@@ -37,7 +37,7 @@ import type {
   ExpenseVatSourceOverrideInput,
   ExpenseLineChargeKind,
 } from '@watchdog-bms/contracts';
-import { canVoidExpenseFinancialState, civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseDocumentDateStatus, expenseLineCharges, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
+import { canVoidExpenseFinancialState, civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilInstantDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseDocumentDateStatus, expenseLineCharges, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
@@ -54,6 +54,25 @@ export {
 
 export type ExpenseDb = Prisma.TransactionClient | PrismaService['client'];
 
+export type AiExpenseReadFilter = {
+  companyId: string;
+  branchId?: string;
+  status?: ListExpensesFilter['status'];
+  paymentStatus?: ListExpensesFilter['paymentStatus'];
+  vendorCounterpartyId?: string;
+  expenseCategoryId?: string;
+  fromDate: string;
+  toDate: string;
+  createdByUserId?: string;
+};
+
+export type AiExpenseReadScope = {
+  branchIds?: string[];
+  relatedUserId?: string;
+};
+
+export type AiExpenseGroupBy = 'category' | 'vendor' | 'day';
+
 type ExpensePaymentResult = { expense: ExpenseRecord; payment: ExpensePaymentRecord; replayed: boolean };
 type SubstituteReceiptPolicyWithApprovalMode = SubstituteReceiptPolicyRecord & { approvalMode: SubstituteReceiptApprovalMode };
 
@@ -62,15 +81,9 @@ const SUPERSEDED_DUPLICATE_REASON = 'system:superseded_by_confirmed_duplicate';
 const SUBSTITUTE_RECEIPT_DOCUMENT_TYPE = 'expense.substitute_receipt';
 const SUBSTITUTE_RECEIPT_OWNER_TYPE = 'expense_substitute_receipt';
 export const SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON = 'EXPENSE_VOIDED';
-const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1_000;
-
 /** Timestamp ranges follow the same Bangkok civil dates shown by the Expenses UI. */
 function bangkokCivilDayRangeToUtc(from?: string, to?: string): { gte?: Date; lt?: Date } {
-  const range = civilDayRangeToUtc(from, to);
-  return {
-    ...(range.gte && { gte: new Date(range.gte.getTime() - BANGKOK_UTC_OFFSET_MS) }),
-    ...(range.lt && { lt: new Date(range.lt.getTime() - BANGKOK_UTC_OFFSET_MS) }),
-  };
+  return civilInstantDayRangeToUtc(from, to);
 }
 
 
@@ -880,6 +893,270 @@ export class PrismaExpenseRepository {
     ]);
     const progress = await loadExpenseReimbursementProgress(this.prisma.client, companyId, data, scopes);
     return { data: data.map(row => ({ ...mapExpense(row), reimbursementProgress: progress.get(row.id) })), total, page, pageSize };
+  }
+
+  /** The existing web/export report includes every status; one SQL aggregate keeps that population exact. */
+  async readReportSummary(
+    filter: { companyId: string; fromDate?: string; toDate?: string; branchId?: string; createdByUserId?: string },
+    scope: AiExpenseReadScope,
+  ) {
+    const where: Prisma.ExpenseRecordWhereInput = {
+      companyId: filter.companyId,
+      ...(!filter.branchId ? branchScopeWhere({ branchIds: scope.branchIds }) : { branchId: filter.branchId }),
+      ...(filter.createdByUserId ? { createdByUserId: filter.createdByUserId } : {}),
+      ...(filter.fromDate || filter.toDate ? { expenseDate: civilDayRangeToUtc(filter.fromDate, filter.toDate) } : {}),
+      ...(scope.relatedUserId ? { AND: [expenseRelatedToUserWhere(scope.relatedUserId)] } : {}),
+    };
+    const groups = await this.prisma.client.expenseRecord.groupBy({
+      by: ['status', 'currency'], where, _count: { _all: true },
+      _sum: { grandTotalAmount: true, paidAmount: true, outstandingAmount: true },
+      orderBy: [{ status: 'asc' }, { currency: 'asc' }],
+    });
+    return groups.map(group => ({
+      status: String(group.status), currency: group.currency, count: group._count._all,
+      grandTotalAmount: new Decimal(String(group._sum.grandTotalAmount ?? 0)).toFixed(4),
+      paidAmount: new Decimal(String(group._sum.paidAmount ?? 0)).toFixed(4),
+      outstandingAmount: new Decimal(String(group._sum.outstandingAmount ?? 0)).toFixed(4),
+    }));
+  }
+
+  private aiExpenseWhere(filter: AiExpenseReadFilter, scope: AiExpenseReadScope): Prisma.ExpenseRecordWhereInput {
+    const explicitStatus = filter.status;
+    return {
+      companyId: filter.companyId,
+      ...(!filter.branchId ? branchScopeWhere({ branchIds: scope.branchIds }) : {}),
+      ...(filter.branchId ? { branchId: filter.branchId } : {}),
+      ...(explicitStatus ? { status: explicitStatus } : { status: { notIn: ['REJECTED', 'VOIDED'] } }),
+      ...(filter.paymentStatus ? { paymentStatus: filter.paymentStatus } : {}),
+      ...(filter.vendorCounterpartyId ? { vendorCounterpartyId: filter.vendorCounterpartyId } : {}),
+      ...(filter.expenseCategoryId ? { expenseCategoryId: filter.expenseCategoryId } : {}),
+      ...(filter.createdByUserId ? { createdByUserId: filter.createdByUserId } : {}),
+      expenseDate: civilDayRangeToUtc(filter.fromDate, filter.toDate),
+      ...(scope.relatedUserId ? { AND: [expenseRelatedToUserWhere(scope.relatedUserId)] } : {}),
+    };
+  }
+
+  /** One repeatable-read snapshot for list rows, counts, and every exact Decimal aggregate. */
+  async readAiExpenseSummary(
+    filter: AiExpenseReadFilter,
+    scope: AiExpenseReadScope,
+    limit: number,
+    cursor?: { expenseDate: Date; id: string },
+  ): Promise<{
+    asOf: Date;
+    total: number;
+    byCurrency: Array<{ currency: string; count: number; totalAmount: string; paidAmount: string; outstandingAmount: string }>;
+    byStatus: Array<{ status: string; currency: string; count: number; totalAmount: string }>;
+    items: Array<{
+      id: string; expenseNumber: string | null; expenseDate: Date; vendorNameSnapshot: string | null;
+      vendorDocumentNumber: string | null; status: string; paymentStatus: string;
+      currency: string; grandTotalAmount: string; paidAmount: string; outstandingAmount: string;
+    }>;
+    hasMore: boolean;
+    nextCursorSource: { expenseDate: Date; id: string } | null;
+  }> {
+    const where = this.aiExpenseWhere(filter, scope);
+    const rowWhere: Prisma.ExpenseRecordWhereInput = cursor ? {
+      AND: [where, { OR: [
+        { expenseDate: { lt: cursor.expenseDate } },
+        { expenseDate: cursor.expenseDate, id: { lt: cursor.id } },
+      ] }],
+    } : where;
+    return this.prisma.client.$transaction(async (tx) => {
+      const stamp = await tx.$queryRaw<Array<{ asOf: Date }>>`SELECT transaction_timestamp() AS "asOf"`;
+      const [currencyGroups, statusGroups, rows, company] = await Promise.all([
+        tx.expenseRecord.groupBy({
+          by: ['currency'], where, _count: { _all: true },
+          _sum: { grandTotalAmount: true, paidAmount: true, outstandingAmount: true },
+        }),
+        tx.expenseRecord.groupBy({
+          by: ['status', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
+        }),
+        tx.expenseRecord.findMany({
+          where: rowWhere, take: limit + 1, orderBy: [{ expenseDate: 'desc' }, { id: 'desc' }],
+          select: {
+            id: true, expenseNumber: true, expenseDate: true, vendorNameSnapshot: true,
+            vendorDocumentNumber: true, status: true, paymentStatus: true, currency: true,
+            grandTotalAmount: true, paidAmount: true, outstandingAmount: true,
+          },
+        }),
+        tx.company.findUnique({ where: { id: filter.companyId }, select: { baseCurrency: true } }),
+      ]);
+      const byCurrency = currencyGroups.length > 0 ? currencyGroups.map((group) => ({
+        currency: group.currency,
+        count: group._count._all,
+        totalAmount: expenseDecimalToString(group._sum.grandTotalAmount),
+        paidAmount: expenseDecimalToString(group._sum.paidAmount),
+        outstandingAmount: expenseDecimalToString(group._sum.outstandingAmount),
+      })) : [{
+        currency: company?.baseCurrency ?? 'THB', count: 0,
+        totalAmount: '0', paidAmount: '0', outstandingAmount: '0',
+      }];
+      return {
+        asOf: stamp[0]?.asOf ?? new Date(),
+        total: currencyGroups.reduce((sum, group) => sum + group._count._all, 0),
+        byCurrency,
+        byStatus: statusGroups.map((group) => ({
+          status: group.status,
+          currency: group.currency,
+          count: group._count._all,
+          totalAmount: expenseDecimalToString(group._sum.grandTotalAmount),
+        })),
+        items: rows.slice(0, limit).map((row) => ({
+          ...row,
+          status: String(row.status), paymentStatus: String(row.paymentStatus),
+          grandTotalAmount: expenseDecimalToString(row.grandTotalAmount),
+          paidAmount: expenseDecimalToString(row.paidAmount),
+          outstandingAmount: expenseDecimalToString(row.outstandingAmount),
+        })),
+        hasMore: rows.length > limit,
+        nextCursorSource: rows.length > limit && rows[limit - 1]
+          ? { expenseDate: rows[limit - 1]!.expenseDate, id: rows[limit - 1]!.id }
+          : null,
+      };
+    }, { isolationLevel: 'RepeatableRead', maxWait: 1_000, timeout: 5_000 });
+  }
+
+  /** Exact aggregate population is independent from the bounded category/branch display groups. */
+  async readAiExpenseBreakdown(
+    filter: AiExpenseReadFilter,
+    scope: AiExpenseReadScope,
+    groupLimit = 25,
+  ): Promise<{
+    asOf: Date;
+    byCurrency: Array<{ currency: string; count: number; totalAmount: string }>;
+    byCategory: Array<{ expenseCategoryId: string | null; currency: string; count: number; totalAmount: string; label: string | null }>;
+    byBranch: Array<{ branchId: string | null; currency: string; count: number; totalAmount: string; label: string | null }>;
+    categoryHasMore: boolean;
+    branchHasMore: boolean;
+  }> {
+    const where = this.aiExpenseWhere(filter, scope);
+    return this.prisma.client.$transaction(async (tx) => {
+      const stamp = await tx.$queryRaw<Array<{ asOf: Date }>>`SELECT transaction_timestamp() AS "asOf"`;
+      const [totals, categoryGroups, branchGroups, company] = await Promise.all([
+        tx.expenseRecord.groupBy({ by: ['currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true } }),
+        tx.expenseRecord.groupBy({
+          by: ['expenseCategoryId', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
+          orderBy: [{ _sum: { grandTotalAmount: 'desc' } }, { expenseCategoryId: 'asc' }, { currency: 'asc' }], take: groupLimit + 1,
+        }),
+        tx.expenseRecord.groupBy({
+          by: ['branchId', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
+          orderBy: [{ _sum: { grandTotalAmount: 'desc' } }, { branchId: 'asc' }, { currency: 'asc' }], take: groupLimit + 1,
+        }),
+        tx.company.findUnique({ where: { id: filter.companyId }, select: { baseCurrency: true } }),
+      ]);
+      const categoryPage = categoryGroups.slice(0, groupLimit);
+      const branchPage = branchGroups.slice(0, groupLimit);
+      const [categories, branches] = await Promise.all([
+        tx.expenseCategory.findMany({
+          where: { companyId: filter.companyId, id: { in: categoryPage.map((group) => group.expenseCategoryId).filter((id): id is string => Boolean(id)) } },
+          select: { id: true, name: true },
+        }),
+        tx.branch.findMany({
+          where: { companyId: filter.companyId, id: { in: branchPage.map((group) => group.branchId).filter((id): id is string => Boolean(id)) } },
+          select: { id: true, name: true },
+        }),
+      ]);
+      const categoryNames = new Map(categories.map((row) => [row.id, row.name]));
+      const branchNames = new Map(branches.map((row) => [row.id, row.name]));
+      return {
+        asOf: stamp[0]?.asOf ?? new Date(),
+        byCurrency: totals.length > 0 ? totals.map((group) => ({
+          currency: group.currency, count: group._count._all,
+          totalAmount: expenseDecimalToString(group._sum.grandTotalAmount),
+        })) : [{ currency: company?.baseCurrency ?? 'THB', count: 0, totalAmount: '0' }],
+        byCategory: categoryPage.map((group) => ({
+          expenseCategoryId: group.expenseCategoryId, currency: group.currency, count: group._count._all,
+          totalAmount: expenseDecimalToString(group._sum.grandTotalAmount),
+          label: group.expenseCategoryId ? categoryNames.get(group.expenseCategoryId) ?? null : null,
+        })),
+        byBranch: branchPage.map((group) => ({
+          branchId: group.branchId, currency: group.currency, count: group._count._all,
+          totalAmount: expenseDecimalToString(group._sum.grandTotalAmount),
+          label: group.branchId ? branchNames.get(group.branchId) ?? null : null,
+        })),
+        categoryHasMore: categoryGroups.length > groupLimit,
+        branchHasMore: branchGroups.length > groupLimit,
+      };
+    }, { isolationLevel: 'RepeatableRead', maxWait: 1_000, timeout: 5_000 });
+  }
+
+  /** One selected, cursor-pageable grouping; its aggregate population is never limited by the group page. */
+  async readAiExpenseGroups(
+    filter: AiExpenseReadFilter,
+    scope: AiExpenseReadScope,
+    groupBy: AiExpenseGroupBy,
+    limit: number,
+    offset: number,
+  ): Promise<{
+    asOf: Date;
+    byCurrency: Array<{ currency: string; count: number; totalAmount: string }>;
+    groups: Array<{ key: string | null; label: string | null; currency: string; count: number; totalAmount: string }>;
+    hasMore: boolean;
+  }> {
+    const where = this.aiExpenseWhere(filter, scope);
+    return this.prisma.client.$transaction(async (tx) => {
+      const stamp = await tx.$queryRaw<Array<{ asOf: Date }>>`SELECT transaction_timestamp() AS "asOf"`;
+      const groupQuery = groupBy === 'category'
+        ? tx.expenseRecord.groupBy({
+          by: ['expenseCategoryId', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
+          orderBy: [{ _sum: { grandTotalAmount: 'desc' } }, { expenseCategoryId: 'asc' }, { currency: 'asc' }],
+          skip: offset, take: limit + 1,
+        })
+        : groupBy === 'vendor'
+          ? tx.expenseRecord.groupBy({
+            by: ['vendorCounterpartyId', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
+            orderBy: [{ _sum: { grandTotalAmount: 'desc' } }, { vendorCounterpartyId: 'asc' }, { currency: 'asc' }],
+            skip: offset, take: limit + 1,
+          })
+          : tx.expenseRecord.groupBy({
+            by: ['expenseDate', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
+            orderBy: [{ _sum: { grandTotalAmount: 'desc' } }, { expenseDate: 'asc' }, { currency: 'asc' }],
+            skip: offset, take: limit + 1,
+          });
+      const [totals, rawGroups] = await Promise.all([
+        tx.expenseRecord.groupBy({ by: ['currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true } }),
+        groupQuery,
+      ]);
+      const page = (rawGroups as any[]).slice(0, limit);
+      let labels = new Map<string, string>();
+      if (groupBy === 'category') {
+        const rows = await tx.expenseCategory.findMany({
+          where: { companyId: filter.companyId, id: { in: page.map((row) => row.expenseCategoryId).filter(Boolean) } },
+          select: { id: true, name: true },
+        });
+        labels = new Map(rows.map((row) => [row.id, row.name]));
+      } else if (groupBy === 'vendor') {
+        const rows = await tx.accountingCounterparty.findMany({
+          where: { companyId: filter.companyId, id: { in: page.map((row) => row.vendorCounterpartyId).filter(Boolean) } },
+          select: { id: true, displayName: true },
+        });
+        labels = new Map(rows.map((row) => [row.id, row.displayName]));
+      }
+      const company = totals.length === 0
+        ? await tx.company.findUnique({ where: { id: filter.companyId }, select: { baseCurrency: true } })
+        : null;
+      return {
+        asOf: stamp[0]?.asOf ?? new Date(),
+        byCurrency: totals.length > 0 ? totals.map((row) => ({
+          currency: row.currency, count: row._count._all,
+          totalAmount: expenseDecimalToString(row._sum.grandTotalAmount),
+        })) : [{ currency: company?.baseCurrency ?? 'THB', count: 0, totalAmount: '0' }],
+        groups: page.map((row) => {
+          const rawKey = groupBy === 'category' ? row.expenseCategoryId
+            : groupBy === 'vendor' ? row.vendorCounterpartyId
+              : row.expenseDate?.toISOString().slice(0, 10);
+          const key = typeof rawKey === 'string' ? rawKey : null;
+          return {
+            key,
+            label: groupBy === 'day' ? key : key ? labels.get(key) ?? null : null,
+            currency: row.currency, count: row._count._all,
+            totalAmount: expenseDecimalToString(row._sum.grandTotalAmount),
+          };
+        }),
+        hasMore: (rawGroups as any[]).length > limit,
+      };
+    }, { isolationLevel: 'RepeatableRead', maxWait: 1_000, timeout: 5_000 });
   }
 
   async listCompanySubstituteReceipts(

@@ -6,7 +6,7 @@ import { DisabledProvider } from './disabled.provider';
 import { OpenAiProvider } from './openai.provider';
 import { withAiBudgetEnvelope } from '../../../../common/usage/ai-budget-provider';
 import { createAiBudgetSeam } from '../../../../common/usage/ai-budget-seam';
-import { currentBudgetEnvelope, currentUsageCompanyId } from '../../../../common/usage/usage-context';
+import { currentBudgetEnvelope, currentBudgetGrantV2, currentBudgetState, currentUsageCompanyId } from '../../../../common/usage/usage-context';
 
 export function createProvider(
   config: AiGatewayConfigService,
@@ -20,28 +20,32 @@ export function createProvider(
   // refused by the guard below anyway, so preferring the envelope's turns a guaranteed
   // `model_mismatch` into the call the reservation actually priced. Unset without an envelope, so
   // every SHARED request keeps the exact model it picks today.
-  const envelopeModelId = currentBudgetEnvelope()?.modelId;
-  if (config.modelProvider === 'openai') {
+  const grant = currentBudgetGrantV2();
+  const envelopeModelId = currentBudgetEnvelope()?.modelId ?? grant?.model.modelId;
+  const budgetActive = currentBudgetState()?.status === 'active' || currentBudgetState()?.status === 'active-v2';
+  const provider = grant?.model.provider ?? config.modelProvider;
+  const modelId = grant?.model.modelId ?? opts?.modelId ?? envelopeModelId;
+  if (provider === 'openai') {
     const apiKey = config.openAiApiKey;
-    if (!apiKey) return new DisabledProvider();
-    const modelId = opts?.modelId ?? envelopeModelId ?? config.openAiModel;
-    assertApproved(config, 'openai', modelId, config.openAiProcessingRegion);
-    return budgeted(config, modelId, new OpenAiProvider({ apiKey, model: modelId, timeoutMs }));
+    const selectedModel = modelId ?? config.openAiModel;
+    if (!apiKey || (grant && config.openAiProcessingRegion !== grant.model.region)) return new DisabledProvider();
+    assertApproved(config, 'openai', selectedModel, grant?.model.region ?? config.openAiProcessingRegion);
+    return budgeted(config, selectedModel, new OpenAiProvider({ apiKey, model: selectedModel, timeoutMs }));
   }
-  if (config.modelProvider === 'bedrock') {
-    const region = config.bedrockRegion;
-    const modelId = opts?.modelId ?? envelopeModelId ?? config.bedrockModelId;
-    // ponytail: fail safe with DisabledProvider if Bedrock is misconfigured
-    if (!region || !modelId) return new DisabledProvider();
-    assertApproved(config, 'bedrock', modelId, region);
-    return budgeted(config, modelId, new BedrockProvider({
+  if (provider === 'bedrock') {
+    const region = grant?.model.region ?? config.bedrockRegion;
+    const selectedModel = modelId ?? config.bedrockModelId;
+    // The signed grant pins all three provider coordinates; never drift to deployment defaults.
+    if (!region || !selectedModel || (grant && config.bedrockRegion !== grant.model.region)) return new DisabledProvider();
+    assertApproved(config, 'bedrock', selectedModel, region);
+    return budgeted(config, selectedModel, new BedrockProvider({
       region,
-      modelId,
+      modelId: selectedModel,
       timeoutMs,
       // ADR 0013 §6 step 3: the reservation prices exactly one SDK attempt, so under an envelope
       // the client is pinned to it — a silent SDK retry would spend a second invocation's money
       // against one hold. Absent without an envelope, which leaves today's SDK default untouched.
-      ...(currentBudgetEnvelope() ? { maxAttempts: AI_BUDGET_STEP_ATTEMPTS } : {}),
+      ...(budgetActive ? { maxAttempts: grant ? 1 : AI_BUDGET_STEP_ATTEMPTS } : {}),
     }));
   }
   return new DisabledProvider();

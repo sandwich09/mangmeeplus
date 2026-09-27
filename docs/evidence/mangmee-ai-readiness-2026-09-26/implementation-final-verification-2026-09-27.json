@@ -1,0 +1,513 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-27T00:13:34.862103+00:00",
+  "status": "implementation_and_local_integration_verified_activation_off",
+  "scope": {
+    "activeSlices": 22,
+    "capabilities": 17,
+    "excluded": [
+      "W10/C13 voice/STT",
+      "Financial Profile/Financial Services Needs roadmap",
+      "deployment"
+    ],
+    "supervision": "gpt-6-astra ultra",
+    "requestedWorkerModels": [
+      "gpt-6-luna xhigh",
+      "gpt-5.6-luna xhigh",
+      "gpt-5.6-sol xhigh"
+    ]
+  },
+  "source": {
+    "baseline": "8b05ed33f8c8ddfcb05ca4e51c029cde06f2a464",
+    "implementationCommit": "09c8fad9f082f7dd66fe72d3f9cc3615b5aa0331",
+    "mainIntegrationCommit": "0e6244ac1321377830c8e075f551a5018e680c50",
+    "runtimeProofCommit": "8462caaa6f717a179cd8362c3a8d2b0e703a9819",
+    "runtimeProofTree": "bc0106ef19257f2bf0e7e8fff1fe093ffb79afbc",
+    "sourcePathsTreeSha256": "46e6f549ab0ae9dbd3f9985c85b4749da23cb5924db9015bc400603e65d7849d",
+    "postProofChanges": "Final status docs, regenerated capability manifest and this evidence only; no production/runtime source changes.",
+    "packageJsonOrLockfileChanges": false
+  },
+  "environment": {
+    "kind": "local_synthetic_only",
+    "postgresPort": 15439,
+    "redisPort": 16389,
+    "freshMigrationCount": 256,
+    "cloudAccessed": false,
+    "providerHttp": "deterministic Responses fixture or blocked",
+    "lineTransport": "synthetic HTTP sink"
+  },
+  "capabilityManifest": {
+    "path": "docs/research/mangmee-ai-capability-manifest-2026-09-27.json",
+    "digest": "c5ebc363efbcf1de32afa015ffb91adab769b4b11b2925b5baaf20b8bfb76e86",
+    "operations": 71,
+    "sellableFamilies": 18,
+    "registeredUnwiredHidden": 3
+  },
+  "corpus": {
+    "status": "draft",
+    "scenarios": 225,
+    "baseScenarios": 150,
+    "thaiVariants": 75,
+    "snapshots": 6,
+    "rowsPerSnapshot": 176,
+    "independentFactExpectations": 95,
+    "digest": "d1ca872dba0849ed7a8caa85597300c1719cc501c40ff23d0efb65950a986739",
+    "humanReviewed": false,
+    "activationEligible": false
+  },
+  "checks": [
+    {
+      "name": "whole_chain",
+      "exitCode": 0,
+      "logSha256": "85eb909a9d3a2864e49597876167ba7376b9f378f794ee0e10a03b9463b312a1",
+      "localLog": "/tmp/mangmee-v24-final-all-suites.log",
+      "tapSummaries": [
+        {
+          "tests": 4,
+          "suites": 1,
+          "passed": 4,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        },
+        {
+          "tests": 5,
+          "suites": 1,
+          "passed": 5,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        },
+        {
+          "tests": 80,
+          "suites": 9,
+          "passed": 80,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        },
+        {
+          "tests": 272,
+          "suites": 40,
+          "passed": 272,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        },
+        {
+          "tests": 4,
+          "suites": 1,
+          "passed": 4,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        },
+        {
+          "tests": 66,
+          "suites": 6,
+          "passed": 66,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        },
+        {
+          "tests": 1712,
+          "suites": 197,
+          "passed": 1712,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        },
+        {
+          "tests": 461,
+          "suites": 63,
+          "passed": 461,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        }
+      ],
+      "notes": "All 12 registered groups passed: 8 TAP groups and 4 infrastructure shell contracts. Not provider/native acceptance.",
+      "reproduceCommand": "DATABASE_URL=<local-domain-db> BILLING_TEST_DATABASE_URL=<local-domain-db> AI_BUDGET_RESERVATION_TEST_DATABASE_URL=<local-domain-db> LINE_AI_LEDGER_REDIS_TEST_URL=<dedicated-local-redis/14> node scripts/run-line-ai-whole-chain-acceptance.mjs"
+    },
+    {
+      "name": "relevant_postgres",
+      "exitCode": 0,
+      "logSha256": "1efd1de77a600ecbfc87c47ef081f63fd543e094e7a57120901502f9c494dd39",
+      "localLog": "/tmp/mangmee-v24-final-postgres.log",
+      "tapSummaries": [
+        {
+          "tests": 59,
+          "suites": 5,
+          "passed": 59,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        }
+      ],
+      "reproduceCommand": "DATABASE_URL=<local-domain-db> BILLING_TEST_DATABASE_URL=<local-domain-db> node scripts/run-line-ai-whole-chain-acceptance.mjs --reliability-postgres"
+    },
+    {
+      "name": "full_api_package",
+      "exitCode": 0,
+      "logSha256": "93b66c630767047d4b5627b88bf81547171cf41fe565253f2ccfd1b33e6759e4",
+      "localLog": "/tmp/mangmee-final-api-package.log",
+      "tapSummaries": [
+        {
+          "tests": 8632,
+          "suites": 1608,
+          "passed": 8620,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 12
+        }
+      ],
+      "notes": "12 reported environment-specific skips in the baseline suite; relevant PostgreSQL/Redis invariants are separately executed above/below. No skipped check is counted as passed.",
+      "reproduceCommand": "DATABASE_URL=<local-domain-db> LINE_AI_LEDGER_REDIS_TEST_URL=<dedicated-local-redis/14> pnpm --filter @watchdog-bms/api test (same named specs; TAP reporter used to retain counts)"
+    },
+    {
+      "name": "full_gateway_package",
+      "exitCode": 0,
+      "logSha256": "eeab7a896a9b944a6ad73d48f8f5b69c145ed1c29a4c692c6add9601b219aa5d",
+      "localLog": "/tmp/mangmee-final-gateway-package.log",
+      "tapSummaries": [
+        {
+          "tests": 1367,
+          "suites": 163,
+          "passed": 1367,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        }
+      ],
+      "reproduceCommand": "pnpm --filter @watchdog-bms/ai-gateway test"
+    },
+    {
+      "name": "real_redis_streams",
+      "exitCode": 0,
+      "logSha256": "778451ffa88d405dd17662016b19cf8815af3104f9beb67811df3f7d4f64648f",
+      "localLog": "/tmp/mangmee-final-real-redis.log",
+      "tapSummaries": [
+        {
+          "tests": 37,
+          "suites": 4,
+          "passed": 37,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        }
+      ],
+      "reproduceCommand": "LINE_AI_LEDGER_REDIS_TEST_URL=<dedicated-local-redis/14> pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/application/line-ai-ledger.service.spec.ts"
+    },
+    {
+      "name": "retained_financial_journey",
+      "exitCode": 0,
+      "logSha256": "a32ae731b7ac7dd89ff13c497f06610ddf2ab50a462ac033913f19dc21e58249",
+      "localLog": "/tmp/mangmee-two-claims-pg.log",
+      "tapSummaries": [
+        {
+          "tests": 1,
+          "suites": 1,
+          "passed": 1,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        }
+      ],
+      "notes": "Actual source selection, accepted preview, real confirm100, preserved sibling, second selection/preview/confirm999, distinct requests; stale cancellation and sibling provenance denied.",
+      "reproduceCommand": "BILLING_TEST_DATABASE_URL=<local-domain-db> pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/application/line-reimbursement-draft-adapter.pg.spec.ts src/modules/line-ai/application/line-retained-task-source.pg.spec.ts"
+    },
+    {
+      "name": "replay_reset_safety",
+      "exitCode": 0,
+      "logSha256": "a59b0289d7bbb34e81e11c233baab93ee830daccde7adbd0b3f9beba51734de4",
+      "localLog": "/tmp/mangmee-runtime-reset-pg.log",
+      "tapSummaries": [
+        {
+          "tests": 1,
+          "suites": 0,
+          "passed": 1,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        }
+      ],
+      "notes": "Separate reset database. Same locked connection; transaction-local fixture cleanup only. Rollback restores origin; real legal-record UPDATE/DELETE/TRUNCATE remain prohibited afterward.",
+      "reproduceCommand": "LINE_RELIABILITY_RESET_TEST_DATABASE_URL=<dedicated-local-replay-db> pnpm exec tsx --test scripts/line-ai-reliability-runtime-reset.pg.spec.ts"
+    },
+    {
+      "name": "runtime_collector_after_reset_fix",
+      "exitCode": 0,
+      "logSha256": "705186ffb299341f87a8a8f9dad7757410ec7e8e6f2f64b875f9d504a1fd5968",
+      "localLog": "/tmp/mangmee-runtime-final-after-reset.log",
+      "tapSummaries": [
+        {
+          "tests": 8,
+          "suites": 0,
+          "passed": 8,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        }
+      ],
+      "reproduceCommand": "pnpm exec tsx --test scripts/line-ai-reliability-runtime.spec.ts"
+    },
+    {
+      "name": "manifest_parity_after_final_doc_status",
+      "exitCode": 0,
+      "logSha256": "474682907f6d5cea3398b5806515696a51181b2edde1060bb63c6130f2de48c2",
+      "localLog": "/tmp/mangmee-final-manifest-verify-final.log",
+      "tapSummaries": [
+        {
+          "tests": 4,
+          "suites": 1,
+          "passed": 4,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        }
+      ],
+      "reproduceCommand": "pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/line-ai-capability-manifest.spec.ts"
+    },
+    {
+      "name": "api_typecheck",
+      "exitCode": 0,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "localLog": "/tmp/mangmee-last-api-tsc.log",
+      "tapSummaries": [],
+      "reproduceCommand": "pnpm --filter @watchdog-bms/api typecheck"
+    },
+    {
+      "name": "gateway_typecheck",
+      "exitCode": 0,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "localLog": "/tmp/mangmee-last-gateway-tsc.log",
+      "tapSummaries": [],
+      "reproduceCommand": "pnpm --filter @watchdog-bms/ai-gateway typecheck"
+    },
+    {
+      "name": "web_typecheck",
+      "exitCode": 0,
+      "logSha256": "1b3837113c195f741aedeb96c5a44695c3f53bd3437853a628238876bc5d793b",
+      "localLog": "/tmp/mangmee-final-web-typecheck.log",
+      "tapSummaries": [],
+      "reproduceCommand": "pnpm --filter @watchdog-bms/web typecheck"
+    },
+    {
+      "name": "replay_strict_typecheck",
+      "exitCode": 0,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "localLog": "/tmp/mangmee-runtime-reset-tsc.log",
+      "tapSummaries": [],
+      "reproduceCommand": "pnpm exec tsc --noEmit --strict --esModuleInterop --skipLibCheck --module ESNext --moduleResolution Bundler --target ES2022 scripts/line-ai-reliability-runtime.ts scripts/line-ai-reliability-runtime-reset.pg.spec.ts scripts/line-ai-reliability-optout-smoke.ts"
+    },
+    {
+      "name": "corpus_runtime_strict_typecheck",
+      "exitCode": 0,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "localLog": "/tmp/mangmee-final-replay-tsc.log",
+      "tapSummaries": [],
+      "reproduceCommand": "pnpm exec tsc --noEmit --strict --esModuleInterop --skipLibCheck --module ESNext --moduleResolution Bundler --target ES2022 scripts/line-ai-reliability-runtime.ts scripts/line-ai-reliability-runtime.spec.ts scripts/line-ai-reliability-corpus.ts scripts/line-ai-reliability-corpus.spec.ts scripts/line-ai-reliability-optout-smoke.ts"
+    },
+    {
+      "name": "contracts_build",
+      "exitCode": 0,
+      "logSha256": "589d8552bff68525057632068a284fc558aaea553e230ae97bf88f0af9a6d30a",
+      "localLog": "/tmp/mangmee-final-contracts-build.log",
+      "tapSummaries": [],
+      "reproduceCommand": "pnpm --filter @watchdog-bms/contracts build"
+    },
+    {
+      "name": "config_build",
+      "exitCode": 0,
+      "logSha256": "5580d1f975a828b70fdfeb579a27a536f2c033aec1710ba8e328132aac0cf15c",
+      "localLog": "/tmp/mangmee-final-config-build.log",
+      "tapSummaries": [],
+      "reproduceCommand": "pnpm --filter @watchdog-bms/config build"
+    },
+    {
+      "name": "api_build",
+      "exitCode": 0,
+      "logSha256": "b7ead3e7b16562ba454be7980f4e6edd73a70531dd13cf5ac782a92a0b2a0aa0",
+      "localLog": "/tmp/mangmee-final-api-build.log",
+      "tapSummaries": [],
+      "reproduceCommand": "pnpm --filter @watchdog-bms/api build"
+    },
+    {
+      "name": "gateway_build",
+      "exitCode": 0,
+      "logSha256": "a3d03d40911f1f06645ae19e989212847c2a5962f0dfcd0a01e83da2bda7ed06",
+      "localLog": "/tmp/mangmee-final-gateway-build.log",
+      "tapSummaries": [],
+      "reproduceCommand": "pnpm --filter @watchdog-bms/ai-gateway build"
+    },
+    {
+      "name": "agentcore_build",
+      "exitCode": 0,
+      "logSha256": "d14a90c2fef23d0d5d48eaf77087fbd32f351b0906b90b090eceaef4e5ab3f61",
+      "localLog": "/tmp/mangmee-final-agentcore-build.log",
+      "tapSummaries": [],
+      "reproduceCommand": "pnpm --filter @watchdog-bms/ai-gateway build:agentcore"
+    },
+    {
+      "name": "fresh_migration_replay",
+      "exitCode": 0,
+      "logSha256": "df3e1c92a263f16162810978e6462c539630131c8799a573767b6a3391df28ef",
+      "localLog": "/tmp/mangmee-migration-fresh.log",
+      "tapSummaries": [],
+      "reproduceCommand": "DATABASE_URL=<fresh-local-replay-db> pnpm --filter @watchdog-bms/api exec prisma migrate deploy"
+    }
+  ],
+  "countsNote": "Suites overlap; do not sum them into a unique test count.",
+  "compiledHttpProof": {
+    "command": "AI_BUDGET_RESERVATION_TEST_DATABASE_URL=<dedicated-local-db> LINE_RELIABILITY_TEST_RESULT_PATH=<result.json> node scripts/line-ai-reliability-compiled-smoke.cjs",
+    "result": {
+      "passed": true,
+      "provenance": "deterministic provider fixture; actual compiled Nest API/Gateway HTTP + real PostgreSQL; no real vendor quality claim",
+      "capability": {
+        "ready": true,
+        "inputContractVersion": 2,
+        "providerOutputVersion": 2,
+        "budgetContractVersion": 2,
+        "profileTableDigest": "c035ee0e52ebfcf8d5d0845c8e1cde17a2485fae55565b3c2deeaa9ac4dc61a6",
+        "estimatorVersion": "utf8-v2",
+        "model": {
+          "provider": "openai",
+          "modelId": "gpt-4.1-mini",
+          "region": "global",
+          "contextTokens": 1047576,
+          "maxOutputTokens": 32768
+        }
+      },
+      "modelCalls": 2,
+      "ordinals": [
+        0,
+        1
+      ],
+      "reservationStates": [
+        "SETTLED",
+        "SETTLED"
+      ],
+      "usageRows": 2,
+      "duplicateError": null,
+      "httpPaths": [
+        "/v1/internal/ai/line-reliability-capabilities",
+        "/v1/internal/ai/line-intake-route",
+        "/v1/internal/ai/budget-step",
+        "/v1/internal/ai/budget-settle",
+        "/v1/internal/ai/line-turn",
+        "/v1/internal/ai/budget-step",
+        "/v1/internal/ai/budget-settle",
+        "/v1/internal/ai/line-turn",
+        "/v1/internal/ai/budget-step"
+      ],
+      "sourceHashes": {
+        "common/usage/ai-budget-provider.js": "3dc2106d77e3a0acd9bfffd0fd13d1a51c2fc83a5a9984071f2dd6bb866a8389",
+        "modules/line-ai/application/use-cases/line-ai-turn.use-case.js": "b5a2adec86041a0fd3edbe6a76d2e8f9373b3fc29f27f1e05d626b386473568c"
+      }
+    },
+    "logSha256": "8bf6bbe504dcb7f707eca4d8f16562ef19b25e1ffad3c269f222898c1c98247e"
+  },
+  "compiledWebhookProof": {
+    "command": "AI_BUDGET_RESERVATION_TEST_DATABASE_URL=<dedicated-local-replay-db> LINE_RELIABILITY_TEST_RESULT_PATH=<result.json> pnpm exec tsx scripts/line-ai-reliability-optout-smoke.ts",
+    "result": {
+      "corpusDigest": "4e240212a17316128a2794d70eb187c693a13d1fde95a15eb45934c7bef10bf8",
+      "provenance": "fixture",
+      "records": [
+        {
+          "scenarioId": "compiled-runtime-optout-smoke",
+          "repeat": 0,
+          "traces": [
+            {
+              "inputDigest": "15bba76e3714112ac69e2c98b4f90190b25c116fa9c45765e40cc75e06edee55",
+              "scopeDigest": "9d45aa4d21fdf86e4a36fa174624058bd8645312afbf858ffb19a3a37a061034",
+              "sourceSnapshot": "compiled-runtime-optout-smoke",
+              "acceptedAtMs": 1790467789143,
+              "outcome": "access_denied",
+              "taskId": null,
+              "askedSlots": [],
+              "tools": [],
+              "facts": [],
+              "effects": [],
+              "modelCalls": 0,
+              "costSatang": 0,
+              "modelWorkCompletedAtMs": 1790467790716,
+              "delivery": {
+                "requiredBatchIds": [
+                  "outcome:cmuj2al410001pwk1d8kynx4u"
+                ],
+                "accepted": [
+                  {
+                    "batchId": "outcome:cmuj2al410001pwk1d8kynx4u",
+                    "wireHash": "261cd3123a2dfc04f417582a4d0890cc0836a4edd6c684d8d0ee6c556bf6aeea",
+                    "acceptedAtMs": 1790467790693,
+                    "receiptId": "sink-d604e8ec-8765-4544-bf4c-26b3edef0f8b"
+                  }
+                ],
+                "status": "ACCEPTED"
+              },
+              "falseRefusalOrHandoff": false,
+              "validationFailures": [],
+              "criticalErrors": [],
+              "versions": {
+                "sourceCommit": "8462caaa6f717a179cd8362c3a8d2b0e703a9819",
+                "schema": "5076c4595a76498285ea5f2d62699c1d7552e520984f8dc6adc6563efe34d740",
+                "prompt": "5c30784d08c3f6ee824ca739aa7a6367d45faa6b88f17611daf7760018458449",
+                "registry": "6ede07798df68afc803f5a62ce2bac32af6072a920f4b8fbe3555d35c4f17bc7",
+                "model": "43014f0b1b2981faef404208823ab044eee99f426d3f2afe8bdd949e1d47479c",
+                "price": "2e680dedb3e1327b9fa86403a25ad57d7a79e46306a2f479ddd59b9112ccb60e"
+              }
+            }
+          ],
+          "error": null,
+          "attempt": {
+            "scenarioId": "compiled-runtime-optout-smoke",
+            "repeat": 0,
+            "cohort": "1500",
+            "cache": "unknown",
+            "semanticCorrect": true,
+            "factsCorrect": true,
+            "effectsCorrect": true,
+            "completed": true,
+            "falseRefusalOrHandoff": false,
+            "criticalErrors": [],
+            "errorFamilies": [],
+            "modelCalls": 0,
+            "costSatang": 0,
+            "deadlineMs": 8000,
+            "deliveryRequired": true,
+            "completeAcceptedMs": 1550
+          }
+        }
+      ],
+      "boundary": {
+        "runtime": "compiled_nest_api_postgres",
+        "line": "synthetic_http_sink",
+        "nativeLineVerified": false,
+        "cacheStateVerified": false,
+        "activationEligible": false
+      }
+    },
+    "logSha256": "aa68cca051fb373b53a703a4e0fefde81a8efc409ba83ab7946cbb0acf07a0cc",
+    "latencyScope": "The1550ms local opt-out observation is not an AI/provider/production latency measurement."
+  },
+  "activation": {
+    "enabled": false,
+    "deployed": false,
+    "remainingGates": [
+      "Human approval of immutable product help packs and receipt/document labels",
+      "Real-provider paired semantic accuracy, false refusal, cost and latency acceptance",
+      "Native LINE multipart/failure/background delivery and browser journey acceptance",
+      "Model/vendor/privacy approval and rollout configuration",
+      "Signed UAT/READY/Production protocol and customer OPEN acceptance for any later release"
+    ]
+  },
+  "integrationAuthorization": {
+    "targets": [
+      "main",
+      "develop"
+    ],
+    "adminMergeWithoutWaitingForCI": true,
+    "receipts": "GitHub PR merge metadata and final task response; this evidence precedes the merges."
+  }
+}

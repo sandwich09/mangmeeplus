@@ -14,6 +14,7 @@
 import type { AgentIntentPlan, AgentIntentItem, AgentRefusal, LineAiPreparedCall, LineAiPreparedPlan } from './line-ai.js';
 import { LINE_AI_AGENT_REGISTRY, LINE_AI_BUSINESS_SUBJECTS } from './line-ai.js';
 import { LINE_TOOL_REGISTRY } from './ai-tools.js';
+import { validateLineAiSourceRefV2, type LineAiInputEvidenceV2, type LineAiSourceRefV2 } from './line-ai-input-evidence.js';
 
 /** Version 1 wrapper bounds (spec §7), concrete so every receiver enforces the same limits. */
 export const LINE_AI_PREPARED_PLAN_BOUNDS = {
@@ -40,6 +41,8 @@ const ANSWER_SHAPES = new Set<NonNullable<LineAiPreparedPlan['answerShape']>>([
 ]);
 const PLAN_STATUSES = new Set<AgentIntentPlan['status']>(['ROUTABLE', 'PARTIAL', 'UNROUTABLE']);
 const REGISTERED_TOOLS = new Set(LINE_TOOL_REGISTRY.map((tool) => tool.name));
+const PREPARED_PLAN_KEYS = new Set(['version', 'inputDigest', 'complexity', 'confidence', 'intentPlan', 'proposedCalls', 'responseMode', 'answerShape']);
+const HASH = /^[0-9a-f]{64}$/u;
 // Category by tool name, so a simple-read call can be checked against the read families without a
 // second registry scan. Read categories only feed the simple structural check.
 const TOOL_CATEGORY = new Map(LINE_TOOL_REGISTRY.map((tool) => [tool.name, tool.category] as const));
@@ -177,8 +180,14 @@ function parseIntentPlan(value: unknown): AgentIntentPlan | undefined {
   return { status, language, intents: parsedIntents, refusals: parsedRefusals, requiresHumanReview };
 }
 
-function parseProposedCall(value: unknown): LineAiPreparedCall | undefined {
+function parseProposedCall(
+  value: unknown,
+  options?: { inputEvidence?: LineAiInputEvidenceV2; candidateIds?: ReadonlySet<string> },
+  version = 1,
+): LineAiPreparedCall | undefined {
   if (!isPlainObject(value)) return undefined;
+  const callKeys = new Set(['toolName', 'input', ...(version === 2 ? ['candidateIds', 'sourceRefs'] : [])]);
+  if (version === 2 && Object.keys(value).some((key) => !callKeys.has(key))) return undefined;
   const { toolName, input } = value;
   // Reject an unregistered tool at the parse boundary as defense-in-depth; the executor re-checks
   // the registry and live permissions again before any call.
@@ -188,7 +197,29 @@ function parseProposedCall(value: unknown): LineAiPreparedCall | undefined {
   // post-parse mutation of the wire input cannot mutate the parsed contract.
   const rebuilt = rebuildBoundedInput(input, 1);
   if (rebuilt === INVALID_INPUT || !isPlainObject(rebuilt)) return undefined;
-  return { toolName, input: rebuilt };
+  if (version === 1) return { toolName, input: rebuilt };
+  let candidateIds: string[] | undefined;
+  if (value['candidateIds'] !== undefined) {
+    const allowedCandidateIds = options?.candidateIds;
+    if (!Array.isArray(value['candidateIds']) || value['candidateIds'].length > 128
+      || !allowedCandidateIds
+      || value['candidateIds'].some((id) => typeof id !== 'string' || !HASH.test(id)
+        || !allowedCandidateIds.has(id))) return undefined;
+    candidateIds = [...new Set(value['candidateIds'] as string[])];
+    if (candidateIds.length !== value['candidateIds'].length) return undefined;
+  }
+  let sourceRefs: LineAiSourceRefV2[] | undefined;
+  if (value['sourceRefs'] !== undefined) {
+    if (!options?.inputEvidence || !Array.isArray(value['sourceRefs']) || value['sourceRefs'].length > 128) return undefined;
+    sourceRefs = [];
+    for (const rawRef of value['sourceRefs']) {
+      if (typeof validateLineAiSourceRefV2(rawRef, options.inputEvidence) !== 'string') return undefined;
+      const ref = rawRef as Record<string, unknown>;
+      sourceRefs.push({ partId: ref['partId'] as string, startUtf16: ref['startUtf16'] as number,
+        endUtf16: ref['endUtf16'] as number, rawSha256: ref['rawSha256'] as string });
+    }
+  }
+  return { toolName, input: rebuilt, ...(candidateIds ? { candidateIds } : {}), ...(sourceRefs ? { sourceRefs } : {}) };
 }
 
 /**
@@ -196,7 +227,10 @@ function parseProposedCall(value: unknown): LineAiPreparedCall | undefined {
  * holds, or `undefined` on any failure (unknown/absent field, oversize, bad shape, out-of-range
  * confidence, unknown tool, prototype/scope/credential injection) so the caller falls back safely.
  */
-export function parseLineAiPreparedPlan(raw: unknown): LineAiPreparedPlan | undefined {
+export function parseLineAiPreparedPlan(
+  raw: unknown,
+  options?: { inputEvidence?: LineAiInputEvidenceV2; candidateIds?: ReadonlySet<string> },
+): LineAiPreparedPlan | undefined {
   if (!isPlainObject(raw)) return undefined;
 
   let encoded: string;
@@ -207,7 +241,12 @@ export function parseLineAiPreparedPlan(raw: unknown): LineAiPreparedPlan | unde
   }
   if (!encoded || byteLength(encoded) > LINE_AI_PREPARED_PLAN_BOUNDS.maxEncodedBytes) return undefined;
 
-  if (raw['version'] !== LINE_AI_PREPARED_PLAN_BOUNDS.version) return undefined;
+  const version = raw['version'];
+  if (version !== 1 && version !== 2) return undefined;
+  if (version === 2 && Object.keys(raw).some((key) => !PREPARED_PLAN_KEYS.has(key))) return undefined;
+  if (version === 1 && raw['inputDigest'] !== undefined) return undefined;
+  if (version === 2 && (!options?.inputEvidence || raw['inputDigest'] !== options.inputEvidence.joinedSha256)) return undefined;
+  if (version === 2 && (typeof raw['inputDigest'] !== 'string' || !HASH.test(raw['inputDigest']))) return undefined;
   const complexity = raw['complexity'];
   if (!inSet(COMPLEXITIES, complexity)) return undefined;
   const responseMode = raw['responseMode'];
@@ -232,7 +271,7 @@ export function parseLineAiPreparedPlan(raw: unknown): LineAiPreparedPlan | unde
   if (!Array.isArray(rawCalls) || rawCalls.length > LINE_AI_PREPARED_PLAN_BOUNDS.maxArrayItems) return undefined;
   const proposedCalls: LineAiPreparedCall[] = [];
   for (const rawCall of rawCalls) {
-    const call = parseProposedCall(rawCall);
+    const call = parseProposedCall(rawCall, options, version);
     if (!call) return undefined;
     proposedCalls.push(call);
   }
@@ -260,7 +299,8 @@ export function parseLineAiPreparedPlan(raw: unknown): LineAiPreparedPlan | unde
   }
 
   return {
-    version: 1,
+    version,
+    ...(version === 2 ? { inputDigest: raw['inputDigest'] as string } : {}),
     complexity,
     confidence,
     intentPlan,

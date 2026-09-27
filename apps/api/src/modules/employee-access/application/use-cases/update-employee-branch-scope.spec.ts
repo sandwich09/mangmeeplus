@@ -20,9 +20,10 @@ function makePrisma(opts: {
   membershipScopeMode?: string;
   membershipBranchIds?: string[];
 } = {}) {
-  const writes = { profileUpdate: undefined as any, userUpdate: undefined as any, membershipUpdate: undefined as any, scopeDeletes: 0, scopeCreates: undefined as any, auditArgs: undefined as any, assignedRoleIds: undefined as any, transactions: 0 };
+  const writes = { profileUpdate: undefined as any, userUpdate: undefined as any, membershipUpdate: undefined as any, scopeDeletes: 0, scopeCreates: undefined as any, auditArgs: undefined as any, assignedRoleIds: undefined as any, transactions: 0, contextInvalidations: [] as any[] };
   const tx = {
     $queryRaw: async () => [],
+    aiConversation: { findMany: async () => [], deleteMany: async ({ where }: any) => { writes.contextInvalidations.push(where); return { count: 1 }; } },
     employeeAccessProfile: { update: async (args: any) => { writes.profileUpdate = args; return {}; } },
     user: { update: async (args: any) => { writes.userUpdate = args; return {}; } },
     membershipRole: {
@@ -124,6 +125,8 @@ describe('UpdateEmployeeUseCase branch scope', () => {
     assert.deepEqual(writes.scopeCreates.data.map((d: any) => d.branchId), ['b1', 'b2']);
     assert.equal(writes.auditArgs.data.riskLevel, 'HIGH');
     assert.deepEqual(writes.auditArgs.data.metadataJson.branchIds, ['b1', 'b2']);
+    assert.deepEqual(writes.contextInvalidations, [{ companyId: 'company-1', userId: 'user-1', channelKind: null }]);
+    assert.equal(writes.auditArgs.data.metadataJson.aiConversationsInvalidated, 1);
     assert.deepEqual(result.branchScopeBranchIds, ['b1']);
   });
 });
@@ -157,6 +160,7 @@ describe('UpdateEmployeeUseCase role assignment guards', () => {
     const { prisma, writes } = makePrisma({ candidateRoles: [SALES_ROLE] });
     await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...managerCmd, requesterPermissions: [...managerCmd.requesterPermissions, 'crm.customer.read'], roleIds: ['r-sales'] });
     assert.deepEqual(writes.assignedRoleIds, ['r-sales']);
+    assert.equal(writes.contextInvalidations.length, 1);
   });
 
   it('rejects empty, multiple, repeated and null roles without mutating access', async () => {
@@ -192,6 +196,7 @@ describe('UpdateEmployeeUseCase role assignment guards', () => {
     await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, jobTitle: 'พนักงานขาย' });
     assert.equal(writes.assignedRoleIds, undefined);
     assert.equal(writes.profileUpdate.data.jobTitle, 'พนักงานขาย');
+    assert.deepEqual(writes.contextInvalidations, []);
   });
 
   it('allows an update when the resolver proves the disabled-feature role permission belongs to the requester', async () => {

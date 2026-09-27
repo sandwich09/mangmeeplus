@@ -18,6 +18,7 @@ import type {
 } from '../domain/models/banking.model';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
 import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import type { BankCashPositionSummary } from '@watchdog-bms/contracts';
 
 @Injectable()
 export class PrismaBankingRepository {
@@ -61,6 +62,67 @@ export class PrismaBankingRepository {
   async listBankAccounts(companyId: string, branchIds?: string[]): Promise<BankAccountRecord[]> {
     const rows = await this.prisma.client.bankAccount.findMany({ where: { companyId, ...branchScopeWhere({ branchIds }) }, orderBy: { displayName: 'asc' } });
     return rows.map((r) => this.toBankAccountRecord(r));
+  }
+
+  /** One repeatable-read snapshot; counts and latest rows never load the full statement history. */
+  async readCashPositionSnapshot(companyId: string, branchIds?: string[]): Promise<{ asOf: Date; accounts: BankCashPositionSummary[] }> {
+    return this.prisma.client.$transaction(async (tx) => {
+      const stamp = await tx.$queryRaw<Array<{ asOf: Date }>>`SELECT transaction_timestamp() AS "asOf"`;
+      const accounts = await tx.bankAccount.findMany({
+        where: { companyId, ...branchScopeWhere({ branchIds }) },
+        orderBy: { displayName: 'asc' },
+        select: { id: true, displayName: true, currency: true },
+      });
+      const accountIds = accounts.map((account) => account.id);
+      if (accountIds.length === 0) return { asOf: stamp[0]?.asOf ?? new Date(), accounts: [] };
+      const [lineCounts, latestLines, pendingAdjustments, completedSessions] = await Promise.all([
+        tx.bankStatementLine.groupBy({
+          by: ['bankAccountId', 'status'], where: { companyId, bankAccountId: { in: accountIds } }, _count: true,
+        }),
+        tx.bankStatementLine.findMany({
+          where: { companyId, bankAccountId: { in: accountIds } },
+          distinct: ['bankAccountId'], orderBy: [{ bankAccountId: 'asc' }, { postedDate: 'desc' }, { id: 'asc' }],
+          select: { bankAccountId: true, postedDate: true },
+        }),
+        tx.bankAdjustment.groupBy({
+          by: ['bankAccountId'], where: { companyId, bankAccountId: { in: accountIds }, status: 'PENDING_APPROVAL' }, _count: true,
+        }),
+        tx.bankReconciliationSession.findMany({
+          where: { companyId, bankAccountId: { in: accountIds }, status: 'COMPLETED' },
+          distinct: ['bankAccountId'], orderBy: [{ bankAccountId: 'asc' }, { completedAt: 'desc' }, { id: 'asc' }],
+          select: { bankAccountId: true, completedAt: true, closingStatementBalanceAmount: true },
+        }),
+      ]);
+      const counts = new Map<string, Map<string, number>>();
+      for (const row of lineCounts) {
+        const current = counts.get(row.bankAccountId) ?? new Map<string, number>();
+        current.set(row.status, row._count);
+        counts.set(row.bankAccountId, current);
+      }
+      const latestByAccount = new Map(latestLines.map((row) => [row.bankAccountId, row]));
+      const adjustmentsByAccount = new Map(pendingAdjustments.map((row) => [row.bankAccountId, row._count]));
+      const sessionsByAccount = new Map(completedSessions.map((row) => [row.bankAccountId, row]));
+      return {
+        asOf: stamp[0]?.asOf ?? new Date(),
+        accounts: accounts.map((account) => {
+          const statusCounts = counts.get(account.id) ?? new Map<string, number>();
+          const unmatchedLineCount = statusCounts.get('UNMATCHED') ?? 0;
+          const unreconciledLineCount = unmatchedLineCount
+            + (statusCounts.get('SUGGESTED') ?? 0)
+            + (statusCounts.get('PARTIALLY_MATCHED') ?? 0);
+          const latest = latestByAccount.get(account.id);
+          const completed = sessionsByAccount.get(account.id);
+          return {
+            companyId, bankAccountId: account.id, bankAccountDisplayName: account.displayName, currency: account.currency,
+            ...(completed?.completedAt ? { lastReconciledDate: completed.completedAt.toISOString() } : {}),
+            ...(completed ? { lastReconciledBalance: String(completed.closingStatementBalanceAmount) } : {}),
+            unreconciledLineCount, unmatchedLineCount,
+            pendingAdjustmentCount: adjustmentsByAccount.get(account.id) ?? 0,
+            ...(latest ? { lastStatementDate: latest.postedDate.toISOString() } : {}),
+          };
+        }),
+      };
+    }, { isolationLevel: 'RepeatableRead', maxWait: 1_000, timeout: 5_000 });
   }
 
   async findLedgerAccountForBank(companyId: string, id: string): Promise<BankLedgerAccountRecord | null> {

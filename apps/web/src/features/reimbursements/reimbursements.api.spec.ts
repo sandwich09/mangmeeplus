@@ -1,6 +1,13 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { submitReimbursement, uploadReceiptFile, uploadSignedClaimFormCopy } from './reimbursements.api';
+import {
+  cancelReimbursementDraftAction,
+  confirmReimbursementDraftAction,
+  getReimbursementDraftAction,
+  submitReimbursement,
+  uploadReceiptFile,
+  uploadSignedClaimFormCopy,
+} from './reimbursements.api';
 import { errorText } from './reimbursements.logic';
 import { subscribeToastBus, type ToastEvent } from '@/common/feedback/toast-bus';
 
@@ -127,5 +134,25 @@ describe('reimbursement receipt upload', () => {
       await assert.rejects(() => uploadReceiptFile('co-1', file, branchId), /สาขา/);
     }
     assert.equal(requests, 0);
+  });
+});
+
+describe('LINE reimbursement draft action API', () => {
+  it('uses the same action URL and exact revision/digest for read, confirm and cancel', async () => {
+    const requests: Array<{ url: string; method: string; body?: unknown }> = [];
+    (globalThis as Record<string, unknown>)['window'] = {};
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(input), method: init?.method ?? 'GET', ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+      return Response.json({ status: 'cancelled', actionId: 'action-1' });
+    }) as typeof fetch;
+    const exact = { previewRevision: 3, confirmationDigest: 'a'.repeat(64) };
+    await getReimbursementDraftAction('co-1', 'action-1');
+    await confirmReimbursementDraftAction('co-1', 'action-1', exact);
+    await cancelReimbursementDraftAction('co-1', 'action-1', exact);
+    assert.deepEqual(requests, [
+      { url: '/api/v1/companies/co-1/reimbursements/draft-actions/action-1', method: 'GET' },
+      { url: '/api/v1/companies/co-1/reimbursements/draft-actions/action-1/confirm', method: 'POST', body: exact },
+      { url: '/api/v1/companies/co-1/reimbursements/draft-actions/action-1/cancel', method: 'POST', body: exact },
+    ]);
   });
 });

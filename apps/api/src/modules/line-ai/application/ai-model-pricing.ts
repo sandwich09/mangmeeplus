@@ -3,6 +3,7 @@
  * Money is computed once, at record time, from these prices and the configured THB rate —
  * never re-derived later, so a price or FX change only affects future rows.
  */
+import Decimal from 'decimal.js';
 import { aiBudgetStepBounds, type AiBudgetStepBounds } from '@watchdog-bms/contracts';
 
 export type AiModelPrices = {
@@ -156,4 +157,76 @@ export function buildPricingSnapshot(
       rounding: costSatang - (input + output + cacheRead + cacheWrite),
     },
   };
+}
+
+/** V2 pins the actual rendered invocation and its tariff. No live-table fallback on settlement. */
+export type AiTariffV2 = {
+  version: string;
+  provider: 'openai' | 'bedrock';
+  modelId: string;
+  region: string;
+  usdPerMTok: AiModelPrices;
+  thbPerUsd: number;
+  externalUsdPerUnit?: number;
+  /** Some approved search tariffs bill a fixed content block outside reported input usage. */
+  searchContentInputTokensPerUnit?: number;
+};
+export function validAiTariffV2(value: AiTariffV2): boolean {
+  return !!value && /^[A-Za-z0-9._:-]{1,128}$/.test(value.version)
+    && (value.provider === 'openai' || value.provider === 'bedrock') && !!value.modelId && !!value.region
+    && Number.isFinite(value.thbPerUsd) && value.thbPerUsd > 0
+    && !!value.usdPerMTok && ['input', 'output', 'cacheRead', 'cacheWrite'].every((key) => {
+      const rate = value.usdPerMTok[key as keyof AiModelPrices];
+      return Number.isFinite(rate) && rate >= 0;
+    }) && (value.externalUsdPerUnit === undefined || Number.isFinite(value.externalUsdPerUnit) && value.externalUsdPerUnit >= 0)
+    && (value.searchContentInputTokensPerUnit === undefined || Number.isSafeInteger(value.searchContentInputTokensPerUnit) && value.searchContentInputTokensPerUnit >= 0);
+}
+export type AiRenderedPricingSnapshotV2 = AiStepBoundSnapshot & {
+  contractVersion: 2;
+  tariff: AiTariffV2;
+  externalUnitBound: number;
+};
+export function priceRenderedAiInvocationV2(tariff: AiTariffV2, inputTokens: number, outputTokens: number, externalUnits = 0): {
+  upperBoundSatang: number; snapshot: AiRenderedPricingSnapshotV2;
+} | null {
+  if (!validAiTariffV2(tariff) || !Number.isSafeInteger(inputTokens) || inputTokens <= 0
+    || !Number.isSafeInteger(outputTokens) || outputTokens <= 0 || !Number.isSafeInteger(externalUnits) || externalUnits < 0
+    || externalUnits > 2 || (externalUnits > 0 && tariff.externalUsdPerUnit === undefined)) return null;
+  const inputUsdPerMTok = Math.max(tariff.usdPerMTok.input, tariff.usdPerMTok.cacheWrite);
+  const bound = new Decimal(inputTokens).mul(inputUsdPerMTok).plus(new Decimal(outputTokens).mul(tariff.usdPerMTok.output))
+    .plus(new Decimal(externalUnits).mul(tariff.searchContentInputTokensPerUnit ?? 0).mul(tariff.usdPerMTok.input))
+    .div(1_000_000).plus(new Decimal(externalUnits).mul(tariff.externalUsdPerUnit ?? 0)).mul(tariff.thbPerUsd).mul(100).ceil();
+  if (!bound.isFinite() || !Number.isSafeInteger(bound.toNumber())) return null;
+  return { upperBoundSatang: bound.toNumber(), snapshot: {
+    stepKind: 'provider-v2', modelId: tariff.modelId, usdPerMTok: { ...tariff.usdPerMTok }, inputUsdPerMTok,
+    unknownModel: false, thbPerUsd: tariff.thbPerUsd, bounds: { maxInputTokens: inputTokens, maxOutputTokens: outputTokens, maxCalls: 1 },
+    attempts: 1, contractVersion: 2, tariff: structuredClone(tariff), externalUnitBound: externalUnits,
+  } };
+}
+export function computePinnedAiCostV2(snapshot: AiRenderedPricingSnapshotV2, entry: PricedUsage, externalUnits?: number | null): {
+  costSatang: number; pricingSnapshot: AiPricingSnapshot & { tariffVersion: string; externalUnits: number; externalToolCostSatang: number };
+} | null {
+  const tariff = snapshot.tariff;
+  if (!validAiTariffV2(tariff) || entry.modelId !== tariff.modelId
+    || [entry.inputTokens, entry.outputTokens, entry.cacheReadInputTokens, entry.cacheWriteInputTokens].some((value) => !Number.isSafeInteger(value) || value < 0)) return null;
+  if (snapshot.externalUnitBound > 0 && (externalUnits === undefined || externalUnits === null
+    || !Number.isSafeInteger(externalUnits) || externalUnits < 0)) return null;
+  if (externalUnits !== undefined && externalUnits !== null && (!Number.isSafeInteger(externalUnits) || externalUnits < 0)) return null;
+  const units = externalUnits ?? 0;
+  if (units > 0 && tariff.externalUsdPerUnit === undefined) return null;
+  const rate = tariff.usdPerMTok;
+  const raw = (count: number, price: number) => new Decimal(count).mul(price).mul(tariff.thbPerUsd).mul(100).div(1_000_000);
+  const values = { input: raw(entry.inputTokens, rate.input), output: raw(entry.outputTokens, rate.output),
+    cacheRead: raw(entry.cacheReadInputTokens, rate.cacheRead), cacheWrite: raw(entry.cacheWriteInputTokens, rate.cacheWrite) };
+  const external = new Decimal(units).mul(tariff.externalUsdPerUnit ?? 0).mul(tariff.thbPerUsd).mul(100)
+    .plus(new Decimal(units).mul(tariff.searchContentInputTokensPerUnit ?? 0).mul(rate.input).mul(tariff.thbPerUsd).mul(100).div(1_000_000));
+  const cost = Object.values(values).reduce((sum, value) => sum.plus(value), external).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+  if (!cost.isFinite() || !Number.isSafeInteger(cost.toNumber())) return null;
+  const rounded = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value.toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber()])) as Record<keyof typeof values, number>;
+  const externalToolCostSatang = external.toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber();
+  return { costSatang: cost.toNumber(), pricingSnapshot: {
+    usdPerMTok: { ...rate }, thbPerUsd: tariff.thbPerUsd, unknownModel: false,
+    componentSatang: { ...rounded, rounding: cost.toNumber() - Object.values(rounded).reduce((sum, value) => sum + value, 0) - externalToolCostSatang },
+    tariffVersion: tariff.version, externalUnits: units, externalToolCostSatang,
+  } };
 }

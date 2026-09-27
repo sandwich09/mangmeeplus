@@ -4,23 +4,34 @@ import { test } from 'node:test';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { ALL_FEATURE_ENTITLEMENT_KEYS, FEATURE_PACKAGE_PRESETS } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../../generated/prisma/client';
+import type { PrismaService } from '../../../common/database/prisma.service';
 import { humanDecidedKeys } from '../../employee-access/application/normalize-entitlements';
 import { exclusiveEntitlementLock } from '../../feature-launch/application/execution-attempt.service';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { applyBillingFeaturePlan, billingFeaturePlan } from './billing-feature-entitlements';
 import { supersedeUnpaidPackageRequest } from './billing-package-request';
+import { LineConversationContextService, type LineConversationOwner } from '../../line-ai/application/line-conversation-context.service';
 
 const databaseUrl = process.env.BILLING_TEST_DATABASE_URL;
 test('paid package rights apply atomically on local PostgreSQL', { skip: !databaseUrl }, async () => {
   const url = new URL(databaseUrl!);
   assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
-  assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci'].includes(url.pathname));
+  assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci'].includes(url.pathname) || url.port === '15439' && url.pathname === '/watchdog_bms_ai_reliability_20260927');
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
   const companyId = `billing-feature-${randomUUID()}`;
+  const otherCompanyId = `billing-feature-other-${randomUUID()}`;
   let ownerUserId = '';
   try {
     await client.company.create({ data: { id: companyId, name: 'Synthetic billing feature company' } });
+    await client.company.create({ data: { id: otherCompanyId, name: 'Synthetic unrelated company' } });
     ownerUserId = (await client.user.create({ data: { displayName: 'Synthetic billing feature owner' } })).id;
+    const contexts = new LineConversationContextService({ client } as PrismaService);
+    const owner: LineConversationOwner = { companyId, userId: ownerUserId, membershipId: 'member', channel: 'line', channelKind: 'USER', messagingChannelId: 'oa', chatKeyHash: 'chat' };
+    const owners = [owner, { ...owner, userId: 'another-company-user', membershipId: 'member-2' }];
+    const unrelated = { ...owner, companyId: otherCompanyId };
+    const projection = { version: 2 as const, tasks: [{ taskId: 'billing-task', revision: 1, kind: 'general' as const, state: 'active' as const, userGoal: 'retained question', subrequests: [] }] };
+    for (const item of [...owners, unrelated]) { await contexts.admit(item); await contexts.save(item, 0, 0, projection); }
+    await contexts.changePreferences(owner, { requestId: randomUUID(), expectedVersion: 0, epoch: 0, set: { detail: 'short' } });
     const { plan, impact } = await billingFeaturePlan(client, companyId);
     assert.ok(impact.removed.some(item => item.featureKey === 'reports'));
     const apply = (invoiceId: string, rollback = false, selectedPlan = plan) => client.$transaction(async tx => {
@@ -34,7 +45,12 @@ test('paid package rights apply atomically on local PostgreSQL', { skip: !databa
     assert.equal(await client.companyFeatureEntitlement.count({ where: { companyId } }), 0);
     assert.equal(await client.companyEntitlementNormalization.count({ where: { companyId } }), 0);
     assert.equal(await client.entitlementTransition.count({ where: { companyId } }), 0);
+    assert.equal((await contexts.load(owner))!.row.lifecycleEpoch, 0); assert.ok((await contexts.load(owner))!.state);
     const disabled = await apply('invoice-paid');
+    for (const item of owners) { assert.equal((await contexts.load(item))!.row.lifecycleEpoch, 1); assert.equal((await contexts.load(item))!.state, null); }
+    assert.deepEqual((await contexts.listPreferences(owner))?.values, { detail: 'short' });
+    assert.equal((await contexts.load(unrelated))!.row.lifecycleEpoch, 0); assert.ok((await contexts.load(unrelated))!.state);
+    assert.equal(await contexts.save(owner, 1, 0, projection), false);
     assert.equal(disabled.length, impact.removed.length);
     assert.equal(await client.companyFeatureEntitlement.count({ where: { companyId } }), ALL_FEATURE_ENTITLEMENT_KEYS.length);
     assert.equal(await client.companyFeatureEntitlement.count({ where: { companyId, enabled: true } }), FEATURE_PACKAGE_PRESETS.starter.featureKeys.length);
@@ -66,7 +82,7 @@ test('paid package rights apply atomically on local PostgreSQL', { skip: !databa
     assert.equal(await client.entitlementCommand.count({ where: { companyId } }), 2);
   } finally {
     await client.auditLog.deleteMany({ where: { companyId } });
-    await client.company.deleteMany({ where: { id: companyId } });
+    await client.company.deleteMany({ where: { id: { in: [companyId, otherCompanyId] } } });
     if (ownerUserId) await client.user.deleteMany({ where: { id: ownerUserId } });
     await client.$disconnect();
   }
@@ -75,7 +91,7 @@ test('paid package rights apply atomically on local PostgreSQL', { skip: !databa
 test('a paid catalog conversion closes only an earlier unpaid LINE package request', { skip: !databaseUrl }, async () => {
   const url = new URL(databaseUrl!);
   assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
-  assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci'].includes(url.pathname));
+  assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci'].includes(url.pathname) || url.port === '15439' && url.pathname === '/watchdog_bms_ai_reliability_20260927');
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
   const companyId = `billing-request-${randomUUID()}`;
   let accountId = '';

@@ -1,0 +1,386 @@
+/** Local runtime replay: real Nest/API/domain code and PostgreSQL; LINE is an explicit test sink.
+ * Run through the existing operator replay CLI after building apps/api. Never imports an oracle
+ * into the execution path. Missing concrete snapshots fail a case instead of returning expected data.
+ */
+import assert from 'node:assert/strict';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { resolve, sep } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { execFileSync } from 'node:child_process';
+import type { ToolResult, SourceRef, LineAiTurnResponse, LineAiSemanticCoverageV2 } from '../packages/contracts/src/index';
+import { classifyLineAiTerminalOutcome } from '../apps/api/src/modules/line-ai/domain/logic/line-ai-terminal-outcome.logic';
+import { reliabilityDigest, replayReliabilityCorpus, type ReliabilityCorpus, type ReliabilityFixture, type ReliabilityReplayAdapter, type ReliabilityTurnTrace } from './line-ai-reliability-fixtures';
+import type { ReliabilityAttempt } from './line-ai-reliability-evaluation';
+
+type JsonRow = Record<string, any>;
+export type RuntimeSourceSnapshot = {
+  /** Ordered real Prisma create arguments; contains no expected result/tool response. */
+  rows: Array<{ model: string; data: JsonRow }>;
+  lineUserId: string;
+  assets: Record<string, { path: string; sha256: string; mimeType: string }>;
+  /** Exact button label to click on a later turn, selected only from the preceding accepted wire. */
+  postbackLabels?: Record<number, string>;
+};
+export type ReliabilityRuntimeManifest = {
+  version: 2; corpus: ReliabilityCorpus; snapshots: Record<string, RuntimeSourceSnapshot>;
+  snapshotDigests: Record<string, string>; versions: ReliabilityTurnTrace['versions'];
+  /** Explicit local gateway; it must call this API's local port for guarded tools/budgets. */
+  apiPort: number; gatewayUrl: string; databaseUrl: string; redisUrl: string; localStorageEndpoint?: string;
+  /** Non-secret runtime flags. Credentials come from the caller's environment, never this artifact. */
+  environment: Record<string, string>; repeats: number; cohort: ReliabilityAttempt['cohort'];
+};
+const sha = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
+const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]']);
+export function assertIsolatedReplayDatabase(value: string): void {
+  const url = new URL(value);
+  assert.ok(['postgresql:', 'postgres:'].includes(url.protocol) && LOCAL.has(url.hostname)
+    && /^\/watchdog_ai_reliability_replay_[a-z0-9_]+$/.test(url.pathname)
+    && (!url.searchParams.has('schema') || url.searchParams.get('schema') === 'public'), 'REPLAY_REQUIRES_DEDICATED_LOCAL_DATABASE');
+}
+/** Fixture cleanup only, on the advisory-lock connection in the dedicated local replay database.
+ * Production append-only triggers remain installed and are active before seeds and business work.
+ * SET LOCAL cannot escape this transaction, including a failed reset. Never use a pooled session SET.
+ */
+export async function resetRuntimeFixtureDatabase(connection: { query(sql: string): Promise<{ rows: any[] }> }, databaseUrl: string): Promise<void> {
+  assertIsolatedReplayDatabase(databaseUrl);
+  const expected = decodeURIComponent(new URL(databaseUrl).pathname.slice(1));
+  const origin = async () => assert.equal((await connection.query("SELECT current_setting('session_replication_role') AS role")).rows[0]?.role, 'origin', 'REPLAY_TRIGGER_STATE_NOT_ORIGIN');
+  await connection.query('BEGIN');
+  try {
+    assert.equal((await connection.query('SELECT current_database() AS name')).rows[0]?.name, expected, 'REPLAY_DATABASE_CONNECTION_MISMATCH');
+    await origin();
+    const tables = (await connection.query("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> '_prisma_migrations'")).rows.map(row => row.tablename as string);
+    assert.ok(tables.length && tables.every(name => /^[A-Za-z0-9_]+$/.test(name)), 'REPLAY_MIGRATIONS_REQUIRED');
+    await connection.query('SET LOCAL session_replication_role = replica');
+    await connection.query(`TRUNCATE TABLE ${tables.map(name => `"public"."${name}"`).join(',')} CASCADE`);
+    await connection.query('SET LOCAL session_replication_role = origin');
+    await origin();
+    await connection.query('COMMIT');
+  } catch (error) { await connection.query('ROLLBACK'); throw error; }
+  await origin();
+}
+const localUrl = (value: string, protocol: string) => { const url = new URL(value); assert.ok(url.protocol === protocol && LOCAL.has(url.hostname) && !url.username && !url.password, 'REPLAY_LOCAL_SERVICE_REQUIRED'); return url; };
+
+export function runtimeDeliveryEvidence(plans: JsonRow[], outcomes: JsonRow[], receipts: Array<{ messages: unknown; at: number; receiptId: string }>): ReliabilityTurnTrace['delivery'] {
+  const required: Array<{ id: string; wireHash: string; messages: unknown; acceptedId: string | null }> = [];
+  for (const plan of plans) for (const batch of plan.planJson.batches) {
+    const state = plan.batchStateJson.find((item: any) => item.batchId === batch.id);
+    const wire = state?.variant === 'fallback' ? batch.fallback : batch.primary;
+    required.push({ id: batch.id, wireHash: wire.wireHash, messages: wire.messages, acceptedId: state?.status === 'ACCEPTED' ? state.providerRequestId : null });
+  }
+  for (const outcome of outcomes) if (!plans.some(plan => plan.outcomeId === outcome.id)) {
+    const messages = outcome.messagesJson.map((message: any) => { const { canonicalText: _, ...wire } = message; return wire; });
+    required.push({ id: `outcome:${outcome.id}`, wireHash: reliabilityDigest(messages), messages, acceptedId: outcome.deliveredAt ? '*' : null });
+  }
+  const used = new Set<number>();
+  const accepted = required.flatMap(batch => {
+    const index = receipts.findIndex((receipt, i) => !used.has(i) && !!batch.acceptedId
+      && (batch.acceptedId === '*' || batch.acceptedId === receipt.receiptId) && reliabilityDigest(batch.messages) === reliabilityDigest(receipt.messages));
+    if (index < 0) return [];
+    used.add(index); const receipt = receipts[index]!;
+    return [{ batchId: batch.id, wireHash: batch.wireHash, acceptedAtMs: receipt.at, receiptId: receipt.receiptId }];
+  });
+  return { requiredBatchIds: required.map(batch => batch.id), accepted,
+    status: required.length && accepted.length === required.length ? 'ACCEPTED' : required.length ? 'INCOMPLETE' : 'NONE' };
+}
+
+/** Nest reads method metadata after wrappers are installed; retain guards/routes/DTO validation. */
+export function instrumentRuntimeMethod(target: any, method: string, instrument: (original: (...args: any[]) => Promise<any>, args: any[]) => Promise<any>) {
+  const original = target[method], wrapper = function(this: any, ...args: any[]) { return instrument(original.bind(this), args); };
+  const reflect = Reflect as any;
+  for (const key of reflect.getMetadataKeys?.(original) ?? []) reflect.defineMetadata(key, reflect.getMetadata(key, original), wrapper);
+  target[method] = wrapper;
+}
+
+export function selectRuntimePostback(messages: unknown, label: string): string {
+  const choices = new Set<string>();
+  const visit = (value: any, depth = 0): void => {
+    if (!value || typeof value !== 'object' || depth > 30) return;
+    if (value.type === 'postback' && value.label === label && typeof value.data === 'string') choices.add(value.data);
+    else for (const child of Object.values(value)) visit(child, depth + 1);
+  };
+  visit(messages); assert.equal(choices.size, 1, 'REPLAY_POSTBACK_NOT_UNIQUELY_DELIVERED'); return [...choices][0]!;
+}
+
+/** Effects come from actual before/after rows, including writes that preceded a thrown timeout. */
+export function runtimeDatabaseEffects(before: Record<string, JsonRow[]>, after: Record<string, JsonRow[]>) {
+  const result: ReliabilityTurnTrace['effects'] = [];
+  for (const table of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const old = new Map((before[table] ?? []).map(row => [String(row.id), row]));
+    const next = new Map((after[table] ?? []).map(row => [String(row.id), row]));
+    for (const id of new Set([...old.keys(), ...next.keys()])) {
+      const from = old.get(id), to = next.get(id);
+      if (reliabilityDigest(from ?? null) === reliabilityDigest(to ?? null)) continue;
+      result.push({ kind: `${table}.${!from ? 'create' : !to ? 'delete' : 'update'}`, recordId: id,
+        revision: to ? String(to.version ?? to.revision ?? to.updatedAt ?? reliabilityDigest(to)) : 'deleted',
+        evidence: 'database_snapshot', evidenceHash: reliabilityDigest({ table, before: from ?? null, after: to ?? null }) });
+    }
+  }
+  return result.sort((a, b) => `${a.kind}:${a.recordId}`.localeCompare(`${b.kind}:${b.recordId}`));
+}
+export const runtimeSourceId = (source: SourceRef): string => source.id ?? `${source.module}:${source.entityType}:${source.entityId ?? 'summary'}`;
+
+/** Collect explicit typed field evidence only. A prose question needs independent semantic review. */
+export function runtimeAskedSlots(result: JsonRow): string[] {
+  return [...new Set([result, result.captureHints, result.reimbursementHints, result.correctionHints]
+    .flatMap(value => Array.isArray(value?.missingFields) ? value.missingFields : [])
+    .filter((value): value is string => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(value)))];
+}
+
+/** Typed application outcomes only: never infer success from prose or the expected oracle. */
+export function runtimeSemanticOutcome(coverage: LineAiSemanticCoverageV2[], events: Array<{ status: string; errorCode?: string | null }>, responses: LineAiTurnResponse[]): string {
+  if (coverage.length) {
+    if (coverage.every(item => item.status === 'handled')) return 'answered';
+    if (coverage.some(item => item.status === 'handled')) return 'partial';
+    if (coverage.some(item => item.status === 'needs_user')) return 'needs_input';
+    if (coverage.some(item => item.status === 'denied')) return 'access_denied';
+    return 'unsupported_action';
+  }
+  const reasons: Record<string, string> = { forbidden: 'access_denied', unlinked_user: 'access_denied', mutation_blocked: 'policy_blocked',
+    unsupported_module: 'unsupported_action', unsupported_yet: 'unsupported_action', feature_disabled: 'feature_unavailable',
+    ambiguous_company: 'needs_input', ai_timeout: 'temporarily_unavailable', tool_unavailable: 'temporarily_unavailable' };
+  const refused = responses.filter(response => response.refused).at(-1);
+  if (refused) return reasons[refused.refusalReason ?? ''] ?? `refusal:${refused.refusalReason ?? 'unknown'}`;
+  const classes: Record<string, string> = { delivered: 'answered', clarification: 'needs_input', permission_refusal: 'access_denied',
+    feature_disabled: 'feature_unavailable', timeout: 'temporarily_unavailable', provider_unavailable: 'temporarily_unavailable',
+    budget_refusal: 'temporarily_unavailable' };
+  const terminal = events.filter(event => event.status !== 'batched');
+  const observed = [...new Set(terminal.map(event => classes[classifyLineAiTerminalOutcome(event.status, event.errorCode) ?? ''] ?? `event:${event.status}`))];
+  return observed.length === 1 ? observed[0]! : observed.length ? observed.sort().join('+') : 'missing_terminal_event';
+}
+
+export function runtimeSourceFacts(results: ToolResult[], cited: Set<string>): ReliabilityTurnTrace['facts'] {
+  const facts: ReliabilityTurnTrace['facts'] = [];
+  for (const result of results) if (result.status === 'ok') for (const fact of result.facts ?? []) {
+    if (fact.value === null || !['known', 'empty'].includes(fact.state)) continue;
+    for (const ref of fact.sourceRefIds) if (cited.has(ref) && result.sourceRefs.some(source => runtimeSourceId(source) === ref && source.permissionChecked)) facts.push({
+      metric: fact.metric, value: fact.value, unit: fact.unit, currency: fact.currency,
+      period: JSON.stringify(fact.period), basis: `${fact.dateBasis}|${fact.statusBasis}`, sourceRef: ref, asOf: fact.asOf,
+    });
+  }
+  return [...new Map(facts.map(fact => [reliabilityDigest(fact), fact])).values()];
+}
+// Every supported mutating business family is observed, not only the expected effect in the oracle.
+const EFFECT_TABLES = ['ExpenseRecord', 'ExpensePayment', 'ExpenseLine', 'ExpenseSubstituteReceiptEvidence', 'ExpenseCaptureGroup', 'ExpenseCaptureFile',
+  'ExpenseCaptureAllocation', 'ReimbursementRequest', 'ReimbursementLine', 'ReimbursementPayment', 'AccountingDocument', 'AccountingDocumentLine',
+  'BankAdjustment', 'BankReconciliationMatch', 'PurchaseOrder', 'PurchaseOrderLine', 'SalesOrder', 'SalesOrderLine', 'StockMovement', 'CrmCustomer',
+  'WorkflowTask', 'AttachmentObject', 'AttachmentLink'];
+
+export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeManifest, repoRoot: string) {
+  assert.equal(manifest.version, 2); assertIsolatedReplayDatabase(manifest.databaseUrl);
+  localUrl(manifest.gatewayUrl, 'http:'); const redisAddress = localUrl(manifest.redisUrl, 'redis:');
+  assert.ok(/^\/(?:[1-9]|1[0-5])$/.test(redisAddress.pathname) && !['', '6379'].includes(redisAddress.port), 'REPLAY_DEDICATED_REDIS_DATABASE_REQUIRED');
+  if (manifest.localStorageEndpoint) localUrl(manifest.localStorageEndpoint, 'http:');
+  assert.ok(Number.isInteger(manifest.apiPort) && manifest.apiPort >= 1024 && manifest.apiPort <= 65535, 'REPLAY_PORT');
+  assert.ok(manifest.corpus.fixtures.every(row => row.provenance.kind === 'synthetic'), 'REPLAY_SYNTHETIC_ONLY');
+  const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+  assert.equal(manifest.versions.sourceCommit, sourceCommit, 'REPLAY_SOURCE_COMMIT_CHANGED');
+  assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).trim(), '', 'REPLAY_REQUIRES_COMMITTED_SOURCE');
+  const allowedEnv = /^(?:LINE_AI_[A-Z0-9_]+|LINE_INTAKE_[A-Z0-9_]+|AI_MODEL_[A-Z0-9_]+|AI_GATEWAY_TRANSPORT|AI_GATEWAY_HOSTNAME|ATTACHMENT_STORAGE_PROVIDER)$/;
+  for (const [key, value] of Object.entries(manifest.environment)) {
+    assert.ok(allowedEnv.test(key) && !/TOKEN|SECRET|URL|HOSTNAME/.test(key), 'REPLAY_UNSAFE_ENV'); process.env[key] = value;
+  }
+  const secret = `replay-${randomUUID()}`;
+  Object.assign(process.env, { APP_ENV: 'local', NODE_ENV: 'test', SERVICE_NAME: 'line-reliability-replay', DATABASE_URL: manifest.databaseUrl,
+    REDIS_URL: manifest.redisUrl, AI_GATEWAY_INTERNAL_URL: manifest.gatewayUrl, LINE_MESSAGING_CHANNEL_SECRET: secret, LINE_AI_BUFFER_DEBOUNCE_MS: manifest.cohort,
+    LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: 'local-replay-sink', S3_BUCKET: 'local-replay-only', S3_ENDPOINT: manifest.localStorageEndpoint ?? 'http://127.0.0.1:9',
+    S3_PUBLIC_ENDPOINT: manifest.localStorageEndpoint ?? 'http://127.0.0.1:9', S3_ACCESS_KEY_ID: 'local-replay-only', S3_SECRET_ACCESS_KEY: 'local-replay-only',
+    AWS_EC2_METADATA_DISABLED: 'true', S3_FORCE_PATH_STYLE: 'true' });
+  const apiRoot = resolve(repoRoot, 'apps/api'), compiled = resolve(apiRoot, 'dist/apps/api/src');
+  const requireApi = createRequire(resolve(apiRoot, 'package.json'));
+  const { Client } = requireApi('pg');
+  const databaseLock = new Client({ connectionString: manifest.databaseUrl });
+  const Redis = requireApi('ioredis');
+  const redis = new Redis(manifest.redisUrl, { lazyConnect: true, enableOfflineQueue: false, maxRetriesPerRequest: 0 });
+  const redisOwnerKey = 'reliability-runtime-database-owner', redisOwner = new URL(manifest.databaseUrl).pathname;
+  const { NestFactory } = requireApi('@nestjs/core'), { Logger } = requireApi('@nestjs/common');
+  const { PrismaService } = requireApi(resolve(compiled, 'common/database/prisma.service.js'));
+  const { LineWebhookController } = requireApi(resolve(compiled, 'modules/auth/presentation/line-webhook.controller.js'));
+  const { AiGatewayClient } = requireApi(resolve(compiled, 'modules/line-ai/infrastructure/ai-gateway.client.js'));
+  const { InternalToolsController } = requireApi(resolve(compiled, 'modules/line-ai/presentation/http/internal-tools.controller.js'));
+  const { PermissionResolverService } = requireApi(resolve(compiled, 'modules/access-control/application/permission-resolver.service.js'));
+  const { LineDocumentQaWorker } = requireApi(resolve(compiled, 'modules/line-ai/application/line-document-qa.worker.js'));
+  const { ExpenseCaptureReadRunnerService } = requireApi(resolve(compiled, 'modules/expenses/application/services/expense-capture-read-runner.service.js'));
+  const { LineCaptureResultNotifierUseCase } = requireApi(resolve(compiled, 'modules/line-ai/application/use-cases/line-capture-result-notifier.use-case.js'));
+  const { ProcessLineWebhookUseCase } = requireApi(resolve(compiled, 'modules/line-ai/application/use-cases/process-line-webhook.use-case.js'));
+  const { AppModule } = requireApi(resolve(compiled, 'app.module.js'));
+  const originalFetch = globalThis.fetch;
+  let app: any, client: any, current: ReliabilityFixture | undefined, snapshot: RuntimeSourceSnapshot | undefined, repeat = 0, unsafeToReset = false;
+  let active: { acceptedAt: number; eventIds: string[]; before: Record<string, JsonRow[]>; usageIds: Set<string>; tools: ReliabilityTurnTrace['tools']; results: ToolResult[];
+    responses: LineAiTurnResponse[]; deliveryCoverage: LineAiSemanticCoverageV2[] | null; missing: string[]; requests: string[]; completedAt: number | null; errors: string[]; critical: string[]; receipts: Array<{ messages: unknown; at: number; receiptId: string }> } | undefined;
+  let turnStates: Array<NonNullable<typeof active>> = [];
+  const readEffects = async () => {
+    const exists = await client.$queryRawUnsafe('SELECT tablename FROM pg_tables WHERE schemaname=\'public\'') as { tablename: string }[];
+    const tables = new Set(exists.map(row => row.tablename)), output: Record<string, JsonRow[]> = {};
+    for (const table of EFFECT_TABLES) if (tables.has(table)) output[table] = await client.$queryRawUnsafe(`SELECT row_to_json(t) AS row FROM "${table}" t`).then((rows: any[]) => rows.map(row => row.row));
+    return output;
+  };
+  const pendingWork = async () => (await client.lineDocumentQaJob.count({ where: { status: { in: ['QUEUED', 'READING'] } } }))
+    + (await client.expenseCaptureReadJob.count({ where: { status: { in: ['QUEUED', 'PREPARING', 'READING'] } } }));
+  globalThis.fetch = (async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.hostname === 'api.line.me') {
+      if (!url.pathname.startsWith('/v2/bot/message/') && url.pathname !== '/v2/bot/chat/loading/start') throw new Error('REPLAY_LINE_ENDPOINT_BLOCKED');
+      const receiptId = `sink-${randomUUID()}`;
+      if (url.pathname !== '/v2/bot/chat/loading/start') {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        assert.ok(active && Array.isArray(body.messages), 'REPLAY_UNSCOPED_SEND');
+        if (body.to !== undefined && body.to !== (current?.fixture.channelKind === 'USER' ? snapshot?.lineUserId : current?.fixture.chat)
+          || body.replyToken !== undefined && !active.eventIds.some(id => body.replyToken === `${id}-token`)) {
+          active.critical.push('cross_recipient_attempt'); throw new Error('REPLAY_WRONG_RECIPIENT');
+        }
+        active.receipts.push({ messages: body.messages, at: Date.now(), receiptId });
+      }
+      return new Response('{}', { status: 200, headers: { 'x-line-request-id': receiptId } });
+    }
+    if (url.hostname === 'api-data.line.me') {
+      const id = decodeURIComponent(url.pathname.match(/\/message\/([^/]+)\/content$/)?.[1] ?? '');
+      const asset = snapshot?.assets[id]; assert.ok(asset, 'REPLAY_UNKNOWN_ASSET');
+      const path = resolve(repoRoot, asset.path); assert.ok(path.startsWith(resolve(repoRoot, 'docs/research') + sep), 'REPLAY_ASSET_PATH');
+      const bytes = readFileSync(path); assert.equal(sha(bytes), asset.sha256, 'REPLAY_ASSET_BYTES_CHANGED');
+      return new Response(bytes, { status: 200, headers: { 'content-type': asset.mimeType } });
+    }
+    // ERP calls the local serving Gateway. No other runtime HTTP egress is permitted by this harness.
+    assert.ok([new URL(manifest.gatewayUrl).origin, `http://127.0.0.1:${manifest.apiPort}`].includes(url.origin), 'REPLAY_EXTERNAL_API_EGRESS_BLOCKED');
+    return originalFetch(input, init);
+  }) as typeof fetch;
+  const collect = async (row: ReliabilityFixture, turnIndex: number): Promise<ReliabilityTurnTrace> => {
+    assert.ok(active, 'REPLAY_NO_ADMITTED_TURN');
+    const state = active, turn = row.turns[turnIndex]!;
+    const [after, usage, events, tasks, plans, outcomes, holds] = await Promise.all([readEffects(), client.aiUsageEvent.findMany(),
+      client.lineWebhookEventLog.findMany({ where: { webhookEventId: { in: state.eventIds } } }),
+      client.aiConversation.findMany({ where: { companyId: row.fixture.company, userId: row.fixture.actor } }),
+      client.lineDeliveryPlan.findMany({ where: { companyId: row.fixture.company, createdAt: { gte: new Date(state.acceptedAt) } } }),
+      client.lineTurnOutcome.findMany({ where: { webhookEventId: { in: state.eventIds } } }),
+      client.aiBudgetReservation.findMany({ where: { createdAt: { gte: new Date(state.acceptedAt) }, status: { in: ['DISPATCHED', 'UNRESOLVED', 'SETTLED'] } } })]);
+    const calls = usage.filter((item: any) => !state.usageIds.has(item.id) && item.eventKind === 'MODEL_CALL');
+    const unreported = holds.filter((hold: any) => !calls.some((call: any) => call.invocationKey === hold.invocationKey));
+    const cited = new Set(state.responses.flatMap(response => response.sourceRefs.filter(ref => ref.permissionChecked).map(runtimeSourceId)));
+    const coverage = state.deliveryCoverage ?? state.responses.flatMap(response => response.semanticCoverage ?? []);
+    const taskIds = tasks.flatMap((task: any) => task.taskStateJson?.tasks?.map((item: any) => item.taskId) ?? []);
+    const outcome = runtimeSemanticOutcome(coverage, events, state.responses);
+    const delivery = runtimeDeliveryEvidence(plans, outcomes, state.receipts);
+    if (state.receipts.length && !delivery.requiredBatchIds.length) state.errors.push('no_frozen_delivery_requirement');
+    if (unreported.length) state.errors.push('provider_usage_unobserved');
+    return { inputDigest: reliabilityDigest({ user: turn.user, attachmentIds: turn.attachmentIds }), scopeDigest: reliabilityDigest(row.fixture),
+      sourceSnapshot: row.fixture.sourceSnapshot, acceptedAtMs: state.acceptedAt, outcome, taskId: new Set(taskIds).size === 1 ? taskIds[0] : null,
+      askedSlots: [...new Set(state.missing)], tools: state.tools, facts: runtimeSourceFacts(state.results, cited), effects: runtimeDatabaseEffects(state.before, after),
+      modelCalls: calls.length + unreported.length, costSatang: unreported.length || calls.some((item: any) => item.usageBasis !== 'PROVIDER_REPORTED') ? null : calls.reduce((sum: number, item: any) => sum + item.costSatang, 0),
+      modelWorkCompletedAtMs: state.completedAt, delivery, falseRefusalOrHandoff: false, validationFailures: state.errors,
+      criticalErrors: state.critical, versions: manifest.versions };
+  };
+  const adapter: ReliabilityReplayAdapter = {
+    // A local LINE sink cannot prove native delivery even when the selected Gateway uses a live model.
+    provenance: 'fixture',
+    async reset(row, ordinal) {
+      assert.equal(unsafeToReset, false, 'REPLAY_PREVIOUS_WORK_NOT_QUIESCENT');
+      if (app) { await app.close(); app = undefined; } active = undefined;
+      turnStates = [];
+      current = row; repeat = ordinal; snapshot = manifest.snapshots[row.fixture.sourceSnapshot];
+      assert.ok(snapshot && reliabilityDigest(snapshot) === manifest.snapshotDigests[row.fixture.sourceSnapshot], 'REPLAY_CONCRETE_SNAPSHOT_REQUIRED');
+      const civil = (time: number) => new Intl.DateTimeFormat('en-CA', { timeZone: row.fixture.timezone }).format(time);
+      assert.ok(snapshot.lineUserId && row.fixture.clock && civil(Date.parse(row.fixture.clock)) === civil(Date.now()), 'REPLAY_FIXTURE_BUSINESS_DATE_CHANGED');
+      assert.ok(Object.keys(snapshot.assets).length === row.assets.length && Object.entries(snapshot.assets).every(([id, asset]) => row.assets.some(expected => expected.id === id && expected.sha256 === asset.sha256 && expected.mimeType === asset.mimeType)), 'REPLAY_ASSET_MANIFEST_MISMATCH');
+      process.env.LINE_MESSAGING_CHANNEL_ID = row.fixture.messagingChannelId;
+      Logger.overrideLogger(false);
+      app = await NestFactory.create(AppModule, { abortOnError: false, logger: false, rawBody: true });
+      client = app.get(PrismaService).client;
+      if (redis.status === 'wait') await redis.connect();
+      const owner = await redis.get(redisOwnerKey);
+      assert.ok(owner === redisOwner || owner === null && await redis.dbsize() === 0, 'REPLAY_REDIS_CONTAINS_OTHER_WORK');
+      await redis.flushdb(); await redis.set(redisOwnerKey, redisOwner);
+      await resetRuntimeFixtureDatabase(databaseLock, manifest.databaseUrl);
+      for (const seed of snapshot.rows) { assert.ok(/^[a-z][A-Za-z0-9]*$/.test(seed.model) && typeof client[seed.model]?.create === 'function', 'REPLAY_INVALID_SEED_MODEL'); await client[seed.model].create({ data: seed.data }); }
+      const entitlementRows = await client.companyFeatureEntitlement.findMany({ where: { companyId: row.fixture.company }, select: { featureKey: true, enabled: true } });
+      assert.ok(entitlementRows.length, 'REPLAY_EXPLICIT_ENTITLEMENT_SEED_REQUIRED');
+      assert.deepEqual(entitlementRows.filter((item: any) => item.enabled).map((item: any) => item.featureKey).sort(),
+        [...row.fixture.enabledFeatures].sort(), 'REPLAY_ENTITLEMENT_SEED_MISMATCH');
+      if (!row.fixture.membership) assert.equal(await client.companyMembership.count({ where: {
+        companyId: row.fixture.company, userId: row.fixture.actor, status: 'ACTIVE',
+      } }), 0, 'REPLAY_UNLINKED_OR_REVOKED_SEED_MISMATCH');
+      if (row.fixture.membership) {
+        const access = await app.get(PermissionResolverService).resolveAccess(row.fixture.actor, row.fixture.company);
+        assert.equal(access.membershipId, row.fixture.membership, 'REPLAY_MEMBERSHIP_SEED_MISMATCH');
+        assert.deepEqual([...access.permissions].sort(), [...row.fixture.permissions].sort(), 'REPLAY_PERMISSION_SEED_MISMATCH');
+        assert.deepEqual([...access.scopes.branchIds].sort(), [...row.fixture.branches].sort(), 'REPLAY_BRANCH_SEED_MISMATCH');
+      }
+      instrumentRuntimeMethod(app.get(InternalToolsController), 'invoke', async (invoke, args) => { const dto = args[2]; try { const result = await invoke(...args);
+        active?.tools.push({ tool: dto.toolName, input: dto.input, resultHash: reliabilityDigest(result), status: result.status }); active?.results.push(result); return result;
+      } catch (error) { active?.tools.push({ tool: dto.toolName, input: dto.input, resultHash: reliabilityDigest({ failed: true }), status: 'error' }); throw error; } });
+      const gateway = app.get(AiGatewayClient);
+      const webhook = app.get(ProcessLineWebhookUseCase);
+      instrumentRuntimeMethod(webhook, 'sendMessagesV2', async (original, args) => {
+        const result = await original(...args);
+        const coverage = webhook.semanticDelivery.get(args[0]);
+        if (active && coverage) active.deliveryCoverage = structuredClone(coverage);
+        return result;
+      });
+      for (const method of ['requestLineTurn', 'requestLinePublicGeneral', 'requestLineIntakeRoute', 'requestLineDocumentQa']) {
+        instrumentRuntimeMethod(gateway, method, async (original, args) => { if (active) active.requests.push(args[0].requestId); try { const result = await original(...args);
+          if (active) { active.completedAt = Date.now(); if (Array.isArray(result.sourceRefs)) active.responses.push(result);
+            active.missing.push(...runtimeAskedSlots(result)); } return result;
+        } catch (error) { active?.errors.push(`${method}_failed`); throw error; } });
+      }
+      app.setGlobalPrefix('v1'); await app.listen(manifest.apiPort, '127.0.0.1');
+    },
+    async turn(row, turnIndex) {
+      assert.equal(current?.id, row.id); assert.ok(snapshot && app);
+      const turn = row.turns[turnIndex]!, prefix = `replay-${sha(`${row.id}:${repeat}:${turnIndex}`).slice(0, 20)}`;
+      const postbackLabel = snapshot.postbackLabels?.[turnIndex];
+      const postbackData = postbackLabel ? selectRuntimePostback(active?.receipts.map(receipt => receipt.messages), postbackLabel) : undefined;
+      if (postbackLabel) assert.ok(turn.user === postbackLabel && !turn.attachmentIds.length, 'REPLAY_POSTBACK_INPUT_MISMATCH');
+      const source = { type: row.fixture.channelKind.toLowerCase(), userId: snapshot.lineUserId,
+        ...(row.fixture.channelKind === 'GROUP' ? { groupId: row.fixture.chat } : row.fixture.channelKind === 'ROOM' ? { roomId: row.fixture.chat } : {}) };
+      const inputs = [...turn.attachmentIds.map(id => ({ type: snapshot!.assets[id]?.mimeType === 'application/pdf' ? 'file' : 'image', id })), ...(turn.user ? [{ type: 'text', text: turn.user, id: `${prefix}-text` }] : [])];
+      const before = await readEffects(), usageIds = new Set<string>((await client.aiUsageEvent.findMany({ select: { id: true } })).map((item: any) => item.id));
+      const at = Date.now();
+      active = { acceptedAt: at, eventIds: inputs.map((_, index) => `${prefix}-${index}`), before, usageIds,
+        tools: [], results: [], responses: [], deliveryCoverage: null, missing: [], requests: [], completedAt: null, errors: [], critical: [], receipts: [] };
+      turnStates.push(active);
+      const body = { destination: row.fixture.messagingChannelId, events: inputs.map((message, index) => ({
+        ...(postbackData ? { type: 'postback', postback: { data: postbackData } } : { type: 'message', message }),
+        webhookEventId: active!.eventIds[index], replyToken: `${prefix}-${index}-token`, timestamp: at, source })) };
+      const rawBody = Buffer.from(JSON.stringify(body));
+      await app.get(LineWebhookController).lineWebhook({ body, rawBody, headers: { 'x-line-signature': createHmac('sha256', secret).update(rawBody).digest('base64') } });
+      const deadline = Date.now() + Math.max(60_000, ...row.turns.map(item => item.expect.deadlineMs));
+      let settled = false;
+      while (Date.now() < deadline) {
+        const events = await client.lineWebhookEventLog.findMany({ where: { webhookEventId: { in: active.eventIds } } });
+        // Same durable QA worker used by the ordinary scheduled drain; no re-created jobs/grants.
+        if (process.env.LINE_AI_DOCUMENT_QA_ENABLED === 'true') { await app.get(LineDocumentQaWorker).drain(); await app.get(ProcessLineWebhookUseCase).recoverDocumentQaResults(); }
+        await app.get(ExpenseCaptureReadRunnerService).drain(); await app.get(LineCaptureResultNotifierUseCase).execute();
+        if (!await pendingWork() && events.length === active.eventIds.length && events.every((event: any) => event.processedAt && !event.payloadJson)) { settled = true; break; }
+        await delay(50);
+      }
+      if (!settled) throw new Error('REPLAY_TERMINAL_TIMEOUT');
+      active.completedAt ??= Date.now(); return collect(row, turnIndex);
+    },
+    async afterFailure(row, index) {
+      if (!active) return null; active.errors.push('runtime_execution_failed');
+      // A timed-out fire-and-forget job cannot be allowed to write into the next reset snapshot.
+      unsafeToReset = await pendingWork() > 0;
+      if (unsafeToReset) active.critical.push('unresolved_background_work');
+      return collect(row, index);
+    },
+    async finalize(row, traces) {
+      const receipts = turnStates.flatMap(state => state.receipts);
+      for (const [index, trace] of traces.entries()) {
+        const state = turnStates[index]!;
+        const plans = await client.lineDeliveryPlan.findMany({ where: { companyId: row.fixture.company, createdAt: {
+          gte: new Date(state.acceptedAt), ...(turnStates[index + 1] ? { lt: new Date(turnStates[index + 1]!.acceptedAt) } : {}),
+        } } });
+        const outcomes = await client.lineTurnOutcome.findMany({ where: { webhookEventId: { in: state.eventIds } } });
+        trace.delivery = runtimeDeliveryEvidence(plans, outcomes, receipts);
+      }
+    },
+  };
+  try {
+    await databaseLock.connect();
+    const locked = await databaseLock.query("SELECT pg_try_advisory_lock(hashtext('line-reliability-runtime-reset')) AS locked");
+    assert.equal(locked.rows[0]?.locked, true, 'REPLAY_DATABASE_IN_USE');
+    const replay = await replayReliabilityCorpus(manifest.corpus, adapter, { repeats: manifest.repeats, cohort: manifest.cohort, cache: 'unknown' });
+    return { ...replay, boundary: { runtime: 'compiled_nest_api_postgres', line: 'synthetic_http_sink', nativeLineVerified: false, cacheStateVerified: false, activationEligible: false } };
+  } finally { try { if (app) await app.close(); } finally { redis.disconnect(); await databaseLock.end(); globalThis.fetch = originalFetch; Logger.overrideLogger(true); } }
+}

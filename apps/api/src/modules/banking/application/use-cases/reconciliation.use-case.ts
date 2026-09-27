@@ -210,39 +210,16 @@ export class GetCashPositionUseCase {
 
   async execute(ctx: RequestContext): Promise<BankCashPositionSummary[]> {
     if (!ctx.permissions.includes('bank.cash.read')) throw new ForbiddenException('Missing permission: bank.cash.read');
+    return (await this.repo.readCashPositionSnapshot(ctx.companyId, ctx.scopes.branchIds)).accounts;
+  }
+}
 
-    const accounts = await this.repo.listBankAccounts(ctx.companyId, ctx.scopes.branchIds);
+@Injectable()
+export class GetReconciliationStatusUseCase {
+  constructor(private readonly repo: PrismaBankingRepository) {}
 
-    const summaries = await Promise.all(
-      accounts.map(async (acct) => {
-        const [allLines, adjustments, sessions] = await Promise.all([
-          this.repo.listStatementLines(ctx.companyId, acct.id),
-          this.repo.listBankAdjustments(ctx.companyId, acct.id, ctx.scopes.branchIds),
-          this.repo.listReconciliationSessions(ctx.companyId, acct.id, ctx.scopes.branchIds),
-        ]);
-
-        const unmatchedCount = allLines.filter((l) => l.status === 'UNMATCHED').length;
-        const unreconciledCount = allLines.filter((l) => l.status !== 'IGNORED' && l.status !== 'VOIDED').length;
-        const pendingAdjustmentCount = adjustments.filter((a) => a.status === 'PENDING_APPROVAL').length;
-        const lastStatementLine = allLines[0];
-        const lastCompletedSession = sessions.find((s) => s.status === 'COMPLETED');
-
-        const summary: BankCashPositionSummary = {
-          companyId: ctx.companyId,
-          bankAccountId: acct.id,
-          bankAccountDisplayName: acct.displayName,
-          currency: acct.currency,
-          lastReconciledDate: lastCompletedSession?.completedAt?.toISOString(),
-          lastReconciledBalance: lastCompletedSession?.closingStatementBalanceAmount,
-          unreconciledLineCount: unreconciledCount,
-          unmatchedLineCount: unmatchedCount,
-          pendingAdjustmentCount,
-          lastStatementDate: lastStatementLine?.postedDate?.toISOString(),
-        };
-        return summary;
-      }),
-    );
-
-    return summaries;
+  async execute(ctx: RequestContext): Promise<{ asOf: Date; accounts: BankCashPositionSummary[] }> {
+    if (!ctx.permissions.includes('bank.reconciliation.read')) throw new ForbiddenException('Missing permission: bank.reconciliation.read');
+    return this.repo.readCashPositionSnapshot(ctx.companyId, ctx.scopes.branchIds);
   }
 }

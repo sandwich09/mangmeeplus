@@ -148,7 +148,7 @@ describe('BedrockProvider error mapping', () => {
     (provider as any).client = {
       send: async (cmd: any) => {
         captured = cmd.input;
-        return { output: { message: { content: [{ text: '{"natural_text":"# ใบเสร็จ"}' }] } } };
+        return { stopReason: 'end_turn', output: { message: { content: [{ text: '{"natural_text":"# ใบเสร็จ"}' }] } } };
       },
     };
     const result = await provider.generateText({
@@ -171,6 +171,7 @@ describe('BedrockProvider error mapping', () => {
     const provider = makeProvider();
     (provider as any).client = {
       send: async () => ({
+        stopReason: 'end_turn',
         output: { message: { content: [{ text: 'ข้อมูลสต็อก: 5 รายการ' }] } },
       }),
     };
@@ -192,7 +193,9 @@ describe('BedrockProvider.generateWithTools', () => {
         return {
           stopReason: 'tool_use',
           output: { message: { content: [
+            { type: 'reasoningContent', reasoningContent: { text: 'hidden' } },
             { text: 'กำลังดึงข้อมูล' },
+            { text: 'พร้อมอีกหนึ่งข้อมูล' },
             { toolUse: { toolUseId: 't1', name: 'sales__get_summary', input: { fromDate: '2026-07-01' } } },
             { toolUse: { toolUseId: 't2', name: 'inventory__list_low_stock', input: {} } },
           ] } },
@@ -205,7 +208,10 @@ describe('BedrockProvider.generateWithTools', () => {
         { role: 'assistant', text: 'เช็คให้ครับ', toolCalls: [{ toolUseId: 't0', name: 'sales__get_summary', input: { x: 1 } }] },
         { role: 'tool_results', results: [{ toolUseId: 't0', content: '{"total":100}', isError: true }] },
       ],
-      tools: [{ name: 'sales__get_summary', description: 'read sales', inputSchema: { type: 'object', properties: {} } }],
+      tools: [
+        { name: 'sales__get_summary', description: 'read sales', inputSchema: { type: 'object', properties: {} } },
+        { name: 'inventory__list_low_stock', inputSchema: { type: 'object', properties: {} } },
+      ],
       systemPrompt: 'sys',
       maxTokens: 99,
     });
@@ -225,7 +231,7 @@ describe('BedrockProvider.generateWithTools', () => {
     assert.equal(result.ok, true);
     if (result.ok) {
       assert.equal(result.stopReason, 'tool_use');
-      assert.equal(result.text, 'กำลังดึงข้อมูล');
+      assert.equal(result.text, 'กำลังดึงข้อมูล\nพร้อมอีกหนึ่งข้อมูล');
       assert.equal(result.toolCalls.length, 2, 'parallel toolUse blocks are all surfaced');
       assert.deepEqual(result.toolCalls[1], { toolUseId: 't2', name: 'inventory__list_low_stock', input: {} });
     }
@@ -330,7 +336,7 @@ describe('BedrockProvider prompt caching', () => {
     const provider = makeProvider();
     (provider as any).client = {
       send: async () => ({
-        output: { message: { content: [{ text: 'ok' }] } },
+        stopReason: 'end_turn', output: { message: { content: [{ text: 'ok' }] } },
         usage: { inputTokens: 2627, outputTokens: 374, cacheReadInputTokens: 2210, cacheWriteInputTokens: 0 },
       }),
     };
@@ -485,10 +491,10 @@ describe('BedrockProvider prompt caching', () => {
     }
 
     assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.error.code, 'PROVIDER_UNKNOWN');
+    if (!result.ok) assert.equal(result.error.code, 'PROVIDER_OUTPUT_INCOMPLETE');
     assert.equal(capture.lines.length, 1, 'a parse failure must not double-log');
     assert.equal(capture.lines[0]!['ok'], false);
-    assert.equal(capture.lines[0]!['errorCode'], 'PROVIDER_UNKNOWN');
+    assert.equal(capture.lines[0]!['errorCode'], 'PROVIDER_OUTPUT_INCOMPLETE');
     assert.equal(capture.lines[0]!['inputTokens'], 9, 'real provider usage survives a parse failure');
     assert.equal(capture.lines[0]!['outputTokens'], 1);
   });
@@ -496,7 +502,7 @@ describe('BedrockProvider prompt caching', () => {
   it('still returns the response when logging itself throws', async () => {
     const provider = makeProvider();
     (provider as any).client = {
-      send: async () => ({ output: { message: { content: [{ text: 'ok' }] } }, usage: { inputTokens: 1, outputTokens: 1 } }),
+      send: async () => ({ stopReason: 'end_turn', output: { message: { content: [{ text: 'ok' }] } }, usage: { inputTokens: 1, outputTokens: 1 } }),
     };
     const original = console.log;
     console.log = () => { throw new Error('stdout is gone'); };
@@ -516,7 +522,7 @@ describe('BedrockProvider prompt caching', () => {
     const provider = makeProvider();
     (provider as any).client = {
       send: async () => ({
-        output: { message: { content: [{ text: 'ok' }] } },
+        stopReason: 'end_turn', output: { message: { content: [{ text: 'ok' }] } },
         usage: { inputTokens: 2627, outputTokens: 374, cacheReadInputTokens: 2210, cacheWriteInputTokens: 12 },
       }),
     };

@@ -3,16 +3,19 @@
  * Protected by X-Internal-Secret; not exposed to public internet.
  */
 import { Controller, Get, Post, Body, Headers, BadRequestException, HttpCode, Inject, Logger, UseInterceptors } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import sharp from 'sharp';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
 import { providerErrorEnvelope } from '../../../../common/usage/ai-budget-provider';
+import { currentBudgetState } from '../../../../common/usage/usage-context';
 import { Public } from '../../../../common/security/public.decorator';
 import { assertInternalSecret } from '../../../../common/security/internal-secret';
 import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
 import { LineAiTurnUseCase } from '../../application/use-cases/line-ai-turn.use-case';
 import { createProvider } from '../../infrastructure/provider/provider.factory';
 import { IntentRouterAgent } from '../../agents/intent-router.agent';
+import { CASUAL_CONVERSATION_SYSTEM_PROMPT } from '../../agents/response-composer.agent';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
 import {
   CAPTURE_EXTRACT_PROMPT,
@@ -22,12 +25,14 @@ import {
   parseCaptureObservationsJson,
   parseCaptureReadPages,
 } from '../../domain/logic/expense-capture-read.logic';
-import { AI_DOCUMENT_OCR_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, type AiBudgetScope, type AiModelLineage, type BusinessDocumentClassification, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeOnePassReceipt, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrFallbackReason, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
+import { AI_DOCUMENT_OCR_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, lineAiRetainedTaskSourceMatchesProjection, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, parseAiBudgetGrantV2, parseLineAiTaskProjection, parseLineAiPublicGeneralRequest, verifyLineAiInputEvidence, verifyLineAiRetainedTaskSource, verifyLineAiValueCandidatesV2, type AiBudgetScope, type AiModelLineage, type BusinessDocumentClassification, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiPublicGeneralRequest, type LineAiPublicGeneralResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeOnePassReceipt, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrEvidenceRole, type ReceiptOcrEvidenceV2, type ReceiptOcrFallbackReason, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
 // JSON bodies on these routes carry base64 media and need main.ts's 16mb parser
 // (UPLOAD_MAX_BYTES 10MB inflates to ~13.7MB in base64); every other route stays at
 // HTTP_BODY_LIMIT. A media-carrying route missing here 413s on real camera photos.
 export const BASE64_MEDIA_ROUTES = /^\/v1\/internal\/ai\/(receipt-ocr|bank-statement-extract|line-intake-route|capture-read|capture-extract)$/;
+/** QA admits up to five 10MiB source files; keep its larger parser isolated from capture routes. */
+export const DOCUMENT_QA_MEDIA_ROUTE = '/v1/internal/ai/line-document-qa';
 
 // Document OCR needs its own budget: a dense real-photo receipt regularly takes document reads
 // past the 15s ERP tool-call timeout (prod failures 2026-07-14).
@@ -230,7 +235,7 @@ function captureReadUserText(chunk: ExpenseCaptureReadChunk): string {
 }
 
 type ReceiptUnderstanding =
-  | { ok: true; fields?: ReceiptOcrResponse['fields']; classification?: ReceiptOcrResponse['classification']; utilityDocuments?: ReceiptOcrResponse['utilityDocuments'] }
+  | { ok: true; fields?: ReceiptOcrResponse['fields']; classification?: ReceiptOcrResponse['classification']; utilityDocuments?: ReceiptOcrResponse['utilityDocuments']; receiptEvidence?: ReceiptOcrEvidenceV2 }
   /** `budgetScope` is set only when the money gate refused this step (spec §9.1). */
   | { ok: false; errorCode: NonNullable<ReceiptOcrResponse['errorCode']>; budgetScope?: AiBudgetScope };
 
@@ -411,6 +416,44 @@ export class LineAiInternalController {
   }
 
   @Public()
+  @Post('line/public-general')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Internal: answer one stateless public LINE question without private context' })
+  async linePublicGeneral(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Body() body: LineAiPublicGeneralRequest,
+  ): Promise<LineAiPublicGeneralResponse> {
+    assertInternalSecret(secret, this.config.aiGatewayInternalSecret);
+    const request = parseLineAiPublicGeneralRequest(body);
+    if (!request) throw new BadRequestException('Invalid public general request payload.');
+    const evidence = await verifyLineAiInputEvidence(request.inputEvidence, request.messageText);
+    const grant = parseAiBudgetGrantV2(request.budgetGrantV2);
+    const budget = currentBudgetState();
+    if (!evidence || !grant || budget?.status !== 'active-v2'
+      || budget.grant.turnKey !== grant.turnKey || budget.grant.payerCompanyId !== request.publicAdmission.payerCompanyId
+      || budget.inputDigest !== evidence.joinedSha256) {
+      return { requestId: request.requestId, status: 'unavailable', replyText: '',
+        language: /[\u0E00-\u0E7F]/u.test(request.messageText) ? 'th' : 'en', errorCode: 'AI_CONTRACT_UNSUPPORTED' };
+    }
+    const language = /[\u0E00-\u0E7F]/u.test(request.messageText) ? 'th' : 'en';
+    const result = await createProvider(this.config).generateText({
+      systemPrompt: CASUAL_CONVERSATION_SYSTEM_PROMPT,
+      messages: [{ role: 'user', text: JSON.stringify({ messageText: request.messageText, language }) }],
+      maxTokens: 1_536,
+      usageTag: 'line.public.general',
+    });
+    if (!result.ok || result.stopReason === 'max_tokens' || !result.text.trim()) {
+      return { requestId: request.requestId, status: 'unavailable', replyText: '', language,
+        errorCode: result.ok ? 'PUBLIC_GENERAL_INCOMPLETE' : (result.error.budgetCode ?? result.error.code) };
+    }
+    const replyText = result.text.trim();
+    if (replyText.length > 8_000 || /^[\[{]/u.test(replyText)) {
+      return { requestId: request.requestId, status: 'unavailable', replyText: '', language, errorCode: 'PUBLIC_GENERAL_SCHEMA_INVALID' };
+    }
+    return { requestId: request.requestId, status: 'answered', replyText, language };
+  }
+
+  @Public()
   @Post('line-turn')
   @HttpCode(200)
   @ApiOperation({ summary: 'Internal: process one LINE AI turn (API service only)' })
@@ -441,6 +484,51 @@ export class LineAiInternalController {
     if (!body?.requestId || !body.companyId || !body.userId || typeof body.messageText !== 'string' || !Array.isArray(body.permissions)) {
       throw new BadRequestException('Invalid intake route payload.');
     }
+    const hasV2ContractField = body.inputEvidence !== undefined || body.budgetGrantV2 !== undefined
+      || body.contractCapabilities !== undefined || body.retainedTaskSource !== undefined;
+    let verifiedIntakeEvidence: LineIntakeRouteRequest['inputEvidence'];
+    if (hasV2ContractField) {
+      const evidence = await verifyLineAiInputEvidence(body.inputEvidence, body.messageText);
+      const grant = parseAiBudgetGrantV2(body.budgetGrantV2);
+      const caps = body.contractCapabilities;
+      const valid = Boolean(evidence && grant && evidence.turnKey === grant.turnKey && Array.isArray(caps)
+        && caps.length === 2 && caps.includes('input-evidence-v2') && caps.includes('budget-envelope-v2'));
+      const activeBudget = currentBudgetState();
+      if (!valid || activeBudget?.status !== 'active-v2'
+        || activeBudget.grant.turnKey !== grant?.turnKey
+        || activeBudget.inputDigest !== evidence?.joinedSha256) {
+        const unsupported: LineIntakeRoutePlan = {
+          status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
+          errorCode: valid ? 'AI_BUDGET_UNAVAILABLE' : 'AI_CONTRACT_UNSUPPORTED',
+        };
+        this.logger.warn({ msg: 'line_intake_contract_v2_rejected', requestId: body.requestId,
+          reason: valid ? 'v2_budget_state_missing' : 'evidence_or_grant_invalid' });
+        return unsupported;
+      }
+      verifiedIntakeEvidence = evidence!;
+      if (body.valueCandidates !== undefined) {
+        const versioned = 'version' in body.valueCandidates && body.valueCandidates.version === 2;
+        const verified = versioned && verifiedIntakeEvidence
+          ? await verifyLineAiValueCandidatesV2(body.valueCandidates, verifiedIntakeEvidence)
+          : undefined;
+        if (!verified) {
+          return { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'AI_CONTRACT_UNSUPPORTED' };
+        }
+        body.valueCandidates = verified;
+      }
+    }
+    if (body.taskProjection !== undefined) {
+      const projection = parseLineAiTaskProjection(body.taskProjection);
+      if (!verifiedIntakeEvidence || !projection) return { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'AI_CONTRACT_UNSUPPORTED' };
+      body.taskProjection = projection;
+    }
+    if (body.retainedTaskSource !== undefined) {
+      const retained = await verifyLineAiRetainedTaskSource(body.retainedTaskSource);
+      if (!verifiedIntakeEvidence || !retained || !lineAiRetainedTaskSourceMatchesProjection(retained, body.taskProjection)) {
+        return { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'AI_CONTRACT_UNSUPPORTED' };
+      }
+      body.retainedTaskSource = retained;
+    }
     // Bound the TRUSTED capability flags at the HTTP receiver — @Body() is only a compile-time shape, so a
     // malformed body (a truthy non-boolean, an unknown/nested key) would otherwise reach routeIntake as-is.
     // Only a literal `true` per known key survives; everything else is discarded here AND re-checked in
@@ -458,6 +546,8 @@ export class LineAiInternalController {
     const router = new IntentRouterAgent(
       createProvider(this.config, hasAttachment ? { timeoutMs: DOCUMENT_OCR_TIMEOUT_MS } : undefined),
       this.config.lineAiDraftEditEnabled,
+      { enabled: this.config.lineAiApprovedKnowledgeEnabled },
+      this.config.lineAiPublicLookupEnabled,
     );
     const routed = await router.routeIntake(body);
     const { receiptCandidate, ...plan } = routed;
@@ -514,6 +604,7 @@ export class LineAiInternalController {
     // Stage 1 (reading): emit the verbatim document markdown that stage 2 must select its
     // values from — the §13 cross-check below is only meaningful against real read text.
     const isPdf = mimeType === 'application/pdf';
+    const requireEvidenceV2 = body.requireEvidenceV2 === true;
     const readerModelId = body.modelPolicy?.modelId ?? this.config.documentAiModelId;
     // The intake router reads the very same photo to classify it, so when it hands that read back
     // this route skips its own (UAT 2026-08-28: 12.8s of intake followed by a 16.6s re-read of the
@@ -528,7 +619,7 @@ export class LineAiInternalController {
     if (reusedRead) {
       stageOneText = JSON.stringify({ natural_text: forwardedText });
     } else {
-      const stageOne = await this.readDocumentText(mimeType, body.attachment.contentBase64, readerModelId, 'receipt', hasAlternateView ? alternate! : undefined);
+      const stageOne = await this.readDocumentText(mimeType, body.attachment.contentBase64, readerModelId, 'receipt', hasAlternateView ? alternate! : undefined, requireEvidenceV2);
       if (!stageOne.ok) {
         return { status: stageOne.status, errorCode: stageOne.errorCode, ...(stageOne.budgetScope ? { budgetScope: stageOne.budgetScope } : {}) };
       }
@@ -556,7 +647,7 @@ export class LineAiInternalController {
       });
       return partsRead.ok ? parseUtilityDocuments(partsRead.text, documentText) : undefined;
     };
-    let understood = await this.understandReceiptText(provider, documentText, activeCategories);
+    let understood = await this.understandReceiptText(provider, documentText, activeCategories, false, requireEvidenceV2, body.attachment.contentBase64, body.attachment.id);
     // Spend the recovery budget on structure OR on vision, never both: the shared caller timeout
     // still covers at most four provider calls. A bad JSON response is not an unreadable image.
     const repairedStructure = !understood.ok && ['OCR_OUTPUT_TRUNCATED', 'OCR_JSON_PARSE_FAILED', 'OCR_SCHEMA_INVALID'].includes(understood.errorCode);
@@ -566,7 +657,7 @@ export class LineAiInternalController {
         msg: 'receipt.ocr.fallback', requestId: body.requestId, fallback: 'extract-repair',
         reasons: [...fallbackReasons], errorCode: understood.ok ? undefined : understood.errorCode,
       });
-      understood = await this.understandReceiptText(provider, documentText, activeCategories, true);
+      understood = await this.understandReceiptText(provider, documentText, activeCategories, true, requireEvidenceV2, body.attachment.contentBase64, body.attachment.id);
     }
     const combinedUtility = isCombinedUtilitySheet(documentText);
     if (!understood.ok && repairedStructure && combinedUtility
@@ -624,7 +715,7 @@ export class LineAiInternalController {
       });
       const rereadText = reread.ok && reread.stopReason !== 'max_tokens' ? parseStageOneNaturalText(reread.text) : null;
       if (rereadText) {
-        const second = await this.understandReceiptText(provider, rereadText, activeCategories);
+        const second = await this.understandReceiptText(provider, rereadText, activeCategories, false, requireEvidenceV2, body.attachment.contentBase64, body.attachment.id);
         if (second.ok && needsTotalReread && hasUsableTotal(second)) {
           understood = second;
           stageOneLineage = modelLineage(this.config, 'receipt_ocr_read', extractionModelId);
@@ -648,6 +739,7 @@ export class LineAiInternalController {
     return {
       status: 'ok',
       ...(understood.fields ? { fields: understood.fields } : {}),
+      ...(understood.receiptEvidence ? { receiptEvidence: understood.receiptEvidence } : {}),
       ...(understood.classification ? { classification: understood.classification } : {}),
       ...(understood.utilityDocuments ? { utilityDocuments: understood.utilityDocuments } : {}),
       modelLineage: [
@@ -676,6 +768,7 @@ export class LineAiInternalController {
     modelId: string | undefined,
     label: string,
     alternate?: { mimeType: 'image/jpeg' | 'image/png'; contentBase64: string },
+    markPagesForEvidenceV2 = false,
   ): Promise<{ ok: true; text: string } | { ok: false; status: 'failed' | 'not_configured'; errorCode: string; budgetScope?: AiBudgetScope }> {
     const isPdf = mimeType === 'application/pdf';
     // Images go to whichever configured provider reads vision; a PDF still needs Bedrock, whose
@@ -685,7 +778,7 @@ export class LineAiInternalController {
     }
     const reader = createProvider(this.config, { modelId, timeoutMs: DOCUMENT_OCR_TIMEOUT_MS });
     const read = await reader.generateText({
-      systemPrompt: bedrockOcrPrompt(isPdf ? 'PDF' : 'image'),
+      systemPrompt: bedrockOcrPrompt(isPdf ? 'PDF' : 'image', markPagesForEvidenceV2),
       messages: [{ role: 'user', text: alternate
         ? 'Both images are different orientations of the SAME page. Read the clearest upright view once; they are not two documents. Transcribe only printed facts, with no translated or calculated additions.'
         : 'Transcribe the attached document.' }],
@@ -705,9 +798,12 @@ export class LineAiInternalController {
     documentText: string,
     activeCategories: Array<{ id: string; name: string }>,
     repair = false,
+    requireEvidenceV2 = false,
+    attachmentBase64?: string,
+    attachmentId?: string,
   ): Promise<ReceiptUnderstanding> {
     const extraction = await provider.generateText({
-      systemPrompt: RECEIPT_OCR_PROMPT,
+      systemPrompt: requireEvidenceV2 ? `${RECEIPT_OCR_PROMPT}\n\n${RECEIPT_OCR_EVIDENCE_V2_PROMPT}` : RECEIPT_OCR_PROMPT,
       messages: [{
         role: 'user',
         text: [
@@ -726,7 +822,8 @@ export class LineAiInternalController {
     if (!extraction.ok) return { ok: false, ...providerErrorEnvelope(extraction.error) };
     if (extraction.stopReason === 'max_tokens') return { ok: false, errorCode: 'OCR_OUTPUT_TRUNCATED' };
 
-    const parsed = parseReceiptOcrJson(extraction.text, documentText, new Set(activeCategories.map((category) => category.id)));
+    const parsed = parseReceiptOcrJson(extraction.text, documentText, new Set(activeCategories.map((category) => category.id)), 2,
+      requireEvidenceV2 ? { requireEvidenceV2: true, attachmentBase64, attachmentId } : {});
     // The extraction contract always requires classification. A fields-only object is valid for
     // low-level parser callers but incomplete for this route; repair its JSON/schema once instead
     // of misclassifying it as a missing-total image problem and spending a vision re-read.
@@ -737,8 +834,12 @@ export class LineAiInternalController {
     }
     const utilityDocuments = parseUtilityDocuments(extraction.text, documentText);
     const fields = parsed.fields
-      ? applyOcrValueCrossCheck(parsed.fields, documentText, todayCivilDate(), parsed.classification?.documentKind)
+      ? requireEvidenceV2 ? parsed.fields : applyOcrValueCrossCheck(parsed.fields, documentText, todayCivilDate(), parsed.classification?.documentKind)
       : undefined;
+    if (requireEvidenceV2 && parsed.receiptEvidence && fields
+      && Object.keys(parsed.receiptEvidence.fields).sort().join('|') !== [...receiptEvidencePaths(fields).keys()].sort().join('|')) {
+      return { ok: false, errorCode: 'OCR_SCHEMA_INVALID' };
+    }
     let classification = parsed.classification
       ? gateBusinessDocumentClassification(parsed.classification, fields, documentText)
       : undefined;
@@ -748,8 +849,11 @@ export class LineAiInternalController {
     // ReceiptOcrResponse.fields is a single-expense draft contract. Returning one page total/vendor/
     // date for MULTI_DOCUMENT would let a future consumer collapse the ledger despite the classifier.
     const safeFields = classification?.contentKind === 'MULTI_DOCUMENT' ? undefined : fields;
+    const receiptEvidence = parsed.receiptEvidence && !safeFields
+      ? { ...parsed.receiptEvidence, fields: {} }
+      : parsed.receiptEvidence;
     return { ok: true, ...(safeFields ? { fields: safeFields } : {}), ...(classification ? { classification } : {}),
-      ...(utilityDocuments ? { utilityDocuments } : {}) };
+      ...(utilityDocuments ? { utilityDocuments } : {}), ...(requireEvidenceV2 && receiptEvidence ? { receiptEvidence } : {}) };
   }
 
   /**
@@ -850,7 +954,7 @@ export class LineAiInternalController {
       return { status: 'failed', contractVersion, errorCode: 'CAPTURE_CONTRACT_VERSION_UNSUPPORTED' };
     }
     const windowText = window.pages
-      .map((page) => `=== PAGE ${page.pageIndex} ===\n${typeof page.text === 'string' ? page.text : ''}`)
+      .map((page) => `=== PAGE ${page.pageIndex} ===\n${page.sourceOffset ? `SOURCE_OFFSET ${page.sourceOffset}\n` : ''}${typeof page.text === 'string' ? page.text : ''}`)
       .join('\n');
     // Splitting windows is the API's job (§4.3). A window past the declared ceiling is refused
     // rather than truncated, because a truncated window reads as a complete one downstream.
@@ -915,7 +1019,7 @@ export class LineAiInternalController {
     });
     if (!extraction.ok) return { ok: false, ...providerErrorEnvelope(extraction.error) };
     if (extraction.stopReason === 'max_tokens') return { ok: false, errorCode: 'OCR_OUTPUT_TRUNCATED' };
-    const parsed = parseCaptureObservationsJson(extraction.text, windowText);
+    const parsed = parseCaptureObservationsJson(extraction.text, windowText, todayCivilDate(), window);
     if (!parsed) {
       try { JSON.parse(extraction.text.match(/\{[\s\S]*\}/)?.[0] ?? extraction.text); }
       catch { return { ok: false, errorCode: 'OCR_JSON_PARSE_FAILED' }; }
@@ -1036,8 +1140,9 @@ function modelLineage(
  *  (r=0.88 across those receipts), and half a printed receipt is loyalty points, promotions and
  *  slogans, so this stops paying to transcribe them. What survives is stated as a keep-list rather
  *  than a "skip the irrelevant" instruction, because the looser wording dropped unlabelled subtotals. */
-const bedrockOcrPrompt = (source: 'PDF' | 'image') => `
+const bedrockOcrPrompt = (source: 'PDF' | 'image', markPagesForEvidenceV2 = false) => `
 Below is a ${source} of a document. Return the markdown representation of the parts of this document that carry accounting meaning, presenting tables in markdown format as they naturally appear.
+${markPagesForEvidenceV2 ? 'For evidence-v2, start each physical page with an exact marker `<!-- PAGE: 0 -->`, `<!-- PAGE: 1 -->`, and so on in source order (a single image is page 0). Never merge text across page boundaries.' : ''}
 
 You MUST include, whenever the page shows them — these are never noise:
 - the seller's name, address, tax identification number and branch
@@ -1167,6 +1272,10 @@ whtBaseAmount is an explicitly labelled printed withholding base only; omit it w
 whtRate is a printed withholding-tax rate as a decimal fraction (3% → "0.03"); whtAmount is the printed withheld amount. grandTotalAmount stays gross before WHT. Never infer WHT merely because the document describes a service.
 If unsure, omit the field and add its name to missingFields.
 Do not invent values.
+`.trim();
+
+const RECEIPT_OCR_EVIDENCE_V2_PROMPT = `
+Strict evidence mode is enabled for this request. For every extracted source field (including each value in buyerAsPrinted, lines, and additionalCharges), include a fieldEvidence entry inside fields using the exact field path as its key. Each value is {"pageIndex":0,"span":"a short exact quote from OCR_TEXT_START"}. pageIndex is zero-based; a plain single-page image has pageIndex 0. Do not cite a page or text outside the OCR block. The quote must contain the exact printed value and its local label/row context. Use the field's own printed role: TOTAL must cite the total label and its own number, never CASH/CHANGE; a date must cite its date label; documentNumber must cite its document-number label and never a date, tax id, patient/visit id, queue number or terminal id; vendor fields must cite the seller/issuer block, not buyer/patient/cashier; line values must cite their own product row. Preserve signs exactly, including a printed minus, trailing minus or accounting parentheses. If a value, page, field role, or complete proposed list cannot be cited exactly, omit the whole field/list and add its missing-field name. Never return only part of a proposed list. No offsets are needed; the API verifies and assigns exact local spans.
 `.trim();
 
 const UTILITY_PARTS_PROMPT = `
@@ -1621,12 +1730,283 @@ export function parseUtilityDocuments(
   }
 }
 
+type ReceiptEvidenceCitation = { pageIndex: number; span: string };
+
+function receiptEvidencePages(documentText: string): Array<{ pageIndex: number; text: string }> {
+  const markers = [...documentText.matchAll(/<!--\s*PAGE\s*:\s*(\d+)\s*-->/giu)];
+  if (!markers.length) return [{ pageIndex: 0, text: documentText }];
+  const pages: Array<{ pageIndex: number; text: string }> = [];
+  for (let index = 0; index < markers.length; index += 1) {
+    const marker = markers[index]!;
+    const pageIndex = Number(marker[1]);
+    const start = marker.index! + marker[0].length;
+    const end = markers[index + 1]?.index ?? documentText.length;
+    const text = documentText.slice(start, end).trim();
+    if (!Number.isSafeInteger(pageIndex) || pageIndex !== index || !text) return [];
+    pages.push({ pageIndex, text });
+  }
+  return pages;
+}
+
+function receiptEvidenceRole(path: string): ReceiptOcrEvidenceRole | undefined {
+  if (path === 'vendorName' || path === 'vendorIdentityEvidence') return 'seller_name';
+  if (path === 'vendorTaxId') return 'seller_tax_id';
+  if (path === 'vendorBranchCode') return 'seller_branch';
+  if (path === 'vendorAddress') return 'seller_address';
+  if (path === 'buyerAsPrinted.name') return 'buyer_name';
+  if (path === 'buyerAsPrinted.taxId') return 'buyer_tax_id';
+  if (path === 'buyerAsPrinted.branchCode') return 'buyer_branch';
+  if (path === 'buyerAsPrinted.addressText') return 'buyer_address';
+  if (path === 'documentNumber') return 'document_number';
+  if (path === 'expenseDate') return 'transaction_date';
+  if (path === 'description') return 'description';
+  if (path === 'quantity') return 'quantity';
+  if (path === 'unitPrice') return 'unit_price';
+  if (path === 'vatRate' || path === 'whtRate') return path === 'vatRate' ? 'vat_rate' : 'wht_rate';
+  if (path === 'subtotalAmount') return 'subtotal';
+  if (path === 'discountAmount') return 'discount';
+  if (path === 'taxableAmount') return 'taxable_base';
+  if (path === 'vatAmount') return 'vat_amount';
+  if (path === 'whtAmount') return 'wht_amount';
+  if (path === 'whtBaseAmount') return 'wht_base';
+  if (path === 'grandTotalAmount') return 'grand_total';
+  if (path === 'currency') return 'currency';
+  if (path === 'vatMode') return 'vat_mode';
+  if (/^lines\.\d+\.description$/u.test(path)) return 'line_description';
+  if (/^lines\.\d+\.amount$/u.test(path)) return 'line_amount';
+  if (/^lines\.\d+\.quantity$/u.test(path)) return 'line_quantity';
+  if (/^lines\.\d+\.unitPrice$/u.test(path)) return 'line_unit_price';
+  if (/^lines\.\d+\.(?:vatRate|vatTreatment)$/u.test(path)) return 'line_vat';
+  if (/^additionalCharges\.\d+\.description$/u.test(path)) return 'charge_description';
+  if (/^additionalCharges\.\d+\.amount$/u.test(path)) return 'charge_amount';
+  if (/^additionalCharges\.\d+\.vatRate$/u.test(path)) return 'charge_vat';
+  return undefined;
+}
+
+function canonicalReceiptDecimal(value: string): string | undefined {
+  const text = mapThaiDigits(value).normalize('NFKC').replace(/[−－]/gu, '-').trim();
+  const parenthesized = /^\(\s*((?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?)\s*\)$/u.exec(text);
+  const trailingMinus = /^((?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?)-$/u.exec(text);
+  const body = parenthesized?.[1] ?? trailingMinus?.[1] ?? text;
+  if (!/^[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/u.test(body)) return undefined;
+  const negative = !!parenthesized || !!trailingMinus || body.startsWith('-');
+  const unsigned = body.replace(/^[+-]/u, '').replace(/,/gu, '');
+  const [integer = '0', fraction = ''] = unsigned.split('.');
+  const whole = integer.replace(/^0+(?=\d)/u, '') || '0';
+  const decimal = fraction.replace(/0+$/u, '');
+  return `${negative && (whole !== '0' || decimal) ? '-' : ''}${whole}${decimal ? `.${decimal}` : ''}`;
+}
+
+function receiptNumberSign(value: string): 'negative' | 'positive' | 'none' {
+  const text = mapThaiDigits(value).normalize('NFKC').replace(/[−－]/gu, '-').trim();
+  if (/^\(/u.test(text) || /-$/u.test(text) || /^-/u.test(text)) return 'negative';
+  return /^\+/u.test(text) ? 'positive' : 'none';
+}
+
+function normalizedReceiptText(value: string): string {
+  return mapThaiDigits(value).normalize('NFKC').replace(/\s+/gu, ' ').trim().toUpperCase();
+}
+
+function receiptRateTimes100(value: string): string | undefined {
+  const canonical = canonicalReceiptDecimal(value);
+  if (canonical === undefined) return undefined;
+  const negative = canonical.startsWith('-');
+  const unsigned = canonical.replace(/^-/, '');
+  const [whole = '0', fraction = ''] = unsigned.split('.');
+  const digits = `${whole}${fraction}`;
+  const point = whole.length + 2;
+  const scaled = point >= digits.length ? `${digits}${'0'.repeat(point - digits.length)}` : `${digits.slice(0, point)}.${digits.slice(point)}`;
+  const [scaledWhole = '0', scaledFraction = ''] = scaled.split('.');
+  const resultWhole = scaledWhole.replace(/^0+(?=\d)/u, '') || '0';
+  const resultFraction = scaledFraction.replace(/0+$/u, '');
+  return `${negative && (resultWhole !== '0' || resultFraction) ? '-' : ''}${resultWhole}${resultFraction ? `.${resultFraction}` : ''}`;
+}
+
+function occurrenceCount(text: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  for (let from = 0; (from = text.indexOf(needle, from)) >= 0; from += Math.max(1, needle.length)) count += 1;
+  return count;
+}
+
+function receiptEvidencePaths(fields: NonNullable<ReceiptOcrResponse['fields']>): Map<string, string> {
+  const values = new Map<string, string>();
+  const add = (path: string, value: unknown) => { if (typeof value === 'string' && value) values.set(path, value); };
+  for (const [key, value] of Object.entries(fields)) {
+    if (key === 'buyerAsPrinted' && value && typeof value === 'object') {
+      for (const [name, part] of Object.entries(value)) add(`buyerAsPrinted.${name}`, part);
+    } else if (key === 'lines' && Array.isArray(value)) {
+      value.forEach((line, index) => { for (const [name, part] of Object.entries(line)) if (!['evidenceSignal', 'confidence'].includes(name)) add(`lines.${index}.${name}`, part); });
+    } else if (key === 'additionalCharges' && Array.isArray(value)) {
+      value.forEach((charge, index) => { for (const [name, part] of Object.entries(charge)) if (!['kind', 'evidenceSignal', 'confidence'].includes(name)) add(`additionalCharges.${index}.${name}`, part); });
+    } else if (!['confidence', 'missingFields', 'expenseDateAssumptions', 'vendorEntityKind', 'categorySuggestion'].includes(key)) add(key, value);
+  }
+  return values;
+}
+
+function evidenceRawSpan(pageText: string, citation: string, fieldValue: string, role: ReceiptOcrEvidenceRole): { start: number; end: number; rawValue: string } | undefined {
+  const numericRole = /(?:amount|quantity|price|rate|base|total|subtotal|discount)$/u.test(role);
+  const candidates: Array<{ start: number; end: number; rawValue: string }> = [];
+  if (numericRole) {
+    const numberRe = /\(\s*\d[\d,]*(?:\.\d+)?\s*\)|[-−]?\d[\d,]*(?:\.\d+)?-?/gu;
+    for (const match of citation.matchAll(numberRe)) {
+      const rawValue = match[0];
+      const parsed = canonicalReceiptDecimal(rawValue);
+      const printedPercent = /(?:rate|vat|wht)$/u.test(role) && /%/u.test(citation.slice(match.index! + rawValue.length, match.index! + rawValue.length + 3));
+      const expected = canonicalReceiptDecimal(fieldValue);
+      const rateMatches = printedPercent && expected !== undefined && receiptRateTimes100(fieldValue) === parsed;
+      const sameSign = receiptNumberSign(rawValue) === receiptNumberSign(fieldValue);
+      if (parsed !== undefined && sameSign && (parsed === expected || rateMatches)) candidates.push({ start: match.index!, end: match.index! + rawValue.length, rawValue });
+    }
+  } else if (role === 'transaction_date') {
+    const dates = extractValueCandidates(citation, todayCivilDate(), { documentContext: 'receipt' }).dates;
+    for (const date of dates) if (date.isoDate === fieldValue) {
+      const at = citation.indexOf(date.span);
+      if (at >= 0 && occurrenceCount(citation, date.span) === 1) candidates.push({ start: at, end: at + date.span.length, rawValue: date.span });
+    }
+  } else if (role === 'seller_tax_id' || role === 'buyer_tax_id') {
+    const digits = fieldValue.replace(/\D/gu, '');
+    const taxRe = /\d(?:[\d -]{10,20}\d)?/gu;
+    for (const match of citation.matchAll(taxRe)) if (match[0].replace(/\D/gu, '') === digits && digits.length >= 5) {
+      candidates.push({ start: match.index!, end: match.index! + match[0].length, rawValue: match[0] });
+    }
+  } else if (role === 'currency') {
+    const aliases: Record<string, RegExp> = { THB: /(?:\bTHB\b|฿|บาท)/giu, USD: /(?:\bUSD\b|US\$|\$)/giu, EUR: /(?:\bEUR\b|€)/giu, GBP: /(?:\bGBP\b|£)/giu, JPY: /(?:\bJPY\b|¥|円)/giu, CNY: /(?:\bCNY\b|\bRMB\b|人民币)/giu };
+    for (const match of citation.matchAll(aliases[fieldValue.toUpperCase()] ?? new RegExp(`\\b${fieldValue}\\b`, 'giu'))) candidates.push({ start: match.index!, end: match.index! + match[0].length, rawValue: match[0] });
+  } else if (role === 'seller_branch' || role === 'buyer_branch') {
+    const matches = fieldValue === '00000' ? [...citation.matchAll(/สำนักงานใหญ่|สนญ|HEAD\s+OFFICE|\bHQ\b|\bHO\b|00000/giu)]
+      : [...citation.matchAll(/(?:สาขา(?:ที่)?\s*|BRANCH\s*)(\d{1,5})/giu)].filter((match) => match[1] === String(Number(fieldValue)));
+    for (const match of matches) candidates.push({ start: match.index!, end: match.index! + match[0].length, rawValue: match[0] });
+  } else if (role === 'line_vat') {
+    const pattern = fieldValue === 'EXEMPT' ? /ยกเว้น|ไม่คิด|\bN\b/giu : fieldValue === 'NON_VAT' ? /\bN\b|ไม่จดทะเบียน/giu : /\bV\b|\bP\b|VAT|ภาษีมูลค่าเพิ่ม/giu;
+    for (const match of citation.matchAll(pattern)) candidates.push({ start: match.index!, end: match.index! + match[0].length, rawValue: match[0] });
+  } else if (role === 'vat_mode') {
+    const pattern = fieldValue === 'VAT_INCLUDED' ? /VAT\s*(?:INCL(?:UDED)?|INC)|รวมภาษี|รวม VAT/giu
+      : fieldValue === 'VAT_EXCLUDED' ? /VAT\s*(?:EXCL(?:UDED)?|EXC)|ก่อนภาษี|ยังไม่รวม VAT/giu
+        : fieldValue === 'NO_VAT' ? /NO\s+VAT|ไม่มี VAT/giu : fieldValue === 'EXEMPT' ? /EXEMPT|ยกเว้นภาษี/giu : /NEEDS\s+REVIEW|ตรวจสอบภาษี/giu;
+    for (const match of citation.matchAll(pattern)) candidates.push({ start: match.index!, end: match.index! + match[0].length, rawValue: match[0] });
+  } else {
+    const target = normalizedReceiptText(fieldValue);
+    // Exact source substring is required for identity/text fields; normalization is for comparing it.
+    for (let start = 0; start < citation.length; start += 1) {
+      for (let end = start + 1; end <= citation.length && end - start <= Math.max(fieldValue.length * 2, 64); end += 1) {
+        if (normalizedReceiptText(citation.slice(start, end)) === target
+          && !/\s/u.test(citation[start - 1] ?? '') && !/\s/u.test(citation[end] ?? '')) candidates.push({ start, end, rawValue: citation.slice(start, end) });
+      }
+    }
+  }
+  if (candidates.length !== 1) return undefined;
+  const citationAt = pageText.indexOf(citation);
+  if (citationAt < 0 || occurrenceCount(pageText, citation) !== 1) return undefined;
+  const selected = candidates[0]!;
+  return { start: citationAt + selected.start, end: citationAt + selected.end, rawValue: selected.rawValue };
+}
+
+function receiptRoleMatches(pageText: string, locator: { start: number; end: number }, role: ReceiptOcrEvidenceRole, fieldValue: string): boolean {
+  const lineStart = pageText.lastIndexOf('\n', locator.start - 1) + 1;
+  const lineEndAt = pageText.indexOf('\n', locator.end);
+  const lineEnd = lineEndAt < 0 ? pageText.length : lineEndAt;
+  const line = mapThaiDigits(pageText.slice(lineStart, lineEnd));
+  const before = line.slice(0, locator.start - lineStart);
+  const normalized = before.toUpperCase();
+  const checks: Partial<Record<ReceiptOcrEvidenceRole, RegExp>> = {
+    document_number: /(?:เลขที่(?:ใบเสร็จ|เอกสาร|ใบกำกับภาษี)?|RECEIPT\s*(?:NO|NUMBER)|INVOICE\s*(?:NO|NUMBER)|BILL\s*(?:NO|NUMBER)|DOCUMENT\s*(?:NO|NUMBER)|\bNO\.?\s*)/iu,
+    transaction_date: /(?:TRANSACTION\s+DATE|TRANS\s+DATE|TXN\s+DATE|SALE\s+DATE|RECEIPT\s+DATE|ISSUE\s+DATE|DOCUMENT\s+DATE|วันที่ขาย|วันที่|DATE)/iu,
+    grand_total: /(?:GRAND\s+TOTAL|TOTAL\s+DUE|AMOUNT\s+DUE|NET\s+TOTAL|รวมทั้งสิ้น|ยอดสุทธิ|ยอดชำระ|TOTAL)/iu,
+    subtotal: /(?:SUB\s*TOTAL|SUBTOTAL|ยอดรวม|รวมเงิน)/iu,
+    discount: /(?:DISCOUNT|COUPON|VOUCHER|ส่วนลด|คูปอง|โปรโมชั่น)/iu,
+    taxable_base: /(?:TAXABLE\s+(?:BASE|AMOUNT)|VAT\s+EXCL|มูลค่าก่อนภาษี|ฐานภาษี)/iu,
+    vat_amount: /(?:VAT\s*(?:AMT|AMOUNT|TTL|TOTAL)|TOTAL\s+VAT|ยอดภาษี|ภาษีมูลค่าเพิ่ม)/iu,
+    wht_amount: /(?:WHT\s*(?:AMT|AMOUNT|TTL|TOTAL)|WITHHOLDING\s+TAX|หักภาษี\s*ณ\s*ที่จ่าย)/iu,
+    wht_base: /(?:WHT\s+BASE|WITHHOLDING\s+(?:TAX\s+)?BASE|ฐาน.{0,15}(?:หัก|ณ\s*ที่จ่าย))/iu,
+    vat_rate: /(?:VAT|TAX|ภาษีมูลค่าเพิ่ม)/iu,
+    wht_rate: /(?:WHT|WITHHOLD|หักภาษี\s*ณ\s*ที่จ่าย)/iu,
+    seller_tax_id: /(?:TAX\s*(?:ID|NO|NUMBER)|\bTIN\b|เลข(?:ประจำตัว)?ผู้เสียภาษี|เลขทะเบียนนิติบุคคล|ทะเบียนเลขที่)/iu,
+    seller_branch: /(?:สำนักงานใหญ่|สนญ|HEAD\s+OFFICE|\bHQ\b|\bHO\b|สาขา|BRANCH)/iu,
+    seller_address: /(?:ที่อยู่|ที่ตั้ง|สำนักงาน|\bADDRESS\b)/iu,
+  };
+  const required = checks[role];
+  if (required && !required.test(before)) return false;
+  if (role === 'grand_total' && /(?:CASH|CHANGE|TENDERED|PAYMENT|เงินสด|เงินทอน|รับชำระ)/iu.test(before.slice((before.match(checks[role]!)?.index ?? 0)))) return false;
+  if (role === 'seller_name' || role === 'seller_tax_id' || role === 'seller_branch' || role === 'seller_address') {
+    const issuer = receiptIssuerText(pageText);
+    if (!issuer.includes(pageText.slice(locator.start, locator.end))) return false;
+  }
+  if ((role === 'buyer_name' || role === 'buyer_tax_id' || role === 'buyer_branch' || role === 'buyer_address')
+    && !/(?:ผู้ซื้อ|ชื่อลูกค้า|ลูกค้า|BUYER|CUSTOMER|BILL\s+TO|ที่อยู่ผู้ซื้อ)/iu.test(pageText.slice(Math.max(0, locator.start - 180), locator.start))) return false;
+  if (role === 'buyer_branch' && fieldValue === '00000' && !/(?:สำนักงานใหญ่|สนญ|HEAD\s+OFFICE|\bHQ\b|\bHO\b)/iu.test(pageText.slice(Math.max(0, locator.start - 60), locator.end))) return false;
+  if (role === 'document_number' && isFullSpanDate(fieldValue)) return false;
+  if (role.startsWith('line_')) {
+    const description = role === 'line_description' ? fieldValue : undefined;
+    if (description && !line.includes(description)) return false;
+    if (role === 'line_amount' || role === 'line_quantity' || role === 'line_unit_price') {
+      // A line value needs its own product context; a matching number on another receipt row is irrelevant.
+      if (!/\S.{0,100}(?:\s+|\|)\d/u.test(line)) return false;
+    }
+  }
+  if (role === 'currency' && !/(?:\bTHB\b|\bUSD\b|\bEUR\b|\bGBP\b|\bJPY\b|\bCNY\b|\bRMB\b|฿|\$|€|£|¥|บาท|円|人民币)/iu.test(line)) return false;
+  if (role === 'description' && !normalized.includes(normalizedReceiptText(fieldValue))) return false;
+  return true;
+}
+
+function compileReceiptEvidenceV2(
+  fields: NonNullable<ReceiptOcrResponse['fields']>,
+  rawFieldEvidence: unknown,
+  documentText: string,
+  attachmentBase64: string,
+  attachmentId: string,
+): ReceiptOcrEvidenceV2 | undefined {
+  if ((!rawFieldEvidence || typeof rawFieldEvidence !== 'object' || Array.isArray(rawFieldEvidence)) && receiptEvidencePaths(fields).size > 0) return undefined;
+  const pages = receiptEvidencePages(documentText);
+  if (!pages.length) return undefined;
+  if (new Set(pages.map((page) => normalizedReceiptText(page.text))).size !== pages.length) return undefined;
+  const citations = (rawFieldEvidence && typeof rawFieldEvidence === 'object' && !Array.isArray(rawFieldEvidence)
+    ? rawFieldEvidence : {}) as Record<string, unknown>;
+  const values = receiptEvidencePaths(fields);
+  const evidence: ReceiptOcrEvidenceV2['fields'] = {};
+  for (const [path, value] of values) {
+    const role = receiptEvidenceRole(path);
+    const citation = citations[path];
+    if (!role || !citation || typeof citation !== 'object' || Array.isArray(citation)) return undefined;
+    const item = citation as Record<string, unknown>;
+    if (!Number.isSafeInteger(item['pageIndex']) || typeof item['span'] !== 'string' || !item['span'].trim() || item['span'].length > 320) return undefined;
+    const page = pages.find((candidate) => candidate.pageIndex === item['pageIndex']);
+    if (!page || occurrenceCount(page.text, item['span']) !== 1) return undefined;
+    const locator = evidenceRawSpan(page.text, item['span'], value, role);
+    if (!locator || !receiptRoleMatches(page.text, locator, role, value)) return undefined;
+    const lineMatch = /^lines\.(\d+)\.(?:amount|quantity|unitPrice)$/u.exec(path);
+    const lineDescription = lineMatch ? values.get(`lines.${lineMatch[1]}.description`) : undefined;
+    if (lineDescription && !normalizedReceiptText(page.text.slice(page.text.lastIndexOf('\n', locator.start - 1) + 1,
+      page.text.indexOf('\n', locator.end) < 0 ? page.text.length : page.text.indexOf('\n', locator.end))).includes(normalizedReceiptText(lineDescription))) return undefined;
+    const sellerEvidence = Object.values(evidence).find((field) => field.role.startsWith('seller_'));
+    if (role.startsWith('seller_') && sellerEvidence && sellerEvidence.pageIndex !== page.pageIndex) return undefined;
+    evidence[path] = { pageIndex: page.pageIndex, role, localSpan: { start: locator.start, end: locator.end }, rawValue: locator.rawValue };
+  }
+  if (Object.keys(citations).length !== Object.keys(evidence).length) return undefined;
+  const vendorName = fields.vendorName && normalizedReceiptText(fields.vendorName);
+  const vendorTaxId = fields.vendorTaxId && collapseDigitSeparators(mapThaiDigits(fields.vendorTaxId)).replace(/\D/gu, '');
+  const sellerPage = evidence['vendorName']?.pageIndex ?? evidence['vendorIdentityEvidence']?.pageIndex;
+  if (sellerPage !== undefined && (vendorName || vendorTaxId)) {
+    for (const locator of Object.values(evidence)) {
+      if (locator.pageIndex === sellerPage) continue;
+      const pageText = pages.find((page) => page.pageIndex === locator.pageIndex)!.text;
+      const issuer = receiptIssuerText(pageText);
+      const sameVendorName = vendorName && normalizedReceiptText(issuer).includes(vendorName);
+      const sameVendorTaxId = vendorTaxId && collapseDigitSeparators(mapThaiDigits(issuer)).includes(vendorTaxId);
+      if (!sameVendorName && !sameVendorTaxId) return undefined;
+    }
+  }
+  const digest = createHash('sha256').update(Buffer.from(attachmentBase64, 'base64')).digest('hex');
+  return { version: 2, attachmentId, attachmentSha256: digest, pages, fields: evidence };
+}
+
 export function parseReceiptOcrJson(
   text: string,
   documentText: string,
   activeCategoryIds: ReadonlySet<string>,
   minimumLineCount: 1 | 2 = 2,
-): Pick<ReceiptOcrResponse, 'fields' | 'classification'> | null {
+  evidenceOptions: { requireEvidenceV2?: boolean; attachmentBase64?: string; attachmentId?: string } = {},
+): Pick<ReceiptOcrResponse, 'fields' | 'classification' | 'receiptEvidence'> | null {
   const json = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
   try {
     const raw = JSON.parse(json) as Record<string, unknown>;
@@ -1694,6 +2074,8 @@ export function parseReceiptOcrJson(
     // Spec §5: item rows are advisory. Every row must quote an OCR span that really exists, so a
     // hallucinated product cannot reach a draft; the API still drops the whole set unless the row
     // amounts reconcile with the printed totals.
+    if (evidenceOptions.requireEvidenceV2 && rawFields['lines'] !== undefined
+      && (!Array.isArray(rawFields['lines']) || rawFields['lines'].length > MAX_RECEIPT_OCR_LINES)) return null;
     if (Array.isArray(rawFields['lines']) && rawFields['lines'].length <= MAX_RECEIPT_OCR_LINES) {
       const lines: NonNullable<typeof out.lines> = [];
       for (const item of rawFields['lines']) {
@@ -1760,7 +2142,10 @@ export function parseReceiptOcrJson(
       // sole row survived evidence checks before arithmetic reconciliation. A partially dropped set
       // never represents the document in either mode.
       if (lines.length >= minimumLineCount && lines.length === rawFields['lines'].length) out.lines = lines;
+      else if (evidenceOptions.requireEvidenceV2) return null;
     }
+    if (evidenceOptions.requireEvidenceV2 && rawFields['additionalCharges'] !== undefined
+      && (!Array.isArray(rawFields['additionalCharges']) || rawFields['additionalCharges'].length > 10)) return null;
     if (Array.isArray(rawFields['additionalCharges']) && rawFields['additionalCharges'].length <= 10) {
       const charges: NonNullable<typeof out.additionalCharges> = [];
       for (const item of rawFields['additionalCharges']) {
@@ -1772,12 +2157,16 @@ export function parseReceiptOcrJson(
         const evidenceSignal = typeof charge['evidenceSignal'] === 'string' ? charge['evidenceSignal'].trim() : '';
         const rawRate = typeof charge['vatRate'] === 'string' ? charge['vatRate'].trim() : undefined;
         const rate = rawRate === undefined ? undefined : Number.parseFloat(rawRate);
+        const strictAmount = evidenceOptions.requireEvidenceV2 ? canonicalReceiptDecimal(amount) : undefined;
+        const amountValid = evidenceOptions.requireEvidenceV2
+          ? strictAmount !== undefined && strictAmount !== '0' && (kind === 'ROUNDING' || !strictAmount.startsWith('-'))
+          : Number.isFinite(Number(amount.replace(/,/g, ''))) && (kind === 'ROUNDING' ? Number(amount.replace(/,/g, '')) !== 0 : Number(amount.replace(/,/g, '')) > 0);
         const confidence = charge['confidence'];
         if (
           typeof kind !== 'string'
           || !RECEIPT_ADDITIONAL_CHARGE_KINDS.includes(kind as never)
           || !description || description.length > 120
-          || !amount || amount.length > 32 || !(Number.isFinite(Number(amount.replace(/,/g, ''))) && (kind === 'ROUNDING' ? Number(amount.replace(/,/g, '')) !== 0 : Number(amount.replace(/,/g, '')) > 0))
+          || !amount || amount.length > 32 || !amountValid
           || (kind === 'ROUNDING' && rawRate !== undefined && rate !== 0)
           || !evidenceSignal || evidenceSignal.length > 120 || !documentText.includes(evidenceSignal)
           || (rawRate !== undefined && (rawRate.length > 16 || !(rate !== undefined && Number.isFinite(rate) && rate >= 0 && rate < 1)))
@@ -1793,6 +2182,7 @@ export function parseReceiptOcrJson(
         });
       }
       if (charges.length > 0) out.additionalCharges = charges;
+      if (evidenceOptions.requireEvidenceV2 && charges.length !== rawFields['additionalCharges'].length) return null;
     }
     if (typeof rawFields['confidence'] === 'number') out.confidence = Math.max(0, Math.min(1, rawFields['confidence']));
     const suggestion = rawFields['categorySuggestion'];
@@ -1820,6 +2210,9 @@ export function parseReceiptOcrJson(
         }
       }
     }
+    if (evidenceOptions.requireEvidenceV2 && rawFields['missingFields'] !== undefined
+      && (!Array.isArray(rawFields['missingFields']) || rawFields['missingFields'].length > 20
+        || rawFields['missingFields'].some((value) => typeof value !== 'string' || value.length > 80))) return null;
     if (Array.isArray(rawFields['missingFields'])) {
       out.missingFields = rawFields['missingFields']
         .filter((v): v is string => typeof v === 'string')
@@ -1834,6 +2227,23 @@ export function parseReceiptOcrJson(
       ? undefined
       : parseBusinessDocumentClassification(raw['classification'], documentText);
     if (raw['classification'] !== undefined && !classification) return null;
+    if (evidenceOptions.requireEvidenceV2) {
+      if (!evidenceOptions.attachmentBase64 || !evidenceOptions.attachmentId || (!fields && classification?.contentKind !== 'MULTI_DOCUMENT')) return null;
+      const sourceFields = raw['fields'] && typeof raw['fields'] === 'object' ? rawFields : raw;
+      const simpleSourceFields = ['vendorName', 'vendorIdentityEvidence', 'vendorEntityKind', 'vendorTaxId', 'vendorBranchCode', 'vendorAddress', 'documentNumber', 'expenseDate', 'description', 'quantity', 'unitPrice', 'vatRate', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtRate', 'whtAmount', 'whtBaseAmount', 'grandTotalAmount', 'currency', 'vatMode'] as const;
+      if (simpleSourceFields.some((key) => sourceFields[key] !== undefined && sourceFields[key] !== null
+        && !(typeof sourceFields[key] === 'string' && sourceFields[key].trim()) && key !== 'vendorEntityKind')) return null;
+      if (simpleSourceFields.some((key) => typeof sourceFields[key] === 'string' && sourceFields[key].trim() && (fields as Record<string, unknown>)[key] === undefined)) return null;
+      if (sourceFields['buyerAsPrinted'] !== undefined) {
+        const sourceBuyer = sourceFields['buyerAsPrinted'];
+        if (!sourceBuyer || typeof sourceBuyer !== 'object' || Array.isArray(sourceBuyer) || !fields?.buyerAsPrinted) return null;
+        if (Object.entries(sourceBuyer as Record<string, unknown>).some(([key, value]) => value !== undefined
+          && !(key in fields.buyerAsPrinted!))) return null;
+      }
+      const receiptEvidence = compileReceiptEvidenceV2(fields ?? {}, sourceFields['fieldEvidence'], documentText, evidenceOptions.attachmentBase64, evidenceOptions.attachmentId);
+      if (!receiptEvidence) return null;
+      return { ...(fields ? { fields } : {}), ...(classification ? { classification } : {}), receiptEvidence };
+    }
     return fields || classification ? { ...(fields ? { fields } : {}), ...(classification ? { classification } : {}) } : null;
   } catch {
     return null;

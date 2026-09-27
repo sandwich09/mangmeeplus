@@ -24,6 +24,7 @@ export const DEFAULT_COMPANY_TIME_ZONE = 'Asia/Bangkok';
  * must be converted before it crosses the wire instead of being stored as a far-future CE date.
  */
 export const CIVIL_DATE_PATTERN = /^(?:[01]\d{3}|20\d{2}|2100)-\d{2}-\d{2}$/;
+export const CIVIL_PERIOD_PATTERN = /^(?:[01]\d{3}|20\d{2}|2100)-(?:0[1-9]|1[0-2])$/;
 
 /**
  * A value that should have been a calendar day was not one. Subclasses TypeError so existing
@@ -63,6 +64,18 @@ export function isCivilDate(value: unknown): value is CivilDate {
   if (typeof value !== 'string' || !CIVIL_DATE_PATTERN.test(value)) return false;
   const asUtc = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(asUtc.getTime()) && asUtc.toISOString().slice(0, 10) === value;
+}
+
+export function isCivilPeriodKey(value: unknown): value is string {
+  return typeof value === 'string' && CIVIL_PERIOD_PATTERN.test(value);
+}
+
+/** Inclusive Gregorian month bounds. Invalid month keys never roll into another year. */
+export function civilPeriodRange(periodKey: string): { startDate: CivilDate; endDate: CivilDate } {
+  if (!isCivilPeriodKey(periodKey)) throw new InvalidCivilDateError(periodKey);
+  const [year, month] = periodKey.split('-').map(Number);
+  const endDay = new Date(Date.UTC(year!, month!, 0)).getUTCDate();
+  return { startDate: `${periodKey}-01`, endDate: `${periodKey}-${String(endDay).padStart(2, '0')}` };
 }
 
 /** Wire value -> the `Date` to store in a `@db.Date` column (UTC midnight, never local). */
@@ -114,24 +127,59 @@ export function civilPeriodKey(value: CivilDate): string {
 }
 
 /**
- * An inclusive civil-date range as the half-open UTC instant range a `DateTime` column needs.
- *
- * Most date columns here are plain `DateTime`, not `@db.Date`, and rows really do carry a time —
- * a LINE receipt is stamped when it arrives, `paidAt` and `createdAt` are instants by definition.
- * `lte: <last day at midnight>` therefore matched only rows sitting exactly on midnight and hid
- * every other row on the range's final day. Measured on seed data: a vendor-bill filter for one
- * day returned 0 of 13. The upper bound must be the NEXT midnight, compared with `lt`.
- *
- * Inputs are sliced to 10 characters so a caller passing a full ISO string cannot stretch the
- * range by a day.
+ * An inclusive civil-date range for date-only columns stored at UTC midnight.
+ * The upper bound is the next UTC midnight and is compared with `lt`.
+ * Inputs are strict civil dates; timestamps and impossible calendar days are rejected.
  */
+function civilMidnightToUtc(value: CivilDate, timeZone: string): Date {
+  if (!isCivilDate(value)) throw new InvalidCivilDateError(value);
+  // Intl gives the zone's wall-clock parts at an instant. Iterating the offset twice handles the
+  // ordinary DST boundary without a date library; R1 business reads admit Asia/Bangkok only.
+  const target = civilDateToUtcDate(value).getTime();
+  let instant = target;
+  const clock = new Intl.DateTimeFormat('en-CA', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  });
+  for (let i = 0; i < 2; i += 1) {
+    const parts = clock.formatToParts(new Date(instant));
+    const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
+    const wallAsUtc = Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second'));
+    instant = target - (wallAsUtc - instant);
+  }
+  const result = new Date(instant);
+  if (civilDate(result, timeZone) !== value) throw new InvalidCivilDateError(value);
+  return result;
+}
+
 export function civilDayRangeToUtc(
   from?: string,
   to?: string,
 ): { gte?: Date; lt?: Date } {
+  if (from !== undefined && !isCivilDate(from)) throw new InvalidCivilDateError(from);
+  if (to !== undefined && !isCivilDate(to)) throw new InvalidCivilDateError(to);
+  if (from && to && from > to) throw new InvalidCivilDateError(`${from}..${to}`);
   return {
-    ...(from ? { gte: civilDateToUtcDate(from.slice(0, 10)) } : {}),
-    ...(to ? { lt: civilDateToUtcDate(addCivilDays(to.slice(0, 10), 1)) } : {}),
+    ...(from ? { gte: civilDateToUtcDate(from) } : {}),
+    ...(to ? { lt: civilDateToUtcDate(addCivilDays(to, 1)) } : {}),
+  };
+}
+
+/**
+ * Inclusive business-local range for timestamp columns such as `paidAt`, `uploadedAt`, and
+ * `createdAt`. A Bangkok civil day starts seven hours before UTC midnight.
+ */
+export function civilInstantDayRangeToUtc(
+  from?: string,
+  to?: string,
+  timeZone: string = DEFAULT_COMPANY_TIME_ZONE,
+): { gte?: Date; lt?: Date } {
+  if (from !== undefined && !isCivilDate(from)) throw new InvalidCivilDateError(from);
+  if (to !== undefined && !isCivilDate(to)) throw new InvalidCivilDateError(to);
+  if (from && to && from > to) throw new InvalidCivilDateError(`${from}..${to}`);
+  return {
+    ...(from ? { gte: civilMidnightToUtc(from, timeZone) } : {}),
+    ...(to ? { lt: civilMidnightToUtc(addCivilDays(to, 1), timeZone) } : {}),
   };
 }
 

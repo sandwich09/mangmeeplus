@@ -445,6 +445,7 @@ function makePrisma(opts: {
         create: async (args: any) => { args.data.createdAt ??= new Date(); createdLogs.push(args); return args; },
         updateMany: async (args: unknown) => { updates.push(args); return { count: 1 }; },
       },
+      lineDeliveryPlan: { findFirst: async () => null },
       lineTurnOutcome: {
         upsert: async (args: any) => {
           turnOutcomeWrites.push(args);

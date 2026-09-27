@@ -104,11 +104,7 @@ function stubWire(...replies: string[]): { calls: () => number } {
   globalThis.fetch = (async () => {
     const text = replies[Math.min(call, replies.length - 1)] ?? '';
     call += 1;
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({ output_text: text, usage: { input_tokens: 1, output_tokens: 1 } }),
-    } as Response;
+    return Response.json({ status: 'completed', output_text: text, usage: { input_tokens: 1, output_tokens: 1 } });
   }) as typeof fetch;
   return { calls: () => call };
 }
@@ -131,7 +127,7 @@ const ROUTED_TO_LIST = JSON.stringify({
 
 beforeEach(() => {
   // Default: model wire DOWN. Any test that needs a real router answer stubs it explicitly.
-  globalThis.fetch = (async () => ({ ok: false, status: 500, json: async () => ({}) } as Response)) as typeof fetch;
+  globalThis.fetch = (async () => Response.json({}, { status: 500 })) as typeof fetch;
 });
 afterEach(() => { globalThis.fetch = originalFetch; });
 

@@ -1,9 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import type { ReportDatasetDefinitionDto, ReportQueryInput } from '@watchdog-bms/contracts';
-import { civilDate, civilPeriodKey } from '@watchdog-bms/contracts';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const PERIOD_RE = /^\d{4}-\d{2}$/;
+import { civilDate, civilPeriodKey, isCivilDate, isCivilPeriodKey } from '@watchdog-bms/contracts';
 
 export const REPORT_MAX_PAGE_SIZE = 100;
 export const REPORT_SYNC_EXPORT_MAX_ROWS = 5_000;
@@ -24,10 +21,11 @@ export function validateReportQuery(definition: ReportDatasetDefinitionDto, inpu
   const sortKeys = new Set([...filterKeys, ...dimensionKeys, ...measureKeys]);
 
   const filters = { ...(input.filters ?? {}) };
-  if (definition.supportedFilters.some((filter) => filter.key === 'periodKey') && !filters.periodKey) {
+  if (definition.supportedFilters.some((filter) => filter.key === 'periodKey')
+    && !filters.periodKey && !filters.fromDate && !filters.toDate) {
     filters.periodKey = defaultPeriodKey();
   }
-  if (definition.supportedFilters.some((filter) => filter.key === 'fromDate') && !filters.fromDate && !filters.toDate) {
+  if (definition.supportedFilters.some((filter) => filter.key === 'fromDate') && !filters.periodKey && !filters.fromDate && !filters.toDate) {
     const range = defaultDateRange();
     if (filterKeys.has('fromDate')) filters.fromDate = range.fromDate;
     if (filterKeys.has('toDate')) filters.toDate = range.toDate;
@@ -35,12 +33,23 @@ export function validateReportQuery(definition: ReportDatasetDefinitionDto, inpu
 
   for (const [key, value] of Object.entries(filters)) {
     if (!filterKeys.has(key)) throw new BadRequestException({ code: 'invalid_filter', message: `Unknown filter: ${key}` });
-    if ((key === 'fromDate' || key === 'toDate' || key === 'asOfDate') && typeof value === 'string' && !DATE_RE.test(value)) {
+    if ((key === 'fromDate' || key === 'toDate' || key === 'asOfDate') && !isCivilDate(value)) {
       throw new BadRequestException({ code: 'invalid_filter', message: `Invalid date filter: ${key}` });
     }
-    if (key === 'periodKey' && typeof value === 'string' && !PERIOD_RE.test(value)) {
+    if (key === 'periodKey' && !isCivilPeriodKey(value)) {
       throw new BadRequestException({ code: 'invalid_filter', message: 'Invalid periodKey' });
     }
+  }
+  const hasFrom = filters.fromDate !== undefined;
+  const hasTo = filters.toDate !== undefined;
+  if (hasFrom !== hasTo) {
+    throw new BadRequestException({ code: 'invalid_filter', message: 'fromDate and toDate must be supplied together' });
+  }
+  if (hasFrom && String(filters.fromDate) > String(filters.toDate)) {
+    throw new BadRequestException({ code: 'invalid_filter', message: 'fromDate must not be after toDate' });
+  }
+  if (filters.periodKey !== undefined && hasFrom) {
+    throw new BadRequestException({ code: 'invalid_filter', message: 'periodKey cannot be combined with fromDate/toDate' });
   }
 
   const dimensions = input.dimensions ?? [];

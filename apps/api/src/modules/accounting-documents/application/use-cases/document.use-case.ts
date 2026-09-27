@@ -456,9 +456,13 @@ export class ListDocumentsUseCase {
    */
   async aggregateByType(
     ctx: RequestContext,
-    filter: { fromDate?: string; toDate?: string; branchId?: string },
-  ): Promise<{ total: number; byType: Record<string, { count: number; totalAmount: string }> }> {
+    filter: { fromDate?: string; toDate?: string; branchId?: string; documentType?: AccountingDocumentType; status?: ListDocumentsFilter['status'] },
+  ): Promise<{ total: number; byType: Record<string, { count: number; totalAmount: string | null; currency: string | null; totalsByCurrency: Array<{ currency: string; totalAmount: string; count: number }> }> }> {
     return this.repo.aggregateDocumentsByType(this.scopedFilter(ctx, filter), ctx.scopes.branchIds);
+  }
+
+  async aggregateOpenReceivables(ctx: RequestContext) {
+    return this.repo.aggregateOpenReceivables(this.scopedFilter(ctx, {}), ctx.scopes.branchIds);
   }
 }
 

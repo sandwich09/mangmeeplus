@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js';
-import { civilDayRangeToUtc, isCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
+import { civilDayRangeToUtc, civilInstantDayRangeToUtc, isCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
 import type {
   IncomeExpenseLedgerCategoryAmount,
   IncomeExpenseLedgerVatRegistrationAlert,
@@ -7,7 +7,6 @@ import type {
 } from '@watchdog-bms/contracts';
 
 export const INCOME_EXPENSE_LEDGER_TIMEZONE = 'Asia/Bangkok' as const;
-const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1_000;
 
 const money = (value: Decimal.Value | null | undefined) => new Decimal(value ?? 0);
 const moneyString = (value: Decimal.Value) => money(value).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
@@ -30,11 +29,7 @@ export function ledgerCivilRange(from: string, to: string) {
 
 /** paidAt is an instant, so Bangkok's local midnight is UTC-7h. */
 export function ledgerBangkokInstantRange(from: string, to: string) {
-  const range = civilDayRangeToUtc(from, to);
-  return {
-    ...(range.gte && { gte: new Date(range.gte.getTime() - BANGKOK_UTC_OFFSET_MS) }),
-    ...(range.lt && { lt: new Date(range.lt.getTime() - BANGKOK_UTC_OFFSET_MS) }),
-  };
+  return civilInstantDayRangeToUtc(from, to);
 }
 
 export function calculateIncomeExpenseLedgerAmounts(input: {

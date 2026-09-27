@@ -14,6 +14,7 @@
  */
 import type { LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
+import { aggregationIncomplete, appliedPeriod } from '../domain/logic/business-read-result-semantics';
 
 export type PreparedFormatResult =
   | { kind: 'answer'; replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[] }
@@ -103,8 +104,9 @@ function periodLine(
   // The label already reads as Thai ("เดือนที่แล้ว (1–31 ส.ค. 2569)"), so it replaces the bare ISO
   // range for a Thai answer; an English answer keeps the ISO dates it has always printed.
   if (!english && periodLabel) return `\nช่วง: ${periodLabel}`;
-  const from = typeof proposedInput?.['fromDate'] === 'string' ? proposedInput['fromDate'] as string : undefined;
-  const to = typeof proposedInput?.['toDate'] === 'string' ? proposedInput['toDate'] as string : undefined;
+  const effective = appliedPeriod(data);
+  const from = effective?.fromDate ?? (typeof proposedInput?.['fromDate'] === 'string' ? proposedInput['fromDate'] as string : undefined);
+  const to = effective?.toDate ?? (typeof proposedInput?.['toDate'] === 'string' ? proposedInput['toDate'] as string : undefined);
   let phrase = rangePhrase(from, to);
   if (!phrase) {
     const echoed = data?.['period'];
@@ -134,11 +136,6 @@ function sourceData(output: SpecialistOutput, tool: string): Record<string, unkn
  * `unverified` and the lane answers with the honest terminal instead of a wrong total. Matched on the
  * key's shape so a flag a tool adds later (`truncated`, `partial`, `capped`, …) still trips this.
  */
-const INCOMPLETE_AGGREGATION_KEY = /truncat|partial|capped|incomplete/i;
-function aggregationIncomplete(data: Record<string, unknown>): boolean {
-  return Object.entries(data).some(([key, value]) => INCOMPLETE_AGGREGATION_KEY.test(key) && Boolean(value));
-}
-
 /** Exact 2dp half-up rounding on a plain decimal string — pure string math, no binary float
  *  anywhere (PR #238 R3): Number('90071992547409.93').toFixed(2) === '90071992547409.94', so a
  *  string that survived the whole pipeline exactly must not be handed to Number at the very last

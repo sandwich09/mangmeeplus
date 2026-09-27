@@ -1507,3 +1507,38 @@ describe('LINE intake router – an unparseable answer is logged, bounded, model
     assert.equal(fine.warned.length, 0);
   });
 });
+
+describe('approved knowledge selection in the existing semantic route', () => {
+  const offered = [{ id: 'expense.status', version: 1, title: 'สถานะเอกสาร', questions: ['ยืนยันแล้วจ่ายหรือยัง'], summary: 'เอกสารกับการชำระเงิน' }];
+  const readPlan = {
+    status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+    intents: [{ intent: 'read_summary', subject: 'sale', agent: 'sales', priority: 1, requiredTools: ['sales.get_sales_summary'], missingContext: [] }],
+  };
+  it('selects help with the same model call while retaining the independent business read', async () => {
+    let calls = 0; let input: ProviderInput | undefined;
+    const router = new IntentRouterAgent({ generateText: async (value) => {
+      calls++; input = value;
+      return { ok: true, text: JSON.stringify({ ...readPlan, selectedKnowledgeCardIds: ['expense.status'] }) };
+    } }, false, { enabled: true });
+    const text = 'ยืนยนแล้วคือจ่ายยัง แล้วช่วยดูยอดขายวันนี้ด้วย';
+    const result = await router.route(text, false, undefined, undefined, offered);
+    assert.equal(calls, 1);
+    assert.deepEqual(result.selectedKnowledgeCardIds, ['expense.status']);
+    assert.deepEqual(result.intents, readPlan.intents);
+    const payload = JSON.parse(input!.messages[0]!.text);
+    assert.equal(payload.messageText, text);
+    assert.deepEqual(payload.approvedKnowledge, offered);
+    assert.match(input!.systemPrompt ?? '', /same JSON response/i);
+  });
+  it('does not leak unvalidated selections from spread model properties', async () => {
+    for (const selected of [['invented'], ['expense.status', 'expense.status'], ['expense.status']]) {
+      const enabled = selected[0] !== 'expense.status' || selected.length > 1;
+      const router = new IntentRouterAgent({ generateText: async () => ({
+        ok: true, text: JSON.stringify({ ...readPlan, selectedKnowledgeCardIds: selected }),
+      }) }, false, { enabled });
+      const result = await router.route('ช่วยดูยอดขาย', false, undefined, undefined, offered);
+      assert.equal(result.selectedKnowledgeCardIds, undefined);
+      assert.deepEqual(result.intents, readPlan.intents);
+    }
+  });
+});

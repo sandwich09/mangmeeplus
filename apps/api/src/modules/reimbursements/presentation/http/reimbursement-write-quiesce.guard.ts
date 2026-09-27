@@ -14,6 +14,14 @@ export const REIMBURSEMENT_UPGRADE_MESSAGE =
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+export function assertReimbursementWriteAvailable(config: Pick<AppConfigService, 'reimbursementWriteQuiesce'>): void {
+  if (!config.reimbursementWriteQuiesce) return;
+  throw new ServiceUnavailableException({
+    code: REIMBURSEMENT_UPGRADE_ERROR_CODE,
+    message: REIMBURSEMENT_UPGRADE_MESSAGE,
+  });
+}
+
 /**
  * Controller guard (after auth/permission, before DTO pipes): the bounded production bridge can
  * keep every reimbursement read available without accepting either old or new mutation payloads.
@@ -28,14 +36,13 @@ export class ReimbursementWriteQuiesceGuard implements CanActivate {
     const http = context.switchToHttp();
     const request = http.getRequest<Request>();
     if (READ_METHODS.has(request.method.toUpperCase())) return true;
+    if (request.method.toUpperCase() === 'POST' && /\/reimbursements\/draft-actions\/[^/]+\/cancel\/?$/.test(request.path)) return true;
 
     http.getResponse<Response>().setHeader(
       'Retry-After',
       String(REIMBURSEMENT_UPGRADE_RETRY_AFTER_SECONDS),
     );
-    throw new ServiceUnavailableException({
-      code: REIMBURSEMENT_UPGRADE_ERROR_CODE,
-      message: REIMBURSEMENT_UPGRADE_MESSAGE,
-    });
+    assertReimbursementWriteAvailable(this.config);
+    return true;
   }
 }

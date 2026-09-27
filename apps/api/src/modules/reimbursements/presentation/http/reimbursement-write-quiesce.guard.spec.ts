@@ -10,11 +10,11 @@ import {
   ReimbursementWriteQuiesceGuard,
 } from './reimbursement-write-quiesce.guard';
 
-function context(method: string) {
+function context(method: string, path = '/companies/company-1/reimbursements/request-1') {
   const headers: Record<string, string> = {};
   const ctx = {
     switchToHttp: () => ({
-      getRequest: () => ({ method }),
+      getRequest: () => ({ method, path }),
       getResponse: () => ({ setHeader: (name: string, value: string) => { headers[name] = value; } }),
     }),
   } as unknown as ExecutionContext;
@@ -31,6 +31,12 @@ describe('ReimbursementWriteQuiesceGuard', () => {
   it('keeps GET, HEAD and OPTIONS available while quiesced', () => {
     const guard = new ReimbursementWriteQuiesceGuard({ reimbursementWriteQuiesce: true } as any);
     for (const method of ['GET', 'HEAD', 'OPTIONS']) assert.equal(guard.canActivate(context(method).ctx), true);
+  });
+
+  it('keeps the action rollback endpoint available while blocking confirmation', () => {
+    const guard = new ReimbursementWriteQuiesceGuard({ reimbursementWriteQuiesce: true } as any);
+    assert.equal(guard.canActivate(context('POST', '/companies/c1/reimbursements/draft-actions/a1/cancel').ctx), true);
+    assert.throws(() => guard.canActivate(context('POST', '/companies/c1/reimbursements/draft-actions/a1/confirm').ctx));
   });
 
   it('rejects every mutation method with one retryable coded 503 before reading a body', () => {

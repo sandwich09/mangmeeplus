@@ -23,9 +23,15 @@ function makePrisma(opts: {
     rolePermissions: [...(opts.rolePermissions ?? [])],
     membershipRoles: (opts.membershipRoles ?? []).map(({ membershipId, roleId }) => ({ membershipId, roleId })),
     auditLogs: [] as any[],
+    contextInvalidations: [] as any[],
   };
   const membershipCompanies = new Map((opts.membershipRoles ?? []).map((row) => [row.membershipId, row.companyId]));
   const tx = {
+    $queryRaw: async () => [],
+    aiConversation: { findMany: async () => [], deleteMany: async ({ where }: any) => { state.contextInvalidations.push(where); return { count: 1 }; } },
+    companyMembership: { findMany: async ({ where }: any) => state.membershipRoles
+      .filter(row => membershipCompanies.get(row.membershipId) === where.companyId && row.roleId === where.roles.some.roleId)
+      .map(row => ({ userId: `user-${row.membershipId}` })) },
     role: {
       findUnique: async ({ where }: any) => {
         if (where.scopeKey_key) {
@@ -432,6 +438,7 @@ describe('UpdateRoleUseCase', () => {
     });
 
     const fork = state.roles.find((role) => role.scopeKey === COMPANY_ID && role.key === systemRole.key);
+    assert.deepEqual(state.contextInvalidations, [{ companyId: COMPANY_ID, userId: 'user-membership-1', channelKind: null }]);
     const expectedKeys = compileRole({
       permissionKeys: [REAL_PERMISSION],
       entitledFeatureKeys: null,

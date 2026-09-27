@@ -337,6 +337,7 @@ function makeUnlinkPrisma(handoffRows: HandoffRow[] = [], credential: any = { st
   const updated: unknown[] = [];
   const contextDeletes: unknown[] = [];
   const ops = {
+    aiConversation: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
     $executeRaw: async () => 1, $queryRaw: async () => [{ now: new Date() }],
     user: { findUnique: async () => ({ id: 'user-1', status: 'ACTIVE', username: 'owner', email: null, emailVerifiedAt: null, emailRevision: 0, credential, externalIdentities: [] }), update: async () => ({}) },
     emailVerificationToken: { findFirst: async () => null, updateMany: async () => ({ count: 0 }) },

@@ -61,6 +61,7 @@ export class InitReceiptUploadUseCase {
          * same guarantee for a group chat.
          */
         pushTargetId?: string;
+        ownerBinding?: { conversationId: string; membershipId: string; channelId: string; ownerEpoch: number };
       };
     },
   ): Promise<InitReceiptUploadResult> {
@@ -101,6 +102,7 @@ export class InitReceiptUploadUseCase {
         lineMessageId: cmd.lineCapture.lineMessageId, lineEventId: cmd.lineCapture.lineEventId,
         sourceChannelMetadataJson: { channel: 'LINE', kind: 'media', chatKeyHash: cmd.lineCapture.chatKeyHash, receiptCapturePending: true,
           ...(cmd.lineCapture.pushTargetId ? { pushTargetId: cmd.lineCapture.pushTargetId } : {}),
+          ...(cmd.lineCapture.ownerBinding && cmd.lineCapture.ownerBinding.membershipId === ctx.membershipId ? { ownerBinding: cmd.lineCapture.ownerBinding } : {}),
           receiptUpload: { originalFileName: cmd.originalFileName, mimeType: cmd.mimeType, byteSize: cmd.byteSize } },
       } : {}),
       // Date-only after shared validation/coercion. An instant from the LINE path must never put a

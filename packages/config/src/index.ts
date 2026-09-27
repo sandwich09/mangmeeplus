@@ -7,6 +7,31 @@ const envBoolean = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
+// Reliability v2 readers and writers must parse the same rollout contract in both services.
+// Empty means nobody is admitted. Wildcards, blank entries and malformed IDs never broaden it.
+const lineAiIdAllowlist = z.string().default('').transform((value, ctx) => {
+  if (value.trim() === '') return [];
+  const ids = value.split(',').map((entry) => entry.trim());
+  if (ids.some((id) => !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id))) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Expected comma-separated company or messaging channel IDs without wildcards or empty entries' });
+    return z.NEVER;
+  }
+  return [...new Set(ids)];
+});
+
+const lineAiReliabilityConfigShape = {
+  LINE_AI_RELIABILITY_V2_MODE: z.enum(['off', 'shadow', 'on']).default('off'),
+  LINE_AI_RELIABILITY_V2_COMPANY_IDS: lineAiIdAllowlist,
+  LINE_AI_DELIVERY_PLAN_V2_ENABLED: envBoolean.default(false),
+  LINE_AI_DELIVERY_PLAN_V2_WRITE_COMPANY_IDS: lineAiIdAllowlist,
+  LINE_AI_DELIVERY_PLAN_V2_PUBLIC_CHANNEL_IDS: lineAiIdAllowlist,
+  LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED: envBoolean.default(false),
+  LINE_AI_DOCUMENT_QA_ENABLED: envBoolean.default(false),
+  LINE_AI_APPROVED_KNOWLEDGE_ENABLED: envBoolean.default(false),
+  LINE_AI_PUBLIC_LOOKUP_ENABLED: envBoolean.default(false),
+  LINE_AI_PREFERENCES_ENABLED: envBoolean.default(false),
+};
+
 // ─── Base (all services) ───────────────────────────────────────────────────────
 
 export const baseConfigSchema = z.object({
@@ -149,6 +174,7 @@ export const DEFAULT_APPROVED_AI_MODEL_IDS = [
 // ─── API service ───────────────────────────────────────────────────────────────
 
 export const apiConfigSchema = baseConfigSchema.extend({
+  ...lineAiReliabilityConfigShape,
   // Database
   DATABASE_URL: z.string().min(1),
   DATABASE_SECRET_ARN: z.string().optional(),
@@ -479,6 +505,7 @@ export const apiConfigSchema = baseConfigSchema.extend({
 // ─── AI Gateway service ────────────────────────────────────────────────────────
 
 export const aiGatewayConfigSchema = baseConfigSchema.extend({
+  ...lineAiReliabilityConfigShape,
   APPROVED_AI_MODEL_IDS: z.string().default(DEFAULT_APPROVED_AI_MODEL_IDS),
   APPROVED_AI_PROVIDERS: z.string().default('bedrock,openai'),
   APPROVED_AI_REGIONS: z.string().default('ap-southeast-1'),

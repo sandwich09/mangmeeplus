@@ -133,6 +133,16 @@ export class AppConfigService {
   // S-4 draft edit over LINE (preview card → confirm postback → apply). OFF = the five
   // `draft_update` tools are refused by the executor and the webhook renders no preview card.
   get lineAiDraftEditEnabled(): boolean { return this.config.LINE_AI_DRAFT_EDIT_ENABLED; }
+  get lineAiReliabilityV2Mode(): 'off' | 'shadow' | 'on' { return this.config.LINE_AI_RELIABILITY_V2_MODE; }
+  get lineAiReliabilityV2CompanyIds(): string[] { return [...this.config.LINE_AI_RELIABILITY_V2_COMPANY_IDS]; }
+  get lineAiDeliveryPlanV2Enabled(): boolean { return this.config.LINE_AI_DELIVERY_PLAN_V2_ENABLED; }
+  get lineAiDeliveryPlanV2WriteCompanyIds(): string[] { return [...this.config.LINE_AI_DELIVERY_PLAN_V2_WRITE_COMPANY_IDS]; }
+  get lineAiDeliveryPlanV2PublicChannelIds(): string[] { return [...this.config.LINE_AI_DELIVERY_PLAN_V2_PUBLIC_CHANNEL_IDS]; }
+  get lineAiReimbursementDraftWriteEnabled(): boolean { return this.config.LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED; }
+  get lineAiDocumentQaEnabled(): boolean { return this.config.LINE_AI_DOCUMENT_QA_ENABLED; }
+  get lineAiApprovedKnowledgeEnabled(): boolean { return this.config.LINE_AI_APPROVED_KNOWLEDGE_ENABLED; }
+  get lineAiPublicLookupEnabled(): boolean { return this.config.LINE_AI_PUBLIC_LOOKUP_ENABLED; }
+  get lineAiPreferencesEnabled(): boolean { return this.config.LINE_AI_PREFERENCES_ENABLED; }
   // Item 10F: LINE AI turn ledger (Redis Streams; ADR 0010)
   get redisUrl(): string { return this.config.REDIS_URL; }
   get s3Bucket(): string { return this.config.S3_BUCKET; }

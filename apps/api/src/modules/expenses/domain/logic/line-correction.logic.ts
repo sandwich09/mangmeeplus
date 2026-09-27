@@ -16,11 +16,12 @@
  * 3. All-or-nothing — a partially applied correction leaves the record in a state the user never
  *    asked for, so any failing field aborts the whole turn.
  */
+import Decimal from 'decimal.js';
 import { extractValueCandidates } from '@watchdog-bms/contracts';
-import type { LineCorrectionField, LineIntakeCorrectionHints, LineIntakeCorrectionValue } from '@watchdog-bms/contracts';
+import type { LineAiValueCandidatesV2, LineCorrectionField, LineIntakeCorrectionHints, LineIntakeCorrectionValue } from '@watchdog-bms/contracts';
 
 /** One evidence text plus the day it was written, so relative readings resolve as they did then. */
-export type CorrectionEvidence = { text: string; todayIso: string };
+export type CorrectionEvidence = { text: string; todayIso: string; valueCandidatesV2?: LineAiValueCandidatesV2 };
 
 /** Narrow read-only question about the LINE edit capability. Keep requests carrying a value or a
  * field-specific change on the normal correction route, where they can only produce a preview. */
@@ -52,11 +53,22 @@ function appearsIn(evidence: CorrectionEvidence[], value: string): boolean {
   return evidence.some((item) => normalize(item.text).includes(needle));
 }
 
+function exactAmount(value: string): string | undefined {
+  if (!/^-?\d+(?:\.\d+)?$/.test(value)) return undefined;
+  return new Decimal(value).toFixed();
+}
+
 function amountCandidates(evidence: CorrectionEvidence[]): Set<string> {
   const values = new Set<string>();
   for (const item of evidence) {
-    for (const candidate of extractValueCandidates(item.text, item.todayIso).amounts) {
-      values.add(String(Number.parseFloat(candidate.value)));
+    // Verified v2 overflow means no guessed or partial set may authorize a number.
+    const candidates = item.valueCandidatesV2
+      ? item.valueCandidatesV2.completeness === 'complete' ? item.valueCandidatesV2.amounts : []
+      : extractValueCandidates(item.text, item.todayIso, { scan: { observe() {}, datePositions: new WeakMap() } }).amounts;
+    if (candidates.length > 128) continue;
+    for (const candidate of candidates) {
+      const canonical = exactAmount(candidate.value);
+      if (canonical !== undefined) values.add(canonical);
     }
   }
   return values;
@@ -65,7 +77,11 @@ function amountCandidates(evidence: CorrectionEvidence[]): Set<string> {
 function dateCandidates(evidence: CorrectionEvidence[]): Set<string> {
   const values = new Set<string>();
   for (const item of evidence) {
-    for (const candidate of extractValueCandidates(item.text, item.todayIso).dates) {
+    const candidates = item.valueCandidatesV2
+      ? item.valueCandidatesV2.completeness === 'complete' ? item.valueCandidatesV2.dates : []
+      : extractValueCandidates(item.text, item.todayIso, { scan: { observe() {}, datePositions: new WeakMap() } }).dates;
+    if (candidates.length > 64) continue;
+    for (const candidate of candidates) {
       values.add(candidate.isoDate);
     }
   }
@@ -78,7 +94,8 @@ function dateCandidates(evidence: CorrectionEvidence[]): Set<string> {
  * rule is exactly how one of them ends up looser than the other.
  */
 export function amountAppearsInEvidence(evidence: CorrectionEvidence[], value: string): boolean {
-  return amountCandidates(evidence).has(String(Number.parseFloat(value)));
+  const canonical = exactAmount(value);
+  return canonical !== undefined && amountCandidates(evidence).has(canonical);
 }
 
 export function dateAppearsInEvidence(evidence: CorrectionEvidence[], isoDate: string): boolean {
@@ -104,16 +121,15 @@ function currentValue(target: CorrectionTargetSnapshot, field: LineCorrectionFie
 function sameValue(field: LineCorrectionField, a: string | null, b: string | null): boolean {
   if (a === null || b === null) return a === b;
   if (field === 'amount') {
-    const left = Number.parseFloat(a);
-    const right = Number.parseFloat(b);
-    return Number.isFinite(left) && Number.isFinite(right) && left === right;
+    const left = exactAmount(a);
+    return left !== undefined && left === exactAmount(b);
   }
   if (field === 'expenseDate') return a.slice(0, 10) === b.slice(0, 10);
   return normalize(a) === normalize(b);
 }
 
 function groundedValue(field: LineCorrectionField, value: string, evidence: CorrectionEvidence[]): boolean {
-  if (field === 'amount') return amountCandidates(evidence).has(String(Number.parseFloat(value)));
+  if (field === 'amount') return amountAppearsInEvidence(evidence, value);
   if (field === 'expenseDate') return dateCandidates(evidence).has(value.slice(0, 10));
   return appearsIn(evidence, value);
 }
@@ -150,6 +166,8 @@ export function evaluateCorrectionHints(
 
   const fields: Partial<Record<LineCorrectionField, { from: string | null; to: string }>> = {};
   for (const [field, value] of requested) {
+    const limit = field === 'vendorName' ? 200 : field === 'documentNumber' ? 60 : field === 'note' ? 500 : undefined;
+    if (limit !== undefined && value.to.length > limit) return { status: 'guidance', reason: `field_too_long:${field}:${limit}` };
     if (!groundedValue(field, value.to, evidence)) {
       return { status: 'guidance', reason: `ungrounded_value:${field}` };
     }

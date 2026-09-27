@@ -11,6 +11,7 @@ import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { formatDraftUpdateReply } from './draft-update-formatter';
 
 export const ALLOWED_TOOLS = new Set([
+  'public.lookup',
   'accounting.get_summary',
   'accounting.list_recent_documents',
   'accounting.get_document_detail',
@@ -18,6 +19,8 @@ export const ALLOWED_TOOLS = new Set([
   'ledger.get_financial_summary',
   'ledger.get_period_status',
   'ledger.get_report_summary',
+    'bank.get_account_balances',
+    'bank.get_reconciliation_status',
   'expense.list_recent',
   'expense.get_detail',
   'expense.explain_record',

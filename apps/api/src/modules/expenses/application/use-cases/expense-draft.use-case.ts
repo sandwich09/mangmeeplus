@@ -245,6 +245,55 @@ export class ListExpensesUseCase {
     if (!canRead && canReadOwn && !canReadRelated) resolved.createdByUserId = ctx.userId;
     return this.repo.listExpenses(resolved, ctx.scopes, !canRead && canReadRelated ? ctx.userId : undefined);
   }
+
+  async readReportSummary(ctx: RequestContext, filter: { fromDate?: string; toDate?: string; branchId?: string }) {
+    const scope = this.aiReadScope(ctx, filter.branchId);
+    return this.repo.readReportSummary({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope);
+  }
+
+  async readAiSummary(
+    ctx: RequestContext,
+    filter: Omit<import('../../infrastructure/prisma-expense.repository').AiExpenseReadFilter, 'companyId'>,
+    limit: number,
+    cursor?: { expenseDate: Date; id: string },
+  ) {
+    const scope = this.aiReadScope(ctx, filter.branchId);
+    return this.repo.readAiExpenseSummary({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope, limit, cursor);
+  }
+
+  async readAiBreakdown(
+    ctx: RequestContext,
+    filter: Omit<import('../../infrastructure/prisma-expense.repository').AiExpenseReadFilter, 'companyId'>,
+  ) {
+    const scope = this.aiReadScope(ctx, filter.branchId);
+    return this.repo.readAiExpenseBreakdown({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope);
+  }
+
+  async readAiGroups(
+    ctx: RequestContext,
+    filter: Omit<import('../../infrastructure/prisma-expense.repository').AiExpenseReadFilter, 'companyId'>,
+    groupBy: import('../../infrastructure/prisma-expense.repository').AiExpenseGroupBy,
+    limit: number,
+    offset: number,
+  ) {
+    const scope = this.aiReadScope(ctx, filter.branchId);
+    return this.repo.readAiExpenseGroups({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope, groupBy, limit, offset);
+  }
+
+  private aiReadScope(ctx: RequestContext, branchId?: string) {
+    const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review');
+    const canReadOwn = hasPerm(ctx, 'expense.read_own');
+    const canReadRelated = hasPerm(ctx, 'expense.read_related');
+    if (!canRead && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read expenses');
+    if (branchId) assertBranchInScope(ctx, branchId);
+    return {
+      filter: !canRead && canReadOwn && !canReadRelated ? { createdByUserId: ctx.userId } : {},
+      scope: {
+        branchIds: ctx.scopes.branchIds,
+        ...(!canRead && canReadRelated ? { relatedUserId: ctx.userId } : {}),
+      },
+    };
+  }
 }
 
 type UpdateExpenseDraftOptions = {

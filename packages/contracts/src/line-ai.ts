@@ -2,7 +2,21 @@
 
 import type { SourceRef } from './ai-tools.js';
 import type { AiModelLineage, AiModelPolicy, AiUsageEntry } from './ai-lineage.js';
-import type { LineAiValueCandidates } from './line-ai-value-normalizer.js';
+import {
+  parseLineAiValueCandidates as parseNormalizedLineAiValueCandidates,
+  type LineAiValueCandidates as NormalizedLineAiValueCandidates,
+  type LineAiValueCandidatesV2,
+} from './line-ai-value-normalizer.js';
+import type { LineAiInputEvidenceV2 } from './line-ai-input-evidence.js';
+import { parseAiBudgetGrantV2 } from './ai-budget-bounds.js';
+import { parseLineAiInputEvidence, verifyLineAiInputEvidence, validateLineAiSourceRefV2, type LineAiSourceRefV2 } from './line-ai-input-evidence.js';
+import type { AiBudgetGrantV2 } from './ai-budget-bounds.js';
+
+export type LineAiTurnValueCandidates = NormalizedLineAiValueCandidates | LineAiValueCandidatesV2;
+
+export function parseLineAiTurnValueCandidates(value: unknown, messageText: string): LineAiTurnValueCandidates | undefined {
+  return parseNormalizedLineAiValueCandidates(value, messageText);
+}
 
 /** 1 chat credit = 1 baht of metered CHAT cost; OCR/receipt reads are accounted separately. */
 export const DEFAULT_CHAT_CREDIT_SATANG = 8_000;
@@ -66,6 +80,56 @@ export const LINE_AI_BUSINESS_SUBJECTS = [
 ] as const;
 
 export type LineAiBusinessSubject = (typeof LINE_AI_BUSINESS_SUBJECTS)[number];
+
+export type LineAiResponsePreferences = {
+  language: 'th' | 'en';
+  detail: 'short' | 'normal' | 'detailed';
+  presentation: 'prose' | 'bullets' | 'table' | 'steps';
+};
+
+export type LineAiTaskProjectionV2 = {
+  version: 2;
+  stateVersion: number;
+  lifecycleEpoch: number;
+  expiresAtMs: number;
+  tasks: Array<{
+    taskId: string;
+    revision: number;
+    kind: 'read' | 'write' | 'general' | 'help' | 'public' | 'file';
+    state: 'active' | 'waiting_user' | 'waiting_job' | 'paused' | 'completed' | 'canceled' | 'invalidated';
+    userGoal: string;
+    subrequests: Array<{ index: number; kind: 'read'|'write'|'general'|'help'|'public'|'file'; goal: string; status: 'pending'|'handled'|'denied'|'unsupported'|'needs_user' }>;
+    slots?: Record<string, string | number | boolean | null>;
+    constraints?: string[];
+    deliveredQuestionRefs?: string[];
+    sourceRevisionLocators?: Array<{ sourceType: string; sourceId: string; revision: string }>;
+    attachmentPageRefs?: Array<{ attachmentId: string; contentHash: string; pages: number[] }>;
+  }>;
+};
+
+export type LineAiSemanticSubrequestV2 = {
+  index: number;
+  /** Advisory selection from the offered task projection; API rechecks exact owner/revision before CAS. */
+  taskRef?: { taskId: string; taskRevision: number; subrequestIndex: number };
+  kind: 'read' | 'general' | 'write' | 'help' | 'public' | 'file';
+  /** Typed proposal only; each API domain still validates evidence, state and mutation authority. */
+  writeIntent?: 'EXPENSE_DOCUMENT_CAPTURE' | 'EXPENSE_DRAFT_CONTINUATION' | 'EXPENSE_CAPTURE_CORRECTION' | 'SUBSTITUTE_RECEIPT_CONTINUATION' | 'REIMBURSEMENT_REQUEST_START';
+  goal: string;
+  requiredEvidence: string[];
+  requestedFilters: Record<string, string | number | boolean | null>;
+  /** Exact user phrase only; it is a lookup hint, never an entity/action ID. */
+  entityReference?: { kind: 'user_text'; value: string };
+  dependsOn: number[];
+  evidenceRefs?: LineAiSourceRefV2[];
+};
+
+/** API-verified historical clause selected from an immutable accepted request. It is context only:
+ * the live request keeps its own messageText, evidence and budget authority. */
+export type LineAiRetainedTaskSourceV2 = {
+  taskRef: { taskId: string; taskRevision: number; subrequestIndex: number };
+  inputEvidence: LineAiInputEvidenceV2;
+  semanticSubrequest: LineAiSemanticSubrequestV2;
+};
 
 export type LineAiRefusalReason =
   | 'mutation_blocked'
@@ -209,6 +273,25 @@ export type LineAiTurnRequest = {
    *  about the caller's own company only — never another company's, never a permission grant. */
   entitledFeatureKeys?: string[];
   messageText: string;
+  /** Complete immutable v2 raw webhook evidence. When present, receivers must validate it and may
+   *  not normalize, truncate, or fall back to the legacy parser after a mismatch. */
+  inputEvidence?: LineAiInputEvidenceV2;
+  /** Explicit server negotiation for the additive v2 wire capabilities. */
+  contractCapabilities?: Array<'input-evidence-v2' | 'budget-envelope-v2'>;
+  /** API-issued, authority-bound grant. It is never a user/model supplied field. */
+  budgetGrantV2?: AiBudgetGrantV2;
+  /** Server-verified approved-help lane. Never inferred from message text or model output. */
+  approvedKnowledge?: boolean;
+  /** Exact card ids selected from the server-offered allowlist, at most five. */
+  selectedKnowledgeCardIds?: string[];
+  /** API-issued bounded conversational state. References only; never authority or financial facts. */
+  taskProjection?: LineAiTaskProjectionV2;
+  /** Explicit owner-approved style only. Current message instructions take precedence. */
+  responsePreferences?: LineAiResponsePreferences;
+  /** Complete, bounded semantic request inventory emitted by intake and preserved by the API. */
+  semanticSubrequests?: LineAiSemanticSubrequestV2[];
+  /** Read-only API context for one explicitly selected historical clause. */
+  retainedTaskSource?: LineAiRetainedTaskSourceV2;
   attachments?: LineAiAttachment[];
   /** Short-term chat context only; company/permission truth still comes from userContext/tools. */
   conversationContext?: LineAiConversationContext;
@@ -216,7 +299,7 @@ export type LineAiTurnRequest = {
   messagePreviewHash: string;
   /** Deterministic amount/date readings of messageText (item 10F). The model selects from
    *  these; input/output membership guards enforce the selection. DATA, never instructions. */
-  valueCandidates?: LineAiValueCandidates;
+  valueCandidates?: LineAiTurnValueCandidates;
   /** Item 10F: the chat's open waiting_user ledger entries (bounded). DATA, never instructions. */
   openClarifications?: LineAiOpenClarification[];
   /** Optional additive prepared plan the API forwarded (latency/autonomy §7). Untrusted model
@@ -232,6 +315,284 @@ export type LineAiTurnRequest = {
    */
   intakeIntent?: LineIntakeRouteIntent;
 };
+
+/** Stateless public answer route. It deliberately has no user/company identity, private history,
+ * permissions/delegations, attachments, or private task projection. The verified payer is bound by
+ * the grant and must match this already-authorized channel admission. */
+export type LineAiPublicGeneralRequest = {
+  requestId: string;
+  webhookEventId: string;
+  kind: 'PUBLIC_GENERAL';
+  messageText: string;
+  inputEvidence: LineAiInputEvidenceV2;
+  contractCapabilities: Array<'input-evidence-v2' | 'budget-envelope-v2'>;
+  budgetGrantV2: AiBudgetGrantV2;
+  publicAdmission: {
+    channelKind: 'USER' | 'GROUP' | 'ROOM';
+    channelKeyHash: string;
+    payerCompanyId: string;
+    admissionId: string;
+  };
+  approvedKnowledge?: boolean;
+  selectedKnowledgeCardIds?: string[];
+  enabledFeatures?: string[];
+};
+
+export type LineAiPublicGeneralResponse = {
+  requestId: string;
+  status: 'answered' | 'unavailable';
+  replyText: string;
+  language: 'th' | 'en';
+  errorCode?: string;
+  usage?: AiUsageEntry[];
+};
+
+const LINE_AI_V2_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
+const LINE_AI_SHA256 = /^[0-9a-f]{64}$/u;
+const SEMANTIC_KINDS = ['read', 'general', 'write', 'help', 'public', 'file'] as const;
+const SEMANTIC_STATUSES = ['handled', 'denied', 'unsupported', 'needs_user'] as const;
+const TASK_SUBREQUEST_STATUSES = ['pending', ...SEMANTIC_STATUSES] as const;
+const exactKeys = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).every((key) => keys.includes(key));
+const recordValue = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+const boundedStringList = (value: unknown, maxItems: number, maxLength: number): string[] | undefined =>
+  Array.isArray(value) && value.length <= maxItems && value.every((item) => typeof item === 'string' && item.length > 0 && item.length <= maxLength)
+    ? [...value] as string[] : undefined;
+
+export function parseLineAiResponsePreferences(value: unknown): LineAiResponsePreferences | undefined {
+  if (!recordValue(value) || Object.keys(value).length !== 3 || !exactKeys(value, ['language', 'detail', 'presentation'])
+    || (value['language'] !== 'th' && value['language'] !== 'en')
+    || !['short', 'normal', 'detailed'].includes(String(value['detail']))
+    || !['prose', 'bullets', 'table', 'steps'].includes(String(value['presentation']))) return undefined;
+  return { language: value['language'], detail: value['detail'] as LineAiResponsePreferences['detail'], presentation: value['presentation'] as LineAiResponsePreferences['presentation'] };
+}
+
+/** Rebuild bounded API-owned task state. No transcript or authoritative financial totals fit this shape. */
+export function parseLineAiTaskProjection(value: unknown): LineAiTaskProjectionV2 | undefined {
+  if (!recordValue(value) || !exactKeys(value, ['version', 'stateVersion', 'lifecycleEpoch', 'expiresAtMs', 'tasks'])
+    || value['version'] !== 2 || !Number.isSafeInteger(value['stateVersion']) || Number(value['stateVersion']) < 0
+    || !Number.isSafeInteger(value['lifecycleEpoch']) || Number(value['lifecycleEpoch']) < 0
+    || !Number.isSafeInteger(value['expiresAtMs']) || Number(value['expiresAtMs']) < 0
+    || !Array.isArray(value['tasks']) || value['tasks'].length > 4) return undefined;
+  const tasks: LineAiTaskProjectionV2['tasks'] = [];
+  for (const raw of value['tasks']) {
+    if (!recordValue(raw) || !exactKeys(raw, ['taskId', 'revision', 'kind', 'state', 'userGoal', 'subrequests', 'slots', 'constraints', 'deliveredQuestionRefs', 'sourceRevisionLocators', 'attachmentPageRefs'])
+      || typeof raw['taskId'] !== 'string' || !LINE_AI_V2_ID.test(raw['taskId'])
+      || !Number.isSafeInteger(raw['revision']) || Number(raw['revision']) < 0
+      || !['read', 'write', 'general', 'help', 'public', 'file'].includes(String(raw['kind']))
+      || !['active', 'waiting_user', 'waiting_job', 'paused', 'completed', 'canceled', 'invalidated'].includes(String(raw['state']))
+      || typeof raw['userGoal'] !== 'string' || raw['userGoal'].length > 800
+      || !Array.isArray(raw['subrequests']) || raw['subrequests'].length > 8) return undefined;
+    const subrequests: LineAiTaskProjectionV2['tasks'][number]['subrequests'] = [];
+    for (let i = 0; i < raw['subrequests'].length; i += 1) {
+      const item = raw['subrequests'][i];
+      if (!recordValue(item) || !exactKeys(item, ['index', 'kind', 'goal', 'status']) || item['index'] !== i
+        || !SEMANTIC_KINDS.includes(item['kind'] as typeof SEMANTIC_KINDS[number])
+        || typeof item['goal'] !== 'string' || item['goal'].length < 1 || item['goal'].length > 800
+        || !TASK_SUBREQUEST_STATUSES.includes(item['status'] as typeof TASK_SUBREQUEST_STATUSES[number])) return undefined;
+      subrequests.push({ index: i, kind: item['kind'] as typeof SEMANTIC_KINDS[number], goal: item['goal'], status: item['status'] as typeof TASK_SUBREQUEST_STATUSES[number] });
+    }
+    let slots: LineAiTaskProjectionV2['tasks'][number]['slots'];
+    if (raw['slots'] !== undefined) {
+      if (!recordValue(raw['slots']) || Object.keys(raw['slots']).length > 32 || Object.entries(raw['slots']).some(([key, item]) =>
+        key.length > 80 || !(item === null || typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item) || typeof item === 'string' && item.length <= 800))) return undefined;
+      slots = { ...raw['slots'] } as NonNullable<typeof slots>;
+    }
+    const constraints = raw['constraints'] === undefined ? undefined : boundedStringList(raw['constraints'], 16, 256);
+    const deliveredQuestionRefs = raw['deliveredQuestionRefs'] === undefined ? undefined : boundedStringList(raw['deliveredQuestionRefs'], 8, 128);
+    if (raw['constraints'] !== undefined && !constraints || raw['deliveredQuestionRefs'] !== undefined && !deliveredQuestionRefs) return undefined;
+    let sourceRevisionLocators: LineAiTaskProjectionV2['tasks'][number]['sourceRevisionLocators'];
+    if (raw['sourceRevisionLocators'] !== undefined) {
+      if (!Array.isArray(raw['sourceRevisionLocators']) || raw['sourceRevisionLocators'].length > 8 || raw['sourceRevisionLocators'].some((loc) =>
+        !recordValue(loc) || !exactKeys(loc, ['sourceType', 'sourceId', 'revision'])
+        || !['sourceType', 'sourceId', 'revision'].every((key) => typeof loc[key] === 'string' && (loc[key] as string).length > 0 && (loc[key] as string).length <= 128))) return undefined;
+      sourceRevisionLocators = raw['sourceRevisionLocators'].map((loc) => ({ sourceType: String((loc as Record<string, unknown>)['sourceType']), sourceId: String((loc as Record<string, unknown>)['sourceId']), revision: String((loc as Record<string, unknown>)['revision']) }));
+    }
+    let attachmentPageRefs: LineAiTaskProjectionV2['tasks'][number]['attachmentPageRefs'];
+    if (raw['attachmentPageRefs'] !== undefined) {
+      if (!Array.isArray(raw['attachmentPageRefs']) || raw['attachmentPageRefs'].length > 5 || raw['attachmentPageRefs'].some((ref) =>
+        !recordValue(ref) || !exactKeys(ref, ['attachmentId', 'contentHash', 'pages'])
+        || typeof ref['attachmentId'] !== 'string' || !LINE_AI_V2_ID.test(ref['attachmentId'])
+        || typeof ref['contentHash'] !== 'string' || !LINE_AI_SHA256.test(ref['contentHash'])
+        || !Array.isArray(ref['pages']) || ref['pages'].length > 20 || ref['pages'].some((page) => !Number.isSafeInteger(page) || Number(page) < 1))) return undefined;
+      attachmentPageRefs = raw['attachmentPageRefs'].map((ref) => ({ attachmentId: String((ref as Record<string, unknown>)['attachmentId']), contentHash: String((ref as Record<string, unknown>)['contentHash']), pages: [...(ref as { pages: number[] }).pages] }));
+    }
+    tasks.push({ taskId: raw['taskId'], revision: Number(raw['revision']), kind: raw['kind'] as LineAiTaskProjectionV2['tasks'][number]['kind'], state: raw['state'] as LineAiTaskProjectionV2['tasks'][number]['state'], userGoal: raw['userGoal'], subrequests,
+      ...(slots ? { slots } : {}), ...(constraints ? { constraints } : {}), ...(deliveredQuestionRefs ? { deliveredQuestionRefs } : {}),
+      ...(sourceRevisionLocators ? { sourceRevisionLocators } : {}), ...(attachmentPageRefs ? { attachmentPageRefs } : {}) });
+  }
+  const parsed: LineAiTaskProjectionV2 = { version: 2, stateVersion: Number(value['stateVersion']), lifecycleEpoch: Number(value['lifecycleEpoch']), expiresAtMs: Number(value['expiresAtMs']), tasks };
+  if (new TextEncoder().encode(JSON.stringify(parsed)).byteLength > 16_384) return undefined;
+  return parsed;
+}
+
+/** Strict semantic plan parser: all proposals are bounded, indexed, and bound to original evidence. */
+export function parseLineAiSemanticSubrequests(value: unknown, messageText: string, evidence?: LineAiInputEvidenceV2): LineAiSemanticSubrequestV2[] | undefined {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 8) return undefined;
+  const parsed: LineAiSemanticSubrequestV2[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const raw = value[i];
+    if (!recordValue(raw) || !exactKeys(raw, ['index', 'kind', 'goal', 'requiredEvidence', 'requestedFilters', 'entityReference', 'dependsOn', 'evidenceRefs', 'taskRef', 'writeIntent'])
+      || raw['index'] !== i || !SEMANTIC_KINDS.includes(raw['kind'] as typeof SEMANTIC_KINDS[number])
+      || typeof raw['goal'] !== 'string' || !raw['goal'].trim() || raw['goal'].length > 800
+      || !Array.isArray(raw['requiredEvidence']) || raw['requiredEvidence'].length > 8
+      || raw['requiredEvidence'].some((item) => typeof item !== 'string' || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/u.test(item))
+      || !recordValue(raw['requestedFilters']) || Object.keys(raw['requestedFilters']).length > 16
+      || Object.entries(raw['requestedFilters']).some(([key, item]) => key.length > 80 || !(item === null || typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item) || typeof item === 'string' && item.length <= 200))
+      || !Array.isArray(raw['dependsOn']) || raw['dependsOn'].length > i
+      || raw['dependsOn'].some((dep) => !Number.isSafeInteger(dep) || Number(dep) < 0 || Number(dep) >= i)
+      || new Set(raw['dependsOn']).size !== raw['dependsOn'].length) return undefined;
+    if (raw['writeIntent'] !== undefined && (raw['kind'] !== 'write' || !['EXPENSE_DOCUMENT_CAPTURE', 'EXPENSE_DRAFT_CONTINUATION', 'EXPENSE_CAPTURE_CORRECTION', 'SUBSTITUTE_RECEIPT_CONTINUATION', 'REIMBURSEMENT_REQUEST_START'].includes(String(raw['writeIntent'])))) return undefined;
+    let taskRef: LineAiSemanticSubrequestV2['taskRef'];
+    if (raw['taskRef'] !== undefined) {
+      const ref = raw['taskRef'];
+      if (!recordValue(ref) || !exactKeys(ref, ['taskId', 'taskRevision', 'subrequestIndex'])
+        || typeof ref['taskId'] !== 'string' || !LINE_AI_V2_ID.test(ref['taskId'])
+        || !Number.isSafeInteger(ref['taskRevision']) || Number(ref['taskRevision']) < 0
+        || !Number.isSafeInteger(ref['subrequestIndex']) || Number(ref['subrequestIndex']) < 0 || Number(ref['subrequestIndex']) > 7) return undefined;
+      taskRef = { taskId: ref['taskId'], taskRevision: Number(ref['taskRevision']), subrequestIndex: Number(ref['subrequestIndex']) };
+      if (parsed.some(item => item.taskRef?.taskId === taskRef!.taskId && item.taskRef.subrequestIndex === taskRef!.subrequestIndex)) return undefined;
+    }
+    let entityReference: LineAiSemanticSubrequestV2['entityReference'];
+    if (raw['entityReference'] !== undefined) {
+      const ref = raw['entityReference'];
+      if (!recordValue(ref) || !exactKeys(ref, ['kind', 'value']) || ref['kind'] !== 'user_text'
+        || typeof ref['value'] !== 'string' || ref['value'].length > 160 || !messageText.includes(ref['value'])) return undefined;
+      entityReference = { kind: 'user_text', value: ref['value'] };
+    }
+    let evidenceRefs: LineAiSourceRefV2[] | undefined;
+    if (raw['evidenceRefs'] !== undefined) {
+      if (!evidence || !Array.isArray(raw['evidenceRefs']) || raw['evidenceRefs'].length > 8) return undefined;
+      evidenceRefs = [];
+      for (const ref of raw['evidenceRefs']) {
+        const exactText = validateLineAiSourceRefV2(ref, evidence);
+        if (exactText === undefined) return undefined;
+        evidenceRefs.push({ ...(ref as LineAiSourceRefV2) });
+      }
+    }
+    if (evidence && !evidenceRefs?.length) return undefined;
+    parsed.push({ index: i, kind: raw['kind'] as LineAiSemanticSubrequestV2['kind'], goal: raw['goal'].trim(),
+      requiredEvidence: [...raw['requiredEvidence']] as string[], requestedFilters: { ...raw['requestedFilters'] } as LineAiSemanticSubrequestV2['requestedFilters'],
+      ...(entityReference ? { entityReference } : {}), ...(taskRef ? { taskRef } : {}), ...(raw['writeIntent'] ? { writeIntent: raw['writeIntent'] as LineAiSemanticSubrequestV2['writeIntent'] } : {}), dependsOn: [...raw['dependsOn']] as number[], ...(evidenceRefs ? { evidenceRefs } : {}) });
+  }
+  return parsed;
+}
+
+function parseRetainedSemanticSubrequest(value: unknown, messageText: string, evidence: LineAiInputEvidenceV2): LineAiSemanticSubrequestV2 | undefined {
+  if (!recordValue(value) || !Number.isSafeInteger(value['index']) || Number(value['index']) < 0 || Number(value['index']) > 7
+    || !Array.isArray(value['dependsOn']) || value['dependsOn'].length > Number(value['index'])
+    || value['dependsOn'].some((dep) => !Number.isSafeInteger(dep) || Number(dep) < 0 || Number(dep) >= Number(value['index']))
+    || new Set(value['dependsOn']).size !== value['dependsOn'].length) return undefined;
+  const parsed = parseLineAiSemanticSubrequests([{ ...value, index: 0, dependsOn: [] }], messageText, evidence)?.[0];
+  if (!parsed || parsed.kind !== 'write' || !parsed.writeIntent || !parsed.evidenceRefs?.length) return undefined;
+  return { ...parsed, index: Number(value['index']), dependsOn: [...value['dependsOn']] as number[] };
+}
+
+/** Extract only the selected historical clause. Reordered, duplicate or overlapping refs fail. */
+export function lineAiRetainedTaskSourceText(source: LineAiRetainedTaskSourceV2): string | undefined {
+  const refs = source.semanticSubrequest.evidenceRefs;
+  if (!refs?.length) return undefined;
+  const parts = new Map(source.inputEvidence.parts.map((part, index) => [part.partId, { part, index }] as const));
+  let previous: { part: number; end: number } | undefined;
+  const text: string[] = [];
+  for (const ref of refs) {
+    const found = parts.get(ref.partId);
+    const exact = validateLineAiSourceRefV2(ref, source.inputEvidence);
+    if (!found || exact === undefined || previous && (found.index < previous.part
+      || found.index === previous.part && ref.startUtf16 < previous.end)) return undefined;
+    previous = { part: found.index, end: ref.endUtf16 };
+    text.push(exact);
+  }
+  return text.join('\n');
+}
+
+/** Structural retained-source parser. Process boundaries must additionally call the async verifier. */
+export function parseLineAiRetainedTaskSource(value: unknown): LineAiRetainedTaskSourceV2 | undefined {
+  if (!recordValue(value) || Object.keys(value).length !== 3
+    || !exactKeys(value, ['taskRef', 'inputEvidence', 'semanticSubrequest']) || !recordValue(value['taskRef'])) return undefined;
+  const ref = value['taskRef'];
+  if (!exactKeys(ref, ['taskId', 'taskRevision', 'subrequestIndex'])
+    || typeof ref['taskId'] !== 'string' || !LINE_AI_V2_ID.test(ref['taskId'])
+    || !Number.isSafeInteger(ref['taskRevision']) || Number(ref['taskRevision']) < 0
+    || !Number.isSafeInteger(ref['subrequestIndex']) || Number(ref['subrequestIndex']) < 0 || Number(ref['subrequestIndex']) > 7) return undefined;
+  if (!recordValue(value['inputEvidence']) || !Array.isArray(value['inputEvidence']['parts'])) return undefined;
+  const messageText = value['inputEvidence']['parts'].map((part) => recordValue(part) && typeof part['rawText'] === 'string' ? part['rawText'] : null);
+  if (messageText.some((part) => part === null)) return undefined;
+  const evidence = parseLineAiInputEvidence(value['inputEvidence'], (messageText as string[]).join('\n'));
+  if (!evidence) return undefined;
+  const semanticSubrequest = parseRetainedSemanticSubrequest(value['semanticSubrequest'], (messageText as string[]).join('\n'), evidence);
+  if (!semanticSubrequest) return undefined;
+  const parsed: LineAiRetainedTaskSourceV2 = {
+    taskRef: { taskId: ref['taskId'], taskRevision: Number(ref['taskRevision']), subrequestIndex: Number(ref['subrequestIndex']) },
+    inputEvidence: evidence,
+    semanticSubrequest,
+  };
+  return lineAiRetainedTaskSourceText(parsed) ? parsed : undefined;
+}
+
+/** Recompute every retained source digest before exposing the selected clause to a provider. */
+export async function verifyLineAiRetainedTaskSource(value: unknown): Promise<LineAiRetainedTaskSourceV2 | undefined> {
+  const parsed = parseLineAiRetainedTaskSource(value);
+  if (!parsed) return undefined;
+  const messageText = parsed.inputEvidence.parts.map((part) => part.rawText).join('\n');
+  return await verifyLineAiInputEvidence(parsed.inputEvidence, messageText) ? parsed : undefined;
+}
+
+export function lineAiRetainedTaskSourceMatchesProjection(source: LineAiRetainedTaskSourceV2, projection: LineAiTaskProjectionV2 | undefined, phase: 'intake' | 'turn' = 'intake'): boolean {
+  const task = projection?.tasks.find((candidate) => candidate.taskId === source.taskRef.taskId
+    && (phase === 'turn'
+      ? candidate.revision === source.taskRef.taskRevision + 1 && candidate.state === 'active'
+      : candidate.revision === source.taskRef.taskRevision && ['waiting_user', 'paused'].includes(candidate.state)));
+  const subrequest = task?.subrequests.find((candidate) => candidate.index === source.taskRef.subrequestIndex
+    && ['pending', 'needs_user'].includes(candidate.status));
+  return subrequest?.kind === source.semanticSubrequest.kind;
+}
+
+export function parseLineAiSemanticCoverage(value: unknown, subrequests: readonly LineAiSemanticSubrequestV2[]): LineAiSemanticCoverageV2[] | undefined {
+  if (!Array.isArray(value) || value.length !== subrequests.length) return undefined;
+  const parsed: LineAiSemanticCoverageV2[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const raw = value[i];
+    if (!recordValue(raw) || !exactKeys(raw, ['index', 'status', 'reasonCode', 'question', 'sourceRefIds']) || raw['index'] !== i
+      || !SEMANTIC_STATUSES.includes(raw['status'] as typeof SEMANTIC_STATUSES[number])
+      || raw['reasonCode'] !== undefined && (typeof raw['reasonCode'] !== 'string' || !/^[A-Z][A-Z0-9_]{0,63}$/u.test(raw['reasonCode']))
+      || raw['question'] !== undefined && (typeof raw['question'] !== 'string' || !raw['question'].trim() || raw['question'].length > 500)
+      || raw['sourceRefIds'] !== undefined && (!Array.isArray(raw['sourceRefIds']) || raw['sourceRefIds'].length > 8 || raw['sourceRefIds'].some((id) => typeof id !== 'string' || !LINE_AI_V2_ID.test(id)))) return undefined;
+    if (raw['status'] === 'needs_user' && typeof raw['question'] !== 'string') return undefined;
+    parsed.push({ index: i, status: raw['status'] as LineAiSemanticCoverageV2['status'],
+      ...(raw['reasonCode'] ? { reasonCode: raw['reasonCode'] as string } : {}), ...(raw['question'] ? { question: raw['question'] as string } : {}),
+      ...(raw['sourceRefIds'] ? { sourceRefIds: [...raw['sourceRefIds']] as string[] } : {}) });
+  }
+  return parsed;
+}
+
+/** Exact-field request parser for the no-private-context endpoint. */
+export function parseLineAiPublicGeneralRequest(value: unknown): LineAiPublicGeneralRequest | undefined {
+  if (!recordValue(value) || !exactKeys(value, ['requestId', 'webhookEventId', 'kind', 'messageText', 'inputEvidence', 'contractCapabilities', 'budgetGrantV2', 'publicAdmission', 'approvedKnowledge', 'selectedKnowledgeCardIds', 'enabledFeatures'])
+    || typeof value['requestId'] !== 'string' || !LINE_AI_V2_ID.test(value['requestId'])
+    || typeof value['webhookEventId'] !== 'string' || !LINE_AI_V2_ID.test(value['webhookEventId'])
+    || value['kind'] !== 'PUBLIC_GENERAL' || typeof value['messageText'] !== 'string'
+    || !Array.isArray(value['contractCapabilities']) || value['contractCapabilities'].length !== 2
+    || !value['contractCapabilities'].includes('input-evidence-v2') || !value['contractCapabilities'].includes('budget-envelope-v2')
+    || value['approvedKnowledge'] !== undefined && value['approvedKnowledge'] !== true
+    || value['selectedKnowledgeCardIds'] !== undefined && (!Array.isArray(value['selectedKnowledgeCardIds']) || value['selectedKnowledgeCardIds'].length > 5 || value['selectedKnowledgeCardIds'].some((id) => typeof id !== 'string' || !LINE_AI_V2_ID.test(id)) || new Set(value['selectedKnowledgeCardIds']).size !== value['selectedKnowledgeCardIds'].length)
+    || value['enabledFeatures'] !== undefined && (!boundedStringList(value['enabledFeatures'], 128, 128))) return undefined;
+  const evidence = parseLineAiInputEvidence(value['inputEvidence'], value['messageText']);
+  const grant = parseAiBudgetGrantV2(value['budgetGrantV2']);
+  const admission = value['publicAdmission'];
+  if (!evidence || !grant || grant.authorityKind !== 'webhook_event' || evidence.turnKey !== grant.turnKey
+    || !grant.allowedProfileIds.includes('line-answer/2') || !recordValue(admission)
+    || !exactKeys(admission, ['channelKind', 'channelKeyHash', 'payerCompanyId', 'admissionId'])
+    || !['USER', 'GROUP', 'ROOM'].includes(String(admission['channelKind']))
+    || typeof admission['channelKeyHash'] !== 'string' || !LINE_AI_SHA256.test(admission['channelKeyHash'])
+    || typeof admission['payerCompanyId'] !== 'string' || admission['payerCompanyId'] !== grant.payerCompanyId
+    || typeof admission['admissionId'] !== 'string' || !LINE_AI_V2_ID.test(admission['admissionId'])) return undefined;
+  return { requestId: value['requestId'], webhookEventId: value['webhookEventId'], kind: 'PUBLIC_GENERAL', messageText: value['messageText'], inputEvidence: evidence,
+    contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'], budgetGrantV2: grant,
+    publicAdmission: { channelKind: admission['channelKind'] as LineAiPublicGeneralRequest['publicAdmission']['channelKind'], channelKeyHash: admission['channelKeyHash'], payerCompanyId: admission['payerCompanyId'], admissionId: admission['admissionId'] },
+    ...(value['approvedKnowledge'] === true ? { approvedKnowledge: true } : {}),
+    ...(Array.isArray(value['selectedKnowledgeCardIds']) ? { selectedKnowledgeCardIds: [...value['selectedKnowledgeCardIds']] as string[] } : {}),
+    ...(Array.isArray(value['enabledFeatures']) ? { enabledFeatures: [...value['enabledFeatures']] as string[] } : {}) };
+}
 
 export type LineAiAttachment = {
   id: string;
@@ -492,11 +853,39 @@ export type ReceiptOcrRequest = {
    * against what the page says rather than against itself.
    */
   documentText?: string;
+  /** API-only, company-gated request for strict W07A page/field provenance. */
+  requireEvidenceV2?: boolean;
+};
+
+export type ReceiptOcrEvidenceRole =
+  | 'seller_name' | 'seller_tax_id' | 'seller_branch' | 'seller_address' | 'buyer_name' | 'buyer_tax_id' | 'buyer_branch' | 'buyer_address'
+  | 'document_number' | 'transaction_date' | 'description' | 'quantity' | 'unit_price'
+  | 'vat_rate' | 'subtotal' | 'discount' | 'taxable_base' | 'vat_amount' | 'wht_rate'
+  | 'wht_amount' | 'wht_base' | 'grand_total' | 'currency' | 'vat_mode'
+  | 'line_description' | 'line_amount' | 'line_quantity' | 'line_unit_price' | 'line_vat'
+  | 'charge_amount' | 'charge_description' | 'charge_vat' | 'category' | 'missing_field';
+
+export type ReceiptOcrFieldEvidenceV2 = {
+  pageIndex: number;
+  role: ReceiptOcrEvidenceRole;
+  localSpan: { start: number; end: number };
+  rawValue: string;
+};
+
+/** Internal OCR provenance. The API binds page text to the submitted attachment digest and
+ *  rechecks every field locator before business application. Never expose pages in user-facing DTOs. */
+export type ReceiptOcrEvidenceV2 = {
+  version: 2;
+  attachmentId: string;
+  attachmentSha256: string;
+  pages: Array<{ pageIndex: number; text: string }>;
+  fields: Record<string, ReceiptOcrFieldEvidenceV2>;
 };
 
 export type ReceiptOcrResponse = {
   status: 'ok' | 'not_configured' | 'failed';
   fields?: ReceiptOcrFieldResult;
+  receiptEvidence?: ReceiptOcrEvidenceV2;
   classification?: BusinessDocumentClassification;
   /** Evidence-validated utility parts. Intake may draft the prior receipt when it accompanies
    *  a new bill; this array itself never records a payment. */
@@ -791,6 +1180,14 @@ export type LineIntakeRouteRequest = {
   userId: string;
   locale: string;
   messageText: string;
+  /** Complete immutable v2 raw webhook evidence; never used as an authority grant. */
+  inputEvidence?: LineAiInputEvidenceV2;
+  contractCapabilities?: Array<'input-evidence-v2' | 'budget-envelope-v2'>;
+  /** API-issued, authority-bound grant. It is never a user/model supplied field. */
+  budgetGrantV2?: AiBudgetGrantV2;
+  taskProjection?: LineAiTaskProjectionV2;
+  /** One server-selected historical write clause; never replaces this request's current input. */
+  retainedTaskSource?: LineAiRetainedTaskSourceV2;
   attachments?: LineAiAttachment[];
   /** Short-term chat context for semantic routing only; not an authorization source. */
   conversationContext?: LineAiConversationContext;
@@ -801,7 +1198,7 @@ export type LineIntakeRouteRequest = {
   activeCategories?: Array<{ id: string; name: string }>;
   /** Deterministic amount/date readings of messageText (item 10F); captureHints.amount and
    *  .expenseDate must be selected from these when present (membership-guarded). */
-  valueCandidates?: LineAiValueCandidates;
+  valueCandidates?: LineAiTurnValueCandidates;
   /** Item 10F: the chat's open waiting_user ledger entries (bounded). DATA, never instructions. */
   openClarifications?: LineAiOpenClarification[];
   /** Recent LINE-captured expenses of THIS user in THIS chat that a correction could target
@@ -823,7 +1220,13 @@ export type LineIntakeRouteRequest = {
  *  PRIMARY modes of LINE_AI_REIMBURSEMENT_SEMANTIC_MODE ('clarify_only' and 'handoff') — never for the
  *  inert 'shadow', which stays byte-identical to 'off' — and it adds the three-way semantic outcome,
  *  funding source and the REIMBURSEMENT_REQUEST_START route to the prompt and parser. */
-export type LineIntakeRouterCapabilities = { fusedPlan?: boolean; substituteSemantic?: boolean; reimbursementSemantic?: boolean; advisor?: boolean };
+export type LineIntakeRouterCapabilities = {
+  fusedPlan?: boolean;
+  substituteSemantic?: boolean;
+  reimbursementSemantic?: boolean;
+  advisor?: boolean;
+  approvedKnowledge?: boolean;
+};
 
 /** Receiver-boundary validator for the TRUSTED capability flags (same role as {@link asIntakeRouteIntent}).
  *  Accepts ONLY a literal boolean `true` for each known key; EVERY other shape — a truthy
@@ -843,6 +1246,7 @@ export function asIntakeRouterCapabilities(value: unknown): LineIntakeRouterCapa
   // Advisor Slice A (advisor spec §9/§17): gates the ADVISOR_CONVERSATION route and the advisorAnswer
   // envelope. Off ⇒ byte-exact legacy prompt/payload, exactly like the three flags above.
   if (Object.hasOwn(raw, 'advisor') && raw.advisor === true) caps.advisor = true;
+  if (Object.hasOwn(raw, 'approvedKnowledge') && raw.approvedKnowledge === true) caps.approvedKnowledge = true;
   return caps;
 }
 
@@ -1280,7 +1684,9 @@ export type AdvisorRefusalCode = (typeof ADVISOR_REFUSAL_CODES)[number];
  * `confidence` is veto-only (a high value never makes an ineligible lane eligible).
  */
 export type PreparedAdvisorAnswer = {
-  version: 1;
+  version: 1 | 2;
+  /** Required by v2 and tied to the complete original turn, not a normalized prompt view. */
+  inputDigest?: string;
   mode: MangmeeConversationMode;
   confidence: number;
   /** HIGH-risk cards and finance/trend only (deterministic renderer); unused in Slice A. */
@@ -1359,6 +1765,10 @@ export type LineIntakeRoutePlan = {
   advisorAnswer?: PreparedAdvisorAnswer;
   /** SERVER-derived audit context, never model output (spec §9). */
   advisorContext?: LineIntakeAdvisorContext;
+  /** Exact approved-help ids selected from the server-offered allowlist, at most five. */
+  selectedKnowledgeCardIds?: string[];
+  /** V2 semantic inventory. Every user clause remains independently represented. */
+  semanticSubrequests?: LineAiSemanticSubrequestV2[];
 };
 
 export type LineAiWebLink = {
@@ -1428,6 +1838,15 @@ export type LineAiCoverageItem = {
   reason?: string;
 };
 
+/** Strict v2 result coverage, indexed against the API-preserved semantic subrequest inventory. */
+export type LineAiSemanticCoverageV2 = {
+  index: number;
+  status: 'handled' | 'denied' | 'unsupported' | 'needs_user';
+  reasonCode?: string;
+  question?: string;
+  sourceRefIds?: string[];
+};
+
 export type LineAiTurnResponse = {
   requestId: string;
   replyText: string;
@@ -1455,6 +1874,8 @@ export type LineAiTurnResponse = {
   /** Item 10F: critic verdicts per sub-request (native loop path only). Drives the API-side
    *  ledger acks/appends; absent on the 10B paths. */
   coverage?: LineAiCoverageItem[];
+  /** V2 coverage, complete and indexed against `LineAiTurnRequest.semanticSubrequests`. */
+  semanticCoverage?: LineAiSemanticCoverageV2[];
   /** One entry per model call this turn made; absent from an older gateway or AgentCore artifact. */
   usage?: AiUsageEntry[];
   /** Additive hosted-runtime evidence. Missing identity means an older/unacceptable candidate. */
@@ -1473,6 +1894,9 @@ export type ProviderErrorCode =
   | 'PROVIDER_THROTTLED'
   | 'PROVIDER_ACCESS_NOT_READY'
   | 'PROVIDER_TIMEOUT'
+  | 'PROVIDER_OUTPUT_INCOMPLETE'
+  | 'PROVIDER_BLOCKED'
+  | 'PROVIDER_TOOL_ARGUMENT_INVALID'
   /** The company's monthly AI MONEY refused the call (spec §9.4). Distinct from `PROVIDER_THROTTLED`:
    *  no amount of waiting opens it this month, so it is never offered as retryable. */
   | 'PROVIDER_BUDGET_EXHAUSTED'
@@ -1531,10 +1955,16 @@ export type LineAiPreparedPlanAnswerShape = 'single_metric' | 'list' | 'summary'
 export type LineAiPreparedCall = {
   toolName: string;
   input: Record<string, unknown>;
+  /** Selected source evidence for a v2 prepared call; advisory until the executor re-checks the
+   * authoritative candidate set and permission-checked tool contract. */
+  candidateIds?: string[];
+  sourceRefs?: import('./line-ai-input-evidence.js').LineAiSourceRefV2[];
 };
 
 export type LineAiPreparedPlan = {
-  version: 1;
+  version: 1 | 2;
+  /** Required by version 2 and bound to the complete raw turn evidence. */
+  inputDigest?: string;
   complexity: LineAiPreparedPlanComplexity;
   /** Untrusted model advice; veto-only, never grants authority. */
   confidence: number;

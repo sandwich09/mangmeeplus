@@ -8,11 +8,26 @@
  * gateway still has NO database access and no second way to reach the API. Nothing but ids,
  * counters and typed codes crosses: never a prompt, a cap, a balance or a company name.
  */
-import { AI_BUDGET_REFUSAL_CODES, parseAiBudgetEnvelope, type AiBudgetEnvelope, type AiBudgetRefusalCode, type AiBudgetScope, type AiUsageEntry } from '@watchdog-bms/contracts';
+import {
+  AI_BUDGET_REFUSAL_CODES,
+  parseAiBudgetEnvelope,
+  parseAiBudgetEnvelopeV2,
+  parseAiBudgetGrantV2,
+  type AiBudgetEnvelope,
+  type AiBudgetEnvelopeV2,
+  type AiBudgetInvocationV2,
+  type AiBudgetRefusalCode,
+  type AiBudgetScope,
+  type AiUsageEntry,
+} from '@watchdog-bms/contracts';
 import { enqueueSettleEvidence } from './ai-budget-durability';
 
 export type AiBudgetStepOutcome =
   | { ok: true; envelope: AiBudgetEnvelope }
+  | { ok: false; code: AiBudgetRefusalCode; budgetScope: AiBudgetScope };
+
+export type AiBudgetStepV2Outcome =
+  | { ok: true; envelope: AiBudgetEnvelopeV2 }
   | { ok: false; code: AiBudgetRefusalCode; budgetScope: AiBudgetScope };
 
 export type AiBudgetSettleOutcome = 'recorded' | 'rejected' | 'unreachable';
@@ -26,6 +41,8 @@ export type AiBudgetSeam = {
     ordinal: number;
     monthKey: string;
   }): Promise<AiBudgetStepOutcome>;
+  /** V2 reserves the rendered invocation, including ordinal 0, through the same API seam. */
+  stepV2?(invocation: AiBudgetInvocationV2, repair: boolean): Promise<AiBudgetStepV2Outcome>;
   settle(input: {
     invocationKey: string;
     sourceRoute: string;
@@ -33,6 +50,9 @@ export type AiBudgetSeam = {
     /** Ids only, for the durable queue's log lines (hold spec §3). Optional: a fake may omit it. */
     companyId?: string;
     entry: AiUsageEntry;
+    externalUnits?: number | null;
+    /** Immediate evidence posting must not consume the turn's reserved delivery window. */
+    deadlineAt?: number;
   }): Promise<AiBudgetSettleOutcome>;
 };
 
@@ -68,14 +88,16 @@ export function createAiBudgetSeam(
   log: (line: Record<string, unknown>) => void,
   fetchImpl: typeof fetch = fetch,
 ): AiBudgetSeam {
-  const post = async (path: string, body: unknown): Promise<{ ok: boolean; json?: unknown }> => {
+  const post = async (path: string, body: unknown, deadlineAt?: number): Promise<{ ok: boolean; json?: unknown }> => {
     if (!config.secret) return { ok: false };
+    const timeoutMs = Math.floor(Math.min(config.timeoutMs, deadlineAt === undefined ? Infinity : deadlineAt - Date.now()));
+    if (timeoutMs <= 0) return { ok: false };
     try {
       const response = await fetchImpl(`${config.baseUrl}/internal/ai/${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': config.secret },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(config.timeoutMs),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!response.ok) return { ok: false };
       return { ok: true, json: await response.json() };
@@ -105,6 +127,27 @@ export function createAiBudgetSeam(
       return { ok: true, envelope };
     },
 
+    async stepV2(invocation, repair) {
+      const result = await post('budget-step', { version: 2, invocation, repair }, invocation.grant.workDeadlineAtMs);
+      if (!result.ok) {
+        log({ msg: 'ai.budget.step_unreachable', profileId: invocation.profileId, ordinal: invocation.ordinal });
+        return refused(undefined, undefined) as AiBudgetStepV2Outcome;
+      }
+      const body = (result.json ?? {}) as Record<string, unknown>;
+      if (body['ok'] !== true) return refused(body['code'], body['budgetScope']) as AiBudgetStepV2Outcome;
+      const envelope = parseAiBudgetEnvelopeV2(body['envelope']);
+      if (!envelope || JSON.stringify(envelope.grant) !== JSON.stringify(parseAiBudgetGrantV2(invocation.grant))
+        || envelope.ordinal !== invocation.ordinal || envelope.profileId !== invocation.profileId
+        || envelope.inputTokenBound !== invocation.inputTokenBound || envelope.requestedOutputTokens !== invocation.requestedOutputTokens
+        || envelope.estimatorVersion !== invocation.estimatorVersion || envelope.promptVersion !== invocation.promptVersion
+        || envelope.payloadDigest !== invocation.payloadDigest || envelope.schemaDigest !== invocation.schemaDigest
+        || envelope.inputDigest !== invocation.inputDigest) {
+        log({ msg: 'ai.budget.step_envelope_invalid', profileId: invocation.profileId, ordinal: invocation.ordinal });
+        return refused(undefined, undefined) as AiBudgetStepV2Outcome;
+      }
+      return { ok: true, envelope };
+    },
+
     async settle(input) {
       const body = {
         invocationKey: input.invocationKey,
@@ -120,10 +163,11 @@ export function createAiBudgetSeam(
           cacheWriteInputTokens: input.entry.cacheWriteInputTokens,
           ...(input.entry.usageBasis ? { usageBasis: input.entry.usageBasis } : {}),
         },
+        ...(input.externalUnits !== undefined ? { externalUnits: input.externalUnits } : {}),
       };
       /** One post, classified. Reused verbatim by the durable queue's re-posts (hold spec §3). */
-      const attemptOnce = async (): Promise<AiBudgetSettleOutcome> => {
-        const result = await post('budget-settle', body);
+      const attemptOnce = async (deadlineAt?: number): Promise<AiBudgetSettleOutcome> => {
+        const result = await post('budget-settle', body, deadlineAt);
         if (!result.ok) return 'unreachable';
         const outcome = (result.json as { result?: unknown } | undefined)?.result;
         if (typeof outcome === 'string' && RECORDED.has(outcome)) return 'recorded';
@@ -134,18 +178,22 @@ export function createAiBudgetSeam(
         return 'rejected';
       };
 
+      let attempts = 0;
       for (let attempt = 1; attempt <= SETTLE_ATTEMPTS; attempt += 1) {
-        const outcome = await attemptOnce();
+        if (input.deadlineAt !== undefined && input.deadlineAt <= Date.now()) break;
+        attempts++;
+        const outcome = await attemptOnce(input.deadlineAt);
         if (outcome !== 'unreachable') return outcome;
+        if (input.deadlineAt !== undefined && input.deadlineAt <= Date.now() + SETTLE_RETRY_MS) break;
         if (attempt < SETTLE_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, SETTLE_RETRY_MS));
       }
       // Never fails the business call (ADR 0013 §6 step 4). Before hold spec §3 the hold went
       // straight to UNRESOLVED here; now the evidence is parked and re-posted off the request path,
       // so only an API that stays unreachable for the whole window strands the money.
-      log({ msg: 'ai.budget.settle_unreachable', sourceRoute: input.sourceRoute, attempts: SETTLE_ATTEMPTS });
+      log({ msg: 'ai.budget.settle_unreachable', sourceRoute: input.sourceRoute, attempts });
       enqueueSettleEvidence({
         invocationKey: input.invocationKey, sourceRoute: input.sourceRoute,
-        companyId: input.companyId, attempts: SETTLE_ATTEMPTS, post: attemptOnce,
+        companyId: input.companyId, attempts, post: () => attemptOnce(),
       }, log);
       return 'unreachable';
     },

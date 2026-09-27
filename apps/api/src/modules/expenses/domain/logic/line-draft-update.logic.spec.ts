@@ -297,3 +297,25 @@ describe('existingChargeLikeProductLine + appendNote', () => {
       'the append stays intact so the use case can reject it instead of previewing a silently truncated value');
   });
 });
+
+describe('lossless document edit boundaries', () => {
+  it('keeps valid field tails and refuses the whole oversized proposal', () => {
+    for (const [field, limit, tool] of [
+      ['vendorName', 200, 'expense.draft.set_header'], ['documentNumber', 60, 'expense.draft.set_header'],
+      ['noteAppend', 500, 'expense.draft.set_header'], ['description', 200, 'expense.draft.set_line'],
+    ] as const) {
+      const input = { lineNumber: 1, [field]: 'ก'.repeat(limit) };
+      const parsed = parseLineDraftPatch(tool, input);
+      assert.equal(parsed.ok, true);
+      if (parsed.ok) assert.equal((parsed.patch as unknown as Record<string, unknown>)[field], input[field]);
+      assert.deepEqual(parseLineDraftPatch(tool, { ...input, [field]: 'ก'.repeat(limit + 1), vendorName: field === 'vendorName' ? 'ก'.repeat(limit + 1) : 'valid' }),
+        { ok: false, reason: `field_too_long:${field}:${limit}` });
+    }
+  });
+
+  it('rejects partial integers and calendar rollover instead of changing their meaning', () => {
+    for (const lineNumber of ['1junk', '1.5', '1e2', '201']) assert.equal(parseLineDraftPatch('expense.draft.remove_line', { lineNumber }).ok, false);
+    for (const expenseDate of ['2026-02-30', '2026-09-27tail', '2026-09-27T00:00:00Z']) assert.equal(parseLineDraftPatch('expense.draft.set_header', { expenseDate }).ok, false);
+    assert.equal(parseLineDraftPatch('expense.draft.set_header', { expenseDate: '2024-02-29' }).ok, true);
+  });
+});

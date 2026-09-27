@@ -39,6 +39,7 @@ import {
 import { ReimbursementController } from './presentation/http/reimbursement.controller';
 import { ReimbursementPolicyController } from './presentation/http/reimbursement-policy.controller';
 import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursement-write-quiesce.guard';
+import { LineReimbursementDraftUseCase } from './application/use-cases/line-reimbursement-draft.use-case';
 
 @Module({
   imports: [AuditModule, DataModelCoreModule, ExpensesModule],
@@ -50,6 +51,7 @@ import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursemen
     ReimbursementProjectionOrchestratorService,
     ReimbursementProjectionReconcilerService,
     ReimbursementWriteQuiesceGuard,
+    LineReimbursementDraftUseCase,
     GetReimbursementPolicyUseCase,
     ListReimbursementApproverOptionsUseCase,
     UpdateReimbursementPolicyUseCase,
@@ -78,6 +80,6 @@ import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursemen
     SignClaimFormUseCase,
     LinkSignedClaimFormCopyUseCase,
   ],
-  exports: [PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, ListReimbursementApproverOptionsUseCase, GetReimbursementAiSummaryUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase],
+  exports: [PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, ListReimbursementApproverOptionsUseCase, GetReimbursementAiSummaryUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase, LineReimbursementDraftUseCase],
 })
 export class ReimbursementsModule {}

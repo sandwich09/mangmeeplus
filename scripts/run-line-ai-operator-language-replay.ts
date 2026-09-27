@@ -19,6 +19,9 @@ import {
   LINE_AI_OPERATOR_LANGUAGE_CORPUS,
   type OperatorAvailabilityCase,
 } from './line-ai-operator-language.corpus';
+import { readFileSync } from 'node:fs';
+import { scoreReliabilityTraceBundle } from './line-ai-reliability-fixtures';
+import { summarizeReliabilityRun } from './line-ai-reliability-evaluation';
 
 const ROUTES: Record<string, { intent: string; subject: string; agent: string }> = {
   'expense.list_recent': { intent: 'read_summary', subject: 'expense', agent: 'accounting' },
@@ -108,11 +111,11 @@ globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
   const payload = payloadFromOpenAiBody(JSON.parse(String(init?.body ?? '{}')));
   if (Array.isArray(payload.availableTools)) {
     const name = payload.availableTools[0]?.name;
-    return { ok: true, json: async () => ({ output_text: JSON.stringify(name ? { callTool: name } : { done: true }) }) } as Response;
+    return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(name ? { callTool: name } : { done: true }) }) } as Response;
   }
-  if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
-  if (payload.systemData) return { ok: true, json: async () => ({ output_text: '' }) } as Response;
-  return { ok: true, json: async () => ({ output_text: JSON.stringify(planFor(String(payload.messageText ?? ''))) }) } as Response;
+  if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ status: 'completed', output_text: payload.reply }) } as Response;
+  if (payload.systemData) return { ok: true, json: async () => ({ status: 'completed', output_text: '' }) } as Response;
+  return { ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(planFor(String(payload.messageText ?? ''))) }) } as Response;
 }) as typeof fetch;
 
 const invoked: string[] = [];
@@ -185,6 +188,23 @@ type Failure = { id: string; expectedTools: string[]; invokedTools: string[]; re
 const same = (left: readonly string[], right: readonly string[]) => JSON.stringify([...new Set(left)].sort()) === JSON.stringify([...new Set(right)].sort());
 
 void (async () => {
+  const runtimeFlag = process.argv.indexOf('--reliability-runtime');
+  if (runtimeFlag >= 0) {
+    const path = process.argv[runtimeFlag + 1];
+    if (!path || path.startsWith('--')) throw new Error('RELIABILITY_RUNTIME_MANIFEST_REQUIRED');
+    const { runLineReliabilityRuntime } = await import('./line-ai-reliability-runtime');
+    const result = await runLineReliabilityRuntime(JSON.parse(readFileSync(path, 'utf8')), process.cwd());
+    console.log(JSON.stringify({ event: 'line_ai_reliability_runtime_replay', ...result }, null, 2));
+    return;
+  }
+  const evidenceFlag = process.argv.indexOf('--reliability-traces');
+  if (evidenceFlag >= 0) {
+    const path = process.argv[evidenceFlag + 1];
+    if (!path || path.startsWith('--')) throw new Error('RELIABILITY_TRACE_FILE_REQUIRED');
+    const run = scoreReliabilityTraceBundle(JSON.parse(readFileSync(path, 'utf8')));
+    console.log(JSON.stringify({ event: 'line_ai_reliability_trace_scored', run, summary: summarizeReliabilityRun(run) }, null, 2));
+    return;
+  }
   const startedAt = Date.now();
   const failures: Failure[] = [];
   for (const [index, testCase] of LINE_AI_ALL_OPERATOR_CASES.entries()) {

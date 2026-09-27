@@ -103,6 +103,7 @@ describe('DrainWorkflowOutboxUseCase', () => {
       // Capture appendix §3: the LINE capture-result push owns this one. Claimed here it would be
       // marked published without anyone being told their document had been read.
       'expense.capture_read.finished',
+      'line.document_qa.raw_cleanup_requested',
     ]);
   });
 

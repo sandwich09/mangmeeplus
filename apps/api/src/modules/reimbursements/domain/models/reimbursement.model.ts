@@ -220,6 +220,59 @@ export type ReimbursementLineWriteData = {
   attachmentSnapshot?: ReimbursementAttachmentSnapshot;
 };
 
+export type ReimbursementDraftActionOwner = {
+  companyId: string;
+  actorUserId: string;
+  membershipId: string;
+  channel: 'line';
+  channelKind: 'USER';
+  messagingChannelId: string;
+  chatKeyHash: string;
+  ownerEpoch: number;
+};
+
+export type ReimbursementDraftActionRecord = ReimbursementDraftActionOwner & {
+  id: string;
+  taskId: string;
+  actionOrdinal: number;
+  intentKeyHash: string;
+  operation: 'CREATE' | 'UPDATE';
+  status: 'COLLECTING' | 'PREVIEW' | 'APPLIED' | 'CANCELLED' | 'EXPIRED' | 'STALE';
+  previewRevision: number;
+  requestId?: string;
+  expectedRequestUpdatedAt?: Date;
+  commandJson?: unknown;
+  previewJson?: unknown;
+  sourceProofJson?: unknown;
+  confirmationDigest?: string;
+  resultJson?: unknown;
+  appliedRequestUpdatedAt?: Date;
+  previewDeliveryId?: string;
+  expiresAt: Date;
+  appliedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type ReimbursementDraftPreparedCommand = {
+  schemaVersion: 1;
+  operation: 'CREATE' | 'UPDATE';
+  requestId?: string;
+  expectedRequestUpdatedAt?: string;
+  requesterUserId: string;
+  requesterDisplayNameSnapshot: string;
+  branchId: string;
+  title?: string;
+  reason: string;
+  currency: string;
+  missingReceiptReason?: string;
+  receiptRequirementStatus: ReimbursementReceiptRequirementStatus;
+  header: { amount: string; categoryKey: string; categoryLabelSnapshot?: string; incurredDate: string };
+  lines: Array<Omit<ReimbursementLineWriteData, 'incurredDate'> & { incurredDate: string }>;
+  policyProof: { currency: string; requireReceipt: boolean; allowMissingReceiptWithReason: boolean };
+  invalidateSignatures: boolean;
+};
+
 export type ReimbursementDuplicateCandidateWriteData = {
   candidateType: 'ATTACHMENT_CHECKSUM' | 'EXPENSE_LINK' | 'AMOUNT_DATE_VENDOR';
   candidateRequestId?: string;

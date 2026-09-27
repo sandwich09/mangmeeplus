@@ -1,11 +1,19 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import type { RequestContext, SourceRef, SupplierStatus, SupplierType, ToolResult } from '@watchdog-bms/contracts';
+import { isCivilPeriodKey, type RequestContext, type SourceRef, type SupplierStatus, type SupplierType, type ToolResult } from '@watchdog-bms/contracts';
 import { ListSuppliersUseCase } from '../../../procurement/application/use-cases/supplier.use-case';
 import { GetPurchaseOrderUseCase, ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import { ListPeriodsUseCase } from '../../../ledger/application/use-cases/period.use-case';
 import { GetBalanceSheetUseCase, GetPnlReportUseCase, GetTrialBalanceUseCase } from '../../../ledger/application/use-cases/report.use-case';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
-import { resolvePeriodInput } from './erp-tools.use-case';
+import {
+  BUSINESS_READ_BASIS_VERSION,
+  appliedQuery,
+  completeResult,
+  fact,
+  periodError,
+  resolveBusinessReadPeriod,
+  sourceRefId,
+} from '../../domain/logic/business-read-source.logic';
 
 function now(): string { return new Date().toISOString(); }
 
@@ -25,12 +33,11 @@ function forbidden(toolName: string, asOf: string, errorCode?: string): ToolResu
   return { toolName, status: 'forbidden', sourceRefs: [], asOf, ...(errorCode && { errorCode }) };
 }
 
-function scopedBranch(ctx: ErpToolContext, requested?: string): { branchId?: string; error?: 'forbidden' | 'unsupported' } {
+function scopedBranch(ctx: ErpToolContext, requested?: string): { branchId?: string; error?: 'forbidden' } {
   const branchId = requested?.trim().slice(0, 200) || undefined;
   if (!ctx.branchIds) return { branchId };
   if (branchId) return ctx.branchIds.includes(branchId) ? { branchId } : { error: 'forbidden' };
-  if (ctx.branchIds.length === 1) return { branchId: ctx.branchIds[0] };
-  return { error: 'unsupported' };
+  return {};
 }
 
 const PURCHASE_ORDER_STATUSES = [
@@ -43,35 +50,50 @@ export class ProcurementGetSummaryTool implements ErpReadToolPort {
   toolName = 'procurement.get_summary';
   constructor(private readonly listPurchaseOrders: ListPurchaseOrdersUseCase) {}
 
-  async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string; branchId?: string }): Promise<ToolResult> {
-    const asOf = now();
+  async execute(ctx: ErpToolContext, input: { periodKey?: string; fromDate?: string; toDate?: string; branchId?: string } = {}): Promise<ToolResult> {
+    let asOf = now();
     if (!ctx.permissions.includes('procurement.purchase_order.read')) return forbidden(this.toolName, asOf);
     const branch = scopedBranch(ctx, input?.branchId);
     if (branch.error === 'forbidden') return forbidden(this.toolName, asOf, 'BRANCH_SCOPE_DENIED');
-    if (branch.error === 'unsupported') {
-      return { toolName: this.toolName, status: 'unavailable', sourceRefs: [], asOf, errorCode: 'MULTI_BRANCH_SUMMARY_UNSUPPORTED' };
-    }
-    const period = resolvePeriodInput(input);
-    const baseFilter = { fromDate: period.fromDate, toDate: period.toDate, ...(branch.branchId && { branchId: branch.branchId }), page: 1, pageSize: 1 };
-    const [all, ...statusPages] = await Promise.all([
-      this.listPurchaseOrders.execute(toCtx(ctx), baseFilter),
-      ...PURCHASE_ORDER_STATUSES.map((status) => this.listPurchaseOrders.execute(toCtx(ctx), { ...baseFilter, status })),
-    ]);
-    const byStatus = Object.fromEntries(PURCHASE_ORDER_STATUSES.map((status, index) => [status, statusPages[index]?.total ?? 0]));
+    const resolved = resolveBusinessReadPeriod(input);
+    if (!resolved.ok) return periodError(this.toolName, asOf, resolved);
+    const period = resolved.period;
+    const aggregate = await this.listPurchaseOrders.aggregate(toCtx(ctx), {
+      fromDate: period.fromDate, toDate: period.toDate, ...(branch.branchId ? { branchId: branch.branchId } : {}),
+    });
+    asOf = aggregate.asOf.toISOString();
+    const byStatus = Object.fromEntries(PURCHASE_ORDER_STATUSES.map((status) => [status, aggregate.byStatus.find((row) => row.status === status)?.count ?? 0]));
+    const sourceRefs = [ref(ctx, asOf, 'procurement', 'purchase_order_summary', 'สรุปการจัดซื้อ', '/procurement')];
+    const queryApplied = appliedQuery(period, {
+      branch: { mode: branch.branchId ? 'selected' : 'all_authorized', branchId: branch.branchId ?? null },
+      dateBasis: 'purchase_order_order_date', statusBasis: 'all_purchase_order_statuses', dataset: 'operational_purchase_orders',
+    });
+    const completeness = completeResult(0, false, aggregate.byStatus.length + aggregate.byCurrency.length, false);
     return {
       toolName: this.toolName,
       status: 'ok',
       data: {
         period: { fromDate: period.fromDate, toDate: period.toDate, defaultedToCurrentMonth: period.defaulted },
         branchId: branch.branchId ?? null,
-        total: all.total,
+        total: aggregate.total,
         byStatus,
         basis: 'canonical_purchase_order_record_counts',
-        monetarySummaryAvailable: false,
-        monetarySummaryUnavailableReason: 'canonical_purchase_order_list_source_has_no_bounded_aggregate_by_currency',
+        totalsByCurrency: aggregate.byCurrency,
+        monetarySummaryAvailable: true,
+        queryApplied,
+        completeness,
       },
-      sourceRefs: [ref(ctx, asOf, 'procurement', 'purchase_order_summary', 'สรุปการจัดซื้อ', '/procurement')],
+      sourceRefs,
       asOf,
+      queryApplied,
+      basisVersion: BUSINESS_READ_BASIS_VERSION,
+      facts: aggregate.byCurrency.map((row) => fact({
+        id: `procurement.purchase_orders.${row.currency}`, metric: 'purchase_order_total', value: row.totalAmount,
+        unit: 'money', currency: row.currency, period: queryApplied.period ?? null,
+        dateBasis: queryApplied.dateBasis, statusBasis: queryApplied.statusBasis,
+        sourceRefIds: sourceRefs.map(sourceRefId), asOf, state: row.count === 0 ? 'empty' : 'known',
+      })),
+      completeness,
     };
   }
 }
@@ -178,6 +200,7 @@ export class LedgerGetPeriodStatusTool implements ErpReadToolPort {
     if (!periodKey) {
       return { toolName: this.toolName, status: 'ok', data: { needsPeriodKey: true }, sourceRefs: [ref(ctx, asOf, 'ledger', 'accounting_period', 'สถานะงวดบัญชี', '/reports')], asOf };
     }
+    if (!isCivilPeriodKey(periodKey)) return { toolName: this.toolName, status: 'error', sourceRefs: [], asOf, errorCode: 'INVALID_PERIOD' };
     const period = (await this.listPeriods.execute(toCtx(ctx))).find((item) => item.periodKey === periodKey);
     if (!period) return {
       toolName: this.toolName, status: 'ok', data: { found: false },
@@ -211,6 +234,7 @@ export class LedgerGetReportSummaryTool implements ErpReadToolPort {
     if (!periodKey) {
       return { toolName: this.toolName, status: 'ok', data: { needsPeriodKey: true }, sourceRefs: [ref(ctx, asOf, 'ledger', 'ledger_report', 'รายงานบัญชีแยกประเภท', '/reports')], asOf };
     }
+    if (!isCivilPeriodKey(periodKey)) return { toolName: this.toolName, status: 'error', sourceRefs: [], asOf, errorCode: 'INVALID_PERIOD' };
     const period = (await this.listPeriods.execute(toCtx(ctx))).find((item) => item.periodKey === periodKey);
     if (!period) return {
       toolName: this.toolName, status: 'ok', data: { found: false },

@@ -9,8 +9,9 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { LINE_FLEX_PREVIEW_LIMIT, lineMessagePreview } from '../domain/logic/line-message-preview.logic';
 
 type LineMessageAction = { type: 'message'; label: string; text: string };
+type LinePostbackAction = { type: 'postback'; label: string; data: string; displayText?: string };
 type LineCameraAction = { type: 'camera' | 'cameraRoll'; label: string };
-export type LineQuickReplyItem = { type: 'action'; action: LineMessageAction | LineCameraAction };
+export type LineQuickReplyItem = { type: 'action'; action: LineMessageAction | LineCameraAction | LinePostbackAction };
 export type LineReplyMessage = {
   quickReply?: { items: LineQuickReplyItem[] };
 } & (
@@ -39,6 +40,8 @@ function providerMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
  *  the Flex message's own `altText` can. Because it only ever appears where
  *  `failed_token` used to, a caller that does not know the value behaves
  *  exactly as before by treating it as `failed_token`. */
+export type LineDeliveryResultV2 = { kind: 'accepted' | 'rejected' | 'unknown'; code: string; requestId?: string; rejection?: 'TOKEN' | 'FLEX' | 'PERMANENT' };
+
 export type LineDeliveryResult = 'ok' | 'failed_token' | 'failed_flex' | 'failed_other' | 'failed_permanent' | 'skipped';
 
 /** Own data again, but a row rewritten by hand must not take the sweep down — and it must never be
@@ -132,6 +135,34 @@ export class LineReplyAdapter {
    *  Used for expired-token fallback, slow-turn feedback, and receipt acknowledgement (spec §10). */
   async sendPush(to: string, messages: LineReplyMessage[], operationId: string = randomUUID()): Promise<LineDeliveryResult> {
     return this.postMessage(this.LINE_PUSH_URL, { to, messages: providerMessages(messages) }, 'push', messages, linePushRetryKey(operationId, to, messages));
+  }
+
+  /** Exact frozen v2 wire. A thrown request/body read is uncertainty, never a token rejection. */
+  async sendFrozenV2(input: { channelId?: string; transport: 'REPLY' | 'PUSH'; target: string; messages: LineReplyMessage[]; pushRetryKey: string; timeoutMs: number }): Promise<LineDeliveryResultV2> {
+    if (!parseOutcomeMessages(input.messages) || input.messages.some(m => m.type === 'flex' && m.canonicalText !== undefined)
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.pushRetryKey)
+      || !input.target || !Number.isFinite(input.timeoutMs) || input.timeoutMs < 500) return { kind: 'rejected', code: 'INVALID_FROZEN_WIRE', rejection: 'PERMANENT' };
+    try {
+      const credentials = await this.lineCredentials.get();
+      if (input.channelId !== undefined && input.channelId !== credentials.channelId) return { kind: 'rejected', code: 'CHANNEL_CHANGED', rejection: 'PERMANENT' };
+      const accessToken = credentials.accessToken;
+      if (!accessToken) return { kind: 'rejected', code: 'CHANNEL_UNAVAILABLE', rejection: 'PERMANENT' };
+      const push = input.transport === 'PUSH';
+      const response = await fetch(push ? this.LINE_PUSH_URL : this.LINE_REPLY_URL, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}`, ...(push ? { 'X-Line-Retry-Key': input.pushRetryKey } : {}) },
+        body: canonicalJson({ [push ? 'to' : 'replyToken']: input.target, messages: input.messages }),
+        signal: AbortSignal.timeout(Math.min(5_000, Math.trunc(input.timeoutMs))),
+      });
+      const requestId = (response.headers.get('x-line-accepted-request-id') ?? response.headers.get('x-line-request-id'))?.slice(0, 200);
+      if (response.ok || (push && response.status === 409 && response.headers.get('x-line-accepted-request-id'))) return { kind: 'accepted', code: 'API_ACCEPTED', ...(requestId ? { requestId } : {}) };
+      // Reading the response shares the abort signal from fetch. A lost body cannot prove rejection.
+      const body = await response.text();
+      if (!push && response.status === 400 && /invalid reply token/i.test(body)) return { kind: 'rejected', code: 'REPLY_TOKEN_REJECTED', rejection: 'TOKEN' };
+      if (response.status === 400 && body.includes(LINE_MESSAGE_BODY_REJECTION) && input.messages.some(m => m.type === 'flex')) return { kind: 'rejected', code: 'FLEX_REJECTED', rejection: 'FLEX' };
+      if (response.status === 429) return { kind: 'rejected', code: 'RATE_LIMITED' };
+      if (response.status >= 400 && response.status < 500 && response.status !== 408) return { kind: 'rejected', code: 'PROVIDER_REJECTED', rejection: 'PERMANENT' };
+      return { kind: 'unknown', code: 'PROVIDER_ACCEPTANCE_UNKNOWN' };
+    } catch { return { kind: 'unknown', code: 'PROVIDER_ACCEPTANCE_UNKNOWN' }; }
   }
 
   /** Best-effort typing indicator. One-on-one chats only; LINE dismisses it

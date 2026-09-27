@@ -2,7 +2,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { HttpException } from '@nestjs/common';
 import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
-import { AI_BUDGET_STEP_BOUNDS } from '@watchdog-bms/contracts';
+import { AI_BUDGET_PROFILE_TABLE_DIGEST_V2, AI_BUDGET_STEP_BOUNDS, createLineAiInputEvidence } from '@watchdog-bms/contracts';
 import { __resetCompanyAiBudgetCache } from '../application/company-ai-usage-meter';
 import { aiBudgetAttemptHash } from '../application/company-ai-budget-reservation';
 import { AiGatewayClient, AiGatewayRequestError } from './ai-gateway.client';
@@ -76,6 +76,39 @@ describe('AiGatewayClient failure classification', () => {
       async () => ({ ok: false, status: 503 } as Response),
       'AI_GATEWAY_UNAVAILABLE',
     );
+  });
+
+  it('refuses v2 input before the legacy v1 reservation path when rendered v2 holds are unavailable', async () => {
+    const built = await createLineAiInputEvidence({
+      turnKey: 'turn-v2', parts: [{ partId: 'part-v2', eventIdHash: 'a'.repeat(64), acceptedAtMs: 100, rawText: baseTurnRequest.messageText }],
+    });
+    assert.ok(built);
+    const request: LineAiTurnRequest = {
+      ...baseTurnRequest,
+      inputEvidence: built.inputEvidence,
+      contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
+      budgetGrantV2: {
+        version: 2, turnKey: 'turn-v2', authorityKind: 'webhook_event', authorityId: 'event-v2',
+        channelOwnerDigest: 'b'.repeat(64), attemptKey: 'attempt-v2', monthKey: '2026-09', payerCompanyId: 'company-1',
+        model: { provider: 'bedrock', modelId: 'apac.anthropic.claude-3-haiku-20240307-v1:0', region: 'ap-southeast-1' },
+        allowedProfileIds: ['line-intake-text/2'], profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
+        maxTurnSlots: 4, maxRepairs: 1, admittedAtMs: 100, workDeadlineAtMs: 10_000, finalDeadlineAtMs: 20_000,
+        nonce: 'nonce-v2', issuerVersion: 'api-1', signature: 'c'.repeat(64),
+      },
+    };
+    const originalFetch = globalThis.fetch;
+    let fetched = false;
+    globalThis.fetch = async () => { fetched = true; return new Response('{}', { status: 200 }); };
+    try {
+      await assert.rejects(createClient().requestLineTurn(request), (error: unknown) => {
+        assert.ok(error instanceof HttpException);
+        assert.deepEqual(error.getResponse(), { code: 'AI_CONTRACT_UNSUPPORTED', reason: 'v2_evidence_or_authority_invalid' });
+        return true;
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assert.equal(fetched, false, 'a v2 request must not consume a v1 hold or reach the legacy gateway route');
   });
 });
 
@@ -993,5 +1026,33 @@ describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)
     const hold = [...failedProvider.reservations.values()][0];
     assert.notEqual(hold.status, 'CANCELLED', 'a provider failure NEVER refunds money (R-05)');
     assert.equal(hold.status, 'SETTLED', 'it settles against the usage the gateway reported');
+  });
+});
+
+
+describe('AiGatewayClient v2 transport', () => {
+  it('forwards authenticated evidence with the pinned model and no legacy hold or duplicate usage metering', async () => {
+    const built = await createLineAiInputEvidence({ turnKey: 'v2-transport', parts: [{ partId: 'one', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: baseTurnRequest.messageText }] });
+    assert.ok(built);
+    const now = Date.now();
+    const grant = { version: 2 as const, turnKey: 'v2-transport', authorityKind: 'webhook_event' as const, authorityId: 'authority', channelOwnerDigest: 'b'.repeat(64),
+      attemptKey: 'attempt-transport', monthKey: '2026-09', payerCompanyId: 'company-1', model: { provider: 'bedrock' as const, modelId: SPLIT_FIXTURE_MODEL_ID, region: 'ap-southeast-1' },
+      allowedProfileIds: ['line-answer/2'] as const, profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, maxTurnSlots: 2 as const, maxRepairs: 1 as const,
+      admittedAtMs: now, workDeadlineAtMs: now + 10000, finalDeadlineAtMs: now + 13000, nonce: 'transport', nextOrdinal: 0, issuerVersion: 'fixture', signature: 'c'.repeat(64) };
+    let validated = 0;
+    const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'synthetic' } as any,
+      { issue: () => { throw new Error('no business delegation authorized'); } } as any, undefined,
+      { client: new Proxy({}, { get: () => { throw new Error('legacy budget/meter path must not run'); } }) } as any,
+      { validate: async (received: unknown, digest: string, scope: unknown) => { validated++; assert.deepEqual(received, grant);
+        assert.equal(digest, built.inputEvidence.joinedSha256); assert.deepEqual(scope, { companyId: 'company-1', userId: 'user-1', membershipId: 'membership-1' }); return true; } } as any);
+    const original = globalThis.fetch; let sent: any;
+    globalThis.fetch = async (_url, init) => { sent = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ status: 'ok', replyText: 'synthetic', usage: [{ inputTokens: 123 }] })); };
+    try {
+      const result = await client.requestLineTurn({ ...baseTurnRequest, inputEvidence: built.inputEvidence,
+        contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'], budgetGrantV2: { ...grant, allowedProfileIds: [...grant.allowedProfileIds] } });
+      assert.equal(result.replyText, 'synthetic'); assert.equal(validated, 1);
+      assert.deepEqual(sent.budgetGrantV2, grant); assert.equal(sent.budgetEnvelope, undefined);
+      assert.deepEqual(sent.modelPolicy, { modelId: SPLIT_FIXTURE_MODEL_ID }); assert.deepEqual(sent.inputEvidence, built.inputEvidence);
+    } finally { globalThis.fetch = original; }
   });
 });

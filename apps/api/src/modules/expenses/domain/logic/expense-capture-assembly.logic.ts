@@ -8,7 +8,7 @@
  * rounding or discount (spec §6 rule 9, §16.2).
  */
 import Decimal from 'decimal.js';
-import { EXPENSE_CAPTURE_OBSERVATION_LIMITS } from '@watchdog-bms/contracts';
+import { EXPENSE_CAPTURE_OBSERVATION_LIMITS, expenseCaptureFieldRole } from '@watchdog-bms/contracts';
 import type {
   ExpenseCaptureAssembledObservations,
   ExpenseCaptureComponentObservation,
@@ -130,7 +130,7 @@ export function assembleCaptureObservations(
       const documentRef = resolve(window.id, item.documentRef);
       if (!documentRef) continue;
       // Rows are NOT deduped by description — two lines of the same product are two purchases
-      // (§16.2). The id is `<page>:<line>`, so only a literally re-read row collapses.
+      // (§16.2). V2 ids bind original page offsets, including across split windows.
       const key = `${documentRef}|${item.id}`;
       if (seenItems.has(key)) continue;
       seenItems.add(key);
@@ -192,6 +192,7 @@ export function assembleCaptureObservations(
   const issuers = new Set(documents.map((document) => (document.issuer?.name ?? '').trim()).filter(Boolean));
 
   return {
+    ...(windows.length && windows.every(window => window.observations.fieldEvidenceVersion === 2) ? { fieldEvidenceVersion: 2 as const } : {}),
     documents,
     items,
     components,
@@ -220,7 +221,7 @@ function goodsSubtotalRole(
   if (!GOODS_SUBTOTAL_WRONG_ROLES.has(component.role)) return component;
   if (DISCOUNT_LABEL.test(`${component.label} ${component.evidenceSpan}`)) return component;
   return GOODS_SUBTOTAL_LABEL.test(`${component.label} ${component.evidenceSpan}`)
-    ? { ...component, role: 'summary' }
+    ? { ...component, role: 'summary', ...(component.fieldEvidence ? { fieldEvidence: Object.fromEntries(Object.entries(component.fieldEvidence).map(([field, evidence]) => [field, { ...evidence, role: expenseCaptureFieldRole({ role: 'summary' }, field) }])) } : {}) }
     : component;
 }
 
@@ -251,7 +252,8 @@ function derivedTaxTotal(
   if (amounts.size !== 1 || !first) return null;
   // Plausibility, not arithmetic proof: an amount above the 7 % ceiling is some other row's money.
   if (money(first.amount)!.greaterThan(vatCeiling)) return null;
-  return { documentRef, kind: 'tax', amount: first.amount!, evidenceSpan: first.evidenceSpan };
+  return { documentRef, kind: 'tax', amount: first.amount!, evidenceSpan: first.evidenceSpan,
+    ...(first.fieldEvidence?.amount ? { fieldEvidence: { amount: { ...first.fieldEvidence.amount, role: 'tax:amount' } } } : {}) };
 }
 
 /** Same issuer AND same printed number. Either one missing means "cannot prove they are one". */
@@ -266,6 +268,13 @@ function mergeDocument(
   into: ExpenseCaptureDocumentObservation,
   from: ExpenseCaptureDocumentObservation,
 ): void {
+  const printedEvidence = new Map([
+    ...(from.printedPage?.number !== undefined ? [[from.printedPage.number, from.fieldEvidence?.['printedPage.number']] as const] : []),
+    ...(into.printedPage?.number !== undefined ? [[into.printedPage.number, into.fieldEvidence?.['printedPage.number']] as const] : []),
+    ...(from.printedPages ?? []).map((value, index) => [value, from.fieldEvidence?.[`printedPages.${index}`]] as const),
+    ...(into.printedPages ?? []).map((value, index) => [value, into.fieldEvidence?.[`printedPages.${index}`]] as const),
+  ]);
+  if (from.fieldEvidence || into.fieldEvidence) into.fieldEvidence = { ...from.fieldEvidence, ...into.fieldEvidence };
   into.pageIndexes = [...new Set([...into.pageIndexes, ...from.pageIndexes])].sort((a, b) => a - b);
   into.documentNumber ??= from.documentNumber;
   into.documentDate ??= from.documentDate;
@@ -275,8 +284,13 @@ function mergeDocument(
   // The printed "page n of m" of ANY page proves how many pages the document claims to have.
   if (from.printedPage?.of !== undefined && (into.printedPage?.of ?? 0) < from.printedPage.of) {
     into.printedPage = { ...into.printedPage, of: from.printedPage.of };
+    if (from.fieldEvidence?.['printedPage.of']) (into.fieldEvidence ??= {})['printedPage.of'] = from.fieldEvidence['printedPage.of'];
   }
-  into.printedPages = [...new Set([...(into.printedPages ?? []), ...printedNumbers(into, from)])];
+  into.printedPages = [...new Set([...(into.printedPages ?? []), ...(from.printedPages ?? []), ...printedNumbers(into, from)])];
+  if (into.fieldEvidence) {
+    for (const key of Object.keys(into.fieldEvidence)) if (key.startsWith('printedPages.')) delete into.fieldEvidence[key];
+    into.printedPages.forEach((value, index) => { const evidence = printedEvidence.get(value); if (evidence) into.fieldEvidence![`printedPages.${index}`] = { ...evidence, role: `document:printedPages.${index}` }; });
+  }
 }
 
 /** Every printed page number seen for this document, so a gap (1 of 3, 3 of 3) is visible. */
@@ -438,7 +452,8 @@ function hasMissingPages(document: ExpenseCaptureDocumentObservation, pageCount:
 
 /**
  * Consecutive read pages grouped into windows inside the declared 12,000-character ceiling (§4.3).
- * Splitting on PAGES rather than mid-text is what keeps an item block and its total in one window.
+ * Whole pages stay together when possible. Long pages split at line boundaries without losing
+ * their tail; an oversized single line stays whole for the Gateway's explicit size refusal.
  */
 export function planWindows(
   pages: Record<string, { text?: string }>,
@@ -449,17 +464,30 @@ export function planWindows(
     .sort((left, right) => left.pageIndex - right.pageIndex);
   const windows: Array<{ id: string; pageIndexes: number[]; pages: ExpenseCaptureExtractWindow['pages'] }> = [];
   let current: { id: string; pageIndexes: number[]; pages: ExpenseCaptureExtractWindow['pages']; chars: number } | null = null;
-  for (const page of ordered) {
-    // A single page longer than the window budget still gets its own window: the ceiling is a
-    // window rule, and refusing the page outright would lose a read that is already paid for.
-    const text = page.text.slice(0, EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars);
-    if (current && current.chars + text.length > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars) {
+  const chunks = ordered.flatMap(page => {
+    const chunks: ExpenseCaptureExtractWindow['pages'] = [];
+    const limit = EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars;
+    for (let start = 0; start < page.text.length;) {
+      let end = page.text.length;
+      if (end - start > limit) {
+        const previousBreak = page.text.lastIndexOf('\n', start + limit - 1);
+        const nextBreak = page.text.indexOf('\n', start + limit);
+        end = previousBreak >= start ? previousBreak + 1 : nextBreak >= 0 ? nextBreak + 1 : page.text.length;
+      }
+      chunks.push({ pageIndex: page.pageIndex, text: page.text.slice(start, end), ...(start ? { sourceOffset: start } : {}) });
+      start = end;
+    }
+    return chunks;
+  });
+  for (const page of chunks) {
+    const text = page.text;
+    if (current && (current.chars + text.length > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars || current.pageIndexes.includes(page.pageIndex))) {
       windows.push({ id: current.id, pageIndexes: current.pageIndexes, pages: current.pages });
       current = null;
     }
     if (!current) current = { id: `w${windows.length + 1}`, pageIndexes: [], pages: [], chars: 0 };
     current.pageIndexes.push(page.pageIndex);
-    current.pages.push({ pageIndex: page.pageIndex, text });
+    current.pages.push(page);
     current.chars += text.length;
   }
   if (current) windows.push({ id: current.id, pageIndexes: current.pageIndexes, pages: current.pages });
