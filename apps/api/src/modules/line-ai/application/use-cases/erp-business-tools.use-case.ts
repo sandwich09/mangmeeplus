@@ -6,7 +6,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS, type ExpensePaymentStatus, type ExpenseStatus, type ToolResult, type SourceRef } from '@watchdog-bms/contracts';
+import { ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS, EXPENSE_PAYMENT_STATUSES, EXPENSE_STATUSES, type ExpensePaymentStatus, type ExpenseStatus, type ToolResult, type SourceRef } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { ListDocumentsUseCase } from '../../../accounting-documents/application/use-cases/document.use-case';
@@ -360,6 +360,12 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
     const resolved = resolveBusinessReadPeriod(input);
     if (!resolved.ok) return periodError(this.toolName, asOf, resolved);
     const period = resolved.period;
+    if (input.documentStatus !== undefined && !(EXPENSE_STATUSES as readonly string[]).includes(input.documentStatus)) {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'Unsupported filter: documentStatus', sourceRefs: [], asOf };
+    }
+    if (input.paymentStatus !== undefined && !(EXPENSE_PAYMENT_STATUSES as readonly string[]).includes(input.paymentStatus)) {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'Unsupported filter: paymentStatus', sourceRefs: [], asOf };
+    }
     const snapshot = await this.listExpenses.readAiBreakdown(toCtx(ctx), {
       fromDate: period.fromDate, toDate: period.toDate,
       ...(input.branchId ? { branchId: input.branchId } : {}),

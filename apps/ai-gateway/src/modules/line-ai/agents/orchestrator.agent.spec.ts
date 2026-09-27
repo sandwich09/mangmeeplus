@@ -466,10 +466,12 @@ describe('OrchestratorAgent', () => {
     assert.ok(result.replyText.includes('11,875.00'));
     assert.ok(!result.replyText.includes('สิ้นกำหนดวันนี้'));
     assert.ok(!result.replyText.includes('เกินกำหนด'));
-    assert.ok(result.replyText.startsWith(`ค่าใช้จ่าย: 11,875.00 บาท (7 รายการ)\nช่วง: 1 ${thaiMonth} ${thaiYear} – ${todayDay} ${thaiMonth} ${thaiYear}`));
+    assert.equal(result.replyText.split('\n')[0], 'ค่าใช้จ่าย: 11,875.00 บาท (7 รายการ)');
+    assert.ok(result.replyText.includes('\nฐานยอด: รวมรายการรอดำเนินการ 0.00 บาท (ในนั้นเป็นร่าง 0.00 บาท) และรายการยืนยันแล้ว 11,875.00 บาท'));
+    assert.ok(result.replyText.includes(`\nช่วง: 1 ${thaiMonth} ${thaiYear} – ${todayDay} ${thaiMonth} ${thaiYear}`));
     assert.ok(result.replyText.includes(`\nข้อมูล ณ ${todayDay} ${thaiMonth} ${thaiYear}`));
     assert.doesNotMatch(result.replyText, new RegExp(today));
-    assert.doesNotMatch(result.replyText, /รอตรวจสอบ|ยืนยันแล้ว|จ่ายแล้ว|ยังไม่จ่าย|บริษัท โฟลว์แอคเคาท์/);
+    assert.doesNotMatch(result.replyText, /รอตรวจสอบ|จ่ายแล้ว|ยังไม่จ่าย|บริษัท โฟลว์แอคเคาท์/);
     assert.ok(!result.replyText.includes('expense-draft-empty'));
     assert.deepEqual(result.webLinks, [{ label: 'รายการค่าใช้จ่าย', path: '/companies/company-1/expenses' }]);
     assert.equal(result.sourceRefs[0]?.permissionChecked, true);

@@ -166,6 +166,17 @@ Add focused semantic-control coverage proving an all-forced/all-question turn sk
 
 Exit: held-out evidence represents current sold package and role boundaries, and no latency statistic includes an unavailable module or a fast authority refusal as a success.
 
+### Phase 5b — Repair canonical filters and conversational read continuity
+
+1. Add exact enum-value metadata to the existing `ToolMeta` entries that accept enum inputs. Expose the same metadata in the intake catalog and semantic-control tool catalog.
+2. Add one shared Gateway read-input normalizer that canonicalizes only a unique case-insensitive match from the selected tool's declared values. Use it before compact prepared equality checks, semantic `validInput`, and normal model-loop execution. Reject unknown enum values; do not add aliases or keyword rules.
+3. Derive prior-user read date/period candidates from the already bounded API `conversationContext`. Anchor every extraction to that turn's `at` in `Asia/Bangkok`; exclude invalid timestamps, missing/truncated previews, overflow and ambiguous candidates. Never derive amounts, ids, write fields or business facts from history.
+4. Present those candidates to intake as explicit data and validate the identical set in compact and semantic paths. Any current date/period evidence, including ambiguity or overflow, suppresses historical fallback and keeps the current scope unresolved when necessary. The model must select semantic continuity; code must not copy the latest historical filter into an unrelated request.
+5. Keep canonical enum status selection separate from `LineAiDeliveredExpenseSummary`; do not change its `exclude_rejected_voided` meaning. Every accepted follow-up runs a fresh permission-checked ERP read.
+6. Add focused tests for known lowercase canonicalization, invalid enum rejection, confirmed-only total, follow-up preservation of exact dates plus status, explicit override/negation, unrelated history, ambiguous multi-period history and Bangkok boundary anchoring. Preserve the current compact/security/semantic suites.
+
+Exit: the reviewed confirmed-expense read reaches ERP with `CONFIRMED`; the category continuation can select the exact prior user-backed date tuple and canonical status without inventing `this_month`; unrelated or ambiguous history does not silently alter a query.
+
 Exit is evidence, not a predetermined pass. A faster refusal, timeout, missing clause, wrong filter, false answer or unsafe effect fails.
 
 ## Phase 6 — Review and handoff

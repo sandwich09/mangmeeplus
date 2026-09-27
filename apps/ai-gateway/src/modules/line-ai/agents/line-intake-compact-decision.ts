@@ -12,6 +12,7 @@ import type {
   ToolMeta,
 } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
+import { canonicalizeReadToolEnums } from './read-tool-input';
 
 const DECISION_KEYS = new Set(['subrequests', 'simpleRead']);
 const SUBREQUEST_KEYS = new Set([
@@ -31,11 +32,6 @@ const KNOWN_FILTER_KEYS = new Set(LINE_TOOL_REGISTRY.flatMap((tool) => [
   ...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? []),
 ]));
 const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-const SAFE_ENUM_FILTERS: Readonly<Record<string, ReadonlySet<string>>> = {
-  documentStatus: new Set(['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'CONFIRMED', 'REJECTED', 'VOIDED']),
-  paymentStatus: new Set(['UNPAID', 'PARTIALLY_PAID', 'PAID', 'VOIDED']),
-};
-
 export type CompactSimpleReadRejection =
   | 'not_single_independent_read'
   | 'invalid_simple_shape'
@@ -106,12 +102,13 @@ function isGroundedFilterValue(
   key: string,
   value: string | number | boolean | null,
   messageText: string,
+  tool: ToolMeta,
   candidates?: LineAiValueCandidates,
 ): boolean {
   if (value === null) return true;
   const literal = String(value);
   if (literal && messageText.includes(literal)) return true;
-  if (typeof value === 'string' && SAFE_ENUM_FILTERS[key]?.has(value)) return true;
+  if (typeof value === 'string' && tool.inputEnumValues?.[key]?.includes(value)) return true;
   if (key === 'fromDate') return (candidates?.periods ?? []).some((period) => period.fromDate === value);
   if (key === 'toDate') return (candidates?.periods ?? []).some((period) => period.toDate === value);
   if (key === 'periodKey') return (candidates?.periods ?? []).some((period) => period.monthKey === value);
@@ -142,7 +139,7 @@ function simpleReadPlan(input: {
   language: string;
   messageText: string;
   valueCandidates?: LineAiValueCandidates;
-}): { preparedPlan?: LineAiPreparedPlan; rejection?: CompactSimpleReadRejection } {
+}): { preparedPlan?: LineAiPreparedPlan; canonicalFilters?: Record<string, string | number | boolean | null>; rejection?: CompactSimpleReadRejection } {
   const { raw, semanticSubrequests, enabledTools, enabledPreparedFamilies, language, messageText, valueCandidates } = input;
   const only = semanticSubrequests[0];
   if (semanticSubrequests.length !== 1 || !only || only.kind !== 'read' || only.dependsOn.length
@@ -167,15 +164,17 @@ function simpleReadPlan(input: {
   }
   if (!tool.supportedAgents.includes(raw['agent'])) return { rejection: 'tool_agent_mismatch' };
 
+  const canonicalFilters = canonicalizeReadToolEnums(tool, only.requestedFilters) as Record<string, string | number | boolean | null> | undefined;
+  if (!canonicalFilters) return { rejection: 'filter_not_grounded' };
   const allowedFilters = new Set([...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? [])]);
-  if (!periodSelectionGrounded(only.requestedFilters, valueCandidates)) return { rejection: 'filter_not_grounded' };
-  for (const [key, value] of Object.entries(only.requestedFilters)) {
+  if (!periodSelectionGrounded(canonicalFilters, valueCandidates)) return { rejection: 'filter_not_grounded' };
+  for (const [key, value] of Object.entries(canonicalFilters)) {
     if (!allowedFilters.has(key)) {
       return { rejection: 'filter_not_supported' };
     }
-    if (!isGroundedFilterValue(key, value, messageText, valueCandidates)) return { rejection: 'filter_not_grounded' };
+    if (!isGroundedFilterValue(key, value, messageText, tool, valueCandidates)) return { rejection: 'filter_not_grounded' };
   }
-  if ((tool.requiredInputFields ?? []).some((key) => only.requestedFilters[key] === undefined)) {
+  if ((tool.requiredInputFields ?? []).some((key) => canonicalFilters[key] === undefined)) {
     return { rejection: 'required_filter_missing' };
   }
 
@@ -189,12 +188,12 @@ function simpleReadPlan(input: {
         requiredTools: [tool.name], missingContext: [] }],
       refusals: [], requiresHumanReview: false,
     },
-    proposedCalls: [{ toolName: tool.name, input: { ...only.requestedFilters } }],
+    proposedCalls: [{ toolName: tool.name, input: { ...canonicalFilters } }],
     responseMode: 'simple_grounded',
     answerShape: raw['answerShape'],
   };
   const preparedPlan = parseLineAiPreparedPlan(candidate);
-  return preparedPlan ? { preparedPlan } : { rejection: 'prepared_contract_invalid' };
+  return preparedPlan ? { preparedPlan, canonicalFilters } : { rejection: 'prepared_contract_invalid' };
 }
 
 /** Expand the provider-private compact decision into the existing canonical gateway contracts. */
@@ -241,8 +240,11 @@ export function parseLineIntakeCompactDecision(input: {
   if (!semanticSubrequests) return undefined;
   if (raw['simpleRead'] === undefined) return { semanticSubrequests };
   const simple = simpleReadPlan({ raw: raw['simpleRead'], semanticSubrequests, enabledTools, enabledPreparedFamilies, language, messageText, valueCandidates });
+  const canonicalSemantic = simple.canonicalFilters
+    ? semanticSubrequests.map((item, index) => index === 0 ? { ...item, requestedFilters: simple.canonicalFilters! } : item)
+    : semanticSubrequests;
   return {
-    semanticSubrequests,
+    semanticSubrequests: canonicalSemantic,
     ...(simple.preparedPlan ? { preparedPlan: simple.preparedPlan } : {}),
     ...(simple.rejection ? { simpleReadRejection: simple.rejection } : {}),
   };

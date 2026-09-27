@@ -625,6 +625,23 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
     assert.equal(events.some((event: any) => event.metadataJson?.reasonCode === 'UNSUPPORTED_FILTER'), true);
   });
 
+  it('rejects noncanonical expense enum values before list or breakdown adapter dispatch', async () => {
+    for (const name of ['expense.list_recent', 'expense.get_breakdown']) {
+      const { controller, events } = build({ permissions: [AI, 'expense.read'] });
+      let executed = false;
+      const entry = { ...registryEntry(name, 'read_summary'), optionalInputFields: ['documentStatus'],
+        inputEnumValues: { documentStatus: ['DRAFT', 'CONFIRMED'] } };
+      controller.toolMap.set(name, { execute: async () => { executed = true; return { toolName: name, status: 'ok', sourceRefs: [], asOf: new Date().toISOString() }; } });
+      const result = await withRegistryEntry(entry, () => controller.invoke('secret', DELEGATION, {
+        toolName: name, context: CONTEXT, input: { documentStatus: 'confirmed' },
+      }));
+      assert.equal(result.status, 'error');
+      assert.equal(result.errorCode, 'UNSUPPORTED_FILTER');
+      assert.equal(executed, false);
+      assert.equal(events.some((event: any) => event.metadataJson?.invalidEnumFields?.includes('documentStatus')), true);
+    }
+  });
+
   it('denies a registry-known tool whose category is not in the LINE-allowed set', async () => {
     const { controller, events } = build({ permissions: [AI] });
 

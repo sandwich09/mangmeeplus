@@ -90,6 +90,18 @@ describe('§3.3 default period: current month (daily closing: today)', () => {
     assert.deepEqual((result.data as any).period, { ...month(), defaultedToCurrentMonth: true });
   });
 
+  it('expense.get_breakdown rejects invalid document/payment enums before reading the repository', async () => {
+    let calls = 0;
+    const source = { readAiBreakdown: async () => { calls++; throw new Error('must not run'); } } as any;
+    const tool = new ExpenseGetBreakdownTool(source);
+    for (const input of [{ documentStatus: 'confirmed' }, { paymentStatus: 'settled' }]) {
+      const result = await tool.execute({ ...baseCtx, permissions: ['expense.read'] }, input as any);
+      assert.equal(result.status, 'error');
+      assert.equal(result.errorCode, 'UNSUPPORTED_FILTER');
+    }
+    assert.equal(calls, 0);
+  });
+
   it('expense.get_daily_closing reads TODAY — the documented per-day exception', async () => {
     const { prisma } = makeDailyClosingPrisma();
     const result = await new ExpenseGetDailyClosingTool(prisma).execute(dailyClosingCtx);

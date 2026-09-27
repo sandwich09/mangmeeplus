@@ -223,6 +223,9 @@ export const LINE_AI_ACTOR_DELEGATIONS_PER_TOOL = 8;
 export type LineAiConversationContextTurn = {
   at: string;
   userMessagePreview?: string;
+  /** True only when the API knows the stored USER preview was not truncated. Absent is ineligible
+   *  for deterministic follow-up candidates so older callers cannot accidentally widen evidence. */
+  userMessagePreviewComplete?: true;
   assistantReplyPreview?: string;
   intent?: string;
   agent?: string;

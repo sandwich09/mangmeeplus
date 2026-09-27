@@ -2,9 +2,9 @@
   "schemaVersion": "line-ai-capability-manifest/v1",
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
-  "baseRevision": "0617d914b7174110749ad4862cc53a9a71776757",
-  "sourceRevision": "0617d914b7174110749ad4862cc53a9a71776757",
-  "checkoutBranch": "codex/mangmee-ai-default-activation-20260927",
+  "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
+  "sourceRevision": "f9438828f397550634dc29b27aa13935d84d63a9",
+  "checkoutBranch": "codex/line-ai-filter-context-20260927",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -45,7 +45,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts",
-      "sha256": "70b71d5053f88b411d4a3d6b09654625fc19fb139f825f11a6ed8a610324f9e8"
+      "sha256": "7166e341fa58db390c509514d121892008da7df6c103904345b7f4e32d9aaca6"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
@@ -89,7 +89,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts",
-      "sha256": "0b0536ab5042b51447c3ffa627e0413ebad1c744c08c47058b45ff22c1615be0"
+      "sha256": "172212b230b50cab14036b911ffcf026d239f829398fc69c02df66292ec49ef1"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-workflow-tools.use-case.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "33e5a0108d274c99c3e09299136012b12a84e03168c40167ec3267a29f13f920"
+      "sha256": "8f6ae17d85dd060d6429890ff5f6ef3bbde79e0185eeb49d9ac03552de6e1732"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -129,7 +129,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
-      "sha256": "9710dcc58f0cc81a17cb58bd98d42b92edf240c5c35525479f659bec27630df3"
+      "sha256": "39fbc52555d64b05889276fe44b8885b735e5a1a24353097c6b097c2c3d48636"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/line-ai-ledger-internal.controller.ts",
@@ -173,7 +173,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f"
+      "sha256": "2c1adef5f169a7d50236849577946e3291775f0fa8e141b2362e3b9518a8911f"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -181,7 +181,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "e33873eb04a1df148dee50818582990e64e3ce834e78068d1d9ee6129fa4300a"
+      "sha256": "0d582ec1e002a497f7af833602fa81507d53c026d9fa79f16f8266da7713247d"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -8636,6 +8636,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-27T02:38:47.970Z",
-  "manifestDigest": "bcbb909349f1420d1f1d64e59b27d82aa3cf0a15572476c106f1bb9d85931a85"
+  "generatedAt": "2026-09-27T13:21:00.892Z",
+  "manifestDigest": "12e046c24d6d719ce3a45b026f390589f52bea26c5c3039d0f0d00f53b37ee63"
 }

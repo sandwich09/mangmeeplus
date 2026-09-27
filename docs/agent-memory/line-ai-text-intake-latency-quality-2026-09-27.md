@@ -1,6 +1,6 @@
 # Agent Memory: LINE AI text intake latency without quality loss
 
-Status: Combined prepared-family candidate `9ec21268` is locally frozen. The source-reviewed 12-card product-help publication follow-up passes focused knowledge/semantic tests and AI Gateway typecheck and is ready for the next local freeze. The first package-realistic Starter OWNER smoke still failed both turns; no release or latency acceptance is claimed.
+Status: Frozen source `f9438828f397550634dc29b27aa13935d84d63a9` passes the first package-realistic expense/help smoke within the user's approximately eight-second conversation tolerance, while the 2–4 second aspiration remains unmet. A later confirmed-expense/category smoke exposed canonical enum and conversational-filter continuity failures. The isolated source fix is implemented and passes focused Gateway checks; real-model acceptance remains pending.
 
 Owner: Sol-5.6 xhigh implementation agent; root owns design, bug/gap/impact review; Luna-6 xhigh owns independent real-model evidence and comparisons.
 
@@ -9,7 +9,7 @@ Scope: Text-only LINE semantic intake compaction, first-intake context ordering,
 Decisions:
 
 - Use Ponytail full mode from `/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/.agents/skills/ponytail/SKILL.md`; the AGENTS.md path under `/Users/spare058/WatchDog-BMS` was stale on this host.
-- Work only in `/Users/thawatchai/.codex/worktrees/mangmee-ai-spec-v24/mangmeeplus`; preserve the dirty primary checkout.
+- Earlier latency work used `/Users/thawatchai/.codex/worktrees/mangmee-ai-spec-v24/mangmeeplus`. The enum/context fix is isolated in `/Users/thawatchai/.codex/worktrees/line-ai-filter-context/mangmeeplus`; preserve the dirty primary checkout and the frozen earlier worktree.
 - Keep compact format private to provider output; expand to existing `LineIntakeRoutePlan`, semantic inventory and prepared plan.
 - Do not lower `maxTokens` as the latency mechanism.
 - Do not add a flag/secret. Default behavior changes with the reviewed code version; rollback is version rollback.
@@ -19,11 +19,15 @@ Decisions:
 - Preserve the unfinished sales/report diagnostic outside the active tree at `/tmp/mangmee-sales-correctness-deferred-20260927.patch` (SHA-256 `475e1fe6cdc9d1a35d7ba969c21dbed267fc1c706fc1c59ef53c732477950ae6`). It is not deployed or release-ready.
 - First intake must receive a request-scoped tool-name upper bound derived from the authenticated API access snapshot. Gateway static/runtime availability intersects it per request; provider catalog and compact decoder use the same immutable set.
 - Bound semantic-v2 without that authority list fails compact prepared reads closed. General/business-concept answers remain available without ERP tools. Legacy non-v2 keeps wire compatibility and downstream authorization never changes.
+- Read tools declare exact canonical enum input values. Gateway may canonicalize only a unique case-insensitive match to those values; unknown values remain rejected by every path and by the ERP boundary.
+- Historical read periods may come only from bounded API-provided USER previews, anchored to each turn's Bangkok civil date. Intake and compact/semantic validators receive the same candidate set. Current explicit filters/negation win; the model decides continuation; assistant replies and historical amounts/ids/writes never become authority.
+- The user set an active one-hour ceiling from `2026-09-27T12:51:25Z` through `2026-09-27T13:51:25Z`. Work inside this window is limited to the canonical enum and contextual read-filter bugs plus focused verification and the frozen real-model rerun.
 
 Open questions:
 
 - The read-only runtime audit found the deployed fused/prepared/ledger flags enabled with the approved Sonnet 4.6 profile, while repository defaults and the broad synthetic overrides remain separately labelled. Live public sales availability is not verified, and no actual deployed first-intake request was captured; neither is required for this local source review. No live setting was changed.
-- A paid Starter-package owner/requester/read-only candidate comparison has not run. The broad pilot remains diagnostic only.
+- A paid Starter-package owner/requester/read-only matrix has not run. The broad pilot remains diagnostic only.
+- Real-model acceptance of the enum/context fix is pending. `LineAiDeliveredExpenseSummary` remains default-status-only evidence and is not reused as arbitrary status/filter memory.
 
 Root review findings and resolutions:
 
@@ -75,6 +79,8 @@ Verification:
 - Bounded source-wrapper audit: `dashboard.get_business_health_summary` computes only entitled providers. Starter enables the expense provider; its aggregate widget requires company `expense.read`, so own-read `STAFF` cannot see it. Inventory is not entitled. Notification tools return notification events/counts; company/branch and employee tools return their own permission-scoped metadata or counts. Their API tool controller still rechecks feature and permission gates. No sales, ledger, bank or inventory source was found through these wrappers.
 - Shared business-answer renderer audit found two production callers, live webhook and ledger drain, and both pass `formatLineReply(response, webBaseUrl)` as fallback. The complete renderer preserves reply text, all source labels, safe tenant links and card text. When no safe tenant URL can be formed (missing base URL, external URL or wrong tenant), it deliberately omits both the unusable link and its navigation label rather than reviving them from fallback text; this is not a financial caveat/source loss.
 - The prepared-family follow-up passes compact decoder plus router 51/51, internal controller 111/111, prepared security/runtime 69/69, semantic-v2 integration 12/12, AI Gateway typecheck and `git diff --check`. Existing outer-CLARIFY and unoffered compact/legacy plan tests now configure a valid family explicitly, so each still exercises its original route/authority boundary instead of passing because prepared execution defaults off.
+- Confirmed/category smoke evidence `/tmp/mangmee-latency-pilot-20260927/starter-owner-confirmed-category.f9438828.redis14.json` and provider capture `/tmp/mangmee-latency-pilot-20260927/provider-response-f943-category-0927-01.jsonl` are manual FAIL. Turn 1 emitted lowercase `documentStatus: confirmed`, called `expense.list_recent`, and received `UNSUPPORTED_FILTER`. Turn 2 lost the status and exact September 1–27 range, invented unoffered `periodKey: this_month`, made no tool call and returned `TOOL_INPUT_NOT_AUTHORIZED`.
+- Isolated enum/context checks pass: compact decoder 10/10, bounded read-context helper 3/3, semantic-v2 integration 15/15, router/orchestrator/prepared-security group 191/191, AI Gateway typecheck, and `git diff --check`. The semantic tests prove lowercase `confirmed` becomes canonical `CONFIRMED`, the exact September tuple survives a category follow-up, a conflicting CONTROL input makes zero ERP calls, and an explicit reset preserves the period while omitting `documentStatus`. Unrelated-history, multiple-history and explicit current-override variants remain pending real-model evidence and are not claimed by these focused results.
 
 Commands run from the managed worktree:
 
@@ -120,5 +126,4 @@ git diff --check # pass
 
 Next:
 
-- Freeze the source-reviewed product-help publication, then rerun the same two-turn Starter OWNER smoke with the temporary provider-boundary capture.
-- The next run must require exact eligible-card selection and report the permission-checked `expense.status` body/source; it must not treat an invented card, missing permission/feature, stale window or failed hash as approved content.
+- Complete the temporary ambient-type overlay, rerun Gateway typecheck, freeze the isolated source, and run the pre-authorized real-model sequence: confirmed current-period read, category continuation, and explicit status reset. Preserve manual correctness scoring and current ERP rereads.

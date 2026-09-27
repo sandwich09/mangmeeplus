@@ -7396,9 +7396,11 @@ export class ProcessLineWebhookUseCase {
     // bounded stored preview is inspected only to recognize a fixed capability-help routing hint.
     // Its contents never enter model input, and the help examples use current access again.
     const recentTurns = [...rows].reverse().map((row) => {
+      const userMessagePreview = row.userMessagePreview ?? undefined;
       return {
         at: row.createdAt.toISOString(),
-        ...(row.userMessagePreview && { userMessagePreview: row.userMessagePreview }),
+        ...(userMessagePreview && { userMessagePreview,
+          ...(userMessagePreview.length < PREVIEW_MAX_CHARS ? { userMessagePreviewComplete: true as const } : {}) }),
         ...(row.intent && { intent: capabilityHistoryIntent(row.replyPreview) ?? String(row.intent) }),
         ...(row.agent && { agent: row.agent }),
         refused: row.refused,

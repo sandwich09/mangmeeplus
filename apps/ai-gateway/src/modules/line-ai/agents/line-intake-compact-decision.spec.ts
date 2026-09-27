@@ -31,7 +31,7 @@ describe('compact LINE intake decision', () => {
     const candidates = extractValueCandidates(text, '2026-09-27');
     const period = (candidates.periods ?? [])[0]!;
     const parsed = parseLineIntakeCompactDecision({
-      raw: decision(text, { fromDate: period.fromDate, toDate: period.toDate, documentStatus: 'CONFIRMED' }),
+      raw: decision(text, { fromDate: period.fromDate, toDate: period.toDate, documentStatus: 'confirmed' }),
       messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
     });
     assert.ok(parsed?.preparedPlan);
@@ -41,6 +41,21 @@ describe('compact LINE intake decision', () => {
     assert.deepEqual(parsed.semanticSubrequests[0]?.evidenceRefs, [{
       partId: 'part-0', startUtf16: 0, endUtf16: text.length, rawSha256: created.inputEvidence.parts[0]!.rawSha256,
     }]);
+  });
+
+  it('keeps canonical semantics but never prepares an unknown enum value', async () => {
+    const text = 'เดือนนี้ใช้เงินไปเท่าไหร่ เฉพาะสถานะแปลก';
+    const created = await fixture(text);
+    const candidates = extractValueCandidates(text, '2026-09-27');
+    const period = candidates.periods?.[0]!;
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: period.fromDate, toDate: period.toDate, documentStatus: 'UNKNOWN_STATUS' }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
+    });
+    assert.equal(parsed?.preparedPlan, undefined);
+    assert.equal(parsed?.simpleReadRejection, 'filter_not_grounded');
+    assert.equal(parsed?.semanticSubrequests[0]?.requestedFilters.documentStatus, 'UNKNOWN_STATUS');
   });
 
   it('does not prepare a read from dates mixed across two candidate periods', async () => {

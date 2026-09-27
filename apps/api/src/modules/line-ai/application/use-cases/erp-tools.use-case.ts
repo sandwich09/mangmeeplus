@@ -7,7 +7,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { createHash } from 'node:crypto';
 import type { ExpensePaymentStatus, ExpenseStatus, ToolResult, SourceRef } from '@watchdog-bms/contracts';
-import { civilInstantDayRangeToUtc, civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { EXPENSE_PAYMENT_STATUSES, EXPENSE_STATUSES, civilInstantDayRangeToUtc, civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { ListProductsUseCase } from '../../../inventory/application/use-cases/list-products.use-case';
 import { GetStockBalanceUseCase, GetStockReportUseCase, ListMovementsUseCase } from '../../../inventory/application/use-cases/movement-query.use-cases';
@@ -257,12 +257,10 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     const resolved = resolveBusinessReadPeriod(input);
     if (!resolved.ok) return periodError(this.toolName, asOf, resolved);
     const period = resolved.period;
-    const validStatuses: ExpenseStatus[] = ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'CONFIRMED', 'REJECTED', 'VOIDED'];
-    const validPaymentStatuses: ExpensePaymentStatus[] = ['UNPAID', 'PARTIALLY_PAID', 'PAID', 'VOIDED'];
-    if (input.documentStatus !== undefined && !validStatuses.includes(input.documentStatus)) {
+    if (input.documentStatus !== undefined && !(EXPENSE_STATUSES as readonly string[]).includes(input.documentStatus)) {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'Unsupported filter: documentStatus', sourceRefs: [], asOf };
     }
-    if (input.paymentStatus !== undefined && !validPaymentStatuses.includes(input.paymentStatus)) {
+    if (input.paymentStatus !== undefined && !(EXPENSE_PAYMENT_STATUSES as readonly string[]).includes(input.paymentStatus)) {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'Unsupported filter: paymentStatus', sourceRefs: [], asOf };
     }
     if (input.limit !== undefined && (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 50)) {

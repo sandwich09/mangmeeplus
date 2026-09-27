@@ -30,13 +30,14 @@ const PUBLIC_QUESTION = 'อัตราดอกเบี้ยนโยบา�
 
 type Scenario = {
   messageText: string;
-  subrequests: Array<Pick<LineAiSemanticSubrequestV2, 'kind' | 'goal'> & Partial<Pick<LineAiSemanticSubrequestV2, 'dependsOn' | 'writeIntent'>>>;
+  subrequests: Array<Pick<LineAiSemanticSubrequestV2, 'kind' | 'goal'> & Partial<Pick<LineAiSemanticSubrequestV2, 'dependsOn' | 'writeIntent' | 'requestedFilters'>>>;
   controls?: string[];
   answers: string[];
   apiResults?: Record<string, Record<string, unknown>>;
   permissions?: string[];
   reimbursementDraftWriteEnabled?: boolean;
   selectedKnowledgeCardIds?: string[];
+  conversationContext?: Record<string, unknown>;
 };
 
 function response(body: unknown, status = 200): Response {
@@ -69,7 +70,7 @@ async function makeScenario(scenario: Scenario) {
   const part = evidence.parts[0]!;
   const sourceRef = { partId: part.partId, startUtf16: 0, endUtf16: part.rawText.length, rawSha256: part.rawSha256 };
   const semanticSubrequests = scenario.subrequests.map((item, index) => ({
-    index, ...item, requiredEvidence: [], requestedFilters: {}, dependsOn: item.dependsOn ?? [], evidenceRefs: [sourceRef],
+    index, ...item, requiredEvidence: [], requestedFilters: item.requestedFilters ?? {}, dependsOn: item.dependsOn ?? [], evidenceRefs: [sourceRef],
   }));
   const now = Date.now();
   const profiles = new Set<string>(['line-answer/2']);
@@ -108,7 +109,8 @@ async function makeScenario(scenario: Scenario) {
       permissions: scenario.permissions ?? ['ai.tool.invoke', 'expense.read'], roles: ['owner'], branchIds: [BRANCH], locationIds: [LOCATION],
       locale: 'th-TH', chatKeyHash: CHAT,
     },
-    conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: new Date().toISOString(), userMessagePreview: HISTORY }] },
+    conversationContext: scenario.conversationContext ?? { windowMinutes: 15, maxTurns: 15,
+      recentTurns: [{ at: new Date().toISOString(), userMessagePreview: HISTORY }] },
     ...(scenario.selectedKnowledgeCardIds ? { approvedKnowledge: true, selectedKnowledgeCardIds: scenario.selectedKnowledgeCardIds,
       entitledFeatureKeys: ['expenses'] } : {}),
   } as any;
@@ -366,6 +368,55 @@ describe('LineAiTurnUseCase -> OrchestratorAgent -> real v2 provider path', () =
       assert.deepEqual(run.steps.map(step => step.invocation.profileId), ['line-control/2']);
       assert.equal(run.events.includes('vendor:answer'), false);
     }
+  });
+
+  it('binds the canonical status and exact historical period when a read follow-up changes the breakdown', async () => {
+    const requestedFilters = { fromDate: '2026-09-01', toDate: '2026-09-27', documentStatus: 'confirmed' };
+    const run = await makeScenario({ messageText: 'แยกตามหมวดให้ดูหน่อย',
+      subrequests: [{ kind: 'read', goal: 'แยกค่าใช้จ่ายเดิมตามหมวด', requestedFilters }],
+      conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: '2026-09-27T05:00:00.000Z',
+        userMessagePreview: 'เดือนนี้เอาเฉพาะรายการยืนยันแล้ว', userMessagePreviewComplete: true }] },
+      controls: ['{"calls":[{"index":0,"toolName":"expense.get_breakdown","input":{}}],"questions":[]}'],
+      answers: ['{"answers":[{"index":0,"status":"handled","text":"ค่าใช้จ่ายยืนยันแล้ว 420.00 บาท","sourceRefIds":["expense-summary-source"]}]}'],
+      apiResults: expenseSummary });
+
+    assert.equal(run.apiCalls.length, 1);
+    assert.deepEqual(run.apiCalls[0]?.body.input, {
+      fromDate: '2026-09-01', toDate: '2026-09-27', documentStatus: 'CONFIRMED',
+    });
+    const control = run.providerRequests.find(request => String(request.instructions).startsWith('You plan one complete LINE request.'));
+    assert.ok(control);
+    assert.match(String(control.instructions), /Preserve every canonical requestedFilter/);
+    assert.match(JSON.stringify(control), /readContextCandidates/);
+  });
+
+  it('rejects a control call that conflicts with an accepted read filter instead of widening the ERP read', async () => {
+    const run = await makeScenario({ messageText: 'แยกตามหมวดให้ดูหน่อย',
+      subrequests: [{ kind: 'read', goal: 'แยกค่าใช้จ่ายเดิมตามหมวด', requestedFilters: {
+        fromDate: '2026-09-01', toDate: '2026-09-27', documentStatus: 'CONFIRMED',
+      } }],
+      conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: '2026-09-27T05:00:00.000Z',
+        userMessagePreview: 'เดือนนี้เอาเฉพาะรายการยืนยันแล้ว', userMessagePreviewComplete: true }] },
+      controls: ['{"calls":[{"index":0,"toolName":"expense.get_breakdown","input":{"documentStatus":"DRAFT"}}],"questions":[]}'],
+      answers: [] });
+
+    assert.equal(run.apiCalls.length, 0);
+    assert.equal(run.response.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+  });
+
+  it('keeps the historical period but omits a reset status filter instead of inventing null or ALL', async () => {
+    const run = await makeScenario({ messageText: 'รวมรายการร่างด้วย ไม่เอาเฉพาะยืนยันแล้ว',
+      subrequests: [{ kind: 'read', goal: 'แยกค่าใช้จ่ายเดิมรวมรายการร่าง', requestedFilters: {
+        fromDate: '2026-09-01', toDate: '2026-09-27',
+      } }],
+      conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: '2026-09-27T05:00:00.000Z',
+        userMessagePreview: 'เดือนนี้เอาเฉพาะรายการยืนยันแล้ว', userMessagePreviewComplete: true }] },
+      controls: ['{"calls":[{"index":0,"toolName":"expense.get_breakdown","input":{}}],"questions":[]}'],
+      answers: ['{"answers":[{"index":0,"status":"handled","text":"ค่าใช้จ่ายรวม 420.00 บาท","sourceRefIds":["expense-summary-source"]}]}'],
+      apiResults: expenseSummary });
+
+    assert.equal(run.apiCalls.length, 1);
+    assert.deepEqual(run.apiCalls[0]?.body.input, { fromDate: '2026-09-01', toDate: '2026-09-27' });
   });
 
   it('refuses a business number that does not match the permission checked fact', async () => {

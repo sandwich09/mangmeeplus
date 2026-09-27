@@ -1,6 +1,7 @@
 // AI Tool contracts – shared by API (tool adapters) and AI Gateway (orchestration).
 
 import type { LineAiBusinessSubject } from './line-ai.js';
+import { EXPENSE_PAYMENT_STATUSES, EXPENSE_STATUSES } from './expenses.js';
 
 export type ToolCategory = 'read_summary' | 'read_detail' | 'report' | 'suggestion' | 'evidence_capture' | 'draft_create' | 'draft_update' | 'approval_request' | 'final_mutation';
 
@@ -134,6 +135,9 @@ export type ToolMeta = {
   requiredInputFields?: readonly string[];
   /** Optional input fields the model may pass (whitelisted; anything else is dropped). */
   optionalInputFields?: readonly string[];
+  /** Exact canonical string values accepted for enum fields. Model-facing catalogs expose these
+   *  values; Gateway normalization may only choose a unique case-insensitive match from this list. */
+  inputEnumValues?: Readonly<Record<string, readonly string[]>>;
   /** Company features that own this tool's data, when the module-level default is not precise
    *  enough. Any one of them entitles the tool. Defaults to `TOOL_MODULE_FEATURE_KEYS[sourceModule]`. */
   featureKeys?: readonly string[];
@@ -453,6 +457,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
     optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'documentStatus', 'paymentStatus', 'limit', 'cursor'],
+    inputEnumValues: { documentStatus: EXPENSE_STATUSES, paymentStatus: EXPENSE_PAYMENT_STATUSES },
   },
   {
     name: 'expense.get_detail',
@@ -974,6 +979,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
     optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'documentStatus', 'paymentStatus'],
+    inputEnumValues: { documentStatus: EXPENSE_STATUSES, paymentStatus: EXPENSE_PAYMENT_STATUSES },
   },
   {
     name: 'public.lookup',

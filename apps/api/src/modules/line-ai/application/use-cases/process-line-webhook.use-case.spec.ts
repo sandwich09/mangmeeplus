@@ -826,6 +826,7 @@ it('answers a bound general question once before two pending files can intercept
   await h.useCase.execute(event);
   assert.equal(h.intakeRequests.length, 1, 'the same intake result is reused downstream');
   assert.equal(h.intakeRequests[0]?.conversationContext, context);
+  assert.equal('userMessagePreviewComplete' in context.recentTurns[0]!, false, 'legacy callers do not gain completeness implicitly');
   assert.equal(h.aiGatewayRequests.length, 1);
   assert.equal(h.aiGatewayRequests[0].conversationContext, context);
   assert.equal(pendingReads, 0, 'a general question does not enumerate or consume pending private files');
@@ -2233,11 +2234,12 @@ describe('ProcessLineWebhookUseCase', () => {
 	    assert.equal(LINE_AI_CONTEXT_MAX_TURNS, 15, 'the owner-selected history bound is exactly 15 turns');
 	    const now = Date.now();
 	    const inWindow = LINE_AI_CONTEXT_MAX_TURNS + 1; // one more than the cap
+	    const boundedPreview = 'ก'.repeat(240);
 	    const recentTurns = [
 	      { createdAt: new Date(now - 16 * 60_000), userMessagePreview: 'old gap', replyPreview: 'old reply', intent: 'READ_SUMMARY', agent: 'general', refused: false },
 	      ...Array.from({ length: inWindow }, (_, i) => ({
 	        createdAt: new Date(now - (inWindow - i) * 1000),
-	        userMessagePreview: `user-${i + 1}`,
+	        userMessagePreview: i === inWindow - 1 ? boundedPreview : `user-${i + 1}`,
 	        replyPreview: `reply-${i + 1}`,
 	        intent: 'READ_DETAIL',
 	        agent: 'inventory',
@@ -2270,7 +2272,9 @@ describe('ProcessLineWebhookUseCase', () => {
 	    assert.equal(intakeContext?.maxTurns, LINE_AI_CONTEXT_MAX_TURNS);
 	    assert.equal(intakeContext?.recentTurns.length, LINE_AI_CONTEXT_MAX_TURNS);
 	    assert.equal(intakeContext?.recentTurns[0]?.userMessagePreview, 'user-2');
-	    assert.equal(intakeContext?.recentTurns.at(-1)?.userMessagePreview, `user-${LINE_AI_CONTEXT_MAX_TURNS + 1}`);
+	    assert.equal(intakeContext?.recentTurns[0]?.userMessagePreviewComplete, true);
+	    assert.equal(intakeContext?.recentTurns.at(-1)?.userMessagePreview, boundedPreview);
+	    assert.equal(intakeContext?.recentTurns.at(-1)?.userMessagePreviewComplete, undefined, 'a 240-character bounded preview may be truncated');
 	    assert.deepEqual(turnContext, intakeContext);
 	  });
 

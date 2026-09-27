@@ -80,7 +80,8 @@ describe('LineReimbursementDraftUseCase', () => {
       } } as any);
     const result = await useCase.preview({ ctx: ctx(['line.ai.query', 'ai.tool.invoke', 'reimbursement.create']), owner,
       key: { actionId, taskId, actionOrdinal: 1, operation: 'CREATE' }, operation: 'CREATE', sourceProof,
-      request: { reason: 'visit', lines: [{ lineNo: 1, incurredDate: '2026-09-20', description: 'taxi', categoryKey: 'travel', amount: '10' }] } });
+      request: { reason: 'visit', lines: [{ lineNo: 1, incurredDate: '2026-09-20', description: 'taxi', categoryKey: 'travel', amount: '10' }] } },
+    new Date('2026-09-27T04:00:00.000Z'));
     assert.deepEqual(result, { status: 'blocked', errorCode: 'rate_limited', retryAfter: 300 });
     assert.equal(writes, 0); assert.equal(action.status, 'COLLECTING');
   });

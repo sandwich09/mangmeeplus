@@ -323,6 +323,20 @@ For NAT-01 the delivered answer must state the applied expense basis. The curren
 
 If correctness, completion rate, permission behavior, source honesty, or mutation safety regresses, the candidate fails even when faster.
 
+### 9.1 Canonical read filters and bounded follow-up candidates
+
+The frozen Starter OWNER follow-up evidence at `f9438828f397550634dc29b27aa13935d84d63a9` exposed two separate contract gaps. The first turn asked for this month restricted to confirmed expenses; intake and semantic control both emitted `documentStatus: "confirmed"`, while the ERP contract accepts the canonical value `CONFIRMED`, so the read failed with `UNSUPPORTED_FILTER`. The next turn asked to group the same result by category; intake invented `periodKey: "this_month"`, lost both the prior confirmed filter and the exact September 1–27 range, and semantic validation rejected the unoffered alias before any tool call. Both turns are manual failures even though transport completed.
+
+Read-tool metadata must expose the exact canonical enum values accepted for each enum input. Intake and semantic-control prompts receive those values as data. At the shared Gateway read-input boundary, a string is normalized case-insensitively only when it maps to exactly one declared canonical value; `confirmed` may become `CONFIRMED`, while an unknown value remains rejected. The compact prepared path, full semantic path and model loop use the same metadata and normalization. The API controller and both expense read adapters also validate exact canonical enum membership before dispatch, return the existing bounded `UNSUPPORTED_FILTER` error for an invalid value, and make zero ERP adapter calls. Permissions and tool availability do not change.
+
+Conversational date/period continuity uses only bounded `conversationContext.recentTurns[].userMessagePreview` supplied by the authenticated API. Candidate extraction anchors each prior turn to that turn's `at` timestamp converted to an `Asia/Bangkok` civil date, so relative dates remain correct across midnight and month boundaries. Invalid timestamps, truncated or absent user previews, overflow, and ambiguous date readings do not become candidates or defaults. Historical assistant replies, amounts, record ids, branch ids and write fields never become candidates or authority.
+
+The provider sees the same bounded prior-user read candidates that compact and semantic validators accept. The model decides whether the current utterance is a continuation; code never applies the latest historical filter unconditionally. An explicit current period/status change or negation wins. Any current date/period evidence, including an ambiguous reading or candidate overflow, blocks historical-period fallback; ambiguity stays unresolved instead of silently reviving an older scope. If multiple valid historical periods leave the referent ambiguous, the model asks rather than choosing. Aliases such as `this_month` are not accepted as period keys unless that exact value exists in the offered candidate set; month-to-date continues to use the exact offered `fromDate`/`toDate` tuple.
+
+Every resulting read still executes the current permission-checked ERP tool. Conversation context can narrow a query but cannot prove a balance, status, source result or prior tool success. `LineAiDeliveredExpenseSummary` remains the separate, delivery-proved descriptor for the existing `exclude_rejected_voided` criterion and is not widened to carry arbitrary status filters.
+
+Focused acceptance covers canonical/lowercase known enums, unknown enum rejection, a confirmed-only total, a category follow-up preserving the selected status and exact date tuple, an explicit current override, current negation, a separate-topic history item that must not contaminate the new read, an ambiguous multi-period history that must clarify, and a Bangkok cross-midnight/month boundary. Tenant, branch, feature, permission and source re-read checks remain unchanged.
+
 ## 10. Observability, rollout and rollback
 
 Add or reuse structured observations for:

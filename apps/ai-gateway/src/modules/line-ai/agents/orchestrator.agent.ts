@@ -29,6 +29,7 @@ import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config
 import { createProvider } from '../infrastructure/provider/provider.factory';
 import { currentBudgetGrantV2 } from '../../../common/usage/usage-context';
 import type { IModelProvider, ProviderToolCall, ProviderToolMessage, ProviderToolResult, ProviderToolSpec } from '../infrastructure/provider/provider.port';
+import { canonicalizeReadToolEnums, conversationReadCandidates } from './read-tool-input';
 
 export const ORCHESTRATOR_SYSTEM_PROMPT = `
 You are the Orchestrator Agent for MangmeePlus LINE AI.
@@ -209,6 +210,7 @@ export function validExpensePeriodSelection(
   raw: unknown,
   sanitized: Record<string, unknown>,
   req: LineAiTurnRequest,
+  readCandidates: LineAiValueCandidates | undefined = req.valueCandidates,
 ): boolean {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
   const source = raw as Record<string, unknown>;
@@ -228,7 +230,7 @@ export function validExpensePeriodSelection(
 
   let periodValid = false;
   if (!hasFrom) {
-    const hasExplicitCandidate = (req.valueCandidates?.periods?.length ?? 0) > 0 || (req.valueCandidates?.dates?.length ?? 0) > 0;
+    const hasExplicitCandidate = (readCandidates?.periods?.length ?? 0) > 0 || (readCandidates?.dates?.length ?? 0) > 0;
     if (!hasExplicitCandidate && (inherited.length === 0 || asksForCurrentExpenseSummary(req.messageText))) periodValid = true;
   } else if (typeof source['fromDate'] === 'string' && typeof source['toDate'] === 'string'
     && LOOP_DATE_PATTERN.test(source['fromDate']) && LOOP_DATE_PATTERN.test(source['toDate'])
@@ -239,8 +241,8 @@ export function validExpensePeriodSelection(
       periodValid = anchored !== null && source['fromDate'] === anchored.fromDate && source['toDate'] === anchored.toDate
         && (branchRequested || allBranchesRequested || source['branchId'] === (anchored.branchId ?? undefined));
     } else {
-      const periods = req.valueCandidates?.periods ?? [];
-      const dates = (req.valueCandidates?.dates ?? []).filter(date => !isAmbiguousDateCandidate(date)).map(date => date.isoDate);
+      const periods = readCandidates?.periods ?? [];
+      const dates = (readCandidates?.dates ?? []).filter(date => !isAmbiguousDateCandidate(date)).map(date => date.isoDate);
       if (periods.length > 0) periodValid = periods.some(period => !isAmbiguousPeriodCandidate(period)
         && period.fromDate === source['fromDate'] && period.toDate === source['toDate']);
       else if (dates.length > 0) periodValid = dates.includes(source['fromDate']) && dates.includes(source['toDate']);
@@ -534,11 +536,13 @@ type PeriodGuard = {
   periodKeys: ReadonlySet<string>;
 };
 
-function sanitizeToolInput(meta: ToolMeta, raw: unknown, guard?: PeriodGuard): Record<string, unknown> {
+function sanitizeToolInput(meta: ToolMeta, raw: unknown, guard?: PeriodGuard): Record<string, unknown> | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const canonicalRaw = canonicalizeReadToolEnums(meta, raw as Record<string, unknown>);
+  if (!canonicalRaw) return undefined;
   const allowed = new Set([...(meta.requiredInputFields ?? []), ...(meta.optionalInputFields ?? [])]);
   const input: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(canonicalRaw)) {
     if (!allowed.has(key)) continue;
     if (typeof value === 'boolean') { input[key] = value; continue; }
     if (typeof value === 'number' && Number.isFinite(value)) { input[key] = value; continue; }
@@ -734,7 +738,9 @@ function registryToolName(wireName: string): string {
 function toolInputSchema(meta: ToolMeta): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
   for (const field of [...(meta.requiredInputFields ?? []), ...(meta.optionalInputFields ?? [])]) {
-    properties[field] = field === 'fromDate' || field === 'toDate'
+    properties[field] = meta.inputEnumValues?.[field]?.length
+      ? { type: 'string', enum: meta.inputEnumValues[field] }
+      : field === 'fromDate' || field === 'toDate'
       ? { type: 'string', description: 'YYYY-MM-DD' }
       : {};
   }
@@ -1607,7 +1613,7 @@ export class OrchestratorAgent {
       const input = sanitizeToolInput(tool, {
         fromDate: month.fromDate, toDate: month.toDate, ...(branchId ? { branchId } : {}),
       }, preparedAllowedPeriods(req.valueCandidates, todayIso));
-      if (input['fromDate'] !== month.fromDate || input['toDate'] !== month.toDate) break;
+      if (!input || input['fromDate'] !== month.fromDate || input['toDate'] !== month.toDate) break;
       const output = await specialist.run(ctx, {
         ...plan.intents[0]!, requiredTools: ['expense.list_recent'],
       }, 1, input, month.label);
@@ -1667,13 +1673,16 @@ export class OrchestratorAgent {
     // any coercion means the input is not trustworthy as-is — fall back BEFORE any call rather than
     // executing a silently-altered or defaulted input.
     const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+    const contextCandidates = conversationReadCandidates(req.conversationContext, req.valueCandidates)?.candidates;
+    const preparedCandidates = contextCandidates ?? req.valueCandidates;
     // Prepared lane: a proposed date MUST be deterministically backed (today or an unambiguous candidate),
     // else the sanitizer drops it and the exact-equality check below fails → pre-call fallback, zero tools.
-    const toolInput = sanitizeToolInput(tool, call.input, preparedAllowedPeriods(req.valueCandidates, todayIso));
-    if (canonicalize(call.input) !== canonicalize(toolInput)) return fallback('input_sanitizer_changed');
+    const toolInput = sanitizeToolInput(tool, call.input, preparedAllowedPeriods(preparedCandidates, todayIso));
+    const canonicalProposed = canonicalizeReadToolEnums(tool, call.input);
+    if (!toolInput || !canonicalProposed || canonicalize(canonicalProposed) !== canonicalize(toolInput)) return fallback('input_sanitizer_changed');
     if (tool.name === 'expense.list_recent' && (expenseBranchScopeRequested(req.messageText)
       || (req.valueCandidates?.periods?.length ?? 0) > 1 || priorMonthAnchor(req) !== undefined
-      || !expenseMonthCoverageValid(req) || !validExpensePeriodSelection(call.input, toolInput, req))) {
+      || !expenseMonthCoverageValid(req) || !validExpensePeriodSelection(call.input, toolInput, req, preparedCandidates))) {
       return fallback('expense_followup_needs_full_path');
     }
 
@@ -1686,7 +1695,7 @@ export class OrchestratorAgent {
     if (!specialist || !specialistAllowsTool(normIntent.agent, call.toolName)) return fallback('specialist_allowlist');
 
     // Execute EXACTLY one call with the sanitized proposed input.
-    const periodLabel = selectedPeriodCandidate(req.valueCandidates, toolInput)?.label;
+    const periodLabel = selectedPeriodCandidate(preparedCandidates, toolInput)?.label;
     const output = await specialist.run(ctx, { ...normIntent, requiredTools: [call.toolName] }, 1, toolInput, periodLabel);
     if (output.toolCalls.length !== 1 || output.toolCalls[0]?.name !== call.toolName) {
       return this.buildPreparedHonestTerminal(singlePlan, output, req, startMs);
@@ -1874,6 +1883,7 @@ export class OrchestratorAgent {
       const specialist = this.createSpecialist(entry.agent);
       if (!specialist) continue;
       const toolInput = sanitizeToolInput(entry.meta, choice.input, periodGuard);
+      if (!toolInput) return { outputs, askUser: plan.language.startsWith('en') ? 'Please specify the requested filter again.' : 'กรุณาระบุตัวกรองที่ต้องการอีกครั้ง' };
       if (choice.callTool === 'expense.list_recent') {
         if (!validExpensePeriodSelection(choice.input, toolInput, req)) return { outputs, askUser: expenseClarification(req) };
         const key = `${choice.callTool}:${canonicalize(toolInput)}`;
@@ -2021,6 +2031,7 @@ export class OrchestratorAgent {
           return { call, result: { toolUseId: call.toolUseId, content: 'Tool not available for this request.', isError: true } };
         }
         const toolInput = sanitizeToolInput(entry.meta, call.input, periodGuard);
+        if (!toolInput) return { call, result: { toolUseId: call.toolUseId, content: 'Unsupported filter value; ask the user to clarify.', isError: true } };
         if (registryName === 'expense.list_recent' && !validExpensePeriodSelection(call.input, toolInput, req)) {
           return { call, askUser: expenseClarification(req), result: { toolUseId: call.toolUseId, content: 'Expense period or branch scope is incomplete; ask the user to clarify.', isError: true } };
         }
@@ -2099,6 +2110,7 @@ export class OrchestratorAgent {
             category: t.meta.category,
             ...(t.meta.requiredInputFields?.length && { requiredInputs: t.meta.requiredInputFields }),
             ...(t.meta.optionalInputFields?.length && { optionalInputs: t.meta.optionalInputFields }),
+            ...(t.meta.inputEnumValues && { inputEnumValues: t.meta.inputEnumValues }),
           })),
           gatheredFacts: gathered.map((f) => ({ label: f.label, value: f.value })),
         }),
