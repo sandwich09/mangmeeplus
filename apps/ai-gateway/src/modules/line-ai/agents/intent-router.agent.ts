@@ -17,6 +17,14 @@ import { PRODUCT_HELP_PACK } from './approved-product-help';
 import { currentBudgetState } from '../../../common/usage/usage-context';
 import { conversationReadCandidates } from './read-tool-input';
 import { parseLineIntakeCompactDecision, type CompactDecodeRejection } from './line-intake-compact-decision';
+// Spec R-L1: the exact pre-call check the orchestrator runs before executing a proposed simple
+// read, reused here so a plan that would fail it is never proposed as `complexity: 'simple'` in
+// the first place. orchestrator.agent.ts already imports IntentRouterAgent from this file; this
+// import runs the other way, so the two modules are mutually circular — safe here because both
+// sides use the other's export only inside function bodies evaluated after module load, never at
+// module-top-level, the same pattern this file already relies on for ROUTER_ENABLED_TOOLS.
+import { preparedSimplePreCallCheck } from './orchestrator.agent';
+import type { PreparedSimpleReadContext } from '../domain/logic/prepared-simple-read.logic';
 import { activePreparedFamilies } from './prepared-simple-read-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 
@@ -639,6 +647,7 @@ export class IntentRouterAgent {
         retainedTaskSource, retainedText, retainedValueCandidates, intakeTools, preparedFamilies, readGroundingCandidates,
         (observation) => { lastCompactRejection = observation.rejection;
           this.logger.log({ msg: 'line.intake_route.compact_decode', requestId: request.requestId, ...observation }); },
+        request.conversationContext, request.permissions, hasAttachment,
       );
       if (parsed) break;
     }
@@ -1156,6 +1165,12 @@ function parseIntakePlan(
   enabledPreparedFamilies: ReadonlySet<string> = new Set(),
   readValueCandidates?: LineAiValueCandidates,
   observeCompact?: (observation: { outcome: 'prepared' | 'semantic_only' | 'invalid'; rejection?: string; subrequestCount: number; durationMs: number }) => void,
+  // Spec R-L1: the same three inputs the orchestrator's pre-call check reads (messageText and
+  // valueCandidates already are params above) — threaded the same way the turn request carries
+  // them, from LineIntakeRouteRequest's own conversationContext/permissions/attachment fields.
+  conversationContext?: LineAiConversationContext,
+  permissions: readonly string[] = [],
+  hasAttachment = false,
 ): LineIntakeRoutePlan | null {
   try {
     const raw = JSON.parse(extractJson(text)) as Record<string, unknown>;
@@ -1333,7 +1348,22 @@ function parseIntakePlan(
       ...semantic,
       ...(reimbursementHints ? { reimbursementHints } : {}),
       ...(semanticSubrequests ? { semanticSubrequests } : {}),
+      // Spec R-L1: propose `complexity: 'simple'` only for a plan that passes the SAME pre-call
+      // check the orchestrator runs before it actually executes one — a plan that fails it (e.g.
+      // the expense-follow-up-needs-full-path case, or a family the request's own permissions
+      // narrowed away) is dropped here so the API narrows this turn to the full path instead of
+      // locking a 2-slot budget the orchestrator can only spend on a fallback.
       ...(caps.fusedPlan && intent === 'BUSINESS_READ_QUESTION' && compactDecision?.preparedPlan
+        && preparedSimplePreCallCheck(compactDecision.preparedPlan, {
+          intakeIntent: intent, permissions,
+          // Fail-open like the orchestrator's own legacy-caller convention: the tool/family
+          // catalog offered to this request (intakeTools -> enabledPreparedFamilies) is already
+          // permission- and entitlement-filtered upstream (effectivePreparedFamilies), so a
+          // family that reaches `enabledFamilies` below already cleared entitlement.
+          entitledFeatures: undefined,
+          hasAttachment, hasOpenClarification: (openClarifications?.length ?? 0) > 0,
+          enabledFamilies: enabledPreparedFamilies,
+        } satisfies PreparedSimpleReadContext, { messageText, conversationContext, valueCandidates }).ok
         ? { preparedPlan: compactDecision.preparedPlan } : {}),
     };
   } catch {

@@ -7,7 +7,7 @@ import { runSemanticTurnV2 } from './semantic-turn-v2';
  * all data via ErpToolClient.
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiSemanticCoverageV2, LineAiSemanticSubrequestV2, LineAiPeriodCandidate, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta, PublicLookupResult } from '@watchdog-bms/contracts';
+import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiSemanticCoverageV2, LineAiSemanticSubrequestV2, LineAiPeriodCandidate, LineAiPreparedPlan, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta, PublicLookupResult } from '@watchdog-bms/contracts';
 import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, isBusinessIntakeIntent, mapThaiDigits, parseLineAiPreparedPlan, parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, resolvePeriodCandidates, unresolvedMonthName } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
@@ -16,7 +16,7 @@ import { AccountingSummaryAgent, ALLOWED_TOOLS as ACCOUNTING_ALLOWED_TOOLS } fro
 import { InventoryAgent, ALLOWED_TOOLS as INVENTORY_ALLOWED_TOOLS } from './inventory.agent';
 import { isExplicitJokeAsk, ResponseComposerAgent, featureDisabledReply } from './response-composer.agent';
 import { normalizePlanToolAccess, removeRuntimeBlockedTools, toolAccessOutcome } from './tool-availability';
-import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext } from '../domain/logic/prepared-simple-read.logic';
+import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext, type PreparedSimpleReadEligibility } from '../domain/logic/prepared-simple-read.logic';
 import { activePreparedFamilies, formatExpenseSummary, formatPreparedSimpleRead, isEnglish, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { formatDraftUpdateReply } from './draft-update-formatter';
@@ -1024,6 +1024,46 @@ function expensesWebLink(companyId: string | undefined, english: boolean): LineA
     : [];
 }
 
+export type PreparedSimplePreCallResult =
+  | { ok: true; call: Extract<PreparedSimpleReadEligibility, { eligible: true }>['call']; tool: ToolMeta;
+      answerShape: 'single_metric' | 'list'; toolInput: Record<string, unknown> }
+  | { ok: false; reason: string };
+
+/**
+ * Spec R-L1: every pre-call check `executePreparedSimpleRead` runs before it actually invokes a
+ * proposed simple read, EXCEPT the delegation-token check (that one only exists once a call is
+ * imminent, so it stays execution-time-only). Shared with the intake route so the compact decision
+ * proposes `preparedPlan.complexity = 'simple'` only for a plan the orchestrator can really run —
+ * this intake-time pass grants no authority and is always re-verified in full at execution time.
+ */
+export function preparedSimplePreCallCheck(
+  plan: LineAiPreparedPlan,
+  eligibilityCtx: PreparedSimpleReadContext,
+  req: Pick<LineAiTurnRequest, 'messageText' | 'conversationContext' | 'valueCandidates'>,
+): PreparedSimplePreCallResult {
+  if ((req.valueCandidates?.periods?.length ?? 0) > 1) return { ok: false, reason: 'multiple_periods' };
+  const eligibility = preparedSimpleReadEligibility(plan, eligibilityCtx);
+  if (!eligibility.eligible) return { ok: false, reason: eligibility.reason };
+  const { call, tool, answerShape } = eligibility;
+
+  const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+  const contextCandidates = conversationReadCandidates(req.conversationContext, req.valueCandidates)?.candidates;
+  const preparedCandidates = contextCandidates ?? req.valueCandidates;
+  // Prepared lane: a proposed date MUST be deterministically backed (today or an unambiguous candidate),
+  // else the sanitizer drops it and the exact-equality check below fails.
+  const toolInput = sanitizeToolInput(tool, call.input, preparedAllowedPeriods(preparedCandidates, todayIso));
+  const canonicalProposed = canonicalizeReadToolEnums(tool, call.input);
+  if (!toolInput || !canonicalProposed || canonicalize(canonicalProposed) !== canonicalize(toolInput)) {
+    return { ok: false, reason: 'input_sanitizer_changed' };
+  }
+  if (tool.name === 'expense.list_recent' && (expenseBranchScopeRequested(req.messageText)
+    || (req.valueCandidates?.periods?.length ?? 0) > 1 || priorMonthAnchor(req) !== undefined
+    || !expenseMonthCoverageValid(req) || !validExpensePeriodSelection(call.input, toolInput, req, preparedCandidates))) {
+    return { ok: false, reason: 'expense_followup_needs_full_path' };
+  }
+  return { ok: true, call, tool, answerShape, toolInput };
+}
+
 @Injectable()
 export class OrchestratorAgent {
   private readonly logger = new Logger(OrchestratorAgent.name);
@@ -1663,14 +1703,16 @@ export class OrchestratorAgent {
       this.logger.warn({ msg: 'line.ai.prepared_simple_read.fallback', requestId: req.requestId, reason, periodSource });
       return null;
     };
-    if ((req.valueCandidates?.periods?.length ?? 0) > 1) return fallback('multiple_periods');
     // Defense in depth: re-parse the wrapper immediately before use — an invalid/forged/state-changed
     // wrapper drops the whole lane before any call.
     const plan = parseLineAiPreparedPlan(req.preparedPlan);
     if (!plan) return fallback('reparse_failed');
-    const eligibility = preparedSimpleReadEligibility(plan, this.preparedEligibilityCtx(req));
-    if (!eligibility.eligible) return fallback(eligibility.reason);
-    const { call, tool, answerShape } = eligibility;
+    // Spec R-L1: the SAME pre-call check the intake route already ran before proposing this plan
+    // (parseIntakePlan's preparedSimplePreCallCheck call) — re-verified in full here, since an
+    // intake-time pass grants no execution authority.
+    const preCall = preparedSimplePreCallCheck(plan, this.preparedEligibilityCtx(req), req);
+    if (!preCall.ok) return fallback(preCall.reason);
+    const { call, tool, answerShape, toolInput } = preCall;
 
     // Re-normalize access on the single-intent plan (subject / permission / entitlement at the same
     // boundary the full path uses). If normalization drops or rewrites the one required read tool, or
@@ -1687,24 +1729,6 @@ export class OrchestratorAgent {
     }
     if (!isSubjectCompatible(normIntent.subject, call.toolName)) return fallback('subject_incompatible');
 
-    // Run the proposed input through the existing whitelist + value/date guards, then require EXACT
-    // equality: the sanitizer must change nothing. A dropped unknown key, a rejected/unbacked date, or
-    // any coercion means the input is not trustworthy as-is — fall back BEFORE any call rather than
-    // executing a silently-altered or defaulted input.
-    const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
-    const contextCandidates = conversationReadCandidates(req.conversationContext, req.valueCandidates)?.candidates;
-    const preparedCandidates = contextCandidates ?? req.valueCandidates;
-    // Prepared lane: a proposed date MUST be deterministically backed (today or an unambiguous candidate),
-    // else the sanitizer drops it and the exact-equality check below fails → pre-call fallback, zero tools.
-    const toolInput = sanitizeToolInput(tool, call.input, preparedAllowedPeriods(preparedCandidates, todayIso));
-    const canonicalProposed = canonicalizeReadToolEnums(tool, call.input);
-    if (!toolInput || !canonicalProposed || canonicalize(canonicalProposed) !== canonicalize(toolInput)) return fallback('input_sanitizer_changed');
-    if (tool.name === 'expense.list_recent' && (expenseBranchScopeRequested(req.messageText)
-      || (req.valueCandidates?.periods?.length ?? 0) > 1 || priorMonthAnchor(req) !== undefined
-      || !expenseMonthCoverageValid(req) || !validExpensePeriodSelection(call.input, toolInput, req, preparedCandidates))) {
-      return fallback('expense_followup_needs_full_path');
-    }
-
     // Pre-call delegation presence for THIS tool (missing / issued-for-another-tool → zero calls). The
     // live ERP boundary still re-validates the delegation token for the acting actor.
     if (!(ctx.actorDelegations?.[tool.name]?.length)) return fallback('delegation_missing');
@@ -1713,7 +1737,10 @@ export class OrchestratorAgent {
     const specialist = this.createSpecialist(normIntent.agent);
     if (!specialist || !specialistAllowsTool(normIntent.agent, call.toolName)) return fallback('specialist_allowlist');
 
-    // Execute EXACTLY one call with the sanitized proposed input.
+    // Execute EXACTLY one call with the sanitized proposed input. (Same derivation the shared
+    // pre-call check used internally — recomputed here only to pick the friendly period label.)
+    const contextCandidates = conversationReadCandidates(req.conversationContext, req.valueCandidates)?.candidates;
+    const preparedCandidates = contextCandidates ?? req.valueCandidates;
     const periodLabel = selectedPeriodCandidate(preparedCandidates, toolInput)?.label;
     const output = await specialist.run(ctx, { ...normIntent, requiredTools: [call.toolName] }, 1, toolInput, periodLabel);
     if (output.toolCalls.length !== 1 || output.toolCalls[0]?.name !== call.toolName) {

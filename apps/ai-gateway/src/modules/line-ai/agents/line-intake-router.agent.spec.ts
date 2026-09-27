@@ -314,6 +314,60 @@ describe('LINE intake router – routeIntake', () => {
     assert.match(prompt, /NEW read question.*independent side question/, 'a new question is distinguished from answering the pending one');
   });
 
+  it('R-L1: never proposes complexity=simple for a plan that fails the shared pre-call check', async () => {
+    const text = 'เดือนนี้จ่ายไปเท่าไหร่';
+    const built = await createLineAiInputEvidence({ turnKey: 'precall-multi-period', parts: [{ partId: 'part-0',
+      eventIdHash: '1'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    // Two offered period candidates alone fails the shared check (multiple_periods) regardless of
+    // what the compact decision itself would otherwise accept.
+    const periods = [
+      { span: 'เดือนนี้', kind: 'month' as const, fromDate: '2026-09-01', toDate: '2026-09-27', monthKey: '2026-09', source: 'relative' as const, label: 'เดือนนี้', assumptions: [] },
+      { span: 'เดือนที่แล้ว', kind: 'month' as const, fromDate: '2026-08-01', toDate: '2026-08-31', monthKey: '2026-08', source: 'relative' as const, label: 'เดือนที่แล้ว', assumptions: [] },
+    ];
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.97,
+      decisionV1: {
+        subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: { fromDate: '2026-09-01', toDate: '2026-09-27' } }],
+        simpleRead: { subrequest: 0, tool: 'expense.list_recent', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 },
+      },
+    }), false, {}, false, EXPENSE_LIST_PREPARED_FAMILIES).routeIntake(baseRequest({
+      messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true },
+      valueCandidates: { amounts: [], dates: [], periods },
+    }));
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.preparedPlan, undefined, 'a plan that fails the shared pre-call check is never locked to the fast lane');
+    assert.equal(plan.semanticSubrequests?.[0]?.goal, text, 'the full request survives for normal planning instead');
+  });
+
+  it('R-L1: a status-filter follow-up after a delivered this-month total now passes the check and stays in the fast lane', async () => {
+    const text = 'แล้วยอดเดือนนี้ ถ้าเอาเฉพาะที่ยืนยันแล้วล่ะ';
+    const built = await createLineAiInputEvidence({ turnKey: 'precall-status-followup', parts: [{ partId: 'part-0',
+      eventIdHash: '2'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+    const monthStart = `${todayIso.slice(0, 7)}-01`;
+    const period = { span: 'เดือนนี้', kind: 'month' as const, fromDate: monthStart, toDate: todayIso, monthKey: todayIso.slice(0, 7), source: 'relative' as const, label: 'เดือนนี้', assumptions: [] };
+    const conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], deliveredExpenseSummary: {
+      version: 1 as const, deliveredAt: new Date().toISOString(), statusBasis: 'exclude_rejected_voided' as const,
+      ranges: [{ fromDate: monthStart, toDate: todayIso, branchId: null }],
+    } };
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.97,
+      decisionV1: {
+        subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: { fromDate: monthStart, toDate: todayIso, documentStatus: 'CONFIRMED' } }],
+        simpleRead: { subrequest: 0, tool: 'expense.list_recent', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 },
+      },
+    }), false, {}, false, EXPENSE_LIST_PREPARED_FAMILIES).routeIntake(baseRequest({
+      messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true },
+      valueCandidates: { amounts: [], dates: [], periods: [period] }, conversationContext,
+    }));
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.preparedPlan?.proposedCalls[0]?.toolName, 'expense.list_recent');
+    assert.equal(plan.preparedPlan?.proposedCalls[0]?.input['documentStatus'], 'CONFIRMED',
+      'R-U1 (item 1): a document-status word after เฉพาะที่ is a filter, not a branch scope request that would fail the check');
+  });
+
   it('offers exact full-part refs for Thai text and surrogate pairs without repairing invalid model evidence', async () => {
     // Real Sonnet NAT-01 failed twice with endUtf16=34 although this exact typo-preserving input is 32.
     for (const rawText of ['เดือนนี้ค่าไช้จ่ายไปเท่าไหร่แล้ว', '😀 เดือนนี้ค่าไช้จ่ายไปเท่าไหร่แล้ว']) {
