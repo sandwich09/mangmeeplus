@@ -6,6 +6,7 @@ import { evaluateEntitledFeatureKeys } from '../../employee-access/application/e
 import { isCurrentEntitlementNormalization, NORMALIZER_VERSION, SYSTEM_ACTOR } from '../../employee-access/application/normalize-entitlements';
 import { buildRunoffRoots } from '../../feature-launch/application/runoff-lifecycle';
 import { billingError, hashBilling } from '../domain/billing-policy';
+import { invalidateLineConversationState } from '../../line-ai/application/line-conversation-context.service';
 
 type FeatureDb = Pick<Prisma.TransactionClient, 'companyFeatureEntitlement' | 'companyEntitlementSet' |
   'companyEntitlementNormalization' | 'entitlementTransition'>;
@@ -147,6 +148,9 @@ export async function applyBillingFeaturePlan(tx: Prisma.TransactionClient, comp
       await tx.runoffSnapshot.create({ data: { companyId, featureKey: target.featureKey, disableSeq: seq, cutoffAt,
         rootsJson: buildRunoffRoots(target.featureKey) as unknown as Prisma.InputJsonValue } });
     }
+  }
+  if (pinned.rows.some(target => !admin.has(target.featureKey) && target.enabled !== wasOn(target.featureKey))) {
+    await invalidateLineConversationState(tx, { companyId }, false);
   }
   if (pinned.setVersion === null) await tx.companyEntitlementNormalization.create({ data: { companyId, status: 'COMPLETED',
     normalizerVersion: NORMALIZER_VERSION, cohortKind: 'EXPLICIT', snapshotHash: hashBilling(pinned.rows),

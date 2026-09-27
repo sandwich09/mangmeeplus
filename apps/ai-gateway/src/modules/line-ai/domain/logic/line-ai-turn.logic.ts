@@ -73,7 +73,7 @@ export function selectTools(agent: LineAiAgent, intent: LineAiIntent, text = '')
     return [];
   }
   const tools = LINE_TOOL_REGISTRY.filter(
-    (t) => t.supportedAgents.includes(agent) && LINE_ALLOWED_TOOL_CATEGORIES.includes(t.category),
+    (t) => t.executionReady !== false && t.supportedAgents.includes(agent) && LINE_ALLOWED_TOOL_CATEGORIES.includes(t.category),
   );
   const priority = [
     ...(agent === 'tax' && matchAny(text, TAX_CODE_KW) ? ['tax.get_tax_code_profile'] : []),

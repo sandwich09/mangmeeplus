@@ -52,6 +52,10 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
+async function jsonMockResponse(stub: { ok: boolean; status?: number; json: () => Promise<unknown> }): Promise<Response> {
+  return new Response(JSON.stringify(await stub.json()), { status: stub.status ?? (stub.ok ? 200 : 500), headers: { 'content-type': 'application/json' } });
+}
+
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
@@ -64,15 +68,15 @@ beforeEach(() => {
     try { payload = JSON.parse(firstUserText.slice(firstUserText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
     // Grounded language-layer polish call: echo the reply unchanged (a valid no-op polish).
     if (typeof payload.reply === 'string') {
-      return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
+      return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: payload.reply }) });
     }
     if (typeof payload.messageText === 'string' && typeof payload.language === 'string') {
-      return { ok: true, json: async () => ({ output_text: 'วันนี้เหนื่อยมานิดหน่อยสินะคะ น้องมั่งมีอยู่เป็นเพื่อนค่ะ 😊' }) } as Response;
+      return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: 'วันนี้เหนื่อยมานิดหน่อยสินะคะ น้องมั่งมีอยู่เป็นเพื่อนค่ะ 😊' }) });
     }
-    return {
+    return await jsonMockResponse({
       ok: true,
-      json: async () => ({ output_text: JSON.stringify(planFor(payload.messageText ?? '')) }),
-    } as Response;
+      json: async () => ({ status: 'completed', output_text: JSON.stringify(planFor(payload.messageText ?? '')) }),
+    });
   };
 });
 
@@ -540,10 +544,10 @@ describe('OrchestratorAgent', () => {
       const userText = String(body.input?.[0]?.content?.[0]?.text ?? '{}');
       let payload: any = {};
       try { payload = JSON.parse(userText.slice(userText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
-      if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
-      if (Array.isArray(payload.availableTools)) return { ok: false, status: 503, json: async () => ({}) } as Response;
-      if (typeof payload.messageText === 'string') return { ok: true, json: async () => ({ output_text: JSON.stringify(planFor(payload.messageText)) }) } as Response;
-      return { ok: false, status: 503, json: async () => ({}) } as Response;
+      if (typeof payload.reply === 'string') return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: payload.reply }) });
+      if (Array.isArray(payload.availableTools)) return await jsonMockResponse({ ok: false, status: 503, json: async () => ({}) });
+      if (typeof payload.messageText === 'string') return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(planFor(payload.messageText)) }) });
+      return await jsonMockResponse({ ok: false, status: 503, json: async () => ({}) });
     };
     const message = 'ค่าใช้จ่ายเดือนกรกฎาคม 2569 เท่าไร';
     const req = makeReq(message);
@@ -567,15 +571,15 @@ describe('OrchestratorAgent', () => {
       const userText = String(body.input?.[0]?.content?.[0]?.text ?? '{}');
       let payload: any = {};
       try { payload = JSON.parse(userText.slice(userText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
-      if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
-      if (Array.isArray(payload.availableTools)) return { ok: false, status: 503, json: async () => ({}) } as Response;
-      if (typeof payload.messageText === 'string') return { ok: true, json: async () => ({ output_text: JSON.stringify({
+      if (typeof payload.reply === 'string') return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: payload.reply }) });
+      if (Array.isArray(payload.availableTools)) return await jsonMockResponse({ ok: false, status: 503, json: async () => ({}) });
+      if (typeof payload.messageText === 'string') return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify({
         status: 'ROUTABLE', language: 'th', refusals: [], requiresHumanReview: false, intents: [
           { intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] },
           { intent: 'report_request', subject: 'sale', agent: 'sales', priority: 2, requiredTools: ['sales.get_sales_summary'], missingContext: [] },
         ],
-      }) }) } as Response;
-      return { ok: false, status: 503, json: async () => ({}) } as Response;
+      }) }) });
+      return await jsonMockResponse({ ok: false, status: 503, json: async () => ({}) });
     };
     const message = 'ค่าใช้จ่ายเดือนกรกฎาคม 2569 และยอดขาย';
     const req = makeReq(message);
@@ -676,9 +680,10 @@ describe('OrchestratorAgent', () => {
       const body = JSON.parse(String(init?.body ?? '{}'));
       // Return a plan routing to inventory with ledger tool (not in inventory ALLOWED_TOOLS)
       void body;
-      return {
+      return await jsonMockResponse({
         ok: true,
         json: async () => ({
+          status: 'completed',
           output_text: JSON.stringify({
             status: 'ROUTABLE',
             language: 'th',
@@ -687,7 +692,7 @@ describe('OrchestratorAgent', () => {
             requiresHumanReview: false,
           }),
         }),
-      } as Response;
+      });
     };
     try {
       const orchestrator = new OrchestratorAgent(erpTools, makeConfig());
@@ -1138,14 +1143,14 @@ describe('OrchestratorAgent period resolution', () => {
       const firstUserText = String(body.input?.[0]?.content?.[0]?.text ?? '{}');
       let payload: any = {};
       try { payload = JSON.parse(firstUserText.slice(firstUserText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
-      if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
+      if (typeof payload.reply === 'string') return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: payload.reply }) });
       if (Array.isArray(payload.availableTools)) {
-        return { ok: true, json: async () => ({ output_text: JSON.stringify({ callTool: 'sales.get_sales_summary', input: proposed }) }) } as Response;
+        return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify({ callTool: 'sales.get_sales_summary', input: proposed }) }) });
       }
       if (Array.isArray(payload.toolsCalled) || typeof payload.answer === 'string') {
-        return { ok: true, json: async () => ({ output_text: '{}' }) } as Response;
+        return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: '{}' }) });
       }
-      return { ok: true, json: async () => ({ output_text: JSON.stringify(planFor(payload.messageText ?? message)) }) } as Response;
+      return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(planFor(payload.messageText ?? message)) }) });
     }) as typeof fetch;
     await new OrchestratorAgent(loop.client, makeConfig()).run(periodRequest(message, 'sales.get_sales_summary'));
 
@@ -1161,11 +1166,11 @@ describe('OrchestratorAgent period resolution', () => {
       const firstUserText = String(body.input?.[0]?.content?.[0]?.text ?? '{}');
       let payload: any = {};
       try { payload = JSON.parse(firstUserText.slice(firstUserText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
-      if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
+      if (typeof payload.reply === 'string') return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: payload.reply }) });
       if (Array.isArray(payload.availableTools)) {
-        return { ok: true, json: async () => ({ output_text: JSON.stringify({ callTool: 'sales.get_sales_summary', input: { fromDate: '2019-01-01', toDate: '2019-01-31' } }) }) } as Response;
+        return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify({ callTool: 'sales.get_sales_summary', input: { fromDate: '2019-01-01', toDate: '2019-01-31' } }) }) });
       }
-      return { ok: true, json: async () => ({ output_text: JSON.stringify(planFor(payload.messageText ?? message)) }) } as Response;
+      return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(planFor(payload.messageText ?? message)) }) });
     }) as typeof fetch;
     await new OrchestratorAgent(loop.client, makeConfig()).run(periodRequest(message, 'sales.get_sales_summary'));
     assert.deepEqual(loop.seen.map((call) => call.input), [{}], 'an unbacked window is dropped, not read');
@@ -1236,13 +1241,13 @@ describe('run-level expense follow-up execution', () => {
       const userText = String(body.input?.[0]?.content?.[0]?.text ?? '{}');
       let payload: any = {};
       try { payload = JSON.parse(userText.slice(userText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
-      if (typeof payload.reply === 'string') return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
+      if (typeof payload.reply === 'string') return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: payload.reply }) });
       if (Array.isArray(payload.availableTools)) {
         const next = choices.shift();
-        return { ok: true, json: async () => ({ output_text: JSON.stringify(next ?? {}) }) } as Response;
+        return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(next ?? {}) }) });
       }
-      if (typeof payload.messageText === 'string') return { ok: true, json: async () => ({ output_text: JSON.stringify(messagePlan(payload.messageText)) }) } as Response;
-      return { ok: true, json: async () => ({ output_text: '{}' }) } as Response;
+      if (typeof payload.messageText === 'string') return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify(messagePlan(payload.messageText)) }) });
+      return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: '{}' }) });
     };
   };
   const expenseErp = (inputs: Array<Record<string, unknown>>, failMonth?: string, failStatus = 'error') => ({
@@ -1533,4 +1538,80 @@ describe('run-level expense follow-up execution', () => {
     assert.match(result.replyText, /ยังระบุเงื่อนไขรายการค่าใช้จ่าย/);
     assert.doesNotMatch(result.replyText, /\d[\d,]*\.\d{2}|ไม่พบรายการ/);
   });
+});
+
+describe('approved knowledge orchestration', () => {
+  async function withReviewedPack(run: () => Promise<void>) {
+    const { PRODUCT_HELP_PACK } = await import('./approved-product-help');
+    const { knowledgePackHash } = await import('./approved-knowledge');
+    const original = structuredClone(PRODUCT_HELP_PACK);
+    Object.assign(PRODUCT_HELP_PACK, {
+      status: 'APPROVED', reviewers: ['synthetic-test-reviewer'],
+      effectiveFrom: '2020-01-01T00:00:00Z', effectiveTo: '2100-01-01T00:00:00Z', reviewDueAt: '2100-01-01T00:00:00Z',
+    });
+    PRODUCT_HELP_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_PACK);
+    try { await run(); } finally { Object.assign(PRODUCT_HELP_PACK, original); }
+  }
+  function knowledgeRequest() {
+    const req = makeReq('เอกสารยืนยันแล้วแปลว่าจ่ายแล้วไหม');
+    req.userContext.permissions.push('expense.read');
+    req.entitledFeatureKeys = ['expenses'];
+    return Object.assign(req, { approvedKnowledge: true, selectedKnowledgeCardIds: ['expense.status'] });
+  }
+  function helpProvider(mixed = false) {
+    let calls = 0;
+    globalThis.fetch = async (_url: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      const message = body.input?.find((entry: any) => entry.role === 'user')?.content?.find((part: any) => part.type === 'input_text')?.text ?? '';
+      let payload: any = {};
+      try { payload = JSON.parse(message.slice(message.lastIndexOf('\n') + 1)); } catch { /* catalog prefix */ }
+      const text = typeof payload.reply === 'string' ? payload.reply : payload.systemData ? '{}' : JSON.stringify({
+        status: 'ROUTABLE', language: 'th', refusals: [], requiresHumanReview: false,
+        selectedKnowledgeCardIds: ['expense.status'],
+        intents: [mixed
+          ? { intent: 'read_summary', subject: 'inventory', agent: 'inventory', priority: 1, requiredTools: ['inventory.list_low_stock'], missingContext: [] }
+          : { intent: 'capability_help', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }],
+      });
+      return await jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: text }) });
+    };
+    return () => calls;
+  }
+  it('renders only the exact reviewed body and real guide citation without a composition call', async () => withReviewedPack(async () => {
+    const calls = helpProvider();
+    const result = await new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiApprovedKnowledgeEnabled: true })).run(knowledgeRequest());
+    const { PRODUCT_HELP_PACK } = await import('./approved-product-help');
+    const card = PRODUCT_HELP_PACK.cards.find((entry) => entry.id === 'expense.status')!;
+    assert.equal(calls(), 1);
+    assert.equal(result.replyText, `${card.title}\n${card.body}`);
+    assert.equal(result.sourceRefs[0]?.entityType, 'approved_product_help');
+    assert.equal(result.webLinks[0]?.path, '/companies/company-1/user-guide/expenses#overview');
+    assert.deepEqual(result.outputs.flatMap((entry) => entry.toolCalls), []);
+  }));
+  it('requires both the trusted API admission bit and Gateway flag, and rechecks current rights', async () => withReviewedPack(async () => {
+    for (const variant of ['api-off', 'gateway-off', 'permission-revoked', 'feature-off']) {
+      helpProvider(); const req = knowledgeRequest();
+      if (variant === 'api-off') req.approvedKnowledge = false;
+      if (variant === 'permission-revoked') req.userContext.permissions = [];
+      if (variant === 'feature-off') req.entitledFeatureKeys = [];
+      const result = await new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiApprovedKnowledgeEnabled: variant !== 'gateway-off' })).run(req);
+      assert.ok(result.sourceRefs.every((source) => source.entityType !== 'approved_product_help'), variant);
+    }
+  }));
+  it('retains the business read and appends the reviewed guide in a mixed question', async () => withReviewedPack(async () => {
+    helpProvider(true); const invoked: string[] = [];
+    const erp = { invoke: async (tool: any) => {
+      invoked.push(tool.name);
+      return { toolName: tool.name, status: 'ok', data: { count: 3 }, sourceRefs: [{ label: 'stock', module: 'inventory', entityType: 'summary', permissionChecked: true }], asOf: new Date().toISOString() };
+    } } as any;
+    const req = knowledgeRequest(); req.entitledFeatureKeys = ['expenses', 'inventory'];
+    req.messageText += ' และมีของอะไรใกล้หมดบ้าง';
+    const result = await new OrchestratorAgent(erp, makeConfig({ lineAiApprovedKnowledgeEnabled: true })).run(req);
+    assert.ok(invoked.includes('inventory.list_low_stock'));
+    assert.match(result.replyText, /สถานะเอกสารกับสถานะจ่ายเงิน/);
+    assert.ok(result.sourceRefs.some((source) => source.module === 'inventory'));
+    assert.ok(result.sourceRefs.some((source) => source.entityType === 'approved_product_help'));
+    assert.equal(result.presentation?.kind, 'answer_cards');
+    if (result.presentation?.kind === 'answer_cards') assert.ok(result.presentation.cards.length >= 2);
+  }));
 });

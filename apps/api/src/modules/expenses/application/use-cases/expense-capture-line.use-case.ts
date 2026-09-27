@@ -1,3 +1,4 @@
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { randomUUID } from 'node:crypto';
 import { ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { emptyExpenseCaptureReadManifest, type RequestContext } from '@watchdog-bms/contracts';
@@ -89,6 +90,31 @@ export class ExpenseCaptureLineUseCase {
    * What the LINE result push needs about a finished EXPENSE-owned read (appendix §25). The CALLER
    * re-checks access before it speaks; this only reports what the record holds.
    */
+  /** Recipient metadata only: the notifier must establish a private chat before reading results. */
+  async readLineDeliveryOwner(companyId: string, owner: { expenseId?: string; groupId?: string }): Promise<{ createdByUserId: string; lineChatKeyHash: string | null; linePushTargetId: string | null; sourceIsLine: boolean; branchId?: string | null; ownerBinding?: { conversationId: string; membershipId: string; channelId: string; ownerEpoch: number } } | null> {
+    if (owner.expenseId) {
+      const row = await this.prisma.client.expenseRecord.findFirst({ where: { companyId, id: owner.expenseId }, select: { createdByUserId: true, branchId: true, captureSource: true, sourceChannelMetadataJson: true } });
+      if (!row) return null;
+      const channel = row.sourceChannelMetadataJson as { chatKeyHash?: string; pushTargetId?: string; ownerBinding?: { conversationId: string; membershipId: string; channelId: string; ownerEpoch: number } } | null;
+      return { createdByUserId: row.createdByUserId, branchId: row.branchId, ...(channel?.ownerBinding ? { ownerBinding: channel.ownerBinding } : {}), lineChatKeyHash: channel?.chatKeyHash ?? null, linePushTargetId: channel?.pushTargetId ?? null, sourceIsLine: row.captureSource === 'LINE_UPLOAD' };
+    }
+    if (!owner.groupId) return null;
+    const row = await this.prisma.client.expenseCaptureGroup.findFirst({ where: { companyId, id: owner.groupId }, select: { createdByUserId: true, branchId: true, lineChatKeyHash: true, linePushTargetId: true, intakeChannel: true } });
+    return row ? { ...row, sourceIsLine: row.intakeChannel === 'LINE' } : null;
+  }
+
+  /** Immutable notification proof projection; this method never hands off, deletes, or reruns OCR. */
+  async readFinishedDeliveryProof(ctx: RequestContext, expenseId: string, jobId: string, recordIds: string[]) {
+    if (!recordIds.length || recordIds.length > 5 || new Set(recordIds).size !== recordIds.length || !recordIds.includes(expenseId)) return null;
+    const records = await this.prisma.client.expenseRecord.findMany({ where: { companyId: ctx.companyId, id: { in: recordIds }, createdByUserId: ctx.userId },
+      select: { id: true, branchId: true, status: true, updatedAt: true, createdAt: true, grandTotalAmount: true, currency: true, vendorNameSnapshot: true, expenseDate: true, sourceDocumentType: true, sourceChannelMetadataJson: true, voidReason: true, voidedAt: true } });
+    if (records.length !== recordIds.length || records.some(record => !isBranchInScope(ctx.scopes ?? {}, record.branchId))) return null;
+    const job = await this.prisma.client.expenseCaptureReadJob.findFirst({ where: { id: jobId, companyId: ctx.companyId, expenseId, status: { in: ['DONE', 'PARTIAL', 'FAILED', 'PAUSED'] } },
+      select: { id: true, status: true, updatedAt: true, manifestJson: true, lastErrorCode: true, pausedReason: true } });
+    if (!job) return null;
+    return { records: recordIds.map(id => records.find(record => record.id === id)!), job };
+  }
+
   async readFinishedExpenseSnapshot(companyId: string, expenseId: string): Promise<{
     expense: {
       id: string; status: string; captureSource: string; createdByUserId: string;

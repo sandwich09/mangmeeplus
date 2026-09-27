@@ -138,6 +138,12 @@ function makeHarness(opts: {
   } as any;
 
   const useCase = {
+    preflightPublicGeneral: async (event: any) => {
+      if (opts.legalAcceptanceRequired) return null;
+      preflightCalls.push(event);
+      const result = opts.preflightImpl ? await opts.preflightImpl(event) : undefined;
+      return result?.status === 'required' ? null : { companyId: result?.companyId };
+    },
     preflightLegalAcceptance: async (event: {
       lineUserId: string;
       messagingChannelId?: string;
@@ -257,8 +263,9 @@ describe('LineMessageBufferService – legal acceptance pre-storage gate', () =>
 
     assert.equal(h.pushes.length, 1);
     assert.equal(h.pushes[0]?.to, 'group-legal');
-    assert.match(h.pushes[0]?.text ?? '', /นโยบายความเป็นส่วนตัว/);
-    assert.equal(h.rows.get('legal-push')?.status, 'legal_acceptance_required');
+    assert.match(h.pushes[0]?.text ?? '', /แชตส่วนตัว/);
+    assert.equal(h.rows.get('legal-push')?.status, 'public_unavailable');
+    assert.equal(h.preflightCalls.length, 0, 'group refusal never loads private legal/membership context');
     assert.equal(h.rows.get('legal-push')?.payloadJson, Prisma.DbNull);
   });
 
@@ -1103,7 +1110,7 @@ describe('LineMessageBufferService – debounce experiment cohort (latency/auton
     try {
       await h.service.enqueue(textEnv('frz-1', 'ก', { chatId: 'chat-frz', userId: 'user-1' })); // opens batch → freezes co-1 cohort
       await h.service.enqueue(textEnv('frz-2', 'ข', { chatId: 'chat-frz', userId: 'user-1' })); // joins; preflight now resolves co-2
-      const state = (h.service as any).chats.get('chat-frz:user-1');
+      const state = (h.service as any).chats.get('ch-1:chat-frz:user-1');
       assert.equal(state.debounceMs, co1, 'cohort frozen at open (co-1), NOT re-assigned to co-2 by the later bubble');
     } finally {
       await h.service.onModuleDestroy();
@@ -1130,8 +1137,8 @@ describe('LineMessageBufferService – debounce experiment cohort (latency/auton
     try {
       await h.service.enqueue(textEnv('g-a', 'ก', { chatId: 'group-9', userId: 'user-A' }));
       await h.service.enqueue(textEnv('g-b', 'ข', { chatId: 'group-9', userId: 'user-B' }));
-      const stateA = (h.service as any).chats.get('group-9:user-A');
-      const stateB = (h.service as any).chats.get('group-9:user-B');
+      const stateA = (h.service as any).chats.get('ch-1:group-9:user-A');
+      const stateB = (h.service as any).chats.get('ch-1:group-9:user-B');
       assert.ok(stateA && stateB && stateA !== stateB, 'buffers are isolated per (chat,user)');
       assert.equal(stateA.debounceMs, stateB.debounceMs, 'cohort shared across users of the same (company,chat)');
       assert.ok([1_000, 1_500, 2_000].includes(stateA.debounceMs), 'cohort is one of the declared values');
@@ -1196,7 +1203,7 @@ describe('LineMessageBufferService – deterministic debounce boundary (latency/
       const h = makeHarness({ debounceMs: 1_000, maxWaitMs: 60_000 });
       await h.service.enqueue(textEnv('a', 'ขอ'));   // arms backstop #1 (generation 1)
       await h.service.enqueue(textEnv('b', 'ยอด'));  // joins within debounce → clears #1, arms #2 (gen 2)
-      const state = (h.service as any).chats.get('user-1:user-1');
+      const state = (h.service as any).chats.get('ch-1:user-1:user-1');
       assert.equal(captured.length, 2);
       assert.equal(captured[0].cleared, true, 'the first backstop was cleared on reschedule');
       const liveTimer = state.debounceTimer;

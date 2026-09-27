@@ -155,6 +155,32 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     if (r.kind === 'answer') assert.match(r.replyText, /^Expenses: 9,000\.00 THB \(8 records\)/);
   });
 
+  it('renders an exact Decimal beyond Number safe precision without losing a satang', () => {
+    const r = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData({
+      total: 1,
+      summary: expenseSummary({ countedItems: 1, totalAmount: '9007199254740993.01' }),
+    })), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.match(r.replyText, /^ค่าใช้จ่าย: 9,007,199,254,740,993\.01 บาท/);
+  });
+
+  it('states the API-applied period when it differs from the proposed range', () => {
+    const r = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData({
+      queryApplied: { period: { startDate: '2026-02-01', endDate: '2026-02-28', timezone: 'Asia/Bangkok' } },
+    })), { ...EN, proposedInput: { fromDate: '2026-01-01', toDate: '2026-01-31' } });
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.match(r.replyText, /\nPeriod: 2026-02-01 – 2026-02-28/);
+  });
+
+  it('accepts capped detail rows only when the aggregate declares itself complete', () => {
+    const complete = expenseData({
+      completeness: { aggregate: 'complete', rows: { returned: 5, hasMore: true, nextCursor: 'next' } },
+    });
+    assert.equal(formatPreparedSimpleRead(EXPENSE, expenseOutput(complete), TH).kind, 'answer');
+    const partial = expenseData({ completeness: { aggregate: 'partial', rows: { returned: 5, hasMore: true, nextCursor: null } } });
+    assert.equal(formatPreparedSimpleRead(EXPENSE, expenseOutput(partial), TH).kind, 'unverified');
+  });
+
   it('states the excluded rejected/voided records as a condition, in both languages', () => {
     const data = expenseData({ total: 40, summary: expenseSummary({ countedItems: 40, cancelledCount: 3 }) });
     const th = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), TH);

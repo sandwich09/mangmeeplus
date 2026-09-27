@@ -14,10 +14,14 @@ import {
   BUSINESS_DOCUMENT_TRANSACTION_STATES,
   EXPENSE_CAPTURE_OBSERVATION_LIMITS,
   extractValueCandidates,
+  expenseCaptureFieldRole,
+  expenseCaptureObservationId,
   mapThaiDigits,
   todayCivilDate,
   type ExpenseCaptureComponentObservation,
   type ExpenseCaptureDocumentObservation,
+  type ExpenseCaptureExtractWindow,
+  type ExpenseCaptureFieldEvidence,
   type ExpenseCaptureItemObservation,
   type ExpenseCaptureObservations,
   type ExpenseCapturePaymentObservation,
@@ -100,6 +104,7 @@ export function parseCaptureNaturalText(text: string, maxChars: number): Capture
     }
   }
   if (!out) return null;
+  if (out.length > maxChars) partialReason = partialReason ?? 'local_text_limit';
   return {
     text: out.length > maxChars ? out.slice(0, maxChars) : out,
     ...(partialReason ? { partialReason } : {}),
@@ -125,6 +130,9 @@ export function parseCaptureReadPages(
     sections.push(text.trim());
   } else {
     for (let index = 0; index < matches.length; index += 1) {
+      // A missing/reordered section cannot shift the next page into another source page's slot.
+      // Keep only the proved contiguous prefix; the API already retries missing pages separately.
+      if (Number(matches[index]![1]) !== index + 1) break;
       const start = matches[index]!.index! + matches[index]![0].length;
       const end = index + 1 < matches.length ? matches[index + 1]!.index! : text.length;
       sections.push(text.slice(start, end).trim());
@@ -138,7 +146,7 @@ export function parseCaptureReadPages(
     pages.push({
       pageIndex: pageIndexes[index]!,
       text: blank ? '' : body.slice(0, MAX_CAPTURE_PAGE_TEXT_CHARS),
-      truncated: truncatedOutput && index === sections.length - 1,
+      truncated: body.length > MAX_CAPTURE_PAGE_TEXT_CHARS || (truncatedOutput && index === sections.length - 1),
       blank,
     });
   }
@@ -158,7 +166,8 @@ Return compact JSON only, no markdown:
 ABSOLUTE RULES
 - NEVER compute, add, subtract, convert or round. Every number you return must appear character-for-character in the window text; a value that is not printed is simply omitted.
 - NEVER invent an issuer, a date, a document number or a discount. If the window does not print it, leave the field out. An unknown value is omitted, never written as 0, "UNKNOWN", "-" or today's date.
-- Every object carries "evidenceSpan": one short exact substring (at most 200 characters) copied from the window text that shows where you read it. An object with no verbatim span is dropped.
+- Every object carries "evidenceSpan": one short exact substring (at most 200 characters) copied from the window text that shows where you read it. An object with no verbatim span is dropped. EVERY numeric field must appear inside its own object evidenceSpan, beside its own row label/role. Never cite TOTAL for CASH or CHANGE; never combine those labelled rows into one span.
+- Every factual field may include fieldEvidence keyed by its dotted path (for example issuer.name, amount, documentDate): {"pageIndex":0,"localSpan":{"start":0,"end":12},"rawValue":"exact printed text"}. Offsets are UTF-16 in the original page text; respect SOURCE_OFFSET when a page continues in another window. Supply this locator whenever the same value appears more than once. All row evidence must be on a page belonging to its documentRef. Never borrow a name, date or number from another document/page.
 - One file may contain several documents and several purchases. Never merge two bills because the shop name matches, and never split one bill because it spans pages.
 
 documents[]: {"ref":"d1","pageIndexes":[0],"kind":"RECEIPT|TAX_INVOICE|ABBREVIATED_TAX_INVOICE|SUPPLIER_INVOICE_OR_BILL|ORDER_OR_CHECK_BILL|QUOTATION|PURCHASE_ORDER|DELIVERY_NOTE|TRANSFER_SLIP|MARKETPLACE_ORDER|HANDWRITTEN_CASH_BILL|APPOINTMENT_CARD|BOOKING_CONFIRMATION|RESERVATION_CONFIRMATION|SIGNATURE_IMAGE|OTHER_BUSINESS_DOCUMENT|NON_FINANCIAL_IMAGE|NEEDS_REVIEW","family":"EXPENSE_EVIDENCE|COMMERCIAL_DOCUMENT|PAYMENT_EVIDENCE|SCHEDULING_DOCUMENT|SIGNATURE_ASSET|OTHER_BUSINESS_DOCUMENT|NON_BUSINESS","issuer":{"name":"printed legal issuer/payee name","taxId":"13 digits","branchCode":"printed branch","storefront":"printed shop/store name","platform":"printed marketplace name"},"buyer":{"name":"","taxId":""},"documentNumber":"printed running number","documentDate":"YYYY-MM-DD","currency":"THB","printedPage":{"number":1,"of":3},"printedPages":[1,2],"continuationOfRef":"ref of the document in PRIOR_DOCUMENTS this one continues","classification":{...}}
@@ -204,15 +213,44 @@ const trimmed = (value: unknown, max: number): string | undefined => {
   return out && out.length <= max ? out : undefined;
 };
 
-/** Every number the window text prints, so a value the model produced but never read is dropped. */
-function printedNumbers(windowText: string): Set<number> {
-  const mapped = mapThaiDigits(windowText);
-  const allowed = new Set<number>();
-  for (const match of mapped.matchAll(/\d[\d,]*(?:\.\d+)?/g)) {
-    const value = Number.parseFloat(match[0].replace(/,/g, ''));
-    if (Number.isFinite(value)) allowed.add(value);
+/** Exact decimals, preserving sign without IEEE-754 rounding or parseFloat prefix acceptance. */
+function exactPrintedNumber(value: string): string | undefined {
+  const normalized = mapThaiDigits(value).normalize('NFKC').replace(/−/g, '-');
+  if (!/^[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(normalized)) return undefined;
+  const clean = normalized.replace(/,/g, '');
+  const negative = clean.startsWith('-');
+  const [integer, fraction = ''] = clean.replace(/^[+-]/, '').split('.');
+  const whole = integer!.replace(/^0+(?=\d)/, '');
+  const decimals = fraction.replace(/0+$/, '');
+  return `${negative && (whole !== '0' || decimals) ? '-' : ''}${whole}${decimals ? `.${decimals}` : ''}`;
+}
+
+function printedNumbers(span: string): Set<string> {
+  const allowed = new Set<string>();
+  const mapped = mapThaiDigits(span).normalize('NFKC').replace(/−/g, '-');
+  for (const match of mapped.matchAll(/(?<![\d.,+-])[+-]?\d[\d,]*(?:\.\d+)?(?![\d.,])/g)) {
+    const value = exactPrintedNumber(match[0]);
+    if (value !== undefined) allowed.add(value);
   }
   return allowed;
+}
+
+/** Known contradictory receipt labels are evidence checks, never user-intent routing. */
+function amountRoleMatches(span: string, amount: string, role?: string): boolean {
+  if (!role) return true;
+  const matchingLines = span.split(/\r?\n/).filter((line) => printedNumbers(line).has(amount));
+  return matchingLines.some((line) => {
+    const labels: string[] = [];
+    if (/\b(?:grand\s+total|total)\b|รวม(?:เงิน)?ทั้งสิ้น|จำนวนเงินรวมทั้งสิ้น/iu.test(line)) labels.push('total');
+    if (/\b(?:cash|tender(?:ed)?)\b|เงินสด|รับเงิน/iu.test(line)) labels.push('tender');
+    if (/\bchange\b|เงินทอน/iu.test(line)) labels.push('change');
+    if (labels.length > 1) return false; // one span merged several labelled amounts
+    if (!labels.length) return true; // role remains a model observation; do not invent a label
+    if (role === 'document_total' || role === 'buyer_payable') return labels[0] === 'total';
+    if (role === 'tender' || role === 'change') return labels[0] === role;
+    if (role === 'reported_paid' || role === 'payment') return labels[0] !== 'change';
+    return !['tender', 'change'].includes(labels[0]!);
+  });
 }
 
 /**
@@ -226,6 +264,7 @@ export function parseCaptureObservationsJson(
   text: string,
   windowText: string,
   todayIso: string = todayCivilDate(),
+  sourceWindow?: ExpenseCaptureExtractWindow,
 ): ExpenseCaptureObservations | null {
   const json = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
   let raw: Record<string, unknown>;
@@ -237,7 +276,8 @@ export function parseCaptureObservationsJson(
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
 
   const mappedWindow = mapThaiDigits(windowText);
-  const allowedNumbers = printedNumbers(windowText);
+  let rejectedFields = 0;
+  let rejectedRows = 0;
   const dateCandidates = new Set(
     extractValueCandidates(windowText, todayIso, { documentContext: 'receipt' }).dates.map((date) => date.isoDate),
   );
@@ -245,11 +285,16 @@ export function parseCaptureObservationsJson(
     const out = trimmed(value, MAX_EVIDENCE_SPAN_CHARS);
     return out && windowText.includes(out) ? out : undefined;
   };
-  const printedMoney = (value: unknown): string | undefined => {
+  const printedMoney = (value: unknown, evidenceSpan: string | undefined, role?: string): string | undefined => {
+    if (value === undefined) return undefined;
     const out = trimmed(value, 32);
-    if (!out) return undefined;
-    const amount = Number.parseFloat(out.replace(/,/g, ''));
-    return Number.isFinite(amount) && allowedNumbers.has(Math.abs(amount)) ? out : undefined;
+    const amount = out ? exactPrintedNumber(out) : undefined;
+    if (!out || amount === undefined || !evidenceSpan || !printedNumbers(evidenceSpan).has(amount)
+      || !amountRoleMatches(evidenceSpan, amount, role)) {
+      rejectedFields += 1;
+      return undefined;
+    }
+    return mapThaiDigits(out).normalize('NFKC').replace(/−/g, '-');
   };
   const printedText = (value: unknown, max: number): string | undefined => {
     const out = trimmed(value, max);
@@ -264,12 +309,12 @@ export function parseCaptureObservationsJson(
   for (const value of asArray(raw['documents'])) {
     if (documents.length >= EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxDocumentsPerWindow) { itemsTruncated = true; break; }
     const row = asRecord(value);
-    if (!row) continue;
+    if (!row) { rejectedRows += 1; continue; }
     const ref = trimmed(row['ref'], 64);
     const kind = trimmed(row['kind'], 64);
     const family = trimmed(row['family'], 64);
     const classification = parseBusinessDocumentClassification(row['classification'], windowText);
-    if (!ref || documentRefs.has(ref) || !classification) continue;
+    if (!ref || documentRefs.has(ref) || !classification) { rejectedRows += 1; continue; }
     const pageIndexes = asArray(row['pageIndexes'])
       .filter((page): page is number => Number.isSafeInteger(page) && (page as number) >= 0)
       .slice(0, 64);
@@ -328,21 +373,21 @@ export function parseCaptureObservationsJson(
   for (const value of asArray(raw['items'])) {
     if (items.length >= EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxItemsPerWindow) { itemsTruncated = true; break; }
     const row = asRecord(value);
-    if (!row) continue;
+    if (!row) { rejectedRows += 1; continue; }
     const id = trimmed(row['id'], 64);
     const documentRef = trimmed(row['documentRef'], 64);
     const description = trimmed(row['description'], 200);
     const event = trimmed(row['event'], 32);
     const evidenceSpan = span(row['evidenceSpan']);
-    if (!id || !documentRef || !documentRefs.has(documentRef) || !description || !event || !ITEM_EVENTS.has(event) || !evidenceSpan) continue;
+    if (!id || !documentRef || !documentRefs.has(documentRef) || !description || !event || !ITEM_EVENTS.has(event) || !evidenceSpan) { rejectedRows += 1; continue; }
     items.push({
       id, documentRef, description,
-      ...optional('quantity', printedMoney(row['quantity'])),
+      ...optional('quantity', printedMoney(row['quantity'], evidenceSpan)),
       ...optional('unit', trimmed(row['unit'], 32)),
-      ...optional('packSize', printedMoney(row['packSize'])),
-      ...optional('unitPrice', printedMoney(row['unitPrice'])),
-      ...optional('amount', printedMoney(row['amount'])),
-      ...optional('listPrice', printedMoney(row['listPrice'])),
+      ...optional('packSize', printedMoney(row['packSize'], evidenceSpan)),
+      ...optional('unitPrice', printedMoney(row['unitPrice'], evidenceSpan)),
+      ...optional('amount', printedMoney(row['amount'], evidenceSpan)),
+      ...optional('listPrice', printedMoney(row['listPrice'], evidenceSpan)),
       ...optional('taxMarker', trimmed(row['taxMarker'], 16)),
       event: event as ExpenseCaptureItemObservation['event'],
       ...optional('linkedItemId', trimmed(row['linkedItemId'], 64)),
@@ -354,7 +399,7 @@ export function parseCaptureObservationsJson(
   for (const value of asArray(raw['components'])) {
     if (components.length >= EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxComponentsPerWindow) { itemsTruncated = true; break; }
     const row = asRecord(value);
-    if (!row) continue;
+    if (!row) { rejectedRows += 1; continue; }
     const id = trimmed(row['id'], 64);
     const documentRef = trimmed(row['documentRef'], 64);
     const label = trimmed(row['label'], MAX_LABEL_CHARS);
@@ -362,11 +407,11 @@ export function parseCaptureObservationsJson(
     const scope = trimmed(row['scope'], 32);
     const appliedStatus = trimmed(row['appliedStatus'], 16) ?? 'unknown';
     const evidenceSpan = span(row['evidenceSpan']);
-    if (!id || !documentRef || !documentRefs.has(documentRef) || !label || !evidenceSpan) continue;
-    if (!role || !COMPONENT_ROLES.has(role) || !scope || !COMPONENT_SCOPES.has(scope) || !COMPONENT_APPLIED.has(appliedStatus)) continue;
+    if (!id || !documentRef || !documentRefs.has(documentRef) || !label || !evidenceSpan) { rejectedRows += 1; continue; }
+    if (!role || !COMPONENT_ROLES.has(role) || !scope || !COMPONENT_SCOPES.has(scope) || !COMPONENT_APPLIED.has(appliedStatus)) { rejectedRows += 1; continue; }
     components.push({
       id, documentRef, label,
-      ...optional('amount', printedMoney(row['amount'])),
+      ...optional('amount', printedMoney(row['amount'], evidenceSpan, role)),
       ...optional('currency', /^[A-Z]{3}$/.test(trimmed(row['currency'], 8)?.toUpperCase() ?? '') ? trimmed(row['currency'], 8)!.toUpperCase() : undefined),
       role: role as ExpenseCaptureComponentObservation['role'],
       scope: scope as ExpenseCaptureComponentObservation['scope'],
@@ -379,31 +424,31 @@ export function parseCaptureObservationsJson(
   const totals: ExpenseCaptureTotalObservation[] = [];
   for (const value of asArray(raw['totals']).slice(0, 40)) {
     const row = asRecord(value);
-    if (!row) continue;
+    if (!row) { rejectedRows += 1; continue; }
     const documentRef = trimmed(row['documentRef'], 64);
     const kind = trimmed(row['kind'], 32);
-    const amount = printedMoney(row['amount']);
     const evidenceSpan = span(row['evidenceSpan']);
+    const amount = printedMoney(row['amount'], evidenceSpan, kind);
     // A total is the one field that cannot be partly known: without a printed amount there is no
     // total, and the assembly answers `insufficient` rather than checking against a guess.
-    if (!documentRef || !documentRefs.has(documentRef) || !kind || !TOTAL_KINDS.has(kind) || !amount || !evidenceSpan) continue;
+    if (!documentRef || !documentRefs.has(documentRef) || !kind || !TOTAL_KINDS.has(kind) || !amount || !evidenceSpan) { rejectedRows += 1; continue; }
     totals.push({ documentRef, kind: kind as ExpenseCaptureTotalObservation['kind'], amount, evidenceSpan });
   }
 
   const payments: ExpenseCapturePaymentObservation[] = [];
   for (const value of asArray(raw['payments']).slice(0, 20)) {
     const row = asRecord(value);
-    if (!row) continue;
+    if (!row) { rejectedRows += 1; continue; }
     const documentRef = trimmed(row['documentRef'], 64);
     const status = trimmed(row['status'], 16) ?? 'unknown';
     const evidenceSpan = span(row['evidenceSpan']);
     const occurredAt = trimmed(row['occurredAt'], 32);
-    if (!documentRef || !documentRefs.has(documentRef) || !PAYMENT_STATES.has(status) || !evidenceSpan) continue;
+    if (!documentRef || !documentRefs.has(documentRef) || !PAYMENT_STATES.has(status) || !evidenceSpan) { rejectedRows += 1; continue; }
     payments.push({
       documentRef,
       ...optional('method', trimmed(row['method'], 64)),
       status: status as ExpenseCapturePaymentObservation['status'],
-      ...optional('amount', printedMoney(row['amount'])),
+      ...optional('amount', printedMoney(row['amount'], evidenceSpan, 'payment')),
       ...optional('occurredAt', occurredAt && dateCandidates.has(occurredAt) ? occurredAt : undefined),
       ...optional('reference', printedText(row['reference'], 64)),
       evidenceSpan,
@@ -413,22 +458,23 @@ export function parseCaptureObservationsJson(
   const refunds: ExpenseCaptureRefundObservation[] = [];
   for (const value of asArray(raw['refunds']).slice(0, 20)) {
     const row = asRecord(value);
-    if (!row) continue;
+    if (!row) { rejectedRows += 1; continue; }
     const documentRef = trimmed(row['documentRef'], 64);
     const state = trimmed(row['state'], 16) ?? 'unknown';
     const evidenceSpan = span(row['evidenceSpan']);
-    if (!documentRef || !documentRefs.has(documentRef) || !REFUND_STATES.has(state) || !evidenceSpan) continue;
+    if (!documentRef || !documentRefs.has(documentRef) || !REFUND_STATES.has(state) || !evidenceSpan) { rejectedRows += 1; continue; }
     refunds.push({
       documentRef,
       state: state as ExpenseCaptureRefundObservation['state'],
-      ...optional('amount', printedMoney(row['amount'])),
+      ...optional('amount', printedMoney(row['amount'], evidenceSpan)),
       ...optional('destination', trimmed(row['destination'], 120)),
       evidenceSpan,
     });
   }
 
   const completeness = asRecord(raw['completeness']) ?? {};
-  return {
+  itemsTruncated ||= asArray(raw['totals']).length > 40 || asArray(raw['payments']).length > 20 || asArray(raw['refunds']).length > 20;
+  const observations: ExpenseCaptureObservations = {
     documents,
     items,
     components,
@@ -437,16 +483,160 @@ export function parseCaptureObservationsJson(
     refunds,
     completeness: {
       itemsTruncated: completeness['itemsTruncated'] === true || itemsTruncated,
-      unreadableRows: positiveInt(completeness['unreadableRows']) ?? 0,
+      unreadableRows: Math.min(Number.MAX_SAFE_INTEGER, (positiveInt(completeness['unreadableRows']) ?? 0) + rejectedRows),
       pagesCovered: asArray(completeness['pagesCovered'])
         .filter((page): page is number => Number.isSafeInteger(page) && (page as number) >= 0)
         .slice(0, 64),
-      notes: asArray(completeness['notes'])
+      notes: [...(rejectedFields ? [`rejected_unproven_fields:${rejectedFields}`] : []), ...(rejectedRows ? [`rejected_rows:${rejectedRows}`] : []), ...asArray(completeness['notes'])]
         .map((note) => trimmed(note, 200))
         .filter((note): note is string => note !== undefined)
         .slice(0, 10),
     },
   };
+  return sourceWindow?.evidenceSource ? bindCaptureEvidence(observations, raw, sourceWindow, todayIso) : observations;
+}
+
+/** v2 retains only values with a unique or explicitly selected original-page locator. */
+function bindCaptureEvidence(observations: ExpenseCaptureObservations, raw: Record<string, unknown>, window: ExpenseCaptureExtractWindow, today: string): ExpenseCaptureObservations | null {
+  const source = window.evidenceSource!;
+  if (source.version !== 2 || !source.attachmentId || !/^[0-9a-f]{64}$/.test(source.checksumSha256)
+    || window.pages.some(page => !Number.isSafeInteger(page.pageIndex) || page.pageIndex < 0 || typeof page.text !== 'string'
+      || !Number.isSafeInteger(page.sourceOffset ?? 0) || (page.sourceOffset ?? 0) < 0)
+    || new Set(window.pages.map(page => page.pageIndex)).size !== window.pages.length) return null;
+  const pageMap = new Map(window.pages.map(page => [page.pageIndex, page]));
+  let removed = 0;
+  const docPages = new Map<string, number[]>();
+  type GroundedRow = Record<string, any>;
+  const normalize = (value: string) => mapThaiDigits(value).normalize('NFKC');
+  const matches = (value: string, printed: string, kind: 'text' | 'number' | 'date' | 'currency') => {
+    if (kind === 'number') return exactPrintedNumber(value) !== undefined && exactPrintedNumber(value) === exactPrintedNumber(printed);
+    if (kind === 'date') return extractValueCandidates(printed, today, { documentContext: 'receipt' }).dates.some(date => date.isoDate === value);
+    if (kind === 'currency') return normalize(printed).toUpperCase() === value || value === 'THB' && /^(?:บาท|฿)$/.test(printed);
+    return normalize(printed) === normalize(value);
+  };
+  const locate = (row: GroundedRow, field: string, value: string, pages: number[], kind: 'text' | 'number' | 'date' | 'currency', role: string, localRow?: string): ExpenseCaptureFieldEvidence | undefined => {
+    const hint = asRecord(asRecord(row['fieldEvidence'])?.[field]);
+    const found: ExpenseCaptureFieldEvidence[] = [];
+    for (const index of pages) {
+      const page = pageMap.get(index); if (!page) continue;
+      const offset = page.sourceOffset ?? 0;
+      const add = (start: number, end: number) => {
+        const printed = page.text.slice(start, end);
+        if (!printed || !matches(value, printed, kind)) return;
+        if (localRow) {
+          let inRow = false;
+          for (let at = page.text.indexOf(localRow); at >= 0; at = page.text.indexOf(localRow, at + 1)) {
+            if (start >= at && end <= at + localRow.length) { inRow = true; break; }
+          }
+          if (!inRow) return;
+        }
+        found.push({ attachmentId: source.attachmentId, checksumSha256: source.checksumSha256, pageIndex: index,
+          localSpan: { start: start + offset, end: end + offset }, rawValue: printed, role });
+      };
+      if (hint) {
+        const span = asRecord(hint['localSpan']);
+        if (hint['pageIndex'] !== index || !span || !Number.isSafeInteger(span['start']) || !Number.isSafeInteger(span['end'])) continue;
+        const start = Number(span['start']) - offset, end = Number(span['end']) - offset;
+        if (start < 0 || end <= start || end > page.text.length || page.text.slice(start, end) !== hint['rawValue']) continue;
+        add(start, end);
+      } else {
+        const candidates = kind === 'number'
+          ? [...page.text.matchAll(/[+\-−]?[0-9๐-๙][0-9๐-๙,]*(?:\.[0-9๐-๙]+)?/g)].map(hit => ({ text: hit[0], start: hit.index! }))
+          : kind === 'date'
+            ? extractValueCandidates(page.text, today, { documentContext: 'receipt' }).dates.filter(date => date.isoDate === value)
+              .flatMap(date => occurrences(page.text, date.span))
+            : (kind === 'currency' && value === 'THB' ? ['THB', 'บาท', '฿'] : [value]).flatMap(text => occurrences(page.text, text));
+        for (const candidate of candidates) add(candidate.start, candidate.start + candidate.text.length);
+      }
+    }
+    const unique = [...new Map(found.map(hit => [`${hit.pageIndex}:${hit.localSpan.start}:${hit.localSpan.end}`, hit])).values()];
+    return unique.length === 1 ? unique[0] : undefined;
+  };
+  const bind = (row: GroundedRow, original: GroundedRow, field: string, pages: number[], kind: 'text' | 'number' | 'date' | 'currency', localRow?: string) => {
+    const path = field.split('.');
+    let parent = row;
+    for (const part of path.slice(0, -1)) { if (!parent[part] || typeof parent[part] !== 'object') return; parent = parent[part]; }
+    const key = path.at(-1)!; if (parent[key] === undefined) return;
+    const evidence = locate(original, field, String(parent[key]), pages, kind, expenseCaptureFieldRole(row, field), localRow);
+    if (!evidence) { delete parent[key]; removed++; }
+    else (row.fieldEvidence ??= {})[field] = evidence;
+  };
+  observations.documents = observations.documents.filter(document => {
+    const original = asArray(raw['documents']).map(asRecord).find(row => row?.['ref'] === document.ref);
+    if (!original || !document.pageIndexes.length || document.pageIndexes.some(page => !pageMap.has(page))) { removed++; return false; }
+    document.pageIndexes = [...new Set(document.pageIndexes)];
+    const ownText = document.pageIndexes.map(page => pageMap.get(page)!.text).join('\n');
+    const classification = parseBusinessDocumentClassification(original['classification'], ownText);
+    if (!classification) { removed++; return false; }
+    document.classification = classification;
+    docPages.set(document.ref, document.pageIndexes);
+    for (const field of ['issuer.name', 'issuer.taxId', 'issuer.branchCode', 'issuer.storefront', 'issuer.platform', 'buyer.name', 'buyer.taxId', 'documentNumber']) bind(document, original, field, document.pageIndexes, 'text');
+    bind(document, original, 'documentDate', document.pageIndexes, 'date');
+    bind(document, original, 'currency', document.pageIndexes, 'currency');
+    for (const field of ['printedPage.number', 'printedPage.of']) bind(document, original, field, document.pageIndexes, 'number');
+    if (document.printedPages) {
+      document.printedPages.forEach((_, index) => bind(document, original, `printedPages.${index}`, document.pageIndexes, 'number'));
+      const retained = document.printedPages.map((value, index) => ({ value, evidence: document.fieldEvidence?.[`printedPages.${index}`] })).filter(({ value }) => Number.isSafeInteger(value));
+      for (const key of Object.keys(document.fieldEvidence ?? {})) if (key.startsWith('printedPages.')) delete document.fieldEvidence![key];
+      document.printedPages = retained.map(({ value, evidence }, index) => {
+        if (evidence) (document.fieldEvidence ??= {})[`printedPages.${index}`] = { ...evidence, role: expenseCaptureFieldRole(document, `printedPages.${index}`) };
+        return value;
+      });
+    }
+    return true;
+  });
+  if (!observations.documents.length) return null;
+  const fields = {
+    items: { text: ['description', 'unit', 'taxMarker'], number: ['quantity', 'packSize', 'unitPrice', 'amount', 'listPrice'], date: [], currency: [] },
+    components: { text: ['label'], number: ['amount'], date: [], currency: ['currency'] },
+    totals: { text: [], number: ['amount'], date: [], currency: [] },
+    payments: { text: ['method', 'reference'], number: ['amount'], date: ['occurredAt'], currency: [] },
+    refunds: { text: ['destination'], number: ['amount'], date: [], currency: [] },
+  } as const;
+  for (const [collection, groups] of Object.entries(fields)) {
+    const retained: GroundedRow[] = [];
+    for (const row of (observations as any)[collection] as GroundedRow[]) {
+      const pages = docPages.get(row.documentRef);
+      const original = asArray(raw[collection]).map(asRecord).find(item => item?.['documentRef'] === row.documentRef
+        && item?.['evidenceSpan'] === row.evidenceSpan && (!row.id || item?.['id'] === row.id));
+      // A row on another document/page cannot lend its numbers or labels to this document.
+      if (!pages || !original || !pages.some(page => pageMap.get(page)!.text.includes(row.evidenceSpan))) { removed++; continue; }
+      for (const [kind, names] of Object.entries(groups)) for (const field of names) bind(row, original, field, pages, kind as 'text' | 'number' | 'date' | 'currency', row.evidenceSpan);
+      if (collection === 'totals' && row.amount === undefined || collection === 'items' && !row.description || collection === 'components' && !row.label) { removed++; continue; }
+      retained.push(row);
+    }
+    (observations as any)[collection] = retained;
+  }
+  const itemIds = new Map<string, string | null>();
+  for (const item of observations.items) {
+    const key = `${item.documentRef}|${item.id}`, id = expenseCaptureObservationId('item', item)!;
+    itemIds.set(key, itemIds.has(key) && itemIds.get(key) !== id ? null : id);
+    item.id = id;
+  }
+  for (const row of [...observations.items, ...observations.components]) {
+    const field = 'event' in row ? 'linkedItemId' : 'parentId';
+    const original = (row as GroundedRow)[field];
+    if (original !== undefined) {
+      const target = itemIds.get(`${row.documentRef}|${original}`);
+      if (target && target !== row.id) (row as GroundedRow)[field] = target;
+      else { delete (row as GroundedRow)[field]; removed++; }
+    }
+    if ('role' in row) row.id = expenseCaptureObservationId('component', row)!;
+  }
+  observations.fieldEvidenceVersion = 2;
+  observations.completeness.pagesCovered = observations.completeness.pagesCovered.filter(page => pageMap.has(page));
+  if (removed) {
+    observations.completeness.unreadableRows += removed;
+    observations.completeness.notes = [`rejected_page_or_field_evidence:${removed}`, ...observations.completeness.notes].slice(0, 10);
+  }
+  return observations;
+}
+
+function occurrences(text: string, value: string): Array<{ text: string; start: number }> {
+  if (!value) return [];
+  const matches: Array<{ text: string; start: number }> = [];
+  for (let start = text.indexOf(value); start >= 0; start = text.indexOf(value, start + 1)) matches.push({ text: value, start });
+  return matches;
 }
 
 const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);

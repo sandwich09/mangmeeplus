@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ReportDatasetDefinitionDto, RequestContext } from '@watchdog-bms/contracts';
 import { findReportDefinition } from '../domain/report-catalog';
+import { buildReportCsv } from '../domain/report-csv.logic';
 import { ReportSourceAdapters } from './report-source-adapters';
 
 const ctx: RequestContext = {
@@ -117,6 +118,20 @@ describe('ReportSourceAdapters item 18 remaining datasets', () => {
     assert.deepEqual(result.sourcePermissionsUsed, ['accounting.document.read', 'ledger.report.read']);
   });
 
+  it('excludes unissued receivables and never presents mixed-currency AR as a single amount', async () => {
+    const docs = [
+      { id: 'draft', status: 'DRAFT', outstandingAmount: '100.00', currency: 'THB' },
+      { id: 'issued-thb', status: 'ISSUED', outstandingAmount: '90071992547409.93', currency: 'THB' },
+      { id: 'issued-usd', status: 'CREDITED', outstandingAmount: '12.34', currency: 'USD' },
+    ];
+    const adapter = adapters({ documents: { execute: async () => ({ data: docs, total: docs.length }) } });
+    const result = await adapter.execute(ctx, enabled('ar.aging'), { filters: {}, chartKind: 'table', page: 1, pageSize: 100 });
+    assert.equal(result.rows.length, 2); assert.equal(result.totals?.outstandingAmount, null);
+    assert.deepEqual(result.rows.map(row => row.currency), ['THB', 'USD']);
+    assert.ok(result.warnings.includes('mixed_currency_total_unavailable'));
+    assert.ok(buildReportCsv(result).includes('90071992547409.93'));
+  });
+
   it('collects every AR detail page for export instead of truncating after 100 rows', async () => {
     const documents = Array.from({ length: 150 }, (_, index) => ({
       id: `inv-${index + 1}`,
@@ -178,114 +193,44 @@ describe('ReportSourceAdapters item 18 remaining datasets', () => {
     assert.equal(result.totals?.outstandingAmount, '5001.0000');
   });
 
-  it('aggregates every expense page instead of computing totals from the first 100 rows', async () => {
-    const expenses = Array.from({ length: 150 }, (_, index) => ({
-      id: `expense-${index + 1}`,
-      status: index < 120 ? 'APPROVED' : 'PAID',
-      grandTotalAmount: '10.0000',
-      paidAmount: index < 120 ? '0.0000' : '10.0000',
-      outstandingAmount: index < 120 ? '10.0000' : '0.0000',
-    }));
-    const requestedPages: number[] = [];
-    const adapter = adapters({
-      expenses: {
-        execute: async (_ctx: RequestContext, filter: { page?: number; pageSize?: number }) => {
-          requestedPages.push(filter.page ?? 1);
-          const result = pageOf(expenses, filter);
-          return { ...result, data: result.items };
-        },
-      },
-    });
-
-    const result = await adapter.execute(ctx, enabled('expense.summary'), { filters: {}, chartKind: 'table', page: 1, pageSize: 100 });
-
-    assert.equal(result.rows.find((row) => row.status === 'APPROVED')?.count, 120);
-    assert.equal(result.rows.find((row) => row.status === 'APPROVED')?.grandTotalAmount, '1200.0000');
-    assert.equal(result.rows.find((row) => row.status === 'PAID')?.count, 30);
-    assert.deepEqual(requestedPages, [1, 2]);
-  });
-
-  it('allows more than 5,000 source rows when an aggregate produces only a few output rows', async () => {
-    const expenses = Array.from({ length: 5_001 }, (_, index) => ({
-      id: `expense-${index + 1}`,
-      status: 'APPROVED',
-      grandTotalAmount: '1.0000',
-      paidAmount: '0.0000',
-      outstandingAmount: '1.0000',
-    }));
-    const adapter = adapters({
-      expenses: {
-        execute: async (_ctx: RequestContext, filter: { page?: number; pageSize?: number }) => {
-          const result = pageOf(expenses, filter);
-          return { ...result, data: result.items };
-        },
-      },
-    });
-
-    const result = await adapter.execute(ctx, enabled('expense.summary'), { filters: {}, chartKind: 'table', page: 1, pageSize: 100 });
-
-    assert.equal(result.total, 1);
-    assert.equal(result.rows[0]?.count, 5_001);
-    assert.equal(result.rows[0]?.grandTotalAmount, '5001.0000');
+  it('reads one complete status/currency aggregate without a mutable page walk and preserves exact CSV amounts', async () => {
+    let aggregateCalls = 0;
+    const rows = [
+      { status: 'CONFIRMED', currency: 'THB', count: 5001, grandTotalAmount: '90071992547409.9300', paidAmount: '0.0000', outstandingAmount: '90071992547409.9300' },
+      { status: 'CONFIRMED', currency: 'USD', count: 1, grandTotalAmount: '12.3400', paidAmount: '0.0000', outstandingAmount: '12.3400' },
+      { status: 'VOIDED', currency: 'THB', count: 1, grandTotalAmount: '7.0000', paidAmount: '0.0000', outstandingAmount: '7.0000' },
+    ];
+    const adapter = adapters({ expenses: {
+      execute: async () => { throw new Error('aggregate must not walk pages'); },
+      readReportSummary: async (_ctx: RequestContext, filters: unknown) => { aggregateCalls++; assert.deepEqual(filters, { fromDate: '2026-09-01', toDate: '2026-09-30' }); return rows; },
+    } });
+    const result = await adapter.execute({ ...ctx, permissions: [...ctx.permissions, 'expense.read'] }, enabled('expense.summary'),
+      { filters: { fromDate: '2026-09-01', toDate: '2026-09-30' }, chartKind: 'bar', page: 1, pageSize: 100 });
+    assert.equal(aggregateCalls, 1); assert.deepEqual(result.rows, rows);
+    const csv = buildReportCsv(result);
+    assert.ok(csv.includes('90071992547409.9300')); assert.ok(csv.includes('THB')); assert.ok(csv.includes('USD'));
+    assert.equal(result.chart?.series[0]?.values[0], '90071992547409.9300');
   });
 
   it('marks an own-only expense summary partial and snapshots only the authority actually used', async () => {
-    const adapter = adapters({ expenses: { execute: async () => ({ data: [], total: 0, page: 1, pageSize: 100 }) } });
+    const adapter = adapters({ expenses: { readReportSummary: async () => [] } });
     const ownOnly = { ...ctx, permissions: [...ctx.permissions, 'expense.read_own'] };
-
     const result = await adapter.execute(ownOnly, enabled('expense.summary'), { filters: {}, chartKind: 'table', page: 1, pageSize: 100 });
-
     assert.equal(result.status, 'EMPTY');
     assert.deepEqual(result.warnings, ['แสดงเฉพาะรายการค่าใช้จ่ายที่คุณสร้าง']);
     assert.deepEqual(result.sourcePermissionsUsed, ['expense.read_own']);
   });
 
-  it('rejects a changed source total between pages', async () => {
-    const expenses = Array.from({ length: 150 }, (_, index) => ({
-      id: `expense-${index + 1}`,
-      status: 'APPROVED',
-      grandTotalAmount: '1.0000',
-      paidAmount: '0.0000',
-      outstandingAmount: '1.0000',
-    }));
-    const adapter = adapters({
-      expenses: {
-        execute: async (_ctx: RequestContext, filter: { page?: number; pageSize?: number }) => {
-          const result = pageOf(expenses, filter);
-          return { ...result, data: result.items, total: filter.page === 1 ? 150 : 149 };
-        },
-      },
-    });
-
-    await assert.rejects(
-      adapter.execute(ctx, enabled('expense.summary'), { filters: {}, chartKind: 'table', page: 1, pageSize: 100 }),
-      assertSourceChanged,
-    );
-  });
-
-  it('rejects a duplicate stable source id across pages', async () => {
-    const expenses = Array.from({ length: 101 }, (_, index) => ({
-      id: `expense-${index + 1}`,
-      status: 'APPROVED',
-      grandTotalAmount: '1.0000',
-      paidAmount: '0.0000',
-      outstandingAmount: '1.0000',
-    }));
-    const adapter = adapters({
-      expenses: {
-        execute: async (_ctx: RequestContext, filter: { page?: number }) => ({
-          data: filter.page === 1 ? expenses.slice(0, 100) : [expenses[0]],
-          total: 101,
-          page: filter.page ?? 1,
-          pageSize: 100,
-        }),
-      },
-    });
-
-    await assert.rejects(
-      adapter.execute(ctx, enabled('expense.summary'), { filters: {}, chartKind: 'table', page: 1, pageSize: 100 }),
-      assertSourceChanged,
-    );
+  it('keeps issued sales amounts separated by currency through the same scoped database aggregate', async () => {
+    const adapter = adapters({ documents: { aggregateByType: async (_ctx: RequestContext, filter: unknown) => {
+      assert.deepEqual(filter, { documentType: 'INVOICE', status: 'ISSUED', fromDate: '2026-09-01', toDate: '2026-09-30' });
+      return { total: 3, byType: { INVOICE: { totalsByCurrency: [
+        { currency: 'THB', count: 2, totalAmount: '90071992547409.93' }, { currency: 'USD', count: 1, totalAmount: '12.34' },
+      ] } } };
+    } } });
+    const result = await adapter.execute(ctx, enabled('sales.summary'), { filters: { fromDate: '2026-09-01', toDate: '2026-09-30' }, chartKind: 'table', page: 1, pageSize: 100 });
+    assert.equal(result.rows.length, 2); assert.equal(result.rows[0]?.amount, '90071992547409.9300');
+    assert.equal(result.rows[1]?.currency, 'USD'); assert.ok(buildReportCsv(result).includes('90071992547409.9300'));
   });
 
   it('refuses a detail export above 5,000 output rows', async () => {

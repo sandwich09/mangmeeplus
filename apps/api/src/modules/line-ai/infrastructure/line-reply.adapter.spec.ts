@@ -182,3 +182,38 @@ describe('LINE push delivery retry identity', () => {
     } finally { globalThis.fetch = originalFetch; }
   });
 });
+
+describe('v2 exact frozen delivery', () => {
+  it('retries a real HTTP lost response with identical wire and key; accepts only a recognized duplicate', async () => {
+    const { createServer } = await import('node:http');
+    const bodies: string[] = [], keys: string[] = [];
+    const server = createServer(async (request, response) => {
+      let body = ''; for await (const chunk of request) body += chunk;
+      bodies.push(body); keys.push(String(request.headers['x-line-retry-key']));
+      if (bodies.length === 1) { response.destroy(); return; }
+      response.writeHead(409, { 'x-line-accepted-request-id': 'accepted-original-request' }); response.end('{}');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address(); assert.ok(address && typeof address !== 'string');
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic' } as any), {} as any);
+      (adapter as any).LINE_PUSH_URL = `http://127.0.0.1:${address.port}/push`;
+      const frozen = { transport: 'PUSH' as const, target: 'U-test', messages: [{ type: 'text' as const, text: 'ข้อหนึ่ง\nห้ามแก้ยอด 9007199254740993.01' }], pushRetryKey: 'f7265b4a-c1ef-4522-81f3-c50d14cba431', timeoutMs: 1000 };
+      assert.equal((await adapter.sendFrozenV2(frozen)).kind, 'unknown');
+      assert.deepEqual(await adapter.sendFrozenV2(frozen), { kind: 'accepted', code: 'API_ACCEPTED', requestId: 'accepted-original-request' });
+      assert.equal(bodies.length, 2); assert.equal(bodies[0], bodies[1]); assert.equal(keys[0], keys[1]);
+      assert.equal(JSON.parse(bodies[0]!).messages[0].text, frozen.messages[0]!.text);
+    } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+  });
+  it('keeps a stalled error body uncertain rather than treating headers as token rejection', async () => {
+    const { createServer } = await import('node:http');
+    const server = createServer((_request, response) => { response.writeHead(400); response.write('{"message":"Invalid reply token'); });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address(); assert.ok(address && typeof address !== 'string');
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic' } as any), {} as any);
+      (adapter as any).LINE_REPLY_URL = `http://127.0.0.1:${address.port}/reply`;
+      assert.equal((await adapter.sendFrozenV2({ transport: 'REPLY', target: 'token', messages: [{ type: 'text', text: 'complete' }], pushRetryKey: 'f7265b4a-c1ef-4522-81f3-c50d14cba431', timeoutMs: 500 })).kind, 'unknown');
+    } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+  });
+});

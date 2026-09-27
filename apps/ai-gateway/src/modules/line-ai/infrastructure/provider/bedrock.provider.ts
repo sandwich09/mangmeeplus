@@ -3,6 +3,7 @@ import type { ContentBlock, ConverseCommandOutput, Message, SystemContentBlock, 
 import type { IModelProvider, ProviderInput, ProviderOutput, ProviderToolCall, ProviderToolsInput, ProviderToolsOutput } from './provider.port';
 import type { AiUsageEntry, ProviderError } from '@watchdog-bms/contracts';
 import { appendUsage, currentBudgetEnvelope, currentUsageCompanyId } from '../../../../common/usage/usage-context';
+import { validateProviderToolCalls } from './provider-output.logic';
 
 export type BedrockProviderConfig = {
   region: string;
@@ -24,6 +25,10 @@ export const CACHE_MIN_CHARS = 4000;
 export const TIMEOUT_INPUT_TOKEN_CEILING = 200_000;
 const CACHE_POINT = { cachePoint: { type: 'default' as const } };
 
+class ProviderResponseError extends Error {
+  constructor(readonly code: 'PROVIDER_OUTPUT_INCOMPLETE' | 'PROVIDER_BLOCKED' | 'PROVIDER_TOOL_ARGUMENT_INVALID') { super(code); }
+}
+
 export class BedrockProvider implements IModelProvider {
   private readonly client: BedrockRuntimeClient;
 
@@ -35,6 +40,9 @@ export class BedrockProvider implements IModelProvider {
   }
 
   async generateText(input: ProviderInput): Promise<ProviderOutput> {
+    if (input.signal?.aborted || (input.deadlineAt !== undefined && input.deadlineAt <= Date.now())) {
+      return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'Provider work deadline elapsed before dispatch.', retryable: false } };
+    }
     // Converse image blocks ride on the last user message (vision routing/OCR).
     const imageBlocks = (input.images ?? []).map((image) => ({
       image: {
@@ -69,17 +77,28 @@ export class BedrockProvider implements IModelProvider {
       inferenceConfig: { maxTokens: input.maxTokens ?? 2048 },
     });
 
-    return this.converse(command, input.usageTag, (response) => ({
-      text: response.output?.message?.content?.[0]?.text ?? '',
-      stopReason: response.stopReason === 'end_turn' ? 'end_turn' as const
-        : response.stopReason === 'max_tokens' ? 'max_tokens' as const
-        : 'other' as const,
-    }));
+    return this.converse(command, input.usageTag, (response) => {
+      const blocks = response.output?.message?.content;
+      if (!Array.isArray(blocks)) throw new ProviderResponseError('PROVIDER_OUTPUT_INCOMPLETE');
+      if (response.stopReason === 'guardrail_intervened') throw new ProviderResponseError('PROVIDER_BLOCKED');
+      if (response.stopReason !== 'end_turn' && response.stopReason !== 'max_tokens') throw new ProviderResponseError('PROVIDER_OUTPUT_INCOMPLETE');
+      const text = blocks.flatMap((block) => typeof block.text === 'string' && block.text ? [block.text] : []).join('\n');
+      if (!text.trim()) throw new ProviderResponseError('PROVIDER_OUTPUT_INCOMPLETE');
+      return {
+        text,
+        completion: response.stopReason === 'end_turn' ? 'complete' as const : 'output_limit' as const,
+        providerStopReason: response.stopReason,
+        stopReason: response.stopReason === 'end_turn' ? 'end_turn' as const : 'max_tokens' as const,
+      };
+    }, input);
   }
 
   /** Item 10F native tool loop – Converse `toolConfig`/`toolUse`/`toolResult`. Verified live
    *  on the pinned Claude model (parallel toolUse blocks in one turn) 2026-07-07. */
   async generateWithTools(input: ProviderToolsInput): Promise<ProviderToolsOutput> {
+    if (input.signal?.aborted || (input.deadlineAt !== undefined && input.deadlineAt <= Date.now())) {
+      return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'Provider work deadline elapsed before dispatch.', retryable: false } };
+    }
     const contextIndex = cacheableContextIndex(input.messages);
     const contextBlocks = cacheableContextBlocks(input.cacheableContext);
     const command = new ConverseCommand({
@@ -124,20 +143,24 @@ export class BedrockProvider implements IModelProvider {
 
     return this.converse(command, input.usageTag, (response) => {
       const blocks = response.output?.message?.content ?? [];
-      const toolCalls: ProviderToolCall[] = blocks
-        .filter((b) => !!b.toolUse)
-        .map((b) => ({
-          toolUseId: b.toolUse!.toolUseId ?? '',
-          name: b.toolUse!.name ?? '',
-          input: b.toolUse!.input ?? {},
-        }))
-        .filter((c) => c.toolUseId && c.name);
-      const stopReason = response.stopReason === 'tool_use' ? 'tool_use'
-        : response.stopReason === 'end_turn' ? 'end_turn'
-        : response.stopReason === 'max_tokens' ? 'max_tokens'
-        : 'other';
-      return { text: blocks.map((b) => b.text ?? '').filter(Boolean).join('\n'), toolCalls, stopReason };
-    });
+      if (!Array.isArray(blocks)) throw new ProviderResponseError('PROVIDER_OUTPUT_INCOMPLETE');
+      if (response.stopReason === 'guardrail_intervened') throw new ProviderResponseError('PROVIDER_BLOCKED');
+      if (!['tool_use', 'end_turn', 'max_tokens'].includes(String(response.stopReason))) throw new ProviderResponseError('PROVIDER_OUTPUT_INCOMPLETE');
+      const text = blocks.flatMap((block) => typeof block.text === 'string' && block.text ? [block.text] : []).join('\n');
+      if (response.stopReason === 'max_tokens') return {
+        text, toolCalls: [], completion: 'output_limit' as const, providerStopReason: response.stopReason,
+        stopReason: 'max_tokens' as const,
+      };
+      const toolUses = blocks.flatMap((block) => block.toolUse ? [{
+        toolUseId: block.toolUse.toolUseId ?? '', name: block.toolUse.name ?? '', input: block.toolUse.input,
+      }] : []);
+      if (response.stopReason === 'end_turn' && !text.trim() && toolUses.length === 0) throw new ProviderResponseError('PROVIDER_OUTPUT_INCOMPLETE');
+      if (response.stopReason === 'tool_use' && toolUses.length === 0) throw new ProviderResponseError('PROVIDER_TOOL_ARGUMENT_INVALID');
+      if (toolUses.some((call) => !call.toolUseId || !call.name || call.input === undefined)
+        || !validateProviderToolCalls(toolUses, input.tools)) throw new ProviderResponseError('PROVIDER_TOOL_ARGUMENT_INVALID');
+      return { text, toolCalls: toolUses, completion: 'complete' as const, providerStopReason: response.stopReason,
+        stopReason: response.stopReason === 'tool_use' ? 'tool_use' as const : 'end_turn' as const };
+    }, input);
   }
 
   /** One Converse round-trip: abortable timeout, response parsing, and exactly one `ai.usage` line
@@ -147,10 +170,19 @@ export class BedrockProvider implements IModelProvider {
     command: ConverseCommand,
     usageTag: string | undefined,
     parse: (response: ConverseCommandOutput) => T,
+    context?: { signal?: AbortSignal; deadlineAt?: number },
   ): Promise<({ ok: true } & T) | { ok: false; error: ProviderError }> {
     const startedAt = Date.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.cfg.timeoutMs);
+    const abortFromCaller = () => controller.abort(context?.signal?.reason);
+    if (context?.signal?.aborted) controller.abort(context.signal.reason);
+    else context?.signal?.addEventListener('abort', abortFromCaller, { once: true });
+    const remaining = context?.deadlineAt === undefined ? this.cfg.timeoutMs : context.deadlineAt - Date.now();
+    if (remaining <= 0 || context?.signal?.aborted) {
+      context?.signal?.removeEventListener('abort', abortFromCaller);
+      return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'Provider work deadline elapsed before dispatch.', retryable: false } };
+    }
+    const timeout = setTimeout(() => controller.abort(), Math.max(0, Math.min(this.cfg.timeoutMs, remaining)));
 
     let usage: TokenUsage | undefined;
     let usageEstimated = false;
@@ -161,7 +193,11 @@ export class BedrockProvider implements IModelProvider {
       return { ok: true, ...parse(response) };
     } catch (err) {
       const timedOut = controller.signal.aborted;
-      const error = this.mapError(timedOut ? { name: 'ProviderTimeout' } : err);
+      const providerCode = (err as { code?: unknown })?.code;
+      const error = providerCode === 'PROVIDER_OUTPUT_INCOMPLETE' || providerCode === 'PROVIDER_BLOCKED'
+        || providerCode === 'PROVIDER_TOOL_ARGUMENT_INVALID'
+        ? { code: providerCode, message: 'The provider response was incomplete or invalid.', retryable: false } as ProviderError
+        : this.mapError(timedOut ? { name: 'ProviderTimeout' } : err);
       if (timedOut) {
         usage = conservativeTimeoutUsage(command);
         usageEstimated = true;
@@ -170,6 +206,7 @@ export class BedrockProvider implements IModelProvider {
       return { ok: false, error };
     } finally {
       clearTimeout(timeout);
+      context?.signal?.removeEventListener('abort', abortFromCaller);
       // Logged here so exactly one line is emitted whatever throws, and so logging can never
       // double-log or turn a success into an error.
       this.logUsage(usageTag, startedAt, usage, errorCode, usageEstimated);

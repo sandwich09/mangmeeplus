@@ -10,19 +10,32 @@
  * AI Gateway invokes this runtime server-side by ARN/id + qualifier.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createHash } from 'node:crypto';
 import {
   LINE_AI_ACTOR_DELEGATIONS_PER_TOOL,
   LINE_AI_CONTEXT_WINDOW_MINUTES,
   LINE_AI_CONTEXT_MAX_TURNS,
   LINE_AI_RUNTIME_CONTRACT_VERSION,
+  AI_BUDGET_ESTIMATOR_VERSION_V2,
+  AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
   parseLineAiPreparedPlan,
-  parseLineAiValueCandidates,
+  parseLineAiTurnValueCandidates,
+  verifyLineAiValueCandidatesV2,
+  parseLineAiInputEvidence,
+  parseLineAiResponsePreferences,
+  parseLineAiTaskProjection,
+  parseLineAiSemanticSubrequests,
+  lineAiRetainedTaskSourceMatchesProjection,
+  parseLineAiRetainedTaskSource,
+  verifyLineAiRetainedTaskSource,
+  parseAiBudgetGrantV2,
   extractValueCandidates,
   asIntakeRouteIntent,
 } from '@watchdog-bms/contracts';
 import type { LineAiPreparedPlan, LineAiTurnRequest, LineIntakeRouteIntent } from '@watchdog-bms/contracts';
 import type { AgentRunResult } from '../modules/line-ai/agents/agent-types';
-import { drainUsage, runWithUsageContext } from '../common/usage/usage-context';
+import { drainUsage, runWithUsageContext, type BudgetRequestState } from '../common/usage/usage-context';
+import { AI_BUDGET_V2_SUPPORTED } from '../common/usage/ai-budget-provider';
 
 const PORT = parseInt(process.env['PORT'] ?? '8080', 10);
 const MAX_CONTEXT_TURNS = LINE_AI_CONTEXT_MAX_TURNS;
@@ -68,6 +81,15 @@ export type RuntimePayload = {
   modelPolicy?: LineAiTurnRequest['modelPolicy'];
   attachments?: unknown[];
   conversationContext?: LineAiTurnRequest['conversationContext'];
+  inputEvidence?: LineAiTurnRequest['inputEvidence'];
+  contractCapabilities?: LineAiTurnRequest['contractCapabilities'];
+  budgetGrantV2?: LineAiTurnRequest['budgetGrantV2'];
+  approvedKnowledge?: LineAiTurnRequest['approvedKnowledge'];
+  selectedKnowledgeCardIds?: LineAiTurnRequest['selectedKnowledgeCardIds'];
+  taskProjection?: LineAiTurnRequest['taskProjection'];
+  responsePreferences?: LineAiTurnRequest['responsePreferences'];
+  semanticSubrequests?: LineAiTurnRequest['semanticSubrequests'];
+  retainedTaskSource?: LineAiTurnRequest['retainedTaskSource'];
   valueCandidates?: LineAiTurnRequest['valueCandidates'];
   /** Optional additive fused plan (latency/autonomy §7); re-parsed and bounded here, never cast. */
   preparedPlan?: LineAiPreparedPlan;
@@ -246,8 +268,37 @@ function answerPayloadTooLarge(req: IncomingMessage, res: ServerResponse): void 
  * L-12: message text and prompt are bounded before the orchestrator sees them. Over-limit text is
  * rejected rather than silently truncated — a half-message answered as if whole is its own bug.
  */
-function boundedMessageText(value: unknown): string | undefined {
-  return typeof value === 'string' && value && value.length <= maxMessageChars() ? value : undefined;
+function boundedMessageText(value: unknown, max = maxMessageChars()): string | undefined {
+  return typeof value === 'string' && value && value.length <= max ? value : undefined;
+}
+
+function parseV2InputFields(p: Record<string, unknown>, messageText: string): Pick<RuntimePayload, 'inputEvidence' | 'contractCapabilities' | 'budgetGrantV2' | 'taskProjection' | 'responsePreferences' | 'semanticSubrequests' | 'retainedTaskSource'> | null {
+  const hasV2Field = p['inputEvidence'] !== undefined || p['budgetGrantV2'] !== undefined
+    || p['contractCapabilities'] !== undefined || p['retainedTaskSource'] !== undefined;
+  if (!hasV2Field) return {};
+  const capabilities = p['contractCapabilities'];
+  const evidence = parseLineAiInputEvidence(p['inputEvidence'], messageText);
+  const grant = parseAiBudgetGrantV2(p['budgetGrantV2']);
+  if (!Array.isArray(capabilities) || capabilities.length !== 2
+    || !capabilities.includes('input-evidence-v2') || !capabilities.includes('budget-envelope-v2')
+    || !evidence || !grant || evidence.turnKey !== grant.turnKey) return null;
+  const digest = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
+  if (evidence.parts.some((part) => digest(part.rawText) !== part.rawSha256)
+    || digest(evidence.parts.map((part) => part.rawText).join('\n')) !== evidence.joinedSha256) return null;
+  const taskProjection = p['taskProjection'] === undefined ? undefined : parseLineAiTaskProjection(p['taskProjection']);
+  const responsePreferences = p['responsePreferences'] === undefined ? undefined : parseLineAiResponsePreferences(p['responsePreferences']);
+  const semanticSubrequests = p['semanticSubrequests'] === undefined ? undefined
+    : parseLineAiSemanticSubrequests(p['semanticSubrequests'], messageText, evidence);
+  const retainedTaskSource = p['retainedTaskSource'] === undefined ? undefined
+    : parseLineAiRetainedTaskSource(p['retainedTaskSource']);
+  if (p['taskProjection'] !== undefined && !taskProjection
+    || p['responsePreferences'] !== undefined && !responsePreferences
+    || p['semanticSubrequests'] !== undefined && !semanticSubrequests
+    || p['retainedTaskSource'] !== undefined && (!retainedTaskSource
+      || !lineAiRetainedTaskSourceMatchesProjection(retainedTaskSource, taskProjection, 'turn'))) return null;
+  return { inputEvidence: evidence, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'], budgetGrantV2: grant,
+    ...(taskProjection ? { taskProjection } : {}), ...(responsePreferences ? { responsePreferences } : {}),
+    ...(semanticSubrequests ? { semanticSubrequests } : {}), ...(retainedTaskSource ? { retainedTaskSource } : {}) };
 }
 
 /** L-12: `null` = over the attachment cap (reject the payload); a non-array stays tolerated as []. */
@@ -256,14 +307,27 @@ function boundedAttachments(value: unknown): unknown[] | null {
   return value.length > maxAttachments() ? null : value;
 }
 
+function boundedKnowledgeCardIds(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 5) return undefined;
+  const ids = value.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9._:-]{1,128}$/u.test(id));
+  return ids.length === value.length && new Set(ids).size === ids.length ? ids : undefined;
+}
+
 export function validatePayload(body: unknown): RuntimePayload | null {
   if (typeof body !== 'object' || body === null) return null;
   const p = body as Record<string, unknown>;
   const attachments = boundedAttachments(p['attachments']);
   if (attachments === null) return null;
   if (typeof p['prompt'] === 'string' && p['prompt']) {
-    const prompt = boundedMessageText(p['prompt']);
+    const prompt = boundedMessageText(p['prompt'], p['inputEvidence'] !== undefined ? 12_000 : undefined);
     if (!prompt) return null;
+    const v2 = parseV2InputFields(p, prompt);
+    if (!v2) return null;
+    const valueCandidates = parseLineAiTurnValueCandidates(p['valueCandidates'], prompt);
+    const versionedCandidates = !!p['valueCandidates'] && typeof p['valueCandidates'] === 'object'
+      && (p['valueCandidates'] as Record<string, unknown>)['version'] === 2;
+    if (versionedCandidates && !valueCandidates) return null;
     return {
       turnId: typeof p['turnId'] === 'string' && p['turnId'] ? p['turnId'] : `playground-${Date.now()}`,
       companyId: typeof p['companyId'] === 'string' && p['companyId'] ? p['companyId'] : 'playground-company',
@@ -282,17 +346,26 @@ export function validatePayload(body: unknown): RuntimePayload | null {
       modelPolicy: parseModelPolicy(p['modelPolicy']),
       attachments,
       conversationContext: parseConversationContext(p['conversationContext']),
-      valueCandidates: parseLineAiValueCandidates(p['valueCandidates'], prompt)
+      ...v2,
+      ...(p['approvedKnowledge'] === true ? { approvedKnowledge: true } : {}),
+      ...(boundedKnowledgeCardIds(p['selectedKnowledgeCardIds']) ? { selectedKnowledgeCardIds: boundedKnowledgeCardIds(p['selectedKnowledgeCardIds']) } : {}),
+      valueCandidates: versionedCandidates ? valueCandidates : valueCandidates
         ?? (p['valueCandidates'] ? extractValueCandidates(prompt, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })) : undefined),
-      preparedPlan: parseLineAiPreparedPlan(p['preparedPlan']),
+      preparedPlan: parseLineAiPreparedPlan(p['preparedPlan'], v2?.inputEvidence ? { inputEvidence: v2.inputEvidence } : undefined),
       intakeIntent: asIntakeRouteIntent(p['intakeIntent']),
     };
   }
   if (typeof p['turnId'] !== 'string' || !p['turnId']) return null;
   if (typeof p['companyId'] !== 'string' || !p['companyId']) return null;
   if (typeof p['userId'] !== 'string' || !p['userId']) return null;
-  const messageText = boundedMessageText(p['messageText']);
+  const messageText = boundedMessageText(p['messageText'], p['inputEvidence'] !== undefined ? 12_000 : undefined);
   if (!messageText) return null;
+  const v2 = parseV2InputFields(p, messageText);
+  if (!v2) return null;
+  const valueCandidates = parseLineAiTurnValueCandidates(p['valueCandidates'], messageText);
+  const versionedCandidates = !!p['valueCandidates'] && typeof p['valueCandidates'] === 'object'
+    && (p['valueCandidates'] as Record<string, unknown>)['version'] === 2;
+  if (versionedCandidates && !valueCandidates) return null;
   return {
     turnId: p['turnId'],
     companyId: p['companyId'],
@@ -311,9 +384,12 @@ export function validatePayload(body: unknown): RuntimePayload | null {
     modelPolicy: parseModelPolicy(p['modelPolicy']),
     attachments,
     conversationContext: parseConversationContext(p['conversationContext']),
-    valueCandidates: parseLineAiValueCandidates(p['valueCandidates'], messageText)
+    ...v2,
+    ...(p['approvedKnowledge'] === true ? { approvedKnowledge: true } : {}),
+    ...(boundedKnowledgeCardIds(p['selectedKnowledgeCardIds']) ? { selectedKnowledgeCardIds: boundedKnowledgeCardIds(p['selectedKnowledgeCardIds']) } : {}),
+    valueCandidates: versionedCandidates ? valueCandidates : valueCandidates
       ?? (p['valueCandidates'] ? extractValueCandidates(messageText, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })) : undefined),
-    preparedPlan: parseLineAiPreparedPlan(p['preparedPlan']),
+    preparedPlan: parseLineAiPreparedPlan(p['preparedPlan'], v2?.inputEvidence ? { inputEvidence: v2.inputEvidence } : undefined),
     intakeIntent: asIntakeRouteIntent(p['intakeIntent']),
   };
 }
@@ -329,6 +405,15 @@ export function payloadToTurnRequest(p: RuntimePayload): LineAiTurnRequest {
     attachments: (p.attachments ?? []) as LineAiTurnRequest['attachments'],
     conversationContext: p.conversationContext,
     ...(p.valueCandidates ? { valueCandidates: p.valueCandidates } : {}),
+    ...(p.inputEvidence ? { inputEvidence: p.inputEvidence } : {}),
+    ...(p.contractCapabilities ? { contractCapabilities: p.contractCapabilities } : {}),
+    ...(p.budgetGrantV2 ? { budgetGrantV2: p.budgetGrantV2 } : {}),
+    ...(p.approvedKnowledge ? { approvedKnowledge: true } : {}),
+    ...(p.selectedKnowledgeCardIds ? { selectedKnowledgeCardIds: p.selectedKnowledgeCardIds } : {}),
+    ...(p.taskProjection ? { taskProjection: p.taskProjection } : {}),
+    ...(p.responsePreferences ? { responsePreferences: p.responsePreferences } : {}),
+    ...(p.semanticSubrequests ? { semanticSubrequests: p.semanticSubrequests } : {}),
+    ...(p.retainedTaskSource ? { retainedTaskSource: p.retainedTaskSource } : {}),
     ...(p.entitledFeatureKeys && { entitledFeatureKeys: p.entitledFeatureKeys }),
     ...(p.preparedPlan ? { preparedPlan: p.preparedPlan } : {}),
     ...(p.intakeIntent ? { intakeIntent: p.intakeIntent } : {}),
@@ -485,10 +570,53 @@ async function handleInvocation(
     return;
   }
 
+  if (typeof body === 'object' && body !== null
+    && (body as Record<string, unknown>)['lineBudgetV2CapabilityProbe'] === true) {
+    const sourceCommit = process.env['GIT_SHA'];
+    const artifactSha256 = process.env['AGENTCORE_ARTIFACT_SHA256'];
+    const serviceVersion = process.env['SERVICE_VERSION'];
+    const runtimeIdentity = sourceCommit && artifactSha256 && serviceVersion
+      ? { sourceCommit, artifactSha256, serviceVersion, contractVersion: LINE_AI_RUNTIME_CONTRACT_VERSION }
+      : undefined;
+    json(res, 200, {
+      turnId: (body as Record<string, unknown>)['turnId'],
+      replyText: '', plan: { status: 'UNROUTABLE', intents: [] }, durationMs: 0, refused: false,
+      sourceRefs: [], webLinks: [], toolsInvoked: [],
+      lineBudgetV2Capability: {
+        supported: AI_BUDGET_V2_SUPPORTED === true && process.env['LINE_AI_AGENT_ORCHESTRATION_ENABLED'] !== 'false',
+        inputContractVersion: 2,
+        providerOutputVersion: 2,
+        budgetContractVersion: 2,
+        profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
+        estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2,
+      },
+      ...(runtimeIdentity ? { runtimeIdentity } : {}),
+    });
+    return;
+  }
+
   const payload = validatePayload(body);
   if (!payload) {
     json(res, 400, { error: 'INVALID_PAYLOAD', message: 'turnId, companyId, userId, and messageText are required' });
     return;
+  }
+  if (payload.valueCandidates && 'version' in payload.valueCandidates && payload.valueCandidates.version === 2) {
+    const verified = payload.inputEvidence
+      ? await verifyLineAiValueCandidatesV2(payload.valueCandidates, payload.inputEvidence)
+      : undefined;
+    if (!verified) {
+      json(res, 400, { error: 'AI_CONTRACT_UNSUPPORTED' });
+      return;
+    }
+    payload.valueCandidates = verified;
+  }
+  if (payload.retainedTaskSource) {
+    const retained = await verifyLineAiRetainedTaskSource(payload.retainedTaskSource);
+    if (!retained || !lineAiRetainedTaskSourceMatchesProjection(retained, payload.taskProjection, 'turn')) {
+      json(res, 400, { error: 'AI_CONTRACT_UNSUPPORTED' });
+      return;
+    }
+    payload.retainedTaskSource = retained;
   }
   const payloadValidationMs = Date.now() - validationStartedAt;
 
@@ -498,7 +626,11 @@ async function handleInvocation(
     // otherwise a rebuilt artifact would report no usage at all and the API could never meter the
     // agentcore runtime. An older artifact simply omits the field (metering spec §7.2).
     const orchestrationStartedAt = Date.now();
-    const { result, usage } = await runWithUsageContext({ companyId: payload.companyId }, async () => {
+    const budget: BudgetRequestState | undefined = payload.inputEvidence && payload.budgetGrantV2
+      ? { status: 'active-v2', grant: payload.budgetGrantV2, inputDigest: payload.inputEvidence.joinedSha256,
+          sourceRoute: 'line-turn', requestId: payload.turnId, calls: payload.budgetGrantV2.nextOrdinal ?? 0, repairCount: 0 }
+      : undefined;
+    const { result, usage } = await runWithUsageContext({ companyId: payload.companyId, ...(budget ? { budget } : {}) }, async () => {
       const run = await orchestrator.run(turnReq);
       return { result: run, usage: drainUsage() };
     });
@@ -523,6 +655,7 @@ async function handleInvocation(
       ...(result.presentation ? { presentation: result.presentation } : {}),
       ...(result.deterministicExpenseSummary ? { deterministicExpenseSummary: true } : {}),
       ...(result.deterministicExpenseCriterionConfirmation ? { deterministicExpenseCriterionConfirmation: true } : {}),
+      ...(result.semanticCoverage ? { semanticCoverage: result.semanticCoverage } : {}),
       // AgentRunResult exposes sources only in aggregate; do not fabricate per-tool attribution.
       toolsInvoked: result.outputs.flatMap((output) => output.toolCalls),
       ...(usage.length > 0 ? { usage } : {}),

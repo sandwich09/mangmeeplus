@@ -2,6 +2,8 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS,
   EXPENSE_CAPTURE_CONTRACT_VERSION,
+  verifyExpenseCaptureFieldEvidenceV2,
+  todayCivilDate,
   type AiBudgetScope,
   type AiModelLineage,
   type AiModelPolicy,
@@ -117,9 +119,14 @@ export class ExpenseCaptureReadClient {
         ...(modelPolicy ? { modelPolicy } : {}),
         ...(hold ? { budgetEnvelope: hold.envelope } : {}),
       }),
-      onOk: (response) => response.status === 'ok' && response.observations
-        ? { status: 'ok', observations: response.observations, ...(response.modelLineage ? { modelLineage: response.modelLineage } : {}) }
-        : null,
+      onOk: (response) => {
+        if (response.status !== 'ok' || !response.observations) return null;
+        const hasFieldEvidenceV2 = response.observations.fieldEvidenceVersion === 2;
+        if (input.window.evidenceSource && !verifyExpenseCaptureFieldEvidenceV2(response.observations, input.window, todayCivilDate())) {
+          return { status: 'failed', errorCode: hasFieldEvidenceV2 ? 'CAPTURE_FIELD_EVIDENCE_INVALID' : 'CAPTURE_FIELD_EVIDENCE_UNSUPPORTED' };
+        }
+        return { status: 'ok', observations: response.observations, ...(response.modelLineage ? { modelLineage: response.modelLineage } : {}) };
+      },
     });
   }
 

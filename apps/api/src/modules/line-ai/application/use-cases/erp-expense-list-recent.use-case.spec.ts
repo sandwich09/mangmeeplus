@@ -4,6 +4,7 @@
 // answers.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import Decimal from 'decimal.js';
 import { ExpenseListRecentTool } from './erp-tools.use-case';
 
 const baseCtx = { companyId: 'c1', userId: 'u1', locale: 'th-TH', permissions: ['expense.read'] } as any;
@@ -11,11 +12,12 @@ const baseCtx = { companyId: 'c1', userId: 'u1', locale: 'th-TH', permissions: [
 const expense = (over: Record<string, unknown>) => ({
   id: 'e1',
   expenseNumber: 'EXP-2026-0001',
-  expenseDate: '2026-08-04',
+  expenseDate: new Date('2026-08-04T00:00:00.000Z'),
   vendorNameSnapshot: 'Starbucks Coffee',
   vendorDocumentNumber: '260705-02-17420',
   status: 'NEEDS_REVIEW',
   paymentStatus: 'UNPAID',
+  currency: 'THB',
   grandTotalAmount: '180.0000',
   paidAmount: '0.0000',
   outstandingAmount: '180.0000',
@@ -35,6 +37,7 @@ function fakePrisma(branches: Array<{ id: string; name: string; code?: string }>
   });
   return {
     client: {
+      company: { findUnique: async () => ({ baseCurrency: 'THB' }) },
       branch: {
         findFirst: async ({ where }: any) => allowed(where)[0] ?? null,
         findMany: async ({ where, take }: any) => allowed(where).slice(0, take),
@@ -44,8 +47,40 @@ function fakePrisma(branches: Array<{ id: string; name: string; code?: string }>
 }
 
 function makeTool(data: Array<ReturnType<typeof expense>>, branches?: Array<{ id: string; name: string }>) {
+  const included = data.filter((row) => row.status !== 'REJECTED' && row.status !== 'VOIDED');
   const listExpenses = {
-    execute: async () => ({ data, total: data.length, page: 1, pageSize: 100 }),
+    readAiSummary: async (_ctx: unknown, _filter: unknown, limit: number) => {
+      const byCurrency = new Map<string, { count: number; total: Decimal; paid: Decimal; outstanding: Decimal }>();
+      const byStatus = new Map<string, { status: string; currency: string; count: number; total: Decimal }>();
+      for (const row of included) {
+        const currency = String(row.currency);
+        const currencyBucket = byCurrency.get(currency) ?? { count: 0, total: new Decimal(0), paid: new Decimal(0), outstanding: new Decimal(0) };
+        currencyBucket.count += 1;
+        currencyBucket.total = currencyBucket.total.add(String(row.grandTotalAmount));
+        currencyBucket.paid = currencyBucket.paid.add(String(row.paidAmount));
+        currencyBucket.outstanding = currencyBucket.outstanding.add(String(row.outstandingAmount));
+        byCurrency.set(currency, currencyBucket);
+        const key = `${row.status}:${currency}`;
+        const statusBucket = byStatus.get(key) ?? { status: String(row.status), currency, count: 0, total: new Decimal(0) };
+        statusBucket.count += 1;
+        statusBucket.total = statusBucket.total.add(String(row.grandTotalAmount));
+        byStatus.set(key, statusBucket);
+      }
+      return {
+        asOf: new Date('2026-08-31T12:00:00.000Z'), total: included.length,
+        byCurrency: [...byCurrency.entries()].map(([currency, bucket]) => ({
+          currency, count: bucket.count, totalAmount: bucket.total.toString(),
+          paidAmount: bucket.paid.toString(), outstandingAmount: bucket.outstanding.toString(),
+        })),
+        byStatus: [...byStatus.values()].map((bucket) => ({
+          status: bucket.status, currency: bucket.currency, count: bucket.count, totalAmount: bucket.total.toString(),
+        })),
+        items: included.slice(0, limit), hasMore: included.length > limit,
+        nextCursorSource: included.length > limit
+          ? { expenseDate: included[limit - 1]!.expenseDate, id: String(included[limit - 1]!.id) }
+          : null,
+      };
+    },
   } as any;
   return new ExpenseListRecentTool(listExpenses, fakePrisma(branches));
 }
@@ -54,21 +89,31 @@ function makeTool(data: Array<ReturnType<typeof expense>>, branches?: Array<{ id
 function makeFilterCapturingTool(branches?: Array<{ id: string; name: string; code?: string }>) {
   const filters: any[] = [];
   const listExpenses = {
-    execute: async (_ctx: unknown, filter: any) => {
+    readAiSummary: async (_ctx: unknown, filter: any) => {
       filters.push(filter);
-      return { data: [], total: 0, page: 1, pageSize: 100 };
+      return {
+        asOf: new Date('2026-08-31T12:00:00.000Z'), total: 0,
+        byCurrency: [{ currency: 'THB', count: 0, totalAmount: '0', paidAmount: '0', outstandingAmount: '0' }],
+        byStatus: [], items: [], hasMore: false, nextCursorSource: null,
+      };
     },
   } as any;
   return { tool: new ExpenseListRecentTool(listExpenses, fakePrisma(branches)), filters };
 }
 
-/** Repository that reports more rows than it will ever hand back, so the page loop keeps asking. */
-function makePagingTool(reportedTotal: number) {
-  const calls: Array<{ page: number; pageSize: number }> = [];
+/** Aggregate population stays complete even when the display rows are bounded. */
+function makePagingTool(reportedTotal: number, hasMore: boolean) {
+  const calls: Array<{ limit: number; cursor: unknown }> = [];
   const listExpenses = {
-    execute: async (_ctx: unknown, filter: { page: number; pageSize: number }) => {
-      calls.push({ page: filter.page, pageSize: filter.pageSize });
-      return { data: [expense({ id: `e${filter.page}` })], total: reportedTotal, page: filter.page, pageSize: 100 };
+    readAiSummary: async (_ctx: unknown, _filter: unknown, limit: number, cursor: unknown) => {
+      calls.push({ limit, cursor });
+      return {
+        asOf: new Date('2026-08-31T12:00:00.000Z'), total: reportedTotal,
+        byCurrency: [{ currency: 'THB', count: reportedTotal, totalAmount: String(reportedTotal), paidAmount: '0', outstandingAmount: String(reportedTotal) }],
+        byStatus: [{ status: 'NEEDS_REVIEW', currency: 'THB', count: reportedTotal, totalAmount: String(reportedTotal) }],
+        items: [expense({})], hasMore,
+        nextCursorSource: hasMore ? { expenseDate: new Date('2026-08-04T00:00:00.000Z'), id: 'e1' } : null,
+      };
     },
   } as any;
   return { tool: new ExpenseListRecentTool(listExpenses, fakePrisma()), calls };
@@ -90,15 +135,15 @@ describe('ExpenseListRecentTool', () => {
     ]).execute(baseCtx);
 
     const summary = (result.data as any).summary;
-    assert.equal(summary.totalAmount, 450);
-    assert.equal(summary.draftAmount, 90);
-    assert.equal(summary.confirmedAmount, 180);
-    assert.equal(summary.paidAmount, 180);
+    assert.equal(summary.totalAmount, '450');
+    assert.equal(summary.draftAmount, '90');
+    assert.equal(summary.confirmedAmount, '180');
+    assert.equal(summary.paidAmount, '180');
     // A rejected expense keeps its outstandingAmount, so this is the figure that used to claim the
     // company owed money it had already refused.
-    assert.equal(summary.unpaidAmount, 270);
+    assert.equal(summary.unpaidAmount, '270');
     assert.equal(summary.countedItems, 3);
-    assert.equal(summary.cancelledCount, 2);
+    assert.equal(summary.cancelledCount, 0);
   });
 
   // The buckets used to be DRAFT-only and CONFIRMED-only, so the whole review pipeline
@@ -114,11 +159,11 @@ describe('ExpenseListRecentTool', () => {
     ]).execute(baseCtx);
 
     const summary = (result.data as any).summary;
-    assert.equal(summary.pendingAmount, 100);
-    assert.equal(summary.draftAmount, 10);
-    assert.equal(summary.confirmedAmount, 50);
+    assert.equal(summary.pendingAmount, '100');
+    assert.equal(summary.draftAmount, '10');
+    assert.equal(summary.confirmedAmount, '50');
     // Every non-cancelled status lands in exactly one of the two buckets, so the parts add up.
-    assert.equal(summary.pendingAmount + summary.confirmedAmount, summary.totalAmount);
+    assert.equal(new Decimal(summary.pendingAmount).add(summary.confirmedAmount).toString(), summary.totalAmount);
   });
 
   it('reports the counted basis as the total so the headline agrees with the money figures', async () => {
@@ -131,10 +176,9 @@ describe('ExpenseListRecentTool', () => {
     // The unfiltered record count (2) contradicted a summary that excludes the rejected row.
     assert.equal(data.total, 1);
     assert.equal(data.summary.countedItems, 1);
-    assert.equal(data.summary.cancelledCount, 1);
+    assert.equal(data.summary.cancelledCount, 0);
     assert.equal(data.truncated, undefined);
-    // The listing itself still shows the rejected row — it is real, it just is not spend.
-    assert.deepEqual(data.items.map((i: { status: string }) => i.status), ['NEEDS_REVIEW', 'REJECTED']);
+    assert.deepEqual(data.items.map((i: { status: string }) => i.status), ['NEEDS_REVIEW']);
     // No branch asked for, no branch in the link: the web list opens on the same all-branches scope.
     assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses');
   });
@@ -206,15 +250,15 @@ describe('ExpenseListRecentTool', () => {
 
   it('does not widen an incomplete or invalid date range to 1970 or the current month', async () => {
     const { tool, filters } = makeFilterCapturingTool();
-    for (const input of [
-      { fromDate: '2026-07-01' },
-      { toDate: '2026-07-31' },
-      { fromDate: '2026-07-40', toDate: '2026-07-31' },
-      { fromDate: '2026-08-01', toDate: '2026-07-31' },
-    ]) {
+    for (const [input, code] of [
+      [{ fromDate: '2026-07-01' }, 'INCOMPLETE_RANGE'],
+      [{ toDate: '2026-07-31' }, 'INCOMPLETE_RANGE'],
+      [{ fromDate: '2026-07-40', toDate: '2026-07-31' }, 'INVALID_PERIOD'],
+      [{ fromDate: '2026-08-01', toDate: '2026-07-31' }, 'INVALID_PERIOD'],
+    ] as const) {
       const result = await tool.execute(baseCtx, input);
       assert.equal(result.status, 'error');
-      assert.equal(result.errorCode, 'INVALID_EXPENSE_PERIOD');
+      assert.equal(result.errorCode, code);
     }
     assert.equal(filters.length, 0);
   });
@@ -246,22 +290,24 @@ describe('ExpenseListRecentTool', () => {
     assert.deepEqual(data.availableBranches, [{ id: 'branch-1', code: 'C-branch-1', name: 'สาธุประดิษฐ์' }]);
   });
 
-  it('caps the page loop and flags the answer as truncated', async () => {
-    const { tool, calls } = makePagingTool(5000);
+  it('reads one snapshot and marks bounded detail rows without degrading the complete aggregate', async () => {
+    const { tool, calls } = makePagingTool(5000, true);
 
     const result = await tool.execute(baseCtx);
 
-    assert.equal(calls.length, 10);
-    assert.deepEqual(calls.map((c) => c.page), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    assert.equal((result.data as any).truncated, true);
+    assert.deepEqual(calls, [{ limit: 20, cursor: undefined }]);
+    assert.equal((result.data as any).completeness.aggregate, 'complete');
+    assert.equal((result.data as any).completeness.rows.hasMore, true);
+    assert.equal(typeof (result.data as any).completeness.rows.nextCursor, 'string');
   });
 
-  it('does not flag truncation when every page fits inside the cap', async () => {
-    const { tool, calls } = makePagingTool(250);
+  it('does not invent a continuation when all detail rows fit', async () => {
+    const { tool, calls } = makePagingTool(1, false);
 
     const result = await tool.execute(baseCtx);
 
-    assert.equal(calls.length, 3);
-    assert.equal((result.data as any).truncated, undefined);
+    assert.equal(calls.length, 1);
+    assert.equal((result.data as any).completeness.rows.hasMore, false);
+    assert.equal((result.data as any).completeness.rows.nextCursor, null);
   });
 });

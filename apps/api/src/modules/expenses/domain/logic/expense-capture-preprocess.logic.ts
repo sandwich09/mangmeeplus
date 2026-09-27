@@ -187,6 +187,7 @@ export async function planCaptureSinglePageChunk(
   pageIndex: number,
   chunkId: string,
   limits: ExpenseCapturePreprocessLimits = EXPENSE_CAPTURE_PREPROCESS_LIMITS,
+  preferRaster = false,
 ): Promise<CaptureChunkPlan | null> {
   if (mimeType !== 'application/pdf') return null;
   let source: PDFDocument;
@@ -196,6 +197,7 @@ export async function planCaptureSinglePageChunk(
     return null;
   }
   if (pageIndex < 0 || pageIndex >= source.getPageCount()) return null;
+  if (preferRaster) return renderPageChunk(bytes, pageIndex, chunkId, limits);
   const fitted = await fitPdfChunk(source, pageIndex, 1, limits);
   if (fitted.kind === 'pdf') {
     return {

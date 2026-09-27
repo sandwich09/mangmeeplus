@@ -11,6 +11,7 @@ import {
   AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, parseAiBudgetEnvelope,
 } from './ai-budget-bounds.js';
 import type { LineAiPreparedPlan } from './line-ai.js';
+import { createLineAiInputEvidence } from './line-ai-input-evidence.js';
 
 function validIntentPlan() {
   return {
@@ -81,6 +82,31 @@ describe('parseLineAiPreparedPlan – valid plans', () => {
     }
     // A simple plan keeps its own (>= floor) confidence unchanged.
     assert.equal(parseLineAiPreparedPlan(validPlan({ confidence: LINE_AI_PREPARED_PLAN_BOUNDS.simpleConfidenceFloor }))?.confidence, 0.85);
+  });
+});
+
+describe('parseLineAiPreparedPlan v2 source preservation', () => {
+  it('binds selected source spans and candidate ids to the complete input digest', async () => {
+    const evidence = await createLineAiInputEvidence({ turnKey: 'turn-v2', parts: [
+      { partId: 'p1', eventIdHash: 'a'.repeat(64), acceptedAtMs: 1, rawText: 'ยอด 42 บาท' },
+    ] });
+    assert.ok(evidence);
+    const candidateId = 'b'.repeat(64);
+    const startUtf16 = evidence.messageText.indexOf('42');
+    const v2 = validPlan({
+      version: 2,
+      inputDigest: evidence.inputEvidence.joinedSha256,
+      proposedCalls: [{ toolName: 'sales.get_sales_summary', input: { fromDate: '2026-08-20', toDate: '2026-08-20' },
+        candidateIds: [candidateId], sourceRefs: [{ partId: 'p1', startUtf16, endUtf16: startUtf16 + 2,
+          rawSha256: evidence.inputEvidence.parts[0]!.rawSha256 }] }],
+    });
+    const parsed = parseLineAiPreparedPlan(v2, { inputEvidence: evidence.inputEvidence, candidateIds: new Set([candidateId]) });
+    assert.equal(parsed?.version, 2);
+    assert.deepEqual(parsed?.proposedCalls[0]?.candidateIds, [candidateId]);
+    assert.equal(parseLineAiPreparedPlan(v2), undefined, 'v2 needs its original input evidence');
+    assert.equal(parseLineAiPreparedPlan(v2, { inputEvidence: evidence.inputEvidence, candidateIds: new Set() }), undefined,
+      'a candidate id outside the authoritative set is rejected');
+    assert.equal(parseLineAiPreparedPlan({ ...v2, inputDigest: 'c'.repeat(64) }, { inputEvidence: evidence.inputEvidence }), undefined);
   });
 });
 

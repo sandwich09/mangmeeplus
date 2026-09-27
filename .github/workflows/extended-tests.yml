@@ -266,6 +266,14 @@ jobs:
         run: |
           python3 infra/postmark/config_test.py
           pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/infrastructure/postmark-configuration.spec.ts src/modules/system-partner-management/application/partner-ai-adjustment-history.spec.ts src/modules/auth/domain/logic/email-otp.logic.spec.ts src/modules/auth/application/account-email-otp.postgres.spec.ts src/modules/billing/application/billing-email-recipient.postgres.spec.ts src/modules/auth/application/email-access.pg.spec.ts
+      - name: Test Mangmee reliability v2 actual PostgreSQL invariants
+        if: matrix.suite == 'backend'
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+        run: |
+          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
+          node scripts/run-line-ai-whole-chain-acceptance.mjs --reliability-postgres
       - name: Test Postmark and Stripe billing HTTP flows against isolated PostgreSQL
         if: matrix.suite == 'backend'
         env:

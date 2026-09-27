@@ -43,6 +43,7 @@ import {
   CompleteReconciliationSessionUseCase,
   ReopenReconciliationSessionUseCase,
   GetCashPositionUseCase,
+  GetReconciliationStatusUseCase,
 } from './application/use-cases/reconciliation.use-case';
 import { BankAccountController } from './presentation/http/bank-account.controller';
 import { StatementController } from './presentation/http/statement.controller';
@@ -98,7 +99,8 @@ import { ReconciliationController } from './presentation/http/reconciliation.con
     CompleteReconciliationSessionUseCase,
     ReopenReconciliationSessionUseCase,
     GetCashPositionUseCase,
+    GetReconciliationStatusUseCase,
   ],
-  exports: [PrismaBankingRepository, GetCashPositionUseCase],
+  exports: [PrismaBankingRepository, ListBankAccountsUseCase, GetCashPositionUseCase, ListReconciliationSessionsUseCase, GetReconciliationStatusUseCase],
 })
 export class BankingModule {}

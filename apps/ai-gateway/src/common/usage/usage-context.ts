@@ -14,7 +14,7 @@
  * behaves exactly as before.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { AiBudgetEnvelope, AiUsageEntry } from '@watchdog-bms/contracts';
+import type { AiBudgetEnvelope, AiBudgetGrantV2, AiUsageEntry } from '@watchdog-bms/contracts';
 
 /**
  * What the receiver boundary decided about this request's money.
@@ -34,6 +34,19 @@ export type BudgetRequestState =
       /** Provider calls already claimed by this request; the next call's ordinal. */
       calls: number;
       /** A guarded provider call is in flight. See {@link claimBudgetInFlight}. */
+      inFlight?: boolean;
+    }
+  | {
+      status: 'active-v2';
+      grant: AiBudgetGrantV2;
+      /** Digest of the complete verified raw turn, carried into each rendered invocation. */
+      inputDigest: string;
+      sourceRoute: string;
+      requestId?: string;
+      /** Global ordinal; API claims this independently from profile counts. */
+      calls: number;
+      repairPending?: boolean;
+      repairCount: number;
       inFlight?: boolean;
     };
 
@@ -75,6 +88,12 @@ export function currentBudgetEnvelope(): AiBudgetEnvelope | undefined {
   return budget?.status === 'active' ? budget.envelope : undefined;
 }
 
+/** V2 grant authority, before a rendered invocation has received its reservation envelope. */
+export function currentBudgetGrantV2(): AiBudgetGrantV2 | undefined {
+  const budget = storage.getStore()?.budget;
+  return budget?.status === 'active-v2' ? budget.grant : undefined;
+}
+
 /**
  * Claims the next provider-call ordinal of this request. Call index 0 is the invocation the API
  * already reserved and dispatched; every later index needs its own `budget-step` first, which is
@@ -83,7 +102,7 @@ export function currentBudgetEnvelope(): AiBudgetEnvelope | undefined {
  */
 export function claimBudgetCallOrdinal(): number {
   const budget = storage.getStore()?.budget;
-  if (budget?.status !== 'active') return 0;
+  if (budget?.status !== 'active' && budget?.status !== 'active-v2') return 0;
   return budget.calls++;
 }
 
@@ -99,7 +118,7 @@ export function claimBudgetCallOrdinal(): number {
  */
 export function claimBudgetInFlight(): boolean {
   const budget = storage.getStore()?.budget;
-  if (budget?.status !== 'active') return true;
+  if (budget?.status !== 'active' && budget?.status !== 'active-v2') return true;
   if (budget.inFlight) return false;
   budget.inFlight = true;
   return true;
@@ -108,7 +127,7 @@ export function claimBudgetInFlight(): boolean {
 /** Releases the in-flight mark. Always called from the decorator's `finally`. */
 export function releaseBudgetInFlight(): void {
   const budget = storage.getStore()?.budget;
-  if (budget?.status === 'active') budget.inFlight = false;
+  if (budget?.status === 'active' || budget?.status === 'active-v2') budget.inFlight = false;
 }
 
 /** How many usage rows this request has collected — the index the next provider call appends at. */

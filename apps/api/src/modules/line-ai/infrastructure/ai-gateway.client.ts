@@ -2,24 +2,37 @@
  * AI Gateway internal HTTP client.
  * Sends server-derived context only; never raw LINE secrets or user tokens.
  */
-import { HttpException, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import {
-  AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS,
+  AI_DOCUMENT_OCR_TIMEOUT_MS, AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS,
+  AI_BUDGET_ESTIMATOR_VERSION_V2, AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
+  type AiBudgetGrantV2, type AiBudgetProfileIdV2,
   LINE_TOOL_REGISTRY,
   LINE_AI_ACTOR_DELEGATIONS_PER_TOOL,
   hasToolFeature,
   hasToolPermissions,
   parseLineAiPreparedPlan,
+  parseAiBudgetGrantV2,
+  lineAiRetainedTaskSourceMatchesProjection,
+  parseLineAiTaskProjection,
+  verifyLineAiInputEvidence,
+  verifyLineAiRetainedTaskSource,
   type AiBudgetRefusalCode,
   type AiBudgetScope,
   type AiUsageEntry,
   type LineAiTurnRequest,
   type LineAiTurnResponse,
+  type LineAiPublicGeneralRequest,
+  type LineAiPublicGeneralResponse,
   type LineIntakeRoutePlan,
   type LineIntakeRouteRequest,
   type ReceiptOcrRequest,
   type ReceiptOcrResponse,
+  createLineAiInputEvidence,
+  lineDocumentQaInputEvidenceText,
+  type LineDocumentQaGatewayRequest,
+  type LineDocumentQaGatewayResponse,
 } from '@watchdog-bms/contracts';
 import { safeLineErrorDetails } from './line-reply.adapter';
 import { ActorDelegationService } from './actor-delegation.service';
@@ -52,6 +65,10 @@ import {
   releaseCompanyOcrAdmission,
 } from '../application/company-ocr-governance';
 
+import { LineAiBudgetAuthorityService, type IssueLineAiBudgetGrant } from '../application/line-ai-budget-authority.service';
+import { resolveThbPerUsd } from '../application/ai-fx-rate';
+import { type AiModelPrices, type AiTariffV2 } from '../application/ai-model-pricing';
+
 const LINE_TURN_TIMEOUT_MS = 120_000;
 const LINE_INTAKE_TIMEOUT_MS = 30_000;
 /** An intake carrying an image runs the gateway's DOCUMENT reader (45s budget there), so this
@@ -83,6 +100,18 @@ export class AiGatewayRequestError extends Error {
 const receiptOcrContent = (request: ReceiptOcrRequest): AiRequestContent =>
   request.attachment?.mimeType === 'application/pdf' ? 'document' : 'image';
 
+type ReliabilityRequest = {
+  requestId: string; messageText: string; inputEvidence?: unknown; contractCapabilities?: unknown; budgetGrantV2?: unknown;
+};
+// Exact reviewed deployment IDs only. Legacy substring pricing is deliberately not grant authority.
+// OpenAI tariff evidence: developers.openai.com/api/docs/pricing and /models/gpt-4.1-mini, 2026-09-27.
+const LINE_V2_TARIFFS: Readonly<Record<string, { provider: 'bedrock' | 'openai'; prices: AiModelPrices; externalUsdPerUnit?: number; searchContentInputTokensPerUnit?: number }>> = {
+  'gpt-4.1-mini': { provider: 'openai', prices: { input: 0.4, output: 1.6, cacheRead: 0.1, cacheWrite: 0.4 }, externalUsdPerUnit: 0.01, searchContentInputTokensPerUnit: 8000 },
+  'gpt-4.1-mini-2025-04-14': { provider: 'openai', prices: { input: 0.4, output: 1.6, cacheRead: 0.1, cacheWrite: 0.4 }, externalUsdPerUnit: 0.01, searchContentInputTokensPerUnit: 8000 },
+  'apac.anthropic.claude-3-5-sonnet-20241022-v2:0': { provider: 'bedrock', prices: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
+  'apac.anthropic.claude-3-haiku-20240307-v1:0': { provider: 'bedrock', prices: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } },
+};
+
 export type GovernedLineIntakeRoutePlan = LineIntakeRoutePlan & {
   /** Present only when a content-bearing LINE media request crossed the OCR governance seam. */
   ocrAdmission?: 'admitted' | 'denied';
@@ -113,7 +142,81 @@ export class AiGatewayClient {
     private readonly actorDelegation: ActorDelegationService,
     @Inject(RedisRateLimitService) private readonly rateLimits: RedisRateLimitService | undefined,
     private readonly prisma: PrismaService,
+    @Optional() private readonly budgetAuthority?: LineAiBudgetAuthorityService,
   ) {}
+
+  /** Producer-only authority issuance, after access/legal/AI admission. Probe the serving runtime
+   * before making any provider hold; an old Gateway cannot silently ignore this contract. */
+  async issueLineReliabilityGrant(requestId: string,
+    input: Omit<IssueLineAiBudgetGrant, 'model' | 'modelContextTokens' | 'modelMaxOutputTokens' | 'tariff'>): Promise<AiBudgetGrantV2 | null> {
+    if (!this.budgetAuthority) return null;
+    const modelPolicy = await resolveCompanyAiModelPolicy(this.prisma, input.owner.owner.companyId, this.config.approvedAiModelIds);
+    const capability = await this.postInternal<{
+      ready: boolean; inputContractVersion: number; providerOutputVersion: number; budgetContractVersion: number;
+      profileTableDigest: string; estimatorVersion: string;
+      model?: AiBudgetGrantV2['model'] & { contextTokens: number; maxOutputTokens: number };
+    }>('/internal/ai/line-reliability-capabilities', { requestId, ...(modelPolicy && { modelPolicy }) }, requestId, 3000);
+    const model = capability.model;
+    if (!capability.ready || capability.inputContractVersion !== 2 || capability.providerOutputVersion !== 2
+      || capability.budgetContractVersion !== 2 || capability.profileTableDigest !== AI_BUDGET_PROFILE_TABLE_DIGEST_V2
+      || capability.estimatorVersion !== AI_BUDGET_ESTIMATOR_VERSION_V2 || !model
+      || !this.config.approvedAiModelIds.includes(model.modelId) || modelPolicy && modelPolicy.modelId !== model.modelId
+      || !Number.isSafeInteger(model.contextTokens) || model.contextTokens < 1
+      || !Number.isSafeInteger(model.maxOutputTokens) || model.maxOutputTokens < 1) return null;
+    const reviewed = LINE_V2_TARIFFS[model.modelId];
+    if (!reviewed || reviewed.provider !== model.provider) return null;
+    const fx = await resolveThbPerUsd(this.prisma, this.config);
+    const tariff: AiTariffV2 = { version: 'line-v2:2026-09-27', provider: model.provider, modelId: model.modelId,
+      region: model.region, usdPerMTok: { ...reviewed.prices }, thbPerUsd: fx.rate,
+      ...(reviewed.externalUsdPerUnit !== undefined ? { externalUsdPerUnit: reviewed.externalUsdPerUnit, searchContentInputTokensPerUnit: reviewed.searchContentInputTokensPerUnit } : {}) };
+    return this.budgetAuthority.issue({ ...input, model: { provider: model.provider, modelId: model.modelId, region: model.region },
+      modelContextTokens: model.contextTokens, modelMaxOutputTokens: model.maxOutputTokens, tariff });
+  }
+
+  async narrowLineReliabilityGrant(grant: AiBudgetGrantV2, lane: 'general' | 'simple' | 'mixed' | 'public', profiles: AiBudgetProfileIdV2[]) {
+    return this.budgetAuthority?.narrow(grant, lane, profiles) ?? null;
+  }
+
+  async requestLineDocumentQa(input: Omit<LineDocumentQaGatewayRequest, 'messageText' | 'inputEvidence' | 'contractCapabilities'> & {
+    question: string;
+    budgetGrantV2: AiBudgetGrantV2;
+  }): Promise<LineDocumentQaGatewayResponse> {
+    const evidence = await createLineAiInputEvidence({
+      turnKey: input.budgetGrantV2.turnKey,
+      parts: [{ partId: 'qa-input-manifest', eventIdHash: aiBudgetAttemptHash(input.jobId), acceptedAtMs: Date.now(),
+        rawText: lineDocumentQaInputEvidenceText(input.question, input.pages, input.questions) }],
+    });
+    if (!evidence) return { status: 'failed', errorCode: 'QA_INPUT_EVIDENCE_INVALID' };
+    const request = { ...input, messageText: evidence.messageText, inputEvidence: evidence.inputEvidence,
+      contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'] as ['input-evidence-v2', 'budget-envelope-v2'] };
+    if (evidence.inputEvidence.joinedSha256 !== input.inputDigest) return { status: 'failed', errorCode: 'QA_INPUT_DIGEST_MISMATCH' };
+    await this.validateLineV2(request, { companyId: input.companyId, userId: input.userId });
+    await this.assertRateLimit('llm', input.companyId);
+    return this.postInternal<LineDocumentQaGatewayResponse>('/internal/ai/line-document-qa', request,
+      input.requestId, 2 * AI_DOCUMENT_OCR_TIMEOUT_MS + 10_000, input.budgetGrantV2.monthKey, 'document');
+  }
+
+  private async validateLineV2(request: ReliabilityRequest, scope: Parameters<LineAiBudgetAuthorityService['validate']>[2]): Promise<AiBudgetGrantV2 | undefined> {
+    const hasV2 = request.inputEvidence !== undefined || request.contractCapabilities !== undefined || request.budgetGrantV2 !== undefined;
+    if (!hasV2) return undefined;
+    const evidence = await verifyLineAiInputEvidence(request.inputEvidence, request.messageText);
+    const grant = parseAiBudgetGrantV2(request.budgetGrantV2), caps = request.contractCapabilities;
+    if (!evidence || !grant || evidence.turnKey !== grant.turnKey || !Array.isArray(caps) || caps.length !== 2
+      || !caps.includes('input-evidence-v2') || !caps.includes('budget-envelope-v2') || !this.budgetAuthority
+      || !await this.budgetAuthority.validate(grant, evidence.joinedSha256, scope)) {
+      throw new HttpException({ code: 'AI_CONTRACT_UNSUPPORTED', reason: 'v2_evidence_or_authority_invalid' }, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    return grant;
+  }
+
+  async requestLinePublicGeneral(request: LineAiPublicGeneralRequest): Promise<LineAiPublicGeneralResponse> {
+    if (request.kind !== 'PUBLIC_GENERAL' || !request.publicAdmission || !request.budgetGrantV2)
+      throw new HttpException({ code: 'AI_CONTRACT_UNSUPPORTED' }, HttpStatus.SERVICE_UNAVAILABLE);
+    const grant = await this.validateLineV2(request, { companyId: request.publicAdmission.payerCompanyId, publicAdmission: request.publicAdmission });
+    if (!grant) throw new HttpException({ code: 'AI_CONTRACT_UNSUPPORTED' }, HttpStatus.SERVICE_UNAVAILABLE);
+    await this.assertRateLimit('llm', grant.payerCompanyId);
+    return this.postInternal<LineAiPublicGeneralResponse>('/internal/ai/line/public-general', request, request.requestId, LINE_TURN_TIMEOUT_MS, grant.monthKey);
+  }
 
   /** Small authenticated config read used only when LINE is about to claim edit capability. */
   async lineDraftEditCapabilityEnabled(requestId: string): Promise<boolean> {
@@ -133,6 +236,13 @@ export class AiGatewayClient {
     /** `retryOrdinal` is the ledger drain's `deliveryCount`: the same attempt, the next try. */
     options: { busyWaitDeadlineMs?: number; retryOrdinal?: number } = {},
   ): Promise<LineAiTurnResponse> {
+    const grant = await this.validateLineV2(request, { companyId: request.userContext.companyId, userId: request.userContext.internalUserId, membershipId: request.userContext.membershipId });
+    if (request.retainedTaskSource !== undefined) {
+      const retained = await verifyLineAiRetainedTaskSource(request.retainedTaskSource);
+      const projection = parseLineAiTaskProjection(request.taskProjection);
+      if (!grant || !retained || !projection || !lineAiRetainedTaskSourceMatchesProjection(retained, projection, 'turn')) throw new Error('AI_CONTRACT_UNSUPPORTED');
+      request.retainedTaskSource = retained; request.taskProjection = projection;
+    }
     await this.assertRateLimit('llm', request.userContext.companyId);
     const { internalUserId: userId, companyId, membershipId, permissions, entitledFeatureKeys } = request.userContext;
     const entitled = entitledFeatureKeys === undefined
@@ -156,6 +266,8 @@ export class AiGatewayClient {
     );
     const turnContent: AiRequestContent = !request.attachments?.some((a) => a.contentBase64) ? 'text'
       : request.attachments.some((a) => a.contentBase64 && a.mimeType !== 'application/pdf') ? 'image' : 'document';
+    if (grant) return this.postInternal<LineAiTurnResponse>('/internal/ai/line-turn', { ...request, actorDelegations, modelPolicy: { modelId: grant.model.modelId } },
+      request.requestId, LINE_TURN_TIMEOUT_MS, grant.monthKey, turnContent);
     return this.runBudgeted(
       request.userContext.companyId,
       (monthKey, hold) => this.postInternal<LineAiTurnResponse>(
@@ -294,6 +406,16 @@ export class AiGatewayClient {
 
   /** LINE Intake Router: semantic route plan before intake dispatch. */
   async requestLineIntakeRoute(request: LineIntakeRouteRequest, options: { busyWaitDeadlineMs?: number; retryWebhookEventId?: string; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void } = {}): Promise<GovernedLineIntakeRoutePlan> {
+    const grant = await this.validateLineV2(request, { companyId: request.companyId, userId: request.userId });
+    if (request.retainedTaskSource !== undefined) {
+      const retained = await verifyLineAiRetainedTaskSource(request.retainedTaskSource);
+      const projection = parseLineAiTaskProjection(request.taskProjection);
+      if (!grant || !retained || !projection || !lineAiRetainedTaskSourceMatchesProjection(retained, projection)) {
+        return { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'AI_CONTRACT_UNSUPPORTED' };
+      }
+      request.retainedTaskSource = retained;
+      request.taskProjection = projection;
+    }
     const companyId = (request as any).companyId ?? (request as any).userContext?.companyId;
     await this.assertRateLimit('llm', companyId);
     const media = request.attachments?.find((attachment) =>
@@ -312,7 +434,9 @@ export class AiGatewayClient {
     // For the media lane this still runs BEFORE the durable document-read admission, so a bad
     // tenant policy remains local readiness rather than a spent OCR count.
     const modelPolicy = await resolveCompanyAiModelPolicy(this.prisma, companyId, this.config.approvedAiModelIds);
-    const plan = await this.runBudgeted(
+    const plan = grant
+      ? await this.requestLineIntakeRouteAdmitted(request, media?.id, grant.monthKey, options.retryWebhookEventId, options.onAdmitted)
+      : await this.runBudgeted(
       companyId,
       (monthKey, hold) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey, options.retryWebhookEventId, options.onAdmitted, hold),
       options.busyWaitDeadlineMs,
@@ -486,6 +610,12 @@ export class AiGatewayClient {
       throw new AiGatewayRequestError('AI_GATEWAY_UNAVAILABLE', 'AI Gateway is not configured');
     }
 
+    const grant = parseAiBudgetGrantV2((request as { budgetGrantV2?: unknown })?.budgetGrantV2);
+    if (grant) {
+      const remaining = grant.workDeadlineAtMs - Date.now();
+      if (remaining <= 0) throw new AiGatewayRequestError('AI_GATEWAY_TIMEOUT', 'LINE work deadline elapsed');
+      timeoutMs = Math.min(timeoutMs, remaining);
+    }
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       // Secret in header, not logged
@@ -525,6 +655,7 @@ export class AiGatewayClient {
     // one of our refusal codes and zero usage rows, which is proof nothing was spent — so the
     // hold is released here instead of becoming a permanent UNRESOLVED one. All three routes of
     // this client report their code on `errorCode`, so one hook covers them.
+    if (grant) return result; // Each rendered v2 invocation settles through its durable reservation; never double-meter the response.
     await cancelAiBudgetStepIfGatewayUnspent(this.prisma, hold, {
       budgetCode: (result as { errorCode?: string })?.errorCode,
       usage: (result as { usage?: AiUsageEntry[] })?.usage,

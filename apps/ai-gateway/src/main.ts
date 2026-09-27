@@ -9,7 +9,7 @@ import { AiGatewayConfigService } from './common/config/ai-gateway-config.servic
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { parseProductionServingMode, productionMaintenanceMiddleware } from './common/http/production-maintenance.middleware';
 import { NestPinoLoggerBridge, createLogger } from './common/logger/logger.service';
-import { BASE64_MEDIA_ROUTES } from './modules/line-ai/presentation/http/line-ai-internal.controller';
+import { BASE64_MEDIA_ROUTES, DOCUMENT_QA_MEDIA_ROUTE } from './modules/line-ai/presentation/http/line-ai-internal.controller';
 
 function getAllowedOrigins(config: AiGatewayConfigService): string[] {
   if (config.corsAllowedOrigins.length > 0) {
@@ -51,6 +51,8 @@ async function bootstrap() {
   );
   // Base64-media routes exceed the global limit; scope the larger parser to exactly them.
   app.use(BASE64_MEDIA_ROUTES, json({ limit: '16mb' }));
+  // 20 selected pages × 3.5MB raster × base64 expansion plus the bounded manifest.
+  app.use(DOCUMENT_QA_MEDIA_ROUTE, json({ limit: '96mb' }));
   app.use(json({ limit: bodyLimit }));
   app.use(urlencoded({ extended: true, limit: bodyLimit }));
   app.enableCors({

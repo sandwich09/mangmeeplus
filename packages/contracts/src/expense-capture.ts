@@ -237,9 +237,11 @@ export type ExpenseCaptureReadResponse = {
 };
 
 export type ExpenseCaptureExtractWindow = {
+  /** v2 binds every retained value to the original attachment and page text. */
+  evidenceSource?: { version: 2; attachmentId: string; checksumSha256: string };
   fileLabel: string;
   pageIndexes: number[];
-  pages: Array<{ pageIndex: number; text: string }>;
+  pages: Array<{ pageIndex: number; text: string; sourceOffset?: number }>;
   /** Documents already assembled from earlier windows, so a continuation is not a new document. */
   priorDocuments?: Array<{
     ref: string;
@@ -293,6 +295,7 @@ export type ExpenseCaptureTotalKind =
   | 'merchandise' | 'shipping' | 'tax' | 'document_total' | 'buyer_payable' | 'reported_paid';
 
 export type ExpenseCaptureDocumentObservation = {
+  fieldEvidence?: Record<string, ExpenseCaptureFieldEvidence>;
   ref: string;
   pageIndexes: number[];
   kind: BusinessDocumentKind;
@@ -313,7 +316,8 @@ export type ExpenseCaptureDocumentObservation = {
 };
 
 export type ExpenseCaptureItemObservation = {
-  /** `<page>:<line>` — stable within one read, so a reviewer's selection survives a re-render. */
+  fieldEvidence?: Record<string, ExpenseCaptureFieldEvidence>;
+  /** v2 uses the original page/description span; legacy reads use `<page>:<line>`. */
   id: string;
   documentRef: string;
   description: string;
@@ -332,6 +336,7 @@ export type ExpenseCaptureItemObservation = {
 };
 
 export type ExpenseCaptureComponentObservation = {
+  fieldEvidence?: Record<string, ExpenseCaptureFieldEvidence>;
   id: string;
   documentRef: string;
   label: string;
@@ -345,6 +350,7 @@ export type ExpenseCaptureComponentObservation = {
 };
 
 export type ExpenseCaptureTotalObservation = {
+  fieldEvidence?: Record<string, ExpenseCaptureFieldEvidence>;
   documentRef: string;
   kind: ExpenseCaptureTotalKind;
   amount: string;
@@ -352,6 +358,7 @@ export type ExpenseCaptureTotalObservation = {
 };
 
 export type ExpenseCapturePaymentObservation = {
+  fieldEvidence?: Record<string, ExpenseCaptureFieldEvidence>;
   documentRef: string;
   method?: string;
   status: 'paid' | 'pending' | 'unknown';
@@ -362,6 +369,7 @@ export type ExpenseCapturePaymentObservation = {
 };
 
 export type ExpenseCaptureRefundObservation = {
+  fieldEvidence?: Record<string, ExpenseCaptureFieldEvidence>;
   documentRef: string;
   state: 'requested' | 'approved' | 'processing' | 'completed' | 'unknown';
   amount?: string;
@@ -377,7 +385,18 @@ export type ExpenseCaptureCompleteness = {
   notes: string[];
 };
 
+export type ExpenseCaptureFieldEvidence = {
+  attachmentId: string;
+  checksumSha256: string;
+  pageIndex: number;
+  /** Exact UTF-16 offsets in the original stored page transcription, not the window. */
+  localSpan: { start: number; end: number };
+  rawValue: string;
+  role: string;
+};
+
 export type ExpenseCaptureObservations = {
+  fieldEvidenceVersion?: 2;
   documents: ExpenseCaptureDocumentObservation[];
   items: ExpenseCaptureItemObservation[];
   components: ExpenseCaptureComponentObservation[];

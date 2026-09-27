@@ -1662,3 +1662,59 @@ describe('trial allowance defaults', () => {
     assert.match(readFileSync(new URL('../../../infra/prod-ecs-express/deploy.sh', import.meta.url), 'utf8'), /LINE_SIGNUP_WARMUP_SLIPS:-15/);
   });
 });
+
+describe('LINE reliability v2 rollout configuration', () => {
+  const base = { APP_ENV: 'local', SERVICE_NAME: 'test', DATABASE_URL: 'postgresql://localhost/test', S3_BUCKET: 'test' };
+  const flags = [
+    'LINE_AI_DELIVERY_PLAN_V2_ENABLED', 'LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED',
+    'LINE_AI_DOCUMENT_QA_ENABLED', 'LINE_AI_APPROVED_KNOWLEDGE_ENABLED',
+    'LINE_AI_PUBLIC_LOOKUP_ENABLED', 'LINE_AI_PREFERENCES_ENABLED',
+  ] as const;
+  const allowlists = [
+    'LINE_AI_RELIABILITY_V2_COMPANY_IDS', 'LINE_AI_DELIVERY_PLAN_V2_WRITE_COMPANY_IDS',
+    'LINE_AI_DELIVERY_PLAN_V2_PUBLIC_CHANNEL_IDS',
+  ] as const;
+
+  for (const [service, schema] of [['API', apiConfigSchema], ['Gateway', aiGatewayConfigSchema]] as const) {
+    it(`${service} defaults every new writer and capability off with no admitted owners`, () => {
+      const config = schema.parse(base);
+      assert.equal(config.LINE_AI_RELIABILITY_V2_MODE, 'off');
+      for (const key of flags) assert.equal(config[key], false, key);
+      for (const key of allowlists) assert.deepEqual(config[key], [], key);
+      for (const key of flags) {
+        assert.equal(schema.parse({ ...base, [key]: 'false' })[key], false, key);
+        assert.equal(schema.parse({ ...base, [key]: 'true' })[key], true, key);
+        assert.equal(schema.safeParse({ ...base, [key]: '1' }).success, false, key);
+      }
+    });
+
+    it(`${service} validates exact allowlists without wildcard or blank admission`, () => {
+      for (const key of allowlists) {
+        assert.deepEqual(schema.parse({ ...base, [key]: ' company-A,1234567890,company-A ' })[key], ['company-A', '1234567890']);
+        assert.deepEqual(schema.parse({ ...base, [key]: '  ' })[key], []);
+        for (const invalid of ['*', 'company-A,', ',company-A', 'company-A,,company-B', 'company A', 'company/A', 'a'.repeat(129)]) {
+          assert.equal(schema.safeParse({ ...base, [key]: invalid }).success, false, `${key}: ${invalid}`);
+        }
+      }
+    });
+
+    it(`${service} keeps shadow distinct and rejects unknown mode values`, () => {
+      assert.equal(schema.parse({ ...base, LINE_AI_RELIABILITY_V2_MODE: 'shadow' }).LINE_AI_RELIABILITY_V2_MODE, 'shadow');
+      assert.equal(schema.parse({ ...base, LINE_AI_RELIABILITY_V2_MODE: 'on' }).LINE_AI_RELIABILITY_V2_MODE, 'on');
+      assert.equal(schema.safeParse({ ...base, LINE_AI_RELIABILITY_V2_MODE: 'enabled' }).success, false);
+    });
+  }
+
+  it('API and Gateway produce identical effective values for the negotiated flags', () => {
+    const env = {
+      ...base, LINE_AI_RELIABILITY_V2_MODE: 'on',
+      ...Object.fromEntries(flags.map((key) => [key, 'true'])),
+      ...Object.fromEntries(allowlists.map((key) => [key, 'company-A,oa-B'])),
+    };
+    const api = apiConfigSchema.parse(env);
+    const gateway = aiGatewayConfigSchema.parse(env);
+    for (const key of ['LINE_AI_RELIABILITY_V2_MODE', ...flags, ...allowlists] as const) {
+      assert.deepEqual(api[key], gateway[key], key);
+    }
+  });
+});

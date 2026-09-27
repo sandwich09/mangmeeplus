@@ -10,6 +10,7 @@ import {
   isBusinessIntakeIntent, LINE_INTAKE_ROUTE_INTENTS, MANGMEE_CONVERSATION_MODES,
 } from './line-ai.js';
 import type { AdvisorRefusalCode, AdvisorTonePreface, MangmeeConversationMode, PreparedAdvisorAnswer } from './line-ai.js';
+import { createLineAiInputEvidence } from './line-ai-input-evidence.js';
 
 /** The minimal SOCIAL_CHAT envelope Slice A emits: route fields plus a short answer, nothing else. */
 function socialAnswer(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -35,6 +36,19 @@ describe('parseLineAiPreparedAdvisorAnswer – legacy absence and non-objects', 
     const legacyPlan = { status: 'ROUTED' as const, intent: 'UNSUPPORTED' as const, language: 'th', confidence: 0.4 };
     assert.equal((legacyPlan as { advisorAnswer?: PreparedAdvisorAnswer }).advisorAnswer, undefined);
     assert.equal(parseLineAiPreparedAdvisorAnswer((legacyPlan as Record<string, unknown>)['advisorAnswer']), undefined);
+  });
+});
+
+describe('parseLineAiPreparedAdvisorAnswer v2 input binding', () => {
+  it('requires and preserves the digest of the complete raw input', async () => {
+    const input = await createLineAiInputEvidence({ turnKey: 'advisor-1', parts: [
+      { partId: 'p1', eventIdHash: 'a'.repeat(64), acceptedAtMs: 1, rawText: 'สวัสดีค่ะ' },
+    ] });
+    assert.ok(input);
+    const answer = { ...socialAnswer(), version: 2, inputDigest: input.inputEvidence.joinedSha256 };
+    assert.equal(parseLineAiPreparedAdvisorAnswer(answer, input.inputEvidence)?.version, 2);
+    assert.equal(parseLineAiPreparedAdvisorAnswer(answer), undefined, 'v2 answer cannot be detached from its source input');
+    assert.equal(parseLineAiPreparedAdvisorAnswer({ ...answer, inputDigest: 'b'.repeat(64) }, input.inputEvidence), undefined);
   });
 });
 

@@ -30,8 +30,16 @@ describe('LINE_TOOL_REGISTRY – drift guard', () => {
   it('every tool carries canonical routing metadata', () => {
     for (const tool of LINE_TOOL_REGISTRY) {
       assert.ok(tool.description.trim(), `${tool.name} needs description`);
-      assert.ok(tool.businessSubjects.length > 0, `${tool.name} needs businessSubjects`);
-      assert.ok(tool.questionKinds.length > 0, `${tool.name} needs questionKinds`);
+      if (tool.name === 'public.lookup') {
+        // Public admission is intentionally isolated from the ERP intent vocabulary.
+        assert.deepEqual(tool.businessSubjects, []);
+        assert.deepEqual(tool.questionKinds, []);
+        assert.equal(tool.sourceModule, 'public');
+        assert.deepEqual(tool.requiredPermissions, ['ai.tool.invoke']);
+      } else {
+        assert.ok(tool.businessSubjects.length > 0, `${tool.name} needs businessSubjects`);
+        assert.ok(tool.questionKinds.length > 0, `${tool.name} needs questionKinds`);
+      }
     }
   });
 
@@ -174,7 +182,7 @@ describe('LINE_TOOL_REGISTRY – drift guard', () => {
 
   it('Phase 5 procurement and ledger tools have exact subjects, permissions, inputs, and reachability', () => {
     const expected: Record<string, { subjects: string[]; permissions: string[]; required?: string[]; optional?: string[] }> = {
-      'procurement.get_summary': { subjects: ['procurement'], permissions: ['procurement.purchase_order.read'], optional: ['fromDate', 'toDate', 'branchId'] },
+      'procurement.get_summary': { subjects: ['procurement'], permissions: ['procurement.purchase_order.read'], optional: ['periodKey', 'fromDate', 'toDate', 'branchId'] },
       'procurement.search_suppliers': { subjects: ['supplier'], permissions: ['procurement.supplier.read'], optional: ['search', 'status', 'supplierType', 'page', 'limit'] },
       'procurement.get_purchase_order_detail': { subjects: ['procurement'], permissions: [], required: ['purchaseOrderId'] },
       'ledger.get_period_status': { subjects: ['ledger'], permissions: ['ledger.period.read'], required: ['periodKey'] },

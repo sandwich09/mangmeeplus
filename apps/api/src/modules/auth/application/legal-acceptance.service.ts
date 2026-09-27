@@ -280,6 +280,11 @@ export class LegalAcceptanceService {
     };
   }
 
+  /** Public AI needs the same current coherent acceptance, without loading a company or role. */
+  async isPublicAiAcceptanceRequired(userId: string): Promise<boolean> {
+    return latestAcceptedAt(this.findCoherentCurrentPair(await this.loadCurrentRecords(userId), userId)) === null;
+  }
+
   async isRequired(locator: LegalAcceptanceLocator): Promise<boolean> {
     return (await this.getStatus(locator)).required;
   }

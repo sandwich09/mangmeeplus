@@ -1,0 +1,10 @@
+# Agent Memory: W00 executable capability manifest
+
+Status: Artifact generated; focused parity check passes with explicitly recorded non-ready operations.
+Owner: requested gpt-6-luna xhigh worker.
+Scope: API LINE AI executable capability/data wiring evidence; no business data oracle or product completion claim.
+Decisions: Read the current W00 contract, implementation index, repo instructions, and Ponytail skill. Build against the actual contract registry, an instantiated `InternalToolsController`, Nest module provider/export metadata, the `ERP_READ_TOOL_REGISTRY` factory, LINE route metadata, API config defaults, and sellable feature catalog. Use AST only for source-file references and constructor parameter association, then assert executable parity.
+Open questions: Lead review is needed for three default-visible but non-ready registry entries: `crm.suggest_sales_followups`, `accounting.capture_receipt_evidence` (receipt capture is a separate webhook intake), and `hr.get_leave_summary`. `line.explain_file_attempt` became fully wired in the active source during this task and is verified through `ERP_READ_TOOL_REGISTRY`. Do not alter shared module DI under this task's ownership restriction.
+Artifacts: `apps/api/src/modules/line-ai/line-ai-capability-manifest.ts`; `apps/api/src/modules/line-ai/line-ai-capability-manifest.spec.ts`; `docs/research/mangmee-ai-capability-manifest-2026-09-27.json`; `docs/research/mangmee-ai-capability-manifest-2026-09-27.md`.
+Verification: `UPDATE_LINE_AI_CAPABILITY_MANIFEST=1 pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/line-ai-capability-manifest.spec.ts` — passed (4 subtests; generated snapshot). `pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/line-ai-capability-manifest.spec.ts` — passed (4 subtests; frozen snapshot parity). `git diff --check` — passed for owned files.
+Next: Lead can resolve or explicitly accept the three non-ready default-visible entries. Receipt capture itself is inventoried as a signed LINE webhook intake; voice is deferred.

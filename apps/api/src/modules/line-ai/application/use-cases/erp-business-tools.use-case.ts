@@ -5,16 +5,24 @@
  * Period-scoped tools default to the current month (owner decision 2026-07-03).
  */
 import { Injectable } from '@nestjs/common';
-import { ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS, type ToolResult, type SourceRef } from '@watchdog-bms/contracts';
+import Decimal from 'decimal.js';
+import { ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS, type ExpensePaymentStatus, type ExpenseStatus, type ToolResult, type SourceRef } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { ListDocumentsUseCase } from '../../../accounting-documents/application/use-cases/document.use-case';
 import { GetApAgingUseCase } from '../../../procurement/application/use-cases/ap-reporting.use-case';
 import { branchScopeWhere } from '../../../data-model-core/domain/logic/branch.logic';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
-import { resolvePeriodInput } from './erp-tools.use-case';
-import { civilDayRangeToUtc } from '@watchdog-bms/contracts';
-import { expenseRelatedToUserWhere } from '../../../expenses/infrastructure/prisma-expense.repository';
+import { ListExpensesUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
+import {
+  BUSINESS_READ_BASIS_VERSION,
+  appliedQuery,
+  completeResult,
+  fact,
+  periodError,
+  resolveBusinessReadPeriod,
+  sourceRefId,
+} from '../../domain/logic/business-read-source.logic';
 
 function now(): string { return new Date().toISOString(); }
 
@@ -32,11 +40,6 @@ function toCtx(ctx: ErpToolContext): RequestContext {
   };
 }
 
-function money(value: unknown): number {
-  const amount = Number(String(value ?? '0').replace(/,/g, ''));
-  return Number.isFinite(amount) ? amount : 0;
-}
-
 // ---- accounting.get_summary ----
 
 @Injectable()
@@ -44,12 +47,14 @@ export class AccountingGetSummaryTool implements ErpReadToolPort {
   toolName = 'accounting.get_summary';
   constructor(private readonly listDocuments: ListDocumentsUseCase) {}
 
-  async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string }): Promise<ToolResult> {
+  async execute(ctx: ErpToolContext, input: { periodKey?: string; fromDate?: string; toDate?: string; branchId?: string } = {}): Promise<ToolResult> {
     const asOf = now();
     if (!ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS.some((permission) => ctx.permissions.includes(permission))) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
-    const period = resolvePeriodInput(input);
+    const resolved = resolveBusinessReadPeriod(input);
+    if (!resolved.ok) return periodError(this.toolName, asOf, resolved);
+    const period = resolved.period;
     // PR #238 review T2: ONE permission-scoped groupBy replaces the 50-page OFFSET walk. A single
     // database operation sees one consistent snapshot, so a concurrent insert/move can no longer
     // duplicate one document and omit another while the cardinality still matched — the failure
@@ -60,16 +65,30 @@ export class AccountingGetSummaryTool implements ErpReadToolPort {
     // would silently lose satang above 2^53/100, and the prepared formatter already renders
     // string | number.
     const aggregate = await this.listDocuments.aggregateByType(toCtx(ctx), {
-      fromDate: period.fromDate, toDate: period.toDate,
+      fromDate: period.fromDate, toDate: period.toDate, ...(input.branchId ? { branchId: input.branchId } : {}),
     });
-    const byType: Record<string, { count: number; totalAmount: string }> = {};
-    for (const [documentType, entry] of Object.entries(aggregate.byType)) {
-      byType[documentType] = { count: entry.count, totalAmount: entry.totalAmount };
-    }
+    const byType = { ...aggregate.byType };
     const sourceRefs: SourceRef[] = [{
       label: 'สรุปเอกสารบัญชี', module: 'accounting-documents', entityType: 'accounting_document_summary',
       asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/accounting`,
     }];
+    const queryApplied = appliedQuery(period, {
+      branch: { mode: input.branchId ? 'selected' : 'all_authorized', branchId: input.branchId ?? null },
+      dateBasis: 'accounting_document_date', statusBasis: 'all_document_statuses',
+      dataset: 'operational_accounting_documents',
+    });
+    const completeness = completeResult(0, false, Object.keys(byType).length, false);
+    const moneyFacts = Object.entries(byType).flatMap(([documentType, entry]) => (entry.totalsByCurrency ?? []).map((total) => fact({
+      id: `accounting.documents.${documentType}.${total.currency}`,
+      metric: 'accounting_document_total', value: total.totalAmount, unit: 'money', currency: total.currency,
+      period: queryApplied.period ?? null, dateBasis: queryApplied.dateBasis, statusBasis: queryApplied.statusBasis,
+      sourceRefIds: sourceRefs.map(sourceRefId), asOf, state: total.count === 0 ? 'empty' : 'known',
+    })));
+    const facts = aggregate.total === 0 ? [fact({
+      id: 'accounting.documents.count', metric: 'accounting_document_count', value: '0', unit: 'count', currency: null,
+      period: queryApplied.period ?? null, dateBasis: queryApplied.dateBasis, statusBasis: queryApplied.statusBasis,
+      sourceRefIds: sourceRefs.map(sourceRefId), asOf, state: 'empty',
+    })] : moneyFacts;
     return {
       toolName: this.toolName,
       status: 'ok',
@@ -77,9 +96,15 @@ export class AccountingGetSummaryTool implements ErpReadToolPort {
         period: { fromDate: period.fromDate, toDate: period.toDate, defaultedToCurrentMonth: period.defaulted },
         total: aggregate.total,
         byType,
+        queryApplied,
+        completeness,
       },
       sourceRefs,
       asOf,
+      queryApplied,
+      basisVersion: BUSINESS_READ_BASIS_VERSION,
+      facts,
+      completeness,
     };
   }
 }
@@ -91,29 +116,44 @@ export class AccountingListRecentDocumentsTool implements ErpReadToolPort {
   toolName = 'accounting.list_recent_documents';
   constructor(private readonly listDocuments: ListDocumentsUseCase) {}
 
-  async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string; documentType?: string }): Promise<ToolResult> {
+  async execute(ctx: ErpToolContext, input: { periodKey?: string; fromDate?: string; toDate?: string; branchId?: string; documentType?: string; limit?: number } = {}): Promise<ToolResult> {
     const asOf = now();
     if (!ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS.some((permission) => ctx.permissions.includes(permission))) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
-    const period = resolvePeriodInput(input);
+    const resolved = resolveBusinessReadPeriod(input);
+    if (!resolved.ok) return periodError(this.toolName, asOf, resolved);
+    const period = resolved.period;
+    if (input.limit !== undefined && (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 50)) {
+      return { toolName: this.toolName, status: 'error', sourceRefs: [], asOf, errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'limit must be 1-50' };
+    }
     const documentType = typeof input?.documentType === 'string' && input.documentType ? input.documentType : undefined;
     const page = await this.listDocuments.execute(toCtx(ctx), {
       fromDate: period.fromDate, toDate: period.toDate,
       ...(documentType && { documentType: documentType as never }),
-      page: 1, pageSize: 10,
+      ...(input.branchId ? { branchId: input.branchId } : {}),
+      page: 1, pageSize: input.limit ?? 20,
     });
     const sourceRefs: SourceRef[] = [{
       label: 'เอกสารบัญชีล่าสุด', module: 'accounting-documents', entityType: 'accounting_document_list',
       asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/accounting`,
     }];
+    const queryApplied = appliedQuery(period, {
+      branch: { mode: input.branchId ? 'selected' : 'all_authorized', branchId: input.branchId ?? null },
+      dateBasis: 'accounting_document_date', statusBasis: 'all_document_statuses',
+      dataset: 'operational_accounting_documents',
+      filters: { ...(documentType ? { documentType } : {}) },
+    });
+    const completeness = completeResult(page.data.length, page.page * page.pageSize < page.total);
     return {
       toolName: this.toolName,
       status: 'ok',
       data: {
         period: { fromDate: period.fromDate, toDate: period.toDate, defaultedToCurrentMonth: period.defaulted },
         total: page.total,
-        items: page.data.slice(0, 10).map((doc) => ({
+        queryApplied,
+        completeness,
+        items: page.data.map((doc) => ({
           documentNumber: doc.documentNumber,
           documentType: doc.documentType,
           documentDate: doc.documentDate,
@@ -124,6 +164,14 @@ export class AccountingListRecentDocumentsTool implements ErpReadToolPort {
       },
       sourceRefs,
       asOf,
+      queryApplied,
+      basisVersion: BUSINESS_READ_BASIS_VERSION,
+      facts: [fact({
+        id: 'accounting.documents.count', metric: 'accounting_document_count', value: String(page.total), unit: 'count', currency: null,
+        period: queryApplied.period ?? null, dateBasis: queryApplied.dateBasis, statusBasis: queryApplied.statusBasis,
+        sourceRefIds: sourceRefs.map(sourceRefId), asOf, state: page.total === 0 ? 'empty' : 'known',
+      })],
+      completeness,
     };
   }
 }
@@ -142,7 +190,7 @@ export class ProcurementApOutstandingTool implements ErpReadToolPort {
     }
     const aging = await this.apAging.execute(toCtx(ctx));
     const topSuppliers = [...aging.suppliers]
-      .sort((a, b) => money(b.totalOutstanding) - money(a.totalOutstanding))
+      .sort((a, b) => new Decimal(b.totalOutstanding).cmp(new Decimal(a.totalOutstanding)) || a.supplierDisplayName.localeCompare(b.supplierDisplayName))
       .slice(0, 5)
       .map((s) => ({ supplier: s.supplierDisplayName, totalOutstanding: s.totalOutstanding }));
     const sourceRefs: SourceRef[] = [{
@@ -297,75 +345,83 @@ export class CompanyEmployeeDetailTool implements ErpReadToolPort {
 @Injectable()
 export class ExpenseGetBreakdownTool implements ErpReadToolPort {
   toolName = 'expense.get_breakdown';
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly listExpenses: ListExpensesUseCase) {}
 
-  async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string }): Promise<ToolResult> {
-    const asOf = now();
+  async execute(ctx: ErpToolContext, input: {
+    periodKey?: string; fromDate?: string; toDate?: string; branchId?: string;
+    categoryId?: string; vendorId?: string; documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus;
+  } = {}): Promise<ToolResult> {
+    let asOf = now();
     const canReadAll = ctx.permissions.includes('expense.read') || ctx.permissions.includes('expense.review');
     const canReadRelated = ctx.permissions.includes('expense.read_related');
     if (!canReadAll && !canReadRelated && !ctx.permissions.includes('expense.read_own')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
-    const period = resolvePeriodInput(input);
-    const where = {
-      companyId: ctx.companyId,
-      status: { notIn: ['REJECTED', 'VOIDED'] as never[] },
-      expenseDate: civilDayRangeToUtc(period.fromDate, period.toDate),
-      AND: [
-        // Branch ABAC (10D): restricted scopes see their branches plus company-central rows.
-        branchScopeWhere({ branchIds: ctx.branchIds }),
-        ...(!canReadAll
-          ? [canReadRelated ? expenseRelatedToUserWhere(ctx.userId) : { createdByUserId: ctx.userId }]
-          : []),
-      ],
-    };
-
-    const [byCategory, byBranch] = await Promise.all([
-      this.prisma.client.expenseRecord.groupBy({ by: ['expenseCategoryId'], where, _sum: { grandTotalAmount: true }, _count: true }),
-      this.prisma.client.expenseRecord.groupBy({ by: ['branchId'], where, _sum: { grandTotalAmount: true }, _count: true }),
-    ]);
-
-    const categoryIds = byCategory.map((g) => g.expenseCategoryId).filter((id): id is string => !!id);
-    const branchIds = byBranch.map((g) => g.branchId).filter((id): id is string => !!id);
-    const [categories, branches] = await Promise.all([
-      categoryIds.length ? this.prisma.client.expenseCategory.findMany({ where: { id: { in: categoryIds } }, select: { id: true, name: true } }) : [],
-      branchIds.length ? this.prisma.client.branch.findMany({ where: { id: { in: branchIds } }, select: { id: true, name: true } }) : [],
-    ]);
-    const categoryName = new Map(categories.map((c) => [c.id, c.name]));
-    const branchName = new Map(branches.map((b) => [b.id, b.name]));
-    const totalCount = byCategory.reduce((total, group) => total + group._count, 0);
-    const totalAmount = byCategory.reduce((total, group) => total + money(group._sum.grandTotalAmount), 0);
+    const resolved = resolveBusinessReadPeriod(input);
+    if (!resolved.ok) return periodError(this.toolName, asOf, resolved);
+    const period = resolved.period;
+    const snapshot = await this.listExpenses.readAiBreakdown(toCtx(ctx), {
+      fromDate: period.fromDate, toDate: period.toDate,
+      ...(input.branchId ? { branchId: input.branchId } : {}),
+      ...(input.categoryId ? { expenseCategoryId: input.categoryId } : {}),
+      ...(input.vendorId ? { vendorCounterpartyId: input.vendorId } : {}),
+      ...(input.documentStatus ? { status: input.documentStatus } : {}),
+      ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
+    });
+    asOf = snapshot.asOf.toISOString();
+    const totalCount = snapshot.byCurrency.reduce((sum, row) => sum + row.count, 0);
+    const soleCurrency = snapshot.byCurrency.length === 1 ? snapshot.byCurrency[0] : undefined;
 
     const sourceRefs: SourceRef[] = [{
       label: 'สรุปค่าใช้จ่ายแยกกลุ่ม', module: 'expenses', entityType: 'expense_breakdown',
       asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/expenses`,
     }];
+    const queryApplied = appliedQuery(period, {
+      branch: { mode: input.branchId ? 'selected' : 'all_authorized', branchId: input.branchId ?? null },
+      dateBasis: 'expense_incurred_date', statusBasis: input.documentStatus ?? 'exclude_rejected_voided',
+      dataset: 'operational_expense_records',
+      filters: {
+        ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+        ...(input.vendorId ? { vendorId: input.vendorId } : {}),
+        ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
+      },
+    });
+    const completeness = completeResult(0, false, snapshot.byCategory.length + snapshot.byBranch.length, snapshot.categoryHasMore || snapshot.branchHasMore);
+    const facts = snapshot.byCurrency.map((row) => fact({
+      id: `expense.breakdown.total.${row.currency}`, metric: 'expense_total', value: row.totalAmount,
+      unit: 'money', currency: row.currency, period: queryApplied.period ?? null,
+      dateBasis: queryApplied.dateBasis, statusBasis: queryApplied.statusBasis,
+      sourceRefIds: sourceRefs.map(sourceRefId), asOf, state: row.count === 0 ? 'empty' : 'known',
+    }));
     return {
       toolName: this.toolName,
       status: 'ok',
       data: {
         period: { fromDate: period.fromDate, toDate: period.toDate, defaultedToCurrentMonth: period.defaulted },
         totalCount,
-        totalAmount: totalAmount.toFixed(4),
-        byCategory: byCategory
-          .map((g) => ({
-            category: g.expenseCategoryId ? (categoryName.get(g.expenseCategoryId) ?? g.expenseCategoryId) : 'ไม่ระบุหมวด',
-            count: g._count,
-            totalAmount: String(g._sum.grandTotalAmount ?? '0'),
-          }))
-          .sort((a, b) => money(b.totalAmount) - money(a.totalAmount))
-          .slice(0, 15),
-        byBranch: byBranch
-          .map((g) => ({
-            branch: g.branchId ? (branchName.get(g.branchId) ?? g.branchId) : 'ส่วนกลาง (ไม่ระบุสาขา)',
-            count: g._count,
-            totalAmount: String(g._sum.grandTotalAmount ?? '0'),
-          }))
-          .sort((a, b) => money(b.totalAmount) - money(a.totalAmount))
-          .slice(0, 15),
+        totalAmount: soleCurrency?.totalAmount ?? null,
+        currency: soleCurrency?.currency ?? null,
+        totalsByCurrency: snapshot.byCurrency,
+        mixedCurrency: snapshot.byCurrency.length > 1,
+        byCategory: snapshot.byCategory.map((group) => ({
+          categoryId: group.expenseCategoryId,
+          category: group.label ?? (group.expenseCategoryId ?? 'ไม่ระบุหมวด'),
+          currency: group.currency, count: group.count, totalAmount: group.totalAmount,
+        })),
+        byBranch: snapshot.byBranch.map((group) => ({
+          branchId: group.branchId,
+          branch: group.label ?? (group.branchId ?? 'ส่วนกลาง (ไม่ระบุสาขา)'),
+          currency: group.currency, count: group.count, totalAmount: group.totalAmount,
+        })),
+        queryApplied,
+        completeness,
       },
       sourceRefs,
       asOf,
+      queryApplied,
+      basisVersion: BUSINESS_READ_BASIS_VERSION,
+      facts,
+      completeness,
     };
   }
 }

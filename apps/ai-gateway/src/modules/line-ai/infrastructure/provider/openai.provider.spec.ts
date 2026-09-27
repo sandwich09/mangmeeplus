@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { OpenAiProvider } from './openai.provider';
 import { drainUsage, runWithUsageContext } from '../../../../common/usage/usage-context';
 
+function jsonResponse(body: unknown, status = 200): Response { return new Response(JSON.stringify(body), { status }); }
+
 function makeProvider(timeoutMs = 10000) {
   return new OpenAiProvider({ apiKey: 'test-key', model: 'gpt-4.1-mini', timeoutMs });
 }
@@ -24,7 +26,7 @@ describe('OpenAiProvider', () => {
 
   it('returns ok=true with output_text', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response(JSON.stringify({ output_text: 'ตอบไทย OK' }), { status: 200 }) as any;
+    globalThis.fetch = async () => new Response(JSON.stringify({ status: 'completed', output_text: 'ตอบไทย OK' }), { status: 200 }) as any;
     try {
       const result = await makeProvider().generateText({ messages: [{ role: 'user', text: 'hello' }] });
       assert.equal(result.ok, true);
@@ -66,22 +68,19 @@ describe('OpenAiProvider', () => {
 
 describe('OpenAiProvider.generateWithTools', () => {
   const originalFetch = globalThis.fetch;
-  it('maps tools/messages onto the Responses wire and parses function calls', async () => {
+  it('rejects a response batch with malformed or unregistered function arguments before any call is usable', async () => {
     const provider = new OpenAiProvider({ apiKey: 'k', model: 'gpt-test', timeoutMs: 5000 });
     let captured: any;
     globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
       captured = JSON.parse(String(init?.body));
-      return {
-        ok: true,
-        json: async () => ({
+      return jsonResponse({
           status: 'completed',
           output: [
             { type: 'function_call', call_id: 'c1', name: 'sales__get_summary', arguments: '{"fromDate":"2026-07-01"}' },
             { type: 'function_call', call_id: 'c2', name: 'inventory__list_low_stock', arguments: 'not-json' },
             { type: 'message', content: [{ type: 'output_text', text: 'checking' }] },
           ],
-        }),
-      } as Response;
+        });
     }) as typeof fetch;
     try {
       const result = await provider.generateWithTools!({
@@ -103,14 +102,8 @@ describe('OpenAiProvider.generateWithTools', () => {
       assert.deepEqual(kinds, ['user', 'assistant', 'function_call', 'function_call_output']);
       assert.equal(captured.input[3].call_id, 'c0');
 
-      assert.equal(result.ok, true);
-      if (result.ok) {
-        assert.equal(result.stopReason, 'tool_use');
-        assert.equal(result.toolCalls.length, 2);
-        assert.deepEqual(result.toolCalls[0], { toolUseId: 'c1', name: 'sales__get_summary', input: { fromDate: '2026-07-01' } });
-        assert.deepEqual(result.toolCalls[1].input, {}, 'malformed arguments degrade to empty input');
-        assert.equal(result.text, 'checking');
-      }
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.code, 'PROVIDER_TOOL_ARGUMENT_INVALID');
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -118,16 +111,13 @@ describe('OpenAiProvider.generateWithTools', () => {
 
   it('maps end_turn and HTTP errors', async () => {
     const provider = new OpenAiProvider({ apiKey: 'k', model: 'gpt-test', timeoutMs: 5000 });
-    globalThis.fetch = (async () => ({
-      ok: true,
-      json: async () => ({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'done' }] }] }),
-    } as Response)) as typeof fetch;
+    globalThis.fetch = (async () => jsonResponse({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'done' }] }] })) as typeof fetch;
     try {
       const done = await provider.generateWithTools!({ messages: [{ role: 'user', text: 'q' }], tools: [] });
       assert.equal(done.ok, true);
       if (done.ok) assert.equal(done.stopReason, 'end_turn');
 
-      globalThis.fetch = (async () => ({ ok: false, status: 429, json: async () => ({ error: { message: 'rate' } }) } as Response)) as typeof fetch;
+      globalThis.fetch = (async () => jsonResponse({ error: { message: 'rate' } }, 429)) as typeof fetch;
       const throttled = await provider.generateWithTools!({ messages: [{ role: 'user', text: 'q' }], tools: [] });
       assert.equal(throttled.ok, false);
       if (!throttled.ok) assert.equal(throttled.error.code, 'PROVIDER_THROTTLED');
@@ -145,7 +135,7 @@ describe('OpenAiProvider cacheableContext', () => {
     let sent: any;
     globalThis.fetch = (async (_url: any, init: any) => {
       sent = JSON.parse(init.body as string);
-      return { ok: true, status: 200, json: async () => ({ output_text: 'ok' }) } as Response;
+      return jsonResponse({ status: 'completed', output_text: 'ok' });
     }) as typeof fetch;
     try {
       const result = await makeProvider().generateText({
@@ -167,7 +157,7 @@ describe('OpenAiProvider cacheableContext', () => {
     let sent: any;
     globalThis.fetch = (async (_url: any, init: any) => {
       sent = JSON.parse(init.body as string);
-      return { ok: true, status: 200, json: async () => ({ output_text: 'ok' }) } as Response;
+      return jsonResponse({ status: 'completed', output_text: 'ok' });
     }) as typeof fetch;
     try {
       await makeProvider().generateText({ messages: [{ role: 'user', text: 'first' }] });
@@ -197,6 +187,7 @@ function captureUsageLines() {
 }
 
 const USAGE_BODY = {
+  status: 'completed',
   output_text: 'ok',
   usage: { input_tokens: 3012, output_tokens: 88, input_tokens_details: { cached_tokens: 2816 } },
 };
@@ -204,7 +195,7 @@ const USAGE_BODY = {
 describe('OpenAiProvider ai.usage logging', () => {
   it('logs one tagged line with the fields the Responses API exposes', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => USAGE_BODY }) as Response) as typeof fetch;
+    globalThis.fetch = (async () => jsonResponse(USAGE_BODY)) as typeof fetch;
     const capture = captureUsageLines();
     try {
       await makeProvider().generateText({ messages: [{ role: 'user', text: 'q' }], usageTag: 'line.plan-route' });
@@ -218,19 +209,15 @@ describe('OpenAiProvider ai.usage logging', () => {
     assert.equal(line['tag'], 'line.plan-route');
     assert.equal(line['modelId'], 'gpt-4.1-mini');
     assert.equal(line['ok'], true);
-    assert.equal(line['inputTokens'], 3012);
+    assert.equal(line['inputTokens'], 196);
     assert.equal(line['outputTokens'], 88);
     assert.equal(line['cacheReadInputTokens'], 2816);
     assert.equal(typeof line['durationMs'], 'number');
   });
 
-  it('never claims ok=true for a failed call that happens to carry usage', async () => {
+  it('retains provider-reported usage when an HTTP error body includes counters', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => ({
-      ok: false,
-      status: 429,
-      json: async () => ({ error: { message: 'rate' }, usage: USAGE_BODY.usage }),
-    }) as Response) as typeof fetch;
+    globalThis.fetch = (async () => jsonResponse({ error: { message: 'rate' }, usage: USAGE_BODY.usage }, 429)) as typeof fetch;
     const capture = captureUsageLines();
     try {
       const result = await makeProvider().generateText({ messages: [{ role: 'user', text: 'q' }], usageTag: 'line.plan-route' });
@@ -240,12 +227,14 @@ describe('OpenAiProvider ai.usage logging', () => {
       globalThis.fetch = originalFetch;
     }
 
-    assert.equal(capture.lines.length, 0, 'failed calls are skipped, not logged as successes');
+    assert.equal(capture.lines.length, 1);
+    assert.equal(capture.lines[0]!['ok'], false);
+    assert.equal(capture.lines[0]!['inputTokens'], 196);
   });
 
   it('skips silently when the response carries no usage block', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ output_text: 'ok' }) }) as Response) as typeof fetch;
+    globalThis.fetch = (async () => jsonResponse({ status: 'completed', output_text: 'ok' })) as typeof fetch;
     const capture = captureUsageLines();
     try {
       await makeProvider().generateText({ messages: [{ role: 'user', text: 'q' }] });
@@ -259,7 +248,7 @@ describe('OpenAiProvider ai.usage logging', () => {
 
   it('carries companyId on the line when a collector context is open', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => USAGE_BODY }) as Response) as typeof fetch;
+    globalThis.fetch = (async () => jsonResponse(USAGE_BODY)) as typeof fetch;
     const capture = captureUsageLines();
     try {
       await runWithUsageContext({ companyId: 'company-1' }, () =>
@@ -279,7 +268,7 @@ describe('OpenAiProvider ai.usage logging', () => {
 describe('OpenAiProvider usage collection', () => {
   it('appends exactly one entry per successful call', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => USAGE_BODY }) as Response) as typeof fetch;
+    globalThis.fetch = (async () => jsonResponse(USAGE_BODY)) as typeof fetch;
     const capture = captureUsageLines();
     const entries = await runWithUsageContext({ companyId: 'company-1' }, async () => {
       try {
@@ -296,7 +285,7 @@ describe('OpenAiProvider usage collection', () => {
       tag: 'line.plan-route',
       modelId: 'gpt-4.1-mini',
       ok: true,
-      inputTokens: 3012,
+      inputTokens: 196,
       outputTokens: 88,
       cacheReadInputTokens: 2816,
       // The Responses API has no cache-write counter.
@@ -306,13 +295,9 @@ describe('OpenAiProvider usage collection', () => {
     });
   });
 
-  it('appends an ok=false entry with zero counts for a mapped error, and logs no line', async () => {
+  it('appends an ok=false entry with provider-reported counters for a mapped error', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => ({
-      ok: false,
-      status: 429,
-      json: async () => ({ error: { message: 'rate' }, usage: USAGE_BODY.usage }),
-    }) as Response) as typeof fetch;
+    globalThis.fetch = (async () => jsonResponse({ error: { message: 'rate' }, usage: USAGE_BODY.usage }, 429)) as typeof fetch;
     const capture = captureUsageLines();
     const entries = await runWithUsageContext({ companyId: 'company-1' }, async () => {
       try {
@@ -326,15 +311,16 @@ describe('OpenAiProvider usage collection', () => {
 
     assert.equal(entries.length, 1);
     assert.equal(entries[0]!.ok, false);
-    assert.equal(entries[0]!.inputTokens, 0, 'a failed call never bills tokens it may have carried');
-    assert.equal(entries[0]!.cacheReadInputTokens, 0);
-    assert.equal(entries[0]!.usageBasis, undefined, 'zeroed counters are not provider-reported usage');
-    assert.equal(capture.lines.length, 0, 'the stdout line stays success-only');
+    assert.equal(entries[0]!.inputTokens, 196);
+    assert.equal(entries[0]!.cacheReadInputTokens, 2816);
+    assert.equal(entries[0]!.usageBasis, 'PROVIDER_REPORTED');
+    assert.equal(capture.lines.length, 1);
+    assert.equal(capture.lines[0]!['ok'], false);
   });
 
   it('appends an entry even when the successful response carries no usage block', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ output_text: 'ok' }) }) as Response) as typeof fetch;
+    globalThis.fetch = (async () => jsonResponse({ status: 'completed', output_text: 'ok' })) as typeof fetch;
     const capture = captureUsageLines();
     const entries = await runWithUsageContext({}, async () => {
       try {

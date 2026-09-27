@@ -25,7 +25,7 @@ import {
 import type { AppConfigService } from '../../../common/config/app-config.service';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import { SECURITY_EVENT, emitSecurityEvent } from '../../../common/logger/security-event';
-import { buildPricingSnapshot, computeCostSatang, priceAiStepUpperBound } from './ai-model-pricing';
+import { buildPricingSnapshot, computeCostSatang, priceAiStepUpperBound, computePinnedAiCostV2, type AiRenderedPricingSnapshotV2 } from './ai-model-pricing';
 import { resolveAiBudgetPolicy, type CompanyAiBudgetPolicyRow } from './company-ai-budget-policy';
 import { isMeterableEntry, normalizeUsageBasis, type AiBudgetBucket, type AiRequestKind } from './company-ai-usage-meter';
 
@@ -147,6 +147,7 @@ async function resolveBudgetUnderLock(
     select: {
       monthlyBudgetSatang: true, budgetMode: true, chatMonthlyBudgetSatang: true,
       ocrMonthlyBudgetSatang: true, budgetConfigVersion: true, pendingBudgetPolicy: true,
+      salesDealChatCreditSatang: true, salesDealChatCreditEndsAt: true,
     },
   })) as ({ monthlyBudgetSatang: number | null } & CompanyAiBudgetPolicyRow) | null;
   const override = row?.monthlyBudgetSatang != null;
@@ -270,6 +271,15 @@ export async function sweepAiBudgetCompanyMonth(
   }
 }
 
+/** In-process only: authorization and the ordinal CAS happen inside the existing money transaction.
+ * This callback is supplied by the API issuer, never read from an HTTP body. */
+export type RenderedAiReservationAuthority = {
+  upperBoundSatang: number;
+  snapshot: AiRenderedPricingSnapshotV2 & Record<string, unknown>;
+  maxTurnSlots: number;
+  authorizeAndClaim(tx: any): Promise<boolean>;
+};
+
 /**
  * Admits ONE provider invocation, or refuses it with the scope that actually blocked (ADR 0013 §5).
  *
@@ -281,8 +291,11 @@ export async function reserveAiBudgetStep(
   prisma: PrismaService,
   config: AppConfigService,
   input: ReserveAiBudgetStepInput,
+  rendered?: RenderedAiReservationAuthority,
 ): Promise<AiBudgetReserveOutcome> {
-  const bounds = aiBudgetStepBounds(input.stepKind);
+  if (rendered && (input.stepKind !== 'provider-v2' || !Number.isSafeInteger(rendered.upperBoundSatang) || rendered.upperBoundSatang < 0
+    || ![2, 4].includes(rendered.maxTurnSlots))) return { ok: false, reason: 'unavailable', budgetScope: 'TOTAL', detail: 'invalid_rendered_authority' };
+  const bounds = rendered ? { ...rendered.snapshot.bounds, maxCalls: rendered.maxTurnSlots } : aiBudgetStepBounds(input.stepKind);
   // A seam whose bound nobody declared can never be reserved — the ADR 0013 §9 readiness property.
   if (!bounds) return { ok: false, reason: 'unavailable', budgetScope: 'TOTAL', detail: 'step_bound_missing' };
   if (input.ordinal < 0 || input.ordinal >= bounds.maxCalls) {
@@ -292,7 +305,7 @@ export async function reserveAiBudgetStep(
     return { ok: false, reason: 'unavailable', budgetScope: 'TOTAL', detail: 'bucket_unknown' };
   }
   if (!input.modelId) return { ok: false, reason: 'unavailable', budgetScope: 'TOTAL', detail: 'model_unknown' };
-  const priced = priceAiStepUpperBound(input.stepKind, input.modelId, input.thbPerUsd);
+  const priced = rendered ?? priceAiStepUpperBound(input.stepKind, input.modelId, input.thbPerUsd);
   if (!priced) return { ok: false, reason: 'unavailable', budgetScope: 'TOTAL', detail: 'price_unavailable' };
 
   const now = input.now ?? new Date();
@@ -319,10 +332,11 @@ export async function reserveAiBudgetStep(
       if (policy.invalidReason) {
         return { ok: false as const, reason: 'unavailable' as const, budgetScope: 'TOTAL' as AiBudgetScope, detail: policy.invalidReason };
       }
-      if (policy.mode !== 'SPLIT') {
+      if (policy.mode !== 'SPLIT' && !rendered) {
         return { ok: false as const, reason: 'unavailable' as const, budgetScope: 'TOTAL' as AiBudgetScope, detail: 'policy_not_split' };
       }
-      const capSatang = input.bucket === 'CHAT' ? policy.chatCapSatang : policy.ocrCapSatang;
+      const capSatang = input.bucket === 'CHAT' ? policy.chatCapSatang
+        : policy.mode === 'SHARED' && rendered ? policy.totalSatang : policy.ocrCapSatang;
       if (capSatang === null) {
         return { ok: false as const, reason: 'unavailable' as const, budgetScope: input.bucket as AiBudgetScope, detail: 'bucket_cap_missing' };
       }
@@ -350,13 +364,17 @@ export async function reserveAiBudgetStep(
       });
       if (!decision.ok) return decision;
 
+      if (rendered && !await rendered.authorizeAndClaim(tx)) {
+        return { ok: false as const, reason: 'unavailable' as const, budgetScope: 'TOTAL' as AiBudgetScope, detail: 'authority_stale' };
+      }
       const created = await tx.aiBudgetReservation.create({
         data: {
           companyId: input.companyId, monthKey: input.monthKey, bucket: input.bucket,
           policyRevision: policy.revision, sourceRoute: input.sourceRoute, stepKind: input.stepKind,
           attemptKey: input.attemptKey, invocationKey, upperBoundSatang: bound,
           pricingSnapshot: { ...priced.snapshot, thbPerUsdSource: input.thbPerUsdSource },
-          requestKind: input.requestKind ?? null, status: 'RESERVED', ownerToken,
+          requestKind: input.requestKind ?? null, status: rendered ? 'DISPATCHED' : 'RESERVED', ownerToken,
+          ...(rendered ? { dispatchedAt: now } : {}),
         },
         select: { id: true },
       });
@@ -722,6 +740,7 @@ export type SettleAiBudgetStepResult =
 export type SettleAiBudgetStepInput = {
   invocationKey: string;
   entry: AiUsageEntry;
+  externalUnits?: number | null;
   meta: { sourceRoute: string; requestId?: string; requestKind?: AiRequestKind };
   now?: Date;
   /**
@@ -790,7 +809,19 @@ export async function settleAiBudgetStep(
       if (!Number.isFinite(thbPerUsd) || thbPerUsd <= 0) return 'invalid-state' as const;
       // The operator charged the DECLARED bound, which is the number this hold has been holding all
       // along — never a price recomputed from the zero counters the decision carries.
-      const costSatang = operator ? reservation.upperBoundSatang : computeCostSatang(input.entry, thbPerUsd).costSatang;
+      const isV2 = (reservation.pricingSnapshot as { contractVersion?: number }).contractVersion === 2;
+      const pinned = isV2 && !operator ? computePinnedAiCostV2(reservation.pricingSnapshot as AiRenderedPricingSnapshotV2, input.entry, input.externalUnits) : null;
+      if (isV2 && !operator && !pinned) {
+        // Preserve the paid evidence while the hosted-unit/tariff discrepancy is reconciled.
+        await tx.aiBudgetReservation.update({ where: { id: reservation.id }, data: { status: 'UNRESOLVED', evidenceJson: {
+          reason: 'TARIFF_OR_EXTERNAL_USAGE_UNRESOLVED', entry: { modelId: input.entry.modelId, tag: input.entry.tag, ok: input.entry.ok,
+            inputTokens: input.entry.inputTokens, outputTokens: input.entry.outputTokens, cacheReadInputTokens: input.entry.cacheReadInputTokens, cacheWriteInputTokens: input.entry.cacheWriteInputTokens,
+            usageBasis: normalizeUsageBasis((input.entry as { usageBasis?: unknown }).usageBasis) },
+          externalUnits: input.externalUnits ?? null,
+        } } });
+        return 'invalid-evidence' as const;
+      }
+      const costSatang = operator ? reservation.upperBoundSatang : pinned?.costSatang ?? computeCostSatang(input.entry, thbPerUsd).costSatang;
       // Money without a provider call, exactly like an audited cost correction: `COST_ADJUSTMENT`
       // is what keeps it out of `calls` and out of `coverage` in the D1 breakdown while its cost
       // still reconciles with the month total (hold spec J-07).
@@ -813,7 +844,7 @@ export async function settleAiBudgetStep(
           requestKind: input.meta.requestKind ?? reservation.requestKind ?? null,
           budgetBucket: reservation.bucket,
           usageBasis,
-          eventKind, pricingSnapshot: buildPricingSnapshot(input.entry, thbPerUsd, costSatang),
+          eventKind, pricingSnapshot: pinned?.pricingSnapshot ?? buildPricingSnapshot(input.entry, thbPerUsd, costSatang),
           invocationKey: input.invocationKey,
         },
       });
@@ -841,7 +872,9 @@ export async function settleAiBudgetStep(
 
       // No clamp, ever. The FULL actual is already recorded above; this only closes the scope.
       // An operator charge lands exactly ON the bound, so this decision can never open a breach.
-      const breached = costSatang > reservation.upperBoundSatang;
+      const breached = costSatang > reservation.upperBoundSatang
+        || isV2 && !operator && typeof input.externalUnits === 'number'
+          && input.externalUnits > (reservation.pricingSnapshot as AiRenderedPricingSnapshotV2).externalUnitBound;
       await tx.aiBudgetReservation.update({
         where: { id: reservation.id },
         data: {
@@ -850,6 +883,7 @@ export async function settleAiBudgetStep(
           evidenceJson: { tag: input.entry.tag, modelId: input.entry.modelId, ok: input.entry.ok,
             inputTokens: input.entry.inputTokens, outputTokens: input.entry.outputTokens,
             cacheReadInputTokens: input.entry.cacheReadInputTokens, cacheWriteInputTokens: input.entry.cacheWriteInputTokens,
+            ...(isV2 ? { externalUnits: input.externalUnits ?? null, contractVersion: 2 } : {}),
             // What the row was when real evidence arrived, so reconciliation can see it.
             ...(anomalous ? { anomaly: { previousStatus: reservation.status } } : {}),
             // Who decided, and why — the row itself says it was not measured.

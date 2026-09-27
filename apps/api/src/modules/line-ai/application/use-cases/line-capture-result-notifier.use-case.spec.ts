@@ -83,6 +83,7 @@ function makeNotifier(scenario: Scenario = {}) {
     { webBaseUrl: 'https://app.example.com' } as any,
     { resolveAccess: async () => ({ membershipId: 'm1', roles: ['STAFF'], permissions: scenario.permissions ?? ['expense.receipt.line_upload'], scopes: {} }) } as any,
     {
+      readLineDeliveryOwner: async () => scenario.expenseSnapshot === null ? null : ({ createdByUserId: 'user-1', lineChatKeyHash: scenario.lineChatKeyHash === undefined ? CHAT_HASH : scenario.lineChatKeyHash, linePushTargetId: scenario.linePushTargetId ?? null, sourceIsLine: (scenario.intakeChannel ?? 'LINE') === 'LINE' && (scenario.captureSource ?? 'LINE_UPLOAD') === 'LINE_UPLOAD' }),
       readFinishedSnapshot: async (_companyId: string, groupId: string) => ({
         group: { id: groupId, status: 'OPEN', intakeChannel: scenario.intakeChannel ?? 'LINE',
           createdByUserId: 'user-1', lineChatKeyHash: scenario.lineChatKeyHash === undefined ? CHAT_HASH : scenario.lineChatKeyHash,
@@ -116,6 +117,7 @@ function makeNotifier(scenario: Scenario = {}) {
       claimBatch: async () => events,
       markPublished: async (input: any) => { published.push(input.id); return true; },
       markFailed: async (input: any) => { failed.push({ id: input.id, error: input.error }); return true; },
+      markDead: async (input: any) => { failed.push({ id: input.id, error: input.error }); return true; },
     } as any,
     {
       // The real use case refuses a group it has already handed off (`handoff_exists`), so a second
@@ -217,9 +219,8 @@ describe('LINE capture result push (appendix §3)', () => {
       assert.equal(h.pushes.length, 0);
       assert.equal(result.pushed, 0);
       // UXE-25: the attempt carries the undelivered outcome so §17.5 can answer honestly later.
-      assert.equal(h.attemptUpdates.length, 1);
-      assert.equal(h.attemptUpdates[0].reasonCode, 'LINE_DELIVERY_FAILED');
-      assert.equal(h.attemptUpdates[0].outcome, 'STORED_READ_DONE');
+      assert.equal(h.attemptUpdates.length, 0, 'recipient denial happens before reading the private finished snapshot');
+      assert.equal(result.skipped, 1);
     });
   }
 
@@ -229,6 +230,9 @@ describe('LINE capture result push (appendix §3)', () => {
     assert.equal(h.pushes.length, 1);
     assert.equal(result.pushed, 0);
     assert.equal(h.attemptUpdates[0].reasonCode, 'LINE_DELIVERY_FAILED');
+    assert.equal(h.published.length, 0, 'provider failure must remain replayable');
+    assert.equal(h.failed.length, 1);
+    assert.equal(result.parked, 1);
   });
 
   it('a delivered result records it as delivered', async () => {
@@ -295,13 +299,16 @@ describe('LINE capture result push (appendix §3)', () => {
     assert.match(h.pushes[1]?.messages[0]?.text ?? '', /companies\/company-1\/expenses/, 'appendix §25: the withdrawn group page is replaced by the expense list');
   });
 
-  it('a group chat is answered IN the group chat it arrived from', async () => {
+  it('CI09/DI10 blocks a private capture group before reading the finished result, even with flags off', async () => {
     const groupChat = 'Cgroup-chat-id';
     const h = makeNotifier({ linePushTargetId: groupChat, lineChatKeyHash: hashMessagePreview(groupChat) });
+    (h.notifier as any).captureLine.readFinishedSnapshot = async () => { throw new Error('PRIVATE_SNAPSHOT_MUST_NOT_LOAD'); };
     const result = await h.notifier.execute();
-    assert.equal(result.pushed, 1);
-    assert.equal(h.pushes[0].to, groupChat, 'W02-LINE deviation 2 is closed: not only 1:1 chats');
-    assert.equal(h.attemptUpdates[0].reasonCode, 'result_delivered');
+    assert.equal(result.pushed, 0);
+    assert.equal(result.skipped, 1);
+    assert.equal(result.parked, 0);
+    assert.equal(h.pushes.length, 0);
+    assert.equal(h.handoffCalls.length, 0);
   });
 
   it('a 1:1 capture with no stored target still reaches the sender', async () => {
@@ -452,6 +459,6 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
     const result = await h.notifier.execute();
     assert.deepEqual(result, { claimed: 1, pushed: 0, skipped: 1, parked: 0 });
     assert.equal(h.pushes.length, 0);
-    assert.equal(h.attemptUpdates[0].reasonCode, 'LINE_DELIVERY_FAILED');
+    assert.equal(h.attemptUpdates.length, 0, 'no private snapshot is loaded after unlink');
   });
 });

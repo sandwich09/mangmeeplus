@@ -40,6 +40,7 @@ function makePrisma(targetRoleRows: Array<{ role: { key: string; permissions: Ar
       update: async ({ data }: any) => { state.membershipStatus = data.status ?? state.membershipStatus; },
     },
     aiConversation: {
+      findMany: async () => [],
       deleteMany: async ({ where }: any) => { state.aiPurges.push(where); return { count: 2 }; },
     },
     employeeLineLinkToken: {
@@ -121,7 +122,7 @@ describe('SetEmployeeStatusUseCase', () => {
     assert.equal(state.profileStatus, 'DISABLED');
     assert.equal(state.membershipStatus, 'DISABLED');
     assert.equal(state.auditLogs[0].action, 'access.employee.disable');
-    assert.deepEqual(state.aiPurges, [{ companyId: COMPANY_ID, userId: 'user-1' }]);
+    assert.deepEqual(state.aiPurges, [{ companyId: COMPANY_ID, userId: 'user-1', channelKind: null }]);
     assert.equal(state.auditLogs[0].metadataJson.aiConversationsPurged, 2);
   });
 

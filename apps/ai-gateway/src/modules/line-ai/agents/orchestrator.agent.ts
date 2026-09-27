@@ -1,3 +1,4 @@
+import { runSemanticTurnV2 } from './semantic-turn-v2';
 /**
  * OrchestratorAgent – feature-flagged entry point for item 10B local agent flow.
  * When a model provider is available the model drives tool selection (model-driven loop,
@@ -6,8 +7,8 @@
  * all data via ErpToolClient.
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiPeriodCandidate, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta } from '@watchdog-bms/contracts';
-import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, isBusinessIntakeIntent, mapThaiDigits, parseLineAiPreparedPlan, resolvePeriodCandidates, unresolvedMonthName } from '@watchdog-bms/contracts';
+import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiSemanticCoverageV2, LineAiSemanticSubrequestV2, LineAiPeriodCandidate, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta, PublicLookupResult } from '@watchdog-bms/contracts';
+import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, isBusinessIntakeIntent, mapThaiDigits, parseLineAiPreparedPlan, parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, resolvePeriodCandidates, unresolvedMonthName } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
 import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
@@ -19,11 +20,14 @@ import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleRe
 import { activePreparedFamilies, formatExpenseSummary, formatPreparedSimpleRead, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { formatDraftUpdateReply } from './draft-update-formatter';
+import { offeredKnowledgeMetadata, productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
+import { PRODUCT_HELP_PACK } from './approved-product-help';
 import { GROUNDING_TEXT_MAX } from '../infrastructure/erp-tool.client';
 import { CoverageCriticAgent } from './coverage-critic.agent';
 import { ErpToolClient, type ErpToolContext } from '../infrastructure/erp-tool.client';
 import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
 import { createProvider } from '../infrastructure/provider/provider.factory';
+import { currentBudgetGrantV2 } from '../../../common/usage/usage-context';
 import type { IModelProvider, ProviderToolCall, ProviderToolMessage, ProviderToolResult, ProviderToolSpec } from '../infrastructure/provider/provider.port';
 
 export const ORCHESTRATOR_SYSTEM_PROMPT = `
@@ -38,6 +42,52 @@ If a task needs final approval, payment, posting, stock mutation, tax filing, or
 
 const OTHER_BUSINESS_TOPIC = /(?:ภาษี|\bvat\b|ภ\.?พ\.?\s*\d*|ยอดขาย|การขาย|ขาย|\bsales?\b|สต็อก|สินค้า|\bstock\b|รายได้|\bincome\b|ลูกค้า|\bcrm\b|จัดซื้อ|\bprocurement\b)/iu;
 const EXPENSE_CONTEXT = /(?:ค่าใช้จ่าย|รายจ่าย|\bexpenses?\b|\bspend\b)/iu;
+
+const PRIVATE_LOOKUP_VALUE_KEY = /(?:name|id|code|sku|email|phone|address|amount|total|balance|account|tax|reference|invoice|vendor|customer|employee|recipient)/iu;
+
+function addPrivateLookupCanaries(target: Set<string>, value: unknown, key = '', depth = 0): void {
+  if (depth > 7 || target.size >= 256 || value === null || value === undefined) return;
+  if (typeof value === 'string') {
+    if (PRIVATE_LOOKUP_VALUE_KEY.test(key) && value.trim().length >= 3 && value.length <= 200) target.add(value.trim());
+    return;
+  }
+  if (typeof value === 'number') {
+    if (PRIVATE_LOOKUP_VALUE_KEY.test(key) && Number.isFinite(value)) target.add(String(value));
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value.slice(0, 80)) addPrivateLookupCanaries(target, item, key, depth + 1);
+    return;
+  }
+  if (typeof value === 'object') {
+    for (const [childKey, child] of Object.entries(value as Record<string, unknown>).slice(0, 100)) {
+      addPrivateLookupCanaries(target, child, childKey, depth + 1);
+    }
+  }
+}
+
+function requestPrivateLookupCanaries(req: LineAiTurnRequest): string[] {
+  const values = new Set<string>();
+  for (const value of [req.userContext.companyId, req.userContext.internalUserId, req.userContext.membershipId,
+    req.userContext.chatKeyHash, ...(req.userContext.branchIds ?? []), ...(req.userContext.locationIds ?? [])]) {
+    if (value && value.length >= 3) values.add(value);
+  }
+  addPrivateLookupCanaries(values, req.valueCandidates);
+  for (const task of req.taskProjection?.tasks ?? []) {
+    addPrivateLookupCanaries(values, task.slots, 'slot');
+    addPrivateLookupCanaries(values, task.sourceRevisionLocators, 'sourceId');
+    addPrivateLookupCanaries(values, task.attachmentPageRefs, 'attachmentId');
+  }
+  addPrivateLookupCanaries(values, req.conversationContext?.deliveredExpenseSummary, 'summary');
+  return [...values];
+}
+
+function addToolOutputCanaries(target: Set<string>, output: SpecialistOutput): void {
+  for (const entry of output.toolData ?? []) addPrivateLookupCanaries(target, entry.data);
+  for (const fact of output.facts) {
+    addPrivateLookupCanaries(target, fact.value, fact.label);
+  }
+}
 const UNSUPPORTED_EXPENSE_FILTER = /(?:เฉพาะ\s*(?:ยืนยัน|จ่าย|ปฏิเสธ|ยกเลิก)|รวม\s*(?:รายการ)?\s*(?:ยกเลิก|ถูกปฏิเสธ)|(?:จ่ายแล้ว|ยืนยันแล้ว)\s*กี่\s*(?:ใบ|รายการ)|หมวด.{0,20}(?:เฉพาะ|แยก)|(?:เฉพาะ|แยก).{0,20}หมวด|จ่ายจริง|ยอดจ่ายจริง|category\s*(?:only|filter)|status\s*(?:filter|only))/iu;
 
 function expenseCriterionConfirmationSignal(text: string, hasPriorExpenseContext: boolean): boolean {
@@ -962,7 +1012,18 @@ export class OrchestratorAgent {
   ) {}
 
   async run(req: LineAiTurnRequest): Promise<AgentRunResult> {
+    if (req.inputEvidence && req.budgetGrantV2 && req.semanticSubrequests?.length) return runSemanticTurnV2({ req,
+      provider: createProvider(this.config, { modelId: req.modelPolicy?.modelId }), invoke: (meta, context, args) => this.erpTools.invoke(meta, context, args),
+      draftEditEnabled: this.config.lineAiDraftEditEnabled, reimbursementDraftEnabled: this.config.lineAiReimbursementDraftWriteEnabled,
+      publicLookupEnabled: this.config.lineAiPublicLookupEnabled, approvedKnowledgeEnabled: this.config.lineAiApprovedKnowledgeEnabled });
     const startMs = Date.now();
+    const knowledgeRequest = req as LineAiTurnRequest & { approvedKnowledge?: boolean; selectedKnowledgeCardIds?: string[] };
+    const knowledgeEnabled = this.config.lineAiApprovedKnowledgeEnabled === true && knowledgeRequest.approvedKnowledge === true;
+    const knowledgeAccess = (language?: string) => productKnowledgeAccess(
+      req.userContext.permissions, req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? [],
+      !!req.userContext.membershipId && !!req.userContext.companyId,
+      language ? language.startsWith('en') ? 'en' : 'th' : /[\u0E00-\u0E7F]/u.test(req.messageText) ? 'th' : 'en',
+    );
     const anchored = priorMonthAnchor(req);
     if (anchored !== undefined) {
       const periods: LineAiPeriodCandidate[] = anchored ? [{
@@ -1072,8 +1133,9 @@ export class OrchestratorAgent {
     }
 
     // Route intents. Fresh, non-narrowed delegation preserved (Phase 3 shadow may then compare).
-    const router = new IntentRouterAgent(provider, this.config.lineAiDraftEditEnabled);
-    const routedPlan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications);
+    const router = new IntentRouterAgent(provider, this.config.lineAiDraftEditEnabled, { enabled: knowledgeEnabled });
+    const routedPlan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications,
+      knowledgeEnabled ? offeredKnowledgeMetadata(PRODUCT_HELP_PACK, knowledgeAccess()) : undefined);
     this.maybeShadowComparePreparedPlan(req, routedPlan);
     const access = normalizePlanToolAccess(routedPlan, req.messageText, req.userContext);
     // Spec §5.5 / evidence E4: a trusted business-read intake about the caller's own record must
@@ -1331,10 +1393,20 @@ export class OrchestratorAgent {
     } else if (zeroToolIntent === 'capability_help') {
       // The self-description is filtered by the same two gates a real answer would hit, so it can
       // never advertise a capability this caller's permissions or this company's features refuse.
-      replyText = composer.composeCapabilityHelp(req.messageText, plan.language, req.userContext.locale, {
-        permissions: req.userContext.permissions,
-        ...(req.entitledFeatureKeys && { entitledFeatureKeys: req.entitledFeatureKeys }),
-      });
+      const knowledgeAnswer = knowledgeEnabled
+        ? renderApprovedKnowledge(PRODUCT_HELP_PACK, knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
+          knowledgeAccess(plan.language), req.userContext.companyId) : null;
+      if (knowledgeAnswer) {
+        replyText = knowledgeAnswer.replyText;
+        finalSourceRefs = knowledgeAnswer.sourceRefs;
+        finalWebLinks = knowledgeAnswer.webLinks;
+        expensePresentation = knowledgeAnswer.presentation;
+      } else {
+        replyText = composer.composeCapabilityHelp(req.messageText, plan.language, req.userContext.locale, {
+          permissions: req.userContext.permissions,
+          ...(req.entitledFeatureKeys && { entitledFeatureKeys: req.entitledFeatureKeys }),
+        });
+      }
     } else if (zeroToolIntent === 'casual_conversation') {
       replyText = await composer.composeCasual(req.messageText, provider, {
         planLanguage: plan.language,
@@ -1385,7 +1457,7 @@ export class OrchestratorAgent {
     const displayWebLinks = monthReply ? finalWebLinks.map((link) => ({
       ...link, label: plan.language.startsWith('en') ? 'Choose a month in the expense list' : 'เลือกเดือนในรายการค่าใช้จ่าย',
     })) : finalWebLinks;
-    const presentation = terminalExpenseResult ? undefined : monthReply
+    let presentation = terminalExpenseResult ? undefined : monthReply
       ? { kind: 'answer_cards' as const, cards: [{
         text: replyText,
         sourceLabels: [...new Set(finalSourceRefs.map((source) => source.label))],
@@ -1399,6 +1471,26 @@ export class OrchestratorAgent {
         req.userContext.locale,
         !!askUserQuestion,
       );
+
+    // A selected guide never replaces another requested read. Keep the reviewed body and its
+    // source separate from model composition, so a mixed question preserves both answers.
+    if (knowledgeEnabled && !zeroToolIntent && plan.status !== 'UNROUTABLE') {
+      const help = renderApprovedKnowledge(PRODUCT_HELP_PACK,
+        knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
+        knowledgeAccess(plan.language), req.userContext.companyId);
+      if (help) {
+        const businessText = replyText;
+        replyText = `${businessText}\n\n${help.replyText}`;
+        const businessSources = [...new Set(finalSourceRefs.map((source) => source.label))];
+        presentation = { kind: 'answer_cards', cards: [
+          { text: businessText, ...(businessSources.length ? { sourceLabels: businessSources } : {}),
+            ...(displayWebLinks[0] ? { webLink: displayWebLinks[0] } : {}) },
+          ...(help.presentation.kind === 'answer_cards' ? help.presentation.cards : []),
+        ] };
+        finalSourceRefs = [...finalSourceRefs, ...help.sourceRefs];
+        displayWebLinks.push(...help.webLinks);
+      }
+    }
 
     // A zero-tool clarification must still reach the API ledger. The critic only runs after
     // tool output, so synthesize the same typed outcome for JSON/native ask_user paths.

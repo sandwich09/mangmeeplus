@@ -17,6 +17,7 @@ const definition: ReportDatasetDefinitionDto = {
   supportedFilters: [
     { key: 'periodKey', label: 'Period', type: 'string' },
     { key: 'fromDate', label: 'From date', type: 'date' },
+    { key: 'toDate', label: 'To date', type: 'date' },
   ],
   supportedDimensions: [{ key: 'account', label: 'Account', type: 'string' }],
   supportedMeasures: [{ key: 'amount', label: 'Amount', type: 'money' }],
@@ -52,6 +53,17 @@ describe('validateReportQuery', () => {
     assert.throws(() => validateReportQuery(definition, { datasetCode: 'test.report', filters: { periodKey: '2026-Q1' } }), /Invalid periodKey/);
     assert.throws(() => validateReportQuery(definition, { datasetCode: 'test.report', chartKind: 'line' }), /Unsupported chart kind/);
     assert.throws(() => validateReportQuery(definition, { datasetCode: 'test.report', pageSize: 101 }), /pageSize/);
+  });
+
+  it('accepts a complete real date range and rejects partial, impossible, reversed, or mixed periods', () => {
+    const valid = validateReportQuery(definition, {
+      datasetCode: 'test.report', filters: { fromDate: '2024-02-29', toDate: '2024-03-01' },
+    });
+    assert.deepEqual(valid.filters, { fromDate: '2024-02-29', toDate: '2024-03-01' });
+    assert.throws(() => validateReportQuery(definition, { datasetCode: 'test.report', filters: { fromDate: '2026-02-01' } }), /supplied together/);
+    assert.throws(() => validateReportQuery(definition, { datasetCode: 'test.report', filters: { fromDate: '2026-02-29', toDate: '2026-03-01' } }), /Invalid date/);
+    assert.throws(() => validateReportQuery(definition, { datasetCode: 'test.report', filters: { fromDate: '2026-03-01', toDate: '2026-02-28' } }), /must not be after/);
+    assert.throws(() => validateReportQuery(definition, { datasetCode: 'test.report', filters: { periodKey: '2026-02', fromDate: '2026-02-01', toDate: '2026-02-28' } }), /cannot be combined/);
   });
 });
 

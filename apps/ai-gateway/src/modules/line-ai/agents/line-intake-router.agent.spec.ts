@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { IntentRouterAgent, LINE_INTAKE_ROUTER_SYSTEM_PROMPT, intakeRouterSystemPrompt } from './intent-router.agent';
 import { DisabledProvider } from '../infrastructure/provider/disabled.provider';
-import type { BusinessDocumentClassification, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
+import { createLineAiInputEvidence, verifyLineAiRetainedTaskSource, type BusinessDocumentClassification, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
 
 function baseRequest(overrides: Partial<LineIntakeRouteRequest> = {}): LineIntakeRouteRequest {
@@ -38,6 +38,63 @@ function documentClassification(overrides: Partial<BusinessDocumentClassificatio
 }
 
 describe('LINE intake router – routeIntake', () => {
+  it('uses only the selected retained write clause while keeping the live selection input unchanged', async () => {
+    const oldText = 'บันทึกค่ากาแฟ 120 บาท วันที่ 26/9/2569\nบันทึกค่าเดินทาง 999 บาท';
+    const old = await createLineAiInputEvidence({ turnKey: 'old-turn', parts: [{ partId: 'old-part', eventIdHash: 'a'.repeat(64),
+      acceptedAtMs: Date.parse('2026-09-27T01:00:00Z'), rawText: oldText }] });
+    const current = await createLineAiInputEvidence({ turnKey: 'current-turn', parts: [{ partId: 'current-part', eventIdHash: 'b'.repeat(64),
+      acceptedAtMs: Date.parse('2026-09-27T02:00:00Z'), rawText: 'ทำข้อ1ก่อน' }] });
+    assert.ok(old && current);
+    const retainedTaskSource = await verifyLineAiRetainedTaskSource({
+      taskRef: { taskId: 'task-1', taskRevision: 3, subrequestIndex: 0 }, inputEvidence: old.inputEvidence,
+      semanticSubrequest: { index: 1, kind: 'write', writeIntent: 'EXPENSE_DOCUMENT_CAPTURE', goal: 'บันทึกค่ากาแฟ',
+        requiredEvidence: [], requestedFilters: {}, dependsOn: [0], evidenceRefs: [{ partId: 'old-part', startUtf16: 0,
+          endUtf16: oldText.indexOf('\n'), rawSha256: old.inputEvidence.parts[0]!.rawSha256 }] },
+    });
+    assert.ok(retainedTaskSource);
+    const taskProjection = { version: 2 as const, stateVersion: 1, lifecycleEpoch: 0, expiresAtMs: Date.now() + 60_000,
+      tasks: [{ taskId: 'task-1', revision: 3, kind: 'write' as const, state: 'paused' as const, userGoal: 'เลือกงาน',
+        subrequests: [{ index: 0, kind: 'write' as const, goal: 'บันทึกค่ากาแฟ', status: 'pending' as const }] }] };
+    const semanticSubrequests = [{ index: 0, kind: 'write', writeIntent: 'EXPENSE_DOCUMENT_CAPTURE', goal: 'บันทึกค่ากาแฟ',
+      requiredEvidence: [], requestedFilters: {}, dependsOn: [], taskRef: retainedTaskSource.taskRef,
+      evidenceRefs: [{ partId: 'current-part', startUtf16: 0, endUtf16: current.messageText.length,
+        rawSha256: current.inputEvidence.parts[0]!.rawSha256 }] }];
+
+    const capture: { input?: ProviderInput } = {};
+    const accepted = await new IntentRouterAgent(modelAnswer({ intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95,
+      captureHints: { amount: '120', description: 'ค่ากาแฟ', expenseDate: '2026-09-26' }, semanticSubrequests }, capture)).routeIntake(baseRequest({
+        messageText: current.messageText, inputEvidence: current.inputEvidence, taskProjection, retainedTaskSource,
+      }));
+    assert.equal(accepted.captureHints?.amount, '120');
+    assert.equal(accepted.captureHints?.description, 'ค่ากาแฟ');
+    assert.equal(accepted.captureHints?.expenseDate, '2026-09-26');
+    const payload = JSON.parse(capture.input?.messages[0]?.text ?? '{}');
+    assert.equal(payload.messageText, 'ทำข้อ1ก่อน');
+    assert.equal(payload.inputEvidenceParts[0].rawText, 'ทำข้อ1ก่อน');
+    assert.match(payload.retainedTaskSource.selectedClause.text, /ค่ากาแฟ 120/);
+    assert.doesNotMatch(payload.retainedTaskSource.selectedClause.text, /999|ค่าเดินทาง/);
+    assert.deepEqual(payload.retainedTaskSource.selectedClause.valueCandidates.amounts.map((item: { value: string }) => item.value), ['120']);
+
+    const forbidden = await new IntentRouterAgent(modelAnswer({ intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95,
+      captureHints: { amount: '999', description: 'ค่าเดินทาง' }, semanticSubrequests })).routeIntake(baseRequest({
+        messageText: current.messageText, inputEvidence: current.inputEvidence, taskProjection, retainedTaskSource,
+      }));
+    assert.equal(forbidden.captureHints?.amount, undefined);
+    assert.equal(forbidden.captureHints?.description, undefined);
+
+    let paidCalls = 0;
+    const tampered = structuredClone(retainedTaskSource);
+    tampered.inputEvidence.parts[0]!.rawText = oldText.replace('120', '121');
+    const rejected = await new IntentRouterAgent({ generateText: async () => {
+      paidCalls += 1;
+      return { ok: true as const, text: '{}' };
+    } }).routeIntake(baseRequest({
+      messageText: current.messageText, inputEvidence: current.inputEvidence, taskProjection, retainedTaskSource: tampered,
+    }));
+    assert.equal(rejected.errorCode, 'AI_CONTRACT_UNSUPPORTED');
+    assert.equal(paidCalls, 0, 'tampered historical evidence is rejected before the provider');
+  });
+
   it('routes a standalone signature-like image to SIGNATURE_UPLOAD_TICKET and passes the image to the model', async () => {
     const capture: { input?: ProviderInput } = {};
     const router = new IntentRouterAgent(modelAnswer(
@@ -450,4 +507,14 @@ describe('LINE intake router – value candidate guards (item 10F)', () => {
     assert.deepEqual(payload.valueCandidates, candidates);
     assert.ok(LINE_INTAKE_ROUTER_SYSTEM_PROMPT.includes('valueCandidates'), 'prompt explains candidate selection');
   });
+});
+
+it('preserves full correction field proposals for API field-specific validation', async () => {
+  const note = 'ก'.repeat(500);
+  const vendor = 'ข'.repeat(201);
+  const router = new IntentRouterAgent(modelAnswer({ intent: 'EXPENSE_CAPTURE_CORRECTION', language: 'th', confidence: 0.95,
+    correctionHints: { note: { to: note }, vendorName: { to: vendor } } }));
+  const plan = await router.routeIntake(baseRequest({ messageText: `${note} ${vendor}` }));
+  assert.equal(plan.correctionHints?.note?.to, note);
+  assert.equal(plan.correctionHints?.vendorName?.to, vendor);
 });

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "date": "2026-09-27",
+  "sourceCommit": "8b05ed33f8c8ddfcb05ca4e51c029cde06f2a464",
+  "evidenceKind": "local_code_and_isolated_postgres_baseline_not_model_quality_or_release",
+  "runtime": {
+    "node": "22.23.2",
+    "pnpm": "9.15.0",
+    "postgres": "16-alpine",
+    "redis": "7-alpine"
+  },
+  "checks": [
+    {
+      "name": "contracts",
+      "command": "pnpm --filter @watchdog-bms/contracts exec tsx --test src/line-ai-prepared-plan.spec.ts src/line-ai-advisor-answer.spec.ts",
+      "result": {
+        "tests": 67,
+        "pass": 67,
+        "fail": 0,
+        "skipped": 0,
+        "cancelled": 0
+      },
+      "logSha256": "d59e2de2c746b2fbe2c8b6dc70bcc395665a0b855822d78ff1d935ada94741e4",
+      "localLog": "/tmp/mangmee-ai-baseline-contracts.log",
+      "exitCode": 0
+    },
+    {
+      "name": "gateway",
+      "command": "pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/agentcore/runtime.spec.ts src/modules/line-ai/infrastructure/runtime/agentcore-runtime.client.spec.ts src/modules/line-ai/infrastructure/provider/openai.provider.spec.ts src/modules/line-ai/infrastructure/provider/bedrock.provider.spec.ts",
+      "result": {
+        "tests": 105,
+        "pass": 105,
+        "fail": 0,
+        "skipped": 0,
+        "cancelled": 0
+      },
+      "logSha256": "9e4978c1320e3b1141f838bc5f2fcdcba7225cfae63494b69ae167483295761e",
+      "localLog": "/tmp/mangmee-ai-baseline-gateway.log",
+      "exitCode": 0
+    },
+    {
+      "name": "api",
+      "command": "pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.spec.ts src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.spec.ts",
+      "result": {
+        "tests": 399,
+        "pass": 399,
+        "fail": 0,
+        "skipped": 0,
+        "cancelled": 0
+      },
+      "logSha256": "da4dcf2a11ddac75798f156a28f0b9d690268df40fbf889c41b42e61d048093e",
+      "localLog": "/tmp/mangmee-ai-baseline-api.log",
+      "exitCode": 0
+    },
+    {
+      "name": "pg",
+      "command": "AI_BUDGET_RESERVATION_TEST_DATABASE_URL=<isolated-local-fixture> AI_BUDGET_RESERVATION_REQUIRE_POSTGRES=true LINE_DRAFT_EDIT_TEST_DATABASE_URL=<isolated-local-fixture> pnpm --filter @watchdog-bms/api exec tsx --test --test-concurrency=1 src/modules/line-ai/application/company-ai-budget-reservation.pg.spec.ts src/modules/expenses/line-draft-update.pg.spec.ts",
+      "result": {
+        "tests": 21,
+        "pass": 21,
+        "fail": 0,
+        "skipped": 0,
+        "cancelled": 0
+      },
+      "logSha256": "887d494f2a43c466bb26b8b3a07362cd33c1ddb478ccc95a85bcf182eb4ad8cc",
+      "localLog": "/tmp/mangmee-ai-baseline-pg.log",
+      "exitCode": 0
+    }
+  ],
+  "sourceHashes": {
+    "pnpm-lock.yaml": "8610f3a88a9ff46acbe37d717e27eab141e661b3790763bb3449f146961a6a5b",
+    "packages/config/src/index.ts": "f5ae42c670efb6ce168c41ae02d6acda75916a584d6d4d076fb6ed5d7c692054",
+    "packages/contracts/src/line-ai.ts": "6423621cb4547e07697ce0b19f4424a4136e545955d809b6577f33e73febc466",
+    "packages/contracts/src/ai-tools.ts": "948ec6788608fb56aa3636baeaf0407f75cd663ca6084a3d0194f82ea89e0aae",
+    "apps/api/prisma/schema.prisma": "c0f5e8f3ef312367543c026b9088f03adf10f4d9383026f8848f83518555bf9b",
+    "scripts/line-ai-operator-language.corpus.ts": "c0b4ab4dcac776c4e43c8ef03aa2e91e9b7a1b9fdbe41c576643a27f18d51842",
+    "scripts/line-ai-substitute-routing.corpus.ts": "57e2d14ddb0339cb61769886e1561a45f5fc662e89c5ece91b8e86c0134c79a6",
+    "scripts/line-ai-latency-autonomy.corpus.ts": "ccaf8ff7c6702bc82882c16084e53048cd1a0d4f6d26b4de2556f5ab71cba3f6"
+  },
+  "migrations": {
+    "allExistingApplied": true,
+    "localLog": "/tmp/mangmee-ai-reliability-baseline-migrations.log"
+  },
+  "modelBackedEvaluation": "not_run",
+  "nativeLineAcceptance": "not_run",
+  "cloudOperations": "none"
+}
