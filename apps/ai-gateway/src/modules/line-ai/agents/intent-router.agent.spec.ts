@@ -541,6 +541,22 @@ describe('IntentRouterAgent – expense breakdown/name-filter routing (item 2g)'
   });
 });
 
+describe('IntentRouterAgent – conversation read memory (spec §4 R-M3/R-M4)', () => {
+  it('describes recentReads, its no-amount rule, and ordinal-to-shownItems resolution in the base intake prompt', () => {
+    const prompt = intakeRouterSystemPrompt();
+    assert.match(prompt, /conversationContext\.recentReads \(when present, spec §4 R-M2\/R-M3\)/);
+    assert.match(prompt, /NO amount in it \(never state a number from here/);
+    assert.match(prompt, /resolve that ONLY to the id at that ordinal in the newest matching entry's shownItems/);
+  });
+
+  it('lets the fused prepared plan copy a non-branch filter from recentReads, current message still wins', () => {
+    const prompt = intakeRouterSystemPrompt({ fusedPlan: true });
+    assert.match(prompt, /you may instead copy THAT entry's period and its non-branch filters/);
+    assert.match(prompt, /a value the current message actually states always overrides the copied one/);
+    assert.match(prompt, /a clear change of subject copies nothing/);
+  });
+});
+
 describe('IntentRouterAgent – intake clarifyQuestion (discovery)', () => {
   it('extracts a bounded clarifying question on the CLARIFY route', async () => {
     const router = new IntentRouterAgent({

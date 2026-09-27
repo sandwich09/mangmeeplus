@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { branchInputMatchesMessage, buildAnswerPresentation, expenseBranchScopeRequested, expenseCriterionOnlyMessage, OrchestratorAgent, uncertainExpenseFilter, unsupportedExpenseFilter, validExpensePeriodSelection, withoutRefusedCoverage } from './orchestrator.agent';
+import { branchInputMatchesMessage, buildAnswerPresentation, expenseBranchScopeRequested, expenseCriterionOnlyMessage, ORCHESTRATOR_TOOL_LOOP_PROMPT, OrchestratorAgent, uncertainExpenseFilter, unsupportedExpenseFilter, validExpensePeriodSelection, withoutRefusedCoverage } from './orchestrator.agent';
 import { ResponseComposerAgent } from './response-composer.agent';
 import { extractValueCandidates, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { LineAiPreparedPlan, LineAiTurnRequest } from '@watchdog-bms/contracts';
@@ -1682,4 +1682,13 @@ describe('approved knowledge orchestration', () => {
     assert.equal(result.presentation?.kind, 'answer_cards');
     if (result.presentation?.kind === 'answer_cards') assert.ok(result.presentation.cards.length >= 2);
   }));
+});
+
+describe('item 3 (R-M4): the classic tool-loop prompt names recentReads inheritance', () => {
+  it('tells the model to inherit period/filters from recentReads and resolve ordinals via shownItems', () => {
+    assert.match(ORCHESTRATOR_TOOL_LOOP_PROMPT, /conversationContext\.recentReads/);
+    assert.match(ORCHESTRATOR_TOOL_LOOP_PROMPT, /a value the CURRENT message states always overrides/);
+    assert.match(ORCHESTRATOR_TOOL_LOOP_PROMPT, /resolves to the id at that ordinal/);
+    assert.match(ORCHESTRATOR_TOOL_LOOP_PROMPT, /A clear change of subject inherits nothing from recentReads/);
+  });
 });
