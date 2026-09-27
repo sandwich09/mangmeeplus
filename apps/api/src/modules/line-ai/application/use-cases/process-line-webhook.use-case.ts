@@ -3416,11 +3416,17 @@ export class ProcessLineWebhookUseCase {
     const bound = this.boundConversations.get(event), initial = this.budgetGrantsV2.get(event);
     if (!bound || !initial || !event.inputEvidence || !route.semanticSubrequests?.length) throw new Error('AI_CONTRACT_UNSUPPORTED');
     const grant = await this.aiGateway.narrowLineReliabilityGrant(initial, 'general', ['line-answer/2']);
-    if (!grant) { await this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY); return; }
+    if (!grant) {
+      await this.deliverReply(event, 'ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง');
+      await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_ADMISSION_UNAVAILABLE', bound.owner.companyId);
+      return;
+    }
     this.budgetGrantsV2.set(event, grant);
     const resumes = route.semanticSubrequests.some(item => item.taskRef);
     if (resumes && !await this.preserveSemanticTask(event, route.semanticSubrequests)) {
-      await this.deliverReply(event, 'งานที่ต้องการทำต่อเปลี่ยนแล้วค่ะ กรุณาระบุงานปัจจุบันอีกครั้ง'); return;
+      await this.deliverReply(event, 'งานที่ต้องการทำต่อเปลี่ยนแล้วค่ะ กรุณาระบุงานปัจจุบันอีกครั้ง');
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', 'STALE_TASK_SELECTION', bound.owner.companyId);
+      return;
     }
     const request: LineAiTurnRequest = { requestId, webhookEventId: event.webhookEventId,
       userContext: { lineUserId: '[REDACTED]', internalUserId: bound.owner.userId, companyId: bound.owner.companyId,
@@ -3439,7 +3445,9 @@ export class ProcessLineWebhookUseCase {
     try { response = await this.aiGateway.requestLineTurn(request); }
     catch { await this.deliverReply(event, 'ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่'); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_UNAVAILABLE', bound.owner.companyId); return; }
     if (response.toolsInvoked.length || !response.semanticCoverage || response.semanticCoverage.length !== route.semanticSubrequests.length) {
-      await this.deliverReply(event, 'ยังตรวจสอบคำตอบครบทุกส่วนไม่ได้ค่ะ กรุณาลองใหม่'); return;
+      await this.deliverReply(event, 'ยังตรวจสอบคำตอบครบทุกส่วนไม่ได้ค่ะ กรุณาลองใหม่');
+      await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_CONTRACT_UNSUPPORTED', bound.owner.companyId);
+      return;
     }
     this.semanticDelivery.set(event, response.semanticCoverage);
     this.deliverySources.set(event, { requestId, ids: [] });
