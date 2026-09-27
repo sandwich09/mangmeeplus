@@ -291,8 +291,9 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       const bytes = runtimeAssetBytes(asset, repoRoot);
       return new Response(bytes, { status: 200, headers: { 'content-type': asset.mimeType } });
     }
-    // ERP calls the local serving Gateway. No other runtime HTTP egress is permitted by this harness.
-    assert.ok([new URL(manifest.gatewayUrl).origin, `http://127.0.0.1:${manifest.apiPort}`].includes(url.origin), 'REPLAY_EXTERNAL_API_EGRESS_BLOCKED');
+    // Presigned uploads/readers also use the explicitly validated local storage endpoint.
+    assert.ok([new URL(manifest.gatewayUrl).origin, `http://127.0.0.1:${manifest.apiPort}`,
+      ...(manifest.localStorageEndpoint ? [new URL(manifest.localStorageEndpoint).origin] : [])].includes(url.origin), 'REPLAY_EXTERNAL_API_EGRESS_BLOCKED');
     return originalFetch(input, init);
   }) as typeof fetch;
   const collect = async (row: ReliabilityFixture, turnIndex: number): Promise<ReliabilityTurnTrace> => {
