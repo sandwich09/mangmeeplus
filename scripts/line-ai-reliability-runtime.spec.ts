@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assertIsolatedReplayDatabase, captureRuntimeTurnEvidence, runtimeFailureDiagnostic, runtimeAskedSlots, runtimeDatabaseEffects, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback, type RuntimeTurnEvidence } from './line-ai-reliability-runtime';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { assertIsolatedReplayDatabase, captureRuntimeTurnEvidence, runLineReliabilityRuntime, runtimeAttachmentMessage, runtimeFailureDiagnostic, runtimeAskedSlots, runtimeDatabaseEffects, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback, type RuntimeTurnEvidence } from './line-ai-reliability-runtime';
 
 test('clarification trace keeps nested typed missing fields without guessing slots from prose', () => {
   assert.deepEqual(runtimeAskedSlots({ missingFields: ['amount'], captureHints: { missingFields: ['expenseDate', 'amount'] },
@@ -14,6 +18,23 @@ test('runtime replay refuses production, ordinary development databases and fore
   assert.doesNotThrow(() => assertIsolatedReplayDatabase('postgresql://test:test@127.0.0.1:15440/watchdog_ai_reliability_replay_smoke?schema=public'));
   for (const url of ['postgresql://test:test@db.prod/watchdog_ai_reliability_replay_smoke', 'postgresql://test:test@localhost/watchdog_bms',
     'postgresql://test:test@localhost/watchdog_ai_reliability_replay_smoke?schema=customer', 'https://localhost/watchdog_ai_reliability_replay_smoke']) assert.throws(() => assertIsolatedReplayDatabase(url), /DEDICATED_LOCAL/);
+});
+
+test('launch bootstrap refuses a truthy non-boolean before touching runtime services', async () => {
+  await assert.rejects(runLineReliabilityRuntime({ version: 2, databaseUrl: 'postgresql://test:test@127.0.0.1:15440/watchdog_ai_reliability_replay_smoke', bootstrapLaunchGates: 'true' } as any, '/unused'), /REPLAY_INVALID_LAUNCH_BOOTSTRAP_FLAG/);
+});
+
+test('PDF webhook metadata comes from verified asset bytes; image shape remains unchanged', () => {
+  const root = mkdtempSync(join(tmpdir(), 'line-replay-file-'));
+  try {
+    mkdirSync(join(root, 'docs/research'), { recursive: true });
+    const bytes = Buffer.from('synthetic ใบเสร็จ');
+    const asset = { path: 'docs/research/receipt.pdf', sha256: createHash('sha256').update(bytes).digest('hex'), mimeType: 'application/pdf' };
+    writeFileSync(join(root, asset.path), bytes);
+    assert.deepEqual(runtimeAttachmentMessage('file-a', asset, root), { type: 'file', id: 'file-a', fileName: 'receipt.pdf', fileSize: bytes.length });
+    assert.deepEqual(runtimeAttachmentMessage('image-a', { ...asset, mimeType: 'image/png' }, root), { type: 'image', id: 'image-a' });
+    assert.throws(() => runtimeAttachmentMessage('file-a', { ...asset, sha256: '0'.repeat(64) }, root), /REPLAY_ASSET_BYTES_CHANGED/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('effect evidence detects create/update/delete even when the application throws after commit', () => {

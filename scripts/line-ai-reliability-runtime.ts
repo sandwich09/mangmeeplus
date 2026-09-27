@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { resolve, sep } from 'node:path';
+import { basename, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execFileSync } from 'node:child_process';
 import type { ToolResult, SourceRef, LineAiTurnResponse, LineAiSemanticCoverageV2 } from '../packages/contracts/src/index';
@@ -31,6 +31,8 @@ export type ReliabilityRuntimeManifest = {
   apiPort: number; gatewayUrl: string; databaseUrl: string; redisUrl: string; localStorageEndpoint?: string;
   /** Non-secret runtime flags. Credentials come from the caller's environment, never this artifact. */
   environment: Record<string, string>; repeats: number; cohort: ReliabilityAttempt['cohort'];
+  /** Opt-in ordinary SYSTEM baseline, using the real bootstrap; negative-gate fixtures leave this off. */
+  bootstrapLaunchGates?: boolean;
 };
 export type RuntimeWireReceipt = { messages: unknown; at: number; receiptId: string; path: string; payloadHash: string };
 export type RuntimeTurnEvidence = {
@@ -56,6 +58,15 @@ export function runtimeFailureDiagnostic(error: unknown) {
     model: safe(value?.meta?.modelName), target: Array.isArray(value?.meta?.target) ? value.meta.target.map(safe).filter(Boolean) : undefined };
 }
 const sha = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
+function runtimeAssetBytes(asset: RuntimeSourceSnapshot['assets'][string], repoRoot: string): Buffer<ArrayBuffer> {
+  const path = resolve(repoRoot, asset.path); assert.ok(path.startsWith(resolve(repoRoot, 'docs/research') + sep), 'REPLAY_ASSET_PATH');
+  const bytes = readFileSync(path); assert.equal(sha(bytes), asset.sha256, 'REPLAY_ASSET_BYTES_CHANGED'); return bytes;
+}
+export function runtimeAttachmentMessage(id: string, asset: RuntimeSourceSnapshot['assets'][string] | undefined, repoRoot: string) {
+  assert.ok(asset, 'REPLAY_UNKNOWN_ASSET');
+  const bytes = runtimeAssetBytes(asset, repoRoot);
+  return asset.mimeType === 'application/pdf' ? { type: 'file', id, fileName: basename(asset.path), fileSize: bytes.length } : { type: 'image', id };
+}
 const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]']);
 export function assertIsolatedReplayDatabase(value: string): void {
   const url = new URL(value);
@@ -194,6 +205,7 @@ const EFFECT_TABLES = ['ExpenseRecord', 'ExpensePayment', 'ExpenseLine', 'Expens
 
 export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeManifest, repoRoot: string) {
   assert.equal(manifest.version, 2); assertIsolatedReplayDatabase(manifest.databaseUrl);
+  assert.ok(manifest.bootstrapLaunchGates === undefined || typeof manifest.bootstrapLaunchGates === 'boolean', 'REPLAY_INVALID_LAUNCH_BOOTSTRAP_FLAG');
   localUrl(manifest.gatewayUrl, 'http:'); const redisAddress = localUrl(manifest.redisUrl, 'redis:');
   assert.ok(/^\/(?:[1-9]|1[0-5])$/.test(redisAddress.pathname) && !['', '6379'].includes(redisAddress.port), 'REPLAY_DEDICATED_REDIS_DATABASE_REQUIRED');
   if (manifest.localStorageEndpoint) localUrl(manifest.localStorageEndpoint, 'http:');
@@ -207,7 +219,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     assert.ok(allowedEnv.test(key) && !/TOKEN|SECRET|URL|HOSTNAME/.test(key), 'REPLAY_UNSAFE_ENV'); process.env[key] = value;
   }
   const secret = `replay-${randomUUID()}`;
-  Object.assign(process.env, { APP_ENV: 'local', NODE_ENV: 'test', SERVICE_NAME: 'line-reliability-replay', DATABASE_URL: manifest.databaseUrl,
+  Object.assign(process.env, { APP_ENV: 'local', DEPLOY_ENVIRONMENT: 'local', GIT_SHA: sourceCommit, NODE_ENV: 'test', SERVICE_NAME: 'line-reliability-replay', DATABASE_URL: manifest.databaseUrl,
     REDIS_URL: manifest.redisUrl, AI_GATEWAY_INTERNAL_URL: manifest.gatewayUrl, LINE_MESSAGING_CHANNEL_SECRET: secret, LINE_AI_BUFFER_DEBOUNCE_MS: manifest.cohort,
     LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: 'local-replay-sink', S3_BUCKET: 'local-replay-only', S3_ENDPOINT: manifest.localStorageEndpoint ?? 'http://127.0.0.1:9',
     S3_PUBLIC_ENDPOINT: manifest.localStorageEndpoint ?? 'http://127.0.0.1:9', S3_ACCESS_KEY_ID: 'local-replay-only', S3_SECRET_ACCESS_KEY: 'local-replay-only',
@@ -275,8 +287,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     if (url.hostname === 'api-data.line.me') {
       const id = decodeURIComponent(url.pathname.match(/\/message\/([^/]+)\/content$/)?.[1] ?? '');
       const asset = snapshot?.assets[id]; assert.ok(asset, 'REPLAY_UNKNOWN_ASSET');
-      const path = resolve(repoRoot, asset.path); assert.ok(path.startsWith(resolve(repoRoot, 'docs/research') + sep), 'REPLAY_ASSET_PATH');
-      const bytes = readFileSync(path); assert.equal(sha(bytes), asset.sha256, 'REPLAY_ASSET_BYTES_CHANGED');
+      const bytes = runtimeAssetBytes(asset, repoRoot);
       return new Response(bytes, { status: 200, headers: { 'content-type': asset.mimeType } });
     }
     // ERP calls the local serving Gateway. No other runtime HTTP egress is permitted by this harness.
@@ -348,6 +359,11 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       stage = 'database_reset';
       await resetRuntimeFixtureDatabase(databaseLock, manifest.databaseUrl);
       for (const [index, seed] of snapshot.rows.entries()) { assert.ok(/^[a-z][A-Za-z0-9]*$/.test(seed.model) && typeof client[seed.model]?.create === 'function', 'REPLAY_INVALID_SEED_MODEL'); stage = `seed:${index}:${seed.model}`; await client[seed.model].create({ data: seed.data }); }
+      if (manifest.bootstrapLaunchGates === true) {
+        stage = 'launch_gate_bootstrap';
+        const { seedLaunchGates } = requireApi(resolve(compiled, 'modules/feature-launch/application/seed-launch-gates.js'));
+        await seedLaunchGates(app.get(PrismaService));
+      }
       stage = 'seed_access_validation';
       const entitlementRows = await client.companyFeatureEntitlement.findMany({ where: { companyId: row.fixture.company }, select: { featureKey: true, enabled: true } });
       assert.ok(entitlementRows.length, 'REPLAY_EXPLICIT_ENTITLEMENT_SEED_REQUIRED');
@@ -394,7 +410,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       if (postbackLabel) assert.ok(turn.user === postbackLabel && !turn.attachmentIds.length, 'REPLAY_POSTBACK_INPUT_MISMATCH');
       const source = { type: row.fixture.channelKind.toLowerCase(), userId: snapshot.lineUserId,
         ...(row.fixture.channelKind === 'GROUP' ? { groupId: row.fixture.chat } : row.fixture.channelKind === 'ROOM' ? { roomId: row.fixture.chat } : {}) };
-      const inputs = [...turn.attachmentIds.map(id => ({ type: snapshot!.assets[id]?.mimeType === 'application/pdf' ? 'file' : 'image', id })), ...(turn.user ? [{ type: 'text', text: turn.user, id: `${prefix}-text` }] : [])];
+      const inputs = [...turn.attachmentIds.map(id => runtimeAttachmentMessage(id, snapshot!.assets[id], repoRoot)), ...(turn.user ? [{ type: 'text', text: turn.user, id: `${prefix}-text` }] : [])];
       const before = await readEffects(), usageIds = new Set<string>((await client.aiUsageEvent.findMany({ select: { id: true } })).map((item: any) => item.id));
       const at = Date.now();
       active = { acceptedAt: at, eventIds: inputs.map((_, index) => `${prefix}-${index}`), before, usageIds,

@@ -1,6 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runOperatorLanguageReplay } from './run-line-ai-operator-language-replay';
 
 test('runtime CLI uses the original transport, never the deterministic routing fetch', async (t) => {
   const original = globalThis.fetch;
@@ -9,6 +8,8 @@ test('runtime CLI uses the original transport, never the deterministic routing f
   globalThis.fetch = transport;
   t.mock.method(console, 'log', () => {});
   try {
+    const { runOperatorLanguageReplay } = await import('./run-line-ai-operator-language-replay');
+    assert.equal(globalThis.fetch, transport, 'importing the runner must not replace the real transport');
     await runOperatorLanguageReplay(['node', 'replay', '--reliability-runtime', 'manifest.json'], async (path) => {
       assert.equal(path, 'manifest.json');
       assert.equal(globalThis.fetch, transport);
