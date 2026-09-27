@@ -89,7 +89,11 @@ function addToolOutputCanaries(target: Set<string>, output: SpecialistOutput): v
     addPrivateLookupCanaries(target, fact.value, fact.label);
   }
 }
-const UNSUPPORTED_EXPENSE_FILTER = /(?:เฉพาะ\s*(?:ยืนยัน|จ่าย|ปฏิเสธ|ยกเลิก)|รวม\s*(?:รายการ)?\s*(?:ยกเลิก|ถูกปฏิเสธ)|(?:จ่ายแล้ว|ยืนยันแล้ว)\s*กี่\s*(?:ใบ|รายการ)|หมวด.{0,20}(?:เฉพาะ|แยก)|(?:เฉพาะ|แยก).{0,20}หมวด|จ่ายจริง|ยอดจ่ายจริง|category\s*(?:only|filter)|status\s*(?:filter|only))/iu;
+// expense.list_recent/expense.get_breakdown now take documentStatus, paymentStatus, categoryId, and
+// branchId filters, so a status filter, category split, or "จ่ายจริง" (actual-paid) request is
+// answerable by normal routing. The one criterion no tool can serve is including rejected/voided
+// records INTO the aggregate total: exclude_rejected_voided is the fixed basis for that total.
+const UNSUPPORTED_EXPENSE_FILTER = /รวม\s*(?:รายการ)?\s*(?:ยกเลิก|ถูกปฏิเสธ)/iu;
 
 function expenseCriterionConfirmationSignal(text: string, hasPriorExpenseContext: boolean): boolean {
   return (EXPENSE_CONTEXT.test(text) || hasPriorExpenseContext)

@@ -1476,7 +1476,7 @@ describe('run-level expense follow-up execution', () => {
   it('keeps sales when an unsupported expense filter is requested and never reads an unfiltered expense total', async () => {
     const calls: string[] = [];
     configureLoopProvider(mixedPlan, [{ callTool: 'sales.get_sales_summary', input: {} }]);
-    const req = makeReq('ยอดขายวันนี้และค่าใช้จ่ายเฉพาะยืนยันแล้ว');
+    const req = makeReq('ยอดขายวันนี้และค่าใช้จ่ายรวมรายการยกเลิกด้วย');
     req.userContext.permissions.push('crm.report.read', 'expense.read');
     const result = await new OrchestratorAgent(mixedErp(calls), makeConfig()).run(req);
     assert.deepEqual(calls, ['sales.get_sales_summary']);
@@ -1539,9 +1539,12 @@ describe('run-level expense follow-up execution', () => {
     assert.equal(uncertainExpenseFilter('ยอดขายไม่รวมปฎิเสด', true), false);
   });
 
-  it('recognizes unsupported expense status, category, and actual-paid filters', () => {
-    for (const text of ['ค่าใช้จ่ายเฉพาะยืนยันแล้ว', 'ค่าใช้จ่ายเฉพาะจ่ายแล้ว', 'ค่าใช้จ่ายรวมรายการยกเลิก',
-      'ค่าใช้จ่ายเฉพาะหมวดเดินทาง', 'ค่าใช้จ่ายจ่ายจริงเท่าไร']) assert.equal(unsupportedExpenseFilter(text), true, text);
+  it('reaches normal routing for status, category, and actual-paid filters; only "include rejected/voided in the total" stays unsupported', () => {
+    for (const text of ['ค่าใช้จ่ายรวมรายการยกเลิก', 'ค่าใช้จ่ายรวมถูกปฏิเสธด้วย']) assert.equal(unsupportedExpenseFilter(text), true, text);
+    // documentStatus/paymentStatus filters, category filters, and "จ่ายจริง" are tool-supported now
+    // (expense.list_recent/expense.get_breakdown) and must reach normal routing, not the canned reply.
+    for (const text of ['ค่าใช้จ่ายเฉพาะยืนยันแล้ว', 'ค่าใช้จ่ายเฉพาะจ่ายแล้ว',
+      'ค่าใช้จ่ายเฉพาะหมวดเดินทาง', 'ค่าใช้จ่ายจ่ายจริงเท่าไร', 'ค่าใช้จ่ายจ่ายแล้วกี่ใบ']) assert.equal(unsupportedExpenseFilter(text), false, text);
     assert.equal(uncertainExpenseFilter('ค่าใช้จ่ายไม่รวมปฎิเสธ'), true);
     assert.equal(uncertainExpenseFilter('ค่าใช้จ่ายเฉพาะสิงหาคม'), false);
     assert.equal(uncertainExpenseFilter('ค่าใช้จ่ายไม่รวมค่าขนส่ง'), true);
