@@ -117,13 +117,73 @@ export function normalizeNameQuery(raw: string): string {
   return raw.normalize('NFC').trim().toLowerCase();
 }
 
-/** Exact match first, then contains; at most 10 candidates come back either way, as near-matches
- *  or as the available catalog to pick from. */
-export function resolveNameCandidate(rawQuery: string, candidates: readonly NameCandidate[]): NameResolution {
+/** Leading words a category query commonly carries ("หมวดหมู่อาหาร", "หมวดเดินทาง") that are never
+ *  part of the category's own stored name. Longest first: "หมวดหมู่" starts with "หมวด", so the
+ *  more specific word must be tried before the shorter one that is its own prefix. */
+export const CATEGORY_NAME_STRIP_PREFIXES = ['หมวดหมู่', 'หมวด'] as const;
+
+/** Leading words a vendor query commonly carries ("ร้านสมใจ", "บริษัทเอบีซี") that are never part
+ *  of the counterparty's own stored display name. */
+export const VENDOR_NAME_STRIP_PREFIXES = ['บริษัท', 'ร้าน'] as const;
+
+type ScoredCandidate = { candidate: NameCandidate; norm: string };
+
+/** Exact match, then forward-contains (candidate contains the query) — the pair every later stage
+ *  below also reruns once on a stripped query. Empty query never contains-matches everything. */
+function exactThenContains(query: string, scored: readonly ScoredCandidate[]): ScoredCandidate[] {
+  const exact = scored.filter((row) => row.norm === query);
+  if (exact.length > 0) return exact;
+  if (query.length === 0) return [];
+  return scored.filter((row) => row.norm.includes(query));
+}
+
+/** Strips ONE leading prefix word (with or without a following space) from `query`, trying the
+ *  longest candidate prefix first. Returns undefined when no listed prefix leads the query, or the
+ *  remainder would be empty. */
+function stripLeadingWord(query: string, prefixes: readonly string[]): string | undefined {
+  const ordered = [...prefixes].sort((a, b) => b.length - a.length);
+  for (const prefix of ordered) {
+    const normPrefix = normalizeNameQuery(prefix);
+    if (normPrefix.length > 0 && query.startsWith(normPrefix)) {
+      const stripped = query.slice(normPrefix.length).trimStart();
+      if (stripped.length > 0) return stripped;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * categoryName/vendorName resolution (spec §3 row 6; relaxed per 2026-09-27 review — Thai users
+ * routinely type a leading "หมวด"/"ร้าน" word the stored name never carries, or name the category
+ * inside a longer phrase). Four stages, tried in order; a stage's result is used and the walk stops
+ * the moment a stage is non-empty — later stages never widen or override an earlier match:
+ *   (a) exact match on the normalised name;
+ *   (b) forward contains — the candidate's name contains the query;
+ *   (c) strip a leading category/vendor word from the QUERY only, then repeat (a) and (b);
+ *   (d) reverse contains — the query contains the candidate's name — for candidates 2+ chars only,
+ *       so a one-character category/vendor name can't match almost anything.
+ * At most 10 candidates come back either way, as near-matches or as the available catalog to pick
+ * from.
+ */
+export function resolveNameCandidate(
+  rawQuery: string,
+  candidates: readonly NameCandidate[],
+  stripPrefixes: readonly string[] = [],
+): NameResolution {
   const query = normalizeNameQuery(rawQuery);
   const scored = candidates.map((candidate) => ({ candidate, norm: normalizeNameQuery(candidate.name) }));
-  const exact = scored.filter((row) => row.norm === query);
-  const pool = exact.length > 0 ? exact : scored.filter((row) => row.norm.includes(query));
+
+  let pool = exactThenContains(query, scored);
+
+  if (pool.length === 0) {
+    const stripped = stripLeadingWord(query, stripPrefixes);
+    if (stripped !== undefined) pool = exactThenContains(stripped, scored);
+  }
+
+  if (pool.length === 0) {
+    pool = scored.filter((row) => row.norm.length >= 2 && query.includes(row.norm));
+  }
+
   if (pool.length === 1) return { kind: 'resolved', id: pool[0]!.candidate.id, name: pool[0]!.candidate.name };
   if (pool.length > 1) return { kind: 'ambiguous', matches: pool.slice(0, NAME_MATCH_DISPLAY_LIMIT).map((row) => row.candidate) };
   return { kind: 'not_found', available: candidates.slice(0, NAME_MATCH_DISPLAY_LIMIT) };
@@ -143,9 +203,10 @@ export function applyNameFilter(
   givenId: string | undefined,
   givenName: string | undefined,
   candidates: readonly NameCandidate[],
+  stripPrefixes: readonly string[] = [],
 ): AppliedNameFilter {
   if (!givenName) return { status: 'applied', id: givenId };
-  const resolution = resolveNameCandidate(givenName, candidates);
+  const resolution = resolveNameCandidate(givenName, candidates, stripPrefixes);
   if (resolution.kind === 'resolved') {
     if (givenId && givenId !== resolution.id) return { status: 'conflict' };
     return { status: 'applied', id: resolution.id, name: resolution.name };

@@ -17,6 +17,8 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import {
   BUSINESS_READ_BASIS_VERSION,
+  CATEGORY_NAME_STRIP_PREFIXES,
+  VENDOR_NAME_STRIP_PREFIXES,
   appliedQuery,
   applyNameFilter,
   completeResult,
@@ -338,7 +340,7 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     const requestedCategoryName = typeof input?.categoryName === 'string' && input.categoryName.trim() ? input.categoryName.trim() : undefined;
     const requestedVendorName = typeof input?.vendorName === 'string' && input.vendorName.trim() ? input.vendorName.trim() : undefined;
     const categoryCandidates = requestedCategoryName ? await this.listExpenses.listCategoryCandidates(ctx.companyId) : [];
-    const categoryFilter = applyNameFilter(input.categoryId, requestedCategoryName, categoryCandidates);
+    const categoryFilter = applyNameFilter(input.categoryId, requestedCategoryName, categoryCandidates, CATEGORY_NAME_STRIP_PREFIXES);
     if (categoryFilter.status === 'conflict') {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'categoryId and categoryName resolve to different categories', sourceRefs: [], asOf };
     }
@@ -349,7 +351,7 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       return { toolName: this.toolName, status: 'ok', data: { categoryUnresolved: requestedCategoryName, availableCategories: categoryFilter.available }, sourceRefs: [], asOf };
     }
     const vendorCandidates = requestedVendorName ? await this.listExpenses.readAiVendorCandidates(toCtx(ctx), branchId) : [];
-    const vendorFilter = applyNameFilter(input.vendorId, requestedVendorName, vendorCandidates);
+    const vendorFilter = applyNameFilter(input.vendorId, requestedVendorName, vendorCandidates, VENDOR_NAME_STRIP_PREFIXES);
     if (vendorFilter.status === 'conflict') {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'vendorId and vendorName resolve to different vendors', sourceRefs: [], asOf };
     }

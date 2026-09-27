@@ -6,7 +6,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import Decimal from 'decimal.js';
 import { ExpenseListRecentTool } from './erp-tools.use-case';
-import { normalizeNameQuery, resolveNameCandidate } from '../../domain/logic/business-read-source.logic';
+import {
+  CATEGORY_NAME_STRIP_PREFIXES,
+  VENDOR_NAME_STRIP_PREFIXES,
+  normalizeNameQuery,
+  resolveNameCandidate,
+} from '../../domain/logic/business-read-source.logic';
 
 const baseCtx = { companyId: 'c1', userId: 'u1', locale: 'th-TH', permissions: ['expense.read'] } as any;
 
@@ -355,6 +360,16 @@ describe('ExpenseListRecentTool', () => {
       assert.equal((result.data as any).queryApplied.filters.categoryName, 'ค่าน้ำมัน');
     });
 
+    // Confirms the real call site passes CATEGORY_NAME_STRIP_PREFIXES through, not just the pure
+    // resolveNameCandidate helper tested in isolation elsewhere.
+    it('strips a leading "หมวด" from a categoryName the same way through the real tool', async () => {
+      const { tool, filters } = makeNameResolutionTool({ categories: [{ id: 'cat1', name: 'ค่าเดินทาง' }, { id: 'cat2', name: 'ค่าน้ำมัน' }] });
+      const result = await tool.execute(baseCtx, { categoryName: 'หมวดค่าเดินทาง' } as any);
+
+      assert.equal(filters[0]?.expenseCategoryId, 'cat1');
+      assert.equal((result.data as any).queryApplied.filters.categoryName, 'ค่าเดินทาง');
+    });
+
     it('resolves a vendor name that only appears as a substring of one candidate', async () => {
       const { tool, filters } = makeNameResolutionTool({ vendors: [{ id: 'v1', name: 'ร้านสมใจการค้า' }] });
       const result = await tool.execute(baseCtx, { vendorName: 'สมใจ' } as any);
@@ -474,5 +489,45 @@ describe('normalizeNameQuery / resolveNameCandidate (Thai-safe name matching hel
     const result = resolveNameCandidate('ไม่มีจริง', candidates);
     assert.equal(result.kind, 'not_found');
     if (result.kind === 'not_found') assert.equal(result.available.length, 10);
+  });
+
+  // 2026-09-27 review: relaxed matching. Stages (a) exact and (b) forward-contains are unchanged
+  // (tested above); these cover the two NEW fallback stages, tried only when (a)+(b) find nothing:
+  // (c) strip a leading category/vendor word from the query, then repeat (a)+(b); (d) reverse
+  // contains (the query contains the candidate), for candidates 2+ characters.
+  describe('relaxed fallback stages (c) strip-prefix and (d) reverse-contains', () => {
+    it('(d) resolves a longer phrase to the one category name it contains', () => {
+      // "ค่าน้ำมันรถ" names no category on its own; "น้ำมัน" (2+ chars) is the only candidate name
+      // that is a substring of it, and "ค่าไฟ" is not, so this is unambiguous.
+      const candidates = [{ id: 'cat1', name: 'น้ำมัน' }, { id: 'cat2', name: 'ค่าไฟ' }];
+      assert.deepEqual(
+        resolveNameCandidate('ค่าน้ำมันรถ', candidates, CATEGORY_NAME_STRIP_PREFIXES),
+        { kind: 'resolved', id: 'cat1', name: 'น้ำมัน' },
+      );
+    });
+
+    it('(c) strips a leading "หมวด" from the query and resolves the remainder exactly', () => {
+      const candidates = [{ id: 'cat1', name: 'ค่าเดินทาง' }, { id: 'cat2', name: 'ค่าน้ำมัน' }];
+      assert.deepEqual(
+        resolveNameCandidate('หมวดค่าเดินทาง', candidates, CATEGORY_NAME_STRIP_PREFIXES),
+        { kind: 'resolved', id: 'cat1', name: 'ค่าเดินทาง' },
+      );
+    });
+
+    // Regression: an exact match at stage (a) must still short-circuit everything below it, with
+    // strip prefixes engaged exactly as the real vendorName call site passes them.
+    it('still resolves "ร้านสมใจ" exactly when "ร้านสมใจการค้า" also exists', () => {
+      const candidates = [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }];
+      assert.deepEqual(
+        resolveNameCandidate('ร้านสมใจ', candidates, VENDOR_NAME_STRIP_PREFIXES),
+        { kind: 'resolved', id: 'v1', name: 'ร้านสมใจ' },
+      );
+    });
+
+    it('still reports "สมใจ" as ambiguous between the same two vendors', () => {
+      const candidates = [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }];
+      const result = resolveNameCandidate('สมใจ', candidates, VENDOR_NAME_STRIP_PREFIXES);
+      assert.equal(result.kind, 'ambiguous');
+    });
   });
 });
