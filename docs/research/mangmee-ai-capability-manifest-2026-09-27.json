@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
-  "sourceRevision": "3c46341f254ce6aa94db2aa9f392d10c42869229",
+  "sourceRevision": "2cb28cd7e30e495ffd7d5fc6d7fa6db62a35b5cb",
   "checkoutBranch": "claude/mangmee-ai-advisor-20260927",
-  "checkoutDirty": true,
+  "checkoutDirty": false,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -45,7 +45,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts",
-      "sha256": "7166e341fa58db390c509514d121892008da7df6c103904345b7f4e32d9aaca6"
+      "sha256": "fccbc14bf5b0ab0f3a96b2e3ed769a3657ee59228eca81a2f10d89a5b3ecf9d9"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
@@ -89,7 +89,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts",
-      "sha256": "172212b230b50cab14036b911ffcf026d239f829398fc69c02df66292ec49ef1"
+      "sha256": "b7ab6dc92e4a2791bdd3bb17e1f5f81f8d18efd324739c8c4b92ead19cd122b9"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-workflow-tools.use-case.ts",
@@ -129,7 +129,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
-      "sha256": "39fbc52555d64b05889276fe44b8885b735e5a1a24353097c6b097c2c3d48636"
+      "sha256": "282e9c644081bc895f86ae8f9a81eacaf2eaabfed2f1f4cb69a7e485e20eb7eb"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/line-ai-ledger-internal.controller.ts",
@@ -173,7 +173,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "2c1adef5f169a7d50236849577946e3291775f0fa8e141b2362e3b9518a8911f"
+      "sha256": "511c7a31b41d747fb30524bbe6e322d4ac7041a9ff180cba3a64e89a5130c4aa"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -1377,6 +1377,7 @@
         "optional": [
           "branchId",
           "categoryId",
+          "categoryName",
           "cursor",
           "documentStatus",
           "fromDate",
@@ -1384,11 +1385,13 @@
           "paymentStatus",
           "periodKey",
           "toDate",
-          "vendorId"
+          "vendorId",
+          "vendorName"
         ],
         "allowed": [
           "branchId",
           "categoryId",
+          "categoryName",
           "cursor",
           "documentStatus",
           "fromDate",
@@ -1396,7 +1399,8 @@
           "paymentStatus",
           "periodKey",
           "toDate",
-          "vendorId"
+          "vendorId",
+          "vendorName"
         ]
       },
       "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
@@ -4585,22 +4589,26 @@
         "optional": [
           "branchId",
           "categoryId",
+          "categoryName",
           "documentStatus",
           "fromDate",
           "paymentStatus",
           "periodKey",
           "toDate",
-          "vendorId"
+          "vendorId",
+          "vendorName"
         ],
         "allowed": [
           "branchId",
           "categoryId",
+          "categoryName",
           "documentStatus",
           "fromDate",
           "paymentStatus",
           "periodKey",
           "toDate",
-          "vendorId"
+          "vendorId",
+          "vendorName"
         ]
       },
       "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
@@ -8636,6 +8644,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-27T16:50:50.998Z",
-  "manifestDigest": "6c1707f8287026555ba7f030b969c101147490578d2f2d061d138d1fca029a86"
+  "generatedAt": "2026-09-27T16:54:08.778Z",
+  "manifestDigest": "355f1c79e93d2d75d48eba756b8185d0ffb59f7082ed191830844031a84766cd"
 }
