@@ -55,6 +55,7 @@ describe('LINE intake router – routeIntake', () => {
         assert.equal(payload.messageText, rawText);
         assert.equal(payload.inputEvidenceParts[0].rawText, rawText);
         assert.deepEqual(payload.inputEvidenceParts[0].fullPartRef, expectedRef);
+        assert.ok(input.systemPrompt);
         assert.match(input.systemPrompt, /COPY that fullPartRef object verbatim/);
         return { ok: true as const, text: JSON.stringify(answer(payload.inputEvidenceParts[0].fullPartRef)) };
       } }).routeIntake(request);
