@@ -258,7 +258,10 @@ export class ListExpensesUseCase {
     cursor?: { expenseDate: Date; id: string },
   ) {
     const scope = this.aiReadScope(ctx, filter.branchId);
-    return this.repo.readAiExpenseSummary({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope, limit, cursor);
+    const snapshot = await this.repo.readAiExpenseSummary({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope, limit, cursor);
+    // Item 1 (spec R-A1 row 18): echo the scope this read already applied, so the caller can state
+    // it instead of leaving a correctly-narrowed own/related total looking like the whole company's.
+    return { ...snapshot, accessScope: scope.accessScope };
   }
 
   async readAiBreakdown(
@@ -266,7 +269,8 @@ export class ListExpensesUseCase {
     filter: Omit<import('../../infrastructure/prisma-expense.repository').AiExpenseReadFilter, 'companyId'>,
   ) {
     const scope = this.aiReadScope(ctx, filter.branchId);
-    return this.repo.readAiExpenseBreakdown({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope);
+    const snapshot = await this.repo.readAiExpenseBreakdown({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope);
+    return { ...snapshot, accessScope: scope.accessScope };
   }
 
   async readAiGroups(
@@ -307,6 +311,11 @@ export class ListExpensesUseCase {
         branchIds: ctx.scopes.branchIds,
         ...(!canRead && canReadRelated ? { relatedUserId: ctx.userId } : {}),
       },
+      // The SAME three-way classification the filter/scope above already apply, exposed as one
+      // label: 'company' can read every record, 'related' is narrowed to the caller's relation,
+      // 'own' is narrowed to only the caller's own records (mirrors the filter/scope precedence
+      // exactly — `related` wins whenever `canReadRelated` is true, same as `scope.relatedUserId` above).
+      accessScope: (canRead ? 'company' : canReadRelated ? 'related' : 'own') as 'own' | 'related' | 'company',
     };
   }
 }

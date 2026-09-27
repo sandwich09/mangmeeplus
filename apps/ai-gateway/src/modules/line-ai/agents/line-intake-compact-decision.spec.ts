@@ -320,7 +320,11 @@ describe('compact LINE intake decision', () => {
     assert.equal(parsed?.semanticSubrequests[0]?.writeIntent, 'REIMBURSEMENT_REQUEST_START');
   });
 
-  it('still rejects a writeIntent claimed on a non-write clause (structural inconsistency, not an unsupported value)', async () => {
+  it('item 4: drops a writeIntent claimed on a non-write clause instead of failing the whole decision', async () => {
+    // The old behavior failed the whole decision here (decision_shape_invalid, ROUTER_SEMANTIC_SCHEMA_INVALID
+    // once both repair attempts repeat the same mismatch) — kind is the model's real mistake, not an
+    // authority claim: writeIntent grants no execution by itself, so dropping it here is exactly as
+    // safe as C4 dropping an unrecognized value above.
     const text = 'ดูค่าใช้จ่ายเดือนนี้';
     const created = await fixture(text);
     const reasons: string[] = [];
@@ -330,7 +334,25 @@ describe('compact LINE intake decision', () => {
       enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
       onReject: (reason) => reasons.push(reason),
     });
-    assert.equal(parsed, undefined);
-    assert.deepEqual(reasons, ['decision_shape_invalid']);
+    assert.deepEqual(reasons, []);
+    assert.equal(parsed?.semanticSubrequests.length, 1);
+    assert.equal(parsed?.semanticSubrequests[0]?.kind, 'read');
+    assert.equal(parsed?.semanticSubrequests[0]?.writeIntent, undefined);
+  });
+
+  it('item 4 (eval T-144-b): "ช่วยอนุมัติใบเบิกของสมชายให้หน่อยค่ะ" never schema-invalids on a general+writeIntent mismatch', async () => {
+    const text = 'ช่วยอนุมัติใบเบิกของสมชายให้หน่อยค่ะ';
+    const created = await fixture(text);
+    const reasons: string[] = [];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: { subrequests: [{ kind: 'general', goal: 'อนุมัติใบเบิกของสมชาย', sources: [{ part: 0, whole: true }], filters: {},
+        entity: 'สมชาย', writeIntent: 'REIMBURSEMENT_REQUEST_START' }] },
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+      onReject: (reason) => reasons.push(reason),
+    });
+    assert.deepEqual(reasons, []);
+    assert.equal(parsed?.semanticSubrequests[0]?.kind, 'general');
+    assert.equal(parsed?.semanticSubrequests[0]?.writeIntent, undefined);
   });
 });

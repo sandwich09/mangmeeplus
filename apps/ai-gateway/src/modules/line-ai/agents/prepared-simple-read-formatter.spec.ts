@@ -225,6 +225,36 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     }
   });
 
+  // Item 1 (spec R-A1 row 18, eval: 15 turns): a STAFF/own-scoped caller got a correct total with
+  // no statement that it covers only their own records. The scope line is read off the tool's own
+  // TRUSTED queryApplied.accessScope, never inferred here.
+  it('item 1: states "only your own records" when queryApplied.accessScope is own', () => {
+    const data = expenseData({ queryApplied: { statusBasis: 'exclude_rejected_voided', accessScope: 'own' } });
+    const th = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), TH);
+    assert.equal(th.kind, 'answer');
+    if (th.kind === 'answer') assert.match(th.replyText, /\nขอบเขต: เฉพาะรายการของคุณ/);
+    const en = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), EN);
+    assert.equal(en.kind, 'answer');
+    if (en.kind === 'answer') assert.match(en.replyText, /\nScope: only your own records/);
+  });
+
+  it('item 1: states "related to you" when queryApplied.accessScope is related', () => {
+    const data = expenseData({ queryApplied: { statusBasis: 'exclude_rejected_voided', accessScope: 'related' } });
+    const r = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.match(r.replyText, /\nขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ/);
+  });
+
+  it('item 1: never states a scope line for a company-wide read (accessScope company or absent)', () => {
+    const company = formatPreparedSimpleRead(EXPENSE,
+      expenseOutput(expenseData({ queryApplied: { statusBasis: 'exclude_rejected_voided', accessScope: 'company' } })), TH);
+    assert.equal(company.kind, 'answer');
+    if (company.kind === 'answer') assert.doesNotMatch(company.replyText, /ขอบเขต:/);
+    const absent = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData()), TH);
+    assert.equal(absent.kind, 'answer');
+    if (absent.kind === 'answer') assert.doesNotMatch(absent.replyText, /ขอบเขต:/);
+  });
+
   it('states the applied payment-status filter and drops the basis line (paymentStatus=UNPAID)', () => {
     const data = expenseData({
       total: 1, summary: expenseSummary({ countedItems: 1, totalAmount: 900, pendingAmount: 900, draftAmount: 0, confirmedAmount: 0 }),
@@ -691,6 +721,17 @@ describe('F3 expense.get_daily_closing::single_metric — ค่าใช้จ�
     assert.equal(formatPreparedSimpleRead(DAILY, expenseOutput(expenseData()), TH).kind, 'unverified');
     assert.equal(formatPreparedSimpleRead(EXPENSE, dailyOutput(dailyData()), TH).kind, 'unverified');
   });
+
+  // Item 1 (spec R-A1 row 18, eval: 15 turns): this tool has no queryApplied wrapper, so its own
+  // accessScope rides `data.accessScope` directly (see erp-expense-daily-closing.use-case.ts).
+  it('item 1: states the own-scope line when data.accessScope is own, omits it for company', () => {
+    const own = formatPreparedSimpleRead(DAILY, dailyOutput(dailyData({ accessScope: 'own' })), TH);
+    assert.equal(own.kind, 'answer');
+    if (own.kind === 'answer') assert.match(own.replyText, /\nขอบเขต: เฉพาะรายการของคุณ/);
+    const company = formatPreparedSimpleRead(DAILY, dailyOutput(dailyData({ accessScope: 'company' })), TH);
+    assert.equal(company.kind, 'answer');
+    if (company.kind === 'answer') assert.doesNotMatch(company.replyText, /ขอบเขต:/);
+  });
 });
 
 // ── F4 — tax.get_vat_summary::single_metric ("ภาษีมูลค่าเพิ่มงวดนี้ต้องยื่นเท่าไหร่") ─────────────────
@@ -1014,6 +1055,9 @@ const expenseListItem = (over: Record<string, unknown> = {}): Record<string, unk
 });
 const expenseListData = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   total: 2, period: { fromDate: '2026-08-01', toDate: '2026-08-31', defaultedToCurrentMonth: false },
+  // Item 2: the same summary the single-metric family reads — a list answer states the filtered
+  // set's own total (500.00 + 700.00), not only its items.
+  summary: { totalAmount: '1200.00' },
   items: [expenseListItem(), expenseListItem({
     id: 'e2', expenseNumber: 'EXP-2026-0002', expenseDate: '2026-08-02T10:00:00.000Z',
     vendorNameSnapshot: 'ร้านใจดี', grandTotalAmount: '700.00', status: 'READY_FOR_CONFIRMATION',
@@ -1026,7 +1070,8 @@ describe('R-L4 F8 expense.list_recent::list — ค่าใช้จ่าย�
     const r = formatPreparedSimpleRead(EXPENSE_LIST, expenseOutput(expenseListData()), TH);
     assert.equal(r.kind, 'answer');
     if (r.kind !== 'answer') return;
-    assert.match(r.replyText, /^ค่าใช้จ่าย: 2 รายการ/);
+    // Item 2: the headline now states the filtered set's own total amount, not only its count.
+    assert.match(r.replyText, /^ค่าใช้จ่าย: 1,200\.00 บาท \(2 รายการ\)/);
     assert.match(r.replyText, /\n1\. 2026-08-05 ร้านสมใจ 500\.00 บาท \(ยืนยันแล้ว\)/);
     assert.match(r.replyText, /\n2\. 2026-08-02 ร้านใจดี 700\.00 บาท \(พร้อมยืนยัน\)/);
     assert.match(r.replyText, /\nช่วง: /);
@@ -1039,7 +1084,7 @@ describe('R-L4 F8 expense.list_recent::list — ค่าใช้จ่าย�
     const r = formatPreparedSimpleRead(EXPENSE_LIST, expenseOutput(expenseListData()), EN);
     assert.equal(r.kind, 'answer');
     if (r.kind !== 'answer') return;
-    assert.match(r.replyText, /^Expenses: 2 records/);
+    assert.match(r.replyText, /^Expenses: 1,200\.00 THB \(2 records\)/);
     assert.match(r.replyText, /\n1\. 2026-08-05 ร้านสมใจ 500\.00 THB \(Confirmed\)/);
   });
 
@@ -1048,6 +1093,17 @@ describe('R-L4 F8 expense.list_recent::list — ค่าใช้จ่าย�
     const r = formatPreparedSimpleRead(EXPENSE_LIST, expenseOutput(data), TH);
     assert.equal(r.kind, 'answer');
     if (r.kind === 'answer') assert.match(r.replyText, /\nตัวกรอง: เฉพาะหมวดอาหาร/);
+  });
+
+  it('item 1: states the own/related scope the same way the single-metric family does', () => {
+    const own = expenseListData({ queryApplied: { statusBasis: 'exclude_rejected_voided', accessScope: 'own' } });
+    const r = formatPreparedSimpleRead(EXPENSE_LIST, expenseOutput(own), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.match(r.replyText, /\nขอบเขต: เฉพาะรายการของคุณ/);
+    const company = expenseListData({ queryApplied: { statusBasis: 'exclude_rejected_voided', accessScope: 'company' } });
+    const companyResult = formatPreparedSimpleRead(EXPENSE_LIST, expenseOutput(company), TH);
+    assert.equal(companyResult.kind, 'answer');
+    if (companyResult.kind === 'answer') assert.doesNotMatch(companyResult.replyText, /ขอบเขต:/);
   });
 
   it('names an unnamed vendor instead of leaving it blank, and never fabricates for a malformed row', () => {
@@ -1061,6 +1117,10 @@ describe('R-L4 F8 expense.list_recent::list — ค่าใช้จ่าย�
       expenseListData({ items: [expenseListItem({ grandTotalAmount: null })] }),
       expenseListData({ items: [expenseListItem({ status: 42 })] }),
       expenseListData({ truncated: true }),
+      // Item 2: no verified single-currency total for the filtered set (e.g. mixed currency) means
+      // no verified list answer either — the same requirement formatExpenseSummary already has.
+      expenseListData({ summary: undefined }), expenseListData({ summary: { totalAmount: null } }),
+      expenseListData({ summary: { totalAmount: 'not-a-number' } }),
     ]) {
       assert.equal(formatPreparedSimpleRead(EXPENSE_LIST, expenseOutput(broken), TH).kind, 'unverified');
     }
@@ -1075,6 +1135,20 @@ describe('R-L4 F8 expense.list_recent::list — ค่าใช้จ่าย�
     if (r.kind !== 'answer') return;
     assert.match(r.replyText, /\nแสดง 10 จาก 12 รายการ/);
     assert.doesNotMatch(r.replyText, /\n11\. /);
+  });
+
+  // Item 2 (eval: "ขอดูรายการ 5 อันล่าสุดเดือนที่แล้วครับ" — an explicit limit=5 against a 14-record
+  // month — answered with only the FULL month's total and none of the 5 requested records). The
+  // headline states the FILTERED set's own total (all 14, matching the tool's own `summary`), not a
+  // guess from the 5 shown rows, and the "showing N of M" line still names the bounded page.
+  it('states the filtered set\'s own total amount and count, distinct from the shown-page size', () => {
+    const items = Array.from({ length: 5 }, (_, i) => expenseListItem({ id: `e${i}`, expenseNumber: `EXP-${i}` }));
+    const data = expenseListData({ total: 14, items, summary: { totalAmount: '40453.00' } });
+    const r = formatPreparedSimpleRead(EXPENSE_LIST, expenseOutput(data), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind !== 'answer') return;
+    assert.match(r.replyText, /^ค่าใช้จ่าย: 40,453\.00 บาท \(14 รายการ\)/);
+    assert.match(r.replyText, /\nแสดง 5 จาก 14 รายการ/);
   });
 });
 
@@ -1139,6 +1213,13 @@ describe('R-L4 F9 expense.get_breakdown::list — แยกค่าใช้จ
     assert.match(r.replyText, /^Expenses by category/);
     assert.match(r.replyText, /\n• อาหาร: 3,000\.00 THB \(60\.0%, 6 records\)/);
     assert.match(r.replyText, /\nTotal: 5,000\.00 THB \(10 records\)/);
+  });
+
+  it('item 1: states the own/related scope the same way the single-metric family does', () => {
+    const r = formatPreparedSimpleRead(BREAKDOWN,
+      breakdownOutput(breakdownData({ queryApplied: { statusBasis: 'exclude_rejected_voided', accessScope: 'related' } })), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.match(r.replyText, /\nขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ/);
   });
 
   it('never fabricates for a malformed or incomplete shape, and falls back to category on an invalid groupBy', () => {
@@ -1264,6 +1345,19 @@ describe('R-L4 F11 reimbursement.get_summary::single_metric — สรุปเ�
       assert.match(r.replyText, /อนุมัติแล้วแต่ยังไม่จ่าย 5 รายการ$/m);
       assert.doesNotMatch(r.replyText, /เกินกำหนด/);
     }
+  });
+
+  // Item 1 (spec R-A1 row 18, eval: 15 turns): this tool has no queryApplied wrapper either, so its
+  // accessScope also rides `data.accessScope` directly (ReimbursementAiSummary's own new field).
+  it('item 1: states "related to you" when accessScope is related, omits it for company', () => {
+    const related = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY,
+      summaryOutput(reimbursementSummaryData({ accessScope: 'related' })), TH);
+    assert.equal(related.kind, 'answer');
+    if (related.kind === 'answer') assert.match(related.replyText, /\nขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ/);
+    const company = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY,
+      summaryOutput(reimbursementSummaryData({ accessScope: 'company' })), TH);
+    assert.equal(company.kind, 'answer');
+    if (company.kind === 'answer') assert.doesNotMatch(company.replyText, /ขอบเขต:/);
   });
 
   it('never fabricates for a malformed or incomplete shape', () => {

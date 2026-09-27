@@ -386,6 +386,9 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
     }, input.limit ?? 20, cursor);
     asOf = snapshot.asOf.toISOString();
+    // Item 1 (spec R-A1 row 18): `readAiSummary` now echoes the scope it already applied; an older
+    // test double or caller that predates this field simply reads as company-wide, unchanged.
+    const accessScope = (snapshot as { accessScope?: 'own' | 'related' | 'company' }).accessScope ?? 'company';
     const sourceRefs: SourceRef[] = [{
       label: 'รายการค่าใช้จ่าย',
       module: 'expenses',
@@ -416,6 +419,7 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       dateBasis: 'expense_incurred_date',
       statusBasis: input.documentStatus ?? 'exclude_rejected_voided',
       dataset: 'operational_expense_records',
+      accessScope,
       filters: {
         ...(categoryId ? { categoryId } : {}),
         ...(categoryFilter.name ? { categoryName: categoryFilter.name } : {}),

@@ -146,6 +146,10 @@ export class ExpenseGetDailyClosingTool implements ErpReadToolPort {
     if (!canReadAll && !canReadRelated && !ctx.permissions.includes('expense.read_own')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
+    // Item 1 (spec R-A1 row 18): the SAME own/related/company classification `accessClauses` below
+    // already applies to this read, exposed so the answer can state it (this tool has no
+    // `queryApplied` wrapper, so it rides `data.accessScope` directly).
+    const accessScope: 'own' | 'related' | 'company' = canReadAll ? 'company' : canReadRelated ? 'related' : 'own';
 
     const date = input?.date === undefined ? bangkokToday() : input.date;
     if (!isCivilDate(date)) {
@@ -271,6 +275,7 @@ export class ExpenseGetDailyClosingTool implements ErpReadToolPort {
       data: {
         date,
         timezone: TIME_ZONE,
+        accessScope,
         scope: {
           kind: branchId ? 'selected_branch' : ctx.branchIds ? 'restricted_branches' : 'all_branches',
           ...(branchId && { branchId }),
