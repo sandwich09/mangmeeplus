@@ -1,0 +1,42 @@
+{
+  "assetId": "receipt-partial",
+  "fileName": "receipt-partial.pdf",
+  "mimeType": "application/pdf",
+  "pages": 2,
+  "status": "draft",
+  "labelledBy": null,
+  "sourceFields": [
+    {
+      "page": 1,
+      "field": "total",
+      "amountRole": "gross_total",
+      "originalValue": "1580.00 THB"
+    },
+    {
+      "page": 2,
+      "field": "line_items",
+      "amountRole": null,
+      "originalValue": "synthetic partial line text"
+    }
+  ],
+  "expectedZeroQaFinancialWrites": true,
+  "questionOnlyRoutes": [
+    "pdf_page_question",
+    "receipt_partial_total_question"
+  ],
+  "unreadable": [],
+  "partial": [
+    {
+      "page": 2,
+      "fields": [
+        "line_items"
+      ],
+      "reason": "canonical fixture marks page as partial"
+    }
+  ],
+  "provenance": {
+    "reviewedBy": null,
+    "reviewedAt": null,
+    "note": "synthetic canonical two-page receipt; no customer data"
+  }
+}

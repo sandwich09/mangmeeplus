@@ -233,8 +233,11 @@ export * from './ai-lineage.js';
 export * from './ai-timeouts.js';
 export * from './ai-budget-bounds.js';
 export * from './line-ai.js';
+export * from './line-ai-input-evidence.js';
 export * from './line-ai-prepared-plan.js';
 export * from './line-ai-advisor-answer.js';
+export * from './line-ai-public-lookup.js';
+export * from './line-reimbursement-draft.js';
 export * from './line-ai-security-eval.js';
 export * from './ai-tools.js';
 // ---- LINE AI Multi-Intent Completion (Item 10F) ----
@@ -287,3 +290,5 @@ export * from './billing.js';
 
 export * from './billing-labels.js';
 export * from './email-delivery.js';
+export * from './line-document-qa.js';
+export * from './expense-capture-evidence.js';

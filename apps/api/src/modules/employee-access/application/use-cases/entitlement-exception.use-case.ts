@@ -34,6 +34,7 @@
  */
 import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
+import { invalidateLineConversationState } from '../../../line-ai/application/line-conversation-context.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { exclusiveEntitlementLock } from '../../../feature-launch/application/execution-attempt.service';
@@ -418,6 +419,9 @@ export class EntitlementExceptionUseCase {
         }
       }
 
+      if (changed.some(change => change.fromEnabled !== change.toEnabled)) {
+        await invalidateLineConversationState(tx, { companyId: cmd.companyId }, false);
+      }
       await tx.auditLog.create({
         data: {
           companyId: cmd.companyId,

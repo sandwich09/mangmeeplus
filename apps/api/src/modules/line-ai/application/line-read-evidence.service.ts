@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_TOOL_REGISTRY, hasToolFeature, hasToolPermissions, type ToolResult, type LineAiConversationContext, type LineAiTurnRequest, type LineAiTurnResponse } from '@watchdog-bms/contracts';
+import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_TOOL_REGISTRY, civilPeriodRange, isCivilPeriodKey, hasToolFeature, hasToolPermissions, type ToolResult, type LineAiConversationContext, type LineAiTurnRequest, type LineAiTurnResponse } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { PermissionResolverService } from '../../access-control/application/permission-resolver.service';
@@ -29,10 +29,16 @@ function expenseSummaryEvidence(result: ToolResult): ExpenseSummaryEvidence | un
   if (!Number.isFinite(Date.parse(result.asOf)) || typeof data['total'] !== 'number' || !Number.isSafeInteger(data['total']) || data['total'] < 0
     || !summary || typeof summary !== 'object' || Array.isArray(summary)) return undefined;
   const totals = summary as Record<string, unknown>;
-  if (typeof totals['totalAmount'] !== 'number' || !Number.isFinite(totals['totalAmount'])
+  const exactAmount = typeof totals['totalAmount'] === 'string' && /^-?\d+(?:\.\d+)?$/.test(totals['totalAmount']);
+  const legacyAmount = typeof totals['totalAmount'] === 'number' && Number.isFinite(totals['totalAmount']);
+  if ((!exactAmount && !legacyAmount)
     || totals['countedItems'] !== data['total'] || typeof totals['cancelledCount'] !== 'number'
     || !Number.isSafeInteger(totals['cancelledCount']) || totals['cancelledCount'] < 0
     || (data['truncated'] !== undefined && typeof data['truncated'] !== 'boolean')) return undefined;
+  // A narrower category/payment/status query cannot become a remembered whole-period summary.
+  if (result.queryApplied && (result.queryApplied.statusBasis !== 'exclude_rejected_voided'
+    || Object.keys(result.queryApplied.filters ?? {}).length > 0)
+    || result.completeness && result.completeness.aggregate !== 'complete') return undefined;
   const period = data['period'];
   if (!period || typeof period !== 'object' || Array.isArray(period)) return undefined;
  const range = period as Record<string, unknown>;
@@ -166,7 +172,7 @@ export function parseExpenseCriterionAccessAuthorization(value: unknown): {
   return proof as { userId: string; companyId: string; fingerprint: string; webhookEventId: string; recipientHash: string; channelId: string; chatKeyHash: string };
 }
 
-export const isLineEvidenceRead = (toolName: string) => READ_CATEGORIES.has(LINE_TOOL_REGISTRY.find(tool => tool.name === toolName)?.category ?? '');
+export const isLineEvidenceRead = (toolName: string) => toolName !== 'public.lookup' && !toolName.startsWith('reimbursement.draft.') && READ_CATEGORIES.has(LINE_TOOL_REGISTRY.find(tool => tool.name === toolName)?.category ?? '');
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -233,7 +239,12 @@ export class LineReadEvidenceService {
       : response.refused ? [] : response.toolsInvoked;
     if (reported.filter(isLineEvidenceRead).some(name => !rows.some(row => row.toolName === name))) return null;
     // Draft preview has its own current-state confirmation boundary; it is never re-executed here.
-    if (response.sourceRefs.length && !rows.length && !reported.some(name => LINE_TOOL_REGISTRY.find(tool => tool.name === name)?.category === 'draft_update')) return null;
+    const privateReadRefs = response.sourceRefs.filter(ref => !(ref.module === 'public' && ref.entityType === 'public_source' && reported.includes('public.lookup'))
+      && !(ref.module === 'reimbursements' && ref.entityType === 'reimbursement_draft_action' && ref.sourceType === 'ACTION'
+        && reported.some(name => name.startsWith('reimbursement.draft.')))
+      && !(ref.module === 'knowledge' && ref.entityType === 'approved_product_help' && request.approvedKnowledge === true
+        && request.selectedKnowledgeCardIds?.length));
+    if (privateReadRefs.length && !rows.length && !reported.some(name => LINE_TOOL_REGISTRY.find(tool => tool.name === name)?.category === 'draft_update')) return null;
     return rows.map(row => row.id);
   }
 
@@ -266,10 +277,14 @@ export class LineReadEvidenceService {
         || !(descriptor.branchId === null || (typeof descriptor.branchId === 'string' && descriptor.branchId.length > 0 && descriptor.branchId.length <= 200))) return undefined;
       const input = saved.input as Record<string, unknown> | undefined;
       if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
-      // A query must use either no explicit period or both boundaries exactly as resolved by the API.
-      const hasFrom = input['fromDate'] !== undefined, hasTo = input['toDate'] !== undefined;
-     if (hasFrom !== hasTo || (hasFrom && (input['fromDate'] !== descriptor.fromDate || input['toDate'] !== descriptor.toDate))) return undefined;
-      if (descriptor.defaultedToCurrentMonth !== (!hasFrom && !hasTo)) return undefined;
+      // Preserve all supported period representations; never reinterpret a malformed one as default.
+      const hasFrom = input['fromDate'] !== undefined, hasTo = input['toDate'] !== undefined, hasPeriod = input['periodKey'] !== undefined;
+      if (hasPeriod) {
+        if (hasFrom || hasTo || !isCivilPeriodKey(input['periodKey'])) return undefined;
+        const period = civilPeriodRange(input['periodKey']);
+        if (period.startDate !== descriptor.fromDate || period.endDate !== descriptor.toDate) return undefined;
+      } else if (hasFrom !== hasTo || (hasFrom && (input['fromDate'] !== descriptor.fromDate || input['toDate'] !== descriptor.toDate))) return undefined;
+      if (descriptor.defaultedToCurrentMonth !== (!hasPeriod && !hasFrom && !hasTo)) return undefined;
       const coveredMonths = rangeMonths(descriptor.fromDate, descriptor.toDate);
       if (!coveredMonths) return undefined;
       coveredMonths.forEach(month => months.add(month));

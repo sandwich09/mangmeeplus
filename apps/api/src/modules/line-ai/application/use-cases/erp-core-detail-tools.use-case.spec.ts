@@ -59,18 +59,24 @@ describe('LINE ERP core detail tools', () => {
     assert.equal((result.data as any).lines.length, 10);
   });
 
-  it('uses paged accounting source results for an exact receivable summary', async () => {
+  it('uses one snapshot aggregate for an exact receivable summary', async () => {
     let calls = 0;
-    const tool = new AccountingGetReceivableSummaryTool({ execute: async (_ctx: any, input: any) => {
+    const tool = new AccountingGetReceivableSummaryTool({ aggregateOpenReceivables: async () => {
       calls += 1;
-      return input.page === 1
-        ? { data: [{ id: 'd1', documentNumber: '1', status: 'ISSUED', outstandingAmount: '20', currency: 'THB', paymentStatus: 'UNPAID' }], total: 101, page: 1, pageSize: 100 }
-        : { data: [{ id: 'd2', documentNumber: '2', status: 'ISSUED', outstandingAmount: '30', currency: 'THB', paymentStatus: 'PARTIALLY_PAID' }], total: 101, page: 2, pageSize: 100 };
+      return {
+        asOf: new Date('2026-07-31T00:00:00Z'), openCount: 2,
+        totalsByCurrency: [{ currency: 'THB', outstandingAmount: '50.00', count: 2 }],
+        items: [
+          { id: 'd1', documentNumber: '1', dueDate: null, outstandingAmount: '20', currency: 'THB', paymentStatus: 'UNPAID' },
+          { id: 'd2', documentNumber: '2', dueDate: null, outstandingAmount: '30', currency: 'THB', paymentStatus: 'PARTIALLY_PAID' },
+        ],
+        hasMore: false,
+      };
     } } as any);
     const result = await tool.execute(ctx);
-    assert.equal(calls, 2);
+    assert.equal(calls, 1);
     assert.equal((result.data as any).openCount, 2);
-    assert.deepEqual((result.data as any).totalsByCurrency, [{ currency: 'THB', outstandingAmount: '50.00' }]);
+    assert.deepEqual((result.data as any).totalsByCurrency, [{ currency: 'THB', outstandingAmount: '50.00', count: 2 }]);
   });
 
   it('returns bounded expense detail and relies on source ABAC', async () => {

@@ -220,13 +220,21 @@ describe('AI assistant preference (PDPA opt-out)', () => {
   function makePrefUseCase() {
     const updates: any[] = [];
     const audits: any[] = [];
-    const prisma = { client: { user: { update: async (args: any) => { updates.push(args); return args; } } } } as any;
+    const clearedScopes: any[] = [];
+    const tx = {
+      user: { update: async (args: any) => { updates.push(args); return args; } },
+      aiConversation: {
+        findMany: async () => [],
+        deleteMany: async ({ where }: any) => { clearedScopes.push(where); return { count: 0 }; },
+      },
+    };
+    const prisma = { client: { $transaction: async (run: (client: typeof tx) => Promise<unknown>) => run(tx) } } as any;
     const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
-    return { useCase: new SetAiAssistantPreferenceUseCase(prisma, audit), updates, audits };
+    return { useCase: new SetAiAssistantPreferenceUseCase(prisma, audit), updates, audits, clearedScopes };
   }
 
   it('opt-out sets the timestamp on the caller row and audits the change', async () => {
-    const { useCase, updates, audits } = makePrefUseCase();
+    const { useCase, updates, audits, clearedScopes } = makePrefUseCase();
     await useCase.execute('user-1', false, 'req-1');
 
     assert.deepEqual(updates[0].where, { id: 'user-1' });
@@ -234,14 +242,16 @@ describe('AI assistant preference (PDPA opt-out)', () => {
     assert.equal(audits[0].action, 'auth.ai_assistant.preference_update');
     assert.equal(audits[0].actorUserId, 'user-1');
     assert.deepEqual(audits[0].metadataJson, { enabled: false });
+    assert.deepEqual(clearedScopes, [{ userId: 'user-1', channelKind: null }]);
   });
 
   it('opt-in clears the timestamp', async () => {
-    const { useCase, updates, audits } = makePrefUseCase();
+    const { useCase, updates, audits, clearedScopes } = makePrefUseCase();
     await useCase.execute('user-1', true, 'req-2');
 
     assert.equal(updates[0].data.aiAssistantOptOutAt, null);
     assert.deepEqual(audits[0].metadataJson, { enabled: true });
+    assert.deepEqual(clearedScopes, [], 'opting in cannot erase current conversation state');
   });
 
   it('controller passes the session user id, not anything body-supplied', async () => {

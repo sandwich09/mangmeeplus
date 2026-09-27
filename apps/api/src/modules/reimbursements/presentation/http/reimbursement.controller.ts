@@ -21,6 +21,7 @@ import {
   SignReimbursementClaimFormDto,
   UpdateReimbursementDraftDto,
   ReimbursementInternalNoteDto,
+  ReimbursementDraftActionControlDto,
 } from './reimbursement.dtos';
 import {
   CreateReimbursementDraftUseCase,
@@ -52,6 +53,7 @@ import {
 } from '../../application/use-cases/reimbursement-claim-signature.use-case';
 import { ReimbursementEvidenceService } from '../../application/services/reimbursement-evidence.service';
 import { ReimbursementWriteQuiesceGuard } from './reimbursement-write-quiesce.guard';
+import { LineReimbursementDraftUseCase } from '../../application/use-cases/line-reimbursement-draft.use-case';
 
 @ApiTags('reimbursements')
 @UseGuards(ReimbursementWriteQuiesceGuard)
@@ -83,6 +85,7 @@ export class ReimbursementController {
     private readonly signClaim: SignClaimFormUseCase,
     private readonly linkSignedClaimCopy: LinkSignedClaimFormCopyUseCase,
     private readonly evidence: ReimbursementEvidenceService,
+    private readonly draftActions: LineReimbursementDraftUseCase,
   ) {}
 
   /** Decisions/payments return the same detail shape the drawer reads, receipt names included. */
@@ -135,6 +138,29 @@ export class ReimbursementController {
   @RequireAnyPermission('reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review')
   sourceOptions(@ReqCtx() ctx: RequestContext, @Query('branchId') branchId?: string, @Query('requesterUserId') requesterUserId?: string, @Query('search') search?: string, @Query('expenseId') expenseId?: string) {
     return this.sources.execute(ctx, branchId, requesterUserId, search, expenseId);
+  }
+
+  @Get('draft-actions/:actionId')
+  @RequirePermissions('account.session.read')
+  @ApiOperation({ summary: 'Render the exact current LINE reimbursement draft preview' })
+  getDraftAction(@ReqCtx() ctx: RequestContext, @Param('actionId') actionId: string) {
+    return this.draftActions.getForWeb(ctx, actionId);
+  }
+
+  @Post('draft-actions/:actionId/confirm')
+  @RequirePermissions('account.session.read')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Confirm the exact rendered LINE reimbursement draft preview' })
+  confirmDraftAction(@ReqCtx() ctx: RequestContext, @Param('actionId') actionId: string, @Body() body: ReimbursementDraftActionControlDto) {
+    return this.draftActions.confirmForWeb(ctx, actionId, body.previewRevision, body.confirmationDigest);
+  }
+
+  @Post('draft-actions/:actionId/cancel')
+  @RequirePermissions('account.session.read')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Cancel the exact LINE reimbursement draft preview without cancelling a reimbursement' })
+  cancelDraftAction(@ReqCtx() ctx: RequestContext, @Param('actionId') actionId: string, @Body() body: ReimbursementDraftActionControlDto) {
+    return this.draftActions.cancelForWeb(ctx, actionId, body.previewRevision, body.confirmationDigest);
   }
 
   // ---- Request CRUD ----

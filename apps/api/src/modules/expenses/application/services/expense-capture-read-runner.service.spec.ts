@@ -94,6 +94,7 @@ async function build(options: {
   derivativeMaxBytes?: number;
   corruptBytes?: boolean;
   jobOver?: Record<string, unknown>;
+  evidenceV2?: boolean;
 } = {}) {
   const bytes = options.corruptBytes
     ? Buffer.from('%PDF-1.7\nthis file cannot be opened')
@@ -255,6 +256,8 @@ async function build(options: {
   };
   const prisma = { client: { $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx) } } as any;
   const config = {
+    lineAiReliabilityV2Mode: options.evidenceV2 ? 'on' : 'off',
+    lineAiReliabilityV2CompanyIds: ['co-1'],
     expenseCaptureReadConcurrency: 2,
     expenseCapturePdfMaxPages: options.maxPages ?? 60,
     expenseCaptureDerivativeMaxBytes: options.derivativeMaxBytes ?? 67_108_864,
@@ -336,6 +339,23 @@ describe('capture read runner — the happy path', () => {
 
 describe('capture read runner — fences and resume', () => {
   let harness: Harness;
+
+  it('sends the immutable attachment source and refuses a legacy extraction on a v2 job', async () => {
+    harness = await build({ evidenceV2: true });
+    await harness.runner.runClaimed(harness.job);
+    assert.equal(harness.extractCalls[0]!.window.evidenceSource.attachmentId, 'att-1');
+    assert.match(harness.extractCalls[0]!.window.evidenceSource.checksumSha256, /^[0-9a-f]{64}$/);
+    assert.equal(terminal(harness).lastErrorCode, 'CAPTURE_FIELD_EVIDENCE_UNSUPPORTED');
+    assert.equal(harness.applyCalls.length, 0); assert.equal(harness.observationsStored.length, 0);
+  });
+
+  it('does not reuse an old truncated window checkpoint under the new complete page plan', async () => {
+    harness = await build({ jobOver: { checkpointJson: { version: 1, chunks: { c1: 'done' },
+      pages: { '0': { text: 'row 1.00\n'.repeat(1700) } }, windows: { w1: observations() } } } });
+    await harness.runner.runClaimed(harness.job);
+    assert.equal(terminal(harness).lastErrorCode, 'CAPTURE_WINDOW_EVIDENCE_VERSION_CHANGED');
+    assert.equal(harness.extractCalls.length, 0); assert.equal(harness.applyCalls.length, 0);
+  });
 
   it('writes nothing after its lease was reclaimed', async () => {
     harness = await build({ pages: 2 });

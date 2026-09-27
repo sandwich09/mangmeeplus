@@ -1,4 +1,10 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { LineConversationContextService, type LineConversationOwner } from '../line-conversation-context.service';
+import { LineLedgerDeliveryService } from '../line-ledger-delivery.service';
+import { buildLineDeliveryPlan, deliveryHash, parseLineDeliveryPlan, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
+import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
+import type { OutboxEventRecord } from '../../../data-model-core/domain/models/outbox.model';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE, SOURCE_DOCUMENT_TYPE_LABELS, type RequestContext } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -24,7 +30,7 @@ import {
   nonReceiptReply,
   type LineNonReceiptCase,
 } from '../../domain/logic/line-non-receipt-reply.logic';
-import { LineReplyAdapter } from '../../infrastructure/line-reply.adapter';
+import { LineReplyAdapter, type LineDeliveryResult } from '../../infrastructure/line-reply.adapter';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
 
 /** The outbox event a finished capture read emits (contracts owns the string; see appendix §3). */
@@ -32,6 +38,11 @@ export const LINE_CAPTURE_READ_FINISHED_EVENT_TYPE = EXPENSE_CAPTURE_READ_FINISH
 
 const WORKER_ID = 'line-capture-result-notifier';
 const MAX_BATCH = 25;
+
+type NotificationOutcome = { kind: 'accepted' } | { kind: 'terminalSkip'; reason: 'NOT_LINE_SOURCE' | 'NO_NOTIFYABLE_RESULT' | 'NO_RECIPIENT_ACCESS' | 'GROUP_PRIVATE_DELIVERY_BLOCKED' | 'SOURCE_GONE' } | { kind: 'retryable' | 'unknown' | 'permanent'; code: string };
+const skipped = (reason: Extract<NotificationOutcome, { kind: 'terminalSkip' }>['reason'] = 'NO_NOTIFYABLE_RESULT'): NotificationOutcome => ({ kind: 'terminalSkip', reason });
+type CapturePreparation = { event: OutboxEventRecord; owner: LineConversationOwner; epoch: number; accessFingerprint: string; lineUserId: string; context: RequestContext };
+const deliveryOutcome = (result: LineDeliveryResult): NotificationOutcome => result === 'ok' ? { kind: 'accepted' } : result === 'failed_permanent' ? { kind: 'permanent', code: 'LINE_PROVIDER_REJECTED' } : { kind: result === 'failed_other' ? 'unknown' : 'retryable', code: 'LINE_DELIVERY_NOT_ACCEPTED' };
 
 export type LineCaptureResultDrainResult = {
   claimed: number;
@@ -53,6 +64,9 @@ export type LineCaptureResultDrainResult = {
 @Injectable()
 export class LineCaptureResultNotifierUseCase {
   private readonly logger = new Logger(LineCaptureResultNotifierUseCase.name);
+  @Inject(LineLedgerDeliveryService) private readonly plans!: LineLedgerDeliveryService;
+  @Inject(LineConversationContextService) private readonly contexts!: LineConversationContextService;
+  private readonly prepared = new WeakMap<object, CapturePreparation>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -76,10 +90,21 @@ export class LineCaptureResultNotifierUseCase {
     result.claimed = events.length;
     for (const event of events) {
       try {
-        const outcome = await this.notify(event.companyId, event.payloadJson);
-        result[outcome] += 1;
-        // One push per job: the event key is the fence, and `markPublished` CASes on the claim.
-        await this.outbox.markPublished({ id: event.id, claimToken: event.claimToken ?? null });
+        const outcome = await this.notify(event.companyId, event.payloadJson, event);
+        const fence = { id: event.id, claimToken: event.claimToken ?? null, expectedEventType: LINE_CAPTURE_READ_FINISHED_EVENT_TYPE };
+        if (outcome.kind === 'accepted' || outcome.kind === 'terminalSkip') {
+          const settled = await this.outbox.markPublished(fence);
+          if (!settled) { result.parked += 1; continue; }
+          result[outcome.kind === 'accepted' ? 'pushed' : 'skipped'] += 1;
+          if (outcome.kind === 'terminalSkip') this.logger.log({ msg: 'line.capture_result.terminal_skip', outboxEventId: event.id, reason: outcome.reason, delivered: false });
+        } else {
+          result.parked += 1;
+          if (outcome.kind === 'permanent') await this.outbox.markDead({ ...fence, error: outcome.code });
+          else if (outcome.code === 'WAITING_CONTINUATION') {
+            const saved = await this.prisma.client.lineDeliveryPlan.findUnique({ where: { outboxEventId: event.id }, select: { expiresAt: true } });
+            await this.outbox.markFailed({ ...fence, error: outcome.code, countsTowardMax: false, nextAvailableAt: saved?.expiresAt });
+          } else await this.outbox.markFailed({ ...fence, error: outcome.code });
+        }
       } catch (error) {
         result.parked += 1;
         this.logger.warn({
@@ -98,30 +123,47 @@ export class LineCaptureResultNotifierUseCase {
   private async notify(
     companyId: string | undefined,
     payload: Record<string, unknown>,
-  ): Promise<'pushed' | 'skipped'> {
-    if (!companyId) return 'skipped';
+    event?: OutboxEventRecord,
+  ): Promise<NotificationOutcome> {
+    if (event?.headersJson?.lineDeliveryPlanVersion === 2) return this.replayCapturePlan(event);
+    if (!companyId) return skipped('SOURCE_GONE');
+    const owner = await this.captureLine.readLineDeliveryOwner(companyId, readString(payload, 'ownerType') === 'EXPENSE' ? { expenseId: readString(payload, 'expenseId') } : { groupId: readString(payload, 'groupId') });
+    if (!owner) return skipped('SOURCE_GONE');
+    if (!owner.sourceIsLine) return skipped('NOT_LINE_SOURCE');
+    const privateAccess = await this.resolveRecipient(companyId, owner);
+    if (!privateAccess) return skipped(owner.linePushTargetId?.startsWith('C') || owner.linePushTargetId?.startsWith('R') ? 'GROUP_PRIVATE_DELIVERY_BLOCKED' : 'NO_RECIPIENT_ACCESS');
+    if (event && owner.ownerBinding && this.config.lineAiReliabilityV2Mode === 'on' && this.config.lineAiDeliveryPlanV2Enabled
+      && this.config.lineAiReliabilityV2CompanyIds.includes(companyId) && this.config.lineAiDeliveryPlanV2WriteCompanyIds.includes(companyId)) {
+      const binding = owner.ownerBinding;
+      const fullOwner: LineConversationOwner = { companyId, userId: owner.createdByUserId, membershipId: binding.membershipId, channel: 'line', channelKind: 'USER', messagingChannelId: binding.channelId, chatKeyHash: owner.lineChatKeyHash ?? '' };
+      const context = await this.contexts.load(fullOwner);
+      if (!context || context.row.id !== binding.conversationId || context.row.lifecycleEpoch !== binding.ownerEpoch || privateAccess.membershipId !== binding.membershipId) return skipped('NO_RECIPIENT_ACCESS');
+      this.prepared.set(payload, { event, owner: fullOwner, epoch: binding.ownerEpoch, accessFingerprint: privateAccess.fingerprint, lineUserId: privateAccess.lineUserId,
+        context: { requestId: event.id, authSubject: fullOwner.userId, authProvider: 'line', userId: fullOwner.userId, companyId, membershipId: binding.membershipId, roles: privateAccess.roles, permissions: privateAccess.permissions, scopes: privateAccess.scopes } });
+    }
+
     // Appendix §25: both lanes queue `ownerType EXPENSE` jobs now, so this is the live path. The
     // group path below still serves rows that were queued before 2026-09-19.
     if (readString(payload, 'ownerType') === 'EXPENSE') return this.notifyExpense(companyId, payload);
     const groupId = readString(payload, 'groupId');
-    if (!groupId) return 'skipped';
+    if (!groupId) return skipped();
     const snapshot = await this.captureLine.readFinishedSnapshot(companyId, groupId);
     // LINE-only: a WEB group's result belongs to the page the customer is already looking at.
-    if (!snapshot || snapshot.group.intakeChannel !== 'LINE') return 'skipped';
+    if (!snapshot || snapshot.group.intakeChannel !== 'LINE') return skipped();
 
     const access = await this.resolveRecipient(companyId, snapshot.group);
     if (!access) {
       // Park as undelivered rather than push: the person this result belongs to no longer has the
       // access it was produced under (appendix §3 "access re-checked").
       await this.recordDelivery(companyId, snapshot.group.createdByUserId, groupId, snapshot, false, null);
-      return 'skipped';
+      return skipped();
     }
 
     // Appendix §25: the group page is withdrawn, so a legacy group's result points at the expense
     // list. New rows never reach here — both lanes queue `ownerType EXPENSE` jobs.
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`);
     const composed = this.composeReply(snapshot, payload, link);
-    if (!composed) return 'skipped';
+    if (!composed) return skipped();
     let { text } = composed;
     // §18.4 NR07: a confirmed non-business image is not evidence of anything, so the work it opened
     // is closed. The bytes are NOT deleted — retention (§8) owns that, not a reply.
@@ -159,8 +201,7 @@ export class LineCaptureResultNotifierUseCase {
     await this.recordDelivery(
       companyId, snapshot.group.createdByUserId, groupId, snapshot, delivery === 'ok', handed?.expenseId ?? null,
     );
-    if (delivery !== 'ok') return 'skipped';
-    return 'pushed';
+    return deliveryOutcome(delivery);
   }
 
   /**
@@ -174,12 +215,12 @@ export class LineCaptureResultNotifierUseCase {
   private async notifyExpense(
     companyId: string,
     payload: Record<string, unknown>,
-  ): Promise<'pushed' | 'skipped'> {
+  ): Promise<NotificationOutcome> {
     const expenseId = readString(payload, 'expenseId');
-    if (!expenseId) return 'skipped';
+    if (!expenseId) return skipped();
     const snapshot = await this.captureLine.readFinishedExpenseSnapshot(companyId, expenseId);
     // LINE-only: a WEB upload's result belongs to the page the customer is already looking at.
-    if (!snapshot || snapshot.expense.captureSource !== 'LINE_UPLOAD') return 'skipped';
+    if (!snapshot || snapshot.expense.captureSource !== 'LINE_UPLOAD') return skipped();
 
     const access = await this.resolveRecipient(companyId, {
       createdByUserId: snapshot.expense.createdByUserId,
@@ -189,21 +230,28 @@ export class LineCaptureResultNotifierUseCase {
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
     if (!access) {
       await this.recordExpenseDelivery(companyId, expenseId, snapshot.jobs, false);
-      return 'skipped';
+      return skipped();
     }
 
     let composed = this.composeExpenseReply(companyId, snapshot, payload, link);
-    if (!composed) return 'skipped';
+    if (!composed) return skipped();
     // §18.4 NR07: a confirmed non-business image is evidence of nothing, and the draft this lane
     // created at intake carries no money yet — so it is removed rather than left as a phantom row.
     if (composed.nr === 'NR07') {
-      const removed = await this.deleteEmptyDraft(companyId, expenseId, readString(payload, 'jobId') ?? null)
+      const removed = await this.deleteEmptyDraft(companyId, expenseId, readString(payload, 'jobId') ?? null, this.prepared.has(payload))
         .catch(() => false);
       // Not removed = no longer empty: someone already filled the draft in, so it is their record
       // now and "จึงไม่ได้สร้างรายการ" would be false. Say what is true, and link it.
       if (!removed) composed = { text: CAPTURE_READ_PARTIAL_REPLY(link), nr: null };
+      else if (this.prepared.has(payload)) composed = { text: 'ภาพนี้ไม่ใช่เอกสารธุรกิจ จึงยกเลิกร่างว่างที่เปิดไว้แล้วค่ะ', nr: 'NR07' };
     }
 
+    const preparation = this.prepared.get(payload);
+    if (preparation) {
+      const result = await this.saveCapturePlan(preparation, payload, composed.text, composed.nr === 'NR07' ? 'EMPTY_DRAFT_DELETED' : 'NONE');
+      await this.recordExpenseDelivery(companyId, expenseId, snapshot.jobs, result.kind === 'accepted');
+      return result;
+    }
     const message = {
       ...this.lineReply.buildTextMessage(composed.text),
       quickReply: buildStaffCompletionQuickReply({
@@ -221,7 +269,75 @@ export class LineCaptureResultNotifierUseCase {
     const delivery = await this.lineReply.sendPush(access.pushTargetId, outgoing, `capture:${expenseId}`)
       .catch(() => 'failed_other' as const);
     await this.recordExpenseDelivery(companyId, expenseId, snapshot.jobs, delivery === 'ok');
-    return delivery === 'ok' ? 'pushed' : 'skipped';
+    return deliveryOutcome(delivery);
+  }
+
+  private async saveCapturePlan(preparation: CapturePreparation, payload: Record<string, unknown>, text: string, businessEffect: 'NONE' | 'EMPTY_DRAFT_DELETED'): Promise<NotificationOutcome> {
+    const expenseId = readString(payload, 'expenseId'), jobId = readString(payload, 'jobId');
+    if (!expenseId || !jobId || !preparation.event.claimToken) return { kind: 'permanent', code: 'CAPTURE_SOURCE_MISSING' };
+    const recordIds = [expenseId, ...readStringArray(payload, 'splitExpenseIds')];
+    const proof = await this.captureLine.readFinishedDeliveryProof(preparation.context, expenseId, jobId, recordIds);
+    if (!proof) return { kind: 'permanent', code: 'CAPTURE_SOURCE_CHANGED' };
+    const createdAt = preparation.event.createdAt, now = new Date(), expiresAt = new Date(createdAt.getTime() + 60 * 60_000).toISOString();
+    const record = proof.records.find(row => row.id === expenseId)!;
+    const plan = buildLineDeliveryPlan({ producerKind: 'CAPTURE_OUTBOX', producerId: preparation.event.id, createdAt: createdAt.toISOString(), readyAt: now.toISOString(), expiresAt,
+      firstDispatchDeadlineAt: expiresAt, control: null,
+      authorization: { v: 2, kind: 'PRIVATE', issuedAt: now.toISOString(), expiresAt, actor: { userId: preparation.owner.userId, companyId: preparation.owner.companyId,
+        membershipId: preparation.owner.membershipId, requestId: preparation.event.id, accessFingerprint: preparation.accessFingerprint, channelId: preparation.owner.messagingChannelId,
+        channel: 'line', channelKind: 'USER', recipientHash: lineDeliveryRecipientHash(preparation.lineUserId, preparation.lineUserId, preparation.owner.messagingChannelId), chatKeyHash: preparation.owner.chatKeyHash,
+        conversationId: (await this.contexts.load(preparation.owner))!.row.id, ownerEpoch: preparation.epoch }, proofs: [{ id: 'capture', kind: 'CAPTURE_RESULT', expenseId, groupId: null, jobId,
+          resultRevision: deliveryHash(proof), recordIds, businessEffect }] },
+      businessResult: businessEffect === 'EMPTY_DRAFT_DELETED' ? null : { kind: 'EXPENSE_CAPTURE', operationKey: `capture:${expenseId}`, committedAt: record.createdAt.toISOString(), recordIds, resultingRevisions: proof.records.map(row => row.updatedAt.toISOString()) },
+      answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text, required: true, sourceProofIds: ['capture'] }] } });
+    const saved = await this.plans.savePlan({ kind: 'CAPTURE_OUTBOX', id: preparation.event.id, token: preparation.event.claimToken }, plan, new Date(createdAt.getTime() + this.config.aiDataRetentionDays * 86400000));
+    if (!saved) return { kind: 'retryable', code: 'CAPTURE_LEASE_CHANGED' };
+    return this.replayCapturePlan({ ...preparation.event, headersJson: { lineDeliveryPlanVersion: 2, lineDeliveryPlanId: saved.id } });
+  }
+
+  async verifyCaptureDeliveryPlan(plan: DeliveryPlanV2, recipient?: { lineUserId: string; pushTargetId?: string; messagingChannelId?: string }) {
+    if (plan.producerKind !== 'CAPTURE_OUTBOX' || plan.authorization.kind !== 'PRIVATE' || Date.parse(plan.authorization.expiresAt) <= Date.now()) return null;
+    const a = plan.authorization.actor, source = plan.authorization.proofs.find(proof => proof.kind === 'CAPTURE_RESULT');
+    if (recipient && (recipient.messagingChannelId !== a.channelId || lineDeliveryRecipientHash(recipient.lineUserId, recipient.pushTargetId ?? recipient.lineUserId, recipient.messagingChannelId ?? '') !== a.recipientHash)) return null;
+    if (!source || typeof source.expenseId !== 'string' || typeof source.jobId !== 'string' || !Array.isArray(source.recordIds)) return null;
+    const metadata = await this.captureLine.readLineDeliveryOwner(a.companyId, { expenseId: source.expenseId });
+    if (!metadata || metadata.createdByUserId !== a.userId || metadata.ownerBinding?.conversationId !== a.conversationId
+      || metadata.ownerBinding?.ownerEpoch !== a.ownerEpoch || metadata.ownerBinding?.channelId !== a.channelId || metadata.ownerBinding?.membershipId !== a.membershipId) return null;
+    const access = await this.resolveRecipient(a.companyId, metadata);
+    if (!access || access.membershipId !== a.membershipId || access.fingerprint !== a.accessFingerprint || lineDeliveryRecipientHash(access.lineUserId, access.pushTargetId, a.channelId) !== a.recipientHash) return null;
+    const owner: LineConversationOwner = { companyId: a.companyId, userId: a.userId, membershipId: a.membershipId, channel: 'line', channelKind: 'USER', messagingChannelId: a.channelId, chatKeyHash: a.chatKeyHash };
+    const current = await this.contexts.load(owner);
+    if (!current || current.row.id !== a.conversationId || current.row.lifecycleEpoch !== a.ownerEpoch) return null;
+    const ctx: RequestContext = { requestId: plan.producerId, authSubject: a.userId, authProvider: 'line', userId: a.userId, companyId: a.companyId, membershipId: a.membershipId, roles: access.roles, permissions: access.permissions, scopes: access.scopes };
+    const proof = await this.captureLine.readFinishedDeliveryProof(ctx, source.expenseId, source.jobId, source.recordIds as string[]);
+    if (!proof || deliveryHash(proof) !== source.resultRevision) return null;
+    return access;
+  }
+
+  private async replayCapturePlan(event: OutboxEventRecord): Promise<NotificationOutcome> {
+    if (!event.companyId || !event.claimToken || typeof event.headersJson?.lineDeliveryPlanId !== 'string') return { kind: 'permanent', code: 'LINE_OUTCOME_RECOVERY_REQUIRED' };
+    const row = await this.prisma.client.lineDeliveryPlan.findUnique({ where: { outboxEventId: event.id } });
+    const plan = parseLineDeliveryPlan(row?.planJson);
+    if (!row || !plan || row.id !== event.headersJson.lineDeliveryPlanId || row.planHash !== deliveryHash(plan) || plan.authorization.kind !== 'PRIVATE') return { kind: 'permanent', code: 'LINE_OUTCOME_RECOVERY_REQUIRED' };
+    if (row.status === 'ACCEPTED') return { kind: 'accepted' };
+    if (['CANCELLED', 'REFUSED', 'EXPIRED'].includes(row.status)) return { kind: 'permanent', code: `LINE_PLAN_${row.status}` };
+    if (row.status === 'WAITING_CONTINUATION') return { kind: 'retryable', code: 'WAITING_CONTINUATION' };
+    for (let batch = 0; batch < 2; batch++) {
+      const access = await this.verifyCaptureDeliveryPlan(plan);
+      if (!access) {
+        await this.prisma.client.lineDeliveryPlan.updateMany({ where: { id: row.id, status: { in: ['READY', 'UNKNOWN', 'WAITING_CONTINUATION'] } }, data: { status: 'REFUSED', cancelReason: 'AUTH_OR_SOURCE_CHANGED' } });
+        return { kind: 'permanent', code: 'CAPTURE_ACCESS_OR_SOURCE_CHANGED' };
+      }
+      const claim = await this.plans.claimPlan(row.id, { kind: 'CAPTURE_OUTBOX', id: event.id, token: event.claimToken });
+      if (!claim) return { kind: 'retryable', code: 'CAPTURE_LEASE_CHANGED' };
+      const dispatch = await this.plans.beginPlanBatch(claim, 'PUSH'); if (!dispatch) return { kind: 'retryable', code: 'CAPTURE_NOT_DISPATCHABLE' };
+      const frozen = plan.batches[dispatch.index]![claim.states[dispatch.index]!.variant]!;
+      const result = await this.lineReply.sendFrozenV2({ channelId: plan.authorization.actor.channelId, transport: 'PUSH', target: access.pushTargetId, messages: frozen.messages, pushRetryKey: frozen.pushRetryKey, timeoutMs: dispatch.timeoutMs });
+      if (!await this.plans.finishPlanBatch(claim, dispatch.index, result)) return { kind: 'unknown', code: 'CAPTURE_CHECKPOINT_LOST' };
+      if (result.kind !== 'accepted') return { kind: result.kind === 'unknown' ? 'unknown' : result.rejection === 'PERMANENT' ? 'permanent' : 'retryable', code: result.code };
+      if (claim.states.every(state => state.status === 'ACCEPTED')) return { kind: 'accepted' };
+      if (dispatch.index === 1 && plan.batches.length === 3) return { kind: 'retryable', code: 'WAITING_CONTINUATION' };
+    }
+    return { kind: 'retryable', code: 'CAPTURE_MORE_BATCHES' };
   }
 
   /** §3 / §17.6 / §18.4 / §25, for the expense lane. */
@@ -297,15 +413,17 @@ export class LineCaptureResultNotifierUseCase {
    * zero-total DRAFT/NEEDS_REVIEW row with no payment, no posting and no reimbursement behind it.
    * Anything else is left alone (`false`) and the customer keeps the record.
    */
-  private async deleteEmptyDraft(companyId: string, expenseId: string, jobId: string | null): Promise<boolean> {
+  private async deleteEmptyDraft(companyId: string, expenseId: string, jobId: string | null, retainReceipt = false): Promise<boolean> {
     return this.prisma.client.$transaction(async (tx) => {
-      const deleted = await tx.expenseRecord.deleteMany({
-        where: {
+      if (retainReceipt && await tx.expenseRecord.findFirst({ where: { companyId, id: expenseId, status: 'VOIDED', voidReason: 'LINE_NR07_EMPTY_DRAFT' }, select: { id: true } })) return true;
+      const where = {
           companyId, id: expenseId, status: { in: ['DRAFT', 'NEEDS_REVIEW'] },
-          grandTotalAmount: 0, paidAmount: 0, postingStatus: 'not_required',
+          grandTotalAmount: 0, paidAmount: 0, postingStatus: 'not_required' as const,
           sourceReimbursementRequestId: null,
-        },
-      });
+        };
+      const deleted = retainReceipt
+        ? await tx.expenseRecord.updateMany({ where: { ...where, status: { in: ['DRAFT', 'NEEDS_REVIEW'] } }, data: { status: 'VOIDED', voidedAt: new Date(), voidReason: 'LINE_NR07_EMPTY_DRAFT', updatedByUserId: null } })
+        : await tx.expenseRecord.deleteMany({ where: { ...where, status: { in: ['DRAFT', 'NEEDS_REVIEW'] } } });
       if (deleted.count !== 1) return false;
       const linkWhere = { companyId, targetType: 'expense.record', targetId: expenseId };
       const links = await tx.attachmentLink.findMany({ where: linkWhere, select: { attachmentId: true } });
@@ -372,19 +490,22 @@ export class LineCaptureResultNotifierUseCase {
    */
   private async resolveRecipient(
     companyId: string,
-    group: { createdByUserId: string; lineChatKeyHash: string | null; linePushTargetId: string | null },
-  ): Promise<{ pushTargetId: string; lineUserId: string; permissions: string[]; roles: string[]; entitledFeatureKeys: ReadonlySet<string> | null } | null> {
+    group: { createdByUserId: string; lineChatKeyHash: string | null; linePushTargetId: string | null; branchId?: string | null; ownerBinding?: { channelId: string } },
+  ): Promise<{ pushTargetId: string; lineUserId: string; permissions: string[]; roles: string[]; entitledFeatureKeys: ReadonlySet<string> | null; membershipId: string; fingerprint: string; scopes: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>['scopes'] } | null> {
     const userId = group.createdByUserId;
     const user = await this.prisma.client.user.findUnique({
       where: { id: userId }, select: { status: true, aiAssistantOptOutAt: true },
     });
     if (!user || user.status !== 'ACTIVE' || user.aiAssistantOptOutAt) return null;
+    const channelId = group.ownerBinding?.channelId;
+    if (channelId && channelId !== this.config.lineMessagingChannelId && !await this.prisma.client.lineChannelBinding.findFirst({ where: { companyId, messagingChannelId: channelId, status: 'ACTIVE', company: { status: 'ACTIVE' } }, select: { id: true } })) return null;
     const identity = await this.prisma.client.externalIdentity.findFirst({
-      where: { userId, provider: 'LINE', status: 'ACTIVE' },
+      where: { userId, provider: 'LINE', status: 'ACTIVE', ...(channelId ? { providerChannelId: channelId } : {}) },
       select: { providerUserId: true },
     });
     if (!identity?.providerUserId) return null;
     const pushTargetId = group.linePushTargetId ?? identity.providerUserId;
+    if (pushTargetId !== identity.providerUserId) return null;
     if (group.lineChatKeyHash && hashMessagePreview(pushTargetId) !== group.lineChatKeyHash) return null;
     let access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>;
     try {
@@ -392,14 +513,15 @@ export class LineCaptureResultNotifierUseCase {
     } catch {
       return null;
     }
+    if (group.branchId !== undefined && !isBranchInScope(access.scopes ?? {}, group.branchId)) return null;
     const mayCapture = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create']
       .some((permission) => access.permissions.includes(permission));
     if (!mayCapture) return null;
-    const entitled = await loadEntitledFeatureKeys(this.prisma, companyId).catch(() => null);
+    const entitled = await loadEntitledFeatureKeys(this.prisma, companyId);
     if (entitled && !entitled.has('expenses')) return null;
     return {
       pushTargetId, lineUserId: identity.providerUserId, permissions: access.permissions,
-      roles: access.roles, entitledFeatureKeys: entitled,
+      roles: access.roles, entitledFeatureKeys: entitled, membershipId: access.membershipId, scopes: access.scopes, fingerprint: resolvedLineDeliveryAccessFingerprint(userId, companyId, access, entitled),
     };
   }
 

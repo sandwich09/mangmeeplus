@@ -3,7 +3,26 @@ import assert from 'node:assert/strict';
 import type { ProviderInput } from '../apps/ai-gateway/src/modules/line-ai/infrastructure/provider/provider.port';
 import { IntentRouterAgent } from '../apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent';
 import { LINE_AI_SUBSTITUTE_ROUTING_CORPUS } from './line-ai-substitute-routing.corpus';
-import { buildSubstituteRouteRequest, scoreSubstituteRow } from './run-line-ai-operator-language-eval';
+import { buildSubstituteRouteRequest, evaluationSchedule, scoreSubstituteRow } from './run-line-ai-operator-language-eval';
+
+describe('operator evaluation repeat scheduling', () => {
+  it('keeps stable case identity and repeat identity without counting repeats as scenarios', () => {
+    const cases = [{ id: 'one', message: 'เดิอนนี้' }, { id: 'two', message: 'สิงหา' }];
+    const result = evaluationSchedule(cases, 3);
+    assert.equal(result.length, 6);
+    assert.deepEqual(result.map(({ testCase, repeat }) => [testCase.id, repeat]), [
+      ['one', 0], ['two', 0], ['one', 1], ['two', 1], ['one', 2], ['two', 2],
+    ]);
+    assert.equal(new Set(result.map(({ testCase }) => testCase.id)).size, 2);
+    assert.equal(result[4]!.testCase, cases[0]);
+  });
+  it('rejects invalid repetition or duplicate fixtures before any paid call', () => {
+    for (const repeat of [0, -1, 1.5, NaN, Infinity, 11]) {
+      assert.throws(() => evaluationSchedule([{ id: 'one' }], repeat), /INVALID_EVALUATION_REPEATS/);
+    }
+    assert.throws(() => evaluationSchedule([{ id: 'one' }, { id: 'one' }], 3), /DUPLICATE_EVALUATION_CASE/);
+  });
+});
 
 // Importing the runner module for these tests must NOT replay the eval (the main() guard prevents it).
 const OPEN_ROW = LINE_AI_SUBSTITUTE_ROUTING_CORPUS.find((row) => row.openSubstitute)!;

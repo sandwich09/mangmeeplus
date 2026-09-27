@@ -292,6 +292,12 @@ export class LineExpenseDraftConversationUseCase {
           webhookEventId: input.webhookEventId,
         });
 
+    if (changed.acceptedFields.includes('D-PURPOSE') && changed.state.header.businessPurpose
+      && withPurposeNote(expense.note, changed.state.header.businessPurpose, Number.POSITIVE_INFINITY).length > 500) {
+      return { handled: true, status: 'TARGET_REQUIRED', expenseId: expense.id, workflowId: selected.state.workflowId, acceptedFields: [],
+        source: replySource(expense, selected.state, categories),
+        replyTexts: ['หมายเหตุรวมวัตถุประสงค์ยาวเกิน 500 ตัวอักษรค่ะ กรุณาย่อข้อความ ยังไม่ได้แก้ข้อมูลในร่าง'] };
+    }
     changed.state = bindSourceDraftLines(changed.state, expense);
     changed.state.unresolvedQuestions = collectLineExpenseDraftQuestions(changed.state, categories);
     // §11.3: answering the one address question — or ignoring it — is not "resume the
@@ -428,7 +434,7 @@ export class LineExpenseDraftConversationUseCase {
       ...(acceptedFields.includes('D-ADDRESS') && state.header.vendorAddress ? { vendorAddressSnapshot: state.header.vendorAddress } : {}),
       // Spec §5.3: the purpose gets its OWN segment and replaces the previous one, so refining the
       // answer never stacks and never takes the provenance note ("LINE receipt upload") with it.
-      ...(acceptedFields.includes('D-PURPOSE') && state.header.businessPurpose ? { note: withPurposeNote(expense!.note, state.header.businessPurpose) } : {}),
+      ...(acceptedFields.includes('D-PURPOSE') && state.header.businessPurpose ? { note: withPurposeNote(expense!.note, state.header.businessPurpose, Number.POSITIVE_INFINITY) } : {}),
       ...(lines ? { lines } : {}),
     }, {
       requireExpectedUpdatedAt: true,

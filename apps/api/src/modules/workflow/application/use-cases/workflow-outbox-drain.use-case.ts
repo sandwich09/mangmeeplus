@@ -104,6 +104,8 @@ export class DrainWorkflowOutboxUseCase {
         // Capture appendix §3: the LINE capture-result push owns this type. Claimed here it would be
         // marked published without anyone being told their document had been read.
         EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE,
+        // QA owns raw-byte deletion and its durable retries.
+        'line.document_qa.raw_cleanup_requested',
       ],
     });
     const sweep = this.shadow.startSweep('outbox.drain');

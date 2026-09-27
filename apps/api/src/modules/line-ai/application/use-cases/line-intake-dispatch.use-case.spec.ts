@@ -890,7 +890,7 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
   });
 
 
-  it('applies the correction to the existing record and confirms old to new', async () => {
+  it('never reports an unexpected legacy applied status as a confirmed mutation without a preview receipt', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload', 'expense.update', 'line.ai.query'],
       routePlan: { ...CORRECTION_PLAN, correctionHints: { expenseDate: { to: '2026-07-20' } } },
@@ -903,12 +903,12 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
     assert.equal(h.captured.length, 0, 'still never a create');
     assert.equal(h.correctionCalls.length, 1);
     assert.equal(h.correctionCalls[0].candidates[0].id, 'expense-1');
-    assert.match(h.replies[0] ?? '', /แก้ไขรายการเดิมให้แล้ว/);
-    assert.match(h.replies[0] ?? '', /วันที่เอกสาร/);
+    assert.doesNotMatch(h.replies[0] ?? '', /แก้ไขรายการเดิมให้แล้ว/);
+    assert.match(h.replies[0] ?? '', /เปิดแก้ไขในเว็บแอป/);
     assert.match(h.replies[0] ?? '', /expense-1/);
   });
 
-  for (const fault of ['unchanged', 'revision', 'missing', 'access', 'fallback']) it(`correction confirmation validates its producing source: ${fault}`, async () => {
+  for (const fault of ['unchanged', 'revision', 'missing', 'access', 'fallback']) it(`legacy compatibility outcome never substitutes for a preview receipt: ${fault}`, async () => {
     let changed = false, privateAttempts = 0; const accepted: unknown[] = [];
     const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'expense.update', 'line.ai.query'],
       routePlan: { ...CORRECTION_PLAN, correctionHints: { expenseDate: { to: '2026-07-20' } } },
@@ -937,13 +937,14 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
     };
     uc.lineReply.sendPush = async (_to: string, messages: unknown[]) => { accepted.push(messages); return 'ok'; };
     const run = h.useCase.execute({ ...TEXT_EVENT, messageText: 'วันที่ต้องเป็น 20 กรกฎาคม 2569' });
-    if (fault === 'unchanged') await run; else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+    if (fault === 'access') await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/); else await run;
     assert.equal(h.correctionCalls.length, 1); assert.equal(h.captured.length, 0); assert.equal(h.ocrRequests.length, 0);
-    if (fault === 'unchanged') assert.match(JSON.stringify(accepted), /แก้ไขรายการเดิมให้แล้ว/);
-    else {
+    assert.doesNotMatch(JSON.stringify(accepted), /แก้ไขรายการเดิมให้แล้ว/);
+    assert.equal(privateAttempts, 0, 'an unrecognized legacy result cannot emit a mutation receipt');
+    if (fault === 'access') {
       assert.doesNotMatch(JSON.stringify(accepted), /แก้ไขรายการเดิมให้แล้ว|expense-1/);
       assert.match(JSON.stringify(accepted), fault === 'access' ? /สิทธิ์หรือร้านที่เลือกเปลี่ยน/ : /ข้อมูลต้นทางเปลี่ยน/);
-      assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0);
+      assert.equal(privateAttempts, 0);
     }
   });
 
@@ -5205,7 +5206,7 @@ describe('Stored clarification provenance across fresh LINE events', () => {
       // A newer capture changes current recency order, not the original offered list.
       if (fault === 'none') recent.unshift({ ...recent[0], id: 'expense-new' });
       options.routePlan = { status: 'ROUTED', intent: 'EXPENSE_CAPTURE_CORRECTION', confidence: 1, language: 'th',
-        resolvedClarificationIds: ['old-question'], correctionHints: { expenseId: 'expense-a', expenseDate: '2026-09-14' } } as any;
+        resolvedClarificationIds: ['old-question'], correctionHints: { targetExpenseId: 'expense-a', expenseDate: { to: '2026-09-14' } } } as any;
       const replyEvent = { ...TEXT_EVENT, webhookEventId: `source-answer-${fault}`, messageText: '1 วันที่ 14 กันยายน 2569',
         ...(fault === 'channel' ? { messagingChannelId: 'different-channel' } : {}) };
       await h.useCase.execute(replyEvent);

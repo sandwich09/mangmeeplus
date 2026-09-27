@@ -1,10 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { UnauthorizedException } from '@nestjs/common';
-import { LINE_ALLOWED_TOOL_CATEGORIES, LINE_DRAFT_UPDATE_TOOLS, LINE_DRAFT_UPDATE_TOOL_CATEGORY, LINE_TOOL_REGISTRY, hasToolFeature, toolFeatureKeys, type ToolMeta, type ToolResult } from '@watchdog-bms/contracts';
+import { LINE_ALLOWED_TOOL_CATEGORIES, LINE_DRAFT_UPDATE_TOOLS, LINE_DRAFT_UPDATE_TOOL_CATEGORY, LINE_REIMBURSEMENT_DRAFT_TOOL_NAMES, LINE_TOOL_REGISTRY, hasToolFeature, toolFeatureKeys, type ToolMeta, type ToolResult } from '@watchdog-bms/contracts';
 
 /** Constructor arity of the controller's tool list. Bumped whenever a tool is wired. */
-const WIRED_TOOL_COUNT = 62;
+const WIRED_TOOL_COUNT = 67;
 function makeController(...args: any[]) {
   const controller = new (InternalToolsController as any)(...args);
   controller.readEvidence = { record: async () => 'synthetic-evidence' };
@@ -543,7 +543,8 @@ describe('InternalToolsController', () => {
 describe('InternalToolsController — L-08 mutation classification at the ERP executor', () => {
   const OK_TOOL = { execute: async () => ({ status: 'ok', sourceRefs: [], asOf: new Date().toISOString() }) };
 
-  function build(options: { permissions: string[]; finalMutationEnabled?: boolean; draftEditEnabled?: boolean; tools?: unknown[] }) {
+  function build(options: { permissions: string[]; finalMutationEnabled?: boolean; draftEditEnabled?: boolean;
+    reimbursementDraftWriteEnabled?: boolean; tools?: unknown[] }) {
     const { events, audit } = recordingAudit();
     const controller = makeController(
       {
@@ -551,6 +552,7 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
         aiFinalMutationEnabled: options.finalMutationEnabled ?? false,
         // S-4: default OFF, so every existing assertion in this file describes the pre-S-4 executor.
         lineAiDraftEditEnabled: options.draftEditEnabled ?? false,
+        lineAiReimbursementDraftWriteEnabled: options.reimbursementDraftWriteEnabled ?? false,
       } as any,
       fakePrisma(),
       audit,
@@ -607,6 +609,20 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
     const registered = new Set(LINE_TOOL_REGISTRY.map((entry) => entry.name));
     const orphans = wired.filter((name) => !registered.has(name));
     assert.deepEqual(orphans, [], 'a wired tool with no registry entry could never be classified');
+  });
+
+  it('returns UNSUPPORTED_FILTER instead of silently dropping an undeclared input field', async () => {
+    const { controller, events } = build({ permissions: [AI] });
+    let executed = false;
+    const entry = { ...registryEntry('test.strict_read', 'read_summary'), optionalInputFields: ['supported'] };
+    controller.toolMap.set(entry.name, { execute: async () => { executed = true; return { toolName: entry.name, status: 'ok', sourceRefs: [], asOf: new Date().toISOString() }; } });
+    const result = await withRegistryEntry(entry, () => controller.invoke('secret', DELEGATION, {
+      toolName: entry.name, context: CONTEXT, input: { silentlyIgnoredBefore: 'x' },
+    }));
+    assert.equal(result.status, 'error');
+    assert.equal(result.errorCode, 'UNSUPPORTED_FILTER');
+    assert.equal(executed, false);
+    assert.equal(events.some((event: any) => event.metadataJson?.reasonCode === 'UNSUPPORTED_FILTER'), true);
   });
 
   it('denies a registry-known tool whose category is not in the LINE-allowed set', async () => {
@@ -695,7 +711,8 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
       const meta = LINE_TOOL_REGISTRY.find((entry) => entry.name === toolName)!;
       // S-4: the five `draft_update` tools are wired but gated on their own flag, which the walk
       // below leaves off. They get their own pair of tests instead of being smuggled in here.
-      if (meta.category === LINE_DRAFT_UPDATE_TOOL_CATEGORY) continue;
+      if (meta.category === LINE_DRAFT_UPDATE_TOOL_CATEGORY
+        || (LINE_REIMBURSEMENT_DRAFT_TOOL_NAMES as readonly string[]).includes(toolName)) continue;
       assert.ok(
         LINE_ALLOWED_TOOL_CATEGORIES.includes(meta.category),
         `${toolName} is categorised "${meta.category}", which the executor now denies`,
@@ -743,6 +760,40 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
       context: { requestId: 'r-mut', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
     });
     assert.equal(refused.status, 'forbidden');
+  });
+
+  it('keeps all reimbursement draft tools behind their own default-off gate', async () => {
+    for (const toolName of LINE_REIMBURSEMENT_DRAFT_TOOL_NAMES) {
+      const meta = LINE_TOOL_REGISTRY.find((entry) => entry.name === toolName)!;
+      const permissions = [AI, ...meta.requiredPermissions, ...(meta.anyOfPermissions?.slice(0, 1) ?? [])];
+      const off = build({ permissions });
+      const denied = await off.controller.invoke('secret', DELEGATION, {
+        toolName, context: { requestId: 'r-reimbursement-off', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+        input: Object.fromEntries((meta.requiredInputFields ?? []).map((field) => [field, field === 'subrequestIndex' ? 0 : {}])),
+      });
+      assert.equal(denied.status, 'forbidden');
+      assert.equal(off.events.find((entry: any) => entry.action === 'ai.tool.invoke.denied')?.metadataJson.reasonCode,
+        'LINE_REIMBURSEMENT_DRAFT_WRITE_DISABLED');
+    }
+  });
+
+  it('admits reimbursement options with only its own switch and never the final-mutation switch', async () => {
+    const permissions = [AI, 'reimbursement.create'];
+    const on = build({ permissions, reimbursementDraftWriteEnabled: true });
+    const admitted = await on.controller.invoke('secret', DELEGATION, {
+      toolName: 'reimbursement.draft.get_options',
+      context: { requestId: 'r-reimbursement-on', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+      input: { operation: 'CREATE', subrequestIndex: 0 },
+    });
+    assert.equal(admitted.status, 'ok');
+
+    const wrongSwitch = build({ permissions, finalMutationEnabled: true });
+    const denied = await wrongSwitch.controller.invoke('secret', DELEGATION, {
+      toolName: 'reimbursement.draft.get_options',
+      context: { requestId: 'r-reimbursement-wrong-switch', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+      input: { operation: 'CREATE', subrequestIndex: 0 },
+    });
+    assert.equal(denied.status, 'forbidden');
   });
 
   it('still requires expense.update — the same permission the web draft PATCH takes', async () => {

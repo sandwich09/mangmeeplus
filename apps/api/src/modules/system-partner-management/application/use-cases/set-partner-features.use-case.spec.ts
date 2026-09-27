@@ -74,6 +74,7 @@ function makePrisma(opts: {
   const statementOf = (sql: any) => String(sql.strings?.join('?') ?? '');
 
   const tx = {
+    aiConversation: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
     // Every raw statement the command issues: the exclusive half of the CC1 claim protocol
     // (spec:60), the provenance UPDATE, and the runoff completer's fence bump — the last two must
     // NOT restamp `updatedAt`, which is why they are raw at all.

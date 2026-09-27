@@ -1,3 +1,4 @@
+import { invalidateLineConversationState } from '../../../line-ai/application/line-conversation-context.service';
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { EmployeeDetail, SetEmployeeStatusInput } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -77,8 +78,8 @@ export class SetEmployeeStatusUseCase {
         where: { id: current.membershipId },
         data: { status: cmd.status },
       });
-      const aiConversationsPurged = cmd.status === 'DISABLED'
-        ? (await tx.aiConversation.deleteMany({ where: { companyId: cmd.companyId, userId: current.userId } })).count
+      const aiConversationsPurged = cmd.status !== 'ACTIVE'
+        ? await invalidateLineConversationState(tx, { companyId: cmd.companyId, userId: current.userId }, cmd.status === 'DISABLED')
         : 0;
 
       await tx.auditLog.create({

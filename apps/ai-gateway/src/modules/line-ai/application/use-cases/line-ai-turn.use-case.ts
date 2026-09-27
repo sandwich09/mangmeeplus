@@ -5,8 +5,9 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiTurnResponse, ToolResult, SourceRef } from '@watchdog-bms/contracts';
-import { AI_BUDGET_REFUSAL_CODES, LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_TOOL_REGISTRY, asIntakeRouteIntent, extractValueCandidates, isBusinessIntakeIntent, parseLineAiPreparedPlan, parseLineAiValueCandidates } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_TOOL_REGISTRY, asIntakeRouteIntent, extractValueCandidates, isBusinessIntakeIntent, lineAiRetainedTaskSourceMatchesProjection, parseAiBudgetGrantV2, parseLineAiPreparedPlan, parseLineAiTurnValueCandidates, parseLineAiResponsePreferences, parseLineAiTaskProjection, parseLineAiSemanticSubrequests, parseLineAiSemanticCoverage, verifyLineAiInputEvidence, verifyLineAiRetainedTaskSource, verifyLineAiValueCandidatesV2 } from '@watchdog-bms/contracts';
 import { currentBudgetState } from '../../../../common/usage/usage-context';
+import { AI_BUDGET_V2_SUPPORTED } from '../../../../common/usage/ai-budget-provider';
 import { classifyIntent, chooseAgent, selectTools, getRefusalReason, validateTurnRequest } from '../../domain/logic/line-ai-turn.logic';
 import { ErpToolClient, type ErpToolContext } from '../../infrastructure/erp-tool.client';
 import { OrchestratorAgent } from '../../agents/orchestrator.agent';
@@ -139,6 +140,13 @@ export class LineAiTurnUseCase {
     return this.agentcoreRuntime.lineDraftEditCapabilityEnabled();
   }
 
+  /** Budget capability requires the serving runtime and its usage wrapper to agree on v2. */
+  async lineBudgetV2CapabilityEnabled(): Promise<boolean> {
+    if (!AI_BUDGET_V2_SUPPORTED || !this.config.lineAiAgentOrchestrationEnabled) return false;
+    if (this.config.lineAiAgentRuntime === 'agentcore') return this.agentcoreRuntime.lineBudgetV2CapabilityEnabled();
+    return true;
+  }
+
   async execute(req: LineAiTurnRequest): Promise<LineAiTurnResponse> {
     const startMs = Date.now();
     const response = await this.executeInner(req, startMs);
@@ -172,19 +180,77 @@ export class LineAiTurnUseCase {
     if (validationError) {
       return this.buildRefusedResponse(req, 'forbidden', '🔒 คำขอไม่ถูกต้อง', startMs);
     }
+    const hasV2ContractField = req.inputEvidence !== undefined || req.budgetGrantV2 !== undefined
+      || req.contractCapabilities !== undefined || req.retainedTaskSource !== undefined;
+    let verifiedInputEvidence: LineAiTurnRequest['inputEvidence'];
+    if (hasV2ContractField) {
+      const inputEvidence = await verifyLineAiInputEvidence(req.inputEvidence, req.messageText);
+      const grant = parseAiBudgetGrantV2(req.budgetGrantV2);
+      const capabilities = req.contractCapabilities;
+      const contractValid = Boolean(inputEvidence && grant && inputEvidence.turnKey === grant.turnKey
+        && Array.isArray(capabilities) && capabilities.length === 2
+        && capabilities.includes('input-evidence-v2') && capabilities.includes('budget-envelope-v2'));
+      if (!contractValid) {
+        this.logger.warn({ msg: 'line_ai_contract_v2_rejected', requestId: req.requestId, reason: 'evidence_or_grant_invalid' });
+        return {
+          ...this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs),
+          errorCode: 'AI_CONTRACT_UNSUPPORTED',
+        };
+      }
+      verifiedInputEvidence = inputEvidence!;
+      // A v2 grant is executable only when the HTTP receiver opened the matching v2 budget state.
+      // Direct callers and malformed/missing interceptor state fail closed; no v1 downgrade.
+      const budget = currentBudgetState();
+      if (budget?.status !== 'active-v2' || budget.grant.turnKey !== grant!.turnKey
+        || budget.inputDigest !== inputEvidence!.joinedSha256) {
+        this.logger.warn({ msg: 'line_ai_contract_v2_rejected', requestId: req.requestId, reason: 'v2_budget_state_missing' });
+        return {
+          ...this.buildRefusedResponse(req, 'tool_unavailable', AI_BUDGET_UNAVAILABLE_REPLY, startMs),
+          errorCode: AI_BUDGET_REFUSAL_CODES.unavailable,
+        };
+      }
+    }
+    const parsedValueCandidates = req.valueCandidates === undefined ? undefined : parseLineAiTurnValueCandidates(req.valueCandidates, req.messageText);
+    const versionedValueCandidates = !!req.valueCandidates && 'version' in req.valueCandidates && req.valueCandidates.version === 2;
+    const verifiedValueCandidates = versionedValueCandidates && verifiedInputEvidence
+      ? await verifyLineAiValueCandidatesV2(req.valueCandidates, verifiedInputEvidence)
+      : undefined;
+    if (versionedValueCandidates && (!parsedValueCandidates || !verifiedValueCandidates)) {
+      this.logger.warn({ msg: 'line_ai_value_candidates_rejected', requestId: req.requestId, reason: 'invalid_v2' });
+      return { ...this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs), errorCode: 'AI_CONTRACT_UNSUPPORTED' };
+    }
+    if (hasV2ContractField && req.valueCandidates !== undefined && !versionedValueCandidates) {
+      this.logger.warn({ msg: 'line_ai_value_candidates_rejected', requestId: req.requestId, reason: 'version_missing' });
+      return { ...this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs), errorCode: 'AI_CONTRACT_UNSUPPORTED' };
+    }
     // Gateway ingress is a trust boundary: re-parse and re-bound the optional prepared plan AND
     // re-validate the trusted outer intake provenance here (explicit membership, no unsafe cast), so
     // every downstream path (agentcore, local orchestrator, deterministic) sees a validated plan/intent
     // or `undefined`, never raw wire JSON. An invalid/forged wrapper or provenance is discarded.
+    const taskProjection = req.taskProjection === undefined ? undefined : parseLineAiTaskProjection(req.taskProjection);
+    const retainedTaskSource = req.retainedTaskSource === undefined ? undefined
+      : await verifyLineAiRetainedTaskSource(req.retainedTaskSource);
     const bounded: LineAiTurnRequest = {
       ...req,
-      preparedPlan: parseLineAiPreparedPlan(req.preparedPlan),
+      preparedPlan: parseLineAiPreparedPlan(req.preparedPlan, req.inputEvidence ? { inputEvidence: req.inputEvidence } : undefined),
       intakeIntent: asIntakeRouteIntent(req.intakeIntent),
+      taskProjection,
+      retainedTaskSource,
+      responsePreferences: req.responsePreferences === undefined ? undefined : parseLineAiResponsePreferences(req.responsePreferences),
+      semanticSubrequests: req.semanticSubrequests === undefined ? undefined
+        : parseLineAiSemanticSubrequests(req.semanticSubrequests, req.messageText, req.inputEvidence),
       valueCandidates: req.valueCandidates
-        ? parseLineAiValueCandidates(req.valueCandidates, req.messageText)
+        ? versionedValueCandidates ? verifiedValueCandidates : parsedValueCandidates
           ?? extractValueCandidates(req.messageText, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }))
         : undefined,
     };
+    if (req.taskProjection !== undefined && !bounded.taskProjection
+      || req.retainedTaskSource !== undefined && (!retainedTaskSource || !lineAiRetainedTaskSourceMatchesProjection(retainedTaskSource, taskProjection, 'turn'))
+      || req.responsePreferences !== undefined && !bounded.responsePreferences
+      || req.semanticSubrequests !== undefined && !bounded.semanticSubrequests) {
+      this.logger.warn({ msg: 'line_ai_contract_v2_rejected', requestId: req.requestId, reason: 'semantic_or_preference_contract_invalid' });
+      return { ...this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs), errorCode: 'AI_CONTRACT_UNSUPPORTED' };
+    }
     if (this.config.lineAiAgentOrchestrationEnabled) {
       return this.runOrchestratorPath(bounded, startMs);
     }
@@ -200,7 +266,7 @@ export class LineAiTurnUseCase {
       // reports back arrive after every one of them is already paid for. A SPLIT company's traffic
       // must therefore be REFUSED here rather than fall back to an unreserved runtime; anything
       // else is the "silently fallback ไป runtime ที่ไม่มี reservation" this clause forbids.
-      if (currentBudgetState()) {
+      if (currentBudgetState()?.status === 'active' || currentBudgetState()?.status === 'invalid') {
         this.logger.warn({ msg: 'ai.budget.runtime_unsupported', requestId: req.requestId, runtime: 'agentcore' });
         return {
           ...this.buildRefusedResponse(req, 'tool_unavailable', AI_BUDGET_UNAVAILABLE_REPLY, startMs),
@@ -242,6 +308,15 @@ export class LineAiTurnUseCase {
           sha256: '',
         })),
         conversationContext: req.conversationContext,
+        ...(req.inputEvidence ? { inputEvidence: req.inputEvidence } : {}),
+        ...(req.contractCapabilities ? { contractCapabilities: req.contractCapabilities } : {}),
+        ...(req.budgetGrantV2 ? { budgetGrantV2: req.budgetGrantV2 } : {}),
+        ...(req.approvedKnowledge ? { approvedKnowledge: true } : {}),
+        ...(req.selectedKnowledgeCardIds ? { selectedKnowledgeCardIds: req.selectedKnowledgeCardIds } : {}),
+        ...(req.taskProjection ? { taskProjection: req.taskProjection } : {}),
+        ...(req.responsePreferences ? { responsePreferences: req.responsePreferences } : {}),
+        ...(req.semanticSubrequests ? { semanticSubrequests: req.semanticSubrequests } : {}),
+        ...(req.retainedTaskSource ? { retainedTaskSource: req.retainedTaskSource } : {}),
         valueCandidates: req.valueCandidates,
         ...(preparedPlan ? { preparedPlan } : {}),
         ...(req.intakeIntent ? { intakeIntent: req.intakeIntent } : {}),
@@ -258,6 +333,12 @@ export class LineAiTurnUseCase {
           durationMs: typeof tool.durationMs === 'number' && Number.isFinite(tool.durationMs) ? tool.durationMs : 0,
           ...(typeof tool.errorCode === 'string' ? { errorCode: tool.errorCode } : {}),
         }));
+      const semanticCoverage = req.semanticSubrequests
+        ? parseLineAiSemanticCoverage(result.semanticCoverage, req.semanticSubrequests)
+        : undefined;
+      if (req.semanticSubrequests && !semanticCoverage) {
+        return { ...this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs), errorCode: 'AI_CONTRACT_UNSUPPORTED' };
+      }
       return {
         requestId: req.requestId,
         replyText: result.replyText,
@@ -265,6 +346,7 @@ export class LineAiTurnUseCase {
         sourceLabels: [...new Set(sourceRefs.map((source) => source.label))],
         webLinks: result.webLinks,
         ...(result.presentation ? { presentation: result.presentation } : {}),
+        ...(semanticCoverage ? { semanticCoverage } : {}),
        ...(result.deterministicExpenseSummary ? { deterministicExpenseSummary: true } : {}),
         ...(result.deterministicExpenseCriterionConfirmation ? { deterministicExpenseCriterionConfirmation: true } : {}),
         intent: (result.plan.intents[0] as any)?.intent ?? 'unknown',
@@ -306,6 +388,12 @@ export class LineAiTurnUseCase {
   private async runLocalOrchestratorPath(req: LineAiTurnRequest, startMs: number): Promise<LineAiTurnResponse> {
     try {
       const result = await this.orchestrator.run(req);
+      const semanticCoverage = req.semanticSubrequests
+        ? parseLineAiSemanticCoverage(result.semanticCoverage, req.semanticSubrequests)
+        : undefined;
+      if (req.semanticSubrequests && !semanticCoverage) {
+        return { ...this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs), errorCode: 'AI_CONTRACT_UNSUPPORTED' };
+      }
       return {
         requestId: req.requestId,
         replyText: result.replyText,
@@ -323,6 +411,7 @@ export class LineAiTurnUseCase {
         toolCalls: result.outputs.flatMap((o) => o.toolCalls),
         durationMs: result.durationMs,
         ...(result.coverage ? { coverage: result.coverage } : {}),
+        ...(semanticCoverage ? { semanticCoverage } : {}),
       };
     } catch (err) {
       // Safe provider error – no stack traces to LINE

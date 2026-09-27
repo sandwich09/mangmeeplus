@@ -38,6 +38,8 @@ export type AiUsageEntry = {
    * an older gateway and from every SHARED company, where the normal metering path applies.
    */
   invocationKey?: string;
+  /** Reported hosted-tool units for v2 external-cost settlement; null means unconfirmed. */
+  externalUnits?: number | null;
 };
 
 /**

@@ -3,7 +3,7 @@
  * AI Gateway invokes these through the internal HTTP API.
  * All adapters must re-check permissions and ABAC server-side.
  */
-import type { ToolResult } from '@watchdog-bms/contracts';
+import type { AiBudgetGrantV2, LineAiInputEvidenceV2, LineAiValueCandidatesV2, ToolResult } from '@watchdog-bms/contracts';
 
 export type ErpToolContext = {
   requestId?: string;
@@ -24,6 +24,9 @@ export type ErpToolContext = {
    *  needs to prove that a number a draft edit would write was actually said. It is never stored,
    *  never logged, and grants nothing — with it absent, only numbers already on the record ground. */
   groundingText?: string;
+  inputEvidence?: LineAiInputEvidenceV2;
+  valueCandidatesV2?: LineAiValueCandidatesV2;
+  budgetGrantV2?: AiBudgetGrantV2;
 };
 
 export interface ErpReadToolPort<TInput = Record<string, unknown>> {

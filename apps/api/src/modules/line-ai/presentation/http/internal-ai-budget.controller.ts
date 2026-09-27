@@ -12,11 +12,12 @@
  * Until Phase E1c the gateway calls neither route — SPLIT cannot be activated — but the seam is
  * registered and boot-tested here so E1c is a gateway-only change.
  */
-import { Body, Controller, Headers, HttpCode, Logger, Post } from '@nestjs/common';
+import { Body, Controller, Headers, HttpCode, Logger, Post, Optional } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
-import { AI_BUDGET_REFUSAL_CODES, aiBudgetInvocationKey, aiBudgetStepBounds, type AiBudgetScope } from '@watchdog-bms/contracts';
+import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min, ValidateNested, ValidateIf, IsIn, IsObject } from 'class-validator';
+import { AI_BUDGET_REFUSAL_CODES, aiBudgetInvocationKey, aiBudgetStepBounds, type AiBudgetScope, type AiBudgetInvocationV2 } from '@watchdog-bms/contracts';
+import { LineAiBudgetAuthorityService } from '../../application/line-ai-budget-authority.service';
 import { Public } from '../../../../common/security/public.decorator';
 import { assertInternalSecret } from '../../../../common/security/secret-compare';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -31,12 +32,15 @@ import {
 const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 class AiBudgetStepDto {
-  @IsString() @IsNotEmpty() @MaxLength(64) companyId!: string;
-  @IsString() @IsNotEmpty() @MaxLength(256) attemptKey!: string;
-  @IsString() @IsNotEmpty() @MaxLength(64) stepKind!: string;
-  /** The API owns ordinal 0; the gateway may only ask for the ones AFTER it. */
-  @IsInt() @Min(1) @Max(64) ordinal!: number;
-  @IsString() @IsNotEmpty() @MaxLength(7) monthKey!: string;
+  @IsOptional() @IsIn([2]) version?: 2;
+  @ValidateIf(body => body.version === 2) @IsObject() invocation?: AiBudgetInvocationV2;
+  @IsOptional() @IsBoolean() repair?: boolean;
+  @ValidateIf(body => body.version !== 2) @IsString() @IsNotEmpty() @MaxLength(64) companyId!: string;
+  @ValidateIf(body => body.version !== 2) @IsString() @IsNotEmpty() @MaxLength(256) attemptKey!: string;
+  @ValidateIf(body => body.version !== 2) @IsString() @IsNotEmpty() @MaxLength(64) stepKind!: string;
+  /** Legacy ordinal zero is API-owned; v2 renders before reserving every ordinal. */
+  @ValidateIf(body => body.version !== 2) @IsInt() @Min(1) @Max(64) ordinal!: number;
+  @ValidateIf(body => body.version !== 2) @IsString() @IsNotEmpty() @MaxLength(7) monthKey!: string;
 }
 
 class AiBudgetSettleUsageDto {
@@ -55,6 +59,7 @@ class AiBudgetSettleDto {
   @IsString() @IsNotEmpty() @MaxLength(512) invocationKey!: string;
   @IsString() @IsNotEmpty() @MaxLength(64) sourceRoute!: string;
   @IsString() @IsOptional() @MaxLength(128) requestId?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) externalUnits?: number | null;
   @ValidateNested() @Type(() => AiBudgetSettleUsageDto) usage!: AiBudgetSettleUsageDto;
 }
 
@@ -66,6 +71,7 @@ export class InternalAiBudgetController {
   constructor(
     private readonly config: AppConfigService,
     private readonly prisma: PrismaService,
+    @Optional() private readonly authority?: LineAiBudgetAuthorityService,
   ) {}
 
   /**
@@ -82,6 +88,16 @@ export class InternalAiBudgetController {
   @ApiOperation({ summary: 'Reserve the next provider invocation of an existing attempt' })
   async budgetStep(@Headers('x-internal-secret') secret: string | undefined, @Body() body: AiBudgetStepDto) {
     assertInternalSecret(secret, this.config.aiGatewayInternalSecret);
+    if (body.version === 2) {
+      // ValidationPipe creates a DTO whose declared legacy fields exist as undefined in the
+      // compiled runtime. Reject supplied legacy values, not these absent-field declarations.
+      if (!this.authority || !body.invocation || Object.entries(body).some(([key, value]) => value !== undefined
+        && !['version', 'invocation', 'repair'].includes(key))) return this.refuse('unavailable', 'TOTAL');
+      const result = await this.authority.reserve(body.invocation, body.repair ?? false);
+      return result.ok ? result : this.refuse(result.reason === 'already_claimed' ? 'busy' : result.reason,
+        'budgetScope' in result ? result.budgetScope : 'TOTAL');
+    }
+    if (body.version !== undefined || body.invocation !== undefined || body.repair !== undefined) return this.refuse('unavailable', 'TOTAL');
     const bounds = aiBudgetStepBounds(body.stepKind);
     // An undeclared step kind, a bad month key, or a call past the chain's declared ceiling: all
     // three mean "no provable bound for this invocation", which is `unavailable`, never a money
@@ -137,7 +153,7 @@ export class InternalAiBudgetController {
   async budgetSettle(@Headers('x-internal-secret') secret: string | undefined, @Body() body: AiBudgetSettleDto) {
     assertInternalSecret(secret, this.config.aiGatewayInternalSecret);
     const result = await settleAiBudgetStep(this.prisma, {
-      invocationKey: body.invocationKey,
+      invocationKey: body.invocationKey, externalUnits: body.externalUnits,
       entry: {
         modelId: body.usage.modelId, tag: body.usage.tag, ok: body.usage.ok,
         inputTokens: body.usage.inputTokens, outputTokens: body.usage.outputTokens,

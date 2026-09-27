@@ -208,3 +208,162 @@ export function parseAiBudgetEnvelope(
     maxCalls: bounds.maxCalls,
   };
 }
+
+// V2 is additive: the legacy table and parser above intentionally remain unchanged.
+export const AI_BUDGET_PROFILE_TABLE_VERSION_V2 = 'budget-profile-table/2' as const;
+export const AI_BUDGET_ESTIMATOR_VERSION_V2 = 'utf8-v2' as const;
+export const AI_BUDGET_PROFILES_V2 = {
+  'line-intake-text/2': { maxInputTokens: 160_000, maxOutputTokens: 4_096, maxCalls: 2 },
+  'line-intake-image/2': { maxInputTokens: 160_000, maxOutputTokens: 8_000, maxCalls: 1 },
+  'line-control/2': { maxInputTokens: 160_000, maxOutputTokens: 2_048, maxCalls: 3 },
+  'line-answer/2': { maxInputTokens: 160_000, maxOutputTokens: 4_096, maxCalls: 2 },
+  'document-qa/2': { maxInputTokens: 160_000, maxOutputTokens: 8_192, maxCalls: 2 },
+  'public-lookup/2': { maxInputTokens: 32_000, maxOutputTokens: 4_096, maxCalls: 1, hostedToolUnits: 2 },
+} as const;
+/** SHA-256 of the lexicographically canonical JSON form of version, estimatorVersion and profiles. */
+export const AI_BUDGET_PROFILE_TABLE_DIGEST_V2 = 'c035ee0e52ebfcf8d5d0845c8e1cde17a2485fae55565b3c2deeaa9ac4dc61a6' as const;
+export type AiBudgetProfileIdV2 = keyof typeof AI_BUDGET_PROFILES_V2;
+export type AiBudgetProfileBoundsV2 = (typeof AI_BUDGET_PROFILES_V2)[AiBudgetProfileIdV2];
+
+export type AiBudgetGrantV2 = {
+  version: 2;
+  turnKey: string;
+  authorityKind: 'webhook_event' | 'ledger_entry' | 'qa_job';
+  authorityId: string;
+  channelOwnerDigest: string;
+  attemptKey: string;
+  monthKey: string;
+  payerCompanyId: string;
+  model: { provider: 'openai' | 'bedrock'; modelId: string; region: string };
+  allowedProfileIds: AiBudgetProfileIdV2[];
+  profileTableDigest: string;
+  maxTurnSlots: 2 | 4;
+  maxRepairs: 1;
+  admittedAtMs: number;
+  workDeadlineAtMs: number;
+  finalDeadlineAtMs: number;
+  nonce: string;
+  issuerVersion: string;
+  /** API-issued next global slot when a turn grant is narrowed between intake and answer. */
+  nextOrdinal?: number;
+  membershipEpoch?: number;
+  taskRevision?: number;
+  signature: string;
+};
+
+export type AiBudgetInvocationV2 = {
+  grant: AiBudgetGrantV2;
+  ordinal: number;
+  profileId: AiBudgetProfileIdV2;
+  inputTokenBound: number;
+  requestedOutputTokens: number;
+  estimatorVersion: typeof AI_BUDGET_ESTIMATOR_VERSION_V2;
+  promptVersion: string;
+  payloadDigest: string;
+  schemaDigest: string;
+  inputDigest: string;
+};
+
+export type AiBudgetEnvelopeV2 = AiBudgetInvocationV2 & {
+  version: 2;
+  reservationId: string;
+  invocationKey: string;
+  tariffVersion: string;
+};
+
+const PROFILE_IDS_V2 = new Set(Object.keys(AI_BUDGET_PROFILES_V2));
+const HEX_256 = /^[0-9a-f]{64}$/u;
+const SAFE_ID = /^[A-Za-z0-9._:-]{1,256}$/u;
+const validSafeInt = (value: unknown, min = 0): value is number => Number.isSafeInteger(value) && Number(value) >= min;
+const onlyKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean => Object.keys(value).every((key) => keys.includes(key));
+
+/** Rebuild an API-authenticated v2 grant without treating type assertions as validation. */
+export function parseAiBudgetGrantV2(value: unknown): AiBudgetGrantV2 | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const model = raw['model'];
+  if (!onlyKeys(raw, ['version', 'turnKey', 'authorityKind', 'authorityId', 'channelOwnerDigest', 'attemptKey', 'monthKey', 'payerCompanyId', 'model', 'allowedProfileIds', 'profileTableDigest', 'maxTurnSlots', 'maxRepairs', 'admittedAtMs', 'workDeadlineAtMs', 'finalDeadlineAtMs', 'nonce', 'issuerVersion', 'nextOrdinal', 'membershipEpoch', 'taskRevision', 'signature'])
+    || !model || typeof model !== 'object' || Array.isArray(model)) return undefined;
+  const modelRaw = model as Record<string, unknown>;
+  const profileIds = raw['allowedProfileIds'];
+  if (raw['version'] !== 2 || typeof raw['turnKey'] !== 'string' || !SAFE_ID.test(raw['turnKey'])
+    || !['webhook_event', 'ledger_entry', 'qa_job'].includes(String(raw['authorityKind']))
+    || typeof raw['authorityId'] !== 'string' || !SAFE_ID.test(raw['authorityId'])
+    || typeof raw['channelOwnerDigest'] !== 'string' || !HEX_256.test(raw['channelOwnerDigest'])
+    || typeof raw['attemptKey'] !== 'string' || !SAFE_ID.test(raw['attemptKey'])
+    || typeof raw['monthKey'] !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/u.test(raw['monthKey'])
+    || typeof raw['payerCompanyId'] !== 'string' || !SAFE_ID.test(raw['payerCompanyId'])
+    || !onlyKeys(modelRaw, ['provider', 'modelId', 'region'])
+    || (modelRaw['provider'] !== 'openai' && modelRaw['provider'] !== 'bedrock')
+    || typeof modelRaw['modelId'] !== 'string' || !SAFE_ID.test(modelRaw['modelId'])
+    || typeof modelRaw['region'] !== 'string' || !SAFE_ID.test(modelRaw['region'])
+    || !Array.isArray(profileIds) || profileIds.length < 1 || profileIds.length > Object.keys(AI_BUDGET_PROFILES_V2).length
+    || profileIds.some((id) => typeof id !== 'string' || !PROFILE_IDS_V2.has(id))
+    || new Set(profileIds).size !== profileIds.length
+    || raw['profileTableDigest'] !== AI_BUDGET_PROFILE_TABLE_DIGEST_V2
+    || (raw['maxTurnSlots'] !== 2 && raw['maxTurnSlots'] !== 4) || raw['maxRepairs'] !== 1
+    || !validSafeInt(raw['admittedAtMs']) || !validSafeInt(raw['workDeadlineAtMs'], 1)
+    || !validSafeInt(raw['finalDeadlineAtMs'], 1) || Number(raw['workDeadlineAtMs']) <= Number(raw['admittedAtMs'])
+    || Number(raw['finalDeadlineAtMs']) < Number(raw['workDeadlineAtMs'])
+    || typeof raw['nonce'] !== 'string' || !SAFE_ID.test(raw['nonce'])
+    || typeof raw['issuerVersion'] !== 'string' || !SAFE_ID.test(raw['issuerVersion'])
+    || (raw['nextOrdinal'] !== undefined && (!validSafeInt(raw['nextOrdinal']) || Number(raw['nextOrdinal']) > 3))
+    || typeof raw['signature'] !== 'string' || !HEX_256.test(raw['signature'])) return undefined;
+  if (raw['authorityKind'] === 'qa_job' && raw['maxTurnSlots'] !== 2) return undefined;
+  if (raw['authorityKind'] !== 'qa_job' && raw['maxTurnSlots'] !== 4 && raw['maxTurnSlots'] !== 2) return undefined;
+  if (raw['membershipEpoch'] !== undefined && !validSafeInt(raw['membershipEpoch'])) return undefined;
+  if (raw['taskRevision'] !== undefined && !validSafeInt(raw['taskRevision'])) return undefined;
+  return {
+    version: 2, turnKey: raw['turnKey'], authorityKind: raw['authorityKind'] as AiBudgetGrantV2['authorityKind'],
+    authorityId: raw['authorityId'], channelOwnerDigest: raw['channelOwnerDigest'], attemptKey: raw['attemptKey'],
+    monthKey: raw['monthKey'], payerCompanyId: raw['payerCompanyId'],
+    model: { provider: modelRaw['provider'], modelId: modelRaw['modelId'], region: modelRaw['region'] },
+    allowedProfileIds: [...profileIds] as AiBudgetProfileIdV2[], profileTableDigest: raw['profileTableDigest'],
+    maxTurnSlots: raw['maxTurnSlots'], maxRepairs: 1,
+    admittedAtMs: Number(raw['admittedAtMs']), workDeadlineAtMs: Number(raw['workDeadlineAtMs']),
+    finalDeadlineAtMs: Number(raw['finalDeadlineAtMs']), nonce: raw['nonce'], issuerVersion: raw['issuerVersion'],
+    nextOrdinal: raw['nextOrdinal'] === undefined ? 0 : Number(raw['nextOrdinal']),
+    ...(raw['membershipEpoch'] !== undefined ? { membershipEpoch: Number(raw['membershipEpoch']) } : {}),
+    ...(raw['taskRevision'] !== undefined ? { taskRevision: Number(raw['taskRevision']) } : {}),
+    signature: raw['signature'],
+  };
+}
+
+/** V2 envelope parser; fixed table/profile limits and immutable invocation values are exact. */
+export function parseAiBudgetEnvelopeV2(value: unknown): AiBudgetEnvelopeV2 | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (!onlyKeys(raw, ['version', 'grant', 'ordinal', 'profileId', 'inputTokenBound', 'requestedOutputTokens', 'estimatorVersion', 'promptVersion', 'payloadDigest', 'schemaDigest', 'inputDigest', 'reservationId', 'invocationKey', 'tariffVersion'])) return undefined;
+  const grant = parseAiBudgetGrantV2(raw['grant']);
+  const profileId = raw['profileId'];
+  if (raw['version'] !== 2 || !grant || typeof profileId !== 'string' || !PROFILE_IDS_V2.has(profileId)
+    || !grant.allowedProfileIds.includes(profileId as AiBudgetProfileIdV2)
+    || !validSafeInt(raw['ordinal']) || Number(raw['ordinal']) >= grant.maxTurnSlots
+    || !validSafeInt(raw['inputTokenBound'], 1) || !validSafeInt(raw['requestedOutputTokens'], 1)
+    || raw['estimatorVersion'] !== AI_BUDGET_ESTIMATOR_VERSION_V2
+    || typeof raw['promptVersion'] !== 'string' || !SAFE_ID.test(raw['promptVersion'])
+    || typeof raw['payloadDigest'] !== 'string' || !HEX_256.test(raw['payloadDigest'])
+    || typeof raw['schemaDigest'] !== 'string' || !HEX_256.test(raw['schemaDigest'])
+    || typeof raw['inputDigest'] !== 'string' || !HEX_256.test(raw['inputDigest'])
+    || typeof raw['reservationId'] !== 'string' || !SAFE_ID.test(raw['reservationId'])
+    || typeof raw['invocationKey'] !== 'string' || raw['invocationKey'] !== `${grant.payerCompanyId}#${grant.attemptKey}#provider-v2#${raw['ordinal']}`
+    || typeof raw['tariffVersion'] !== 'string' || !SAFE_ID.test(raw['tariffVersion'])) return undefined;
+  const profile = AI_BUDGET_PROFILES_V2[profileId as AiBudgetProfileIdV2];
+  // `ordinal` is the global turn slot. A profile's maxCalls is enforced by the API's
+  // per-profile counter, not by this receiver: line-control/2 may legitimately use
+  // ordinal 2 after another profile has claimed earlier global slots.
+  if (Number(raw['inputTokenBound']) > profile.maxInputTokens
+    || Number(raw['requestedOutputTokens']) > profile.maxOutputTokens) return undefined;
+  if ('hostedToolUnits' in profile && raw['profileId'] !== 'public-lookup/2') return undefined;
+  return {
+    version: 2, grant, ordinal: Number(raw['ordinal']), profileId: profileId as AiBudgetProfileIdV2,
+    inputTokenBound: Number(raw['inputTokenBound']), requestedOutputTokens: Number(raw['requestedOutputTokens']),
+    estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2,
+    promptVersion: raw['promptVersion'] as string,
+    payloadDigest: raw['payloadDigest'] as string,
+    schemaDigest: raw['schemaDigest'] as string,
+    inputDigest: raw['inputDigest'] as string,
+    reservationId: raw['reservationId'] as string,
+    invocationKey: raw['invocationKey'] as string, tariffVersion: raw['tariffVersion'] as string,
+  };
+}

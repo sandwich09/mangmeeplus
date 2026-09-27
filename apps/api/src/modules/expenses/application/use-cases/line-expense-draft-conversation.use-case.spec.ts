@@ -329,3 +329,10 @@ describe('the collected purpose does not evict the capture provenance', () => {
     assert.equal(note.split('วัตถุประสงค์:').length - 1, 1);
   });
 });
+
+
+it('rejects an appended purpose exceeding note storage before any draft update, without truncating', async () => {
+  const h = harness(1, 'x'.repeat(490));
+  const result = await h.useCase.execute(ctx, { chatKeyHash: 'chat', messageText: 'D-PURPOSE ใช้เดินทางพบลูกค้า', webhookEventId: 'long-purpose' });
+  assert.equal(h.updates.length, 0); assert.match(result.replyTexts.join('\n'), /500/); assert.deepEqual(result.acceptedFields, []);
+});

@@ -26,25 +26,72 @@ export function allowedToolCategories(flags: { draftEditEnabled?: boolean } = {}
 
 /** The registry as this runtime should see it. One place decides tool visibility so the gateway's
  *  catalog and the API's executor cannot disagree about which tools exist. */
-export function lineToolRegistryFor(flags: { draftEditEnabled?: boolean } = {}): ToolMeta[] {
+export const LINE_REIMBURSEMENT_DRAFT_TOOL_NAMES = [
+  'reimbursement.draft.get_options',
+  'reimbursement.draft.preview_create',
+  'reimbursement.draft.preview_update',
+] as const;
+const LINE_REIMBURSEMENT_DRAFT_TOOL_NAME_SET: ReadonlySet<string> = new Set(LINE_REIMBURSEMENT_DRAFT_TOOL_NAMES);
+
+export function lineToolRegistryFor(flags: { draftEditEnabled?: boolean; publicLookupEnabled?: boolean; reimbursementDraftWriteEnabled?: boolean } = {}): ToolMeta[] {
   const allowed = new Set(allowedToolCategories(flags));
-  return LINE_TOOL_REGISTRY.filter((tool) => allowed.has(tool.category) || !DYNAMIC_TOOL_CATEGORIES.has(tool.category));
+  return LINE_TOOL_REGISTRY.filter((tool) => tool.executionReady !== false && (tool.name !== 'public.lookup' || flags.publicLookupEnabled === true)
+    && (LINE_REIMBURSEMENT_DRAFT_TOOL_NAME_SET.has(tool.name)
+      ? flags.reimbursementDraftWriteEnabled === true
+      : allowed.has(tool.category) || !DYNAMIC_TOOL_CATEGORIES.has(tool.category)));
 }
 
 /** Categories whose presence depends on a runtime flag. Everything else keeps its existing
- *  visibility (registered-but-unwired tools still appear and answer `unsupported_module`). */
+ *  visibility; known unwired entries are metadata only and are not offered for execution. */
 const DYNAMIC_TOOL_CATEGORIES: ReadonlySet<ToolCategory> = new Set<ToolCategory>([LINE_DRAFT_UPDATE_TOOL_CATEGORY]);
 
 export type ToolResultStatus = 'ok' | 'forbidden' | 'unsupported_module' | 'unavailable' | 'error';
 
 export type SourceRef = {
+  /** Stable API-issued locator used by typed facts; never supplied by the model. */
+  id?: string;
   label: string;
   module: string;
   entityType: string;
   entityId?: string;
   asOf?: string;
   permissionChecked: true;
+  /** ACTION locators are permission-checked operation receipts, not ERP read evidence. */
+  sourceType?: 'ERP_READ' | 'ACTION';
   webPath?: string;
+};
+
+export type SourceFact = {
+  id: string;
+  metric: string;
+  /** Canonical decimal/integer string. Null means unknown, never zero. */
+  value: string | null;
+  unit: 'money' | 'count' | 'percent';
+  currency: string | null;
+  period: { startDate: string; endDate: string; timezone: string } | null;
+  dateBasis: string;
+  statusBasis: string;
+  sourceRefIds: string[];
+  asOf: string;
+  state: 'known' | 'empty' | 'unknown' | 'conflict';
+};
+
+export type ToolResultCompleteness = {
+  aggregate: 'complete' | 'partial' | 'unknown';
+  rows: { returned: number; hasMore: boolean; nextCursor: string | null };
+  groups: { returned: number; hasMore: boolean; nextCursor: string | null };
+  /** A complete source query cannot prove that every real-world record was entered. */
+  businessRecording: 'unknown';
+};
+
+export type ToolQueryApplied = {
+  timezone: string;
+  period?: { startDate: string; endDate: string; timezone: string; defaulted: boolean; periodKey?: string };
+  branch?: { mode: 'all_authorized' | 'selected' | 'central'; branchId: string | null };
+  dateBasis: string;
+  statusBasis: string;
+  dataset: string;
+  filters?: Record<string, string | number | boolean | null | readonly string[]>;
 };
 
 export type ToolResult<TData = unknown> = {
@@ -60,10 +107,17 @@ export type ToolResult<TData = unknown> = {
   errorMessage?: string;
   /** Wall-clock ms measured by the caller boundary (gateway ErpToolClient), not by the tool adapter. */
   durationMs?: number;
+  /** Additive v2 source semantics. Legacy consumers may keep reading `data`. */
+  queryApplied?: ToolQueryApplied;
+  basisVersion?: string;
+  facts?: SourceFact[];
+  completeness?: ToolResultCompleteness;
 };
 
 export type ToolMeta = {
   name: string;
+  /** Explicitly false until a callable permission-checked tool handler exists; API intake is separate. */
+  executionReady?: boolean;
   description: string;
   businessSubjects: LineAiBusinessSubject[];
   questionKinds: Array<'summary' | 'search' | 'list' | 'detail' | 'breakdown' | 'explain'>;
@@ -212,7 +266,7 @@ export function usableCapabilityGroupIds(
   entitled: ReadonlySet<string> | null,
 ): LineCapabilityGroupId[] {
   const usable = LINE_TOOL_REGISTRY.filter(
-    (tool) => hasToolPermissions(tool, permissions) && hasToolFeature(tool, entitled),
+    (tool) => tool.executionReady !== false && hasToolPermissions(tool, permissions) && hasToolFeature(tool, entitled),
   );
   return LINE_CAPABILITY_GROUPS.filter((group) => usable.some((tool) => inCapabilityGroup(tool, group))).map((group) => group.id);
 }
@@ -398,7 +452,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'cfo'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['fromDate', 'toDate', 'branchId'],
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'documentStatus', 'paymentStatus', 'limit', 'cursor'],
   },
   {
     name: 'expense.get_detail',
@@ -563,7 +617,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['general', 'sales', 'cfo'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['fromDate', 'toDate', 'branchId'],
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId'],
   },
   {
     name: 'crm.get_customer_summary',
@@ -716,6 +770,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'crm.suggest_sales_followups',
+    executionReady: false,
     description: 'Suggest CRM sales follow-ups.',
     businessSubjects: ['follow_up', 'customer'],
     questionKinds: ['list'],
@@ -728,6 +783,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'accounting.capture_receipt_evidence',
+    executionReady: false,
     description: 'Create or review receipt or tax-invoice evidence draft from supplied evidence.',
     businessSubjects: ['expense', 'accounting_document'],
     questionKinds: ['detail'],
@@ -757,7 +813,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'general'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['fromDate', 'toDate'],
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId'],
   },
   {
     name: 'accounting.list_recent_documents',
@@ -771,7 +827,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'general'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['fromDate', 'toDate', 'documentType'],
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'documentType', 'limit'],
   },
   {
     name: 'accounting.get_document_detail',
@@ -814,7 +870,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'procurement.get_summary',
-    description: 'Read exact purchase-order record counts by status for a bounded period and permitted branch; monetary aggregate is explicitly unavailable.',
+    description: 'Read exact purchase-order counts and source-currency monetary totals by status for a bounded period and permitted branch.',
     businessSubjects: ['procurement'],
     questionKinds: ['summary', 'breakdown'],
     category: 'read_summary',
@@ -823,7 +879,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'cfo', 'general'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['fromDate', 'toDate', 'branchId'],
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId'],
   },
   {
     name: 'procurement.search_suppliers',
@@ -917,16 +973,28 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'general'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['fromDate', 'toDate'],
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'documentStatus', 'paymentStatus'],
   },
-  // ---- Registered-but-waiting (owning module not implemented yet; safe unsupported_module reply) ----
+  {
+    name: 'public.lookup',
+    description: 'Admit a public-only question under an approved source policy; admission is not searched facts.',
+    businessSubjects: [],
+    questionKinds: [],
+    category: 'read_summary',
+    requiredPermissions: ['ai.tool.invoke'],
+    sourceModule: 'public',
+    supportedAgents: ['general'],
+    sensitiveAudit: false,
+    requiresErpPermissionCheck: true,
+    requiredInputFields: ['publicQuestion', 'topic', 'locale', 'temporalIntent', 'sourcePolicyId'],
+  },
   {
     name: 'bank.get_account_balances',
-    description: 'Read bank and cash account balances.',
+    description: 'Read last reconciled bank-account balances and dates; these are not live bank balances.',
     businessSubjects: ['bank'],
     questionKinds: ['summary', 'list'],
     category: 'read_summary',
-    requiredPermissions: ['bank.account.read'],
+    requiredPermissions: ['bank.account.read', 'bank.cash.read'],
     sourceModule: 'banking',
     supportedAgents: ['accounting', 'cfo'],
     sensitiveAudit: false,
@@ -934,7 +1002,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'bank.get_reconciliation_status',
-    description: 'Read bank reconciliation status.',
+    description: 'Read last completed reconciliation and current pending/unmatched counts for permitted accounts.',
     businessSubjects: ['bank'],
     questionKinds: ['summary', 'breakdown'],
     category: 'read_summary',
@@ -943,6 +1011,48 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
+  },
+  {
+    name: 'reimbursement.draft.get_options',
+    description: 'Get bounded API-issued opaque choices for one explicitly admitted reimbursement DRAFT create/update task. This never creates a reimbursement request and never confirms, submits, approves, pays, or posts. Echo only the returned task/action/choice locators; ask the user when a list has more results.',
+    businessSubjects: ['reimbursement'],
+    questionKinds: ['search', 'list', 'detail'],
+    category: 'draft_create',
+    requiredPermissions: [],
+    anyOfPermissions: ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'],
+    sourceModule: 'reimbursements',
+    supportedAgents: ['accounting', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    requiredInputFields: ['operation', 'subrequestIndex'],
+    optionalInputFields: ['taskId', 'actionId', 'branchChoiceId', 'requesterChoiceId', 'targetRef', 'query', 'continuation'],
+  },
+  {
+    name: 'reimbursement.draft.preview_create',
+    description: 'Validate an explicit reimbursement-write proposal against the complete admitted input and API-issued choices, then create or replace only a confirmation preview. No reimbursement request is saved until the user presses the exact server-rendered confirm control; there is no model confirm/apply tool.',
+    businessSubjects: ['reimbursement'],
+    questionKinds: ['detail'],
+    category: 'draft_create',
+    requiredPermissions: ['reimbursement.create'],
+    sourceModule: 'reimbursements',
+    supportedAgents: ['accounting', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    requiredInputFields: ['action', 'proposal'],
+  },
+  {
+    name: 'reimbursement.draft.preview_update',
+    description: 'Validate changes to one exact permission-scoped DRAFT reimbursement and return the full replacement preview while preserving untouched lines/evidence. No newest-record fallback and no model confirm/apply/submit tool.',
+    businessSubjects: ['reimbursement'],
+    questionKinds: ['detail'],
+    category: LINE_DRAFT_UPDATE_TOOL_CATEGORY,
+    requiredPermissions: [],
+    anyOfPermissions: ['reimbursement.update_own_draft', 'reimbursement.finance_review'],
+    sourceModule: 'reimbursements',
+    supportedAgents: ['accounting', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    requiredInputFields: ['action', 'proposal'],
   },
   {
     name: 'reimbursement.list_pending_approvals',
@@ -988,6 +1098,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'hr.get_leave_summary',
+    executionReady: false,
     description: 'Read employee leave-day summary.',
     businessSubjects: ['leave'],
     questionKinds: ['summary', 'breakdown'],
@@ -1001,7 +1112,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'reports.get_monthly_report_summary',
-    description: 'Read monthly business report summary.',
+    description: 'Read one explicitly selected operational_sales, posted_ledger, or operational_dashboard dataset.',
     businessSubjects: ['report'],
     questionKinds: ['summary', 'breakdown'],
     category: 'report',
@@ -1010,6 +1121,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['general', 'cfo'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
+    requiredInputFields: ['dataset'],
     optionalInputFields: ['periodKey', 'fromDate', 'toDate'],
   },
   // Receipt intake is a deterministic, API-owned attachment pipeline (persist bytes →

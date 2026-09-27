@@ -16,6 +16,7 @@ import {
   roleGrantViolation,
 } from '../../domain/logic/employee-access.logic';
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
+import { invalidateLineConversationState } from '../../../line-ai/application/line-conversation-context.service';
 
 export type UpdateEmployeeCommand = UpdateEmployeeInput & {
   companyId: string;
@@ -278,6 +279,9 @@ export class UpdateEmployeeUseCase {
         }
       }
 
+      const aiConversationsInvalidated = roles || scopeTouched || widenToAllBranches
+        ? await invalidateLineConversationState(tx, { companyId: cmd.companyId, userId: existing.userId }, false)
+        : 0;
       await tx.auditLog.create({
         data: {
           companyId: cmd.companyId,
@@ -290,6 +294,7 @@ export class UpdateEmployeeUseCase {
           riskLevel: scopeTouched || widenToAllBranches ? 'HIGH' : 'MEDIUM',
           metadataJson: {
             membershipId: existing.membershipId,
+            aiConversationsInvalidated,
             ...(roles && {
               granterUserId: cmd.requestingUserId,
               granteeUserId: existing.userId,

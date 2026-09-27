@@ -15,7 +15,7 @@ import { round2, SETTLE_EPSILON, vendorBillTaxSourceChecksum } from '../domain/l
 // A pure function, not a provider: the handoff prefill and the ภ.ง.ด. event must report the same
 // income base, and procurement already depends on tax for the handoff use case.
 import { deriveWhtIncomeBase } from '../../tax/domain/logic/wht-report.logic';
-import { civilDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { civilDate, civilDayRangeToUtc, civilInstantDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { branchScopeWhere, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
 import { resolveTransactionBranchId, requireTransactionBranchId } from '../../data-model-core/application/services/transaction-branch';
 import { buildCounterpartyAddressV2, counterpartyAddressText } from '../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
@@ -521,7 +521,7 @@ export class PrismaProcurementRepository {
     const where: any = { companyId, AND: [branchScopeWhere(scopes), {
       ...(filter.status && { status: filter.status }), ...(filter.requesterUserId && { requesterUserId: filter.requesterUserId }),
       ...(filter.supplierId && { supplierId: filter.supplierId }), ...(filter.branchId && { branchId: filter.branchId }),
-      ...(filter.fromDate || filter.toDate ? { createdAt: civilDayRangeToUtc(filter.fromDate, filter.toDate) } : {}),
+      ...(filter.fromDate || filter.toDate ? { createdAt: civilInstantDayRangeToUtc(filter.fromDate, filter.toDate) } : {}),
       ...(relatedIds && { id: { in: [...relatedIds.PURCHASE_REQUEST] } }),
     }] };
     const [rows, total] = await Promise.all([this.prisma.client.purchaseRequest.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, orderBy: { createdAt: 'desc' } }), this.prisma.client.purchaseRequest.count({ where })]);
@@ -674,6 +674,43 @@ export class PrismaProcurementRepository {
     }] };
     const [rows, total] = await Promise.all([this.prisma.client.purchaseOrder.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, orderBy: { createdAt: 'desc' } }), this.prisma.client.purchaseOrder.count({ where })]);
     return { data: rows.map((r) => this.toPurchaseOrderRecord(r)), total };
+  }
+
+  async aggregatePurchaseOrders(
+    companyId: string,
+    filter: { branchId?: string; fromDate: string; toDate: string },
+    scopes: BranchScopes = {},
+  ): Promise<{
+    asOf: Date;
+    total: number;
+    byStatus: Array<{ status: string; count: number }>;
+    byCurrency: Array<{ currency: string; count: number; totalAmount: string }>;
+  }> {
+    const where: any = {
+      companyId,
+      AND: [branchScopeWhere(scopes), {
+        ...(filter.branchId ? { branchId: filter.branchId } : {}),
+        orderDate: civilDayRangeToUtc(filter.fromDate, filter.toDate),
+      }],
+    };
+    return this.prisma.client.$transaction(async (tx) => {
+      const [stamp, byStatusRows, byCurrencyRows, company] = await Promise.all([
+        tx.$queryRaw<Array<{ asOf: Date }>>`SELECT transaction_timestamp() AS "asOf"`,
+        tx.purchaseOrder.groupBy({ by: ['status'], where, _count: true }),
+        tx.purchaseOrder.groupBy({ by: ['currency'], where, _count: true, _sum: { grandTotalAmount: true } }),
+        tx.company.findUnique({ where: { id: companyId }, select: { baseCurrency: true } }),
+      ]);
+      return {
+        asOf: stamp[0]?.asOf ?? new Date(),
+        total: byStatusRows.reduce((sum, row) => sum + row._count, 0),
+        byStatus: byStatusRows.map((row) => ({ status: row.status, count: row._count })),
+        byCurrency: byCurrencyRows.length > 0 ? byCurrencyRows.map((row) => ({
+          currency: row.currency,
+          count: row._count,
+          totalAmount: String(row._sum.grandTotalAmount ?? '0'),
+        })) : [{ currency: company?.baseCurrency ?? 'THB', count: 0, totalAmount: '0' }],
+      };
+    }, { isolationLevel: 'RepeatableRead' });
   }
 
   async updatePurchaseOrderStatus(companyId: string, id: string, status: string, extra?: Record<string, unknown>): Promise<PurchaseOrderRecord> {

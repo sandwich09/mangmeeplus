@@ -1964,7 +1964,7 @@ export class PrismaCrmInboxRepository {
       await this.db.aiTurn.deleteMany({ where: { id: { in: turns.map((turn) => turn.id) } } });
     }
     const conversations = await this.db.aiConversation.deleteMany({
-      where: { updatedAt: { lt: before }, turns: { none: {} } },
+      where: { updatedAt: { lt: before }, turns: { none: {} }, channelKind: null },
     });
     return { turns: turns.length, conversations: conversations.count };
   }

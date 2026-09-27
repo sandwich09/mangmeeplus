@@ -30,9 +30,8 @@ describe('resolvePeriodInput (owner decision: default = now)', () => {
     assert.deepEqual(period, { fromDate: '2026-06-01', toDate: '2026-06-30', defaulted: false });
   });
 
-  it('drops malformed dates and falls back to the current month', () => {
-    const period = resolvePeriodInput({ fromDate: 'DROP TABLE', toDate: 'x' });
-    assert.equal(period.defaulted, true);
+  it('rejects malformed dates instead of silently changing the requested period', () => {
+    assert.throws(() => resolvePeriodInput({ fromDate: 'DROP TABLE', toDate: 'x' }), /INVALID_PERIOD/);
   });
 });
 
@@ -55,13 +54,17 @@ describe('§3.3 default period: current month (daily closing: today)', () => {
     const result = await new SalesGetSalesSummaryTool(prisma).execute({ ...baseCtx, permissions: ['crm.report.read'] });
     assert.deepEqual((result.data as any).period, { ...month(), defaultedToCurrentMonth: true });
     assert.equal(captured.where.paidAt.gte.toISOString(), bangkok(month().fromDate));
-    assert.equal(captured.where.paidAt.lte.toISOString(), bangkok(month().toDate, true));
+    assert.equal(captured.where.paidAt.lt.toISOString(), new Date(`${month().toDate}T17:00:00.000Z`).toISOString());
   });
 
   it('expense.list_recent reads the current month', async () => {
     const captured: { filter?: any } = {};
     const listExpenses = {
-      execute: async (_ctx: any, filter: any) => { captured.filter = filter; return { data: [], total: 0, page: 1, pageSize: 100 }; },
+      readAiSummary: async (_ctx: any, filter: any) => { captured.filter = filter; return {
+        asOf: new Date(), total: 0,
+        byCurrency: [{ currency: 'THB', count: 0, totalAmount: '0', paidAmount: '0', outstandingAmount: '0' }],
+        byStatus: [], items: [], hasMore: false, nextCursorSource: null,
+      }; },
     } as any;
     const result = await new ExpenseListRecentTool(listExpenses, { client: {} } as any)
       .execute({ ...baseCtx, permissions: ['expense.read'] });
@@ -79,15 +82,11 @@ describe('§3.3 default period: current month (daily closing: today)', () => {
   });
 
   it('expense.get_breakdown reads the current month', async () => {
-    const captured: { where?: any } = {};
-    const prisma = {
-      client: {
-        expenseRecord: { groupBy: async (args: any) => { captured.where = args.where; return []; } },
-        expenseCategory: { findMany: async () => [] },
-        branch: { findMany: async () => [] },
-      },
-    } as any;
-    const result = await new ExpenseGetBreakdownTool(prisma).execute({ ...baseCtx, permissions: ['expense.read'] });
+    const source = { readAiBreakdown: async () => ({
+      asOf: new Date(), byCurrency: [{ currency: 'THB', count: 0, totalAmount: '0' }],
+      byCategory: [], byBranch: [], categoryHasMore: false, branchHasMore: false,
+    }) } as any;
+    const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read'] });
     assert.deepEqual((result.data as any).period, { ...month(), defaultedToCurrentMonth: true });
   });
 
@@ -130,7 +129,7 @@ describe('SalesGetSalesSummaryTool', () => {
     assert.equal(data.transactionCount, 2);
     assert.equal(data.basis, 'recorded_received_payments');
     assert.equal(captured.where.paidAt.gte.toISOString(), '2026-07-11T17:00:00.000Z');
-    assert.equal(captured.where.paidAt.lte.toISOString(), '2026-07-12T16:59:59.999Z');
+    assert.equal(captured.where.paidAt.lt.toISOString(), '2026-07-12T17:00:00.000Z');
     assert.deepEqual(captured.where.counterparty, { is: { type: { in: ['CUSTOMER', 'BOTH'] } } });
     assert.deepEqual(captured.where.OR, [{ branchId: { in: ['b1'] } }, { branchId: null }]);
   });
@@ -140,7 +139,10 @@ describe('AccountingGetSummaryTool', () => {
   // PR #238 review T2: the tool now delegates to ONE snapshot-consistent groupBy on the
   // permission-scoped use case — no page walk, so the old count-mismatch and period-too-large
   // refusals are structurally impossible and gone.
-  function aggregateSource(byType: Record<string, { count: number; totalAmount: string }>) {
+  function aggregateSource(legacy: Record<string, { count: number; totalAmount: string }>) {
+    const byType = Object.fromEntries(Object.entries(legacy).map(([key, value]) => [key, {
+      ...value, currency: 'THB', totalsByCurrency: [{ currency: 'THB', totalAmount: value.totalAmount, count: value.count }],
+    }]));
     const calls: Array<{ ctx: any; filter: any }> = [];
     const total = Object.values(byType).reduce((sum, entry) => sum + entry.count, 0);
     const source = {
@@ -336,30 +338,31 @@ describe('CompanyEmployeeDetailTool', () => {
 });
 
 describe('ExpenseGetBreakdownTool', () => {
-  function makePrisma(captured: { where?: any } = {}) {
+  function makeSource(captured: { ctx?: any; filter?: any } = {}) {
     return {
-      client: {
-        expenseRecord: {
-          groupBy: async (args: any) => {
-            captured.where = args.where;
-            return args.by[0] === 'expenseCategoryId'
-              ? [{ expenseCategoryId: 'cat1', _sum: { grandTotalAmount: '300.0000' }, _count: 3 }]
-              : [{ branchId: 'b1', _sum: { grandTotalAmount: '200.0000' }, _count: 2 }, { branchId: null, _sum: { grandTotalAmount: '100.0000' }, _count: 1 }];
-          },
-        },
-        expenseCategory: { findMany: async () => [{ id: 'cat1', name: 'ค่าอาหาร' }] },
-        branch: { findMany: async () => [{ id: 'b1', name: 'สาขาลาดพร้าว' }] },
+      readAiBreakdown: async (ctx: any, filter: any) => {
+        captured.ctx = ctx; captured.filter = filter;
+        return {
+          asOf: new Date('2026-07-31T00:00:00Z'),
+          byCurrency: [{ currency: 'THB', count: 3, totalAmount: '300.0000' }],
+          byCategory: [{ expenseCategoryId: 'cat1', currency: 'THB', count: 3, totalAmount: '300.0000', label: 'ค่าอาหาร' }],
+          byBranch: [
+            { branchId: 'b1', currency: 'THB', count: 2, totalAmount: '200.0000', label: 'สาขาลาดพร้าว' },
+            { branchId: null, currency: 'THB', count: 1, totalAmount: '100.0000', label: null },
+          ],
+          categoryHasMore: false, branchHasMore: false,
+        };
       },
     } as any;
   }
 
   it('fails closed without any expense read permission', async () => {
-    const result = await new ExpenseGetBreakdownTool(makePrisma()).execute({ ...baseCtx, permissions: [] });
+    const result = await new ExpenseGetBreakdownTool(makeSource()).execute({ ...baseCtx, permissions: [] });
     assert.equal(result.status, 'forbidden');
   });
 
   it('groups by category and branch with readable labels', async () => {
-    const result = await new ExpenseGetBreakdownTool(makePrisma()).execute({ ...baseCtx, permissions: ['expense.read'] });
+    const result = await new ExpenseGetBreakdownTool(makeSource()).execute({ ...baseCtx, permissions: ['expense.read'] });
     const data = result.data as any;
     assert.equal(data.byCategory[0].category, 'ค่าอาหาร');
     assert.equal(data.byBranch[0].branch, 'สาขาลาดพร้าว');
@@ -370,21 +373,21 @@ describe('ExpenseGetBreakdownTool', () => {
   });
 
   it('applies the caller branch scope to the query (10D ABAC)', async () => {
-    const captured: { where?: any } = {};
-    await new ExpenseGetBreakdownTool(makePrisma(captured)).execute({ ...baseCtx, permissions: ['expense.read'], branchIds: ['b1'] });
-    assert.deepEqual(captured.where.AND[0].OR, [{ branchId: { in: ['b1'] } }, { branchId: null }]);
+    const captured: { ctx?: any; filter?: any } = {};
+    await new ExpenseGetBreakdownTool(makeSource(captured)).execute({ ...baseCtx, permissions: ['expense.read'], branchIds: ['b1'] });
+    assert.deepEqual(captured.ctx.scopes.branchIds, ['b1']);
   });
 
   it('limits read_own callers to their own records', async () => {
-    const captured: { where?: any } = {};
-    await new ExpenseGetBreakdownTool(makePrisma(captured)).execute({ ...baseCtx, permissions: ['expense.read_own'] });
-    assert.equal(captured.where.AND[1].createdByUserId, 'u1');
+    const captured: { ctx?: any } = {};
+    await new ExpenseGetBreakdownTool(makeSource(captured)).execute({ ...baseCtx, permissions: ['expense.read_own'] });
+    assert.deepEqual(captured.ctx.permissions, ['expense.read_own']);
   });
 
   it('limits read_related callers to the persisted actor relation', async () => {
-    const captured: { where?: any } = {};
-    await new ExpenseGetBreakdownTool(makePrisma(captured)).execute({ ...baseCtx, permissions: ['expense.read_related'] });
-    assert.ok(captured.where.AND[1].OR.some((clause: any) => clause.payments?.some));
+    const captured: { ctx?: any } = {};
+    await new ExpenseGetBreakdownTool(makeSource(captured)).execute({ ...baseCtx, permissions: ['expense.read_related'] });
+    assert.deepEqual(captured.ctx.permissions, ['expense.read_related']);
   });
 });
 

@@ -10,13 +10,23 @@
  */
 import { Injectable, type CallHandler, type ExecutionContext, type NestInterceptor } from '@nestjs/common';
 import { Observable, map } from 'rxjs';
-import { parseAiBudgetEnvelope, type AiUsageEntry } from '@watchdog-bms/contracts';
+import {
+  parseAiBudgetEnvelope,
+  parseAiBudgetGrantV2,
+  parseLineAiInputEvidence,
+  type AiUsageEntry,
+} from '@watchdog-bms/contracts';
 import { drainUsage, runWithUsageContext, type BudgetRequestState } from './usage-context';
 
 type UsageBody = {
   companyId?: unknown;
   requestId?: unknown;
+  messageText?: unknown;
   budgetEnvelope?: unknown;
+  inputEvidence?: unknown;
+  budgetGrantV2?: unknown;
+  contractCapabilities?: unknown;
+  publicAdmission?: { payerCompanyId?: unknown };
   userContext?: { companyId?: unknown };
 };
 
@@ -34,7 +44,9 @@ export class AiUsageInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const request = context.switchToHttp().getRequest<{ body?: UsageBody; url?: string; originalUrl?: string }>();
     const body = request?.body;
-    const raw = typeof body?.companyId === 'string' ? body.companyId : body?.userContext?.companyId;
+  const raw = typeof body?.companyId === 'string' ? body.companyId
+    : typeof body?.userContext?.companyId === 'string' ? body.userContext.companyId
+      : body?.publicAdmission?.payerCompanyId;
     const companyId = typeof raw === 'string' && raw ? raw : undefined;
     const budget = readBudgetState(body, companyId, internalAiSourceRoute(request?.originalUrl ?? request?.url));
 
@@ -63,7 +75,27 @@ function readBudgetState(
   companyId: string | undefined,
   sourceRoute: string,
 ): BudgetRequestState | undefined {
-  if (body?.budgetEnvelope === undefined || body.budgetEnvelope === null) return undefined;
+  const hasV2 = body?.inputEvidence !== undefined || body?.budgetGrantV2 !== undefined || body?.contractCapabilities !== undefined;
+  const hasLegacy = body?.budgetEnvelope !== undefined && body.budgetEnvelope !== null;
+  if (hasV2 && hasLegacy) return { status: 'invalid' };
+  if (hasV2) {
+    const evidence = typeof body?.messageText === 'string'
+      ? parseLineAiInputEvidence(body.inputEvidence, body.messageText)
+      : undefined;
+    const grant = parseAiBudgetGrantV2(body?.budgetGrantV2);
+    const capabilities = body?.contractCapabilities;
+    if (!companyId || !evidence || !grant || grant.payerCompanyId !== companyId
+      || evidence.turnKey !== grant.turnKey || !Array.isArray(capabilities) || capabilities.length !== 2
+      || capabilities.includes('input-evidence-v2') !== true || capabilities.includes('budget-envelope-v2') !== true) {
+      return { status: 'invalid' };
+    }
+    return {
+      status: 'active-v2', grant, inputDigest: evidence.joinedSha256, sourceRoute,
+      ...(typeof body?.requestId === 'string' && body.requestId ? { requestId: body.requestId } : {}),
+      calls: grant.nextOrdinal ?? 0, repairCount: 0,
+    };
+  }
+  if (!hasLegacy) return undefined;
   const envelope = companyId ? parseAiBudgetEnvelope(body.budgetEnvelope, companyId) : undefined;
   if (!envelope) return { status: 'invalid' };
   return {

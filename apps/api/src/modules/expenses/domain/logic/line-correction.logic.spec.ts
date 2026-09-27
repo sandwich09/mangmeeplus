@@ -212,3 +212,23 @@ describe('the header note keeps its provenance under both writers', () => {
     assert.ok(withPurposeNote(PROVENANCE.padEnd(495, '!'), 'เลี้ยงลูกค้าอย่างยาวมาก').length <= 500);
   });
 });
+
+describe('full precision correction evidence', () => {
+  it('distinguishes decimals which collide as JavaScript numbers and rejects a numeric prefix', () => {
+    const exact = '99999999999999.9999';
+    for (const value of ['100000000000000', exact + 'junk']) {
+      const outcome = evaluateCorrectionHints({ amount: { to: value } }, target, evidence(exact), LINE_CORRECTION_FIELDS);
+      assert.equal(outcome.status, 'guidance');
+    }
+    assert.equal(evaluateCorrectionHints({ amount: { to: exact } }, target, evidence(exact), LINE_CORRECTION_FIELDS).status, 'applicable');
+  });
+  it('grounds a later amount without the old twenty-candidate truncation', () => {
+    assert.equal(evaluateCorrectionHints({ amount: { to: '121' } }, target,
+      evidence(Array.from({ length: 22 }, (_, index) => String(100 + index)).join(' / ')), LINE_CORRECTION_FIELDS).status, 'applicable');
+  });
+  it('refuses an oversized field without applying another otherwise valid field', () => {
+    const outcome = evaluateCorrectionHints({ amount: { to: '590' }, vendorName: { to: 'ก'.repeat(201) } }, target,
+      evidence('590 ' + 'ก'.repeat(201)), LINE_CORRECTION_FIELDS);
+    assert.deepEqual(outcome, { status: 'guidance', reason: 'field_too_long:vendorName:200' });
+  });
+});

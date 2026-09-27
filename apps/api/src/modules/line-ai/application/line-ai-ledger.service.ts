@@ -36,6 +36,8 @@ import { AuditService } from '../../audit/application/audit.service';
 import { hashMessagePreview } from '../domain/logic/line-ai-classifier.logic';
 import { safeLineErrorDetails } from '../infrastructure/line-reply.adapter';
 import { ConsumptionMarkerUnavailableError, findConsumedClarificationIds, type MarkerTransactionClient } from './line-ai-consumption-marker';
+import { Prisma } from '../../../generated/prisma/client';
+import { freezeAcceptedLedgerRequest, type AcceptedLedgerRequestInput } from './line-ledger-accepted-request';
 
 export const LEDGER_GROUP = 'lineai-turn';
 export const LINE_CLARIFICATION_SOURCE_MAX_BYTES = 16384;
@@ -105,6 +107,9 @@ export type LedgerEntry = {
   /** The already-stored file this question was asked about (see LineAiOpenClarification). */
   pendingMedia?: LedgerPendingMedia;
   valueCandidates?: LineAiValueCandidates;
+  /** Marker only; complete immutable input lives in Postgres, never in Redis authority. */
+  reliabilityVersion?: 2;
+  durableDeliveryId?: string;
   createdAt: string;
 };
 
@@ -142,6 +147,8 @@ export function fieldsToEntry(key: string, id: string, fields: string[]): Ledger
   const map: Record<string, string> = {};
   for (let i = 0; i + 1 < fields.length; i += 2) map[fields[i]] = fields[i + 1];
   if ((map['kind'] !== 'turn' && map['kind'] !== 'sub_request') || !map['turnId'] || !map['userId']) return null;
+  if (map['reliabilityVersion'] && (map['reliabilityVersion'] !== '2' || (map['kind'] === 'turn' && !/^[0-9a-f]{64}$/.test(map['durableDeliveryId'] ?? '')))) return null;
+  if (map['durableDeliveryId'] && map['reliabilityVersion'] !== '2') return null;
   let valueCandidates: LineAiValueCandidates | undefined;
   if (map['valueCandidates']) {
     try { valueCandidates = JSON.parse(map['valueCandidates']) as LineAiValueCandidates; } catch { valueCandidates = undefined; }
@@ -174,6 +181,7 @@ export function fieldsToEntry(key: string, id: string, fields: string[]): Ledger
     ...(pendingMedia ? { pendingMedia } : {}),
     ...(valueCandidates ? { valueCandidates } : {}),
     createdAt: map['createdAt'] ?? '',
+    ...(map['reliabilityVersion'] === '2' ? { reliabilityVersion: 2 as const, ...(map['durableDeliveryId'] ? { durableDeliveryId: map['durableDeliveryId'] } : {}) } : {}),
   };
 }
 
@@ -230,8 +238,8 @@ export class LineAiLedgerService implements OnModuleDestroy {
     this.client = null;
   }
 
-  /** Append one `turn` entry BEFORE the gateway call. Returns the entry id, or null when the
-   *  ledger is off/unavailable (fail-open: the turn proceeds unledgered). */
+  /** Freeze v2 admission in Postgres BEFORE the gateway call regardless of the optional Redis
+   *  queue. Legacy turns may proceed unqueued; a v2 persistence failure must stop the turn. */
   async appendTurn(input: {
     companyId: string;
     chatKey: string;
@@ -242,15 +250,33 @@ export class LineAiLedgerService implements OnModuleDestroy {
     text: string;
     valueCandidates?: LineAiValueCandidates;
     intakeIntent?: LineIntakeRouteIntent;
+    acceptedRequest?: AcceptedLedgerRequestInput;
     now?: Date;
   }): Promise<string | null> {
+    const channelId = input.messagingChannelId ?? this.config.lineMessagingChannelId ?? '';
+    const accepted = input.acceptedRequest ? freezeAcceptedLedgerRequest(input.acceptedRequest, { ...input, messagingChannelId: channelId }) : null;
+    if (accepted) {
+      // Admission happens before the Redis reference. Replaying an enqueue cannot overwrite input
+      // or extend the foreground lease/deadline. The original webhook owns its paid work window.
+      const admittedAt = new Date(accepted.request.budgetGrantV2!.admittedAtMs);
+      const saved = await this.prisma.client.lineLedgerDelivery.upsert({ where: { id: accepted.deliveryId }, create: {
+        id: accepted.deliveryId, companyId: input.companyId, userId: input.userId, webhookEventId: input.webhookEventId,
+        entryId: `v2:${accepted.deliveryId}`, entryKind: 'turn', createdAt: admittedAt,
+        expiresAt: new Date(admittedAt.getTime() + LINE_AI_CONTEXT_WINDOW_MINUTES * 60_000),
+        leaseToken: `foreground:${input.turnId}`, leaseExpiresAt: new Date(accepted.request.budgetGrantV2!.finalDeadlineAtMs),
+        acceptedRequestJson: accepted as unknown as Prisma.InputJsonValue,
+      }, update: {} });
+      if ((saved.acceptedRequestJson as { digest?: string } | null)?.digest !== accepted.digest) throw new Error('LINE_LEDGER_ACCEPTED_REQUEST_CHANGED');
+    }
+    if (!this.enabled) return null;
     return this.append(input.companyId, input.chatKey, {
       kind: 'turn',
       turnId: input.turnId,
       webhookEventId: input.webhookEventId,
       ...(input.messagingChannelId ? { messagingChannelId: input.messagingChannelId } : {}),
       userId: input.userId,
-      text: input.text,
+      text: accepted?.request.messageText ?? input.text,
+      ...(accepted ? { reliabilityVersion: '2', durableDeliveryId: accepted.deliveryId } : {}),
       state: 'pending',
       ...(input.valueCandidates ? { valueCandidates: JSON.stringify(input.valueCandidates) } : {}),
       ...(input.intakeIntent ? { intakeIntent: input.intakeIntent } : {}),
@@ -266,11 +292,13 @@ export class LineAiLedgerService implements OnModuleDestroy {
     messagingChannelId?: string;
     userId: string;
     items: LedgerSubRequestInput[];
+    reliabilityVersion?: 2;
     now?: Date;
   }): Promise<void> {
     for (const item of input.items) {
       await this.append(input.companyId, input.chatKey, {
         kind: 'sub_request',
+        ...(input.reliabilityVersion === 2 ? { reliabilityVersion: '2' } : {}),
         turnId: input.turnId,
         webhookEventId: input.webhookEventId,
         ...(input.messagingChannelId ? { messagingChannelId: input.messagingChannelId } : {}),

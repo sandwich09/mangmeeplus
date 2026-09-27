@@ -1,3 +1,5 @@
+import { createLineAiInputEvidence, verifyLineAiInputEvidence, LINE_AI_INPUT_EVIDENCE_LIMITS } from '@watchdog-bms/contracts';
+import { createHash } from 'node:crypto';
 /**
  * LINE AI message buffer + per-chat serial dispatch.
  *
@@ -57,6 +59,10 @@ export type LineBufferIncomingItem =
       text: string;
       /** Exact preview id from a validated confirm/cancel postback; synthetic command text stays unchanged. */
       draftUpdatePreviewId?: string;
+      reimbursementDraftControl?: import('./line-reimbursement-draft.service').LineReimbursementDraftControl;
+  answerDeliveryControl?: import('../domain/logic/line-delivery-plan.logic').LineAnswerDeliveryControl;
+      /** API-owned replay snapshot; never populated from LINE webhook JSON. */
+      inputEvidence?: import('@watchdog-bms/contracts').LineAiInputEvidenceV2;
       lineMessageId?: string;
       timestamp: number;
     }
@@ -80,6 +86,7 @@ export type LineBufferEnvelope = {
   chatId: string;
   lineUserId: string;
   messagingChannelId: string;
+  channelKind?: 'USER' | 'GROUP' | 'ROOM';
   item: LineBufferIncomingItem;
 };
 
@@ -96,9 +103,11 @@ type BatchLoading = { promise: Promise<boolean>; webhookEventId: string; consume
 type PendingMeta = { firstAcceptedAt: number; flushedAt: number; loading: BatchLoading | null };
 
 type ChatState = {
+  reliabilityV2: boolean;
   chatId: string;
   lineUserId: string;
   messagingChannelId: string;
+  channelKind?: 'USER' | 'GROUP' | 'ROOM';
   /** Effective debounce for this chat: the configured value, or the experiment cohort when the
    *  debounce experiment is on and this (company, chat) resolved to one. */
   debounceMs: number;
@@ -157,12 +166,24 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // The legal gate must run before acceptEvent: its recoverable payload contains raw chat
     // text/reply tokens/media ids. Preflight receives identity coordinates only, so a pending
     // employee message never crosses the durable-payload boundary.
+    const publicChat = envelope.channelKind === 'GROUP' || envelope.channelKind === 'ROOM' || envelope.chatId !== envelope.lineUserId;
+    const publicAdmission = publicChat && envelope.item.kind === 'text' ? await this.processWebhook.preflightPublicGeneral(envelope) : null;
+    if (publicChat && !publicAdmission) {
+      const accepted = await this.acceptEvent(envelope, false);
+      if (accepted !== null) {
+        const messages = [{ type: 'text' as const, text: 'แชตนี้ยังไม่พร้อมตอบด้วย AI ค่ะ งานเอกสารหรือข้อมูลบริษัทกรุณาส่งในแชตส่วนตัว' }];
+        const delivery = await this.lineReply.sendReply(envelope.item.replyToken, messages);
+        if (delivery === 'failed_token') await this.lineReply.sendPush(envelope.chatId, messages, `public-unavailable:${envelope.item.webhookEventId}`);
+        await this.prisma.client.lineWebhookEventLog.updateMany({ where: { webhookEventId: envelope.item.webhookEventId, status: 'received' }, data: { status: 'public_unavailable', processedAt: new Date(), payloadJson: Prisma.DbNull } });
+      }
+      return;
+    }
     const companyCommand = envelope.item.kind === 'text' && !!parseLineCompanyCommand(envelope.item.text);
     const publicCommand = envelope.item.kind === 'text' && staffMenuCommand(envelope.item.text);
     // P10-L: the door commands join the bypass for the same reason the first three are on it — the
     // reply carries no company data, and a greeting or "I am staff" must answer before there is an
     // account to have accepted anything.
-    const legal = publicCommand === 'contact' || publicCommand === 'talk' || publicCommand === 'promotion'
+    const legal = publicAdmission ? { status: 'continue' as const, companyId: publicAdmission.companyId } : publicCommand === 'contact' || publicCommand === 'talk' || publicCommand === 'promotion'
       || publicCommand === 'follow' || publicCommand === 'employee' || publicCommand === 'staff_contact'
       ? { status: 'continue' as const, companyId: undefined }
       : await this.processWebhook.preflightLegalAcceptance({
@@ -377,13 +398,15 @@ export class LineMessageBufferService implements OnModuleDestroy {
   }
 
   private appendAccepted(envelope: LineBufferEnvelope, acceptedAt: number, companyId?: string): void {
-    const key = `${envelope.chatId}:${envelope.lineUserId}`;
+    const key = `${envelope.messagingChannelId}:${envelope.chatId}:${envelope.lineUserId}`;
     let state = this.chats.get(key);
     if (!state) {
       state = {
+        reliabilityV2: this.config.lineAiReliabilityV2Mode === 'on' && this.config.lineAiDeliveryPlanV2Enabled && (!!companyId && this.config.lineAiReliabilityV2CompanyIds.includes(companyId) && this.config.lineAiDeliveryPlanV2WriteCompanyIds.includes(companyId) || this.config.lineAiDeliveryPlanV2PublicChannelIds.includes(envelope.messagingChannelId)),
         chatId: envelope.chatId,
         lineUserId: envelope.lineUserId,
         messagingChannelId: envelope.messagingChannelId,
+        channelKind: envelope.channelKind,
         debounceMs: this.config.lineAiBufferDebounceMs,
         open: [],
         firstAcceptedAt: null,
@@ -404,7 +427,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
 
     const incoming = envelope.item;
     const lineCommand = incoming.kind === 'text'
-      && (parseLineCompanyCommand(incoming.text) || staffMenuCommand(incoming.text));
+      && (incoming.inputEvidence || incoming.reimbursementDraftControl || incoming.answerDeliveryControl || parseLineCompanyCommand(incoming.text) || staffMenuCommand(incoming.text));
     const kind = lineCommand ? 'command' : incoming.kind;
     const item = {
       ...incoming,
@@ -469,7 +492,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       }
     }
 
-    if (item.kind === 'command' || bufferAtCapacity(state.open) || state.debounceMs === 0) {
+    if (item.kind === 'command' || bufferAtCapacity(state.open, state.reliabilityV2 ? LINE_AI_INPUT_EVIDENCE_LIMITS.maxUtf16Units : undefined) || state.debounceMs === 0) {
       this.flushOpen(key, state);
       return;
     }
@@ -546,6 +569,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       return;
     }
     const items = state.open;
+    if (state.reliabilityV2 && !this.fitsV2Input(items)) { state.open = []; state.firstAcceptedAt = null; state.scheduledFlushAt = null; this.handleOverflow(state, items, true); return; }
     const firstAcceptedAt = state.firstAcceptedAt;
     const openLoading = state.openLoading;
     state.open = [];
@@ -563,7 +587,15 @@ export class LineMessageBufferService implements OnModuleDestroy {
     } else {
       // Merge-into-pending keeps queue depth structurally bounded (spec §7):
       // at most one processing batch + one pending batch + the open buffer.
-      const fit = fittingPrefixCount(state.pending, items);
+      if (state.reliabilityV2) {
+        const combined = [...state.pending, ...items];
+        if (!this.fitsV2Input(combined)) {
+          state.pending = null; state.pendingMeta = null;
+          this.handleOverflow(state, combined, true);
+          return;
+        }
+      }
+      const fit = state.reliabilityV2 ? items.length : fittingPrefixCount(state.pending, items);
       state.pending.push(...items.slice(0, fit));
       const dropped = items.slice(fit);
       if (dropped.length > 0) this.handleOverflow(state, dropped);
@@ -571,14 +603,19 @@ export class LineMessageBufferService implements OnModuleDestroy {
     this.kickWorker(key, state);
   }
 
+  private fitsV2Input(items: LineBufferItem[]): boolean {
+    const text = items.filter((item): item is LineBufferTextItem => item.kind !== 'media').map(item => item.text).join('\n');
+    return items.length <= LINE_AI_INPUT_EVIDENCE_LIMITS.maxParts && text.length <= LINE_AI_INPUT_EVIDENCE_LIMITS.maxUtf16Units && Buffer.byteLength(text, 'utf8') <= LINE_AI_INPUT_EVIDENCE_LIMITS.maxUtf8Bytes;
+  }
+
   /** Reaching this needs ~40+ bubbles during one in-flight turn — flood, not
    *  normal use. Drop the newest, tell the user once, keep the audit trail. */
-  private handleOverflow(state: ChatState, dropped: LineBufferItem[]): void {
+  private handleOverflow(state: ChatState, dropped: LineBufferItem[], inputTooLarge = false): void {
     const droppedIds = dropped.map((item) => item.webhookEventId);
     void Promise.all(droppedIds.map(async (webhookEventId) => {
       const updated = await this.prisma.client.lineWebhookEventLog.updateMany({
         where: { webhookEventId, status: 'received' },
-        data: { status: 'rate_limited', errorCode: 'RATE_LIMITED', processedAt: new Date(), payloadJson: Prisma.DbNull },
+        data: { status: 'rate_limited', errorCode: inputTooLarge ? 'INPUT_TOO_LARGE' : 'RATE_LIMITED', processedAt: new Date(), payloadJson: Prisma.DbNull },
       }).catch(() => ({ count: 0 }));
       if (updated.count === 1) {
         emitLineAiTerminalOutcome(this.logger, { webhookEventId, status: 'rate_limited', errorCode: 'RATE_LIMITED' });
@@ -599,7 +636,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       state.overflowNotified = true;
       const last = dropped[dropped.length - 1];
       void this.lineReply
-        .sendReply(last.replyToken, [this.lineReply.buildTextMessage(RATE_LIMIT_REPLY)])
+        .sendReply(last.replyToken, [this.lineReply.buildTextMessage(inputTooLarge ? 'ข้อความชุดนี้ยาวเกินขอบเขตที่รับได้ค่ะ ยังไม่ได้ดำเนินการ กรุณาแบ่งคำขอเป็นชุดเล็กลง' : RATE_LIMIT_REPLY)])
         .catch(() => {});
     }
   }
@@ -829,7 +866,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
    *  was already shown — it then skips the duplicate processing-start loading. */
   private async dispatchGroup(state: ChatState, group: LineBatchGroup, suppressLoading: boolean): Promise<void> {
     if (group.kind === 'command') {
-      await this.processWebhook.execute(this.toTextEvent(state, [group.item]));
+      await this.processWebhook.execute(await this.toTextEvent(state, [group.item]));
       return;
     }
 
@@ -887,7 +924,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
         loadingEnabled: this.config.lineAiLoadingAnimationEnabled,
         latestAcceptedAt, now: Date.now(),
       }),
-      (beforeReply) => this.processWebhook.execute({ ...this.toTextEvent(state, textItems), beforeReply }),
+      async (beforeReply) => this.processWebhook.execute({ ...await this.toTextEvent(state, textItems), beforeReply }),
       suppressLoading,
     );
     await this.markBatched(textItems.filter((item) => item !== last).map((item) => item.webhookEventId));
@@ -895,17 +932,45 @@ export class LineMessageBufferService implements OnModuleDestroy {
 
   /** The synthesized turn carries the LAST bubble's event id + reply token
    *  (freshest token); earlier bubbles become `batched` members (spec §8). */
-  private toTextEvent(state: ChatState, textItems: LineBufferTextItem[]): LineTextEvent {
+  private async toTextEvent(state: ChatState, textItems: LineBufferTextItem[]): Promise<LineTextEvent> {
     const last = textItems[textItems.length - 1];
+    const recovered = last.inputEvidence;
+    if (recovered && (textItems.length !== 1 || !await verifyLineAiInputEvidence(recovered, last.text))) throw new Error('INVALID_INPUT_EVIDENCE');
+    const evidence = recovered ? { inputEvidence: recovered } : state.reliabilityV2
+      ? await createLineAiInputEvidence({ turnKey: createHash('sha256').update(last.webhookEventId).digest('hex'), parts: textItems.map((part, index) => ({ partId: `part-${index}`, eventIdHash: createHash('sha256').update(part.webhookEventId).digest('hex'), acceptedAtMs: part.acceptedAt, rawText: part.text })) }) : undefined;
+    if (state.reliabilityV2 && !evidence) throw new Error('INPUT_TOO_LARGE');
+    if (evidence && !recovered) {
+      // Freeze the complete turn and retire its parts in one transaction before any model/tool call.
+      // Recovery replays this one record even if all new-write flags have since been disabled.
+      const payload = { chatId: state.chatId, lineUserId: state.lineUserId, messagingChannelId: state.messagingChannelId, channelKind: state.channelKind,
+        item: { kind: 'text', webhookEventId: last.webhookEventId, replyToken: last.replyToken,
+          text: joinGroupText(textItems), timestamp: last.timestamp, lineMessageId: last.lineMessageId,
+          ...(last.draftUpdatePreviewId ? { draftUpdatePreviewId: last.draftUpdatePreviewId } : {}),
+          ...(last.answerDeliveryControl ? { answerDeliveryControl: last.answerDeliveryControl } : {}),
+          ...(last.reimbursementDraftControl ? { reimbursementDraftControl: last.reimbursementDraftControl } : {}),
+          inputEvidence: evidence.inputEvidence } };
+      await this.prisma.client.$transaction(async tx => {
+        const frozen = await tx.lineWebhookEventLog.updateMany({ where: { webhookEventId: last.webhookEventId, status: 'received', deliveryOwnerId: null }, data: { payloadJson: JSON.parse(JSON.stringify(payload)) as Prisma.InputJsonValue } });
+        if (frozen.count !== 1) throw new Error('INPUT_OWNER_CHANGED');
+        const sourceIds = textItems.slice(0, -1).map(part => part.webhookEventId);
+        if (sourceIds.length) {
+          const retired = await tx.lineWebhookEventLog.updateMany({ where: { webhookEventId: { in: sourceIds }, status: 'received', deliveryOwnerId: null }, data: { status: 'batched', processedAt: new Date(), payloadJson: Prisma.DbNull } });
+          if (retired.count !== sourceIds.length) throw new Error('INPUT_PART_OWNER_CHANGED');
+        }
+      });
+    }
     return {
+      ...(evidence ? { inputEvidence: evidence.inputEvidence } : {}),
       webhookEventId: last.webhookEventId,
       lineUserId: state.lineUserId,
       replyToken: last.replyToken,
       messageText: joinGroupText(textItems),
-      messagingChannelId: state.messagingChannelId,
+      messagingChannelId: state.messagingChannelId, channelKind: state.channelKind,
       lineMessageId: last.lineMessageId,
       pushTargetId: state.chatId,
       ...(last.draftUpdatePreviewId ? { draftUpdatePreviewId: last.draftUpdatePreviewId } : {}),
+      ...(last.answerDeliveryControl ? { answerDeliveryControl: last.answerDeliveryControl } : {}),
+          ...(last.reimbursementDraftControl ? { reimbursementDraftControl: last.reimbursementDraftControl } : {}),
     };
   }
 
@@ -922,7 +987,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       messageType: media.messageType,
       fileName: media.fileName,
       fileSize: media.fileSize,
-      messagingChannelId: state.messagingChannelId,
+      messagingChannelId: state.messagingChannelId, channelKind: state.channelKind,
       pushTargetId: state.chatId,
       assistantPaused,
       ...(media.companyIdAtAcceptance ? { companyIdAtAcceptance: media.companyIdAtAcceptance } : {}),

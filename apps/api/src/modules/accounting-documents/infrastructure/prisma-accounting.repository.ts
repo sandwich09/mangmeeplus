@@ -889,12 +889,10 @@ export class PrismaAccountingRepository {
     const pageSize = Math.min(filter.pageSize ?? 20, 100);
     const skip = (page - 1) * pageSize;
     const where = await this.buildDocumentsWhere(filter, branchIds);
-    const [data, total] = await Promise.all([
-      // id tiebreaker: documentDate is non-unique, and OFFSET paging over an unstable order can
-      // repeat/skip rows across pages (breaks multi-page aggregation in accounting.get_summary)
-      this.prisma.client.accountingDocument.findMany({ where, skip, take: pageSize, orderBy: [{ documentDate: 'desc' }, { id: 'asc' }] }),
-      this.prisma.client.accountingDocument.count({ where }),
-    ]);
+    const [data, total] = await this.prisma.client.$transaction(async (tx) => Promise.all([
+      tx.accountingDocument.findMany({ where, skip, take: pageSize, orderBy: [{ documentDate: 'desc' }, { id: 'asc' }] }),
+      tx.accountingDocument.count({ where }),
+    ]), { isolationLevel: 'RepeatableRead', maxWait: 1_000, timeout: 5_000 });
     return { data: data.map((r) => this.toDocumentRecord(r)), total, page, pageSize };
   }
 
@@ -908,24 +906,65 @@ export class PrismaAccountingRepository {
   async aggregateDocumentsByType(
     filter: Omit<ListDocumentsFilter, 'page' | 'pageSize'>,
     branchIds?: string[],
-  ): Promise<{ total: number; byType: Record<string, { count: number; totalAmount: string }> }> {
+  ): Promise<{ total: number; byType: Record<string, { count: number; totalAmount: string | null; currency: string | null; totalsByCurrency: Array<{ currency: string; totalAmount: string; count: number }> }> }> {
     const where = await this.buildDocumentsWhere(filter, branchIds);
     const groups = await (this.prisma.client.accountingDocument as any).groupBy({
-      by: ['documentType'],
+      by: ['documentType', 'currency'],
       where,
       _count: { _all: true },
       _sum: { grandTotalAmount: true },
     });
-    const byType: Record<string, { count: number; totalAmount: string }> = {};
+    const grouped = new Map<string, Array<{ currency: string; totalAmount: string; count: number }>>();
     let total = 0;
-    for (const group of groups as Array<{ documentType: string; _count: { _all: number }; _sum: { grandTotalAmount: unknown } }>) {
+    for (const group of groups as Array<{ documentType: string; currency: string; _count: { _all: number }; _sum: { grandTotalAmount: unknown } }>) {
       total += group._count._all;
-      byType[group.documentType] = {
-        count: group._count._all,
-        totalAmount: new Decimal(String(group._sum.grandTotalAmount ?? 0)).toFixed(2),
-      };
+      const entries = grouped.get(group.documentType) ?? [];
+      entries.push({ currency: group.currency, count: group._count._all, totalAmount: new Decimal(String(group._sum.grandTotalAmount ?? 0)).toFixed(2) });
+      grouped.set(group.documentType, entries);
     }
+    const byType = Object.fromEntries([...grouped].map(([documentType, totalsByCurrency]) => [documentType, {
+      count: totalsByCurrency.reduce((sum, entry) => sum + entry.count, 0),
+      totalAmount: totalsByCurrency.length === 1 ? totalsByCurrency[0]!.totalAmount : null,
+      currency: totalsByCurrency.length === 1 ? totalsByCurrency[0]!.currency : null,
+      totalsByCurrency,
+    }]));
     return { total, byType };
+  }
+
+  async aggregateOpenReceivables(
+    filter: Omit<ListDocumentsFilter, 'page' | 'pageSize' | 'documentType'>,
+    branchIds?: string[],
+  ): Promise<{
+    asOf: Date;
+    openCount: number;
+    totalsByCurrency: Array<{ currency: string; outstandingAmount: string; count: number }>;
+    items: Array<{ id: string; documentNumber: string | null; dueDate: Date | null; outstandingAmount: string; currency: string; paymentStatus: string }>;
+    hasMore: boolean;
+  }> {
+    const where = await this.buildDocumentsWhere({ ...filter, documentType: 'INVOICE' }, branchIds);
+    Object.assign(where, { status: { in: ['ISSUED', 'CREDITED', 'DEBITED', 'CLOSED'] }, outstandingAmount: { gt: 0 } });
+    return this.prisma.client.$transaction(async (tx) => {
+      const stamp = await tx.$queryRaw<Array<{ asOf: Date }>>`SELECT transaction_timestamp() AS "asOf"`;
+      const [groups, rows] = await Promise.all([
+        tx.accountingDocument.groupBy({
+          by: ['currency'], where, _count: { _all: true }, _sum: { outstandingAmount: true },
+        }),
+        tx.accountingDocument.findMany({
+          where, take: 11, orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
+          select: { id: true, documentNumber: true, dueDate: true, outstandingAmount: true, currency: true, paymentStatus: true },
+        }),
+      ]);
+      return {
+        asOf: stamp[0]?.asOf ?? new Date(),
+        openCount: groups.reduce((sum, group) => sum + group._count._all, 0),
+        totalsByCurrency: groups.map((group) => ({
+          currency: group.currency, count: group._count._all,
+          outstandingAmount: new Decimal(String(group._sum.outstandingAmount ?? 0)).toFixed(2),
+        })),
+        items: rows.slice(0, 10).map((row) => ({ ...row, outstandingAmount: String(row.outstandingAmount), paymentStatus: String(row.paymentStatus ?? 'UNPAID') })),
+        hasMore: rows.length > 10,
+      };
+    }, { isolationLevel: 'RepeatableRead', maxWait: 1_000, timeout: 5_000 });
   }
 
   async issueDocument(

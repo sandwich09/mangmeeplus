@@ -1,3 +1,4 @@
+import { invalidateLineConversationState } from '../../../line-ai/application/line-conversation-context.service';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -16,9 +17,9 @@ export class SetAiAssistantPreferenceUseCase {
   ) {}
 
   async execute(userId: string, enabled: boolean, requestId?: string): Promise<void> {
-    await this.prisma.client.user.update({
-      where: { id: userId },
-      data: { aiAssistantOptOutAt: enabled ? null : new Date() },
+    await this.prisma.client.$transaction(async tx => {
+      await tx.user.update({ where: { id: userId }, data: { aiAssistantOptOutAt: enabled ? null : new Date() } });
+      if (!enabled) await invalidateLineConversationState(tx, { userId }, false);
     });
     await this.audit?.log({
       action: AuditAction.AUTH_AI_ASSISTANT_PREFERENCE_UPDATE,

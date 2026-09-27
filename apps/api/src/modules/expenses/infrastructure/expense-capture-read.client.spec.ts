@@ -57,6 +57,22 @@ const chunk = {
 };
 
 describe('ExpenseCaptureReadClient', () => {
+  it('does not save a v2 checkbox without original field evidence from an older or malformed Gateway', async () => {
+    for (const evidenceVersion of [undefined, 2]) {
+      const state = sharedPrisma();
+      const gateway = stubGateway({ status: 'ok', contractVersion: 1, observations: {
+        fieldEvidenceVersion: evidenceVersion, documents: [{ ref: 'd1', pageIndexes: [0], issuer: { name: 'invented' } }],
+        items: [], components: [], totals: [], payments: [], refunds: [],
+      } });
+      try {
+        const client = new ExpenseCaptureReadClient(config, undefined, state.prisma);
+        const result = await client.extractWindow({ companyId: 'co-1', userId: 'system', requestId: 'r', jobId: 'job-1', windowId: 'w1',
+          window: { evidenceSource: { version: 2, attachmentId: 'att-1', checksumSha256: 'a'.repeat(64) }, fileLabel: 'f', pageIndexes: [0], pages: [{ pageIndex: 0, text: 'TOTAL 1.00' }] } });
+        assert.equal(result.status, 'failed');
+        assert.equal((result as any).errorCode, evidenceVersion === 2 ? 'CAPTURE_FIELD_EVIDENCE_INVALID' : 'CAPTURE_FIELD_EVIDENCE_UNSUPPORTED');
+      } finally { gateway.restore(); }
+    }
+  });
   it('names the job AND the chunk in the attempt key, under the declared read step', async () => {
     const state = sharedPrisma();
     const gateway = stubGateway({ status: 'ok', contractVersion: 1, pages: [{ pageIndex: 3, text: 'A', truncated: false, blank: false }] });

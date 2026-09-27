@@ -16,6 +16,30 @@ function qs(params?: Record<string, unknown>): string {
 
 const base = (companyId: string) => `/companies/${companyId}/reimbursements`;
 
+export type ReimbursementDraftActionResponse =
+  | { status: 'preview'; preview: any }
+  | { status: 'applied'; receipt: Record<string, any> }
+  | { status: 'needs_fields'; actionId: string; fieldPaths: string[]; actionRevision: number }
+  | { status: 'needs_target'; actionId: string; actionRevision: number }
+  | { status: 'cancelled' | 'expired' | 'stale' | 'result_unknown'; actionId: string; errorCode?: string }
+  | { status: 'blocked'; errorCode: string; retryAfter?: number };
+
+export function getReimbursementDraftAction(companyId: string, actionId: string) {
+  return apiFetch<ReimbursementDraftActionResponse>(`${base(companyId)}/draft-actions/${actionId}`);
+}
+
+export function confirmReimbursementDraftAction(companyId: string, actionId: string, input: { previewRevision: number; confirmationDigest: string }) {
+  return apiFetch<ReimbursementDraftActionResponse>(`${base(companyId)}/draft-actions/${actionId}/confirm`, {
+    method: 'POST', body: JSON.stringify(input),
+  });
+}
+
+export function cancelReimbursementDraftAction(companyId: string, actionId: string, input: { previewRevision: number; confirmationDigest: string }) {
+  return apiFetch<ReimbursementDraftActionResponse>(`${base(companyId)}/draft-actions/${actionId}/cancel`, {
+    method: 'POST', body: JSON.stringify(input),
+  });
+}
+
 export function getReimbursementSourceOptions(companyId: string, params: { branchId: string; requesterUserId: string; search?: string; expenseId?: string }) {
   return apiFetch<ReimbursementSourceOptions>(`${base(companyId)}/source-options${qs(params)}`);
 }

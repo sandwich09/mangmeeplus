@@ -1,3 +1,9 @@
+import { LineDocumentQaWorker } from '../line-document-qa.worker';
+import { LineDocumentQaService } from '../line-document-qa.service';
+import { parseLineReimbursementDraftControl } from '../line-reimbursement-draft.service';
+import { parseLineAiInputEvidence } from '@watchdog-bms/contracts';
+import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
+import { LineLedgerDeliveryService } from '../line-ledger-delivery.service';
 /**
  * Orphaned LINE webhook recovery + event-log retention.
  *
@@ -64,9 +70,16 @@ export function parseBufferEnvelope(value: unknown): LineBufferEnvelope | null {
   if (typeof envelope.chatId !== 'string' || !envelope.chatId) return null;
   if (typeof envelope.lineUserId !== 'string' || !envelope.lineUserId) return null;
   if (typeof envelope.messagingChannelId !== 'string') return null;
+  if (envelope.channelKind !== undefined && !['USER', 'GROUP', 'ROOM'].includes(envelope.channelKind)) return null;
   if (!item || typeof item.webhookEventId !== 'string' || typeof item.replyToken !== 'string') return null;
   if (item.kind === 'text') {
     if (typeof item.text !== 'string') return null;
+    if ('inputEvidence' in item && !parseLineAiInputEvidence(item.inputEvidence, item.text)) return null;
+    if ('reimbursementDraftControl' in item && !parseLineReimbursementDraftControl(item.reimbursementDraftControl)) return null;
+    if ('answerDeliveryControl' in item) {
+      const control = item.answerDeliveryControl;
+      if (!control || !['continue', 'cancel'].includes(control.action) || !/^[a-f0-9]{64}$/.test(control.planId) || (control.action === 'continue' && control.next !== 2)) return null;
+    }
     if ('draftUpdatePreviewId' in item && !isLineDraftPreviewId(item.draftUpdatePreviewId)) return null;
     return envelope as LineBufferEnvelope;
   }
@@ -76,7 +89,11 @@ export function parseBufferEnvelope(value: unknown): LineBufferEnvelope | null {
 
 @Injectable()
 export class RecoverOrphanLineEventsUseCase {
+  @Inject(LineDocumentQaWorker) private readonly documentQaWorker!: LineDocumentQaWorker;
+  @Inject(LineDocumentQaService) private readonly documentQa!: LineDocumentQaService;
   private readonly logger = new Logger(RecoverOrphanLineEventsUseCase.name);
+  @Inject(ProcessLineWebhookUseCase) private readonly webhook!: ProcessLineWebhookUseCase;
+  @Inject(LineLedgerDeliveryService) private readonly deliveryPlans!: LineLedgerDeliveryService;
   @Inject(LineReadEvidenceService) private readonly readEvidence!: LineReadEvidenceService;
   // Property injection, like `readEvidence` above: the five constructor arguments are what every
   // existing caller and spec already passes.
@@ -92,6 +109,9 @@ export class RecoverOrphanLineEventsUseCase {
   ) {}
 
   async execute(batchSize = 20): Promise<OrphanSweepResult> {
+    await this.documentQaWorker?.drain().catch(() => ({ claimed: 0 }));
+    await this.webhook?.recoverDocumentQaResults?.().catch(() => 0);
+    await this.documentQa?.purgeExpired().catch(() => 0);
     const now = Date.now();
     const rows = await this.prisma.client.lineWebhookEventLog.findMany({
       where: {
@@ -104,6 +124,8 @@ export class RecoverOrphanLineEventsUseCase {
         // every minute. It also bounds replay — the stamp below is itself a RETRYABLE_ code, and
         // acceptEvent clears it only once the buffer has actually taken the message back.
         OR: [
+          // Existing v2 obligations are always read, even after new-write flags are disabled.
+          { status: 'delivery_pending', turnOutcome: { is: { presentationKind: 'delivery_plan_v2' } } },
           // Never dispatched, or dispatched by a process that died mid-turn.
           { status: 'received', errorCode: null },
           { status: 'received', errorCode: LINE_RECEIPT_RETRY_LEASE_CODE, processedAt: { lte: new Date(now - LINE_RECEIPT_RETRY_LEASE_MS) } },
@@ -130,12 +152,12 @@ export class RecoverOrphanLineEventsUseCase {
 
     // Read pending AND accepted outcomes. A crash after API acceptance but before event bookkeeping
     // must reconcile the event without rerouting or sending the already accepted result.
-    const outcomes = this.config.lineAiTerminalOutcomeReplayEnabled && rows.length > 0
+    const outcomes = rows.length > 0
       ? new Map((await this.prisma.client.lineTurnOutcome.findMany({
         where: { webhookEventId: { in: rows.map((row) => row.webhookEventId) } },
-        select: { webhookEventId: true, messagesJson: true, authorizationJson: true, deliveredAt: true },
+        select: { webhookEventId: true, messagesJson: true, authorizationJson: true, deliveredAt: true, presentationKind: true, deliveryPlan: { select: { id: true } } },
       })).map((outcome) => [outcome.webhookEventId, outcome]))
-      : new Map<string, { messagesJson: unknown; authorizationJson: unknown; deliveredAt: Date | null }>();
+      : new Map<string, { messagesJson: unknown; authorizationJson: unknown; deliveredAt: Date | null; presentationKind?: string; deliveryPlan?: { id: string } | null }>();
 
     const result: OrphanSweepResult = { replayed: 0, expired: 0, skipped: 0, purged: 0, captureFilesPurged: 0 };
     const replayBefore = new Date(now - ORPHAN_REPLAY_MAX_AGE_MS);
@@ -153,6 +175,7 @@ export class RecoverOrphanLineEventsUseCase {
         continue;
       }
       const outcome = outcomes.get(row.webhookEventId);
+      if (!this.config.lineAiTerminalOutcomeReplayEnabled && outcome && outcome.presentationKind !== 'delivery_plan_v2') { result.skipped += 1; continue; }
       if (outcome && row.errorCode === 'LINE_API_ACCEPTED') {
         await this.prisma.client.lineTurnOutcome.updateMany({
           where: { webhookEventId: row.webhookEventId, deliveredAt: null }, data: { deliveredAt: new Date() },
@@ -165,6 +188,13 @@ export class RecoverOrphanLineEventsUseCase {
         // The send committed before event bookkeeping did: never recompute an accepted turn.
         await this.park(row, 'completed', 'LINE_OUTCOME_ALREADY_ACCEPTED');
         result.skipped += 1;
+        continue;
+      }
+      if (outcome?.presentationKind === 'delivery_plan_v2') {
+        if (!outcome.deliveryPlan) { await this.park(row, 'delivery_failed', 'LINE_OUTCOME_RECOVERY_REQUIRED'); result.skipped += 1; continue; }
+        const delivered = await this.webhook.replayDeliveryPlan(outcome.deliveryPlan.id, { webhookEventId: row.webhookEventId, replyToken: '', lineUserId: envelope.lineUserId, pushTargetId: envelope.chatId, messagingChannelId: envelope.messagingChannelId });
+        if (delivered === 'ok') { await this.park(row, 'completed', 'LINE_OUTCOME_ALREADY_ACCEPTED'); result.replayed += 1; }
+        else result.skipped += 1;
         continue;
       }
       if (outcome) {
@@ -199,6 +229,7 @@ export class RecoverOrphanLineEventsUseCase {
       }
     }
 
+    await this.deliveryPlans?.sweepPlans(new Date(now));
     result.purged = await this.purgeExpiredEvents(now);
     result.captureFilesPurged = await this.purgeExpiredCaptureData(now);
     if (result.replayed + result.expired + result.skipped > 0) {

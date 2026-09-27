@@ -1,3 +1,4 @@
+import { invalidateLineConversationState } from '../../../line-ai/application/line-conversation-context.service';
 import { accountEmailState, emailError, lockAccountEmail } from '../account-email-state';
 import { ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -50,6 +51,8 @@ export class UnlinkLineIdentityUseCase {
       await tx.lineCompanyContext.deleteMany({
         where: { lineUserId: identity.providerUserId },
       });
+
+      await invalidateLineConversationState(tx, { userId }, true);
 
       // The deep links already sent to this chat outlive the identity by up to 15 minutes and are
       // bearer credentials for the account being severed — see the helper for the full reasoning.

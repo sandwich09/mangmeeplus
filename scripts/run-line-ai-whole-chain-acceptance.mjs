@@ -5,11 +5,14 @@ import { fileURLToPath } from 'node:url';
 import {
   LINE_AI_WHOLE_CHAIN_SCENARIOS,
   LINE_AI_WHOLE_CHAIN_SUITES,
+  LINE_AI_RELIABILITY_POSTGRES_SUITES,
 } from './line-ai-whole-chain-acceptance.catalog.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const catalogOnly = process.argv.includes('--catalog-only');
-const suites = [
+const postgresOnly = process.argv.includes('--reliability-postgres');
+if (postgresOnly && !process.env.BILLING_TEST_DATABASE_URL) throw new Error('BILLING_TEST_DATABASE_URL is required; PostgreSQL invariants must not silently skip.');
+const suites = postgresOnly ? LINE_AI_RELIABILITY_POSTGRES_SUITES : [
   {
     id: 'catalog-contract', cwd: '.', command: process.execPath,
     args: ['--test', 'scripts/line-ai-whole-chain-acceptance-catalog.spec.mjs'],
@@ -25,7 +28,7 @@ const startedAt = Date.now();
 for (const suite of suites) {
   const result = spawnSync(suite.command, suite.args, {
     cwd: resolve(repoRoot, suite.cwd),
-    env: process.env,
+    env: postgresOnly ? { ...process.env, AI_BUDGET_RESERVATION_TEST_DATABASE_URL: process.env.BILLING_TEST_DATABASE_URL } : process.env,
     stdio: 'inherit',
   });
   if (result.error) {

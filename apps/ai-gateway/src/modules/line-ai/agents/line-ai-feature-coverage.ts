@@ -45,6 +45,20 @@ function tools(...names: string[]): LineAiCoverageTool[] {
  */
 export const LINE_AI_FEATURE_COVERAGE: readonly LineAiFeatureCoverageRow[] = [
   {
+    id: 'public_lookup_v2', feature: 'Policy-bounded public lookup', status: 'feature_gated',
+    questionKinds: ['explain'], tools: tools('public.lookup'), requiredPermissions: ['ai.tool.invoke'],
+    sourceModule: 'public', owningItem: 'W09',
+    reason: 'Semantic v2 executor and public lookup flags must be enabled; API policy admission is not searched evidence.',
+  },
+  {
+    id: 'reimbursement_draft_v2', feature: 'Reimbursement draft collection and preview', status: 'feature_gated',
+    questionKinds: ['evidence_capture'],
+    tools: tools('reimbursement.draft.get_options', 'reimbursement.draft.preview_create', 'reimbursement.draft.preview_update'),
+    requiredPermissions: ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'],
+    sourceModule: 'reimbursements', owningItem: 'W06c',
+    reason: 'Semantic v2 and reimbursement draft flags must be enabled; API rechecks each tool permission and confirmation before mutation.',
+  },
+  {
     id: 'company_context', feature: 'Company and branch context', status: 'covered',
     questionKinds: ['summary', 'list'],
     tools: tools('company.get_current_context', 'company.list_branches'),

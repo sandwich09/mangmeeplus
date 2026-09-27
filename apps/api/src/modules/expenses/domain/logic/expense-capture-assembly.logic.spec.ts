@@ -16,7 +16,26 @@ import type {
   ExpenseCaptureObservations,
   ExpenseCaptureTotalObservation,
 } from '@watchdog-bms/contracts';
-import { assembleCaptureObservations } from './expense-capture-assembly.logic';
+import { assembleCaptureObservations, planWindows } from './expense-capture-assembly.logic';
+
+describe('complete capture extraction windows', () => {
+  it('keeps every long-page character and the bottom total with original offsets', () => {
+    const text = 'item 1.00\n'.repeat(1700) + 'TOTAL 1700.00';
+    const windows = planWindows({ '2': { text } });
+    assert.ok(windows.length > 1);
+    assert.equal(windows.flatMap(window => window.pages).map(page => page.text).join(''), text);
+    let offset = 0;
+    for (const page of windows.flatMap(window => window.pages)) {
+      assert.equal(page.sourceOffset ?? 0, offset); assert.equal(page.pageIndex, 2);
+      assert.equal(text.slice(offset, offset + page.text.length), page.text); offset += page.text.length;
+    }
+    assert.ok(windows.at(-1)!.pages.at(-1)!.text.endsWith('TOTAL 1700.00'));
+  });
+  it('retains an oversized indivisible line for explicit refusal rather than claiming its prefix is complete', () => {
+    const text = 'ก'.repeat(15000);
+    assert.equal(planWindows({ '0': { text } })[0]!.pages[0]!.text, text);
+  });
+});
 
 const classification: BusinessDocumentClassification = {
   contentKind: 'DOCUMENT',
@@ -62,6 +81,23 @@ function observations(over: Partial<ExpenseCaptureObservations> = {}): ExpenseCa
 
 const assemble = (windows: ExpenseCaptureObservations[], pageCount = 1) =>
   assembleCaptureObservations(windows.map((value, index) => ({ id: `w${index + 1}`, observations: value })), { pageCount });
+
+it('v2 split-page source ids retain both rows and deduplicate only the same source row', () => {
+  const head = observations({ fieldEvidenceVersion: 2, items: [item({ id: 'item:p0:s10:e20', amount: '10.00' })] });
+  const tail = observations({ fieldEvidenceVersion: 2, items: [item({ id: 'item:p0:s14000:e14010', amount: '20.00' })], totals: [total('document_total', '30.00')] });
+  const result = assemble([head, tail, structuredClone(head)]);
+  assert.equal(result.items.length, 2); assert.equal(result.reconciliation[0]!.status, 'reconciled');
+});
+
+it('reclassified and derived fields preserve printed locators with their final field roles', () => {
+  const proof = (role: string, rawValue: string) => ({ attachmentId: 'a', checksumSha256: 'a'.repeat(64), pageIndex: 0, localSpan: { start: 0, end: rawValue.length }, rawValue, role });
+  const result = assemble([observations({ components: [
+    component({ id: 'goods', role: 'applied_discount', scope: 'document', label: 'มูลค่าก่อนภาษี', amount: '100.00', evidenceSpan: 'มูลค่าก่อนภาษี 100.00', fieldEvidence: { amount: proof('applied_discount:amount', '100.00'), label: proof('applied_discount:label', 'มูลค่าก่อนภาษี') } }),
+    component({ id: 'vat', role: 'tax_included', scope: 'document', label: 'VAT 7%', amount: '7.00', evidenceSpan: 'VAT 7% 7.00', fieldEvidence: { amount: proof('tax_included:amount', '7.00'), label: proof('tax_included:label', 'VAT 7%') } }),
+  ], totals: [total('document_total', '107.00')] })]);
+  assert.equal(result.components[0]!.role, 'summary'); assert.equal(result.components[0]!.fieldEvidence!.amount!.role, 'summary:amount');
+  assert.deepEqual(result.totals.find(row => row.kind === 'tax')!.fieldEvidence, { amount: proof('tax:amount', '7.00') });
+});
 
 describe('capture assembly — money', () => {
   it('A25: a subtotal that already includes shipping is not added to the shipping charge again', () => {

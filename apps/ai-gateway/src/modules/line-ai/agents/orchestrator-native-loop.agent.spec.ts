@@ -73,14 +73,14 @@ function installNativeFetch(opts: {
       nativeBodies.push(body);
       if (httpErrorPending) {
         httpErrorPending = false;
-        return { ok: false, status: 500, json: async () => ({ error: { message: 'boom' } }) } as Response;
+        return Response.json({ error: { message: 'boom' } }, { status: 500 });
       }
       const turn = nativeTurns[nativeIndex++] ?? { text: 'done' };
       const output = [
         ...(turn.toolCalls ?? []).map((c) => ({ type: 'function_call', call_id: `c${callId++}`, name: c.name, arguments: JSON.stringify(c.input ?? {}) })),
         ...(turn.text ? [{ type: 'message', content: [{ type: 'output_text', text: turn.text }] }] : []),
       ];
-      return { ok: true, json: async () => ({ status: 'completed', output }) } as Response;
+      return Response.json({ status: 'completed', output });
     }
     let payload: any = {};
     // The router's feature catalog is prepended as a cacheable block on the OpenAI wire, so the
@@ -89,19 +89,19 @@ function installNativeFetch(opts: {
     try { payload = JSON.parse(firstUserText.slice(firstUserText.lastIndexOf('\n') + 1)); } catch { payload = {}; }
     if (Array.isArray(payload.toolsCalled)) {
       const answer = criticAnswers[criticIndex++] ?? JSON.stringify([]);
-      return { ok: true, json: async () => ({ output_text: answer }) } as Response;
+      return Response.json({ status: 'completed', output_text: answer });
     }
     if (payload.systemData) {
-      return { ok: true, json: async () => ({ output_text: 'สรุปตามข้อมูลด้านบนค่ะ' }) } as Response;
+      return Response.json({ status: 'completed', output_text: 'สรุปตามข้อมูลด้านบนค่ะ' });
     }
     if (typeof payload.reply === 'string') {
-      return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
+      return Response.json({ status: 'completed', output_text: payload.reply });
     }
     if (Array.isArray(payload.availableTools)) {
       const choice = jsonLoopChoices[jsonIndex++] ?? { done: true };
-      return { ok: true, json: async () => ({ output_text: JSON.stringify(choice) }) } as Response;
+      return Response.json({ status: 'completed', output_text: JSON.stringify(choice) });
     }
-    return { ok: true, json: async () => ({ output_text: JSON.stringify(plan) }) } as Response;
+    return Response.json({ status: 'completed', output_text: JSON.stringify(plan) });
   }) as typeof fetch;
 }
 

@@ -16,6 +16,7 @@
  */
 import type { AdvisorRefusalCode, AdvisorTonePreface, MangmeeConversationMode, PreparedAdvisorAnswer } from './line-ai.js';
 import { ADVISOR_REFUSAL_CODES, ADVISOR_TONE_PREFACES, MANGMEE_CONVERSATION_MODES } from './line-ai.js';
+import type { LineAiInputEvidenceV2 } from './line-ai-input-evidence.js';
 
 /** Version 1 wrapper bounds (spec §9), concrete so every receiver enforces the same limits. */
 export const LINE_AI_ADVISOR_ANSWER_BOUNDS = {
@@ -53,7 +54,7 @@ const REFUSAL_CODES = new Set<AdvisorRefusalCode>(ADVISOR_REFUSAL_CODES);
  * riding along — the attempt fails visibly and the turn falls back.
  */
 const ALLOWED_ADVISOR_KEYS: ReadonlySet<string> = new Set([
-  'version', 'mode', 'confidence', 'needsTools', 'knowledgeCardIds', 'companyProfileFieldsUsed',
+  'version', 'inputDigest', 'mode', 'confidence', 'needsTools', 'knowledgeCardIds', 'companyProfileFieldsUsed',
   'responseFamilyId', 'answerText', 'tonePreface', 'clarificationQuestion', 'refusalCode',
 ]);
 
@@ -118,7 +119,10 @@ function parseProse(value: unknown, maxBytes: number): string | undefined | type
  * enum, out-of-range confidence, raw URL/markup, prototype or provenance injection) so the caller
  * falls back to the existing full path.
  */
-export function parseLineAiPreparedAdvisorAnswer(raw: unknown): PreparedAdvisorAnswer | undefined {
+export function parseLineAiPreparedAdvisorAnswer(
+  raw: unknown,
+  inputEvidence?: LineAiInputEvidenceV2,
+): PreparedAdvisorAnswer | undefined {
   if (!isPlainObject(raw)) return undefined;
 
   let encoded: string;
@@ -134,7 +138,11 @@ export function parseLineAiPreparedAdvisorAnswer(raw: unknown): PreparedAdvisorA
     if (!ALLOWED_ADVISOR_KEYS.has(key)) return undefined;
   }
 
-  if (raw['version'] !== LINE_AI_ADVISOR_ANSWER_BOUNDS.version) return undefined;
+  const version = raw['version'];
+  if (version !== 1 && version !== 2) return undefined;
+  if (version === 1 && raw['inputDigest'] !== undefined) return undefined;
+  if (version === 2 && (!inputEvidence || raw['inputDigest'] !== inputEvidence.joinedSha256)) return undefined;
+  if (version === 2 && (typeof raw['inputDigest'] !== 'string' || !/^[0-9a-f]{64}$/u.test(raw['inputDigest']))) return undefined;
   const mode = raw['mode'];
   if (!inSet(MODES, mode)) return undefined;
 
@@ -181,7 +189,8 @@ export function parseLineAiPreparedAdvisorAnswer(raw: unknown): PreparedAdvisorA
   }
 
   return {
-    version: 1,
+    version,
+    ...(version === 2 ? { inputDigest: raw['inputDigest'] as string } : {}),
     mode,
     confidence,
     needsTools,

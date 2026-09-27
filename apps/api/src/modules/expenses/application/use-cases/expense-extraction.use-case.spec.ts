@@ -1,7 +1,8 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { RequestReceiptExtractionUseCase } from './expense-extraction.use-case';
-import { ReceiptOcrClient } from '../../infrastructure/receipt-ocr.client';
+import { ReceiptOcrClient, verifyReceiptOcrEvidenceV2 } from '../../infrastructure/receipt-ocr.client';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { __resetCompanyAiBudgetCache } from '../../../line-ai/application/company-ai-usage-meter';
 
@@ -914,6 +915,94 @@ describe('ReceiptOcrClient failure boundary', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('rejects a tampered or missing evidence envelope before the business checkpoint', async () => {
+    __resetCompanyAiBudgetCache();
+    const originalFetch = globalThis.fetch;
+    const state = readyPrisma();
+    const config = {
+      aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+      aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+      lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+    } as any;
+    let sentBody: any;
+    const contentBase64 = Buffer.from('receipt').toString('base64');
+    const pageText = 'TOTAL 1,177.00 CASH 1,200.00 CHANGE 23.00';
+    globalThis.fetch = mock.fn(async (_url: any, init: any) => {
+      sentBody = JSON.parse(init.body);
+      return new Response(JSON.stringify({
+        status: 'ok', fields: { grandTotalAmount: '1,200.00' },
+        receiptEvidence: {
+          version: 2, attachmentId: 'attachment-1',
+          attachmentSha256: createHash('sha256').update(Buffer.from(contentBase64, 'base64')).digest('hex'),
+          pages: [{ pageIndex: 0, text: pageText }],
+          fields: { grandTotalAmount: {
+            pageIndex: 0, role: 'grand_total', rawValue: '1,200.00',
+            localSpan: { start: pageText.indexOf('1,200.00'), end: pageText.indexOf('1,200.00') + '1,200.00'.length },
+          } },
+        },
+        usage: [{ tag: 'receipt-ocr', modelId: 'synthetic', ok: true, inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 }],
+      }));
+    }) as any;
+    try {
+      const client = new ReceiptOcrClient(config, undefined, state.prisma);
+      const response = await client.extract({ ...request, attachment: {
+        id: 'attachment-1',
+        mimeType: 'image/jpeg', contentBase64,
+      } } as any);
+      assert.equal(sentBody.requireEvidenceV2, true, 'only the configured company enters strict evidence mode');
+      assert.equal(response.status, 'failed');
+      assert.equal(response.errorCode, 'OCR_EVIDENCE_INVALID');
+      assert.equal(response.usage?.length, 1, 'the paid usage survives API evidence rejection');
+      assert.equal(state.providerUsage.length, 1, 'API validation runs after usage is recorded');
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it('honors explicit internal evidence requests when the company rollout flag is off', async () => {
+    __resetCompanyAiBudgetCache();
+    const originalFetch = globalThis.fetch;
+    const state = readyPrisma();
+    let sentBody: any;
+    globalThis.fetch = mock.fn(async (_url: any, init: any) => {
+      sentBody = JSON.parse(init.body);
+      return new Response(JSON.stringify({ status: 'ok', fields: { grandTotalAmount: '10.00' } }));
+    }) as any;
+    try {
+      const client = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+        lineAiReliabilityV2Mode: 'off', lineAiReliabilityV2CompanyIds: [],
+      } as any, undefined, state.prisma);
+      const response = await client.extract({ ...request, requireEvidenceV2: true, attachment: {
+        id: 'attachment-1', mimeType: 'image/jpeg', contentBase64: Buffer.from('receipt').toString('base64'),
+      } } as any);
+      assert.equal(sentBody.requireEvidenceV2, true);
+      assert.equal(response.errorCode, 'OCR_EVIDENCE_INVALID');
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it('rejects a locally valid total from a different page seller', () => {
+    const contentBase64 = Buffer.from('receipt').toString('base64');
+    const page0 = '[SELLER]ร้านเอ[/SELLER]';
+    const page1 = '[SELLER]ร้านบี[/SELLER]\nTOTAL 20.00';
+    const response = {
+      status: 'ok',
+      fields: { vendorName: 'ร้านเอ', grandTotalAmount: '20.00' },
+      receiptEvidence: {
+        version: 2,
+        attachmentId: 'attachment-1',
+        attachmentSha256: createHash('sha256').update(Buffer.from(contentBase64, 'base64')).digest('hex'),
+        pages: [{ pageIndex: 0, text: page0 }, { pageIndex: 1, text: page1 }],
+        fields: {
+          vendorName: { pageIndex: 0, role: 'seller_name', rawValue: 'ร้านเอ', localSpan: { start: page0.indexOf('ร้านเอ'), end: page0.indexOf('ร้านเอ') + 'ร้านเอ'.length } },
+          grandTotalAmount: { pageIndex: 1, role: 'grand_total', rawValue: '20.00', localSpan: { start: page1.indexOf('20.00'), end: page1.indexOf('20.00') + '20.00'.length } },
+        },
+      },
+    } as any;
+    assert.equal(verifyReceiptOcrEvidenceV2(response, { attachment: {
+      id: 'attachment-1', mimeType: 'image/jpeg', contentBase64,
+    } } as any), false);
   });
 });
 
