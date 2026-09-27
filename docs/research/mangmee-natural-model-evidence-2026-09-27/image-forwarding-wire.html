@@ -1,0 +1,1543 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>NAT — ตรวจข้อความ LINE ที่ส่งจริง</title>
+    <style>body{font-family:system-ui,sans-serif;color:#172438;background:#eef2f5;line-height:1.6;max-width:1100px;margin:32px auto;padding:0 18px}h1{font-size:26px}h2{font-size:20px}section{background:#fff;border:1px solid #d9e1e9;border-radius:12px;padding:22px;margin:22px 0}p{white-space:pre-wrap}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f0f3f6;padding:12px;font-size:12px}code{overflow-wrap:anywhere}.question{background:#e5f0ff;padding:12px;border-radius:8px}.message{max-width:760px;background:#eef7f1;padding:14px;margin:12px 0;border-radius:10px}.carousel{display:flex;gap:12px;overflow-x:auto}.bubble{background:white;border:1px solid #d2ddda;border-radius:12px;min-width:250px;max-width:340px;padding:14px}.bubble p{margin:8px 0}button{border:1px solid #46866a;background:#fff;color:#205f44;border-radius:7px;padding:8px 12px;margin:5px;opacity:1}.muted{color:#526174;font-size:13px}.warning{color:#8f3b15;background:#fff0de;padding:12px}details{margin:12px 0}summary{cursor:pointer;font-weight:600}article{border-top:1px solid #d9e1e9;padding:12px 0}</style>
+    <h1>NAT — ตรวจข้อความ LINE ที่ส่งจริง</h1><p>จำนวนข้อในรายงาน 5 · มีหลักฐาน 5 · ไม่มีหลักฐาน 0</p>
+    <p>สถานะการตรวจโดยคน: UNREVIEWED ทุกข้อ ใช้คำถาม/คำตอบจริงจาก artifact นี้ ไม่คำนวณคะแนนจาก golden เก่า</p>
+    <p class="warning">ปลายทางเป็น synthetic LINE HTTP sink เท่านั้น ไม่ใช่ภาพจากแอป LINE และยังไม่ผ่าน native LINE acceptance ภาพการ์ดนี้จัดวางโดยประมาณ ปุ่มกดไม่ได้และไม่มีการโหลดรูปหรือเปิดลิงก์ ตรวจเพียง message envelope ของ repo และไฟล์ route ที่มีอยู่ การเข้าถึง URL / login / tenant permission / การแสดงผลจริงยังไม่ได้ทดสอบ</p>
+    <p>ตัวเลข 0 ที่ปรากฏในคำตอบต้องตรวจเทียบผล tool และ source; ข้อมูลที่หายไปไม่เท่ากับ 0 แถว usage ที่ไม่มีไม่พิสูจน์ว่าไม่มี provider call การเปลี่ยน preview/context แยกจาก mutation ธุรกิจไว้ด้านล่าง ไม่มีการอนุมัติหรือเคลื่อนเงินจริงจากรายงานนี้</p>
+    <details><summary>ขอบเขตและข้อผิดพลาด runtime</summary><pre>{
+  &quot;boundary&quot;: {
+    &quot;runtime&quot;: &quot;compiled_nest_api_postgres&quot;,
+    &quot;line&quot;: &quot;synthetic_http_sink&quot;,
+    &quot;nativeLineVerified&quot;: false,
+    &quot;cacheStateVerified&quot;: false,
+    &quot;activationEligible&quot;: false
+  },
+  &quot;runtimeDiagnostics&quot;: [
+    {
+      &quot;scenarioId&quot;: &quot;NAT-05&quot;,
+      &quot;repeat&quot;: 0,
+      &quot;phase&quot;: &quot;gateway&quot;,
+      &quot;stage&quot;: &quot;requestLineTurn&quot;,
+      &quot;error&quot;: {
+        &quot;name&quot;: &quot;AiGatewayRequestError&quot;,
+        &quot;code&quot;: &quot;AI_GATEWAY_TIMEOUT&quot;
+      }
+    }
+  ]
+}</pre></details><section><h2>NAT-05 · รอบ 1 · ข้อ 1</h2><p class="question">ใบนี้รวมเท่าไหร่อะ</p><p>ไฟล์แนบ: receipt-clear</p>
+      <p>สถานะที่เก็บได้: <strong>needs_input</strong> · sink delivery: ACCEPTED</p>
+      <p>จบงานที่ runtime สังเกต: 14,435 ms · wire แรก: 1,066 ms · wire ล่าสุด: 14,552 ms</p>
+      <article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/push · 1,066 ms</p><div class="message"><p>ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ปกติไม่เกิน 1 นาที เสร็จแล้วน้องจะสรุปให้เลยนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ปกติไม่เกิน 1 นาที เสร็จแล้วน้องจะสรุปให้เลยนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483784575,
+  &quot;receiptId&quot;: &quot;sink-3ad6fba5-14b0-4589-b000-79e4f606c4ba&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/push&quot;,
+  &quot;payloadHash&quot;: &quot;0d663758a822ce27341cd0b8e0831ba67bbaa7e7202c23ad604f268672ee5f64&quot;
+}</pre></details></article><article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/reply · 14,552 ms</p><div class="message"><p>ต้องการให้อ่านไฟล์นี้เพื่อตอบคำถาม หรือใช้เป็นหลักฐานบันทึกค่าใช้จ่ายคะ ยังไม่ได้สร้างรายการให้ค่ะ</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;ต้องการให้อ่านไฟล์นี้เพื่อตอบคำถาม หรือใช้เป็นหลักฐานบันทึกค่าใช้จ่ายคะ ยังไม่ได้สร้างรายการให้ค่ะ&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483798061,
+  &quot;receiptId&quot;: &quot;sink-b6a228ed-fb3e-4fa2-8cfb-dc49c6396e5a&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/reply&quot;,
+  &quot;payloadHash&quot;: &quot;5fc23d696385d29559fac70ffabef0ba539e177086e3e4b18a03132c66b0503f&quot;
+}</pre></details></article>
+      <p>การเปลี่ยนข้อมูลธุรกิจ: AttachmentObject.create (cmujbtoev002epkk13eh6s010)</p>
+      <p>Provider usage: 1 แถวที่บันทึกได้</p>
+      <details><summary>Provider: รุ่น / token / ค่าใช้จ่าย / แหล่ง usage / reservation</summary><pre>{
+  &quot;usage&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbtods002bpkk1gbhb3ynz&quot;,
+      &quot;requestId&quot;: &quot;a39938fc-1aca-4960-879a-aaf4974c40e3&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#b3e4ea669835dc883dbce7171118fc346e61d8db8271a65dc50a61e4c1885285#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-intake-route&quot;,
+      &quot;usageTag&quot;: &quot;line.intake-route&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 2346,
+      &quot;outputTokens&quot;: 871,
+      &quot;cacheReadInputTokens&quot;: 0,
+      &quot;cacheWriteInputTokens&quot;: 6891,
+      &quot;costSatang&quot;: 152,
+      &quot;requestKind&quot;: &quot;IMAGE&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 23,
+          &quot;output&quot;: 43,
+          &quot;rounding&quot;: 1,
+          &quot;cacheRead&quot;: 0,
+          &quot;cacheWrite&quot;: 85
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:37.936Z&quot;
+    }
+  ],
+  &quot;reservations&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbte7o002apkk1wf2qtusr&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#b3e4ea669835dc883dbce7171118fc346e61d8db8271a65dc50a61e4c1885285#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 853,
+      &quot;settledCostSatang&quot;: 152,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:24.756Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:36:24.742Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:36:37.932Z&quot;
+    }
+  ]
+}</pre></details>
+      <details><summary>ผล tool จริงสำหรับตรวจตัวเลขและแหล่งข้อมูล</summary><pre>[]</pre></details>
+      <details><summary>ผล Gateway จริง รวม intake / semanticSubrequests / preparedPlan</summary><pre>[
+  {
+    &quot;method&quot;: &quot;requestLineIntakeRoute&quot;,
+    &quot;requestId&quot;: &quot;a39938fc-1aca-4960-879a-aaf4974c40e3&quot;,
+    &quot;startedAtMs&quot;: 1790483784697,
+    &quot;completedAtMs&quot;: 1790483797944,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;ROUTED&quot;,
+      &quot;intent&quot;: &quot;BUSINESS_READ_QUESTION&quot;,
+      &quot;language&quot;: &quot;th&quot;,
+      &quot;confidence&quot;: 0.82,
+      &quot;reason&quot;: &quot;The user is asking a read question about the total amount on the attached document, not requesting to capture or record an expense.&quot;,
+      &quot;documentClassification&quot;: {
+        &quot;contentKind&quot;: &quot;DOCUMENT&quot;,
+        &quot;documentFamily&quot;: &quot;EXPENSE_EVIDENCE&quot;,
+        &quot;documentKind&quot;: &quot;RECEIPT&quot;,
+        &quot;businessDirection&quot;: &quot;PURCHASE_EXPENSE&quot;,
+        &quot;transactionState&quot;: &quot;UNKNOWN&quot;,
+        &quot;evidenceRoles&quot;: [
+          &quot;EXPENSE_SUPPORT&quot;
+        ],
+        &quot;confidence&quot;: 0.72,
+        &quot;evidenceSignals&quot;: [],
+        &quot;amountSignals&quot;: [],
+        &quot;settlementSignals&quot;: [],
+        &quot;missingRequiredSignals&quot;: [
+          &quot;MISSING_PAYMENT_EVIDENCE&quot;
+        ],
+        &quot;contradictionSignals&quot;: [
+          &quot;HUMAN_REVIEW_REQUIRED&quot;,
+          &quot;CONTRADICTORY_SIGNALS&quot;
+        ],
+        &quot;requiresClarification&quot;: true
+      },
+      &quot;documentText&quot;: &quot;SYNTHETIC TEST DATA ONLY — NOT A VALID TAX DOCUMENT\n\n**Green Bowl Synthetic Cafe**\n\nReceipt: NAT-RECEIPT-001\nDate: 2026-09-21\nCurrency: THB\n\n**Food and beverages**\n\nMeal and beverage service    1,196.63\n\nSubtotal (before VAT)    1,196.63 THB\n\nVAT component    83.87 THB\n\n**TOTAL    1,280.50 THB**\n\nAmounts are authored synthetic fixture values.\nNo payment, reimbursement or tax entitlement is certified.\n1,196.63 + 83.87 = 1,280.50\nPage 1 of 1&quot;,
+      &quot;semanticOutcome&quot;: &quot;AMBIGUOUS&quot;,
+      &quot;fundingSource&quot;: &quot;UNKNOWN&quot;,
+      &quot;semanticSubrequests&quot;: [
+        {
+          &quot;index&quot;: 0,
+          &quot;kind&quot;: &quot;read&quot;,
+          &quot;goal&quot;: &quot;คำนวณ/อ่านยอดรวมจากใบเสร็จที่แนบมา&quot;,
+          &quot;requiredEvidence&quot;: [],
+          &quot;requestedFilters&quot;: {},
+          &quot;dependsOn&quot;: [],
+          &quot;evidenceRefs&quot;: [
+            {
+              &quot;partId&quot;: &quot;part-0&quot;,
+              &quot;startUtf16&quot;: 0,
+              &quot;endUtf16&quot;: 18,
+              &quot;rawSha256&quot;: &quot;da4ea40432a584fb7e3bf6fa53c1f0d07ffcaf59e3209ccf3b128dd451bf8fa5&quot;
+            }
+          ]
+        }
+      ],
+      &quot;usage&quot;: [
+        {
+          &quot;tag&quot;: &quot;line.intake-route&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 2346,
+          &quot;outputTokens&quot;: 871,
+          &quot;cacheReadInputTokens&quot;: 0,
+          &quot;cacheWriteInputTokens&quot;: 6891,
+          &quot;durationMs&quot;: 13166,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#b3e4ea669835dc883dbce7171118fc346e61d8db8271a65dc50a61e4c1885285#provider-v2#0&quot;
+        }
+      ],
+      &quot;ocrAdmission&quot;: &quot;admitted&quot;,
+      &quot;ocrMonthKey&quot;: &quot;2026-09&quot;
+    }
+  }
+]</pre></details>
+      <details><summary>สถานะ preview / การยกเลิก / context / preference ก่อนและหลัง</summary><pre>{
+  &quot;before&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [],
+    &quot;truncated&quot;: false
+  },
+  &quot;after&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 0,
+        &quot;taskStateJson&quot;: null,
+        &quot;stateExpiresAt&quot;: null,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:36:24.625Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:36:38.068Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  }
+}</pre></details>
+      <details><summary>Webhook / delivery / mutations / validation failures / source versions</summary><pre>{
+  &quot;webhookEvents&quot;: [
+    {
+      &quot;webhookEventId&quot;: &quot;replay-1334263aa721dc42c23e-0&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;clarification_required&quot;,
+      &quot;errorCode&quot;: null,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:36:38.076Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:23.545Z&quot;
+    },
+    {
+      &quot;webhookEventId&quot;: &quot;replay-1334263aa721dc42c23e-1&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;batched&quot;,
+      &quot;errorCode&quot;: null,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:36:38.077Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:23.561Z&quot;
+    }
+  ],
+  &quot;delivery&quot;: {
+    &quot;requiredBatchIds&quot;: [
+      &quot;88e7d86d0f355ae546ec8ed6bd28374285e1781e3974fd29ce2bdba03ef9e3ea:batch:0&quot;
+    ],
+    &quot;accepted&quot;: [
+      {
+        &quot;batchId&quot;: &quot;88e7d86d0f355ae546ec8ed6bd28374285e1781e3974fd29ce2bdba03ef9e3ea:batch:0&quot;,
+        &quot;wireHash&quot;: &quot;3cdfc86e2cf7b10f138736baab2d663978006600dd1897bed0a230e823a8c5ab&quot;,
+        &quot;acceptedAtMs&quot;: 1790483798061,
+        &quot;receiptId&quot;: &quot;sink-b6a228ed-fb3e-4fa2-8cfb-dc49c6396e5a&quot;
+      }
+    ],
+    &quot;status&quot;: &quot;ACCEPTED&quot;
+  },
+  &quot;effects&quot;: [
+    {
+      &quot;kind&quot;: &quot;AttachmentObject.create&quot;,
+      &quot;recordId&quot;: &quot;cmujbtoev002epkk13eh6s010&quot;,
+      &quot;revision&quot;: &quot;2026-09-27T04:36:38.021&quot;,
+      &quot;evidence&quot;: &quot;database_snapshot&quot;,
+      &quot;evidenceHash&quot;: &quot;f140dc59e251261b6a6b6dd353a0b6f36724a6bb5cea402bb4a192553efe08e0&quot;
+    }
+  ],
+  &quot;validationFailures&quot;: [],
+  &quot;criticalErrors&quot;: [],
+  &quot;recordError&quot;: null,
+  &quot;versions&quot;: {
+    &quot;sourceCommit&quot;: &quot;e9d867382cf0789eac226fd38519d84188440302&quot;,
+    &quot;schema&quot;: &quot;f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8&quot;,
+    &quot;prompt&quot;: &quot;350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e&quot;,
+    &quot;registry&quot;: &quot;0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f&quot;,
+    &quot;model&quot;: &quot;95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7&quot;,
+    &quot;price&quot;: &quot;67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb&quot;
+  }
+}</pre></details>
+      <p class="muted">Snapshot nat-NAT-05 · hash 1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c</p></section>
+<section><h2>NAT-05 · รอบ 1 · ข้อ 2</h2><p class="question">VAT ล่ะ ไม่ใช่ยอดรวมนะ</p>
+      <p>สถานะที่เก็บได้: <strong>temporarily_unavailable</strong> · sink delivery: ACCEPTED</p>
+      <p>จบงานที่ runtime สังเกต: 8,675 ms · wire แรก: 8,737 ms · wire ล่าสุด: 8,737 ms</p>
+      <article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/reply · 8,737 ms</p><div class="message"><p>ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483806866,
+  &quot;receiptId&quot;: &quot;sink-bf8c979f-df25-4cc7-8c3b-ce6c299d9cfc&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/reply&quot;,
+  &quot;payloadHash&quot;: &quot;05d0309e1365499d785b72da21a14a081586ac845bfb72a00bced768fffb944e&quot;
+}</pre></details></article>
+      <p>การเปลี่ยนข้อมูลธุรกิจ: snapshot ไม่พบการเปลี่ยนในตารางธุรกิจที่ตรวจ</p>
+      <p>Provider usage: 1 แถวที่บันทึกได้</p>
+      <details><summary>Provider: รุ่น / token / ค่าใช้จ่าย / แหล่ง usage / reservation</summary><pre>{
+  &quot;usage&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbtv7v002npkk1bq3wcwem&quot;,
+      &quot;requestId&quot;: &quot;b48f5766-2eab-4a94-807d-6909171b7da7&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#03e1c43ca53714a95f5c31f351c9edc46a6b91c0c891b90c2d37713cedd21bfd#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-intake-route&quot;,
+      &quot;usageTag&quot;: &quot;line.intake-route&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 1115,
+      &quot;outputTokens&quot;: 523,
+      &quot;cacheReadInputTokens&quot;: 0,
+      &quot;cacheWriteInputTokens&quot;: 14632,
+      &quot;costSatang&quot;: 218,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 11,
+          &quot;output&quot;: 26,
+          &quot;rounding&quot;: 0,
+          &quot;cacheRead&quot;: 0,
+          &quot;cacheWrite&quot;: 181
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:46.795Z&quot;
+    }
+  ],
+  &quot;reservations&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbtpeq002mpkk1nf5kilky&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#03e1c43ca53714a95f5c31f351c9edc46a6b91c0c891b90c2d37713cedd21bfd#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 1040,
+      &quot;settledCostSatang&quot;: 218,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:39.266Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:36:39.254Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:36:46.788Z&quot;
+    }
+  ]
+}</pre></details>
+      <details><summary>ผล tool จริงสำหรับตรวจตัวเลขและแหล่งข้อมูล</summary><pre>[]</pre></details>
+      <details><summary>ผล Gateway จริง รวม intake / semanticSubrequests / preparedPlan</summary><pre>[
+  {
+    &quot;method&quot;: &quot;requestLineIntakeRoute&quot;,
+    &quot;requestId&quot;: &quot;b48f5766-2eab-4a94-807d-6909171b7da7&quot;,
+    &quot;startedAtMs&quot;: 1790483799235,
+    &quot;completedAtMs&quot;: 1790483806804,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;ROUTED&quot;,
+      &quot;intent&quot;: &quot;CLARIFY&quot;,
+      &quot;language&quot;: &quot;th&quot;,
+      &quot;confidence&quot;: 0.45,
+      &quot;reason&quot;: &quot;The message &#39;VAT ล่ะ ไม่ใช่ยอดรวมนะ&#39; could be a correction to a recently captured expense (wrong VAT amount recorded as total), a follow-up question about VAT on an expense record, or a standalone cla&quot;,
+      &quot;clarifyQuestion&quot;: &quot;ข้อความนี้หมายถึงอะไรคะ — แก้ไขยอด VAT ของรายการค่าใช้จ่ายที่เพิ่งบันทึก หรือถามข้อมูล VAT ของบริษัท?&quot;,
+      &quot;semanticOutcome&quot;: &quot;AMBIGUOUS&quot;,
+      &quot;fundingSource&quot;: &quot;UNKNOWN&quot;,
+      &quot;semanticSubrequests&quot;: [
+        {
+          &quot;index&quot;: 0,
+          &quot;kind&quot;: &quot;general&quot;,
+          &quot;goal&quot;: &quot;ผู้ใช้ชี้แจงว่าค่าที่ต้องการคือ VAT ไม่ใช่ยอดรวม — อาจเป็นการแก้ไขรายการที่บันทึก หรือถามเกี่ยวกับ VAT&quot;,
+          &quot;requiredEvidence&quot;: [],
+          &quot;requestedFilters&quot;: {},
+          &quot;dependsOn&quot;: [],
+          &quot;evidenceRefs&quot;: [
+            {
+              &quot;partId&quot;: &quot;part-0&quot;,
+              &quot;startUtf16&quot;: 0,
+              &quot;endUtf16&quot;: 22,
+              &quot;rawSha256&quot;: &quot;8e085b8e260d2f55ffd8f021538424691dd561b9b56bc8bc9018950061e43493&quot;
+            }
+          ]
+        }
+      ],
+      &quot;usage&quot;: [
+        {
+          &quot;tag&quot;: &quot;line.intake-route&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 1115,
+          &quot;outputTokens&quot;: 523,
+          &quot;cacheReadInputTokens&quot;: 0,
+          &quot;cacheWriteInputTokens&quot;: 14632,
+          &quot;durationMs&quot;: 7514,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#03e1c43ca53714a95f5c31f351c9edc46a6b91c0c891b90c2d37713cedd21bfd#provider-v2#0&quot;
+        }
+      ]
+    }
+  }
+]</pre></details>
+      <details><summary>สถานะ preview / การยกเลิก / context / preference ก่อนและหลัง</summary><pre>{
+  &quot;before&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 0,
+        &quot;taskStateJson&quot;: null,
+        &quot;stateExpiresAt&quot;: null,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:36:24.625Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:36:38.068Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  },
+  &quot;after&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 0,
+        &quot;taskStateJson&quot;: null,
+        &quot;stateExpiresAt&quot;: null,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:36:24.625Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:36:38.068Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  }
+}</pre></details>
+      <details><summary>Webhook / delivery / mutations / validation failures / source versions</summary><pre>{
+  &quot;webhookEvents&quot;: [
+    {
+      &quot;webhookEventId&quot;: &quot;replay-b2db9ab4e1b760ed2ee6-0&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;provider_unavailable&quot;,
+      &quot;errorCode&quot;: &quot;AI_GENERAL_ADMISSION_UNAVAILABLE&quot;,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:36:46.877Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:38.142Z&quot;
+    }
+  ],
+  &quot;delivery&quot;: {
+    &quot;requiredBatchIds&quot;: [
+      &quot;005976bf056c7181634499d4e578c58e153a4bf029f0e9df448099b3cbe39974:batch:0&quot;
+    ],
+    &quot;accepted&quot;: [
+      {
+        &quot;batchId&quot;: &quot;005976bf056c7181634499d4e578c58e153a4bf029f0e9df448099b3cbe39974:batch:0&quot;,
+        &quot;wireHash&quot;: &quot;bdf6ea3a34e2cc1dbf77e4018fdb186c352417ca41cacfcd540aa8b9e3f0ec4d&quot;,
+        &quot;acceptedAtMs&quot;: 1790483806866,
+        &quot;receiptId&quot;: &quot;sink-bf8c979f-df25-4cc7-8c3b-ce6c299d9cfc&quot;
+      }
+    ],
+    &quot;status&quot;: &quot;ACCEPTED&quot;
+  },
+  &quot;effects&quot;: [],
+  &quot;validationFailures&quot;: [],
+  &quot;criticalErrors&quot;: [],
+  &quot;recordError&quot;: null,
+  &quot;versions&quot;: {
+    &quot;sourceCommit&quot;: &quot;e9d867382cf0789eac226fd38519d84188440302&quot;,
+    &quot;schema&quot;: &quot;f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8&quot;,
+    &quot;prompt&quot;: &quot;350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e&quot;,
+    &quot;registry&quot;: &quot;0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f&quot;,
+    &quot;model&quot;: &quot;95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7&quot;,
+    &quot;price&quot;: &quot;67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb&quot;
+  }
+}</pre></details>
+      <p class="muted">Snapshot nat-NAT-05 · hash 1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c</p></section>
+<section><h2>NAT-05 · รอบ 1 · ข้อ 3</h2><p class="question">ชื่อร้านกับวันที่อ่านว่าอะไร</p>
+      <p>สถานะที่เก็บได้: <strong>needs_input</strong> · sink delivery: ACCEPTED</p>
+      <p>จบงานที่ runtime สังเกต: 13,202 ms · wire แรก: 13,274 ms · wire ล่าสุด: 13,274 ms</p>
+      <article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/reply · 13,274 ms</p><div class="message"><p>ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง
+
+↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ
+🤔 รูปนี้เป็นอะไรคะ ตอบเลขข้อได้เลยนะคะ
+1) ใบเสร็จ/เอกสารค่าใช้จ่ายรายการเดียวที่ต้องการบันทึก
+2) ภาพประกอบคำถาม ไม่ต้องบันทึก
+3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง\n\n↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n🤔 รูปนี้เป็นอะไรคะ ตอบเลขข้อได้เลยนะคะ\n1) ใบเสร็จ/เอกสารค่าใช้จ่ายรายการเดียวที่ต้องการบันทึก\n2) ภาพประกอบคำถาม ไม่ต้องบันทึก\n3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483820197,
+  &quot;receiptId&quot;: &quot;sink-f48e8fcb-5b47-4ce8-bf47-c1bbac4cfc17&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/reply&quot;,
+  &quot;payloadHash&quot;: &quot;9b81df4274d372767bf8a3368f092eb94e0f9ee0f5b60be897280a356e861ac5&quot;
+}</pre></details></article>
+      <p>การเปลี่ยนข้อมูลธุรกิจ: snapshot ไม่พบการเปลี่ยนในตารางธุรกิจที่ตรวจ</p>
+      <p>Provider usage: 3 แถวที่บันทึกได้</p>
+      <details><summary>Provider: รุ่น / token / ค่าใช้จ่าย / แหล่ง usage / reservation</summary><pre>{
+  &quot;usage&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbu0id002tpkk19wzo46dt&quot;,
+      &quot;requestId&quot;: &quot;bb27ac93-aca4-423e-868a-e7a64a8e0621&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-intake-route&quot;,
+      &quot;usageTag&quot;: &quot;line.intake-route&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 1110,
+      &quot;outputTokens&quot;: 383,
+      &quot;cacheReadInputTokens&quot;: 14632,
+      &quot;cacheWriteInputTokens&quot;: 0,
+      &quot;costSatang&quot;: 44,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 11,
+          &quot;output&quot;: 19,
+          &quot;rounding&quot;: 0,
+          &quot;cacheRead&quot;: 14,
+          &quot;cacheWrite&quot;: 0
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:53.653Z&quot;
+    },
+    {
+      &quot;id&quot;: &quot;cmujbu35x002ypkk1ig3op2dc&quot;,
+      &quot;requestId&quot;: &quot;bb27ac93-aca4-423e-868a-e7a64a8e0621&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#1&quot;,
+      &quot;sourceRoute&quot;: &quot;line-turn&quot;,
+      &quot;usageTag&quot;: &quot;line.loop&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 4820,
+      &quot;outputTokens&quot;: 145,
+      &quot;cacheReadInputTokens&quot;: 0,
+      &quot;cacheWriteInputTokens&quot;: 0,
+      &quot;costSatang&quot;: 55,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 48,
+          &quot;output&quot;: 7,
+          &quot;rounding&quot;: 0,
+          &quot;cacheRead&quot;: 0,
+          &quot;cacheWrite&quot;: 0
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:57.093Z&quot;
+    },
+    {
+      &quot;id&quot;: &quot;cmujbu5hx0032pkk1civ8y75b&quot;,
+      &quot;requestId&quot;: &quot;bb27ac93-aca4-423e-868a-e7a64a8e0621&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#2&quot;,
+      &quot;sourceRoute&quot;: &quot;line-turn&quot;,
+      &quot;usageTag&quot;: &quot;line.compose&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 1141,
+      &quot;outputTokens&quot;: 179,
+      &quot;cacheReadInputTokens&quot;: 0,
+      &quot;cacheWriteInputTokens&quot;: 0,
+      &quot;costSatang&quot;: 20,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 11,
+          &quot;output&quot;: 9,
+          &quot;rounding&quot;: 0,
+          &quot;cacheRead&quot;: 0,
+          &quot;cacheWrite&quot;: 0
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:37:00.117Z&quot;
+    }
+  ],
+  &quot;reservations&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbtw5u002spkk1sa2utg4g&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 1040,
+      &quot;settledCostSatang&quot;: 44,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:48.018Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:36:48.007Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:36:53.650Z&quot;
+    },
+    {
+      &quot;id&quot;: &quot;cmujbu0kt002xpkk15qhfsam6&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#1&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 406,
+      &quot;settledCostSatang&quot;: 55,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:53.741Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:36:53.731Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:36:57.088Z&quot;
+    },
+    {
+      &quot;id&quot;: &quot;cmujbu36k0031pkk1yochsvfm&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#2&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 191,
+      &quot;settledCostSatang&quot;: 20,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:57.116Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:36:57.105Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:37:00.111Z&quot;
+    }
+  ]
+}</pre></details>
+      <details><summary>ผล tool จริงสำหรับตรวจตัวเลขและแหล่งข้อมูล</summary><pre>[]</pre></details>
+      <details><summary>ผล Gateway จริง รวม intake / semanticSubrequests / preparedPlan</summary><pre>[
+  {
+    &quot;method&quot;: &quot;requestLineIntakeRoute&quot;,
+    &quot;requestId&quot;: &quot;bb27ac93-aca4-423e-868a-e7a64a8e0621&quot;,
+    &quot;startedAtMs&quot;: 1790483807996,
+    &quot;completedAtMs&quot;: 1790483813661,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;ROUTED&quot;,
+      &quot;intent&quot;: &quot;CLARIFY&quot;,
+      &quot;language&quot;: &quot;th&quot;,
+      &quot;confidence&quot;: 0.45,
+      &quot;reason&quot;: &quot;The user asks what a shop name and date say, but there is no image or document attached to read from — it is unclear which document or record they are referring to.&quot;,
+      &quot;clarifyQuestion&quot;: &quot;คุณต้องการให้อ่านชื่อร้านกับวันที่จากเอกสารหรือรูปภาพใด? กรุณาส่งรูปหรือเอกสารนั้นมาด้วยค่ะ&quot;,
+      &quot;semanticOutcome&quot;: &quot;AMBIGUOUS&quot;,
+      &quot;fundingSource&quot;: &quot;UNKNOWN&quot;,
+      &quot;semanticSubrequests&quot;: [
+        {
+          &quot;index&quot;: 0,
+          &quot;kind&quot;: &quot;read&quot;,
+          &quot;goal&quot;: &quot;Read the vendor/shop name and date from an unspecified document or image&quot;,
+          &quot;requiredEvidence&quot;: [],
+          &quot;requestedFilters&quot;: {},
+          &quot;dependsOn&quot;: [],
+          &quot;evidenceRefs&quot;: [
+            {
+              &quot;partId&quot;: &quot;part-0&quot;,
+              &quot;startUtf16&quot;: 0,
+              &quot;endUtf16&quot;: 28,
+              &quot;rawSha256&quot;: &quot;73d51c21771e72a8611456019593af645f9cd11510d625e2f45e6ee28012c783&quot;
+            }
+          ]
+        }
+      ],
+      &quot;usage&quot;: [
+        {
+          &quot;tag&quot;: &quot;line.intake-route&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 1110,
+          &quot;outputTokens&quot;: 383,
+          &quot;cacheReadInputTokens&quot;: 14632,
+          &quot;cacheWriteInputTokens&quot;: 0,
+          &quot;durationMs&quot;: 5622,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#0&quot;
+        }
+      ]
+    }
+  },
+  {
+    &quot;method&quot;: &quot;requestLineTurn&quot;,
+    &quot;requestId&quot;: &quot;bb27ac93-aca4-423e-868a-e7a64a8e0621&quot;,
+    &quot;startedAtMs&quot;: 1790483813711,
+    &quot;completedAtMs&quot;: 1790483820125,
+    &quot;response&quot;: {
+      &quot;requestId&quot;: &quot;bb27ac93-aca4-423e-868a-e7a64a8e0621&quot;,
+      &quot;replyText&quot;: &quot;ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง&quot;,
+      &quot;sourceRefs&quot;: [],
+      &quot;sourceLabels&quot;: [],
+      &quot;webLinks&quot;: [],
+      &quot;intent&quot;: &quot;unknown&quot;,
+      &quot;agent&quot;: &quot;general&quot;,
+      &quot;refused&quot;: false,
+      &quot;toolsInvoked&quot;: [],
+      &quot;toolCalls&quot;: [],
+      &quot;durationMs&quot;: 6396,
+      &quot;semanticCoverage&quot;: [
+        {
+          &quot;index&quot;: 0,
+          &quot;status&quot;: &quot;needs_user&quot;,
+          &quot;reasonCode&quot;: &quot;SEMANTIC_CONTROL_UNAVAILABLE&quot;,
+          &quot;question&quot;: &quot;ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง&quot;
+        }
+      ],
+      &quot;modelLineage&quot;: [
+        {
+          &quot;provider&quot;: &quot;bedrock&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;region&quot;: &quot;ap-southeast-1&quot;,
+          &quot;purpose&quot;: &quot;employee_line_assistant&quot;
+        }
+      ],
+      &quot;usage&quot;: [
+        {
+          &quot;tag&quot;: &quot;line.loop&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 4820,
+          &quot;outputTokens&quot;: 145,
+          &quot;cacheReadInputTokens&quot;: 0,
+          &quot;cacheWriteInputTokens&quot;: 0,
+          &quot;durationMs&quot;: 3342,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#1&quot;
+        },
+        {
+          &quot;tag&quot;: &quot;line.compose&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 1141,
+          &quot;outputTokens&quot;: 179,
+          &quot;cacheReadInputTokens&quot;: 0,
+          &quot;cacheWriteInputTokens&quot;: 0,
+          &quot;durationMs&quot;: 2985,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#2&quot;
+        }
+      ]
+    }
+  }
+]</pre></details>
+      <details><summary>สถานะ preview / การยกเลิก / context / preference ก่อนและหลัง</summary><pre>{
+  &quot;before&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 0,
+        &quot;taskStateJson&quot;: null,
+        &quot;stateExpiresAt&quot;: null,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:36:24.625Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:36:38.068Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  },
+  &quot;after&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 2,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;read&quot;,
+              &quot;state&quot;: &quot;waiting_user&quot;,
+              &quot;taskId&quot;: &quot;6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c&quot;,
+              &quot;revision&quot;: 1,
+              &quot;userGoal&quot;: &quot;Read the vendor/shop name and date from an unspecified document or image&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Read the vendor/shop name and date from an unspecified document or image&quot;,
+                  &quot;kind&quot;: &quot;read&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;needs_user&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;90635da9d401294fec59ece836ed991a889a3febcca2a002d65379a19e284dac&quot;
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:52:00.210Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:36:24.625Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:37:00.211Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  }
+}</pre></details>
+      <details><summary>Webhook / delivery / mutations / validation failures / source versions</summary><pre>{
+  &quot;webhookEvents&quot;: [
+    {
+      &quot;webhookEventId&quot;: &quot;replay-dcc2bab598984ee5469d-0&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;completed&quot;,
+      &quot;errorCode&quot;: null,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:37:00.207Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:36:46.937Z&quot;
+    }
+  ],
+  &quot;delivery&quot;: {
+    &quot;requiredBatchIds&quot;: [
+      &quot;7933f6f2892d735c7b5c56bed2b33c115e9422e5efc1c4ad5e31b751bc5d2c11:batch:0&quot;
+    ],
+    &quot;accepted&quot;: [
+      {
+        &quot;batchId&quot;: &quot;7933f6f2892d735c7b5c56bed2b33c115e9422e5efc1c4ad5e31b751bc5d2c11:batch:0&quot;,
+        &quot;wireHash&quot;: &quot;4e8bc1d809393ca5bc464cc18ed35660cf14fd60c033ab72c0ee45098b73ef55&quot;,
+        &quot;acceptedAtMs&quot;: 1790483820197,
+        &quot;receiptId&quot;: &quot;sink-f48e8fcb-5b47-4ce8-bf47-c1bbac4cfc17&quot;
+      }
+    ],
+    &quot;status&quot;: &quot;ACCEPTED&quot;
+  },
+  &quot;effects&quot;: [],
+  &quot;validationFailures&quot;: [],
+  &quot;criticalErrors&quot;: [],
+  &quot;recordError&quot;: null,
+  &quot;versions&quot;: {
+    &quot;sourceCommit&quot;: &quot;e9d867382cf0789eac226fd38519d84188440302&quot;,
+    &quot;schema&quot;: &quot;f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8&quot;,
+    &quot;prompt&quot;: &quot;350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e&quot;,
+    &quot;registry&quot;: &quot;0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f&quot;,
+    &quot;model&quot;: &quot;95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7&quot;,
+    &quot;price&quot;: &quot;67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb&quot;
+  }
+}</pre></details>
+      <p class="muted">Snapshot nat-NAT-05 · hash 1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c</p></section>
+<section><h2>NAT-05 · รอบ 1 · ข้อ 4</h2><p class="question">แค่ถามนะ อย่าเพิ่งลงรายจ่าย</p>
+      <p>สถานะที่เก็บได้: <strong>temporarily_unavailable</strong> · sink delivery: ACCEPTED</p>
+      <p>จบงานที่ runtime สังเกต: 6,506 ms · wire แรก: 7,074 ms · wire ล่าสุด: 7,074 ms</p>
+      <article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/reply · 7,074 ms</p><div class="message"><p>ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483827371,
+  &quot;receiptId&quot;: &quot;sink-e114a3cd-9aab-43eb-9c58-c23d98f9db0a&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/reply&quot;,
+  &quot;payloadHash&quot;: &quot;c65a806266a1db8c787bdba4870495f76dd90e51c63eb92b8ecb486600a55e7e&quot;
+}</pre></details></article>
+      <p>การเปลี่ยนข้อมูลธุรกิจ: snapshot ไม่พบการเปลี่ยนในตารางธุรกิจที่ตรวจ</p>
+      <p>Provider usage: 1 แถวที่บันทึกได้</p>
+      <details><summary>Provider: รุ่น / token / ค่าใช้จ่าย / แหล่ง usage / reservation</summary><pre>{
+  &quot;usage&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbuanf003apkk1efw4ta8m&quot;,
+      &quot;requestId&quot;: &quot;dec6207a-2723-451f-bea9-7ade5b26c4c6&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#ab8b9f6355c8e8642f6aef8c6192e4970d616aaf0c3efea05137d4d2c052bd42#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-intake-route&quot;,
+      &quot;usageTag&quot;: &quot;line.intake-route&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 1294,
+      &quot;outputTokens&quot;: 368,
+      &quot;cacheReadInputTokens&quot;: 14632,
+      &quot;cacheWriteInputTokens&quot;: 0,
+      &quot;costSatang&quot;: 46,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 13,
+          &quot;output&quot;: 18,
+          &quot;rounding&quot;: 1,
+          &quot;cacheRead&quot;: 14,
+          &quot;cacheWrite&quot;: 0
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:37:06.795Z&quot;
+    }
+  ],
+  &quot;reservations&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbu6h90039pkk1nz28lk51&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#ab8b9f6355c8e8642f6aef8c6192e4970d616aaf0c3efea05137d4d2c052bd42#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 1040,
+      &quot;settledCostSatang&quot;: 46,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:37:01.390Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:37:01.377Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:37:06.789Z&quot;
+    },
+    {
+      &quot;id&quot;: &quot;cmujbuaps003epkk12ewzllv3&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#ab8b9f6355c8e8642f6aef8c6192e4970d616aaf0c3efea05137d4d2c052bd42#provider-v2#1&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;DISPATCHED&quot;,
+      &quot;upperBoundSatang&quot;: 191,
+      &quot;settledCostSatang&quot;: null,
+      &quot;usageBasis&quot;: null,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:37:06.880Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:37:06.871Z&quot;,
+      &quot;settledAt&quot;: null
+    }
+  ]
+}</pre></details>
+      <details><summary>ผล tool จริงสำหรับตรวจตัวเลขและแหล่งข้อมูล</summary><pre>[]</pre></details>
+      <details><summary>ผล Gateway จริง รวม intake / semanticSubrequests / preparedPlan</summary><pre>[
+  {
+    &quot;method&quot;: &quot;requestLineIntakeRoute&quot;,
+    &quot;requestId&quot;: &quot;dec6207a-2723-451f-bea9-7ade5b26c4c6&quot;,
+    &quot;startedAtMs&quot;: 1790483821364,
+    &quot;completedAtMs&quot;: 1790483826803,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;ROUTED&quot;,
+      &quot;intent&quot;: &quot;CLARIFY&quot;,
+      &quot;language&quot;: &quot;th&quot;,
+      &quot;confidence&quot;: 0.72,
+      &quot;reason&quot;: &quot;User says &#39;just asking, don&#39;t record an expense yet&#39; but has not yet stated their actual question — the intent is a preamble with no concrete question or subject.&quot;,
+      &quot;clarifyQuestion&quot;: &quot;โอเคค่ะ ไม่ลงรายจ่ายก่อนนะคะ 😊 อยากถามเรื่องอะไรคะ?&quot;,
+      &quot;semanticOutcome&quot;: &quot;AMBIGUOUS&quot;,
+      &quot;fundingSource&quot;: &quot;UNKNOWN&quot;,
+      &quot;semanticSubrequests&quot;: [
+        {
+          &quot;index&quot;: 0,
+          &quot;kind&quot;: &quot;general&quot;,
+          &quot;goal&quot;: &quot;User signals they want to ask a question and explicitly requests no expense be recorded yet — no concrete subject stated&quot;,
+          &quot;requiredEvidence&quot;: [],
+          &quot;requestedFilters&quot;: {},
+          &quot;dependsOn&quot;: [],
+          &quot;evidenceRefs&quot;: [
+            {
+              &quot;partId&quot;: &quot;part-0&quot;,
+              &quot;startUtf16&quot;: 0,
+              &quot;endUtf16&quot;: 27,
+              &quot;rawSha256&quot;: &quot;14202e485f6a9a7e210a77231adafccddda935676143b02a5c80eee713d9f24c&quot;
+            }
+          ]
+        }
+      ],
+      &quot;usage&quot;: [
+        {
+          &quot;tag&quot;: &quot;line.intake-route&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 1294,
+          &quot;outputTokens&quot;: 368,
+          &quot;cacheReadInputTokens&quot;: 14632,
+          &quot;cacheWriteInputTokens&quot;: 0,
+          &quot;durationMs&quot;: 5392,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#ab8b9f6355c8e8642f6aef8c6192e4970d616aaf0c3efea05137d4d2c052bd42#provider-v2#0&quot;
+        }
+      ]
+    }
+  }
+]</pre></details>
+      <details><summary>สถานะ preview / การยกเลิก / context / preference ก่อนและหลัง</summary><pre>{
+  &quot;before&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 2,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;read&quot;,
+              &quot;state&quot;: &quot;waiting_user&quot;,
+              &quot;taskId&quot;: &quot;6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c&quot;,
+              &quot;revision&quot;: 1,
+              &quot;userGoal&quot;: &quot;Read the vendor/shop name and date from an unspecified document or image&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Read the vendor/shop name and date from an unspecified document or image&quot;,
+                  &quot;kind&quot;: &quot;read&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;needs_user&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;90635da9d401294fec59ece836ed991a889a3febcca2a002d65379a19e284dac&quot;
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:52:00.210Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:36:24.625Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:37:00.211Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  },
+  &quot;after&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 2,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;read&quot;,
+              &quot;state&quot;: &quot;waiting_user&quot;,
+              &quot;taskId&quot;: &quot;6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c&quot;,
+              &quot;revision&quot;: 1,
+              &quot;userGoal&quot;: &quot;Read the vendor/shop name and date from an unspecified document or image&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Read the vendor/shop name and date from an unspecified document or image&quot;,
+                  &quot;kind&quot;: &quot;read&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;needs_user&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;90635da9d401294fec59ece836ed991a889a3febcca2a002d65379a19e284dac&quot;
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:52:00.210Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:36:24.625Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:37:00.211Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  }
+}</pre></details>
+      <details><summary>Webhook / delivery / mutations / validation failures / source versions</summary><pre>{
+  &quot;webhookEvents&quot;: [
+    {
+      &quot;webhookEventId&quot;: &quot;replay-398416665f01520186fe-0&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;provider_unavailable&quot;,
+      &quot;errorCode&quot;: &quot;AI_GENERAL_UNAVAILABLE&quot;,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:37:07.381Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:37:00.311Z&quot;
+    }
+  ],
+  &quot;delivery&quot;: {
+    &quot;requiredBatchIds&quot;: [
+      &quot;5837391d183aa4f1c570f2e26f98ad46dcaa0ab9f96c53949d5cbb312ba154db:batch:0&quot;
+    ],
+    &quot;accepted&quot;: [
+      {
+        &quot;batchId&quot;: &quot;5837391d183aa4f1c570f2e26f98ad46dcaa0ab9f96c53949d5cbb312ba154db:batch:0&quot;,
+        &quot;wireHash&quot;: &quot;e99717398e672aad1d7c8cc56daa9560079bfb39edc958f996e5b5d8e2b0606a&quot;,
+        &quot;acceptedAtMs&quot;: 1790483827371,
+        &quot;receiptId&quot;: &quot;sink-e114a3cd-9aab-43eb-9c58-c23d98f9db0a&quot;
+      }
+    ],
+    &quot;status&quot;: &quot;ACCEPTED&quot;
+  },
+  &quot;effects&quot;: [],
+  &quot;validationFailures&quot;: [
+    &quot;requestLineTurn_failed&quot;,
+    &quot;provider_usage_unobserved&quot;
+  ],
+  &quot;criticalErrors&quot;: [],
+  &quot;recordError&quot;: null,
+  &quot;versions&quot;: {
+    &quot;sourceCommit&quot;: &quot;e9d867382cf0789eac226fd38519d84188440302&quot;,
+    &quot;schema&quot;: &quot;f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8&quot;,
+    &quot;prompt&quot;: &quot;350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e&quot;,
+    &quot;registry&quot;: &quot;0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f&quot;,
+    &quot;model&quot;: &quot;95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7&quot;,
+    &quot;price&quot;: &quot;67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb&quot;
+  }
+}</pre></details>
+      <p class="muted">Snapshot nat-NAT-05 · hash 1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c</p></section>
+<section><h2>NAT-05 · รอบ 1 · ข้อ 5</h2><p class="question">โอเค งั้นช่วยทำร่างค่าอาหารจากใบนี้ไว้ตรวจที</p>
+      <p>สถานะที่เก็บได้: <strong>needs_input</strong> · sink delivery: ACCEPTED</p>
+      <p>จบงานที่ runtime สังเกต: 8,262 ms · wire แรก: 8,339 ms · wire ล่าสุด: 8,339 ms</p>
+      <article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/reply · 8,339 ms</p><div class="message"><p>🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483835811,
+  &quot;receiptId&quot;: &quot;sink-1acdaa29-560c-4fec-83be-c9f6cedaee11&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/reply&quot;,
+  &quot;payloadHash&quot;: &quot;8da3ad8a58d0b88ab7a19d3102cbf97a4dee7916613858ddcdc21fb6d89f0fd0&quot;
+}</pre></details></article>
+      <p>การเปลี่ยนข้อมูลธุรกิจ: snapshot ไม่พบการเปลี่ยนในตารางธุรกิจที่ตรวจ</p>
+      <p>Provider usage: 2 แถวที่บันทึกได้</p>
+      <details><summary>Provider: รุ่น / token / ค่าใช้จ่าย / แหล่ง usage / reservation</summary><pre>{
+  &quot;usage&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbubtw003gpkk1naz7gpcl&quot;,
+      &quot;requestId&quot;: &quot;dec6207a-2723-451f-bea9-7ade5b26c4c6&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#ab8b9f6355c8e8642f6aef8c6192e4970d616aaf0c3efea05137d4d2c052bd42#provider-v2#1&quot;,
+      &quot;sourceRoute&quot;: &quot;line-turn&quot;,
+      &quot;usageTag&quot;: &quot;line.compose&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: false,
+      &quot;inputTokens&quot;: 9216,
+      &quot;outputTokens&quot;: 1536,
+      &quot;cacheReadInputTokens&quot;: 0,
+      &quot;cacheWriteInputTokens&quot;: 0,
+      &quot;costSatang&quot;: 167,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;CONSERVATIVE_ESTIMATE&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 91,
+          &quot;output&quot;: 76,
+          &quot;rounding&quot;: 0,
+          &quot;cacheRead&quot;: 0,
+          &quot;cacheWrite&quot;: 0
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:37:08.324Z&quot;
+    },
+    {
+      &quot;id&quot;: &quot;cmujbuhji003lpkk1549aj0aj&quot;,
+      &quot;requestId&quot;: &quot;352bb0ac-5f0c-43c8-b9dc-bcbb393fd61b&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#33ba99366cbb47fd200f93bd4ca6b4a2370996b99e7a6ab699984eb38108b07e#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-intake-route&quot;,
+      &quot;usageTag&quot;: &quot;line.intake-route&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 1314,
+      &quot;outputTokens&quot;: 545,
+      &quot;cacheReadInputTokens&quot;: 14632,
+      &quot;cacheWriteInputTokens&quot;: 0,
+      &quot;costSatang&quot;: 54,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 13,
+          &quot;output&quot;: 27,
+          &quot;rounding&quot;: 0,
+          &quot;cacheRead&quot;: 14,
+          &quot;cacheWrite&quot;: 0
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:37:15.726Z&quot;
+    }
+  ],
+  &quot;reservations&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbuc0y003kpkk1rp5b7vsf&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#33ba99366cbb47fd200f93bd4ca6b4a2370996b99e7a6ab699984eb38108b07e#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 1040,
+      &quot;settledCostSatang&quot;: 54,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:37:08.578Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:37:08.565Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:37:15.720Z&quot;
+    }
+  ]
+}</pre></details>
+      <details><summary>ผล tool จริงสำหรับตรวจตัวเลขและแหล่งข้อมูล</summary><pre>[]</pre></details>
+      <details><summary>ผล Gateway จริง รวม intake / semanticSubrequests / preparedPlan</summary><pre>[
+  {
+    &quot;method&quot;: &quot;requestLineIntakeRoute&quot;,
+    &quot;requestId&quot;: &quot;352bb0ac-5f0c-43c8-b9dc-bcbb393fd61b&quot;,
+    &quot;startedAtMs&quot;: 1790483828552,
+    &quot;completedAtMs&quot;: 1790483835734,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;ROUTED&quot;,
+      &quot;intent&quot;: &quot;CLARIFY&quot;,
+      &quot;language&quot;: &quot;th&quot;,
+      &quot;confidence&quot;: 0.45,
+      &quot;reason&quot;: &quot;ผู้ใช้ขอทำร่างค่าอาหาร &#39;จากใบนี้&#39; แต่ไม่มีไฟล์แนบหรือรูปภาพในข้อความ จึงไม่ทราบว่า &#39;ใบนี้&#39; หมายถึงเอกสารใด&quot;,
+      &quot;clarifyQuestion&quot;: &quot;คุณหมายถึงใบไหนครับ — ช่วยส่งรูปหรือไฟล์ใบเสร็จ/ใบกำกับภาษีค่าอาหารมาด้วยได้เลยครับ&quot;,
+      &quot;semanticOutcome&quot;: &quot;BUSINESS_EXPENSE&quot;,
+      &quot;fundingSource&quot;: &quot;COMPANY_PAID&quot;,
+      &quot;semanticSubrequests&quot;: [
+        {
+          &quot;index&quot;: 0,
+          &quot;kind&quot;: &quot;write&quot;,
+          &quot;goal&quot;: &quot;สร้างร่างค่าใช้จ่ายค่าอาหารจากเอกสารที่ผู้ใช้อ้างถึงว่า &#39;ใบนี้&#39; แต่ไม่มีไฟล์แนบ&quot;,
+          &quot;requiredEvidence&quot;: [
+            &quot;receipt_or_tax_invoice_image&quot;
+          ],
+          &quot;requestedFilters&quot;: {},
+          &quot;writeIntent&quot;: &quot;EXPENSE_DOCUMENT_CAPTURE&quot;,
+          &quot;dependsOn&quot;: [],
+          &quot;evidenceRefs&quot;: [
+            {
+              &quot;partId&quot;: &quot;part-0&quot;,
+              &quot;startUtf16&quot;: 0,
+              &quot;endUtf16&quot;: 44,
+              &quot;rawSha256&quot;: &quot;5a967ff3e0fc923282ff422ebdc781d7bc262e1453bc11634632d3f9893a3ca1&quot;
+            }
+          ]
+        }
+      ],
+      &quot;usage&quot;: [
+        {
+          &quot;tag&quot;: &quot;line.intake-route&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 1314,
+          &quot;outputTokens&quot;: 545,
+          &quot;cacheReadInputTokens&quot;: 14632,
+          &quot;cacheWriteInputTokens&quot;: 0,
+          &quot;durationMs&quot;: 7135,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#33ba99366cbb47fd200f93bd4ca6b4a2370996b99e7a6ab699984eb38108b07e#provider-v2#0&quot;
+        }
+      ]
+    }
+  }
+]</pre></details>
+      <details><summary>สถานะ preview / การยกเลิก / context / preference ก่อนและหลัง</summary><pre>{
+  &quot;before&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 2,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;read&quot;,
+              &quot;state&quot;: &quot;waiting_user&quot;,
+              &quot;taskId&quot;: &quot;6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c&quot;,
+              &quot;revision&quot;: 1,
+              &quot;userGoal&quot;: &quot;Read the vendor/shop name and date from an unspecified document or image&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Read the vendor/shop name and date from an unspecified document or image&quot;,
+                  &quot;kind&quot;: &quot;read&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;needs_user&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;90635da9d401294fec59ece836ed991a889a3febcca2a002d65379a19e284dac&quot;
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:52:00.210Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:36:24.625Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:37:00.211Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  },
+  &quot;after&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 3,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;read&quot;,
+              &quot;state&quot;: &quot;waiting_user&quot;,
+              &quot;taskId&quot;: &quot;6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c&quot;,
+              &quot;revision&quot;: 1,
+              &quot;userGoal&quot;: &quot;Read the vendor/shop name and date from an unspecified document or image&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Read the vendor/shop name and date from an unspecified document or image&quot;,
+                  &quot;kind&quot;: &quot;read&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;needs_user&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;90635da9d401294fec59ece836ed991a889a3febcca2a002d65379a19e284dac&quot;
+              ]
+            },
+            {
+              &quot;kind&quot;: &quot;write&quot;,
+              &quot;state&quot;: &quot;active&quot;,
+              &quot;taskId&quot;: &quot;3647e489b734d83b06d03c1dc9562eda07e5aaeebf718ac07ab8393b580109bd&quot;,
+              &quot;revision&quot;: 0,
+              &quot;userGoal&quot;: &quot;สร้างร่างค่าใช้จ่ายค่าอาหารจากเอกสารที่ผู้ใช้อ้างถึงว่า &#39;ใบนี้&#39; แต่ไม่มีไฟล์แนบ&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;สร้างร่างค่าใช้จ่ายค่าอาหารจากเอกสารที่ผู้ใช้อ้างถึงว่า &#39;ใบนี้&#39; แต่ไม่มีไฟล์แนบ&quot;,
+                  &quot;kind&quot;: &quot;write&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;pending&quot;
+                }
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:52:15.767Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:36:24.625Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:37:15.816Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  }
+}</pre></details>
+      <details><summary>Webhook / delivery / mutations / validation failures / source versions</summary><pre>{
+  &quot;webhookEvents&quot;: [
+    {
+      &quot;webhookEventId&quot;: &quot;replay-0f7951274b5b5822e976-0&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;clarification_required&quot;,
+      &quot;errorCode&quot;: null,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:37:15.819Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:37:07.487Z&quot;
+    }
+  ],
+  &quot;delivery&quot;: {
+    &quot;requiredBatchIds&quot;: [
+      &quot;aff0adfef7176b43eb291bfad745748843e37b7adf0fbfc33f5e22ddaa65d177:batch:0&quot;
+    ],
+    &quot;accepted&quot;: [
+      {
+        &quot;batchId&quot;: &quot;aff0adfef7176b43eb291bfad745748843e37b7adf0fbfc33f5e22ddaa65d177:batch:0&quot;,
+        &quot;wireHash&quot;: &quot;d01f431854c3f1624b2381c6138d70284d315a579327ec7438650c68d2bd6429&quot;,
+        &quot;acceptedAtMs&quot;: 1790483835811,
+        &quot;receiptId&quot;: &quot;sink-1acdaa29-560c-4fec-83be-c9f6cedaee11&quot;
+      }
+    ],
+    &quot;status&quot;: &quot;ACCEPTED&quot;
+  },
+  &quot;effects&quot;: [],
+  &quot;validationFailures&quot;: [],
+  &quot;criticalErrors&quot;: [],
+  &quot;recordError&quot;: null,
+  &quot;versions&quot;: {
+    &quot;sourceCommit&quot;: &quot;e9d867382cf0789eac226fd38519d84188440302&quot;,
+    &quot;schema&quot;: &quot;f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8&quot;,
+    &quot;prompt&quot;: &quot;350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e&quot;,
+    &quot;registry&quot;: &quot;0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f&quot;,
+    &quot;model&quot;: &quot;95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7&quot;,
+    &quot;price&quot;: &quot;67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb&quot;
+  }
+}</pre></details>
+      <p class="muted">Snapshot nat-NAT-05 · hash 1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c</p></section></html>

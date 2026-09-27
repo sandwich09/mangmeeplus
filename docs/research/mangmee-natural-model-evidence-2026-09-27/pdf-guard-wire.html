@@ -1,0 +1,1581 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>NAT — ตรวจข้อความ LINE ที่ส่งจริง</title>
+    <style>body{font-family:system-ui,sans-serif;color:#172438;background:#eef2f5;line-height:1.6;max-width:1100px;margin:32px auto;padding:0 18px}h1{font-size:26px}h2{font-size:20px}section{background:#fff;border:1px solid #d9e1e9;border-radius:12px;padding:22px;margin:22px 0}p{white-space:pre-wrap}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f0f3f6;padding:12px;font-size:12px}code{overflow-wrap:anywhere}.question{background:#e5f0ff;padding:12px;border-radius:8px}.message{max-width:760px;background:#eef7f1;padding:14px;margin:12px 0;border-radius:10px}.carousel{display:flex;gap:12px;overflow-x:auto}.bubble{background:white;border:1px solid #d2ddda;border-radius:12px;min-width:250px;max-width:340px;padding:14px}.bubble p{margin:8px 0}button{border:1px solid #46866a;background:#fff;color:#205f44;border-radius:7px;padding:8px 12px;margin:5px;opacity:1}.muted{color:#526174;font-size:13px}.warning{color:#8f3b15;background:#fff0de;padding:12px}details{margin:12px 0}summary{cursor:pointer;font-weight:600}article{border-top:1px solid #d9e1e9;padding:12px 0}</style>
+    <h1>NAT — ตรวจข้อความ LINE ที่ส่งจริง</h1><p>จำนวนข้อในรายงาน 5 · มีหลักฐาน 5 · ไม่มีหลักฐาน 0</p>
+    <p>สถานะการตรวจโดยคน: UNREVIEWED ทุกข้อ ใช้คำถาม/คำตอบจริงจาก artifact นี้ ไม่คำนวณคะแนนจาก golden เก่า</p>
+    <p class="warning">ปลายทางเป็น synthetic LINE HTTP sink เท่านั้น ไม่ใช่ภาพจากแอป LINE และยังไม่ผ่าน native LINE acceptance ภาพการ์ดนี้จัดวางโดยประมาณ ปุ่มกดไม่ได้และไม่มีการโหลดรูปหรือเปิดลิงก์ ตรวจเพียง message envelope ของ repo และไฟล์ route ที่มีอยู่ การเข้าถึง URL / login / tenant permission / การแสดงผลจริงยังไม่ได้ทดสอบ</p>
+    <p>ตัวเลข 0 ที่ปรากฏในคำตอบต้องตรวจเทียบผล tool และ source; ข้อมูลที่หายไปไม่เท่ากับ 0 แถว usage ที่ไม่มีไม่พิสูจน์ว่าไม่มี provider call การเปลี่ยน preview/context แยกจาก mutation ธุรกิจไว้ด้านล่าง ไม่มีการอนุมัติหรือเคลื่อนเงินจริงจากรายงานนี้</p>
+    <details><summary>ขอบเขตและข้อผิดพลาด runtime</summary><pre>{
+  &quot;boundary&quot;: {
+    &quot;runtime&quot;: &quot;compiled_nest_api_postgres&quot;,
+    &quot;line&quot;: &quot;synthetic_http_sink&quot;,
+    &quot;nativeLineVerified&quot;: false,
+    &quot;cacheStateVerified&quot;: false,
+    &quot;activationEligible&quot;: false
+  },
+  &quot;runtimeDiagnostics&quot;: []
+}</pre></details><section><h2>NAT-06 · รอบ 1 · ข้อ 1</h2><p class="question">ดูหน่อย ใบนี้เขียนว่าอะไรบ้าง</p><p>ไฟล์แนบ: receipt-partial</p>
+      <p>สถานะที่เก็บได้: <strong>needs_input</strong> · sink delivery: ACCEPTED</p>
+      <p>จบงานที่ runtime สังเกต: 6,969 ms · wire แรก: 1,049 ms · wire ล่าสุด: 7,071 ms</p>
+      <article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/push · 1,049 ms</p><div class="message"><p>ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483285283,
+  &quot;receiptId&quot;: &quot;sink-9b925297-54cc-41b4-8c5a-6bddce5d88ce&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/push&quot;,
+  &quot;payloadHash&quot;: &quot;ba58ca9d8a17fe5803d1e8fa583f8960f13033c888b956545b18c1604ea55dd2&quot;
+}</pre></details></article><article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/reply · 7,071 ms</p><div class="message"><p>ไฟล์ PDF ที่แนบมานี้เป็นเอกสารประเภทไหนคะ เช่น ใบเสร็จ/ใบกำกับภาษี, เอกสารธุรกิจ (ใบเสนอราคา/ใบสั่งซื้อ), หรืออื่นๆ?</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;ไฟล์ PDF ที่แนบมานี้เป็นเอกสารประเภทไหนคะ เช่น ใบเสร็จ/ใบกำกับภาษี, เอกสารธุรกิจ (ใบเสนอราคา/ใบสั่งซื้อ), หรืออื่นๆ?&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483291305,
+  &quot;receiptId&quot;: &quot;sink-1888a70d-0608-4b76-a0a3-d88b68c9aa6c&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/reply&quot;,
+  &quot;payloadHash&quot;: &quot;dc546c8a85c4cc28b21eb0305dec33a9a59bbdf997e87c9a4f6d691790f42dde&quot;
+}</pre></details></article>
+      <p>การเปลี่ยนข้อมูลธุรกิจ: AttachmentObject.create (cmujbiteu002cryk1nlubons2)</p>
+      <p>Provider usage: 1 แถวที่บันทึกได้</p>
+      <details><summary>Provider: รุ่น / token / ค่าใช้จ่าย / แหล่ง usage / reservation</summary><pre>{
+  &quot;usage&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbitdi0029ryk1444kpuz5&quot;,
+      &quot;requestId&quot;: &quot;75f20e60-0390-430e-ac17-ac1d4aaf0a5e&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-intake-route&quot;,
+      &quot;usageTag&quot;: &quot;line.intake-route&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 1272,
+      &quot;outputTokens&quot;: 439,
+      &quot;cacheReadInputTokens&quot;: 6891,
+      &quot;cacheWriteInputTokens&quot;: 0,
+      &quot;costSatang&quot;: 41,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 13,
+          &quot;output&quot;: 22,
+          &quot;rounding&quot;: -1,
+          &quot;cacheRead&quot;: 7,
+          &quot;cacheWrite&quot;: 0
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:11.190Z&quot;
+    }
+  ],
+  &quot;reservations&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbioxq0028ryk1hlztult4&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 634,
+      &quot;settledCostSatang&quot;: 41,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:05.438Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:28:05.425Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:28:11.180Z&quot;
+    }
+  ]
+}</pre></details>
+      <details><summary>ผล tool จริงสำหรับตรวจตัวเลขและแหล่งข้อมูล</summary><pre>[]</pre></details>
+      <details><summary>ผล Gateway จริง รวม intake / semanticSubrequests / preparedPlan</summary><pre>[
+  {
+    &quot;method&quot;: &quot;requestLineIntakeRoute&quot;,
+    &quot;requestId&quot;: &quot;75f20e60-0390-430e-ac17-ac1d4aaf0a5e&quot;,
+    &quot;startedAtMs&quot;: 1790483285394,
+    &quot;completedAtMs&quot;: 1790483291203,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;ROUTED&quot;,
+      &quot;intent&quot;: &quot;CLARIFY&quot;,
+      &quot;language&quot;: &quot;th&quot;,
+      &quot;confidence&quot;: 0.55,
+      &quot;reason&quot;: &quot;User wants to know what is written on an attached PDF, but the file purpose is unknown and has no image content, making it impossible to determine if it is an expense document, a business reference do&quot;,
+      &quot;clarifyQuestion&quot;: &quot;ไฟล์ PDF ที่แนบมานี้เป็นเอกสารประเภทไหนคะ เช่น ใบเสร็จ/ใบกำกับภาษี, เอกสารธุรกิจ (ใบเสนอราคา/ใบสั่งซื้อ), หรืออื่นๆ?&quot;,
+      &quot;semanticOutcome&quot;: &quot;AMBIGUOUS&quot;,
+      &quot;fundingSource&quot;: &quot;UNKNOWN&quot;,
+      &quot;semanticSubrequests&quot;: [
+        {
+          &quot;index&quot;: 0,
+          &quot;kind&quot;: &quot;read&quot;,
+          &quot;goal&quot;: &quot;อ่าน/สรุปเนื้อหาของเอกสาร PDF ที่แนบมา&quot;,
+          &quot;requiredEvidence&quot;: [],
+          &quot;requestedFilters&quot;: {},
+          &quot;dependsOn&quot;: [],
+          &quot;evidenceRefs&quot;: [
+            {
+              &quot;partId&quot;: &quot;part-0&quot;,
+              &quot;startUtf16&quot;: 0,
+              &quot;endUtf16&quot;: 29,
+              &quot;rawSha256&quot;: &quot;361a404ee594e9544ddd94de576693b8859693d848f246539df949be417fd6fb&quot;
+            }
+          ]
+        }
+      ],
+      &quot;usage&quot;: [
+        {
+          &quot;tag&quot;: &quot;line.intake-route&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 1272,
+          &quot;outputTokens&quot;: 439,
+          &quot;cacheReadInputTokens&quot;: 6891,
+          &quot;cacheWriteInputTokens&quot;: 0,
+          &quot;durationMs&quot;: 5727,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#0&quot;
+        }
+      ]
+    }
+  }
+]</pre></details>
+      <details><summary>สถานะ preview / การยกเลิก / context / preference ก่อนและหลัง</summary><pre>{
+  &quot;before&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [],
+    &quot;truncated&quot;: false
+  },
+  &quot;after&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 0,
+        &quot;taskStateJson&quot;: null,
+        &quot;stateExpiresAt&quot;: null,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:28:05.331Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:28:11.311Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  }
+}</pre></details>
+      <details><summary>Webhook / delivery / mutations / validation failures / source versions</summary><pre>{
+  &quot;webhookEvents&quot;: [
+    {
+      &quot;webhookEventId&quot;: &quot;replay-3d22c4088d3be6636a5c-0&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;clarification_required&quot;,
+      &quot;errorCode&quot;: null,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:28:11.317Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:04.252Z&quot;
+    },
+    {
+      &quot;webhookEventId&quot;: &quot;replay-3d22c4088d3be6636a5c-1&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;batched&quot;,
+      &quot;errorCode&quot;: null,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:28:11.319Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:04.263Z&quot;
+    }
+  ],
+  &quot;delivery&quot;: {
+    &quot;requiredBatchIds&quot;: [
+      &quot;0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0&quot;
+    ],
+    &quot;accepted&quot;: [
+      {
+        &quot;batchId&quot;: &quot;0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0&quot;,
+        &quot;wireHash&quot;: &quot;1f4cbc97e0e9236cdb96fd6741085219ca4c5c8eb2f159e3521ba3c4e9945b10&quot;,
+        &quot;acceptedAtMs&quot;: 1790483291305,
+        &quot;receiptId&quot;: &quot;sink-1888a70d-0608-4b76-a0a3-d88b68c9aa6c&quot;
+      }
+    ],
+    &quot;status&quot;: &quot;ACCEPTED&quot;
+  },
+  &quot;effects&quot;: [
+    {
+      &quot;kind&quot;: &quot;AttachmentObject.create&quot;,
+      &quot;recordId&quot;: &quot;cmujbiteu002cryk1nlubons2&quot;,
+      &quot;revision&quot;: &quot;2026-09-27T04:28:11.269&quot;,
+      &quot;evidence&quot;: &quot;database_snapshot&quot;,
+      &quot;evidenceHash&quot;: &quot;366db0cab50bb2316d3907ded6fd9e1ca9302474beda0a7d176904037ab5cb26&quot;
+    }
+  ],
+  &quot;validationFailures&quot;: [],
+  &quot;criticalErrors&quot;: [],
+  &quot;recordError&quot;: null,
+  &quot;versions&quot;: {
+    &quot;sourceCommit&quot;: &quot;063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3&quot;,
+    &quot;schema&quot;: &quot;f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8&quot;,
+    &quot;prompt&quot;: &quot;350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e&quot;,
+    &quot;registry&quot;: &quot;0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f&quot;,
+    &quot;model&quot;: &quot;95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7&quot;,
+    &quot;price&quot;: &quot;67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb&quot;
+  }
+}</pre></details>
+      <p class="muted">Snapshot nat-NAT-06 · hash 9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063</p></section>
+<section><h2>NAT-06 · รอบ 1 · ข้อ 2</h2><p class="question">ส่งผิด เอาไฟล์นี้แทนอันเมื่อกี้</p><p>ไฟล์แนบ: document-unreadable</p>
+      <p>สถานะที่เก็บได้: <strong>needs_input</strong> · sink delivery: ACCEPTED</p>
+      <p>จบงานที่ runtime สังเกต: 8,407 ms · wire แรก: 1,039 ms · wire ล่าสุด: 8,488 ms</p>
+      <article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/push · 1,039 ms</p><div class="message"><p>ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483292438,
+  &quot;receiptId&quot;: &quot;sink-fb8762c8-3b67-4401-96c1-be8006f512d3&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/push&quot;,
+  &quot;payloadHash&quot;: &quot;ba58ca9d8a17fe5803d1e8fa583f8960f13033c888b956545b18c1604ea55dd2&quot;
+}</pre></details></article><article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/reply · 7,005 ms</p><div class="message"><p>กำลังอ่านไฟล์เพื่อตอบคำถามค่ะ เมื่ออ่านเสร็จจะตอบในแชตนี้ ยังไม่ได้สร้างรายการค่าใช้จ่ายหรือใบเบิก</p>
+    <div class="quick"><button disabled>ยกเลิกอ่านไฟล์</button></div></div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+        <details><summary>ชนิดปุ่ม / postback / ข้อความที่ปุ่มส่งจริง</summary><pre>[
+  {
+    &quot;type&quot;: &quot;message&quot;,
+    &quot;label&quot;: &quot;ยกเลิกอ่านไฟล์&quot;,
+    &quot;text&quot;: &quot;/qa cancel cmujbiywr002tryk1o83e9fsg&quot;
+  }
+]</pre></details>
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;type&quot;: &quot;text&quot;,
+      &quot;text&quot;: &quot;กำลังอ่านไฟล์เพื่อตอบคำถามค่ะ เมื่ออ่านเสร็จจะตอบในแชตนี้ ยังไม่ได้สร้างรายการค่าใช้จ่ายหรือใบเบิก&quot;,
+      &quot;quickReply&quot;: {
+        &quot;items&quot;: [
+          {
+            &quot;type&quot;: &quot;action&quot;,
+            &quot;action&quot;: {
+              &quot;type&quot;: &quot;message&quot;,
+              &quot;label&quot;: &quot;ยกเลิกอ่านไฟล์&quot;,
+              &quot;text&quot;: &quot;/qa cancel cmujbiywr002tryk1o83e9fsg&quot;
+            }
+          }
+        ]
+      }
+    }
+  ],
+  &quot;at&quot;: 1790483298404,
+  &quot;receiptId&quot;: &quot;sink-7c270a1c-857c-45e0-b62c-eaf7f61e9b22&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/reply&quot;,
+  &quot;payloadHash&quot;: &quot;8062801d7135ea335dd4da6cc538bd7ef1d7881fac5beb9bb559436c78dbb04a&quot;
+}</pre></details></article><article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/push · 8,488 ms</p><div class="message"><p>ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้</p>
+    </div><div class="message"><p>ส่วนที่ยังไม่เสร็จ:
+ข้อ 1: Replace previously sent file with this new unreadable PDF attachment</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    },
+    {
+      &quot;text&quot;: &quot;ส่วนที่ยังไม่เสร็จ:\nข้อ 1: Replace previously sent file with this new unreadable PDF attachment&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483299887,
+  &quot;receiptId&quot;: &quot;sink-65170e6f-1a97-4bcd-bf07-548c11f08a1e&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/push&quot;,
+  &quot;payloadHash&quot;: &quot;35e8e0263577ea638b8fe4352589dd616b1ede2cb2c8f39907cb57a8b7e48473&quot;
+}</pre></details></article>
+      <p>การเปลี่ยนข้อมูลธุรกิจ: AttachmentLink.create (cmujbiywu002uryk1citl4rkr), AttachmentObject.create (cmujbiyv7002pryk1cj4grdtk)</p>
+      <p>Provider usage: 1 แถวที่บันทึกได้</p>
+      <details><summary>Provider: รุ่น / token / ค่าใช้จ่าย / แหล่ง usage / reservation</summary><pre>{
+  &quot;usage&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbiyuh002mryk1kxwlce9a&quot;,
+      &quot;requestId&quot;: &quot;d582bf70-7f9d-473f-a73b-6c52fef9676d&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#54e941c81d76af720084e318f371f3888a51edc563ca86bd7baaacb808b8e6be#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-intake-route&quot;,
+      &quot;usageTag&quot;: &quot;line.intake-route&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 1288,
+      &quot;outputTokens&quot;: 430,
+      &quot;cacheReadInputTokens&quot;: 6891,
+      &quot;cacheWriteInputTokens&quot;: 0,
+      &quot;costSatang&quot;: 41,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 13,
+          &quot;output&quot;: 21,
+          &quot;rounding&quot;: 0,
+          &quot;cacheRead&quot;: 7,
+          &quot;cacheWrite&quot;: 0
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:18.281Z&quot;
+    }
+  ],
+  &quot;reservations&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbiueq002lryk1ynehqogj&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#54e941c81d76af720084e318f371f3888a51edc563ca86bd7baaacb808b8e6be#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 634,
+      &quot;settledCostSatang&quot;: 41,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:12.530Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:28:12.517Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:28:18.273Z&quot;
+    }
+  ]
+}</pre></details>
+      <details><summary>ผล tool จริงสำหรับตรวจตัวเลขและแหล่งข้อมูล</summary><pre>[]</pre></details>
+      <details><summary>ผล Gateway จริง รวม intake / semanticSubrequests / preparedPlan</summary><pre>[
+  {
+    &quot;method&quot;: &quot;requestLineIntakeRoute&quot;,
+    &quot;requestId&quot;: &quot;d582bf70-7f9d-473f-a73b-6c52fef9676d&quot;,
+    &quot;startedAtMs&quot;: 1790483292498,
+    &quot;completedAtMs&quot;: 1790483298290,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;ROUTED&quot;,
+      &quot;intent&quot;: &quot;CLARIFY&quot;,
+      &quot;language&quot;: &quot;th&quot;,
+      &quot;confidence&quot;: 0.45,
+      &quot;reason&quot;: &quot;User says they sent the wrong file and wants to replace it with this one, but the attached PDF is unreadable/unknown purpose, so it is ambiguous whether this is an expense document, a business documen&quot;,
+      &quot;clarifyQuestion&quot;: &quot;ไฟล์ที่ส่งมาใหม่นี้คืออะไรครับ — เป็นใบเสร็จ/เอกสารค่าใช้จ่าย หรือเป็นเอกสารธุรกิจประเภทอื่น (เช่น ใบเสนอราคา, ใบสั่งซื้อ)?&quot;,
+      &quot;semanticOutcome&quot;: &quot;AMBIGUOUS&quot;,
+      &quot;fundingSource&quot;: &quot;UNKNOWN&quot;,
+      &quot;semanticSubrequests&quot;: [
+        {
+          &quot;index&quot;: 0,
+          &quot;kind&quot;: &quot;file&quot;,
+          &quot;goal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+          &quot;requiredEvidence&quot;: [],
+          &quot;requestedFilters&quot;: {},
+          &quot;dependsOn&quot;: [],
+          &quot;evidenceRefs&quot;: [
+            {
+              &quot;partId&quot;: &quot;part-0&quot;,
+              &quot;startUtf16&quot;: 0,
+              &quot;endUtf16&quot;: 31,
+              &quot;rawSha256&quot;: &quot;d823e38e762700395efb96f09d7b69549389f666292c3eff6203871660d4c690&quot;
+            }
+          ]
+        }
+      ],
+      &quot;usage&quot;: [
+        {
+          &quot;tag&quot;: &quot;line.intake-route&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 1288,
+          &quot;outputTokens&quot;: 430,
+          &quot;cacheReadInputTokens&quot;: 6891,
+          &quot;cacheWriteInputTokens&quot;: 0,
+          &quot;durationMs&quot;: 5735,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#54e941c81d76af720084e318f371f3888a51edc563ca86bd7baaacb808b8e6be#provider-v2#0&quot;
+        }
+      ]
+    }
+  },
+  {
+    &quot;method&quot;: &quot;requestLineDocumentQa&quot;,
+    &quot;requestId&quot;: &quot;qa:cmujbiywr002tryk1o83e9fsg:1:359663f3-8a92-45ae-8f3a-88669c1d233b&quot;,
+    &quot;startedAtMs&quot;: 1790483299806,
+    &quot;completedAtMs&quot;: 1790483299806,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;failed&quot;,
+      &quot;errorCode&quot;: &quot;QA_INPUT_EVIDENCE_INVALID&quot;
+    }
+  }
+]</pre></details>
+      <details><summary>สถานะ preview / การยกเลิก / context / preference ก่อนและหลัง</summary><pre>{
+  &quot;before&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 0,
+        &quot;taskStateJson&quot;: null,
+        &quot;stateExpiresAt&quot;: null,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:28:05.331Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:28:11.311Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  },
+  &quot;after&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 3,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;file&quot;,
+              &quot;state&quot;: &quot;waiting_user&quot;,
+              &quot;taskId&quot;: &quot;eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f&quot;,
+              &quot;revision&quot;: 2,
+              &quot;userGoal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+                  &quot;kind&quot;: &quot;file&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;needs_user&quot;
+                }
+              ],
+              &quot;attachmentPageRefs&quot;: [
+                {
+                  &quot;pages&quot;: [
+                    1,
+                    2
+                  ],
+                  &quot;contentHash&quot;: &quot;37b80639d6d96436268e911c8792542c3c7e0e1e3e18fabd84b462e0f8324f01&quot;,
+                  &quot;attachmentId&quot;: &quot;cmujbiyv7002pryk1cj4grdtk&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91&quot;
+              ],
+              &quot;sourceRevisionLocators&quot;: [
+                {
+                  &quot;revision&quot;: &quot;1&quot;,
+                  &quot;sourceId&quot;: &quot;cmujbiywr002tryk1o83e9fsg&quot;,
+                  &quot;sourceType&quot;: &quot;LINE_DOCUMENT_QA_0_0&quot;
+                }
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:43:19.892Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:28:05.331Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:28:19.893Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  }
+}</pre></details>
+      <details><summary>Webhook / delivery / mutations / validation failures / source versions</summary><pre>{
+  &quot;webhookEvents&quot;: [
+    {
+      &quot;webhookEventId&quot;: &quot;replay-5e964de497aa52e91d30-1&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;batched&quot;,
+      &quot;errorCode&quot;: null,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:28:18.405Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:11.427Z&quot;
+    },
+    {
+      &quot;webhookEventId&quot;: &quot;replay-5e964de497aa52e91d30-0&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;document_qa_failed&quot;,
+      &quot;errorCode&quot;: &quot;QA_INPUT_EVIDENCE_INVALID&quot;,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:28:19.895Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:11.413Z&quot;
+    }
+  ],
+  &quot;delivery&quot;: {
+    &quot;requiredBatchIds&quot;: [
+      &quot;59e874cb5cfc367a3be395f4df383b63d648ea64763a8b3d7dc35730d3cdba00:batch:0&quot;
+    ],
+    &quot;accepted&quot;: [
+      {
+        &quot;batchId&quot;: &quot;59e874cb5cfc367a3be395f4df383b63d648ea64763a8b3d7dc35730d3cdba00:batch:0&quot;,
+        &quot;wireHash&quot;: &quot;eb75404b3dbede5b5e533e4933925b118acd70930e3e2227b4ffc45355ac3dd4&quot;,
+        &quot;acceptedAtMs&quot;: 1790483299887,
+        &quot;receiptId&quot;: &quot;sink-65170e6f-1a97-4bcd-bf07-548c11f08a1e&quot;
+      }
+    ],
+    &quot;status&quot;: &quot;ACCEPTED&quot;
+  },
+  &quot;effects&quot;: [
+    {
+      &quot;kind&quot;: &quot;AttachmentLink.create&quot;,
+      &quot;recordId&quot;: &quot;cmujbiywu002uryk1citl4rkr&quot;,
+      &quot;revision&quot;: &quot;f7e3e014dd8f4e5098174f6e270bca058ae969c23feb12674ffea8a2f784f3c3&quot;,
+      &quot;evidence&quot;: &quot;database_snapshot&quot;,
+      &quot;evidenceHash&quot;: &quot;79e5eb0d5c5cc1e9e815b0e3b3b2950a7755df73384924894364669c5f254ca8&quot;
+    },
+    {
+      &quot;kind&quot;: &quot;AttachmentObject.create&quot;,
+      &quot;recordId&quot;: &quot;cmujbiyv7002pryk1cj4grdtk&quot;,
+      &quot;revision&quot;: &quot;2026-09-27T04:28:18.34&quot;,
+      &quot;evidence&quot;: &quot;database_snapshot&quot;,
+      &quot;evidenceHash&quot;: &quot;961801a3b3eb07f86afe11ad49266a1e60429e9bf1d0c447a6a8c3b960529fa2&quot;
+    }
+  ],
+  &quot;validationFailures&quot;: [],
+  &quot;criticalErrors&quot;: [],
+  &quot;recordError&quot;: null,
+  &quot;versions&quot;: {
+    &quot;sourceCommit&quot;: &quot;063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3&quot;,
+    &quot;schema&quot;: &quot;f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8&quot;,
+    &quot;prompt&quot;: &quot;350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e&quot;,
+    &quot;registry&quot;: &quot;0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f&quot;,
+    &quot;model&quot;: &quot;95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7&quot;,
+    &quot;price&quot;: &quot;67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb&quot;
+  }
+}</pre></details>
+      <p class="muted">Snapshot nat-NAT-06 · hash 9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063</p></section>
+<section><h2>NAT-06 · รอบ 1 · ข้อ 3</h2><p class="question">หน้าสองเขียนว่าไง</p>
+      <p>สถานะที่เก็บได้: <strong>needs_input</strong> · sink delivery: ACCEPTED</p>
+      <p>จบงานที่ runtime สังเกต: 9,058 ms · wire แรก: 8,908 ms · wire ล่าสุด: 9,132 ms</p>
+      <article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/reply · 8,908 ms</p><div class="message"><p>กำลังอ่านไฟล์เดิมเพื่อตอบคำถามใหม่นี้ค่ะ ยังไม่ได้สร้างรายการ</p>
+    <div class="quick"><button disabled>ยกเลิกอ่านไฟล์</button></div></div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+        <details><summary>ชนิดปุ่ม / postback / ข้อความที่ปุ่มส่งจริง</summary><pre>[
+  {
+    &quot;type&quot;: &quot;message&quot;,
+    &quot;label&quot;: &quot;ยกเลิกอ่านไฟล์&quot;,
+    &quot;text&quot;: &quot;/qa cancel cmujbj6ym0031ryk1euagnw05&quot;
+  }
+]</pre></details>
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;type&quot;: &quot;text&quot;,
+      &quot;text&quot;: &quot;กำลังอ่านไฟล์เดิมเพื่อตอบคำถามใหม่นี้ค่ะ ยังไม่ได้สร้างรายการ&quot;,
+      &quot;quickReply&quot;: {
+        &quot;items&quot;: [
+          {
+            &quot;type&quot;: &quot;action&quot;,
+            &quot;action&quot;: {
+              &quot;type&quot;: &quot;message&quot;,
+              &quot;label&quot;: &quot;ยกเลิกอ่านไฟล์&quot;,
+              &quot;text&quot;: &quot;/qa cancel cmujbj6ym0031ryk1euagnw05&quot;
+            }
+          }
+        ]
+      }
+    }
+  ],
+  &quot;at&quot;: 1790483308840,
+  &quot;receiptId&quot;: &quot;sink-4fe1ea9b-acb7-458b-b30d-b49be8aeec0a&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/reply&quot;,
+  &quot;payloadHash&quot;: &quot;8a0a435784480d11cc0afc83bee01372b2423a6bffcc65b6f715c8dbd9650636&quot;
+}</pre></details></article><article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/push · 9,132 ms</p><div class="message"><p>ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้</p>
+    </div><div class="message"><p>ส่วนที่ยังไม่เสร็จ:
+ข้อ 1: Replace previously sent file with this new unreadable PDF attachment</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    },
+    {
+      &quot;text&quot;: &quot;ส่วนที่ยังไม่เสร็จ:\nข้อ 1: Replace previously sent file with this new unreadable PDF attachment&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483309064,
+  &quot;receiptId&quot;: &quot;sink-42a99c82-5eb7-4b57-8a86-5ebd4e5f023b&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/push&quot;,
+  &quot;payloadHash&quot;: &quot;35e8e0263577ea638b8fe4352589dd616b1ede2cb2c8f39907cb57a8b7e48473&quot;
+}</pre></details></article>
+      <p>การเปลี่ยนข้อมูลธุรกิจ: AttachmentLink.create (cmujbj6yo0032ryk14rjfzhov)</p>
+      <p>Provider usage: 1 แถวที่บันทึกได้</p>
+      <details><summary>Provider: รุ่น / token / ค่าใช้จ่าย / แหล่ง usage / reservation</summary><pre>{
+  &quot;usage&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbj6xl002yryk1pmf9sf2n&quot;,
+      &quot;requestId&quot;: &quot;0ae79210-0f1d-4c74-9be7-b2587f0f430d&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#1f9fcb1f1f9e888ce8dad0775f9a906c58fa5e7ad91a3a4a08da3e8844a56ad6#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-intake-route&quot;,
+      &quot;usageTag&quot;: &quot;line.intake-route&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 1511,
+      &quot;outputTokens&quot;: 575,
+      &quot;cacheReadInputTokens&quot;: 14632,
+      &quot;cacheWriteInputTokens&quot;: 0,
+      &quot;costSatang&quot;: 58,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 15,
+          &quot;output&quot;: 28,
+          &quot;rounding&quot;: 1,
+          &quot;cacheRead&quot;: 14,
+          &quot;cacheWrite&quot;: 0
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:28.761Z&quot;
+    }
+  ],
+  &quot;reservations&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbj0za002xryk1ab0b1dod&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#1f9fcb1f1f9e888ce8dad0775f9a906c58fa5e7ad91a3a4a08da3e8844a56ad6#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 1052,
+      &quot;settledCostSatang&quot;: 58,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:21.046Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:28:21.037Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:28:28.753Z&quot;
+    }
+  ]
+}</pre></details>
+      <details><summary>ผล tool จริงสำหรับตรวจตัวเลขและแหล่งข้อมูล</summary><pre>[]</pre></details>
+      <details><summary>ผล Gateway จริง รวม intake / semanticSubrequests / preparedPlan</summary><pre>[
+  {
+    &quot;method&quot;: &quot;requestLineIntakeRoute&quot;,
+    &quot;requestId&quot;: &quot;0ae79210-0f1d-4c74-9be7-b2587f0f430d&quot;,
+    &quot;startedAtMs&quot;: 1790483301021,
+    &quot;completedAtMs&quot;: 1790483308771,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;ROUTED&quot;,
+      &quot;intent&quot;: &quot;UNSUPPORTED&quot;,
+      &quot;language&quot;: &quot;th&quot;,
+      &quot;confidence&quot;: 0.55,
+      &quot;reason&quot;: &quot;User is asking what page two says, which refers to a previously uploaded document — this is a document content question, not a business data read or an expense/signature intake action.&quot;,
+      &quot;semanticOutcome&quot;: &quot;AMBIGUOUS&quot;,
+      &quot;fundingSource&quot;: &quot;UNKNOWN&quot;,
+      &quot;semanticSubrequests&quot;: [
+        {
+          &quot;index&quot;: 0,
+          &quot;kind&quot;: &quot;file&quot;,
+          &quot;goal&quot;: &quot;Read or transcribe the content of page two of a previously submitted document&quot;,
+          &quot;requiredEvidence&quot;: [],
+          &quot;requestedFilters&quot;: {},
+          &quot;taskRef&quot;: {
+            &quot;taskId&quot;: &quot;eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f&quot;,
+            &quot;taskRevision&quot;: 2,
+            &quot;subrequestIndex&quot;: 0
+          },
+          &quot;dependsOn&quot;: [],
+          &quot;evidenceRefs&quot;: [
+            {
+              &quot;partId&quot;: &quot;part-0&quot;,
+              &quot;startUtf16&quot;: 0,
+              &quot;endUtf16&quot;: 17,
+              &quot;rawSha256&quot;: &quot;46e93ef845bc46debf193564b76143702a95fd53ba2e2980d1f65a0c79a0b300&quot;
+            }
+          ]
+        }
+      ],
+      &quot;usage&quot;: [
+        {
+          &quot;tag&quot;: &quot;line.intake-route&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 1511,
+          &quot;outputTokens&quot;: 575,
+          &quot;cacheReadInputTokens&quot;: 14632,
+          &quot;cacheWriteInputTokens&quot;: 0,
+          &quot;durationMs&quot;: 7696,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#1f9fcb1f1f9e888ce8dad0775f9a906c58fa5e7ad91a3a4a08da3e8844a56ad6#provider-v2#0&quot;
+        }
+      ]
+    }
+  },
+  {
+    &quot;method&quot;: &quot;requestLineDocumentQa&quot;,
+    &quot;requestId&quot;: &quot;qa:cmujbj6ym0031ryk1euagnw05:1:ae194b10-67aa-4735-9c3f-070310ad361d&quot;,
+    &quot;startedAtMs&quot;: 1790483308990,
+    &quot;completedAtMs&quot;: 1790483308990,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;failed&quot;,
+      &quot;errorCode&quot;: &quot;QA_INPUT_EVIDENCE_INVALID&quot;
+    }
+  }
+]</pre></details>
+      <details><summary>สถานะ preview / การยกเลิก / context / preference ก่อนและหลัง</summary><pre>{
+  &quot;before&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 3,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;file&quot;,
+              &quot;state&quot;: &quot;waiting_user&quot;,
+              &quot;taskId&quot;: &quot;eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f&quot;,
+              &quot;revision&quot;: 2,
+              &quot;userGoal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+                  &quot;kind&quot;: &quot;file&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;needs_user&quot;
+                }
+              ],
+              &quot;attachmentPageRefs&quot;: [
+                {
+                  &quot;pages&quot;: [
+                    1,
+                    2
+                  ],
+                  &quot;contentHash&quot;: &quot;37b80639d6d96436268e911c8792542c3c7e0e1e3e18fabd84b462e0f8324f01&quot;,
+                  &quot;attachmentId&quot;: &quot;cmujbiyv7002pryk1cj4grdtk&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91&quot;
+              ],
+              &quot;sourceRevisionLocators&quot;: [
+                {
+                  &quot;revision&quot;: &quot;1&quot;,
+                  &quot;sourceId&quot;: &quot;cmujbiywr002tryk1o83e9fsg&quot;,
+                  &quot;sourceType&quot;: &quot;LINE_DOCUMENT_QA_0_0&quot;
+                }
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:43:19.892Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:28:05.331Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:28:19.893Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  },
+  &quot;after&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 6,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;file&quot;,
+              &quot;state&quot;: &quot;waiting_user&quot;,
+              &quot;taskId&quot;: &quot;eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f&quot;,
+              &quot;revision&quot;: 5,
+              &quot;userGoal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+                  &quot;kind&quot;: &quot;file&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;needs_user&quot;
+                }
+              ],
+              &quot;attachmentPageRefs&quot;: [
+                {
+                  &quot;pages&quot;: [
+                    1,
+                    2
+                  ],
+                  &quot;contentHash&quot;: &quot;8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24&quot;,
+                  &quot;attachmentId&quot;: &quot;cmujbiteu002cryk1nlubons2&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91&quot;
+              ],
+              &quot;sourceRevisionLocators&quot;: [
+                {
+                  &quot;revision&quot;: &quot;1&quot;,
+                  &quot;sourceId&quot;: &quot;cmujbj6ym0031ryk1euagnw05&quot;,
+                  &quot;sourceType&quot;: &quot;LINE_DOCUMENT_QA_0_0&quot;
+                }
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:43:29.069Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:28:05.331Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:28:29.070Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  }
+}</pre></details>
+      <details><summary>Webhook / delivery / mutations / validation failures / source versions</summary><pre>{
+  &quot;webhookEvents&quot;: [
+    {
+      &quot;webhookEventId&quot;: &quot;replay-0cbe97db9c7b59d05fcb-0&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;document_qa_failed&quot;,
+      &quot;errorCode&quot;: &quot;QA_INPUT_EVIDENCE_INVALID&quot;,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:28:29.072Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:19.942Z&quot;
+    }
+  ],
+  &quot;delivery&quot;: {
+    &quot;requiredBatchIds&quot;: [
+      &quot;c5dc4bc525f9ef46b635d7d3cb153e7e35ebae5da9eb9b2a9a7c2e53c7be7336:batch:0&quot;
+    ],
+    &quot;accepted&quot;: [
+      {
+        &quot;batchId&quot;: &quot;c5dc4bc525f9ef46b635d7d3cb153e7e35ebae5da9eb9b2a9a7c2e53c7be7336:batch:0&quot;,
+        &quot;wireHash&quot;: &quot;eb75404b3dbede5b5e533e4933925b118acd70930e3e2227b4ffc45355ac3dd4&quot;,
+        &quot;acceptedAtMs&quot;: 1790483309064,
+        &quot;receiptId&quot;: &quot;sink-42a99c82-5eb7-4b57-8a86-5ebd4e5f023b&quot;
+      }
+    ],
+    &quot;status&quot;: &quot;ACCEPTED&quot;
+  },
+  &quot;effects&quot;: [
+    {
+      &quot;kind&quot;: &quot;AttachmentLink.create&quot;,
+      &quot;recordId&quot;: &quot;cmujbj6yo0032ryk14rjfzhov&quot;,
+      &quot;revision&quot;: &quot;ccf98048d2bfae7fc276d8b4d99fc2b23dbc37d9125fd3c58093dd450b2b619a&quot;,
+      &quot;evidence&quot;: &quot;database_snapshot&quot;,
+      &quot;evidenceHash&quot;: &quot;1ffb8976dade98abb2858ef3d08b1669470597985441296d9be9e1c77f2b9399&quot;
+    }
+  ],
+  &quot;validationFailures&quot;: [],
+  &quot;criticalErrors&quot;: [],
+  &quot;recordError&quot;: null,
+  &quot;versions&quot;: {
+    &quot;sourceCommit&quot;: &quot;063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3&quot;,
+    &quot;schema&quot;: &quot;f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8&quot;,
+    &quot;prompt&quot;: &quot;350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e&quot;,
+    &quot;registry&quot;: &quot;0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f&quot;,
+    &quot;model&quot;: &quot;95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7&quot;,
+    &quot;price&quot;: &quot;67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb&quot;
+  }
+}</pre></details>
+      <p class="muted">Snapshot nat-NAT-06 · hash 9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063</p></section>
+<section><h2>NAT-06 · รอบ 1 · ข้อ 4</h2><p class="question">งั้นสรุปแค่หน้าที่อ่านออก</p>
+      <p>สถานะที่เก็บได้: <strong>event:delivery_failed</strong> · sink delivery: NONE</p>
+      <p>จบงานที่ runtime สังเกต: 6,755 ms · wire แรก: 6,788 ms · wire ล่าสุด: 6,788 ms</p>
+      <article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/reply · 6,788 ms</p><div class="message"><p>ข้อมูลต้นทางเปลี่ยนหรือยังตรวจสอบไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;type&quot;: &quot;text&quot;,
+      &quot;text&quot;: &quot;ข้อมูลต้นทางเปลี่ยนหรือยังตรวจสอบไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483315894,
+  &quot;receiptId&quot;: &quot;sink-eb6b94ca-0e9b-4d12-bca8-802c9dffc4ec&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/reply&quot;,
+  &quot;payloadHash&quot;: &quot;3331f798fd979e4f18b327ae8091fa781ed09f0b12fc676d10c481a0495e73e2&quot;
+}</pre></details></article>
+      <p>การเปลี่ยนข้อมูลธุรกิจ: snapshot ไม่พบการเปลี่ยนในตารางธุรกิจที่ตรวจ</p>
+      <p>Provider usage: 1 แถวที่บันทึกได้</p>
+      <details><summary>Provider: รุ่น / token / ค่าใช้จ่าย / แหล่ง usage / reservation</summary><pre>{
+  &quot;usage&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbjcel0036ryk1d0g7gpjb&quot;,
+      &quot;requestId&quot;: &quot;f46efa17-2f57-4dc8-88a1-045fe2bca734&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#3318ca69bb362eefff08c6fa102f5b1f155a9046efcaf86b4a64ca674696f8f1#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-intake-route&quot;,
+      &quot;usageTag&quot;: &quot;line.intake-route&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 1386,
+      &quot;outputTokens&quot;: 478,
+      &quot;cacheReadInputTokens&quot;: 14632,
+      &quot;cacheWriteInputTokens&quot;: 0,
+      &quot;costSatang&quot;: 52,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 14,
+          &quot;output&quot;: 24,
+          &quot;rounding&quot;: 0,
+          &quot;cacheRead&quot;: 14,
+          &quot;cacheWrite&quot;: 0
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:35.853Z&quot;
+    }
+  ],
+  &quot;reservations&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbj81x0035ryk116pzlvny&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#3318ca69bb362eefff08c6fa102f5b1f155a9046efcaf86b4a64ca674696f8f1#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 1040,
+      &quot;settledCostSatang&quot;: 52,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:30.213Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:28:30.198Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:28:35.847Z&quot;
+    }
+  ]
+}</pre></details>
+      <details><summary>ผล tool จริงสำหรับตรวจตัวเลขและแหล่งข้อมูล</summary><pre>[]</pre></details>
+      <details><summary>ผล Gateway จริง รวม intake / semanticSubrequests / preparedPlan</summary><pre>[
+  {
+    &quot;method&quot;: &quot;requestLineIntakeRoute&quot;,
+    &quot;requestId&quot;: &quot;f46efa17-2f57-4dc8-88a1-045fe2bca734&quot;,
+    &quot;startedAtMs&quot;: 1790483310181,
+    &quot;completedAtMs&quot;: 1790483315861,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;ROUTED&quot;,
+      &quot;intent&quot;: &quot;EXPENSE_DRAFT_CONTINUATION&quot;,
+      &quot;language&quot;: &quot;th&quot;,
+      &quot;confidence&quot;: 0.82,
+      &quot;reason&quot;: &quot;User is continuing the open file task by asking to summarize only the readable pages of the previously submitted unreadable PDF attachment.&quot;,
+      &quot;captureHints&quot;: {
+        &quot;confidence&quot;: 0.72,
+        &quot;missingFields&quot;: []
+      },
+      &quot;semanticOutcome&quot;: &quot;AMBIGUOUS&quot;,
+      &quot;fundingSource&quot;: &quot;UNKNOWN&quot;,
+      &quot;semanticSubrequests&quot;: [
+        {
+          &quot;index&quot;: 0,
+          &quot;kind&quot;: &quot;file&quot;,
+          &quot;goal&quot;: &quot;Process only the readable pages of the previously attached unreadable PDF&quot;,
+          &quot;requiredEvidence&quot;: [],
+          &quot;requestedFilters&quot;: {},
+          &quot;taskRef&quot;: {
+            &quot;taskId&quot;: &quot;eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f&quot;,
+            &quot;taskRevision&quot;: 5,
+            &quot;subrequestIndex&quot;: 0
+          },
+          &quot;dependsOn&quot;: [],
+          &quot;evidenceRefs&quot;: [
+            {
+              &quot;partId&quot;: &quot;part-0&quot;,
+              &quot;startUtf16&quot;: 0,
+              &quot;endUtf16&quot;: 25,
+              &quot;rawSha256&quot;: &quot;d90d41021c237022d04cac8cd650960e8b66a42fa43028eebed6d4726ac601cd&quot;
+            }
+          ]
+        }
+      ],
+      &quot;usage&quot;: [
+        {
+          &quot;tag&quot;: &quot;line.intake-route&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 1386,
+          &quot;outputTokens&quot;: 478,
+          &quot;cacheReadInputTokens&quot;: 14632,
+          &quot;cacheWriteInputTokens&quot;: 0,
+          &quot;durationMs&quot;: 5625,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#3318ca69bb362eefff08c6fa102f5b1f155a9046efcaf86b4a64ca674696f8f1#provider-v2#0&quot;
+        }
+      ]
+    }
+  }
+]</pre></details>
+      <details><summary>สถานะ preview / การยกเลิก / context / preference ก่อนและหลัง</summary><pre>{
+  &quot;before&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 6,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;file&quot;,
+              &quot;state&quot;: &quot;waiting_user&quot;,
+              &quot;taskId&quot;: &quot;eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f&quot;,
+              &quot;revision&quot;: 5,
+              &quot;userGoal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+                  &quot;kind&quot;: &quot;file&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;needs_user&quot;
+                }
+              ],
+              &quot;attachmentPageRefs&quot;: [
+                {
+                  &quot;pages&quot;: [
+                    1,
+                    2
+                  ],
+                  &quot;contentHash&quot;: &quot;8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24&quot;,
+                  &quot;attachmentId&quot;: &quot;cmujbiteu002cryk1nlubons2&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91&quot;
+              ],
+              &quot;sourceRevisionLocators&quot;: [
+                {
+                  &quot;revision&quot;: &quot;1&quot;,
+                  &quot;sourceId&quot;: &quot;cmujbj6ym0031ryk1euagnw05&quot;,
+                  &quot;sourceType&quot;: &quot;LINE_DOCUMENT_QA_0_0&quot;
+                }
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:43:29.069Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:28:05.331Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:28:29.070Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  },
+  &quot;after&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 6,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;file&quot;,
+              &quot;state&quot;: &quot;waiting_user&quot;,
+              &quot;taskId&quot;: &quot;eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f&quot;,
+              &quot;revision&quot;: 5,
+              &quot;userGoal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+                  &quot;kind&quot;: &quot;file&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;needs_user&quot;
+                }
+              ],
+              &quot;attachmentPageRefs&quot;: [
+                {
+                  &quot;pages&quot;: [
+                    1,
+                    2
+                  ],
+                  &quot;contentHash&quot;: &quot;8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24&quot;,
+                  &quot;attachmentId&quot;: &quot;cmujbiteu002cryk1nlubons2&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91&quot;
+              ],
+              &quot;sourceRevisionLocators&quot;: [
+                {
+                  &quot;revision&quot;: &quot;1&quot;,
+                  &quot;sourceId&quot;: &quot;cmujbj6ym0031ryk1euagnw05&quot;,
+                  &quot;sourceType&quot;: &quot;LINE_DOCUMENT_QA_0_0&quot;
+                }
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:43:29.069Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:28:05.331Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:28:29.070Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  }
+}</pre></details>
+      <details><summary>Webhook / delivery / mutations / validation failures / source versions</summary><pre>{
+  &quot;webhookEvents&quot;: [
+    {
+      &quot;webhookEventId&quot;: &quot;replay-eb0d26037c4f6f9a25e7-0&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;delivery_failed&quot;,
+      &quot;errorCode&quot;: &quot;LINE_DELIVERY_SOURCE_CHANGED&quot;,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:28:35.891Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:29.114Z&quot;
+    }
+  ],
+  &quot;delivery&quot;: {
+    &quot;requiredBatchIds&quot;: [],
+    &quot;accepted&quot;: [],
+    &quot;status&quot;: &quot;NONE&quot;
+  },
+  &quot;effects&quot;: [],
+  &quot;validationFailures&quot;: [
+    &quot;no_frozen_delivery_requirement&quot;
+  ],
+  &quot;criticalErrors&quot;: [],
+  &quot;recordError&quot;: null,
+  &quot;versions&quot;: {
+    &quot;sourceCommit&quot;: &quot;063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3&quot;,
+    &quot;schema&quot;: &quot;f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8&quot;,
+    &quot;prompt&quot;: &quot;350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e&quot;,
+    &quot;registry&quot;: &quot;0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f&quot;,
+    &quot;model&quot;: &quot;95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7&quot;,
+    &quot;price&quot;: &quot;67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb&quot;
+  }
+}</pre></details>
+      <p class="muted">Snapshot nat-NAT-06 · hash 9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063</p></section>
+<section><h2>NAT-06 · รอบ 1 · ข้อ 5</h2><p class="question">ขอเทียบกับไฟล์แรกด้วย ยังอยู่มั้ย</p>
+      <p>สถานะที่เก็บได้: <strong>needs_input</strong> · sink delivery: ACCEPTED</p>
+      <p>จบงานที่ runtime สังเกต: 8,638 ms · wire แรก: 8,727 ms · wire ล่าสุด: 8,727 ms</p>
+      <article><p class="muted">ข้อความส่งจริงไป sink · /v2/bot/message/reply · 8,727 ms</p><div class="message"><p>คุณต้องการเปรียบเทียบกับไฟล์แรกที่ส่งมาก่อนหน้านี้ (ไฟล์ PDF ที่แนบมาในงานที่ค้างอยู่) หรือต้องการเปรียบเทียบเอกสารธุรกิจอื่น เช่น ใบเสร็จหรือใบแจ้งหนี้ที่เคยบันทึกไว้?</p>
+    </div>
+        <p>Envelope ตาม repo: ผ่าน</p>
+
+
+        <details><summary>Payload จริง + receipt/hash</summary><pre>{
+  &quot;messages&quot;: [
+    {
+      &quot;text&quot;: &quot;คุณต้องการเปรียบเทียบกับไฟล์แรกที่ส่งมาก่อนหน้านี้ (ไฟล์ PDF ที่แนบมาในงานที่ค้างอยู่) หรือต้องการเปรียบเทียบเอกสารธุรกิจอื่น เช่น ใบเสร็จหรือใบแจ้งหนี้ที่เคยบันทึกไว้?&quot;,
+      &quot;type&quot;: &quot;text&quot;
+    }
+  ],
+  &quot;at&quot;: 1790483324709,
+  &quot;receiptId&quot;: &quot;sink-513c084d-4b1b-412c-9f89-5670caa6822d&quot;,
+  &quot;path&quot;: &quot;/v2/bot/message/reply&quot;,
+  &quot;payloadHash&quot;: &quot;b82c8f72edbd0b34e0408288a3e44929bca871fb13a4dbedd1d50accfcf60bca&quot;
+}</pre></details></article>
+      <p>การเปลี่ยนข้อมูลธุรกิจ: snapshot ไม่พบการเปลี่ยนในตารางธุรกิจที่ตรวจ</p>
+      <p>Provider usage: 1 แถวที่บันทึกได้</p>
+      <details><summary>Provider: รุ่น / token / ค่าใช้จ่าย / แหล่ง usage / reservation</summary><pre>{
+  &quot;usage&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbjj5s003fryk1n4klpsdl&quot;,
+      &quot;requestId&quot;: &quot;81529849-d40e-4d22-890e-2964d3d39ade&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#081baeded28b400c5ed8a62cc3f05c01557f41ccea200b96aebc389f9046202f#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-intake-route&quot;,
+      &quot;usageTag&quot;: &quot;line.intake-route&quot;,
+      &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+      &quot;ok&quot;: true,
+      &quot;inputTokens&quot;: 1415,
+      &quot;outputTokens&quot;: 571,
+      &quot;cacheReadInputTokens&quot;: 14632,
+      &quot;cacheWriteInputTokens&quot;: 0,
+      &quot;costSatang&quot;: 57,
+      &quot;requestKind&quot;: &quot;TEXT&quot;,
+      &quot;budgetBucket&quot;: &quot;CHAT&quot;,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;eventKind&quot;: &quot;MODEL_CALL&quot;,
+      &quot;pricingSnapshot&quot;: {
+        &quot;thbPerUsd&quot;: 33,
+        &quot;usdPerMTok&quot;: {
+          &quot;input&quot;: 3,
+          &quot;output&quot;: 15,
+          &quot;cacheRead&quot;: 0.3,
+          &quot;cacheWrite&quot;: 3.75
+        },
+        &quot;unknownModel&quot;: false,
+        &quot;externalUnits&quot;: 0,
+        &quot;tariffVersion&quot;: &quot;line-v2:2026-09-27&quot;,
+        &quot;componentSatang&quot;: {
+          &quot;input&quot;: 14,
+          &quot;output&quot;: 28,
+          &quot;rounding&quot;: 1,
+          &quot;cacheRead&quot;: 14,
+          &quot;cacheWrite&quot;: 0
+        },
+        &quot;externalToolCostSatang&quot;: 0
+      },
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:44.608Z&quot;
+    }
+  ],
+  &quot;reservations&quot;: [
+    {
+      &quot;id&quot;: &quot;cmujbjdco003eryk1uq2osptz&quot;,
+      &quot;invocationKey&quot;: &quot;w14-synthetic-company#081baeded28b400c5ed8a62cc3f05c01557f41ccea200b96aebc389f9046202f#provider-v2#0&quot;,
+      &quot;sourceRoute&quot;: &quot;line-ai-v2&quot;,
+      &quot;stepKind&quot;: &quot;provider-v2&quot;,
+      &quot;bucket&quot;: &quot;CHAT&quot;,
+      &quot;status&quot;: &quot;SETTLED&quot;,
+      &quot;upperBoundSatang&quot;: 1040,
+      &quot;settledCostSatang&quot;: 57,
+      &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:37.080Z&quot;,
+      &quot;dispatchedAt&quot;: &quot;2026-09-27T04:28:37.070Z&quot;,
+      &quot;settledAt&quot;: &quot;2026-09-27T04:28:44.602Z&quot;
+    }
+  ]
+}</pre></details>
+      <details><summary>ผล tool จริงสำหรับตรวจตัวเลขและแหล่งข้อมูล</summary><pre>[]</pre></details>
+      <details><summary>ผล Gateway จริง รวม intake / semanticSubrequests / preparedPlan</summary><pre>[
+  {
+    &quot;method&quot;: &quot;requestLineIntakeRoute&quot;,
+    &quot;requestId&quot;: &quot;81529849-d40e-4d22-890e-2964d3d39ade&quot;,
+    &quot;startedAtMs&quot;: 1790483317054,
+    &quot;completedAtMs&quot;: 1790483324620,
+    &quot;response&quot;: {
+      &quot;status&quot;: &quot;ROUTED&quot;,
+      &quot;intent&quot;: &quot;CLARIFY&quot;,
+      &quot;language&quot;: &quot;th&quot;,
+      &quot;confidence&quot;: 0.55,
+      &quot;reason&quot;: &quot;The user asks to compare with &#39;the first file&#39; and whether it is still available, which likely continues the open file task (taskId eb2b54d8…) but could also be a general document comparison question &quot;,
+      &quot;clarifyQuestion&quot;: &quot;คุณต้องการเปรียบเทียบกับไฟล์แรกที่ส่งมาก่อนหน้านี้ (ไฟล์ PDF ที่แนบมาในงานที่ค้างอยู่) หรือต้องการเปรียบเทียบเอกสารธุรกิจอื่น เช่น ใบเสร็จหรือใบแจ้งหนี้ที่เคยบันทึกไว้?&quot;,
+      &quot;semanticOutcome&quot;: &quot;AMBIGUOUS&quot;,
+      &quot;fundingSource&quot;: &quot;UNKNOWN&quot;,
+      &quot;semanticSubrequests&quot;: [
+        {
+          &quot;index&quot;: 0,
+          &quot;kind&quot;: &quot;file&quot;,
+          &quot;goal&quot;: &quot;Compare current content with the first file previously submitted and check if it is still available&quot;,
+          &quot;requiredEvidence&quot;: [],
+          &quot;requestedFilters&quot;: {},
+          &quot;taskRef&quot;: {
+            &quot;taskId&quot;: &quot;eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f&quot;,
+            &quot;taskRevision&quot;: 5,
+            &quot;subrequestIndex&quot;: 0
+          },
+          &quot;dependsOn&quot;: [],
+          &quot;evidenceRefs&quot;: [
+            {
+              &quot;partId&quot;: &quot;part-0&quot;,
+              &quot;startUtf16&quot;: 0,
+              &quot;endUtf16&quot;: 33,
+              &quot;rawSha256&quot;: &quot;f28bca891f2065cd8d77bf6d7c36b1fa0aa15555ddabaac525e1cd7045ddad40&quot;
+            }
+          ]
+        }
+      ],
+      &quot;usage&quot;: [
+        {
+          &quot;tag&quot;: &quot;line.intake-route&quot;,
+          &quot;modelId&quot;: &quot;global.anthropic.claude-sonnet-4-6&quot;,
+          &quot;ok&quot;: true,
+          &quot;inputTokens&quot;: 1415,
+          &quot;outputTokens&quot;: 571,
+          &quot;cacheReadInputTokens&quot;: 14632,
+          &quot;cacheWriteInputTokens&quot;: 0,
+          &quot;durationMs&quot;: 7508,
+          &quot;usageBasis&quot;: &quot;PROVIDER_REPORTED&quot;,
+          &quot;invocationKey&quot;: &quot;w14-synthetic-company#081baeded28b400c5ed8a62cc3f05c01557f41ccea200b96aebc389f9046202f#provider-v2#0&quot;
+        }
+      ]
+    }
+  }
+]</pre></details>
+      <details><summary>สถานะ preview / การยกเลิก / context / preference ก่อนและหลัง</summary><pre>{
+  &quot;before&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 6,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;file&quot;,
+              &quot;state&quot;: &quot;waiting_user&quot;,
+              &quot;taskId&quot;: &quot;eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f&quot;,
+              &quot;revision&quot;: 5,
+              &quot;userGoal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+                  &quot;kind&quot;: &quot;file&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;needs_user&quot;
+                }
+              ],
+              &quot;attachmentPageRefs&quot;: [
+                {
+                  &quot;pages&quot;: [
+                    1,
+                    2
+                  ],
+                  &quot;contentHash&quot;: &quot;8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24&quot;,
+                  &quot;attachmentId&quot;: &quot;cmujbiteu002cryk1nlubons2&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91&quot;
+              ],
+              &quot;sourceRevisionLocators&quot;: [
+                {
+                  &quot;revision&quot;: &quot;1&quot;,
+                  &quot;sourceId&quot;: &quot;cmujbj6ym0031ryk1euagnw05&quot;,
+                  &quot;sourceType&quot;: &quot;LINE_DOCUMENT_QA_0_0&quot;
+                }
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:43:29.069Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:28:05.331Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:28:29.070Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  },
+  &quot;after&quot;: {
+    &quot;draftActions&quot;: [],
+    &quot;conversations&quot;: [
+      {
+        &quot;id&quot;: &quot;line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e&quot;,
+        &quot;companyId&quot;: &quot;w14-synthetic-company&quot;,
+        &quot;userId&quot;: &quot;w14-synthetic-user&quot;,
+        &quot;channel&quot;: &quot;line&quot;,
+        &quot;channelKind&quot;: &quot;USER&quot;,
+        &quot;messagingChannelId&quot;: &quot;w14-synthetic-line-channel&quot;,
+        &quot;chatKeyHash&quot;: &quot;7607b84c8f009728&quot;,
+        &quot;membershipId&quot;: &quot;w14-synthetic-membership&quot;,
+        &quot;stateVersion&quot;: 7,
+        &quot;taskStateJson&quot;: {
+          &quot;tasks&quot;: [
+            {
+              &quot;kind&quot;: &quot;file&quot;,
+              &quot;state&quot;: &quot;active&quot;,
+              &quot;taskId&quot;: &quot;eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f&quot;,
+              &quot;revision&quot;: 6,
+              &quot;userGoal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+              &quot;subrequests&quot;: [
+                {
+                  &quot;goal&quot;: &quot;Replace previously sent file with this new unreadable PDF attachment&quot;,
+                  &quot;kind&quot;: &quot;file&quot;,
+                  &quot;index&quot;: 0,
+                  &quot;status&quot;: &quot;pending&quot;
+                }
+              ],
+              &quot;attachmentPageRefs&quot;: [
+                {
+                  &quot;pages&quot;: [
+                    1,
+                    2
+                  ],
+                  &quot;contentHash&quot;: &quot;8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24&quot;,
+                  &quot;attachmentId&quot;: &quot;cmujbiteu002cryk1nlubons2&quot;
+                }
+              ],
+              &quot;deliveredQuestionRefs&quot;: [
+                &quot;c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91&quot;
+              ],
+              &quot;sourceRevisionLocators&quot;: [
+                {
+                  &quot;revision&quot;: &quot;1&quot;,
+                  &quot;sourceId&quot;: &quot;cmujbj6ym0031ryk1euagnw05&quot;,
+                  &quot;sourceType&quot;: &quot;LINE_DOCUMENT_QA_0_0&quot;
+                }
+              ]
+            }
+          ],
+          &quot;version&quot;: 2
+        },
+        &quot;stateExpiresAt&quot;: &quot;2026-09-27T04:43:44.650Z&quot;,
+        &quot;lifecycleEpoch&quot;: 0,
+        &quot;preferenceJson&quot;: null,
+        &quot;preferenceVersion&quot;: 0,
+        &quot;preferenceRequestId&quot;: null,
+        &quot;preferenceExpiresAt&quot;: null,
+        &quot;createdAt&quot;: &quot;2026-09-27T04:28:05.331Z&quot;,
+        &quot;updatedAt&quot;: &quot;2026-09-27T04:28:44.716Z&quot;
+      }
+    ],
+    &quot;truncated&quot;: false
+  }
+}</pre></details>
+      <details><summary>Webhook / delivery / mutations / validation failures / source versions</summary><pre>{
+  &quot;webhookEvents&quot;: [
+    {
+      &quot;webhookEventId&quot;: &quot;replay-55a64e225e5e89bec330-0&quot;,
+      &quot;eventType&quot;: &quot;message&quot;,
+      &quot;status&quot;: &quot;clarification_required&quot;,
+      &quot;errorCode&quot;: null,
+      &quot;processedAt&quot;: &quot;2026-09-27T04:28:44.722Z&quot;,
+      &quot;createdAt&quot;: &quot;2026-09-27T04:28:35.992Z&quot;
+    }
+  ],
+  &quot;delivery&quot;: {
+    &quot;requiredBatchIds&quot;: [
+      &quot;4ab1e751bff80e511e38c8b59d4564dd52d944d844dff12ffd1a664a75c9e07c:batch:0&quot;
+    ],
+    &quot;accepted&quot;: [
+      {
+        &quot;batchId&quot;: &quot;4ab1e751bff80e511e38c8b59d4564dd52d944d844dff12ffd1a664a75c9e07c:batch:0&quot;,
+        &quot;wireHash&quot;: &quot;adde317a3f8b5d627b8991ba008a2ade324915369621d9167dbf591a4ac66075&quot;,
+        &quot;acceptedAtMs&quot;: 1790483324709,
+        &quot;receiptId&quot;: &quot;sink-513c084d-4b1b-412c-9f89-5670caa6822d&quot;
+      }
+    ],
+    &quot;status&quot;: &quot;ACCEPTED&quot;
+  },
+  &quot;effects&quot;: [],
+  &quot;validationFailures&quot;: [],
+  &quot;criticalErrors&quot;: [],
+  &quot;recordError&quot;: null,
+  &quot;versions&quot;: {
+    &quot;sourceCommit&quot;: &quot;063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3&quot;,
+    &quot;schema&quot;: &quot;f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8&quot;,
+    &quot;prompt&quot;: &quot;350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e&quot;,
+    &quot;registry&quot;: &quot;0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f&quot;,
+    &quot;model&quot;: &quot;95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7&quot;,
+    &quot;price&quot;: &quot;67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb&quot;
+  }
+}</pre></details>
+      <p class="muted">Snapshot nat-NAT-06 · hash 9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063</p></section></html>

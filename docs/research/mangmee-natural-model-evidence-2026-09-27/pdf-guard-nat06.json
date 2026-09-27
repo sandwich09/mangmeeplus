@@ -1,0 +1,1710 @@
+{
+  "startedAt": "2026-09-27T04:28:01.474Z",
+  "completedAt": "2026-09-27T04:28:44.818Z",
+  "model": {
+    "provider": "bedrock",
+    "modelId": "global.anthropic.claude-sonnet-4-6",
+    "region": "ap-southeast-1",
+    "transport": "local-http",
+    "runtime": "strands-local",
+    "globalApprovalRef": "DPO-2026-07-23-bedrock-global"
+  },
+  "compiledHashes": {
+    "apps/api/dist/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.js": "f9393fce2b38121bf181bd0821aef4e4c4614f2a8a2041d3bb45dac62967ac6e",
+    "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.js": "9e2ad5fc43b79c9c8df1219481e87ddfd87024c1d95215628c34c8c1d9920103",
+    "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/semantic-turn-v2.js": "6fd7585b4ba24d5b8bf6604dd36874cf132f16a138ac042cab67d45a17ae3e1e"
+  },
+  "corpusDigest": "68def2b8359571b271f18de46cbe3cccc8f4cdb71f7fc28da351ad55c84971a5",
+  "provenance": "fixture",
+  "turnEvidence": [
+    {
+      "scenarioId": "NAT-06",
+      "repeat": 0,
+      "turnIndex": 0,
+      "user": "ดูหน่อย ใบนี้เขียนว่าอะไรบ้าง",
+      "attachmentIds": [
+        "receipt-partial"
+      ],
+      "companyId": "w14-synthetic-company",
+      "sourceSnapshot": "nat-NAT-06",
+      "snapshotDigest": "9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063",
+      "webBaseUrl": "http://127.0.0.1:18993",
+      "acceptedAtMs": 1790483284234,
+      "modelWorkCompletedAtMs": 1790483291203,
+      "receipts": [
+        {
+          "messages": [
+            {
+              "text": "ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ",
+              "type": "text"
+            }
+          ],
+          "at": 1790483285283,
+          "receiptId": "sink-9b925297-54cc-41b4-8c5a-6bddce5d88ce",
+          "path": "/v2/bot/message/push",
+          "payloadHash": "ba58ca9d8a17fe5803d1e8fa583f8960f13033c888b956545b18c1604ea55dd2"
+        },
+        {
+          "messages": [
+            {
+              "text": "ไฟล์ PDF ที่แนบมานี้เป็นเอกสารประเภทไหนคะ เช่น ใบเสร็จ/ใบกำกับภาษี, เอกสารธุรกิจ (ใบเสนอราคา/ใบสั่งซื้อ), หรืออื่นๆ?",
+              "type": "text"
+            }
+          ],
+          "at": 1790483291305,
+          "receiptId": "sink-1888a70d-0608-4b76-a0a3-d88b68c9aa6c",
+          "path": "/v2/bot/message/reply",
+          "payloadHash": "dc546c8a85c4cc28b21eb0305dec33a9a59bbdf997e87c9a4f6d691790f42dde"
+        }
+      ],
+      "toolResults": [],
+      "gatewayResponses": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "75f20e60-0390-430e-ac17-ac1d4aaf0a5e",
+          "startedAtMs": 1790483285394,
+          "completedAtMs": 1790483291203,
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.55,
+            "reason": "User wants to know what is written on an attached PDF, but the file purpose is unknown and has no image content, making it impossible to determine if it is an expense document, a business reference do",
+            "clarifyQuestion": "ไฟล์ PDF ที่แนบมานี้เป็นเอกสารประเภทไหนคะ เช่น ใบเสร็จ/ใบกำกับภาษี, เอกสารธุรกิจ (ใบเสนอราคา/ใบสั่งซื้อ), หรืออื่นๆ?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "อ่าน/สรุปเนื้อหาของเอกสาร PDF ที่แนบมา",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 29,
+                    "rawSha256": "361a404ee594e9544ddd94de576693b8859693d848f246539df949be417fd6fb"
+                  }
+                ]
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1272,
+                "outputTokens": 439,
+                "cacheReadInputTokens": 6891,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 5727,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#0"
+              }
+            ]
+          }
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-3d22c4088d3be6636a5c-0",
+          "eventType": "message",
+          "status": "clarification_required",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:28:11.317Z",
+          "createdAt": "2026-09-27T04:28:04.252Z"
+        },
+        {
+          "webhookEventId": "replay-3d22c4088d3be6636a5c-1",
+          "eventType": "message",
+          "status": "batched",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:28:11.319Z",
+          "createdAt": "2026-09-27T04:28:04.263Z"
+        }
+      ],
+      "providerUsage": [
+        {
+          "id": "cmujbitdi0029ryk1444kpuz5",
+          "requestId": "75f20e60-0390-430e-ac17-ac1d4aaf0a5e",
+          "invocationKey": "w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#0",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1272,
+          "outputTokens": 439,
+          "cacheReadInputTokens": 6891,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 41,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 13,
+              "output": 22,
+              "rounding": -1,
+              "cacheRead": 7,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:28:11.190Z"
+        }
+      ],
+      "reservations": [
+        {
+          "id": "cmujbioxq0028ryk1hlztult4",
+          "invocationKey": "w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#0",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 634,
+          "settledCostSatang": 41,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:28:05.438Z",
+          "dispatchedAt": "2026-09-27T04:28:05.425Z",
+          "settledAt": "2026-09-27T04:28:11.180Z"
+        }
+      ],
+      "reviewState": {
+        "before": {
+          "draftActions": [],
+          "conversations": [],
+          "truncated": false
+        },
+        "after": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 0,
+              "taskStateJson": null,
+              "stateExpiresAt": null,
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:28:05.331Z",
+              "updatedAt": "2026-09-27T04:28:11.311Z"
+            }
+          ],
+          "truncated": false
+        }
+      },
+      "delivery": {
+        "requiredBatchIds": [
+          "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0",
+            "wireHash": "1f4cbc97e0e9236cdb96fd6741085219ca4c5c8eb2f159e3521ba3c4e9945b10",
+            "acceptedAtMs": 1790483291305,
+            "receiptId": "sink-1888a70d-0608-4b76-a0a3-d88b68c9aa6c"
+          }
+        ],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "scenarioId": "NAT-06",
+      "repeat": 0,
+      "turnIndex": 1,
+      "user": "ส่งผิด เอาไฟล์นี้แทนอันเมื่อกี้",
+      "attachmentIds": [
+        "document-unreadable"
+      ],
+      "companyId": "w14-synthetic-company",
+      "sourceSnapshot": "nat-NAT-06",
+      "snapshotDigest": "9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063",
+      "webBaseUrl": "http://127.0.0.1:18993",
+      "acceptedAtMs": 1790483291399,
+      "modelWorkCompletedAtMs": 1790483299806,
+      "receipts": [
+        {
+          "messages": [
+            {
+              "text": "ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ",
+              "type": "text"
+            }
+          ],
+          "at": 1790483292438,
+          "receiptId": "sink-fb8762c8-3b67-4401-96c1-be8006f512d3",
+          "path": "/v2/bot/message/push",
+          "payloadHash": "ba58ca9d8a17fe5803d1e8fa583f8960f13033c888b956545b18c1604ea55dd2"
+        },
+        {
+          "messages": [
+            {
+              "type": "text",
+              "text": "กำลังอ่านไฟล์เพื่อตอบคำถามค่ะ เมื่ออ่านเสร็จจะตอบในแชตนี้ ยังไม่ได้สร้างรายการค่าใช้จ่ายหรือใบเบิก",
+              "quickReply": {
+                "items": [
+                  {
+                    "type": "action",
+                    "action": {
+                      "type": "message",
+                      "label": "ยกเลิกอ่านไฟล์",
+                      "text": "/qa cancel cmujbiywr002tryk1o83e9fsg"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "at": 1790483298404,
+          "receiptId": "sink-7c270a1c-857c-45e0-b62c-eaf7f61e9b22",
+          "path": "/v2/bot/message/reply",
+          "payloadHash": "8062801d7135ea335dd4da6cc538bd7ef1d7881fac5beb9bb559436c78dbb04a"
+        },
+        {
+          "messages": [
+            {
+              "text": "ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้",
+              "type": "text"
+            },
+            {
+              "text": "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: Replace previously sent file with this new unreadable PDF attachment",
+              "type": "text"
+            }
+          ],
+          "at": 1790483299887,
+          "receiptId": "sink-65170e6f-1a97-4bcd-bf07-548c11f08a1e",
+          "path": "/v2/bot/message/push",
+          "payloadHash": "35e8e0263577ea638b8fe4352589dd616b1ede2cb2c8f39907cb57a8b7e48473"
+        }
+      ],
+      "toolResults": [],
+      "gatewayResponses": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "d582bf70-7f9d-473f-a73b-6c52fef9676d",
+          "startedAtMs": 1790483292498,
+          "completedAtMs": 1790483298290,
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.45,
+            "reason": "User says they sent the wrong file and wants to replace it with this one, but the attached PDF is unreadable/unknown purpose, so it is ambiguous whether this is an expense document, a business documen",
+            "clarifyQuestion": "ไฟล์ที่ส่งมาใหม่นี้คืออะไรครับ — เป็นใบเสร็จ/เอกสารค่าใช้จ่าย หรือเป็นเอกสารธุรกิจประเภทอื่น (เช่น ใบเสนอราคา, ใบสั่งซื้อ)?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "file",
+                "goal": "Replace previously sent file with this new unreadable PDF attachment",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 31,
+                    "rawSha256": "d823e38e762700395efb96f09d7b69549389f666292c3eff6203871660d4c690"
+                  }
+                ]
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1288,
+                "outputTokens": 430,
+                "cacheReadInputTokens": 6891,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 5735,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#54e941c81d76af720084e318f371f3888a51edc563ca86bd7baaacb808b8e6be#provider-v2#0"
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineDocumentQa",
+          "requestId": "qa:cmujbiywr002tryk1o83e9fsg:1:359663f3-8a92-45ae-8f3a-88669c1d233b",
+          "startedAtMs": 1790483299806,
+          "completedAtMs": 1790483299806,
+          "response": {
+            "status": "failed",
+            "errorCode": "QA_INPUT_EVIDENCE_INVALID"
+          }
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-5e964de497aa52e91d30-1",
+          "eventType": "message",
+          "status": "batched",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:28:18.405Z",
+          "createdAt": "2026-09-27T04:28:11.427Z"
+        },
+        {
+          "webhookEventId": "replay-5e964de497aa52e91d30-0",
+          "eventType": "message",
+          "status": "document_qa_failed",
+          "errorCode": "QA_INPUT_EVIDENCE_INVALID",
+          "processedAt": "2026-09-27T04:28:19.895Z",
+          "createdAt": "2026-09-27T04:28:11.413Z"
+        }
+      ],
+      "providerUsage": [
+        {
+          "id": "cmujbiyuh002mryk1kxwlce9a",
+          "requestId": "d582bf70-7f9d-473f-a73b-6c52fef9676d",
+          "invocationKey": "w14-synthetic-company#54e941c81d76af720084e318f371f3888a51edc563ca86bd7baaacb808b8e6be#provider-v2#0",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1288,
+          "outputTokens": 430,
+          "cacheReadInputTokens": 6891,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 41,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 13,
+              "output": 21,
+              "rounding": 0,
+              "cacheRead": 7,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:28:18.281Z"
+        }
+      ],
+      "reservations": [
+        {
+          "id": "cmujbiueq002lryk1ynehqogj",
+          "invocationKey": "w14-synthetic-company#54e941c81d76af720084e318f371f3888a51edc563ca86bd7baaacb808b8e6be#provider-v2#0",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 634,
+          "settledCostSatang": 41,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:28:12.530Z",
+          "dispatchedAt": "2026-09-27T04:28:12.517Z",
+          "settledAt": "2026-09-27T04:28:18.273Z"
+        }
+      ],
+      "reviewState": {
+        "before": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 0,
+              "taskStateJson": null,
+              "stateExpiresAt": null,
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:28:05.331Z",
+              "updatedAt": "2026-09-27T04:28:11.311Z"
+            }
+          ],
+          "truncated": false
+        },
+        "after": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 3,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "file",
+                    "state": "waiting_user",
+                    "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                    "revision": 2,
+                    "userGoal": "Replace previously sent file with this new unreadable PDF attachment",
+                    "subrequests": [
+                      {
+                        "goal": "Replace previously sent file with this new unreadable PDF attachment",
+                        "kind": "file",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "attachmentPageRefs": [
+                      {
+                        "pages": [
+                          1,
+                          2
+                        ],
+                        "contentHash": "37b80639d6d96436268e911c8792542c3c7e0e1e3e18fabd84b462e0f8324f01",
+                        "attachmentId": "cmujbiyv7002pryk1cj4grdtk"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91"
+                    ],
+                    "sourceRevisionLocators": [
+                      {
+                        "revision": "1",
+                        "sourceId": "cmujbiywr002tryk1o83e9fsg",
+                        "sourceType": "LINE_DOCUMENT_QA_0_0"
+                      }
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:43:19.892Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:28:05.331Z",
+              "updatedAt": "2026-09-27T04:28:19.893Z"
+            }
+          ],
+          "truncated": false
+        }
+      },
+      "delivery": {
+        "requiredBatchIds": [
+          "59e874cb5cfc367a3be395f4df383b63d648ea64763a8b3d7dc35730d3cdba00:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "59e874cb5cfc367a3be395f4df383b63d648ea64763a8b3d7dc35730d3cdba00:batch:0",
+            "wireHash": "eb75404b3dbede5b5e533e4933925b118acd70930e3e2227b4ffc45355ac3dd4",
+            "acceptedAtMs": 1790483299887,
+            "receiptId": "sink-65170e6f-1a97-4bcd-bf07-548c11f08a1e"
+          }
+        ],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "scenarioId": "NAT-06",
+      "repeat": 0,
+      "turnIndex": 2,
+      "user": "หน้าสองเขียนว่าไง",
+      "attachmentIds": [],
+      "companyId": "w14-synthetic-company",
+      "sourceSnapshot": "nat-NAT-06",
+      "snapshotDigest": "9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063",
+      "webBaseUrl": "http://127.0.0.1:18993",
+      "acceptedAtMs": 1790483299932,
+      "modelWorkCompletedAtMs": 1790483308990,
+      "receipts": [
+        {
+          "messages": [
+            {
+              "type": "text",
+              "text": "กำลังอ่านไฟล์เดิมเพื่อตอบคำถามใหม่นี้ค่ะ ยังไม่ได้สร้างรายการ",
+              "quickReply": {
+                "items": [
+                  {
+                    "type": "action",
+                    "action": {
+                      "type": "message",
+                      "label": "ยกเลิกอ่านไฟล์",
+                      "text": "/qa cancel cmujbj6ym0031ryk1euagnw05"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "at": 1790483308840,
+          "receiptId": "sink-4fe1ea9b-acb7-458b-b30d-b49be8aeec0a",
+          "path": "/v2/bot/message/reply",
+          "payloadHash": "8a0a435784480d11cc0afc83bee01372b2423a6bffcc65b6f715c8dbd9650636"
+        },
+        {
+          "messages": [
+            {
+              "text": "ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้",
+              "type": "text"
+            },
+            {
+              "text": "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: Replace previously sent file with this new unreadable PDF attachment",
+              "type": "text"
+            }
+          ],
+          "at": 1790483309064,
+          "receiptId": "sink-42a99c82-5eb7-4b57-8a86-5ebd4e5f023b",
+          "path": "/v2/bot/message/push",
+          "payloadHash": "35e8e0263577ea638b8fe4352589dd616b1ede2cb2c8f39907cb57a8b7e48473"
+        }
+      ],
+      "toolResults": [],
+      "gatewayResponses": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "0ae79210-0f1d-4c74-9be7-b2587f0f430d",
+          "startedAtMs": 1790483301021,
+          "completedAtMs": 1790483308771,
+          "response": {
+            "status": "ROUTED",
+            "intent": "UNSUPPORTED",
+            "language": "th",
+            "confidence": 0.55,
+            "reason": "User is asking what page two says, which refers to a previously uploaded document — this is a document content question, not a business data read or an expense/signature intake action.",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "file",
+                "goal": "Read or transcribe the content of page two of a previously submitted document",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "taskRef": {
+                  "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                  "taskRevision": 2,
+                  "subrequestIndex": 0
+                },
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 17,
+                    "rawSha256": "46e93ef845bc46debf193564b76143702a95fd53ba2e2980d1f65a0c79a0b300"
+                  }
+                ]
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1511,
+                "outputTokens": 575,
+                "cacheReadInputTokens": 14632,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 7696,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#1f9fcb1f1f9e888ce8dad0775f9a906c58fa5e7ad91a3a4a08da3e8844a56ad6#provider-v2#0"
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineDocumentQa",
+          "requestId": "qa:cmujbj6ym0031ryk1euagnw05:1:ae194b10-67aa-4735-9c3f-070310ad361d",
+          "startedAtMs": 1790483308990,
+          "completedAtMs": 1790483308990,
+          "response": {
+            "status": "failed",
+            "errorCode": "QA_INPUT_EVIDENCE_INVALID"
+          }
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-0cbe97db9c7b59d05fcb-0",
+          "eventType": "message",
+          "status": "document_qa_failed",
+          "errorCode": "QA_INPUT_EVIDENCE_INVALID",
+          "processedAt": "2026-09-27T04:28:29.072Z",
+          "createdAt": "2026-09-27T04:28:19.942Z"
+        }
+      ],
+      "providerUsage": [
+        {
+          "id": "cmujbj6xl002yryk1pmf9sf2n",
+          "requestId": "0ae79210-0f1d-4c74-9be7-b2587f0f430d",
+          "invocationKey": "w14-synthetic-company#1f9fcb1f1f9e888ce8dad0775f9a906c58fa5e7ad91a3a4a08da3e8844a56ad6#provider-v2#0",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1511,
+          "outputTokens": 575,
+          "cacheReadInputTokens": 14632,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 58,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 15,
+              "output": 28,
+              "rounding": 1,
+              "cacheRead": 14,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:28:28.761Z"
+        }
+      ],
+      "reservations": [
+        {
+          "id": "cmujbj0za002xryk1ab0b1dod",
+          "invocationKey": "w14-synthetic-company#1f9fcb1f1f9e888ce8dad0775f9a906c58fa5e7ad91a3a4a08da3e8844a56ad6#provider-v2#0",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 1052,
+          "settledCostSatang": 58,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:28:21.046Z",
+          "dispatchedAt": "2026-09-27T04:28:21.037Z",
+          "settledAt": "2026-09-27T04:28:28.753Z"
+        }
+      ],
+      "reviewState": {
+        "before": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 3,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "file",
+                    "state": "waiting_user",
+                    "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                    "revision": 2,
+                    "userGoal": "Replace previously sent file with this new unreadable PDF attachment",
+                    "subrequests": [
+                      {
+                        "goal": "Replace previously sent file with this new unreadable PDF attachment",
+                        "kind": "file",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "attachmentPageRefs": [
+                      {
+                        "pages": [
+                          1,
+                          2
+                        ],
+                        "contentHash": "37b80639d6d96436268e911c8792542c3c7e0e1e3e18fabd84b462e0f8324f01",
+                        "attachmentId": "cmujbiyv7002pryk1cj4grdtk"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91"
+                    ],
+                    "sourceRevisionLocators": [
+                      {
+                        "revision": "1",
+                        "sourceId": "cmujbiywr002tryk1o83e9fsg",
+                        "sourceType": "LINE_DOCUMENT_QA_0_0"
+                      }
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:43:19.892Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:28:05.331Z",
+              "updatedAt": "2026-09-27T04:28:19.893Z"
+            }
+          ],
+          "truncated": false
+        },
+        "after": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 6,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "file",
+                    "state": "waiting_user",
+                    "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                    "revision": 5,
+                    "userGoal": "Replace previously sent file with this new unreadable PDF attachment",
+                    "subrequests": [
+                      {
+                        "goal": "Replace previously sent file with this new unreadable PDF attachment",
+                        "kind": "file",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "attachmentPageRefs": [
+                      {
+                        "pages": [
+                          1,
+                          2
+                        ],
+                        "contentHash": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+                        "attachmentId": "cmujbiteu002cryk1nlubons2"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91"
+                    ],
+                    "sourceRevisionLocators": [
+                      {
+                        "revision": "1",
+                        "sourceId": "cmujbj6ym0031ryk1euagnw05",
+                        "sourceType": "LINE_DOCUMENT_QA_0_0"
+                      }
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:43:29.069Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:28:05.331Z",
+              "updatedAt": "2026-09-27T04:28:29.070Z"
+            }
+          ],
+          "truncated": false
+        }
+      },
+      "delivery": {
+        "requiredBatchIds": [
+          "c5dc4bc525f9ef46b635d7d3cb153e7e35ebae5da9eb9b2a9a7c2e53c7be7336:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "c5dc4bc525f9ef46b635d7d3cb153e7e35ebae5da9eb9b2a9a7c2e53c7be7336:batch:0",
+            "wireHash": "eb75404b3dbede5b5e533e4933925b118acd70930e3e2227b4ffc45355ac3dd4",
+            "acceptedAtMs": 1790483309064,
+            "receiptId": "sink-42a99c82-5eb7-4b57-8a86-5ebd4e5f023b"
+          }
+        ],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "scenarioId": "NAT-06",
+      "repeat": 0,
+      "turnIndex": 3,
+      "user": "งั้นสรุปแค่หน้าที่อ่านออก",
+      "attachmentIds": [],
+      "companyId": "w14-synthetic-company",
+      "sourceSnapshot": "nat-NAT-06",
+      "snapshotDigest": "9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063",
+      "webBaseUrl": "http://127.0.0.1:18993",
+      "acceptedAtMs": 1790483309106,
+      "modelWorkCompletedAtMs": 1790483315861,
+      "receipts": [
+        {
+          "messages": [
+            {
+              "type": "text",
+              "text": "ข้อมูลต้นทางเปลี่ยนหรือยังตรวจสอบไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ"
+            }
+          ],
+          "at": 1790483315894,
+          "receiptId": "sink-eb6b94ca-0e9b-4d12-bca8-802c9dffc4ec",
+          "path": "/v2/bot/message/reply",
+          "payloadHash": "3331f798fd979e4f18b327ae8091fa781ed09f0b12fc676d10c481a0495e73e2"
+        }
+      ],
+      "toolResults": [],
+      "gatewayResponses": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "f46efa17-2f57-4dc8-88a1-045fe2bca734",
+          "startedAtMs": 1790483310181,
+          "completedAtMs": 1790483315861,
+          "response": {
+            "status": "ROUTED",
+            "intent": "EXPENSE_DRAFT_CONTINUATION",
+            "language": "th",
+            "confidence": 0.82,
+            "reason": "User is continuing the open file task by asking to summarize only the readable pages of the previously submitted unreadable PDF attachment.",
+            "captureHints": {
+              "confidence": 0.72,
+              "missingFields": []
+            },
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "file",
+                "goal": "Process only the readable pages of the previously attached unreadable PDF",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "taskRef": {
+                  "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                  "taskRevision": 5,
+                  "subrequestIndex": 0
+                },
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 25,
+                    "rawSha256": "d90d41021c237022d04cac8cd650960e8b66a42fa43028eebed6d4726ac601cd"
+                  }
+                ]
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1386,
+                "outputTokens": 478,
+                "cacheReadInputTokens": 14632,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 5625,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#3318ca69bb362eefff08c6fa102f5b1f155a9046efcaf86b4a64ca674696f8f1#provider-v2#0"
+              }
+            ]
+          }
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-eb0d26037c4f6f9a25e7-0",
+          "eventType": "message",
+          "status": "delivery_failed",
+          "errorCode": "LINE_DELIVERY_SOURCE_CHANGED",
+          "processedAt": "2026-09-27T04:28:35.891Z",
+          "createdAt": "2026-09-27T04:28:29.114Z"
+        }
+      ],
+      "providerUsage": [
+        {
+          "id": "cmujbjcel0036ryk1d0g7gpjb",
+          "requestId": "f46efa17-2f57-4dc8-88a1-045fe2bca734",
+          "invocationKey": "w14-synthetic-company#3318ca69bb362eefff08c6fa102f5b1f155a9046efcaf86b4a64ca674696f8f1#provider-v2#0",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1386,
+          "outputTokens": 478,
+          "cacheReadInputTokens": 14632,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 52,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 14,
+              "output": 24,
+              "rounding": 0,
+              "cacheRead": 14,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:28:35.853Z"
+        }
+      ],
+      "reservations": [
+        {
+          "id": "cmujbj81x0035ryk116pzlvny",
+          "invocationKey": "w14-synthetic-company#3318ca69bb362eefff08c6fa102f5b1f155a9046efcaf86b4a64ca674696f8f1#provider-v2#0",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 1040,
+          "settledCostSatang": 52,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:28:30.213Z",
+          "dispatchedAt": "2026-09-27T04:28:30.198Z",
+          "settledAt": "2026-09-27T04:28:35.847Z"
+        }
+      ],
+      "reviewState": {
+        "before": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 6,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "file",
+                    "state": "waiting_user",
+                    "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                    "revision": 5,
+                    "userGoal": "Replace previously sent file with this new unreadable PDF attachment",
+                    "subrequests": [
+                      {
+                        "goal": "Replace previously sent file with this new unreadable PDF attachment",
+                        "kind": "file",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "attachmentPageRefs": [
+                      {
+                        "pages": [
+                          1,
+                          2
+                        ],
+                        "contentHash": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+                        "attachmentId": "cmujbiteu002cryk1nlubons2"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91"
+                    ],
+                    "sourceRevisionLocators": [
+                      {
+                        "revision": "1",
+                        "sourceId": "cmujbj6ym0031ryk1euagnw05",
+                        "sourceType": "LINE_DOCUMENT_QA_0_0"
+                      }
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:43:29.069Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:28:05.331Z",
+              "updatedAt": "2026-09-27T04:28:29.070Z"
+            }
+          ],
+          "truncated": false
+        },
+        "after": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 6,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "file",
+                    "state": "waiting_user",
+                    "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                    "revision": 5,
+                    "userGoal": "Replace previously sent file with this new unreadable PDF attachment",
+                    "subrequests": [
+                      {
+                        "goal": "Replace previously sent file with this new unreadable PDF attachment",
+                        "kind": "file",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "attachmentPageRefs": [
+                      {
+                        "pages": [
+                          1,
+                          2
+                        ],
+                        "contentHash": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+                        "attachmentId": "cmujbiteu002cryk1nlubons2"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91"
+                    ],
+                    "sourceRevisionLocators": [
+                      {
+                        "revision": "1",
+                        "sourceId": "cmujbj6ym0031ryk1euagnw05",
+                        "sourceType": "LINE_DOCUMENT_QA_0_0"
+                      }
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:43:29.069Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:28:05.331Z",
+              "updatedAt": "2026-09-27T04:28:29.070Z"
+            }
+          ],
+          "truncated": false
+        }
+      },
+      "delivery": {
+        "requiredBatchIds": [],
+        "accepted": [],
+        "status": "NONE"
+      }
+    },
+    {
+      "scenarioId": "NAT-06",
+      "repeat": 0,
+      "turnIndex": 4,
+      "user": "ขอเทียบกับไฟล์แรกด้วย ยังอยู่มั้ย",
+      "attachmentIds": [],
+      "companyId": "w14-synthetic-company",
+      "sourceSnapshot": "nat-NAT-06",
+      "snapshotDigest": "9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063",
+      "webBaseUrl": "http://127.0.0.1:18993",
+      "acceptedAtMs": 1790483315982,
+      "modelWorkCompletedAtMs": 1790483324620,
+      "receipts": [
+        {
+          "messages": [
+            {
+              "text": "คุณต้องการเปรียบเทียบกับไฟล์แรกที่ส่งมาก่อนหน้านี้ (ไฟล์ PDF ที่แนบมาในงานที่ค้างอยู่) หรือต้องการเปรียบเทียบเอกสารธุรกิจอื่น เช่น ใบเสร็จหรือใบแจ้งหนี้ที่เคยบันทึกไว้?",
+              "type": "text"
+            }
+          ],
+          "at": 1790483324709,
+          "receiptId": "sink-513c084d-4b1b-412c-9f89-5670caa6822d",
+          "path": "/v2/bot/message/reply",
+          "payloadHash": "b82c8f72edbd0b34e0408288a3e44929bca871fb13a4dbedd1d50accfcf60bca"
+        }
+      ],
+      "toolResults": [],
+      "gatewayResponses": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "81529849-d40e-4d22-890e-2964d3d39ade",
+          "startedAtMs": 1790483317054,
+          "completedAtMs": 1790483324620,
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.55,
+            "reason": "The user asks to compare with 'the first file' and whether it is still available, which likely continues the open file task (taskId eb2b54d8…) but could also be a general document comparison question ",
+            "clarifyQuestion": "คุณต้องการเปรียบเทียบกับไฟล์แรกที่ส่งมาก่อนหน้านี้ (ไฟล์ PDF ที่แนบมาในงานที่ค้างอยู่) หรือต้องการเปรียบเทียบเอกสารธุรกิจอื่น เช่น ใบเสร็จหรือใบแจ้งหนี้ที่เคยบันทึกไว้?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "file",
+                "goal": "Compare current content with the first file previously submitted and check if it is still available",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "taskRef": {
+                  "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                  "taskRevision": 5,
+                  "subrequestIndex": 0
+                },
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 33,
+                    "rawSha256": "f28bca891f2065cd8d77bf6d7c36b1fa0aa15555ddabaac525e1cd7045ddad40"
+                  }
+                ]
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1415,
+                "outputTokens": 571,
+                "cacheReadInputTokens": 14632,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 7508,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#081baeded28b400c5ed8a62cc3f05c01557f41ccea200b96aebc389f9046202f#provider-v2#0"
+              }
+            ]
+          }
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-55a64e225e5e89bec330-0",
+          "eventType": "message",
+          "status": "clarification_required",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:28:44.722Z",
+          "createdAt": "2026-09-27T04:28:35.992Z"
+        }
+      ],
+      "providerUsage": [
+        {
+          "id": "cmujbjj5s003fryk1n4klpsdl",
+          "requestId": "81529849-d40e-4d22-890e-2964d3d39ade",
+          "invocationKey": "w14-synthetic-company#081baeded28b400c5ed8a62cc3f05c01557f41ccea200b96aebc389f9046202f#provider-v2#0",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1415,
+          "outputTokens": 571,
+          "cacheReadInputTokens": 14632,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 57,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 14,
+              "output": 28,
+              "rounding": 1,
+              "cacheRead": 14,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:28:44.608Z"
+        }
+      ],
+      "reservations": [
+        {
+          "id": "cmujbjdco003eryk1uq2osptz",
+          "invocationKey": "w14-synthetic-company#081baeded28b400c5ed8a62cc3f05c01557f41ccea200b96aebc389f9046202f#provider-v2#0",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 1040,
+          "settledCostSatang": 57,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:28:37.080Z",
+          "dispatchedAt": "2026-09-27T04:28:37.070Z",
+          "settledAt": "2026-09-27T04:28:44.602Z"
+        }
+      ],
+      "reviewState": {
+        "before": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 6,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "file",
+                    "state": "waiting_user",
+                    "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                    "revision": 5,
+                    "userGoal": "Replace previously sent file with this new unreadable PDF attachment",
+                    "subrequests": [
+                      {
+                        "goal": "Replace previously sent file with this new unreadable PDF attachment",
+                        "kind": "file",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "attachmentPageRefs": [
+                      {
+                        "pages": [
+                          1,
+                          2
+                        ],
+                        "contentHash": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+                        "attachmentId": "cmujbiteu002cryk1nlubons2"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91"
+                    ],
+                    "sourceRevisionLocators": [
+                      {
+                        "revision": "1",
+                        "sourceId": "cmujbj6ym0031ryk1euagnw05",
+                        "sourceType": "LINE_DOCUMENT_QA_0_0"
+                      }
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:43:29.069Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:28:05.331Z",
+              "updatedAt": "2026-09-27T04:28:29.070Z"
+            }
+          ],
+          "truncated": false
+        },
+        "after": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 7,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "file",
+                    "state": "active",
+                    "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+                    "revision": 6,
+                    "userGoal": "Replace previously sent file with this new unreadable PDF attachment",
+                    "subrequests": [
+                      {
+                        "goal": "Replace previously sent file with this new unreadable PDF attachment",
+                        "kind": "file",
+                        "index": 0,
+                        "status": "pending"
+                      }
+                    ],
+                    "attachmentPageRefs": [
+                      {
+                        "pages": [
+                          1,
+                          2
+                        ],
+                        "contentHash": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+                        "attachmentId": "cmujbiteu002cryk1nlubons2"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "c1b325bf5300ff9228ef4006bf3fabfb243052285a2b3514d5d4bfdae6946b91"
+                    ],
+                    "sourceRevisionLocators": [
+                      {
+                        "revision": "1",
+                        "sourceId": "cmujbj6ym0031ryk1euagnw05",
+                        "sourceType": "LINE_DOCUMENT_QA_0_0"
+                      }
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:43:44.650Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:28:05.331Z",
+              "updatedAt": "2026-09-27T04:28:44.716Z"
+            }
+          ],
+          "truncated": false
+        }
+      },
+      "delivery": {
+        "requiredBatchIds": [
+          "4ab1e751bff80e511e38c8b59d4564dd52d944d844dff12ffd1a664a75c9e07c:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "4ab1e751bff80e511e38c8b59d4564dd52d944d844dff12ffd1a664a75c9e07c:batch:0",
+            "wireHash": "adde317a3f8b5d627b8991ba008a2ade324915369621d9167dbf591a4ac66075",
+            "acceptedAtMs": 1790483324709,
+            "receiptId": "sink-513c084d-4b1b-412c-9f89-5670caa6822d"
+          }
+        ],
+        "status": "ACCEPTED"
+      }
+    }
+  ],
+  "runtimeDiagnostics": [],
+  "boundary": {
+    "runtime": "compiled_nest_api_postgres",
+    "line": "synthetic_http_sink",
+    "nativeLineVerified": false,
+    "cacheStateVerified": false,
+    "activationEligible": false
+  },
+  "records": [
+    {
+      "scenarioId": "NAT-06",
+      "repeat": 0,
+      "traces": [
+        {
+          "inputDigest": "cf2bd2d1d55b845ee936df7756ffc9e43244d000be16f54bbc896326d6568198",
+          "scopeDigest": "9c81bea2e962f4811f1c87a43ecb7ec79bfd9034839dfed9ba4a75776f9e113a",
+          "sourceSnapshot": "nat-NAT-06",
+          "acceptedAtMs": 1790483284234,
+          "outcome": "needs_input",
+          "taskId": null,
+          "askedSlots": [],
+          "tools": [],
+          "facts": [],
+          "effects": [
+            {
+              "kind": "AttachmentObject.create",
+              "recordId": "cmujbiteu002cryk1nlubons2",
+              "revision": "2026-09-27T04:28:11.269",
+              "evidence": "database_snapshot",
+              "evidenceHash": "366db0cab50bb2316d3907ded6fd9e1ca9302474beda0a7d176904037ab5cb26"
+            }
+          ],
+          "modelCalls": 1,
+          "costSatang": 41,
+          "modelWorkCompletedAtMs": 1790483291203,
+          "delivery": {
+            "requiredBatchIds": [
+              "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0"
+            ],
+            "accepted": [
+              {
+                "batchId": "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0",
+                "wireHash": "1f4cbc97e0e9236cdb96fd6741085219ca4c5c8eb2f159e3521ba3c4e9945b10",
+                "acceptedAtMs": 1790483291305,
+                "receiptId": "sink-1888a70d-0608-4b76-a0a3-d88b68c9aa6c"
+              }
+            ],
+            "status": "ACCEPTED"
+          },
+          "falseRefusalOrHandoff": false,
+          "validationFailures": [],
+          "criticalErrors": [],
+          "versions": {
+            "sourceCommit": "063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3",
+            "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+            "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+            "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+            "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+            "price": "67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb"
+          }
+        },
+        {
+          "inputDigest": "a8574c425c0dae199bde44570179f590b86146abe5ca7a064142de3482449239",
+          "scopeDigest": "9c81bea2e962f4811f1c87a43ecb7ec79bfd9034839dfed9ba4a75776f9e113a",
+          "sourceSnapshot": "nat-NAT-06",
+          "acceptedAtMs": 1790483291399,
+          "outcome": "needs_input",
+          "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+          "askedSlots": [],
+          "tools": [],
+          "facts": [],
+          "effects": [
+            {
+              "kind": "AttachmentLink.create",
+              "recordId": "cmujbiywu002uryk1citl4rkr",
+              "revision": "f7e3e014dd8f4e5098174f6e270bca058ae969c23feb12674ffea8a2f784f3c3",
+              "evidence": "database_snapshot",
+              "evidenceHash": "79e5eb0d5c5cc1e9e815b0e3b3b2950a7755df73384924894364669c5f254ca8"
+            },
+            {
+              "kind": "AttachmentObject.create",
+              "recordId": "cmujbiyv7002pryk1cj4grdtk",
+              "revision": "2026-09-27T04:28:18.34",
+              "evidence": "database_snapshot",
+              "evidenceHash": "961801a3b3eb07f86afe11ad49266a1e60429e9bf1d0c447a6a8c3b960529fa2"
+            }
+          ],
+          "modelCalls": 1,
+          "costSatang": 41,
+          "modelWorkCompletedAtMs": 1790483299806,
+          "delivery": {
+            "requiredBatchIds": [
+              "59e874cb5cfc367a3be395f4df383b63d648ea64763a8b3d7dc35730d3cdba00:batch:0"
+            ],
+            "accepted": [
+              {
+                "batchId": "59e874cb5cfc367a3be395f4df383b63d648ea64763a8b3d7dc35730d3cdba00:batch:0",
+                "wireHash": "eb75404b3dbede5b5e533e4933925b118acd70930e3e2227b4ffc45355ac3dd4",
+                "acceptedAtMs": 1790483299887,
+                "receiptId": "sink-65170e6f-1a97-4bcd-bf07-548c11f08a1e"
+              }
+            ],
+            "status": "ACCEPTED"
+          },
+          "falseRefusalOrHandoff": false,
+          "validationFailures": [],
+          "criticalErrors": [],
+          "versions": {
+            "sourceCommit": "063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3",
+            "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+            "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+            "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+            "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+            "price": "67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb"
+          }
+        },
+        {
+          "inputDigest": "40bb562583af5c557eda30cb71abc84acd212ec54ed0698f9eb0e3183706d3aa",
+          "scopeDigest": "9c81bea2e962f4811f1c87a43ecb7ec79bfd9034839dfed9ba4a75776f9e113a",
+          "sourceSnapshot": "nat-NAT-06",
+          "acceptedAtMs": 1790483299932,
+          "outcome": "needs_input",
+          "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+          "askedSlots": [],
+          "tools": [],
+          "facts": [],
+          "effects": [
+            {
+              "kind": "AttachmentLink.create",
+              "recordId": "cmujbj6yo0032ryk14rjfzhov",
+              "revision": "ccf98048d2bfae7fc276d8b4d99fc2b23dbc37d9125fd3c58093dd450b2b619a",
+              "evidence": "database_snapshot",
+              "evidenceHash": "1ffb8976dade98abb2858ef3d08b1669470597985441296d9be9e1c77f2b9399"
+            }
+          ],
+          "modelCalls": 1,
+          "costSatang": 58,
+          "modelWorkCompletedAtMs": 1790483308990,
+          "delivery": {
+            "requiredBatchIds": [
+              "c5dc4bc525f9ef46b635d7d3cb153e7e35ebae5da9eb9b2a9a7c2e53c7be7336:batch:0"
+            ],
+            "accepted": [
+              {
+                "batchId": "c5dc4bc525f9ef46b635d7d3cb153e7e35ebae5da9eb9b2a9a7c2e53c7be7336:batch:0",
+                "wireHash": "eb75404b3dbede5b5e533e4933925b118acd70930e3e2227b4ffc45355ac3dd4",
+                "acceptedAtMs": 1790483309064,
+                "receiptId": "sink-42a99c82-5eb7-4b57-8a86-5ebd4e5f023b"
+              }
+            ],
+            "status": "ACCEPTED"
+          },
+          "falseRefusalOrHandoff": false,
+          "validationFailures": [],
+          "criticalErrors": [],
+          "versions": {
+            "sourceCommit": "063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3",
+            "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+            "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+            "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+            "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+            "price": "67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb"
+          }
+        },
+        {
+          "inputDigest": "adcdfed4a6e26ab47a361e7f719eee3b681251242eadc5c543331337a26a2a48",
+          "scopeDigest": "9c81bea2e962f4811f1c87a43ecb7ec79bfd9034839dfed9ba4a75776f9e113a",
+          "sourceSnapshot": "nat-NAT-06",
+          "acceptedAtMs": 1790483309106,
+          "outcome": "event:delivery_failed",
+          "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+          "askedSlots": [],
+          "tools": [],
+          "facts": [],
+          "effects": [],
+          "modelCalls": 1,
+          "costSatang": 52,
+          "modelWorkCompletedAtMs": 1790483315861,
+          "delivery": {
+            "requiredBatchIds": [],
+            "accepted": [],
+            "status": "NONE"
+          },
+          "falseRefusalOrHandoff": false,
+          "validationFailures": [
+            "no_frozen_delivery_requirement"
+          ],
+          "criticalErrors": [],
+          "versions": {
+            "sourceCommit": "063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3",
+            "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+            "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+            "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+            "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+            "price": "67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb"
+          }
+        },
+        {
+          "inputDigest": "4f9474fc5751b2ff94290fa137e7755aafaedd6cb641a564ced6fd77ef783099",
+          "scopeDigest": "9c81bea2e962f4811f1c87a43ecb7ec79bfd9034839dfed9ba4a75776f9e113a",
+          "sourceSnapshot": "nat-NAT-06",
+          "acceptedAtMs": 1790483315982,
+          "outcome": "needs_input",
+          "taskId": "eb2b54d868477c3f5976cfecba4259b7e41ad795f890a140b56911d0194e596f",
+          "askedSlots": [],
+          "tools": [],
+          "facts": [],
+          "effects": [],
+          "modelCalls": 1,
+          "costSatang": 57,
+          "modelWorkCompletedAtMs": 1790483324620,
+          "delivery": {
+            "requiredBatchIds": [
+              "4ab1e751bff80e511e38c8b59d4564dd52d944d844dff12ffd1a664a75c9e07c:batch:0"
+            ],
+            "accepted": [
+              {
+                "batchId": "4ab1e751bff80e511e38c8b59d4564dd52d944d844dff12ffd1a664a75c9e07c:batch:0",
+                "wireHash": "adde317a3f8b5d627b8991ba008a2ade324915369621d9167dbf591a4ac66075",
+                "acceptedAtMs": 1790483324709,
+                "receiptId": "sink-513c084d-4b1b-412c-9f89-5670caa6822d"
+              }
+            ],
+            "status": "ACCEPTED"
+          },
+          "falseRefusalOrHandoff": false,
+          "validationFailures": [],
+          "criticalErrors": [],
+          "versions": {
+            "sourceCommit": "063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3",
+            "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+            "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+            "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+            "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+            "price": "67c4142ff8da8349eedc6ed772ad10a96d6318327f5a3b53854faa7221dcf6fb"
+          }
+        }
+      ],
+      "error": null
+    }
+  ],
+  "rawResultSha256": "3afa19865c01f332eb08020a24befb2f218e829937fbff0ef6eaa147de6aa148",
+  "testedSourceCommit": "063b7f2a2e6b4d7f031b942e9f4baccd55bd31b3",
+  "reviewBoundary": "separate_retest_not_primary_or_human_acceptance"
+}

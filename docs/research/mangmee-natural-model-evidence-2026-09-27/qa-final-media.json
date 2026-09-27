@@ -1,0 +1,2086 @@
+{
+  "startedAt": "2026-09-27T04:40:55.546Z",
+  "completedAt": "2026-09-27T04:43:54.999Z",
+  "model": {
+    "provider": "bedrock",
+    "modelId": "global.anthropic.claude-sonnet-4-6",
+    "region": "ap-southeast-1",
+    "transport": "local-http",
+    "runtime": "strands-local",
+    "globalApprovalRef": "DPO-2026-07-23-bedrock-global"
+  },
+  "compiledHashes": {
+    "apps/api/dist/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.js": "7a1d50ed4e2f1becdee3c5b9b5369affe2544f337f907e81f68da2a1e2ca3654",
+    "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.js": "9e2ad5fc43b79c9c8df1219481e87ddfd87024c1d95215628c34c8c1d9920103",
+    "apps/ai-gateway/dist/apps/ai-gateway/src/modules/line-ai/agents/semantic-turn-v2.js": "6fd7585b4ba24d5b8bf6604dd36874cf132f16a138ac042cab67d45a17ae3e1e"
+  },
+  "corpusDigest": "776279a2d338916abe9e374b611184dac83e40785b350d125fb0d1f173e0176e",
+  "provenance": "fixture",
+  "turnEvidence": [
+    {
+      "scenarioId": "NAT-05",
+      "repeat": 0,
+      "turnIndex": 0,
+      "user": "ใบนี้รวมเท่าไหร่อะ",
+      "attachmentIds": [
+        "receipt-clear"
+      ],
+      "companyId": "w14-synthetic-company",
+      "sourceSnapshot": "nat-NAT-05",
+      "snapshotDigest": "1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c",
+      "webBaseUrl": "http://127.0.0.1:18993",
+      "acceptedAtMs": 1790484058571,
+      "modelWorkCompletedAtMs": 1790484068542,
+      "receipts": [
+        {
+          "messages": [
+            {
+              "text": "ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ปกติไม่เกิน 1 นาที เสร็จแล้วน้องจะสรุปให้เลยนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ",
+              "type": "text"
+            }
+          ],
+          "at": 1790484059621,
+          "receiptId": "sink-4f4dc384-eb74-41c1-b4e4-b121ebb6b665",
+          "path": "/v2/bot/message/push",
+          "payloadHash": "0d663758a822ce27341cd0b8e0831ba67bbaa7e7202c23ad604f268672ee5f64"
+        },
+        {
+          "messages": [
+            {
+              "text": "ต้องการให้อ่านไฟล์นี้เพื่อตอบคำถาม หรือใช้เป็นหลักฐานบันทึกค่าใช้จ่ายคะ ยังไม่ได้สร้างรายการให้ค่ะ",
+              "type": "text"
+            }
+          ],
+          "at": 1790484068653,
+          "receiptId": "sink-7a70ece7-6b08-45d3-a0b7-8cddcc72ef03",
+          "path": "/v2/bot/message/reply",
+          "payloadHash": "5fc23d696385d29559fac70ffabef0ba539e177086e3e4b18a03132c66b0503f"
+        }
+      ],
+      "toolResults": [],
+      "gatewayResponses": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "4372ef47-9801-4a73-9d70-1c7d01a25627",
+          "startedAtMs": 1790484059737,
+          "completedAtMs": 1790484068542,
+          "response": {
+            "status": "ROUTED",
+            "intent": "BUSINESS_READ_QUESTION",
+            "language": "th",
+            "confidence": 0.82,
+            "reason": "User is asking for the total amount on the attached receipt document — a read/lookup question about document content, not a capture or record-creation request.",
+            "documentText": "SYNTHETIC TEST DATA ONLY — NOT A VALID TAX DOCUMENT\n\n# Green Bowl Synthetic Cafe\n\nReceipt: NAT-RECEIPT-001\nDate: 2026-09-21\nCurrency: THB\n\n## Food and beverages\n\n| Item | Amount |\n|---|---|\n| Meal and beverage service | 1,196.63 |\n\n| Subtotal (before VAT) | 1,196.63 THB |\n| VAT component | 83.87 THB |\n\n**TOTAL 1,280.50 THB**\n\nAmounts are authored synthetic fixture values.\nNo payment, reimbursement or tax entitlement is certified.\n1,196.63 + 83.87 = 1,280.50\nPage 1 of 1",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "อ่านยอดรวมทั้งหมดจากใบเสร็จที่แนบมา",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 18,
+                    "rawSha256": "da4ea40432a584fb7e3bf6fa53c1f0d07ffcaf59e3209ccf3b128dd451bf8fa5"
+                  }
+                ]
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 2346,
+                "outputTokens": 538,
+                "cacheReadInputTokens": 6891,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 8703,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#b3e4ea669835dc883dbce7171118fc346e61d8db8271a65dc50a61e4c1885285#provider-v2#0"
+              }
+            ],
+            "ocrAdmission": "admitted",
+            "ocrMonthKey": "2026-09"
+          }
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-1334263aa721dc42c23e-0",
+          "eventType": "message",
+          "status": "clarification_required",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:41:08.665Z",
+          "createdAt": "2026-09-27T04:40:58.590Z"
+        },
+        {
+          "webhookEventId": "replay-1334263aa721dc42c23e-1",
+          "eventType": "message",
+          "status": "batched",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:41:08.667Z",
+          "createdAt": "2026-09-27T04:40:58.601Z"
+        }
+      ],
+      "providerUsage": [
+        {
+          "id": "cmujbzh64002b9rk17swiguy5",
+          "requestId": "4372ef47-9801-4a73-9d70-1c7d01a25627",
+          "invocationKey": "w14-synthetic-company#b3e4ea669835dc883dbce7171118fc346e61d8db8271a65dc50a61e4c1885285#provider-v2#0",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 2346,
+          "outputTokens": 538,
+          "cacheReadInputTokens": 6891,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 57,
+          "requestKind": "IMAGE",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 23,
+              "output": 27,
+              "rounding": 0,
+              "cacheRead": 7,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:41:08.524Z"
+        }
+      ],
+      "reservations": [
+        {
+          "id": "cmujbzafn002a9rk1cbema1hf",
+          "invocationKey": "w14-synthetic-company#b3e4ea669835dc883dbce7171118fc346e61d8db8271a65dc50a61e4c1885285#provider-v2#0",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 853,
+          "settledCostSatang": 57,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:40:59.795Z",
+          "dispatchedAt": "2026-09-27T04:40:59.776Z",
+          "settledAt": "2026-09-27T04:41:08.515Z"
+        }
+      ],
+      "reviewState": {
+        "before": {
+          "draftActions": [],
+          "conversations": [],
+          "truncated": false
+        },
+        "after": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 0,
+              "taskStateJson": null,
+              "stateExpiresAt": null,
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:40:59.674Z",
+              "updatedAt": "2026-09-27T04:41:08.659Z"
+            }
+          ],
+          "truncated": false
+        }
+      },
+      "delivery": {
+        "requiredBatchIds": [
+          "88e7d86d0f355ae546ec8ed6bd28374285e1781e3974fd29ce2bdba03ef9e3ea:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "88e7d86d0f355ae546ec8ed6bd28374285e1781e3974fd29ce2bdba03ef9e3ea:batch:0",
+            "wireHash": "3cdfc86e2cf7b10f138736baab2d663978006600dd1897bed0a230e823a8c5ab",
+            "acceptedAtMs": 1790484068653,
+            "receiptId": "sink-7a70ece7-6b08-45d3-a0b7-8cddcc72ef03"
+          }
+        ],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "scenarioId": "NAT-05",
+      "repeat": 0,
+      "turnIndex": 1,
+      "user": "VAT ล่ะ ไม่ใช่ยอดรวมนะ",
+      "attachmentIds": [],
+      "companyId": "w14-synthetic-company",
+      "sourceSnapshot": "nat-NAT-05",
+      "snapshotDigest": "1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c",
+      "webBaseUrl": "http://127.0.0.1:18993",
+      "acceptedAtMs": 1790484068752,
+      "modelWorkCompletedAtMs": 1790484076681,
+      "receipts": [
+        {
+          "messages": [
+            {
+              "text": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+              "type": "text"
+            }
+          ],
+          "at": 1790484076725,
+          "receiptId": "sink-f7512b0c-4522-4c22-94a8-19013a093543",
+          "path": "/v2/bot/message/reply",
+          "payloadHash": "05d0309e1365499d785b72da21a14a081586ac845bfb72a00bced768fffb944e"
+        }
+      ],
+      "toolResults": [],
+      "gatewayResponses": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "998974dd-7f65-47cc-b64c-6b06edde6c72",
+          "startedAtMs": 1790484069850,
+          "completedAtMs": 1790484076681,
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.42,
+            "reason": "The message asks about VAT (not the total), but without active drafts, recent captures, or prior context it is unclear whether this is a correction to a captured expense, a question about how VAT was ",
+            "clarifyQuestion": "ต้องการถามเรื่อง VAT ของรายการค่าใช้จ่ายที่เพิ่งบันทึกไว้ หรือต้องการแก้ไขยอด VAT ในบิลล่าสุด หรือเป็นคำถามทั่วไปเกี่ยวกับ VAT ครับ?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "general",
+                "goal": "User is asking about VAT specifically (not the total amount) — context ambiguous between a correction, a draft question, or a general VAT query",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 22,
+                    "rawSha256": "8e085b8e260d2f55ffd8f021538424691dd561b9b56bc8bc9018950061e43493"
+                  }
+                ]
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1115,
+                "outputTokens": 450,
+                "cacheReadInputTokens": 14632,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 6777,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#03e1c43ca53714a95f5c31f351c9edc46a6b91c0c891b90c2d37713cedd21bfd#provider-v2#0"
+              }
+            ]
+          }
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-b2db9ab4e1b760ed2ee6-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:41:16.730Z",
+          "createdAt": "2026-09-27T04:41:08.767Z"
+        }
+      ],
+      "providerUsage": [
+        {
+          "id": "cmujbzngh002n9rk13v5tzbgj",
+          "requestId": "998974dd-7f65-47cc-b64c-6b06edde6c72",
+          "invocationKey": "w14-synthetic-company#03e1c43ca53714a95f5c31f351c9edc46a6b91c0c891b90c2d37713cedd21bfd#provider-v2#0",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1115,
+          "outputTokens": 450,
+          "cacheReadInputTokens": 14632,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 48,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 11,
+              "output": 22,
+              "rounding": 1,
+              "cacheRead": 14,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:41:16.673Z"
+        }
+      ],
+      "reservations": [
+        {
+          "id": "cmujbzi7z002m9rk1rqyocxni",
+          "invocationKey": "w14-synthetic-company#03e1c43ca53714a95f5c31f351c9edc46a6b91c0c891b90c2d37713cedd21bfd#provider-v2#0",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 1040,
+          "settledCostSatang": 48,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:41:09.887Z",
+          "dispatchedAt": "2026-09-27T04:41:09.872Z",
+          "settledAt": "2026-09-27T04:41:16.670Z"
+        }
+      ],
+      "reviewState": {
+        "before": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 0,
+              "taskStateJson": null,
+              "stateExpiresAt": null,
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:40:59.674Z",
+              "updatedAt": "2026-09-27T04:41:08.659Z"
+            }
+          ],
+          "truncated": false
+        },
+        "after": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 0,
+              "taskStateJson": null,
+              "stateExpiresAt": null,
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:40:59.674Z",
+              "updatedAt": "2026-09-27T04:41:08.659Z"
+            }
+          ],
+          "truncated": false
+        }
+      },
+      "delivery": {
+        "requiredBatchIds": [
+          "005976bf056c7181634499d4e578c58e153a4bf029f0e9df448099b3cbe39974:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "005976bf056c7181634499d4e578c58e153a4bf029f0e9df448099b3cbe39974:batch:0",
+            "wireHash": "bdf6ea3a34e2cc1dbf77e4018fdb186c352417ca41cacfcd540aa8b9e3f0ec4d",
+            "acceptedAtMs": 1790484076725,
+            "receiptId": "sink-f7512b0c-4522-4c22-94a8-19013a093543"
+          }
+        ],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "scenarioId": "NAT-05",
+      "repeat": 0,
+      "turnIndex": 2,
+      "user": "ชื่อร้านกับวันที่อ่านว่าอะไร",
+      "attachmentIds": [],
+      "companyId": "w14-synthetic-company",
+      "sourceSnapshot": "nat-NAT-05",
+      "snapshotDigest": "1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c",
+      "webBaseUrl": "http://127.0.0.1:18993",
+      "acceptedAtMs": 1790484076822,
+      "modelWorkCompletedAtMs": 1790484096401,
+      "receipts": [
+        {
+          "messages": [
+            {
+              "text": "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง\n\n↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n🤔 รูปนี้เป็นอะไรคะ ตอบเลขข้อได้เลยนะคะ\n1) ใบเสร็จ/เอกสารค่าใช้จ่ายรายการเดียวที่ต้องการบันทึก\n2) ภาพประกอบคำถาม ไม่ต้องบันทึก\n3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)",
+              "type": "text"
+            }
+          ],
+          "at": 1790484096468,
+          "receiptId": "sink-e591562d-6bb5-46d7-9d82-724856086c2f",
+          "path": "/v2/bot/message/reply",
+          "payloadHash": "9b81df4274d372767bf8a3368f092eb94e0f9ee0f5b60be897280a356e861ac5"
+        }
+      ],
+      "toolResults": [],
+      "gatewayResponses": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "startedAtMs": 1790484077894,
+          "completedAtMs": 1790484089022,
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.52,
+            "reason": "The user asks what the vendor name and date say, but there is no attached image or document to read them from — it is unclear what record or document they are referring to.",
+            "clarifyQuestion": "คุณถามเกี่ยวกับเอกสารไหนครับ — รูปใบเสร็จที่เพิ่งส่งมา หรือรายการที่บันทึกไว้ในระบบ?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "read",
+                "goal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 28,
+                    "rawSha256": "73d51c21771e72a8611456019593af645f9cd11510d625e2f45e6ee28012c783"
+                  }
+                ]
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1110,
+                "outputTokens": 410,
+                "cacheReadInputTokens": 14632,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 5413,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#0"
+              },
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1187,
+                "outputTokens": 401,
+                "cacheReadInputTokens": 14632,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 5639,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#1"
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineTurn",
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "startedAtMs": 1790484089096,
+          "completedAtMs": 1790484096401,
+          "response": {
+            "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+            "replyText": "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง",
+            "sourceRefs": [],
+            "sourceLabels": [],
+            "webLinks": [],
+            "intent": "unknown",
+            "agent": "general",
+            "refused": false,
+            "toolsInvoked": [],
+            "toolCalls": [],
+            "durationMs": 7278,
+            "semanticCoverage": [
+              {
+                "index": 0,
+                "status": "needs_user",
+                "reasonCode": "SEMANTIC_CONTROL_UNAVAILABLE",
+                "question": "ยังตรวจสอบส่วนนี้ไม่ได้ กรุณาระบุคำขอส่วนนี้อีกครั้ง"
+              }
+            ],
+            "modelLineage": [
+              {
+                "provider": "bedrock",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "region": "ap-southeast-1",
+                "purpose": "employee_line_assistant"
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.loop",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 4892,
+                "outputTokens": 210,
+                "cacheReadInputTokens": 0,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 3907,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#2"
+              },
+              {
+                "tag": "line.compose",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1213,
+                "outputTokens": 187,
+                "cacheReadInputTokens": 0,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 3284,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#3"
+              }
+            ]
+          }
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-dcc2bab598984ee5469d-0",
+          "eventType": "message",
+          "status": "completed",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:41:36.478Z",
+          "createdAt": "2026-09-27T04:41:16.835Z"
+        }
+      ],
+      "providerUsage": [
+        {
+          "id": "cmujbzslu002t9rk167pf69t7",
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#0",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1110,
+          "outputTokens": 410,
+          "cacheReadInputTokens": 14632,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 46,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 11,
+              "output": 20,
+              "rounding": 1,
+              "cacheRead": 14,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:41:23.346Z"
+        },
+        {
+          "id": "cmujbzwz9002x9rk1dcd974c8",
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#1",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1187,
+          "outputTokens": 401,
+          "cacheReadInputTokens": 14632,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 46,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 12,
+              "output": 20,
+              "rounding": 0,
+              "cacheRead": 14,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:41:29.014Z"
+        },
+        {
+          "id": "cmujc004000329rk1ntih7nhw",
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#2",
+          "sourceRoute": "line-turn",
+          "usageTag": "line.loop",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4892,
+          "outputTokens": 210,
+          "cacheReadInputTokens": 0,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 59,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 48,
+              "output": 10,
+              "rounding": 1,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:41:33.072Z"
+        },
+        {
+          "id": "cmujc02oa00369rk11wdx9y53",
+          "requestId": "5411e250-4728-4880-b7cc-d57973bf58cf",
+          "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#3",
+          "sourceRoute": "line-turn",
+          "usageTag": "line.compose",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1213,
+          "outputTokens": 187,
+          "cacheReadInputTokens": 0,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 21,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 12,
+              "output": 9,
+              "rounding": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:41:36.394Z"
+        }
+      ],
+      "reservations": [
+        {
+          "id": "cmujbzof7002s9rk15rlsw62g",
+          "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#0",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 1040,
+          "settledCostSatang": 46,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:41:17.923Z",
+          "dispatchedAt": "2026-09-27T04:41:17.906Z",
+          "settledAt": "2026-09-27T04:41:23.343Z"
+        },
+        {
+          "id": "cmujbzsm9002w9rk1aigh0xxu",
+          "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#1",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 1040,
+          "settledCostSatang": 46,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:41:23.361Z",
+          "dispatchedAt": "2026-09-27T04:41:23.352Z",
+          "settledAt": "2026-09-27T04:41:29.008Z"
+        },
+        {
+          "id": "cmujbzx2y00319rk1slx1r05e",
+          "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#2",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 406,
+          "settledCostSatang": 59,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:41:29.146Z",
+          "dispatchedAt": "2026-09-27T04:41:29.128Z",
+          "settledAt": "2026-09-27T04:41:33.064Z"
+        },
+        {
+          "id": "cmujc004p00359rk1yfc8vqq7",
+          "invocationKey": "w14-synthetic-company#bcae5791fe7ab8cc8cfac81c3bafc51f8a558353bdabacebfe60e2bd7a5ee619#provider-v2#3",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 191,
+          "settledCostSatang": 21,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:41:33.097Z",
+          "dispatchedAt": "2026-09-27T04:41:33.085Z",
+          "settledAt": "2026-09-27T04:41:36.389Z"
+        }
+      ],
+      "reviewState": {
+        "before": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 0,
+              "taskStateJson": null,
+              "stateExpiresAt": null,
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:40:59.674Z",
+              "updatedAt": "2026-09-27T04:41:08.659Z"
+            }
+          ],
+          "truncated": false
+        },
+        "after": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 2,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "read",
+                    "state": "waiting_user",
+                    "taskId": "6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c",
+                    "revision": 1,
+                    "userGoal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                    "subrequests": [
+                      {
+                        "goal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                        "kind": "read",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "90635da9d401294fec59ece836ed991a889a3febcca2a002d65379a19e284dac"
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:56:36.480Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:40:59.674Z",
+              "updatedAt": "2026-09-27T04:41:36.481Z"
+            }
+          ],
+          "truncated": false
+        }
+      },
+      "delivery": {
+        "requiredBatchIds": [
+          "7933f6f2892d735c7b5c56bed2b33c115e9422e5efc1c4ad5e31b751bc5d2c11:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "7933f6f2892d735c7b5c56bed2b33c115e9422e5efc1c4ad5e31b751bc5d2c11:batch:0",
+            "wireHash": "4e8bc1d809393ca5bc464cc18ed35660cf14fd60c033ab72c0ee45098b73ef55",
+            "acceptedAtMs": 1790484096468,
+            "receiptId": "sink-e591562d-6bb5-46d7-9d82-724856086c2f"
+          }
+        ],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "scenarioId": "NAT-05",
+      "repeat": 0,
+      "turnIndex": 3,
+      "user": "แค่ถามนะ อย่าเพิ่งลงรายจ่าย",
+      "attachmentIds": [],
+      "companyId": "w14-synthetic-company",
+      "sourceSnapshot": "nat-NAT-05",
+      "snapshotDigest": "1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c",
+      "webBaseUrl": "http://127.0.0.1:18993",
+      "acceptedAtMs": 1790484096601,
+      "modelWorkCompletedAtMs": 1790484105415,
+      "receipts": [
+        {
+          "messages": [
+            {
+              "text": "ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง",
+              "type": "text"
+            }
+          ],
+          "at": 1790484105466,
+          "receiptId": "sink-fb00c690-8a1a-4f8d-9b1c-f72ef5f9f228",
+          "path": "/v2/bot/message/reply",
+          "payloadHash": "b17a71ff15578e2c8253c3db70d19fd9df7e3e4287355ee1311fb86035bbacf0"
+        }
+      ],
+      "toolResults": [],
+      "gatewayResponses": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "a30082f8-7aa7-42d9-b9c6-1f4b7bfc8315",
+          "startedAtMs": 1790484097691,
+          "completedAtMs": 1790484105415,
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.72,
+            "reason": "User says 'just asking, don't record an expense yet' but has not asked any question — the actual question is missing, so clarification is needed.",
+            "clarifyQuestion": "มีคำถามอะไรอยากถามไหมคะ? หรือต้องการดูข้อมูลอะไรเป็นพิเศษ",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "general",
+                "goal": "ผู้ใช้แจ้งว่าแค่ต้องการถาม ยังไม่ให้ลงรายจ่าย — แต่ไม่มีคำถามจริงในข้อความ",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 27,
+                    "rawSha256": "14202e485f6a9a7e210a77231adafccddda935676143b02a5c80eee713d9f24c"
+                  }
+                ]
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1342,
+                "outputTokens": 587,
+                "cacheReadInputTokens": 14632,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 7666,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#ab8b9f6355c8e8642f6aef8c6192e4970d616aaf0c3efea05137d4d2c052bd42#provider-v2#0"
+              }
+            ]
+          }
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-398416665f01520186fe-0",
+          "eventType": "message",
+          "status": "provider_unavailable",
+          "errorCode": "AI_GENERAL_ADMISSION_UNAVAILABLE",
+          "processedAt": "2026-09-27T04:41:45.473Z",
+          "createdAt": "2026-09-27T04:41:36.615Z"
+        }
+      ],
+      "providerUsage": [
+        {
+          "id": "cmujc09ml003e9rk12n44rcoj",
+          "requestId": "a30082f8-7aa7-42d9-b9c6-1f4b7bfc8315",
+          "invocationKey": "w14-synthetic-company#ab8b9f6355c8e8642f6aef8c6192e4970d616aaf0c3efea05137d4d2c052bd42#provider-v2#0",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1342,
+          "outputTokens": 587,
+          "cacheReadInputTokens": 14632,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 57,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 13,
+              "output": 29,
+              "rounding": 1,
+              "cacheRead": 14,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:41:45.405Z"
+        }
+      ],
+      "reservations": [
+        {
+          "id": "cmujc03p8003d9rk1hdlgpraf",
+          "invocationKey": "w14-synthetic-company#ab8b9f6355c8e8642f6aef8c6192e4970d616aaf0c3efea05137d4d2c052bd42#provider-v2#0",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 1040,
+          "settledCostSatang": 57,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:41:37.724Z",
+          "dispatchedAt": "2026-09-27T04:41:37.711Z",
+          "settledAt": "2026-09-27T04:41:45.398Z"
+        }
+      ],
+      "reviewState": {
+        "before": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 2,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "read",
+                    "state": "waiting_user",
+                    "taskId": "6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c",
+                    "revision": 1,
+                    "userGoal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                    "subrequests": [
+                      {
+                        "goal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                        "kind": "read",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "90635da9d401294fec59ece836ed991a889a3febcca2a002d65379a19e284dac"
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:56:36.480Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:40:59.674Z",
+              "updatedAt": "2026-09-27T04:41:36.481Z"
+            }
+          ],
+          "truncated": false
+        },
+        "after": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 2,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "read",
+                    "state": "waiting_user",
+                    "taskId": "6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c",
+                    "revision": 1,
+                    "userGoal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                    "subrequests": [
+                      {
+                        "goal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                        "kind": "read",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "90635da9d401294fec59ece836ed991a889a3febcca2a002d65379a19e284dac"
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:56:36.480Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:40:59.674Z",
+              "updatedAt": "2026-09-27T04:41:36.481Z"
+            }
+          ],
+          "truncated": false
+        }
+      },
+      "delivery": {
+        "requiredBatchIds": [
+          "5837391d183aa4f1c570f2e26f98ad46dcaa0ab9f96c53949d5cbb312ba154db:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "5837391d183aa4f1c570f2e26f98ad46dcaa0ab9f96c53949d5cbb312ba154db:batch:0",
+            "wireHash": "bdf6ea3a34e2cc1dbf77e4018fdb186c352417ca41cacfcd540aa8b9e3f0ec4d",
+            "acceptedAtMs": 1790484105466,
+            "receiptId": "sink-fb00c690-8a1a-4f8d-9b1c-f72ef5f9f228"
+          }
+        ],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "scenarioId": "NAT-05",
+      "repeat": 0,
+      "turnIndex": 4,
+      "user": "โอเค งั้นช่วยทำร่างค่าอาหารจากใบนี้ไว้ตรวจที",
+      "attachmentIds": [],
+      "companyId": "w14-synthetic-company",
+      "sourceSnapshot": "nat-NAT-05",
+      "snapshotDigest": "1ac6de84e8db58bb1fefe667430121400c64f1766097e3a8f904d33004fef29c",
+      "webBaseUrl": "http://127.0.0.1:18993",
+      "acceptedAtMs": 1790484105584,
+      "modelWorkCompletedAtMs": 1790484113156,
+      "receipts": [
+        {
+          "messages": [
+            {
+              "text": "🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”",
+              "type": "text"
+            }
+          ],
+          "at": 1790484113249,
+          "receiptId": "sink-e7e58f5b-240c-4469-a48d-8d838ec7ff67",
+          "path": "/v2/bot/message/reply",
+          "payloadHash": "8da3ad8a58d0b88ab7a19d3102cbf97a4dee7916613858ddcdc21fb6d89f0fd0"
+        }
+      ],
+      "toolResults": [],
+      "gatewayResponses": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "694f3b05-94da-426d-af32-6e5626581b82",
+          "startedAtMs": 1790484106650,
+          "completedAtMs": 1790484113156,
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.52,
+            "reason": "The user asks to draft a food expense from 'this document' but no image or attachment is present in the message.",
+            "clarifyQuestion": "ดูเหมือนว่ายังไม่ได้รับไฟล์หรือรูปใบเสร็จค่าอาหาร — รบกวนส่งรูปหรือไฟล์ใบนั้นมาด้วยได้เลยครับ",
+            "semanticOutcome": "BUSINESS_EXPENSE",
+            "fundingSource": "COMPANY_PAID",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "write",
+                "goal": "สร้างร่างค่าใช้จ่ายค่าอาหารจากเอกสารที่อ้างถึง",
+                "requiredEvidence": [
+                  "receipt_image"
+                ],
+                "requestedFilters": {},
+                "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 44,
+                    "rawSha256": "5a967ff3e0fc923282ff422ebdc781d7bc262e1453bc11634632d3f9893a3ca1"
+                  }
+                ]
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1362,
+                "outputTokens": 433,
+                "cacheReadInputTokens": 14632,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 6468,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#33ba99366cbb47fd200f93bd4ca6b4a2370996b99e7a6ab699984eb38108b07e#provider-v2#0"
+              }
+            ]
+          }
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-0f7951274b5b5822e976-0",
+          "eventType": "message",
+          "status": "clarification_required",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:41:53.262Z",
+          "createdAt": "2026-09-27T04:41:45.605Z"
+        }
+      ],
+      "providerUsage": [
+        {
+          "id": "cmujc0flo003k9rk1cm861g1h",
+          "requestId": "694f3b05-94da-426d-af32-6e5626581b82",
+          "invocationKey": "w14-synthetic-company#33ba99366cbb47fd200f93bd4ca6b4a2370996b99e7a6ab699984eb38108b07e#provider-v2#0",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1362,
+          "outputTokens": 433,
+          "cacheReadInputTokens": 14632,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 49,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 13,
+              "output": 21,
+              "rounding": 1,
+              "cacheRead": 14,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:41:53.148Z"
+        }
+      ],
+      "reservations": [
+        {
+          "id": "cmujc0aln003j9rk1dfoji4c0",
+          "invocationKey": "w14-synthetic-company#33ba99366cbb47fd200f93bd4ca6b4a2370996b99e7a6ab699984eb38108b07e#provider-v2#0",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 1040,
+          "settledCostSatang": 49,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:41:46.667Z",
+          "dispatchedAt": "2026-09-27T04:41:46.659Z",
+          "settledAt": "2026-09-27T04:41:53.141Z"
+        }
+      ],
+      "reviewState": {
+        "before": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 2,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "read",
+                    "state": "waiting_user",
+                    "taskId": "6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c",
+                    "revision": 1,
+                    "userGoal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                    "subrequests": [
+                      {
+                        "goal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                        "kind": "read",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "90635da9d401294fec59ece836ed991a889a3febcca2a002d65379a19e284dac"
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:56:36.480Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:40:59.674Z",
+              "updatedAt": "2026-09-27T04:41:36.481Z"
+            }
+          ],
+          "truncated": false
+        },
+        "after": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 3,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "read",
+                    "state": "waiting_user",
+                    "taskId": "6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c",
+                    "revision": 1,
+                    "userGoal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                    "subrequests": [
+                      {
+                        "goal": "อ่านชื่อร้านและวันที่จากเอกสารหรือรายการที่ไม่ระบุ",
+                        "kind": "read",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "90635da9d401294fec59ece836ed991a889a3febcca2a002d65379a19e284dac"
+                    ]
+                  },
+                  {
+                    "kind": "write",
+                    "state": "active",
+                    "taskId": "3647e489b734d83b06d03c1dc9562eda07e5aaeebf718ac07ab8393b580109bd",
+                    "revision": 0,
+                    "userGoal": "สร้างร่างค่าใช้จ่ายค่าอาหารจากเอกสารที่อ้างถึง",
+                    "subrequests": [
+                      {
+                        "goal": "สร้างร่างค่าใช้จ่ายค่าอาหารจากเอกสารที่อ้างถึง",
+                        "kind": "write",
+                        "index": 0,
+                        "status": "pending"
+                      }
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:56:53.186Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:40:59.674Z",
+              "updatedAt": "2026-09-27T04:41:53.256Z"
+            }
+          ],
+          "truncated": false
+        }
+      },
+      "delivery": {
+        "requiredBatchIds": [
+          "aff0adfef7176b43eb291bfad745748843e37b7adf0fbfc33f5e22ddaa65d177:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "aff0adfef7176b43eb291bfad745748843e37b7adf0fbfc33f5e22ddaa65d177:batch:0",
+            "wireHash": "d01f431854c3f1624b2381c6138d70284d315a579327ec7438650c68d2bd6429",
+            "acceptedAtMs": 1790484113249,
+            "receiptId": "sink-e7e58f5b-240c-4469-a48d-8d838ec7ff67"
+          }
+        ],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "scenarioId": "NAT-06",
+      "repeat": 0,
+      "turnIndex": 0,
+      "user": "ดูหน่อย ใบนี้เขียนว่าอะไรบ้าง",
+      "attachmentIds": [
+        "receipt-partial"
+      ],
+      "companyId": "w14-synthetic-company",
+      "sourceSnapshot": "nat-NAT-06",
+      "snapshotDigest": "9727982afc81d8c14d085212794851a7b045f9cb443fbb2647ebecb8bb342063",
+      "webBaseUrl": "http://127.0.0.1:18993",
+      "acceptedAtMs": 1790484114898,
+      "modelWorkCompletedAtMs": 1790484150028,
+      "receipts": [
+        {
+          "messages": [
+            {
+              "text": "ได้รับไฟล์แล้วค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ",
+              "type": "text"
+            }
+          ],
+          "at": 1790484115933,
+          "receiptId": "sink-5e47efc9-d181-4396-9f43-0f04076df744",
+          "path": "/v2/bot/message/push",
+          "payloadHash": "ba58ca9d8a17fe5803d1e8fa583f8960f13033c888b956545b18c1604ea55dd2"
+        },
+        {
+          "messages": [
+            {
+              "text": "ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้",
+              "type": "text"
+            },
+            {
+              "text": "ส่วนที่ยังไม่เสร็จ:\nข้อ 1: อ่านและบอกเนื้อหาของเอกสาร PDF ที่แนบมา",
+              "type": "text"
+            }
+          ],
+          "at": 1790484150092,
+          "receiptId": "sink-185dbc1a-b3b4-407f-ab91-102a36179ab6",
+          "path": "/v2/bot/message/reply",
+          "payloadHash": "ca1e5a38d1d5c0a960c31d9498ef7093a2ab2fbc189ce32202e5bce907843188"
+        }
+      ],
+      "toolResults": [],
+      "gatewayResponses": [
+        {
+          "method": "requestLineIntakeRoute",
+          "requestId": "2059f10f-0ab6-4011-818b-e8999e6a1b20",
+          "startedAtMs": 1790484115996,
+          "completedAtMs": 1790484121381,
+          "response": {
+            "status": "ROUTED",
+            "intent": "CLARIFY",
+            "language": "th",
+            "confidence": 0.55,
+            "reason": "PDF attachment has unknown purpose and no image content; cannot determine if this is an expense document, business reference document, or something else entirely.",
+            "clarifyQuestion": "ไฟล์ PDF ที่แนบมานี้เป็นเอกสารประเภทไหนครับ เช่น ใบเสร็จ / ใบแจ้งหนี้ / ใบเสนอราคา หรือเอกสารอื่น?",
+            "semanticOutcome": "AMBIGUOUS",
+            "fundingSource": "UNKNOWN",
+            "semanticSubrequests": [
+              {
+                "index": 0,
+                "kind": "file",
+                "goal": "อ่านและบอกเนื้อหาของเอกสาร PDF ที่แนบมา",
+                "requiredEvidence": [],
+                "requestedFilters": {},
+                "dependsOn": [],
+                "evidenceRefs": [
+                  {
+                    "partId": "part-0",
+                    "startUtf16": 0,
+                    "endUtf16": 29,
+                    "rawSha256": "361a404ee594e9544ddd94de576693b8859693d848f246539df949be417fd6fb"
+                  }
+                ]
+              }
+            ],
+            "usage": [
+              {
+                "tag": "line.intake-route",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 1272,
+                "outputTokens": 396,
+                "cacheReadInputTokens": 6891,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 5323,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#0"
+              }
+            ]
+          }
+        },
+        {
+          "method": "requestLineDocumentQa",
+          "requestId": "qa:cmujc0m0g00659rk1wl3056vo:1:8ccdf68b-5a3a-4b3f-a192-d22b6b0c81f8",
+          "startedAtMs": 1790484122267,
+          "completedAtMs": 1790484150028,
+          "response": {
+            "status": "failed",
+            "errorCode": "QA_RESULT_INVALID",
+            "usage": [
+              {
+                "tag": "line.document.qa",
+                "modelId": "global.anthropic.claude-sonnet-4-6",
+                "ok": true,
+                "inputTokens": 3709,
+                "outputTokens": 2812,
+                "cacheReadInputTokens": 0,
+                "cacheWriteInputTokens": 0,
+                "durationMs": 27699,
+                "usageBasis": "PROVIDER_REPORTED",
+                "invocationKey": "w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#1"
+              }
+            ]
+          }
+        }
+      ],
+      "webhookEvents": [
+        {
+          "webhookEventId": "replay-3d22c4088d3be6636a5c-1",
+          "eventType": "message",
+          "status": "batched",
+          "errorCode": null,
+          "processedAt": "2026-09-27T04:42:30.102Z",
+          "createdAt": "2026-09-27T04:41:54.924Z"
+        },
+        {
+          "webhookEventId": "replay-3d22c4088d3be6636a5c-0",
+          "eventType": "message",
+          "status": "delivery_pending",
+          "errorCode": "LINE_DELIVERY_V2_PENDING",
+          "processedAt": "2026-09-27T04:42:30.087Z",
+          "createdAt": "2026-09-27T04:41:54.914Z"
+        }
+      ],
+      "providerUsage": [
+        {
+          "id": "cmujc0ly1005y9rk1bubznaqc",
+          "requestId": "2059f10f-0ab6-4011-818b-e8999e6a1b20",
+          "invocationKey": "w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#0",
+          "sourceRoute": "line-intake-route",
+          "usageTag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 1272,
+          "outputTokens": 396,
+          "cacheReadInputTokens": 6891,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 39,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 13,
+              "output": 20,
+              "rounding": -1,
+              "cacheRead": 7,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:42:01.369Z"
+        },
+        {
+          "id": "cmujc181s00689rk12kv8ly7u",
+          "requestId": "qa:cmujc0m0g00659rk1wl3056vo:1:8ccdf68b-5a3a-4b3f-a192-d22b6b0c81f8",
+          "invocationKey": "w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#1",
+          "sourceRoute": "line-document-qa",
+          "usageTag": "line.document.qa",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3709,
+          "outputTokens": 2812,
+          "cacheReadInputTokens": 0,
+          "cacheWriteInputTokens": 0,
+          "costSatang": 176,
+          "requestKind": "TEXT",
+          "budgetBucket": "CHAT",
+          "usageBasis": "PROVIDER_REPORTED",
+          "eventKind": "MODEL_CALL",
+          "pricingSnapshot": {
+            "thbPerUsd": 33,
+            "usdPerMTok": {
+              "input": 3,
+              "output": 15,
+              "cacheRead": 0.3,
+              "cacheWrite": 3.75
+            },
+            "unknownModel": false,
+            "externalUnits": 0,
+            "tariffVersion": "line-v2:2026-09-27",
+            "componentSatang": {
+              "input": 37,
+              "output": 139,
+              "rounding": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "externalToolCostSatang": 0
+          },
+          "createdAt": "2026-09-27T04:42:30.016Z"
+        }
+      ],
+      "reservations": [
+        {
+          "id": "cmujc0htl005x9rk1mznhfeop",
+          "invocationKey": "w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#0",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 634,
+          "settledCostSatang": 39,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:41:56.025Z",
+          "dispatchedAt": "2026-09-27T04:41:56.011Z",
+          "settledAt": "2026-09-27T04:42:01.362Z"
+        },
+        {
+          "id": "cmujc0mnu00679rk199j9o6u1",
+          "invocationKey": "w14-synthetic-company#311e7c8c09fd521785531b5e95283e28851e87d382de72549709c414f95ed814#provider-v2#1",
+          "sourceRoute": "line-ai-v2",
+          "stepKind": "provider-v2",
+          "bucket": "CHAT",
+          "status": "SETTLED",
+          "upperBoundSatang": 545,
+          "settledCostSatang": 176,
+          "usageBasis": "PROVIDER_REPORTED",
+          "createdAt": "2026-09-27T04:42:02.298Z",
+          "dispatchedAt": "2026-09-27T04:42:02.286Z",
+          "settledAt": "2026-09-27T04:42:30.008Z"
+        }
+      ],
+      "reviewState": {
+        "before": {
+          "draftActions": [],
+          "conversations": [],
+          "truncated": false
+        },
+        "after": {
+          "draftActions": [],
+          "conversations": [
+            {
+              "id": "line-v2:52de37ec87a17300add9079a463b42ff6880d3a82575d7b592b8a4bd21ec935e",
+              "companyId": "w14-synthetic-company",
+              "userId": "w14-synthetic-user",
+              "channel": "line",
+              "channelKind": "USER",
+              "messagingChannelId": "w14-synthetic-line-channel",
+              "chatKeyHash": "7607b84c8f009728",
+              "membershipId": "w14-synthetic-membership",
+              "stateVersion": 3,
+              "taskStateJson": {
+                "tasks": [
+                  {
+                    "kind": "file",
+                    "state": "waiting_user",
+                    "taskId": "6004c9473dd6ab7929eb733e88913f3df246fbb1d68bd6c2593e108fa8bb03b3",
+                    "revision": 2,
+                    "userGoal": "อ่านและบอกเนื้อหาของเอกสาร PDF ที่แนบมา",
+                    "subrequests": [
+                      {
+                        "goal": "อ่านและบอกเนื้อหาของเอกสาร PDF ที่แนบมา",
+                        "kind": "file",
+                        "index": 0,
+                        "status": "needs_user"
+                      }
+                    ],
+                    "attachmentPageRefs": [
+                      {
+                        "pages": [
+                          1,
+                          2
+                        ],
+                        "contentHash": "8e682955b7343d030a1764e2351181f229dae1ab1bef140532cd6dad05608c24",
+                        "attachmentId": "cmujc0lyw00619rk1ekkh79f9"
+                      }
+                    ],
+                    "deliveredQuestionRefs": [
+                      "774c0261c4fab1d949987d9e88b78a36268ef2cb9380182139a27519581bf1d7"
+                    ],
+                    "sourceRevisionLocators": [
+                      {
+                        "revision": "1",
+                        "sourceId": "cmujc0m0g00659rk1wl3056vo",
+                        "sourceType": "LINE_DOCUMENT_QA_0_0"
+                      }
+                    ]
+                  }
+                ],
+                "version": 2
+              },
+              "stateExpiresAt": "2026-09-27T04:57:30.098Z",
+              "lifecycleEpoch": 0,
+              "preferenceJson": null,
+              "preferenceVersion": 0,
+              "preferenceRequestId": null,
+              "preferenceExpiresAt": null,
+              "createdAt": "2026-09-27T04:41:55.963Z",
+              "updatedAt": "2026-09-27T04:42:30.098Z"
+            }
+          ],
+          "truncated": false
+        }
+      },
+      "delivery": {
+        "requiredBatchIds": [
+          "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0"
+        ],
+        "accepted": [
+          {
+            "batchId": "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0",
+            "wireHash": "1d437e1b4e1337e6ff855698f130ff174f59bf81615522462250d818f43eacc4",
+            "acceptedAtMs": 1790484150092,
+            "receiptId": "sink-185dbc1a-b3b4-407f-ab91-102a36179ab6"
+          }
+        ],
+        "status": "ACCEPTED"
+      }
+    }
+  ],
+  "runtimeDiagnostics": [
+    {
+      "scenarioId": "NAT-06",
+      "repeat": 0,
+      "phase": "turn",
+      "stage": "turn:0",
+      "error": {
+        "name": "Error",
+        "assertion": "REPLAY_TERMINAL_TIMEOUT"
+      }
+    }
+  ],
+  "boundary": {
+    "runtime": "compiled_nest_api_postgres",
+    "line": "synthetic_http_sink",
+    "nativeLineVerified": false,
+    "cacheStateVerified": false,
+    "activationEligible": false
+  },
+  "records": [
+    {
+      "scenarioId": "NAT-05",
+      "repeat": 0,
+      "traces": [
+        {
+          "inputDigest": "6e6787ba2e609e5dbde56678c156b0f26ea23086f51843c44ff56354d72b1b0c",
+          "scopeDigest": "4e32a8efa44ffadb19b4bafef8585e76affcd0ee00534f30bd4ba4cb3c056549",
+          "sourceSnapshot": "nat-NAT-05",
+          "acceptedAtMs": 1790484058571,
+          "outcome": "needs_input",
+          "taskId": null,
+          "askedSlots": [],
+          "tools": [],
+          "facts": [],
+          "effects": [
+            {
+              "kind": "AttachmentObject.create",
+              "recordId": "cmujbzh7i002e9rk1nwuok5qb",
+              "revision": "2026-09-27T04:41:08.614",
+              "evidence": "database_snapshot",
+              "evidenceHash": "234aa6a98b63a3e92973e8414010e62314d40d2347260f9f81eb1533326fc517"
+            }
+          ],
+          "modelCalls": 1,
+          "costSatang": 57,
+          "modelWorkCompletedAtMs": 1790484068542,
+          "delivery": {
+            "requiredBatchIds": [
+              "88e7d86d0f355ae546ec8ed6bd28374285e1781e3974fd29ce2bdba03ef9e3ea:batch:0"
+            ],
+            "accepted": [
+              {
+                "batchId": "88e7d86d0f355ae546ec8ed6bd28374285e1781e3974fd29ce2bdba03ef9e3ea:batch:0",
+                "wireHash": "3cdfc86e2cf7b10f138736baab2d663978006600dd1897bed0a230e823a8c5ab",
+                "acceptedAtMs": 1790484068653,
+                "receiptId": "sink-7a70ece7-6b08-45d3-a0b7-8cddcc72ef03"
+              }
+            ],
+            "status": "ACCEPTED"
+          },
+          "falseRefusalOrHandoff": false,
+          "validationFailures": [],
+          "criticalErrors": [],
+          "versions": {
+            "sourceCommit": "a9763631f985468b97a53528a6dc2db26266965b",
+            "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+            "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+            "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+            "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+            "price": "08b926da3d8c3ea94b95b4cdccd3c150b128e86f35fa6e8542b6ec0610f1269f"
+          }
+        },
+        {
+          "inputDigest": "50de26f5643d8c422c0653b55bbbd4941fac315f609d08a8c5d4c228191f98e5",
+          "scopeDigest": "4e32a8efa44ffadb19b4bafef8585e76affcd0ee00534f30bd4ba4cb3c056549",
+          "sourceSnapshot": "nat-NAT-05",
+          "acceptedAtMs": 1790484068752,
+          "outcome": "temporarily_unavailable",
+          "taskId": null,
+          "askedSlots": [],
+          "tools": [],
+          "facts": [],
+          "effects": [],
+          "modelCalls": 1,
+          "costSatang": 48,
+          "modelWorkCompletedAtMs": 1790484076681,
+          "delivery": {
+            "requiredBatchIds": [
+              "005976bf056c7181634499d4e578c58e153a4bf029f0e9df448099b3cbe39974:batch:0"
+            ],
+            "accepted": [
+              {
+                "batchId": "005976bf056c7181634499d4e578c58e153a4bf029f0e9df448099b3cbe39974:batch:0",
+                "wireHash": "bdf6ea3a34e2cc1dbf77e4018fdb186c352417ca41cacfcd540aa8b9e3f0ec4d",
+                "acceptedAtMs": 1790484076725,
+                "receiptId": "sink-f7512b0c-4522-4c22-94a8-19013a093543"
+              }
+            ],
+            "status": "ACCEPTED"
+          },
+          "falseRefusalOrHandoff": false,
+          "validationFailures": [],
+          "criticalErrors": [],
+          "versions": {
+            "sourceCommit": "a9763631f985468b97a53528a6dc2db26266965b",
+            "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+            "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+            "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+            "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+            "price": "08b926da3d8c3ea94b95b4cdccd3c150b128e86f35fa6e8542b6ec0610f1269f"
+          }
+        },
+        {
+          "inputDigest": "afbfae7ce1fa1a4d32a9eeaa7cb8ed7e67cfa814254571cd0be4062d7a192359",
+          "scopeDigest": "4e32a8efa44ffadb19b4bafef8585e76affcd0ee00534f30bd4ba4cb3c056549",
+          "sourceSnapshot": "nat-NAT-05",
+          "acceptedAtMs": 1790484076822,
+          "outcome": "needs_input",
+          "taskId": "6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c",
+          "askedSlots": [],
+          "tools": [],
+          "facts": [],
+          "effects": [],
+          "modelCalls": 4,
+          "costSatang": 172,
+          "modelWorkCompletedAtMs": 1790484096401,
+          "delivery": {
+            "requiredBatchIds": [
+              "7933f6f2892d735c7b5c56bed2b33c115e9422e5efc1c4ad5e31b751bc5d2c11:batch:0"
+            ],
+            "accepted": [
+              {
+                "batchId": "7933f6f2892d735c7b5c56bed2b33c115e9422e5efc1c4ad5e31b751bc5d2c11:batch:0",
+                "wireHash": "4e8bc1d809393ca5bc464cc18ed35660cf14fd60c033ab72c0ee45098b73ef55",
+                "acceptedAtMs": 1790484096468,
+                "receiptId": "sink-e591562d-6bb5-46d7-9d82-724856086c2f"
+              }
+            ],
+            "status": "ACCEPTED"
+          },
+          "falseRefusalOrHandoff": false,
+          "validationFailures": [],
+          "criticalErrors": [],
+          "versions": {
+            "sourceCommit": "a9763631f985468b97a53528a6dc2db26266965b",
+            "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+            "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+            "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+            "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+            "price": "08b926da3d8c3ea94b95b4cdccd3c150b128e86f35fa6e8542b6ec0610f1269f"
+          }
+        },
+        {
+          "inputDigest": "076c8e462bc5b6307007f159074771cf5f084833ba50bd25350cd55a67867359",
+          "scopeDigest": "4e32a8efa44ffadb19b4bafef8585e76affcd0ee00534f30bd4ba4cb3c056549",
+          "sourceSnapshot": "nat-NAT-05",
+          "acceptedAtMs": 1790484096601,
+          "outcome": "temporarily_unavailable",
+          "taskId": "6d901d9a7aa2f6b7218aae2b1ac2742aa11f0cbc32daa850d56f74f30dd8d66c",
+          "askedSlots": [],
+          "tools": [],
+          "facts": [],
+          "effects": [],
+          "modelCalls": 1,
+          "costSatang": 57,
+          "modelWorkCompletedAtMs": 1790484105415,
+          "delivery": {
+            "requiredBatchIds": [
+              "5837391d183aa4f1c570f2e26f98ad46dcaa0ab9f96c53949d5cbb312ba154db:batch:0"
+            ],
+            "accepted": [
+              {
+                "batchId": "5837391d183aa4f1c570f2e26f98ad46dcaa0ab9f96c53949d5cbb312ba154db:batch:0",
+                "wireHash": "bdf6ea3a34e2cc1dbf77e4018fdb186c352417ca41cacfcd540aa8b9e3f0ec4d",
+                "acceptedAtMs": 1790484105466,
+                "receiptId": "sink-fb00c690-8a1a-4f8d-9b1c-f72ef5f9f228"
+              }
+            ],
+            "status": "ACCEPTED"
+          },
+          "falseRefusalOrHandoff": false,
+          "validationFailures": [],
+          "criticalErrors": [],
+          "versions": {
+            "sourceCommit": "a9763631f985468b97a53528a6dc2db26266965b",
+            "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+            "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+            "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+            "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+            "price": "08b926da3d8c3ea94b95b4cdccd3c150b128e86f35fa6e8542b6ec0610f1269f"
+          }
+        },
+        {
+          "inputDigest": "6202de2fcb689551720e8340630e602efdbac61d20d59567b7454b55fbc23777",
+          "scopeDigest": "4e32a8efa44ffadb19b4bafef8585e76affcd0ee00534f30bd4ba4cb3c056549",
+          "sourceSnapshot": "nat-NAT-05",
+          "acceptedAtMs": 1790484105584,
+          "outcome": "needs_input",
+          "taskId": null,
+          "askedSlots": [],
+          "tools": [],
+          "facts": [],
+          "effects": [],
+          "modelCalls": 1,
+          "costSatang": 49,
+          "modelWorkCompletedAtMs": 1790484113156,
+          "delivery": {
+            "requiredBatchIds": [
+              "aff0adfef7176b43eb291bfad745748843e37b7adf0fbfc33f5e22ddaa65d177:batch:0"
+            ],
+            "accepted": [
+              {
+                "batchId": "aff0adfef7176b43eb291bfad745748843e37b7adf0fbfc33f5e22ddaa65d177:batch:0",
+                "wireHash": "d01f431854c3f1624b2381c6138d70284d315a579327ec7438650c68d2bd6429",
+                "acceptedAtMs": 1790484113249,
+                "receiptId": "sink-e7e58f5b-240c-4469-a48d-8d838ec7ff67"
+              }
+            ],
+            "status": "ACCEPTED"
+          },
+          "falseRefusalOrHandoff": false,
+          "validationFailures": [],
+          "criticalErrors": [],
+          "versions": {
+            "sourceCommit": "a9763631f985468b97a53528a6dc2db26266965b",
+            "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+            "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+            "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+            "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+            "price": "08b926da3d8c3ea94b95b4cdccd3c150b128e86f35fa6e8542b6ec0610f1269f"
+          }
+        }
+      ],
+      "error": null
+    },
+    {
+      "scenarioId": "NAT-06",
+      "repeat": 0,
+      "traces": [
+        {
+          "inputDigest": "cf2bd2d1d55b845ee936df7756ffc9e43244d000be16f54bbc896326d6568198",
+          "scopeDigest": "9c81bea2e962f4811f1c87a43ecb7ec79bfd9034839dfed9ba4a75776f9e113a",
+          "sourceSnapshot": "nat-NAT-06",
+          "acceptedAtMs": 1790484114898,
+          "outcome": "needs_input",
+          "taskId": "6004c9473dd6ab7929eb733e88913f3df246fbb1d68bd6c2593e108fa8bb03b3",
+          "askedSlots": [],
+          "tools": [],
+          "facts": [],
+          "effects": [
+            {
+              "kind": "AttachmentLink.create",
+              "recordId": "cmujc0m0i00669rk14sl2j0v6",
+              "revision": "cbbaae0f23db3d9531b8b48c99bdfcd807a251821e94052c72d38c1e028202c9",
+              "evidence": "database_snapshot",
+              "evidenceHash": "66f9bdb8ee57dd4d9bddf35b2167b52aaaea52f487cdbdfe65cfece2567315b2"
+            },
+            {
+              "kind": "AttachmentObject.create",
+              "recordId": "cmujc0lyw00619rk1ekkh79f9",
+              "revision": "2026-09-27T04:42:01.431",
+              "evidence": "database_snapshot",
+              "evidenceHash": "7a779a2700d42d099cc8bea1375356d328d8284383102da36e862452bf6ca04e"
+            }
+          ],
+          "modelCalls": 2,
+          "costSatang": 215,
+          "modelWorkCompletedAtMs": 1790484150028,
+          "delivery": {
+            "requiredBatchIds": [
+              "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0"
+            ],
+            "accepted": [
+              {
+                "batchId": "0d25e348cdcba0211167f4864e9977a2daed46e1037d6ef0bde0dcec257a71ef:batch:0",
+                "wireHash": "1d437e1b4e1337e6ff855698f130ff174f59bf81615522462250d818f43eacc4",
+                "acceptedAtMs": 1790484150092,
+                "receiptId": "sink-185dbc1a-b3b4-407f-ab91-102a36179ab6"
+              }
+            ],
+            "status": "ACCEPTED"
+          },
+          "falseRefusalOrHandoff": false,
+          "validationFailures": [
+            "runtime_execution_failed"
+          ],
+          "criticalErrors": [],
+          "versions": {
+            "sourceCommit": "a9763631f985468b97a53528a6dc2db26266965b",
+            "schema": "f40ffc39e1ed486ec8688397dbe155d5098025d82f358e255b60f1de6f478ef8",
+            "prompt": "350ca36638d7f630bdbac363ee9e169e52c0c03e971faa867ef28a666bd31c6e",
+            "registry": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f",
+            "model": "95c2064032b11ca880601a6a7a355ff1c8b9263513dfe833e1fda1d2cc375da7",
+            "price": "08b926da3d8c3ea94b95b4cdccd3c150b128e86f35fa6e8542b6ec0610f1269f"
+          }
+        }
+      ],
+      "error": "REPLAY_EXECUTION_FAILED"
+    }
+  ],
+  "rawResultSha256": "5a5a6316a762eb444c05bc642c715b255b54a046ec7a29abeb37e074340f0951",
+  "testedSourceCommit": "a9763631f985468b97a53528a6dc2db26266965b",
+  "reviewBoundary": "final_scoped_media_retest_not_primary_or_human_acceptance"
+}

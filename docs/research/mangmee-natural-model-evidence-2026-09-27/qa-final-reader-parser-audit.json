@@ -1,0 +1,325 @@
+{
+  "providerOk": true,
+  "parserValid": false,
+  "invalidSpans": 7,
+  "totalClaims": 13,
+  "issues": [
+    {
+      "page": 1,
+      "group": "facts",
+      "index": 0,
+      "role": "document_title",
+      "claimedText": "Synthetic Catering Receipt",
+      "localSpan": {
+        "start": 57,
+        "end": 83
+      },
+      "slicedVisibleText": "hetic Catering Receipt\n\nRe",
+      "actualFirstOccurrence": 53
+    },
+    {
+      "page": 1,
+      "group": "facts",
+      "index": 1,
+      "role": "reference_number",
+      "claimedText": "Reference: NAT-PARTIAL-001",
+      "localSpan": {
+        "start": 85,
+        "end": 111
+      },
+      "slicedVisibleText": "rence: NAT-PARTIAL-001\nDat",
+      "actualFirstOccurrence": 81
+    },
+    {
+      "page": 1,
+      "group": "facts",
+      "index": 2,
+      "role": "date",
+      "claimedText": "Date: 2026-09-20",
+      "localSpan": {
+        "start": 112,
+        "end": 128
+      },
+      "slicedVisibleText": ": 2026-09-20\nMer",
+      "actualFirstOccurrence": 108
+    },
+    {
+      "page": 1,
+      "group": "facts",
+      "index": 3,
+      "role": "merchant",
+      "claimedText": "Merchant: Sample Catering Test Kitchen",
+      "localSpan": {
+        "start": 129,
+        "end": 167
+      },
+      "slicedVisibleText": "hant: Sample Catering Test Kitchen\n\nCa",
+      "actualFirstOccurrence": 125
+    },
+    {
+      "page": 1,
+      "group": "facts",
+      "index": 4,
+      "role": "line_item",
+      "claimedText": "Catering service                                          1,580.00 THB",
+      "localSpan": {
+        "start": 169,
+        "end": 239
+      },
+      "slicedVisibleText": "ring service                                          1,580.00 THB\n\nTO",
+      "actualFirstOccurrence": 165
+    },
+    {
+      "page": 1,
+      "group": "facts",
+      "index": 5,
+      "role": "total_amount",
+      "claimedText": "TOTAL                                                     1,580.00 THB",
+      "localSpan": {
+        "start": 241,
+        "end": 311
+      },
+      "slicedVisibleText": "L                                                     1,580.00 THB\n\nVA",
+      "actualFirstOccurrence": 237
+    },
+    {
+      "page": 2,
+      "group": "evidence",
+      "index": 0,
+      "role": "visible_text",
+      "claimedText": "The customer tax ID field is deliberately obscured. No value is encoded underneath it. Do not infer the missing value.",
+      "localSpan": {
+        "start": 268,
+        "end": 385
+      },
+      "slicedVisibleText": "The customer tax ID field is deliberately obscured. No value is encoded underneath it. Do not infer the missing value",
+      "actualFirstOccurrence": 268
+    }
+  ],
+  "selectedPages": [
+    {
+      "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+      "page": 1
+    },
+    {
+      "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+      "page": 2
+    }
+  ],
+  "rawResult": {
+    "version": 1,
+    "readerVersion": "line-document-qa/1",
+    "answer": "เอกสารนี้มี 2 หน้า เป็นใบเสร็จบริการจัดเลี้ยง (Synthetic Catering Receipt) โดยมีข้อมูลดังนี้:\n\n**หน้า 1:**\n- หมายเลขอ้างอิง: NAT-PARTIAL-001\n- วันที่: 2026-09-20\n- ร้านค้า: Sample Catering Test Kitchen\n- รายการ: Catering service — 1,580.00 THB\n- ยอดรวม (TOTAL): 1,580.00 THB\n- หมายเหตุ: VAT amount is not separately shown in this document.\n\n**หน้า 2 (Catering detail):**\n- หมายเลขอ้างอิง: NAT-PARTIAL-001\n- หมายเหตุ: Lunch catering for a team meeting.\n- รายการบริการ: Prepared lunch boxes\n- จำนวน: 10 boxes\n- วันที่จัดส่ง: 2026-09-20\n- Customer tax ID: (ถูกปิดบัง ไม่สามารถอ่านได้)\n\n⚠️ หมายเหตุสำคัญ: เอกสารนี้ระบุไว้ชัดเจนว่า \"SYNTHETIC TEST DATA ONLY — NOT A VALID TAX DOCUMENT\" คือเป็นเพียงข้อมูลทดสอบ ไม่ใช่เอกสารภาษีที่ถูกต้องตามกฎหมาย",
+    "answerPageRefs": [
+      {
+        "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+        "page": 1
+      },
+      {
+        "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+        "page": 2
+      }
+    ],
+    "pages": [
+      {
+        "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+        "page": 1,
+        "visibleText": "SYNTHETIC TEST DATA ONLY — NOT A VALID TAX DOCUMENT\n\nSynthetic Catering Receipt\n\nReference: NAT-PARTIAL-001\nDate: 2026-09-20\nMerchant: Sample Catering Test Kitchen\n\nCatering service                                          1,580.00 THB\n\nTOTAL                                                     1,580.00 THB\n\nVAT amount is not separately shown in this document.\n\nTwo-page test document. Additional readable details and one obscured field appear on page 2.\nPage 1 of 2",
+        "facts": [
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 1,
+            "text": "Synthetic Catering Receipt",
+            "role": "document_title",
+            "localSpan": {
+              "start": 57,
+              "end": 83
+            },
+            "confidence": "high"
+          },
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 1,
+            "text": "Reference: NAT-PARTIAL-001",
+            "role": "reference_number",
+            "localSpan": {
+              "start": 85,
+              "end": 111
+            },
+            "confidence": "high"
+          },
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 1,
+            "text": "Date: 2026-09-20",
+            "role": "date",
+            "localSpan": {
+              "start": 112,
+              "end": 128
+            },
+            "confidence": "high"
+          },
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 1,
+            "text": "Merchant: Sample Catering Test Kitchen",
+            "role": "merchant",
+            "localSpan": {
+              "start": 129,
+              "end": 167
+            },
+            "confidence": "high"
+          },
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 1,
+            "text": "Catering service                                          1,580.00 THB",
+            "role": "line_item",
+            "localSpan": {
+              "start": 169,
+              "end": 239
+            },
+            "confidence": "high"
+          },
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 1,
+            "text": "TOTAL                                                     1,580.00 THB",
+            "role": "total_amount",
+            "localSpan": {
+              "start": 241,
+              "end": 311
+            },
+            "confidence": "high"
+          }
+        ],
+        "evidence": [
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 1,
+            "role": "visible_text",
+            "text": "SYNTHETIC TEST DATA ONLY — NOT A VALID TAX DOCUMENT",
+            "localSpan": {
+              "start": 0,
+              "end": 51
+            }
+          }
+        ]
+      },
+      {
+        "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+        "page": 2,
+        "visibleText": "SYNTHETIC TEST DATA ONLY — NOT A VALID TAX DOCUMENT\n\nCatering detail — page 2\n\nReference: NAT-PARTIAL-001\n\nREADABLE NOTE: Lunch catering for a team meeting.\n\nService item: Prepared lunch boxes\nQuantity: 10 boxes\nDelivery date: 2026-09-20\n\nCustomer tax ID: [OBSCURED]\n\nThe customer tax ID field is deliberately obscured. No value is encoded underneath it. Do not infer the missing value.\n\nThis page is partially readable. The note, item, quantity and delivery date remain visible.\nPage 2 of 2",
+        "facts": [
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 2,
+            "text": "READABLE NOTE: Lunch catering for a team meeting.",
+            "role": "note",
+            "localSpan": {
+              "start": 107,
+              "end": 156
+            },
+            "confidence": "high"
+          },
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 2,
+            "text": "Service item: Prepared lunch boxes",
+            "role": "service_item",
+            "localSpan": {
+              "start": 158,
+              "end": 192
+            },
+            "confidence": "high"
+          },
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 2,
+            "text": "Quantity: 10 boxes",
+            "role": "quantity",
+            "localSpan": {
+              "start": 193,
+              "end": 211
+            },
+            "confidence": "high"
+          },
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 2,
+            "text": "Delivery date: 2026-09-20",
+            "role": "delivery_date",
+            "localSpan": {
+              "start": 212,
+              "end": 237
+            },
+            "confidence": "high"
+          },
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 2,
+            "text": "Customer tax ID: [OBSCURED]",
+            "role": "obscured_field",
+            "localSpan": {
+              "start": 239,
+              "end": 266
+            },
+            "confidence": "high"
+          }
+        ],
+        "evidence": [
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 2,
+            "role": "visible_text",
+            "text": "The customer tax ID field is deliberately obscured. No value is encoded underneath it. Do not infer the missing value.",
+            "localSpan": {
+              "start": 268,
+              "end": 385
+            }
+          }
+        ]
+      }
+    ],
+    "coverage": {
+      "requested": [
+        {
+          "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+          "page": 1
+        },
+        {
+          "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+          "page": 2
+        }
+      ],
+      "read": [
+        {
+          "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+          "page": 1
+        },
+        {
+          "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+          "page": 2
+        }
+      ],
+      "failed": []
+    },
+    "questionCoverage": [
+      {
+        "subrequestIndex": 0,
+        "status": "answered",
+        "answer": "เอกสารนี้เป็นใบเสร็จบริการจัดเลี้ยง (Synthetic Catering Receipt) 2 หน้า:\n\nหน้า 1: Reference NAT-PARTIAL-001, วันที่ 2026-09-20, ร้านค้า Sample Catering Test Kitchen, รายการ Catering service 1,580.00 THB, ยอดรวม 1,580.00 THB (VAT ไม่แสดงแยก)\n\nหน้า 2: รายละเอียดเพิ่มเติม — Lunch catering for a team meeting, Service item: Prepared lunch boxes, Quantity: 10 boxes, Delivery date: 2026-09-20 และ Customer tax ID ถูกปิดบัง อ่านไม่ได้\n\nทั้งเอกสารระบุว่าเป็น SYNTHETIC TEST DATA ONLY — NOT A VALID TAX DOCUMENT",
+        "answerPageRefs": [
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 1
+          },
+          {
+            "attachmentId": "cmujc0lyw00619rk1ekkh79f9",
+            "page": 2
+          }
+        ]
+      }
+    ]
+  }
+}

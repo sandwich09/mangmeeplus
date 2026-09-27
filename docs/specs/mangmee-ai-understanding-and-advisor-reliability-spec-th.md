@@ -1,11 +1,18 @@
 # Spec: มั่งมีเข้าใจบริบท ตอบธุรกิจได้ และไม่ปฏิเสธวน
 
 วันที่: 2026-09-26\
-สถานะ: **Specified v2.4 — มี implementation contracts ครบ active scope พร้อม schema/state/migration/impact/tests ที่ main f932b577; เสียงพัก; ยังไม่ได้ implement หรือเปิดใช้งานจากงานนี้**\
+สถานะ: **v2.4 source implementation/default activation merge แล้ว; real-model NAT diagnostic 2026-09-27 ไม่ผ่านการรับงาน — W14/Production readiness ยังไม่ปิด**\
 ผู้ใช้หลัก: ผู้ประกอบการและสมาชิกบริษัทที่ใช้ LINE OA น้องมั่งมี\
 แผน: [Implementation plan](../plans/mangmee-ai-understanding-and-advisor-reliability-plan-2026-09-26.md)
 
 เริ่มอ่านภาพรวมที่ §15 (17 ด้านในขอบเขต + C13 เสียงที่พักไว้), สัญญาระบบที่ §16–20 และ [ชุดรับงาน](../qa/mangmee-conversation-acceptance-catalog-2026-09-26-th.md) ส่วน §1–14 เก็บเหตุผล หลักฐาน และกติกาพื้นฐานที่ยังใช้ต่อ
+
+
+## Evidence update — 2026-09-27: ผลโมเดลจริงยังไม่ผ่าน
+
+รัน NAT12/60 ด้วยโมเดลจริงและ webhook/tool จริงในระบบ local สังเคราะห์ ได้ primary evidence56ข้อ อีก4ข้อหยุดหลังPDFtimeout การรันทวนหลังแก้เก็บแยก snapshot ดู [ผลพร้อมข้อความ/payload/เวลา/ข้อบกพร่อง](../research/mangmee-natural-real-model-results-2026-09-27-th.md) การมี implementation และเปิด default ไม่ใช่ functional acceptance; checkbox ในแผนออกแบบเดิมเป็นรายการงาน ไม่ใช่สถานะ deployed ล่าสุด
+
+ต้องปิด context/current-attachment, file-read dispatch, budget/route eligibility, entity resolution, draft/control/preferences และทดสอบ actual card/actions ก่อนรับ W14 ไม่มีการ deploy หรือเปลี่ยน customer gate จากงานทดสอบนี้ Public lookup/เสียงยังพัก
 
 ## Owner update — 2026-09-27: เปิดความสามารถพื้นฐานโดยไม่ตั้ง flag เพิ่ม
 
