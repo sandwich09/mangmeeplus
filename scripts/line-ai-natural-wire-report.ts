@@ -69,6 +69,13 @@ export function inspectWireMessages(messages: unknown, companyId: string, webBas
     if (key === 'action') result.actions.push(value);
     for (const [childKey, child] of Object.entries(value)) {
       if (['uri', 'originalContentUrl', 'previewImageUrl', 'url'].includes(childKey) && typeof child === 'string') result.links.push(inspectWireLink(child, companyId, webBaseUrl, routes));
+      if (['text', 'altText', 'canonicalText'].includes(childKey) && typeof child === 'string') {
+        // App links use ASCII/percent-encoded paths; adjacent Thai prose and sentence punctuation are not URL bytes.
+        for (const match of child.matchAll(/https?:\/\/[^\s<>"'`\u0e00-\u0e7f]+/giu)) {
+          const url = match[0].replace(/[.,!?;:)\]}\u3002\uff0c\uff01\uff1f\uff1b\uff1a\u00bb\u201d\u2019]+$/u, '');
+          result.links.push(inspectWireLink(url, companyId, webBaseUrl, routes));
+        }
+      }
       visit(child, childKey, depth + 1);
     }
   };

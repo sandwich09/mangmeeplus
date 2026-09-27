@@ -48,6 +48,30 @@ test('static URLs distinguish actual route, cross tenant, offsite, missing route
   assert.equal(inspectWireLink('https://example.test/login', 'company-a', undefined, routes).status, 'origin_unknown');
 });
 
+test('plain outgoing answer links receive the same tenant and route checks as URI actions', () => {
+  const result = inspectWireMessages([{ type: 'text', text: [
+    'เปิดดู: https://example.test/companies/company-a/expenses/manual',
+    'ผิดบริษัท: https://example.test/companies/company-b/expenses/expense-a',
+    'ไม่มีหน้า: https://example.test/companies/company-a/missing-page',
+  ].join('\n') }], 'company-a', 'https://example.test', routes);
+  assert.deepEqual(result.links.map(link => link.status), ['same_company_route_exists', 'cross_company', 'route_not_found']);
+});
+
+test('punctuation and adjacent Thai do not become app URL bytes, while query and escaped Thai survive', () => {
+  const url = 'https://example.test/companies/company-a/expenses/manual?label=%E0%B8%9A%E0%B8%B4%E0%B8%A5&mode=review#details';
+  const result = inspectWireMessages([{ type: 'text', text: `เปิด(${url}).แล้วตรวจอีกครั้ง ดูhttps://example.test/companies/company-a/missing-page,ค่ะ` }], 'company-a', 'https://example.test', routes);
+  assert.deepEqual(result.links.map(link => [link.url, link.status]), [[url, 'same_company_route_exists'],
+    ['https://example.test/companies/company-a/missing-page', 'route_not_found']]);
+});
+
+test('text, Flex altText and leaked canonicalText links are inspected once alongside URI actions', () => {
+  const url = 'https://example.test/companies/company-b/expenses/expense-a';
+  const result = inspectWireMessages([{ type: 'text', text: url }, { type: 'flex', altText: `ดู ${url}`, canonicalText: `เปิด ${url}`,
+    contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: url }, { type: 'button', action: { type: 'uri', uri: url, label: 'ดู' } }] } } }], 'company-a', 'https://example.test', routes);
+  assert.deepEqual(result.links, [{ url, status: 'cross_company' }]);
+  assert.ok(result.issues.includes('internal_canonicalText_on_wire'));
+});
+
 test('report shows actual wire, numeric sources, usage, state and timing without claiming native acceptance', () => {
   const html = renderNaturalWireReport({ boundary, turnEvidence: [evidence()] }, repoRoot);
   for (const text of ['เมื่อกี้เท่าไหร่นะ', '250.00 บาท', 'actual-model-a', 'PROVIDER_REPORTED', 'semanticSubrequests', 'preparedPlan', 'PREVIEW', '80 ms', '120 ms', 'UNREVIEWED']) assert.ok(html.includes(text), text);
