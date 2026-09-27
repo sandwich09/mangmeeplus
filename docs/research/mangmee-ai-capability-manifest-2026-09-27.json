@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
-  "sourceRevision": "f9438828f397550634dc29b27aa13935d84d63a9",
-  "checkoutBranch": "codex/line-ai-filter-context-20260927",
+  "sourceRevision": "3c46341f254ce6aa94db2aa9f392d10c42869229",
+  "checkoutBranch": "claude/mangmee-ai-advisor-20260927",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -33,7 +33,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
-      "sha256": "8ab6e76220d8ec822b5a5fe2f9f921a7b4b4fa06cfcca4a8cd8e9a3aea6d2e93"
+      "sha256": "5602f4e308ef56a6b0bb153ded77c9f07bd9c8073467917b16f395a7f5768698"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-reimbursement-draft.service.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "8f6ae17d85dd060d6429890ff5f6ef3bbde79e0185eeb49d9ac03552de6e1732"
+      "sha256": "4eccdedc2661161f799c05cffb08b0f346777edd24661cab9dd2510dc67aaf14"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8636,6 +8636,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-27T13:21:00.892Z",
-  "manifestDigest": "12e046c24d6d719ce3a45b026f390589f52bea26c5c3039d0f0d00f53b37ee63"
+  "generatedAt": "2026-09-27T16:50:50.998Z",
+  "manifestDigest": "6c1707f8287026555ba7f030b969c101147490578d2f2d061d138d1fca029a86"
 }
