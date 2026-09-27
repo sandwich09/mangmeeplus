@@ -2127,7 +2127,9 @@ export class ProcessLineWebhookUseCase {
     const cached = input.event && this.intakePlansV2.get(input.event);
     if (cached) return cached;
     try {
-      const budgetGrantV2 = input.event ? await this.prepareTextGrantV2(input.event, input.requestId) : undefined;
+      const hasImageContent = !!input.attachment?.contentBase64
+        && (input.attachment.mimeType === 'image/png' || input.attachment.mimeType === 'image/jpeg');
+      const budgetGrantV2 = input.event ? await this.prepareTextGrantV2(input.event, input.requestId, hasImageContent) : undefined;
       const reliabilityContext = input.event ? await this.reliabilityContext(input.event) : {};
       const activeCategories = !budgetGrantV2 && this.expenseRepo
         ? (await this.expenseRepo.listCategories(input.companyId)).map((c) => ({ id: c.id, name: c.name }))
@@ -3389,7 +3391,7 @@ export class ProcessLineWebhookUseCase {
     return candidates;
   }
 
-  private async prepareTextGrantV2(event: LineTextEvent, requestId: string): Promise<AiBudgetGrantV2 | undefined> {
+  private async prepareTextGrantV2(event: LineTextEvent, requestId: string, hasImageContent = false): Promise<AiBudgetGrantV2 | undefined> {
     const bound = this.boundConversations.get(event);
     if (!bound) return undefined;
     const stored = this.budgetGrantsV2.get(event); if (stored) return stored;
@@ -3403,8 +3405,8 @@ export class ProcessLineWebhookUseCase {
     const accepted = evidence.parts.map(part => part.acceptedAtMs), first = Math.min(...accepted), last = Math.max(...accepted);
     const grant = await this.aiGateway.issueLineReliabilityGrant(requestId, { authorityKind: 'webhook_event', authorityId: log.id,
       owner: { kind: 'PRIVATE', owner: bound.owner, epoch: bound.epoch }, turnKey: evidence.turnKey, attemptKey: deliveryHash(['line-turn-v2', event.webhookEventId]),
-      inputDigest: evidence.joinedSha256, requestKind: 'TEXT', admittedAtMs: first, coalescingExtraMs: Math.min(6000, Math.max(0, last - first)),
-      lane: 'public', allowedProfileIds: ['line-intake-text/2'] });
+      inputDigest: evidence.joinedSha256, requestKind: hasImageContent ? 'IMAGE' : 'TEXT', admittedAtMs: first, coalescingExtraMs: Math.min(6000, Math.max(0, last - first)),
+      lane: 'public', allowedProfileIds: [hasImageContent ? 'line-intake-image/2' : 'line-intake-text/2'] });
     if (!grant) throw new HttpException({ code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' }, 429);
     this.budgetGrantsV2.set(event, grant); return grant;
   }
@@ -7638,7 +7640,8 @@ export class ProcessLineWebhookUseCase {
 
 
 
-    const qaRoute = await this.routeDocumentQuestionBeforeCapture(event, ctx, access, captionText ?? '', media);
+    const qaRoute = await this.routeDocumentQuestionBeforeCapture(event, ctx, access, captionText ?? '', media,
+      (identity) => { admissionAttempt.identity = identity; admissionAttempt.companyId = companyId; });
     if (qaRoute?.handled) return;
     if (!this.initReceiptUpload || !this.completeReceiptUpload) {
       await this.deliverReply(event, ERROR_REPLY);
@@ -8886,7 +8889,8 @@ ${link}`, ctx.companyId, access);
   }
 
   private async routeDocumentQuestionBeforeCapture(event: LineReceiptUploadEvent, ctx: RequestContext,
-    access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>, caption: string, media: DownloadedLineMedia
+    access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>, caption: string, media: DownloadedLineMedia,
+    onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void,
   ): Promise<{ handled?: boolean; route?: GovernedLineIntakeRoutePlan } | null> {
     if (!this.documentQa) return null;
     let bound = this.boundConversations.get(event);
@@ -8906,8 +8910,9 @@ ${link}`, ctx.companyId, access);
     this.boundConversations.set(textEvent, bound);
     this.deliveryAccess.set(textEvent, this.deliveryAccess.get(event)!);
     const route = await this.tryRouteIntake({ event: textEvent, requestId: ctx.requestId, webhookEventId: event.webhookEventId,
+      retryWebhookEventId: event.webhookEventId, onAdmitted,
       companyId: ctx.companyId, userId: ctx.userId, permissions: access.permissions, enabledFeatures: access.entitledFeatureKeys ?? [], messageText: caption,
-      attachment: { id: event.lineMessageId, mimeType: media.mimeType }, valueCandidates: await this.textValueCandidates(textEvent, caption) });
+      attachment: { id: event.lineMessageId, mimeType: media.mimeType, contentBase64: media.contentBase64 }, valueCandidates: await this.textValueCandidates(textEvent, caption) });
     if (route.status === 'ROUTED' && route.intent === 'REIMBURSEMENT_REQUEST_START' && this.config.lineAiReimbursementDraftWriteEnabled
       && route.semanticSubrequests?.some(item => item.kind === 'write') && this.budgetGrantsV2.has(textEvent)) {
       if (!access.permissions.includes('attachment.create') || !access.permissions.some(permission => ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission))) {

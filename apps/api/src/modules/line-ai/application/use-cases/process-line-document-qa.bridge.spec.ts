@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
 
@@ -198,6 +200,70 @@ async function pdfEntryFixture(route: any, v2 = true) {
   f.flow.prisma.client.lineIntakePendingMedia.findFirst = async () => null;
   return { ...f, media, expenseInitializations: () => expenseInitializations };
 }
+
+it('sends the downloaded PNG to the first governed intake with the image profile, then runs QA exactly once', async () => {
+  const route = { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', semanticSubrequests: [{ index: 0, kind: 'file', goal: 'read file' }] };
+  const f = await pdfEntryFixture(route);
+  const bytes = readFileSync(resolve(__dirname, '../../../../../../../docs/research/mangmee-ai-natural-assets-2026-09-27/receipt-clear.png'));
+  const media = { ...f.media, fileName: 'receipt.png', mimeType: 'image/png', bytes, byteSize: bytes.length, contentBase64: bytes.toString('base64') };
+  Object.assign(f.event, { messageType: 'image', fileName: media.fileName });
+  const grant = { turnKey: 'turn', admittedAtMs: Date.now(), authorityKind: 'webhook_event' };
+  const admission = { eventId: 'ocr-admission', monthKey: '2026-09' }, attempt: any = { receiptRequested: false, usablePersisted: false };
+  const grants: any[] = [], intakes: any[] = [];
+  Object.assign(f.flow, {
+    downloadLineMedia: async () => ({ ok: true, media }),
+    tryRouteIntake: (ProcessLineWebhookUseCase.prototype as any).tryRouteIntake,
+    intakePlansV2: new WeakMap(), retainedTaskSources: new WeakMap(),
+    textEvidenceV2: async () => ({ turnKey: 'turn', joinedSha256: 'digest', parts: [{ acceptedAtMs: grant.admittedAtMs }] }),
+    reliabilityContext: async () => ({}),
+    aiGateway: {
+      issueLineReliabilityGrant: async (_id: string, input: any) => { grants.push(input); return grant; },
+      requestLineIntakeRoute: async (input: any, options: any) => {
+        intakes.push(input); f.trace.push('intake');
+        assert.equal(input.attachments[0].contentBase64, media.contentBase64, 'first intake must receive the actual downloaded image');
+        assert.deepEqual(Buffer.from(input.attachments[0].contentBase64, 'base64'), bytes);
+        assert.equal(options.retryWebhookEventId, f.event.webhookEventId);
+        options.onAdmitted(admission);
+        return route;
+      },
+    },
+  });
+  f.flow.prisma.client.lineWebhookEventLog = { findUnique: async () => ({ id: 'event-log' }), updateMany: async () => ({ count: 1 }) };
+  f.flow.documentQa.admit = async (input: any) => {
+    f.trace.push('qa-admit'); assert.equal(input.originalBudgetGrantV2, grant);
+    assert.deepEqual(input.attachments, [{ attachmentId: 'attachment', requestedPages: [1] }]);
+    return { jobId: 'job', foregroundDeadlineAt: new Date(Date.now() + 10000).toISOString() };
+  };
+  await f.flow.executeReceiptUploadInner(f.event, 'อ่านไฟล์นี้ว่าอย่างไร', attempt);
+  assert.equal(intakes.length, 1); assert.equal(grants.length, 1);
+  assert.equal(grants[0].requestKind, 'IMAGE');
+  assert.deepEqual(grants[0].allowedProfileIds, ['line-intake-image/2']);
+  assert.deepEqual(f.trace, ['intake', 'upload-intent', 'pending', 'upload', 'complete-upload', 'qa-admit', 'pending-update', 'qa-execute', 'pending-update']);
+  assert.equal(f.expenseInitializations(), 0);
+  assert.equal(attempt.identity, admission); assert.equal(attempt.companyId, 'company');
+});
+
+it('keeps PDF classification metadata-only and on the text intake profile', async () => {
+  const f = fixture(), grants: any[] = [];
+  const grant = { turnKey: 'turn', admittedAtMs: Date.now(), authorityKind: 'webhook_event' };
+  Object.assign(f.flow, {
+    tryRouteIntake: (ProcessLineWebhookUseCase.prototype as any).tryRouteIntake,
+    intakePlansV2: new WeakMap(), retainedTaskSources: new WeakMap(),
+    textEvidenceV2: async () => ({ turnKey: 'turn', joinedSha256: 'digest', parts: [{ acceptedAtMs: grant.admittedAtMs }] }),
+    reliabilityContext: async () => ({}),
+    aiGateway: {
+      issueLineReliabilityGrant: async (_id: string, input: any) => { grants.push(input); return grant; },
+      requestLineIntakeRoute: async (input: any) => {
+        assert.deepEqual(input.attachments, [{ id: 'message', mimeType: 'application/pdf', purpose: 'unknown' }]);
+        return { status: 'ROUTED', intent: 'CLARIFY', semanticSubrequests: [{ kind: 'read' }] };
+      },
+    },
+  });
+  f.flow.prisma.client.lineWebhookEventLog = { findUnique: async () => ({ id: 'event-log' }), updateMany: async () => ({ count: 1 }) };
+  await f.flow.routeDocumentQuestionBeforeCapture(f.event, f.ctx, f.access, 'อ่านไฟล์นี้ว่าอย่างไร', { ...f.media, mimeType: 'application/pdf' });
+  assert.equal(grants.length, 1); assert.equal(grants[0].requestKind, 'TEXT');
+  assert.deepEqual(grants[0].allowedProfileIds, ['line-intake-text/2']);
+});
 
 for (const classification of [
   { status: 'ROUTED', intent: 'CLARIFY', semanticSubrequests: [{ kind: 'read' }] },
