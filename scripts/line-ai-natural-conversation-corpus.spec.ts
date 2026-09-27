@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +8,7 @@ import test from 'node:test';
 import { AUTHORED_CORPUS, CORPUS_JSON_PATH, assertFrozenArtifact } from './line-ai-reliability-corpus';
 import { reliabilityDigest, validateReliabilityCorpus } from './line-ai-reliability-fixtures';
 import {
-  NATURAL_ARTIFACT_DIGEST, NATURAL_CLOCK, NATURAL_CORPUS, NATURAL_DIAGNOSTIC_POLICY,
+  NATURAL_ARTIFACT_DIGEST, NATURAL_ASSET_DIR, NATURAL_ASSET_MANIFEST, NATURAL_CLOCK, NATURAL_CORPUS, NATURAL_DIAGNOSTIC_POLICY,
   NATURAL_MODEL_ID, NATURAL_REFERENCE_FACTS, NATURAL_REVIEW_CRITERIA, NATURAL_SOURCE_PATH,
   NATURAL_SOURCE_SNAPSHOT_MANIFEST, buildNaturalConversationRuntimeManifest,
 } from './line-ai-natural-conversation-corpus';
@@ -65,6 +66,25 @@ test('assets are attached only at the three actual upload turns; no seeded assis
     assert.ok(!seeded.rows.some(row => /aiConversation|reimbursementDraftAction|lineDocumentQaJob|pendingAction/i.test(row.model)));
     assert.equal(reliabilityDigest(seeded), NATURAL_SOURCE_SNAPSHOT_MANIFEST.snapshotDigests[fixture.fixture.sourceSnapshot]);
   }
+});
+
+test('NAT uses separate hashed readable assets with actual PDF page counts and unreviewed labels', async () => {
+  const requireApi = createRequire(resolve(dirname(fileURLToPath(import.meta.url)), '../apps/api/package.json'));
+  const { PDFDocument } = requireApi('pdf-lib');
+  const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+  for (const [id, asset] of Object.entries(NATURAL_ASSET_MANIFEST)) {
+    const bytes = readFileSync(resolve(NATURAL_ASSET_DIR, asset.fileName)), labelBytes = readFileSync(resolve(NATURAL_ASSET_DIR, asset.labelFile));
+    assert.equal(digest(bytes), asset.sha256); assert.equal(digest(labelBytes), asset.labelDigest);
+    const label = JSON.parse(labelBytes.toString('utf8'));
+    assert.equal(label.labelledBy, null); assert.equal(label.provenance.reviewedBy, null); assert.equal(label.status, 'draft');
+    if (asset.mimeType === 'application/pdf') assert.equal((await PDFDocument.load(bytes)).getPageCount(), 2);
+    assert.equal(label.pages, asset.pages);
+    for (const snapshot of Object.values(NATURAL_SOURCE_SNAPSHOT_MANIFEST.snapshots)) if (snapshot.assets[id]) assert.ok(snapshot.assets[id]!.path.startsWith(NATURAL_ASSET_DIR));
+  }
+  const receipt = JSON.parse(readFileSync(resolve(NATURAL_ASSET_DIR, 'receipt-clear.label.json'), 'utf8'));
+  const amount = (field: string) => Number(receipt.sourceFields.find((entry: any) => entry.field === field).originalValue.split(' ')[0].replace('.', ''));
+  assert.equal(amount('subtotal') + amount('vat'), amount('total')); assert.equal(amount('total'), 128050);
+  assertFrozenArtifact(JSON.parse(readFileSync(CORPUS_JSON_PATH, 'utf8')));
 });
 
 test('the real seeded owner grants and branch scopes exactly match fixture admission', () => {

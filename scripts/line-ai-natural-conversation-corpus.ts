@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ASSET_DIR, AUTHORED_ARTIFACT, AUTHORED_CORPUS,
+  AUTHORED_CORPUS,
   AUTHORED_SOURCE_SNAPSHOT_MANIFEST, type CorpusSourceSnapshotManifest, type RuntimeSourceSnapshot,
 } from './line-ai-reliability-corpus';
 import { reliabilityDigest, validateReliabilityCorpus, type ReliabilityCorpus, type ReliabilityFixture } from './line-ai-reliability-fixtures';
@@ -12,6 +12,10 @@ import type { ReliabilityRuntimeManifest } from './line-ai-reliability-runtime';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const NATURAL_SOURCE_PATH = join(ROOT, 'docs/research/mangmee-ai-human-review-2026-09-27-th.md');
+export const NATURAL_ASSET_DIR = join(ROOT, 'docs/research/mangmee-ai-natural-assets-2026-09-27');
+export const NATURAL_ASSET_MANIFEST = (JSON.parse(readFileSync(join(NATURAL_ASSET_DIR, 'manifest.json'), 'utf8')) as {
+  assets: Record<string, { fileName: string; mimeType: ReliabilityFixture['assets'][number]['mimeType']; pages: number; sha256: string; labelFile: string; labelDigest: string }>;
+}).assets;
 export const NATURAL_MODEL_ID = 'global.anthropic.claude-sonnet-4-6';
 export const NATURAL_CLOCK = '2026-09-27T03:00:00.000Z';
 const source = readFileSync(NATURAL_SOURCE_PATH, 'utf8');
@@ -29,13 +33,13 @@ assert.ok(cases.every(row => row.turns.length === 5), 'NAT_SOURCE_TURN_COUNT');
 export const NATURAL_DIAGNOSTIC_POLICY = {
   mode: 'natural_diagnostic', status: 'draft', acceptanceEligible: false,
   approvalScope: 'Owner approved these 60 questions in the current conversation; ERP fixture, asset labels, answers and behavior remain unreviewed.',
-  sourceDocumentStatus: 'UNREVIEWED', exactToolGoldens: false, aggregateQualityScore: false,
+  sourceDocumentStatus: 'QUESTIONS_APPROVED_ASSETS_DRAFT', exactToolGoldens: false, aggregateQualityScore: false,
   semanticReview: 'Review actual accepted LINE wire, actual tools and durable state; old exact-tool/fact/effect scorer is not NAT correctness.',
   publicLookup: false, fabricatedAssistantHistory: false,
   limitations: {
     'NAT-04': 'MISSING_PRIOR_RECEIPTS: two earlier stationery uploads are not available. Run truthfulness/missing-evidence diagnostic only; full source-selection/reimbursement path is NOT_RUN_FIXTURE_REQUIRED.',
-    'NAT-05': 'Existing synthetic PNG and draft label only; owner has not certified visual labels or OCR answers.',
-    'NAT-06': 'Existing two-page PDF assets and draft labels only; requested page readability and replacement must be verified from actual reader evidence.',
+    'NAT-05': 'NAT-only readable synthetic PNG and draft label; owner has not certified visual labels or OCR answers. Original 225-case asset is preserved separately.',
+    'NAT-06': 'NAT-only real two-page PDFs: partial page has readable text plus an obscured field; replacement page has unreadable business body and readable test marker. Labels remain unreviewed.',
     'NAT-03': 'Turn 3 ordinal must resolve only if the preceding accepted answer actually supplied that choice; no choices are seeded.',
     'NAT-08': 'Turn 3 refers to an actual preceding accepted choice, if any; two Somchai vendors and two repair bills exist in ERP.',
     'NAT-12': 'Edit/cancel coverage depends on an actual preview produced in preceding turns; none is fabricated and no button click substitutes for user text.',
@@ -137,7 +141,7 @@ export const NATURAL_CORPUS: ReliabilityCorpus = {
       provenance: { kind: 'synthetic', sourceId: `nat-${row.id}`, consentRef: null, reviewedBy: null, reviewedAt: null },
       fixture: { ...structuredClone(baseFixture.fixture), clock: NATURAL_CLOCK, permissions: [...permissions],
         branches: [...privateBranches], sourceSnapshot: `nat-${row.id}`, taskRevision: null, previewRevision: null },
-      assets: assetIds.map(id => { const asset = AUTHORED_ARTIFACT.assetManifest[id]!;
+      assets: assetIds.map(id => { const asset = NATURAL_ASSET_MANIFEST[id]!;
         return { id, sha256: asset.sha256, mimeType: asset.mimeType as ReliabilityFixture['assets'][number]['mimeType'],
           pages: asset.pages, labelDigest: asset.labelDigest, labelledBy: null };
       }),
@@ -155,7 +159,7 @@ validateReliabilityCorpus(NATURAL_CORPUS);
 export const NATURAL_SOURCE_SNAPSHOT_MANIFEST: CorpusSourceSnapshotManifest = {
   version: 1, snapshots: Object.fromEntries(NATURAL_CORPUS.fixtures.map(fixture => [fixture.fixture.sourceSnapshot, {
     rows: structuredClone(rows), lineUserId: AUTHORED_SOURCE_SNAPSHOT_MANIFEST.snapshots[baseFixture.fixture.sourceSnapshot]!.lineUserId,
-    assets: Object.fromEntries(fixture.assets.map(asset => [asset.id, { path: join(ASSET_DIR, AUTHORED_ARTIFACT.assetManifest[asset.id]!.fileName),
+    assets: Object.fromEntries(fixture.assets.map(asset => [asset.id, { path: join(NATURAL_ASSET_DIR, NATURAL_ASSET_MANIFEST[asset.id]!.fileName),
       sha256: asset.sha256, mimeType: asset.mimeType }])),
   }])), snapshotDigests: {},
 };

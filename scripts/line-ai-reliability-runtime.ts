@@ -390,7 +390,12 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       // active receipt owner to the next turn while the real buffer handler is still running.
       for (const method of ['execute', 'executeReceiptUpload']) instrumentRuntimeMethod(webhook, method, async (original, args) => {
         processingWebhook++;
-        try { return await original(...args); } finally { processingWebhook--; }
+        try { return await original(...args); }
+        catch (error) {
+          active?.errors.push(`${method}_failed`);
+          runtimeDiagnostics.push({ scenarioId: row.id, repeat, phase: 'webhook', stage: method, error: runtimeFailureDiagnostic(error) });
+          throw error;
+        } finally { processingWebhook--; }
       });
       instrumentRuntimeMethod(webhook, 'sendMessagesV2', async (original, args) => {
         const result = await original(...args);
@@ -403,7 +408,11 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
           if (state) { state.completedAt = Date.now(); if (Array.isArray(result.sourceRefs)) state.responses.push(result);
             state.gatewayResponses.push(structuredClone({ method, requestId: args[0].requestId, startedAtMs, completedAtMs: state.completedAt, response: result }));
             state.missing.push(...runtimeAskedSlots(result)); } return result;
-        } catch (error) { state?.errors.push(`${method}_failed`); throw error; } });
+        } catch (error) {
+          state?.errors.push(`${method}_failed`);
+          runtimeDiagnostics.push({ scenarioId: row.id, repeat, phase: 'gateway', stage: method, error: runtimeFailureDiagnostic(error) });
+          throw error;
+        } });
       }
       stage = 'nest_listen';
       app.setGlobalPrefix('v1'); app.useGlobalPipes(new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS)); await app.listen(manifest.apiPort, '127.0.0.1');
