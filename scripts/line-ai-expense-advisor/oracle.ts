@@ -307,6 +307,19 @@ function dailyClosingFacts(data: Record<string, unknown>): ExpectedFact[] {
   return facts;
 }
 
+/** A reply never has to spell out a bare "0" to be truthful about having none of something — a
+ * natural Thai answer says "ยังไม่มี" instead, so requiring the literal digit fails a correct
+ * reply. Drop every zero-valued money fact, and every zero-valued count fact too, EXCEPT for
+ * `pending_approvals`, the one shape whose entire point IS a count ("are there any approvals
+ * waiting") — there, zero pending IS the informative answer and stays required. */
+function dropUninformativeZeroFacts(facts: ExpectedFact[], shape: AnswerShape): ExpectedFact[] {
+  return facts.filter((fact) => {
+    if (fact.kind === 'money') return Number(fact.value) !== 0;
+    if (fact.kind === 'count') return Number(fact.value) !== 0 || shape === 'pending_approvals';
+    return true;
+  });
+}
+
 /** Facts a delivered reply must contain for this gold call to be considered grounded — never
  * hand-typed, always read back off the oracle's own ToolResult. Required-only per shape (task
  * follow-up 2); everything else about the result is optional and not checked. Empty for an
@@ -317,15 +330,18 @@ export function extractExpectedFacts(tool: string, result: { status: string; dat
   const data = result.data as Record<string, unknown>;
   if (isAmbiguousOrUnresolved(data)) return [];
   const shape = answerShape ?? DEFAULT_ANSWER_SHAPE[tool];
-  switch (shape) {
-    case 'single_metric': return singleMetricFacts(tool, data);
-    case 'breakdown': return breakdownFacts(data, 'category');
-    case 'list': return listFacts(data);
-    case 'detail': return detailFacts(tool, data);
-    case 'pending_approvals': return pendingApprovalsFacts(data);
-    case 'daily_closing': return dailyClosingFacts(data);
-    default: { const facts: ExpectedFact[] = []; scanNumericFacts(data, '', 0, facts); return facts; }
-  }
+  const facts = (() => {
+    switch (shape) {
+      case 'single_metric': return singleMetricFacts(tool, data);
+      case 'breakdown': return breakdownFacts(data, 'category');
+      case 'list': return listFacts(data);
+      case 'detail': return detailFacts(tool, data);
+      case 'pending_approvals': return pendingApprovalsFacts(data);
+      case 'daily_closing': return dailyClosingFacts(data);
+      default: { const out: ExpectedFact[] = []; scanNumericFacts(data, '', 0, out); return out; }
+    }
+  })();
+  return dropUninformativeZeroFacts(facts, shape);
 }
 
 /** Same as `extractExpectedFacts`, but honors a gold call's own `groupBy` override for the
@@ -336,6 +352,6 @@ export function extractExpectedFactsForCall(tool: string, result: { status: stri
   const data = result.data as Record<string, unknown>;
   if (isAmbiguousOrUnresolved(data)) return [];
   const shape = call.answerShape ?? DEFAULT_ANSWER_SHAPE[tool];
-  if (shape === 'breakdown') return breakdownFacts(data, call.groupBy ?? 'category');
+  if (shape === 'breakdown') return dropUninformativeZeroFacts(breakdownFacts(data, call.groupBy ?? 'category'), shape);
   return extractExpectedFacts(tool, result, shape);
 }

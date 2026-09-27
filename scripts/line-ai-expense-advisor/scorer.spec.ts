@@ -4,6 +4,7 @@ import {
   callMatchesGold, factInText, moneyTextVariants, scoreFacts, scoreTags, scoreToolCalls, scoreTurn, summarizeScores,
   type CapturedEvidence,
 } from './scorer';
+import { extractExpectedFacts, extractExpectedFactsForCall } from './oracle';
 import type { Turn } from './types';
 
 const NOW = new Date('2026-09-27T06:00:00.000Z'); // 13:00 Bangkok, 27 Sep 2026
@@ -27,6 +28,14 @@ describe('moneyTextVariants', () => {
     const variants = moneyTextVariants('152.50');
     assert.ok(!variants.includes('152'));
   });
+
+  it('treats 0 / 0.00 / 0.0000 as the same value, any Thai-acceptable formatting', () => {
+    for (const zero of [0, '0', '0.00', '0.0000']) {
+      const variants = moneyTextVariants(zero);
+      assert.ok(variants.includes('0.00'), `moneyTextVariants(${JSON.stringify(zero)}) should include '0.00'`);
+      assert.ok(variants.includes('0'), `moneyTextVariants(${JSON.stringify(zero)}) should include '0'`);
+    }
+  });
 });
 
 describe('factInText', () => {
@@ -42,6 +51,11 @@ describe('factInText', () => {
   it('finds a count fact as a plain integer', () => {
     assert.ok(factInText({ kind: 'count', value: 12 }, 'มีทั้งหมด 12 รายการ'));
   });
+
+  it('finds a required zero-valued money fact in any Thai-acceptable formatting', () => {
+    assert.ok(factInText({ kind: 'money', value: '0.0000' }, 'ยอดคงเหลือ 0 บาท'));
+    assert.ok(factInText({ kind: 'money', value: 0 }, 'ยอดคงเหลือ 0.00 บาท'));
+  });
 });
 
 describe('scoreFacts', () => {
@@ -51,6 +65,30 @@ describe('scoreFacts', () => {
     const result = scoreFacts([{ kind: 'money', value: '1000.00' }, { kind: 'count', value: 99 }], text);
     assert.equal(result.ok, false);
     assert.deepEqual(result.reasons, ['missing_fact:count:99']);
+  });
+});
+
+describe('extractExpectedFacts: a correct zero never has to be spelled out', () => {
+  it('drops a zero-valued money fact but keeps a non-zero count (reimbursement.get_summary)', () => {
+    // "มี 2 รายการที่รออนุมัติ ... ยังไม่มีรายการที่อนุมัติแล้วรอจ่าย" is a correct, complete
+    // answer that never writes a literal "0" for the unpaid total — requiring it was the bug.
+    const facts = extractExpectedFacts('reimbursement.get_summary', { status: 'ok', data: { totalUnpaidAmount: '0.0000', pendingApprovalCount: 2 } });
+    assert.deepEqual(facts, [{ kind: 'count', value: 2, label: 'pending_count' }]);
+  });
+
+  it('drops a zero-valued count fact for a shape whose primary metric is not that count (single_metric)', () => {
+    const facts = extractExpectedFacts('expense.list_recent', { status: 'ok', data: { summary: { totalAmount: '500.00', countedItems: 0 } } });
+    assert.deepEqual(facts, [{ kind: 'money', value: '500.00', label: 'total' }]);
+  });
+
+  it('keeps a zero count for pending_approvals, the one shape whose whole point IS that count', () => {
+    const facts = extractExpectedFacts('reimbursement.list_pending_approvals', { status: 'ok', data: { total: 0, items: [] } });
+    assert.deepEqual(facts, [{ kind: 'count', value: 0, label: 'count' }]);
+  });
+
+  it('drops a zero overall total from a breakdown, via extractExpectedFactsForCall', () => {
+    const facts = extractExpectedFactsForCall('expense.get_breakdown', { status: 'ok', data: { totalAmount: 0, byCategory: [] } }, {});
+    assert.deepEqual(facts, []);
   });
 });
 
