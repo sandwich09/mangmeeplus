@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PDFDocument } from 'pdf-lib';
+import sharp from 'sharp';
 import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
 
 function fixture() {
@@ -201,11 +202,12 @@ async function pdfEntryFixture(route: any, v2 = true) {
   return { ...f, media, expenseInitializations: () => expenseInitializations };
 }
 
-it('sends the downloaded PNG to the first governed intake with the image profile, then runs QA exactly once', async () => {
+for (const mimeType of ['image/png', 'image/jpeg']) it(`sends the downloaded ${mimeType} to the first governed intake with the image profile, then runs QA exactly once`, async () => {
   const route = { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', semanticSubrequests: [{ index: 0, kind: 'file', goal: 'read file' }] };
   const f = await pdfEntryFixture(route);
-  const bytes = readFileSync(resolve(__dirname, '../../../../../../../docs/research/mangmee-ai-natural-assets-2026-09-27/receipt-clear.png'));
-  const media = { ...f.media, fileName: 'receipt.png', mimeType: 'image/png', bytes, byteSize: bytes.length, contentBase64: bytes.toString('base64') };
+  const png = readFileSync(resolve(__dirname, '../../../../../../../docs/research/mangmee-ai-natural-assets-2026-09-27/receipt-clear.png'));
+  const bytes = mimeType === 'image/png' ? png : await sharp(png).jpeg().toBuffer();
+  const media = { ...f.media, fileName: mimeType === 'image/png' ? 'receipt.png' : 'receipt.jpg', mimeType, bytes, byteSize: bytes.length, contentBase64: bytes.toString('base64') };
   Object.assign(f.event, { messageType: 'image', fileName: media.fileName });
   const grant = { turnKey: 'turn', admittedAtMs: Date.now(), authorityKind: 'webhook_event' };
   const admission = { eventId: 'ocr-admission', monthKey: '2026-09' }, attempt: any = { receiptRequested: false, usablePersisted: false };
@@ -243,8 +245,13 @@ it('sends the downloaded PNG to the first governed intake with the image profile
   assert.equal(attempt.identity, admission); assert.equal(attempt.companyId, 'company');
 });
 
-it('keeps PDF classification metadata-only and on the text intake profile', async () => {
-  const f = fixture(), grants: any[] = [];
+for (const mediaInput of [
+  { mimeType: 'application/pdf', contentBase64: undefined },
+  { mimeType: 'application/pdf', contentBase64: Buffer.from('PDF bytes must not enter image intake').toString('base64') },
+  { mimeType: 'image/png', contentBase64: undefined },
+  { mimeType: 'image/jpeg', contentBase64: undefined },
+]) it(`keeps ${mediaInput.mimeType} ${mediaInput.contentBase64 ? 'with bytes' : 'without bytes'} on metadata-only text intake`, async () => {
+  const f = fixture(), grants: any[] = [], intakes: any[] = [];
   const grant = { turnKey: 'turn', admittedAtMs: Date.now(), authorityKind: 'webhook_event' };
   Object.assign(f.flow, {
     tryRouteIntake: (ProcessLineWebhookUseCase.prototype as any).tryRouteIntake,
@@ -254,13 +261,15 @@ it('keeps PDF classification metadata-only and on the text intake profile', asyn
     aiGateway: {
       issueLineReliabilityGrant: async (_id: string, input: any) => { grants.push(input); return grant; },
       requestLineIntakeRoute: async (input: any) => {
-        assert.deepEqual(input.attachments, [{ id: 'message', mimeType: 'application/pdf', purpose: 'unknown' }]);
+        intakes.push(input);
         return { status: 'ROUTED', intent: 'CLARIFY', semanticSubrequests: [{ kind: 'read' }] };
       },
     },
   });
   f.flow.prisma.client.lineWebhookEventLog = { findUnique: async () => ({ id: 'event-log' }), updateMany: async () => ({ count: 1 }) };
-  await f.flow.routeDocumentQuestionBeforeCapture(f.event, f.ctx, f.access, 'อ่านไฟล์นี้ว่าอย่างไร', { ...f.media, mimeType: 'application/pdf' });
+  await f.flow.routeDocumentQuestionBeforeCapture(f.event, f.ctx, f.access, 'อ่านไฟล์นี้ว่าอย่างไร', { ...f.media, ...mediaInput });
+  assert.equal(intakes.length, 1);
+  assert.deepEqual(intakes[0].attachments, [{ id: 'message', mimeType: mediaInput.mimeType, purpose: 'unknown' }]);
   assert.equal(grants.length, 1); assert.equal(grants[0].requestKind, 'TEXT');
   assert.deepEqual(grants[0].allowedProfileIds, ['line-intake-text/2']);
 });

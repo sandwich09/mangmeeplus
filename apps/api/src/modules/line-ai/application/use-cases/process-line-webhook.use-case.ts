@@ -8912,7 +8912,9 @@ ${link}`, ctx.companyId, access);
     const route = await this.tryRouteIntake({ event: textEvent, requestId: ctx.requestId, webhookEventId: event.webhookEventId,
       retryWebhookEventId: event.webhookEventId, onAdmitted,
       companyId: ctx.companyId, userId: ctx.userId, permissions: access.permissions, enabledFeatures: access.entitledFeatureKeys ?? [], messageText: caption,
-      attachment: { id: event.lineMessageId, mimeType: media.mimeType, contentBase64: media.contentBase64 }, valueCandidates: await this.textValueCandidates(textEvent, caption) });
+      attachment: { id: event.lineMessageId, mimeType: media.mimeType,
+        ...((media.mimeType === 'image/png' || media.mimeType === 'image/jpeg') && media.contentBase64 ? { contentBase64: media.contentBase64 } : {}) },
+      valueCandidates: await this.textValueCandidates(textEvent, caption) });
     if (route.status === 'ROUTED' && route.intent === 'REIMBURSEMENT_REQUEST_START' && this.config.lineAiReimbursementDraftWriteEnabled
       && route.semanticSubrequests?.some(item => item.kind === 'write') && this.budgetGrantsV2.has(textEvent)) {
       if (!access.permissions.includes('attachment.create') || !access.permissions.some(permission => ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission))) {
