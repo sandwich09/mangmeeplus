@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { branchInputMatchesMessage, buildAnswerPresentation, expenseCriterionOnlyMessage, OrchestratorAgent, uncertainExpenseFilter, unsupportedExpenseFilter, validExpensePeriodSelection, withoutRefusedCoverage } from './orchestrator.agent';
+import { branchInputMatchesMessage, buildAnswerPresentation, expenseBranchScopeRequested, expenseCriterionOnlyMessage, OrchestratorAgent, uncertainExpenseFilter, unsupportedExpenseFilter, validExpensePeriodSelection, withoutRefusedCoverage } from './orchestrator.agent';
 import { ResponseComposerAgent } from './response-composer.agent';
 import { extractValueCandidates, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { LineAiPreparedPlan, LineAiTurnRequest } from '@watchdog-bms/contracts';
@@ -1228,6 +1228,26 @@ describe('expense follow-up branch scope', () => {
     assert.equal(validExpensePeriodSelection(correct, correct, req), true);
     const wrongBranch = { ...correct, branchId: 'B' };
     assert.equal(validExpensePeriodSelection(wrongBranch, wrongBranch, req), false);
+  });
+
+  it('R-U1: treats a status word after เฉพาะ/เอาเฉพาะ/ดูเฉพาะ (with or without ที่/รายการที่/อันที่) as a filter, not a branch', () => {
+    const table: Array<[string, boolean]> = [
+      ['แล้วยอดเดือนนี้ ถ้าเอาเฉพาะที่ยืนยันแล้วล่ะ', false],
+      ['เอาเฉพาะยืนยันแล้ว', false],
+      ['เอาเฉพาะที่จ่ายแล้ว', false],
+      ['เอาเฉพาะยังไม่จ่าย', false],
+      ['เอาเฉพาะที่ค้างจ่าย', false],
+      ['เอาเฉพาะรายการที่อนุมัติ', false],
+      ['เอาเฉพาะร่าง', false],
+      ['เอาเฉพาะอันที่รอตรวจ', false],
+      ['เอาเฉพาะปฏิเสธ', false],
+      ['เอาเฉพาะที่ยกเลิก', false],
+      ['ดูเฉพาะสาขาลาดพร้าว', true],
+      ['เอาเฉพาะลาดพร้าว', true],
+      ['เฉพาะ BKK', true],
+      ['เฉพาะกันยายน', false],
+    ];
+    for (const [text, expected] of table) assert.equal(expenseBranchScopeRequested(text), expected, text);
   });
 });
 

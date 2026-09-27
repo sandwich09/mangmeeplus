@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_EXPENSE_CRITERION_REPLIES } from '@watchdog-bms/contracts';
-import { isExpenseCriterionOnlyText, LineReadEvidenceService, parseExpenseCriterionAccessAuthorization, thaiMonthMentions } from './line-read-evidence.service';
+import { expenseBranchScopeRequested, isExpenseCriterionOnlyText, LineReadEvidenceService, parseExpenseCriterionAccessAuthorization, thaiMonthMentions } from './line-read-evidence.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from './line-delivery-access';
 
 describe('read-free LINE outcome authorization', () => {
@@ -37,6 +37,25 @@ describe('read-free LINE outcome authorization', () => {
   it('finds concatenated and one-character misspelled Thai months', () => {
     assert.deepEqual(thaiMonthMentions('กรกฏาคมและสิงหาคม 2569'), [7, 8]);
     assert.deepEqual(thaiMonthMentions('สรุปค่าใช้จ่ายเดือนสิงหาคม 2569'), [8]);
+  });
+
+  it('R-U1: treats a status word after เฉพาะ/เอาเฉพาะ/ดูเฉพาะ (with or without ที่/รายการที่/อันที่) as a filter, not a branch', () => {
+    const table: Array<[string, boolean]> = [
+      ['แล้วยอดเดือนนี้ ถ้าเอาเฉพาะที่ยืนยันแล้วล่ะ', false],
+      ['เอาเฉพาะยืนยันแล้ว', false],
+      ['เอาเฉพาะที่จ่ายแล้ว', false],
+      ['เอาเฉพาะยังไม่จ่าย', false],
+      ['เอาเฉพาะที่ค้างจ่าย', false],
+      ['เอาเฉพาะรายการที่อนุมัติ', false],
+      ['เอาเฉพาะร่าง', false],
+      ['เอาเฉพาะอันที่รอตรวจ', false],
+      ['เอาเฉพาะปฏิเสธ', false],
+      ['เอาเฉพาะที่ยกเลิก', false],
+      ['ดูเฉพาะสาขาลาดพร้าว', true],
+      ['เอาเฉพาะลาดพร้าว', true],
+      ['เฉพาะกันยายน', false],
+    ];
+    for (const [text, expected] of table) assert.equal(expenseBranchScopeRequested(text), expected, text);
   });
 
   it('rejects a read-free authorization when a separate presentation could change delivered content', async () => {

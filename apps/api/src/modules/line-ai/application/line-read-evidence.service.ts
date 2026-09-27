@@ -50,10 +50,11 @@ function expenseSummaryEvidence(result: ToolResult): ExpenseSummaryEvidence | un
     defaultedToCurrentMonth: range['defaultedToCurrentMonth'], statusBasis: EXPENSE_STATUS_BASIS, truncated: data['truncated'] === true };
 }
 
-function expenseBranchScopeRequested(text: string): boolean {
+export function expenseBranchScopeRequested(text: string): boolean {
   const withoutAllBranches = text.replace(/ทุก\s*สาขา|\ball\s+branches\b/giu, '');
   if (/(?:สาขา|\bbranch\b)/iu.test(withoutAllBranches)) return true;
-  return /เฉพาะ(?!\s*(?:เดือน|ช่วง|งวด|หมวด|รายการ|ยืนยัน|จ่าย|ปฏิเสธ|ยกเลิก|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|กรกฏาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม|ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.))[\u0E00-\u0E7F]{3,}/iu.test(text);
+  // A document/payment status word (optionally after ที่/รายการที่/อันที่) is a filter, not a branch name.
+  return /เฉพาะ(?!\s*(?:เดือน|ช่วง|งวด|หมวด|รายการ|(?:รายการที่|อันที่|ที่)?\s*(?:ยืนยัน|อนุมัติ|ยังไม่จ่าย|ค้างจ่าย|จ่าย|ร่าง|รอ|ปฏิเสธ|ยกเลิก)|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|กรกฏาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม|ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.))[\u0E00-\u0E7F]{3,}/iu.test(text);
 }
 
 function allExpenseBranchesRequested(text: string): boolean {

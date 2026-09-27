@@ -110,6 +110,8 @@ function nonExpenseQuestion(text: string): string {
     .join(' และ ');
 }
 
+const EXPENSE_STATUS_CRITERION_TARGET = /^(?:รายการที่|อันที่|ที่)?\s*(?:ยืนยัน|อนุมัติ|ยังไม่จ่าย|ค้างจ่าย|จ่าย|ร่าง|รอ|ปฏิเสธ|ยกเลิก)/iu;
+
 export function expenseBranchScopeRequested(text: string): boolean {
   const withoutAllBranches = text.replace(/ทุก\s*สาขา|\ball\s+branches\b/giu, '');
   if (/(?:สาขา|\bbranch\b)/iu.test(withoutAllBranches)) return true;
@@ -118,8 +120,10 @@ export function expenseBranchScopeRequested(text: string): boolean {
   const target = implicitBranch[1].split(/\s+(?:เดือน|ช่วง|งวด|และ|กับ|สำหรับ|เฉพาะ)(?=\s|$)/iu)[0]!.trim();
   // Thai month names can directly follow "เฉพาะ" without spaces. Don't mistake a misspelled
   // month for a branch and let the caller silently widen to all branches/current month.
+  // A document/payment status word (optionally after ที่/รายการที่/อันที่) is a filter, not a branch name.
   if (thaiExpenseMonthMentions(target).length > 0
-    || /^(?:เดือน|ช่วง|งวด|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|กรกฏาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม|ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.)/iu.test(target)) return false;
+    || /^(?:เดือน|ช่วง|งวด|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|กรกฏาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม|ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.)/iu.test(target)
+    || EXPENSE_STATUS_CRITERION_TARGET.test(target)) return false;
   return /(?:ดู\s*เฉพาะ|เอา\s*เฉพาะ|เฉพาะ)\s*[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}\s.'’_-]{2,}/iu.test(text);
 }
 
