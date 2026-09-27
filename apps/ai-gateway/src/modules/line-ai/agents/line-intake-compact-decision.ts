@@ -13,7 +13,7 @@ import type {
   ToolMeta,
 } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
-import { canonicalizeReadToolEnums, nameFilterGroundedInText } from './read-tool-input';
+import { canonicalizeReadToolEnums, nameFilterGroundedInText, paymentStatusGroundedInText } from './read-tool-input';
 
 // Spec item 2(b): categoryName/vendorName are free text the model must have echoed from what the user
 // typed, not a value proven by an id/date/enum shape. Checked by normalized substring, not raw equality.
@@ -142,6 +142,9 @@ function isGroundedFilterValue(
   const literal = String(value);
   if (literal && messageText.includes(literal)) return true;
   if (typeof value === 'string' && NAME_FILTER_GROUNDING_FIELDS.has(key) && nameFilterGroundedInText(value, messageText)) return true;
+  // Item 1: paymentStatus needs its own word-level check — see paymentStatusGroundedInText — before
+  // the generic enum-membership fallback below, which would otherwise wave through ANY listed value.
+  if (key === 'paymentStatus' && typeof value === 'string') return paymentStatusGroundedInText(value, messageText);
   if (typeof value === 'string' && tool.inputEnumValues?.[key]?.includes(value)) return true;
   if (typeof value === 'string' && recentReadsFilterValue(key, value, recentReads)) return true;
   if (key === 'fromDate') return (candidates?.periods ?? []).some((period) => period.fromDate === value)
@@ -149,6 +152,17 @@ function isGroundedFilterValue(
   if (key === 'toDate') return (candidates?.periods ?? []).some((period) => period.toDate === value)
     || (recentReads ?? []).some((entry) => entry.period?.toDate === value);
   if (key === 'periodKey') return (candidates?.periods ?? []).some((period) => period.monthKey === value);
+  // Item 4: `expense.get_daily_closing`'s bare `date` field (e.g. "วันนี้") had no grounding rule at
+  // all — unlike fromDate/toDate/periodKey above — so an explicit date always failed as ungrounded
+  // and the whole daily-closing fast lane rejected, even though the value is one deterministic
+  // extracted candidate, never invented. "วันนี้" extracts as a one-day PERIOD (fromDate===toDate),
+  // never a `dates` candidate — same dual source the classic tool loop's `validInput` already
+  // trusts for a single-date field (read-tool-input.ts has no shared home for it; this parser is
+  // the only caller of a bare `date` filter today).
+  if (key === 'date') {
+    return (candidates?.dates ?? []).some((date) => date.isoDate === value)
+      || (candidates?.periods ?? []).some((period) => period.fromDate === value || period.toDate === value);
+  }
   // A boolean or numeric default that the user did not select is still invented model input.
   return false;
 }

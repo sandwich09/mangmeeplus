@@ -343,16 +343,22 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     // input, so a branch name plus a vendor name narrow together.
     const requestedCategoryName = typeof input?.categoryName === 'string' && input.categoryName.trim() ? input.categoryName.trim() : undefined;
     const requestedVendorName = typeof input?.vendorName === 'string' && input.vendorName.trim() ? input.vendorName.trim() : undefined;
+    // Item 2 (223-turn eval batch 2): an ambiguous/unresolved name is still a real, permission-
+    // checked answer drawn from this company's own category/vendor catalog — it needs a source
+    // citation like every other 'ok' result below, or the gateway's enforceSourceHonesty boundary
+    // check (which requires at least one sourceRef on any 'ok' result) discards it as an opaque
+    // TOOL_RESULT_NO_SOURCE error before any caller ever sees availableCategories/availableVendors.
+    const nameLookupSourceRefs: SourceRef[] = [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/expenses` }];
     const categoryCandidates = requestedCategoryName ? await this.listExpenses.listCategoryCandidates(ctx.companyId) : [];
     const categoryFilter = applyNameFilter(input.categoryId, requestedCategoryName, categoryCandidates, CATEGORY_NAME_STRIP_PREFIXES);
     if (categoryFilter.status === 'conflict') {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'categoryId and categoryName resolve to different categories', sourceRefs: [], asOf };
     }
     if (categoryFilter.status === 'ambiguous') {
-      return { toolName: this.toolName, status: 'ok', data: { categoryAmbiguous: requestedCategoryName, availableCategories: categoryFilter.matches }, sourceRefs: [], asOf };
+      return { toolName: this.toolName, status: 'ok', data: { categoryAmbiguous: requestedCategoryName, availableCategories: categoryFilter.matches }, sourceRefs: nameLookupSourceRefs, asOf };
     }
     if (categoryFilter.status === 'not_found') {
-      return { toolName: this.toolName, status: 'ok', data: { categoryUnresolved: requestedCategoryName, availableCategories: categoryFilter.available }, sourceRefs: [], asOf };
+      return { toolName: this.toolName, status: 'ok', data: { categoryUnresolved: requestedCategoryName, availableCategories: categoryFilter.available }, sourceRefs: nameLookupSourceRefs, asOf };
     }
     const vendorCandidates = requestedVendorName ? await this.listExpenses.readAiVendorCandidates(toCtx(ctx), branchId) : [];
     const vendorFilter = applyNameFilter(input.vendorId, requestedVendorName, vendorCandidates, VENDOR_NAME_STRIP_PREFIXES);
@@ -360,10 +366,10 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'vendorId and vendorName resolve to different vendors', sourceRefs: [], asOf };
     }
     if (vendorFilter.status === 'ambiguous') {
-      return { toolName: this.toolName, status: 'ok', data: { vendorAmbiguous: requestedVendorName, availableVendors: vendorFilter.matches }, sourceRefs: [], asOf };
+      return { toolName: this.toolName, status: 'ok', data: { vendorAmbiguous: requestedVendorName, availableVendors: vendorFilter.matches }, sourceRefs: nameLookupSourceRefs, asOf };
     }
     if (vendorFilter.status === 'not_found') {
-      return { toolName: this.toolName, status: 'ok', data: { vendorUnresolved: requestedVendorName, availableVendors: vendorFilter.available }, sourceRefs: [], asOf };
+      return { toolName: this.toolName, status: 'ok', data: { vendorUnresolved: requestedVendorName, availableVendors: vendorFilter.available }, sourceRefs: nameLookupSourceRefs, asOf };
     }
     const categoryId = categoryFilter.id;
     const vendorId = vendorFilter.id;

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { conversationReadCandidates, nameFilterGroundedInText, resolvePeriodKeyAlias } from './read-tool-input';
+import { conversationReadCandidates, nameFilterGroundedInText, paymentStatusGroundedInText, resolvePeriodKeyAlias } from './read-tool-input';
 
 const context = (turns: any[]) => ({ windowMinutes: 15, maxTurns: 15, recentTurns: turns });
 
@@ -45,6 +45,40 @@ describe('item 2b: name filter grounding', () => {
   it('rejects an empty or whitespace-only name', () => {
     assert.equal(nameFilterGroundedInText('', 'อะไรก็ได้'), false);
     assert.equal(nameFilterGroundedInText('   ', 'อะไรก็ได้'), false);
+  });
+});
+
+describe('item 1: paymentStatus filter grounding (T-001#0)', () => {
+  it('drops PAID on a plain total-spending question with no payment-state word', () => {
+    assert.equal(paymentStatusGroundedInText('PAID', 'เดือนนี้จ่ายไปเท่าไหร่แล้วคะ'), false);
+    assert.equal(paymentStatusGroundedInText('PAID', 'ใช้ไปเท่าไหร่แล้ว'), false);
+    assert.equal(paymentStatusGroundedInText('PAID', 'ใช้จ่ายไปเท่าไหร่แล้ว'), false);
+    assert.equal(paymentStatusGroundedInText('PAID', 'เสียไปเท่าไหร่แล้ว'), false);
+  });
+
+  it('drops UNPAID on a plain total-spending question with no payment-state word', () => {
+    assert.equal(paymentStatusGroundedInText('UNPAID', 'เดือนนี้จ่ายไปเท่าไหร่แล้วคะ'), false);
+  });
+
+  it('grounds PAID only on an explicit already-paid contrast', () => {
+    assert.equal(paymentStatusGroundedInText('PAID', 'ที่จ่ายแล้วจริงๆ เท่าไหร่คะ'), true);
+    assert.equal(paymentStatusGroundedInText('PAID', 'ที่ชำระแล้วมีเท่าไหร่'), true);
+    assert.equal(paymentStatusGroundedInText('PAID', 'จ่ายจริงไปเท่าไหร่'), true);
+  });
+
+  it('grounds UNPAID only on an explicit not-yet-paid contrast', () => {
+    assert.equal(paymentStatusGroundedInText('UNPAID', 'ที่ยังไม่จ่ายมีเท่าไหร่คะ'), true);
+    assert.equal(paymentStatusGroundedInText('UNPAID', 'ที่ค้างจ่ายอยู่เท่าไหร่'), true);
+    assert.equal(paymentStatusGroundedInText('UNPAID', 'ที่ยังไม่ชำระมีเท่าไหร่'), true);
+  });
+
+  it('never mistakes UNPAID\'s own word for a PAID contrast', () => {
+    assert.equal(paymentStatusGroundedInText('PAID', 'ที่ยังไม่จ่ายมีเท่าไหร่คะ'), false);
+  });
+
+  it('leaves every other enum value (PARTIALLY_PAID, VOIDED) ungated', () => {
+    assert.equal(paymentStatusGroundedInText('PARTIALLY_PAID', 'เดือนนี้จ่ายไปเท่าไหร่แล้วคะ'), true);
+    assert.equal(paymentStatusGroundedInText('VOIDED', 'เดือนนี้จ่ายไปเท่าไหร่แล้วคะ'), true);
   });
 });
 

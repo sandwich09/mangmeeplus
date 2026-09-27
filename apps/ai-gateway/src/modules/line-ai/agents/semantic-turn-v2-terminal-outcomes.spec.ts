@@ -134,3 +134,70 @@ describe('item 6: an uncitable read answer is terminal, and tries the determinis
     assert.ok(result.replyText.includes('ดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
   });
 });
+
+describe('item 2 (223-turn eval batch 2): a name-resolution result is answered deterministically, never composed', () => {
+  const MESSAGE_TEXT = 'สมใจจ่ายไปทั้งหมดเท่าไหร่ครับเดือนนี้';
+  const TODAY = '2026-09-28';
+  const SOURCE_REF = { label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary',
+    permissionChecked: true as const, asOf: '2026-09-27T18:20:29.656Z', webPath: '/companies/company/expenses' };
+
+  function ambiguousResult(): ToolResult {
+    return { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [SOURCE_REF],
+      data: { vendorAmbiguous: 'สมใจ', availableVendors: [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }] } };
+  }
+
+  function notFoundResult(): ToolResult {
+    return { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [SOURCE_REF],
+      data: { vendorUnresolved: 'ร้านกาแฟอเมซอน', availableVendors: [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }] } };
+  }
+
+  function request(): LineAiTurnRequest {
+    return {
+      requestId: 'req-name-1', webhookEventId: 'event-name-1', messageText: MESSAGE_TEXT, messagePreviewHash: 'c'.repeat(16),
+      valueCandidates: extractValueCandidates(MESSAGE_TEXT, TODAY),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ยอดรวมที่จ่ายให้สมใจเดือนนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+        requestedFilters: { vendorName: 'สมใจ' } }],
+      userContext: baseUserContext(),
+    };
+  }
+
+  const CONTROL_CALL = JSON.stringify({ calls: [{ index: 0, toolName: 'expense.list_recent', input: { vendorName: 'สมใจ' } }] });
+
+  async function run(invokeResult: ToolResult) {
+    let calls = 0;
+    const provider: IModelProvider = { async generateText(_input: ProviderInput): Promise<ProviderOutput> {
+      calls++; return { ok: true, text: CONTROL_CALL };
+    } };
+    const result = await runSemanticTurnV2({
+      req: request(), provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { return invokeResult; },
+    });
+    return { result, calls };
+  }
+
+  it('ambiguous vendor: a real clarification question listing the options, needs_user (eval T-011#2/T-062#0)', async () => {
+    const { result, calls } = await run(ambiguousResult());
+    // Only the control round's generateText call runs — never a second (compose) call around this
+    // deterministic data, and never the raw TOOL_RESULT_NO_SOURCE code the eval saw leak through.
+    assert.equal(calls, 1, 'only the control round runs — never a compose call around this data');
+    const coverage = result.semanticCoverage?.[0];
+    assert.equal(coverage?.status, 'needs_user');
+    assert.equal(coverage?.reasonCode, 'EXPENSE_NAME_AMBIGUOUS');
+    assert.ok(result.replyText.includes('ร้านสมใจ'));
+    assert.ok(result.replyText.includes('ร้านสมใจการค้า'));
+    assert.ok(!result.replyText.includes('TOOL_RESULT_NO_SOURCE'));
+  });
+
+  it('vendor not found: a terminal answer naming it and listing available names, never needs_user (eval T-008#3)', async () => {
+    const { result, calls } = await run(notFoundResult());
+    assert.equal(calls, 1, 'only the control round runs — never a compose call around this data');
+    const coverage = result.semanticCoverage?.[0];
+    assert.equal(coverage?.status, 'handled');
+    assert.notEqual(coverage?.status, 'needs_user');
+    assert.equal(coverage?.reasonCode, 'EXPENSE_NAME_UNRESOLVED');
+    assert.ok(result.replyText.includes('ร้านสมใจ'));
+    assert.ok(result.replyText.includes('ร้านสมใจการค้า'));
+    assert.ok(!result.replyText.includes('TOOL_RESULT_NO_SOURCE'));
+  });
+});

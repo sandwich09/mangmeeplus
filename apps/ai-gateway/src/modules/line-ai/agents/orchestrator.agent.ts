@@ -17,6 +17,7 @@ import { InventoryAgent, ALLOWED_TOOLS as INVENTORY_ALLOWED_TOOLS } from './inve
 import { isExplicitJokeAsk, ResponseComposerAgent, featureDisabledReply } from './response-composer.agent';
 import { normalizePlanToolAccess, removeRuntimeBlockedTools, toolAccessOutcome } from './tool-availability';
 import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext, type PreparedSimpleReadEligibility } from '../domain/logic/prepared-simple-read.logic';
+import { expenseNameResolutionIssue, expenseNameResolutionReplyText } from '../domain/logic/business-read-result-semantics';
 import { activePreparedFamilies, formatExpenseSummary, formatPreparedSimpleRead, isEnglish, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { formatDraftUpdateReply } from './draft-update-formatter';
@@ -461,76 +462,6 @@ function deterministicExpenseSummaryReply(
     sourceRefs: formatted.flatMap(result => result.kind === 'answer' ? result.sourceRefs : []),
     webLinks: formatted.flatMap(result => result.kind === 'answer' ? result.webLinks : []),
   };
-}
-
-/** Spec item 2(c): expense.list_recent AND expense.get_breakdown both resolve a free-text
- *  branch/category/vendor name server-side; several matches or none must become a real
- *  clarification instead of silently falling through to a misleading zero/empty answer. */
-export type ExpenseNameResolutionIssue = {
-  kind: 'ambiguous' | 'not_found';
-  field: 'branch' | 'category' | 'vendor';
-  requested: string;
-  names: string[];
-};
-
-const EXPENSE_NAME_FIELDS = [
-  { field: 'branch' as const, ambiguousKey: 'branchAmbiguous', unresolvedKey: 'branchUnresolved', availableKey: 'availableBranches' },
-  { field: 'category' as const, ambiguousKey: 'categoryAmbiguous', unresolvedKey: 'categoryUnresolved', availableKey: 'availableCategories' },
-  { field: 'vendor' as const, ambiguousKey: 'vendorAmbiguous', unresolvedKey: 'vendorUnresolved', availableKey: 'availableVendors' },
-];
-
-/** Reads ONE tool result's raw `data` (never a specialist's shaped facts, which do not carry these
- *  keys through) for a branch/category/vendor ambiguity or not-found marker. */
-function expenseNameResolutionIssueFromData(data: Record<string, unknown> | undefined): ExpenseNameResolutionIssue | undefined {
-  if (!data) return undefined;
-  for (const { field, ambiguousKey, unresolvedKey, availableKey } of EXPENSE_NAME_FIELDS) {
-    const ambiguous = data[ambiguousKey], unresolved = data[unresolvedKey];
-    const requested = typeof ambiguous === 'string' ? ambiguous : typeof unresolved === 'string' ? unresolved : undefined;
-    if (requested === undefined) continue;
-    const available = Array.isArray(data[availableKey]) ? data[availableKey] as Array<Record<string, unknown>> : [];
-    const names = available.map(item => String(item['name'] ?? '').trim()).filter(Boolean).slice(0, 5);
-    return { kind: typeof ambiguous === 'string' ? 'ambiguous' : 'not_found', field, requested, names };
-  }
-  return undefined;
-}
-
-/** Same lookup across every read this turn's expense.list_recent/expense.get_breakdown outputs
- *  carried, classic-path or fast-lane alike. */
-function expenseNameResolutionIssue(outputs: SpecialistOutput[]): ExpenseNameResolutionIssue | undefined {
-  for (const output of outputs) {
-    for (const entry of output.toolData ?? []) {
-      if (entry.tool !== 'expense.list_recent' && entry.tool !== 'expense.get_breakdown') continue;
-      const data = entry.data && typeof entry.data === 'object' && !Array.isArray(entry.data) ? entry.data as Record<string, unknown> : undefined;
-      const issue = expenseNameResolutionIssueFromData(data);
-      if (issue) return issue;
-    }
-  }
-  return undefined;
-}
-
-const EXPENSE_NAME_FIELD_TH: Record<ExpenseNameResolutionIssue['field'], string> = { branch: 'สาขา', category: 'หมวด', vendor: 'ร้าน' };
-const EXPENSE_NAME_FIELD_EN: Record<ExpenseNameResolutionIssue['field'], string> = { branch: 'branch', category: 'category', vendor: 'vendor' };
-
-/** Ambiguous -> a real clarifying question (spec: "หมายถึงร้านไหนคะ" + up to 5 options) when the
- *  matches have distinct display names — an actual chat-answerable question. Several matches
- *  sharing the EXACT same display name cannot be told apart in text at all (never print the
- *  internal id/code that could): that case, like not-found, is a terminal statement pointing at
- *  the web app, never a question, never a waiting task. */
-function expenseNameResolutionReplyText(issue: ExpenseNameResolutionIssue, english: boolean): string {
-  const th = EXPENSE_NAME_FIELD_TH[issue.field], en = EXPENSE_NAME_FIELD_EN[issue.field];
-  const uniqueNames = [...new Set(issue.names)];
-  if (issue.kind === 'ambiguous') {
-    if (uniqueNames.length > 1) {
-      return english ? `Which ${en} do you mean? ${uniqueNames.join(', ')}` : `หมายถึง${th}ไหนคะ ${uniqueNames.join(', ')}`;
-    }
-    return english
-      ? `Several records share the same ${en} name, so I could not identify which one you mean. Please select it in the web app.`
-      : `มีหลาย${th}ที่ใช้ชื่อเดียวกัน จึงยังระบุ${th}ที่ต้องการไม่ได้ค่ะ กรุณาเลือก${th}จากหน้าเว็บ`;
-  }
-  const available = uniqueNames.join(', ');
-  return english
-    ? `I could not identify the requested ${en}.${available ? ` Available: ${available}.` : ''} Please check and select it in the web app.`
-    : `ยังระบุ${th}ที่ต้องการไม่ได้ค่ะ${available ? ` ${th}ที่มี: ${available}` : ''} กรุณาตรวจสอบและเลือก${th}จากหน้าเว็บ`;
 }
 
 function expenseBranchResolutionReply(req: LineAiTurnRequest, outputs: SpecialistOutput[]): string | undefined {
