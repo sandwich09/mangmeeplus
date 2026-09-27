@@ -13,6 +13,7 @@ import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from 
 import { buildLineAssistantTextCardMessage } from '../../domain/logic/line-business-card.logic';
 import { STAFF_CONTACT_COMMAND } from '../../domain/logic/line-staff-menu.logic';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
+import { LineReadEvidenceService } from '../line-read-evidence.service';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 const CLEAN_SCANNER = { assertClean: async () => undefined } as any;
@@ -2195,6 +2196,148 @@ describe('ProcessLineWebhookUseCase', () => {
       await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-fwd-p3', messageText: 'ยอดขายวันนี้เท่าไหร่' });
       assert.ok(aiGatewayRequests[0]?.preparedPlan, 'shadow on → forwarded for comparison');
     }
+  });
+
+  /**
+   * Spec §4 R-M1/R-M2, controller finding 2026-09-27: a real Bedrock run showed turn 2's intake
+   * request carrying NO recentReads at all, even though turn 1 (a prepared/fast-lane list read) was
+   * delivered fine. Every prior test mocks `aiGatewayFn` at the top-level RPC boundary, which skips
+   * the real internal-tools-controller callback that calls `LineReadEvidenceService.record()` — so
+   * nothing before this test ever ran record() → recentReadsForTurn() → deliverySources →
+   * recordTurnOutcome() → loadConversationContext() end to end. This does, with no model involved:
+   * turn 1 records evidence the way the real controller would, turn 2 (a FRESH use-case instance,
+   * same backing store — proving this is delivery-backed memory, not process-local state, same as
+   * the existing "remembers only the delivered public topic" test above) must see it in the intake
+   * request it builds. The gateway's own rendering of conversationContext into the model prompt is
+   * already covered by "passes bounded conversation context to model routing payloads, spec §4 R-M3
+   * recentReads included" in intent-router.agent.spec.ts — this test closes the gap before it.
+   */
+  it('spec §4 R-M2: a delivered prepared-lane read persists memory the next turn carries into its intake request (no model)', async () => {
+    const { prisma, outcomeStore } = makePrisma({
+      recentTurns: [{ webhookEventId: 'evt-mem-1', createdAt: new Date(), userMessagePreview: 'ขอดูรายการล่าสุดหน่อยครับ',
+        replyPreview: 'ค่าใช้จ่าย 3 รายการ', intent: 'READ_SUMMARY', agent: 'accounting', refused: false, status: 'COMPLETED' }],
+    });
+    // Two fixture gaps `makePrisma()` never needed before this feature: an in-memory `lineReadEvidence`
+    // table (R-M1's own store) and `lineTurnOutcome.findMany` (what `loadConversationContext` reads
+    // delivered evidence back through). Patched locally so the shared fixture stays untouched for
+    // every other test in this file.
+    const evidenceRows: any[] = [];
+    prisma.client.lineReadEvidence = {
+      create: async ({ data }: any) => {
+        const row = { id: `evid-${evidenceRows.length + 1}`, createdAt: new Date(), ...data };
+        evidenceRows.push(row);
+        return { id: row.id };
+      },
+      count: async ({ where }: any) => evidenceRows.filter((row) =>
+        row.companyId === where.companyId && row.userId === where.userId && row.requestId === where.requestId).length,
+      findMany: async ({ where, take }: any) => {
+        const rows = evidenceRows
+          .filter((row) => row.companyId === where.companyId && row.userId === where.userId && row.requestId === where.requestId
+            && (!where.toolName?.in || where.toolName.in.includes(row.toolName)))
+          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
+        return take ? rows.slice(0, take) : rows;
+      },
+    };
+    // record()'s own transaction (advisory lock + count + create) — process-line-webhook.use-case.ts
+    // never calls $transaction itself, so replacing it here cannot affect the rest of this turn.
+    prisma.client.$transaction = async (work: any) => work({ $executeRaw: async () => undefined, lineReadEvidence: prisma.client.lineReadEvidence });
+    prisma.client.lineTurnOutcome.findMany = async ({ where }: any) => {
+      const ids: string[] = where.webhookEventId?.in ?? [];
+      return ids.flatMap((id) => {
+        const row = outcomeStore.get(id);
+        return row && row.deliveredAt != null ? [{ webhookEventId: id, deliveredAt: row.deliveredAt, authorizationJson: row.authorizationJson }] : [];
+      });
+    };
+    // Real service, not the harness's default `{ forTurn: async () => [] }` stub (which has no
+    // recentReadsForTurn/deliveredExpenseSummaryForTurn at all) — those conditional-existence checks
+    // in process-line-webhook.use-case.ts exist for that stub, so overriding with the real service is
+    // what actually exercises the feature instead of always short-circuiting it to undefined. verify/
+    // verifyDelivery are a SEPARATE, pre-existing re-authorization check (mayDeliverBusinessReply,
+    // unrelated to R-M2) that the harness's own default stubs out the same way for every other test —
+    // kept stubbed here too so this test stays about the memory chain, not that unrelated gate.
+    const realReadEvidence = new LineReadEvidenceService(prisma, {} as any, new Map());
+    const readEvidence = {
+      record: realReadEvidence.record.bind(realReadEvidence),
+      forTurn: realReadEvidence.forTurn.bind(realReadEvidence),
+      deliveredExpenseSummaryForTurn: realReadEvidence.deliveredExpenseSummaryForTurn.bind(realReadEvidence),
+      recentReadsForTurn: realReadEvidence.recentReadsForTurn.bind(realReadEvidence),
+      verify: async () => true,
+      verifyDelivery: async () => false,
+    };
+    const config = { lineAiPreparedSimpleReadEnabled: true, lineAiTerminalOutcomeReplayEnabled: true };
+    const prepared = parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'list',
+      intentPlan: {
+        status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }],
+      },
+      proposedCalls: [{ toolName: 'expense.list_recent', input: {} }],
+    });
+    assert.ok(prepared, 'prepared-plan fixture parses');
+
+    // Turn 1: the prepared (fast-lane) list read the real orchestrator would serve. aiGatewayFn
+    // stands in for the whole gateway turn, so it also does the ONE thing the real internal-tools
+    // controller does that the mock otherwise skips: record read evidence for a successful read.
+    const h1 = makeUseCase(prisma, {
+      permissions: ['line.ai.query'], config,
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, preparedPlan: prepared }),
+      aiGatewayFn: async (req: any) => {
+        await readEvidence.record({
+          requestId: req.requestId, companyId: req.userContext.companyId, userId: req.userContext.internalUserId,
+          membershipId: req.userContext.membershipId, permissions: req.userContext.permissions, locale: req.userContext.locale,
+          chatKeyHash: req.userContext.chatKeyHash,
+        }, {}, {
+          toolName: 'expense.list_recent', status: 'ok',
+          data: { total: 3, items: [
+            { id: 'expense-1', vendorNameSnapshot: 'ร้านหนึ่ง', expenseDate: '2026-09-10T00:00:00.000Z' },
+            { id: 'expense-2', vendorNameSnapshot: 'ร้านสอง', expenseDate: '2026-09-12T00:00:00.000Z' },
+            { id: 'expense-3', vendorNameSnapshot: 'ร้านสามการค้า', expenseDate: '2026-09-16T00:00:00.000Z' },
+          ] },
+          sourceRefs: [{ module: 'expenses', entityType: 'expense', permissionChecked: true, label: 'รายการค่าใช้จ่าย' }],
+          asOf: '2026-09-28T09:00:00.000Z',
+        } as any);
+        return {
+          requestId: req.requestId, replyText: 'ค่าใช้จ่าย: 3 รายการ', sourceRefs: [], sourceLabels: [], webLinks: [],
+          intent: 'read_summary', agent: 'accounting', refused: false,
+          toolsInvoked: ['expense.list_recent'], toolCalls: [{ name: 'expense.list_recent', status: 'ok' }],
+          modelCallCount: 1, modelLineage: [], usage: [], durationMs: 10,
+        };
+      },
+    });
+    (h1.useCase as any).readEvidence = readEvidence;
+    await h1.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-mem-1', messageText: 'ขอดูรายการล่าสุดหน่อยครับ' });
+
+    const outcome1 = outcomeStore.get('evt-mem-1');
+    assert.ok(outcome1?.deliveredAt, 'turn 1 must be recorded as delivered before its memory can carry forward');
+    assert.equal(outcome1.authorizationJson?.readMemory?.entries?.[0]?.tool, 'expense.list_recent');
+    assert.equal(outcome1.authorizationJson.readMemory.entries[0].shownItems[2]?.id, 'expense-3', 'R-M1 keeps display order for ordinal lookups');
+
+    // Turn 2: a FRESH use-case instance, same backing store — same proof shape the existing "remembers
+    // only the delivered public topic across instances" test above already uses for a different field.
+    const h2 = makeUseCase(prisma, {
+      permissions: ['line.ai.query'], config,
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }),
+      aiGatewayFn: () => ({
+        requestId: 'req-mem-2', replyText: 'รายการที่ 3 คือร้านสามการค้าค่ะ', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_detail', agent: 'accounting', refused: false, toolsInvoked: [], toolCalls: [],
+        modelCallCount: 1, modelLineage: [], usage: [], durationMs: 10,
+      }),
+    });
+    (h2.useCase as any).readEvidence = readEvidence;
+    await h2.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-mem-2', messageText: 'รายการที่ 3 คือร้านอะไรครับ' });
+
+    // This is the exact drop the controller reported: the intake-route request the API builds for
+    // turn 2 must itself carry recentReads with the shownItems id "รายการที่ 3" resolves to.
+    assert.equal(h2.intakeRequests.length, 1);
+    const recentReads = h2.intakeRequests[0]?.conversationContext?.recentReads;
+    assert.ok(recentReads?.length, 'turn 2 intake request must carry turn 1 read memory');
+    assert.equal(recentReads[0].tool, 'expense.list_recent');
+    assert.equal(recentReads[0].shownItems?.[2]?.id, 'expense-3', '"รายการที่ 3" must resolve to the third shown item\'s id');
+    assert.equal(
+      recentReads[0].shownItems.some((item: any) => 'amount' in item || 'grandTotalAmount' in item),
+      false,
+      'R-M6: memory carries no amounts',
+    );
   });
 
   /**
