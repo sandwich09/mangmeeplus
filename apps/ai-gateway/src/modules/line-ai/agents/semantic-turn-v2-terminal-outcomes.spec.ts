@@ -59,7 +59,7 @@ describe('item 6: an uncovered product-help question is terminal, and still help
   it('same outcome in English, still naming the web app for setup', async () => {
     const request: LineAiTurnRequest = {
       requestId: 'req-help-2', webhookEventId: 'event-help-2', messageText: 'How do I set up an approval signature?',
-      messagePreviewHash: 'f'.repeat(16), responsePreferences: { language: 'en' },
+      messagePreviewHash: 'f'.repeat(16), responsePreferences: { language: 'en', detail: 'normal', presentation: 'prose' },
       semanticSubrequests: [{ index: 0, kind: 'help', goal: 'Explain how to set up an approval signature', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
       userContext: baseUserContext(),
     };
@@ -98,8 +98,11 @@ describe('item 6: an uncitable read answer is terminal, and tries the determinis
 
   const CONTROL_CALL = JSON.stringify({ calls: [{ index: 0, toolName: 'expense.list_recent', input: { fromDate: '2026-09-01', toDate: '2026-09-28' } }] });
   // The composer cites a source id nothing in `good` produced — exactly SOURCE_COVERAGE_MISSING's
-  // trigger (`answer.sourceRefIds.some(id => !allowed.has(id))`).
-  const UNCITABLE_ANSWER = JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'ยอดรวม 1,000 บาทค่ะ', sourceRefIds: ['not-a-real-source'] }] });
+  // trigger (`answer.sourceRefIds.some(id => !allowed.has(id))`). The claimed amount (9,999) is
+  // deliberately different from the tool's own grounded total (1,000, `goodResult`'s summary) so the
+  // test can tell "the model's uncited number leaked" apart from "the deterministic fallback
+  // correctly renders the tool's real total" (item 2 now prints that total on the list shape too).
+  const UNCITABLE_ANSWER = JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'ยอดรวม 9,999 บาทค่ะ', sourceRefIds: ['not-a-real-source'] }] });
 
   async function run(enabledDeterministicFamilies?: ReadonlySet<string>) {
     const queue = [CONTROL_CALL, UNCITABLE_ANSWER];
@@ -118,7 +121,8 @@ describe('item 6: an uncitable read answer is terminal, and tries the determinis
     const coverage = result.semanticCoverage?.[0];
     assert.equal(coverage?.status, 'handled');
     assert.equal(coverage?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
-    assert.ok(!result.replyText.includes('1,000'), 'the uncited model total must not leak through');
+    assert.ok(!result.replyText.includes('9,999'), 'the uncited model total must not leak through');
+    assert.ok(result.replyText.includes('1,000'), 'the tool\'s own grounded total still renders');
   });
 
   it('falls back to the honest §8 terminal (unsupported, not needs_user) when no family is enabled', async () => {
