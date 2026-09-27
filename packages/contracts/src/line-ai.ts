@@ -242,6 +242,45 @@ export type LineAiDeliveredExpenseSummary = {
   ranges: Array<{ fromDate: string; toDate: string; branchId: string | null }>;
 };
 
+/**
+ * Spec §4 R-M1/R-M4: one entry the customer saw — a numbered record (expense.list_recent,
+ * reimbursement.list_pending_approvals), a breakdown group (expense.get_breakdown; `kind` names the
+ * axis), or the single record a detail read resolved (expense.get_detail, reimbursement.get_detail).
+ * `id` is the ONLY thing an ordinal reference ("รายการแรก", "หมวดแรก") may resolve to (R-M5); never an
+ * amount. `label`/`date` are display text for the router prompt, not business facts to compute from.
+ */
+export type LineAiReadMemoryShownItem = {
+  ordinal: number;
+  id: string;
+  label: string;
+  date?: string;
+  kind?: 'category' | 'branch' | 'vendor';
+};
+
+/**
+ * Spec §4 R-M1: what one successful read tool call actually applied, recorded by the API from the
+ * tool result's OWN `queryApplied`/resolved data — never the model's raw proposed input, so a
+ * follow-up can never inherit a filter that was rejected, ambiguous, or never really took effect.
+ * R-M6: carries NO amounts, ever — this is understanding-only memory; every number in an answer must
+ * come from this turn's own tool results.
+ */
+export type LineAiReadMemory = {
+  tool: string;
+  period?: { fromDate: string; toDate: string };
+  documentStatus?: string;
+  paymentStatus?: string;
+  categoryId?: string;
+  categoryName?: string;
+  vendorId?: string;
+  vendorName?: string;
+  branchId?: string;
+  branchName?: string;
+  groupBy?: 'category' | 'branch' | 'vendor';
+  answerShape: 'single_metric' | 'list';
+  shownItems?: LineAiReadMemoryShownItem[];
+  asOf: string;
+};
+
 export const LINE_AI_EXPENSE_CRITERION_REPLIES = {
   deliveredTh: 'ยอดค่าใช้จ่ายที่แสดงก่อนหน้านี้ไม่รวมรายการที่ “ปฏิเสธ” และ “ยกเลิก” อยู่แล้วค่ะ ยอดนั้นยังรวมรายการที่อยู่ระหว่างตรวจสอบด้วยค่ะ',
   generalTh: 'ตามเกณฑ์ทั่วไป ยอดค่าใช้จ่ายบน LINE ไม่นับรายการที่ถูกปฏิเสธหรือยกเลิก และยังรวมรายการที่อยู่ระหว่างตรวจสอบค่ะ',
@@ -258,6 +297,10 @@ export type LineAiConversationContext = {
   recentTurns: LineAiConversationContextTurn[];
   /** Latest fully evidenced expense summary delivered in this same chat and current access scope. */
   deliveredExpenseSummary?: LineAiDeliveredExpenseSummary;
+  /** Spec §4 R-M2: at most 3 read-tool results delivered in this same chat and current access scope,
+   *  newest first, within `windowMinutes`. `undefined` in a group/room chat (R-M7) or when the access
+   *  scope changed since — never a business-data source, understanding-only (R-M6). */
+  recentReads?: LineAiReadMemory[];
 };
 
 /** Internal request from API to AI Gateway for one LINE turn. */

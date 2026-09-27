@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_EXPENSE_CRITERION_REPLIES } from '@watchdog-bms/contracts';
-import { expenseBranchScopeRequested, isExpenseCriterionOnlyText, LineReadEvidenceService, parseExpenseCriterionAccessAuthorization, thaiMonthMentions } from './line-read-evidence.service';
+import { expenseBranchScopeRequested, isExpenseCriterionOnlyText, LineReadEvidenceService, parseExpenseCriterionAccessAuthorization, readMemoryEvidence, thaiMonthMentions } from './line-read-evidence.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from './line-delivery-access';
 
 describe('read-free LINE outcome authorization', () => {
@@ -240,5 +240,221 @@ describe('exact aggregate read provenance compatibility', () => {
       await service.record(ctx, { periodKey: '2026-08' }, { ...result, ...changes });
       assert.equal(saved.inputJson.expenseSummary, undefined);
     }
+  });
+
+  it('spec §4 R-M1: record() also persists readMemory alongside expenseSummary', async () => {
+    let saved: any;
+    const tx = { $executeRaw: async () => {}, lineReadEvidence: { count: async () => 0, create: async ({ data }: any) => { saved = data; return { id: 'proof' }; } } };
+    const service = new LineReadEvidenceService({ client: { $transaction: async (fn: any) => fn(tx) } } as any, {} as any, new Map());
+    const ctx = { companyId: 'company', userId: 'user', membershipId: 'member', requestId: 'request', locale: 'th-TH', chatKeyHash: 'a'.repeat(16) } as any;
+    const result = { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-27T00:00:00.000Z', sourceRefs: [],
+      data: { total: 1, summary: { countedItems: 1, cancelledCount: 0, totalAmount: '500.00' },
+        period: { fromDate: '2026-08-01', toDate: '2026-08-31', defaultedToCurrentMonth: false },
+        items: [{ id: 'e1', expenseDate: '2026-08-05T10:00:00.000Z', vendorNameSnapshot: 'ร้านสมใจ', grandTotalAmount: '500.00' }] },
+      queryApplied: { timezone: 'Asia/Bangkok', period: { startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Bangkok', defaulted: false },
+        branch: { mode: 'all_authorized', branchId: null }, dateBasis: 'expense_incurred_date', statusBasis: 'exclude_rejected_voided',
+        dataset: 'operational_expense_records', filters: {} } } as any;
+    await service.record(ctx, {}, result);
+    assert.equal(saved.inputJson.readMemory.tool, 'expense.list_recent');
+    assert.equal(saved.inputJson.readMemory.shownItems[0].id, 'e1');
+    assert.equal(saved.inputJson.readMemory.shownItems[0].label, 'ร้านสมใจ');
+    assert.equal(JSON.stringify(saved.inputJson.readMemory).match(/500/), null, 'R-M6: no amount reaches read memory');
+  });
+});
+
+describe('read memory extraction (spec §4 R-M1)', () => {
+  const asOf = '2026-09-27T09:00:00.000Z';
+  const queryApplied = (over: Record<string, unknown> = {}) => ({
+    timezone: 'Asia/Bangkok', period: { startDate: '2026-08-01', endDate: '2026-08-31', timezone: 'Asia/Bangkok', defaulted: false },
+    branch: { mode: 'all_authorized', branchId: null }, dateBasis: 'expense_incurred_date', statusBasis: 'exclude_rejected_voided',
+    dataset: 'operational_expense_records', filters: {}, ...over,
+  });
+
+  it('expense.list_recent: canonical filters from queryApplied (not the raw input), records in display order', () => {
+    const memory = readMemoryEvidence({
+      toolName: 'expense.list_recent', status: 'ok', asOf, sourceRefs: [],
+      data: { total: 2, items: [
+        { id: 'e1', expenseDate: '2026-08-05T10:00:00.000Z', vendorNameSnapshot: 'ร้านสมใจ' },
+        { id: 'e2', expenseDate: '2026-08-02T10:00:00.000Z', vendorNameSnapshot: undefined },
+      ] },
+      queryApplied: queryApplied({ statusBasis: 'CONFIRMED', branch: { mode: 'selected', branchId: 'b1' },
+        filters: { paymentStatus: 'UNPAID', categoryId: 'c1', categoryName: 'อาหาร', vendorId: 'v1', vendorName: 'ร้านสมใจ', branchName: 'สาขาลาดพร้าว' } }),
+    } as any)!;
+    assert.equal(memory.tool, 'expense.list_recent');
+    assert.equal(memory.answerShape, 'list');
+    assert.deepEqual(memory.period, { fromDate: '2026-08-01', toDate: '2026-08-31' });
+    assert.equal(memory.documentStatus, 'CONFIRMED');
+    assert.equal(memory.paymentStatus, 'UNPAID');
+    assert.equal(memory.categoryId, 'c1');
+    assert.equal(memory.categoryName, 'อาหาร');
+    assert.equal(memory.vendorId, 'v1');
+    assert.equal(memory.vendorName, 'ร้านสมใจ');
+    assert.equal(memory.branchId, 'b1');
+    assert.equal(memory.branchName, 'สาขาลาดพร้าว');
+    assert.deepEqual(memory.shownItems, [
+      { ordinal: 1, id: 'e1', label: 'ร้านสมใจ', date: '2026-08-05' },
+      { ordinal: 2, id: 'e2', label: 'ไม่ระบุร้าน', date: '2026-08-02' },
+    ]);
+  });
+
+  it('expense.list_recent: exclude_rejected_voided basis is never recorded as a documentStatus filter', () => {
+    const memory = readMemoryEvidence({ toolName: 'expense.list_recent', status: 'ok', asOf, sourceRefs: [],
+      data: { total: 0, items: [] }, queryApplied: queryApplied() } as any)!;
+    assert.equal(memory.documentStatus, undefined);
+    assert.equal(memory.shownItems, undefined);
+  });
+
+  it('expense.get_breakdown: groups by the effective groupBy, sorted descending, top 8, null-id group dropped', () => {
+    const groups = Array.from({ length: 9 }, (_, i) => ({ categoryId: `c${i}`, category: `หมวด${i}`, totalAmount: String(100 - i) }));
+    groups.push({ categoryId: null as any, category: 'ไม่ระบุหมวด', totalAmount: '999' });
+    const memory = readMemoryEvidence({
+      toolName: 'expense.get_breakdown', status: 'ok', asOf, sourceRefs: [],
+      data: { totalCount: 10, totalAmount: '1000.00', byCategory: groups, byBranch: [], byVendor: [] },
+      queryApplied: queryApplied({ filters: { groupBy: 'category' } }),
+    } as any)!;
+    assert.equal(memory.groupBy, 'category');
+    // The 999-amount null-id row sorts first and fills one of the top-8 DISPLAY slots (the gateway
+    // formatter shows it too, just with no id to remember) — so only 7 of the 10 groups end up
+    // referenceable: c0..c6 (display positions 2-8). c7/c8 never entered the top-8 window at all.
+    assert.equal(memory.shownItems?.length, 7);
+    assert.equal(memory.shownItems?.[0]?.id, 'c0');
+    assert.equal(memory.shownItems?.[0]?.ordinal, 2, 'true display position, after the dropped null-id row');
+    assert.equal(memory.shownItems?.every(item => item.kind === 'category'), true);
+    assert.equal(memory.shownItems?.some(item => item.id === 'c7' || item.id === 'c8'), false, 'beyond the top-8 display window is folded into อื่นๆ, not remembered individually');
+  });
+
+  it('expense.get_breakdown: defaults to category when groupBy is absent', () => {
+    const memory = readMemoryEvidence({
+      toolName: 'expense.get_breakdown', status: 'ok', asOf, sourceRefs: [],
+      data: { totalCount: 1, totalAmount: '10.00', byCategory: [{ categoryId: 'c1', category: 'อาหาร', totalAmount: '10.00' }], byBranch: [], byVendor: [] },
+      queryApplied: queryApplied({ filters: {} }),
+    } as any)!;
+    assert.equal(memory.groupBy, undefined);
+    assert.equal(memory.shownItems?.[0]?.kind, 'category');
+  });
+
+  it('expense.get_detail: remembers the one resolved record, no period/filters', () => {
+    const memory = readMemoryEvidence({
+      toolName: 'expense.get_detail', status: 'ok', asOf, sourceRefs: [],
+      data: { id: 'e1', vendorName: 'ร้านสมใจ', expenseDate: '2026-08-05T10:00:00.000Z', grandTotalAmount: '500.00' },
+    } as any)!;
+    assert.equal(memory.answerShape, 'single_metric');
+    assert.deepEqual(memory.shownItems, [{ ordinal: 1, id: 'e1', label: 'ร้านสมใจ', date: '2026-08-05' }]);
+    assert.equal(memory.period, undefined);
+  });
+
+  it('reimbursement.get_detail: remembers the one resolved record by requester', () => {
+    const memory = readMemoryEvidence({
+      toolName: 'reimbursement.get_detail', status: 'ok', asOf, sourceRefs: [],
+      data: { id: 'r1', requesterDisplayName: 'สมชาย', incurredDate: '2026-08-05', amount: '1500.00' },
+    } as any)!;
+    assert.deepEqual(memory.shownItems, [{ ordinal: 1, id: 'r1', label: 'สมชาย', date: '2026-08-05' }]);
+  });
+
+  it('expense.get_daily_closing: remembers the day as a one-day period, no shownItems', () => {
+    const memory = readMemoryEvidence({
+      toolName: 'expense.get_daily_closing', status: 'ok', asOf, sourceRefs: [],
+      data: { date: '2026-08-16', timezone: 'Asia/Bangkok' },
+    } as any)!;
+    assert.equal(memory.answerShape, 'single_metric');
+    assert.deepEqual(memory.period, { fromDate: '2026-08-16', toDate: '2026-08-16' });
+    assert.equal(memory.shownItems, undefined);
+  });
+
+  it('reimbursement.list_pending_approvals: shownItems in the tool\'s own order, no queryApplied needed', () => {
+    const memory = readMemoryEvidence({
+      toolName: 'reimbursement.list_pending_approvals', status: 'ok', asOf, sourceRefs: [],
+      data: { total: 2, items: [
+        { id: 'r1', requesterDisplayName: 'สมชาย', submittedAt: '2026-08-05T10:00:00.000Z', amount: '1500.00' },
+        { id: 'r2', requesterDisplayName: 'สมหญิง', submittedAt: '2026-08-06T10:00:00.000Z', amount: '2500.00' },
+      ] },
+    } as any)!;
+    assert.equal(memory.answerShape, 'list');
+    assert.deepEqual(memory.shownItems, [
+      { ordinal: 1, id: 'r1', label: 'สมชาย', date: '2026-08-05' },
+      { ordinal: 2, id: 'r2', label: 'สมหญิง', date: '2026-08-06' },
+    ]);
+  });
+
+  it('reimbursement.get_summary: no shownItems, single_metric', () => {
+    const memory = readMemoryEvidence({
+      toolName: 'reimbursement.get_summary', status: 'ok', asOf, sourceRefs: [],
+      data: { pendingApprovalCount: 3, unpaidApprovedCount: 5, overdueApprovalCount: 2, totalUnpaidAmount: '12500.00' },
+    } as any)!;
+    assert.equal(memory.answerShape, 'single_metric');
+    assert.equal(memory.shownItems, undefined);
+  });
+
+  it('returns undefined for a tool outside the memory set, a failed/forbidden result, or a malformed shape', () => {
+    assert.equal(readMemoryEvidence({ toolName: 'sales.get_sales_summary', status: 'ok', asOf, sourceRefs: [], data: { totalSales: '100' } } as any), undefined);
+    assert.equal(readMemoryEvidence({ toolName: 'expense.list_recent', status: 'forbidden', asOf, sourceRefs: [] } as any), undefined);
+    assert.equal(readMemoryEvidence({ toolName: 'expense.list_recent', status: 'ok', asOf, sourceRefs: [], data: null } as any), undefined);
+    assert.equal(readMemoryEvidence({ toolName: 'expense.get_detail', status: 'ok', asOf: 'not-a-date', sourceRefs: [], data: { id: 'e1' } } as any), undefined);
+  });
+
+  it('spec §4 R-M6: no field name or value anywhere in extracted memory ever carries a money amount', () => {
+    const memory = readMemoryEvidence({
+      toolName: 'expense.list_recent', status: 'ok', asOf, sourceRefs: [],
+      data: { total: 1, summary: { totalAmount: '999999.99' }, items: [{ id: 'e1', expenseDate: '2026-08-05T10:00:00.000Z', vendorNameSnapshot: 'ร้านสมใจ', grandTotalAmount: '999999.99' }] },
+      queryApplied: queryApplied(),
+    } as any)!;
+    const serialized = JSON.stringify(memory);
+    assert.doesNotMatch(serialized, /999999/);
+    assert.doesNotMatch(serialized, /[Aa]mount/);
+  });
+});
+
+describe('recentReadsForTurn (spec §4 R-M2/R-M7)', () => {
+  const chatKeyHash = 'e'.repeat(16);
+  const request = (over: Record<string, unknown> = {}) => ({
+    requestId: 'request-1',
+    userContext: { companyId: 'company-1', internalUserId: 'user-1', membershipId: 'membership-1', chatKeyHash, ...((over as any).userContext ?? {}) },
+    ...over,
+  }) as any;
+  const memoryRow = (tool: string, over: Record<string, unknown> = {}) => ({
+    toolName: tool, membershipId: 'membership-1',
+    inputJson: { chatKeyHash, readMemory: { tool, answerShape: 'list', asOf: '2026-09-27T09:00:00.000Z', ...over } },
+  });
+  const serviceFor = (rows: unknown[]) => new LineReadEvidenceService({ client: { lineReadEvidence: { findMany: async () => rows } } } as any, {} as any, new Map());
+
+  it('returns this turn\'s own memory entries for tool calls the response reports as ok', async () => {
+    const response = { refused: false, toolCalls: [{ name: 'expense.list_recent', status: 'ok' }] } as any;
+    const entries = await serviceFor([memoryRow('expense.list_recent')]).recentReadsForTurn(request(), response);
+    assert.equal(entries?.length, 1);
+    assert.equal(entries?.[0]?.tool, 'expense.list_recent');
+  });
+
+  it('spec R-M7: a group/room chat (no chatKeyHash) never gets memory', async () => {
+    const response = { refused: false, toolCalls: [{ name: 'expense.list_recent', status: 'ok' }] } as any;
+    const groupRequest = { requestId: 'request-1', userContext: { companyId: 'company-1', internalUserId: 'user-1', membershipId: 'membership-1' } } as any;
+    assert.equal(await serviceFor([memoryRow('expense.list_recent')]).recentReadsForTurn(groupRequest, response), undefined);
+  });
+
+  it('a refused turn never gets memory', async () => {
+    const response = { refused: true, toolCalls: [] } as any;
+    assert.equal(await serviceFor([]).recentReadsForTurn(request(), response), undefined);
+  });
+
+  it('no qualifying evidence rows returns an empty array, not undefined', async () => {
+    const response = { refused: false, toolCalls: [{ name: 'sales.get_sales_summary', status: 'ok' }] } as any;
+    assert.deepEqual(await serviceFor([]).recentReadsForTurn(request(), response), []);
+  });
+
+  it('a stored row the gateway did not report as a successful call makes the whole result untrusted', async () => {
+    const response = { refused: false, toolCalls: [{ name: 'expense.list_recent', status: 'error' }] } as any;
+    assert.equal(await serviceFor([memoryRow('expense.list_recent')]).recentReadsForTurn(request(), response), undefined);
+  });
+
+  it('an access-scope change (membership) since the read makes the whole result untrusted', async () => {
+    const response = { refused: false, toolCalls: [{ name: 'expense.list_recent', status: 'ok' }] } as any;
+    const wrongMembership = { ...memoryRow('expense.list_recent'), membershipId: 'membership-other' };
+    assert.equal(await serviceFor([wrongMembership]).recentReadsForTurn(request(), response), undefined);
+  });
+
+  it('a chat mismatch on the stored row makes the whole result untrusted', async () => {
+    const response = { refused: false, toolCalls: [{ name: 'expense.list_recent', status: 'ok' }] } as any;
+    const row = memoryRow('expense.list_recent');
+    (row.inputJson as any).chatKeyHash = 'f'.repeat(16);
+    assert.equal(await serviceFor([row]).recentReadsForTurn(request(), response), undefined);
   });
 });

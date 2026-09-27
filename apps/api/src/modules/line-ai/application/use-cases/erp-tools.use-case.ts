@@ -278,6 +278,9 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     // outside their scope, and a name outside that scope stays unresolvable on purpose.
     const requestedBranch = typeof input?.branchId === 'string' && input.branchId.trim() ? input.branchId.trim() : undefined;
     let branchId: string | undefined;
+    // Spec §4 R-M1: the resolved display name, not the raw id/code/name the model sent — this is
+    // what read memory (line-read-evidence.service.ts) shows back for a branch-scoped follow-up.
+    let branchName: string | undefined;
     if (requestedBranch) {
       const scopeWhere = {
         companyId: ctx.companyId,
@@ -333,6 +336,7 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
         };
       }
       branchId = hit.id;
+      branchName = hit.name;
     }
     // categoryName/vendorName resolution (spec §3 row 6): same exact-then-contains match as the
     // branch lookup above. Vendor candidates use the branch already resolved here, not the raw
@@ -418,6 +422,7 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
         ...(vendorId ? { vendorId } : {}),
         ...(vendorFilter.name ? { vendorName: vendorFilter.name } : {}),
         ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
+        ...(branchName ? { branchName } : {}),
       },
     });
     const completeness = completeResult(snapshot.items.length, snapshot.hasMore);

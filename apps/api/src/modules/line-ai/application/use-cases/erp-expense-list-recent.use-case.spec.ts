@@ -208,6 +208,14 @@ describe('ExpenseListRecentTool', () => {
     assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
   });
 
+  it('spec §4 R-M1: echoes the resolved branch display name in queryApplied, not the raw id/code/name the caller sent', async () => {
+    const { tool } = makeFilterCapturingTool([{ id: 'branch-1', name: 'สาธุประดิษฐ์', code: 'STP' }]);
+    const byName = await tool.execute(baseCtx, { branchId: 'สาธุประดิษฐ์' });
+    assert.equal(byName.queryApplied?.filters?.['branchName'], 'สาธุประดิษฐ์');
+    const byCode = await tool.execute(baseCtx, { branchId: 'STP' });
+    assert.equal(byCode.queryApplied?.filters?.['branchName'], 'สาธุประดิษฐ์');
+  });
+
   it('resolves a branch code the same way', async () => {
     const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-1', name: 'สาธุประดิษฐ์', code: 'STP' }]);
     const result = await tool.execute(baseCtx, { branchId: 'STP' });

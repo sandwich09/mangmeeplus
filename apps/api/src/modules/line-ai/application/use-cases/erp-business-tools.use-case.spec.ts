@@ -388,6 +388,13 @@ describe('ExpenseGetBreakdownTool', () => {
     assert.equal(data.period.defaultedToCurrentMonth, true);
   });
 
+  it('spec §4 R-M1: echoes the effective groupBy in queryApplied, defaulting to category', async () => {
+    const defaulted = await new ExpenseGetBreakdownTool(makeSource()).execute({ ...baseCtx, permissions: ['expense.read'] });
+    assert.equal(defaulted.queryApplied?.filters?.['groupBy'], 'category');
+    const byVendor = await new ExpenseGetBreakdownTool(makeSource()).execute({ ...baseCtx, permissions: ['expense.read'] }, { groupBy: 'vendor' } as any);
+    assert.equal(byVendor.queryApplied?.filters?.['groupBy'], 'vendor');
+  });
+
   it('applies the caller branch scope to the query (10D ABAC)', async () => {
     const captured: { ctx?: any; filter?: any } = {};
     await new ExpenseGetBreakdownTool(makeSource(captured)).execute({ ...baseCtx, permissions: ['expense.read'], branchIds: ['b1'] });

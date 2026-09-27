@@ -353,9 +353,13 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
   async execute(ctx: ErpToolContext, input: {
     periodKey?: string; fromDate?: string; toDate?: string; branchId?: string;
     categoryId?: string; vendorId?: string; categoryName?: string; vendorName?: string;
-    documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus;
+    documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus; groupBy?: string;
   } = {}): Promise<ToolResult> {
     let asOf = now();
+    // Spec §4 R-M1: groupBy is a pure presentation hint (gateway formatter picks the axis; this tool
+    // always computes and returns all three) — echo the EFFECTIVE value back in queryApplied so read
+    // memory records what the answer actually featured, not whatever string the model sent.
+    const groupBy = input.groupBy === 'branch' || input.groupBy === 'vendor' ? input.groupBy : 'category';
     const canReadAll = ctx.permissions.includes('expense.read') || ctx.permissions.includes('expense.review');
     const canReadRelated = ctx.permissions.includes('expense.read_related');
     if (!canReadAll && !canReadRelated && !ctx.permissions.includes('expense.read_own')) {
@@ -425,6 +429,7 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
         ...(vendorId ? { vendorId } : {}),
         ...(vendorFilter.name ? { vendorName: vendorFilter.name } : {}),
         ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
+        groupBy,
       },
     });
     const completeness = completeResult(
