@@ -284,3 +284,120 @@ describe('item 3 (223-turn eval batch 2): a two-period comparison is answered wi
     assert.ok(result.replyText.includes('23.6%'));
   });
 });
+
+// ── Item 2 (spec §3 row 8, "รายการที่ 3 คือร้านอะไรครับ") ────────────────────────────────────────
+// A small reference ordinal the customer types THEMSELVES ("รายการที่ 3") is not a tool-derived
+// number, but echoing it back is not fabrication either: userStatedReferenceNumbers in
+// semantic-turn-v2.ts unions verbatim whole numbers 1-20 from the CURRENT message into the
+// numeric-grounding allow-set. Fixture shape copied from the real tool result (ExpenseGetDetailTool's
+// success path, erp-core-detail-tools.use-case.ts) — deliberately free of the digit "3" or "7"
+// anywhere (id/dates/amounts) so passing tests are never accidental leakage from JSON.stringify(data).
+const DETAIL_SOURCE_REF = {
+  label: 'EXP-0009', module: 'expenses', entityType: 'expense', entityId: 'expense-detail-one',
+  asOf: '2026-09-27T18:20:29.656Z', permissionChecked: true as const,
+  webPath: '/companies/company/expenses/expense-detail-one',
+};
+
+function expenseGetDetailResult(): ToolResult {
+  return {
+    toolName: 'expense.get_detail', status: 'ok', asOf: '2026-09-27T18:20:29.656Z',
+    sourceRefs: [DETAIL_SOURCE_REF],
+    data: {
+      id: 'expense-detail-one', expenseNumber: 'EXP-0009', status: 'CONFIRMED', captureSource: 'LINE_UPLOAD', branchId: null,
+      vendorName: null, vendorDocumentNumber: null,
+      expenseDate: '2026-09-14T00:00:00.000Z', dueDate: null,
+      currency: 'THB', vatMode: 'NONE', inputVatClaimStatus: 'NOT_CLAIMED',
+      subtotalAmount: '900.00', discountAmount: '0.00',
+      taxableAmount: '900.00', vatAmount: '0.00', whtAmount: '0.00',
+      grandTotalAmount: '900.00', netPayableAmount: '900.00',
+      paidAmount: '0.00', outstandingAmount: '900.00',
+      paymentStatus: 'UNPAID', duplicateStatus: 'NONE',
+      taxEvidenceStatus: 'NONE', postingStatus: 'NOT_POSTED',
+      lines: [], charges: [], attachmentCount: 0,
+    },
+  };
+}
+
+function detailRequest(messageText: string): LineAiTurnRequest {
+  return {
+    requestId: 'request-detail', webhookEventId: 'event-detail', messageText,
+    messagePreviewHash: 'e'.repeat(16),
+    semanticSubrequests: [{
+      index: 0, kind: 'read', goal: 'รายละเอียดรายการที่ 3', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+      requestedFilters: { expenseId: 'expense-detail-one' },
+    }],
+    userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
+      permissions: ['expense.read'], roles: ['owner'], branchIds: [], locationIds: [], locale: 'th-TH' },
+  };
+}
+
+const DETAIL_CONTROL_CALL = JSON.stringify({
+  calls: [{ index: 0, toolName: 'expense.get_detail', input: { expenseId: 'expense-detail-one' } }],
+  questions: [],
+});
+
+function detailAnswerEnvelope(text: string) {
+  return JSON.stringify({ answers: [{ index: 0, status: 'handled', text, sourceRefIds: ['expenses:expense:expense-detail-one'] }] });
+}
+
+async function runDetail(controls: string[], messageText: string, enabledDeterministicFamilies?: ReadonlySet<string>) {
+  const queue = [...controls];
+  const provider: IModelProvider = { async generateText(_input: ProviderInput): Promise<ProviderOutput> {
+    return { ok: true, text: queue.shift() ?? '{}' };
+  } };
+  return runSemanticTurnV2({
+    req: detailRequest(messageText), provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+    publicLookupEnabled: false, approvedKnowledgeEnabled: false, enabledDeterministicFamilies,
+    async invoke(): Promise<ToolResult> { return expenseGetDetailResult(); },
+  });
+}
+
+describe('semantic turn v2: item 2 (spec §3 row 8) small user-typed ordinals are grounded', () => {
+  it('accepts a reference ordinal ("3") copied verbatim from the current message, with no vendor to report', async () => {
+    const text = 'รายการที่ 3 ไม่ได้ระบุชื่อร้านค้าไว้ค่ะ';
+    const result = await runDetail([DETAIL_CONTROL_CALL, detailAnswerEnvelope(text)], 'รายการที่ 3 คือร้านอะไรครับ');
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+    assert.ok(result.replyText.includes('รายการที่ 3'));
+  });
+
+  it('still rejects a user-typed amount ("5,000") even though it was typed in the current message', async () => {
+    const text = 'รายการที่ 3 ยอด 5,000 บาทใช่ไหมคะ';
+    const result = await runDetail([DETAIL_CONTROL_CALL, detailAnswerEnvelope(text)], 'รายการที่ 3 คือ 5,000 บาทใช่ไหมครับ');
+    assert.notEqual(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+  });
+
+  it('still rejects a small reference number that never appears in the current message at all', async () => {
+    const text = 'รายการที่ 7 ไม่ได้ระบุชื่อร้านค้าไว้ค่ะ';
+    const result = await runDetail([DETAIL_CONTROL_CALL, detailAnswerEnvelope(text)], 'รายการที่ 3 คือร้านอะไรครับ');
+    assert.notEqual(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+  });
+});
+
+// ── Item 3 (spec §3 row 8) — expense.get_detail::single_metric as the deterministic fallback ──────
+// Same recovery C1(c)/(d) already proves for expense.list_recent: grounding-exhausted (or otherwise
+// uncitable) composition never shows the raw rejection or lingers as `needs_user` — it renders the
+// SAME verified, model-free formatter the prepared lane trusts, gated by the SAME operator allowlist.
+describe('semantic turn v2: item 3 (spec §3 row 8) expense.get_detail as the deterministic fallback', () => {
+  const INVENTED_DETAIL = 'รายการที่ 3 ยังค้างจ่ายอีกประมาณ 3,500 บาทค่ะ';
+
+  it('renders expense.get_detail::single_metric when its family is enabled, never `needs_user`', async () => {
+    const result = await runDetail([DETAIL_CONTROL_CALL, detailAnswerEnvelope(INVENTED_DETAIL)],
+      'รายการที่ 3 คือร้านอะไรครับ', new Set(['expense.get_detail::single_metric']));
+    const coverage = result.semanticCoverage?.[0];
+    assert.equal(coverage?.status, 'handled');
+    assert.equal(coverage?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
+    assert.match(result.replyText, /ค่าใช้จ่าย: ไม่ระบุร้าน วันที่ 14 กันยายน 2569 ยอด 900\.00 บาท/);
+    assert.ok(!result.replyText.includes('3,500'));
+  });
+
+  it('falls back to the honest §8 terminal (unsupported, not needs_user) when no family is enabled', async () => {
+    const result = await runDetail([DETAIL_CONTROL_CALL, detailAnswerEnvelope(INVENTED_DETAIL)], 'รายการที่ 3 คือร้านอะไรครับ');
+    const coverage = result.semanticCoverage?.[0];
+    assert.equal(coverage?.status, 'unsupported');
+    assert.notEqual(coverage?.status, 'needs_user');
+    assert.equal(coverage?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+  });
+});

@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
-  "sourceRevision": "efcb8c676e76f64483c86f6d8d3ea67489a1bd6b",
-  "checkoutBranch": "claude/mangmee-ai-advisor-20260927",
-  "checkoutDirty": false,
+  "sourceRevision": "3691605c819a561793dee5005e6d1c79cd727c30",
+  "checkoutBranch": "claude/mangmee-ai-advisor-fixes3",
+  "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -45,7 +45,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts",
-      "sha256": "02a34572f8a68e317088eb837207a8e74a502b5717e9bd247e176f330b624f82"
+      "sha256": "7cd30308057b13741fbeb7808c40d9745bd1a06d8f4055276d1841c315473df0"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
@@ -89,7 +89,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts",
-      "sha256": "aa6570ba43e8108528605a352a89de2d50db46cff95534dc3e73a711713d77f7"
+      "sha256": "235c375dedce73d9de0821def3216c01deac418f252091a99fb517ac72e74dd8"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-workflow-tools.use-case.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "4613e07a9dfad893e3f0aed735bb3e21d79153828686257163e438f03066d093"
+      "sha256": "c6a8896306ad76939628576ec34724d6752d8c86201974ec6dc62aa6458ab1c3"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -169,11 +169,11 @@
     },
     {
       "path": "packages/config/src/index.ts",
-      "sha256": "e810f30f907b1a89b0682fb700929a7ed650176e5e8c1e50505d3177037936ef"
+      "sha256": "12555d439cd0f6deed69d5f4364ede807b0c0ea07e7052214523f26c0dcf9654"
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "84c19b251350870878601b1dab9a36b491e4efa57c79fc099a95664444a143a7"
+      "sha256": "b7f2b64ae45657c8fd3493155cf3302c59070ae8e1b6579bc91f12ff91577ab2"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-27T22:25:01.837Z",
-  "manifestDigest": "fe7fccc2bbc365cd2dbac17f2115648a0f4edba0a51c26d12de66f8e0c8a3ca1"
+  "generatedAt": "2026-09-27T22:56:41.566Z",
+  "manifestDigest": "c4e136d4e6930c525d1a038429fe57538c30f654d6f2e3e96e91584c9c30d676"
 }
