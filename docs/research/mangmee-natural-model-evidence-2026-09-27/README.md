@@ -7,7 +7,7 @@ Status: failed conversational acceptance; AI-assisted review, not human certific
 - `wire-audit.json`: repository envelope and tenant/route checks; no browser authentication or native LINE validation.
 - `pdf-guard-nat06*` / `review-pdf-retest.json`: separate `063b7f2a` retest, 5 observed; no financial writes, but QA evidence failure/current-file mismatch.
 - `image-final-nat05*` / `review-image-retest.json`: separate `e9d86738` retest, 5 observed; image fields extracted correctly in intake but not delivered to user. No document reader/preview success.
-- `qa-final-media*` / `qa-final-wire.html` / `qa-final-reader-output.json`: final scoped source `a9763631`, planned10, observed6; PDF reader executes but output fails QA contract and event stays delivery_pending until timeout. No acceptance.
+- `qa-final-media*` / `qa-final-wire.html` / `qa-final-reader-output.json` / `review-final-media.json`: final scoped source `a9763631`, planned10, observed6; PDF reader executes but output fails QA contract and event stays delivery_pending until timeout. No acceptance.
 - `direct-image-*`: same model/image with a short provider-only prompt, five fields correct. Not an application or LINE test.
 
 All rows use isolated synthetic fixtures. Images/PDFs and authored draft labels are in `../mangmee-ai-natural-assets-2026-09-27/`; original225 assets/labels were not changed. NAT04 lacks two prior receipt sources, so source-selection/preview acceptance stays BLOCKED_FIXTURE.
