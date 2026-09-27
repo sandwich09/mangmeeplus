@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
-import { validateCorpus, flattenTurns, type Corpus } from './types';
+import { validateCorpus, flattenTurns, parseFailedConversationIds, selectConversations, type Corpus } from './types';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -160,5 +160,37 @@ describe('flattenTurns', () => {
     assert.deepEqual(flat.map((row) => [row.conversation.id, row.turnIndex, row.turn.user]), [
       ['a', 0, 'one'], ['a', 1, 'two'], ['b', 0, 'เดือนนี้จ่ายไปเท่าไหร่'],
     ]);
+  });
+});
+
+describe('parseFailedConversationIds', () => {
+  it('de-duplicates a conversation with more than one failing turn, in first-seen order', () => {
+    const evidence = { summary: { failures: [
+      { conversationId: 'b-manager-approvals' }, { conversationId: 'a-owner-monthly-flow' }, { conversationId: 'b-manager-approvals' },
+    ] } };
+    assert.deepEqual(parseFailedConversationIds(evidence), ['b-manager-approvals', 'a-owner-monthly-flow']);
+  });
+
+  it('returns an empty list for a fully-passing run', () => {
+    assert.deepEqual(parseFailedConversationIds({ summary: { failures: [] } }), []);
+  });
+});
+
+describe('selectConversations', () => {
+  const corpus: Corpus = { version: 1, conversations: [
+    validConversation({ id: 'a' }) as never, validConversation({ id: 'b' }) as never, validConversation({ id: 'c' }) as never,
+  ] };
+
+  it('returns every conversation, unchanged, when no subset was requested', () => {
+    assert.deepEqual(selectConversations(corpus, null), corpus.conversations);
+  });
+
+  it('keeps only the requested ids, in the CORPUS\'s own order (not the request order)', () => {
+    const selected = selectConversations(corpus, ['c', 'a']);
+    assert.deepEqual(selected.map((conversation) => conversation.id), ['a', 'c']);
+  });
+
+  it('throws on a misspelled/stale id rather than silently running fewer conversations', () => {
+    assert.throws(() => selectConversations(corpus, ['a', 'does-not-exist']), /does-not-exist/);
   });
 });

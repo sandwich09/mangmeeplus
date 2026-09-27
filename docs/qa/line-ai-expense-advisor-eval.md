@@ -90,6 +90,27 @@ per turn after the first in that conversation) sleeps `MANGMEE_EVAL_TURN_PAUSE_M
 default to `0` (off) inside that shared file, so every other caller of
 `runLineReliabilityRuntime` that never sets them is unaffected.
 
+### Re-running a subset
+
+To confirm a fix without paying for (and waiting on) the whole corpus again, `run-real.ts` accepts
+`MANGMEE_EVAL_ONLY`, in either of two forms:
+
+```bash
+# a comma-separated list of conversation ids
+MANGMEE_EVAL_ONLY=A-owner-monthly-flow,B-manager-approvals ... run-real.ts
+
+# every conversation that had a failing turn in a previous run's evidence.json
+MANGMEE_EVAL_ONLY=/path/to/previous.evidence.json MANGMEE_EVAL_ONLY_FAILED=1 ... run-real.ts
+```
+
+Selection is always by WHOLE conversation (`types.ts` `selectConversations`/
+`parseFailedConversationIds`) — a follow-up turn needs its own history, so re-running a single turn
+in isolation is never offered. An id that does not exist in the corpus throws immediately, rather
+than silently running fewer conversations than asked for. Both the console `real_run_start` line,
+the written `evidence.json`, and the `.report.md` (a `> **Subset run — not the full corpus.**`
+line right under the header) say when a run is a subset, and of what — never indistinguishable
+from a full run.
+
 Writes `<ISO-timestamp>.evidence.json` (full `turnEvidence`, per-turn scores, summary) and
 `<ISO-timestamp>.report.md` (summary table, per-category table, a failures section with the
 transcript-so-far and gold `expect` for every failed turn) into `MANGMEE_EVAL_OUTPUT_DIR`.

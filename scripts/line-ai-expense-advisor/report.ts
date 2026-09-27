@@ -63,8 +63,14 @@ export function renderReport(input: {
   scores: TurnScore[];
   corpus: Corpus;
   turnEvidence: RuntimeTurnEvidence[];
+  /** Task item "re-run a subset": present only when MANGMEE_EVAL_ONLY selected fewer than the
+   * corpus's full conversation list — the report must say so, never look like a full run. */
+  subset?: { onlyIds: string[]; description: string };
 }): string {
-  const { sourceCommit, now, summary, scores, corpus, turnEvidence } = input;
+  const { sourceCommit, now, summary, scores, corpus, turnEvidence, subset } = input;
+  const subsetBanner = subset
+    ? `> **Subset run — not the full corpus.** ${corpus.conversations.length} conversation(s) selected from ${subset.description}: ${subset.onlyIds.join(', ')}\n\n`
+    : '';
   const byCategoryRows = Object.entries(summary.byCategory).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
     .map(([category, row]) => `| ${category} | ${row.passed}/${row.total} |`).join('\n');
   const failureSections = summary.failures.map((failure) => {
@@ -89,6 +95,7 @@ export function renderReport(input: {
   }).join('\n');
   return `# LINE AI expense-advisor eval report\n\n`
     + `- Source commit: \`${sourceCommit}\`\n- Run started: ${now.toISOString()}\n- Corpus: ${corpus.conversations.length} conversations, ${scores.length} turns\n\n`
+    + subsetBanner
     + `## Summary\n\n| | |\n|---|---|\n| Passed | ${summary.passed} |\n| Failed | ${summary.failed} |\n| Pass rate | ${(summary.passRate * 100).toFixed(1)}% |\n\n`
     + `## By category (spec §3 row)\n\n| Category | Passed/Total |\n|---|---|\n${byCategoryRows}\n\n`
     + `## Failures\n\n${failureSections || '_none_'}\n`;

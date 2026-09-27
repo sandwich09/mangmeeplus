@@ -123,4 +123,21 @@ describe('renderReport', () => {
     const report = renderReport({ sourceCommit: 'abc123', now: NOW, summary: summarizeScores(passing), scores: passing, corpus, turnEvidence: [] });
     assert.match(report, /_none_/);
   });
+
+  it('says it is a subset run, and names the selected ids and why, when subset is given', () => {
+    const passing: TurnScore[] = [{ conversationId: 'conv-1', turnIndex: 0, category: '1', passed: true, reasons: [] }];
+    const report = renderReport({
+      sourceCommit: 'abc123', now: NOW, summary: summarizeScores(passing), scores: passing, corpus, turnEvidence: [],
+      subset: { onlyIds: ['conv-1'], description: 'an explicit MANGMEE_EVAL_ONLY list' },
+    });
+    assert.match(report, /Subset run/);
+    assert.match(report, /conv-1/);
+    assert.match(report, /an explicit MANGMEE_EVAL_ONLY list/);
+  });
+
+  it('says nothing about a subset when none was requested', () => {
+    const passing: TurnScore[] = [{ conversationId: 'conv-1', turnIndex: 0, category: '1', passed: true, reasons: [] }];
+    const report = renderReport({ sourceCommit: 'abc123', now: NOW, summary: summarizeScores(passing), scores: passing, corpus, turnEvidence: [] });
+    assert.doesNotMatch(report, /Subset run/);
+  });
 });

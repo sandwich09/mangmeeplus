@@ -190,3 +190,26 @@ export function flattenTurns(corpus: Corpus): Array<{ conversation: Conversation
   return corpus.conversations.flatMap((conversation) =>
     conversation.turns.map((turn, turnIndex) => ({ conversation, turnIndex, turn })));
 }
+
+/** The minimal shape run-real.ts's own `*.evidence.json` has, for re-running just the
+ * conversations that failed last time (task item "re-run a subset"). */
+export type EvidenceFileForSubsetSelection = { summary: { failures: Array<{ conversationId: string }> } };
+
+/** Every conversation id that had at least one failing turn, in first-seen order, de-duplicated —
+ * a conversation with 2 failing turns is still just ONE id to re-run (whole conversations only:
+ * a follow-up turn needs its own history, never a single turn in isolation). */
+export function parseFailedConversationIds(evidence: EvidenceFileForSubsetSelection): string[] {
+  return [...new Set(evidence.summary.failures.map((failure) => failure.conversationId))];
+}
+
+/** `onlyIds === null` means "no subset requested" — every conversation runs, unchanged. Otherwise
+ * keeps the corpus's own order (never `onlyIds`' order) and refuses a stale/misspelled id outright
+ * — silently running fewer conversations than asked for is the one wrong failure mode for a
+ * re-run whose whole point is confirming a specific fix. */
+export function selectConversations(corpus: Corpus, onlyIds: readonly string[] | null): Conversation[] {
+  if (onlyIds === null) return corpus.conversations;
+  const known = new Set(corpus.conversations.map((conversation) => conversation.id));
+  for (const id of onlyIds) assert.ok(known.has(id), `MANGMEE_EVAL_ONLY: no conversation with id "${id}" in this corpus`);
+  const wanted = new Set(onlyIds);
+  return corpus.conversations.filter((conversation) => wanted.has(conversation.id));
+}

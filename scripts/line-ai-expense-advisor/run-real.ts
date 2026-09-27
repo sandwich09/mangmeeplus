@@ -62,7 +62,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runLineReliabilityRuntime, type ReliabilityRuntimeManifest, type RuntimeSourceSnapshot, type RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 import { reliabilityDigest, type ReliabilityFixture } from '../line-ai-reliability-fixtures';
-import { validateCorpus, flattenTurns, type Corpus, type EvalCompany } from './types';
+import { validateCorpus, flattenTurns, selectConversations, parseFailedConversationIds, type Corpus, type EvalCompany } from './types';
 import { buildCompanySeed, applySeedRows, truncateAllTables, SHARED_ACCESS_ROWS, type CompanySeed, type PgClientLike } from './seed';
 import { scoreTurn, summarizeScores, type CapturedEvidence, type ExpectedFact, type ToolResultLike, type TurnScore } from './scorer';
 import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFactsForCall, extractOfferedChoices, gitHeadSha, type ShownItem } from './oracle';
@@ -102,6 +102,23 @@ process.env['MANGMEE_EVAL_CONVERSATION_PAUSE_MS'] ??= '2000';
 
 function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(resolve(REPO_ROOT, path))).digest('hex');
+}
+
+export type SubsetSelection = { onlyIds: string[]; description: string };
+
+/** Task item "re-run a subset": MANGMEE_EVAL_ONLY is either a comma-separated list of conversation
+ * ids, or — with MANGMEE_EVAL_ONLY_FAILED=1 — a path to a previous run's *.evidence.json, in which
+ * case every conversation that had a failing turn in it is re-run. Always whole conversations
+ * (selectConversations, types.ts): a follow-up turn needs its own history, never a single turn run
+ * in isolation. `null` means no subset was requested — every conversation in the corpus runs. */
+function resolveSubsetSelection(): SubsetSelection | null {
+  const only = process.env['MANGMEE_EVAL_ONLY'];
+  if (!only) return null;
+  if (process.env['MANGMEE_EVAL_ONLY_FAILED'] === '1') {
+    const evidence = JSON.parse(readFileSync(resolve(REPO_ROOT, only), 'utf8'));
+    return { onlyIds: parseFailedConversationIds(evidence), description: `conversations with a failing turn in ${only}` };
+  }
+  return { onlyIds: only.split(',').map((id) => id.trim()).filter(Boolean), description: 'an explicit MANGMEE_EVAL_ONLY list' };
 }
 
 /** Every text a delivered LINE message could carry a fact in: a plain text bubble's `text`, and a
@@ -273,8 +290,10 @@ async function main(): Promise<void> {
   databaseUrl.pathname = `/${DB_NAME}`;
   databaseUrl.searchParams.set('schema', 'public');
 
-  const corpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8')) as Corpus;
-  validateCorpus(corpus);
+  const fullCorpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8')) as Corpus;
+  validateCorpus(fullCorpus);
+  const subset = resolveSubsetSelection();
+  const corpus: Corpus = subset ? { ...fullCorpus, conversations: selectConversations(fullCorpus, subset.onlyIds) } : fullCorpus;
   const flat = flattenTurns(corpus);
 
   const now = new Date();
@@ -309,7 +328,7 @@ async function main(): Promise<void> {
     repeats: 1, cohort: '1000', bootstrapLaunchGates: true,
   };
 
-  console.log(JSON.stringify({ event: 'real_run_start', conversations: fixtures.length, turns: flat.length, sourceCommit }));
+  console.log(JSON.stringify({ event: 'real_run_start', conversations: fixtures.length, turns: flat.length, sourceCommit, subset: subset ?? undefined }));
   const result = await runLineReliabilityRuntime(manifest, REPO_ROOT);
 
   if (result.records.some((record: { error: string | null }) => record.error) || result.runtimeDiagnostics.length) {
@@ -346,8 +365,8 @@ async function main(): Promise<void> {
   const evidencePath = resolve(outputDir, `${stamp}.evidence.json`);
   const reportPath = resolve(outputDir, `${stamp}.report.md`);
   const safeManifest = { ...manifest, databaseUrl: '[redacted]', gatewayUrl: '[redacted-local]' };
-  writeFileSync(evidencePath, JSON.stringify({ startedAt: now.toISOString(), sourceCommit, model, manifest: safeManifest, scores, summary, turnEvidence: result.turnEvidence, runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
-  writeFileSync(reportPath, renderReport({ sourceCommit, now, summary, scores, corpus, turnEvidence: result.turnEvidence }));
+  writeFileSync(evidencePath, JSON.stringify({ startedAt: now.toISOString(), sourceCommit, model, manifest: safeManifest, subset: subset ?? undefined, scores, summary, turnEvidence: result.turnEvidence, runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
+  writeFileSync(reportPath, renderReport({ sourceCommit, now, summary, scores, corpus, turnEvidence: result.turnEvidence, subset: subset ?? undefined }));
 
   console.log(JSON.stringify({ event: 'real_run_done', evidencePath, reportPath, total: summary.total, passed: summary.passed, failed: summary.failed }));
   process.exitCode = summary.failed > 0 ? 1 : 0;
