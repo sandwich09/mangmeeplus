@@ -416,6 +416,11 @@ describe('ExpenseListRecentTool', () => {
       assert.deepEqual((result.data as any).availableVendors, [
         { id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' },
       ]);
+      // Item 2 (223-turn eval batch 2): this 'ok' result must carry a real source citation, or the
+      // gateway's enforceSourceHonesty boundary check discards it as TOOL_RESULT_NO_SOURCE before
+      // any caller (classic or model-driven) ever sees availableVendors.
+      assert.ok(result.sourceRefs.length > 0);
+      assert.ok(result.sourceRefs.every((ref) => ref.permissionChecked === true && ref.module === 'expenses'));
     });
 
     it('returns a not-found result listing the available categories instead of records', async () => {
@@ -425,6 +430,9 @@ describe('ExpenseListRecentTool', () => {
       assert.equal(filters.length, 0);
       assert.equal((result.data as any).categoryUnresolved, 'ค่าเช่า');
       assert.deepEqual((result.data as any).availableCategories, [{ id: 'cat1', name: 'ค่าน้ำมัน' }, { id: 'cat2', name: 'ค่าไฟ' }]);
+      // Item 2: same source-honesty requirement as the ambiguous case above.
+      assert.ok(result.sourceRefs.length > 0);
+      assert.ok(result.sourceRefs.every((ref) => ref.permissionChecked === true && ref.module === 'expenses'));
     });
 
     it('returns an input error when vendorId and vendorName resolve to different vendors', async () => {

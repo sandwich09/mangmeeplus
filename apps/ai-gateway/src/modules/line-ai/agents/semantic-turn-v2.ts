@@ -15,6 +15,7 @@ import { formatPreparedSimpleRead } from './prepared-simple-read-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
 import { canonicalizeReadToolEnums, conversationReadCandidates, resolvePeriodKeyAlias } from './read-tool-input';
+import { expenseNameResolutionIssue, expenseNameResolutionReplyText, type ExpenseNameResolutionIssue } from '../domain/logic/business-read-result-semantics';
 
 const logger = new Logger('SemanticTurnV2');
 
@@ -401,6 +402,17 @@ export async function runSemanticTurnV2(input: {
     }
     if (!results.slice(previousResultCount).some(entry => entry.result.toolName === 'reimbursement.draft.get_options' && entry.result.status === 'ok')) break;
   }
+  // Item 2 (223-turn eval batch 2): computed once per index right after the tool-call loop — not
+  // inside the final per-item loop below — so a name-resolution turn also SKIPS the compose call
+  // (needsComposition below); the answer is fully decided by this deterministic data, never a
+  // model-composed sentence around it.
+  const nameIssues = new Map<number, ExpenseNameResolutionIssue>();
+  for (const item of inventory) {
+    if (item.kind !== 'read') continue;
+    const good = results.filter(entry => entry.index === item.index && entry.result.status === 'ok').map(entry => entry.result);
+    const issue = good.length ? expenseNameResolutionIssue([toSpecialistOutput(good)]) : undefined;
+    if (issue) nameIssues.set(item.index, issue);
+  }
   const knowledge = input.approvedKnowledgeEnabled && req.approvedKnowledge === true
     ? renderApprovedKnowledge(PRODUCT_HELP_PACK, req.selectedKnowledgeCardIds, productKnowledgeAccess(req.userContext.permissions,
       req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? [], true, language), req.userContext.companyId) : null;
@@ -413,7 +425,7 @@ export async function runSemanticTurnV2(input: {
       sources: entry.result.sourceRefs.map(ref => ({ ...ref, id: sourceId(ref) })) })), questions: [...questions].map(([index, text]) => ({ index, text })),
     approvedHelp: knowledge?.replyText ?? capabilityHelp, forcedOutcomes: [...forced].map(([index, value]) => ({ index, ...value })) };
   let parsed: Record<string, unknown> | undefined;
-  const needsComposition = inventory.some(item => item.kind !== 'help' && !forced.has(item.index) && !questions.has(item.index));
+  const needsComposition = inventory.some(item => item.kind !== 'help' && !forced.has(item.index) && !questions.has(item.index) && !nameIssues.has(item.index));
   for (let attempt = 0; needsComposition && attempt < 2; attempt++) {
     if (attempt) {
       const state = currentBudgetState();
@@ -435,8 +447,24 @@ export async function runSemanticTurnV2(input: {
     let answer = answers.find(answer => answer.index === item.index) ?? { index: item.index, status: 'unsupported' as const, text: READ_UNAVAILABLE_TEXT[language], reasonCode: 'SEMANTIC_ANSWER_UNAVAILABLE' };
     const assigned = results.filter(entry => entry.index === item.index).map(entry => entry.result);
     const good = assigned.filter(result => result.status === 'ok');
+    // Item 2 (223-turn eval batch 2, T-011#2/T-062#0/T-008#3): expense.list_recent/get_breakdown's
+    // {vendorAmbiguous|categoryAmbiguous, available…}/{vendorUnresolved|categoryUnresolved, …} is a
+    // real, permission-checked answer — never trust the model's free-form prose around it (the eval
+    // saw it parrot a literal internal errorCode, and once the wrong year). Reuse the same helpers
+    // the classic path's expenseBranchResolutionReply already trusts, checked BEFORE forced/questions
+    // would matter here anyway (those only ever populate when no successful result exists).
+    const nameIssue = nameIssues.get(item.index);
     if (forced.has(item.index)) answer = { index: item.index, ...forced.get(item.index)! };
     else if (questions.has(item.index)) answer = { index: item.index, status: 'needs_user', text: questions.get(item.index)!, reasonCode: 'MISSING_REQUIRED_INPUT' };
+    else if (nameIssue) {
+      const replyText = expenseNameResolutionReplyText(nameIssue, language === 'en');
+      answer = nameIssue.kind === 'ambiguous'
+        // A real clarification question: needs_user is correct here (spec item 2).
+        ? { index: item.index, status: 'needs_user', text: replyText, reasonCode: 'EXPENSE_NAME_AMBIGUOUS' }
+        // Not found: a terminal answer, never a question — nothing more the customer can add.
+        : { index: item.index, status: 'handled', text: replyText, reasonCode: 'EXPENSE_NAME_UNRESOLVED',
+          sourceRefIds: good.flatMap(result => result.sourceRefs.map(sourceId)) };
+    }
     else if (item.kind === 'help') {
       // Product instructions are immutable reviewed source text. Model prose cannot add a button,
       // permission or financial operation that was absent from that source.
