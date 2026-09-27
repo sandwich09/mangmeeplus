@@ -18,7 +18,7 @@ Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangme
 | 4 | guard คอนโซล: "เปิดใช้งานบริษัท" สำหรับร้าน term-disabled (web ซ่อน + API ปฏิเสธ `partner_activation_term_locked`), อนุมัติคำขอเปลี่ยนแพ็กเกจของร้านล็อก (web ซ่อนปุ่ม + API ปฏิเสธ `package_change_company_locked`) | `partner-lifecycle-transition.use-case.ts`, `package-change-decision.use-case.ts`, `PartnerDetailPage.tsx:3161`, `SignupQueuePage.tsx:779-787` |
 | 5 | LoginPage R-B5 ขยาย: มาจากลิงก์ LINE + ไม่มี session → เริ่ม LINE login ทันที; `channel=line` → ปุ่ม LINE บนสุด + ฟอร์มรหัสผ่านพับ; copy `:41`; log `login_wall_from_line_link` ที่ BFF start route | `apps/web/src/features/auth/LoginPage.tsx`, `apps/web/app/api/auth/line-login/start/route.ts` |
 | 6 | R-B4: ในเบราว์เซอร์ของ LINE แสดง "เปิดหน้านี้ใน Safari/Chrome" แทน reauth; copy `:99,:111`; `account/email/page.tsx` back-link ตาม permission + copy `:25` + รับ `channel=line`; start route redirect `/login?next=` เมื่อไม่มี session | `AccountEmailOtpPanel.tsx`, `apps/web/app/account/email/page.tsx`, `start/route.ts:32` |
-| 7 | DQ8: session ลูกค้า 30 วัน / platform 7 วัน ที่ `issue-token.use-case.ts` + cookie maxAge ฝั่งเว็บ | `issue-token.use-case.ts:18-19,58-74`, `apps/web/src/common/auth/auth-cookies.constants.ts:34` |
+| 7 | ~~DQ8: session ลูกค้า 30 วัน~~ **ตัดออก — Owner 2026-09-27 ให้คงอายุ session 7 วันไปก่อน**; ไม่แตะ `issue-token.use-case.ts` และ `auth-cookies.constants.ts` (แนวทางเก็บไว้ใน §3.13) | — |
 | 8 | RV30: `PLAN_TERM_CHANGED_EVENT` + WorkspaceLayout re-read notice/`router.refresh()` + re-read on focus/visibility | `plan-term.api.ts`, `BillingPage.tsx:289`, `WorkspaceLayout.tsx:75-105` |
 | 9 | ลิงก์โควตาใบเสร็จ permission-aware (G18), ปุ่มจ่ายในการ์ดใกล้หมดอายุ (G17), back link ของ locked shell → settings (F20) | `ExpensesPages.tsx:289,517-531,2901,2970`, `PlanTermSidebarCard.tsx:78-105`, `BillingPage.tsx:306-307` |
 | 10 | tests แก้/เพิ่ม + ลงทะเบียน | §5 |
@@ -33,7 +33,6 @@ Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangme
 - ปุ่ม "ต่ออายุ" ของร้าน `no_package` มีคำเตือนผลข้างเคียงจริง 5 ข้อ (§4) + เหตุผลบังคับ (เดิม); ปุ่ม "เปิดใช้งานบริษัท" ไม่แสดงสำหรับร้าน term-locked และ API ปฏิเสธด้วย `partner_activation_term_locked`; ปุ่ม "เปลี่ยนแพ็กเกจให้" ไม่แสดงสำหรับร้านล็อกในคิว และ API ปฏิเสธด้วย `package_change_company_locked`
 - `/login?line=handoff-expired&next=…` และ `/login?next=…channel=line…` โดยไม่มี session → ไม่เห็นฟอร์มรหัสผ่าน เห็นหน้า "กำลังเข้าสู่ระบบด้วย LINE…" แล้วเด้งไป LINE (เมื่อ LINE login available); กลับมาลง `next`; วน loop ไม่ได้ (§8)
 - ในเบราว์เซอร์ของ LINE หน้าอีเมลบัญชีไม่มีปุ่ม reauth ที่พาออกนอกโดยไม่มี session — มีปุ่ม "เปิดหน้านี้ใน Safari/Chrome"; start route ที่ไม่มี session redirect `/login?next=<returnTo>`
-- `AuthSession.expiresAt` ของผู้ใช้ร้าน = now + 30 วัน, ของ SYSTEM_ADMIN/MANGMEE_SALES* = now + 7 วัน; refresh cookie ฝั่งเว็บอยู่ได้ 30 วัน; `refresh-session.use-case.ts` ไม่ถูกแตะ
 - หลังชำระสำเร็จใน locked shell หน้าปลดล็อกในที่ (sidebar ธุรกิจโผล่) โดยไม่ต้อง reload มือ
 - spec ที่แตะทั้งหมดผ่าน; `spec-suite-coverage.spec.ts`, `api-error-coverage.spec.ts` ผ่าน; contracts spec ใหม่อยู่ใน `ci.yml`; `sync-production-maintenance-release-pins.mjs --check` ผ่าน; ci.yml ที่แก้ต้องขึ้น main แบบ byte-identical ก่อน UAT all (P0)
 - `docs/agent-memory/purchase-without-setup-2026-09-26.md` อัปเดต Status/Verification/Next
@@ -481,7 +480,7 @@ export const SALES_ACCESS_STATE_META: Record<SalesCompanyAccessState, { label: s
     if (!accessToken) return NextResponse.redirect(new URL(returnTo ? `/login?next=${encodeURIComponent(returnTo)}` : '/login', origin));
 ```
 
-### 3.13 DQ8 — session 30 วัน
+### 3.13 DQ8 — session 30 วัน — **ไม่ทำในรอบนี้ (Owner 2026-09-27: คงเดิม 7 วัน)** — เก็บแนวทางไว้สำหรับอนาคต ห้ามแตะไฟล์ในหัวข้อนี้ใน PR B
 
 `apps/api/src/modules/auth/application/use-cases/issue-token.use-case.ts`:
 - `:18-19` →
@@ -672,7 +671,7 @@ export function notifyPlanTermChanged(): void {
 | ไฟล์ | ครอบ |
 |---|---|
 | `packages/contracts/src/plan-term.spec.ts` | `planTermLockReason` 4 เคสเดิม (`plan-term.logic.spec.ts:27-48`) ทั้งแบบ `Date` และ ISO string; `planTermState`: `null` → ACTIVE; no_package → NO_PACKAGE แม้ส่ง companyStatus 'DISABLED'+termDisabledAt; `termEndsAt<=now` → EXPIRED; `termDisabledAt` set + end อนาคต → EXPIRED; `FREE_TRIAL_15` running → TRIAL; อื่น → ACTIVE; `'DISABLED'` ไม่มี termDisabledAt → ADMIN_HOLD; `'SUSPENDED'`/`'ARCHIVED'` → ADMIN_HOLD แม้ term ล็อก (precedence); `planTermStateLabel` ครบ 5 ค่า ไม่มี "+" และไม่มี snake_case; `PLAN_TERM_STATE_LABEL_TH.NO_PACKAGE === 'ยังไม่มีแพ็กเกจ'` |
-| `apps/api/src/modules/auth/application/use-cases/issue-token.use-case.spec.ts` | fake `jwtService.sign` เก็บ `options.expiresIn`; fake prisma `authSession.create` เก็บ `expiresAt`, `companyMembership.count` คืน 0/1, `userCredential`/`$transaction` เท่าที่ path `'line'` ใช้ (`:104-106`); เคส: count 0 → refresh JWT `expiresIn = 2592000`, `expiresAt ≈ now+30d` (±5s); count 1 → `604800`/7d; `resolveAccess` โยน (ร้านล็อก) → ยัง 30d; access `expiresIn = 900` ทั้งสองเคส |
+| ~~issue-token.use-case.spec.ts~~ (ตัดออก — DQ8 ไม่ทำรอบนี้) | fake `jwtService.sign` เก็บ `options.expiresIn`; fake prisma `authSession.create` เก็บ `expiresAt`, `companyMembership.count` คืน 0/1, `userCredential`/`$transaction` เท่าที่ path `'line'` ใช้ (`:104-106`); เคส: count 0 → refresh JWT `expiresIn = 2592000`, `expiresAt ≈ now+30d` (±5s); count 1 → `604800`/7d; `resolveAccess` โยน (ร้านล็อก) → ยัง 30d; access `expiresIn = 900` ทั้งสองเคส |
 | `apps/web/src/features/plan-term/plan-term.api.spec.ts` (ใหม่ หรือรวมใน `plan-term.logic.spec.ts`) | `PLAN_TERM_CHANGED_EVENT === 'watchdog:plan-term-changed'`; `notifyPlanTermChanged()` dispatch event บน `globalThis.window` fake |
 | `apps/web/src/features/auth/LoginPage.spec.ts` (เพิ่ม describe) | source check: `fromLineLink` regex `/[?&]channel=line(?:&|$)/` และ `lineNotice === 'handoff-expired'`; auto-start ใช้ `withLineExternalBrowser(` + `&from=` + `&auto=1`; `autoStartingLine` return ก่อน `<form`; `<details` ครอบ `passwordForm` เมื่อ `fromLineLink`; `LINE_NOTICE_TEXT['handoff-expired']` ไม่มีคำว่า "รหัสผ่าน" ขึ้นก่อน "LINE" |
 | `apps/web/src/features/auth/AccountEmailOtpPanel.qa.spec.ts` (source check แบบ `SignupQueuePage.qa.spec.ts:1-30`) | มี `isLineInAppBrowser(navigator.userAgent)`; ปุ่ม `เปิดหน้านี้ใน Safari/Chrome`; ไม่มี `onClick={reauthenticate}` นอก `lineReauthButton`; reopen URL ตั้ง `channel=line` |
@@ -683,7 +682,7 @@ export function notifyPlanTermChanged(): void {
 ### 5.3 ลงทะเบียน (ไม่แตะ package.json)
 
 - contracts: `packages/contracts/package.json:17` เป็นรายการตายตัว 13 ไฟล์ → ลงทะเบียน `plan-term.spec.ts` ที่ `.github/workflows/ci.yml:543` ต่อท้าย: `pnpm exec tsx --test packages/contracts/src/company-business-type.spec.ts packages/contracts/src/billing-company-profile.spec.ts packages/contracts/src/plan-term.spec.ts` (ci.yml parity กับ main ก่อน UAT all — P0)
-- API ใหม่ `issue-token.use-case.spec.ts` → เพิ่ม path `'src/modules/auth/application/use-cases/issue-token.use-case.spec.ts'` ใน `scripts/line-ai-whole-chain-acceptance.catalog.mjs` block `id: 'api-behavior'` (`:344`, ตัวอย่างรายการ `:352,:374,:399`) — `spec-suite-coverage.spec.ts:43-75` ตรวจว่าทุก spec ถูกอ้างใน package.json/catalog/ci.yml/extended-tests
+- ~~API ใหม่ `issue-token.use-case.spec.ts`~~ — ตัดออก (DQ8 ไม่ทำรอบนี้) จึงไม่มี spec API ใหม่ให้ลงทะเบียนใน catalog
 - API spec ที่แก้: ลงทะเบียนอยู่แล้ว (`apps/api/package.json` — auth.controller, package-change-decision, partner-lifecycle-transition, company-plan-term, plan-term.logic; `ci.yml:544` get-partner-detail; `ci.yml:547` list-partners; `ci.yml:778` sales-console.pg)
 - web spec: auto (`apps/web/package.json:10` glob `src/**/*.spec.ts`)
 - e2e: chromium project เก็บอัตโนมัติ แต่รันเฉพาะ `extended-tests.yml` (บันทึก run id ใน memory)
@@ -697,7 +696,7 @@ export function notifyPlanTermChanged(): void {
 | `docs/specs/mangmee-company-plan-term-spec-th.md:72` | "เห็นบริษัทใน switcher ติดป้าย "หมดอายุ"" → "ติดป้ายตาม `lockReason`: "ยังไม่มีแพ็กเกจ" (no_package) / "หมดอายุ" (trial_ended); label ทุก surface มาจาก `planTermStateLabel()` ใน contracts (purchase-without-setup R-C7)" |
 | `docs/runbooks/line-first-signup-support-playbook.md:56` | เพิ่มท้ายบรรทัด: "— ถ้าบรรทัดเป็น *ยังไม่มีแพ็กเกจ* ทางหลักคือลูกค้าซื้อเองจากหน้าแพ็กเกจ; ปุ่มต่ออายุ = ให้วันใช้งานฟรี (มีคำเตือนผลข้างเคียงใน dialog ต้องใส่เหตุผล); ปุ่ม **เปิดใช้งานบริษัท** ใน Lifecycle ไม่ปรากฏสำหรับร้านที่ระบบพักเพราะแพ็กเกจ" |
 | `docs/specs/mangmee-sales-deals-and-locked-signup-spec-th.md:62` (R2 vocabulary) | เพิ่ม "label กลาง: ยังไม่มีแพ็กเกจ / กำลังทดลองใช้ / ใช้งานได้ / หมดอายุ / พักการใช้งาน (`planTermStateLabel`)" — sales console badge ACTIVE เปลี่ยนจาก "ใช้งานอยู่" เป็น "ใช้งานได้" |
-| `docs/specs/mangmee-purchase-without-setup-spec-th.md` §18.2 R-C7 | ระบุว่า `CompanyPlanTermDto` ได้ `lockReason` และ `planState` derive ฝั่งเว็บจาก helper + `companyStatus` (ไม่ใส่ใน DTO นี้); R-C6 เพิ่ม "API ปฏิเสธด้วย `partner_activation_term_locked` / `package_change_company_locked`"; DQ8 เพิ่ม "cookie ฝั่งเว็บ 30 วันสำหรับทุก role" |
+| `docs/specs/mangmee-purchase-without-setup-spec-th.md` §18.2 R-C7 | ระบุว่า `CompanyPlanTermDto` ได้ `lockReason` และ `planState` derive ฝั่งเว็บจาก helper + `companyStatus` (ไม่ใส่ใน DTO นี้); R-C6 เพิ่ม "API ปฏิเสธด้วย `partner_activation_term_locked` / `package_change_company_locked`"; DQ8 → คงเดิม 7 วัน (Owner 2026-09-27) |
 | `docs/plans/mangmee-purchase-without-setup-plan-th.md` P1 ข้อ 10/11b | ติ๊กเสร็จ + run ids; ระบุว่า BC03/RV31 ยังค้าง Phase 6 |
 | `docs/agent-memory/purchase-without-setup-2026-09-26.md` | Status/Verification/Next |
 
@@ -722,7 +721,6 @@ pnpm --filter @watchdog-bms/web run typecheck; echo "web typecheck exit=$?"
 # 3. API specs ที่แตะ + coverage
 pnpm --filter @watchdog-bms/api exec tsx --test \
   src/modules/auth/presentation/auth.controller.spec.ts \
-  src/modules/auth/application/use-cases/issue-token.use-case.spec.ts \
   src/modules/system-partner-management/application/use-cases/list-partners.use-case.spec.ts \
   src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.spec.ts \
   src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.spec.ts \
@@ -754,7 +752,7 @@ Readback หลัง merge (UAT): `GET /v1/auth/me/companies` ของ owner �
 1. **Auto-start วน loop** — ป้องกันโดยโครงสร้าง: ทุกทางล้มเหลวของ LINE กลับมาเป็น `/login?line=failed|canceled|unavailable|link-required` โดยไม่มี `next` (`callback/route.ts:37,133,138-139`; `start/route.ts:45`) → `fromLineLink=false`; `linkMode` ถูกตัดออกจาก `fromLineLink`; ผลข้างเคียงที่ยอมรับ: เมื่อ LINE ล้มเหลว `next` หาย (พฤติกรรมเดิมของทุกเลน) — ผู้ใช้กดเมนู "บริษัทของฉัน" รับลิงก์ใหม่ (copy PR A)
 2. **`start/route.ts` `console.info`** — BFF ไม่มี logging convention; ต้องยืนยันว่า stdout ของ Next ใน container api-web ถูกเก็บใน CloudWatch (§9); ถ้าไม่ ให้ตัด log ออกและใช้ audit `AUTH_LINE_HANDOFF_EXCHANGE` FAILED เป็น metric เดียว (ไม่กระทบพฤติกรรม)
 3. **`openExternalBrowser=1` ผ่าน `window.location.assign`** (R-B4 reopen) — LINE เอกสารรับรองสำหรับลิงก์; ต้องทดสอบบนเครื่องจริงว่า navigation แบบ assign เปิดเบราว์เซอร์นอกด้วย (ถ้าไม่ ให้ render เป็น `<a href>` แทนปุ่ม)
-4. **DQ8 cookie 30 วันสำหรับ platform admin** — cookie อยู่นานกว่า JWT (7 วัน) แต่ session row/JWT เป็นตัวตัดสิน → refresh 401 → signed out; ไม่ลดความปลอดภัย; `remember` unchecked ยังเป็น session cookie
+4. ~~DQ8 cookie 30 วัน~~ — ไม่ทำรอบนี้ (Owner 2026-09-27 คงเดิม)
 5. **Guard ใน `partner-lifecycle-transition`** — ผู้เรียก ACTIVE ที่เป็น human มีเพียง partner controller (lifecycle route) และ renew (`company-plan-term.use-cases.ts:319-328` หลังอัปเดต termEndsAt ใน tx เดียวกัน); ถ้า e2e BC03 หรือ smoke ใดเรียก lifecycle ACTIVE ตรง ๆ กับร้าน term หมด จะได้ 409 — grep ก่อน merge (§9)
 6. **`api-error-coverage.spec.ts`** จะแดงทันทีถ้าลืม `CODE_LABELS` ของ 2 รหัสใหม่ (scan `code: '…'` ใน `system-partner-management`) — เป็นความตั้งใจ
 7. **Remount ของ BillingPage** หลังปลดล็อก (RV30) — state ใน memory (quote ค้าง, capacity draft) หาย; เกิดเฉพาะเมื่อ `confirmed` แล้ว (ไม่มี quote ค้าง) จึงยอมรับได้; หน้า return กู้จาก URL
