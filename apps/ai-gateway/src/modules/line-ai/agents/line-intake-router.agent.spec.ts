@@ -331,7 +331,7 @@ describe('LINE intake router – routeIntake', () => {
         subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: { fromDate: '2026-09-01', toDate: '2026-09-27' } }],
         simpleRead: { subrequest: 0, tool: 'expense.list_recent', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 },
       },
-    }), false, {}, false, EXPENSE_LIST_PREPARED_FAMILIES).routeIntake(baseRequest({
+    }), false, {}, false, [...EXPENSE_LIST_PREPARED_FAMILIES]).routeIntake(baseRequest({
       messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true },
       valueCandidates: { amounts: [], dates: [], periods },
     }));
@@ -358,7 +358,7 @@ describe('LINE intake router – routeIntake', () => {
         subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: { fromDate: monthStart, toDate: todayIso, documentStatus: 'CONFIRMED' } }],
         simpleRead: { subrequest: 0, tool: 'expense.list_recent', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 },
       },
-    }), false, {}, false, EXPENSE_LIST_PREPARED_FAMILIES).routeIntake(baseRequest({
+    }), false, {}, false, [...EXPENSE_LIST_PREPARED_FAMILIES]).routeIntake(baseRequest({
       messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true },
       valueCandidates: { amounts: [], dates: [], periods: [period] }, conversationContext,
     }));

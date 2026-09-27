@@ -143,7 +143,13 @@ function asksForCurrentExpenseSummary(text: string): boolean {
   return /(?:ล่าสุด|ปัจจุบัน|ตอนนี้|current|latest|recent)/iu.test(text);
 }
 
-export function branchInputMatchesMessage(branchId: unknown, req: LineAiTurnRequest): boolean {
+/** The exact three LineAiTurnRequest fields every branch/period follow-up check below reads — never
+ *  userContext, attachments, or anything else. Narrower than LineAiTurnRequest on purpose so the R-L1
+ *  shared pre-call check (which only ever HAS these three at intake time) can call them directly; a
+ *  full LineAiTurnRequest still satisfies this structurally, so every execution-time caller is unaffected. */
+export type MinimalTurnRequest = Pick<LineAiTurnRequest, 'messageText' | 'conversationContext' | 'valueCandidates'>;
+
+export function branchInputMatchesMessage(branchId: unknown, req: MinimalTurnRequest): boolean {
   if (typeof branchId !== 'string') return false;
   const normalized = branchId.normalize('NFC').trim().toLocaleLowerCase();
   if (!normalized) return false;
@@ -221,7 +227,7 @@ export function uncertainExpenseFilter(text: string, hasPriorExpenseContext = fa
 export function validExpensePeriodSelection(
   raw: unknown,
   sanitized: Record<string, unknown>,
-  req: LineAiTurnRequest,
+  req: MinimalTurnRequest,
   readCandidates: LineAiValueCandidates | undefined = req.valueCandidates,
 ): boolean {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
@@ -283,7 +289,7 @@ function isCivilLoopDate(value: string): boolean {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-function priorMonthAnchor(req: LineAiTurnRequest): { fromDate: string; toDate: string; branchId: string | null } | null | undefined {
+function priorMonthAnchor(req: MinimalTurnRequest): { fromDate: string; toDate: string; branchId: string | null } | null | undefined {
   if (!/(?:เดือนก่อนหน้า|เดือนก่อนหน้านั้น|previous month|month before)/iu.test(req.messageText)) return undefined;
   const ranges = req.conversationContext?.deliveredExpenseSummary?.ranges ?? [];
   const unique = [...new Map(ranges.map(range => [`${range.fromDate}:${range.toDate}:${range.branchId ?? ''}`, range])).values()];
@@ -332,7 +338,7 @@ export function thaiExpenseMonthMentions(text: string): number[] {
   return found;
 }
 
-function expenseMonthCoverageValid(req: LineAiTurnRequest): boolean {
+function expenseMonthCoverageValid(req: MinimalTurnRequest): boolean {
   const mentions = thaiExpenseMonthMentions(req.messageText);
   if (mentions.length === 0) return true;
   const periods = req.valueCandidates?.periods ?? [];
@@ -1106,7 +1112,7 @@ export type PreparedSimplePreCallResult =
 export function preparedSimplePreCallCheck(
   plan: LineAiPreparedPlan,
   eligibilityCtx: PreparedSimpleReadContext,
-  req: Pick<LineAiTurnRequest, 'messageText' | 'conversationContext' | 'valueCandidates'>,
+  req: MinimalTurnRequest,
 ): PreparedSimplePreCallResult {
   if ((req.valueCandidates?.periods?.length ?? 0) > 1) return { ok: false, reason: 'multiple_periods' };
   const eligibility = preparedSimpleReadEligibility(plan, eligibilityCtx);
