@@ -640,14 +640,17 @@ const isDocumentReadingCreditSpent = (errorCode?: string): boolean =>
 
 /**
  * Spec §8: an intake route that never reached the model — the gateway call itself did not complete
- * (`ROUTER_UNREACHABLE`, tryRouteIntake's own catch block), or our AI budget gate could not run or is
- * exhausted — reads to the customer as "the system is slow right now", never "I don't understand
- * you". Everything else with `status !== 'ROUTED'` (the model answered but produced an invalid or
- * unroutable plan, e.g. `ROUTER_SEMANTIC_SCHEMA_INVALID`) is the model genuinely not making sense of
- * the text.
+ * (`ROUTER_UNREACHABLE`, tryRouteIntake's own catch block), the provider itself could not be reached
+ * in time (`PROVIDER_THROTTLED`/`PROVIDER_TIMEOUT` — the two provider codes the gateway always marks
+ * `retryable: true`, in `bedrock.provider.ts`/`openai.provider.ts`, regardless of which call site hit
+ * them), or our AI budget gate could not run or is exhausted — reads to the customer as "the system
+ * is slow right now", never "I don't understand you". Everything else with `status !== 'ROUTED'`
+ * (the model answered but produced an invalid or unroutable plan, e.g. `ROUTER_SEMANTIC_SCHEMA_INVALID`)
+ * is the model genuinely not making sense of the text.
  */
 const isTransientLineAiRouteFailure = (errorCode?: string): boolean =>
-  errorCode === 'ROUTER_UNREACHABLE' || isAiBudgetRefusalCode(errorCode);
+  errorCode === 'ROUTER_UNREACHABLE' || errorCode === 'PROVIDER_THROTTLED' || errorCode === 'PROVIDER_TIMEOUT'
+  || isAiBudgetRefusalCode(errorCode);
 const LINE_AI_ROUTE_TRANSIENT_REPLY = 'ขอโทษค่ะ ระบบตอบช้ากว่าปกติ ลองส่งข้อความเดิมอีกครั้งได้เลยค่ะ';
 const LINE_AI_ROUTE_UNCLEAR_REPLY = 'ขอโทษค่ะ น้องมั่งมียังไม่แน่ใจว่าหมายถึงอะไร ช่วยพิมพ์อีกแบบได้ไหมคะ เช่น "เดือนนี้จ่ายไปเท่าไหร่" หรือ "แยกค่าใช้จ่ายตามหมวด"';
 

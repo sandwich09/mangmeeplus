@@ -796,6 +796,46 @@ it('fails a bound semantic turn before pending media, ERP reads, or a LINE turn 
   assert.ok(logged, 'the durable row keeps the real gateway errorCode');
 });
 
+// Item 5 (223-turn eval batch 2): a route that failed because the PROVIDER throttled or timed out
+// never reached the model at all — same "system is slow" bucket as ROUTER_UNREACHABLE, never the
+// "I don't understand you" copy a genuinely unroutable plan gets.
+for (const errorCode of ['PROVIDER_THROTTLED', 'PROVIDER_TIMEOUT']) {
+  it(`treats a ${errorCode} route as transient, not "I don't understand" (item 5, 223-turn eval batch 2)`, async () => {
+    const { prisma, updates } = makePrisma();
+    prisma.client.lineIntakePendingMedia.findMany = async () => { throw new Error('pending media must stay untouched'); };
+    prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+    const h = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+        lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+      intakeRouteFn: () => ({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode }),
+      aiGatewayFn: () => assert.fail('a throttled/timed-out route must not start the LINE turn'),
+    });
+    const event: any = { ...BASE_EVENT, webhookEventId: `compact-${errorCode}-boundary`, messageText: 'เดือนนี้จ่ายไปเท่าไหร่แล้วคะ' };
+    const evidence = await createLineAiInputEvidence({ turnKey: `compact-${errorCode}-boundary`, parts: [{ partId: 'part-0',
+      eventIdHash: 'b'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] });
+    assert.ok(evidence);
+    event.inputEvidence = evidence.inputEvidence;
+    const flow = h.useCase as any;
+    const delivered: string[] = [];
+    flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string }>) => {
+      delivered.push(...messages.flatMap((message) => message.text ? [message.text] : [])); return 'ok';
+    };
+    flow.contextV2 = {
+      admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+      projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+    };
+    flow.prepareTextGrantV2 = async () => ({ turnKey: evidence.inputEvidence.turnKey });
+    flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+    await h.useCase.execute(event);
+    assert.equal(delivered.length, 1);
+    assert.match(delivered[0]!, /ระบบตอบช้ากว่าปกติ/);
+    assert.doesNotMatch(delivered[0]!, /ยังไม่แน่ใจว่าหมายถึงอะไร/);
+    const logged = updates.find((u: any) => u.data?.errorCode === errorCode);
+    assert.ok(logged, 'the durable row keeps the real gateway errorCode');
+  });
+}
+
 it('answers a bound general question once before two pending files can intercept it', async () => {
   const { prisma } = makePrisma();
   let pendingReads = 0;
