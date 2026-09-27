@@ -18,6 +18,7 @@ import type { RequestContext } from '../../../auth/domain/models/request-context
 import {
   BUSINESS_READ_BASIS_VERSION,
   appliedQuery,
+  applyNameFilter,
   completeResult,
   fact,
   periodError,
@@ -246,7 +247,8 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
 
   async execute(ctx: ErpToolContext, input: {
     periodKey?: string; fromDate?: string; toDate?: string; branchId?: string;
-    categoryId?: string; vendorId?: string; documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus;
+    categoryId?: string; vendorId?: string; categoryName?: string; vendorName?: string;
+    documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus;
     limit?: number; cursor?: string;
   } = {}): Promise<ToolResult> {
     let asOf = now();
@@ -330,10 +332,39 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       }
       branchId = hit.id;
     }
+    // categoryName/vendorName resolution (spec §3 row 6): same exact-then-contains match as the
+    // branch lookup above. Vendor candidates use the branch already resolved here, not the raw
+    // input, so a branch name plus a vendor name narrow together.
+    const requestedCategoryName = typeof input?.categoryName === 'string' && input.categoryName.trim() ? input.categoryName.trim() : undefined;
+    const requestedVendorName = typeof input?.vendorName === 'string' && input.vendorName.trim() ? input.vendorName.trim() : undefined;
+    const categoryCandidates = requestedCategoryName ? await this.listExpenses.listCategoryCandidates(ctx.companyId) : [];
+    const categoryFilter = applyNameFilter(input.categoryId, requestedCategoryName, categoryCandidates);
+    if (categoryFilter.status === 'conflict') {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'categoryId and categoryName resolve to different categories', sourceRefs: [], asOf };
+    }
+    if (categoryFilter.status === 'ambiguous') {
+      return { toolName: this.toolName, status: 'ok', data: { categoryAmbiguous: requestedCategoryName, availableCategories: categoryFilter.matches }, sourceRefs: [], asOf };
+    }
+    if (categoryFilter.status === 'not_found') {
+      return { toolName: this.toolName, status: 'ok', data: { categoryUnresolved: requestedCategoryName, availableCategories: categoryFilter.available }, sourceRefs: [], asOf };
+    }
+    const vendorCandidates = requestedVendorName ? await this.listExpenses.readAiVendorCandidates(toCtx(ctx), branchId) : [];
+    const vendorFilter = applyNameFilter(input.vendorId, requestedVendorName, vendorCandidates);
+    if (vendorFilter.status === 'conflict') {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'vendorId and vendorName resolve to different vendors', sourceRefs: [], asOf };
+    }
+    if (vendorFilter.status === 'ambiguous') {
+      return { toolName: this.toolName, status: 'ok', data: { vendorAmbiguous: requestedVendorName, availableVendors: vendorFilter.matches }, sourceRefs: [], asOf };
+    }
+    if (vendorFilter.status === 'not_found') {
+      return { toolName: this.toolName, status: 'ok', data: { vendorUnresolved: requestedVendorName, availableVendors: vendorFilter.available }, sourceRefs: [], asOf };
+    }
+    const categoryId = categoryFilter.id;
+    const vendorId = vendorFilter.id;
     const cursorFingerprint = expenseCursorFingerprint({
       companyId: ctx.companyId, userId: ctx.userId, branchIds: ctx.branchIds ?? null,
       period: [period.fromDate, period.toDate], branchId: branchId ?? null,
-      categoryId: input.categoryId ?? null, vendorId: input.vendorId ?? null,
+      categoryId: categoryId ?? null, vendorId: vendorId ?? null,
       documentStatus: input.documentStatus ?? null, paymentStatus: input.paymentStatus ?? null,
     });
     const cursor = input.cursor === undefined ? undefined
@@ -343,8 +374,8 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     }
     const snapshot = await this.listExpenses.readAiSummary(toCtx(ctx), {
       fromDate: period.fromDate, toDate: period.toDate, ...(branchId && { branchId }),
-      ...(input.categoryId ? { expenseCategoryId: input.categoryId } : {}),
-      ...(input.vendorId ? { vendorCounterpartyId: input.vendorId } : {}),
+      ...(categoryId ? { expenseCategoryId: categoryId } : {}),
+      ...(vendorId ? { vendorCounterpartyId: vendorId } : {}),
       ...(input.documentStatus ? { status: input.documentStatus } : {}),
       ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
     }, input.limit ?? 20, cursor);
@@ -380,8 +411,10 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       statusBasis: input.documentStatus ?? 'exclude_rejected_voided',
       dataset: 'operational_expense_records',
       filters: {
-        ...(input.categoryId ? { categoryId: input.categoryId } : {}),
-        ...(input.vendorId ? { vendorId: input.vendorId } : {}),
+        ...(categoryId ? { categoryId } : {}),
+        ...(categoryFilter.name ? { categoryName: categoryFilter.name } : {}),
+        ...(vendorId ? { vendorId } : {}),
+        ...(vendorFilter.name ? { vendorName: vendorFilter.name } : {}),
         ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
       },
     });

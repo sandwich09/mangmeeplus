@@ -1102,6 +1102,32 @@ export class PrismaExpenseRepository {
     }, { isolationLevel: 'RepeatableRead', maxWait: 1_000, timeout: 5_000 });
   }
 
+  /** Vendor name/id candidates for `vendorName` resolution (spec §3 row 6) — vendors that appear on
+   *  expenses THIS caller can read, never the company's full vendor list: a `read_own` caller must
+   *  not learn a vendor name from someone else's expense. Deliberately not `aiExpenseWhere`:
+   *  candidates ignore the requested date range and value filters, so a vendor asked about outside
+   *  the current period still resolves instead of reading as "not found". */
+  async readAiVendorCandidates(
+    filter: { companyId: string; branchId?: string; createdByUserId?: string },
+    scope: AiExpenseReadScope,
+  ): Promise<Array<{ id: string; name: string }>> {
+    const where: Prisma.ExpenseRecordWhereInput = {
+      companyId: filter.companyId,
+      ...(!filter.branchId ? branchScopeWhere({ branchIds: scope.branchIds }) : { branchId: filter.branchId }),
+      status: { notIn: ['REJECTED', 'VOIDED'] },
+      ...(filter.createdByUserId ? { createdByUserId: filter.createdByUserId } : {}),
+      ...(scope.relatedUserId ? { AND: [expenseRelatedToUserWhere(scope.relatedUserId)] } : {}),
+    };
+    const rows = await this.prisma.client.expenseRecord.groupBy({ by: ['vendorCounterpartyId'], where });
+    const ids = rows.map((row) => row.vendorCounterpartyId).filter((id): id is string => Boolean(id));
+    if (ids.length === 0) return [];
+    const vendors = await this.prisma.client.accountingCounterparty.findMany({
+      where: { companyId: filter.companyId, id: { in: ids } },
+      select: { id: true, displayName: true },
+    });
+    return vendors.map((row) => ({ id: row.id, name: row.displayName }));
+  }
+
   /** One selected, cursor-pageable grouping; its aggregate population is never limited by the group page. */
   async readAiExpenseGroups(
     filter: AiExpenseReadFilter,

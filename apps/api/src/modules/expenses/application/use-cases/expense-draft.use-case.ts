@@ -280,6 +280,21 @@ export class ListExpensesUseCase {
     return this.repo.readAiExpenseGroups({ ...filter, companyId: ctx.companyId, ...scope.filter }, scope.scope, groupBy, limit, offset);
   }
 
+  /** Company-wide, ACTIVE-only category candidates for `categoryName` resolution (spec §3 row 6) —
+   *  categories carry no ABAC beyond the tenant boundary the caller's own permission check already
+   *  enforced above. */
+  async listCategoryCandidates(companyId: string): Promise<Array<{ id: string; name: string }>> {
+    const categories = await this.repo.listCategories(companyId);
+    return categories.map((category) => ({ id: category.id, name: category.name }));
+  }
+
+  /** Vendor candidates for `vendorName` resolution, scoped exactly like every other AI read here:
+   *  read_own sees only its own createdByUserId, read_related only its actor relation. */
+  async readAiVendorCandidates(ctx: RequestContext, branchId?: string): Promise<Array<{ id: string; name: string }>> {
+    const scope = this.aiReadScope(ctx, branchId);
+    return this.repo.readAiVendorCandidates({ companyId: ctx.companyId, ...(branchId ? { branchId } : {}), ...scope.filter }, scope.scope);
+  }
+
   private aiReadScope(ctx: RequestContext, branchId?: string) {
     const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review');
     const canReadOwn = hasPerm(ctx, 'expense.read_own');
