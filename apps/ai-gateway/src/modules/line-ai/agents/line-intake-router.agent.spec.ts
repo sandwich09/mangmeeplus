@@ -71,6 +71,13 @@ describe('LINE intake router – routeIntake', () => {
     assert.match(prompt, /Omit simpleRead for compound, ambiguous, dependent, entity\/task-referenced/);
     assert.match(prompt, /simpleRead never grants permission/);
     assert.match(prompt, /only an exact tool and answerShape pair listed in preparedSimpleReadFamilies/);
+    // Item 2 (eval: "ขอดูรายการล่าสุด"/"ขอ list รายการล่าสุด"/"รายการเดือนนี้มีอะไรบ้าง" all answered as
+    // a single total): the prompt must name the record-listing keywords and force "list" for them.
+    assert.match(prompt, /choose answerShape "list" whenever the message asks to see, list, or enumerate the records themselves/);
+    assert.match(prompt, /"รายการ", "list"/);
+    assert.match(prompt, /"มีอะไรบ้าง"/);
+    assert.match(prompt, /"ขอดู N รายการ", "ขอดูรายการล่าสุด"/);
+    assert.match(prompt, /choose "single_metric" only for a total, sum, count, or aggregate question with no request to see the individual records/);
     assert.match(prompt, /Use kind "help" for the meaning or workflow of MangmeePlus itself/);
     assert.match(prompt, /Use kind "general" for a business-domain concept or definition independent of this product/);
     assert.match(prompt, /Use kind "read" only for an actual company figure, record, or current status/);
