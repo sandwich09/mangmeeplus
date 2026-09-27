@@ -57,15 +57,15 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runLineReliabilityRuntime, type ReliabilityRuntimeManifest, type RuntimeSourceSnapshot, type RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 import { reliabilityDigest, type ReliabilityFixture } from '../line-ai-reliability-fixtures';
-import { validateCorpus, flattenTurns, selectConversations, parseFailedConversationIds, type Corpus, type EvalCompany } from './types';
-import { buildCompanySeed, applySeedRows, truncateAllTables, SHARED_ACCESS_ROWS, type CompanySeed, type PgClientLike } from './seed';
-import { scoreTurn, summarizeScores, type CapturedEvidence, type ExpectedFact, type ToolResultLike, type TurnScore } from './scorer';
-import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFactsForCall, extractOfferedChoices, gitHeadSha, type ShownItem } from './oracle';
+import { validateCorpus, flattenTurns, selectConversations, parseFailedConversationIds, type Corpus, type EvalCompany, type Turn } from './types';
+import { buildCompanySeed, type CompanySeed } from './seed';
+import { scoreTurn, summarizeScores, type CapturedEvidence, type ToolResultLike, type TurnScore } from './scorer';
+import { collectGoldResults, turnKey } from './gold-oracle-pass';
+import { extractOfferedChoices, gitHeadSha } from './oracle';
 import { ROLE_GRANTS } from '../../apps/api/src/modules/auth/permission-registry';
 import { filterPermissionsByEntitlement } from '../../apps/api/src/modules/employee-access/domain/logic/feature-gate.logic';
 import { TIER_FEATURE_PRESETS } from '../../packages/contracts/src/menu-entitlements';
@@ -217,66 +217,8 @@ function buildFixtures(corpus: Corpus, companies: Record<EvalCompany, CompanySee
   });
 }
 
-const turnKey = (conversationId: string, turnIndex: number) => `${conversationId}#${turnIndex}`;
-
-/**
- * Runs every gold call in the corpus through the SAME real, in-process oracle preflight uses,
- * against a freshly truncated-and-reseeded copy of the eval database — BEFORE the live replay
- * starts (`runLineReliabilityRuntime` does its own truncate+reseed per fixture, so this pass's
- * seeded state is irrelevant to it once it begins; running the oracle first, and fully closing it,
- * also avoids any overlap with that function's own Nest app / fetch patching).
- *
- * This is the source of truth for two things "never hand-type expected numbers" requires:
- *  - `factsByTurn`: the facts a delivered reply must contain (extracted from the GOLD call's own
- *    result, not the model's possibly-wrong one);
- *  - `resultsByTurn`: the gold call's own resolved category/vendor/branch, for the "judge by what
- *    the API resolved" scorer rule (scorer.ts resolvedOutcome) — comparing a model's raw
- *    "น้ำมัน" against gold's raw "ค่าน้ำมัน" would never match on text, but both resolve to the
- *    same categoryId.
- */
-async function collectGoldResults(
-  corpus: Corpus, companies: Record<EvalCompany, CompanySeed>, databaseUrl: string, redisUrl: string, secretsPath: string, now: Date,
-): Promise<{ resultsByTurn: Map<string, Array<ToolResultLike | undefined>>; factsByTurn: Map<string, ExpectedFact[]> }> {
-  const apiRoot = resolve(REPO_ROOT, 'apps/api');
-  const requireApi = createRequire(resolve(apiRoot, 'package.json'));
-  const { Client } = requireApi('pg') as { Client: new (opts: { connectionString: string }) => PgClientLike & { connect(): Promise<void>; end(): Promise<void> } };
-  const pg = new Client({ connectionString: databaseUrl });
-  await pg.connect();
-  try { await truncateAllTables(pg); } finally { await pg.end(); }
-
-  const oracle = await bootOracle({ repoRoot: REPO_ROOT, databaseUrl, redisUrl, secretsPath });
-  const resultsByTurn = new Map<string, Array<ToolResultLike | undefined>>();
-  const factsByTurn = new Map<string, ExpectedFact[]>();
-  try {
-    await applySeedRows(oracle.prisma as never, SHARED_ACCESS_ROWS);
-    for (const company of Object.values(companies)) await applySeedRows(oracle.prisma as never, company.rows.slice(SHARED_ACCESS_ROWS.length));
-
-    for (const conversation of corpus.conversations) {
-      const company = companies[conversation.company];
-      const actor = company.users[conversation.role];
-      const ctx = await oracle.resolveActorContext({ userId: actor.userId, companyId: company.companyId });
-      let priorShownItems: ShownItem[] = [];
-      for (const [turnIndex, turn] of conversation.turns.entries()) {
-        if (!turn.expect.calls?.length) continue;
-        const results: Array<ToolResultLike | undefined> = [];
-        const facts: ExpectedFact[] = [];
-        for (const call of turn.expect.calls) {
-          const resolvedInput = resolveGoldCallInput(call, now, priorShownItems);
-          const result = await oracle.invoke(call.tool, ctx, resolvedInput) as ToolResultLike;
-          results.push(result);
-          facts.push(...extractExpectedFactsForCall(call.tool, result, call));
-          const shown = extractShownItems(call.tool, result);
-          if (shown.length) priorShownItems = shown;
-        }
-        resultsByTurn.set(turnKey(conversation.id, turnIndex), results);
-        factsByTurn.set(turnKey(conversation.id, turnIndex), facts);
-      }
-    }
-  } finally {
-    await oracle.close();
-  }
-  return { resultsByTurn, factsByTurn };
-}
+// collectGoldResults/turnKey moved to gold-oracle-pass.ts (shared with run-rescore.ts, which
+// re-scores saved evidence against the SAME oracle pass with no gateway/model involved).
 
 async function main(): Promise<void> {
   const outputDir = process.env['MANGMEE_EVAL_OUTPUT_DIR'];
@@ -302,8 +244,8 @@ async function main(): Promise<void> {
   const fixtures = buildFixtures(corpus, companies, now);
 
   console.log(JSON.stringify({ event: 'gold_oracle_pass_start' }));
-  const { resultsByTurn, factsByTurn } = await collectGoldResults(corpus, companies, databaseUrl.toString(), REDIS_URL, SECRETS_PATH, now);
-  console.log(JSON.stringify({ event: 'gold_oracle_pass_done', turnsResolved: resultsByTurn.size }));
+  const goldPass = await collectGoldResults(REPO_ROOT, corpus, companies, databaseUrl.toString(), REDIS_URL, SECRETS_PATH, now);
+  console.log(JSON.stringify({ event: 'gold_oracle_pass_done', turnsResolved: goldPass.resultsByTurn.size }));
 
   const sourceCommit = gitHeadSha(REPO_ROOT);
   const model = { provider: 'bedrock', modelId: 'global.anthropic.claude-sonnet-4-6', region: 'ap-southeast-1', transport: 'local-http', runtime: 'strands-local' };
@@ -353,11 +295,17 @@ async function main(): Promise<void> {
     }
     const captured = toCapturedEvidence(evidence);
     const key = turnKey(conversation.id, turnIndex);
-    // Both come from collectGoldResults' independent oracle pass — never from the model's own
+    // All three come from collectGoldResults' independent oracle pass — never from the model's own
     // (possibly wrong) captured result, per "never hand-type expected numbers, always the oracle".
-    const expectedFacts = factsByTurn.get(key) ?? [];
-    const goldResults = resultsByTurn.get(key) ?? [];
-    scores.push(scoreTurn({ conversationId: conversation.id, turnIndex }, turn, captured, expectedFacts, now, goldResults));
+    const expectedFacts = goldPass.factsByTurn.get(key) ?? [];
+    const goldResults = goldPass.resultsByTurn.get(key) ?? [];
+    // T-068 bug: turn.expect.calls still carries the RAW corpus literal (e.g. an unresolved
+    // `{ $fromShownItems: 2 }`), which scoreToolCalls would compare as the literal string
+    // "[object Object]" against the model's resolved id — always failing even when the model
+    // called the exact right tool. Score against the SAME resolved input the oracle actually ran.
+    const resolvedCalls = goldPass.resolvedCallsByTurn.get(key);
+    const turnForScoring: Turn = resolvedCalls ? { ...turn, expect: { ...turn.expect, calls: resolvedCalls } } : turn;
+    scores.push(scoreTurn({ conversationId: conversation.id, turnIndex }, turnForScoring, captured, expectedFacts, now, goldResults));
   }
   const summary = summarizeScores(scores);
 

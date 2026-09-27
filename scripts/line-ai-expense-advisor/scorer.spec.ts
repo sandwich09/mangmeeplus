@@ -205,6 +205,21 @@ describe('scoreToolCalls', () => {
     assert.equal(scoreToolCalls(gold, actual, NOW, goldResults).ok, true);
   });
 
+  describe('T-068: a gold call\'s expenseId must be RESOLVED before scoring, never the raw marker', () => {
+    // "รายการที่ 3 คือร้านอะไร" — the model correctly called get_detail on the 3rd shown item.
+    const actual = [{ tool: 'expense.get_detail', input: { expenseId: 'expense-company-a-13' } }];
+
+    it('fails to match an unresolved { $fromShownItems } marker object (String(obj) is "[object Object]") — the bug', () => {
+      const gold = [{ tool: 'expense.get_detail', input: { expenseId: { $fromShownItems: 2 } } }];
+      assert.equal(scoreToolCalls(gold, actual, NOW).ok, false);
+    });
+
+    it('matches once the marker has been resolved to the same id the model used — the fix (run-real.ts scores resolvedCallsByTurn, never turn.expect.calls verbatim)', () => {
+      const gold = [{ tool: 'expense.get_detail', input: { expenseId: 'expense-company-a-13' } }];
+      assert.equal(scoreToolCalls(gold, actual, NOW).ok, true);
+    });
+  });
+
   describe('expense.get_breakdown as an equivalent tool for an expense.list_recent total', () => {
     const gold = [{ tool: 'expense.list_recent', input: { fromDate: '2026-09-01', toDate: '2026-09-27' } }];
     const goldResults = [{ status: 'ok', data: { summary: { totalAmount: '1500.00', countedItems: 3 } } }];
