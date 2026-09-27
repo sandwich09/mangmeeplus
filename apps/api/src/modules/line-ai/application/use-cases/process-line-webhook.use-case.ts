@@ -4095,9 +4095,20 @@ export class ProcessLineWebhookUseCase {
     const attachmentIds = [...new Set(qaResult?.coverage.requested.map(page => page.attachmentId) ?? [])];
     const pendingSubrequestIds = [...pending.map(item => String(item.index)),
       ...failedPages.map(page => `file:${page.attachmentId}:page:${page.page}`)];
-    if (pendingSubrequestIds.length) items.push({ kind: 'limitation', required: true, sourceProofIds: [],
-      text: ['ส่วนที่ยังไม่เสร็จ:', ...pending.map(item => `ข้อ ${item.index + 1}: ${item.question}`),
-        ...failedPages.map(page => `ยังอ่านเอกสารแนบลำดับที่ ${attachmentIds.indexOf(page.attachmentId) + 1} หน้า ${page.page} ไม่สำเร็จ`)].join('\n') });
+    const missingLimitations: string[] = [];
+    for (const limitation of [
+      ...pending.map(item => ({ match: item.question, text: `ข้อ ${item.index + 1}: ${item.question}` })),
+      ...failedPages.map(page => {
+        const text = `ยังอ่านเอกสารแนบลำดับที่ ${attachmentIds.indexOf(page.attachmentId) + 1} หน้า ${page.page} ไม่สำเร็จ`;
+        return { match: text, text };
+      }),
+    ]) {
+      const existingItem = limitation.match && items.find(item => item.text.includes(limitation.match!));
+      if (existingItem) existingItem.kind = 'limitation'; // Preserve the exact wire text and source proof.
+      else missingLimitations.push(limitation.text);
+    }
+    if (missingLimitations.length) items.push({ kind: 'limitation', required: true, sourceProofIds: [],
+      text: ['ส่วนที่ยังไม่เสร็จ:', ...missingLimitations].join('\n') });
     const financialControlIndex = reimbursementControlIndex >= 0 ? reimbursementControlIndex : controlIndex;
     const control = reimbursement?.status === 'preview' && reimbursementControlIndex >= 0
       ? { kind: 'REIMBURSEMENT_DRAFT_CONFIRM' as const, actionId: reimbursement.preview.actionId, previewRevision: reimbursement.preview.previewRevision, confirmationDigest: reimbursement.preview.confirmationDigest, expiresAt: reimbursement.preview.expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) }
@@ -7665,7 +7676,7 @@ export class ProcessLineWebhookUseCase {
     //
     // A chat with open substitute work keeps its existing arrival handler: a PDF scan of a signed
     // certificate belongs to THAT question, not to a new evidence group.
-    if (event.messageType === 'file' && canCaptureExpense && this.captureLine && this.initReceiptUpload) {
+    if (!this.boundConversations.has(event) && event.messageType === 'file' && canCaptureExpense && this.captureLine && this.initReceiptUpload) {
       const substituteOpen = this.substituteReceiptContinuation && access.permissions.includes('expense.receipt.upload')
         ? await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event)).catch(() => null)
         : null;
@@ -7688,7 +7699,9 @@ export class ProcessLineWebhookUseCase {
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && Boolean(this.expenseDraftConversation);
     const captionCandidates = computeValueCandidates(normalizeLineText(caption));
-    const routePlan = qaRoute?.route ?? await this.tryRouteIntake({
+    const routePlan: GovernedLineIntakeRoutePlan = this.boundConversations.has(event) && !caption
+      ? { status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0 }
+      : qaRoute?.route ?? await this.tryRouteIntake({
       requestId,
       webhookEventId: event.webhookEventId,
       retryWebhookEventId: event.webhookEventId,
@@ -7745,7 +7758,7 @@ export class ProcessLineWebhookUseCase {
     // substring test, and a real routed receipt says things like “ค่าทำป้ายลายเซ็น 500 บาท”: reading
     // that as intent would file the receipt as the newest signature for legal documents AND lose the
     // expense. A reachable router that looked at both the caption and the picture outranks a regex.
-    if (routePlan.status !== 'ROUTED'
+    if (!this.boundConversations.has(event) && routePlan.status !== 'ROUTED'
       && canSubmitSignature && event.messageType === 'image' && isSignatureCaptionText(caption)
       && this.initSignatureUpload && this.createSignatureAsset) {
       const ticketReply = await this.createLineSignatureAsset({ ctx, event, sourceEvent: event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
@@ -7758,14 +7771,23 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    if (routePlan.status === 'ROUTED' && routePlan.intent === 'CLARIFY') {
-      const clarifyReply = routePlan.clarifyQuestion ?? CLARIFY_REPLY;
+    // v2 media is not financial authority. An empty/ambiguous/read-only caption must keep its
+    // bytes pending, even when the sender has expense permission and the file is a PDF.
+    const v2CaptureAuthorized = !!caption && routePlan.status === 'ROUTED'
+      && routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE'
+      && routePlan.semanticSubrequests?.some(item => item.kind === 'write' && item.writeIntent === 'EXPENSE_DOCUMENT_CAPTURE');
+    const v2NeedsCaptureClarification = this.boundConversations.has(event) && !v2CaptureAuthorized
+      && routePlan.intent !== 'MUTATION_REQUEST_REFUSAL';
+    if (v2NeedsCaptureClarification || (routePlan.status === 'ROUTED' && routePlan.intent === 'CLARIFY')) {
+      const clarifyReply = routePlan.clarifyQuestion ?? (v2NeedsCaptureClarification
+        ? 'ต้องการให้อ่านไฟล์นี้เพื่อตอบคำถาม หรือใช้เป็นหลักฐานบันทึกค่าใช้จ่ายคะ ยังไม่ได้สร้างรายการให้ค่ะ'
+        : CLARIFY_REPLY);
       // A4: this branch asked a question about a photo and then threw the photo away. Whatever the
       // customer answered — “ใบเสร็จ”, “ลายเซ็น”, “หลักฐานการจ่าย” — there were no bytes left to act
       // on. Park them on the same pending row every other clarify uses; the reply is unchanged, and
       // a failure to park must not swallow the question the customer is waiting for.
       let parked: Awaited<ReturnType<ProcessLineWebhookUseCase['ensurePendingMedia']>> | undefined;
-      if (canCaptureExpense) {
+      if (canCaptureExpense || canReadDocument || canStageReimbursement) {
         try {
           parked = await this.ensurePendingMedia(
             ctx, event, companyId, identity.userId, caption, media, receiptClarifyQuestion(event),
@@ -7865,6 +7887,13 @@ export class ProcessLineWebhookUseCase {
         // Never let this branch sink a media turn: without it the photo is still capturable below.
         this.logger.warn({ msg: 'line_substitute_media_arrival_failed', requestId, ...safeLineErrorDetails(error) });
       }
+    }
+
+    // The legacy PDF fast path above stays unchanged; v2 reaches capture only after typed
+    // expense authority and the existing substitute continuation have both been checked.
+    if (this.boundConversations.has(event) && v2CaptureAuthorized && event.messageType === 'file'
+      && canCaptureExpense && this.captureLine && this.initReceiptUpload) {
+      return await this.captureLineFile({ event, ctx, access, companyId, userId: identity.userId, media, caption });
     }
 
     // Reference-only routes may receive bounded guidance without expense permission, but must
@@ -8872,7 +8901,7 @@ ${link}`, ctx.companyId, access);
       await this.deliverDocumentQaResult(event, pending.readJobId, { ...bound.owner, ownerEpoch: bound.epoch });
       return { handled: true };
     }
-    if (!bound || !(this.config.lineAiDocumentQaEnabled || this.config.lineAiReimbursementDraftWriteEnabled) || !access.permissions.includes('line.ai.query') || !caption.trim()) return null;
+    if (!bound || !access.permissions.includes('line.ai.query') || !caption.trim()) return null;
     const textEvent: LineTextEvent = { ...event, messageText: caption };
     this.boundConversations.set(textEvent, bound);
     this.deliveryAccess.set(textEvent, this.deliveryAccess.get(event)!);

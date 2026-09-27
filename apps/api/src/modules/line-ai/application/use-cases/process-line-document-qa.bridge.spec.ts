@@ -165,3 +165,73 @@ it('keeps non-file clauses pending and closes only explicitly answered file clau
   assert.match(f.delivered[0]!, /why sky blue/);
   assert.equal(f.flow.semanticDelivery.get(f.event)[1].status, 'needs_user');
 });
+
+// The real media entry point must stop before the former unconditional PDF capture branch.
+async function pdfEntryFixture(route: any, v2 = true) {
+  const f = fixture(), pdf = await PDFDocument.create(); pdf.addPage(); pdf.addPage();
+  const bytes = Buffer.from(await pdf.save());
+  const media = { ...f.media, fileName: 'document.pdf', mimeType: 'application/pdf', bytes, byteSize: bytes.length };
+  Object.assign(f.event, { companyIdAtAcceptance: 'company', messageType: 'file', fileName: media.fileName });
+  f.access.permissions.push('expense.receipt.upload');
+  if (!v2) f.flow.boundConversations.delete(f.event);
+  let expenseInitializations = 0;
+  Object.assign(f.flow, {
+    claimWebhookEvent: async () => true, stampSupportMedia: async () => false, assistantPaused: async () => false,
+    resolveLineIdentity: async () => ({ userId: 'user', user: { status: 'ACTIVE' } }),
+    permissionResolver: { resolveAccess: async () => f.access }, refusePendingLegalAcceptance: async () => false,
+    recordShadowTurn: async () => undefined, refuseWhenLaunchRouteClosed: async () => false, bindConversation: async () => undefined,
+    timeStage: async (_id: string, _stage: string, run: () => Promise<unknown>) => run(),
+    downloadLineMedia: async () => ({ ok: true, media }), lineMediaRejectionReason: async () => null,
+    expenseRepo: { findByLineMessageId: async () => null, findExpenseIdsByAttachmentChecksum: async () => [] },
+    initReceiptUpload: { execute: async () => { expenseInitializations++; return { expenseId: 'unexpected-expense' }; } },
+    completeReceiptUpload: { execute: async () => { throw new Error('Unexpected expense completion'); } },
+    captureLine: {}, captureLineFile: async () => { f.trace.push('expense-capture'); await f.flow.initReceiptUpload.execute(); },
+    loadConversationContext: async () => undefined, mayDeliverBusinessReply: async () => true,
+    tryRouteIntake: async () => { f.trace.push('intake'); return route; },
+    persistIntakeTurn: async () => undefined,
+    appendMediaClarification: async (_event: any, input: any) => {
+      assert.equal(input.pending.attachmentId, 'attachment'); f.trace.push('waiting-for-purpose');
+    },
+    logger: { warn: (entry: unknown) => { throw new Error(`Unexpected pending-media failure: ${JSON.stringify(entry)}`); } },
+  });
+  f.flow.prisma.client.companyFeatureEntitlement = { findMany: async () => [] };
+  f.flow.prisma.client.lineIntakePendingMedia.findFirst = async () => null;
+  return { ...f, media, expenseInitializations: () => expenseInitializations };
+}
+
+for (const classification of [
+  { status: 'ROUTED', intent: 'CLARIFY', semanticSubrequests: [{ kind: 'read' }] },
+  { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', semanticSubrequests: [{ kind: 'read' }] },
+  { status: 'UNAVAILABLE', intent: 'CLARIFY' },
+  { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', semanticSubrequests: [{ kind: 'read' }] },
+  { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', semanticSubrequests: [{ kind: 'write', writeIntent: 'REIMBURSEMENT_REQUEST_START' }] },
+]) it(`keeps a v2 PDF pending without expense initialization for ${classification.status}/${classification.intent}/${classification.semanticSubrequests?.[0]?.kind ?? 'unknown'}`, async () => {
+  const f = await pdfEntryFixture(classification);
+  if (classification.status === 'UNAVAILABLE') f.flow.config.lineAiDocumentQaEnabled = false;
+  await f.flow.executeReceiptUploadInner(f.event, 'อ่านไฟล์นี้ว่าอย่างไร', {});
+  assert.equal(f.expenseInitializations(), 0);
+  assert.deepEqual(f.trace, ['intake', 'upload-intent', 'pending', 'upload', 'complete-upload', 'waiting-for-purpose']);
+  assert.match(f.delivered[0]!, /ยังไม่ได้สร้างรายการ/);
+  const pending = await f.flow.prisma.client.lineIntakePendingMedia.findUnique();
+  assert.equal(pending.status, 'PENDING'); assert.equal(pending.askedQuestionJson.pageCount, 2);
+  assert.equal(pending.chatKeyHash, 'chat'); assert.equal(pending.lifecycleEpoch, 3);
+});
+
+it('asks purpose for a blank v2 PDF without a model call, but retains legacy blank upload behavior', async () => {
+  for (const v2 of [true, false]) {
+    const f = await pdfEntryFixture({ status: 'UNAVAILABLE', intent: 'CLARIFY' }, v2);
+    await f.flow.executeReceiptUploadInner(f.event, '', {});
+    assert.equal(f.trace.includes('intake'), false);
+    assert.equal(f.expenseInitializations(), v2 ? 0 : 1);
+    assert.equal(f.trace.includes('waiting-for-purpose'), v2);
+    assert.equal(f.trace.includes('expense-capture'), !v2);
+  }
+});
+
+it('allows a typed explicit expense write through the v2 PDF capture path after exactly one intake', async () => {
+  const f = await pdfEntryFixture({ status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE',
+    semanticSubrequests: [{ kind: 'write', writeIntent: 'EXPENSE_DOCUMENT_CAPTURE' }] });
+  await f.flow.executeReceiptUploadInner(f.event, 'บันทึกเอกสารนี้เป็นค่าใช้จ่าย', {});
+  assert.equal(f.expenseInitializations(), 1);
+  assert.deepEqual(f.trace, ['intake', 'expense-capture']);
+});

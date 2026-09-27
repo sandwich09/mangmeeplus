@@ -87,6 +87,10 @@ for (const scenario of [
   { name: 'denied and unsupported are terminal dispositions', coverage: [{ index: 0, status: 'denied' }, { index: 1, status: 'unsupported' }], pending: [], pages: false },
   { name: 'actual clarification', coverage: [{ index: 0, status: 'needs_user', question: 'ต้องตรวจข้อมูลหรือสิทธิ์ของส่วนนี้ก่อน ยังไม่ได้ทำรายการให้' }], pending: ['0'], pages: false },
   { name: 'mixed handled and pending clauses', coverage: [{ index: 0, status: 'handled' }, { index: 1, status: 'needs_user', question: 'ต้องการใช้สาขาใด' }], pending: ['1'], pages: false },
+  { name: 'one already-rendered clarification', coverage: [{ index: 0, status: 'needs_user', question: 'ต้องการใช้สาขาใด' }], pending: ['0'], pages: false, outgoing: ['ต้องการใช้สาขาใด'] },
+  { name: 'an answered clause plus an already-rendered pending question', coverage: [{ index: 0, status: 'handled' }, { index: 1, status: 'needs_user', question: 'ต้องการใช้สาขาใด' }], pending: ['1'], pages: false, outgoing: ['ยอดที่ตรวจสอบแล้ว 120 บาท', 'ต้องการใช้สาขาใด'] },
+  { name: 'a pending question embedded in the canonical answer', coverage: [{ index: 0, status: 'handled' }, { index: 1, status: 'needs_user', question: 'ต้องการใช้สาขาใด' }], pending: ['1'], pages: false, outgoing: ['ยอดที่ตรวจสอบแล้ว 120 บาท\nต้องการใช้สาขาใด'] },
+  { name: 'an already-rendered failed page', coverage: [], pending: ['file:attachment:page:2'], pages: true, outgoing: ['อ่านหน้าแรกได้\nยังอ่านเอกสารแนบลำดับที่ 1 หน้า 2 ไม่สำเร็จ'] },
   { name: 'historical QA failed page without indexed coverage', coverage: [], pending: ['file:attachment:page:2'], pages: true },
   { name: 'QA failed page and pending clause', coverage: [{ index: 0, status: 'needs_user', question: 'ยังตอบคำถามจากหน้าที่เลือกไม่ได้' }], pending: ['0', 'file:attachment:page:2'], pages: true },
 ]) it(`frozen webhook delivery preserves ${scenario.name} through the real plan validator`, async () => {
@@ -106,7 +110,7 @@ for (const scenario of [
     persistSemanticTaskCompletion: async () => { calls.push('persist-pending-state'); },
     webhookPlanAuthorization: async (_event: any, expiresAt: string) => ({ v: 2, kind: 'PRIVATE', issuedAt: createdAt.toISOString(), expiresAt,
       actor: { userId: 'user', companyId: 'company', membershipId: 'member', requestId: 'request', accessFingerprint: 'fingerprint',
-        channelId: 'oa', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation', ownerEpoch: 0 }, proofs: [] }),
+        channelId: 'oa', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation', ownerEpoch: 0 }, proofs: 'outgoing' in scenario ? [{ id: 'read', kind: 'READ', evidenceIds: ['evidence'] }] : [] }),
     prisma: { client: { lineTurnOutcome: { findUnique: async () => null }, lineWebhookEventLog: { findUnique: async () => ({ createdAt }) } } },
     deliveryPlans: { savePlan: async (_owner: unknown, plan: DeliveryPlanV2) => {
       assert.ok(parseLineDeliveryPlan(plan), 'actual plan must meet unchanged coverage and frozen-wire validation');
@@ -118,8 +122,9 @@ for (const scenario of [
       return 'ok';
     },
   });
-  const answer = 'คำตอบหรือคำอธิบายขอบเขตที่ตรวจสอบแล้ว';
-  assert.equal(await flow.sendMessagesV2(event, [{ type: 'text', text: answer }]), 'ok');
+  const outgoing = 'outgoing' in scenario ? scenario.outgoing! : ['คำตอบหรือคำอธิบายขอบเขตที่ตรวจสอบแล้ว'];
+  const answer = outgoing[0]!;
+  assert.equal(await flow.sendMessagesV2(event, outgoing.map(text => ({ type: 'text', text }))), 'ok');
   assert.deepEqual(calls, ['persist-pending-state', 'save-plan', 'replay']);
   assert.deepEqual(saved!.answer.pendingSubrequestIds, scenario.pending);
   assert.equal(saved!.answer.status, scenario.pending.length ? 'PARTIAL' : 'COMPLETE');
@@ -127,5 +132,10 @@ for (const scenario of [
   assert.equal(saved!.answer.items[0]!.text, answer); assert.equal(wire[0], answer);
   for (const item of scenario.coverage) if (item.status === 'needs_user') assert.ok(wire.join('\n').includes(item.question!));
   if (scenario.pages) { assert.match(wire.join('\n'), /ยังอ่านเอกสารแนบลำดับที่ 1 หน้า 2 ไม่สำเร็จ/); assert.doesNotMatch(wire.join('\n'), /attachment/); }
+  if ('outgoing' in scenario) {
+    assert.deepEqual(wire, outgoing, 'already-rendered limitations must not append a second question or discard the answer');
+    assert.ok(saved!.answer.items.every(item => item.required));
+    for (const item of saved!.answer.items) assert.deepEqual(item.sourceProofIds, ['read'], 'marking a limitation must retain its original source proof');
+  }
   assert.deepEqual(scenario.coverage, originalCoverage, 'transport must not promote pending or denied work to handled');
 });
