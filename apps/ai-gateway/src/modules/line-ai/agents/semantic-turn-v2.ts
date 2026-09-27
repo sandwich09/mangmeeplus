@@ -236,7 +236,8 @@ export async function runSemanticTurnV2(input: {
       sources: entry.result.sourceRefs.map(ref => ({ ...ref, id: sourceId(ref) })) })), questions: [...questions].map(([index, text]) => ({ index, text })),
     approvedHelp: knowledge?.replyText ?? capabilityHelp, forcedOutcomes: [...forced].map(([index, value]) => ({ index, ...value })) };
   let parsed: Record<string, unknown> | undefined;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const needsComposition = inventory.some(item => item.kind !== 'help' && !forced.has(item.index) && !questions.has(item.index));
+  for (let attempt = 0; needsComposition && attempt < 2; attempt++) {
     if (attempt) {
       const state = currentBudgetState();
       if (state?.status !== 'active-v2' || state.repairCount >= state.grant.maxRepairs || state.calls >= state.grant.maxTurnSlots) break;

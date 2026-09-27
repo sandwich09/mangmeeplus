@@ -160,6 +160,10 @@ Capture provider duration/tokens, decoder result, tool duration, final delivery 
 5. Compare the first-intake catalog, compact decoder set, full semantic CONTROL tools, actor delegations, executed tools and delivered result for each role/package case.
 6. Keep the NAT-02 sales mismatch as a deferred diagnostic. Do not activate sales/report tools or change product goldens to make an expense-package run pass.
 
+The first Starter OWNER smoke is a manual failure despite the generic scorer's empty-oracle pass: the first turn proposed an authorized ordinary tool without an enabled deterministic formatter family and dead-ended before tool execution; the second turn failed semantic-control parsing. Before another paid run, pass the Gateway's existing active prepared-family set into intake prompting and compact decoding. Keep the full authorized catalog for ordinary semantic routing, advertise `simpleRead` only for exact active tool/shape families, and strip an unsupported prepared candidate while retaining canonical semantics so the API does not narrow the grant into the unavailable fast lane.
+
+Add focused semantic-control coverage proving an all-forced/all-question turn skips compose and returns ordered deterministic coverage, while a mixed forced plus unresolved turn still composes once and preserves every clause in order. Add intake coverage for the `help`/`general`/`read` boundary without keyword routing. Do not activate the DRAFT `expense.status` card or bypass its reviewer gate.
+
 Exit: held-out evidence represents current sold package and role boundaries, and no latency statistic includes an unavailable module or a fast authority refusal as a success.
 
 Exit is evidence, not a predetermined pass. A faster refusal, timeout, missing clause, wrong filter, false answer or unsafe effect fails.

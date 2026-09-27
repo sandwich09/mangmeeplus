@@ -350,6 +350,21 @@ describe('LineAiTurnUseCase -> OrchestratorAgent -> real v2 provider path', () =
     assert.equal(run.usage.length, 2);
   });
 
+  it('skips composition when control already resolves every clause, while preserving inventory order', async () => {
+    const subrequests = [{ kind: 'read' as const, goal: 'ตรวจข้อแรก' }, { kind: 'read' as const, goal: 'ตรวจข้อสอง' }];
+    const cases = [
+      { control: '{}', reasons: ['SEMANTIC_CONTROL_UNAVAILABLE', 'SEMANTIC_CONTROL_UNAVAILABLE'] },
+      { control: JSON.stringify({ calls: [], questions: [{ index: 1, text: 'ถามข้อสอง' }, { index: 0, text: 'ถามข้อแรก' }] }),
+        reasons: ['MISSING_REQUIRED_INPUT', 'MISSING_REQUIRED_INPUT'] },
+    ];
+    for (const [index, candidate] of cases.entries()) {
+      const run = await makeScenario({ messageText: `ตรวจสองข้อ ${index}`, subrequests, controls: [candidate.control], answers: [] });
+      assert.deepEqual(run.response.semanticCoverage?.map(item => [item.index, item.reasonCode]), [[0, candidate.reasons[0]], [1, candidate.reasons[1]]]);
+      assert.deepEqual(run.steps.map(step => step.invocation.profileId), ['line-control/2']);
+      assert.equal(run.events.includes('vendor:answer'), false);
+    }
+  });
+
   it('refuses a business number that does not match the permission checked fact', async () => {
     const run = await makeScenario({ messageText: 'สรุปค่าใช้จ่ายรวมและอธิบายกำไรคืออะไร',
       subrequests: [{ kind: 'read', goal: 'สรุปค่าใช้จ่ายรวม' }, { kind: 'general', goal: 'อธิบายว่ากำไรคืออะไร' }],
@@ -378,6 +393,18 @@ it('does not let model-authored product buttons escape the reviewed-help boundar
   assert.match(run.response.replyText, /กำไรกับเงินสดเป็นคนละมุมมอง/);
   assert.deepEqual(run.response.semanticCoverage?.map(item => item.status), ['needs_user', 'handled']);
   assert.equal(run.apiCalls.length, 0);
+  assert.equal(run.events.filter(event => event === 'vendor:answer').length, 1, 'the unresolved general clause still composes once');
+});
+
+it('answers pure help from the deterministic guide boundary without control or composition', async () => {
+  const run = await makeScenario({ messageText: 'รายการยืนยันแล้ว แปลว่าจ่ายเงินแล้วหรือยัง',
+    subrequests: [{ kind: 'help', goal: 'อธิบายสถานะยืนยันและชำระเงินของมั่งมี' }], answers: [] });
+  assert.equal(run.response.semanticCoverage?.[0]?.status, 'needs_user');
+  assert.equal(run.response.semanticCoverage?.[0]?.reasonCode, 'SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE');
+  assert.match(run.response.replyText, /ยังไม่มีคู่มือที่ตรวจสอบแล้ว/);
+  assert.deepEqual(run.steps, []);
+  assert.deepEqual(run.providerRequests, []);
+  assert.deepEqual(run.usage, []);
 });
 
 
@@ -401,6 +428,7 @@ describe('v2 financial and dependency dispatch fences', () => {
       apiResults: expenseSummary });
     assert.equal(result.apiCalls.length, 1);
     assert.equal(result.response.semanticCoverage?.[1]?.reasonCode, 'DEPENDENCY_SOURCE_PENDING');
+    assert.equal(result.events.filter(event => event === 'vendor:answer').length, 1, 'the unresolved independent clause still composes once');
   });
 
   it('does not treat reimbursement options as a completed financial dependency', async () => {

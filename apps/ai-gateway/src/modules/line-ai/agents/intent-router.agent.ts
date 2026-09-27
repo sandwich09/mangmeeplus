@@ -16,6 +16,8 @@ import { APPROVED_KNOWLEDGE_SELECTION_PROMPT, offeredKnowledgeMetadata, parseSel
 import { PRODUCT_HELP_PACK } from './approved-product-help';
 import { currentBudgetState } from '../../../common/usage/usage-context';
 import { parseLineIntakeCompactDecision } from './line-intake-compact-decision';
+import { activePreparedFamilies } from './prepared-simple-read-formatter';
+import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 
 /** The reason-code vocabulary, rendered from the contract itself so the prompt can never drift
  *  from the parser. UAT 2026-08-27: these two arrays were the only classification fields the
@@ -199,6 +201,15 @@ export function effectiveIntakeToolNames(
   return new Set((value as string[]).filter((name) => configured.has(name) && authorized.has(name)).sort());
 }
 
+/** The operator allowlist is global; a request may advertise only families whose tool survived the
+ * same permission/feature/runtime catalog intersection. Shapes stay exact and compiled. */
+export function effectivePreparedFamilies(allowlist: readonly string[], intakeTools: ReadonlySet<string>): ReadonlySet<string> {
+  const requestFamilies = new Set([...intakeTools].flatMap((tool) => [
+    preparedFamilyKey(tool, 'single_metric'), preparedFamilyKey(tool, 'list'),
+  ]));
+  return new Set([...activePreparedFamilies(allowlist)].filter((family) => requestFamilies.has(family)));
+}
+
 const SUBSTITUTE_ROUTE_MEANING = `
 - SUBSTITUTE_RECEIPT_CONTINUATION: the user is working on a ใบรับรองแทนใบเสร็จรับเงิน (substitute/replacement receipt certifying a cash spend that has no seller receipt) — starting one, continuing one, or answering its pending question. Judge SEMANTICALLY, not by one keyword: "ทำใบทดแทนของค่าวิน", "ขอออกใบรับรองแทนใบเสร็จค่าแท็กซี่", or an answer to substituteContext.pendingQuestion all belong here. Choose this ONLY when substituteContext shows an open/paused workflow OR the message itself clearly asks to make/continue a substitute receipt; a mere mention while asking a definition is a question, not this route. NEVER route ใบสำคัญรับเงิน / payment voucher / เงินสดย่อย petty-cash reimbursement / a normal expense here — those are different documents. A brand-new unrelated expense note like "ค่ากาแฟ 65 บาท" stays EXPENSE_DOCUMENT_CAPTURE even while a substitute workflow is open; it does not continue the substitute.`;
 
@@ -347,9 +358,11 @@ export type IntakeRouterCapabilities = { fusedPlan?: boolean; substituteSemantic
  * {@link IMAGE_CAPTURE_HINTS_SECTION}). It defaults to false, so every text call — and every existing
  * caller and spec that passes one argument — keeps the exact prompt it had before.
  */
-export function intakeRouterSystemPrompt(caps: IntakeRouterCapabilities = {}, hasImage = false, semanticV2 = false, retainedTask = false): string {
+export function intakeRouterSystemPrompt(caps: IntakeRouterCapabilities = {}, hasImage = false, semanticV2 = false,
+  retainedTask = false, preparedFamilies: ReadonlySet<string> = new Set()): string {
   const compactTextDecision = semanticV2 && !hasImage;
-  const compactSimpleReadField = caps.fusedPlan
+  const compactSimpleReadEnabled = !!caps.fusedPlan && preparedFamilies.size > 0;
+  const compactSimpleReadField = compactSimpleReadEnabled
     ? ', "simpleRead": { "subrequest": 0, "tool": "registered tool", "subject": "catalog subject", "agent": "catalog agent", "answerShape": "single_metric"|"list", "confidence": 0.0 }'
     : '';
   const substituteEnum = caps.substituteSemantic ? ' | "SUBSTITUTE_RECEIPT_CONTINUATION"' : '';
@@ -368,7 +381,7 @@ export function intakeRouterSystemPrompt(caps: IntakeRouterCapabilities = {}, ha
     ? ', // business-document images only, see below\n  "preparedPlan": { ... } // OPTIONAL bounded pre-plan; omit unless highly confident, see "Fused prepared plan" below'
     : ' // business-document images only, see below';
   const semanticInventoryField = compactTextDecision
-    ? `\n  "decisionV1": { "subrequests": [{ "kind": "read"|"general"|"write"|"help"|"public"|"file", "goal": "...", "sources": [{ "part": 0, "whole": true }], "filters": {} }]${compactSimpleReadField} }, // REQUIRED${caps.fusedPlan ? '; simpleRead OPTIONAL, see below' : ''},`
+    ? `\n  "decisionV1": { "subrequests": [{ "kind": "read"|"general"|"write"|"help"|"public"|"file", "goal": "...", "sources": [{ "part": 0, "whole": true }], "filters": {} }]${compactSimpleReadField} }, // REQUIRED${compactSimpleReadEnabled ? '; simpleRead OPTIONAL, see below' : ''},`
     : semanticV2
     ? '\n  "semanticSubrequests": [{ "index": 0, "kind": "read"|"general"|"write"|"help"|"public"|"file", "goal": "...", "requiredEvidence": [], "requestedFilters": {}, "dependsOn": [], "evidenceRefs": [{ "partId": "...", "startUtf16": 0, "endUtf16": 1, "rawSha256": "..." }] }] // REQUIRED, one item per distinct user request; max 8,'
     : '';
@@ -400,8 +413,8 @@ Route meanings:
 - MUTATION_REQUEST_REFUSAL: user asks for a final business mutation: approve, pay, transfer money, post ledger, file tax, export, activate/apply a signature, change permissions.
 - CLARIFY: image/text is ambiguous between routes, or too unclear to act on. When unsure between capture and signature, choose CLARIFY.
 - UNSUPPORTED: unrelated to business data or expense/signature intake (small talk goes here too).
-${compactTextDecision ? `decisionV1 is the provider-only compact form. The server expands it into the existing canonical semanticSubrequests and optional preparedPlan; never emit either legacy field beside decisionV1. Preserve EVERY distinct clause in original order, max 8. A subrequest MUST contain kind, goal, sources, and filters. requiredEvidence, dependsOn, entity, taskRef, and writeIntent are optional; omit empty requiredEvidence/dependsOn because the server supplies []. Use sources [{"part":N,"whole":true}] for a whole current input part, or [{"part":N,"quote":"exact unique substring"}] for a narrower clause. Quotes must be exact, case-preserved, unique in that part, and never normalized. Never write hashes or offsets; the server derives them from current inputEvidenceParts. entity must be exact current user text. taskRef must be copied exactly from the offered current taskProjection and only for a waiting_user/paused task with a needs_user/pending subrequest; an independent side question has no taskRef. Keep the latest explicit correction and negation. An explicit write clause uses writeIntent; a question about writing or "read only / do not save" stays read/general and never gains writeIntent. Ambiguous target or operation stays unresolved and asks one concrete question; never guess.
-${caps.fusedPlan ? `For exactly one independent read, simpleRead MAY select one enabled catalog tool. Put each business filter only in subrequests[0].filters; the server copies it to the canonical tool input. Use only that tool's requiredInputFields/optionalInputFields and exact scalar values grounded in current text or valueCandidates. Express a period as EITHER periodKey OR the complete fromDate/toDate pair, never both. For month-to-date/spending-so-far copy the candidate's clamped fromDate/toDate. Do not emit aliases, invented ids/defaults, conflicting filters, or a filter the selected tool cannot express. Omit simpleRead for compound, ambiguous, dependent, entity/task-referenced, write, attachment, analysis, or unsupported-filter requests; keep the full subrequest so normal planning can preserve or clarify it. simpleRead never grants permission.` : ''}` : semanticV2 ? `For the required semanticSubrequests inventory, preserve EVERY distinct clause in the original message, including mixed business reads, general/science questions, approved help, public lookup requests, file requests, unsupported requests, and blocked write requests. Use exact zero-based contiguous indices in the original clause order, max 8; never discard a clause because it looks like a label, fragment, quoted title, or question. Each goal is a concise interpretation, but every item MUST include one or more evidenceRefs copied as exact UTF-16 offsets into the supplied inputEvidenceParts (partId/rawSha256); the span text must be the user's accepted raw text, with no lowercasing, normalization, or truncation. Each nonempty inputEvidenceParts item includes a server-calculated fullPartRef. When a clause cites the whole rawText of a part, COPY that fullPartRef object verbatim into evidenceRefs; do not count characters or recalculate offsets or hashes. For a narrower clause, use its exact subspan within that part, bounded by fullPartRef.endUtf16, never broaden it to a different clause. Entity references, when included, are exact user_text spans only. When this clause answers or resumes a pending task, include taskRef:{taskId,taskRevision,subrequestIndex} copied exactly from the offered taskProjection; select only waiting_user/paused tasks and needs_user/pending subrequests. An independent side question has no taskRef and does not replace or cancel the prior task. Do not invent a task or guess between multiple tasks: ask one specific selection question. For an explicit write clause, include writeIntent selected from EXPENSE_DOCUMENT_CAPTURE, EXPENSE_DRAFT_CONTINUATION, EXPENSE_CAPTURE_CORRECTION, SUBSTITUTE_RECEIPT_CONTINUATION, REIMBURSEMENT_REQUEST_START when it matches that clause. Keep the writeIntent even when a mixed question makes the outer intent BUSINESS_READ. Never put writeIntent on general/help/read/file questions; a question about writing is not a requested write. Negation, missing target, or unclear operation must remain a clarification, never manufacture write authority. Do not treat this inventory as permission or mutation authority. Return valid JSON; missing, duplicate, or incomplete coverage is a schema failure.` : ''}
+${compactTextDecision ? `decisionV1 is the provider-only compact form. The server expands it into the existing canonical semanticSubrequests and optional preparedPlan; never emit either legacy field beside decisionV1. Preserve EVERY distinct clause in original order, max 8. A subrequest MUST contain kind, goal, sources, and filters. requiredEvidence, dependsOn, entity, taskRef, and writeIntent are optional; omit empty requiredEvidence/dependsOn because the server supplies []. Use sources [{"part":N,"whole":true}] for a whole current input part, or [{"part":N,"quote":"exact unique substring"}] for a narrower clause. Quotes must be exact, case-preserved, unique in that part, and never normalized. Never write hashes or offsets; the server derives them from current inputEvidenceParts. entity must be exact current user text. taskRef must be copied exactly from the offered current taskProjection and only for a waiting_user/paused task with a needs_user/pending subrequest; an independent side question has no taskRef. Keep the latest explicit correction and negation. An explicit write clause uses writeIntent; a question about writing or "read only / do not save" stays read/general and never gains writeIntent. Use kind "help" for the meaning or workflow of MangmeePlus itself, and select only an exact offered approvedKnowledge card when one matches. Use kind "general" for a business-domain concept or definition independent of this product. Use kind "read" only for an actual company figure, record, or current status that requires a current permission-checked source; an explicit record/entity/current-state question never becomes help or general. Ambiguous target or operation stays unresolved and asks one concrete question; never guess.
+${compactSimpleReadEnabled ? `For exactly one independent read, simpleRead MAY select only an exact tool and answerShape pair listed in preparedSimpleReadFamilies in the catalog. Put each business filter only in subrequests[0].filters; the server copies it to the canonical tool input. Use only that tool's requiredInputFields/optionalInputFields and exact scalar values grounded in current text or valueCandidates. Express a period as EITHER periodKey OR the complete fromDate/toDate pair, never both. For month-to-date/spending-so-far copy the candidate's clamped fromDate/toDate. Do not emit aliases, invented ids/defaults, conflicting filters, or a filter the selected tool cannot express. Omit simpleRead for compound, ambiguous, dependent, entity/task-referenced, write, attachment, analysis, unsupported-filter requests, or when no exact prepared family matches; keep the full subrequest so normal planning can preserve or clarify it. simpleRead never grants permission.` : ''}` : semanticV2 ? `For the required semanticSubrequests inventory, preserve EVERY distinct clause in the original message, including mixed business reads, general/science questions, approved help, public lookup requests, file requests, unsupported requests, and blocked write requests. Use exact zero-based contiguous indices in the original clause order, max 8; never discard a clause because it looks like a label, fragment, quoted title, or question. Each goal is a concise interpretation, but every item MUST include one or more evidenceRefs copied as exact UTF-16 offsets into the supplied inputEvidenceParts (partId/rawSha256); the span text must be the user's accepted raw text, with no lowercasing, normalization, or truncation. Each nonempty inputEvidenceParts item includes a server-calculated fullPartRef. When a clause cites the whole rawText of a part, COPY that fullPartRef object verbatim into evidenceRefs; do not count characters or recalculate offsets or hashes. For a narrower clause, use its exact subspan within that part, bounded by fullPartRef.endUtf16, never broaden it to a different clause. Entity references, when included, are exact user_text spans only. When this clause answers or resumes a pending task, include taskRef:{taskId,taskRevision,subrequestIndex} copied exactly from the offered taskProjection; select only waiting_user/paused tasks and needs_user/pending subrequests. An independent side question has no taskRef and does not replace or cancel the prior task. Do not invent a task or guess between multiple tasks: ask one specific selection question. For an explicit write clause, include writeIntent selected from EXPENSE_DOCUMENT_CAPTURE, EXPENSE_DRAFT_CONTINUATION, EXPENSE_CAPTURE_CORRECTION, SUBSTITUTE_RECEIPT_CONTINUATION, REIMBURSEMENT_REQUEST_START when it matches that clause. Keep the writeIntent even when a mixed question makes the outer intent BUSINESS_READ. Never put writeIntent on general/help/read/file questions; a question about writing is not a requested write. Negation, missing target, or unclear operation must remain a clarification, never manufacture write authority. Do not treat this inventory as permission or mutation authority. Return valid JSON; missing, duplicate, or incomplete coverage is a schema failure.` : ''}
 ${semanticV2 && caps.fusedPlan && !compactTextDecision ? `When emitting a simple preparedPlan for one read subrequest, semanticSubrequests[0].requestedFilters and preparedPlan.proposedCalls[0].input MUST carry the same canonical business filter keys and exact scalar values. Use only the chosen tool's catalog input fields; do not add aliases such as period or monthKey, human-readable labels, or contradictory filters to requestedFilters. Express a period as EITHER periodKey OR the complete fromDate/toDate pair, never both. When the user's meaning is month-to-date or spending so far, copy the supplied candidate's fromDate/toDate range, including its end clamped to today; do not widen it to the whole month through periodKey. If the chosen tool cannot express that range or the filters cannot be made consistent without inventing values, omit preparedPlan and retain the full semantic request for normal planning. This consistency requirement grants no permission and never overrides evidence or source validation.` : ''}
 ${retainedTask ? `retainedTaskSource is a server-verified selection of exactly ONE historical write clause. The live messageText remains the user's current selection command. Route only that selected clause: return exactly one semanticSubrequest, copy retainedTaskSource.taskRef unchanged, and keep retainedTaskSource.selectedClause.kind/writeIntent unchanged. Its evidenceRefs still point to the live inputEvidenceParts. captureHints may copy values only from retainedTaskSource.selectedClause.text or the live messageText, and numeric/date hints must select from retainedTaskSource.selectedClause.valueCandidates. No sibling historical clause is available or authorized; never infer one.` : ''}
 For EXPENSE_DOCUMENT_CAPTURE or BUSINESS_DOCUMENT_REFERENCE images, include documentClassification:
@@ -463,7 +476,8 @@ export class IntentRouterAgent {
    *  keeps the exact pre-S-4 catalog byte-for-byte. */
   constructor(private readonly provider: IModelProvider, private readonly draftEditEnabled = false,
     private readonly knowledge: { enabled?: boolean; pack?: ProductKnowledgePack } = {},
-    private readonly publicLookupEnabled = false) {}
+    private readonly publicLookupEnabled = false,
+    private readonly preparedFamilyAllowlist: readonly string[] = []) {}
 
   async route(messageText: string, hasAttachment = false, conversationContext?: LineAiConversationContext, openClarifications?: LineAiOpenClarification[], knowledgeMetadata?: KnowledgeMetadata[], taskProjection?: LineAiTaskProjectionV2): Promise<AgentIntentPlan & { selectedKnowledgeCardIds?: string[] }> {
     if (isCrisisMessage(messageText)) return crisisPlan(messageText);
@@ -533,6 +547,9 @@ export class IntentRouterAgent {
     const intakeTools = semanticV2
       ? effectiveIntakeToolNames(request.offeredToolNames, this.enabledTools(), request.permissions, request.enabledFeatures)
       : this.enabledTools();
+    const preparedFamilies = caps.fusedPlan
+      ? effectivePreparedFamilies(this.preparedFamilyAllowlist, intakeTools)
+      : new Set<string>();
     const payload = {
       messageText: request.messageText,
       ...(request.inputEvidence ? { inputEvidenceParts: request.inputEvidence.parts.map(({ partId, rawText, rawSha256 }) => ({
@@ -578,12 +595,14 @@ export class IntentRouterAgent {
         budget.repairPending = true;
       }
       result = await this.provider.generateText({
-        systemPrompt: intakeRouterSystemPrompt(caps, hasAttachment, semanticV2, !!retainedTaskSource)
+        systemPrompt: intakeRouterSystemPrompt(caps, hasAttachment, semanticV2, !!retainedTaskSource, preparedFamilies)
           + (knowledgeMetadata.length ? `\n${APPROVED_KNOWLEDGE_SELECTION_PROMPT}` : ''),
         // The ~21KB glossary + tool catalog is a cost/latency price paid ONLY when fused planning needs it.
-        ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY, ...buildFeatureCatalog(this.draftEditEnabled, this.publicLookupEnabled, semanticV2 ? intakeTools : undefined) }) } : {}),
+        ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY,
+          preparedSimpleReadFamilies: [...preparedFamilies].sort(),
+          ...buildFeatureCatalog(this.draftEditEnabled, this.publicLookupEnabled, semanticV2 ? intakeTools : undefined) }) } : {}),
         messages: [{ role: 'user', text: JSON.stringify({ ...payload, ...(attempt > 0 ? {
-          schemaRepair: `Return the same route plus a complete decisionV1. Preserve one subrequest per distinct clause. Use only {part,whole:true} or {part,quote:exact unique substring} sources from current inputEvidenceParts.${caps.fusedPlan ? ' Use only catalog filter fields; if a constraint cannot be represented safely, omit simpleRead and make the route CLARIFY with one specific question.' : ''} Never emit legacy semanticSubrequests or preparedPlan beside decisionV1. Do not omit any request.`
+          schemaRepair: `Return the same route plus a complete decisionV1. Preserve one subrequest per distinct clause. Use only {part,whole:true} or {part,quote:exact unique substring} sources from current inputEvidenceParts.${preparedFamilies.size ? ' Use only exact preparedSimpleReadFamilies and catalog filter fields; if a constraint cannot be represented safely, omit simpleRead and make the route CLARIFY with one specific question.' : ''} Never emit legacy semanticSubrequests or preparedPlan beside decisionV1. Do not omit any request.`
         } : {}) }) }],
         ...(images.length > 0 ? { images } : {}),
         // V2 text plans carry the complete semantic inventory. Image calls keep their one-call
@@ -595,7 +614,7 @@ export class IntentRouterAgent {
       parsed = parseIntakePlan(
         result.text, request.messageText, request.valueCandidates, request.openClarifications,
         request.recentCapturedExpenses, request.activeExpenseDrafts, caps, request.inputEvidence, request.taskProjection,
-        retainedTaskSource, retainedText, retainedValueCandidates, intakeTools,
+        retainedTaskSource, retainedText, retainedValueCandidates, intakeTools, preparedFamilies,
         (observation) => this.logger.log({ msg: 'line.intake_route.compact_decode', requestId: request.requestId, ...observation }),
       );
       if (parsed) break;
@@ -694,7 +713,7 @@ export class IntentRouterAgent {
     // Intake provenance is NOT bound here: the API binds the trusted outer route intent onto
     // LineAiTurnRequest.intakeIntent, so the wrapper never carries authorization-relevant provenance.
     const preparedCandidate = caps.fusedPlan ? parsed.preparedPlan ?? extractPreparedPlan(result.text) : undefined;
-    const prepared = preparedCandidate && (!semanticV2 || preparedPlanUsesOnly(preparedCandidate, intakeTools))
+    const prepared = preparedCandidate && (!semanticV2 || preparedPlanUsesOnly(preparedCandidate, intakeTools, preparedFamilies))
       ? preparedCandidate
       : undefined;
     // Never let an unaccepted candidate survive through `return parsed` or the spread below, even
@@ -1111,6 +1130,7 @@ function parseIntakePlan(
   retainedText?: string,
   retainedValueCandidates?: LineAiValueCandidates,
   enabledTools: ReadonlySet<string> = ROUTER_ENABLED_TOOLS,
+  enabledPreparedFamilies: ReadonlySet<string> = new Set(),
   observeCompact?: (observation: { outcome: 'prepared' | 'semantic_only' | 'invalid'; rejection?: string; subrequestCount: number; durationMs: number }) => void,
 ): LineIntakeRoutePlan | null {
   try {
@@ -1125,7 +1145,8 @@ function parseIntakePlan(
     if (hasCompactDecision && (raw['semanticSubrequests'] !== undefined || raw['preparedPlan'] !== undefined)) return null;
     const compactStartedAt = Date.now();
     const compactDecision = inputEvidence && hasCompactDecision
-      ? parseLineIntakeCompactDecision({ raw: raw['decisionV1'], messageText, inputEvidence, enabledTools, language: compactLanguage, valueCandidates })
+      ? parseLineIntakeCompactDecision({ raw: raw['decisionV1'], messageText, inputEvidence, enabledTools,
+        enabledPreparedFamilies, language: compactLanguage, valueCandidates })
       : undefined;
     if (hasCompactDecision) observeCompact?.({
       outcome: compactDecision?.preparedPlan ? 'prepared' : compactDecision ? 'semantic_only' : 'invalid',
@@ -1322,9 +1343,12 @@ function extractPreparedPlan(rawText: string): LineIntakeRoutePlan['preparedPlan
 }
 
 /** Zero-tool conversational/refusal plans remain valid; every named tool must be in this request's catalog. */
-function preparedPlanUsesOnly(plan: NonNullable<LineIntakeRoutePlan['preparedPlan']>, enabledTools: ReadonlySet<string>): boolean {
+function preparedPlanUsesOnly(plan: NonNullable<LineIntakeRoutePlan['preparedPlan']>, enabledTools: ReadonlySet<string>,
+  enabledPreparedFamilies: ReadonlySet<string>): boolean {
   return plan.proposedCalls.every((call) => enabledTools.has(call.toolName))
-    && plan.intentPlan.intents.every((intent) => intent.requiredTools.every((tool) => enabledTools.has(tool)));
+    && plan.intentPlan.intents.every((intent) => intent.requiredTools.every((tool) => enabledTools.has(tool)))
+    && (plan.proposedCalls.length === 0 || typeof plan.answerShape === 'string'
+      && plan.proposedCalls.every((call) => enabledPreparedFamilies.has(preparedFamilyKey(call.toolName, plan.answerShape!))));
 }
 
 /**

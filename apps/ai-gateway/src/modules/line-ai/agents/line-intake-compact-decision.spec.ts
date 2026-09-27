@@ -4,6 +4,8 @@ import { createLineAiInputEvidence, extractValueCandidates } from '@watchdog-bms
 import { ROUTER_ENABLED_TOOLS } from './intent-router.agent';
 import { parseLineIntakeCompactDecision } from './line-intake-compact-decision';
 
+const PREPARED_FAMILIES = new Set(['expense.list_recent::single_metric']);
+
 async function fixture(messageText: string) {
   const created = await createLineAiInputEvidence({
     turnKey: 'turn-compact-test',
@@ -30,7 +32,7 @@ describe('compact LINE intake decision', () => {
     const period = (candidates.periods ?? [])[0]!;
     const parsed = parseLineIntakeCompactDecision({
       raw: decision(text, { fromDate: period.fromDate, toDate: period.toDate, documentStatus: 'CONFIRMED' }),
-      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, language: 'th', valueCandidates: candidates,
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
     });
     assert.ok(parsed?.preparedPlan);
     assert.deepEqual(parsed.semanticSubrequests[0]?.requestedFilters,
@@ -49,7 +51,7 @@ describe('compact LINE intake decision', () => {
     assert.equal(periods.length, 2);
     const parsed = parseLineIntakeCompactDecision({
       raw: decision(text, { fromDate: periods[0]!.fromDate, toDate: periods[1]!.toDate }),
-      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, language: 'th', valueCandidates: candidates,
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
     });
     assert.equal(parsed?.preparedPlan, undefined);
     assert.equal(parsed?.simpleReadRejection, 'filter_not_grounded');
@@ -63,7 +65,7 @@ describe('compact LINE intake decision', () => {
     assert.equal(monthKey, '2026-08');
     const parsed = parseLineIntakeCompactDecision({
       raw: decision(text, { periodKey: monthKey }), messageText: text, inputEvidence: created.inputEvidence,
-      enabledTools: ROUTER_ENABLED_TOOLS, language: 'th', valueCandidates: candidates,
+      enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
     });
     assert.ok(parsed?.preparedPlan);
     assert.deepEqual(parsed.preparedPlan.proposedCalls[0]?.input, { periodKey: '2026-08' });
@@ -79,7 +81,7 @@ describe('compact LINE intake decision', () => {
       { subrequest: 0, tool: 'unknown.read', subject: 'expense', agent: 'accounting', answerShape: 'list', confidence: 0.95 })]) {
       const parsed = parseLineIntakeCompactDecision({
         raw, messageText: text,
-        inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, language: 'th',
+        inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
       });
       assert.equal(parsed, undefined);
     }
@@ -91,7 +93,7 @@ describe('compact LINE intake decision', () => {
     const filters = JSON.parse('{"__proto__":null}') as Record<string, unknown>;
     const parsed = parseLineIntakeCompactDecision({
       raw: decision(text, filters), messageText: text, inputEvidence: created.inputEvidence,
-      enabledTools: ROUTER_ENABLED_TOOLS, language: 'th',
+      enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
     });
     assert.equal(parsed, undefined);
   });
@@ -102,7 +104,7 @@ describe('compact LINE intake decision', () => {
     for (const source of [{ part: 0, whole: true, quote: null }, { part: 0, quote: 123 }, { part: 0, whole: false }]) {
       const parsed = parseLineIntakeCompactDecision({
         raw: { subrequests: [{ kind: 'read', goal: text, sources: [source], filters: {} }] },
-        messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, language: 'th',
+        messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
       });
       assert.equal(parsed, undefined);
     }
@@ -111,9 +113,18 @@ describe('compact LINE intake decision', () => {
   it('keeps canonical semantics but omits prepared execution for an unknown tool or task continuation', async () => {
     const text = 'ดูค่าใช้จ่ายต่อ';
     const created = await fixture(text);
+    const unsupportedFamily = parseLineIntakeCompactDecision({
+      raw: decision(text, {}, { subrequest: 0, tool: 'expense.get_breakdown', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.95 }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+    });
+    assert.equal(unsupportedFamily?.semanticSubrequests.length, 1);
+    assert.equal(unsupportedFamily?.preparedPlan, undefined);
+    assert.equal(unsupportedFamily?.simpleReadRejection, 'formatter_family_not_allowed');
+
     const unknownTool = parseLineIntakeCompactDecision({
       raw: decision(text, {}, { subrequest: 0, tool: 'unknown.read', subject: 'expense', agent: 'accounting', answerShape: 'list', confidence: 0.95 }),
-      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, language: 'th',
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
     });
     assert.equal(unknownTool?.semanticSubrequests.length, 1);
     assert.equal(unknownTool?.preparedPlan, undefined);
@@ -122,7 +133,7 @@ describe('compact LINE intake decision', () => {
     const task = parseLineIntakeCompactDecision({
       raw: { ...decision(text), subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {},
         taskRef: { taskId: 'task-1', taskRevision: 4, subrequestIndex: 0 } }] },
-      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, language: 'th',
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
     });
     assert.equal(task?.preparedPlan, undefined);
     assert.equal(task?.simpleReadRejection, 'not_single_independent_read');
@@ -133,7 +144,7 @@ describe('compact LINE intake decision', () => {
     const unique = await fixture(uniqueText);
     const parsed = parseLineIntakeCompactDecision({
       raw: { subrequests: [{ kind: 'read', goal: 'ดูรายจ่ายเดือนนี้', sources: [{ part: 0, quote: 'ดูรายจ่ายเดือนนี้' }], filters: {} }] },
-      messageText: uniqueText, inputEvidence: unique.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, language: 'th',
+      messageText: uniqueText, inputEvidence: unique.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
     });
     assert.deepEqual(parsed?.semanticSubrequests[0]?.evidenceRefs, [{
       partId: 'part-0', startUtf16: 0, endUtf16: 'ดูรายจ่ายเดือนนี้'.length,
@@ -144,7 +155,7 @@ describe('compact LINE intake decision', () => {
     const duplicate = await fixture(duplicateText);
     assert.equal(parseLineIntakeCompactDecision({
       raw: { subrequests: [{ kind: 'read', goal: 'ดูรายจ่าย', sources: [{ part: 0, quote: 'ดูรายจ่าย' }], filters: {} }] },
-      messageText: duplicateText, inputEvidence: duplicate.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, language: 'th',
+      messageText: duplicateText, inputEvidence: duplicate.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
     }), undefined);
   });
 
@@ -159,7 +170,7 @@ describe('compact LINE intake decision', () => {
         ],
         simpleRead: { subrequest: 0, tool: 'expense.list_recent', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 },
       },
-      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, language: 'th',
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
     });
     assert.deepEqual(parsed?.semanticSubrequests.map((item) => item.kind), ['read', 'general']);
     assert.equal(parsed?.preparedPlan, undefined);

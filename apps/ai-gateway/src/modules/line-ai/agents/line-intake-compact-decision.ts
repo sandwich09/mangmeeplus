@@ -11,6 +11,7 @@ import type {
   LineAiValueCandidates,
   ToolMeta,
 } from '@watchdog-bms/contracts';
+import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 
 const DECISION_KEYS = new Set(['subrequests', 'simpleRead']);
 const SUBREQUEST_KEYS = new Set([
@@ -42,6 +43,7 @@ export type CompactSimpleReadRejection =
   | 'tool_not_read'
   | 'tool_subject_mismatch'
   | 'tool_agent_mismatch'
+  | 'formatter_family_not_allowed'
   | 'filter_not_supported'
   | 'filter_not_grounded'
   | 'required_filter_missing'
@@ -136,11 +138,12 @@ function simpleReadPlan(input: {
   raw: unknown;
   semanticSubrequests: LineAiSemanticSubrequestV2[];
   enabledTools: ReadonlySet<string>;
+  enabledPreparedFamilies: ReadonlySet<string>;
   language: string;
   messageText: string;
   valueCandidates?: LineAiValueCandidates;
 }): { preparedPlan?: LineAiPreparedPlan; rejection?: CompactSimpleReadRejection } {
-  const { raw, semanticSubrequests, enabledTools, language, messageText, valueCandidates } = input;
+  const { raw, semanticSubrequests, enabledTools, enabledPreparedFamilies, language, messageText, valueCandidates } = input;
   const only = semanticSubrequests[0];
   if (semanticSubrequests.length !== 1 || !only || only.kind !== 'read' || only.dependsOn.length
     || only.entityReference || only.taskRef || only.writeIntent || only.requiredEvidence.length) {
@@ -155,6 +158,9 @@ function simpleReadPlan(input: {
   const tool = TOOL_BY_NAME.get(raw['tool']);
   if (!tool || !enabledTools.has(raw['tool'])) return { rejection: 'tool_not_enabled' };
   if (!SIMPLE_READ_CATEGORIES.has(tool.category)) return { rejection: 'tool_not_read' };
+  if (!enabledPreparedFamilies.has(preparedFamilyKey(tool.name, String(raw['answerShape'])))) {
+    return { rejection: 'formatter_family_not_allowed' };
+  }
   if (!LINE_AI_BUSINESS_SUBJECTS.includes(raw['subject'] as typeof LINE_AI_BUSINESS_SUBJECTS[number])
     || !tool.businessSubjects.includes(raw['subject'] as typeof tool.businessSubjects[number])) {
     return { rejection: 'tool_subject_mismatch' };
@@ -197,10 +203,11 @@ export function parseLineIntakeCompactDecision(input: {
   messageText: string;
   inputEvidence: LineAiInputEvidenceV2;
   enabledTools: ReadonlySet<string>;
+  enabledPreparedFamilies: ReadonlySet<string>;
   language: string;
   valueCandidates?: LineAiValueCandidates;
 }): CompactDecisionResult | undefined {
-  const { raw, messageText, inputEvidence, enabledTools, language, valueCandidates } = input;
+  const { raw, messageText, inputEvidence, enabledTools, enabledPreparedFamilies, language, valueCandidates } = input;
   if (!plainObject(raw) || !exactKeys(raw, DECISION_KEYS) || !Array.isArray(raw['subrequests'])
     || raw['subrequests'].length < 1 || raw['subrequests'].length > 8) return undefined;
   const canonical: unknown[] = [];
@@ -233,7 +240,7 @@ export function parseLineIntakeCompactDecision(input: {
   const semanticSubrequests = parseLineAiSemanticSubrequests(canonical, messageText, inputEvidence);
   if (!semanticSubrequests) return undefined;
   if (raw['simpleRead'] === undefined) return { semanticSubrequests };
-  const simple = simpleReadPlan({ raw: raw['simpleRead'], semanticSubrequests, enabledTools, language, messageText, valueCandidates });
+  const simple = simpleReadPlan({ raw: raw['simpleRead'], semanticSubrequests, enabledTools, enabledPreparedFamilies, language, messageText, valueCandidates });
   return {
     semanticSubrequests,
     ...(simple.preparedPlan ? { preparedPlan: simple.preparedPlan } : {}),

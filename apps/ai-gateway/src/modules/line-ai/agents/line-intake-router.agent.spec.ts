@@ -5,6 +5,10 @@ import { DisabledProvider } from '../infrastructure/provider/disabled.provider';
 import { createLineAiInputEvidence, verifyLineAiRetainedTaskSource, type BusinessDocumentClassification, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
 
+const EXPENSE_LIST_PREPARED_FAMILY = 'expense.list_recent::single_metric';
+const EXPENSE_LIST_PREPARED_FAMILIES = new Set([EXPENSE_LIST_PREPARED_FAMILY]);
+const SALES_SUMMARY_PREPARED_FAMILY = 'sales.get_sales_summary::single_metric';
+
 function baseRequest(overrides: Partial<LineIntakeRouteRequest> = {}): LineIntakeRouteRequest {
   return {
     requestId: 'req-1',
@@ -57,7 +61,7 @@ describe('LINE intake router – routeIntake', () => {
   });
 
   it('requires consistent canonical simple-read filters and preserves candidate month-to-date bounds', () => {
-    const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true);
+    const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true, false, EXPENSE_LIST_PREPARED_FAMILIES);
     assert.match(prompt, /decisionV1 is the provider-only compact form/);
     assert.match(prompt, /Put each business filter only in subrequests\[0\]\.filters; the server copies it to the canonical tool input/);
     assert.match(prompt, /EITHER periodKey OR the complete fromDate\/toDate pair, never both/);
@@ -65,7 +69,13 @@ describe('LINE intake router – routeIntake', () => {
     assert.match(prompt, /copy the candidate's clamped fromDate\/toDate/);
     assert.match(prompt, /Omit simpleRead for compound, ambiguous, dependent, entity\/task-referenced/);
     assert.match(prompt, /simpleRead never grants permission/);
+    assert.match(prompt, /only an exact tool and answerShape pair listed in preparedSimpleReadFamilies/);
+    assert.match(prompt, /Use kind "help" for the meaning or workflow of MangmeePlus itself/);
+    assert.match(prompt, /Use kind "general" for a business-domain concept or definition independent of this product/);
+    assert.match(prompt, /Use kind "read" only for an actual company figure, record, or current status/);
     assert.doesNotMatch(prompt, /semanticSubrequests\[0\]\.requestedFilters and preparedPlan/);
+    assert.doesNotMatch(intakeRouterSystemPrompt({ fusedPlan: true }, false, true), /simpleRead/,
+      'an empty executable family set must not invite an unusable fast plan');
 
     const imageCompatibilityPrompt = intakeRouterSystemPrompt({ fusedPlan: true }, true, true);
     assert.match(imageCompatibilityPrompt, /semanticSubrequests\[0\]\.requestedFilters and preparedPlan\.proposedCalls\[0\]\.input MUST carry the same canonical business filter keys and exact scalar values/);
@@ -104,7 +114,9 @@ describe('LINE intake router – routeIntake', () => {
         subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {} }],
         simpleRead: { subrequest: 0, tool: 'expense.list_recent', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 },
       },
-    })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true } }));
+    }), false, {}, false, [EXPENSE_LIST_PREPARED_FAMILY]).routeIntake(baseRequest({
+      messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true },
+    }));
     assert.equal(plan.intent, 'CLARIFY');
     assert.equal(plan.preparedPlan, undefined);
     assert.equal(plan.clarifyQuestion, 'หมายถึงสาขาใดคะ');
@@ -122,7 +134,7 @@ describe('LINE intake router – routeIntake', () => {
         subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {} }],
         simpleRead: { subrequest: 0, tool: 'sales.get_sales_summary', subject: 'sale', agent: 'sales', answerShape: 'single_metric', confidence: 0.96 },
       },
-    }, capture)).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true },
+    }, capture), false, {}, false, [SALES_SUMMARY_PREPARED_FAMILY]).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true },
       offeredToolNames: ['expense.list_recent', 'sales.get_sales_summary', 'unknown.from.newer.api'] }));
     const catalog = JSON.parse(capture.input!.cacheableContext ?? '{}');
     assert.deepEqual(catalog.enabledFeatures.map((feature: { toolName: string }) => feature.toolName), ['expense.list_recent']);
@@ -130,6 +142,40 @@ describe('LINE intake router – routeIntake', () => {
     assert.equal(plan.status, 'ROUTED');
     assert.equal(plan.preparedPlan, undefined, 'the decoder cannot use a tool omitted from the provider catalog');
     assert.equal(plan.semanticSubrequests?.[0]?.goal, text, 'the canonical request survives for safe full-path handling');
+  });
+
+  it('keeps ordinary tools visible but prepares only an exact configured formatter family', async () => {
+    const text = 'เดือนนี้ค่าไช้จ่ายไปเท่าไหร่แล้ว';
+    const built = await createLineAiInputEvidence({ turnKey: 'prepared-family-scope', parts: [{ partId: 'part-0',
+      eventIdHash: '6'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const answer = (tool: string) => ({
+      intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.97,
+      decisionV1: {
+        subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {} }],
+        simpleRead: { subrequest: 0, tool, subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 },
+      },
+    });
+    const request = baseRequest({ messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true },
+      offeredToolNames: ['expense.get_breakdown', 'expense.list_recent'] });
+    const capture: { input?: ProviderInput } = {};
+    const unsupported = await new IntentRouterAgent(modelAnswer(answer('expense.get_breakdown'), capture), false, {}, false,
+      [EXPENSE_LIST_PREPARED_FAMILY, 'sales.get_sales_summary::single_metric']).routeIntake(request);
+    const catalog = JSON.parse(capture.input!.cacheableContext ?? '{}');
+    assert.deepEqual(catalog.enabledFeatures.map((feature: { toolName: string }) => feature.toolName),
+      ['expense.get_breakdown', 'expense.list_recent'], 'normal semantic routing retains both authorized tools');
+    assert.deepEqual(catalog.preparedSimpleReadFamilies, [EXPENSE_LIST_PREPARED_FAMILY]);
+    assert.equal(unsupported.preparedPlan, undefined);
+    assert.equal(unsupported.semanticSubrequests?.[0]?.goal, text);
+
+    const runtimeOff = await new IntentRouterAgent(modelAnswer(answer('expense.list_recent')), false, {}, false, [])
+      .routeIntake(request);
+    assert.equal(runtimeOff.preparedPlan, undefined, 'prepared runtime off keeps canonical semantics without an executable plan');
+    assert.equal(runtimeOff.semanticSubrequests?.[0]?.goal, text);
+
+    const supported = await new IntentRouterAgent(modelAnswer(answer('expense.list_recent')), false, {}, false,
+      [EXPENSE_LIST_PREPARED_FAMILY]).routeIntake(request);
+    assert.equal(supported.preparedPlan?.proposedCalls[0]?.toolName, 'expense.list_recent');
   });
 
   it('discards a legacy prepared plan that names an unoffered tool while preserving canonical semantics', async () => {
@@ -145,7 +191,9 @@ describe('LINE intake router – routeIntake', () => {
         intentPlan: { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_summary', subject: 'sale', agent: 'sales', priority: 1,
           requiredTools: ['sales.get_sales_summary'], missingContext: [] }], refusals: [], requiresHumanReview: false },
         proposedCalls: [{ toolName: 'sales.get_sales_summary', input: {} }] },
-    })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true } }));
+    }), false, {}, false, [SALES_SUMMARY_PREPARED_FAMILY]).routeIntake(baseRequest({
+      messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true },
+    }));
     assert.equal(plan.status, 'ROUTED');
     assert.equal(plan.preparedPlan, undefined);
     assert.equal(plan.semanticSubrequests?.[0]?.goal, text);

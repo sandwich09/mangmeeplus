@@ -1,6 +1,6 @@
 # Agent Memory: LINE AI text intake latency without quality loss
 
-Status: Root approved and froze compact-intake candidate `c836e7e05c487b3677d10b6726eeb252e67b87ad` for benchmark use. The four-turn paid pilot completed, but it used a broad synthetic authority fixture and is not customer-package acceptance. Sales/report expansion is deferred because current paid tiers grant the Starter expense/reimbursement set. The current reviewed diff implements the request-scoped first-intake tool catalog and passes focused source, transport, build and type checks; root full-diff review and a real Starter-package run remain before another frozen candidate.
+Status: Combined candidate `e51b9a59a89dd376c58fab808b72bd1593d8363f` is locally frozen and source checks passed. Its first package-realistic Starter OWNER smoke reached the provider but manually failed both turns; no release or latency acceptance is claimed. Root approved a bounded follow-up that gives compact intake the actual executable prepared-family set while preserving the ordinary authorized semantic catalog.
 
 Owner: Sol-5.6 xhigh implementation agent; root owns design, bug/gap/impact review; Luna-6 xhigh owns independent real-model evidence and comparisons.
 
@@ -59,7 +59,7 @@ Verification:
 - Provider duration includes network, queueing, prefill and generation; no TTFT split exists. Compact output remains an A/B hypothesis. A second cached sample still took about 6,988 ms, which only shows cache alone was insufficient in those two samples.
 - Source inspection found the reliability-v2 early route before `loadConversationContext`; later `tryRouteIntake` reuses the cached partial route.
 - Root approved the architecture and code phase. Review items A–F, prepared-plan gating, prompt compatibility, applied basis, context payload forwarding and snapshot isolation are addressed in the current diff.
-- Focused checks passed: compact decoder 9/9; intake router 37/37; prepared security/runtime 69/69; prepared formatter 67/67; semantic-v2 integration 10/10; general-v2 plus mixed-business-v2 21/21; AI Gateway and API type checks.
+- Focused checks passed: compact decoder 9/9; intake router 37/37; prepared security/runtime 69/69; prepared formatter 67/67; semantic-v2 integration 12/12; general-v2 plus mixed-business-v2 21/21; AI Gateway and API type checks.
 - API boundary checks pass for invalid compact intake stopping before pending media/ERP/`requestLineTurn`, and for a general question with two pending files using one intake, one bounded context and no pending-file enumeration.
 - Document-QA boundary check passes for “ดูอย่างเดียวยังไม่บันทึก” against an existing pending receipt: it reads the bound bytes, makes no expense-repository call, and only moves the pending-media row through its QA state back to `RESOLVED_RECEIPT`.
 - The initial admission blocker was traced to mismatched approved-model bootstrap: `TENANT_AI_MODEL_NOT_APPROVED` → `ROUTER_UNREACHABLE` → `AI_CONTRACT_UNSUPPORTED`. Aligning the test processes to the same existing approved model profile fixed the harness without changing product policy.
@@ -68,9 +68,13 @@ Verification:
 - Package audit: `packages/contracts/src/menu-entitlements.ts:432-500` defines 17 common Starter keys and the narrow Enterprise additions; `packages/contracts/src/billing.ts:64-79` puts those keys on offers. Live offer availability depends on the active policy/gates/price bindings and is not proven from repository defaults.
 - Gap found in frozen `c836`: API passed current `permissions` and `enabledFeatures`, but `IntentRouterAgent.buildFeatureCatalog` listed the static global router tools and the compact decoder received the global set. Full semantic CONTROL already applied current permissions/features/runtime flags and remains a downstream safety boundary.
 - Current catalog implementation adds the optional internal `offeredToolNames` field, derives it from the API's current permission/entitlement/runtime registry view, validates and re-intersects it in the Gateway, and uses one effective set for the provider catalog, compact decoder and every compact/legacy prepared-plan candidate. Missing or malformed bound-v2 authority produces no ERP prepared tools while native expense capture and general questions remain routable.
+- Starter OWNER smoke evidence `/tmp/mangmee-latency-pilot-20260927/starter-owner-smoke.e51b9a59.redis14.json` used one active BKK branch, an active `STARTER_249` term, 62 explicit entitlements (17 true/45 false), production OWNER grants filtered by entitlement, and two turns in one conversation. Turn 1 took 6,702 ms accepted-to-model completion, proposed `expense.get_breakdown::single_metric`, invoked zero tools and returned `PREPARED_READ_UNAVAILABLE`; the exact pre-call reason is `formatter_family_not_allowed` because only `expense.list_recent::single_metric` was enabled. Turn 2 took 22,269 ms, made three provider calls and returned `SEMANTIC_CONTROL_UNAVAILABLE`. The persisted evidence has no raw control response, so its exact failed JSON predicate cannot be recovered. The generic scorer's `semanticCorrect=true`/`completed=true` is a false positive from empty fact/tool expectations; manual result is FAIL for both turns.
+- Existing knowledge card `expense.status` has the exact reviewed-source draft body: “สถานะเอกสารบอกว่าตรวจไปถึงขั้นใด ส่วนสถานะชำระเงินบอกว่าจ่ายให้ผู้ขายหรือยัง เป็นคนละเรื่องกันค่ะ เอกสารที่ยืนยันแล้วอาจยังไม่จ่ายเงิน และรายการที่จ่ายแล้วอาจยังตรวจเอกสารไม่ครบ”. Its source is `apps/web/src/features/user-guide/expenses-guide.content.ts`, SHA-256 `73f50c3324ed2051b4881206cd68b1beb2542b21fcd67875eb68f07d92d42982`. Runtime correctly excludes it because the pack is `DRAFT` with no reviewers. Advisor spec §18 requires official source, reviewer/window evidence and Product plus Accounting/Tax owner signoff. This task does not publish or alter the pack.
+- Compose admission treats `help` as deterministically resolved by the existing reviewed-guide gate: a pure help turn makes no semantic CONTROL or compose call and returns the eligible guide or honest missing-guide fallback; mixed help plus an unresolved general clause still composes once for the general clause. This does not change pack status, permissions, source checks or reviewer policy.
 - Production-role fixture coverage uses Starter `OWNER`, `STAFF` and `AUDITOR_READONLY`. All AI-capable Starter writer roles also hold at least own/related expense read; there is no valid production create-with-no-read role to invent for a test. `STAFF` retains native receipt capture, while `AUDITOR_READONLY` cannot capture.
 - Bounded source-wrapper audit: `dashboard.get_business_health_summary` computes only entitled providers. Starter enables the expense provider; its aggregate widget requires company `expense.read`, so own-read `STAFF` cannot see it. Inventory is not entitled. Notification tools return notification events/counts; company/branch and employee tools return their own permission-scoped metadata or counts. Their API tool controller still rechecks feature and permission gates. No sales, ledger, bank or inventory source was found through these wrappers.
 - Shared business-answer renderer audit found two production callers, live webhook and ledger drain, and both pass `formatLineReply(response, webBaseUrl)` as fallback. The complete renderer preserves reply text, all source labels, safe tenant links and card text. When no safe tenant URL can be formed (missing base URL, external URL or wrong tenant), it deliberately omits both the unusable link and its navigation label rather than reviving them from fallback text; this is not a financial caveat/source loss.
+- The prepared-family follow-up passes compact decoder plus router 51/51, internal controller 111/111, prepared security/runtime 69/69, semantic-v2 integration 12/12, AI Gateway typecheck and `git diff --check`. Existing outer-CLARIFY and unoffered compact/legacy plan tests now configure a valid family explicitly, so each still exercises its original route/authority boundary instead of passing because prepared execution defaults off.
 
 Commands run from the managed worktree:
 
@@ -79,12 +83,23 @@ pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/modules/line-ai/agent
 pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/modules/line-ai/agents/line-intake-router.agent.spec.ts # 37/37
 pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/modules/line-ai/agents/prepared-simple-read-security.spec.ts # 69/69
 pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/modules/line-ai/agents/prepared-simple-read-formatter.spec.ts # 67/67
-pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/modules/line-ai/application/use-cases/line-ai-turn-v2.integration.spec.ts # 10/10
+pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/modules/line-ai/application/use-cases/line-ai-turn-v2.integration.spec.ts # 12/12
 pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/application/use-cases/process-line-general-v2.spec.ts src/modules/line-ai/application/use-cases/process-line-mixed-business-v2.spec.ts # 21/21
 pnpm --filter @watchdog-bms/api exec tsx --test --test-name-pattern='fails a bound semantic turn|answers a bound general question' src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts # 2/2
 pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/application/use-cases/process-line-document-qa.bridge.spec.ts # 25/25
 pnpm --filter @watchdog-bms/ai-gateway typecheck # pass
 pnpm --filter @watchdog-bms/api typecheck # pass
+git diff --check # pass
+```
+
+Prepared-family follow-up checks:
+
+```sh
+pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/modules/line-ai/agents/line-intake-compact-decision.spec.ts src/modules/line-ai/agents/line-intake-router.agent.spec.ts # 51/51
+pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/modules/line-ai/presentation/http/line-ai-internal.controller.spec.ts # 111/111
+pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/modules/line-ai/agents/prepared-simple-read-security.spec.ts # 69/69
+pnpm --filter @watchdog-bms/ai-gateway exec tsx --test src/modules/line-ai/application/use-cases/line-ai-turn-v2.integration.spec.ts # 12/12
+pnpm --filter @watchdog-bms/ai-gateway typecheck # pass
 git diff --check # pass
 ```
 
@@ -104,6 +119,5 @@ git diff --check # pass
 
 Next:
 
-- Root reviews the combined catalog, delivery integrity and deadline-narrowing diff before creating the next frozen candidate; the deferred sales patch remains outside the active tree.
-- Luna rebuilds the held-out fixture from production-derived Starter OWNER/requester/read-only authority before any paid comparison; the unavailable deployed-request capture remains an explicitly unverified operational fact.
-- Run the frozen Starter candidate only after source hashes and authority fixtures are reviewed. The 2–4 second aspiration and release quality remain unproven.
+- Freeze the reviewed exact prepared-family and compose-admission changes, then rerun the same two-turn Starter OWNER smoke with the temporary provider-boundary capture.
+- Keep the `expense.status` card DRAFT until the existing knowledge-review policy is satisfied; the next run must report the honest missing-guide behavior rather than treating it as approved content.
