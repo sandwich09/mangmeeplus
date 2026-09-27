@@ -37,7 +37,7 @@ export type PreparedFormatContext = {
   asOfLabel?: string;
 };
 
-const isEnglish = (ctx: PreparedFormatContext): boolean =>
+export const isEnglish = (ctx: PreparedFormatContext): boolean =>
   ctx.language.toLowerCase().startsWith('en') || (!/[฀-๿]/.test(ctx.language) && ctx.locale.toLowerCase().startsWith('en'));
 
 /** Group the source thousands like the ERP does; leaves a non-numeric string untouched. */
@@ -637,9 +637,10 @@ export function preparedTerminalReply(output: SpecialistOutput, ctx: PreparedFor
   if (output.status === 'PERMISSION_DENIED') {
     return english ? '🔒 You do not have permission to view this information.' : '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ';
   }
+  // Spec §8 "อ่านข้อมูลไม่ได้ ฝั่งระบบ": a system-side read failure, not a question — no "try again".
   return english
-    ? '⏳ This information is not available right now. Please check the web app.'
-    : '⏳ ตอนนี้ยังดึงข้อมูลส่วนนี้ไม่ได้ กรุณาตรวจสอบในเว็บแอปนะคะ';
+    ? "I can't fetch this data right now. You can view it on the Expenses page on the web."
+    : 'ตอนนี้น้องมั่งมียังดึงข้อมูลส่วนนี้ไม่ได้ค่ะ ดูได้ที่หน้ารายจ่ายบนเว็บ';
 }
 
 /** Exact compiled registry: `${tool}::${answerShape}` → formatter. Add one verified family at a time. */

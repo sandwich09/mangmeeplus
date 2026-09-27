@@ -143,7 +143,7 @@ type CaseSpec = {
 
 /** Honest terminal: an authoritative outcome line with NO number of any kind (nothing fabricated). */
 const assertNoFabricatedNumber = (result: AgentRunResult) => {
-  assert.match(result.replyText, /^[⏳🔒]/u, 'a non-success prepared outcome uses the deterministic terminal copy');
+  assert.match(result.replyText, /^🔒|ยังดึงข้อมูลส่วนนี้ไม่ได้|can't fetch this data/u, 'a non-success prepared outcome uses the deterministic terminal copy');
   assert.doesNotMatch(result.replyText, /\d/u, 'the terminal must not carry any number');
   assert.deepEqual(result.sourceRefs, [], 'an honest terminal claims no source');
 };
@@ -249,7 +249,7 @@ describe('v2 prepared simple-read preserves the two-call grant and semantic cove
       assert.equal(fetchCalls, 0, 'never spend the remaining slot on an unusable plan');
       assert.deepEqual(spy, { compose: 0, judge: 0, route: 0 });
       assert.ok(parseLineAiSemanticCoverage(result.semanticCoverage, req.semanticSubrequests!));
-      assert.equal(result.semanticCoverage?.[0]?.status, name === 'prepared-explicit-empty' ? 'handled' : 'needs_user');
+      assert.equal(result.semanticCoverage?.[0]?.status, name === 'prepared-explicit-empty' ? 'handled' : 'unsupported');
       if (scenario.expectCalls) scenario.assertOutcome?.(result);
       else assert.deepEqual(result.outputs, []);
     });
@@ -272,7 +272,7 @@ describe('v2 prepared simple-read preserves the two-call grant and semantic cove
       })).run(req);
       assert.deepEqual(calls, []); assert.equal(fetchCalls, 0);
       assert.equal(result.semanticCoverage?.length, req.semanticSubrequests!.length);
-      assert.ok(result.semanticCoverage?.every(coverage => coverage.status === 'needs_user'));
+      assert.ok(result.semanticCoverage?.every(coverage => coverage.status === 'unsupported'));
       assert.ok(parseLineAiSemanticCoverage(result.semanticCoverage, req.semanticSubrequests!));
       assert.deepEqual(result.sourceRefs, []);
     });
@@ -282,7 +282,7 @@ describe('v2 prepared simple-read preserves the two-call grant and semantic cove
     const { client, calls } = makeErp({ sourceRefs: [{ label: 'unverified', module: 'sales', entityType: 'summary', permissionChecked: false }] as unknown as ToolResult['sourceRefs'] });
     const result = await new OrchestratorAgent(client, makeConfig()).run(await v2Req());
     assert.equal(calls.length, 1); assert.equal(fetchCalls, 0);
-    assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
+    assert.equal(result.semanticCoverage?.[0]?.status, 'unsupported');
     assertNoFabricatedNumber(result);
   });
 

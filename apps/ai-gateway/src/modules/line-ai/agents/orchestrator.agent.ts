@@ -17,7 +17,7 @@ import { InventoryAgent, ALLOWED_TOOLS as INVENTORY_ALLOWED_TOOLS } from './inve
 import { isExplicitJokeAsk, ResponseComposerAgent, featureDisabledReply } from './response-composer.agent';
 import { normalizePlanToolAccess, removeRuntimeBlockedTools, toolAccessOutcome } from './tool-availability';
 import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext } from '../domain/logic/prepared-simple-read.logic';
-import { activePreparedFamilies, formatExpenseSummary, formatPreparedSimpleRead, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
+import { activePreparedFamilies, formatExpenseSummary, formatPreparedSimpleRead, isEnglish, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { formatDraftUpdateReply } from './draft-update-formatter';
 import { offeredKnowledgeMetadata, productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
@@ -1016,6 +1016,14 @@ function canonicalize(value: unknown): string {
   return `{${entries.join(',')}}`;
 }
 
+/** Spec §8: a system-side read give-up points at the web app instead of leaving a dead end.
+ *  Same link/copy the composer already uses for an out-of-scope business turn (response-composer.agent.ts). */
+function expensesWebLink(companyId: string | undefined, english: boolean): LineAiWebLink[] {
+  return companyId
+    ? [{ label: english ? 'Open records in the web app' : 'เปิดรายการในเว็บ', path: `/companies/${companyId}/expenses` }]
+    : [];
+}
+
 @Injectable()
 export class OrchestratorAgent {
   private readonly logger = new Logger(OrchestratorAgent.name);
@@ -1048,23 +1056,26 @@ export class OrchestratorAgent {
           const handled = result.presentation?.kind === 'answer_cards' && result.sourceRefs.length > 0
             && result.sourceRefs.every(source => source.permissionChecked) && result.outputs.every(output => output.status === 'SUCCEEDED');
           if (!handled && result.presentation) result = this.buildPreparedHonestTerminal(result.plan, result.outputs[0]!, req, started);
-          const status = handled ? 'handled' : result.outputs.some(output => output.status === 'PERMISSION_DENIED') ? 'denied' : 'needs_user';
+          // Spec R-L2: a fast-lane give-up is a system outcome, never a question — `unsupported` is
+          // terminal (API closes the task as `completed`, no deliveredQuestionRefs), unlike `needs_user`.
+          const status = handled ? 'handled' : result.outputs.some(output => output.status === 'PERMISSION_DENIED') ? 'denied' : 'unsupported';
           return { ...result, semanticCoverage: [{ index: item.index, status,
             ...(handled ? { sourceRefIds: result.sourceRefs.map(source => source.id ?? `${source.module}:${source.entityType}:${source.entityId ?? 'summary'}`) }
-              : { reasonCode: status === 'denied' ? 'READ_ACCESS_DENIED' : 'READ_SOURCE_UNAVAILABLE' }),
-            ...(status === 'needs_user' ? { question: result.replyText.slice(0, 500) } : {}) }] };
+              : { reasonCode: status === 'denied' ? 'READ_ACCESS_DENIED' : 'READ_SOURCE_UNAVAILABLE' }) }] };
         }
       }
       // Never widen an issued grant or execute a partial control call that leaves no answer slot.
       if (req.budgetGrantV2.maxTurnSlots === 2 && inventory.some(subrequest => !['general', 'help'].includes(subrequest.kind))) {
         const language = req.responsePreferences?.language ?? (req.userContext.locale.startsWith('en') ? 'en' : 'th');
+        // Spec R-L2/§8: a fast-lane give-up BEFORE any tool call is the same honest system outcome as
+        // the post-call READ_SOURCE_UNAVAILABLE case below — `unsupported`, not a question, no "try again".
         const replyText = language === 'en'
-          ? 'This request could not be verified. No action was taken; please try again.'
-          : 'ยังตรวจสอบคำขอนี้ไม่ได้ค่ะ ยังไม่ได้ทำรายการให้ กรุณาลองใหม่';
+          ? "I can't fetch this data right now. You can view it on the Expenses page on the web."
+          : 'ตอนนี้น้องมั่งมียังดึงข้อมูลส่วนนี้ไม่ได้ค่ะ ดูได้ที่หน้ารายจ่ายบนเว็บ';
         return { plan: { status: 'ROUTABLE', language, intents: [], refusals: [], requiresHumanReview: false },
-          outputs: [], replyText, sourceRefs: [], webLinks: [], durationMs: Date.now() - started,
-          semanticCoverage: inventory.map(subrequest => ({ index: subrequest.index, status: 'needs_user',
-            reasonCode: 'PREPARED_READ_UNAVAILABLE', question: replyText })) };
+          outputs: [], replyText, sourceRefs: [], webLinks: expensesWebLink(req.userContext.companyId, language === 'en'), durationMs: Date.now() - started,
+          semanticCoverage: inventory.map(subrequest => ({ index: subrequest.index, status: 'unsupported',
+            reasonCode: 'PREPARED_READ_UNAVAILABLE' })) };
       }
       return runSemanticTurnV2({ req,
         provider: createProvider(this.config, { modelId: req.modelPolicy?.modelId }), invoke: (meta, context, args) => this.erpTools.invoke(meta, context, args),
@@ -1771,10 +1782,13 @@ export class OrchestratorAgent {
   private buildPreparedHonestTerminal(plan: AgentIntentPlan, output: SpecialistOutput, req: LineAiTurnRequest, startMs: number): AgentRunResult {
     // Authoritative deterministic honest terminal — NO ResponseComposer/router/critic/model, no re-
     // invocation, no fabricated facts/source/completion, no card. Just an honest outcome line.
-    const replyText = preparedTerminalReply(output, { language: plan.language, locale: req.userContext.locale });
+    const ctx = { language: plan.language, locale: req.userContext.locale };
+    const replyText = preparedTerminalReply(output, ctx);
+    // The copy above points at the Expenses page only on a real read failure, never on denial.
+    const webLinks = output.status === 'PERMISSION_DENIED' ? [] : expensesWebLink(req.userContext.companyId, isEnglish(ctx));
     return {
       plan, outputs: [output], replyText,
-      sourceRefs: [], webLinks: [],
+      sourceRefs: [], webLinks,
       durationMs: Date.now() - startMs,
     };
   }

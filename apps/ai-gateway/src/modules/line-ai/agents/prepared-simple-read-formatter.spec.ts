@@ -427,7 +427,7 @@ describe('F2 accounting.get_summary::list — สรุปรายการเ�
     };
     assert.equal(formatPreparedSimpleRead(ACCOUNTING, failed, TH).kind, 'unverified');
     assert.match(preparedTerminalReply(failed, TH), /ยังดึงข้อมูลส่วนนี้ไม่ได้/);
-    assert.match(preparedTerminalReply(failed, EN), /not available right now/);
+    assert.match(preparedTerminalReply(failed, EN), /can't fetch this data right now/);
     assert.match(preparedTerminalReply({ ...failed, status: 'PERMISSION_DENIED' }, TH), /ไม่มีสิทธิ์/);
   });
 
@@ -608,7 +608,7 @@ describe('F3 expense.get_daily_closing::single_metric — ค่าใช้จ�
     };
     assert.equal(formatPreparedSimpleRead(DAILY, failed, TH).kind, 'unverified');
     assert.match(preparedTerminalReply(failed, TH), /ยังดึงข้อมูลส่วนนี้ไม่ได้/);
-    assert.match(preparedTerminalReply(failed, EN), /not available right now/);
+    assert.match(preparedTerminalReply(failed, EN), /can't fetch this data right now/);
     // Another family's data can never be answered as this one.
     assert.equal(formatPreparedSimpleRead(DAILY, expenseOutput(expenseData()), TH).kind, 'unverified');
     assert.equal(formatPreparedSimpleRead(EXPENSE, dailyOutput(dailyData()), TH).kind, 'unverified');
