@@ -1193,7 +1193,11 @@ export type LineIntakeRouteRequest = {
   conversationContext?: LineAiConversationContext;
   /** Server-derived permission keys; the router may only propose routes the user could perform. */
   permissions: string[];
-  enabledFeatures?: string[];
+  /** null preserves the repository's legacy fail-open company entitlement semantics. */
+  enabledFeatures?: string[] | null;
+  /** API-derived, request-scoped upper bound of ERP tools this actor may invoke. The Gateway
+   *  intersects it with its own configured registry; absence on bound semantic-v2 fails closed. */
+  offeredToolNames?: string[];
   /** Active configured expense categories the model may choose from. */
   activeCategories?: Array<{ id: string; name: string }>;
   /** Deterministic amount/date readings of messageText (item 10F); captureHints.amount and

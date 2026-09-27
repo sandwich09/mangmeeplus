@@ -2,7 +2,7 @@
 
 ## 1. Status and decision
 
-Status: source implementation and focused checks complete on 2026-09-27; frozen real-model comparison remains pending. This spec narrows the current text-intake output and fixes first-intake context ordering. It does not authorize deployment, a model change, or a new product module.
+Status: the first compact-intake candidate is frozen at `c836e7e05c487b3677d10b6726eeb252e67b87ad` and its two-prompt same-model pilot is complete. NAT-01 passed its independent content rubric; NAT-02 exposed a pre-existing sales-versus-cash error under a synthetic all-module authority fixture. The actual paid tiers grant the Starter expense/reimbursement feature set, not sales documents or reports. Sales/report expansion is therefore deferred. The current reviewed diff makes the first-intake tool catalog match current package entitlements and actor permissions and passes focused source/transport checks; it still requires root full-diff review and package-real evidence. This spec does not authorize deployment, a model change, a package change, or a new product module.
 
 The implementation decision is:
 
@@ -11,6 +11,8 @@ The implementation decision is:
 3. Decode that private provider response on the AI Gateway and expand it into the existing canonical `LineIntakeRoutePlan`, `LineAiSemanticSubrequestV2[]`, and `LineAiPreparedPlan` contracts.
 4. Load the authorized bounded conversation/task snapshot before the first intake call and reuse that one result; do not prefetch source-specific private ERP rows for every turn.
 5. Keep permissions, entitlements, tenant/branch scope, source evidence, source-state rechecks, task revision checks, and final-mutation boundaries unchanged.
+6. Derive a request-scoped effective tool catalog from the API's authenticated permission/entitlement snapshot, then intersect it with the Gateway's existing static/runtime tool availability. The prompt and compact decoder use that same immutable set.
+7. Offer compact `simpleRead` output only when the existing fused-plan capability is true. Canonical semantic coverage remains required when fused planning is off.
 
 This path is the default text behavior after the code version is deployed. It does not add an opt-in flag or secret. Rollback is a code-version rollback. The existing configured model remains unchanged until same-model quality evidence passes.
 
@@ -72,6 +74,8 @@ There is also a correctness-ordering gap in `apps/api/src/modules/line-ai/applic
 - server expansion to the existing canonical route, semantic inventory, and prepared simple-read plan;
 - first-intake context ordering and single pre-intake snapshot use;
 - focused contract, router, webhook-ordering, and compatibility tests;
+- request-scoped first-intake tool availability that reflects the current paid package, actor role and deployment capabilities;
+- parity with the already permission/feature-filtered full semantic-control tool catalog;
 - same-model local synthetic benchmark and held-out semantic comparison;
 - observability for compact decode outcome, fallback reason, provider tokens, provider duration, and successful end-to-end duration.
 
@@ -86,6 +90,7 @@ There is also a correctness-ordering gap in `apps/api/src/modules/line-ai/applic
 - new debounce policy;
 - UAT/Production deployment or customer-gate changes;
 - unrelated NAT failures listed in `docs/research/mangmee-natural-real-model-results-2026-09-27-th.md`.
+- issued-document sales/report routing and formatting while those features are outside the current paid-tier grants;
 
 Passing this scoped change must not be reported as closing those gaps.
 
@@ -105,6 +110,26 @@ The existing legacy provider response remains decodable when the compact field i
 AI Gateway remains separate from ERP core. It proposes and decodes. The API and tool executor continue to own tenant, membership, permission, entitlement, delegation, branch scope, authoritative state, audit, source evidence, and final mutation.
 
 No dependency or `package.json` change is required.
+
+### 5.1 Authority-scoped tool catalog contract
+
+`LineIntakeRouteRequest` gains one optional API-issued field, `offeredToolNames: string[]`. It carries names only, sorted and deduplicated. It contains no tenant id, role name, permission list or customer data beyond fields already present in the internal request.
+
+The API derives it from the access snapshot already resolved for this accepted turn:
+
+- the actor must hold `ai.tool.invoke`;
+- the tool must be execution-ready in the existing `lineToolRegistryFor(...)` runtime view;
+- `hasToolPermissions` must pass for the actor's current effective permissions;
+- `hasToolFeature` must pass for the company's current `loadEntitledFeatureKeys` result;
+- existing runtime capability switches continue to hide draft, reimbursement-draft and public-lookup tools.
+
+The Gateway treats that list as an upper bound and intersects it with its own static enabled-tool registry and trusted capability flags. It does not mutate `ROUTER_ENABLED_TOOLS` or any singleton catalog. The resulting immutable set is used for both the provider catalog and `parseLineIntakeCompactDecision`; a tool absent from the provider catalog cannot reappear through the decoder's global fallback.
+
+For a bound semantic-v2 request, missing or malformed `offeredToolNames` fails closed for compact prepared reads: the model receives no ERP simple-read choices and the decoder cannot emit a prepared plan. It may still return complete canonical semantic coverage, and general/business-concept questions that need no ERP data remain answerable. Legacy non-v2 callers keep their existing static route compatibility; all downstream authorization checks remain mandatory.
+
+The cacheable provider catalog is keyed by its canonical sorted effective descriptors plus a catalog schema/capability version. It contains no company/user id or raw permission values, so two actors reuse a cache entry only when they see the same effective tool catalog. A task resumed on a later turn receives a newly resolved list. Permission or entitlement revocation after planning is still caught by actor-delegation creation and the internal tool controller's current authorization recheck.
+
+The full semantic-control path already filters `LINE_TOOL_REGISTRY` through `executionReady`, `hasToolPermissions`, `toolAccessOutcome` and runtime flags before placing `tools` in its CONTROL payload. Focused parity tests must prove the first-intake catalog and full-control catalog expose no tool outside the same current authority snapshot; this change does not replace or weaken the full path.
 
 ## 6. Pre-intake context snapshot
 
@@ -225,6 +250,16 @@ Decoder logs contain request id, bounded outcome/rejection enum, subrequest coun
 - Permission denied, feature disabled, source changed, empty, unknown and partial remain distinct outcomes.
 - Every final write remains behind its existing source-module preview/confirm/state gates.
 
+### 8.1 Current paid-package boundary and deferred sales diagnostic
+
+The repository's public billing catalog contains `STARTER_249`, `BASIC_499`, `PRO_999` and `ENTERPRISE_1999`. `STARTER_249`, `BASIC_499` and `PRO_999` all grant the same 17-key Starter feature set: dashboard/notifications, expense subfeatures, reimbursement, the LINE AI assistant and platform employee/company settings. `ENTERPRISE_1999` adds only `wht_pnd53` and `wht_50bis`. None of these tier presets grants `sales_documents`, `reports`, CRM or ledger. Runtime sale availability is separate and requires an active billing policy, an open `new_sales` gate, a company-admitted sales cohort and an exact tier/interval price binding; repository defaults alone do not prove the live catalog is open.
+
+The first paid pilot used a synthetic fixture with 62 feature keys and 64 permission keys, so it was intentionally broader than a customer package. NAT-02 remains useful as a diagnostic: both baseline and candidate answered generic sales with received-cash data. It is not evidence that a Starter customer should receive a sales/report feature, and it is excluded from customer-package latency acceptance.
+
+The reviewed but unfinished sales/report correction is preserved outside the active tree at `/tmp/mangmee-sales-correctness-deferred-20260927.patch` with SHA-256 `475e1fe6cdc9d1a35d7ba969c21dbed267fc1c706fc1c59ef53c732477950ae6`. It is deferred until product packaging explicitly includes an authoritative sales source. The active change must not add `reports.get_monthly_report_summary`, sales/report formatter families or report dataset permissions to a paid tier or default deployment catalog.
+
+For current packages, first intake exposes only tools that pass both the package entitlement and the actor's actual role permissions. Expense and reimbursement requests continue through their existing tools and final authority checks. A request for an unpurchased private ERP module receives an honest unsupported/feature-unavailable outcome; it is never silently answered from a different dataset. A general business-concept question that needs no private ERP data remains answerable through the existing general path.
+
 ## 9. Latency and quality gates
 
 The desired 2–4 second text answer is an aspiration to test, not a guarantee and not an acceptance shortcut.
@@ -242,7 +277,14 @@ Report these separately for every measured turn:
 - model/tool call counts;
 - exact semantic, filter, tool, source, basis and effect outcome.
 
-Initial same-model pilot: frozen baseline commit `abdf93b9f93fc21f4e5b79f92cd147e0bf3dd74d` versus reviewed candidate, Bedrock Sonnet 4.6, synthetic local services/sink, NAT-01 and NAT-02, four provider turns total: one prompt for each scenario on baseline and the same two prompts on candidate. The subsequent held-out matrix must include:
+The first same-model pilot compared frozen baseline `abdf93b9f93fc21f4e5b79f92cd147e0bf3dd74d` with candidate `c836e7e05c487b3677d10b6726eeb252e67b87ad` on Bedrock Sonnet 4.6, synthetic local services/sink, NAT-01 and NAT-02, four provider turns total: one prompt for each scenario on baseline and the same two prompts on candidate. Its fixture forced 62 features, 64 permissions and latency-related runtime switches rather than deriving them from a sold package, so the result is diagnostic evidence, not customer-package acceptance.
+
+| Turn | Baseline accepted→sink | Candidate accepted→sink | Quality outcome |
+| --- | ---: | ---: | --- |
+| NAT-01 expense | 8,759 ms | 6,507 ms | Candidate content rubric passes and states draft/pending and confirmed basis; baseline omits the basis. Actual sink delivery is text-only, so card/link delivery is a separately tracked gap. |
+| NAT-02 sales | 8,387 ms | 6,212 ms | Both fail task correctness by returning received cash instead of issued-document sales. |
+
+Candidate provider durations were 5,099 ms and 4,883 ms with 283 and 287 output tokens, down from baseline 7,364 ms/589 tokens and 7,081 ms/582 tokens. Both candidate turns remain above the 2–4 second aspiration. Because NAT-02 fails and NAT-01 baseline is not independently correct, this pilot does not support a pairwise successful-latency median or release acceptance. The held-out matrix must run against the next reviewed correctness commit and include:
 
 - typo and paraphrase simple reads;
 - relative dates and Bangkok boundaries;
@@ -254,6 +296,11 @@ Initial same-model pilot: frozen baseline commit `abdf93b9f93fc21f4e5b79f92cd147
 - unknown tool/filter/malformed compact payloads;
 - general questions needing no ERP read;
 - empty, partial, unknown and source-changed tool results.
+- a request for an unpurchased private module, which must not expose or execute that module's tools;
+- actual Starter owner and requester roles derived from `TIER_FEATURE_PRESETS.STARTER_249`, `evaluateEntitledFeatureKeys`, `ROLE_GRANTS.OWNER`/entitlement filtering and `compileRole`, including branch scope;
+- the Enterprise-only WHT additions as a separate narrow case rather than an all-feature fixture;
+- fused-plan off, where intake must not ask the model for an unusable `simpleRead` field;
+- configuration evidence that distinguishes repository defaults, the synthetic runner's overrides and the read-only effective UAT/Production flags.
 
 Acceptance requires all of the following:
 
@@ -264,6 +311,7 @@ Acceptance requires all of the following:
 5. simple-read provider output tokens materially decrease; no hard token ceiling is lowered to manufacture the result;
 6. the 2–4 second goal is claimed only if successful accepted-to-delivery observations actually fall there under the stated environment;
 7. all focused tests, type checks and frozen evidence hashes pass.
+8. the first-intake provider catalog and decoder allowed-tool set are identical and contain no tool outside the current permission/feature/runtime intersection; the full semantic-control catalog has the same authority outcome.
 
 For NAT-01 the delivered answer must state the applied expense basis. The current default total includes pending statuses and confirmed records while excluding rejected/voided records; the pending amount includes the draft component. The candidate must state that the pending basis includes the 900-baht draft amount and state the confirmed component. It may use confirmed-only only when the user explicitly requests that basis or the authoritative tool contract changes and reports it. A silent confirmed-only reinterpretation is a failure.
 

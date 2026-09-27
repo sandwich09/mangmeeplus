@@ -143,13 +143,14 @@ import { ListApprovalQueueUseCase } from '../../../reimbursements/application/us
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFallbackReason, ReceiptOcrFieldResult, ReceiptOcrResponse, RequestContext } from '@watchdog-bms/contracts';
-import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, extractValueCandidatesV2, mapThaiDigits, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, extractValueCandidatesV2, mapThaiDigits, todayCivilDate, hasToolFeature, hasToolPermissions, lineToolRegistryFor, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
+import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer, type PublicPolicyTopic } from '../../domain/logic/line-public-policy.logic';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -426,6 +427,22 @@ const BUSY_FOLLOW_UP_REPLY = '⏳ น้องมั่งมีกำลัง�
  *  lease frees between a media turn's model calls, so a queued chat message usually slips into
  *  one of those gaps well inside this window; LINE's loading indicator covers the wait. */
 const LINE_AI_LIVE_BUSY_WAIT_MS = 25_000;
+
+/** Request-scoped ERP catalog upper bound from the same authority snapshot used downstream. */
+export function lineIntakeOfferedToolNames(input: {
+  permissions: readonly string[];
+  entitledFeatureKeys: ReadonlySet<string> | null | undefined;
+  draftEditEnabled?: boolean;
+  publicLookupEnabled?: boolean;
+  reimbursementDraftWriteEnabled?: boolean;
+}): string[] {
+  const entitled = input.entitledFeatureKeys;
+  if (!input.permissions.includes('ai.tool.invoke') || entitled === undefined) return [];
+  return lineToolRegistryFor(input)
+    .filter((tool) => hasToolPermissions(tool, input.permissions) && hasToolFeature(tool, entitled))
+    .map((tool) => tool.name)
+    .sort();
+}
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
 /** C3: what someone who is NOT the owner of a locked shop hears. No tier, no date, no price — the
  *  same "ask the shop owner" rule the web banner follows — but it no longer tells a connected
@@ -2104,7 +2121,9 @@ export class ProcessLineWebhookUseCase {
   private async tryRouteIntake(input: {
     requestId: string;
     event?: LineTextEvent;
-    enabledFeatures?: string[];
+    enabledFeatures?: string[] | null;
+    /** Current server-resolved company entitlements; undefined means authority snapshot missing. */
+    entitledFeatureKeys?: ReadonlySet<string> | null;
     /** The original webhook event — the intake's money ATTEMPT identity (ADR 0013 §4). */
     webhookEventId?: string;
     retryWebhookEventId?: string;
@@ -2134,6 +2153,13 @@ export class ProcessLineWebhookUseCase {
       const activeCategories = !budgetGrantV2 && this.expenseRepo
         ? (await this.expenseRepo.listCategories(input.companyId)).map((c) => ({ id: c.id, name: c.name }))
         : [];
+      const offeredToolNames = lineIntakeOfferedToolNames({
+        permissions: input.permissions,
+        entitledFeatureKeys: input.entitledFeatureKeys,
+        draftEditEnabled: this.config.lineAiDraftEditEnabled,
+        publicLookupEnabled: this.config.lineAiPublicLookupEnabled,
+        reimbursementDraftWriteEnabled: this.config.lineAiReimbursementDraftWriteEnabled,
+      });
       return await this.aiGateway.requestLineIntakeRoute({
         requestId: input.requestId,
         // Not part of the model payload — the intake router builds its prompt from an explicit
@@ -2146,7 +2172,8 @@ export class ProcessLineWebhookUseCase {
         ...reliabilityContext,
         ...(input.event && this.retainedTaskSources?.get(input.event) ? { retainedTaskSource: this.retainedTaskSources.get(input.event)!.source } : {}),
         ...(budgetGrantV2 && input.event?.inputEvidence ? { inputEvidence: input.event.inputEvidence, budgetGrantV2, contractCapabilities: ['input-evidence-v2' as const, 'budget-envelope-v2' as const] } : {}),
-        ...(input.enabledFeatures ? { enabledFeatures: input.enabledFeatures } : {}),
+        ...(input.enabledFeatures !== undefined ? { enabledFeatures: input.enabledFeatures } : {}),
+        offeredToolNames,
         ...(input.conversationContext && { conversationContext: input.conversationContext }),
         ...(input.valueCandidates && { valueCandidates: input.valueCandidates }),
         ...(input.openClarifications && { openClarifications: input.openClarifications }),
@@ -3119,14 +3146,14 @@ export class ProcessLineWebhookUseCase {
     companyId: string,
     access: { permissions: string[]; roles: string[] },
   ): Promise<LineReplyMessage> {
-    return {
+    return inheritCompleteLineBusinessAnswerPresentation(message, {
       ...message,
       quickReply: buildStaffCompletionQuickReply({
         permissions: access.permissions,
         entitledFeatureKeys: await loadEntitledFeatureKeys(this.prisma, companyId),
         isOwner: access.roles.includes('OWNER'),
       }),
-    };
+    });
   }
 
   private async deliverCompletedReply(
@@ -3417,7 +3444,14 @@ export class ProcessLineWebhookUseCase {
     candidates: LineAiTurnRequest['valueCandidates'], conversationContext?: LineAiConversationContext): Promise<void> {
     const bound = this.boundConversations.get(event), initial = this.budgetGrantsV2.get(event);
     if (!bound || !initial || !event.inputEvidence || !route.semanticSubrequests?.length) throw new Error('AI_CONTRACT_UNSUPPORTED');
-    const grant = await this.aiGateway.narrowLineReliabilityGrant(initial, 'general', ['line-answer/2']);
+    let grant;
+    try { grant = await this.aiGateway.narrowLineReliabilityGrant(initial, 'general', ['line-answer/2']); }
+    catch (error) {
+      if (!(error instanceof LineAiBudgetDeadlineExceededError)) throw error;
+      await this.deliverReply(event, formatRefusal('ai_timeout'));
+      await this.updateEventLog(event.webhookEventId, 'ai_timeout', error.code, bound.owner.companyId);
+      return;
+    }
     if (!grant) {
       await this.deliverReply(event, 'ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง');
       await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_ADMISSION_UNAVAILABLE', bound.owner.companyId);
@@ -4118,7 +4152,9 @@ export class ProcessLineWebhookUseCase {
       : controlIndex >= 0 && previewProof && draft?.previewId ? { kind: 'EXPENSE_EDIT_CONFIRM' as const, previewId: draft.previewId, previewRevision: String(previewProof.previewRevision), expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) } : null;
     const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt,
       firstDispatchDeadlineAt: new Date(this.documentQaDelivery.get(event)?.jobDeadlineAt.getTime() ?? (log.budgetAuthorityJson as { grant?: { finalDeadlineAtMs?: number } } | null)?.grant?.finalDeadlineAtMs ?? log.createdAt.getTime() + 40_000).toISOString(), authorization, control, businessResult: reimbursement?.status === 'applied' ? { kind: 'REIMBURSEMENT_DRAFT', operationKey: String(reimbursement.receipt.actionId), committedAt: String(reimbursement.receipt.committedAt), recordIds: [String(reimbursement.receipt.requestId)], resultingRevisions: [String(reimbursement.receipt.appliedRequestUpdatedAt)] } : null,
-      answer: { status: pendingSubrequestIds.length ? 'PARTIAL' : 'COMPLETE', pendingSubrequestIds, items }, ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) });
+      answer: { status: pendingSubrequestIds.length ? 'PARTIAL' : 'COMPLETE', pendingSubrequestIds, items },
+      preferredMessages: items.map((_item, index) => index < messages.length && index !== financialControlIndex ? messages[index]! : null),
+      ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) });
     const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId);
     if (!saved) return 'failed_other';
     return this.replayDeliveryPlan(saved.id, event, 2);
@@ -5202,7 +5238,8 @@ export class ProcessLineWebhookUseCase {
     if (boundSemanticV2) {
       const candidates = await this.textValueCandidates(event, event.messageText);
       semanticRoutePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({ event, requestId, webhookEventId: event.webhookEventId,
-        companyId, userId: identity.userId, permissions: resolvedAccess.permissions, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : [],
+        companyId, userId: identity.userId, permissions: resolvedAccess.permissions, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : null,
+        entitledFeatureKeys,
         messageText: event.messageText, conversationContext, ...(candidates ? { valueCandidates: candidates } : {}) }));
       this.intakePlansV2.set(event, semanticRoutePlan);
       if (semanticRoutePlan.status !== 'ROUTED' || !semanticRoutePlan.semanticSubrequests?.length) {
@@ -5847,7 +5884,8 @@ export class ProcessLineWebhookUseCase {
     // queued behind an in-flight media turn waits for the lease instead of bouncing the user.
     const busyWaitDeadlineMs = Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS;
     let routePlan = semanticRoutePlan ?? await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({
-      event, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : [],
+      event, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : null,
+      entitledFeatureKeys,
       requestId,
       webhookEventId: event.webhookEventId,
       companyId,
@@ -5894,7 +5932,13 @@ export class ProcessLineWebhookUseCase {
       const lane = hasPublic ? 'public' : onlyGeneral ? 'general' : !routePlan.semanticSubrequests && (routePlan.intent === 'ADVISOR_CONVERSATION' || routePlan.intent === 'UNSUPPORTED') ? 'general'
         : routePlan.preparedPlan?.complexity === 'simple' ? 'simple' : 'mixed';
       const profiles: AiBudgetProfileIdV2[] = lane === 'public' ? ['line-control/2', 'line-answer/2', 'public-lookup/2'] : lane === 'general' ? ['line-answer/2'] : ['line-control/2', 'line-answer/2'];
-      const narrowed = await this.aiGateway.narrowLineReliabilityGrant(initialGrantV2, lane, profiles);
+      let narrowed;
+      try { narrowed = await this.aiGateway.narrowLineReliabilityGrant(initialGrantV2, lane, profiles); }
+      catch (error) {
+        if (!(error instanceof LineAiBudgetDeadlineExceededError)) throw error;
+        await this.deliverReply(event, formatRefusal('ai_timeout'));
+        await this.updateEventLog(event.webhookEventId, 'ai_timeout', error.code, companyId); return;
+      }
       if (!narrowed) { await this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_BUDGET_UNAVAILABLE', companyId); return; }
       this.budgetGrantsV2.set(event, narrowed);
     }
@@ -7649,7 +7693,7 @@ export class ProcessLineWebhookUseCase {
 
 
 
-    const qaRoute = await this.routeDocumentQuestionBeforeCapture(event, ctx, access, captionText ?? '', media,
+    const qaRoute = await this.routeDocumentQuestionBeforeCapture(event, ctx, access, captionText ?? '', media, entitledFeatureKeys,
       (identity) => { admissionAttempt.identity = identity; admissionAttempt.companyId = companyId; });
     if (qaRoute?.handled) return;
     if (!this.initReceiptUpload || !this.completeReceiptUpload) {
@@ -7721,6 +7765,8 @@ export class ProcessLineWebhookUseCase {
       companyId,
       userId: identity.userId,
       permissions: access.permissions,
+      enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : null,
+      entitledFeatureKeys,
       messageText: caption,
       attachment: { id: event.lineMessageId, mimeType: media.mimeType, contentBase64: media.contentBase64 },
       conversationContext,
@@ -8899,6 +8945,7 @@ ${link}`, ctx.companyId, access);
 
   private async routeDocumentQuestionBeforeCapture(event: LineReceiptUploadEvent, ctx: RequestContext,
     access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>, caption: string, media: DownloadedLineMedia,
+    entitledFeatureKeys: ReadonlySet<string> | null,
     onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void,
   ): Promise<{ handled?: boolean; route?: GovernedLineIntakeRoutePlan } | null> {
     if (!this.documentQa) return null;
@@ -8920,7 +8967,7 @@ ${link}`, ctx.companyId, access);
     this.deliveryAccess.set(textEvent, this.deliveryAccess.get(event)!);
     const route = await this.tryRouteIntake({ event: textEvent, requestId: ctx.requestId, webhookEventId: event.webhookEventId,
       retryWebhookEventId: event.webhookEventId, onAdmitted,
-      companyId: ctx.companyId, userId: ctx.userId, permissions: access.permissions, enabledFeatures: access.entitledFeatureKeys ?? [], messageText: caption,
+      companyId: ctx.companyId, userId: ctx.userId, permissions: access.permissions, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : null, entitledFeatureKeys, messageText: caption,
       attachment: { id: event.lineMessageId, mimeType: media.mimeType,
         ...((media.mimeType === 'image/png' || media.mimeType === 'image/jpeg') && media.contentBase64 ? { contentBase64: media.contentBase64 } : {}) },
       valueCandidates: await this.textValueCandidates(textEvent, caption) });

@@ -2,9 +2,11 @@ import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createLineAiInputEvidence, LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
-import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages } from './process-line-webhook.use-case';
+import { canAdvertiseReceiptCapture, createLineAiInputEvidence, LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
+import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, lineIntakeOfferedToolNames, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
+import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
+import { ROLE_GRANTS } from '../../../auth/permission-registry';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
@@ -55,6 +57,56 @@ const closedLaunchGate = {
 const brokenLaunchGate = {
   assertLaunchRouteOpen: async () => { throw new Error('connection terminated'); },
 } as any;
+
+describe('LINE intake offered tool authority', () => {
+  const starter = new Set(TIER_FEATURE_PRESETS.STARTER_249);
+
+  it('derives owner, requester, and read-only catalogs from production role grants plus the sold Starter package', () => {
+    const owner = filterPermissionsByEntitlement(ROLE_GRANTS.OWNER, starter);
+    const requester = filterPermissionsByEntitlement(ROLE_GRANTS.STAFF, starter);
+    const readOnly = filterPermissionsByEntitlement(ROLE_GRANTS.AUDITOR_READONLY, starter);
+    for (const [role, permissions] of [['OWNER', owner], ['STAFF', requester], ['AUDITOR_READONLY', readOnly]] as const) {
+      const names = lineIntakeOfferedToolNames({ permissions, entitledFeatureKeys: starter });
+      assert.ok(names.includes('expense.list_recent'), `${role} can read its permitted expense scope`);
+      assert.ok(names.includes('dashboard.get_business_health_summary'), `${role} can read the Starter dashboard`);
+      for (const forbidden of ['sales.get_sales_summary', 'ledger.get_financial_summary', 'reports.get_monthly_report_summary', 'inventory.search_products']) {
+        assert.equal(names.includes(forbidden), false, `${role} cannot be offered unpurchased ${forbidden}`);
+      }
+    }
+    assert.equal(canAdvertiseReceiptCapture(requester, starter), true, 'the Starter requester keeps native receipt capture');
+    assert.equal(canAdvertiseReceiptCapture(readOnly, starter), false, 'the read-only role is not offered native receipt capture');
+  });
+
+  it('recomputes revocation and preserves legacy-null versus missing authority semantics', () => {
+    const owner = filterPermissionsByEntitlement(ROLE_GRANTS.OWNER, starter);
+    const normal = lineIntakeOfferedToolNames({ permissions: owner, entitledFeatureKeys: starter });
+    assert.ok(normal.includes('expense.list_recent'));
+    assert.deepEqual(lineIntakeOfferedToolNames({ permissions: owner.filter((key) => key !== 'ai.tool.invoke'), entitledFeatureKeys: starter }), []);
+    assert.equal(lineIntakeOfferedToolNames({ permissions: owner, entitledFeatureKeys: new Set(['ai_line_assistant']) }).includes('expense.list_recent'), false);
+    assert.deepEqual(lineIntakeOfferedToolNames({ permissions: owner, entitledFeatureKeys: undefined }), []);
+    assert.ok(lineIntakeOfferedToolNames({ permissions: owner, entitledFeatureKeys: null }).includes('expense.list_recent'));
+  });
+
+  it('puts the same Starter authority snapshot on the real API intake request', async () => {
+    const { prisma } = makePrisma();
+    const owner = filterPermissionsByEntitlement(ROLE_GRANTS.OWNER, starter);
+    const h = makeUseCase(prisma, { permissions: owner, intakeRouteFn: () => ({
+      status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98,
+    }) });
+    const handler = h.useCase as any;
+    handler.reliabilityContext = async () => ({});
+    await handler.tryRouteIntake({
+      requestId: 'starter-authority', companyId: 'company-1', userId: 'user-1', permissions: owner,
+      enabledFeatures: [...starter], entitledFeatureKeys: starter, messageText: 'ดูรายจ่ายเดือนนี้',
+    });
+    assert.equal(h.intakeRequests.length, 1);
+    assert.deepEqual(h.intakeRequests[0].enabledFeatures, [...starter]);
+    assert.ok(h.intakeRequests[0].offeredToolNames.includes('expense.list_recent'));
+    for (const forbidden of ['sales.get_sales_summary', 'ledger.get_financial_summary', 'reports.get_monthly_report_summary', 'inventory.search_products']) {
+      assert.equal(h.intakeRequests[0].offeredToolNames.includes(forbidden), false);
+    }
+  });
+});
 
 describe('receipt owner summary and fallback', () => {
   it('orders the five receipt facts and shows taxes and other charges only when nonzero', () => {
@@ -773,6 +825,7 @@ it('answers a bound general question once before two pending files can intercept
   };
   await h.useCase.execute(event);
   assert.equal(h.intakeRequests.length, 1, 'the same intake result is reused downstream');
+  assert.equal(h.intakeRequests[0]?.conversationContext, context);
   assert.equal(h.aiGatewayRequests.length, 1);
   assert.equal(h.aiGatewayRequests[0].conversationContext, context);
   assert.equal(pendingReads, 0, 'a general question does not enumerate or consume pending private files');

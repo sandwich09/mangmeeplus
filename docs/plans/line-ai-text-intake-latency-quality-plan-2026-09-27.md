@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation and focused source verification are complete under root review. Spec: `docs/specs/line-ai-text-intake-latency-quality-spec-2026-09-27.md`. The real-model baseline/candidate pilot remains pending and the latency goal is not yet established.
+The first compact-intake implementation and focused source verification are complete at frozen candidate `c836e7e05c487b3677d10b6726eeb252e67b87ad`. Its two-prompt paid pilot is complete: NAT-01 candidate passed its content rubric, while NAT-02 exposed a pre-existing sales-versus-cash error under a synthetic all-module fixture. The actual paid tiers grant Starter expense/reimbursement features, so the unfinished sales/report expansion is removed from the active tree and preserved as a deferred patch. The current reviewed diff now scopes first-intake tools to the current package and actor and passes focused transport/source checks; it is awaiting combined root review and a package-real frozen run. The latency goal is not established and no release/deployment is authorized.
 
 Implementation uses Ponytail full mode: existing types and validators first, smallest root-cause diff, no dependency, no `package.json` edit, and one focused runnable check per non-trivial boundary. Root reviewed the initial spec/plan and approved the code phase; candidate freeze still requires final diff review.
 
@@ -91,6 +91,33 @@ Focused webhook tests must prove:
 
 Exit: a turn is semantically classified once from the bounded authorized classification snapshot; private source rows are read only by the route that needs them.
 
+## Phase 3a — Make first-intake tools match current authority
+
+Use the existing registry and access helpers; do not create a second authorization framework.
+
+1. Add optional internal `LineIntakeRouteRequest.offeredToolNames: string[]`.
+2. In the API, derive the sorted names from the already resolved turn permissions and `loadEntitledFeatureKeys`, requiring `ai.tool.invoke`, `executionReady`, `hasToolPermissions` and `hasToolFeature`, with the existing runtime registry flags.
+3. In the Gateway, intersect that API upper bound with the immutable static router set and trusted request capabilities. Never mutate `ROUTER_ENABLED_TOOLS` or a shared catalog.
+4. Build the provider catalog from that request-scoped set and pass the exact same set to the compact decoder. Canonical sorted descriptors plus a schema/capability version form the cacheable context; do not include tenant/user ids or raw permission data in the cache key.
+5. For bound semantic-v2, a missing/malformed authority list offers no ERP simple-read tool and cannot produce a prepared plan. General/business-concept semantic coverage remains available. Keep legacy non-v2 behavior for wire compatibility and retain every downstream permission/entitlement/delegation/tool recheck.
+6. Confirm the full semantic CONTROL path still filters its fresh `LineAiTurnRequest.userContext` through `executionReady`, `hasToolPermissions`, `toolAccessOutcome` and runtime switches. Add parity coverage instead of replacing that implementation.
+7. Gate the compact prompt's `simpleRead` schema and instructions on the existing fused-plan capability. With fused planning off, require canonical `decisionV1.subrequests` but do not ask the provider for an unusable simple-read proposal.
+
+Focused checks must prove:
+
+- a Starter owner/requester catalog is derived from `TIER_FEATURE_PRESETS.STARTER_249` and production role compilation/filtering, never a hand-written all-permission fixture;
+- sales, report, CRM, ledger and other unpurchased tools are absent from both the provider catalog and decoder allowed set;
+- an expense/reimbursement tool appears only when both its entitlement and its exact role permission pass;
+- a permission/feature revoked before a resumed turn produces a newly reduced catalog, while a mid-turn revocation is still stopped by existing downstream checks;
+- different authority catalogs cannot reuse the same cacheable catalog payload, and identical canonical catalogs contain no tenant identifiers;
+- missing authority on bound semantic-v2 fails prepared reads closed but a no-ERP general business question still answers;
+- fused-plan off prompt contains no `simpleRead` invitation and its parser never carries a compact prepared plan;
+- full semantic CONTROL exposes the same effective authority result.
+
+Exit: first intake tells the model only about tools the current actor can actually invoke under the current package and runtime; later authorization remains unchanged.
+
+Implementation evidence in the current diff: the API derives and transports the sorted upper bound at all four intake call sites; the Gateway validates it, intersects static/runtime/permission/feature authority and uses the same set for prompt, decoder and legacy/compact prepared-plan gating. Starter `OWNER`, `STAFF` and `AUDITOR_READONLY`, revocation, malformed/missing authority, fused-off prompting, empty-catalog native capture and HTTP/client transport are covered by focused tests. An actual deployed first-intake request was not captured and live public sales availability is not verified; neither blocks local source acceptance. The paid Starter comparison remains an evidence task.
+
 ## Phase 4 — Focused verification
 
 Run the smallest relevant checks first:
@@ -122,7 +149,18 @@ Pilot authorized by the owner/root review:
 - four provider turns total: NAT-01 and NAT-02 once on baseline, then the same two prompts once on candidate;
 - no public lookup, voice, new advisor scope or model change.
 
-Capture provider duration/tokens, decoder result, tool duration, final delivery duration, semantic inventory, filters, tools, source/basis, reply and effects. Run the held-out matrix only after pilot review.
+Capture provider duration/tokens, decoder result, tool duration, final delivery duration, semantic inventory, filters, tools, source/basis, reply and effects. The initial pilot completed with accepted-to-sink baseline/candidate results of 8,759/6,507 ms for NAT-01 and 8,387/6,212 ms for NAT-02. NAT-01 candidate content rubric passed while baseline omitted basis; actual sink delivery was text-only despite response card/link metadata, which remains a separate delivery gap. Both NAT-02 turns failed by using cash receipts for a generic sales question, so no pairwise successful median is claimed. The runner forced 62 feature keys, 64 permission keys and three latency-related flags; it is diagnostic and must not be reported as a sold-package acceptance run.
+
+### Phase 5a — Package-realistic evidence before held-out claims
+
+1. Derive the common 17 Starter feature keys from `TIER_FEATURE_PRESETS.STARTER_249`; do not hand-copy broad feature lists.
+2. Build an OWNER case from the production OWNER grant set after entitlement filtering, and requester/read-only cases through `compileRole` plus `evaluateEntitledFeatureKeys`. Include realistic branch scope.
+3. Keep an Enterprise-only case limited to the two additional WHT features. Do not use it as an all-module package.
+4. Record repository defaults, runner overrides and read-only effective UAT/Production flags separately. A runner-forced flag is not a product default or deployment claim.
+5. Compare the first-intake catalog, compact decoder set, full semantic CONTROL tools, actor delegations, executed tools and delivered result for each role/package case.
+6. Keep the NAT-02 sales mismatch as a deferred diagnostic. Do not activate sales/report tools or change product goldens to make an expense-package run pass.
+
+Exit: held-out evidence represents current sold package and role boundaries, and no latency statistic includes an unavailable module or a fast authority refusal as a success.
 
 Exit is evidence, not a predetermined pass. A faster refusal, timeout, missing clause, wrong filter, false answer or unsafe effect fails.
 

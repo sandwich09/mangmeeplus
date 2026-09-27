@@ -2,7 +2,9 @@ import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Prisma } from '../../../../generated/prisma/client';
 import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
+import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.service';
 import { parseLineDeliveryPlan, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
+import { buildLineBusinessAnswerMessage, inheritCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
 
 it('answers an admitted private general/help turn without private ERP prefetch or touching four waiting tasks', async () => {
   const event: any = { webhookEventId: 'evt', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'ทำไมท้องฟ้าเป็นสีฟ้า', inputEvidence: { joinedSha256: 'digest' } };
@@ -37,6 +39,7 @@ it('answers an admitted private general/help turn without private ERP prefetch o
 
 for (const scenario of [
   { name: 'general grant admission is unavailable', kind: 'grant', status: 'provider_unavailable', error: 'AI_GENERAL_ADMISSION_UNAVAILABLE', calls: ['narrow', 'reply', 'terminal'] },
+  { name: 'the authoritative grant deadline elapsed', kind: 'deadline', status: 'ai_timeout', error: 'DEADLINE_EXCEEDED', calls: ['narrow', 'reply', 'terminal'] },
   { name: 'a resumed task selection is stale', kind: 'task', status: 'clarification_required', error: 'STALE_TASK_SELECTION', calls: ['narrow', 'preserve', 'reply', 'terminal'] },
   { name: 'semantic coverage is absent', kind: 'missing', status: 'provider_unavailable', error: 'AI_CONTRACT_UNSUPPORTED', calls: ['narrow', 'context', 'durable', 'answer', 'reply', 'terminal'] },
   { name: 'semantic coverage omits a clause', kind: 'count', status: 'provider_unavailable', error: 'AI_CONTRACT_UNSUPPORTED', calls: ['narrow', 'context', 'durable', 'answer', 'reply', 'terminal'] },
@@ -61,7 +64,11 @@ for (const scenario of [
     settleSemanticTask: forbidden, persistTurn: forbidden, deliverMessages: forbidden, loadConversationContext: forbidden,
     expenseRepo: new Proxy({}, { get: forbidden }), contextV2: new Proxy({}, { get: forbidden }),
     aiGateway: {
-      narrowLineReliabilityGrant: async () => { calls.push('narrow'); return scenario.kind === 'grant' ? null : grant; },
+      narrowLineReliabilityGrant: async () => {
+        calls.push('narrow');
+        if (scenario.kind === 'deadline') throw new LineAiBudgetDeadlineExceededError();
+        return scenario.kind === 'grant' ? null : grant;
+      },
       requestLineTurn: async () => { calls.push('answer'); return { replyText: 'UNVERIFIED ANSWER MUST NOT BE SENT', toolsInvoked: scenario.kind === 'tool' ? ['expense.get_detail'] : [],
         semanticCoverage: scenario.kind === 'missing' ? undefined : scenario.kind === 'count' ? [] : [{ index: 0, status: 'handled' }] }; },
     },
@@ -81,6 +88,7 @@ for (const scenario of [
   assert.ok(stored.processedAt instanceof Date); assert.equal(stored.payloadJson, Prisma.DbNull, 'terminal turn must release its buffered replay payload');
   assert.equal(replies.length, 1); assert.ok(replies[0]!.trim()); assert.ok(!replies[0]!.includes('UNVERIFIED ANSWER'));
   if (scenario.kind === 'grant') assert.doesNotMatch(replies[0]!, /budget|งบประมาณ/i, 'failed admission alone does not establish exhausted budget');
+  if (scenario.kind === 'deadline') assert.match(replies[0]!, /ใช้เวลานาน|ลองใหม่/i);
   assert.deepEqual(tasks, originalTasks); assert.equal(flow.semanticDelivery.has(event), false); assert.equal(flow.deliverySources.has(event), false);
 });
 
@@ -140,4 +148,39 @@ for (const scenario of [
     for (const item of saved!.answer.items) assert.deepEqual(item.sourceProofIds, ['read'], 'marking a limitation must retain its original source proof');
   }
   assert.deepEqual(scenario.coverage, originalCoverage, 'transport must not promote pending or denied work to handled');
+});
+
+it('freezes the trusted expense card and safe link through the actual webhook v2 seam', async () => {
+  const event: any = { webhookEventId: 'expense-card-event', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply' };
+  const createdAt = new Date(); let saved: DeliveryPlanV2 | undefined;
+  const response: any = { requestId: 'expense-card-request', replyText: 'ค่าใช้จ่ายเดือนนี้ 500 บาท', sourceRefs: [], sourceLabels: ['ค่าใช้จ่าย'],
+    webLinks: [{ label: 'เปิดค่าใช้จ่าย', path: '/companies/company/expenses' }], intent: 'read_summary', agent: 'accounting', refused: false,
+    toolsInvoked: ['expense.list_recent'], durationMs: 1, presentation: { kind: 'answer_cards', cards: [{ title: 'ค่าใช้จ่ายเดือนนี้',
+      text: 'ค่าใช้จ่ายเดือนนี้ 500 บาท', sourceLabels: ['ค่าใช้จ่าย'], webLink: { label: 'เปิดค่าใช้จ่าย', path: '/companies/company/expenses' } }] } };
+  const rendered = buildLineBusinessAnswerMessage(response, response.replyText, 'https://app.example.com', 'company');
+  assert.equal(rendered.type, 'flex');
+  const message = inheritCompleteLineBusinessAnswerPresentation(rendered, { ...rendered,
+    quickReply: { items: [{ type: 'action' as const, action: { type: 'message' as const, label: 'ถามข้อมูล', text: 'ถามข้อมูล' } }] } });
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  Object.assign(flow, {
+    config: { aiDataRetentionDays: 30 }, semanticDelivery: new WeakMap(), documentQaDelivery: new WeakMap(), deliveryReimbursements: new WeakMap(), deliveryDraftPreviews: new WeakMap(),
+    persistSemanticTaskCompletion: async () => undefined,
+    webhookPlanAuthorization: async (_event: any, expiresAt: string) => ({ v: 2, kind: 'PRIVATE', issuedAt: createdAt.toISOString(), expiresAt,
+      actor: { userId: 'user', companyId: 'company', membershipId: 'member', requestId: 'request', accessFingerprint: 'fingerprint', channelId: 'oa', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation', ownerEpoch: 0 },
+      proofs: [{ id: 'read', kind: 'READ', evidenceIds: ['expense-evidence'] }] }),
+    prisma: { client: { lineTurnOutcome: { findUnique: async () => null }, lineWebhookEventLog: { findUnique: async () => ({ createdAt }) } } },
+    deliveryPlans: { savePlan: async (_owner: unknown, plan: DeliveryPlanV2) => { saved = plan; return { id: plan.planId }; } },
+    replayDeliveryPlan: async () => 'ok',
+  });
+  assert.equal(await flow.sendMessagesV2(event, [message]), 'ok');
+  assert.ok(saved && parseLineDeliveryPlan(saved));
+  const primary = saved!.batches[0]!.primary.messages[0]!, fallback = saved!.batches[0]!.fallback!.messages[0]!;
+  assert.equal(primary.type, 'flex'); assert.equal((primary as any).canonicalText, undefined);
+  assert.match(JSON.stringify(primary), /https:\/\/app\.example\.com\/companies\/company\/expenses/);
+  assert.equal(fallback.type, 'text');
+  if (fallback.type === 'text') {
+    assert.match(fallback.text, /ค่าใช้จ่ายเดือนนี้ 500 บาท/);
+    assert.match(fallback.text, /แหล่งข้อมูล: ค่าใช้จ่าย/);
+    assert.match(fallback.text, /https:\/\/app\.example\.com\/companies\/company\/expenses/);
+  }
 });

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { IntentRouterAgent, LINE_INTAKE_ROUTER_SYSTEM_PROMPT, intakeRouterSystemPrompt } from './intent-router.agent';
+import { effectiveIntakeToolNames, IntentRouterAgent, LINE_INTAKE_ROUTER_SYSTEM_PROMPT, intakeRouterSystemPrompt } from './intent-router.agent';
 import { DisabledProvider } from '../infrastructure/provider/disabled.provider';
 import { createLineAiInputEvidence, verifyLineAiRetainedTaskSource, type BusinessDocumentClassification, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
@@ -12,7 +12,9 @@ function baseRequest(overrides: Partial<LineIntakeRouteRequest> = {}): LineIntak
     userId: 'user-1',
     locale: 'th',
     messageText: '',
-    permissions: ['expense.receipt.line_upload', 'expense.signature.manage', 'line.ai.query'],
+    permissions: ['ai.tool.invoke', 'expense.read', 'expense.receipt.line_upload', 'expense.signature.manage', 'line.ai.query'],
+    enabledFeatures: ['expenses', 'expenses.list'],
+    offeredToolNames: ['expense.list_recent'],
     activeCategories: [{ id: 'cat-travel', name: 'ค่าเดินทาง' }, { id: 'cat-meals', name: 'ค่าอาหาร' }],
     ...overrides,
   };
@@ -38,6 +40,22 @@ function documentClassification(overrides: Partial<BusinessDocumentClassificatio
 }
 
 describe('LINE intake router – routeIntake', () => {
+  it('fails closed on malformed authority and preserves only configured, permitted, entitled tools', () => {
+    const configured = new Set(['expense.list_recent', 'sales.get_sales_summary']);
+    const permissions = ['ai.tool.invoke', 'expense.read'];
+    const features = ['expenses', 'expenses.list'];
+    assert.deepEqual([...effectiveIntakeToolNames(
+      ['unknown.from.newer.api', 'sales.get_sales_summary', 'expense.list_recent', 'expense.list_recent'],
+      configured, permissions, features,
+    )], ['expense.list_recent']);
+    for (const malformed of [undefined, 'expense.list_recent', [1], Array.from({ length: 129 }, () => 'expense.list_recent')]) {
+      assert.deepEqual([...effectiveIntakeToolNames(malformed, configured, permissions, features)], []);
+    }
+    assert.deepEqual([...effectiveIntakeToolNames(['expense.list_recent'], configured, ['expense.read'], features)], [], 'ai.tool.invoke revoked');
+    assert.deepEqual([...effectiveIntakeToolNames(['expense.list_recent'], configured, permissions, undefined)], [], 'missing entitlement snapshot');
+    assert.deepEqual([...effectiveIntakeToolNames(['expense.list_recent'], configured, permissions, null)], ['expense.list_recent'], 'legacy null is fail-open');
+  });
+
   it('requires consistent canonical simple-read filters and preserves candidate month-to-date bounds', () => {
     const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true);
     assert.match(prompt, /decisionV1 is the provider-only compact form/);
@@ -60,16 +78,19 @@ describe('LINE intake router – routeIntake', () => {
     const built = await createLineAiInputEvidence({ turnKey: 'compact-cap-off', parts: [{ partId: 'part-0',
       eventIdHash: 'a'.repeat(64), acceptedAtMs: 1, rawText: text }] });
     assert.ok(built);
+    const capture: { input?: ProviderInput } = {};
     const plan = await new IntentRouterAgent(modelAnswer({
       intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.97,
       decisionV1: {
         subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {} }],
         simpleRead: { subrequest: 0, tool: 'expense.list_recent', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.96 },
       },
-    })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence }));
+    }, capture)).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence }));
     assert.equal(plan.status, 'ROUTED');
     assert.equal(plan.preparedPlan, undefined);
     assert.equal(plan.semanticSubrequests?.length, 1);
+    assert.doesNotMatch(capture.input!.systemPrompt ?? '', /simpleRead/);
+    assert.equal(capture.input!.cacheableContext, undefined);
   });
 
   it('keeps compact semantics but strips prepared execution from an outer CLARIFY route', async () => {
@@ -87,6 +108,71 @@ describe('LINE intake router – routeIntake', () => {
     assert.equal(plan.intent, 'CLARIFY');
     assert.equal(plan.preparedPlan, undefined);
     assert.equal(plan.clarifyQuestion, 'หมายถึงสาขาใดคะ');
+  });
+
+  it('uses the same request-scoped catalog for the provider and compact decoder', async () => {
+    const text = 'ยอดขายเดือนนี้เท่าไหร่';
+    const built = await createLineAiInputEvidence({ turnKey: 'scoped-catalog', parts: [{ partId: 'part-0',
+      eventIdHash: '9'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const capture: { input?: ProviderInput } = {};
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.97,
+      decisionV1: {
+        subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {} }],
+        simpleRead: { subrequest: 0, tool: 'sales.get_sales_summary', subject: 'sale', agent: 'sales', answerShape: 'single_metric', confidence: 0.96 },
+      },
+    }, capture)).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true },
+      offeredToolNames: ['expense.list_recent', 'sales.get_sales_summary', 'unknown.from.newer.api'] }));
+    const catalog = JSON.parse(capture.input!.cacheableContext ?? '{}');
+    assert.deepEqual(catalog.enabledFeatures.map((feature: { toolName: string }) => feature.toolName), ['expense.list_recent']);
+    assert.deepEqual(catalog.disabledFeatures, []);
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.preparedPlan, undefined, 'the decoder cannot use a tool omitted from the provider catalog');
+    assert.equal(plan.semanticSubrequests?.[0]?.goal, text, 'the canonical request survives for safe full-path handling');
+  });
+
+  it('discards a legacy prepared plan that names an unoffered tool while preserving canonical semantics', async () => {
+    const text = 'ยอดขายเดือนนี้เท่าไหร่';
+    const built = await createLineAiInputEvidence({ turnKey: 'legacy-prepared-scope', parts: [{ partId: 'part-0',
+      eventIdHash: '8'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const ref = { partId: 'part-0', startUtf16: 0, endUtf16: text.length, rawSha256: built.inputEvidence.parts[0]!.rawSha256 };
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.97,
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: text, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [ref] }],
+      preparedPlan: { version: 1, complexity: 'simple', confidence: 0.96, responseMode: 'simple_grounded', answerShape: 'single_metric',
+        intentPlan: { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_summary', subject: 'sale', agent: 'sales', priority: 1,
+          requiredTools: ['sales.get_sales_summary'], missingContext: [] }], refusals: [], requiresHumanReview: false },
+        proposedCalls: [{ toolName: 'sales.get_sales_summary', input: {} }] },
+    })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true } }));
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.preparedPlan, undefined);
+    assert.equal(plan.semanticSubrequests?.[0]?.goal, text);
+  });
+
+  it('keeps native expense capture available when the bound ERP read catalog is empty', async () => {
+    const text = 'บันทึกค่ากาแฟ 120 บาท';
+    const built = await createLineAiInputEvidence({ turnKey: 'native-capture-empty-catalog', parts: [{ partId: 'part-0',
+      eventIdHash: '7'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const capture: { input?: ProviderInput } = {};
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97,
+      captureHints: { amount: '120', description: 'ค่ากาแฟ' },
+      decisionV1: { subrequests: [{ kind: 'write', goal: text, sources: [{ part: 0, whole: true }], filters: {},
+        writeIntent: 'EXPENSE_DOCUMENT_CAPTURE' }] },
+    }, capture)).routeIntake(baseRequest({
+      messageText: text, inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true },
+      permissions: ['line.ai.query', 'expense.receipt.line_upload'], enabledFeatures: ['expenses.upload'],
+      offeredToolNames: undefined,
+    }));
+    const catalog = JSON.parse(capture.input!.cacheableContext ?? '{}');
+    assert.deepEqual(catalog.enabledFeatures, []);
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.intent, 'EXPENSE_DOCUMENT_CAPTURE');
+    assert.equal(plan.semanticSubrequests?.[0]?.writeIntent, 'EXPENSE_DOCUMENT_CAPTURE');
+    assert.equal(plan.preparedPlan, undefined);
   });
 
   it('rejects compact output that also carries either legacy planning field', async () => {
