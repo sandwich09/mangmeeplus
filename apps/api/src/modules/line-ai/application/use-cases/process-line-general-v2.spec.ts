@@ -117,6 +117,10 @@ for (const scenario of [
     config: { aiDataRetentionDays: 30 }, semanticDelivery: new WeakMap([[event, scenario.coverage]]),
     documentQaDelivery: new WeakMap(scenario.pages ? [[event, { resultJson: qa, jobDeadlineAt: new Date(createdAt.getTime() + 40_000) }]] : []),
     deliveryReimbursements: new WeakMap(), deliveryDraftPreviews: new WeakMap(),
+    // buildTurnAuthorizationJson (called from sendMessagesV2) reads these WeakMaps on `this` directly,
+    // same as the real class fields — empty here, same as the other unused delivery-* maps above.
+    deliveryAccess: new WeakMap(), deliverySources: new WeakMap(), publicPolicyTopics: new WeakMap(),
+    deliveryReceiptSources: new WeakMap(), deliverySubstituteSources: new WeakMap(), deliveryCandidates: new WeakMap(),
     persistSemanticTaskCompletion: async () => { calls.push('persist-pending-state'); },
     webhookPlanAuthorization: async (_event: any, expiresAt: string) => ({ v: 2, kind: 'PRIVATE', issuedAt: createdAt.toISOString(), expiresAt,
       actor: { userId: 'user', companyId: 'company', membershipId: 'member', requestId: 'request', accessFingerprint: 'fingerprint',
@@ -164,6 +168,9 @@ it('freezes the trusted expense card and safe link through the actual webhook v2
   const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
   Object.assign(flow, {
     config: { aiDataRetentionDays: 30 }, semanticDelivery: new WeakMap(), documentQaDelivery: new WeakMap(), deliveryReimbursements: new WeakMap(), deliveryDraftPreviews: new WeakMap(),
+    // buildTurnAuthorizationJson (called from sendMessagesV2) reads these WeakMaps on `this` directly.
+    deliveryAccess: new WeakMap(), deliverySources: new WeakMap(), publicPolicyTopics: new WeakMap(),
+    deliveryReceiptSources: new WeakMap(), deliverySubstituteSources: new WeakMap(), deliveryCandidates: new WeakMap(),
     persistSemanticTaskCompletion: async () => undefined,
     webhookPlanAuthorization: async (_event: any, expiresAt: string) => ({ v: 2, kind: 'PRIVATE', issuedAt: createdAt.toISOString(), expiresAt,
       actor: { userId: 'user', companyId: 'company', membershipId: 'member', requestId: 'request', accessFingerprint: 'fingerprint', channelId: 'oa', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation', ownerEpoch: 0 },
