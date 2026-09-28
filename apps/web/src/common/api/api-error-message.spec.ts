@@ -10,6 +10,13 @@ test('billing rate limit displays only the bounded wait and preserves a route to
   assert.match(apiErrorMessage({ code: 'CONTROL_ACTION_NOT_SUPPORTED' }), /หน้ามั่งมี/);
 });
 
+test('resend and recipient-code limits keep their own sentence and add only a short wait', () => {
+  const error = (code: string, seconds: unknown) => Object.assign(new Error('internal diagnostic'), { status: 429, code, details: { code, retryAfterSeconds: seconds } });
+  assert.equal(apiErrorMessage(error('EMAIL_OTP_RATE_LIMITED', 60)), 'ขอรหัสหรือกรอกรหัสผิดบ่อยเกินไป กรุณารอก่อนลองใหม่ (ลองใหม่ได้ใน 60 วินาที)');
+  assert.equal(apiErrorMessage(error('BILLING_RESEND_LIMIT', 3600)), 'วันนี้ส่งเอกสารใบนี้ซ้ำครบจำนวนที่กำหนดแล้ว ลองใหม่ได้พรุ่งนี้ หรือเปิดเอกสารจากหน้านี้ได้ทันที');
+  assert.doesNotMatch(apiErrorMessage(error('BILLING_RESEND_LIMIT', 'soon')), /วินาที/);
+});
+
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
 
 test('explains document VAT acceptance without suggesting a bypass of Tax Code rules', () => {
