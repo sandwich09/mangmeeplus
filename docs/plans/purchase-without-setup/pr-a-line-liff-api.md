@@ -1,8 +1,9 @@
 # PR A — LINE / LIFF / API: ลิงก์ออกนอกเบราว์เซอร์ LINE, การ์ดล็อก one-tap, สถานะ "ยังไม่มีแพ็กเกจ" บน LIFF, สิทธิ์ `company.plan.manage`
+> ตรวจ anchor ใหม่บน develop 03438bde (2026-09-28); ฐานเดิม ddcdcadf
 
-Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangmee-purchase-without-setup-spec-th.md) (v0.2; **§18.2 มีผลเหนือ §7**) · Plan: [../mangmee-purchase-without-setup-plan-th.md](../mangmee-purchase-without-setup-plan-th.md) "แก้ไขแผน 2026-09-27" §P0/§P1 · กติการ่วม: [00-readme.md](00-readme.md) · ฐานโค้ด: `origin/develop` ddcdcadf (ทุกเลขบรรทัดในเอกสารนี้อ้างจาก commit นี้)
+Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangmee-purchase-without-setup-spec-th.md) (v0.2; **§18.2 มีผลเหนือ §7**) · Plan: [../mangmee-purchase-without-setup-plan-th.md](../mangmee-purchase-without-setup-plan-th.md) "แก้ไขแผน 2026-09-27" §P0/§P1 · กติการ่วม: [00-readme.md](00-readme.md) · ฐานโค้ด: `origin/develop` 03438bde (ทุกเลขบรรทัดในเอกสารนี้อ้างจาก commit นี้)
 
-กติกาที่ใช้เขียน brief นี้: ทุกไฟล์ที่อ้างถูกอ่านจริงที่ ddcdcadf; snippet "ปัจจุบัน" คัดจากโค้ดจริง, snippet "ใหม่" คือสิ่งที่ต้องเขียน; ไม่มี env/flag ใหม่ (D-PF-8); DTO ใหม่ทุกฟิลด์ optional; ห้ามแก้ `package.json`; ไม่แตะ `attemptDelivery` (`process-line-webhook.use-case.ts:3274-3281`) และ `linePushRetryKey`
+กติกาที่ใช้เขียน brief นี้: ทุกไฟล์ที่อ้างถูกอ่านจริงที่ ddcdcadf และตรวจซ้ำที่ 03438bde; snippet "ปัจจุบัน" คัดจากโค้ดจริง, snippet "ใหม่" คือสิ่งที่ต้องเขียน; ไม่มี env/flag ใหม่ (D-PF-8); DTO ใหม่ทุกฟิลด์ optional; ห้ามแก้ `package.json`; ไม่แตะ `attemptDelivery` (`process-line-webhook.use-case.ts:4345-4352`), `linePushRetryKey`, `sendFrozenV2` และ `replayDeliveryPlan`
 
 ---
 
@@ -12,7 +13,7 @@ Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangme
 
 | # | งาน | กติกาใน spec | ไฟล์หลัก |
 |---|---|---|---|
-| A1 | Outbound transform `openExternalBrowser=1` ที่ "ทางออก" 3 จุด + helper กลางใน contracts + ตัด param ตอน mint + ลบ hardcode 2 จุด | §18.2 R-B1, RV21 | `packages/contracts/src/line-external-browser.ts` (ใหม่), `line-reply.adapter.ts`, `system-line-push.ts`, `notification.use-cases.ts`, `line-handoff-link.service.ts`, `sales-deal.logic.ts`, `line-business-card.logic.ts` |
+| A1 | Outbound transform `openExternalBrowser=1` ที่ "ทางออก" 3 จุด + ตอน freeze delivery plan v2 (§3.4ก) + helper กลางใน contracts + ตัด param ตอน mint + ลบ hardcode 2 จุด | §18.2 R-B1, RV21 | `packages/contracts/src/line-external-browser.ts` (ใหม่), `line-reply.adapter.ts`, `system-line-push.ts`, `notification.use-cases.ts`, `line-delivery-plan.logic.ts`, `line-handoff-link.service.ts`, `sales-deal.logic.ts`, `line-business-card.logic.ts` |
 | A2 | R-B2 ทาง (ข): การ์ดล็อกและตอบ "ขอเปลี่ยนแพ็กเกจ" mint `/l/<token>` ในเลนก่อนบันทึก; ห้าม mint ในกลุ่ม/ห้อง; การ์ดโปรโมชั่นได้ group guard | §18.2 R-B2, RV07, RV08 | `process-line-webhook.use-case.ts`, `line-business-card.logic.ts` |
 | A3 | `/l/[token]`: `HEAD` → 204, ส่งต่อ client IP | §18.2 R-B1, RV22 | `apps/web/app/l/[token]/route.ts` |
 | A4 | LIFF: DTO `lockReason`/`canManagePlan` (+ `lockedEntryCompanyId`), หน้าผลลัพธ์ "เปิดร้านแล้ว ขั้นต่อไปเลือกแพ็กเกจ" เตรียม handoff ตอน render, label รายการร้าน, แก้ busy-label, `destination()` permission-aware, `needsSelection` แนบ lock info | §18.2 R-C2, R-C3, RV10, RV24 | `external-signup.ts` (contracts), `get-line-signup-status.use-case.ts`, `liff-page.security.ts`, `exchange-liff-session.use-case.ts` |
@@ -20,15 +21,15 @@ Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangme
 | A6 | Copy: G19 postback "ให้ทีมงานติดต่อกลับ" (support request ไม่หยุด AI 24 ชม.), G20 ENTERPRISE, G25 FAQ, RV33 LIFF help text, ข้อความตอบ "ขอเปลี่ยนแพ็กเกจ" | §12, §13 G19/G20/G25, RV32, RV33 | `line-staff-menu.logic.ts`, `line-public-policy.logic.ts`, `auth.controller.ts`, `process-line-webhook.use-case.ts` |
 | A7 | R-C11: helper `plan-manager.logic.ts` ใน access-control + ใช้ใน `assertOwner` + แทนที่ OWNER-role ทุก call site ที่ spec ระบุ; คง OWNER สำหรับ "เปิดร้านเพิ่ม" | §18.2 R-C11, D-PF-10, G26 | `access-control/domain/logic/plan-manager.logic.ts` (ใหม่), `billing.service.ts`, webhook, `plan-term-sweep.use-case.ts`, `billing-notifications.service.ts`, `sales-deals.service.ts` |
 | A8 | R-B4 / R-B5 ฝั่ง API: **ไม่มี** (ยืนยัน §3.22) | §18.2 R-B4/R-B5 | — |
-| A9 | Pins sync (P0): develop stale จริง — `auth.guard.ts` sha ปัจจุบัน `5d1dadec…` ≠ pin `9e752308…` (validator :25) เพราะ 48c4ab57 แก้ไฟล์หลัง sync ล่าสุด (b8fe2b28) | plan §P0, RV12 | `infra/security/validate-production-maintenance-release.sh`, `.github/workflows/deploy-production.yml:421` |
+| A9 | Pins sync (P0): develop stale จริง — `auth.guard.ts` sha ปัจจุบัน `5d1dadec…` ≠ pin `9e752308…` (validator :25) เพราะ 48c4ab57 แก้ไฟล์หลัง sync ล่าสุด (b8fe2b28); ที่ 03438bde `legal-acceptance.service.ts` ก็ stale แล้ว (pin :21, check :102; แก้ใน d08bb68a) | plan §P0, RV12 | `infra/security/validate-production-maintenance-release.sh`, `.github/workflows/deploy-production.yml:421` |
 | A10 | ลงทะเบียน spec ใหม่ (catalog / ci.yml) + amend docs | plan §P0 "การลงทะเบียนเทสต์", RV13 | `scripts/line-ai-whole-chain-acceptance.catalog.mjs`, `.github/workflows/ci.yml:543` |
 
 นอก scope (PR อื่น): `/auth/me/companies` lockReason, `planTermStateLabel` ใน contracts `plan-term.ts`, picker/switcher/BillingPage labels, partner list/detail, LoginPage (R-B5 ขยาย), `AccountEmailOtpPanel` (R-B4), DQ8 session — ทั้งหมด PR B; R-E5 reference ในคำขอ — PR E
 
 ### 1.2 Definition of done
 
-1. ทุกลิงก์ที่ออกจาก LINE ผ่าน 3 ทางออก (`providerMessages`, `pushLineMessages`, `pushLineMessage`) มี `openExternalBrowser=1` ยกเว้น LIFF/`*.line.me`/official/`tel:`/กล้อง; retry key ของ push และ binding hash ของ billing notification **ไม่เปลี่ยน**; ภาพไม่ถูกแตะ; ใส่ซ้ำแล้วได้ bytes เดิม (idempotent)
-2. การ์ดล็อกและข้อความตอบ "ขอเปลี่ยนแพ็กเกจ" มีปุ่ม/ลิงก์ `<web>/l/<token>` ทั้งเมื่อ `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` เปิดและปิด; payload ที่ `recordTurnOutcome` บันทึก = payload ที่ส่ง (token เดียวกัน; ต่างกันเฉพาะ param ที่ exit เติมแบบ deterministic — ดู §9.1); mint ล้มเหลว → URL ธรรมดา; ในกลุ่ม/ห้อง → URL ธรรมดา
+1. ทุกลิงก์ที่ออกจาก LINE ผ่าน 3 ทางออก (`providerMessages`, `pushLineMessages`, `pushLineMessage`) มี `openExternalBrowser=1` ยกเว้น LIFF/`*.line.me`/official/`tel:`/กล้อง; retry key ของ push และ binding hash ของ billing notification **ไม่เปลี่ยน**; ภาพไม่ถูกแตะ; ใส่ซ้ำแล้วได้ bytes เดิม (idempotent); คำตอบที่ส่งทาง delivery plan v2 (`sendFrozenV2`) ได้ param ตั้งแต่ตอน freeze (§3.4ก) — bytes ที่บันทึก/ส่ง/retry/drain/replay เท่ากันทุก byte และไม่ถูกเติมซ้ำ
+2. การ์ดล็อกและข้อความตอบ "ขอเปลี่ยนแพ็กเกจ" มีปุ่ม/ลิงก์ `<web>/l/<token>` ทั้งเมื่อ `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` เปิดและปิด; payload ที่ `recordTurnOutcome` บันทึก = payload ที่ส่ง (token เดียวกัน; ต่างกันเฉพาะ param ที่ exit เติมแบบ deterministic — ดู §9.1); mint ล้มเหลว → URL ธรรมดา; ในกลุ่ม/ห้อง → URL ธรรมดา (ระดับ helper — ที่ 03438bde กลุ่ม/ห้องไม่ถึงเลนเหล่านี้, §4.1 ข้อ 7)
 3. `HEAD /l/<token>` ตอบ 204 โดยไม่เรียก API; `GET` ส่ง `x-forwarded-for` ต่อให้ API
 4. LIFF signup COMPLETED + ร้านล็อก + ผู้กดมี `company.plan.manage` → หัวข้อ "เปิดร้านแล้ว ขั้นต่อไปเลือกแพ็กเกจ" + ปุ่ม "เลือกแพ็กเกจ" ที่พร้อมกดทันที (handoff เตรียมตอน render, เปิด `external: true`); พนักงาน → ข้อความพนักงาน; `canEnter` เดิมไม่เปลี่ยน; `liff/session` ของร้านล็อกพา plan manager ไป `/companies/:id/billing?channel=line`, คนอื่นไป `/renew`
 5. Push หลังสมัครยังเป็นลิงก์ LIFF (`/start`) หัวข้อ "เปิดร้านแล้ว"/"เพิ่มร้านแล้ว" ปุ่ม "เลือกแพ็กเกจ"; follow reply ไม่ส่งภาพวิธีใช้
@@ -40,16 +41,17 @@ Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangme
 
 ## 2. Contracts
 
-### 2.1 `packages/contracts/src/line-external-browser.ts` (ไฟล์ใหม่; export จาก `index.ts` ต่อจากบรรทัด 260 `export * from './plan-term.js';`)
+### 2.1 `packages/contracts/src/line-external-browser.ts` (ไฟล์ใหม่; export จาก `index.ts` ต่อจากบรรทัด 263 `export * from './plan-term.js';`)
 
 ```ts
 export const LINE_EXTERNAL_BROWSER_PARAM = 'openExternalBrowser';
-export const LINE_TEXT_MESSAGE_MAX_CHARS = 5000;   // LINE text message body limit (line-reply.adapter.ts:52 นับเท่านี้)
+export const LINE_TEXT_MESSAGE_MAX_CHARS = 5000;   // LINE text message body limit (line-reply.adapter.ts:55 นับเท่านี้)
 export const LINE_URI_ACTION_MAX_CHARS = 1000;     // LINE uri action limit
 export function shouldOpenOutsideLine(url: string): boolean;
 export function hasLineExternalBrowserParam(url: string): boolean;
 export function withLineExternalBrowserParam(url: string): string;
 export function stripLineExternalBrowserParam(pathOrUrl: string): string;
+export function withLineExternalBrowserText(text: string, maxChars?: number): string;   // default LINE_TEXT_MESSAGE_MAX_CHARS
 export function withLineExternalBrowserLinks<T>(messages: readonly T[]): T[];
 ```
 
@@ -57,7 +59,8 @@ export function withLineExternalBrowserLinks<T>(messages: readonly T[]): T[];
 - `shouldOpenOutsideLine`: parse ด้วย `URL`; `false` เมื่อ parse ไม่ได้, protocol ไม่ใช่ `http:`/`https:` (ครอบ `tel:`, camera/clipboard action ไม่มี uri อยู่แล้ว), host ∈ {`liff.line.me`, `line.me`, `official.mangmeeplus.com`} หรือ host ลงท้าย `.line.me` (ลิงก์ add-friend `https://line.me/R/ti/p/…` ที่ `auth.controller.ts:705` สร้าง ต้องอยู่ใน LINE)
 - `withLineExternalBrowserParam`: ถ้าไม่ควรเปิดนอก หรือมี param อยู่แล้ว → คืน string เดิม **byte-identical**; มิฉะนั้นต่อ `?openExternalBrowser=1` หรือ `&openExternalBrowser=1` **ก่อน** `#fragment` โดย string splice (ห้ามใช้ `URL.toString()` เพราะ normalize bytes ที่ builder ส่งมา เช่น เติม `/` ท้าย origin)
 - `stripLineExternalBrowserParam`: รับ path (`/companies/...`) หรือ URL เต็ม; ไม่มี param → คืนค่าเดิม; มี → ลบผ่าน `URLSearchParams` แล้วประกอบ `pathname + search + hash` (ใช้ตอน mint เท่านั้น)
-- `withLineExternalBrowserLinks`: เดินทุก message — `type:'text'` → แทนทุก URL ที่ตรง `/https?:\/\/[^\s<>"'`)\]}]+/g` (regex เดียวกับ `line-handoff-link.service.ts:17`) และ **ถ้าความยาวหลังแทน > 5000 ให้คืน text เดิม**; `type:'flex'` → deep-walk `contents` แทนทุก `{ type: 'uri', uri }` และ **ถ้า uri ใหม่ยาว > 1000 ให้คง uri เดิม**; `type:'image'`/อื่น → คืน object เดิม; ไม่มีอะไรเปลี่ยน → คืน array เดิม (identity เท่ากัน) เพื่อให้ caller เทียบได้; **ห้าม mutate** input; `quickReply` ไม่ถูกแตะ (item ใน `LineQuickReplyItem` มีแค่ message/camera)
+- `withLineExternalBrowserText`: แทนทุก URL ในข้อความ (regex ข้างล่าง); ถ้าความยาวหลังแทน > `maxChars` (default 5000) คืนข้อความเดิม — delivery plan v2 ส่ง `Number.POSITIVE_INFINITY` เพราะ `splitLineDeliveryText` ของ plan คุมความยาวต่อข้อความเอง (§3.4ก)
+- `withLineExternalBrowserLinks`: เดินทุก message — `type:'text'` → แทนทุก URL ที่ตรง `/https?:\/\/[^\s<>"'`)\]}]+/g` (regex เดียวกับ `line-handoff-link.service.ts:17`) และ **ถ้าความยาวหลังแทน > 5000 ให้คืน text เดิม**; `type:'flex'` → deep-walk `contents` แทนทุก `{ type: 'uri', uri }` และ **ถ้า uri ใหม่ยาว > 1000 ให้คง uri เดิม**; `type:'image'`/อื่น → คืน object เดิม; ไม่มีอะไรเปลี่ยน → คืน array เดิม (identity เท่ากัน) เพื่อให้ caller เทียบได้; **ห้าม mutate** input; `quickReply` ไม่ถูกแตะ (item ใน `LineQuickReplyItem` มีแค่ message/camera/postback — `line-reply.adapter.ts:11-14` ที่ 03438bde เพิ่ม postback; ไม่มี uri)
 
 ### 2.2 `packages/contracts/src/external-signup.ts`
 
@@ -127,7 +130,7 @@ export type ExchangeLiffSessionResult =
 ### 2.5 `GET /l/<token>` (web route)
 
 - `HEAD` → `204` ไม่มี body, ไม่เรียก API (token ไม่ถูกเผา; deeplink spec G7)
-- `GET` เดิม + header `x-forwarded-for` (จาก `forwardedClientHeaders(request.headers)`) ไปยัง `POST /auth/line/handoff/exchange` เพื่อให้ `assertLineHandoffExchangeAllowed(trustedClientIp(req))` (`auth.controller.ts:468`; limiter 20/60 วิ `packages/config/src/index.ts:443-444`) นับต่อผู้ใช้ ไม่ใช่ต่อ container
+- `GET` เดิม + header `x-forwarded-for` (จาก `forwardedClientHeaders(request.headers)`) ไปยัง `POST /auth/line/handoff/exchange` เพื่อให้ `assertLineHandoffExchangeAllowed(trustedClientIp(req))` (`auth.controller.ts:468`; limiter 20/60 วิ `packages/config/src/index.ts:469-470`) นับต่อผู้ใช้ ไม่ใช่ต่อ container
 
 ### 2.6 LINE postback ใหม่ (G19)
 
@@ -156,9 +159,11 @@ export function planManagerLineUserIds(db: PlanManagerDb, companyId: string, cha
 
 ```ts
 // Spec: docs/specs/mangmee-purchase-without-setup-spec-th.md §7-B R-B1 / §18.2 R-B1 (Owner D-PF-2).
-// Applied at the three LINE send boundaries only — never in a message builder — so retry keys
+// Applied at the three legacy LINE send boundaries — never in a message builder — so retry keys
 // (line-reply.adapter.ts linePushRetryKey), stored outcomes and notification binding hashes keep
-// the plain bytes and this stays a deterministic, idempotent wire-level rewrite.
+// the plain bytes; and once where a delivery plan v2 is frozen (line-delivery-plan.logic.ts
+// buildLineDeliveryPlan/freeze), BEFORE its wireHash/pushRetryKey, so a frozen plan stores, sends
+// and replays one byte sequence. A deterministic, idempotent rewrite either way.
 
 export const LINE_EXTERNAL_BROWSER_PARAM = 'openExternalBrowser';
 export const LINE_TEXT_MESSAGE_MAX_CHARS = 5000;
@@ -198,9 +203,10 @@ export function stripLineExternalBrowserParam(pathOrUrl: string): string {
   return relative ? rest : `${parsed.origin}${rest}`;
 }
 
-function rewriteText(text: string): string {
+/** Over `maxChars` the text stays as it was — never a link cut in half. The v2 plan passes Infinity. */
+export function withLineExternalBrowserText(text: string, maxChars: number = LINE_TEXT_MESSAGE_MAX_CHARS): string {
   const out = text.replace(URL_PATTERN, (url) => withLineExternalBrowserParam(url));
-  return out.length <= LINE_TEXT_MESSAGE_MAX_CHARS ? out : text;
+  return out.length <= maxChars ? out : text;
 }
 
 function rewriteNode(node: unknown): unknown {
@@ -230,7 +236,7 @@ export function withLineExternalBrowserLinks<T>(messages: readonly T[]): T[] {
     const wire = message as LineWireMessage | null;
     if (!wire || typeof wire !== 'object') return message;
     if (wire.type === 'text' && typeof wire.text === 'string') {
-      const text = rewriteText(wire.text);
+      const text = withLineExternalBrowserText(wire.text);
       return text === wire.text ? message : ({ ...(wire as object), text } as T);
     }
     if (wire.type === 'flex' && wire.contents && typeof wire.contents === 'object') {
@@ -242,11 +248,11 @@ export function withLineExternalBrowserLinks<T>(messages: readonly T[]): T[] {
   return out.some((item, index) => item !== messages[index]) ? out : (messages as T[]);
 }
 ```
-`packages/contracts/src/index.ts`: เพิ่ม `export * from './line-external-browser.js';` หลังบรรทัด 260
+`packages/contracts/src/index.ts`: เพิ่ม `export * from './line-external-browser.js';` หลังบรรทัด 263
 
 ### 3.2 `apps/api/src/modules/line-ai/infrastructure/line-reply.adapter.ts` (ทางออก 1: reply + push + replay)
 
-ปัจจุบัน (:22-29):
+ปัจจุบัน (:23-30):
 ```ts
 /** Internal recovery text stays in the durable outcome, never in the LINE wire schema. */
 function providerMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
@@ -273,7 +279,7 @@ function providerMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
   }));
 }
 ```
-ไม่แตะ `sendReply`/`sendPush` (:127-135): `linePushRetryKey(operationId, to, messages)` ยังคำนวณจาก `messages` ต้นฉบับ (helper ไม่ mutate); `postMessage(..., messages, retryKey)` ยังได้ `messages` เดิมสำหรับ `failed_flex` (:206-207). เส้นทาง replay (`recover-orphan-line-events.use-case.ts:301` `sendPush(envelope.chatId, messages, row.webhookEventId)`) และ push fallback (webhook :3294) ผ่านจุดนี้เหมือนกัน
+ไม่แตะ `sendReply`/`sendPush` (:130-138): `linePushRetryKey(operationId, to, messages)` ยังคำนวณจาก `messages` ต้นฉบับ (helper ไม่ mutate); `postMessage(..., messages, retryKey)` ยังได้ `messages` เดิมสำหรับ `failed_flex` (:237-238). เส้นทาง replay (`recover-orphan-line-events.use-case.ts:332` `sendPush(envelope.chatId, messages, row.webhookEventId)`) และ push fallback (webhook :4365) ผ่านจุดนี้เหมือนกัน. **ห้ามแตะ `sendFrozenV2` (:140-166)**: มันไม่เรียก `providerMessages` และต้องส่ง frozen wire ตรงกับ `wireHash`/`pushRetryKey` ที่บันทึกไว้ทุก byte — delivery plan v2 ได้ param ตอน freeze แทน (§3.4ก)
 
 ### 3.3 `apps/api/src/modules/auth/infrastructure/system-line-push.ts` (ทางออก 2: signup push, sales offer, partner message, package-change decision)
 
@@ -299,6 +305,51 @@ import { withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
       body: JSON.stringify({ to: lineUserId, messages: withLineExternalBrowserLinks([message]) }),
 ```
 ห้ามใส่ใน `buildLineMessage` (:717-771): จะเปลี่ยน binding → `LINE_BINDING_CHANGED` (`billing-notifications.service.ts:88, :370-372`) และ label check `:735-736` เทียบ `href.endsWith('/billing')` จะพัง
+
+### 3.4ก `apps/api/src/modules/line-ai/domain/logic/line-delivery-plan.logic.ts` (ทางออก 4: delivery plan v2 — frozen bytes; เพิ่ม 2026-09-28 บน 03438bde)
+
+ที่มา: LINE delivery plan v2 ส่งด้วย `LineReplyAdapter.sendFrozenV2` (`line-reply.adapter.ts:140-166`) ซึ่ง POST `canonicalJson` ของ `frozen.messages` ตรง ๆ **ไม่ผ่าน `providerMessages`** (ทางออก 1). caller 3 จุด: webhook `replayDeliveryPlan` (`process-line-webhook.use-case.ts:4040-4067`, ส่งที่ :4058), `drain-line-ledger.use-case.ts` `sendSavedPlan` (:391-427, ส่งที่ :414), `line-capture-result-notifier.use-case.ts` `replayCapturePlan` (:317-342, ส่งที่ :335). ใช้เมื่อ `LINE_AI_RELIABILITY_V2_MODE=on` และ `LINE_AI_DELIVERY_PLAN_V2_ENABLED` (default ทั้งคู่ `packages/config/src/index.ts:29, :31`) กับ (1) แชต 1:1 ที่ผูก conversation แล้วและ `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` เปิด (default `true` :345; webhook `conversationOwner` :7468-7474, `bindConversation` :5146/:7721 → `sendMessages` :4249-4254 → `sendMessagesV2` :4158-4218, build :4207), (2) คำตอบ public ในกลุ่ม/ห้อง (webhook `executePublicGeneral` :4821-4865, build :4856), (3) ผลบันทึกใบเสร็จของแชตที่ผูก conversation (`line-capture-result-notifier.use-case.ts` gate :136, `saveCapturePlan` :276-296, build :284). ทั้งสามสร้าง plan ผ่าน `buildLineDeliveryPlan` (`line-delivery-plan.logic.ts:101-147`) ที่เดียว → `freeze` (:76-81) คำนวณ `wireHash = deliveryHash([channel, recipient, wire])` และ `pushRetryKey = lineDeliveryRetryKey(planId, index, variant, wireHash)` → `savePlan` (`line-ledger-delivery.service.ts:118-164`) เก็บ `planJson` + `planHash` → retry/continuation/drain/replay (`claimPlan` :166, `beginPlanBatch` :185, `finishPlanBatch` :212, `continuePlan` :241; orphan sweep เรียก `replayDeliveryPlan` ที่ `recover-orphan-line-events.use-case.ts:195`) ส่ง `frozen.messages` ที่เก็บไว้เสมอ. เติม param ใน `sendFrozenV2` ไม่ได้ (bytes จะไม่ตรง `wireHash`/`pushRetryKey` ที่บันทึก) → เติมตอนสร้าง plan ก่อน freeze
+
+ใหม่ (ไฟล์นี้ไฟล์เดียว):
+```ts
+import { withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
+…
+// freeze (:76-81): แทนบรรทัด :77
+function freeze(planId: string, index: number, messages: LineReplyMessage[], auth: DeliveryAuthorizationV2, variant: 'primary' | 'fallback'): FrozenRepresentation {
+  // R-B1: a Flex `uri` leaves LINE's in-app browser from HERE, before wireHash/pushRetryKey, so the
+  // stored plan, LINE and every retry/drain/replay carry one byte sequence. Text parts were escaped
+  // through their item (buildLineDeliveryPlan) and must stay equal to their span — never rewrite them here.
+  const wire = lineDeliveryWireMessages(messages)
+    .map((message) => message.type === 'flex' ? withLineExternalBrowserLinks([message])[0]! : message);
+  if (!parseOutcomeMessages(wire)) fail('PLAN_INVALID_WIRE');
+  …
+}
+…
+// buildLineDeliveryPlan (:101-147): แทนบรรทัด :108 (items) และ :113 (matches)
+  // R-B1: escape web links in the ITEM text so span coverage (validateLineDeliveryPlan :177-185) still
+  // rebuilds each item from its frozen parts. Uncapped per item (splitLineDeliveryText keeps every part
+  // ≤ 4,800); if the escaped total would pass the plan's 60,000 bound (:160), every item stays as is.
+  const escapeAll = input.answer.items.reduce((n, item) => n + withLineExternalBrowserText(item.text, Number.POSITIVE_INFINITY).length, 0) <= 60_000;
+  const escape = (text: string) => escapeAll ? withLineExternalBrowserText(text, Number.POSITIVE_INFINITY) : text;
+  const items = input.answer.items.map((item, i) => ({ ...item, text: escape(item.text), id: `${planId}:item:${i}` }));
+  …
+    // Same escaped form as `item.text`; the presentation proof below still reads the ORIGINAL object.
+    const matches = preferred?.type === 'text' ? escape(preferred.text) === item.text
+      : preferred?.type === 'flex' ? preferred.canonicalText !== undefined && escape(preferred.canonicalText) === item.text : false;
+```
+ผล: text primary/fallback ได้ param จาก item; flex primary (การ์ดคำตอบที่ผ่านการเช็ก `isCompleteLineBusinessAnswerPresentation` ใน `buildLineDeliveryPlan` :115) และ control message ได้ param ใน `uri` ที่ `freeze`; `lineDeliveryWireMessages` (:37-43), `validateLineDeliveryPlan` (:148-203), `parseLineDeliveryPlan` (:204-206) ไม่แก้. **ห้ามเติมก่อนเรียก `buildLineDeliveryPlan`** (ใน `sendMessagesV2`, `executePublicGeneral`, `saveCapturePlan`, `withCompletionMenu`): proof ของการ์ดคำตอบผูกกับ object + fingerprint (`line-business-card.logic.ts:31-52`) → object ใหม่เสีย proof แล้วการ์ดถูกลดเป็นข้อความ `canonicalText`
+
+กันเติมซ้ำ:
+1. เติมที่เดียว: `buildLineDeliveryPlan`/`freeze` ตอนสร้าง plan ใหม่; `savePlan` คืนแถวเดิมเมื่อ `planId` มีแล้ว ("First owner result wins" `line-ledger-delivery.service.ts:141-145`) → ไม่ render ใหม่
+2. ทุกทางส่งซ้ำ (retry ผ่าน `claimPlan`/`beginPlanBatch`, `continuePlan`, ledger drain, capture outbox, orphan sweep) อ่าน `frozen.messages` จาก `planJson` แล้วส่ง `sendFrozenV2` ตรง ๆ — ไม่มีขั้นแปลง
+3. `withLineExternalBrowserParam` idempotent (`hasLineExternalBrowserParam`) → item ที่มี param อยู่แล้วได้ bytes เดิม
+4. `validateLineDeliveryPlan`/`parseLineDeliveryPlan` **ไม่บังคับ** param: plan ที่ frozen ก่อน deploy (อายุ ≤ 60 นาที, LEDGER ≤ 15 นาที `line-delivery-plan.logic.ts:151`) ยัง parse และส่ง bytes เดิม (`planHash` คิดจาก JSON ที่เก็บ)
+
+ทางส่งอื่น (grep `api.line.me`, `/v2/bot/message/` ใน apps/api, apps/workers เทียบ ddcdcadf): ไม่มีทางส่งใหม่นอกจาก `sendFrozenV2` (ใช้ URL เดิม `line-reply.adapter.ts:124-125`). ข้อความตายตัวที่เพิ่มมา (webhook `handleAnswerDeliveryControl` :4133-4156, `denyBusinessDelivery` :4610-4639, public-unavailable `line-message-buffer.service.ts:170-181`) ส่งผ่าน `sendReply`/`sendPush` = ทางออก 1. `apps/workers/src/modules/notifications/notification-delivery-adapters.ts:77` `processLineDelivery` ไม่มี caller (dead export; ไม่เปลี่ยนตั้งแต่ ddcdcadf) และ `crm-inbox/infrastructure/line-messaging.adapter.ts` ส่งข้อความที่ทีมงานร้านพิมพ์ด้วย token ของ OA ร้าน — ไม่อยู่ใน R-B1 (ไม่แก้)
+
+ทางออกเดิม 3 จุดยังถูกใช้เมื่อ v2 เปิด: เลนที่ตอบก่อน `bindConversation` (webhook: door/follow, promotion card :4959, "ขอเปลี่ยนแพ็กเกจ" :5048, บริษัทของฉัน :5096, การ์ดล็อก :5103/:7685, G19), บริษัทนอก rollout list, `intermediateDeliveries`, orphan replay แบบเดิม (`recover-orphan-line-events.use-case.ts:332`), ผล capture ทางเดิม (`line-capture-result-notifier.use-case.ts:200, :270`) ผ่าน `providerMessages`; `system-line-push.ts` และ `notification.use-cases.ts` ไม่เกี่ยวกับ v2
+
+AC3: สำหรับ plan v2 ไม่มีข้อยกเว้น — param อยู่ใน frozen bytes ก่อนคำนวณ `wireHash`/`pushRetryKey` → ที่บันทึก = ที่ส่ง = ที่ retry/drain/replay ทุก byte; ข้อยกเว้น "ทางออกเติมหลังคำนวณ retry key" (spec §18.5 A10) ใช้กับทางออกเดิม 3 จุดเท่านั้น; "เฉพาะ exit เติม param" = ทางออกเดิม 3 จุด + `buildLineDeliveryPlan`/`freeze` (ห้ามที่ builder ข้อความ) — ดู §9.1, §10 ข้อ 1, แถว spec ใน §7. Tests: §6.1 แถว `line-delivery-plan.logic.spec.ts`, §6.2 (ต)(ถ)(ท)(ธ)
 
 ### 3.5 `apps/api/src/modules/line-ai/application/line-handoff-link.service.ts` (ตัด param ตอน mint)
 
@@ -339,7 +390,7 @@ import { stripLineExternalBrowserParam } from '@watchdog-bms/contracts';
 
 ### 3.7 `apps/api/src/modules/line-ai/domain/logic/line-business-card.logic.ts`
 
-(ก) door card — ปัจจุบัน (:413-415 comment, :422):
+(ก) door card — ปัจจุบัน (:441-443 comment, :450):
 ```ts
     return `${base.origin}/login?line=link-required&next=%2F&openExternalBrowser=1`;
 ```
@@ -347,9 +398,9 @@ import { stripLineExternalBrowserParam } from '@watchdog-bms/contracts';
 ```ts
     return `${base.origin}/login?line=link-required&next=%2F`;
 ```
-และแก้ comment :413-415 เป็น "`openExternalBrowser=1` is added by the reply exit (`line-reply.adapter.ts`, R-B1), never here."
+และแก้ comment :441-443 เป็น "`openExternalBrowser=1` is added by the reply exit (`line-reply.adapter.ts`, R-B1), never here."
 
-(ข) `buildPackageRequiredMessage` — ปัจจุบัน (:516-545):
+(ข) `buildPackageRequiredMessage` — ปัจจุบัน (:544-573):
 ```ts
 export function buildPackageRequiredMessage(input: {
   lockReason: PlanTermLockReason;
@@ -393,16 +444,16 @@ export function buildPackageRequiredMessage(input: {
   const link = oneTapPackageLink(input.webBaseUrl, input.packageUrl) ?? safeTenantLink(input.webBaseUrl, input.companyId,
     `/companies/${encodeURIComponent(input.companyId)}/billing?channel=line`);
 ```
-ส่วนที่เหลือของฟังก์ชัน (title/badge/buttons :526-544) คงเดิม
+ส่วนที่เหลือของฟังก์ชัน (title/badge/buttons :554-572) คงเดิม
 
 ### 3.8 `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts` — R-B2 (ข) + group guard
 
-(ก) import — เพิ่มที่ :159:
+(ก) import — เพิ่มที่ :178:
 ```ts
 import { isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../../auth/domain/logic/line-handoff.logic';
 ```
 
-(ข) helper ใหม่ (วางถัดจาก `promotionCard` :2316):
+(ข) helper ใหม่ (วางถัดจาก `promotionCard` :2459):
 ```ts
   /**
    * R-B2 (b): mint the one-tap package link IN the lane, before `recordTurnOutcome` stores the
@@ -426,7 +477,7 @@ import { isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '..
   }
 ```
 
-(ค) `replyIfCompanyLocked` — ปัจจุบัน (:2184-2192):
+(ค) `replyIfCompanyLocked` — ปัจจุบัน (:2327-2335):
 ```ts
     const owner = await lockedCompanyFor(this.prisma, userId, true);
     if (owner) {
@@ -453,9 +504,9 @@ import { isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '..
           ...(packageUrl ? { packageUrl } : {}),
         })]);
 ```
-บรรทัด :2193-2208 (billing ปิด → `expiredLineOwnerMessageTh()`; member reply; event log `package_required`) คงเดิม (แทน `owner.companyId` ด้วย `manager.companyId` ที่ :2201). แก้ doc comment :2176 "The OWNER is the only person who can act" → "Members whose role grants `company.plan.manage` (R-C11) are the only ones who can act"
+บรรทัด :2336-2351 (billing ปิด → `expiredLineOwnerMessageTh()`; member reply; event log `package_required`) คงเดิม (แทน `owner.companyId` ด้วย `manager.companyId` ที่ :2344). แก้ doc comment :2319 "The OWNER is the only person who can act" → "Members whose role grants `company.plan.manage` (R-C11) are the only ones who can act"
 
-(ง) `handlePackageChangeRequest` — ปัจจุบัน (:2841-2848):
+(ง) `handlePackageChangeRequest` — ปัจจุบัน (:2984-2991):
 ```ts
     if (['test', 'live'].includes(this.config.billingMode) && this.config.webBaseUrl) {
       // Old rich-menu/message commands converge here too. The card offers a review page, never
@@ -482,7 +533,7 @@ import { isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '..
     }
 ```
 
-(จ) `promotionCard` group guard — ปัจจุบัน (:2310-2315):
+(จ) `promotionCard` group guard — ปัจจุบัน (:2453-2458):
 ```ts
     if (!this.config.webBaseUrl) return buildPromotionCard('owner');
     const targetPath = `/companies/${encodeURIComponent(companyId)}/billing?channel=line`;
@@ -499,9 +550,11 @@ import { isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '..
     return buildPromotionCard('owner', await this.oneTapPackageUrl(event, identity.userId, companyId, 'promotion_card_packages')
       ?? new URL(targetPath, this.config.webBaseUrl).toString());
 ```
-หมายเหตุ: เดิม mint ด้วย `lineUserId: event.lineUserId` (คนกด) แม้อยู่ในกลุ่ม; ใหม่ใช้ `pushTargetId ?? lineUserId` ตามที่ `attemptDelivery` (:3278) ใช้ — ในแชต 1:1 สองค่านี้เท่ากัน (`line-webhook.controller.ts:78`)
+หมายเหตุ: เดิม mint ด้วย `lineUserId: event.lineUserId` (คนกด) แม้อยู่ในกลุ่ม; ใหม่ใช้ `pushTargetId ?? lineUserId` ตามที่ `attemptDelivery` (:4349) ใช้ — ในแชต 1:1 สองค่านี้เท่ากัน (`line-webhook.controller.ts:80`). ที่ 03438bde ข้อความจากกลุ่ม/ห้องไม่ถึงเลน (ค)(ง)(จ) แล้ว: `line-message-buffer.service.ts:170-181` ตอบรูป/ข้อความที่ไม่ผ่าน public admission ด้วยประโยคคงที่ และ `execute()` :4912 ส่งข้อความกลุ่มที่ผ่าน admission ไป `executePublicGeneral` ก่อน public command ทุกตัว → group guard ใน `oneTapPackageUrl` เป็น defense-in-depth (คงไว้) และทดสอบที่ helper ตรง ๆ (§6.2 ง)
 
-(ฉ) ห้ามแตะ `attemptDelivery` (:3261-3301) และ `sendMessages` (:3155-3253): เงื่อนไข `!this.config.lineAiTerminalOutcomeReplayEnabled` (:3274) มีไว้เพื่อให้ payload ที่บันทึกไม่มี token อายุ 15 นาที (comment :3271-3273) — เลนสามเลนนี้ตัดสินใจถือ token ในรายการที่บันทึกเอง (แบบเดียวกับ promotion card และ บริษัทของฉัน :5800/:5850 ที่ทำอยู่แล้ว)
+(ฉ) ห้ามแตะ `attemptDelivery` (:4332-4372), `sendMessages` (:4220-4324), `sendMessagesV2` (:4158-4218) และ `replayDeliveryPlan` (:4040-4067): เงื่อนไข `!this.config.lineAiTerminalOutcomeReplayEnabled` (:4345) มีไว้เพื่อให้ payload ที่บันทึกไม่มี token อายุ 15 นาที (comment :4342-4344) — เลนสามเลนนี้ตัดสินใจถือ token ในรายการที่บันทึกเอง (แบบเดียวกับ promotion card และ บริษัทของฉัน :7122/:7172 ที่ทำอยู่แล้ว). ตรวจซ้ำที่ 03438bde (G04): `attemptDelivery` ยัง wrap เฉพาะเมื่อ flag ปิด (:4345-4352 เหมือนเดิมทุก byte) แต่ default ของ `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` เปลี่ยนเป็น `true` แล้ว (`packages/config/src/index.ts:345`; ที่ ddcdcadf เป็น false) และแชตที่ผูก conversation v2 ไม่ผ่าน `attemptDelivery` เลย (`sendMessages` :4249-4254 → `sendMessagesV2` → `replayDeliveryPlan` → `sendFrozenV2` ซึ่งไม่ wrap เช่นกัน) — ข้อสรุป G04 ยังจริงและกว้างขึ้น: ถ้าไม่ mint ในเลน ไม่มีทางไหน wrap ลิงก์ให้
+
+(ช) delivery plan v2 ไม่เปลี่ยน R-B2 (ตรวจ 2026-09-28): (ค)(ง)(จ) ตอบก่อน `bindConversation` (:5146 ข้อความ, :7721 รูป; เลนถูกเรียกที่ :5103/:7685, :5048, :4959) → event ไม่มี `boundConversations` → `sendMessages` ไม่เข้าทาง v2 (:4250) → `recordTurnOutcome` → `attemptDelivery` → ทางออก 1 เหมือนเดิม; mint ในเลนก่อนบันทึกจึงยังถูก. ห้ามย้ายเลนเหล่านี้ไปหลัง `bindConversation`: บน v2 การ์ดล็อก (flex ที่ไม่ใช่การ์ดคำตอบ) จะถูก `buildLineDeliveryPlan` (`line-delivery-plan.logic.ts:115-126`) ลดเป็นข้อความ `canonicalText` ที่ไม่มีลิงก์ (ปุ่ม "เลือกแพ็กเกจ" หาย) และ token 15 นาทีจะถูก freeze ใน plan อายุ 60 นาที
 
 ### 3.9 `apps/web/app/l/[token]/route.ts` — HEAD + client IP
 
@@ -639,7 +692,7 @@ function toProgress(
     ...(entryCompanyId ? { entryCompanyId } : {}),
     ...(lockedEntryCompanyId ? { lockedEntryCompanyId } : {}),
 ```
-`import type { PlanTermLockReason } from '@watchdog-bms/contracts'` เพิ่มใน import list :3-8. `planTermLockReason` (spm `plan-term.logic.ts:74-80`) รับ `{termStartAt, termEndsAt, renewCount}` — fallback `'trial_ended'` ตามที่ webhook `lockedCompanyFor` (:1716) ใช้
+`import type { PlanTermLockReason } from '@watchdog-bms/contracts'` เพิ่มใน import list :3-8. `planTermLockReason` (spm `plan-term.logic.ts:74-80`) รับ `{termStartAt, termEndsAt, renewCount}` — fallback `'trial_ended'` ตามที่ webhook `lockedCompanyFor` (:1810) ใช้
 
 ### 3.11 `apps/api/src/modules/auth/application/use-cases/exchange-liff-session.use-case.ts` — `destination()` permission-aware (R-C3)
 
@@ -918,7 +971,7 @@ export function attachedMessageTh(companyName: string): string {
 
 ### 3.14 webhook — ถอดภาพวิธีใช้ตอน follow (R-C4/RV33)
 
-ปัจจุบัน (:252, :2226-2230):
+ปัจจุบัน (:276, :2369-2373):
 ```ts
 const FOLLOW_WELCOME_IMAGE_PATH = '/assets/line/mangmeeplus-welcome-how-to-start-1080x1350.png';
 …
@@ -929,7 +982,7 @@ const FOLLOW_WELCOME_IMAGE_PATH = '/assets/line/mangmeeplus-welcome-how-to-start
         : null;
       return [{ type: 'text', text: FOLLOW_WELCOME_REPLY }, ...(image ? [image] : []), this.doorCard()];
 ```
-ใหม่ (ลบค่าคงที่ :252 และ image):
+ใหม่ (ลบค่าคงที่ :276 และ image):
 ```ts
       if (!welcome) return [this.doorCard()];
       // R-C4 (§18.2): the how-to picture showed no "choose a package" step, and a locked shop cannot
@@ -937,7 +990,7 @@ const FOLLOW_WELCOME_IMAGE_PATH = '/assets/line/mangmeeplus-welcome-how-to-start
       // caches by URL; apps/web/public is a Release Contracts trigger — the old PNG stays untouched).
       return [{ type: 'text', text: FOLLOW_WELCOME_REPLY }, this.doorCard()];
 ```
-ถ้า `absoluteWebLink` ไม่ถูกใช้ที่อื่นในไฟล์หลังลบ ให้ลบ import (:122) — **ต้องตรวจ** (`grep -n absoluteWebLink` ในไฟล์: ยังใช้ที่ :965 `putLineMediaUpload` → คง import)
+ถ้า `absoluteWebLink` ไม่ถูกใช้ที่อื่นในไฟล์หลังลบ ให้ลบ import (:140) — **ต้องตรวจ** (`grep -n absoluteWebLink` ในไฟล์: ยังใช้ที่ :1021 `putLineMediaUpload` → คง import)
 
 ### 3.15 G19 — postback "ให้ทีมงานติดต่อกลับ"
 
@@ -965,9 +1018,9 @@ export const PACKAGE_CALLBACK_POSTBACK = 'action=package-callback';
 ```
 แก้ comment :318-320 ให้ตรง ("the request lands in the support inbox as a callback")
 
-(ข) `line-webhook.controller.ts:87` `linePostbackCommandText(event.postback?.data, …)` — ไม่ต้องแก้ (mapping มาจากตาราง)
+(ข) `line-webhook.controller.ts:92` `linePostbackCommandText(event.postback?.data, …)` — ไม่ต้องแก้ (mapping มาจากตาราง; parser postback ใหม่สองตัวก่อนหน้า :87-88 คืน `null` สำหรับ `action=package-callback` — reimbursement ต้องมี 4 key, answer-delivery ต้องมี `plan`)
 
-(ค) webhook — ค่าคงที่ใหม่ (วางหลัง :269 `SUPPORT_DAILY_LIMIT_REPLY`):
+(ค) webhook — ค่าคงที่ใหม่ (วางหลัง :293 `SUPPORT_DAILY_LIMIT_REPLY`):
 ```ts
 /** G19: what the inbox shows for a callback request (requestText/lastMessageText + thread line). */
 const PACKAGE_CALLBACK_NOTE = 'ขอให้ทีมงานติดต่อกลับเรื่องแพ็กเกจ';
@@ -976,7 +1029,7 @@ const PACKAGE_CALLBACK_REPLY = '📮 รับเรื่องแล้วค�
   + 'ระหว่างนี้ถามน้องมั่งมีต่อได้เลยนะคะ';
 const PACKAGE_CALLBACK_ALREADY_OPEN_REPLY = '📮 คำขอของคุณยังอยู่ในคิวค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
 ```
-(ง) แยก transaction สร้างแถวออกจาก `handleStaffContact` (:2385-2422) เป็น method ใหม่ แล้วให้ `handleStaffContact` เรียก:
+(ง) แยก transaction สร้างแถวออกจาก `handleStaffContact` (:2528-2565) เป็น method ใหม่ แล้วให้ `handleStaffContact` เรียก:
 ```ts
   /**
    * The ONE creator of a `LineSupportRequest` row (§2.1). Returns the live row when one raced ahead,
@@ -1019,7 +1072,7 @@ const PACKAGE_CALLBACK_ALREADY_OPEN_REPLY = '📮 คำขอของคุณ
     });
   }
 ```
-ใน `handleStaffContact` แทน block :2385-2422 ด้วย `const created = await this.openSupportRequest(event.lineUserId, asker, asker?.lastMessageText);` (พฤติกรรมเดิมทุกอย่าง — bytes ของ `data` เท่าเดิม)
+ใน `handleStaffContact` แทน block :2528-2565 ด้วย `const created = await this.openSupportRequest(event.lineUserId, asker, asker?.lastMessageText);` (พฤติกรรมเดิมทุกอย่าง — bytes ของ `data` เท่าเดิม)
 
 (จ) handler ใหม่ (วางถัดจาก `handleStaffContact`):
 ```ts
@@ -1067,15 +1120,17 @@ const PACKAGE_CALLBACK_ALREADY_OPEN_REPLY = '📮 คำขอของคุณ
     await this.updateEventLog(event.webhookEventId, 'package_callback_requested');
   }
 ```
-(ฉ) `recordSupportFollowUp` (:2585-2648): เพิ่ม param ที่ 4 `options: { extendPause?: boolean } = {}` และครอบ block :2625-2628 ด้วย `if (options.extendPause !== false) { … }` (default เดิม = ต่อ pause)
-(ช) dispatch — เพิ่มหลัง :3752-3755 (`staff_contact`) ก่อน `resume_ai`:
+(ฉ) `recordSupportFollowUp` (:2728-2791): เพิ่ม param ที่ 4 `options: { extendPause?: boolean } = {}` และครอบ block :2768-2771 ด้วย `if (options.extendPause !== false) { … }` (default เดิม = ต่อ pause)
+(ช) dispatch — เพิ่มหลัง :4924-4927 (`staff_contact`) ก่อน `resume_ai`:
 ```ts
     if (publicCommand === 'package_callback') {
       await this.handlePackageCallback(event, requestId);
       return;
     }
 ```
-(อยู่เหนือ pause gate :3898-3911 และไม่ต้องมี identity เหมือน `staff_contact`)
+(อยู่เหนือ pause gate :5070-5083 และไม่ต้องมี identity เหมือน `staff_contact`; กลุ่ม/ห้องถูกส่งไป `executePublicGeneral` ที่ :4912 ก่อนถึงจุดนี้)
+
+(ช.1) legal gate (ตัดสิน 2026-09-28, §10 ข้อ 15): `line-message-buffer.service.ts:187-188` เพิ่ม `|| publicCommand === 'package_callback'` ต่อจาก `publicCommand === 'staff_contact'` ในรายการข้าม legal gate — เหตุผลเดียวกับ `staff_contact` (คำตอบไม่มีข้อมูลบริษัท ไม่ส่งข้อความแชตเข้า AI); เทสต์: คนที่ยังไม่ยอมรับเงื่อนไขกดปุ่มแล้วได้การรับเรื่อง ไม่ใช่ข้อความ legal
 
 (ซ) ต่อยอดโดย PR E (pr-e §4.1, ตัดสิน 2026-09-27): `openSupportRequest`/`recordSupportFollowUp` รับ `reference?: { kind: 'attempt' | 'invoice'; id: string }` ท้ายสุด และ `handlePackageCallback` derive reference จากบริษัทฝั่ง server (attempt ค้างล่าสุด → invoice ล่าสุด) — postback ยังไม่มี id (SEC-04) และ `handleStaffContact` ไม่ถูกแตะ; PR A ไม่ต้องเตรียมอะไรเพิ่ม
 
@@ -1083,7 +1138,7 @@ const PACKAGE_CALLBACK_ALREADY_OPEN_REPLY = '📮 คำขอของคุณ
 
 - `line-staff-menu.logic.ts:310` แก้ข้อความตามตาราง
 - `line-public-policy.logic.ts` :6-34 แก้ `trial`, `trial_limits`(บรรทัด 16), `data`, `paid_renewal`, `buy_early` — คง key ทุกตัว, คง regex ของคำถาม (:86-103), คง `answer()`/`PUBLIC_PACKAGE_URL`
-- webhook `FOLLOW_WELCOME_REPLY` :244 — **Owner-verbatim** (comment :236-238) → เสนอข้อความในตาราง แต่ห้าม merge จนกว่า Owner sign-off; ถ้ายังไม่ได้ ให้คง :244 ไว้และบันทึกใน memory
+- webhook `FOLLOW_WELCOME_REPLY` :268 — **Owner-verbatim** (comment :260-262) → เสนอข้อความในตาราง แต่ห้าม merge จนกว่า Owner sign-off; ถ้ายังไม่ได้ ให้คง :268 ไว้และบันทึกใน memory
 - `auth.controller.ts:580` แก้ตามตาราง
 
 ### 3.17 R-C11 helper — `apps/api/src/modules/access-control/domain/logic/plan-manager.logic.ts` (ใหม่)
@@ -1159,7 +1214,7 @@ import { canManagePlan } from '../../access-control/domain/logic/plan-manager.lo
     }
 ```
 
-(ข) webhook `lockedCompanyFor` — ปัจจุบัน (:1690-1695, :1707):
+(ข) webhook `lockedCompanyFor` — ปัจจุบัน (:1784-1789, :1801):
 ```ts
 async function lockedCompanyFor(
   prisma: PrismaService,
@@ -1184,11 +1239,11 @@ async function lockedCompanyFor(
       ...(planManagersOnly ? planManagerRoleFilter() : {}),
 ```
 
-(ค) webhook `listLineCompanies` (:5741-5753) — select เพิ่ม `status` + `permissions`:
+(ค) webhook `listLineCompanies` (:7063-7075) — select เพิ่ม `status` + `permissions`:
 ```ts
         roles: { select: { role: { select: { key: true, name: true, status: true, permissions: { select: { permission: { select: { key: true } } } } } } } },
 ```
-และ `LineCompanyMembership` (:952-956):
+และ `LineCompanyMembership` (:1008-1012):
 ```ts
 type LineCompanyMembership = {
   companyId: string;
@@ -1196,18 +1251,18 @@ type LineCompanyMembership = {
   roles?: Array<{ role?: { key: string; name?: string; status?: string; permissions?: Array<{ permission: { key: string } }> } | null }>;
 };
 ```
-`companyRoleLabels` (:1150-1156) ยังแสดงทุก role เหมือนเดิม (ไม่กรอง status ที่ query)
+`companyRoleLabels` (:1244-1250) ยังแสดงทุก role เหมือนเดิม (ไม่กรอง status ที่ query)
 
-(ง) webhook promotion card :2301 — ปัจจุบัน `const owners = (await this.listLineCompanies(identity.userId)).filter(isCompanyOwner);` → ใหม่:
+(ง) webhook promotion card :2444 — ปัจจุบัน `const owners = (await this.listLineCompanies(identity.userId)).filter(isCompanyOwner);` → ใหม่:
 ```ts
     // R-C11: whoever may buy for the shop gets the button, owner or custom role alike.
     const owners = (await this.listLineCompanies(identity.userId)).filter((membership) => canManagePlan(membership.roles));
 ```
-(ตัวแปรชื่อ `owners` เปลี่ยนเป็น `managers` ได้ตามสะดวก — :2302/:2309 ใช้ต่อ)
+(ตัวแปรชื่อ `owners` เปลี่ยนเป็น `managers` ได้ตามสะดวก — :2445/:2452 ใช้ต่อ)
 
-(จ) webhook `handlePackageChangeRequest` :2817 — ปัจจุบัน `roles: { some: { role: { key: 'OWNER', status: 'ACTIVE' } } },` → ใหม่ `...planManagerRoleFilter(),` (comment :2800-2802 "owned shop" ยังจริง; `PACKAGE_CHANGE_NOT_OWNER_REPLY` คงข้อความ — ผู้ไม่มีสิทธิ์ยังได้ข้อความพนักงานเดิมตาม spec)
+(จ) webhook `handlePackageChangeRequest` :2960 — ปัจจุบัน `roles: { some: { role: { key: 'OWNER', status: 'ACTIVE' } } },` → ใหม่ `...planManagerRoleFilter(),` (comment :2943-2945 "owned shop" ยังจริง; `PACKAGE_CHANGE_NOT_OWNER_REPLY` คงข้อความ — ผู้ไม่มีสิทธิ์ยังได้ข้อความพนักงานเดิมตาม spec)
 
-(ฉ) webhook :5842 `isOwner: isCompanyOwner(currentMembership)` — **คง OWNER** (ปุ่ม "เปิดร้านเพิ่ม" เป็นสิทธิ์เจ้าของ ไม่ใช่ plan manager); :3057/:4016/:4104 `isOwner: access.roles.includes('OWNER')` (quick reply "บริษัทของฉัน") คงเดิม
+(ฉ) webhook :7164 `isOwner: isCompanyOwner(currentMembership)` — **คง OWNER** (ปุ่ม "เปิดร้านเพิ่ม" เป็นสิทธิ์เจ้าของ ไม่ใช่ plan manager); :3208/:5195/:5288 `isOwner: access.roles.includes('OWNER')` (quick reply "บริษัทของฉัน") คงเดิม
 
 (ช) `plan-term-sweep.use-case.ts` — ปัจจุบัน (:177-180):
 ```ts
@@ -1267,7 +1322,7 @@ import { planManagerLineUserIds } from '../../access-control/domain/logic/plan-m
 ### 3.19 R-C8 (label ใน บริษัทของฉัน — เล็ก, อยู่ใน scope line-ai ตาม spec §8)
 
 - `listLineCompanies` select `company` เพิ่ม `status: true, planTerm: { select: { termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } }`; `LineCompanyMembership.company` เพิ่ม `status?: string; planTerm?: { termStartAt: Date; termEndsAt: Date; renewCount: number; termDisabledAt?: Date | null } | null`
-- helper ใน webhook (ข้าง `companyLabel` :1146):
+- helper ใน webhook (ข้าง `companyLabel` :1240):
 ```ts
 /** R-C8: the same wording as LIFF (R-C2) for a locked shop in the picker and the context card. */
 function companyStateLabel(membership: LineCompanyMembership, now = new Date()): string | undefined {
@@ -1278,12 +1333,12 @@ function companyStateLabel(membership: LineCompanyMembership, now = new Date()):
   return term && planTermLockReason(term) === 'no_package' ? 'ยังไม่มีแพ็กเกจ' : 'หมดอายุ';
 }
 ```
-- `CompanyPickerItem` (:55-65) และ `CompanyContextCard` (:78-118) เพิ่ม `stateLabel?: string`; `companyBubble` (:414-424) เพิ่ม `...(company.stateLabel ? [{ type: 'text', text: '🔒 ' + company.stateLabel, size: 'sm', color: '#B42318' }] : [])` หลังบรรทัดชื่อ; `buildCompanyContextMessage` (:240-247) เพิ่มบรรทัดเดียวกันหลัง `🏢 ${companyName}`; caller (:3939, :5791-5794, :5838-5844) ส่ง `stateLabel: companyStateLabel(membership)`
+- `CompanyPickerItem` (:55-65) และ `CompanyContextCard` (:78-118) เพิ่ม `stateLabel?: string`; `companyBubble` (:414-424) เพิ่ม `...(company.stateLabel ? [{ type: 'text', text: '🔒 ' + company.stateLabel, size: 'sm', color: '#B42318' }] : [])` หลังบรรทัดชื่อ; `buildCompanyContextMessage` (:240-247) เพิ่มบรรทัดเดียวกันหลัง `🏢 ${companyName}`; caller (:5111, :7113-7116, :7160-7166) ส่ง `stateLabel: companyStateLabel(membership)`
 - optional เมื่อไม่มีค่า → bytes ของร้าน ACTIVE เท่าเดิม (spec เดิมของ picker ไม่แดง)
 
 ### 3.20 Catalog / CI registration
 
-- `scripts/line-ai-whole-chain-acceptance.catalog.mjs` ใน `api-behavior.args` (หลัง :371 `'src/modules/billing/line-billing-entry.spec.ts',`) เพิ่ม:
+- `scripts/line-ai-whole-chain-acceptance.catalog.mjs` ใน `api-behavior.args` (หลัง :440 `'src/modules/billing/line-billing-entry.spec.ts',`) เพิ่ม:
 ```js
       // Purchase-without-setup PR A: the one plan-manager predicate LINE and the web share (R-C11).
       'src/modules/access-control/domain/logic/plan-manager.logic.spec.ts',
@@ -1304,15 +1359,15 @@ function companyStateLabel(membership: LineCompanyMembership, now = new Date()):
 
 ## 4. Sequences
 
-### 4.1 การ์ดล็อก (ข้อความจากร้าน `no_package`; flag replay เปิด = production)
+### 4.1 การ์ดล็อก (ข้อความจากร้าน `no_package`; flag replay เปิด = production และ default ตั้งแต่ 03438bde)
 
-1. `execute()` → `resolveCompanyForLineUser` คืน `null` (ร้าน DISABLED) → `replyIfCompanyLocked` (:3931)
+1. `execute()` → `resolveCompanyForLineUser` คืน `null` (ร้าน DISABLED) → `replyIfCompanyLocked` (:5103) — ก่อน `bindConversation` (:5146) จึงไม่เข้าทาง delivery plan v2 (§3.8 ช)
 2. `lockedCompanyFor(prisma, userId, true)` ด้วย `planManagerRoleFilter()` → `{companyId, lockReason:'no_package'}`
 3. `billingMode ∈ {test,live}` + `webBaseUrl` → `event.handoff = {userId, companyId}`; `oneTapPackageUrl(event, …, 'locked_card_packages')`: chatKey = `pushTargetId ?? lineUserId`; ไม่ใช่กลุ่ม → `handoffLinks.linkFor()` → `mint.execute({targetPath:'/companies/<id>/billing?channel=line', surface:'locked_card_packages'})` → `https://<web>/l/<token>` (mint ล้มเหลว/flag `LINE_WEB_HANDOFF_ENABLED` ปิด → `null` → ไม่ส่ง `packageUrl`)
 4. `buildPackageRequiredMessage({..., packageUrl})` → `oneTapPackageLink` รับเฉพาะ `<web origin>/l/…` → ปุ่ม "เลือกแพ็กเกจ" = `/l/<token>`; ปุ่ม "ติดต่อเจ้าหน้าที่" คงเดิม
-5. `deliverRequiredMessages` → `sendMessages`: `recordTurnOutcome` บันทึก payload (มี `/l/<token>`) → `attemptDelivery`: flag เปิด → ไม่ wrap (:3274) → `lineReply.sendReply(replyToken, outgoing)` → `providerMessages` ตัด `canonicalText` + เติม `?openExternalBrowser=1` ให้ `/l/<token>` (ไม่เปลี่ยน stored bytes) → LINE
+5. `deliverRequiredMessages` → `sendMessages`: `recordTurnOutcome` บันทึก payload (มี `/l/<token>`) → `attemptDelivery`: flag เปิด → ไม่ wrap (:4345) → `lineReply.sendReply(replyToken, outgoing)` → `providerMessages` ตัด `canonicalText` + เติม `?openExternalBrowser=1` ให้ `/l/<token>` (ไม่เปลี่ยน stored bytes) → LINE
 6. ผู้ใช้แตะ → Safari/Chrome เปิด `GET /l/<token>?openExternalBrowser=1` → route อ่าน token จาก path → `POST /auth/line/handoff/exchange` พร้อม `x-forwarded-for` → cookie → redirect `/companies/<id>/billing?channel=line` (locked shell อนุญาต billing) → หน้าแพ็กเกจ (1 แตะ; AC10 ก)
-7. กลุ่ม/ห้อง: ข้อ 3 คืน `undefined` → ปุ่ม = `https://<web>/companies/<id>/billing?channel=line&openExternalBrowser=1` (param จาก exit) → ผู้แตะใช้ session ของเครื่องตัวเอง (AC10 ง)
+7. กลุ่ม/ห้อง: ข้อ 3 คืน `undefined` → ปุ่ม = `https://<web>/companies/<id>/billing?channel=line&openExternalBrowser=1` (param จาก exit) → ผู้แตะใช้ session ของเครื่องตัวเอง (AC10 ง). ที่ 03438bde เส้นทางนี้เข้าไม่ถึงจากกลุ่ม/ห้องแล้ว (`line-message-buffer.service.ts:170-181` / webhook `execute()` :4912 → `executePublicGeneral`; §3.8 จ หมายเหตุ) — guard คงไว้เป็น defense-in-depth; AC10 ง ในกลุ่มจึงได้ "ไม่มีการ์ดล็อก" แทน (ดู §10 ข้อ 14)
 
 ### 4.2 LIFF หน้าผลลัพธ์หลังสมัคร (COMPLETED, ร้านล็อก, ผู้กด = OWNER)
 
@@ -1344,14 +1399,14 @@ function companyStateLabel(membership: LineCompanyMembership, now = new Date()):
 | LIFF ปุ่ม `#open-web` เมื่อเป็นร้านล็อก | `เปิดหน้าเว็บ` / `พร้อมแล้วค่ะ กดเปิดหน้าเว็บเพื่อเข้าร้าน` | `เลือกแพ็กเกจ` / `พร้อมแล้วค่ะ กดเลือกแพ็กเกจเพื่อเปิดหน้าแพ็กเกจในเบราว์เซอร์` | `PACKAGE_START` |
 | LIFF start needsSelection ปุ่มร้าน | `{ร้าน}` | `{ร้าน} · ยังไม่มีแพ็กเกจ` / `{ร้าน} · หมดอายุ` เมื่อล็อก | |
 | `auth.controller.ts:580` (RV33) | `เพิ่มภายหลังได้ ก่อนชำระแพ็กเกจจะให้ยืนยันอีเมลสำหรับรับเอกสาร ใช้งานผ่าน LINE ได้ทันที` | `เพิ่มภายหลังได้ อีเมลรับเอกสารกรอกได้ที่หน้าชำระเงิน ใช้งานผ่าน LINE ได้ทันที` | D-PF-1 |
-| webhook `:2846` ตอบ "ขอเปลี่ยนแพ็กเกจ" | `📦 {ร้าน}\nดูแพ็กเกจ ตรวจสอบการชำระเงิน และเปิดใบเสร็จได้ที่\n{url}\nกรุณาตรวจสอบราคาและยืนยันบนเว็บก่อนชำระเงินค่ะ` | `📦 {ร้าน}\nเลือกแพ็กเกจ ตรวจสอบการชำระเงิน และเปิดใบเสร็จได้ที่ลิงก์นี้ (เปิดในเบราว์เซอร์ให้อัตโนมัติ)\n{url}\nตรวจสอบราคาและยืนยันบนเว็บก่อนชำระเงินนะคะ` | url = `/l/<token>` หรือ URL ธรรมดา |
+| webhook `:2989` ตอบ "ขอเปลี่ยนแพ็กเกจ" | `📦 {ร้าน}\nดูแพ็กเกจ ตรวจสอบการชำระเงิน และเปิดใบเสร็จได้ที่\n{url}\nกรุณาตรวจสอบราคาและยืนยันบนเว็บก่อนชำระเงินค่ะ` | `📦 {ร้าน}\nเลือกแพ็กเกจ ตรวจสอบการชำระเงิน และเปิดใบเสร็จได้ที่ลิงก์นี้ (เปิดในเบราว์เซอร์ให้อัตโนมัติ)\n{url}\nตรวจสอบราคาและยืนยันบนเว็บก่อนชำระเงินนะคะ` | url = `/l/<token>` หรือ URL ธรรมดา |
 | `line-staff-menu.logic.ts:321` ปุ่มโปรโมชั่น (G19) | `ให้ทีมงานช่วยเลือก` (message = ขอเปลี่ยนแพ็กเกจ) | `ให้ทีมงานติดต่อกลับ` (postback `action=package-callback`) | |
 | webhook ใหม่ `PACKAGE_CALLBACK_REPLY` | — | `📮 รับเรื่องแล้วค่ะ ทีมงานจะติดต่อกลับเรื่องแพ็กเกจในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) ระหว่างนี้ถามน้องมั่งมีต่อได้เลยนะคะ` | ไม่หยุด AI |
 | webhook ใหม่ `PACKAGE_CALLBACK_ALREADY_OPEN_REPLY` | — | `📮 คำขอของคุณยังอยู่ในคิวค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ` | |
 | webhook ใหม่ `PACKAGE_CALLBACK_NOTE` (inbox) | — | `ขอให้ทีมงานติดต่อกลับเรื่องแพ็กเกจ` | requestText/thread |
 | `line-staff-menu.logic.ts:310` (G20) | `รายเดือน 249 / 499 / 999 บาท และแพ็กเกจธุรกิจ 1,999 บาท ครบทุกเมนูรวมภาษี เลือกและชำระในแอปได้เองค่ะ` | `รายเดือน 249 / 499 / 999 บาท และแพ็กเกจธุรกิจ 1,999 บาท ที่เพิ่มเอกสารภาษี ภ.ง.ด.53 และ 50 ทวิ เลือกและชำระในแอปได้เองค่ะ` | ตาม `menu-entitlements.ts:491-500` (ENTERPRISE = starter + `wht_pnd53` + `wht_50bis`) |
 | `line-public-policy.logic.ts:16` (G20) | `แพ็กเกจธุรกิจ 1,999 เปิดครบทุกเมนู รวมภาษี ภ.ง.ด.53 และ 50 ทวิ จัดซื้อ คลังสินค้า CRM บัญชีธนาคาร และรายงานการเงินค่ะ` | `แพ็กเกจธุรกิจ 1,999 ได้เมนูเดียวกัน และเพิ่มเอกสารภาษี ภ.ง.ด.53 และ 50 ทวิ ที่ออกจากระบบค่ะ` | |
-| webhook `:244` (G20, **Owner-verbatim — ต้อง sign-off**) | `🧾 แพ็กเกจธุรกิจออกเอกสารและภาษีได้ครบ รวม ภ.ง.ด.53 และ 50 ทวิ` | `🧾 แพ็กเกจธุรกิจเพิ่มเอกสารภาษี ภ.ง.ด.53 และ 50 ทวิ` | **Owner sign-off 2026-09-27** (แพ็กเกจธุรกิจ = ชุด 1,999 บาท: เมนูเหมือนแพ็กเกจอื่น + ภ.ง.ด.53 + 50 ทวิ) |
+| webhook `:268` (G20, **Owner-verbatim — ต้อง sign-off**) | `🧾 แพ็กเกจธุรกิจออกเอกสารและภาษีได้ครบ รวม ภ.ง.ด.53 และ 50 ทวิ` | `🧾 แพ็กเกจธุรกิจเพิ่มเอกสารภาษี ภ.ง.ด.53 และ 50 ทวิ` | **Owner sign-off 2026-09-27** (แพ็กเกจธุรกิจ = ชุด 1,999 บาท: เมนูเหมือนแพ็กเกจอื่น + ภ.ง.ด.53 + 50 ทวิ) |
 | `line-public-policy.logic.ts:8-10` `trial` (G25) | `สมัครแล้วร้านเปิดไว้ก่อน ไม่บังคับซื้อทันที ใช้งานได้เมื่อเลือกและชำระแพ็กเกจแล้ว เริ่มที่ STARTER 249 บาทต่อเดือนเป็นต้นไป ผ่านบัตรออนไลน์\nไม่เรียกเก็บเงินอัตโนมัติจนกว่าจะเลือกเอง ยังไม่ชำระข้อมูลยังอยู่ค่ะ\nร้านที่มีสิทธิ์ทดลองฟรีอยู่ก่อนใช้ต่อได้จนกว่าจะหมดช่วง ต่ออายุตามเงื่อนไขแพ็กเกจค่ะ` | `สมัครแล้วร้านเปิดไว้ก่อนแบบยังไม่มีแพ็กเกจ ไม่บังคับซื้อทันที ใช้งานได้เมื่อเลือกและชำระแพ็กเกจแล้ว เริ่มที่ STARTER 249 บาทต่อเดือน ผ่านบัตรออนไลน์หรือพร้อมเพย์\nไม่เรียกเก็บเงินอัตโนมัติจนกว่าจะเลือกเอง ยังไม่ชำระข้อมูลยังอยู่ค่ะ\nร้านที่มีสิทธิ์ทดลองฟรีอยู่ก่อนใช้ต่อได้จนกว่าจะหมดช่วง แล้วเลือกแพ็กเกจต่อได้เองในแอปค่ะ` | คง regex spec :724-727, :757 |
 | `:13-14` `trial_limits` | title `เปิดร้านแล้วใช้อะไรได้บ้าง`; `ก่อนชำระ ใช้ได้แค่ตั้งค่าข้อมูลร้านและบัญชี กับหน้าแพ็กเกจค่ะ` | คง title; `ก่อนชำระ ใช้ได้แค่ตั้งค่าข้อมูลร้านและบัญชี กับหน้าแพ็กเกจค่ะ` (คง) + บรรทัด 15 คง + บรรทัด 16 ตาม G20 ข้างบน | spec :776,:778-780 ต้องแก้ |
 | `:24-25` `data` | title `ข้อมูลหลังหมดช่วงทดลอง`; `หมดช่วงทดลองใช้ฟรีแล้ว การใช้งานส่วนธุรกิจจะหยุดไว้ แต่ข้อมูลไม่ได้ถูกลบทันทีเพราะหมดช่วงทดลองค่ะ\n…` | title `ข้อมูลเมื่อยังไม่มีแพ็กเกจหรือหมดอายุ`; `เมื่อยังไม่มีแพ็กเกจหรือแพ็กเกจหมดอายุ การใช้งานส่วนธุรกิจจะหยุดไว้ แต่ข้อมูลไม่ได้ถูกลบทันทีค่ะ\n` + ประโยคลบข้อมูลเดิมทั้งหมด | คง regex :782-783 |
@@ -1359,7 +1414,7 @@ function companyStateLabel(membership: LineCompanyMembership, now = new Date()):
 | `:32-33` `buy_early` | title `ซื้อแพ็กเกจระหว่างทดลองใช้ฟรี`; `หากซื้อแพ็กเกจระหว่างที่ยังมีสิทธิ์ทดลองใช้ฟรีอยู่ แพ็กเกจที่ซื้อจะเริ่มทำงานและตัดรอบชำระทันทีค่ะ …` | title `ซื้อแพ็กเกจก่อนช่วงเดิมหมด`; `หากซื้อแพ็กเกจก่อนที่ช่วงใช้งานเดิมจะหมด แพ็กเกจที่ซื้อจะเริ่มทำงานและตัดรอบชำระทันทีค่ะ ควรตรวจเงื่อนไขแพ็กเกจก่อนยืนยันซื้อค่ะ` | คง regex :785 |
 | `:49` `payment_failure` | `ช่วงนี้ไม่ใช่วันทดลองใช้ฟรีเพิ่ม …` | คงเดิม (ประโยคยังจริง; spec :790 ตรึงไว้) | ไม่แก้ |
 | `line-business-card.logic.ts` การ์ดล็อก | title `ยังไม่ได้สมัครแพ็กเกจ`/`แพ็กเกจหมดอายุแล้ว`, badge `🔒 รอเลือกแพ็กเกจ`, ปุ่ม `เลือกแพ็กเกจ` | คงเดิม (R-C8) | |
-| webhook `PACKAGE_REQUIRED_MEMBER_REPLY` :410, `PACKAGE_CHANGE_NOT_OWNER_REPLY` :311 | เดิม | คงเดิม (พนักงานได้ข้อความเดิมตาม R-C11) | |
+| webhook `PACKAGE_REQUIRED_MEMBER_REPLY` :450, `PACKAGE_CHANGE_NOT_OWNER_REPLY` :335 | เดิม | คงเดิม (พนักงานได้ข้อความเดิมตาม R-C11) | |
 
 ---
 
@@ -1369,22 +1424,22 @@ function companyStateLabel(membership: LineCompanyMembership, now = new Date()):
 
 | Spec (ลงทะเบียนที่) | บรรทัด | แก้เป็น |
 |---|---|---|
-| `apps/api/src/modules/sales-console/domain/sales-deal.logic.spec.ts` (catalog :355) | :180, :184, :202 | ตัด `?openExternalBrowser=1` ออกจาก URL ที่คาด (`…/companies/co-1/billing`, `…/companies/..%2F..%2Fevil/billing`) |
+| `apps/api/src/modules/sales-console/domain/sales-deal.logic.spec.ts` (catalog :424) | :180, :184, :202 | ตัด `?openExternalBrowser=1` ออกจาก URL ที่คาด (`…/companies/co-1/billing`, `…/companies/..%2F..%2Fevil/billing`) |
 | `apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts` (package.json `test`) | :111, :124 | `${WEB_BASE}/login?line=link-required&next=%2F` (harness จับที่ `sendReply` fake :349 = ก่อน exit) |
 | เดียวกัน | :400-405 | `['text', 'flex']` และลบ `deepEqual` ของ image |
 | เดียวกัน | :1297 | คง (harness ไม่มี `handoffLinks` → URL ธรรมดา); เพิ่ม `assert.match(rendered(h), /เปิดในเบราว์เซอร์ให้อัตโนมัติ/)` |
 | เดียวกัน | :1317 | `assert.deepEqual(where.roles, { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key: 'company.plan.manage' } } } } } })` |
 | เดียวกัน | :1428 `shop()` | `roles: [{ role: { key, status: 'ACTIVE', permissions: key === 'OWNER' ? [{ permission: { key: 'company.plan.manage' } }] : [] } }]`; เพิ่มเคส `shop('PLAN_MANAGER')` ที่มี permission แต่ key ไม่ใช่ OWNER → ได้ปุ่ม `เลือกแพ็กเกจ` |
-| เดียวกัน | :1440 | `lineUserId` ใน ctx ยัง `'Uline-1'` (1:1) — คง; เพิ่มเคส `event(...)` ที่มี `pushTargetId: 'C' + '0'.repeat(32)` → ไม่ mint (`minted.length === 0`) และปุ่มเป็น URL ธรรมดา |
+| เดียวกัน | :1440 | `lineUserId` ใน ctx ยัง `'Uline-1'` (1:1) — คง; ไม่เพิ่มเคสกลุ่มผ่าน `execute()`: ที่ 03438bde event ที่มี `pushTargetId: 'C' + '0'.repeat(32)` ถูกส่งไป `executePublicGeneral` (webhook :4912) ก่อนถึงเลนโปรโมชั่น — ทดสอบ group guard ที่ `oneTapPackageUrl` ตรง ๆ แทน (§6.2 ง) |
 | เดียวกัน | :1460 | `['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานติดต่อกลับ', 'คุยกับทีมงาน']` + `assert.equal(actions(h)[1].type, 'postback')` |
 | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts` (package.json `test`) | :695-700 | labels → `'ให้ทีมงานติดต่อกลับ'`; :697 → `assert.deepEqual(employee[1], { type: 'postback', label: PACKAGE_CALLBACK_COMMAND, data: 'action=package-callback', displayText: PACKAGE_CALLBACK_COMMAND })`; owner list :700 เช่นกัน |
 | เดียวกัน | :776 regex trial_limits (`ตั้งค่าข้อมูลร้านและบัญชี[\s\S]*249 \/ 499 \/ 999[\s\S]*แพ็กเกจธุรกิจ`) | คงได้ (ยังมี "แพ็กเกจธุรกิจ"); :779 → `/ภ\.ง\.ด\.53 และ 50 ทวิ/`; :780 `/เปิดครบทุกเมนู/` → `/เพิ่มเอกสารภาษี/` |
 | เดียวกัน | :728 `doesNotMatch(/PRO|ฟรีตลอด|…/)` | คง; เพิ่ม `assert.doesNotMatch(JSON.stringify(buildPromotionCard('owner','https://x/l/t')), /ครบทุกเมนู/)` |
-| `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts` (package.json `test` + catalog :387) | :388, :404 default roles | `[{ role: { key: 'OWNER', status: 'ACTIVE', permissions: [{ permission: { key: 'company.plan.manage' } }] } }]` |
-| เดียวกัน | :487-489 fake | `const wantsManager = Boolean(where.roles?.some?.role?.permissions); const row = termExpiredRows.find((candidate) => !wantsManager || candidate.roles.some((assigned: any) => (assigned.role.permissions ?? []).some((rp: any) => rp.permission.key === 'company.plan.manage')));` |
-| เดียวกัน | :2318-2343 | คง URL ธรรมดาที่ :2335 เมื่อ `makeUseCase(prisma, {config:{billingMode:'test'}})` ไม่มี `handoffLinks`; เพิ่มเคสใหม่ (§6.2 ข) |
-| เดียวกัน | :2399-2413 (`roles: [{ role: { key: 'SALES' } }]`) | คง — ไม่มี permission → member reply (ยืนยัน R-C11 ทางลบ); เพิ่มเคส custom role ที่มี permission → ได้การ์ด |
-| `apps/api/src/modules/billing/line-billing-entry.spec.ts` (catalog :371) | :26 | `assert.deepEqual(h.query().where.roles, { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key: 'company.plan.manage' } } } } } })`; :24 คง (context ไม่มี `handoffLinks`); เพิ่มเคส context มี `handoffLinks.linkFor` → reply มี `/l/tok` และเคส `event.pushTargetId` เป็นกลุ่ม → ไม่มี `/l/` |
+| `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts` (package.json `test` + catalog :456) | :441, :457 default roles | `[{ role: { key: 'OWNER', status: 'ACTIVE', permissions: [{ permission: { key: 'company.plan.manage' } }] } }]` |
+| เดียวกัน | :541-543 fake | `const wantsManager = Boolean(where.roles?.some?.role?.permissions); const row = termExpiredRows.find((candidate) => !wantsManager || candidate.roles.some((assigned: any) => (assigned.role.permissions ?? []).some((rp: any) => rp.permission.key === 'company.plan.manage')));` |
+| เดียวกัน | :2776-2801 | คง URL ธรรมดาที่ :2793 เมื่อ `makeUseCase(prisma, {config:{billingMode:'test'}})` ไม่มี `handoffLinks`; เพิ่มเคสใหม่ (§6.2 ข) |
+| เดียวกัน | :2857-2871 (`roles: [{ role: { key: 'SALES' } }]`) | คง — ไม่มี permission → member reply (ยืนยัน R-C11 ทางลบ); เพิ่มเคส custom role ที่มี permission → ได้การ์ด |
+| `apps/api/src/modules/billing/line-billing-entry.spec.ts` (catalog :440) | :26 | `assert.deepEqual(h.query().where.roles, { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key: 'company.plan.manage' } } } } } })`; :24 คง (context ไม่มี `handoffLinks`); เพิ่มเคส context มี `handoffLinks.linkFor` → reply มี `/l/tok` และเคส `event.pushTargetId` เป็นกลุ่ม → ไม่มี `/l/` |
 | `apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.spec.ts` (package.json `test`) | :76 | `const wantsOwner = JSON.stringify(where.roles ?? {}).includes('company.plan.manage');` (ชื่อตัวแปรเปลี่ยนได้); :194 ชื่อเทสต์ "notifies the plan managers …" |
 | `apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.spec.ts` | :45-76 | **ไม่แก้** — `ownerLineUserIds` ไม่ถูกแตะ (spec §18.2 R-C11) |
 | `apps/api/src/modules/external-signup/application/line-signup-notify.service.spec.ts` (package.json `test`) | :165-179 | เพิ่ม `assert.match(sent, /เปิดร้านแล้ว/); assert.match(sent, /"label":"เลือกแพ็กเกจ"/); assert.equal(sent.includes('พร้อมใช้งานแล้ว'), false); assert.equal(sent.includes('เริ่มใช้งาน"'), false)`; เพิ่มเคส `deliver('r1','attached')` → `/เพิ่มร้านแล้ว/` + ปุ่มเดียวกัน + LIFF URL |
@@ -1393,9 +1448,10 @@ function companyStateLabel(membership: LineCompanyMembership, now = new Date()):
 | เดียวกัน | :392 type ของ `eligibleCompanies` | เพิ่ม `lockReason?: 'no_package' \| 'trial_ended'; canManagePlan?: boolean` |
 | เดียวกัน | :517-525 | คง (ไม่มี `lockedEntryCompanyId` → ข้อความเดิม) |
 | `apps/api/src/modules/line-ai/domain/logic/line-business-card.logic.spec.ts` (package.json `test`, `test:line-ai-business-coverage`) | — | ไม่มี assertion การ์ดล็อก/door param → เพิ่มเคสใหม่ (§6.2 ค) |
-| `apps/api/src/modules/line-ai/infrastructure/line-reply.adapter.spec.ts` (package.json `test`) | :51-68, :133-154 | คง; เพิ่มเคส (§6.2 ก) |
+| `apps/api/src/modules/line-ai/infrastructure/line-reply.adapter.spec.ts` (package.json `test`) | :51-68, :133-154 | คง; เพิ่มเคส (§6.2 ข, ถ) |
+| `apps/api/src/modules/line-ai/domain/logic/line-delivery-plan.logic.spec.ts` (catalog `reliability-api-v2` :381) | :68-69 (`freezes a bounded trusted Flex…` :54-73) | `contents` ที่คาด = `withLineExternalBrowserLinks([preferred])[0]!.contents` (uri `…/companies/company/expenses?openExternalBrowser=1`); fallback `text` = `withLineExternalBrowserText(text, Number.POSITIVE_INFINITY)`; :66 primary ยังเป็น `flex` (proof อ่านจาก object เดิม) |
 | `apps/api/src/modules/line-ai/application/line-handoff-link.service.spec.ts` (package.json `test`) | :88 "carries the query string" | ยืนยันยังผ่าน (query อื่นคง); เพิ่มเคส strip |
-| `apps/web/src/features/external-signup/*`/e2e `line-signup-contact-email.spec.ts:66,191` (F13) | e2e (Extended Tests) | แก้ข้อความช่วยเหลือเป็นค่าใหม่ — **ต้องตรวจ** บรรทัดจริง (§10) |
+| `e2e/line-signup-contact-email.spec.ts:66,191` (F13; ที่ root ไม่ใช่ใต้ `apps/web`) | e2e (Extended Tests) | :66 `toContainText('ก่อนชำระแพ็กเกจ')` → แก้เป็นข้อความช่วยเหลือใหม่; :191 ปุ่ม `เริ่มใช้งาน` ของร้าน ACTIVE — **ต้องตรวจ** ว่า fixture ยังเปิดร้าน ACTIVE (§10) |
 
 ### 6.2 Spec ใหม่ / เคสใหม่
 
@@ -1416,7 +1472,7 @@ function companyStateLabel(membership: LineCompanyMembership, now = new Date()):
 - ปุ่มแรก `uri === 'https://app.example.com/l/tok-1'`; `calls[0].ctx.surface === 'locked_card_packages'`, `calls[0].path === '/companies/company-1/billing?channel=line'`, `calls[0].ctx.lineUserId === BASE_EVENT.lineUserId`
 - flag true: payload ที่ `recordTurnOutcome` บันทึก (`turnOutcomeWrites`/`outcomeStore` ในharness) มี `/l/tok-1` ตัวเดียวกับที่ส่ง (recorded == sent)
 - `linkFor` คืน `null` → URL ธรรมดา; `linkFor` throw → URL ธรรมดา (seam จริงจับ error เอง — ในเทสต์ให้คืน null)
-- `{ ...BASE_EVENT, pushTargetId: 'C' + 'a'.repeat(32) }` → `calls.length === 0` และปุ่ม = URL ธรรมดา
+- group guard: เรียก helper ตรง ๆ `await (h.useCase as any).oneTapPackageUrl({ lineUserId: BASE_EVENT.lineUserId, pushTargetId: 'C' + 'a'.repeat(32) }, <userId>, 'company-1', 'locked_card_packages')` → `undefined` และ `calls.length === 0` (ผ่าน `execute()` ไม่ได้แล้ว: ที่ 03438bde event กลุ่มถูกส่งไป `executePublicGeneral` ที่ webhook :4912 ก่อนถึงการ์ดล็อก)
 - เคส R-C11: `termExpiredMemberships: [{ companyId:'company-1', roles:[{ role:{ key:'ACCOUNTANT', status:'ACTIVE', permissions:[{ permission:{ key:'company.plan.manage' } }] } }], term: NO_PACKAGE }]` → ได้การ์ด (ไม่ใช่ member reply)
 - G19: `useCase.execute({ ...BASE_EVENT, messageText: 'ให้ทีมงานติดต่อกลับ' })` (fake `lineSupportRequest.create/findFirst`, `lineCompanyContext.upsert` บันทึกการเรียก) → สร้างแถว `requestText === 'ขอให้ทีมงานติดต่อกลับเรื่องแพ็กเกจ'`, ตอบ `/ติดต่อกลับเรื่องแพ็กเกจ/`, **ไม่มี** `lineCompanyContext.upsert` (ไม่ pause), event log `package_callback_requested`; เคส live request → `support_already_open` และ `lineCompanyContext.updateMany` ไม่ถูกเรียก (`extendPause:false`); เคส `handleStaffContact` เดิม (`ติดต่อเจ้าหน้าที่`) ยัง pause (regression)
 
@@ -1425,7 +1481,7 @@ function companyStateLabel(membership: LineCompanyMembership, now = new Date()):
 (ฉ) `line-liff-signup.spec.ts` ใน describe `one truthful renderer…`: `runSignupScript(signupStatus({ state:'COMPLETED', companyCreated:true, resolution:'NEW_SHOP', lockedEntryCompanyId:'co-1' }, [{ companyId:'co-1', companyName:'ร้านนิด', status:'EXPIRED', canEnter:false, lockReason:'no_package', canManagePlan:true }]), [ …status GET…, { status: 200, body: JSON.stringify({ handoffUrl: 'https://app.example.test/l/RAW' }) } ])` → หลัง `settle()` ×3: `progress-title === 'เปิดร้านแล้ว ขั้นต่อไปเลือกแพ็กเกจ'`, มี fetch ไป `/auth/line/liff/session` body `{ idToken, companyId:'co-1' }`, `elements['open-web'].hidden === false && textContent === 'เลือกแพ็กเกจ'`, `retry-status` label กลับเป็น `'ตรวจสอบสถานะอีกครั้ง'` และ `disabled === false`; คลิก `open-web` → liff mock `openWindow` ได้ `{ url:'https://app.example.test/l/RAW', external:true }` (mock :348 ต้องบันทึก args); เคส `canManagePlan:false` → title `/รอเลือกแพ็กเกจ/`, ไม่มี fetch session, `support` แสดง; เคสไม่มี progress + บริษัทล็อก → มี note `ร้านนิด · ยังไม่มีแพ็กเกจ` + ปุ่ม `เลือกแพ็กเกจ`
 - busy-label: เคส `retry-status` เดิม (`h.click('retry-status')` สำเร็จ) → label คืนและ `disabled===false`
 
-(ช) `liff-start-handoff.spec.ts` (catalog :348): เพิ่มเคส `needsSelection` ที่ `companies:[{id:'co-1',name:'ร้านหนึ่ง',lockReason:'no_package',canManagePlan:true},{id:'co-2',name:'ร้านสอง'}]` → ปุ่ม `'ร้านหนึ่ง · ยังไม่มีแพ็กเกจ'`, `'ร้านสอง'`
+(ช) `liff-start-handoff.spec.ts` (catalog :417): เพิ่มเคส `needsSelection` ที่ `companies:[{id:'co-1',name:'ร้านหนึ่ง',lockReason:'no_package',canManagePlan:true},{id:'co-2',name:'ร้านสอง'}]` → ปุ่ม `'ร้านหนึ่ง · ยังไม่มีแพ็กเกจ'`, `'ร้านสอง'`
 
 (ซ) `exchange-liff-session` — ไม่มี unit spec แยกในทรี (พฤติกรรมถูกทดสอบผ่าน `line-liff-signup.spec.ts:203-230` ด้วย fake `execute`) → เพิ่มไฟล์ใหม่ `apps/api/src/modules/auth/application/use-cases/exchange-liff-session.use-case.spec.ts` (fake `prisma.client.{externalIdentity,companyMembership,lineCompanyContext}`, `lineIdToken.verify`, `rateLimit`, `mint.execute` บันทึก `targetPath`, `audit.log`, `config:{lineWebHandoffEnabled:true, sesWebBaseUrl:'https://app.example.test'}`): ร้านล็อก+manager → `targetPath === '/companies/co-1/billing?channel=line'`; ร้านล็อก+ไม่ใช่ manager → `/companies/co-1/renew`; ร้าน ACTIVE → `/companies/co-1/dashboard`; ACTIVE แต่ `termEndsAt` อดีต + manager → billing; needsSelection แนบ `lockReason`/`canManagePlan` เฉพาะร้านล็อก — **ลงทะเบียน** ใน catalog api-behavior args ถัดจากบรรทัดของ `plan-manager.logic.spec.ts`
 
@@ -1443,16 +1499,28 @@ function companyStateLabel(membership: LineCompanyMembership, now = new Date()):
 
 (ฒ) `line-handoff-link.service.spec.ts`: text `https://app/companies/co-1/billing?openExternalBrowser=1` → `calls[0].targetPath === '/companies/co-1/billing'`; `linkFor(ctx,'/companies/co-2/dashboard?openExternalBrowser=1')` → mint ด้วย `/companies/co-2/dashboard`
 
-(ณ) `system-line-push.spec.ts` (package.json `test` + extended :318): เพิ่ม `pushLineMessages({..., messages:[{type:'flex',…uri:'https://app/companies/c/billing'}]})` → body มี param; `liff.line.me` ไม่มี
+(ณ) `system-line-push.spec.ts` (package.json `test` + `extended-tests.yml:326`): เพิ่ม `pushLineMessages({..., messages:[{type:'flex',…uri:'https://app/companies/c/billing'}]})` → body มี param; `liff.line.me` ไม่มี
 
 (ด) `process-due-deliveries.use-case.spec.ts:185-221` (มี fetch fake อยู่แล้ว): เพิ่ม assertion body ของ push มี `openExternalBrowser=1` ใน uri เมื่อ deep link เป็น web URL; retry key regex เดิมยังผ่าน
+
+(ต) `line-delivery-plan.logic.spec.ts` (catalog `reliability-api-v2` :381; ไฟล์เดิม ไม่ต้องลงทะเบียนใหม่) — ทางออก 4 (§3.4ก):
+- item `'ดูรายการ https://app.example.com/companies/company/expenses'` → `p.answer.items[0].text` และ `p.batches[0].primary.messages[0].text` ลงท้าย `?openExternalBrowser=1` ครั้งเดียว; `parseLineDeliveryPlan(JSON.parse(JSON.stringify(p)))` ผ่าน (= `wireHash`/`pushRetryKey` คำนวณจาก bytes ที่มี param); build ซ้ำ → `deliveryHash(p1) === deliveryHash(p2)`; item ที่มี param อยู่แล้ว → bytes เดิม (ไม่มี param ที่สอง); `https://liff.line.me/…`, `https://official.mangmeeplus.com/` ไม่ถูกแตะ
+- แก้เคสเดิม :54-73 ตาม §6.1; เคส :114 (control message มีแต่ postback) ต้องผ่านโดยไม่แก้ — `matchingControl` อ่าน postback เท่านั้น
+- plan ที่ frozen ก่อน deploy: เอา param ออกจาก item/primary text ของ plan ที่ build แล้ว คำนวณ `wireHash = deliveryHash([authorization.destination.channelId, authorization.destination.targetHash, messages])` และ `pushRetryKey = lineDeliveryRetryKey(planId, 0, 'primary', wireHash)` ใหม่ → `parseLineDeliveryPlan` ยังผ่านและคืน bytes เดิม (parse ไม่เติม param)
+- guard 60,000: `['x'.repeat(59_965) + ' https://app.example.com/a']` → build ผ่าน และข้อความไม่มี param
+
+(ถ) `line-reply.adapter.spec.ts` (package.json `test`) ใน describe `v2 exact frozen delivery` (:186): `sendFrozenV2({ transport: 'PUSH', target: 'U1', messages: [{ type: 'text', text: 'เปิด https://app.example.test/companies/c/billing' }], pushRetryKey: <uuid>, timeoutMs: 5_000 })` → body บน wire ไม่มี `openExternalBrowser` และ `JSON.parse(body).messages` deepEqual input (adapter ไม่แปลง frozen bytes); `sendPush` ด้วย messages เดียวกันได้ param (ทางออก 1) — ยืนยันว่าสองทางแยกกัน
+
+(ท) `process-line-general-v2.spec.ts` (catalog `reliability-api-v2` :378) เคส `freezes the trusted expense card and safe link through the actual webhook v2 seam` (:157-193): regex เดิมยังผ่าน; เพิ่ม `assert.equal(JSON.stringify(primary).split('openExternalBrowser=1').length, 2)` และแบบเดียวกันกับ `fallback.text` (param ครั้งเดียวทั้งใน uri ของการ์ดและบรรทัด `เปิดดู:`) และ `primary.type === 'flex'` (การ์ดไม่ถูกลดเป็นข้อความ)
+
+(ธ) `line-capture-delivery.pg.spec.ts` (`reliability-postgres-v2`, catalog :522-537 — ไฟล์นี้ที่ :527; ต้องใช้ PG แยก = Extended/CI) เคส `UNKNOWN replays saved body/key…` (:48-58): ต้องยังผ่าน (replay ส่ง `messages`/`pushRetryKey` เดิม แม้ปิด flag); เพิ่ม `const wire = JSON.stringify(sends[0].messages); assert.equal(wire.split('openExternalBrowser=1').length, wire.split('https://example.test/').length)` (param ครั้งเดียวต่อ URL; ข้อความผลบันทึกมีลิงก์รายการ `line-capture-result-notifier.use-case.ts:231`/:391/:557)
 
 ### 6.3 Coverage guard
 `pnpm --filter @watchdog-bms/api exec tsx --test src/spec-suite-coverage.spec.ts` ต้องผ่านหลังเพิ่มไฟล์ใหม่ทั้ง 2 ไฟล์ใน api (catalog) — ถ้าลืม จะแดงพร้อมชื่อไฟล์
 
 ---
 
-## 7. Docs ที่ต้อง amend ใน PR นี้ (บรรทัดจาก ddcdcadf)
+## 7. Docs ที่ต้อง amend ใน PR นี้ (บรรทัดจาก 03438bde)
 
 | ไฟล์:บรรทัด | ปัจจุบัน (ย่อ) | แก้เป็น |
 |---|---|---|
@@ -1467,12 +1535,14 @@ function companyStateLabel(membership: LineCompanyMembership, now = new Date()):
 | `:73` | `purpose=start\|billing` + "ตรวจ current OWNER + company.setup.manage" | "ไม่มี `purpose` — `liff/session` เดิมตัดสินปลายทางจากสถานะร้านและสิทธิ์ `company.plan.manage` (R-C3): ร้านล็อก+manager → billing, อื่น → renew; ไม่ใช่ OWNER/`company.setup.manage`" |
 | `:75` | surface=liff_billing; ปุ่ม "เปิดหน้าชำระเงินในเบราว์เซอร์" | "surface คง `liff_start`; ปุ่มบนหน้าผลลัพธ์ signup = 'เลือกแพ็กเกจ' (handoff เตรียมตอน render, เปิด `external:true`), หน้า start = 'เปิดหน้าเว็บ'" |
 | `docs/specs/line-web-deeplink-handoff-spec.md:5` | "ปัจจุบัน exchange ยังปฏิเสธ non-ACTIVE ทั้งหมด: งานถัดไปเพิ่ม term-expiry recovery สำหรับ current OWNER" | "2026-09-27: exchange รับร้าน DISABLED+termDisabledAt แล้ว (`resolveLineHandoffTarget`); target billing สำหรับผู้มี `company.plan.manage` (ไม่ใช่ OWNER เท่านั้น); `/l/` ตอบ `HEAD` 204 และส่งต่อ client IP; `/l/<token>` บน LINE มี `?openExternalBrowser=1` เสมอ (route อ่าน token จาก path เท่านั้น)" |
-| `docs/research/line-stripe-browser-payment-reference-th.md:15` | "ใช้ external browser เป็นทางหลักจาก LIFF …" | เพิ่ม: "และจากทุกข้อความ LINE: ทางออก 3 จุด (`line-reply.adapter.ts`, `system-line-push.ts`, `notification.use-cases.ts`) เติม `openExternalBrowser=1` ให้ทุกลิงก์เว็บ ยกเว้น LIFF/`*.line.me`/official (implemented 2026-09-27)" |
+| `docs/research/line-stripe-browser-payment-reference-th.md:15` | "ใช้ external browser เป็นทางหลักจาก LIFF …" | เพิ่ม: "และจากทุกข้อความ LINE: ทางออก 3 จุด (`line-reply.adapter.ts`, `system-line-push.ts`, `notification.use-cases.ts`) และตอน freeze delivery plan v2 (`line-delivery-plan.logic.ts`) เติม `openExternalBrowser=1` ให้ทุกลิงก์เว็บ ยกเว้น LIFF/`*.line.me`/official (implemented 2026-09-27)" |
 | `docs/specs/mangmee-company-plan-term-spec-th.md:70` | แจ้ง **OWNER เท่านั้น** บันได 7/3/1 | "แจ้ง **ผู้มี `company.plan.manage`** (OWNER และ custom role; Owner D-PF-10 2026-09-26) …" |
 | `:93` | แบนเนอร์/หน้าแดงเฉพาะ OWNER; พนักงาน = ข้อความกลาง | "เฉพาะผู้มี `company.plan.manage` (เว็บอ่านจาก `canManagePlan`; LINE ใช้ predicate เดียวกัน) — พนักงานที่ไม่มีสิทธิ์ยังได้ข้อความกลาง" |
 | `:113` | "LINE ตอนหมดอายุ → ตอบสุภาพ+ชวนติดต่อ (แจ้งเฉพาะ OWNER เหมือนเดิม)" | "LINE ตอนหมดอายุ → การ์ดล็อกพร้อมปุ่ม 'เลือกแพ็กเกจ' one-tap ให้ผู้มี `company.plan.manage`; พนักงานได้ประโยคกลาง (purchase-without-setup R-B2/R-C11)" |
 | `packages/contracts/src/external-signup.ts:372` | `/** Only ACTIVE is a valid RETURN_EXISTING target and direct entry. */` | ตาม §2.2 (comment ใหม่ + ฟิลด์ใหม่) |
-| `docs/agent-memory/purchase-without-setup-2026-09-26.md` | Status/Verification/Next | อัปเดตเมื่อ PR A เปิด/merge (run ids, สิ่งที่ Owner ต้อง sign-off: :244) |
+| `docs/specs/mangmee-purchase-without-setup-spec-th.md:288` | R-B1 (แก้): เติม param "ที่ทางออกของข้อความ 3 จุดเท่านั้น … ทำหลังคำนวณ retry key" | เพิ่มท้าย: "และจุดที่ 4 (ตั้งแต่ delivery plan v2, 2026-09-28): `buildLineDeliveryPlan`/`freeze` (`line-delivery-plan.logic.ts`) เติมก่อนคำนวณ `wireHash`/`pushRetryKey` เพื่อให้ frozen bytes = ที่ส่ง = ที่ replay; ห้ามเติมใน `sendFrozenV2`" — **ต้อง sign-off** (§10 ข้อ 1) |
+| `:391` | A10: AC3 = "payload ที่บันทึก = payload ที่ส่ง **ยกเว้น** param ที่ทางออกเติม … หลังคำนวณ retry key" | เพิ่ม: "สำหรับ delivery plan v2 ไม่มีข้อยกเว้น — param อยู่ใน frozen bytes ที่บันทึก ส่ง retry drain และ replay ทุก byte" — **ต้อง sign-off** (§10 ข้อ 1) |
+| `docs/agent-memory/purchase-without-setup-2026-09-26.md` | Status/Verification/Next | อัปเดตเมื่อ PR A เปิด/merge (run ids, สิ่งที่ Owner ต้อง sign-off: :268) |
 
 ---
 
@@ -1496,6 +1566,8 @@ pnpm --filter @watchdog-bms/api exec tsx --test \
   src/modules/access-control/domain/logic/plan-manager.logic.spec.ts \
   src/modules/auth/application/use-cases/exchange-liff-session.use-case.spec.ts \
   src/modules/line-ai/infrastructure/line-reply.adapter.spec.ts \
+  src/modules/line-ai/domain/logic/line-delivery-plan.logic.spec.ts \
+  src/modules/line-ai/application/use-cases/process-line-general-v2.spec.ts \
   src/modules/auth/infrastructure/system-line-push.spec.ts \
   src/modules/dashboard-notifications/application/use-cases/process-due-deliveries.use-case.spec.ts \
   src/modules/line-ai/application/line-handoff-link.service.spec.ts \
@@ -1521,6 +1593,8 @@ pnpm --filter @watchdog-bms/web exec tsx --test src/features/auth/line-handoff-r
 pnpm --filter @watchdog-bms/web typecheck                 # ต้องตรวจชื่อ script (§10)
 
 # 4) PG/smoke/e2e = Extended Tests (manual) — บันทึก run id ใน memory; ไม่ใช่ gate ของ PR นี้
+#    รวม reliability-postgres-v2 (§6.2 ธ, replay ส่ง bytes เดิม):
+#    BILLING_TEST_DATABASE_URL=<isolated PG> node scripts/run-line-ai-whole-chain-acceptance.mjs --reliability-postgres
 ```
 Local เครื่องจริง (ก่อน UAT, AC10): iPhone + Android — การ์ดล็อกแตะครั้งแรกเปิด Safari/Chrome ที่หน้าแพ็กเกจโดยไม่มีหน้าล็อกอิน; LIFF ผลลัพธ์ 1 แตะ; push 2 แตะ; ลิงก์ในกลุ่มเป็น URL ธรรมดา; link preview ไม่เผา token (HEAD 204)
 
@@ -1528,33 +1602,36 @@ Local เครื่องจริง (ก่อน UAT, AC10): iPhone + Andro
 
 ## 9. Risks / guards
 
-1. **AC3 "payload ที่บันทึก = payload ที่ส่ง"** — เป็นจริงระดับ token/ลิงก์ (mint ในเลน); bytes บน wire ต่างจากที่บันทึกเฉพาะ `openExternalBrowser=1` ที่ exit เติมแบบ deterministic+idempotent → replay/push fallback ส่ง bytes เดียวกับครั้งแรก, retry key คำนวณจาก payload ที่บันทึก (ไม่เปลี่ยน). ต้องเขียน AC3 ใน spec ให้ตรง (ดู §10 ข้อ 1)
-2. **Token ตายในรายการที่บันทึก**: เลน `package_required`/`billing_review_link` เมื่อ flag replay เปิด จะบันทึก `/l/<token>` (อายุ 15 นาที) → orphan replay อาจส่งลิงก์ตาย — เท่ากับ promotion card/บริษัทของฉัน ที่ทำอยู่แล้ว; ปลายทางลิงก์ตาย = `/login?line=handoff-expired&next=…` ซึ่ง R-B5 (PR B) จะเริ่ม LINE login ให้เอง (AC10 ค). ห้ามแก้ `:3274`
+1. **AC3 "payload ที่บันทึก = payload ที่ส่ง"** — เป็นจริงระดับ token/ลิงก์ (mint ในเลน); bytes บน wire ต่างจากที่บันทึกเฉพาะ `openExternalBrowser=1` ที่ exit เติมแบบ deterministic+idempotent → replay/push fallback ส่ง bytes เดียวกับครั้งแรก, retry key คำนวณจาก payload ที่บันทึก (ไม่เปลี่ยน). ต้องเขียน AC3 ใน spec ให้ตรง (ดู §10 ข้อ 1). Delivery plan v2 (03438bde) ไม่มีข้อยกเว้นนี้: param อยู่ใน frozen bytes ตั้งแต่ `buildLineDeliveryPlan` ก่อนคำนวณ `wireHash`/`pushRetryKey` → ที่บันทึก = ที่ส่ง = ที่ retry/drain/replay ทุก byte (§3.4ก)
+2. **Token ตายในรายการที่บันทึก**: เลน `package_required`/`billing_review_link` เมื่อ flag replay เปิด จะบันทึก `/l/<token>` (อายุ 15 นาที) → orphan replay อาจส่งลิงก์ตาย — เท่ากับ promotion card/บริษัทของฉัน ที่ทำอยู่แล้ว; ปลายทางลิงก์ตาย = `/login?line=handoff-expired&next=…` ซึ่ง R-B5 (PR B) จะเริ่ม LINE login ให้เอง (AC10 ค). ห้ามแก้ `:4345`
 3. **Length**: text 5000 / uri 1000 — helper คืนค่าเดิมเมื่อเกิน (ไม่ตัดกลางลิงก์); `providerMessages` ยังนับ `altText ≤ 400` เดิม
 4. **Binding hash ของ billing notification** (`:85`, `:368`) คำนวณจาก `buildLineMessage` ก่อน exit → ไม่เปลี่ยน; ถ้าใครย้าย transform เข้า `buildLineMessage` จะได้ `LINE_BINDING_CHANGED` ทุก retry
-5. **กลุ่ม/ห้อง**: guard ที่ `oneTapPackageUrl` ด้วย `isLineGroupChatKey(pushTargetId ?? lineUserId)`; `attemptDelivery` seam เดิม (flag ปิด) ยัง wrap ในกลุ่มได้ — พฤติกรรมเดิม ไม่แตะ (RV08 ยังคงเป็น residual ของ seam เดิมเมื่อ flag ปิด; production flag เปิด)
+5. **กลุ่ม/ห้อง**: guard ที่ `oneTapPackageUrl` ด้วย `isLineGroupChatKey(pushTargetId ?? lineUserId)`; `attemptDelivery` seam เดิม (flag ปิด) ยัง wrap ในกลุ่มได้ — พฤติกรรมเดิม ไม่แตะ (RV08 ยังคงเป็น residual ของ seam เดิมเมื่อ flag ปิด; production flag เปิด). ที่ 03438bde: flag replay default `true` (`packages/config/src/index.ts:345`) และ event กลุ่ม/ห้องไม่ถึง `sendMessages`/`attemptDelivery` แล้ว (รูป/ข้อความที่ไม่ผ่าน admission ตอบที่ `line-message-buffer.service.ts:170-181`; ข้อความที่ผ่านไป `executePublicGeneral` webhook :4912 ซึ่งส่งผ่าน plan v2 หรือ `sendReply` ตรง ๆ ไม่ wrap) → guard เป็น defense-in-depth
 6. **R-C11 ขยายผู้รับ**: custom role ที่มี `company.plan.manage` ได้การ์ด/แจ้งเตือน/ข้อเสนอพิเศษ (ราคาไม่เดินทางบน LINE อยู่แล้ว — R14); อีเมล billing notice ยัง OWNER จน PR C; `ownerLineUserIds` (ตอบ support/ตัดสินคำขอเปลี่ยนแพ็กเกจ) ไม่แตะ — สอง predicate อยู่คู่กันโดยตั้งใจ
 7. **`canEnter` ไม่เปลี่ยน** (RV10) — `submit-line-signup.use-case.ts:145` ยังอ่าน `canEnter`; ฟิลด์ใหม่ทั้งหมด optional และโผล่เฉพาะร้านล็อก → fixture ร้าน ACTIVE ทุกที่คงเดิม
 8. **LIFF เตรียม handoff ตอน render** = mint 1 token ต่อการเปิดหน้า (rate limit `assertLineLiffSessionAllowed` ต่อบัญชี) — เท่ากับหน้า start ที่ทำอยู่แล้ว; ไม่เปิดอัตโนมัติ (GW02)
 9. **G19 ไม่ pause** แต่ยังใช้ dedupe/daily floor/notice เดิม; `recordSupportFollowUp(..., {extendPause:false})` ต้อง default `true` เพื่อไม่เปลี่ยนพฤติกรรม "ติดต่อเจ้าหน้าที่"
-10. **Owner-verbatim** `:244` — sign-off แล้ว 2026-09-27 (spec §18.5 A18); commit แยกได้เพื่อถอดง่าย
+10. **Owner-verbatim** `:268` — sign-off แล้ว 2026-09-27 (spec §18.5 A18); commit แยกได้เพื่อถอดง่าย
 11. **Release Contracts**: PR A ไม่แตะ `apps/web/public`, `.github/` (ยกเว้น ci.yml:543 และ deploy-production.yml:421 จาก pins) → ci.yml เปลี่ยน = ต้องเหมือน main ก่อน UAT all (P0)
 12. **DI**: ไม่มี provider ใหม่; import pure function ข้าม module (access-control ← billing/external-signup/spm/sales-console/line-ai/auth) ไม่สร้าง Nest cycle แต่ต้อง `test:boot`
+13. **Frozen path (v2)**: เติม param ได้ที่ `buildLineDeliveryPlan`/`freeze` เท่านั้น — เติมใน `sendFrozenV2`/ตอน parse/replay = bytes ไม่ตรง `wireHash`/`pushRetryKey`; เติมก่อนเรียก `buildLineDeliveryPlan` = การ์ดคำตอบเสีย proof แล้วถูกลดเป็นข้อความ (§3.4ก)
 
 ---
 
 ## 10. "ต้องตรวจ" (ยืนยันไม่ได้จากการอ่านโค้ด — พร้อมคำสั่ง)
 
-1. ~~AC3 wording~~ ตัดสินแล้ว 2026-09-27: spec §18.5 A10 แก้ AC3 เป็น "payload ที่บันทึก = payload ที่ส่ง ยกเว้น `openExternalBrowser=1` ที่ทางออกเติมแบบ deterministic/idempotent หลังคำนวณ retry key"
+1. ~~AC3 wording~~ ตัดสินแล้ว 2026-09-27: spec §18.5 A10 แก้ AC3 เป็น "payload ที่บันทึก = payload ที่ส่ง ยกเว้น `openExternalBrowser=1` ที่ทางออกเติมแบบ deterministic/idempotent หลังคำนวณ retry key". **ตัดสินแล้ว 2026-09-28 (controller):** delivery plan v2 เติม param **ก่อน** คำนวณ `wireHash`/`pushRetryKey` ที่จุดที่ 4 (§3.4ก) — PR นี้แก้ spec แถว `:288`/`:391` ตามข้อความที่เสนอใน §7 (เป้า D-PF-2 "ทุกลิงก์จาก LINE เปิดนอกเบราว์เซอร์ LINE" คงเดิม; จุดที่ 4 จำเป็นเพื่อคงกติกา frozen bytes) (ขัด AC3 "ทุกลิงก์")
 2. **`entryKind`** — spec §7 R-C2 พูดถึง `entryKind: 'ACTIVE'|'LOCKED'` แต่ §18.2 (มีผลเหนือ) ระบุ `lockReason` + `canManagePlan`; brief ใช้ §18.2 และเพิ่ม `lockedEntryCompanyId` (จำเป็นเพราะ `entryCompanyId` ถูก gate ด้วย `canEnter` ที่ห้ามขยาย) — ตัดสินแล้ว 2026-09-27: ใช้ `lockReason`/`canManagePlan`/`lockedEntryCompanyId` (spec §18.5 A9)
-3. รายชื่อไฟล์ pinned อื่นที่อาจ stale นอกจาก `auth.guard.ts`: `node infra/security/sync-production-maintenance-release-pins.mjs --check` (loop เทียบ sha ใน session นี้รันไม่ผ่านเพราะ sandbox — ตรวจซ้ำก่อน sync)
+3. รายชื่อไฟล์ pinned อื่นที่อาจ stale นอกจาก `auth.guard.ts`: `node infra/security/sync-production-maintenance-release-pins.mjs --check` (loop เทียบ sha ใน session นี้รันไม่ผ่านเพราะ sandbox — ตรวจซ้ำก่อน sync). ที่ 03438bde เทียบ sha ของทุก `check_file` แล้ว: stale 2 ไฟล์ — `auth.guard.ts` (pin :25) และ `legal-acceptance.service.ts` (pin :21)
 4. ชื่อ script typecheck ของ web: `grep -n '"typecheck"' apps/web/package.json`
 5. `billing-notification-smoke.ts` / fixture custom role: `grep -n "OWNER\|plan.manage" apps/api/src/scripts/billing-notification-smoke.ts` — ถ้า smoke สร้างผู้รับด้วย OWNER เท่านั้น ยังผ่าน (OWNER ⊂ managers)
-6. e2e `line-signup-contact-email.spec.ts:66,191` อ้างข้อความ `ก่อนชำระแพ็กเกจ` หรือไม่: `grep -n "ก่อนชำระ\|ยืนยันอีเมล" apps/web/e2e/line-signup-contact-email.spec.ts` (path ต้องตรวจ: `find apps/web -name "line-signup-contact-email.spec.ts"`)
-7. `absoluteWebLink` ยังถูกใช้ใน webhook หลังลบภาพ: `grep -n absoluteWebLink apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts` (คาดว่าใช้ที่ `putLineMediaUpload` :965 → คง import)
+6. e2e อยู่ที่ root `e2e/line-signup-contact-email.spec.ts` (ไม่ใช่ `apps/web/e2e/`): :66 `toContainText('ก่อนชำระแพ็กเกจ')` → แดงแน่หลังแก้ `auth.controller.ts:580` (แก้เป็นข้อความใหม่); :191 คาดปุ่ม `เริ่มใช้งาน` หลังเปิดร้าน — ยังต้องตรวจว่า fixture เปิดร้าน ACTIVE หรือร้านล็อก (ร้านล็อกจะได้หัวข้อใหม่ §3.12 ค แทน)
+7. `absoluteWebLink` ยังถูกใช้ใน webhook หลังลบภาพ: `grep -n absoluteWebLink apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts` (ที่ 03438bde ยังใช้ที่ `putLineMediaUpload` :1021 และอีกหลายจุด → คง import)
 8. LINE uri action limit 1000 และ postback `displayText` — ยืนยันกับ LINE Messaging API reference ปัจจุบัน (uri action `uri` ≤ 1000 chars; postback `displayText` ≤ 300) ก่อน merge
 9. `START_REASON_TH.expired` (:174) เข้าถึงได้หรือไม่ (blockedReason) — ถ้า dead branch ให้บันทึกใน memory ไม่ต้องแก้
 10. `line-staff-menu.logic.spec.ts` มีเทสต์ `linePostbackCommandText` หรือไม่ (grep คืนว่าง) — ถ้าไม่มี ให้ใส่เคสใหม่ใน `line-webhook.controller.spec.ts:92-105` (มี pattern)
 11. `docs/specs/mangmee-line-first-signup-spec-th.md:5` ผูกกับ evidence/Release Contracts ใด: `grep -rn "welcome-how-to-start" docs/security-evidence infra .github` — ถ้ามี manifest ที่ตรวจ URL รูป ต้องอัปเดตพร้อมกัน
 12. Prisma relation ชื่อ `Role.permissions` → `RolePermission.permission` และ `Role.status` (ใช้ใน `planManagerRoleFilter`): ยืนยันจาก `apps/api/prisma/schema.prisma` `model Role` / `model RolePermission` (assertOwner :111-114 ใช้ shape นี้อยู่แล้ว — typecheck จะฟ้องถ้าผิด)
-13. ตัดสินแล้ว: Owner sign-off ข้อความ `:244` (G20) 2026-09-27 — แพ็กเกจธุรกิจ = ชุด 1,999 บาท ได้เมนูเหมือนแพ็กเกจอื่น + ภ.ง.ด.53 + 50 ทวิ; ยังควรยืนยันแคตตาล็อกจริงบน UAT (`GET /v1/billing/catalog`) ว่า ENTERPRISE ยัง = starter + `wht_pnd53` + `wht_50bis`
+13. ตัดสินแล้ว: Owner sign-off ข้อความ `:268` (G20) 2026-09-27 — แพ็กเกจธุรกิจ = ชุด 1,999 บาท ได้เมนูเหมือนแพ็กเกจอื่น + ภ.ง.ด.53 + 50 ทวิ; ยังควรยืนยันแคตตาล็อกจริงบน UAT (`GET /v1/billing/catalog`) ว่า ENTERPRISE ยัง = starter + `wht_pnd53` + `wht_50bis`
+14. **AC10 ง (กลุ่ม/ห้อง) — ตัดสินแล้ว 2026-09-28 (controller): ใช้ข้อความที่เสนอด้านล่าง** (เดิม: ต้องตัดสินใหม่): ที่ 03438bde กลุ่ม/ห้องไม่ได้การ์ดล็อก/ตอบขอเปลี่ยนแพ็กเกจ/การ์ดโปรโมชั่นเลย (§4.1 ข้อ 7) — ทดสอบบนเครื่องจริงแบบเดิมไม่ได้; เสนอแก้ AC10 ง เป็น "ในกลุ่ม/ห้องไม่มีลิงก์ handoff (ไม่มีการ์ดเหล่านี้)" และคง group guard เป็นเทสต์ระดับ helper (§6.2 ง)
+15. G19 "public like its twin" (§3.15 จ): `line-message-buffer.service.ts:187-188` ให้ `staff_contact` ข้าม legal gate แต่ไม่มี `package_callback` — ผู้ที่ยังไม่ยอมรับเงื่อนไขจะได้ข้อความ legal แทนการรับเรื่อง (เป็นแบบนี้ตั้งแต่ ddcdcadf); **ตัดสินแล้ว 2026-09-28 (controller): เพิ่ม `package_callback` ในรายการข้าม legal gate คู่กับ `staff_contact`** — เป็นคำขอให้คนติดต่อกลับเหมือนกัน คำตอบไม่มีข้อมูลบริษัท และไม่ส่งข้อความแชตเข้า AI; เพิ่มเคสใน spec ของ buffer (คนที่ยังไม่ยอมรับเงื่อนไขกดแล้วได้การรับเรื่อง ไม่ใช่ข้อความ legal)

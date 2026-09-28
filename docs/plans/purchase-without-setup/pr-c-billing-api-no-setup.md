@@ -1,16 +1,18 @@
 # PR C — Billing API "ซื้อโดยไม่ต้องตั้งค่าก่อน" (schema + gate removal + Customer/Checkout + recipient capture + recipient OTP + post-payment email/bounce + resend)
 
+> ตรวจ anchor ใหม่บน develop 03438bde (2026-09-28); ฐานเดิม ddcdcadf
+
 Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangmee-purchase-without-setup-spec-th.md) §18.2 (R-A1..R-A11, R-D1, §9, §11, RV01–06, RV16–22) · Plan: [../mangmee-purchase-without-setup-plan-th.md](../mangmee-purchase-without-setup-plan-th.md) "แก้ไขแผน 2026-09-27" P0/P2/P3 · Readme: [00-readme.md](00-readme.md) · Memory: `docs/agent-memory/purchase-without-setup-2026-09-26.md`
 
-ฐานโค้ด: `origin/develop` ddcdcadf — ทุกเลขบรรทัดในไฟล์นี้ตรวจกับโค้ดจริงบน ddcdcadf แล้ว (2026-09-27). ถ้า PR A merge ก่อน (ควรเป็นเช่นนั้น) ให้ rebase worktree แล้วเลื่อนบรรทัดตาม แต่ชื่อฟังก์ชัน/ลำดับ statement ที่อ้างในนี้เป็นตัวชี้จริง
+ฐานโค้ด: `origin/develop` ddcdcadf — ทุกเลขบรรทัดในไฟล์นี้ตรวจกับโค้ดจริงบน ddcdcadf แล้ว (2026-09-27); re-verify กับ `03438bde` 2026-09-28 (ทุกไฟล์ที่ brief นี้อ้างไม่เปลี่ยน ยกเว้น `schema.prisma`, `packages/config/src/index.ts`, `extended-tests.yml`, `api-error-message.ts`, `workflow-outbox-drain.use-case.ts` — เลขบรรทัดในนี้อัปเดตแล้ว). ถ้า PR A merge ก่อน (ควรเป็นเช่นนั้น) ให้ rebase worktree แล้วเลื่อนบรรทัดตาม แต่ชื่อฟังก์ชัน/ลำดับ statement ที่อ้างในนี้เป็นตัวชี้จริง
 
 ข้อขัดแย้งที่พบระหว่างตรวจ (ต้องรู้ก่อนเริ่ม):
 
 1. contracts `billing.ts:134` มี `'SCHEDULED_CHANGE' | 'ADVANCE_DEAL'` ใน purchase-kind union อยู่แล้วบน ddcdcadf — งาน "เพิ่ม SCHEDULED_CHANGE/ADVANCE_DEAL" ไม่ต้องทำ (audit F26 stale)
 2. `billing-repeat.ts`: profile assert อยู่ที่ `:210` ไม่ใช่ `:209`; proofs `:207-208`; equality `:281`; profile settle `:239-243`; profile sync `:282-286`; Checkout params `:289-295` (journal-hashed ผ่าน `command('checkout', …)` `:200-216`)
-3. DQ6 "แยก Postmark stream" ทำไม่ได้โดยไม่มี env ใหม่: stream เดียวมาจาก `POSTMARK_MESSAGE_STREAM` (`packages/config/src/index.ts:383` default `outbound`); webhook ปฏิเสธ stream อื่น (`postmark-events.service.ts:57`); suppression/monitor/retention/reconcile ทุกตัว key ด้วย stream เดียว (`email-delivery.service.ts:47,53,72,163`, `system-email-delivery.service.ts:41-44`, `email-history-retention`). ทางออกที่ไม่ผิด D-PF-8: **ไม่แยก stream**; ใช้ `Tag: purpose` ที่ส่งอยู่แล้ว (`email-delivery.service.ts:125` — `billing_status` vs `email_verification`) เป็นตัวแยกใน Postmark และแยกในระบบเราด้วย `intentKey`/`purpose` (§9.4)
+3. DQ6 "แยก Postmark stream" ทำไม่ได้โดยไม่มี env ใหม่: stream เดียวมาจาก `POSTMARK_MESSAGE_STREAM` (`packages/config/src/index.ts:409` default `outbound`); webhook ปฏิเสธ stream อื่น (`postmark-events.service.ts:57`); suppression/monitor/retention/reconcile ทุกตัว key ด้วย stream เดียว (`email-delivery.service.ts:47,53,72,163`, `system-email-delivery.service.ts:41-44`, `email-history-retention`). ทางออกที่ไม่ผิด D-PF-8: **ไม่แยก stream**; ใช้ `Tag: purpose` ที่ส่งอยู่แล้ว (`email-delivery.service.ts:125` — `billing_status` vs `email_verification`) เป็นตัวแยกใน Postmark และแยกในระบบเราด้วย `intentKey`/`purpose` (§9.4)
 4. `session.customer_details` มีทั้ง session โหมด `payment` และ `subscription` (audit F17 บอกว่ามีเฉพาะ one-time — ไม่จริง) → ใช้ session เป็นแหล่งแรกทั้งสองทาง, GET Customer เป็น fallback
-5. spec §18.2 R-A8 ให้ "purpose `billing_recipient` ผูก companyId" — ตาราง `EmailVerificationToken` (`schema.prisma:788-811`) ไม่มีคอลัมน์ companyId → ต้องเพิ่มคอลัมน์ additive `companyId String?` (นอกรายการ §9 ที่มีแค่ `BillingAccount`) หรือสร้างตารางใหม่; brief นี้เลือกเพิ่มคอลัมน์ (diff เล็กสุด, ใช้ limiter/index เดิม) — ระบุใน §3
+5. spec §18.2 R-A8 ให้ "purpose `billing_recipient` ผูก companyId" — ตาราง `EmailVerificationToken` (`schema.prisma:792-815`) ไม่มีคอลัมน์ companyId → ต้องเพิ่มคอลัมน์ additive `companyId String?` (นอกรายการ §9 ที่มีแค่ `BillingAccount`) หรือสร้างตารางใหม่; brief นี้เลือกเพิ่มคอลัมน์ (diff เล็กสุด, ใช้ limiter/index เดิม) — ระบุใน §3
 6. `billing-portal-smoke.ts:70-77` และ `billing-notification-smoke.ts:112-115` ทดสอบพฤติกรรมที่ DQ2/R-A7 ยกเลิก → ต้องเขียน assertion ใหม่ (ไม่ใช่แค่แก้ให้ผ่าน) — §6
 7. เอกสาร `mangmee-billing-subscription-spec-th.md:254` ห้าม "ส่ง receipt ซ้ำด้วย Postmark" — brief นี้ส่ง **อีเมลแจ้งพร้อมลิงก์เข้าแอป** (ไม่ใช่ตัวใบเสร็จ) ตาม R-A7 → amend บรรทัดนั้น (§7)
 
@@ -129,7 +131,7 @@ Codes เดิมที่**ยังคง**ข้อความไว้ 1 r
 ### 3.1 Prisma diff (`apps/api/prisma/schema.prisma`)
 
 ```prisma
-model BillingAccount {                       // :9653 — เพิ่มหลัง leaseUntil (:9679) ก่อน createdAt
+model BillingAccount {                       // :9791 — เพิ่มหลัง leaseUntil (:9816) ก่อน createdAt
   // R-A4/R-A7 (§18.2 §9): ผู้รับเอกสารของบริษัท = สำเนาของอีเมลบน Stripe Customer ที่ระบบเราเป็นเจ้าของ;
   // billing ใช้ String ไม่ใช่ enum (prisma-enum-parity: billing columns เป็น String)
   recipientEmail            String?   @db.VarChar(320)
@@ -141,7 +143,7 @@ model BillingAccount {                       // :9653 — เพิ่มหล�
   @@index([recipientEmail])
 }
 
-model EmailVerificationToken {              // :788 — เพิ่มหลัง requestFingerprint (:805)
+model EmailVerificationToken {              // :792 — เพิ่มหลัง requestFingerprint (:809)
   companyId String?                          // proofKind 'BILLING_RECIPIENT' เท่านั้น; ผูก challenge กับบริษัท (R-A8)
   ...
   @@index([companyId, proofKind, status])
@@ -217,7 +219,7 @@ void main().catch(error => { console.error(JSON.stringify({ event: 'backfill_bil
 
 - `recipientSource='ACCOUNT_EMAIL'` = legacy (ผู้รับที่มีอยู่ทุกแถวมาจาก verified account email ของผู้ซื้อตามกติกาเดิม `billing.service.ts:624`)
 - **วิธีรันใน release step** (runbook ไม่มีขั้น "one-off script"; migration-tool image รันได้แค่ `migrate deploy` — runbook :304): รันจากเครื่อง controller ผ่านอุโมงค์ DB หลัง `migrate deploy` ของ release เดียวกันและก่อน customer acceptance:
-  - UAT: `DATABASE_URL="$(infra/uat/db-port-forward.sh --url)" STRIPE_SECRET_KEY=<uat test key> STRIPE_ACCOUNT_ID=<acct> BILLING_MODE=test pnpm --filter @watchdog-bms/api exec tsx src/scripts/backfill-billing-recipients.ts --dry-run` → อ่านผล → รันซ้ำโดยไม่มี `--dry-run` (recipe `cloud-environment-operations.md:632-645`)
+  - UAT: `DATABASE_URL="$(infra/uat/db-port-forward.sh --url)" STRIPE_SECRET_KEY=<uat test key> STRIPE_ACCOUNT_ID=<acct> BILLING_MODE=test pnpm --filter @watchdog-bms/api exec tsx src/scripts/backfill-billing-recipients.ts --dry-run` → อ่านผล → รันซ้ำโดยไม่มี `--dry-run` (recipe `cloud-environment-operations.md:651-664`)
   - Production: recipe memory `prod-bastion-tunnel-recipe` (fetch secret ในเครื่อง + SSM port-forward 55433; **บอก Owner ก่อนเปิดอุโมงค์** เพราะมีเมลแจ้งเตือน; ปิดด้วย `pkill -f session-manager-plugin` + `terminate-session`); `BILLING_MODE=live --yes`; บันทึก summary JSON ใน memory
   - ไม่ใช่ hard gate ของ release: แถวที่ยังว่างจะได้ค่าจาก (1) lazy backfill ใน `emailRecipient.current()` (§4.10) เมื่อผู้ใช้เปิดหน้าแพ็กเกจ, (2) capture ตอนซื้อครั้งถัดไป; อีเมลชำระสำเร็จของแถวว่างใช้ fallback fan-out เจ้าของเดิม (§4.12)
 - ต้องไม่ลงทะเบียนใน `package.json` (กติกา) — เรียกด้วย `tsx` ตรง ๆ ตามข้างบน; ไฟล์เป็น `.ts` ไม่ใช่ `.spec.ts` จึงไม่ติด `spec-suite-coverage`
@@ -1107,14 +1109,14 @@ notifications drain → sendEmail (ผู้รับจากคอลัมน
 5. resend: `POST documents/:id/resend {}` ×3 → 200 (`invoiceSent`, `receiptUpdated` true ครั้งแรก, false ครั้งถัดไปเพราะ fake charge `receipt_email` ตรงแล้ว), fake นับ `POST /invoices/:id/send`===3; ครั้งที่ 4 → 429 `BILLING_RESEND_LIMIT`; fake ให้ `/send` ตอบ 500 → 409 `BILLING_RESEND_UNAVAILABLE` และ counter ไม่เพิ่ม (ตรวจด้วย `limits.inspect`); audit `billing.document.resent` 3 แถว; outbox resend PUBLISHED ×3
 6. bounce: ตั้ง `EmailSuppression` + attempt SUPPRESSED ของ intent ล่าสุด → drain → `recipientBouncedAt`, `recipientBounceNotifiedAt`, event 'อีเมลรับเอกสารส่งไม่ถึง' 1 ครั้ง; ทำ OTP change อีกรอบ → ธงล้าง
 7. quote/checkout กับ recipient drift: quote (snapshot billingEmail=new) → เปลี่ยน `recipientEmail` ใน DB → checkout → `BILLING_QUOTE_STALE`
-8. ผลลัพธ์ JSON `{layer:'real-Nest-HTTP-PostgreSQL-provider-simulation', simulatedProviders:['Stripe','Postmark'], realProviderPayment:false}`; step ใน `.github/workflows/extended-tests.yml` backend suite หลัง `:282`: `BILLING_NO_SETUP_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js`
+8. ผลลัพธ์ JSON `{layer:'real-Nest-HTTP-PostgreSQL-provider-simulation', simulatedProviders:['Stripe','Postmark'], realProviderPayment:false}`; step ใน `.github/workflows/extended-tests.yml` backend suite หลัง `:290`: `BILLING_NO_SETUP_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js`
 
 ### 6.3 Spec ใหม่ + การลงทะเบียน (`spec-suite-coverage.spec.ts:43-75` บังคับ; ห้ามแตะ `package.json`)
 
 | Spec | ทดสอบ | ลงทะเบียน |
 |---|---|---|
-| `apps/api/src/modules/billing/domain/billing-recipient-otp.logic.spec.ts` | digest deterministic; เปลี่ยน companyId/sessionId/email/expiresAt → ไม่ match; code ไม่ใช่ 6 หลัก → false; key ผิด → throw | เพิ่มชื่อใน `scripts/line-ai-whole-chain-acceptance.catalog.mjs` api-behavior args (ข้าง `:370 stripe.client.spec.ts`) |
-| `apps/api/src/modules/billing/billing-recipient-capture.pg.spec.ts` (suffix `.pg.spec.ts` — coverage ยกเว้น) | ใช้ PG จริง (`BILLING_RECIPIENT_TEST_DATABASE_URL` guard แบบ `billing-email-recipient.postgres.spec.ts:11-17`): (1) `recordRecipientCapture` set-if-null + address latest + audit ครั้งเดียว; (2) replay ไม่เขียน; (3) `readRecipientCapture` ข้าม provider เมื่อมีผู้รับ; (4) คอลัมน์ทั้ง 5 + `EmailVerificationToken.companyId` เขียน/อ่านได้ (พิสูจน์ migration=schema); (5) reconciler `reconcileOneTime` กับ stripe stub session `customer_details` → capture (สร้าง `BillingReconcilerService` แบบ `billing-profile-recovery.spec.ts:24`) | `ci.yml` job "Migrations and Boot" หลัง `:778`: `BILLING_RECIPIENT_TEST_DATABASE_URL="$DATABASE_URL" pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/billing-recipient-capture.pg.spec.ts` **และ** `extended-tests.yml` backend step `:281` (DB `watchdog_postmark_ci`) — ci.yml เปลี่ยน → parity main ก่อน UAT all (P0) |
+| `apps/api/src/modules/billing/domain/billing-recipient-otp.logic.spec.ts` | digest deterministic; เปลี่ยน companyId/sessionId/email/expiresAt → ไม่ match; code ไม่ใช่ 6 หลัก → false; key ผิด → throw | เพิ่มชื่อใน `scripts/line-ai-whole-chain-acceptance.catalog.mjs` api-behavior args (ข้าง `:439 stripe.client.spec.ts`) |
+| `apps/api/src/modules/billing/billing-recipient-capture.pg.spec.ts` (suffix `.pg.spec.ts` — coverage ยกเว้น) | ใช้ PG จริง (`BILLING_RECIPIENT_TEST_DATABASE_URL` guard แบบ `billing-email-recipient.postgres.spec.ts:11-17`): (1) `recordRecipientCapture` set-if-null + address latest + audit ครั้งเดียว; (2) replay ไม่เขียน; (3) `readRecipientCapture` ข้าม provider เมื่อมีผู้รับ; (4) คอลัมน์ทั้ง 5 + `EmailVerificationToken.companyId` เขียน/อ่านได้ (พิสูจน์ migration=schema); (5) reconciler `reconcileOneTime` กับ stripe stub session `customer_details` → capture (สร้าง `BillingReconcilerService` แบบ `billing-profile-recovery.spec.ts:24`) | `ci.yml` job "Migrations and Boot" หลัง `:778`: `BILLING_RECIPIENT_TEST_DATABASE_URL="$DATABASE_URL" pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/billing-recipient-capture.pg.spec.ts` **และ** `extended-tests.yml` backend step `:289` (DB `watchdog_postmark_ci`) — ci.yml เปลี่ยน → parity main ก่อน UAT all (P0) |
 | `billing-email-recipient.postgres.spec.ts` (เพิ่ม test) | สาย CUSTOMER_OTP: token USED ของบริษัท/ผู้ใช้ → preview/submit/advance; token ของบริษัทอื่น/ผู้ใช้อื่น/ยัง PENDING/หมด 30 นาที → `BILLING_RECIPIENT_PROOF_INVALID`; proof ถูก op ที่ยังไม่จบอ้าง → INVALID; op แถวเก่า (`proposedJson.emailProof` ไม่มี target) → advance ได้ | มีใน `extended-tests.yml:266` แล้ว |
 | `apps/api/src/modules/billing/application/billing-recipient-otp.service.spec.ts` (unit, mock prisma) | request: ไม่มี customerId → `BILLING_RECIPIENT_UNAVAILABLE`; email เดิม → `UNCHANGED`; limiter คืน >0 → 429; confirm: state machine ทุกแขนง (ไม่พบ/session ต่าง/EXPIRED/ผิด 5 ครั้ง/ถูก/idempotent) | catalog api-behavior |
 | `apps/api/src/modules/billing/application/billing-document-resend.spec.ts` (unit, stub stripe/limits) | inspect→Stripe→consume; 429 ไม่เรียก Stripe; Stripe REJECTED/UNKNOWN → 409 + consume ไม่ถูกเรียก; `receipt_email` เท่ากัน → ไม่ POST charge; ไม่มี recipient → 409; lease ไม่ว่าง → `BILLING_PURCHASE_PENDING`; lease ปล่อยเสมอ | catalog api-behavior |
@@ -1199,7 +1201,7 @@ BILLING_RECIPIENT_TEST_DATABASE_URL=postgresql://…/watchdog pnpm --filter @wat
 3. **R-A5 ก่อน admin recipient change (PR E, A11)**: PR C ถอดการเทียบอีเมล Stripe ที่ quote/checkout/repeat แล้ว → PR E จึงเปลี่ยนผู้รับได้โดยไม่ทำให้การซื้อพัง; ห้าม merge PR E ก่อน PR C
 4. **Stripe email lock (R-A2)**: ห้ามใส่อีเมลที่ไม่ verified ลง Customer — payload ใช้เฉพาะ `quote.billingEmail` (recipient ปัจจุบัน / verified) ✓; ผู้ซื้อที่มี verified email จะไม่ได้แก้อีเมลใน Checkout (AC1 ข้อยกเว้น)
 5. **G27 ต้องพิสูจน์บน UAT test mode**: Checkout ถามอีเมลเมื่อ Customer ไม่มีและเขียนลง Customer; `customer_update.address` never/auto; `/invoices/:id/send` กับใบ paid (test mode ไม่ส่งเมล — ดู `invoice.sent` event); `receipt_email` เปลี่ยนแล้วส่ง; PROMPTPAY_RENEW binding เมื่ออีเมลมาจาก Checkout (RV20; fallback §4.7)
-6. **UAT Postmark allowlist** (`POSTMARK_UAT_ALLOWED_RECIPIENTS` `config/index.ts:386`): อีเมลที่พิมพ์ที่ Checkout บน UAT ต้องอยู่ใน allowlist มิฉะนั้น attempt CONFIG/PERMANENT → ต้องใช้ allowlist ในแผนทดสอบ; `assertEmailOtpDeliveryReady` ปฏิเสธ OTP ผู้รับนอก allowlist ด้วย `EMAIL_DELIVERY_UNAVAILABLE` (ข้อความบอกชัด)
+6. **UAT Postmark allowlist** (`POSTMARK_UAT_ALLOWED_RECIPIENTS` `config/index.ts:412`): อีเมลที่พิมพ์ที่ Checkout บน UAT ต้องอยู่ใน allowlist มิฉะนั้น attempt CONFIG/PERMANENT → ต้องใช้ allowlist ในแผนทดสอบ; `assertEmailOtpDeliveryReady` ปฏิเสธ OTP ผู้รับนอก allowlist ด้วย `EMAIL_DELIVERY_UNAVAILABLE` (ข้อความบอกชัด)
 7. **Stream เดียว (DQ6)**: hard bounce ของอีเมลผู้รับทำให้ `EmailSuppression` บล็อกอีเมลนั้นทั้ง OTP/claim/billing บน stream นี้ — ยอมรับ (อีเมลตาย); แยกด้วย Tag ใน Postmark dashboard
 8. **DB ↔ Stripe drift**: แอดมินแก้อีเมลใน Stripe Dashboard → DB ไม่รู้; `emailRecipient.current()` แสดงทั้ง `email` (Stripe) และ `stored` (DB) ให้ UI/แอดมินเห็นความต่าง; ไม่มี auto-sync (ตั้งใจ — op เท่านั้นที่เขียนทั้งสอง)
 9. **Op ค้างข้าม release**: `proposedJson` แบบเก่า (`emailProof`) ยัง advance ได้ผ่าน `targetOf` ✓; snapshot quote เก่าที่มี `emailProof` ถูกละเลย ✓; attempt ที่ checkout แล้วก่อน deploy ยัง apply ได้ (capture set-if-null) ✓
