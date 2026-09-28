@@ -33,19 +33,19 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
   const [data,setData]=useState<BillingAdjustments|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState<ReturnType<typeof documentError>|null>(null),[opening,setOpening]=useState(false);
   const [adjustmentsOpen,setAdjustmentsOpen]=useState(!admin);
   const [resend,setResend]=useState<{busy:boolean;result:BillingDocumentResendResult|null;error:string}>({busy:false,result:null,error:''});
-  const [endReview,setEndReview]=useState<BillingEndPackageReview|null>(null),[endOpen,setEndOpen]=useState(false),[endReason,setEndReason]=useState(''),[endPassword,setEndPassword]=useState(''),[endBusy,setEndBusy]=useState(false),[endMessage,setEndMessage]=useState('');
+  const [endReview,setEndReview]=useState<BillingEndPackageReview|null>(null),[endReviewError,setEndReviewError]=useState(false),[endOpen,setEndOpen]=useState(false),[endReason,setEndReason]=useState(''),[endPassword,setEndPassword]=useState(''),[endBusy,setEndBusy]=useState(false),[endMessage,setEndMessage]=useState('');
   // Purchase without setup PR E (R-E1/R-E2): document recipient + resend.
-  const [recipientReview,setRecipientReview]=useState<BillingRecipientAdminReview|null>(null);
-  const [resendOpen,setResendOpen]=useState(false),[resendReason,setResendReason]=useState(''),[resendPassword,setResendPassword]=useState(''),[resendBusy,setResendBusy]=useState(false),[resendMessage,setResendMessage]=useState(''),[resendResult,setResendResult]=useState<BillingDocumentResendResult|null>(null);
+  const [recipientReview,setRecipientReview]=useState<BillingRecipientAdminReview|null>(null),[recipientReviewError,setRecipientReviewError]=useState(false);
+  const [resendOpen,setResendOpen]=useState(false),[resendReason,setResendReason]=useState(''),[resendPassword,setResendPassword]=useState(''),[resendSupportRequestId,setResendSupportRequestId]=useState(''),[resendBusy,setResendBusy]=useState(false),[resendMessage,setResendMessage]=useState(''),[resendResult,setResendResult]=useState<BillingDocumentResendResult|null>(null);
   const generation=useRef(0);
   useEffect(()=>{
-    if(!admin||preview)return;let active=true;setEndReview(null);
-    void authedApiFetch<BillingEndPackageReview>(`${base}/invoices/${encodeURIComponent(invoiceId)}/end-package`,{cache:'no-store',suppressErrorToast:true}).then(value=>{if(active)setEndReview(value);}).catch(()=>{});
+    if(!admin||preview)return;let active=true;setEndReview(null);setEndReviewError(false);
+    void authedApiFetch<BillingEndPackageReview>(`${base}/invoices/${encodeURIComponent(invoiceId)}/end-package`,{cache:'no-store',suppressErrorToast:true}).then(value=>{if(active)setEndReview(value);}).catch(()=>{if(active)setEndReviewError(true);});
     return()=>{active=false;};
   },[admin,preview,base,invoiceId,reload]);
   useEffect(()=>{
-    if(!admin||preview)return;let active=true;setRecipientReview(null);
-    void authedApiFetch<BillingRecipientAdminReview>(`${base}/invoices/${encodeURIComponent(invoiceId)}/recipient-review`,{cache:'no-store',suppressErrorToast:true}).then(value=>{if(active)setRecipientReview(value);}).catch(()=>{});
+    if(!admin||preview)return;let active=true;setRecipientReview(null);setRecipientReviewError(false);
+    void authedApiFetch<BillingRecipientAdminReview>(`${base}/invoices/${encodeURIComponent(invoiceId)}/recipient-review`,{cache:'no-store',suppressErrorToast:true}).then(value=>{if(active)setRecipientReview(value);}).catch(()=>{if(active)setRecipientReviewError(true);});
     return()=>{active=false;};
   },[admin,preview,base,invoiceId,reload]);
   async function adminResend(){
@@ -53,8 +53,9 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
     const post=<T,>(path:string,body:unknown)=>authedApiFetch<T>(path,{method:'POST',cache:'no-store',suppressErrorToast:true,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     try{
       await post(`${base}/reauthenticate`,{password:resendPassword});
-      const result=await post<BillingDocumentResendResult>(`${base}/invoices/${encodeURIComponent(invoiceId)}/resend`,{reason:resendReason});
-      setResendResult(result);setResendOpen(false);setResendReason('');
+      const result=await post<BillingDocumentResendResult>(`${base}/invoices/${encodeURIComponent(invoiceId)}/resend`,
+        {reason:resendReason,...resendSupportRequestId.trim()?{supportRequestId:resendSupportRequestId.trim()}:{}});
+      setResendResult(result);setResendOpen(false);setResendReason('');setResendSupportRequestId('');
       setResendMessage(`ส่งใบแจ้งหนี้ไปที่ ${result.recipientEmail} แล้ว ${result.receiptUpdated?'และส่งใบเสร็จอีกครั้งแล้ว':'ใบเสร็จไม่ส่งซ้ำเพราะอีเมลไม่เปลี่ยน ให้เปิดใบเสร็จแล้วส่งลิงก์ให้ลูกค้าแทน'}`);
     }catch(cause){setResendMessage(apiErrorMessage(cause));}
     finally{setResendPassword('');setResendBusy(false);}
@@ -136,13 +137,15 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
             <label className="block">รหัสผ่านปัจจุบัน<input className={billingField} type="password" autoComplete="current-password" required maxLength={1024} value={endPassword} disabled={endBusy} onChange={e=>setEndPassword(e.target.value)}/></label>
             <div className="flex flex-wrap gap-3"><button className={button} disabled={endBusy||!endReason.trim()||!endPassword} aria-busy={endBusy}>ยืนยันยุติแพ็กเกจ</button><button type="button" className={button} disabled={endBusy} onClick={()=>setEndOpen(false)}>ยกเลิก</button></div>
           </form>}</div>}
+        {endReviewError&&<p role="alert" className="mt-3 text-red-700">ยังโหลดข้อมูลส่วนนี้ไม่ได้ <button type="button" className="min-h-11 underline" onClick={()=>setReload(n=>n+1)}>ลองอีกครั้ง</button></p>}
         {endMessage&&<p role="status" className="mt-3">{endMessage}</p>}</details>}
-      {admin&&recipientReview&&<details className="rounded-xl border border-gray-200 bg-white p-5 sm:p-6" open><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เอกสารและผู้รับเอกสาร</summary>
-        <div className="space-y-3 py-3">
+      {admin&&(recipientReview||recipientReviewError)&&<details className="rounded-xl border border-gray-200 bg-white p-5 sm:p-6" open><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เอกสารและผู้รับเอกสาร</summary>
+        {recipientReview?<div className="space-y-3 py-3">
           <p className="text-gray-600">อีเมลผู้รับเอกสารปัจจุบัน: {recipientReview.currentEmail??'ยังไม่มี'} · ที่มา: {billingRecipientSourceLabel(recipientReview.currentSource)}</p>
           {recipientReview.bouncedAt&&<p className="text-red-700">อีเมลนี้ตีกลับเมื่อ {time(recipientReview.bouncedAt)}</p>}
           {!resendOpen?<button className={button} onClick={()=>setResendOpen(true)}>ส่งเอกสารซ้ำ</button>:<form className="space-y-3" onSubmit={e=>{e.preventDefault();void adminResend();}}>
             <label className="block">เหตุผลภายใน (ลูกค้าไม่เห็น)<textarea className={billingField} required maxLength={500} value={resendReason} disabled={resendBusy} onChange={e=>setResendReason(e.target.value)}/></label>
+            <div><label className="block" htmlFor="document-resend-support-request">เลขคำขอคุยกับเจ้าหน้าที่ (ถ้ามี)</label><input id="document-resend-support-request" className={billingField} maxLength={64} value={resendSupportRequestId} disabled={resendBusy} onChange={e=>setResendSupportRequestId(e.target.value)}/></div>
             <label className="block">รหัสผ่านปัจจุบัน<input className={billingField} type="password" autoComplete="current-password" required maxLength={1024} value={resendPassword} disabled={resendBusy} onChange={e=>setResendPassword(e.target.value)}/></label>
             <div className="flex flex-wrap gap-3"><button className={button} disabled={resendBusy||!resendReason.trim()||!resendPassword} aria-busy={resendBusy}>ส่งอีกครั้ง</button><button type="button" className={button} disabled={resendBusy} onClick={()=>setResendOpen(false)}>ยกเลิก</button></div>
           </form>}
@@ -150,7 +153,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
           {resendResult&&<button className={button} disabled={opening} onClick={()=>void open('receipt')}>เปิดใบเสร็จรับเงิน</button>}
           {recipientReview.canChange?<Link className={billingLink} href={`${base}/invoices/${encodeURIComponent(invoiceId)}/recipient`}>เปลี่ยนอีเมลผู้รับเอกสาร</Link>
             :recipientReview.blockedReason&&<p className="text-gray-600">{{BILLING_RECIPIENT_BUSY:'บริษัทมีรายการซื้อ คำสั่งต่ออายุ หรือคำขอเปลี่ยนผู้รับของลูกค้าค้างอยู่ รอให้เสร็จก่อนเปลี่ยนอีเมลผู้รับ',BILLING_RECIPIENT_NO_CUSTOMER:'บริษัทนี้ยังไม่มีบัญชีลูกค้าใน Stripe จึงยังไม่มีผู้รับเอกสารให้เปลี่ยน'}[recipientReview.blockedReason]??'ยังเปลี่ยนผู้รับเอกสารไม่ได้ในตอนนี้'}</p>}
-        </div>
+        </div>:<p role="alert" className="py-3 text-red-700">ยังโหลดข้อมูลส่วนนี้ไม่ได้ <button type="button" className="min-h-11 underline" onClick={()=>setReload(n=>n+1)}>ลองอีกครั้ง</button></p>}
       </details>}
     </>}
     <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงสำหรับตรวจสอบ</summary><p className="break-all">รหัสรายการ ใช้ค้นประวัติในระบบ: {invoiceId}</p></details>
