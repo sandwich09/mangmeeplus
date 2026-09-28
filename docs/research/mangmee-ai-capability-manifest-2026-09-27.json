@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
-  "sourceRevision": "221575c455596e765f4beb23d62ca8f631ac7bff",
-  "checkoutBranch": "claude/mangmee-ai-advisor-fixes5c",
+  "sourceRevision": "ca06479fb172d9710366ba8cf9fc0a541870753b",
+  "checkoutBranch": "claude/mangmee-ai-advisor-fixes6b",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -69,7 +69,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-expense-daily-closing.use-case.ts",
-      "sha256": "3186757de80fecdc17905a16e7b2cf6d6bc2e07389757417419542197c900b13"
+      "sha256": "dc8365b1baca1ab9d972845fc4377b621a06a89e452d35c62c4dd781d4722278"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-procurement-ledger-tools.use-case.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-28T04:28:51.177Z",
-  "manifestDigest": "386343c277cf9d7848bc50acb9e4543756a967a69cf01fe67491b2e1b1617070"
+  "generatedAt": "2026-09-28T05:48:31.143Z",
+  "manifestDigest": "b8257f4931785a1a593e373772ac9a1bfeb38d9b4d21061aafb1d9779431293d"
 }
