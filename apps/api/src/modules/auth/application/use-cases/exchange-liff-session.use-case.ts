@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import type { PlanTermLockReason } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { requiredWebAppBase } from '../../../../common/http/public-api-base';
@@ -9,6 +10,8 @@ import { AuthRateLimitService } from '../auth-rate-limit.service';
 import { LineIdTokenService } from '../line-id-token.service';
 import { lineHandoffUrl, resolveLineHandoffTarget } from '../../domain/logic/line-handoff.logic';
 import { MintLineHandoffTokenUseCase } from './mint-line-handoff-token.use-case';
+import { canManagePlan } from '../../../access-control/domain/logic/plan-manager.logic';
+import { planTermLockReason } from '../../../system-partner-management/domain/logic/plan-term.logic';
 
 /**
  * Spec §15.2 B-07. Owner decision 2026-09-06: the shop's own overview, not the upload form —
@@ -23,7 +26,7 @@ export type ExchangeLiffSessionResult =
   | { handoffUrl: string }
   /** No linked identity exists — the page may offer signup. A revoked identity is refused. */
   | { needsSignup: true }
-  | { needsSelection: true; companies: Array<{ id: string; name: string }> }
+  | { needsSelection: true; companies: Array<{ id: string; name: string; lockReason?: PlanTermLockReason; canManagePlan?: boolean }> }
   | { reason: LiffSessionBlockedReason };
 
 export type ExchangeLiffSessionCommand = {
@@ -116,11 +119,30 @@ export class ExchangeLiffSessionUseCase {
         { company: { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } } },
       ] },
       orderBy: { createdAt: 'asc' },
-      select: { companyId: true, company: { select: { name: true, status: true, planTerm: { select: { termEndsAt: true, termDisabledAt: true } } } } },
+      select: {
+        companyId: true,
+        company: { select: { name: true, status: true, planTerm: { select: { termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } } } },
+        roles: { where: { role: { status: 'ACTIVE' } }, select: { role: { select: { permissions: { select: { permission: { select: { key: true } } } } } } } },
+      },
     });
 
+    // Same "locked" boundary `resolveLineHandoffTarget` applies: an ended term or the sweep's lock.
+    const now = new Date();
+    const isLocked = (membership: typeof memberships[number]) =>
+      (membership.company.status === 'DISABLED' && !!membership.company.planTerm?.termDisabledAt)
+      || (membership.company.status === 'ACTIVE' && !!membership.company.planTerm?.termEndsAt && membership.company.planTerm.termEndsAt <= now);
+    const lockInfo = (membership: typeof memberships[number]) => isLocked(membership) ? {
+      lockReason: membership.company.planTerm ? planTermLockReason(membership.company.planTerm) : 'trial_ended' as const,
+      canManagePlan: canManagePlan(membership.roles),
+    } : {};
+
     const destination = (membership: typeof memberships[number]) => {
-      const targetPath = resolveLineHandoffTarget(membership.companyId, `/companies/${membership.companyId}/${LIFF_START_TARGET_PATH}`, membership.company);
+      // R-C3: a locked shop lands its plan manager on the package page directly (Q5); everyone else
+      // keeps the locked shell's /renew, which `resolveLineHandoffTarget` still enforces below.
+      const wanted = isLocked(membership) && canManagePlan(membership.roles)
+        ? `/companies/${membership.companyId}/billing?channel=line`
+        : `/companies/${membership.companyId}/${LIFF_START_TARGET_PATH}`;
+      const targetPath = resolveLineHandoffTarget(membership.companyId, wanted, membership.company, now);
       return targetPath ? { companyId: membership.companyId, targetPath } : { reason: 'suspended' as const };
     };
 
@@ -140,7 +162,7 @@ export class ExchangeLiffSessionUseCase {
     if (current) return destination(current);
     return {
       needsSelection: true,
-      companies: memberships.map((membership) => ({ id: membership.companyId, name: membership.company.name })),
+      companies: memberships.map((membership) => ({ id: membership.companyId, name: membership.company.name, ...lockInfo(membership) })),
     };
   }
 
