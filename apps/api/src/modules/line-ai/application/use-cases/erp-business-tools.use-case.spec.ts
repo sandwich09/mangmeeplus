@@ -636,6 +636,16 @@ describe('ExpenseGetBreakdownTool', () => {
       assert.equal((result.data as any).queryApplied.filters.categoryName, 'ค่าน้ำมัน');
     });
 
+    // batch 9a real repro, through the real tool: the model itself sent categoryName "ค่าเดินทาน"
+    // (one Thai character off "ค่าเดินทาง") calling this tool, not a user typo forwarded verbatim.
+    it('resolves the model\'s one-character miswrite of a category name to its id', async () => {
+      const source = makeNamedSource([{ id: 'cat1', name: 'ค่าเดินทาง' }, { id: 'cat2', name: 'ค่าน้ำมัน' }], []);
+      const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read'] }, { categoryName: 'ค่าเดินทาน' } as any);
+      assert.equal(result.status, 'ok');
+      assert.equal(source.filters[0].expenseCategoryId, 'cat1');
+      assert.equal((result.data as any).queryApplied.filters.categoryName, 'ค่าเดินทาง');
+    });
+
     it('returns a structured ambiguity for several vendor name matches', async () => {
       const source = makeNamedSource([], [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }]);
       const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read'] }, { vendorName: 'สมใจ' } as any);
