@@ -7249,16 +7249,28 @@ export class ProcessLineWebhookUseCase {
 
   /**
    * Phase-0 correlated turn summary after response/delivery. Every field is the ACTUAL observed value
-   * or an explicit `null` — nothing invented: prepared-plan version is the forwarded request's (Phase 2,
-   * usually null); `lane` is null NOT because lanes are unimplemented (the prepared simple-read lane is
-   * live behind LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES) but because the gateway RESPONSE does not carry
-   * which internal lane (prepared simple-read vs full agentic) served the turn — that is observable only
-   * in the gateway's own `line.ai.prepared_simple_read.*` logs, so the API summary cannot truthfully
-   * populate it here; model provider and ids are derived from the response's `modelLineage` and usage
-   * entries; usage token totals appear only when the gateway reported them; cost is null (metered
-   * elsewhere in recordCompanyAiUsage, not on the response). `fallbackReason` is a DISTINCT field and is
-   * always null here for the SAME reason — a prepared-plan → full-agentic downgrade is not exposed on the
-   * response, and it is deliberately NOT conflated with `refused`/`refusalReason`/`errorCode`.
+   * or an explicit `null` — nothing invented. Prepared-plan version is the forwarded request's. Model
+   * provider and ids come from the response's `modelLineage` and usage entries; usage token totals
+   * appear only when the gateway reported them.
+   *
+   * `lane` is derived from what the turn response carries (expense-advisor plan P7):
+   * - 'prepared': a simple_grounded prepared plan was forwarded and the turn made NO model call —
+   *   the gateway answered from its deterministic formatter.
+   * - 'semantic': the semantic path ran — a planner/compose call (usage tag line.loop or
+   *   line.compose), or semantic coverage without a prepared answer (a comparison, name resolution or
+   *   scope reply the gateway rendered without a model call).
+   * - 'other': anything else, e.g. the legacy orchestrator. The advisor direct answer never reaches
+   *   this summary: it is delivered before any gateway turn.
+   *
+   * `fallbackReason` is the first non-handled semantic coverage reasonCode, else
+   * DETERMINISTIC_FALLBACK_RENDERED when a model-free fallback answered an item, else null. It stays
+   * distinct from `refused`/`refusalReason`/`errorCode`. A prepared plan that was forwarded but not
+   * used shows as preparedPlanVersion set with lane 'semantic'.
+   *
+   * `costSatang` stays null. The authoritative cost is priced when each model call settles, against
+   * that invocation's pinned tariff (settleAiBudgetStep / recordCompanyAiUsage), and stored per call in
+   * AiUsageEvent keyed by requestId. The turn flow never receives that settled amount, and re-pricing
+   * here could disagree with the ledger — join AiUsageEvent on requestId for per-turn cost.
    */
   private emitTurnSummary(input: {
     webhookEventId: string;
@@ -7278,18 +7290,28 @@ export class ProcessLineWebhookUseCase {
       for (const entry of usage ?? []) if (entry?.modelId) modelIdSet.add(entry.modelId);
       const modelIds = modelIdSet.size > 0 ? [...modelIdSet] : null;
       const modelProvider = lineage?.[0]?.provider ?? null;
+      const usageTags = new Set((usage ?? []).map((entry) => entry?.tag).filter((tag): tag is string => typeof tag === 'string'));
+      const coverage = Array.isArray(response.semanticCoverage) ? response.semanticCoverage : [];
+      const semanticModelCall = usageTags.has('line.loop') || usageTags.has('line.compose');
+      const preparedForwarded = input.request.preparedPlan?.responseMode === 'simple_grounded';
+      const lane = semanticModelCall ? 'semantic'
+        : preparedForwarded && usageTags.size === 0 && !response.refused ? 'prepared'
+          : coverage.length > 0 && usageTags.size === 0 ? 'semantic'
+            : 'other';
+      const fallbackReason = coverage.find((item) => item?.status !== 'handled' && item?.reasonCode)?.reasonCode
+        ?? (coverage.some((item) => item?.reasonCode === 'DETERMINISTIC_FALLBACK_RENDERED') ? 'DETERMINISTIC_FALLBACK_RENDERED' : null);
       this.logger.log({
         msg: 'line.ai.turn_summary',
         surface: 'employee_oa',
         webhookEventId: input.webhookEventId,
         requestId: input.requestId,
         preparedPlanVersion: input.request.preparedPlan?.version ?? null,
-        lane: null,
+        lane,
         intent: response.intent,
         refused: response.refused,
         refusalReason: response.refusalReason ?? null,
         errorCode: response.errorCode ?? null,
-        fallbackReason: null,
+        fallbackReason,
         modelProvider,
         modelIds,
         modelCallCount: response.modelCallCount ?? null,
