@@ -19,6 +19,7 @@ import { SetSharedLineCredentialUseCase } from './application/use-cases/set-shar
 import { ListPartnerMembersUseCase } from './application/use-cases/list-partner-members.use-case';
 import { PartnerMemberLineUnlinkUseCase } from './application/use-cases/partner-member-line-unlink.use-case';
 import { SetPartnerMemberContactUseCase } from './application/use-cases/set-partner-member-contact.use-case';
+import { SetPartnerOwnerNameUseCase } from './application/use-cases/set-partner-owner-name.use-case';
 import { PartnerMemberPasswordResetUseCase } from './application/use-cases/partner-member-password-reset.use-case';
 import { PartnerMemberPasswordRevealUseCase } from './application/use-cases/partner-member-password-reveal.use-case';
 import { PartnerMemberLineLinkTokenUseCase } from './application/use-cases/partner-member-line-link-token.use-case';
@@ -73,6 +74,7 @@ import { SystemPackageChangeController } from './presentation/http/system-packag
     LookupUsersUseCase,
     PartnerMemberLineUnlinkUseCase,
     SetPartnerMemberContactUseCase,
+    SetPartnerOwnerNameUseCase,
     PartnerMemberPasswordResetUseCase,
     PartnerMemberPasswordRevealUseCase,
     PartnerMemberLineLinkTokenUseCase,
