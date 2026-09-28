@@ -62,7 +62,7 @@ const TERM_RECOVERY_ROUTES = new Set([
   'PATCH /v1/auth/me/contact', 'POST /v1/auth/me/password/set',
 ]);
 
-// Account email proof is a prerequisite for payment, including after a term hold.
+// Account email OTP stays reachable for the optional backup login (R-A6); payment no longer requires it.
 // Keep this exact: other account mutations do not inherit recovery access.
 export function isAccountEmailRecoveryRoute(method: string, path: string): boolean {
   const clean = cleanRequestPath(path).toLowerCase(), prefix = '/v1/auth/account/email/otp';
@@ -100,7 +100,7 @@ export function isBillingRecoveryRoute(method: string, path: string): boolean {
   if ((method === 'GET' || method === 'POST') && /^\/v1\/companies\/[^/]+\/package-change-requests$/.test(clean)) return true;
   const prefix = '/v1/companies/[^/]+/billing';
   return method === 'GET' ? new RegExp(`^${prefix}(?:/history|/capacity|/recipient(?:/[^/]+)?|/attempts/[^/]+|/collection/[^/]+|/invoices/[^/]+/adjustments/(?:refunds|credit-notes))?$`).test(clean)
-    : method === 'POST' && new RegExp(`^${prefix}/(?:quote|checkout|portal|refresh|recipient/preview|recipient/[^/]+/(?:submit|cancel)|collection/preview|collection/[^/]+/(?:submit|withdraw|capacity)|attempts/[^/]+/(?:resume|cancel|capacity)|documents/[^/]+/open)$`).test(clean);
+    : method === 'POST' && new RegExp(`^${prefix}/(?:quote|checkout|portal|refresh|recipient/preview|recipient/otp/(?:request|confirm)|recipient/[^/]+/(?:submit|cancel)|collection/preview|collection/[^/]+/(?:submit|withdraw|capacity)|attempts/[^/]+/(?:resume|cancel|capacity)|documents/[^/]+/(?:open|resend))$`).test(clean);
 }
 
 function isTermExpiryExempt(path: string): boolean {

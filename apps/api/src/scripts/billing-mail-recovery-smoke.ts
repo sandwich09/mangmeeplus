@@ -35,6 +35,20 @@ export async function checkBillingMailRecovery(input:Parameters<typeof checkBill
     await input.drainNotifications();assert.equal((await latest(first.id)).status,'ACCEPTED');assert.equal(sent(ready.id),1);await input.drainNotifications();assert.equal(sent(ready.id),1);
     assert.equal((await get(first.id)).body.recoveryBlockedReason,'ALREADY_ACCEPTED');assert.equal((await db.outboxEvent.findUniqueOrThrow({where:{id:first.id}})).attempts,3);
 
+    // R-A7: a document-recipient row (no user) is reviewed and recovered from the recipient column.
+    const storedRecipient=(await db.billingAccount.findUniqueOrThrow({where:{id:account.id}})).recipientEmail;
+    await db.billingAccount.update({where:{id:account.id},data:{recipientEmail:user.email}});
+    try{
+      const column=await db.outboxEvent.create({data:{companyId,aggregateType:'BillingInvoice',aggregateId:input.invoiceId,eventType:'billing.status.email',eventKey:`mail-recovery:${randomUUID()}`,
+        status:'DEAD',attempts:3,lastError:'authentication',payloadJson:{schemaVersion:2,data:{recipientUserId:null}}}});ids.push(column.id);
+      await db.emailSendAttempt.create({data:{id:randomUUID(),intentKey:`billing-notice:${column.id}`,generation:1,purpose:'billing_status',provider:'postmark',providerServerId:9191301,
+        stream:'outbound',recipient:user.email!,status:'CONFIG',errorCode:'authentication'}});
+      const columnView=await get(column.id);assert.equal(columnView.status,200,JSON.stringify(columnView));
+      assert.equal(columnView.body.recipientUserId,null);assert.equal(columnView.body.recipientName,null);assert.equal(columnView.body.canRetry,true,JSON.stringify(columnView.body));
+      await prepare(column.id);const columnReady=await latest(column.id);assert.equal(columnReady.status,'READY');assert.equal(columnReady.recipient,user.email);
+      await input.drainNotifications();assert.equal((await latest(column.id)).status,'ACCEPTED');assert.equal(sent(columnReady.id),1);
+    }finally{await db.billingAccount.update({where:{id:account.id},data:{recipientEmail:storedRecipient}});}
+
     const denied=await queue();await prepare(denied.id);const reserved=await latest(denied.id);
     await db.billingOperatorScope.update({where:{id:scope.id},data:{expiresAt:new Date(0)}});await input.drainNotifications();assert.equal(sent(reserved.id),0);
     assert.equal((await db.outboxEvent.findUniqueOrThrow({where:{id:denied.id}})).status,'DEAD');assert.equal((await latest(denied.id)).status,'READY');
@@ -103,7 +117,7 @@ export async function checkBillingMailRecovery(input:Parameters<typeof checkBill
     }
     return ['admin-postmark-original-intent-ready-generation-replay-and-no-counter-reset','admin-postmark-revoked-operator-parks-ready-and-new-review-resumes-same-generation',
       'admin-postmark-unknown-scoped-lookup-without-resend-and-observed-resolution','admin-postmark-empty-lookup-duplicate-warning-and-late-positive-fence','admin-postmark-recipient-suppression-generation-cap-and-stale-preview',
-      'admin-postmark-approved-content-expiry-and-server-mapping-fences',
+      'admin-postmark-approved-content-expiry-and-server-mapping-fences','admin-postmark-document-recipient-row-reviewed-and-recovered-from-column',
       ...(browser?['browser-admin-mail-retry-and-lookup-command-reload-return-mobile']:[])];
   }finally{
     if(browser&&viewport)await browser.page.setViewportSize(viewport);await db.billingOperatorScope.update({where:{id:scope.id},data:{expiresAt:scope.expiresAt}});

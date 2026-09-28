@@ -52,7 +52,9 @@ export async function checkBillingPlanChange(input: {
   Object.assign(snapshot,{priceId:initialPrice,policy,termHash:termProjectionHash(term),termVersion:term.updatedAt.toISOString()});
   Object.assign(snapshot.quote,{quoteId,companyId,companyName:'Synthetic scheduled change',policyRevision:revision.id,offer,subtotalSatang:initialAmount,taxSatang:0,totalSatang:initialAmount});
   const json=snapshot as unknown as Prisma.InputJsonValue;
-  await client.billingAccount.update({where:{id:account.id},data:{termProjectionHash:snapshot.termHash}});
+  await client.billingAccount.update({where:{id:account.id},data:{termProjectionHash:snapshot.termHash,
+    // R-A5: repeat/upgrade judge recipient drift against this column, set as the first payment would have.
+    recipientEmail:snapshot.quote.billingEmail,recipientSource:'ACCOUNT_EMAIL'}});
   await client.billingQuote.create({data:{id:quoteId,companyId,initiatingUserId:input.userId,policyRevisionId:revision.id,expiresAt:new Date(start*1000),snapshotJson:json}});
   await client.billingAttempt.create({data:{id:attemptId,billingAccountId:account.id,initiatingUserId:input.userId,quoteId,channel:'web',idempotencyKey:randomUUID(),
     requestHash:'synthetic-upgrade-history',quoteSnapshot:json,policyRevisionId:revision.id,consentRevision:policy.consentRevision,consentAt:new Date(start*1000),status:'COMPLETED',subscriptionId:subId}});

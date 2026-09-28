@@ -50,6 +50,15 @@ export function renderBillingStatusEmail(companyName: string, href: string): Ren
     html: layout(title, paragraphs, 'ดูแพ็กเกจและประวัติการชำระเงิน', href) };
 }
 
+/** R-A8: to the previous document recipient. Never names the new address, so the old mailbox learns nothing new. */
+export function renderBillingRecipientChangedEmail(companyName: string, href: string): RenderedEmail {
+  const title = 'อีเมลรับเอกสารของบริษัทถูกเปลี่ยน', paragraphs = [
+    `บริษัท ${companyName} เปลี่ยนอีเมลรับเอกสารการชำระเงินแล้ว อีเมลนี้จะไม่ได้รับเอกสารใบถัดไป`,
+    'หากไม่ได้ทำรายการนี้ กรุณาติดต่อทีมงานทันทีผ่านหน้าบริษัท'];
+  return { subject: title, text: `${title}\n\n${paragraphs.join('\n')}\n\n${href}`,
+    html: layout(title, paragraphs, 'เปิดหน้าบริษัท', href) };
+}
+
 function layout(
   title: string,
   paragraphs: readonly string[],

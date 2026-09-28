@@ -16,7 +16,8 @@ import { StripeClient, stripeId, verifyStripeSignature, type StripeObject } from
 import { hashBilling } from '../domain/billing-policy';
 import { paidInvoiceEvidence, termProjectionHash, type PaidInvoiceEvidence } from '../domain/paid-invoice';
 import { BillingService, type BillingSnapshot } from './billing.service';
-import { stripeBillingProfile, stripeBillingProfileMatches } from './billing-company-profile';
+import { stripeCustomerSyncPayload, stripeCustomerSynced } from './billing-company-profile';
+import { readRecipientCapture, recordRecipientCapture, type RecipientCapture } from './billing-recipient-capture';
 import { restartFits, restartSource } from './billing-restart';
 import { observeBillingCharges, recordBillingFinancials } from './billing-financial';
 import { grantPaidPackageReceipts } from './billing-receipt-grants';
@@ -66,8 +67,8 @@ export class BillingReconcilerService {
     const customer = await this.stripe.request('GET', `/customers/${account.customerId}`);
     if (customer.id !== account.customerId || customer.metadata?.billingAccountId !== account.id) throw new Error('billing.customer_binding');
     const updated = marker.confirmed ? customer : await this.stripe.request('POST', `/customers/${account.customerId}`,
-      stripeBillingProfile(snapshot.quote.billingProfile), `mm:${attempt.id}:billing-profile`);
-    if (updated.id !== account.customerId || updated.metadata?.billingAccountId !== account.id || !stripeBillingProfileMatches(updated, snapshot.quote.billingProfile))
+      stripeCustomerSyncPayload(snapshot), `mm:${attempt.id}:billing-profile`);
+    if (updated.id !== account.customerId || updated.metadata?.billingAccountId !== account.id || !stripeCustomerSynced(updated, snapshot))
       throw new Error('billing.profile_sync_unconfirmed');
     await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
@@ -242,6 +243,7 @@ export class BillingReconcilerService {
       }
       const restart = attempt ? (attempt.quoteSnapshot as unknown as BillingSnapshot).restart : undefined;
       let subscriptionId = account.baseSubscriptionId ?? hintedSubscriptionId;
+      let capture: RecipientCapture | null = null;
       if (attempt) {
         const sessions = attempt.checkoutSessionId ? [await this.stripe.request('GET', `/checkout/sessions/${attempt.checkoutSessionId}`)] :
           (await this.stripe.list('/checkout/sessions', { customer: account.customerId })).filter((s) => s.metadata?.billingAttemptId === attempt!.id);
@@ -251,6 +253,8 @@ export class BillingReconcilerService {
           !['open', 'complete', 'expired'].includes(session.status) ||
           session.client_reference_id !== attempt.id || stripeId(session.customer) !== account.customerId ||
           session.metadata?.billingAccountId !== account.id || session.metadata?.billingAttemptId !== attempt.id) throw new Error('billing.session_binding');
+        // R-A4: only a completed session can pay an INITIAL invoice; read its recipient before any transaction.
+        if (session.status === 'complete') capture = await readRecipientCapture(this.stripe, account, session);
         if (session.status === 'expired' && !session.subscription) {
           await this.prisma.client.$transaction(async (tx) => {
             await lockPlanTermCompany(tx, account.companyId);
@@ -323,7 +327,7 @@ export class BillingReconcilerService {
           if (!Number.isSafeInteger(serviceStart)) throw new Error('billing.invoice_period_missing');
           const invoiceSnapshot = mapped?.contractSnapshot ? mapped.contractSnapshot as unknown as BillingSnapshot :
             invoice.billing_reason === 'subscription_create' ? snapshot : await this.contractSnapshot(account.id, new Date(serviceStart * 1000), snapshot);
-          await this.verifyAndApplyInvoice(account,contract,invoice,subscription,lines,invoiceSnapshot,leaseToken);
+          await this.verifyAndApplyInvoice(account,contract,invoice,subscription,lines,invoiceSnapshot,leaseToken,undefined,capture);
         } catch (error) { await this.billing.issue(account.companyId, 'PAID_NOT_APPLIED', invoice.id); throw error; }
       }
       const financial = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
@@ -462,7 +466,9 @@ export class BillingReconcilerService {
     if(invoice.id!==source.providerInvoiceId)throw new Error('billing.original_invoice_changed');
     const lines=await this.stripe.list(`/invoices/${source.providerInvoiceId}/lines`,{});
     const snapshot=(source.contractSnapshot as unknown as BillingSnapshot|null)??await this.contractSnapshot(account.id,source.periodStart,contract.quoteSnapshot as unknown as BillingSnapshot);
-    await this.verifyAndApplyInvoice(account,contract,invoice,subscription,lines,snapshot,lease);
+    // R-A4 (held INITIAL invoice applied later): no session here, so the Customer is read only while the recipient is empty.
+    const capture=initial?await readRecipientCapture(this.stripe,account,null):null;
+    await this.verifyAndApplyInvoice(account,contract,invoice,subscription,lines,snapshot,lease,undefined,capture);
   }
 
   private async reconcileOneTime(account: BillingAccount, attempt: BillingAttempt, lease: string,
@@ -511,8 +517,10 @@ export class BillingReconcilerService {
       paymentMethod: mode?.startsWith('PROMPTPAY') ? 'promptpay' : 'card',
       checkoutLines: await this.stripe.list(`/checkout/sessions/${session.id}/line_items`, {}),
       invoiceLines: await this.stripe.list(`/invoices/${invoice.id}/lines`, {}) });
+    // R-A4: the session was read above, so this adds no provider call; an evidence import is not an apply.
+    const capture = recordOnly ? null : await readRecipientCapture(this.stripe, account, session);
     if (snapshot.advanceDeal) {
-      return this.reconcileAdvanceDeal(account, attempt, snapshot, evidence, intent, lease, recordOnly);
+      return this.reconcileAdvanceDeal(account, attempt, snapshot, evidence, intent, lease, recordOnly, capture);
     }
     const impact = snapshot.upgrade ? { serviceStartsAt: new Date(snapshot.upgrade.prorationAt), paidThrough: new Date(snapshot.oneTime!.paidThrough) } :
       fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,
@@ -545,6 +553,7 @@ export class BillingReconcilerService {
           financialObservedAt: new Date(), feeSatang: evidence.feeSatang, providerChargeId: evidence.chargeId,
           periodStart: impact.serviceStartsAt, periodEnd: impact.paidThrough, providerStatus: 'paid', evidenceHash: evidence.evidenceHash } });
       await recordBillingFinancials(tx, account, row, { refundedSatang: evidence.refundedSatang, disputed: evidence.disputed });
+      await recordRecipientCapture(tx, account, snapshot, capture, row.id, attempt.initiatingUserId);
       if (row.appliedAt) { await resolveAppliedInvoiceIssues(tx, account, row.id); return; }
       const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
       const source = snapshot.oneTime ? await tx.billingInvoice.findFirst({ where: { id: snapshot.oneTime.invoiceId,
@@ -688,7 +697,8 @@ export class BillingReconcilerService {
 
   /** First cycle is paid now, but the running one-time term remains authoritative until its end. */
   private async reconcileAdvanceDeal(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot,
-    evidence: PaidCheckoutEvidence, intent: StripeObject, lease: string, recordOnly?: (tx: Prisma.TransactionClient) => Promise<void>) {
+    evidence: PaidCheckoutEvidence, intent: StripeObject, lease: string, recordOnly?: (tx: Prisma.TransactionClient) => Promise<void>,
+    capture: RecipientCapture | null = null) {
     const source = snapshot.advanceDeal!, deal = snapshot.deal!;
     const startsAt = new Date(source.paidThrough), endsAt = new Date(source.firstCycleEndsAt);
     if (!deal?.cadence || !snapshot.featurePlan || !['CARD_AUTO', 'PROMPTPAY_RENEW'].includes(snapshot.quote.purchaseMode ?? '') ||
@@ -712,6 +722,7 @@ export class BillingReconcilerService {
           financialObservedAt: new Date(), feeSatang: evidence.feeSatang, providerChargeId: evidence.chargeId,
           periodStart: startsAt, periodEnd: endsAt, providerStatus: 'paid', evidenceHash: evidence.evidenceHash } });
       await recordBillingFinancials(tx, account, invoice, { refundedSatang: evidence.refundedSatang, disputed: evidence.disputed });
+      await recordRecipientCapture(tx, account, snapshot, capture, invoice.id, attempt.initiatingUserId);
       if (invoice.appliedAt) return;
       const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
       const dealRow = await tx.packageChangeRequest.findFirst({ where: { id: deal.requestId, companyId: account.companyId, kind: 'SALES_DEAL' } });
@@ -1132,12 +1143,12 @@ export class BillingReconcilerService {
     });
   }
 
-  private async verifyAndApplyInvoice(account:BillingAccount,contract:BillingAttempt,invoice:StripeObject,subscription:StripeObject,lines:StripeObject[],snapshot:BillingSnapshot,lease:string,recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>) {
+  private async verifyAndApplyInvoice(account:BillingAccount,contract:BillingAttempt,invoice:StripeObject,subscription:StripeObject,lines:StripeObject[],snapshot:BillingSnapshot,lease:string,recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>,capture:RecipientCapture|null=null) {
     const payments=await this.stripe.list('/invoice_payments',{invoice:invoice.id}),payment=payments.find(p=>p.status==='paid'&&p.payment?.type==='payment_intent');
     if(!payment)throw new Error('billing.card_payment_missing');
     const intent=await this.stripe.request('GET',`/payment_intents/${stripeId(payment.payment.payment_intent)}`,{expand:['latest_charge.balance_transaction']});
     const charge=typeof intent.latest_charge==='object'?intent.latest_charge:await this.stripe.request('GET',`/charges/${stripeId(intent.latest_charge)}`,{expand:['balance_transaction']});
-    await this.applyInvoice(account,contract,paidInvoiceEvidence(invoice,subscription,lines,payments,intent,charge,snapshot,this.stripe.livemode),snapshot,lease,recordOnly);
+    await this.applyInvoice(account,contract,paidInvoiceEvidence(invoice,subscription,lines,payments,intent,charge,snapshot,this.stripe.livemode),snapshot,lease,recordOnly,capture);
   }
 
   private async contractSnapshot(accountId: string, at: Date, fallback: BillingSnapshot): Promise<BillingSnapshot> {
@@ -1248,7 +1259,8 @@ export class BillingReconcilerService {
     }
   }
 
-  private async applyInvoice(account: BillingAccount, contract: BillingAttempt, evidence: PaidInvoiceEvidence, snapshot: BillingSnapshot, leaseToken: string, recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>): Promise<void> {
+  private async applyInvoice(account: BillingAccount, contract: BillingAttempt, evidence: PaidInvoiceEvidence, snapshot: BillingSnapshot, leaseToken: string, recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>,
+    capture: RecipientCapture | null = null): Promise<void> {
     let disabledFeatures: string[] = [], planMenus: PlanMenuMove | null = null;
     // Q1/D-P5-6: the cycle that puts a shop back on the catalog price rewrites its menus, AI
     // credit and limits in the same commit — even though it is an ordinary RENEWAL invoice.
@@ -1273,6 +1285,8 @@ export class BillingReconcilerService {
         update: { feeSatang: evidence.feeSatang,
           ...(existing?.contractSnapshot ? {} : { contractSnapshot: snapshot as unknown as Prisma.InputJsonValue }) } });
       await recordBillingFinancials(tx,account,invoice,{refundedSatang:evidence.refundedSatang,disputed:evidence.disputed});
+      // R-A4: the first purchase captures its Checkout recipient; a renewal never does.
+      if (evidence.kind === 'INITIAL') await recordRecipientCapture(tx, account, snapshot, capture, invoice.id, contract.initiatingUserId);
       if(recordOnly){
         if(!invoice.appliedAt){await tx.billingInvoice.update({where:{id:invoice.id},data:{applyStatus:'HELD',errorCode:'access_review_required'}});
           await detectBillingIssue(tx,{companyId:account.companyId,stripeAccountId:account.stripeAccountId,livemode:account.livemode,kind:'PAID_HELD',referenceId:invoice.id});}

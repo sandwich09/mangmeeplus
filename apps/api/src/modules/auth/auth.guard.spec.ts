@@ -707,7 +707,12 @@ describe('billing recovery boundaries', () => {
   it('bounds recovery to implemented methods and preserves business and legal gates', async () => {
     for(const method of ['GET','POST'])assert.equal(isBillingRecoveryRoute(method,'/v1/companies/c1/package-change-requests'),true);
     for(const [method,path] of [['DELETE','/v1/companies/c1/package-change-requests'],['POST','/v1/companies/c1/package-change-requests/approve'],['GET','/v1/system/package-change-requests']])assert.equal(isBillingRecoveryRoute(method!,path!),false);
-    for (const path of ['quote', 'checkout', 'portal', 'refresh', 'attempts/a/resume', 'attempts/a/cancel', 'attempts/a/capacity', 'collection/a/capacity', 'documents/d/open']) assert.equal(isBillingRecoveryRoute('POST', `/v1/companies/c1/billing/${path}`), true);
+    for (const path of ['quote', 'checkout', 'portal', 'refresh', 'attempts/a/resume', 'attempts/a/cancel', 'attempts/a/capacity', 'collection/a/capacity', 'documents/d/open',
+      // Purchase without setup (R-A8/R-D1): a locked shop can prove a new recipient and resend its documents.
+      'recipient/otp/request', 'recipient/otp/confirm', 'documents/d/resend']) assert.equal(isBillingRecoveryRoute('POST', `/v1/companies/c1/billing/${path}`), true);
+    for (const path of ['recipient/otp/other', 'recipient/otp/request/x', 'documents/d/resend/x', 'documents/d/delete'])
+      assert.equal(isBillingRecoveryRoute('POST', `/v1/companies/c1/billing/${path}`), false, path);
+    for (const path of ['recipient/otp/request', 'documents/d/resend']) assert.equal(isBillingRecoveryRoute('GET', `/v1/companies/c1/billing/${path}`), false, path);
     assert.equal(isBillingRecoveryRoute('GET', '/v1/companies/c1/billing/capacity?offerKey=STARTER_249&interval=year'), true);
     for(const kind of ['refunds','credit-notes'])assert.equal(isBillingRecoveryRoute('GET',`/v1/companies/c1/billing/invoices/i1/adjustments/${kind}?cursor=re_1`),true);
     for(const method of ['GET','POST'])assert.equal(isBillingRecoveryRoute(method,'/v1/companies/c1/billing/invoices/i1/adjustments/admin'),false);

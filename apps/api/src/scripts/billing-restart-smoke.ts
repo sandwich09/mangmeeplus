@@ -33,7 +33,9 @@ export async function checkBillingRestart(input: {
   Object.assign(snapshot, { termHash: termProjectionHash(term), termVersion: term.updatedAt.toISOString() });
   Object.assign(snapshot.quote, { quoteId: oldQuoteId, companyId, companyName: 'Synthetic lapsed company', purchase: { kind: 'INITIAL' } });
   const json = snapshot as unknown as Prisma.InputJsonValue;
-  await client.billingAccount.update({ where: { id: account.id }, data: { termProjectionHash: snapshot.termHash } });
+  await client.billingAccount.update({ where: { id: account.id }, data: { termProjectionHash: snapshot.termHash,
+    // R-A5: purchases judge recipient drift against this column, set as the first payment would have.
+    recipientEmail: snapshot.quote.billingEmail, recipientSource: 'ACCOUNT_EMAIL' } });
   await client.billingQuote.create({ data: { id: oldQuoteId, companyId, initiatingUserId: original.initiatingUserId,
     policyRevisionId: original.policyRevisionId, expiresAt: new Date(oldStart * 1000), snapshotJson: json } });
   await client.billingAttempt.create({ data: { id: oldAttemptId, billingAccountId: account.id, initiatingUserId: original.initiatingUserId,

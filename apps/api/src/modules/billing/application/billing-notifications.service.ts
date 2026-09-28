@@ -11,17 +11,20 @@ import { DEFAULT_ENABLED_CHANNELS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMP
 import { isInQuietHours, resolveDeliveryOutcome } from '../../dashboard-notifications/domain/logic/notification.logic';
 import { EmailDeliveryService } from '../../auth/application/email-delivery.service';
 import { PostmarkSendError } from '../../auth/infrastructure/postmark.client';
-import { renderBillingStatusEmail } from '../../auth/infrastructure/auth-email.templates';
+import { renderBillingRecipientChangedEmail, renderBillingStatusEmail } from '../../auth/infrastructure/auth-email.templates';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { planManagerRoleFilter } from '../../access-control/domain/logic/plan-manager.logic';
 import { BillingService, type BillingSnapshot } from './billing.service';
 import { BillingAdminService } from './billing-admin.service';
+import { BILLING_RECIPIENT_CHANGED } from './billing-email-recipient';
 import { billingError, hashBilling } from '../domain/billing-policy';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { resolveBillingIssue } from './billing-issues';
 
 export const BILLING_NOTICE_EMAIL = 'billing.status.email';
 const APPLIED = 'billing.invoice.applied';
+/** R-A7: `recipientUserId` null = the company's document recipient (the column), not a user. */
+type NoticePayload = { data?: { recipientUserId?: unknown } };
 const defer = (code: string) => new PostmarkSendError('RETRY', code, 60);
 
 @Injectable()
@@ -98,10 +101,11 @@ export class BillingNotificationsService {
     const invoice=outbox?await tx.billingInvoice.findUnique({where:{id:outbox.aggregateId}}):null;
     const account=invoice?await tx.billingAccount.findUnique({where:{id:invoice.billingAccountId}}):null;
     if(!outbox||!invoice||!account||account.companyId!==companyId||account.stripeAccountId!==this.billing.stripe.accountId||account.livemode!==this.billing.stripe.livemode)throw new NotFoundException();
-    const userId=(outbox.payloadJson as {data?:{recipientUserId?:unknown}}).data?.recipientUserId;
-    if(typeof userId!=='string')throw new NotFoundException();
+    const userId=(outbox.payloadJson as NoticePayload).data?.recipientUserId;
+    if(userId!==null&&typeof userId!=='string')throw new NotFoundException();
     const company=await tx.company.findUniqueOrThrow({where:{id:companyId},include:{planTerm:true}}),settings=await this.billing.settings(tx);
-    const owner=(await this.owners(companyId,tx)).find(m=>m.userId===userId),recipient=owner?.user.email?.trim().toLowerCase()??null;
+    const owner=typeof userId==='string'?(await this.owners(companyId,tx)).find(m=>m.userId===userId):undefined;
+    const recipient=typeof userId==='string'?owner?.user.email?.trim().toLowerCase()??null:account.recipientEmail;
     const intentKey=`billing-notice:${outbox.id}`,attempts=await tx.emailSendAttempt.findMany({where:{intentKey},orderBy:{generation:'desc'},take:6}),attempt=attempts[0]??null;
     const serverId=this.config.postmarkServerId,stream=this.config.postmarkMessageStream;
     const mappingValid=Boolean(serverId&&stream)&&attempts.every(a=>a.provider==='postmark'&&a.providerServerId===serverId&&a.stream===stream&&a.purpose==='billing_status'&&!a.signupRequestId);
@@ -111,7 +115,7 @@ export class BillingNotificationsService {
     let binding:string|null=null,blockedReason:string|null=null;
     if(!this.billing.stripe.enabled||!settings.gates.notification_delivery)blockedReason='NOTIFICATION_PAUSED';
     else if(invoice.applyStatus!=='APPLIED'||!invoice.appliedAt||(company.status!=='ACTIVE'&&!(company.status==='DISABLED'&&company.planTerm?.termDisabledAt)))blockedReason='SOURCE_HELD';
-    else if(!owner?.user.emailVerifiedAt||!recipient)blockedReason='VERIFIED_EMAIL_REQUIRED';
+    else if(!recipient||(typeof userId==='string'&&!owner?.user.emailVerifiedAt))blockedReason=typeof userId==='string'?'VERIFIED_EMAIL_REQUIRED':'RECIPIENT_MISSING';
     else if(!this.email.isPostmark||!mappingValid||!this.config.postmarkServerToken||!this.config.postmarkFromAddress)blockedReason='MAIL_CONFIGURATION_CHANGED';
     else if(attempts.some(a=>a.recipient!==recipient))blockedReason='MAIL_RECIPIENT_CHANGED';
     else if(attempts.some(a=>a.suppressedAt||a.status==='SUPPRESSED')||await tx.emailSuppression.findUnique({where:{providerServerId_stream_recipient:{providerServerId:serverId!,stream,recipient}}}))blockedReason='PREFERENCE_SUPPRESSED';
@@ -183,10 +187,22 @@ export class BillingNotificationsService {
         ORDER BY o."createdAt", o.id LIMIT 10 FOR UPDATE OF o SKIP LOCKED
       ) UPDATE "OutboxEvent" o SET status = 'PROCESSING', "lockedAt" = now(), "lockedBy" = 'billing-notifications',
           "claimToken" = ${claimToken}, "updatedAt" = now() FROM candidates c WHERE o.id = c.id RETURNING o.*`;
+    // R-A8: a completed recipient change belongs to the account, not an invoice. A separate claim keeps
+    // the invoice claim above byte-for-byte and needs no locking clause under a UNION.
+    const changes = await this.prisma.client.$queryRaw<OutboxEvent[]>`
+      WITH candidates AS (
+        SELECT o.id FROM "OutboxEvent" o JOIN "BillingAccount" a ON o."aggregateType" = 'BillingAccount' AND o."aggregateId" = a.id
+          AND o."companyId" = a."companyId"
+        WHERE a."stripeAccountId" = ${stripeAccountId} AND a.livemode = ${livemode}
+          AND o."eventType" = ${BILLING_RECIPIENT_CHANGED} AND o.status IN ('PENDING', 'FAILED') AND o."availableAt" <= now()
+        ORDER BY o."createdAt", o.id LIMIT 10 FOR UPDATE OF o SKIP LOCKED
+      ) UPDATE "OutboxEvent" o SET status = 'PROCESSING', "lockedAt" = now(), "lockedBy" = 'billing-notifications',
+          "claimToken" = ${claimToken}, "updatedAt" = now() FROM candidates c WHERE o.id = c.id RETURNING o.*`;
     let processed = 0, failed = 0;
-    for (const row of rows) {
+    for (const row of [...rows, ...changes]) {
       try {
         if (row.eventType === APPLIED) await this.produce(row);
+        else if (row.eventType === BILLING_RECIPIENT_CHANGED) await this.recipientChanged(row);
         else await this.sendEmail(row);
         if (await this.outbox.markPublished({ id: row.id, claimToken, expectedEventType: row.eventType })) processed++;
       } catch (error) {
@@ -201,6 +217,7 @@ export class BillingNotificationsService {
         failed++;
       }
     }
+    await this.observeRecipientBounces();
     const deliveries = await this.drainDeliveries();
     return { processed, failed, deliveries };
   }
@@ -220,7 +237,7 @@ export class BillingNotificationsService {
     const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
     if ((company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt)) ||
       !(await this.billing.settings(tx)).gates.notification_delivery) throw defer('notification_paused');
-    return { invoice, company };
+    return { invoice, company, account };
   }
 
   private async owners(companyId: string, tx: Prisma.TransactionClient = this.prisma.client) {
@@ -228,7 +245,8 @@ export class BillingNotificationsService {
       roles: { some: { role: { key: 'OWNER', status: 'ACTIVE' } } } }, include: { user: true } });
   }
 
-  /** R-C11: LINE/web recipients are whoever may manage the package; email keeps `owners()` until R-A7 moves it to the document recipient (PR C). */
+  /** R-C11: LINE/web recipients are whoever may manage the package. Email goes to the document recipient
+   *  (R-A7); `owners()` remains only for accounts whose recipient column is still empty. */
   private async planManagers(companyId: string, tx: Prisma.TransactionClient = this.prisma.client) {
     return tx.companyMembership.findMany({ where: { companyId, status: 'ACTIVE', user: { status: 'ACTIVE' }, ...planManagerRoleFilter() }, include: { user: true } });
   }
@@ -236,7 +254,7 @@ export class BillingNotificationsService {
   private async produce(row: OutboxEvent) {
     await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, row.companyId!);
-      const { invoice, company } = await this.source(row, tx);
+      const { invoice, company, account } = await this.source(row, tx);
       const managers = await this.planManagers(company.id, tx), owners = await this.owners(company.id, tx);
       if (!managers.length) throw defer('recipient_pending');
       const contract = invoice.contractSnapshot as unknown as BillingSnapshot | null;
@@ -252,7 +270,14 @@ export class BillingNotificationsService {
       await this.events.executeInTransaction({ companyId: company.id, triggerKey: 'billing.package_updated', sourceModule: 'billing', sourceType: 'invoice',
         sourceId: invoice.id, severity: 'info', title: 'อัปเดตแพ็กเกจมั่งมี', body,
         deepLinkHref: `/companies/${encodeURIComponent(company.id)}/billing`, recipientUserIds: managers.map(m => m.userId) }, tx);
-      for (const owner of owners.filter(m => m.user.email && m.user.emailVerifiedAt)) {
+      // R-A7: one mail to the company's document recipient, whether or not any owner verified an email.
+      if (account.recipientEmail) {
+        await tx.outboxEvent.upsert({ where: { eventKey: `billing:notice-email:${invoice.id}:recipient` }, update: {}, create: {
+          companyId: company.id, eventType: BILLING_NOTICE_EMAIL, aggregateType: 'BillingInvoice', aggregateId: invoice.id,
+          eventKey: `billing:notice-email:${invoice.id}:recipient`, payloadJson: { schemaVersion: 2, data: { recipientUserId: null } },
+        } });
+      } else for (const owner of owners.filter(m => m.user.email && m.user.emailVerifiedAt)) {
+        // Legacy fan-out until the backfill or the next capture fills the recipient column.
         await tx.outboxEvent.upsert({ where: { eventKey: `billing:notice-email:${invoice.id}:${owner.userId}` }, update: {}, create: {
           companyId: company.id, eventType: BILLING_NOTICE_EMAIL, aggregateType: 'BillingInvoice', aggregateId: invoice.id,
           eventKey: `billing:notice-email:${invoice.id}:${owner.userId}`, payloadJson: { schemaVersion: 1, data: { recipientUserId: owner.userId } },
@@ -262,30 +287,37 @@ export class BillingNotificationsService {
   }
 
   private async sendEmail(row: OutboxEvent) {
-    const { company } = await this.source(row), userId = (row.payloadJson as { data?: { recipientUserId?: unknown } }).data?.recipientUserId;
-    if (typeof userId !== 'string') throw new Error('billing.notification_recipient_missing');
-    const owner = (await this.owners(company.id)).find(m => m.userId === userId);
-    if (!owner?.user.email || !owner.user.emailVerifiedAt) {
+    const { company, account } = await this.source(row), userId = (row.payloadJson as NoticePayload).data?.recipientUserId;
+    if (userId !== null && typeof userId !== 'string') throw new Error('billing.notification_recipient_missing');
+    // A user id is the legacy owner fan-out (verified owner email); null is the document recipient column (R-A7).
+    const resolveRecipient = async () => {
+      if (typeof userId === 'string') {
+        const owner = (await this.owners(company.id)).find(m => m.userId === userId);
+        return owner?.user.email && owner.user.emailVerifiedAt ? owner.user.email.trim().toLowerCase() : null;
+      }
+      return (await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } })).recipientEmail;
+    };
+    const recipient = await resolveRecipient();
+    if (!recipient) {
       await this.billing.issue(company.id, 'NOTIFICATION_RECIPIENT_CHANGED', row.id); return;
     }
     if (!this.email.isPostmark) throw new PostmarkSendError('CONFIG', 'mail_provider_unavailable');
     const recovery=(row.headersJson as {billingRecovery?:{operationId:string;attemptId:string;binding:string}}|null)?.billingRecovery;
-    const {content,binding}=this.emailBinding(company.name,company.id,owner.user.email.trim().toLowerCase());
+    const {content,binding}=this.emailBinding(company.name,company.id,recipient);
     if(recovery){
       try{if(!recovery.operationId)throw Error();await this.retryAuthority(recovery.operationId,company.id,`email:${row.id}`);}catch{throw new PostmarkSendError('PERMANENT','CONTROL_PERMISSION_CHANGED');}
       if(recovery.binding!==binding)throw new PostmarkSendError('PERMANENT','MAIL_BINDING_CHANGED');
     }
     const attempt = recovery?await this.prisma.client.emailSendAttempt.findFirstOrThrow({where:{id:recovery.attemptId,intentKey:`billing-notice:${row.id}`,
-      purpose:'billing_status',signupRequestId:null,provider:'postmark',providerServerId:this.config.postmarkServerId,stream:this.config.postmarkMessageStream,recipient:owner.user.email.trim().toLowerCase()}}):
-      await this.email.prepare({ purpose: 'billing_status', recipient: owner.user.email, intentKey: `billing-notice:${row.id}` });
+      purpose:'billing_status',signupRequestId:null,provider:'postmark',providerServerId:this.config.postmarkServerId,stream:this.config.postmarkMessageStream,recipient}}):
+      await this.email.prepare({ purpose: 'billing_status', recipient, intentKey: `billing-notice:${row.id}` });
     try {
       const current=await this.source(row);
       if(recovery){
         try{await this.retryAuthority(recovery.operationId,company.id,`email:${row.id}`);}catch{throw new PostmarkSendError('PERMANENT','CONTROL_PERMISSION_CHANGED');}
         if(recovery.binding!==this.emailBinding(current.company.name,company.id,attempt.recipient).binding)throw new PostmarkSendError('PERMANENT','MAIL_BINDING_CHANGED');
       }
-      const fresh = (await this.owners(company.id)).find(m => m.userId === userId);
-      if (!fresh?.user.emailVerifiedAt || fresh.user.email?.trim().toLowerCase() !== attempt.recipient) throw new PostmarkSendError('SUPPRESSED', 'recipient_changed');
+      if (await resolveRecipient() !== attempt.recipient) throw new PostmarkSendError('SUPPRESSED', 'recipient_changed');
     } catch (error) {
       await this.prisma.client.emailSendAttempt.updateMany({ where: { id: attempt.id, status: 'SENDING', dispatchStartedAt: null },
         data: { status: 'RETRY', errorCode: 'billing_send_not_started', nextRecoveryAt: new Date(Date.now() + 60000) } });
@@ -303,6 +335,88 @@ export class BillingNotificationsService {
       for(const kind of ['NOTIFICATION_REVIEW','NOTIFICATION_RECIPIENT_CHANGED'])await resolveBillingIssue(tx,
         {companyId,stripeAccountId:this.billing.stripe.accountId,livemode:this.billing.stripe.livemode,kind,referenceId:outboxId},'POSTMARK_REQUEST_ACCEPTED');
     });
+  }
+
+  /** R-A8: after a completed recipient change, mail the old recipient and tell every plan manager on web/LINE. */
+  private async recipientChanged(row: OutboxEvent) {
+    const lease = await this.prisma.client.outboxEvent.findFirst({ where: { id: row.id, status: 'PROCESSING', claimToken: row.claimToken,
+      lockedAt: { gt: new Date(Date.now() - 300000) } } });
+    if (!lease) throw new Error('billing.notification_lease_lost');
+    const account = await this.prisma.client.billingAccount.findUnique({ where: { id: row.aggregateId } });
+    const data = (row.payloadJson as { data?: { operationId?: unknown; noticeAttemptId?: unknown } }).data ?? {};
+    if (!this.billing.stripe.enabled || !account || account.companyId !== row.companyId || account.stripeAccountId !== this.billing.stripe.accountId ||
+        account.livemode !== this.billing.stripe.livemode || typeof data.operationId !== 'string') throw new Error('billing.notification_source_changed');
+    const company = await this.prisma.client.company.findUniqueOrThrow({ where: { id: account.companyId } });
+    const intentKey = `billing-recipient-notice:${data.operationId}`;
+    const first = typeof data.noticeAttemptId === 'string' && this.email.isPostmark
+      ? await this.prisma.client.emailSendAttempt.findFirst({ where: { id: data.noticeAttemptId, intentKey, purpose: 'billing_status' } }) : null;
+    if (first) {
+      try {
+        let attempt = await this.prisma.client.emailSendAttempt.findFirstOrThrow({ where: { intentKey }, orderBy: { generation: 'desc' } });
+        // A transient failure is retried under the same intent; a suppressed old address has nobody to tell.
+        if (attempt.status === 'RETRY' && attempt.generation < 5) attempt = await this.email.prepare({ purpose: 'billing_status', recipient: attempt.recipient, intentKey });
+        if (['READY', 'SENDING'].includes(attempt.status) && !attempt.dispatchStartedAt)
+          await this.email.send(attempt, renderBillingRecipientChangedEmail(company.name, this.billingHref(company.id)));
+      } catch (error) { if (!(error instanceof PostmarkSendError) || error.kind !== 'SUPPRESSED') throw error; }
+    }
+    // The LINE delivery joins an applied invoice (drainDeliveries); without one there is nothing to anchor it.
+    const latest = await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id, applyStatus: 'APPLIED', appliedAt: { not: null } },
+      orderBy: [{ periodEnd: 'desc' }, { createdAt: 'desc' }] });
+    if (!latest) return;
+    await this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, company.id);
+      const managers = await this.planManagers(company.id, tx);
+      // Existing trigger (a new key is blocked by stored preferences, F12); the period key makes it a new event.
+      await this.events.executeInTransaction({ companyId: company.id, triggerKey: 'billing.package_updated', sourceModule: 'billing', sourceType: 'invoice',
+        sourceId: latest.id, periodKey: `recipient-changed:${data.operationId}`, severity: 'info', title: 'เปลี่ยนอีเมลรับเอกสารแล้ว',
+        body: 'อีเมลรับเอกสารการชำระเงินของบริษัทถูกเปลี่ยนแล้ว หากไม่ได้ทำรายการนี้ กรุณาติดต่อทีมงานทันที',
+        deepLinkHref: `/companies/${encodeURIComponent(company.id)}/billing`, recipientUserIds: managers.map(m => m.userId) }, tx);
+    });
+  }
+
+  /**
+   * R-A7: our billing mail to the document recipient was refused (Postmark bounce, spam complaint or an
+   * inactive address). Flag it once and tell the plan managers once. Billing reads the attempts itself —
+   * auth never calls billing (module cycle). `status = 'SUPPRESSED'` also covers a send Postmark refused
+   * up front (406), which records no `suppressedAt`.
+   */
+  private async observeRecipientBounces() {
+    const due = await this.prisma.client.$queryRaw<Array<{ attemptId: string; accountId: string; companyId: string }>>`
+      SELECT a.id AS "attemptId", b.id AS "accountId", b."companyId"
+      FROM "EmailSendAttempt" a
+      JOIN "OutboxEvent" o ON o.id = substring(a."intentKey" from 16) AND a."intentKey" = 'billing-notice:' || o.id AND o."aggregateType" = 'BillingInvoice'
+      JOIN "BillingInvoice" i ON i.id = o."aggregateId" JOIN "BillingAccount" b ON b.id = i."billingAccountId" AND b."companyId" = o."companyId"
+      WHERE a.status = 'SUPPRESSED' AND a.purpose = 'billing_status' AND COALESCE(a."suppressedAt", a."updatedAt") >= now() - interval '30 days'
+        AND b."recipientEmail" = a.recipient AND b."recipientBouncedAt" IS NULL
+        AND b."stripeAccountId" = ${this.billing.stripe.accountId} AND b.livemode = ${this.billing.stripe.livemode}
+      ORDER BY COALESCE(a."suppressedAt", a."updatedAt"), a.id LIMIT 20`;
+    for (const row of due) {
+      try {
+        await this.prisma.client.$transaction(async tx => {
+          await lockPlanTermCompany(tx, row.companyId);
+          const attempt = await tx.emailSendAttempt.findUniqueOrThrow({ where: { id: row.attemptId } });
+          const bouncedAt = attempt.suppressedAt ?? attempt.updatedAt;
+          // The recipient may have changed since the query: then this bounce no longer applies.
+          const flagged = await tx.billingAccount.updateMany({ where: { id: row.accountId, recipientEmail: attempt.recipient, recipientBouncedAt: null },
+            data: { recipientBouncedAt: bouncedAt } });
+          if (!flagged.count) return;
+          await tx.auditLog.create({ data: { companyId: row.companyId, action: 'billing.recipient.bounced', targetType: 'BillingAccount', targetId: row.accountId,
+            requestId: row.attemptId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { attemptId: row.attemptId, kind: attempt.errorCode ?? 'suppressed' } } });
+          const latest = await tx.billingInvoice.findFirst({ where: { billingAccountId: row.accountId, applyStatus: 'APPLIED', appliedAt: { not: null } },
+            orderBy: [{ periodEnd: 'desc' }, { createdAt: 'desc' }] });
+          if (!latest) return;
+          const managers = await this.planManagers(row.companyId, tx);
+          await this.events.executeInTransaction({ companyId: row.companyId, triggerKey: 'billing.package_updated', sourceModule: 'billing', sourceType: 'invoice',
+            sourceId: latest.id, periodKey: `recipient-bounce:${row.accountId}:${bouncedAt.toISOString()}`, severity: 'action', title: 'อีเมลรับเอกสารส่งไม่ถึง',
+            body: 'อีเมลรับเอกสารการชำระเงินของบริษัทส่งไม่ถึง กรุณาแก้อีเมลรับเอกสารในหน้าแพ็กเกจ',
+            deepLinkHref: `/companies/${encodeURIComponent(row.companyId)}/billing`, recipientUserIds: managers.map(m => m.userId) }, tx);
+          await tx.billingAccount.update({ where: { id: row.accountId }, data: { recipientBounceNotifiedAt: new Date() } });
+        });
+      } catch {
+        // The row stays due and the next drain retries it; the issue keeps a persistent failure visible.
+        await this.billing.issue(row.companyId, 'NOTIFICATION_REVIEW', row.attemptId);
+      }
+    }
   }
 
   private billingHref(companyId: string) {

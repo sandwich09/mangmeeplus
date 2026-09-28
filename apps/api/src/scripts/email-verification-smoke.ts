@@ -74,8 +74,9 @@ export async function checkEmailVerification(input: { app: INestApplication; pri
     await panel.getByRole('button', { name: 'ขอรหัสยืนยัน', exact: true }).click(); assert.equal((await sent).status(), 202);
     assert.equal((await db.user.findUniqueOrThrow({ where: { id: user.id } })).email, null);
     const pending = (await request(base)).body; assert.equal(pending.emailRequirement, 'CHANGE_PENDING');
+    // R-A6: an unverified account email no longer blocks a quote; Checkout will ask for the address.
     const quote = await request(`/v1/companies/${member.companyId}/billing/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'forged@example.test' });
-    assert.equal(quote.body.code, 'BILLING_EMAIL_VERIFICATION_REQUIRED');
+    assert.equal(quote.status, 200, JSON.stringify(quote.body)); assert.equal(quote.body.billingEmail, null);
     await panel.getByLabel('รหัสยืนยัน 6 หลัก', { exact: true }).fill('000012');
     assert.equal(await panel.getByLabel('รหัสยืนยัน 6 หลัก', { exact: true }).inputValue(), '000012');
     await page.reload(); await panel.getByLabel('รหัสยืนยัน 6 หลัก', { exact: true }).waitFor();
@@ -142,20 +143,42 @@ export async function checkEmailVerification(input: { app: INestApplication; pri
     await app.get(BillingReconcilerService).reconcileAccount(account.id);
     const observed = await request(`${billingBase}/recipient`); assert.equal(observed.body.email, command.newEmail); assert.equal(observed.body.busy, false);
     assert.equal(recipientWrites, 1);
+    // R-A8: the column follows Stripe and the change queues the old-recipient notice.
+    const changed = await db.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+    assert.equal(changed.recipientEmail, command.newEmail); assert.equal(changed.recipientSource, 'ACCOUNT_EMAIL');
+    assert.ok(await db.outboxEvent.findUnique({ where: { eventKey: `billing:recipient-changed:${preview.body.id}` } }));
+    assert.deepEqual(observed.body.stored, { email: command.newEmail, source: 'ACCOUNT_EMAIL', bouncedAt: null, canChange: true });
+    // A code sent to a mailbox that is not the account email changes it again, on the locked company.
+    const recipientEmail = `verify-${tag}-recipient@example.test`;
+    const challenge = await request(`${billingBase}/recipient/otp/request`, 'POST', { email: recipientEmail, requestKey: randomUUID() });
+    assert.equal(challenge.status, 202, JSON.stringify(challenge.body)); assert.equal(challenge.body.email, recipientEmail);
+    const proof = await request(`${billingBase}/recipient/otp/confirm`, 'POST', { challengeId: challenge.body.challengeId, code: lastCode() });
+    assert.equal(proof.status, 200, JSON.stringify(proof.body));
+    const otpPreview = await request(`${billingBase}/recipient/preview`, 'POST', { recipientProofId: proof.body.recipientProofId });
+    assert.equal(otpPreview.status, 200, JSON.stringify(otpPreview.body)); assert.equal(otpPreview.body.source, 'CUSTOMER_OTP');
+    const otpSubmitted = await request(`${billingBase}/recipient/${otpPreview.body.id}/submit`, 'POST', {
+      expectedVersion: otpPreview.body.version, previewHash: otpPreview.body.previewHash, accepted: true,
+    }, { 'idempotency-key': `recipient-otp-${tag}` });
+    assert.equal(otpSubmitted.status, 200, JSON.stringify(otpSubmitted.body));
+    await app.get(BillingReconcilerService).reconcileAccount(account.id);
+    assert.equal(recipientWrites, 2); assert.equal(customer.email, recipientEmail);
+    const otpChanged = await db.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+    assert.equal(otpChanged.recipientEmail, recipientEmail); assert.equal(otpChanged.recipientSource, 'CUSTOMER_OTP');
     await page.goto(`${browser.origin}/verify-email#token=retired-synthetic-proof`);
     await page.getByRole('heading', { name: 'ยืนยันอีเมลด้วยรหัส OTP' }).waitFor();
     await page.waitForURL(url => !url.hash && !url.searchParams.has('token'));
     assert.equal(await page.getByRole('link', { name: 'เข้าสู่ระบบเพื่อขอรหัส OTP' }).getAttribute('href'), '/login');
     assert.equal(await page.getByRole('main').getByRole('button').count(), 0, 'legacy page must not offer a retired verification mutation');
     return ['expired-company-OTP-LINE-reauth-recipient-payment-recovery', 'legacy-link-browser-OTP-recovery-and-token-removal', 'optional-email-authenticated-OTP-real-HTTP-PG-browser-existing-long-password', 'retired-link-and-direct-email-writers-refuse',
-      'OTP-leading-zero-reload-explicit-confirm-no-URL-secret', 'unverified-billing-gate',
-      'OTP-idempotent-request-and-confirm-after-lost-response', 'company-recipient-review-submit-reconcile-real-HTTP', 'LINE-reauth-BFF-browser-same-session-no-password-email-request', 'OTP-panel-320-390-768-1280'];
+      'OTP-leading-zero-reload-explicit-confirm-no-URL-secret', 'unverified-account-email-quote-open',
+      'OTP-idempotent-request-and-confirm-after-lost-response', 'company-recipient-review-submit-reconcile-real-HTTP', 'company-recipient-OTP-to-new-mailbox-on-locked-company', 'LINE-reauth-BFF-browser-same-session-no-password-email-request', 'OTP-panel-320-390-768-1280'];
   } catch (error) {
     await page.screenshot({ path: `${browser.evidenceDir}/email-otp-failure.png`, fullPage: true }); throw error;
   } finally {
     service.confirm = confirm; input.transport(undefined);
     for (const key of configKeys) { const descriptor = previousConfig.get(key); if (descriptor) Object.defineProperty(config, key, descriptor); else Reflect.deleteProperty(config, key); }
     await db.billingOperation.deleteMany({ where: { companyId: member.companyId, type: 'UPDATE_BILLING_EMAIL' } });
+    await db.emailSendAttempt.deleteMany({ where: { intentKey: { startsWith: 'billing-recipient-notice:' }, recipient: 'previous-recipient@example.test' } });
     if (recipientAccountId) await db.billingAccount.delete({ where: { id: recipientAccountId } });
     await db.outboxEvent.deleteMany({ where: { aggregateType: 'User', aggregateId: user.id, eventType: 'auth.email.security_notice' } });
     await db.emailVerificationToken.deleteMany({ where: { userId: user.id } });
