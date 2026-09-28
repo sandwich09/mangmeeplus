@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_EXPENSE_CRITERION_REPLIES } from '@watchdog-bms/contracts';
-import { expenseBranchScopeRequested, isExpenseCriterionOnlyText, LineReadEvidenceService, parseExpenseCriterionAccessAuthorization, readMemoryEvidence, thaiMonthMentions } from './line-read-evidence.service';
+import { expenseBranchScopeRequested, isExpenseCriterionOnlyText, lineReadResultHash, LineReadEvidenceService, parseExpenseCriterionAccessAuthorization, readMemoryEvidence, thaiMonthMentions } from './line-read-evidence.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from './line-delivery-access';
 
 describe('read-free LINE outcome authorization', () => {
@@ -456,5 +456,43 @@ describe('recentReadsForTurn (spec §4 R-M2/R-M7)', () => {
     const row = memoryRow('expense.list_recent');
     (row.inputJson as any).chatKeyHash = 'f'.repeat(16);
     assert.equal(await serviceFor([row]).recentReadsForTurn(request(), response), undefined);
+  });
+});
+
+describe('lineReadResultHash (item 1: daily-closing delivery re-verification)', () => {
+  // expense.get_daily_closing's data.observability.queryDurationMs is real per-call DB timing —
+  // re-running the exact same query for LineReadEvidenceService.verify() always measures a
+  // different duration even when nothing about the underlying rows changed. Before this field was
+  // excluded, that made every daily-closing answer fail its own delivery re-verification and get
+  // denied with LINE_DELIVERY_SOURCE_CHANGED regardless of whether the source actually changed.
+  const dailyClosing = (over: Record<string, unknown> = {}) => ({
+    toolName: 'expense.get_daily_closing', status: 'ok', asOf: '2026-09-28T10:00:00.000Z',
+    sourceRefs: [{ label: 'สรุปปิดร้าน', module: 'expenses', entityType: 'expense_daily_closing', asOf: '2026-09-28T10:00:00.000Z', permissionChecked: true }],
+    data: {
+      date: '2026-09-28', occurredToday: { totals: [{ currency: 'THB', count: 1, total: '100.0000' }] },
+      observability: { queryDurationMs: 12, queryCount: 16, truncated: false },
+      ...over,
+    },
+  } as any);
+
+  it('ignores queryDurationMs so an unchanged read verifies even when the DB round-trip timing differs', () => {
+    const first = dailyClosing();
+    const secondsLater = dailyClosing({ observability: { queryDurationMs: 341, queryCount: 16, truncated: false } });
+    assert.equal(lineReadResultHash(secondsLater), lineReadResultHash(first));
+  });
+
+  it('still catches a real change: totals, queryCount, and truncated all move the hash', () => {
+    const first = dailyClosing();
+    const newExpense = dailyClosing({ occurredToday: { totals: [{ currency: 'THB', count: 2, total: '250.0000' }] } });
+    const differentQueryCount = dailyClosing({ observability: { queryDurationMs: 12, queryCount: 17, truncated: false } });
+    const nowTruncated = dailyClosing({ observability: { queryDurationMs: 12, queryCount: 16, truncated: true } });
+    assert.notEqual(lineReadResultHash(newExpense), lineReadResultHash(first));
+    assert.notEqual(lineReadResultHash(differentQueryCount), lineReadResultHash(first));
+    assert.notEqual(lineReadResultHash(nowTruncated), lineReadResultHash(first));
+  });
+
+  it('leaves a tool result with no observability field untouched', () => {
+    const withoutObservability = { toolName: 'expense.get_detail', status: 'ok', asOf: 'a', sourceRefs: [], data: { id: 'e1' } } as any;
+    assert.equal(lineReadResultHash(withoutObservability), lineReadResultHash({ ...withoutObservability, asOf: 'b' }));
   });
 });
