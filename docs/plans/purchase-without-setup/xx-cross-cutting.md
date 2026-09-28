@@ -1,7 +1,9 @@
 # ข้ามทุก PR (A–E): ลงทะเบียนเทสต์, pins, ci.yml parity, migrations, contracts, readbacks, UAT/production, docs, release
 
+> ตรวจ anchor ใหม่บน develop 03438bde (2026-09-28); ฐานเดิม ddcdcadf
+
 - Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangmee-purchase-without-setup-spec-th.md) §18.1 "ข้ามระบบ", §18.3 RV12/RV13/RV17/RV18/RV31/RV34/RV35, §18.4 DQ6 · Plan: [../mangmee-purchase-without-setup-plan-th.md](../mangmee-purchase-without-setup-plan-th.md) P0/P6 · Runbook: [../../runbooks/uat-production-v2-deployment.md](../../runbooks/uat-production-v2-deployment.md)
-- ฐาน: `origin/develop` ddcdcadf; ทุกบรรทัดตรวจกับไฟล์จริง 2026-09-27; คำสั่ง `--check` ของ pins รันจริงในวันเดียวกัน (§2)
+- ฐาน: `origin/develop` ddcdcadf; ทุกบรรทัดตรวจกับไฟล์จริง 2026-09-27; คำสั่ง `--check` ของ pins รันจริงในวันเดียวกัน (§2) — re-verify ทุก anchor กับ `03438bde` 2026-09-28 (ผลใน §2.1/§4/§6/§7.3/§8; ไฟล์ส่วนใหญ่ที่ brief นี้อ้างไม่เปลี่ยน)
 - ใช้คู่กับ brief ของแต่ละ PR; ชื่อไฟล์เทสต์ใหม่ของ PR A–D ในเอกสารนี้เป็น **ชื่อคาดการณ์** — ผู้ implement ต้องใช้ชื่อจริงจาก brief ของ PR นั้น แต่ตำแหน่งลงทะเบียนไม่เปลี่ยน
 
 ## 1. การลงทะเบียนเทสต์ (RV13) — ห้ามแตะ `package.json`
@@ -12,7 +14,7 @@
 - contracts spec: `packages/contracts/package.json:17` เป็นรายการตายตัว (ห้ามแก้) และไม่มีอะไร police → spec ใหม่ใน `packages/contracts/src/*.spec.ts` ต้องถูกชื่อใน `ci.yml:543`
 - `*.pg.spec.ts` ไม่รันที่ไหนเองเลย → ต้องมี invocation ของตัวเองใน job "Migrations and Boot" (pattern `ci.yml:766-778`: DB `watchdog_step0_ci` ที่ `migrate deploy` จากศูนย์ `:772-773` แล้ว `SALES_CONSOLE_TEST_DATABASE_URL="$DATABASE_URL" pnpm --filter @watchdog-bms/api exec tsx --test src/modules/sales-console/sales-console.pg.spec.ts` `:777-778`) หรือใน `extended-tests.yml` (manual, ไม่ใช่ release gate `:3-5`)
 - smoke: `apps/api/src/scripts/billing-http-smoke.ts:207-258` เลือกชุดด้วย env `BILLING_*_ONLY=1` แล้ว `return` — smoke ใหม่ = ฟังก์ชัน `checkBillingNoSetup()` ในไฟล์ `apps/api/src/scripts/billing-no-setup-smoke.ts` เรียกจาก selector ใหม่ `BILLING_NO_SETUP_ONLY=1` (บล็อกใหม่หน้า `:207`) + step ใน `extended-tests.yml`
-- e2e: `playwright.config.ts:87-92` project `chromium` เลือกทุก spec อัตโนมัติ (ยกเว้น `evidence.spec.ts`) แต่ workflow รัน Playwright **จุดเดียว** = `extended-tests.yml:309` (`pnpm exec playwright test e2e/line-signup-contact-email.spec.ts --workers=1`) → e2e ใหม่ต้องมี step ของตัวเอง; 390px ทำใน spec ด้วย `setViewportSize` (ตัวอย่าง `e2e/billing-admin-directory.spec.ts:74`)
+- e2e: `playwright.config.ts:87-92` project `chromium` เลือกทุก spec อัตโนมัติ (ยกเว้น `evidence.spec.ts`) แต่ workflow รัน Playwright **จุดเดียว** = `extended-tests.yml:317` (`pnpm exec playwright test e2e/line-signup-contact-email.spec.ts --workers=1`) → e2e ใหม่ต้องมี step ของตัวเอง; 390px ทำใน spec ด้วย `setViewportSize` (ตัวอย่าง `e2e/billing-admin-directory.spec.ts:74`)
 - web spec: glob ของ `apps/web` รันเอง (ไม่ต้องลงทะเบียน)
 
 ### 1.2 ไฟล์เทสต์ใหม่ที่คาดว่าจะเกิดจาก PR A–E และที่ลงทะเบียน
@@ -20,23 +22,23 @@
 | PR | ไฟล์ (คาดการณ์) | ลงทะเบียนที่ |
 |---|---|---|
 | A | `packages/contracts/src/line-external-browser.spec.ts` (`withLineExternalBrowserParam`) | `ci.yml:543` |
-| A | `apps/api/src/modules/access-control/domain/logic/plan-manager.logic.spec.ts` (`planManagersOf`/`canManagePlan`) | catalog `:373+` |
-| A | `apps/api/src/modules/line-ai/application/use-cases/line-locked-card-handoff.spec.ts` (R-B2 ทาง (ข): flag on/off, recorded==sent, group → plain) — หรือขยาย `process-line-webhook.use-case.spec.ts` (มีใน catalog `:387`) | catalog |
-| A | ขยาย `line-liff-signup.spec.ts`, `line-first-signup-webhook.spec.ts`, `line-signup-notify.service.spec.ts`, `line-signup-status-and-package-change.spec.ts`, `plan-term-sweep.use-case.spec.ts`, `package-change-decision.use-case.spec.ts`, `line-billing-entry.spec.ts` (catalog `:371`) | เดิม |
+| A | `apps/api/src/modules/access-control/domain/logic/plan-manager.logic.spec.ts` (`planManagersOf`/`canManagePlan`) | catalog `:442+` |
+| A | `apps/api/src/modules/line-ai/application/use-cases/line-locked-card-handoff.spec.ts` (R-B2 ทาง (ข): flag on/off, recorded==sent, group → plain) — หรือขยาย `process-line-webhook.use-case.spec.ts` (มีใน catalog `:456`) | catalog |
+| A | ขยาย `line-liff-signup.spec.ts`, `line-first-signup-webhook.spec.ts`, `line-signup-notify.service.spec.ts`, `line-signup-status-and-package-change.spec.ts`, `plan-term-sweep.use-case.spec.ts`, `package-change-decision.use-case.spec.ts`, `line-billing-entry.spec.ts` (catalog `:440`) | เดิม |
 | B | `packages/contracts/src/plan-term.spec.ts` (`planTermStateLabel`) | `ci.yml:543` |
 | B | ขยาย `apps/api/src/modules/auth/auth.controller.spec.ts` (`/auth/me/companies` lockReason), web specs ของ picker/switcher/PartnerDetailPage/LoginPage | เดิม / auto |
-| C | `apps/api/src/modules/billing/domain/billing-recipient-otp.logic.spec.ts`, `apps/api/src/modules/billing/application/billing-recipient-otp.service.spec.ts`, `billing-document-resend.spec.ts`, `billing-notifications-recipient.spec.ts` (ชื่อจริงตาม pr-c §6.3) | catalog `:373+` |
+| C | `apps/api/src/modules/billing/domain/billing-recipient-otp.logic.spec.ts`, `apps/api/src/modules/billing/application/billing-recipient-otp.service.spec.ts`, `billing-document-resend.spec.ts`, `billing-notifications-recipient.spec.ts` (ชื่อจริงตาม pr-c §6.3) | catalog `:442+` |
 | C | `apps/api/src/modules/billing/billing-recipient-capture.pg.spec.ts` (คอลัมน์ใหม่ทุกตัว + apply → recipient captured + replay) | `ci.yml` ต่อจาก `:778` |
 | C | `apps/api/src/scripts/billing-no-setup-smoke.ts` + selector `BILLING_NO_SETUP_ONLY` ใน `billing-http-smoke.ts` | `extended-tests.yml` step ใหม่ |
 | C | แก้ smoke/spec ที่จะแดง: `billing-http-smoke.ts:267-295,310-346`, `email-verification-smoke.ts`, `billing-free-days-smoke.ts`, `billing-portal-smoke.ts`, `billing-notification-smoke.ts`, `billing-company-profile.spec.ts` (api+contracts ชื่อใน `ci.yml:543-544`), `billing-profile-recovery.spec.ts` (`:544`), `billing-email-recipient.postgres.spec.ts` | เดิม |
 | D | `e2e/billing-no-setup.spec.ts` + `apps/web/src/features/billing/billing-no-setup.fixture.ts`; web specs `BillingPage*.spec.ts`, ขยาย `api-error-coverage.spec.ts` ให้ไล่ `billingError('X')` | `extended-tests.yml` step ใหม่ / auto |
-| E | `apps/api/src/modules/billing/application/billing-document-admin.service.spec.ts`, `billing-admin-lookup.spec.ts`, `apps/api/src/modules/system-partner-management/application/use-cases/update-partner-identity.use-case.spec.ts`, `apps/api/src/modules/line-ai/application/use-cases/line-support-reference.spec.ts` | catalog `:373+` |
+| E | `apps/api/src/modules/billing/application/billing-document-admin.service.spec.ts`, `billing-admin-lookup.spec.ts`, `apps/api/src/modules/system-partner-management/application/use-cases/update-partner-identity.use-case.spec.ts`, `apps/api/src/modules/line-ai/application/use-cases/line-support-reference.spec.ts` | catalog `:442+` |
 | E | `apps/api/src/modules/billing/billing-admin-tools.pg.spec.ts` | `ci.yml` ต่อจาก `:778` |
 | E | `e2e/billing-admin-document-tools.spec.ts`; ขยาย `e2e/billing-admin-directory.spec.ts`, `e2e/system-support-resolution.spec.ts` | `extended-tests.yml` step ใหม่ |
 
 ### 1.3 แก้ตรงไหน (current → new)
 
-**`scripts/line-ai-whole-chain-acceptance.catalog.mjs`** — suite `api-behavior` (`:342-347`), args array `:348-426`; แทรกต่อจาก `:373` (`'src/modules/billing/application/billing-approval.spec.ts',`):
+**`scripts/line-ai-whole-chain-acceptance.catalog.mjs`** — suite `api-behavior` (`:412-417`), args array `:417-495`; แทรกต่อจาก `:442` (`'src/modules/billing/application/billing-approval.spec.ts',`):
 ```js
       // Purchase-without-setup (2026-09): not in apps/api/package.json's fixed list, so this runner executes them.
       'src/modules/access-control/domain/logic/plan-manager.logic.spec.ts',
@@ -70,17 +72,17 @@ new (PR A เพิ่ม `line-external-browser.spec.ts`, PR B เพิ่ม 
 ```
 (spec ต้อง `skip` เมื่อ env ว่าง — pattern เดียวกับ `sales-console.pg.spec.ts`)
 
-**`.github/workflows/extended-tests.yml`** (job `Billing Integration (${{ matrix.suite }})` `:187`; billing suites `:250-383`):
-- smoke (PR C): ต่อจาก `:298` ใน step "Test signup and billing recovery…" (`matrix.suite == 'customer'`):
+**`.github/workflows/extended-tests.yml`** (job `Billing Integration (${{ matrix.suite }})` `:187`; billing suites `:250-391`):
+- smoke (PR C): ต่อจาก `:306` ใน step "Test signup and billing recovery…" (`matrix.suite == 'customer'`):
   ```
           BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_NO_SETUP_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
   ```
-- e2e (PR D และ PR E): step ใหม่ต่อจาก `:309` คัดลอกโครง `:299-309` ทั้ง env (`DATABASE_URL`, `REDIS_URL`, `API_PORT`, `WEB_PORT`, `LINE_LIFF_ID`, `NEXT_DIST_DIR`) เปลี่ยนพอร์ตไม่ให้ชน (เช่น `API_PORT: '3157'`, `WEB_PORT: '3158'`, `NEXT_DIST_DIR: .next/purchase-no-setup`, `DATABASE_URL: ...:5432/purchase_no_setup_test` ที่ต้องสร้างในขั้น "Prepare isolated billing databases" `:239-246`):
+- e2e (PR D และ PR E): step ใหม่ต่อจาก `:317` คัดลอกโครง `:307-317` ทั้ง env (`DATABASE_URL`, `REDIS_URL`, `API_PORT`, `WEB_PORT`, `LINE_LIFF_ID`, `NEXT_DIST_DIR`) เปลี่ยนพอร์ตไม่ให้ชน (เช่น `API_PORT: '3157'`, `WEB_PORT: '3158'`, `NEXT_DIST_DIR: .next/purchase-no-setup`, `DATABASE_URL: ...:5432/purchase_no_setup_test` ที่ต้องสร้างในขั้น "Prepare isolated billing databases" `:239-246`):
   ```
       - name: Test purchase-without-setup journeys in the browser
         if: matrix.suite == 'customer'
         timeout-minutes: 6
-        env: { …ตาม :302-308 }
+        env: { …ตาม :310-316 }
         run: pnpm exec playwright test e2e/billing-no-setup.spec.ts e2e/billing-admin-document-tools.spec.ts e2e/billing-admin-directory.spec.ts e2e/system-support-resolution.spec.ts --workers=1
   ```
 - ทุกครั้งที่แก้ `extended-tests.yml`/`ci.yml` → ต้องขึ้น main แบบ byte-identical ก่อน UAT `all` (§3)
@@ -98,6 +100,8 @@ Run: node infra/security/sync-production-maintenance-release-pins.mjs
 EXIT=1
 ```
 → develop stale อยู่แล้ว (commit 48c4ab57 แก้ `auth.guard.ts` โดยไม่ sync) → **PR A ต้องทำข้อ 2.2 เป็น commit แรก** มิฉะนั้น CI ทุก PR ที่ `code_changed` แดงที่ `ci.yml:318-324` ("Verify maintenance policy pins before CI fan-out": รัน `--check` เมื่อ `code_changed == true && validated_ci_run_id == ''`)
+
+**อัปเดต 2026-09-28 (รันซ้ำจริงบน `03438bde`):** `node infra/security/sync-production-maintenance-release-pins.mjs --check` ยัง `EXIT=1` เหมือนเดิม แต่ตอนนี้ stale 4 ไฟล์ ไม่ใช่ 1 — เทียบ `expected_*` ในตัว validator กับ SHA256 จริงทีละไฟล์แล้วพบ: `auth.guard.ts` (สาเหตุเดิม 48c4ab57 ยังไม่ sync), และเพิ่มใหม่จากงาน AI reliability ระหว่าง ddcdcadf→03438bde: `apps/api/src/modules/auth/application/legal-acceptance.service.ts`, `infra/prod-ecs-express/deploy.sh`, `apps/ai-gateway/src/main.ts`; ไฟล์ pinned อื่นที่แผนนี้แตะ (`email-access.service.ts`, `refresh-session.use-case.ts`, `login/page.tsx`, `session-gate.logic.ts`, `companies/[companyId]/layout.tsx`, `workers/src/main.ts`, `infra/postmark/config.py`/`config.json`) ตรง hash เดิมทุกไฟล์. **ข้อสรุปไม่เปลี่ยน:** PR A ยังต้องรัน `node infra/security/sync-production-maintenance-release-pins.mjs` (ไม่ใช่ `--check`) เป็น commit แรก — คำสั่งเดียวกันซิงก์ครบทั้ง 4 ไฟล์พร้อมกัน ไม่ต้องแยกทำ (ทำแล้ว 2026-09-28 เป็น commit แรกของ PR A: แก้ 2 ไฟล์ คือ validator กับ `deploy-production.yml`; `--check` และ spec ของ pins ทั้งสองผ่าน)
 
 ### 2.2 ขั้นตอน sync (ทำใน PR ที่แตะไฟล์ pinned หรือ PR แรก)
 ```bash
@@ -135,9 +139,9 @@ commit ใน PR เดียวกัน + twin main; CI ตรวจซ้ำ�
 
 ## 4. Migrations (RV13/A4)
 
-- ที่: `apps/api/prisma/migrations/YYYYMMDDHHMMSS_snake_case/migration.sql`; ล่าสุด `20260926120000_counterparty_receipt_uploader` → ชื่อใหม่ต้องเรียงหลัง; 2 ไฟล์ (ตัดสิน 2026-09-27): PR C `20260927120000_billing_recipient_columns` (BillingAccount 5 คอลัมน์ + index `recipientEmail` + `EmailVerificationToken.companyId` + index), PR E `20260927130000_line_support_request_reference` (2 คอลัมน์)
+- ที่: `apps/api/prisma/migrations/YYYYMMDDHHMMSS_snake_case/migration.sql`; ล่าสุดบน develop (2026-09-28) `20260927180000_line_document_qa_questions` → ชื่อใหม่ต้องเรียงหลัง; 2 ไฟล์ (ตัดสิน 2026-09-27, เปลี่ยนเวลา 2026-09-28 เพราะงาน AI ใช้ช่วง `20260927110000`–`20260927180000` ไปแล้ว): PR C `20260928200000_billing_recipient_columns` (BillingAccount 5 คอลัมน์ + index `recipientEmail` + `EmailVerificationToken.companyId` + index), PR E `20260928210000_line_support_request_reference` (2 คอลัมน์); ตอนลงมือถ้า develop มี migration ใหม่กว่านี้ ให้ขยับ timestamp ไปหลังตัวล่าสุด (คงชื่อท้ายเดิม) แล้วแก้ชื่อใน 00-readme, brief และ memory ใน PR เดียวกัน
 - additive เท่านั้น: `ALTER TABLE … ADD COLUMN … NULL` / `CREATE INDEX` (ไม่ใช้ `CONCURRENTLY` — migration รันใน transaction); ห้าม `DROP/TRUNCATE/DELETE` — auto-promotion ปฏิเสธ (`apps/api/prisma/verify-applied-migration-catalog.ts:120-127` → `assertProductionA5NoDestructiveSql`)
-- ไม่มี Prisma enum ใหม่: `BillingOperation.type` เป็น `String` (`schema.prisma:9859`), `LineSupportRequest` ใช้ string สำหรับ `closedReason/lastReplyDeliveryStatus` (`:4207-4212`); ค่าใหม่ (`RECIPIENT_ADMIN_CHANGE`, `CUSTOMER_PROFILE_SYNC`, `recipientSource`, `referenceKind`) เป็น string ใน union ของ contracts; **ถ้าประกาศ `as const` array ใน contracts ชื่อต้องไม่ตรงชื่อ Prisma enum** (`packages/contracts/src/prisma-enum-parity.spec.ts:284-309` จะ flag) — เช่น `BILLING_RECIPIENT_SOURCES` ไม่มี enum ชื่อ `BillingRecipientSource` จึงผ่าน
+- ไม่มี Prisma enum ใหม่: `BillingOperation.type` เป็น `String` (`schema.prisma:9997`), `LineSupportRequest` ใช้ string สำหรับ `closedReason/lastReplyDeliveryStatus` (`:4294-4299`); ค่าใหม่ (`RECIPIENT_ADMIN_CHANGE`, `CUSTOMER_PROFILE_SYNC`, `recipientSource`, `referenceKind`) เป็น string ใน union ของ contracts; **ถ้าประกาศ `as const` array ใน contracts ชื่อต้องไม่ตรงชื่อ Prisma enum** (`packages/contracts/src/prisma-enum-parity.spec.ts:289-314` จะ flag) — เช่น `BILLING_RECIPIENT_SOURCES` ไม่มี enum ชื่อ `BillingRecipientSource` จึงผ่าน
 - CI: `ci.yml:754` `prisma:validate` → `:755` `migration:review` (SQL diff ให้ reviewer อ่าน) → `:773` fresh `migrate deploy` บน DB ว่าง → PG specs → `:781` `test:boot`; ไม่มีอะไรเทียบ migration กับ schema → **PG spec ของ PR นั้นต้องเขียน/อ่านคอลัมน์ใหม่ทุกตัว**
 - ปล่อย: migration pending บน production → READY ต้องเดิน `APPEND_ONLY_PENDING` (fresh tagged snapshot → restore clone → rehearsal → cleanup; runbook `:359-360`) ไม่ใช่ `EXACT_MATCH` quick path; แก้ migration หลังออก Passport = เริ่ม UAT ใหม่ (`:25`)
 - script backfill `recipientEmail` (PR C): อ่าน Stripe Customer อย่างเดียว เขียนคอลัมน์เมื่อว่าง; รันใน release step หลัง migrate (ระบุใน runbook ของ release; idempotent; log จำนวนแถว ไม่ log อีเมล)
@@ -146,7 +150,7 @@ commit ใน PR เดียวกัน + twin main; CI ตรวจซ้ำ�
 
 - ลำดับ: `pnpm --filter @watchdog-bms/contracts build` ก่อนทุกอย่าง (`ci.yml:446` typecheck job, `:504` unit, `:539` acceptance, `:756` migrations job) → `prisma generate` (`:447,:505,:757`); API typecheck อ่าน contracts จาก src (TS7 `apps/api/tsconfig.typecheck.json`) แต่ **web อ่าน `dist`** (`apps/web/tsconfig.typecheck.json:10` `"@watchdog-bms/contracts": ["../../packages/contracts/dist/index.js"]`) → local: build contracts ก่อน `pnpm --filter @watchdog-bms/web typecheck` เสมอ; CI ใช้ TS7 single-threaded (`:456-462`) — local ใช้ script `typecheck` ของ package (heap flag)
 - DI metadata: `ci.yml:468-470` `node apps/api/scripts/check-di-metadata.mjs` — class `@Injectable()` ใหม่ (`BillingDocumentAdminService`, `UpdatePartnerIdentityUseCase`, service OTP ของ PR C) ต้องประกาศ constructor เอง (ห้ามสืบทอด constructor จาก base ที่ไม่มี decorator)
-- boot: `ci.yml:781` `test:boot` (build + boot Nest) — provider ใหม่ต้องอยู่ใน `providers` ของ module (`billing.module.ts:29`, `system-partner-management.module.ts`), `CompanyIdentityUseCase` ต้อง `exports` ใน `data-model-core.module.ts:83-100`, `EmployeeAccessModule` เข้า imports ของ `SystemPartnerManagementModule` (`:49`); import วนตรวจด้วย boot
+- boot: `ci.yml:781` `test:boot` (build + boot Nest) — provider ใหม่ต้องอยู่ใน `providers` ของ module (`billing.module.ts:29`, `system-partner-management.module.ts`), `CompanyIdentityUseCase` ต้อง `exports` ใน `data-model-core.module.ts:83-100`, `EmployeeAccessModule` เข้า imports ของ `SystemPartnerManagementModule` (`:50`); import วนตรวจด้วย boot
 - Release Contracts (`ci.yml:305-313`, regex `:310`) รันเมื่อ PR แตะ: `.github/` (PR ที่แก้ workflow), `infra/` (PR A และ PR C จาก pins sync), `apps/web/public/` (PR A ถ้าเปลี่ยนภาพต้อนรับ — §18.2 R-C4 ให้ถอด/ไฟล์ชื่อใหม่), `packages/contracts/src/(legal-acceptance|line-ai).ts` (**ห้ามใส่ helper ใน `line-ai.ts`** — ถูกคัดลอกเข้า LINE AI release manifest), `packages/config/src/index.ts` (ห้ามแตะ), Dockerfile/prisma scripts (ไม่แตะ)
 - body ใหม่ทุกตัวต้องเป็น class DTO (`apps/api/src/common/pipes/body-validation-coverage.spec.ts`; `forbidNonWhitelisted`)
 
@@ -155,11 +159,11 @@ commit ใน PR เดียวกัน + twin main; CI ตรวจซ้ำ�
 | รายการ | วิธีอ่าน | ค่าที่ต้องเป็น |
 |---|---|---|
 | `salesCompanyIds` ใน billing policy ที่ ACTIVE | `GET /v1/system/billing/settings` (`billing.controller.ts:279`, `system.billing.read`) → `policy.salesCompanyIds` หรือหน้า `/system/billing/settings`; กติกา `companyCanBuy` `billing-policy.ts:91-93`: `null` = ทุกร้านซื้อได้, รายการ = เฉพาะที่อยู่ในรายการ | **ต้องเป็น `null` บน UAT และ production** มิฉะนั้นร้านใหม่ทุกร้านติด `BILLING_COMPANY_SALES_CLOSED` (`:94-95`) แม้ทำ Phase 2 ครบ; ถ้าไม่ใช่ → Owner เผยแพร่ policy ใหม่ผ่าน configuration-changes (reviewed) ก่อน UAT |
-| Postmark stream/secret (DQ6) | `infra/postmark/config.json` (pinned): uat/production `POSTMARK_MESSAGE_STREAM: "outbound"`, secrets `watchdog-bms/<env>/postmark/*`; runtime `POSTMARK_MESSAGE_STREAM` (`packages/config/src/index.ts:383` default `outbound`) ใช้ที่ `postmark.client.ts:58,80` | **ตัดสินแล้ว 2026-09-27 (spec §18.5 A1, DQ6):** คง stream `outbound` เดียว; แยก bounce ด้วย `intentKey 'billing-notice:<outboxId>'` + Tag `purpose` (ไม่มี env ใหม่, ไม่แตะไฟล์ pinned) |
-| `LINE_WEB_HANDOFF_ENABLED` | `packages/config/src/index.ts:203` default `false`; ค่า UAT/production ไม่อยู่ใน git (`infra/kamal/config.json:3` มีแค่ `BILLING_MODE/STRIPE_ACCOUNT_ID` ฯลฯ) → อ่านจาก ECS task env ตาม runbook `cloud-environment-operations.md` / capture `infra/dev-kamal/capture-config.py` | ต้อง `true` ทั้ง UAT และ production (LIFF session `exchange-liff-session.use-case.ts:60` และการ mint ทุกเลนพึ่งค่านี้) |
-| `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` | `index.ts:318` default `false`; production = `true` (ยืนยัน 2026-09-26 จาก capture ของ release — memory) | R-B2 ทาง (ข) ต้องผ่านทั้งสองค่า → UAT ทดสอบด้วยค่าเดียวกับ production (`true`) |
-| `BILLING_MODE` | `infra/kamal/config.json:3` production `live`; UAT `test` | webhook `:2841` ต้องเป็น `test|live` จึงจะส่งลิงก์แพ็กเกจ |
-| `POSTMARK_UAT_ALLOWED_RECIPIENTS` | secret `watchdog-bms/uat/postmark/POSTMARK_UAT_ALLOWED_RECIPIENTS` (`config.json` uat.secrets); `index.ts:386` | อีเมลที่ผู้ทดสอบจะพิมพ์ที่ Stripe Checkout บน UAT **ต้องอยู่ใน allowlist** มิฉะนั้นอีเมลชำระสำเร็จ/แจ้งผู้รับถูกปฏิเสธ (RV06) — เพิ่มอีเมลทดสอบก่อน (เปลี่ยน secret = ไม่แตะ git) |
+| Postmark stream/secret (DQ6) | `infra/postmark/config.json` (pinned): uat/production `POSTMARK_MESSAGE_STREAM: "outbound"`, secrets `watchdog-bms/<env>/postmark/*`; runtime `POSTMARK_MESSAGE_STREAM` (`packages/config/src/index.ts:409` default `outbound`) ใช้ที่ `postmark.client.ts:58,80` | **ตัดสินแล้ว 2026-09-27 (spec §18.5 A1, DQ6):** คง stream `outbound` เดียว; แยก bounce ด้วย `intentKey 'billing-notice:<outboxId>'` + Tag `purpose` (ไม่มี env ใหม่, ไม่แตะไฟล์ pinned) |
+| `LINE_WEB_HANDOFF_ENABLED` | `packages/config/src/index.ts:235` default `false`; ค่า UAT/production ไม่อยู่ใน git (`infra/kamal/config.json:3` มีแค่ `BILLING_MODE/STRIPE_ACCOUNT_ID` ฯลฯ) → อ่านจาก ECS task env ตาม runbook `cloud-environment-operations.md` / capture `infra/dev-kamal/capture-config.py` | ต้อง `true` ทั้ง UAT และ production (LIFF session `exchange-liff-session.use-case.ts:60` และการ mint ทุกเลนพึ่งค่านี้) |
+| `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` | `index.ts:351` default **`true`** (เปลี่ยนจาก `false` ระหว่าง ddcdcadf→03438bde โดยงาน AI reliability — ตรงกับ production capture 2026-09-26 อยู่แล้ว ไม่ต้องพึ่ง override) | R-B2 ทาง (ข) ต้องผ่านทั้งสองค่า → UAT ทดสอบด้วยค่าเดียวกับ production (`true`, ตอนนี้เป็นค่า default เอง) |
+| `BILLING_MODE` | `infra/kamal/config.json:3` production `live`; UAT `test` | webhook `:2984` ต้องเป็น `test|live` จึงจะส่งลิงก์แพ็กเกจ |
+| `POSTMARK_UAT_ALLOWED_RECIPIENTS` | secret `watchdog-bms/uat/postmark/POSTMARK_UAT_ALLOWED_RECIPIENTS` (`config.json` uat.secrets); `index.ts:412` | อีเมลที่ผู้ทดสอบจะพิมพ์ที่ Stripe Checkout บน UAT **ต้องอยู่ใน allowlist** มิฉะนั้นอีเมลชำระสำเร็จ/แจ้งผู้รับถูกปฏิเสธ (RV06) — เพิ่มอีเมลทดสอบก่อน (เปลี่ยน secret = ไม่แตะ git) |
 | Stripe test mode บน UAT | `GET /v1/billing/catalog` (memory: pack 1999 live บน UAT) | catalog AVAILABLE; webhook secret ของ UAT ชี้ UAT |
 
 ## 7. UAT checklist (G27 ขยาย) และ production acceptance
@@ -191,14 +195,14 @@ commit ใน PR เดียวกัน + twin main; CI ตรวจซ้ำ�
 5. บันทึกตาม runbook (UAT/READY/Production run ids, signed result, customer `OPEN`)
 
 ### 7.3 แก้ rig e2e (RV31) — PR B หรือ PR D (ใครแตะ `e2e/plan-term-billing-readiness.spec.ts` ก่อน)
-- `e2e/plan-term-billing-readiness.spec.ts:103-110` ส่ง `data: { days: 30 }` แต่ `RenewPlanTermBodyDto` (`partner.controller.ts:188-190` extends `PlanTermAdjustmentBodyDto` `:172-176`) บังคับ `commandId` (16–120 ตัว), `expectedVersion` (64 hex = `planTermSourceVersion`), `reason` — `checkPlanTermAdjustment` (`plan-term-adjustment.ts:29-34,47`) ตอบ 422 `partner_plan_term_command_required`/`partner_plan_term_changed` → BR01/02/07, GW02, BC03 ล้ม. new:
+- `e2e/plan-term-billing-readiness.spec.ts:103-110` ส่ง `data: { days: 30 }` แต่ `RenewPlanTermBodyDto` (`partner.controller.ts:194-196` extends `PlanTermAdjustmentBodyDto` `:178-182`) บังคับ `commandId` (16–120 ตัว), `expectedVersion` (64 hex = `planTermSourceVersion`), `reason` — `checkPlanTermAdjustment` (`plan-term-adjustment.ts:29-34,47`) ตอบ 422 `partner_plan_term_command_required`/`partner_plan_term_changed` → BR01/02/07, GW02, BC03 ล้ม. new:
   ```ts
   const view = await (await request.get(`${urls.api}/system/partners/${companyId}/plan-term`, { headers: apiHeaders(adminToken, adminMembership.companyId) })).json() as CompanyPlanTermViewDto; // sourceVersion (contracts plan-term.ts:43)
   const res = await request.post(renewUrl, { headers: { ...apiHeaders(adminToken, adminMembership.companyId), 'X-Request-Id': requestId },
     data: { commandId: requestId, expectedVersion: view.sourceVersion, reason: 'e2e simulated payment', days: 30 } });
   ```
   (ใช้กับ `ownerRenew` `:116` ด้วย)
-- BC03 `:736-776`: หลัง PR B ปุ่ม "ต่ออายุ" ในหน้า partner ต้องกรอกเหตุผล (`PartnerDetailPage.tsx:2489-2495` `handleRenew` ปฏิเสธเมื่อไม่มี `renewReason`) และร้าน `no_package` มีคำเตือนเพิ่ม → เพิ่มขั้น fill "เหตุผล" + จำนวนวันใน dialog ก่อน `:755`; label หัวข้อ `:750` "แพ็กเกจหมดอายุแล้ว" อาจเปลี่ยนเป็น label จาก `planTermStateLabel` (PR B) → อัปเดตตาม
+- BC03 `:736-776`: หลัง PR B ปุ่ม "ต่ออายุ" ในหน้า partner ต้องกรอกเหตุผล (`PartnerDetailPage.tsx:2540-2546` `handleRenew` ปฏิเสธเมื่อไม่มี `renewReason`) และร้าน `no_package` มีคำเตือนเพิ่ม → เพิ่มขั้น fill "เหตุผล" + จำนวนวันใน dialog ก่อน `:755`; label หัวข้อ `:750` "แพ็กเกจหมดอายุแล้ว" อาจเปลี่ยนเป็น label จาก `planTermStateLabel` (PR B) → อัปเดตตาม
 - e2e นี้ไม่อยู่ใน workflow ใด → ใส่ใน step e2e ใหม่ของ §1.3 ถ้าเวลาพอ (ยาว ~10 นาที) หรือรัน local ครั้งเดียวก่อน UAT แล้วบันทึกผล
 
 ## 8. Docs amendment master table (รวม spec §17/§18 + ตาราง audit; ทุกบรรทัดตรวจแล้ว)
@@ -226,7 +230,7 @@ commit ใน PR เดียวกัน + twin main; CI ตรวจซ้ำ�
 | `docs/runbooks/line-first-signup-support-playbook.md:56` | "แพ็กเกจหมดอายุแล้ว → กด ต่ออายุ" | เพิ่ม: ร้าน "ยังไม่มีแพ็กเกจ" ให้ลูกค้าซื้อเองจากหน้าแพ็กเกจ; "ต่ออายุ" = ให้วันฟรี (R-C6 คำเตือน) | B |
 | `packages/contracts/src/external-signup.ts:372` | comment "Only ACTIVE is a valid RETURN_EXISTING target and direct entry." | คง `canEnter`; เพิ่ม comment ว่า `lockReason/canManagePlan` ใช้แสดงผลเท่านั้น | A |
 | `docs/runbooks/line-rich-menu-v2-console-setup.md` | — | ไม่เปลี่ยน (ยืนยันแล้ว) | — |
-| `docs/plans/mangmee-master-plan-index-th.md:44` (แถว PF, ยัง uncommitted) | "**DRAFT 2026-09-26** — มติ Owner D-PF-1..8 ครบ; รอรีวิว Q1–Q6 แล้วเริ่ม Phase 1" | "**DRAFT v0.2 2026-09-27** — D-PF-1..10; §18 ผลตรวจโค้ด; briefs ใน `docs/plans/purchase-without-setup/`; รอ DQ1–DQ8 แล้วเริ่ม PR A" แล้วอัปเดตสถานะทุกครั้งที่ PR merge | spec PR (ก่อน A) |
+| `docs/plans/mangmee-master-plan-index-th.md:45` (แถว PF) | **ทำแล้ว** ณ 03438bde: แถวเป็น "**DRAFT v0.2 + briefs 2026-09-27** — D-PF-1..10; §18 ผลตรวจโค้ด + §18.5 การปรับหลัง brief; implementation briefs ใน `purchase-without-setup/` (PR A–E + cross-cutting) พร้อมลงมือ; รอ DQ1–DQ11 (มีค่าเริ่มต้น) แล้วเริ่ม PR A" แล้ว (ไม่ใช่ข้อความร่างเดิมของบรรทัดนี้อีกต่อไป) | อัปเดตสถานะทุกครั้งที่ PR merge ต่อจากนี้ | spec PR (ทำแล้ว) |
 | `docs/plans/mangmee-purchase-without-setup-plan-th.md` / `docs/agent-memory/purchase-without-setup-2026-09-26.md` | — | ทุก PR: Status/Verification/Next + run ids | ทุก PR |
 
 ## 9. Release plan
@@ -243,6 +247,6 @@ commit ใน PR เดียวกัน + twin main; CI ตรวจซ้ำ�
 3. RV18: อ่าน `salesCompanyIds` จริงบน UAT และ production ก่อน UAT (ยังไม่รู้ค่า)
 4. ค่า `LINE_WEB_HANDOFF_ENABLED` บน UAT/production (ไม่อยู่ใน git) — อ่านจาก task env ตาม runbook cloud-environment-operations
 5. หลัง PR B: ตรวจ BC03 (`:736-776`) กับ dialog ต่ออายุที่ต้องกรอกเหตุผล/คำเตือน no_package แล้วแก้ขั้นตอนใน spec ตาม §7.3
-6. พอร์ต/DB ใน step e2e ใหม่ของ `extended-tests.yml` ต้องไม่ชนกับ step อื่นใน job `customer` (`:299-309` ใช้ 3153/3154, `email_otp_test`)
+6. พอร์ต/DB ใน step e2e ใหม่ของ `extended-tests.yml` ต้องไม่ชนกับ step อื่นใน job `customer` (`:307-317` ใช้ 3153/3154, `email_otp_test`)
 7. `git rev-parse <candidate>:.github/workflows/ci.yml == origin/main` ก่อน dispatch UAT `all` ทุกครั้ง (รวม `deploy-uat.yml` `:783-785`)
 8. `e2e/client-support.spec.ts` ถูกอ้างในคำสั่งงานว่าเกี่ยวกับ support — ตรวจแล้วเป็นเรื่อง client compatibility notice (`:6-48`) ไม่ต้องแก้; e2e support ที่เกี่ยวคือ `system-support-resolution.spec.ts`

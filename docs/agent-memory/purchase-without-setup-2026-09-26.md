@@ -17,7 +17,7 @@ Artifacts:
 - worktree: `/private/tmp/mangmee-purchase-flow-spec-20260926` branch `claude/purchase-flow-no-setup-spec-20260926` (จาก develop ddcdcadf) — docs commit/push 2026-09-27 (PR develop + twin main, admin merge)
 - การวิเคราะห์ต้นทาง: session 2026-09-26 (2 Explore agents บน origin/main 0760ed94 + หน้าเว็บจริง official/signup/login/email-access + public catalog LIVE 8 offers); production log groups `/ecs/mangmee-kamal-production-*` อ่านไม่ได้ด้วย profile dev (FilterLogEvents denied) จึงไม่มีตัวเลข funnel
 Verification: docs only — ไม่ได้รันอะไร; ข้อเท็จจริงในโค้ดที่อ้างใน spec §3/§13 ตรวจจาก origin/main แล้ว (get-line-signup-status:77, provision-signup:512-534, webhook:3274-3280, line-handoff.logic:78, AccountEmailOtpPanel reauthenticate, billing.service quote/checkout gates, update-partner-profile fields, company-plan-term renew, lookup-users)
-Next: เริ่ม PR A ตาม brief ได้ (pins sync เป็น commit แรก; G20 sign-off แล้ว) → B (ไม่มี DQ8) → C+D คู่กัน → E; แต่ละ PR: worktree ใหม่จาก origin/develop, verify ขั้นต่ำตาม brief §8, อัปเดต memory นี้ (Status/Verification/Next + run ids), develop แล้ว twin main; Extended Tests ท้าย Phase 2/4; readbacks xx §6 → UAT U1–U15 → production acceptance xx §7.2
+Next (อัปเดต 2026-09-28 ท้ายไฟล์): เริ่ม PR A ตาม brief ได้ (pins sync เป็น commit แรก; G20 sign-off แล้ว) → B (ไม่มี DQ8) → C+D คู่กัน → E; แต่ละ PR: worktree ใหม่จาก origin/develop, verify ขั้นต่ำตาม brief §8, อัปเดต memory นี้ (Status/Verification/Next + run ids), develop แล้ว twin main; Extended Tests ท้าย Phase 2/4; readbacks xx §6 → UAT U1–U15 → production acceptance xx §7.2
 Review 2026-09-27 (6 Explore audits, ~3.5M tokens; condensed notes in session scratchpad review/*.md): verdict = ทำได้ทุกส่วนยกเว้น "ออกใบใหม่แทนใบเดิม" (RV14: คืนเงินไม่ได้อีก, restart ติด review, legal-identity permission, pending items, op slots) → พักไปสเปกแยก; ต้องแก้สเปก: ไม่มีคอลัมน์ผู้รับ (RV01), ห้ามเขียนที่อยู่ลง Company (RV02), gate ซ่อน ~10 จุด + DTO บังคับอีเมล (RV03/05), flow เปลี่ยนผู้รับใหม่ต้องสร้าง (RV04), R-B2 = ทาง (ข) mint ในเลน (RV07), ห้าม mint ในกลุ่ม (RV08), ตัด R-B3 (RV09), คง canEnter (RV10), push = LIFF 2 แตะ (RV11), pins stale บน develop (RV12), ลงทะเบียนเทสต์ผ่าน catalog/ci.yml/extended-tests (RV13), web support request ไม่มี model (RV15). Stripe facts verified from API reference (Checkout email lock/prefill from saved card; customer_update; effective_at; paid_out_of_band; send works for paid but test mode sends no email; receipt_email resends; credit note out_of_band/email_type none).
 
 ## 2026-09-27 — implementation briefs (5 agents, ~2.85M tokens) + controller reconciliation
@@ -25,4 +25,23 @@ Review 2026-09-27 (6 Explore audits, ~3.5M tokens; condensed notes in session sc
 - สเปกที่ brief พบว่าทำไม่ได้: DQ6 แยก stream (env ใหม่ + pinned) → ไม่แยก; R-C7 `CompanyPlanTermDto` ได้เฉพาะ `lockReason`; R-C2 ต้องมี `lockedEntryCompanyId`; AC3 ต้องยกเว้น param ที่ exit เติม; DQ ใหม่ DQ9 (permission identity), DQ10 (resend แอดมิน 10/วัน), DQ11 (OTP ผู้รับไม่ reauth)
 - pins บน develop stale จริง (`auth.guard.ts` sha ≠ pin, จาก 48c4ab57) — PR A ต้อง sync เป็น commit แรก (xx §2)
 - ยังยืนยันไม่ได้จากการอ่านโค้ด (ต้องรันจริง/ทดสอบบนเครื่อง): รายการ "ต้องตรวจ" ท้ายแต่ละ brief (A 13 ข้อ, B 14, C 12, D 12, E 10, xx 8) — ส่วนใหญ่เป็นคำสั่ง grep/typecheck/boot, พฤติกรรม Stripe บน UAT (G27), เครื่องจริง iPhone/Android (AC10), CloudWatch เก็บ stdout ของ Next หรือไม่ (A15)
+
+## 2026-09-28 — resumed after the AI advisor program; briefs refreshed to develop 03438bde
+- The owner put this program on hold on 2026-09-27 while the AI work ran. It resumed on 2026-09-28, after the AI advisor program merged (#838/#839, telemetry #834/#835). At 03438bde, develop and main had identical trees.
+- Migrations renamed, because the AI work used 20260927110000–20260927180000:
+  - PR C → `20260928200000_billing_recipient_columns`;
+  - PR E → `20260928210000_line_support_request_reference`.
+  - If develop has a newer migration at implementation time, bump the timestamp and keep the suffix.
+- Every brief anchor was re-checked from ddcdcadf to 03438bde, with a helper that separates same / shifted / changed lines. Almost all anchors were shifted or unchanged.
+- The main semantic changes:
+  - **PR A, new exit 4 (§3.4ก):** delivery plan v2 sends the frozen wire through `sendFrozenV2` and never reaches the three old exits. So `openExternalBrowser=1` is added inside `buildLineDeliveryPlan`: in the item text, and in `freeze` for Flex `uri` actions, before `wireHash` and `pushRetryKey` are computed. Stored, sent, retried and replayed bytes then match.
+    - Controller decision (2026-09-28): the spec wording for R-B1 ("3 exits only") and A10 is amended in PR A as §7 proposes.
+  - **PR A, groups:** since reliability v2.4, group and room chats never reach the locked card, the package-change reply or the promotion card. They go to the public general lane. AC10 ง now reads "no handoff links in groups" (controller decision), and the group guard is tested at helper level.
+  - **PR A, G19:** `package_callback` joins `staff_contact` in the legal-gate bypass list of `line-message-buffer.service.ts` (controller decision).
+  - **PR A, `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED`:** its default is now true in code, matching production.
+  - **PR E:** the owner display-name feature (#836/#837) added a `setOwnerName` constructor parameter to `partner.controller.ts`. PR E's `updateIdentity` goes after it. The boundaries are separate:
+    - display name = `User.displayName`, under `system.partner_member.manage`;
+    - legal identity = `Company`, under `system.identity_reconciliation.resolve` (DQ-E1 = DQ9, decided).
+  - **xx:** pins on develop are stale for 4 files: auth.guard, legal-acceptance service, ai-gateway main and the legacy deploy.sh. PR A's first commit runs the one sync command.
+- Next: merge this docs refresh (develop + main twin), then PR A.
 
