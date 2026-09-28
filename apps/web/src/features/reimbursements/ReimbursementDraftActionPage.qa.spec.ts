@@ -23,8 +23,9 @@ describe('ReimbursementDraftActionView', () => {
     assert.match(applied, /บันทึกร่างใบเบิกแล้ว/);
     assert.match(applied, /href="\/companies\/company-1\/reimbursements\/rb1"/);
     assert.doesNotMatch(applied, /สร้าง.*ใหม่/);
-    const unknown = renderToStaticMarkup(React.createElement(ReimbursementDraftActionView, { companyId: 'company-1', state: { kind: 'unknown', message: 'ตรวจจากร่างเดิม' }, onConfirm: noop, onCancel: noop, onRefresh: noop }));
+    const unknown = renderToStaticMarkup(React.createElement(ReimbursementDraftActionView, { companyId: 'company-1', state: { kind: 'unknown', notice: 'result_unconfirmed' }, onConfirm: noop, onCancel: noop, onRefresh: noop }));
     assert.match(unknown, /ตรวจสถานะจากระบบ/);
+    assert.match(unknown, /ระบบจะตรวจจากร่างเดิมโดยไม่สร้างใบเบิกซ้ำ/);
     assert.doesNotMatch(unknown, /ยืนยันบันทึกเป็นร่าง/);
   });
 
