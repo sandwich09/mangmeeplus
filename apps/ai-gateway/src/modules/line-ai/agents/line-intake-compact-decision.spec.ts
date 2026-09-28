@@ -433,6 +433,77 @@ describe('tuning-3 item 2: a groupBy-only follow-up carries the latest matching 
   });
 });
 
+describe('R1(b): an explicit topic restart drops the recentReads carry (companion to the router rule)', () => {
+  const BREAKDOWN_LIST_FAMILY = new Set(['expense.get_breakdown::list']);
+  const breakdownSimpleRead = (confidence = 0.9) => ({
+    subrequest: 0, tool: 'expense.get_breakdown', subject: 'expense', agent: 'accounting', answerShape: 'list', confidence,
+  });
+
+  it('an explicit "กลับมาเรื่อง" restart never carries an earlier documentStatus into a new groupBy-only clause', async () => {
+    const text = 'กลับมาเรื่องรายจ่ายเดือนนี้ค่ะ แยกตามหมวดให้ดูหน่อย';
+    const created = await fixture(text);
+    const recentReads = [{
+      tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-09-27T23:06:36.944Z',
+      period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, documentStatus: 'CONFIRMED',
+    }];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' }, breakdownSimpleRead(0.91)),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: BREAKDOWN_LIST_FAMILY, language: 'th', recentReads,
+    });
+    assert.ok(parsed?.preparedPlan, 'the period plus groupBy alone must still ground and prepare');
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['documentStatus'], undefined, 'the restart must drop the old documentStatus, never carry it forward');
+  });
+
+  it('"เรื่องเดิม…อีกที" (topic word next to อีกที) also drops an earlier paymentStatus', async () => {
+    const text = 'เรื่องเดิมที่คุยไว้ ขอดูอีกที แยกตามร้าน';
+    const created = await fixture(text);
+    const recentReads = [{
+      tool: 'expense.get_breakdown', answerShape: 'list' as const, asOf: '2026-09-27T23:11:35.571Z',
+      period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, groupBy: 'category' as const, paymentStatus: 'PAID',
+    }];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'vendor' }, breakdownSimpleRead()),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: BREAKDOWN_LIST_FAMILY, language: 'th', recentReads,
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['paymentStatus'], undefined, 'a topic word next to อีกที is a restart, so paymentStatus must not carry');
+  });
+
+  it('a bare "อีกที" with no nearby topic word is NOT a restart and still carries (regression guard)', async () => {
+    const text = 'แยกตามหมวดอีกทีค่ะ';
+    const created = await fixture(text);
+    const recentReads = [{
+      tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-09-27T23:06:36.944Z',
+      period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, documentStatus: 'NEEDS_REVIEW',
+    }];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' }, breakdownSimpleRead(0.91)),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: BREAKDOWN_LIST_FAMILY, language: 'th', recentReads,
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['documentStatus'], 'NEEDS_REVIEW', 'an ordinary "again" follow-up with no topic word must keep carrying exactly as before');
+  });
+
+  it('"เริ่มใหม่" also blocks the carry, but a status the clause names of its own is untouched either way', async () => {
+    const text = 'เริ่มใหม่ค่ะ แยกตามหมวดเฉพาะที่ยืนยันแล้วให้ดูหน่อย';
+    const created = await fixture(text);
+    const recentReads = [{
+      tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-09-27T23:06:36.944Z',
+      period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, documentStatus: 'NEEDS_REVIEW',
+    }];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category', documentStatus: 'CONFIRMED' }, breakdownSimpleRead(0.91)),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: BREAKDOWN_LIST_FAMILY, language: 'th', recentReads,
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['documentStatus'], 'CONFIRMED', 'a status the clause names itself is never blocked by the restart guard');
+  });
+});
+
 describe('compact LINE intake decision: write clauses and other coverage', () => {
   it('C4: keeps a write clause whose writeIntent no tool supports (e.g. invoicing) instead of failing the whole decision', async () => {
     const text = 'ช่วยออกใบแจ้งหนี้ให้ลูกค้าหน่อยค่ะ';

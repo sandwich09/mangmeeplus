@@ -18,6 +18,12 @@ describe('item 1: unsold module topic classifier (spec §2/§3 row 17)', () => {
     { name: 'bank balance', text: 'เช็คยอดคงเหลือบัญชีธนาคารหน่อยค่ะ', featureKey: 'bank_reconciliation' },
     { name: 'bank reconciliation', text: 'ช่วยกระทบยอดบัญชีให้หน่อยค่ะ', featureKey: 'bank_reconciliation' },
     { name: 'purchase order', text: 'ขอดูใบสั่งซื้อค้างอยู่กี่ใบคะ', featureKey: 'procurement' },
+    // R2: purchase-order wording extension.
+    { name: 'procurement department (จัดซื้อ)', text: 'ฝ่ายจัดซื้อขอดูสถานะการสั่งของหน่อยครับ', featureKey: 'procurement' },
+    { name: 'สั่งซื้อ paired with ซัพพลายเออร์', text: 'สั่งซื้อวัตถุดิบจากซัพพลายเออร์รายใหม่ยังไงคะ', featureKey: 'procurement' },
+    { name: 'สั่งซื้อ paired with ผู้ขาย', text: 'อยากสั่งซื้อสินค้าจากผู้ขายเจ้าประจำเพิ่มอีกค่ะ', featureKey: 'procurement' },
+    { name: 'PO abbreviation', text: 'ขอเช็คสถานะ PO เลขที่ 1024 หน่อยครับ', featureKey: 'procurement' },
+    { name: 'purchase order (English)', text: 'เช็ค purchase order เลขที่ 1024 ให้หน่อยค่ะ', featureKey: 'procurement' },
   ];
 
   for (const { name, text, featureKey } of CASES) {
@@ -40,6 +46,23 @@ describe('item 1: unsold module topic classifier (spec §2/§3 row 17)', () => {
   it('mixed message: still finds the unsold clause when an expense clause is also present', () => {
     const topic = unsoldModuleTopicFor('ขอดูยอดขายเดือนนี้ กับค่าใช้จ่ายเดือนนี้ด้วยค่ะ');
     assert.equal(topic?.featureKey, 'sales_documents');
+  });
+
+  // R2: plain purchase wording (no supplier/vendor word, no PO/จัดซื้อ/ใบสั่งซื้อ) stays an ordinary
+  // expense question, never the out-of-package procurement reply.
+  for (const text of [
+    'ซื้อวัตถุดิบเข้าร้านวันนี้ค่ะ',
+    'ค่าซื้อเครื่องดื่มสำหรับลูกค้า',
+    'ซื้อแก๊สหุงต้มมาเติมค่ะ',
+    'จ่ายค่าซื้ออุปกรณ์ทำความสะอาด',
+  ]) {
+    it(`never flags plain purchase wording as procurement ("${text}")`, () => {
+      assert.equal(unsoldModuleTopicFor(text), undefined);
+    });
+  }
+
+  it('never flags a bare "สั่งซื้อ" with no supplier/vendor word (still ordinary shopping)', () => {
+    assert.equal(unsoldModuleTopicFor('สั่งซื้อกาแฟเจ้าประจำเหมือนเดิมค่ะ'), undefined);
   });
 });
 

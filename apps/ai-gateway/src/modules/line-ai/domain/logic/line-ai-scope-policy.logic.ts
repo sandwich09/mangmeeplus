@@ -34,6 +34,12 @@ export type UnsoldModuleTopic = { featureKey: string | null; topicLabelTh: strin
  *  so it only counts as the unsold "issue an invoice" topic paired with an issuing verb. */
 const ISSUE_VERB_TH = ['ออก', 'ทำ', 'สร้าง', 'จัดทำ'];
 
+// R2: "สั่งซื้อ" alone is ordinary shopping ("สั่งซื้อของออนไลน์"), so it only counts as the unsold
+// procurement topic paired with a supplier/vendor word; "ใบสั่งซื้อ", "จัดซื้อ", and PO/purchase order
+// are unambiguous procurement terms on their own and need no pairing.
+const SUPPLIER_WORD_PATTERN = /ซัพพลายเออร์|ผู้ขาย|supplier/i;
+const PURCHASE_ORDER_EN_PATTERN = /\bPO\b|purchase\s*order/i;
+
 const UNSOLD_MODULE_TOPICS: ReadonlyArray<UnsoldModuleTopic & { test: (text: string) => boolean }> = [
   {
     featureKey: 'sales_documents', topicLabelTh: 'ยอดขายและรายได้', topicLabelEn: 'sales and revenue',
@@ -68,7 +74,8 @@ const UNSOLD_MODULE_TOPICS: ReadonlyArray<UnsoldModuleTopic & { test: (text: str
   },
   {
     featureKey: 'procurement', topicLabelTh: 'ใบสั่งซื้อ', topicLabelEn: 'purchase orders',
-    test: (text) => text.includes('ใบสั่งซื้อ'),
+    test: (text) => text.includes('ใบสั่งซื้อ') || text.includes('จัดซื้อ') || PURCHASE_ORDER_EN_PATTERN.test(text)
+      || (text.includes('สั่งซื้อ') && SUPPLIER_WORD_PATTERN.test(text)),
   },
 ];
 
