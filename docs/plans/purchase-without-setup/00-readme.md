@@ -1,5 +1,7 @@
 # Implementation briefs: ซื้อแพ็กเกจได้ทันทีหลังสมัคร — สารบัญและกติการ่วม
 
+> ตรวจ anchor ใหม่บน develop 03438bde (2026-09-28); ฐานเดิม ddcdcadf
+
 Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangmee-purchase-without-setup-spec-th.md) (v0.2, §18 มีผลเหนือ §7/§9/§11) · Plan: [../mangmee-purchase-without-setup-plan-th.md](../mangmee-purchase-without-setup-plan-th.md) ("แก้ไขแผน 2026-09-27") · Memory: [../../agent-memory/purchase-without-setup-2026-09-26.md](../../agent-memory/purchase-without-setup-2026-09-26.md)
 
 แต่ละ brief ต้องพร้อมเขียนโค้ดได้โดยไม่ต้องค้นเพิ่ม: ไฟล์/ฟังก์ชัน/บรรทัด, contract (TypeScript/DTO/endpoint/error code + ข้อความไทย), ลำดับการทำงาน, ข้อความไทยทุกข้อความ, test ที่แก้/เพิ่ม + วิธีลงทะเบียน, docs ที่ต้อง amend, คำสั่ง verify, และรายการ "ต้องตรวจ" ที่เหลือ
@@ -62,7 +64,7 @@ Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangme
 
 ### 4. ข้อที่ยังต้อง Owner ตัดสิน (มีค่าเริ่มต้น — spec §18.4/§18.5)
 
-DQ1–DQ5, DQ7 (เดิม); DQ6 แก้ค่าเริ่มต้นเป็น **ไม่แยก stream**; DQ8 **คงเดิม 7 วันไปก่อน (Owner 2026-09-27 — ตัดออกจาก PR B)**; **DQ9** permission ฟอร์ม identity ในคอนโซล = ค่าเริ่มต้น (Owner 2026-09-27 ยืนยันว่าแอดมินต้องแก้ได้ — System Admin มีสิทธิ์นี้อยู่แล้ว); **DQ10** เพดาน resend แอดมิน 10/วัน; **DQ11** OTP ผู้รับไม่บังคับ reauth; ข้อความ G20 (`process-line-webhook.use-case.ts:244`) **Owner sign-off แล้ว 2026-09-27** (แพ็กเกจธุรกิจ = ชุด 1,999: เมนูเหมือนแพ็กเกจอื่น + ภ.ง.ด.53 + 50 ทวิ) → PR A ใช้ข้อความที่เสนอได้
+DQ1–DQ5, DQ7 (เดิม); DQ6 แก้ค่าเริ่มต้นเป็น **ไม่แยก stream**; DQ8 **คงเดิม 7 วันไปก่อน (Owner 2026-09-27 — ตัดออกจาก PR B)**; **DQ9** permission ฟอร์ม identity ในคอนโซล = ค่าเริ่มต้น (Owner 2026-09-27 ยืนยันว่าแอดมินต้องแก้ได้ — System Admin มีสิทธิ์นี้อยู่แล้ว); **DQ10** เพดาน resend แอดมิน 10/วัน; **DQ11** OTP ผู้รับไม่บังคับ reauth; ข้อความ G20 (`process-line-webhook.use-case.ts:268`) **Owner sign-off แล้ว 2026-09-27** (แพ็กเกจธุรกิจ = ชุด 1,999: เมนูเหมือนแพ็กเกจอื่น + ภ.ง.ด.53 + 50 ทวิ) → PR A ใช้ข้อความที่เสนอได้
 
 ### 5. ลำดับปล่อย (xx §9)
 

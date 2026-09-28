@@ -1,5 +1,7 @@
 # PR D (+G): เว็บลูกค้า — ซื้อโดยไม่ต้องตั้งค่า, หน้า return, ผู้รับเอกสาร, error map, ขัดเกลา — Implementation brief
 
+> ตรวจ anchor ใหม่บน develop 03438bde (2026-09-28); ฐานเดิม ddcdcadf
+
 - วันที่: 2026-09-27 · ฐานโค้ด: `origin/develop` ddcdcadf (ทุกเลขบรรทัดในไฟล์นี้ตรวจกับ commit นี้แล้ว) · Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangmee-purchase-without-setup-spec-th.md) §18.2 (R-A6/A8/A9/A11, R-D1, §12 error), §18.3 RV05/RV28/RV29/RV30, §12 เว็บลูกค้า · Plan: [../mangmee-purchase-without-setup-plan-th.md](../mangmee-purchase-without-setup-plan-th.md) "แก้ไขแผน 2026-09-27" P2 ข้อ 7/9 และ P5 · กติการ่วม: [00-readme.md](00-readme.md)
 - ขอบเขตไฟล์: `apps/web/**` + `e2e/**` + docs + `.github/workflows/extended-tests.yml` (1 step) เท่านั้น; **ไม่แตะ** `apps/api`, `packages/contracts` (PR C), `package.json`, `app/login/page.tsx`, `session-gate.logic.ts`, `companies/[companyId]/layout.tsx`
 - ลำดับ: **branch หลัง PR C merge** (ต้องใช้ contracts §2.1) — ถ้าต้องทำขนาน ให้ branch จาก branch ของ PR C แล้ว rebase; PR B แตะ `BillingPage.tsx:341-347` (label จาก lockReason), `AccountEmailOtpPanel.tsx`, `account/email/page.tsx:23` และอาจแตะ `WorkspaceLayout.tsx` (§3.8) → PR ที่ merge ทีหลัง rebase ก่อน push; ห้ามแตะ worktree ของอีก agent
@@ -103,7 +105,7 @@ export type BillingDocumentResendResult = { invoiceSent: boolean; receiptUpdated
 | `BILLING_INVOICE_MISMATCH` (domain) | `paid-invoice.ts` (ห้ามแตะ) | หลักฐานใบแจ้งหนี้ของรายการนี้ต้องให้ทีมงานตรวจก่อนเปิดสิทธิ์ กรุณาดูสถานะรายการเดิม |
 | `SPECIAL_PRICE_RETURN_REVIEW` | `billing-price-return.ts` | ราคาพิเศษของร้านยังปรับกลับเป็นราคาปกติไม่ได้ ทีมงานกำลังตรวจสอบ |
 
-**(ข) 5 รหัสที่มีเฉพาะใน `api-error-message.ts` (ไม่มีใน `BillingPage.errorText`)** — ครอบด้วย fall-through §3.2 ไม่ต้องคัดลอก: `BILLING_COMPANY_SALES_CLOSED` (:107), `BILLING_EMAIL_UPDATE_PENDING` (:20), `BILLING_INPUT_INVALID` (:895), `CONTROL_POLICY_NOT_READY` (:91), `CONTROL_PREVIEW_STALE` (:94 — ลูกค้าเจอเมื่อกดยุติรายการแล้วข้อมูลเปลี่ยน `billing-checkout-expiry.service.ts:16`). ปรับ 2 ข้อความให้เข้ากับหน้าลูกค้า: `BILLING_EMAIL_UPDATE_PENDING` → "มีคำขอเปลี่ยนอีเมลรับเอกสารค้างอยู่ กรุณายืนยันหรือยกเลิกคำขอในแท็บการต่ออายุและชำระเงินก่อนเริ่มรายการใหม่"; `CONTROL_PREVIEW_STALE` คงเดิม (ใช้ทั้งแอดมิน/ลูกค้า)
+**(ข) 5 รหัสที่มีเฉพาะใน `api-error-message.ts` (ไม่มีใน `BillingPage.errorText`)** — ครอบด้วย fall-through §3.2 ไม่ต้องคัดลอก: `BILLING_COMPANY_SALES_CLOSED` (:107), `BILLING_EMAIL_UPDATE_PENDING` (:20), `BILLING_INPUT_INVALID` (:898), `CONTROL_POLICY_NOT_READY` (:91), `CONTROL_PREVIEW_STALE` (:94 — ลูกค้าเจอเมื่อกดยุติรายการแล้วข้อมูลเปลี่ยน `billing-checkout-expiry.service.ts:16`). ปรับ 2 ข้อความให้เข้ากับหน้าลูกค้า: `BILLING_EMAIL_UPDATE_PENDING` → "มีคำขอเปลี่ยนอีเมลรับเอกสารค้างอยู่ กรุณายืนยันหรือยกเลิกคำขอในแท็บการต่ออายุและชำระเงินก่อนเริ่มรายการใหม่"; `CONTROL_PREVIEW_STALE` คงเดิม (ใช้ทั้งแอดมิน/ลูกค้า)
 
 **(ค) รหัสใหม่ — PR C ใส่ไทยใน `api-error-message.ts` เอง (coverage spec ของ PR C ต้องผ่าน); PR D ตรวจว่าครบและปรับถ้อยคำได้ แต่ห้ามเปลี่ยนชื่อรหัส (ตัดสิน 2026-09-27)**
 
@@ -197,7 +199,7 @@ export function errorText(error: unknown): string {
 ### 3.3 `apps/web/src/common/api/api-error-message.ts`
 
 - `CODE_LABELS`: เพิ่มทุกแถวใน §2.3 (ก)(ค)(จ) ไว้ถัดจาก `:110` (กลุ่ม BILLING_) และ `:20`; แก้ `:20` ตาม (ข); `:19` `BILLING_EMAIL_VERIFICATION_REQUIRED` "…ก่อนชำระเงิน" → "การเปลี่ยนผู้รับเอกสารด้วยอีเมลบัญชีต้องยืนยันอีเมลบัญชีก่อน หรือเลือก "ใช้อีเมลอื่น" เพื่อยืนยันด้วยรหัสที่ส่งไปอีเมลนั้น" (ใช้ในแผงผู้รับเอกสารทางเดิม — F06)
-- `apiErrorMessage` (`:1273-1278`) มี branch `BILLING_RATE_LIMIT` + `retryAfterSeconds` อยู่แล้ว → ขยายเงื่อนไขให้ครอบ `BILLING_RESEND_LIMIT` และ `EMAIL_OTP_RATE_LIMITED`: ข้อความ = ตาราง + ` (ลองใหม่ได้ใน ${seconds} วินาที)` เมื่อ `1 ≤ seconds ≤ 300`; เกิน 300 ใช้ข้อความตารางเฉย ๆ
+- `apiErrorMessage` (`:1276-1281`) มี branch `BILLING_RATE_LIMIT` + `retryAfterSeconds` อยู่แล้ว → ขยายเงื่อนไขให้ครอบ `BILLING_RESEND_LIMIT` และ `EMAIL_OTP_RATE_LIMITED`: ข้อความ = ตาราง + ` (ลองใหม่ได้ใน ${seconds} วินาที)` เมื่อ `1 ≤ seconds ≤ 300`; เกิน 300 ใช้ข้อความตารางเฉย ๆ
 
 ### 3.4 `apps/web/src/features/billing/BillingPage.tsx` (อ่านไฟล์ทั้ง 595 บรรทัดก่อนแก้)
 
@@ -608,7 +610,7 @@ routes: `GET /billing` → status; `GET /billing/catalog` → 8 offers จาก
    - เลือกใหม่ → `s.checkoutResult = 'UNKNOWN'` → click → status 'กำลังตรวจกับ Stripe'; button checkout count 0; รอ 2.5 วิ → `expect(s.log.checkouts).toHaveLength(2)` (ไม่ retry); button 'ตรวจผลการชำระเงินอีกครั้ง' visible
 4. `NO-SETUP failed attempt keeps the shop locked and offers the chooser at ${width}px` — stage failed → goto return → heading 'รายการชำระเงินนี้ไม่สำเร็จ', text 'สิทธิ์แพ็กเกจเดิมยังคงเดิม', button 'เลือกแพ็กเกจ' visible; polling หยุด (นับ GET attempts ภายใน 3 วิ ≤ 1)
 
-**การลงทะเบียน**: playwright `chromium` project เก็บ `e2e/*.spec.ts` อัตโนมัติ (`playwright.config.ts:89-93`); เพิ่ม step ใน `.github/workflows/extended-tests.yml` ใต้ step `:299-309` (suite `customer`) ชื่อ "Test purchase without setup in the browser" `run: pnpm exec playwright test e2e/billing-no-setup.spec.ts --workers=1` ด้วย env เดียวกับ `:302-308` (`API_PORT '3155'`, `WEB_PORT '3156'`, `NEXT_DIST_DIR .next/billing-no-setup`) — ไม่แตะ `ci.yml` (ไม่ต้อง parity main)
+**การลงทะเบียน**: playwright `chromium` project เก็บ `e2e/*.spec.ts` อัตโนมัติ (`playwright.config.ts:89-93`); เพิ่ม step ใน `.github/workflows/extended-tests.yml` ใต้ step `:307-317` (suite `customer`) ชื่อ "Test purchase without setup in the browser" `run: pnpm exec playwright test e2e/billing-no-setup.spec.ts --workers=1` ด้วย env เดียวกับ `:310-316` (`API_PORT '3155'`, `WEB_PORT '3156'`, `NEXT_DIST_DIR .next/billing-no-setup`) — ไม่แตะ `ci.yml` (ไม่ต้อง parity main)
 
 ## 6. Docs ที่ต้อง amend ใน PR นี้
 
