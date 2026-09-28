@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "596b15912731fd9f8ac74c1a4467a9d2216e8e74",
-  "checkoutBranch": "claude/purchase-pr-a-line-liff-20260928",
-  "checkoutDirty": true,
+  "sourceRevision": "4f0d7f2e8f6672a88f83b94a579ae42c1157a41a",
+  "checkoutBranch": "claude/w00-manifest-regen-20260928",
+  "checkoutDirty": false,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/web/src/features/reimbursements/ReimbursementDraftActionPage.tsx",
-      "sha256": "20a41dfafb4d2e51ac43cfcc38e200f5ce651f641f7e7fe4aa0fc10c56e5607f"
+      "sha256": "79c1da19156a4041ec3cc3cbb420f96fa63d704eb0bb4b5f872ba0d96cb76be0"
     },
     {
       "path": "apps/web/src/features/reports/ReportsWorkspacePage.tsx",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-28T14:42:32.052Z",
-  "manifestDigest": "eea49b638bcf204e13f2aff3eaa1b9a9648d6a5d5f03ed8545966161d21ff153"
+  "generatedAt": "2026-09-28T15:10:07.406Z",
+  "manifestDigest": "c603875e27e8a5fc0c8d0c01d04cb1e1cd09cc73507a0b78f3a0fb97c8552301"
 }
