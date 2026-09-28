@@ -159,11 +159,18 @@ describe('semantic turn v2: C1(c)/(d) grounding-exhausted fallback is never a de
     assert.ok(result.replyText.includes('ดึงข้อมูลส่วนนี้ไม่ได้'));
   });
 
-  it('never leaves a compose failure (both attempts unparsable) as `needs_user`', async () => {
+  // E3 (tuning-6a) changed this scenario's outcome on purpose: a single-subrequest read with good
+  // results now RESCUES a non-JSON compose response as `handled` (run 5: 24/77 compose calls
+  // answered in plain prose) rather than silently dropping it — it still runs the same grounding
+  // check any composed answer gets, and a bare placeholder string has no numbers to reject, so it
+  // grounds exactly as it would had the model wrapped this same text in valid JSON. The property
+  // this test still guards (R-L2/R-L3) is unchanged: never a phantom `needs_user`.
+  it('rescues a non-JSON compose response as `handled` rather than leaving it `needs_user`', async () => {
     const { result } = await run([CONTROL_CALL, 'this is not json', 'still not json']);
     const coverage = result.semanticCoverage?.[0];
-    assert.equal(coverage?.status, 'unsupported');
-    assert.equal(coverage?.reasonCode, 'SEMANTIC_ANSWER_UNAVAILABLE');
+    assert.notEqual(coverage?.status, 'needs_user');
+    assert.equal(coverage?.status, 'handled');
+    assert.ok(result.replyText.includes('this is not json'), result.replyText);
   });
 });
 

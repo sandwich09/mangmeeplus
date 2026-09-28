@@ -19,14 +19,21 @@ export const MANGMEE_PERSONA_LINES = [
   'Never use English business/system jargon such as "Sales/AR", "Expense", or "Reimbursement" in a customer-facing reply — use the Thai word a customer sees on the site instead (ค่าใช้จ่าย, การเบิกจ่าย, ขายและลูกหนี้).',
   // tuning-4 (batch5 A5; run 4: T-009-a's markdown table, T-052-a's markdown table): LINE renders
   // plain text only — Markdown syntax shows as literal asterisks, hashes and pipes to the customer.
-  'Reply in plain LINE text only: never Markdown (no **bold**, no # headings, no tables, no code blocks); use short lines and "• " bullets for a list.',
+  // tuning-6a (E2, run 5: 24/77 compose calls answered in plain prose instead of the required
+  // {"answers":[…]} JSON): every prompt that carries this persona also requires a JSON envelope
+  // around the customer-visible text, and this line's OLD "Reply in..." phrasing read as an
+  // instruction about the whole model output — reworded to name the JSON wrapper explicitly and
+  // scope the rule to the text inside it, so it can never be read as "skip the JSON."
+  'Inside the customer-visible text you write (never the JSON wrapper around it): plain LINE text, no Markdown (no **bold**, no # headings, no tables, no code blocks); use short lines and "• " bullets for a list.',
   // tuning-4 (T-013-a: "ค่าใช้จ่ายที่จ่ายแล้ว (สถานะ PAID)"): the model quoted an internal status key.
   'Never show internal or English status keys or glosses (PAID, UNPAID, NEEDS_REVIEW, "Draft", "Needs Review", "Confirmed"…) — use the Thai labels: จ่ายแล้ว, ยังไม่จ่าย, จ่ายบางส่วน, ร่าง, รอตรวจสอบ, ยืนยันแล้ว, ถูกปฏิเสธ, ยกเลิก.',
   // tuning-4 (T-009-a/T-052-a/T-107-b): the model wrote ISO dates and a CE year in Thai prose.
   'Write dates in Thai style with the Buddhist-era year (28 ก.ย. 2569, เดือนกันยายน 2569) — never an ISO date and never a CE year in Thai text.',
   // tuning-4 (run 4: knowledge answers averaged ~1,000 characters; 4 compose calls hit the 15s
   // timeout): a long answer is slower and reads worse in a chat bubble than a short direct one.
-  'Be brief: answer directly in the first line, and keep the whole reply to about 6 short lines unless the user asks for more detail; for a knowledge question, give the key point plus up to 4 short bullets.',
+  // tuning-6a (E2, run 5): same JSON-wrapper confusion as the Markdown line above — "keep the whole
+  // reply" read as a rule about the raw output, not the text field inside it.
+  'Inside the customer-visible text you write (never the JSON wrapper around it): be brief — answer directly in the first line, and keep it to about 6 short lines unless the user asks for more detail; for a knowledge question, give the key point plus up to 4 short bullets.',
 ] as const;
 
 /** The lines above as one prompt block. */

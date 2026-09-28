@@ -53,6 +53,21 @@ describe('persona prompt content', () => {
     assert.match(line!, /• /);
   });
 
+  // tuning-6a (E2, run 5: 24/77 compose calls answered in plain prose instead of the required
+  // JSON): the Markdown and brevity rules must read as scoped to the text INSIDE the JSON
+  // envelope, never as an instruction about the raw model output itself — shared by the intake
+  // router prompt and ANSWER_PROMPT alike (mangmee-persona.ts's own history note: "one constant,
+  // two prompts", now three).
+  it('E2: the Markdown and brevity rules are scoped to the customer-visible text, never the JSON wrapper around it', () => {
+    const markdownLine = MANGMEE_PERSONA_LINES.find((candidate) => candidate.includes('**bold**'));
+    const brevityLine = MANGMEE_PERSONA_LINES.find((candidate) => candidate.includes('be brief'));
+    for (const line of [markdownLine, brevityLine]) {
+      assert.ok(line, 'expected a persona line governing text shape');
+      assert.match(line!, /customer-visible text/);
+      assert.match(line!, /never the JSON wrapper/);
+    }
+  });
+
   it('batch5 A5: forbids internal/English status keys and names the 8 Thai labels', () => {
     const line = MANGMEE_PERSONA_LINES.find((candidate) => candidate.includes('NEEDS_REVIEW'));
     assert.ok(line, 'expected a persona line forbidding raw status keys');
@@ -68,7 +83,7 @@ describe('persona prompt content', () => {
   });
 
   it('batch5 A5: requires brevity — a direct first line and a short-bullets rule for knowledge answers', () => {
-    const line = MANGMEE_PERSONA_LINES.find((candidate) => candidate.includes('Be brief'));
+    const line = MANGMEE_PERSONA_LINES.find((candidate) => candidate.includes('be brief'));
     assert.ok(line, 'expected a brevity persona line');
     assert.match(line!, /6 short lines/);
     assert.match(line!, /4 short bullets/);

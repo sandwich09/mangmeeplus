@@ -162,3 +162,80 @@ describe('item 3: whatever still cannot be bound stays honest, never a permissio
     assert.ok(result.replyText.includes('ดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
   });
 });
+
+// E5 (tuning-6a): a why-question about a read that the planner answered with only the raw records
+// (list_recent) or only a name-filtered breakdown leaves the customer with no ranked cause. Reuses
+// this file's own `run`/`candidatesV2`/`baseUserContext` harness — `invokedInputs` shows exactly
+// which tool calls actually executed, additions included.
+describe('E5: a why-question about a read gets a category/vendor breakdown added, not just the raw records', () => {
+  it('T-015-a-style ("ทำไมมีร่างค้างเยอะจังคะ"): a list_recent-only plan also gets a category breakdown of the same filters, limit dropped', async () => {
+    const MESSAGE_TEXT = 'ทำไมมีร่างค้างเยอะจังคะ';
+    const valueCandidates = await candidatesV2(MESSAGE_TEXT, 'turn-e5-a');
+    const request: LineAiTurnRequest = {
+      requestId: 'req-e5-a', webhookEventId: 'event-e5-a', messageText: MESSAGE_TEXT,
+      messagePreviewHash: 'e'.repeat(16), valueCandidates,
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามสาเหตุร่างค้าง', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+        requestedFilters: { documentStatus: 'NEEDS_REVIEW' } }],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const toolResult: ToolResult = { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-28T01:42:00.000Z',
+      sourceRefs: [{ id: 'expenses:expense_summary:summary', label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, asOf: '2026-09-28T01:42:00.000Z' }],
+      facts: [], data: { total: 5 } };
+    const { invokedInputs } = await run({
+      request, invokeResult: toolResult,
+      controlCall: { calls: [{ index: 0, toolName: 'expense.list_recent', input: { documentStatus: 'NEEDS_REVIEW', limit: 20 } }] },
+    });
+    assert.deepEqual(invokedInputs, [
+      { tool: 'expense.list_recent', input: { documentStatus: 'NEEDS_REVIEW', limit: 20 } },
+      { tool: 'expense.get_breakdown', input: { documentStatus: 'NEEDS_REVIEW', groupBy: 'category' } },
+    ]);
+  });
+
+  it('T-111-b-style ("ทำไมจ่ายร้านสมใจการค้าเยอะจังเดือนนี้ครับ"): a vendor-filtered breakdown also gets an unfiltered one, so the rank is visible', async () => {
+    const MESSAGE_TEXT = 'ทำไมจ่ายร้านสมใจการค้าเยอะจังเดือนนี้ครับ';
+    const valueCandidates = await candidatesV2(MESSAGE_TEXT, 'turn-e5-b');
+    assert.ok(valueCandidates.periods.some(p => p.fromDate === '2026-09-01' && p.toDate === '2026-09-28'), 'sanity: this-month is grounded');
+    const request: LineAiTurnRequest = {
+      requestId: 'req-e5-b', webhookEventId: 'event-e5-b', messageText: MESSAGE_TEXT,
+      messagePreviewHash: 'f'.repeat(16), valueCandidates,
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามสาเหตุจ่ายร้านสมใจการค้าเยอะ', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+        requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า' } }],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const toolResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-28T01:42:00.000Z',
+      sourceRefs: [{ id: 'expenses:expense_summary:summary', label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, asOf: '2026-09-28T01:42:00.000Z' }],
+      facts: [], data: { totalAmount: '17765.00' } };
+    const { invokedInputs } = await run({
+      request, invokeResult: toolResult,
+      controlCall: { calls: [{ index: 0, toolName: 'expense.get_breakdown',
+        input: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า' } }] },
+    });
+    // (b)'s unfiltered call is invoked directly (never through `calls`/`bindRequestedReadFilters` —
+    // see semantic-turn-v2.ts's E5 comment), so it lands in `invokedInputs` before the control
+    // round's own filtered call executes; the ORDER is an implementation detail, so sort first.
+    const sorted = [...invokedInputs].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    assert.deepEqual(sorted, [
+      { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'vendor' } },
+      { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า' } },
+    ]);
+  });
+
+  it('never adds a breakdown for an ordinary (non-why) read question', async () => {
+    const MESSAGE_TEXT = 'เดือนนี้จ่ายไปเท่าไหร่คะ';
+    const valueCandidates = await candidatesV2(MESSAGE_TEXT, 'turn-e5-c');
+    const request: LineAiTurnRequest = {
+      requestId: 'req-e5-c', webhookEventId: 'event-e5-c', messageText: MESSAGE_TEXT,
+      messagePreviewHash: '6'.repeat(16), valueCandidates,
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ยอดเดือนนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const toolResult: ToolResult = { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-28T01:42:00.000Z',
+      sourceRefs: [{ id: 'expenses:expense_summary:summary', label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, asOf: '2026-09-28T01:42:00.000Z' }],
+      facts: [], data: { total: 5 } };
+    const { invokedInputs } = await run({
+      request, invokeResult: toolResult,
+      controlCall: { calls: [{ index: 0, toolName: 'expense.list_recent', input: {} }] },
+    });
+    assert.deepEqual(invokedInputs, [{ tool: 'expense.list_recent', input: {} }]);
+  });
+});
