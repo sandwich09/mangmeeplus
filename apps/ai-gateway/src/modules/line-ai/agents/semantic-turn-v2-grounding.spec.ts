@@ -236,8 +236,10 @@ describe('item 3 (223-turn eval batch 2): a two-period comparison is answered wi
     const result = await runCmp([answers]);
     assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
     assert.ok(!result.replyText.includes('99,999'), 'the invented figure must not leak through');
-    assert.ok(result.replyText.includes('-22,688.00'), result.replyText);
-    assert.ok(result.replyText.includes('ช่วง 2026-08-01'), result.replyText);
+    // A8: the bare signed "-22,688.00" line is now a direction sentence from the LATER period's own
+    // point of view, and "ช่วง 2026-08-01" is now the Thai whole-month label "ส.ค. 2569".
+    assert.match(result.replyText, /น้อยกว่า.*22,688\.00 บาท \(ลดลง 56\.1%\)/su, result.replyText);
+    assert.ok(result.replyText.includes('ช่วง ส.ค. 2569'), result.replyText);
   });
 
   it('falls to the deterministic comparison — never the generic terminal — when compose fails entirely', async () => {
@@ -248,8 +250,12 @@ describe('item 3 (223-turn eval batch 2): a two-period comparison is answered wi
       assert.equal(coverage?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
       assert.notEqual(coverage?.reasonCode, 'SEMANTIC_ANSWER_UNAVAILABLE');
     }
-    assert.ok(result.replyText.includes('-22,688.00'));
+    // A8: same direction-sentence rewrite as above.
+    assert.match(result.replyText, /น้อยกว่า.*22,688\.00 บาท \(ลดลง 56\.1%\)/su, result.replyText);
     assert.ok(!result.replyText.includes('ดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
+    // A7: both indices render the SAME deterministic comparison block — printed once, unnumbered.
+    assert.ok(!result.replyText.startsWith('1. '), result.replyText);
+    assert.ok(!result.replyText.includes('\n\n2. '), result.replyText);
   });
 
   it('item 3(b): grounds a code-computed category share for a single-period breakdown "why" question', async () => {
@@ -399,5 +405,188 @@ describe('semantic turn v2: item 3 (spec §3 row 8) expense.get_detail as the de
     assert.equal(coverage?.status, 'unsupported');
     assert.notEqual(coverage?.status, 'needs_user');
     assert.equal(coverage?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+  });
+});
+
+// ── A1 (batch5, run 4): date-aware number tokenizer ────────────────────────────────────────────
+// Root cause: `/-?\d[\d,]*(?:\.\d+)?/gu` read an ISO date "2026-09-15T04:00:00.000Z" as 2026, -9,
+// -15 — the allow-set only ever carried the NEGATIVE form of a tool date's day, so a composed answer
+// naming that day in plain positive prose was rejected 76/89 times in run 4. Fixture dates below are
+// deliberately distinct from the C1 block above (day 15, not 14/28) so a pass here cannot be
+// accidental leakage from another fixture's digits.
+describe('semantic turn v2: A1 (batch5) date-aware number tokenizer', () => {
+  const DATED_SOURCE_REF = { label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary',
+    asOf: '2026-09-15T04:00:00.000Z', permissionChecked: true as const, webPath: '/companies/company/expenses' };
+
+  function datedListRecentResult(): ToolResult {
+    return {
+      toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-15T04:00:00.000Z',
+      sourceRefs: [DATED_SOURCE_REF],
+      queryApplied: { timezone: 'Asia/Bangkok', period: { startDate: '2026-09-01', endDate: '2026-09-28', timezone: 'Asia/Bangkok', defaulted: false },
+        dateBasis: 'expense_incurred_date', statusBasis: 'exclude_rejected_voided', dataset: 'operational_expense_records' },
+      facts: [],
+      data: {
+        total: 1, period: { fromDate: '2026-09-01', toDate: '2026-09-28', defaultedToCurrentMonth: false },
+        summary: { countedItems: 1, cancelledCount: 0, totalAmount: '300.50', pendingAmount: '0', draftAmount: '0', confirmedAmount: '300.50', paidAmount: '300.50', unpaidAmount: '0' },
+        totalsByCurrency: [{ currency: 'THB', count: 1, totalAmount: '300.50' }],
+        items: [{ id: 'e1', expenseDate: '2026-09-15T04:00:00.000Z', vendorNameSnapshot: 'ร้านสมใจ', status: 'CONFIRMED', paymentStatus: 'PAID', grandTotalAmount: '300.50' }],
+      },
+    };
+  }
+
+  it('grounds a day named in prose ("15 ก.ย.") from a tool ISO date, which the old regex could only ever read as negative', async () => {
+    const text = 'ค่าใช้จ่ายวันที่ 15 ก.ย. รวม 300.50 บาทค่ะ';
+    const { result } = await run([CONTROL_CALL, answerEnvelope(text)], datedListRecentResult());
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.ok(result.replyText.includes('15 ก.ย.'), result.replyText);
+  });
+
+  it('grounds a month-to-date range ("1–28 ก.ย. 2569") from the tool\'s own period', async () => {
+    const text = 'ค่าใช้จ่ายช่วง 1–28 ก.ย. 2569 รวม 300.50 บาทค่ะ';
+    const { result } = await run([CONTROL_CALL, answerEnvelope(text)], datedListRecentResult());
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.ok(result.replyText.includes('1–28 ก.ย. 2569'), result.replyText);
+  });
+
+  it('still rejects an invented approximate figure even with the date-aware tokenizer', async () => {
+    const text = 'ค่าใช้จ่ายวันที่ 15 ก.ย. รวมประมาณ 7,312.50 บาทค่ะ';
+    const { result } = await run([CONTROL_CALL, answerEnvelope(text)], datedListRecentResult());
+    assert.notEqual(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.ok(!result.replyText.includes('7,312.50') && !result.replyText.includes('7312.50'), result.replyText);
+  });
+});
+
+// ── A2 (batch5): rounded derived percentages ────────────────────────────────────────────────────
+describe('semantic turn v2: A2 (batch5) a rounded derived percentage is grounded, an arbitrary one is not', () => {
+  const SHARE_SOURCE_REF = { label: 'สรุปค่าใช้จ่ายแยกกลุ่ม', module: 'expenses', entityType: 'expense_breakdown',
+    asOf: '2026-09-27T18:20:29.656Z', permissionChecked: true as const, webPath: '/companies/company/expenses' };
+
+  function shareRequest(): LineAiTurnRequest {
+    const text = 'ค่าเดินทางเดือนนี้คิดเป็นสัดส่วนเท่าไหร่คะ';
+    return {
+      requestId: 'req-share-pct', webhookEventId: 'event-share-pct', messageText: text, messagePreviewHash: 'a'.repeat(16),
+      valueCandidates: extractValueCandidates(text, '2026-09-28'),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'สัดส่วนค่าเดินทาง', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+        requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28' } }],
+      userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
+        permissions: ['expense.read'], roles: ['owner'], branchIds: [], locationIds: [], locale: 'th-TH' },
+    };
+  }
+  const SHARE_CONTROL_CALL = JSON.stringify({ calls: [{ index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28' } }] });
+  // ค่าเดินทาง 562 of a 1000 total is a 56.2% share, computed by expenseBreakdownShares.
+  const SHARE_RESULT: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [SHARE_SOURCE_REF],
+    data: { period: { fromDate: '2026-09-01', toDate: '2026-09-28', defaultedToCurrentMonth: false }, totalCount: 3, totalAmount: '1000', currency: 'THB',
+      totalsByCurrency: [{ currency: 'THB', count: 3, totalAmount: '1000' }], mixedCurrency: false,
+      byCategory: [{ categoryId: null, category: 'ค่าเดินทาง', currency: 'THB', count: 1, totalAmount: '562' }], byBranch: [], byVendor: [] } };
+
+  async function runShare(answerText: string) {
+    const queue = [SHARE_CONTROL_CALL, JSON.stringify({ answers: [{ index: 0, status: 'handled', text: answerText, sourceRefIds: ['expenses:expense_breakdown:summary'] }] })];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    return runSemanticTurnV2({ req: shareRequest(), provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false, async invoke(): Promise<ToolResult> { return SHARE_RESULT; } });
+  }
+
+  it('accepts the model rounding a code-derived 56.2% share to "56%"', async () => {
+    const result = await runShare('ค่าเดินทางเดือนนี้คิดเป็น 56% ของยอดรวมค่ะ');
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+  });
+
+  it('still rejects an arbitrary whole percent that is not the rounded derived share', async () => {
+    const result = await runShare('ค่าเดินทางเดือนนี้คิดเป็น 75% ของยอดรวมค่ะ');
+    assert.notEqual(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+  });
+});
+
+// ── A4 (batch5): raw facts are never appended to the customer-visible reply ────────────────────
+describe('semantic turn v2: A4 (batch5) grounded compose text is never followed by raw fact lines', () => {
+  it('a grounded answer stays exactly the model\'s own text', async () => {
+    const text = 'ค่าใช้จ่ายยืนยันแล้วเดือนนี้ 8,703 บาท (8 รายการ) ค่ะ';
+    const { result } = await run([CONTROL_CALL, answerEnvelope(text)]);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.equal(result.replyText, text, result.replyText);
+    assert.ok(!result.replyText.includes('expense_total:'), result.replyText);
+    assert.ok(!result.replyText.includes('|'), result.replyText);
+  });
+});
+
+// ── A9 (batch5, T-070-a/T-074-a): the fallback list shape follows a "list" request ──────────────
+describe('semantic turn v2: A9 (batch5) a "list"-asking message prefers the list deterministic shape', () => {
+  const LIST_MESSAGE = 'ขอ list รายการล่าสุดหน่อยค่ะ';
+
+  function listRequest(): LineAiTurnRequest {
+    return {
+      requestId: 'request-list', webhookEventId: 'event-list', messageText: LIST_MESSAGE, messagePreviewHash: 'c'.repeat(16),
+      valueCandidates: extractValueCandidates(LIST_MESSAGE, TODAY),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'รายการล่าสุด', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
+        permissions: ['expense.read'], roles: ['owner'], branchIds: [], locationIds: [], locale: 'th-TH' },
+    };
+  }
+  const LIST_CONTROL_CALL = JSON.stringify({ calls: [{ index: 0, toolName: 'expense.list_recent', input: {} }], questions: [] });
+
+  it('renders the list shape (names an item\'s vendor), not the total-only shape, when the user asked to see a list', async () => {
+    const queue = [LIST_CONTROL_CALL, answerEnvelope('ค่าใช้จ่ายรวมประมาณ 99,000 บาทนะคะ')];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    const result = await runSemanticTurnV2({
+      req: listRequest(), provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      enabledDeterministicFamilies: new Set(['expense.list_recent::single_metric', 'expense.list_recent::list']),
+      async invoke(): Promise<ToolResult> { return listRecentConfirmedResult(); },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
+    assert.ok(result.replyText.includes('ร้านสมใจ'), result.replyText);
+  });
+});
+
+// ── A3 (batch5, T-084-b): reimbursement.list_pending_approvals total joins the grounding allow-set ──
+describe('semantic turn v2: A3 (batch5) the code-computed pending-approvals total is grounded', () => {
+  const PENDING_SOURCE_REF = { label: 'รายการเบิกจ่ายรออนุมัติ', module: 'reimbursements', entityType: 'reimbursement_approval_queue',
+    asOf: '2026-09-28T02:00:00.000Z', permissionChecked: true as const, webPath: '/companies/company/reimbursements' };
+  const PENDING_RESULT: ToolResult = { toolName: 'reimbursement.list_pending_approvals', status: 'ok', asOf: '2026-09-28T02:00:00.000Z',
+    sourceRefs: [PENDING_SOURCE_REF], facts: [], data: { total: 2, items: [
+      { id: 'r1', documentNumber: 'REQ-1', requesterDisplayName: 'สมชาย', amount: '1200.00', currency: 'THB', submittedAt: '2026-09-20T00:00:00.000Z', status: 'PENDING_APPROVAL', branch: null },
+      { id: 'r2', documentNumber: 'REQ-2', requesterDisplayName: 'สมหญิง', amount: '866.00', currency: 'THB', submittedAt: '2026-09-21T00:00:00.000Z', status: 'PENDING_APPROVAL', branch: null },
+    ] } };
+
+  function pendingRequest(): LineAiTurnRequest {
+    // Deliberately NOT T-084-b's own "...หน่อยครับ" wording: that phrase also trips the unrelated
+    // (out-of-scope for this task) LINE-action-boundary classifier in line-ai-scope-policy.logic.ts,
+    // whose REQUEST_MARKERS_TH+verb match fires on "รออนุมัติ"'s "อนุมัติ" substring before this
+    // subrequest ever reaches a tool call. This test isolates the A3 grounding fix only.
+    const text = 'มีใบเบิกรออนุมัติกี่ใบคะ';
+    return {
+      requestId: 'req-pending', webhookEventId: 'event-pending', messageText: text, messagePreviewHash: 'e'.repeat(16),
+      valueCandidates: extractValueCandidates(text, '2026-09-28'),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ใบเบิกรออนุมัติ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
+        permissions: ['reimbursement.approve'], roles: ['manager'], branchIds: [], locationIds: [], locale: 'th-TH' },
+    };
+  }
+  const PENDING_CONTROL_CALL = JSON.stringify({ calls: [{ index: 0, toolName: 'reimbursement.list_pending_approvals', input: {} }], questions: [] });
+
+  it('grounds a composed answer citing the code-computed 2,066.00 total (run 4 rejected this 7 times)', async () => {
+    const answer = JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'ใบเบิกรออนุมัติตอนนี้มี 2 รายการ รวม 2,066.00 บาทค่ะ', sourceRefIds: ['reimbursements:reimbursement_approval_queue:summary'] }] });
+    const queue = [PENDING_CONTROL_CALL, answer];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    const result = await runSemanticTurnV2({
+      req: pendingRequest(), provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { return PENDING_RESULT; },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+    assert.ok(result.replyText.includes('2,066.00'), result.replyText);
+  });
+
+  it('still rejects an invented pending-approvals total', async () => {
+    const answer = JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'ใบเบิกรออนุมัติตอนนี้รวมประมาณ 9,999.00 บาทค่ะ', sourceRefIds: ['reimbursements:reimbursement_approval_queue:summary'] }] });
+    const queue = [PENDING_CONTROL_CALL, answer];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    const result = await runSemanticTurnV2({
+      req: pendingRequest(), provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { return PENDING_RESULT; },
+    });
+    assert.notEqual(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.ok(!result.replyText.includes('9,999.00'), result.replyText);
   });
 });

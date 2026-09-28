@@ -133,6 +133,24 @@ export function reimbursementApprovalNotPermittedReplyText(english: boolean): st
     : 'บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ ถ้าต้องการดูใบเบิกของตัวเอง ถามได้เลย เช่น “ใบเบิกของฉันถึงไหนแล้ว”';
 }
 
+// ─── A3 (batch5, T-084-b): reimbursement.list_pending_approvals has no code-computed total ───────
+// erp-reimbursement-tools.use-case.ts's ReimbursementListPendingApprovalsTool returns `total` (the
+// full count, never truncated) and `items` capped to the first 10 rows — no total AMOUNT at all.
+// Sum the shown items in code, and only when nothing is missing (`items` actually holds every row,
+// i.e. total <= 10) and every row shares one currency; a partial sum would silently understate a
+// longer queue. Joins the SAME derivedFacts path as the comparison/share facts below, so compose can
+// cite the total and grounding allows it (run 4 rejected 7 composed answers stating it).
+export function reimbursementPendingApprovalsTotal(data: UnknownRecord): string | undefined {
+  const total = data['total'];
+  const items = Array.isArray(data['items']) ? data['items'] as UnknownRecord[] : [];
+  if (typeof total !== 'number' || items.length === 0 || items.length !== total) return undefined;
+  const currencies = new Set(items.map((item) => String(item['currency'] ?? '')));
+  if (currencies.size !== 1 || [...currencies][0] === '') return undefined;
+  const sum = items.reduce((acc, item) => acc + Number(item['amount'] ?? 0), 0);
+  if (!Number.isFinite(sum)) return undefined;
+  return `ใบเบิกรออนุมัติทั้งหมด: ${total} รายการ รวม ${formatSignedMoney(sum)} บาท`;
+}
+
 // ─── Item 3 (223-turn eval batch 2): period comparisons and breakdown shares ───────────────────
 // "เทียบกับเดือนที่แล้วเป็นยังไงบ้าง" style turns kept failing compose because the model computed
 // its own difference/percentage across two tool results and grounding correctly rejected numbers
@@ -144,14 +162,41 @@ type ExpensePeriodTotals = {
   toDate: string;
   totalAmount: string;
   count: number;
-  /** Same-shaped sub-split when the tool result carries one: get_breakdown's byCategory rows, or
-   *  list_recent's per-payment-status amounts. Matched across periods by `label`. */
+  /** Same-shaped sub-split when the tool result carries one: get_breakdown's byCategory/byBranch/
+   *  byVendor rows (whichever `queryApplied.filters.groupBy` actually applied — A8/T-082-a: this
+   *  used to always read byCategory, so a vendor-grouped comparison silently answered with category
+   *  rows), or list_recent's per-payment-status amounts. Matched across periods by `label`. */
   byLabel: Array<{ label: string; totalAmount: string }>;
+  /** A8 (T-080-a): `queryApplied.accessScope`, when the tool result carries one — "own"/"related"
+   *  means this period's figures cover only the caller's own/related records. */
+  accessScope?: 'own' | 'related' | 'company';
+  /** get_breakdown only: the grouping actually applied, for the rank-1 "same X?" wording below. */
+  groupBy?: 'category' | 'branch' | 'vendor';
 };
 
 const EXPENSE_STATUS_AMOUNT_LABELS_TH: Record<string, string> = {
   paidAmount: 'จ่ายแล้ว', unpaidAmount: 'ยังไม่จ่าย', confirmedAmount: 'ยืนยันแล้ว', draftAmount: 'ร่าง', pendingAmount: 'รอดำเนินการ',
 };
+
+const BREAKDOWN_GROUP_FIELDS = {
+  category: { key: 'byCategory', field: 'category' },
+  branch: { key: 'byBranch', field: 'branch' },
+  vendor: { key: 'byVendor', field: 'vendor' },
+} as const;
+
+/** Same default as ExpenseGetBreakdownTool's own `groupBy` echo (erp-business-tools.use-case.ts):
+ *  an absent or unrecognized value reads as "category" — that tool always computes and returns all
+ *  three group arrays, so this only decides WHICH one this comparison actually follows. */
+function appliedGroupBy(data: UnknownRecord): 'category' | 'branch' | 'vendor' {
+  const filters = record(record(data['queryApplied'])?.['filters']);
+  const groupBy = filters?.['groupBy'];
+  return groupBy === 'branch' || groupBy === 'vendor' ? groupBy : 'category';
+}
+
+function accessScopeOf(data: UnknownRecord): 'own' | 'related' | 'company' | undefined {
+  const scope = record(data['queryApplied'])?.['accessScope'];
+  return scope === 'own' || scope === 'related' || scope === 'company' ? scope : undefined;
+}
 
 /** Reads a generic "grand total + count, and a same-shaped sub-split when present" out of either
  *  expense.list_recent's or expense.get_breakdown's `data` — comparison and share math never needs
@@ -160,12 +205,15 @@ function expensePeriodTotals(toolName: string, data: UnknownRecord): ExpensePeri
   const period = record(data['period']);
   const fromDate = period?.['fromDate'], toDate = period?.['toDate'];
   if (typeof fromDate !== 'string' || typeof toDate !== 'string') return undefined;
+  const accessScope = accessScopeOf(data);
   if (toolName === 'expense.get_breakdown') {
     const totalAmount = data['totalAmount'], totalCount = data['totalCount'];
     if (typeof totalAmount !== 'string' || typeof totalCount !== 'number') return undefined;
-    const byCategory = Array.isArray(data['byCategory']) ? data['byCategory'] as UnknownRecord[] : [];
-    return { fromDate, toDate, totalAmount, count: totalCount,
-      byLabel: byCategory.map((row) => ({ label: String(row['category'] ?? ''), totalAmount: String(row['totalAmount'] ?? '0') })).filter((row) => row.label) };
+    const groupBy = appliedGroupBy(data);
+    const { key, field } = BREAKDOWN_GROUP_FIELDS[groupBy];
+    const rows = Array.isArray(data[key]) ? data[key] as UnknownRecord[] : [];
+    return { fromDate, toDate, totalAmount, count: totalCount, accessScope, groupBy,
+      byLabel: rows.map((row) => ({ label: String(row[field] ?? ''), totalAmount: String(row['totalAmount'] ?? '0') })).filter((row) => row.label) };
   }
   if (toolName === 'expense.list_recent') {
     const summary = record(data['summary']);
@@ -176,7 +224,7 @@ function expensePeriodTotals(toolName: string, data: UnknownRecord): ExpensePeri
       const value = summary?.[key];
       if (typeof value === 'string') byLabel.push({ label, totalAmount: value });
     }
-    return { fromDate, toDate, totalAmount, count: data['total'], byLabel };
+    return { fromDate, toDate, totalAmount, count: data['total'], byLabel, accessScope };
   }
   return undefined;
 }
@@ -196,8 +244,72 @@ function formatSignedPercent(percent: number | undefined): string | undefined {
   return percent === undefined ? undefined : `${percent >= 0 ? '+' : ''}${percent.toFixed(1)}%`;
 }
 
-function periodLabel(period: { fromDate: string; toDate: string }): string {
-  return period.fromDate === period.toDate ? period.fromDate : `${period.fromDate} – ${period.toDate}`;
+const THAI_MONTH_ABBR = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+const ENGLISH_MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const CIVIL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
+
+function lastDayOfMonthCe(yearCe: number, month: number): number {
+  return new Date(Date.UTC(yearCe, month, 0)).getUTCDate();
+}
+
+/** A8 (batch5, T-082-a/T-080-a): a Thai (or English) period phrase for the deterministic comparison
+ *  reply, never the raw ISO dates it replaced. A whole calendar month prints as just the month
+ *  ("ส.ค. 2569"/"Aug 2026"); a partial month (typically month-to-date) keeps its day range
+ *  ("1–28 ก.ย. 2569"/"1–28 Sep 2026"); a single day prints once; anything else falls back to a
+ *  day-month-year range. Local month table — copied from prepared-simple-read-formatter.ts's own
+ *  THAI_MONTH_ABBR (read-only for this task) rather than imported, since that agents-layer file must
+ *  not become a dependency of this domain/logic module. */
+function periodLabel(fromDate: string, toDate: string, english: boolean): string {
+  const from = CIVIL_DATE.exec(fromDate), to = CIVIL_DATE.exec(toDate);
+  if (!from || !to) return fromDate === toDate ? fromDate : `${fromDate} – ${toDate}`;
+  const [fy, fm, fd] = [Number(from[1]), Number(from[2]), Number(from[3])];
+  const [ty, tm, td] = [Number(to[1]), Number(to[2]), Number(to[3])];
+  const month = (m: number) => (english ? ENGLISH_MONTH_ABBR : THAI_MONTH_ABBR)[m - 1];
+  const year = (y: number) => (english ? String(y) : String(y + 543));
+  if (fromDate === toDate) return english ? `${month(fm)} ${fd}, ${year(fy)}` : `${fd} ${month(fm)} ${year(fy)}`;
+  if (fy === ty && fm === tm) {
+    if (fd === 1 && td === lastDayOfMonthCe(fy, fm)) return `${month(fm)} ${year(fy)}`;
+    return `${fd}–${td} ${month(fm)} ${year(fy)}`;
+  }
+  return english ? `${month(fm)} ${fd}, ${year(fy)} – ${month(tm)} ${td}, ${year(ty)}` : `${fd} ${month(fm)} ${year(fy)} – ${td} ${month(tm)} ${year(ty)}`;
+}
+
+/** A8 (T-080-a): direction from the LATER period's (b's) point of view; `a` is always the caller's
+ *  older period, unchanged contract from tuning-3. */
+function directionSentence(labelA: string, labelB: string, diff: number, percent: number | undefined, english: boolean): string {
+  if (diff === 0) return english ? 'Equal' : 'เท่ากัน';
+  const amount = formatSignedMoney(Math.abs(diff));
+  const pctWord = diff < 0 ? (english ? 'down' : 'ลดลง') : (english ? 'up' : 'เพิ่มขึ้น');
+  const pct = percent === undefined ? '' : ` (${pctWord} ${Math.abs(percent).toFixed(1)}%)`;
+  return english
+    ? `${labelB} is ${diff < 0 ? 'less than' : 'more than'} ${labelA} by ${amount} THB${pct}`
+    : `${labelB} ${diff < 0 ? 'น้อยกว่า' : 'มากกว่า'} ${labelA} ${amount} บาท${pct}`;
+}
+
+const GROUP_NOUN_TH: Record<'category' | 'branch' | 'vendor', string> = { category: 'หมวด', branch: 'สาขา', vendor: 'ร้าน' };
+
+/** A8 (T-082-a): up to the top 3 groups of EACH period, ranked independently — never the matched-
+ *  intersection `groupLines` below, so a group only one period returned still shows (that is exactly
+ *  what reveals "not the same vendor"). Only rank 1 states whether the two periods agree. */
+function topRankLines(a: ExpensePeriodTotals, b: ExpensePeriodTotals, labelA: string, labelB: string, english: boolean): string[] {
+  const top = (totals: ExpensePeriodTotals) => [...totals.byLabel].sort((x, y) => Number(y.totalAmount) - Number(x.totalAmount)).slice(0, 3);
+  const topA = top(a), topB = top(b);
+  const noun = GROUP_NOUN_TH[a.groupBy ?? 'category'];
+  const lines: string[] = [];
+  for (let i = 0; i < Math.max(topA.length, topB.length); i++) {
+    const rowA = topA[i], rowB = topB[i];
+    const sideA = rowA ? `${labelA}: ${rowA.label} ${formatSignedMoney(Number(rowA.totalAmount))} บาท` : undefined;
+    const sideB = rowB ? `${labelB}: ${rowB.label} ${formatSignedMoney(Number(rowB.totalAmount))} บาท` : undefined;
+    const sides = [sideA, sideB].filter((side): side is string => !!side);
+    if (!sides.length) continue;
+    let line = `${english ? 'Rank' : 'อันดับ'} ${i + 1} ${sides.join(' · ')}`;
+    if (i === 0 && rowA && rowB) {
+      const same = rowA.label === rowB.label;
+      line += english ? ` — ${same ? 'same' : 'not the same'} ${a.groupBy ?? 'category'}` : ` — ${same ? '' : 'ไม่ใช่'}${noun}เดียวกัน`;
+    }
+    lines.push(line);
+  }
+  return lines;
 }
 
 /** tuning-3 item 4: same cap as prepared-simple-read-formatter.ts's MAX_BREAKDOWN_GROUPS (R-A2) —
@@ -215,12 +327,21 @@ export type ExpensePeriodComparison = {
   periodB: { label: string; totalAmount: string; count: number };
   diffAmount: string;
   percent?: string;
+  /** A8 (T-080-a): replaces the bare "ต่างกัน X บาท (Y%)" line in the deterministic reply, worded
+   *  from periodB's (the later period's) point of view. */
+  directionLine: string;
   /** tuning-3 item 4 (T-016/T-082): the SAME per-label lines as in `factsText`, but only for a
    *  GROUPED read (expense.get_breakdown's categories/vendors/branches — never list_recent's fixed
    *  status split, which is not a "group" the customer asked for), ranked by whichever period's
    *  amount is larger and capped like the single-period breakdown formatter — for
    *  `expensePeriodComparisonReplyText` to append to the deterministic customer-facing reply. */
   groupLines: string[];
+  /** A8 (T-082-a): grouped comparisons only — up to the top 3 groups of EACH period, independently
+   *  ranked, plus whether the two periods' rank-1 group is the same. */
+  rankLines: string[];
+  /** A8 (T-080-a): the fast lane's own scope sentence, set when either period's read was scoped to
+   *  the caller's own/related records ("" when company-wide or unknown). */
+  scopeLine: string;
 };
 
 /**
@@ -229,10 +350,10 @@ export type ExpensePeriodComparison = {
  * both periods carry one. `dataA`/`dataB` should be given oldest-period-first for a readable sign
  * (still safe either way — the caller decides which is "A").
  */
-export function expensePeriodComparison(toolName: string, dataA: UnknownRecord, dataB: UnknownRecord): ExpensePeriodComparison | undefined {
+export function expensePeriodComparison(toolName: string, dataA: UnknownRecord, dataB: UnknownRecord, english = false): ExpensePeriodComparison | undefined {
   const a = expensePeriodTotals(toolName, dataA), b = expensePeriodTotals(toolName, dataB);
   if (!a || !b || (a.fromDate === b.fromDate && a.toDate === b.toDate)) return undefined;
-  const labelA = periodLabel(a), labelB = periodLabel(b);
+  const labelA = periodLabel(a.fromDate, a.toDate, english), labelB = periodLabel(b.fromDate, b.toDate, english);
   const total = moneyDiff(a.totalAmount, b.totalAmount);
   const lines = [
     `ช่วง ${labelA}: ${formatSignedMoney(Number(a.totalAmount))} บาท (${a.count} รายการ)`,
@@ -252,31 +373,39 @@ export function expensePeriodComparison(toolName: string, dataA: UnknownRecord, 
   // single-period breakdown formatter, only a label BOTH periods actually returned (spec's own "the
   // change for groups present in both") — get_breakdown only, never list_recent's fixed status
   // split, which already reads fine as the 3 lines above (T-076/077/078/080/081, unflagged today).
-  const groupLines = toolName === 'expense.get_breakdown'
-    ? matched.sort((left, right) => right.rank - left.rank).slice(0, MAX_COMPARISON_GROUPS).map(({ line }) => line)
-    : [];
+  const grouped = toolName === 'expense.get_breakdown';
+  const groupLines = grouped ? matched.sort((left, right) => right.rank - left.rank).slice(0, MAX_COMPARISON_GROUPS).map(({ line }) => line) : [];
+  // A8 (T-082-a): independent top-3-per-period ranking — deliberately NOT the `matched` intersection
+  // above, since a period-exclusive top group is exactly what reveals "not the same vendor".
+  const rankLines = grouped ? topRankLines(a, b, labelA, labelB, english) : [];
+  const scoped = a.accessScope === 'own' || a.accessScope === 'related' || b.accessScope === 'own' || b.accessScope === 'related';
   return {
-    factsText: lines.join('\n'), groupLines,
+    factsText: lines.join('\n'), groupLines, rankLines,
     periodA: { label: labelA, totalAmount: a.totalAmount, count: a.count },
     periodB: { label: labelB, totalAmount: b.totalAmount, count: b.count },
     diffAmount: formatSignedMoney(total.diff),
     percent: formatSignedPercent(total.percent),
+    directionLine: directionSentence(labelA, labelB, total.diff, total.percent, english),
+    // A8 (T-080-a): same words prepared-simple-read-formatter.ts's fast lane already uses.
+    scopeLine: scoped ? (english ? 'Scope: only records related to you' : 'ขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ') : '',
   };
 }
 
 /**
  * Item 3(c): the deterministic answer when compose still fails a two-period comparison even with
- * expensePeriodComparison's facts allowed. Exact shape from the spec: "ช่วง A: X บาท (n รายการ) /
- * ช่วง B: Y บาท (m รายการ) / ต่างกัน Z บาท (±P%)", PLUS (tuning-3 item 4) a grouped read's own
- * ranked `groupLines`; source/link are attached by the caller.
+ * expensePeriodComparison's facts allowed. A8: the bare "ต่างกัน" line is now `directionLine`
+ * (worded from the later period's own point of view), plus (grouped reads only) `rankLines` and,
+ * for an own/related-scoped read, the fast lane's own scope sentence; source/link are attached by
+ * the caller.
  */
 export function expensePeriodComparisonReplyText(comparison: ExpensePeriodComparison): string {
-  const percent = comparison.percent ? ` (${comparison.percent})` : '';
   const lines = [
     `ช่วง ${comparison.periodA.label}: ${formatSignedMoney(Number(comparison.periodA.totalAmount))} บาท (${comparison.periodA.count} รายการ)`,
     `ช่วง ${comparison.periodB.label}: ${formatSignedMoney(Number(comparison.periodB.totalAmount))} บาท (${comparison.periodB.count} รายการ)`,
-    `ต่างกัน ${comparison.diffAmount} บาท${percent}`,
+    comparison.directionLine,
     ...comparison.groupLines,
+    ...comparison.rankLines,
+    ...(comparison.scopeLine ? [comparison.scopeLine] : []),
   ];
   return lines.join('\n');
 }
