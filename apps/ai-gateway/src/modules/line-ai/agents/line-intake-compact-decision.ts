@@ -20,7 +20,7 @@ const NAME_FILTER_GROUNDING_FIELDS = new Set(['categoryName', 'vendorName']);
 
 const DECISION_KEYS = new Set(['subrequests', 'simpleRead']);
 const SUBREQUEST_KEYS = new Set([
-  'kind', 'goal', 'sources', 'filters', 'requiredEvidence', 'dependsOn', 'entity', 'taskRef', 'writeIntent',
+  'kind', 'goal', 'sources', 'filters', 'requiredEvidence', 'dependsOn', 'entity', 'taskRef', 'writeIntent', 'tool',
 ]);
 const SOURCE_KEYS = new Set(['part', 'whole', 'quote']);
 const SIMPLE_READ_KEYS = new Set(['subrequest', 'tool', 'subject', 'agent', 'answerShape', 'confidence']);
@@ -399,12 +399,20 @@ export function parseLineIntakeCompactDecision(input: {
     const recognizedWriteIntent = item['kind'] === 'write'
       && WRITE_INTENTS.has(writeIntent as NonNullable<LineAiSemanticSubrequestV2['writeIntent']>)
       ? writeIntent as NonNullable<LineAiSemanticSubrequestV2['writeIntent']> : undefined;
+    // tuning-7b (K1): the compact "tool" hint maps to toolHint only when it names an ENABLED tool in a
+    // read category (read_summary/read_detail/report) — a disabled tool, a write/help/file tool, or a
+    // typo drops the hint silently rather than failing the whole clause; it is advisory only, so the
+    // gateway still runs its own permission-checked call regardless of which tool answers it.
+    const hintedTool = typeof item['tool'] === 'string' ? TOOL_BY_NAME.get(item['tool']) : undefined;
+    const toolHint = typeof item['tool'] === 'string' && enabledTools.has(item['tool'])
+      && hintedTool && SIMPLE_READ_CATEGORIES.has(hintedTool.category) ? item['tool'] : undefined;
     canonical.push({
       index, kind: item['kind'], goal: item['goal'], requiredEvidence, requestedFilters: filters, dependsOn,
       evidenceRefs: refs,
       ...(entity !== undefined ? { entityReference: { kind: 'user_text', value: entity } } : {}),
       ...(taskRef !== undefined ? { taskRef } : {}),
       ...(recognizedWriteIntent !== undefined ? { writeIntent: recognizedWriteIntent } : {}),
+      ...(toolHint !== undefined ? { toolHint } : {}),
     });
   }
   const semanticSubrequests = parseLineAiSemanticSubrequests(canonical, messageText, inputEvidence);
