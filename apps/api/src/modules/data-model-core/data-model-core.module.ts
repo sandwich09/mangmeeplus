@@ -97,6 +97,9 @@ import { AttachmentMalwareScanner } from './infrastructure/attachment-malware-sc
     PrismaOutboxRepository,
     // Read by the expenses capture policy, so both sides answer from the same interval accessor.
     CompanyVatRegistrationUseCase,
+    // Purchase without setup PR E (R-E3): the partner console's admin identity route reuses this
+    // single legal-identity writer (CAS/revision/CRITICAL audit) rather than a second path.
+    CompanyIdentityUseCase,
   ],
 })
 export class DataModelCoreModule {}

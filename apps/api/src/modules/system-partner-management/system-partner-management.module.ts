@@ -7,6 +7,7 @@ import { LookupUsersUseCase } from './application/use-cases/lookup-users.use-cas
 import { ListPartnersUseCase } from './application/use-cases/list-partners.use-case';
 import { GetPartnerDetailUseCase } from './application/use-cases/get-partner-detail.use-case';
 import { UpdatePartnerProfileUseCase } from './application/use-cases/update-partner-profile.use-case';
+import { UpdatePartnerIdentityUseCase } from './application/use-cases/update-partner-identity.use-case';
 import { PartnerLifecycleTransitionUseCase } from './application/use-cases/partner-lifecycle-transition.use-case';
 import { SetPartnerFeaturesUseCase } from './application/use-cases/set-partner-features.use-case';
 import { SetPartnerAiModelUseCase } from './application/use-cases/set-partner-ai-model.use-case';
@@ -24,6 +25,7 @@ import { PartnerMemberPasswordResetUseCase } from './application/use-cases/partn
 import { PartnerMemberPasswordRevealUseCase } from './application/use-cases/partner-member-password-reveal.use-case';
 import { PartnerMemberLineLinkTokenUseCase } from './application/use-cases/partner-member-line-link-token.use-case';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
+import { EmployeeAccessModule } from '../employee-access/employee-access.module';
 import { LedgerModule } from '../ledger/ledger.module.js';
 import { DashboardNotificationsModule } from '../dashboard-notifications/dashboard-notifications.module';
 import { LoggerModule } from '../../common/logger/logger.module';
@@ -47,7 +49,9 @@ import { SystemPackageChangeController } from './presentation/http/system-packag
   // DashboardNotificationsModule supplies CreateOrUpdateNotificationEventUseCase for the P29
   // warning ladder and expiry notices (WEB + LINE, owners and system admins).
   // LoggerModule: LOGGER_TOKEN for the best-effort LINE notice the package-change decision sends.
-  imports: [LedgerModule, DataModelCoreModule, DashboardNotificationsModule, LoggerModule],
+  // EmployeeAccessModule (PR E): supplies ListThaiAddressesUseCase for the partner identity form's
+  // address-master route. It declares no `imports` of its own, so this cannot cycle.
+  imports: [LedgerModule, DataModelCoreModule, DashboardNotificationsModule, LoggerModule, EmployeeAccessModule],
   controllers: [
     PartnerController,
     SystemLineController,
@@ -61,6 +65,7 @@ import { SystemPackageChangeController } from './presentation/http/system-packag
     ListPartnersUseCase,
     GetPartnerDetailUseCase,
     UpdatePartnerProfileUseCase,
+    UpdatePartnerIdentityUseCase,
     PartnerLifecycleTransitionUseCase,
     SetPartnerFeaturesUseCase,
     SetPartnerAiModelUseCase,

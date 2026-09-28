@@ -9,6 +9,7 @@ import {
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -22,20 +23,28 @@ import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import {
   ALL_FEATURE_ENTITLEMENT_KEYS,
+  LEGAL_IDENTITY_CORRECTION_REASONS,
   PARTNER_ADJUSTMENT_REASON_MAX_LENGTH,
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
   PLAN_TIER_PRESETS,
+  USER_LEGAL_IDENTITY_CHANGE_KINDS,
   VAT_FACT_STATUSES,
+  type CompanyLegalAddress,
+  type LegalIdentityCorrectionReason,
   type PlanTierKey,
+  type UserLegalIdentityChangeKind,
   type VatFactStatus,
 } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { trustedPublicApiBase } from '../../../../common/http/public-api-base';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
+import { assertPlatformTenant } from '../../../sales-console/application/sales-context';
+import { ListThaiAddressesUseCase } from '../../../employee-access/application/use-cases/list-thai-addresses.use-case';
 import { ListPartnersUseCase } from '../../application/use-cases/list-partners.use-case';
 import { GetPartnerDetailUseCase } from '../../application/use-cases/get-partner-detail.use-case';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
 import { UpdatePartnerProfileUseCase } from '../../application/use-cases/update-partner-profile.use-case';
+import { UpdatePartnerIdentityUseCase } from '../../application/use-cases/update-partner-identity.use-case';
 import { PartnerLifecycleTransitionUseCase } from '../../application/use-cases/partner-lifecycle-transition.use-case';
 import { SetPartnerFeaturesUseCase } from '../../application/use-cases/set-partner-features.use-case';
 import { SetPartnerAiModelUseCase } from '../../application/use-cases/set-partner-ai-model.use-case';
@@ -69,6 +78,22 @@ class UpdateProfileBodyDto {
   @IsString() @IsOptional() locale?: string;
   @IsString() @IsOptional() phone?: string;
   @IsString() @IsOptional() email?: string;
+}
+
+// Purchase without setup PR E (R-E3, DQ9): same fields as CompanyIdentityController's own
+// PatchCompanyIdentityBodyDto (company-identity.controller.ts), plus the two the admin console adds.
+class PartnerIdentityBodyDto {
+  @Type(() => Number) @IsInt() @Min(0) expectedLegalIdentityVersion!: number;
+  @IsIn(USER_LEGAL_IDENTITY_CHANGE_KINDS) changeKind!: UserLegalIdentityChangeKind;
+  @IsString() @IsOptional() @MaxLength(32) taxId?: string;
+  @IsString() @IsOptional() @MaxLength(255) registeredName?: string;
+  @IsObject() @IsOptional() addressJson?: CompanyLegalAddress;
+  @IsString() @IsOptional() effectiveFrom?: string;
+  @IsIn(LEGAL_IDENTITY_CORRECTION_REASONS) @IsOptional() correctionReason?: LegalIdentityCorrectionReason;
+  @IsString() @IsOptional() @MaxLength(500) note?: string;
+  @IsString() @IsOptional() @MaxLength(200) evidenceRef?: string;
+  @IsString() @IsNotEmpty() @MaxLength(500) reason!: string;
+  @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) supportRequestId?: string;
 }
 
 class MemberContactBodyDto {
@@ -233,6 +258,8 @@ export class PartnerController {
     private readonly lineMessage: SendPartnerLineMessageUseCase,
     private readonly aiCreditHoldsUseCase: PartnerAiCreditHoldsUseCase,
     private readonly setOwnerName: SetPartnerOwnerNameUseCase,
+    private readonly updateIdentity: UpdatePartnerIdentityUseCase,
+    private readonly listThaiAddresses: ListThaiAddressesUseCase,
   ) {}
 
   @Get()
@@ -250,6 +277,48 @@ export class PartnerController {
       status,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  }
+
+  // Purchase without setup PR E (R-E3): registered errors BEFORE ':partnerCompanyId' below —
+  // 'address-master' would otherwise be caught as an id (system-support-request.controller.ts has
+  // the same pattern). Thai address options for the identity form's address fields.
+  @Get('address-master')
+  @RequirePermissions('system.identity_reconciliation.resolve')
+  @ApiOperation({ summary: 'Thai address options for the partner identity form' })
+  addresses(@Query('postalCode') postalCode = '', @Req() req: AuthedRequest) {
+    assertPlatformTenant(req.context);
+    return this.listThaiAddresses.execute(postalCode);
+  }
+
+  // R-E3/DQ9: legal identity (registered name, tax id, address) — one writer, gated on the
+  // identity-reconciliation key (CRITICAL) rather than system.partner_company.update (MEDIUM).
+  @Get(':partnerCompanyId/identity')
+  @RequirePermissions('system.identity_reconciliation.resolve')
+  @ApiOperation({ summary: "Read the partner company's legal-identity CAS token and allowed change kinds" })
+  identityControl(@Param('partnerCompanyId') companyId: string) {
+    return this.updateIdentity.getControl(companyId);
+  }
+
+  @Patch(':partnerCompanyId/identity')
+  @RequirePermissions('system.identity_reconciliation.resolve')
+  @ApiOperation({ summary: 'Change the registered name, tax id and/or address of a partner company' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 409, description: 'legalIdentityVersion is stale — reload and retry' })
+  @ApiResponse({ status: 422, description: 'Company is an admin hold/ARCHIVED, or the change kind is not allowed' })
+  updateIdentityFields(
+    @Param('partnerCompanyId') companyId: string,
+    @Body() dto: PartnerIdentityBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    const { reason, supportRequestId, ...body } = dto;
+    return this.updateIdentity.execute({
+      companyId,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+      reason,
+      ...(supportRequestId ? { supportRequestId } : {}),
+      body,
     });
   }
 
