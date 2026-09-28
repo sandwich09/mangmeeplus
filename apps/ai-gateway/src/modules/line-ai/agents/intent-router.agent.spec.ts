@@ -273,12 +273,16 @@ describe('IntentRouterAgent – model routing', () => {
     assert.equal(plan.refusals[0]?.reason, 'tool_unavailable');
   });
 
-	  it('passes bounded conversation context to model routing payloads', async () => {
+	  it('passes bounded conversation context to model routing payloads, spec §4 R-M3 recentReads included', async () => {
 	    const context = {
 	      windowMinutes: 15,
 	      maxTurns: 15,
 	      lastTurnAt: '2026-07-05T10:00:00.000Z',
 	      recentTurns: [{ at: '2026-07-05T10:00:00.000Z', userMessagePreview: 'ดูสินค้าใกล้หมด', assistantReplyPreview: 'มี 2 รายการ', intent: 'READ_DETAIL', agent: 'inventory', refused: false }],
+	      // Spec §4 R-M3: the model must see this to resolve "อันที่สองล่ะ" below — the whole point of
+	      // this test is proving conversationContext reaches the payload byte-for-byte, unfiltered.
+	      recentReads: [{ tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-08-25T09:00:00.000Z',
+	        shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้านหนึ่ง', date: '2026-08-01' }, { ordinal: 2, id: 'e2', label: 'ร้านสอง', date: '2026-08-02' }] }],
 	    };
 	    const payloads: any[] = [];
 	    const router = new IntentRouterAgent({
@@ -524,6 +528,88 @@ describe('IntentRouterAgent – draft edit routing (S-4)', () => {
     };
     assert.ok((await catalogFor(true)).includes('expense.draft.add_charge'), 'flag on: the tool is in the catalog');
     assert.ok(!(await catalogFor(false)).includes('expense.draft.add_charge'), 'flag off: the tool is absent, not merely refused');
+  });
+});
+
+// Spec item 2(g): expense.get_breakdown now also groups byVendor, and both expense.list_recent and
+// expense.get_breakdown accept a free-text categoryName/vendorName — the prompt must say both, or the
+// model has no way to know either exists.
+describe('IntentRouterAgent – expense breakdown/name-filter routing (item 2g)', () => {
+  it('tells the model expense.get_breakdown also groups by vendor', () => {
+    assert.match(INTENT_ROUTER_SYSTEM_PROMPT, /group the period by category, branch, or vendor/);
+  });
+
+  it('tells the model to pass a user-typed category/vendor name as categoryName/vendorName, never invented', () => {
+    assert.match(INTENT_ROUTER_SYSTEM_PROMPT, /pass that exact text as categoryName\/vendorName on expense\.list_recent or expense\.get_breakdown/);
+    assert.match(INTENT_ROUTER_SYSTEM_PROMPT, /never invent a category or vendor name the message does not contain/);
+  });
+});
+
+describe('IntentRouterAgent – conversation read memory (spec §4 R-M3/R-M4)', () => {
+  it('describes recentReads, its no-amount rule, and ordinal-to-shownItems resolution in the base intake prompt', () => {
+    const prompt = intakeRouterSystemPrompt();
+    assert.match(prompt, /conversationContext\.recentReads \(when present, spec §4 R-M2\/R-M3\)/);
+    assert.match(prompt, /NO amount in it \(never state a number from here/);
+    assert.match(prompt, /resolve that ONLY to the id at that ordinal in the newest matching entry's shownItems/);
+  });
+
+  it('tuning-6b (F1, T-014-b): a same-turn correction of the PREVIOUS READ stays BUSINESS_READ_QUESTION, never EXPENSE_CAPTURE_CORRECTION', () => {
+    const prompt = intakeRouterSystemPrompt();
+    assert.match(prompt, /a short "ไม่ใช่ X", "X ต่างหาก", or "หมายถึง X" reply right after a BUSINESS_READ_QUESTION answer \(conversationContext\.recentReads present, no pending capture draft\/task\) corrects that PREVIOUS QUESTION, not a captured record/);
+    assert.match(prompt, /it stays BUSINESS_READ_QUESTION, repeating the same read with the corrected value/);
+    assert.match(prompt, /"ไม่ใช่ ค่าออฟฟิศต่างหากค่ะ" repeats that same read for categoryName ค่าออฟฟิศ, never a correction/);
+  });
+
+  it('lets the fused prepared plan copy a non-branch filter from recentReads, current message still wins', () => {
+    const prompt = intakeRouterSystemPrompt({ fusedPlan: true });
+    assert.match(prompt, /you may instead copy THAT entry's period and its non-branch filters/);
+    assert.match(prompt, /a value the current message actually states always overrides the copied one/);
+    assert.match(prompt, /a clear change of subject copies nothing/);
+  });
+
+  it('tuning-3 item 2 (T-004#2/T-013#2): naming only a new groupBy still copies the rest of the matching recentReads entry (fused prepared plan)', () => {
+    const prompt = intakeRouterSystemPrompt({ fusedPlan: true });
+    assert.match(prompt, /a message that names ONLY a new groupBy .* still copies that SAME entry's other filters too/);
+    assert.match(prompt, /grouping is a presentation change, never a scope change/);
+  });
+
+  it('tuning-3 item 2 (T-004#2/T-013#2): the same groupBy-carries-filters guidance is in the compact decisionV1 lane semantic-turn planning uses', () => {
+    const prompt = intakeRouterSystemPrompt({}, false, true);
+    assert.match(prompt, /a follow-up clause naming ONLY a new groupBy .* is a presentation change, never a scope change/);
+    assert.match(prompt, /copy that SAME period and its other filters .* from the newest matching conversationContext\.recentReads entry/);
+  });
+
+  // N2 (tuning-8, T-107-b): reverses B4h (tuning-5b) — dropping categoryName/vendorName left the
+  // router's own call an unfiltered ranking and nothing else, so "ทำไมค่าเดินทางเดือนนี้พุ่งขนาดนี้คะ"
+  // never looked inside ค่าเดินทาง. semantic-turn-v2.ts's H2 already adds the unfiltered ranking sibling
+  // whenever a name-filtered expense.get_breakdown call exists, so the router keeping the name now lets
+  // the answer cover both the drivers and the rank.
+  it('tuning-8 (T-107-b): a why-question about one named category or vendor keeps that name in the compact decisionV1 lane', () => {
+    const prompt = intakeRouterSystemPrompt({}, false, true);
+    assert.match(prompt, /A ทำไม\/why question about one named category or vendor KEEPS that categoryName\/vendorName exactly as the user typed it/);
+    assert.doesNotMatch(prompt, /never add that categoryId\/vendorName/);
+  });
+
+  // R1(a): a topic return/restart, or a self-contained list request naming no status of its own,
+  // must never inherit an earlier status/payment/category/vendor/branch filter — only the period plus
+  // whatever the new message itself states. The decoder-side backstop for the fast lane's own
+  // recentReads carry lives in line-intake-compact-decision.ts (see its own spec).
+  it('R1(a): an explicit topic restart drops every inherited status/payment/category/vendor/branch filter in the compact decisionV1 lane', () => {
+    const prompt = intakeRouterSystemPrompt({}, false, true);
+    assert.match(prompt, /An explicit topic return or restart — "กลับมาเรื่อง…", "กลับมาที่…", "เรื่องเดิม…อีกที", "ขอดูใหม่", "เริ่มใหม่"/);
+    assert.match(prompt, /a self-contained list request naming no status of its own \("ขอดูรายการล่าสุด N รายการ", "ขอ list…"\)/);
+    assert.match(prompt, /dropping every inherited status, payment, category, vendor and branch filter/);
+    assert.match(prompt, /is NOT a restart and keeps carrying exactly as above/);
+  });
+
+  it('item 3 (spec §3 row 8): the compact simpleRead guidance covers an ordinal reference to expense.get_detail/reimbursement.get_detail', () => {
+    const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true, false,
+      new Set(['expense.get_detail::single_metric', 'reimbursement.get_detail::single_metric']));
+    assert.match(prompt, /an ordinal reference to a record already shown this chat \("รายการที่ 3", "อันที่ 2"\) may instead use tool expense\.get_detail or reimbursement\.get_detail with answerShape "single_metric"/);
+    assert.match(prompt, /putting its id in filters\.expenseId or filters\.reimbursementId copied ONLY from that ordinal's entry in the newest matching conversationContext\.recentReads shownItems/);
+    // The same guidance is absent when the compact/simpleRead lane itself is off (no families offered).
+    const off = intakeRouterSystemPrompt({ fusedPlan: true }, false, true, false, new Set());
+    assert.doesNotMatch(off, /expense\.get_detail or reimbursement\.get_detail/);
   });
 });
 
@@ -1375,6 +1461,19 @@ describe('LINE intake router – advisor route under the trusted capability', ()
     assert.match(P, /never claim a body, a personal life, or that you are human/i);
     assert.equal(P.includes('knowledgeCardIds'), false, 'no knowledge registry in Slice A');
     assert.equal(P.includes('companyProfileFieldsUsed'), false, 'no company profile in Slice A');
+  });
+
+  // tuning-7b (K2, T-123-a/T-129-a): run 6 showed the router writing a full advisorAnswer.answerText
+  // (445-564 output tokens, 8-10s calls) for a knowledge/definition question that the semantic-v2 path
+  // then discarded and re-composed anyway. The prompt now caps advisorAnswer to short social chat and
+  // tells the model to omit it entirely for a knowledge/definition/how-to question.
+  it('caps advisorAnswer to short social chat and omits it for a knowledge/definition/how-to question', () => {
+    assert.match(P, /"answerText": "your reply in the user's language, at most 2 short sentences"/);
+    assert.match(P, /"answerText" is short social chat ONLY/);
+    assert.match(P, /A knowledge, definition, or how-to question is NEVER short social chat/);
+    assert.match(P, /OMIT "advisorAnswer" entirely for it/);
+    assert.match(P, /never a list, numbered steps, or a tutorial/);
+    assert.equal(P.includes('1–3 short sentences'), false, 'the old, looser cap is gone');
   });
 
   // UAT 2026-09-06 (build f2bd38ed): the draft for "คุณเป็นใคร" was a male-voiced "AI Assistant ของ

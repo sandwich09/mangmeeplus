@@ -548,6 +548,7 @@ export class LineAiInternalController {
       this.config.lineAiDraftEditEnabled,
       { enabled: this.config.lineAiApprovedKnowledgeEnabled },
       this.config.lineAiPublicLookupEnabled,
+      this.config.lineAiPreparedSimpleReadEnabled ? this.config.lineAiDeterministicResponseFamilies : [],
     );
     const routed = await router.routeIntake(body);
     const { receiptCandidate, ...plan } = routed;

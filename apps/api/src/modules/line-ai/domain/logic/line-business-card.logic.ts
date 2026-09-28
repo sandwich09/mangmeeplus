@@ -22,6 +22,34 @@ const THEME = {
 } as const;
 
 const bounded = (value: string, max: number) => Array.from(value.trim()).slice(0, max).join('');
+const ANSWER_CARD_LIMIT = 12;
+const ANSWER_CARD_TITLE_LIMIT = 80;
+const ANSWER_CARD_BODY_LIMIT = 1_200;
+const ANSWER_CARD_BADGE_LIMIT = 40;
+const ANSWER_CARD_SOURCE_LIMIT = 5;
+const ANSWER_CARD_SOURCE_LABEL_LIMIT = 60;
+const completeBusinessAnswerPresentations = new WeakMap<object, string>();
+
+function businessAnswerPresentationFingerprint(message: LineReplyMessage): string | null {
+  return message.type === 'flex'
+    ? JSON.stringify([message.altText, message.canonicalText, message.contents])
+    : null;
+}
+
+/** Ephemeral renderer proof. It never enters the frozen message, JSON, hashes, persistence, or LINE payloads. */
+export function isCompleteLineBusinessAnswerPresentation(message: LineReplyMessage): boolean {
+  const fingerprint = businessAnswerPresentationFingerprint(message);
+  return fingerprint !== null && completeBusinessAnswerPresentations.get(message) === fingerprint;
+}
+
+/** Preserve the renderer proof only across the API's completion-menu clone. An unproved source cannot mint it. */
+export function inheritCompleteLineBusinessAnswerPresentation<T extends LineReplyMessage>(source: LineReplyMessage, target: T): T {
+  const fingerprint = businessAnswerPresentationFingerprint(target);
+  if (isCompleteLineBusinessAnswerPresentation(source)
+    && fingerprint !== null
+    && fingerprint === businessAnswerPresentationFingerprint(source)) completeBusinessAnswerPresentations.set(target, fingerprint);
+  return target;
+}
 
 /**
  * A URI button, one that sends a text command the webhook already answers (`โปรโมชั่น`), or one
@@ -592,6 +620,52 @@ export function buildReceiptQuotaExceededMessage(text: string): LineReplyMessage
   };
 }
 
+function completeAnswerText(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string): string {
+  const parts: string[] = [];
+  const blocks = new Set<string>();
+  const append = (value: string | undefined) => {
+    const text = value?.trim();
+    if (text && !blocks.has(text)) { blocks.add(text); parts.push(text); }
+  };
+  append(response.replyText);
+  for (const card of cards) { append(card.title); append(card.badge); append(card.text); }
+  const sources = [...new Set([...response.sourceLabels, ...cards.flatMap(card => card.sourceLabels ?? [])].map(label => label.trim()).filter(Boolean))];
+  if (sources.length) append(`แหล่งข้อมูล: ${sources.join(', ')}`);
+  const links = [...response.webLinks, ...cards.flatMap(card => card.webLink ? [card.webLink] : [])];
+  const seen = new Set<string>();
+  for (const link of links) {
+    const url = safeTenantLink(webBaseUrl, companyId, link.path);
+    if (!url || seen.has(url)) continue;
+    seen.add(url); append(`เปิดดู: ${link.label.trim() || 'เปิดดูข้อมูล'} ${url}`);
+  }
+  return parts.join('\n\n');
+}
+
+function answerCardsCoverCompleteReply(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string): boolean {
+  if (!cards.length || cards.length > ANSWER_CARD_LIMIT) return false;
+  for (const card of cards) {
+    if (Array.from(card.text.trim()).length > ANSWER_CARD_BODY_LIMIT
+      || card.title && Array.from(card.title.trim()).length > ANSWER_CARD_TITLE_LIMIT
+      || card.badge && Array.from(card.badge.trim()).length > ANSWER_CARD_BADGE_LIMIT
+      || (card.sourceLabels?.length ?? 0) > ANSWER_CARD_SOURCE_LIMIT
+      || card.sourceLabels?.some(label => Array.from(label.trim()).length > ANSWER_CARD_SOURCE_LABEL_LIMIT)
+      || card.webLink && (!safeTenantLink(webBaseUrl, companyId, card.webLink.path)
+        || Array.from(card.webLink.label.trim()).length > MAX_BUTTON_LABEL)) return false;
+  }
+  const visibleText = cards.flatMap(card => [card.title?.trim(), card.text.trim()].filter((value): value is string => !!value)).join('\n');
+  if (response.replyText.trim() && !visibleText.includes(response.replyText.trim())) return false;
+  const visibleSources = new Set(cards.flatMap(card => card.sourceLabels ?? []).map(label => label.trim()));
+  if (response.sourceLabels.some(label => !visibleSources.has(label.trim()))) return false;
+  const visibleLinks = new Set(cards.flatMap(card => {
+    const link = card.webLink && safeTenantLink(webBaseUrl, companyId, card.webLink.path);
+    return link ? [link] : [];
+  }));
+  return response.webLinks.every(link => {
+    const safe = safeTenantLink(webBaseUrl, companyId, link.path);
+    return !safe || visibleLinks.has(safe);
+  });
+}
+
 /** Renderer only: presentation is structured by the trusted gateway; raw model Flex JSON is never accepted. */
 export function buildLineBusinessAnswerMessage(
   response: LineAiTurnResponse,
@@ -600,16 +674,20 @@ export function buildLineBusinessAnswerMessage(
   companyId: string,
 ): LineReplyMessage {
   const cards = !response.refused && response.presentation?.kind === 'answer_cards'
-    ? response.presentation.cards.filter((card) => card.text.trim()).slice(0, 12)
+    ? response.presentation.cards.filter((card) => card.text.trim())
     : [];
   const title = answerCardTitle(response);
-  if (cards.length === 0) return buildLineAssistantTextCardMessage(fallbackText, webBaseUrl, companyId, undefined, title);
+  const canonicalText = completeAnswerText(response, cards, webBaseUrl, companyId);
+  if (cards.length === 0) return buildLineAssistantTextCardMessage(canonicalText || fallbackText, webBaseUrl, companyId, undefined, title);
+  if (!answerCardsCoverCompleteReply(response, cards, webBaseUrl, companyId)) return { type: 'text', text: canonicalText };
 
   const bubbles = cards.map((card) => bubble({ ...card, title: card.title?.trim() || title }, webBaseUrl, companyId));
-  return {
+  const message: LineReplyMessage = {
     type: 'flex',
     altText: preview(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี',
-    canonicalText: response.presentation?.kind === 'answer_cards' ? response.presentation.cards.map(card => [card.title, card.text].filter(Boolean).join('\n')).join('\n\n') : fallbackText,
+    canonicalText,
     contents: bubbles.length === 1 ? bubbles[0]! : { type: 'carousel', contents: bubbles },
   };
+  completeBusinessAnswerPresentations.set(message, businessAnswerPresentationFingerprint(message)!);
+  return message;
 }

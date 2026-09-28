@@ -16,10 +16,7 @@ const access = (): KnowledgeAccess => ({
   now: new Date('2026-10-01T00:00:00Z'),
 });
 function reviewed(): ProductKnowledgePack {
-  const pack = structuredClone(PRODUCT_HELP_PACK);
-  pack.status = 'APPROVED'; pack.reviewers = ['synthetic-test-reviewer'];
-  pack.contentHash = knowledgePackHash(pack);
-  return pack;
+  return structuredClone(PRODUCT_HELP_PACK);
 }
 const rehash = (pack: ProductKnowledgePack) => {
   for (const card of pack.cards) card.contentHash = knowledgeCardHash(card);
@@ -30,6 +27,8 @@ const rehash = (pack: ProductKnowledgePack) => {
 describe('approved product knowledge eligibility, source integrity and rendering', () => {
   it('validates bounded curated bodies against the exact checked-in manual source hashes', () => {
     validateKnowledgePack(PRODUCT_HELP_PACK);
+    assert.equal(PRODUCT_HELP_PACK.status, 'APPROVED');
+    assert.deepEqual(PRODUCT_HELP_PACK.reviewers, ['repository-ai-source-code-review:codex-gpt-5.6-sol:2026-09-27']);
     const root = resolve(__dirname, '../../../../../..');
     for (const card of PRODUCT_HELP_PACK.cards) {
       assert.equal(createHash('sha256').update(readFileSync(resolve(root, card.sourceFile))).digest('hex'), card.sourceHash, card.sourceFile);
@@ -39,7 +38,8 @@ describe('approved product knowledge eligibility, source integrity and rendering
   });
 
   it('offers nothing from draft, retired, unreviewed, expired or wrong-release packs', () => {
-    assert.deepEqual(eligibleKnowledgeCards(PRODUCT_HELP_PACK, access()), []);
+    const draft = reviewed(); draft.status = 'DRAFT'; draft.reviewers = []; rehash(draft);
+    assert.deepEqual(eligibleKnowledgeCards(draft, access()), []);
     const retired = reviewed(); retired.status = 'RETIRED'; rehash(retired);
     assert.deepEqual(eligibleKnowledgeCards(retired, access()), []);
     const unreviewed = reviewed(); unreviewed.reviewers = []; rehash(unreviewed);

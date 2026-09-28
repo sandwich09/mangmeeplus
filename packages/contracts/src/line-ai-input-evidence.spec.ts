@@ -6,7 +6,10 @@ import {
   validateLineAiSourceRefV2,
   verifyLineAiInputEvidence,
 } from './line-ai-input-evidence.js';
-import { lineAiRetainedTaskSourceMatchesProjection, lineAiRetainedTaskSourceText, verifyLineAiRetainedTaskSource } from './line-ai.js';
+import {
+  lineAiRetainedTaskSourceMatchesProjection, lineAiRetainedTaskSourceText, verifyLineAiRetainedTaskSource,
+  parseLineAiSemanticSubrequests,
+} from './line-ai.js';
 
 const hash = 'a'.repeat(64);
 
@@ -77,5 +80,34 @@ describe('LineAiInputEvidenceV2', () => {
     const tampered = structuredClone(retained);
     tampered.inputEvidence.parts[0]!.rawText = rawText.replace('120', '121');
     assert.equal(await verifyLineAiRetainedTaskSource(tampered), undefined);
+  });
+
+  // tuning-7b (K1): toolHint is advisory (gateway may skip its own tool-planning call), so an invalid
+  // one must drop ONLY the hint, never fail the whole subrequest the way taskRef/entityReference do.
+  it('keeps a valid toolHint, drops an invalid one without failing the subrequest, and leaves it omitted', () => {
+    const messageText = 'ค่าใช้จ่ายเดือนนี้เท่าไหร่คะ';
+    const base = { index: 0, kind: 'read', goal: 'ยอดค่าใช้จ่ายเดือนนี้', requiredEvidence: [], requestedFilters: {}, dependsOn: [] };
+
+    const valid = parseLineAiSemanticSubrequests([{ ...base, toolHint: 'expense.get_breakdown' }], messageText);
+    assert.equal(valid?.[0]?.toolHint, 'expense.get_breakdown');
+
+    const invalidHints: unknown[] = [
+      'Expense.GetBreakdown', // uppercase
+      'expense_get_breakdown', // no dot
+      'expense.', // nothing after the dot
+      '.get_breakdown', // nothing before the dot
+      'expense.get.breakdown', // two dots
+      'a'.repeat(40) + '.' + 'b'.repeat(41), // shape ok, 82 chars > 80
+      42,
+      '',
+    ];
+    for (const bad of invalidHints) {
+      const parsed = parseLineAiSemanticSubrequests([{ ...base, toolHint: bad }], messageText);
+      assert.equal(parsed?.[0]?.toolHint, undefined, `bad toolHint ${JSON.stringify(bad)} must be dropped`);
+      assert.equal(parsed?.[0]?.goal, base.goal, `bad toolHint ${JSON.stringify(bad)} must not fail the whole subrequest`);
+    }
+
+    const omitted = parseLineAiSemanticSubrequests([base], messageText);
+    assert.equal(omitted?.[0]?.toolHint, undefined);
   });
 });

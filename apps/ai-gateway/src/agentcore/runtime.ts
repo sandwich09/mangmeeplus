@@ -33,7 +33,7 @@ import {
   extractValueCandidates,
   asIntakeRouteIntent,
 } from '@watchdog-bms/contracts';
-import type { LineAiPreparedPlan, LineAiTurnRequest, LineIntakeRouteIntent } from '@watchdog-bms/contracts';
+import type { LineAiPreparedPlan, LineAiReadMemory, LineAiReadMemoryShownItem, LineAiTurnRequest, LineIntakeRouteIntent } from '@watchdog-bms/contracts';
 import type { AgentRunResult } from '../modules/line-ai/agents/agent-types';
 import { drainUsage, runWithUsageContext, type BudgetRequestState } from '../common/usage/usage-context';
 import { AI_BUDGET_V2_SUPPORTED } from '../common/usage/ai-budget-provider';
@@ -141,13 +141,91 @@ function parseConversationContext(value: unknown): LineAiTurnRequest['conversati
   const deliveredExpenseSummary = summaryRaw && typeof summaryRaw === 'object' && !Array.isArray(summaryRaw)
     ? parseDeliveredExpenseSummary(summaryRaw)
     : undefined;
+  const recentReads = Array.isArray(raw['recentReads']) ? parseRecentReads(raw['recentReads']) : undefined;
   return {
     windowMinutes: LINE_AI_CONTEXT_WINDOW_MINUTES,
     maxTurns: MAX_CONTEXT_TURNS,
     ...(lastTurnAt && { lastTurnAt }),
     recentTurns,
     ...(deliveredExpenseSummary ? { deliveredExpenseSummary } : {}),
+    ...(recentReads ? { recentReads } : {}),
   };
+}
+
+// Spec §4 R-M2: at most 3, matching the API loader's own cap — bounded again here rather than cast,
+// same as every other conversationContext field this parser rebuilds field-by-field.
+const MAX_RECENT_READS = 3;
+const MAX_SHOWN_ITEMS = 10;
+
+function parseReadMemoryShownItem(value: unknown): LineAiReadMemoryShownItem | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const id = boundedString(raw['id'], 200);
+  const label = boundedString(raw['label'], 200);
+  if (typeof raw['ordinal'] !== 'number' || !Number.isSafeInteger(raw['ordinal']) || raw['ordinal'] < 1 || !id || !label) return undefined;
+  const date = boundedString(raw['date'], 32);
+  const kind = raw['kind'];
+  return {
+    ordinal: raw['ordinal'], id, label,
+    ...(date && { date }),
+    ...((kind === 'category' || kind === 'branch' || kind === 'vendor') && { kind }),
+  };
+}
+
+/** R-M6: no amount field exists on LineAiReadMemory's type, so this parser — like every other field
+ *  here — simply never has one to copy; there is no separate stripping step to keep correct. */
+function parseReadMemoryEntry(value: unknown): LineAiReadMemory | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const tool = boundedString(raw['tool'], 128);
+  const asOf = boundedString(raw['asOf'], 64);
+  if (!tool || !asOf || !Number.isFinite(Date.parse(asOf))
+    || (raw['answerShape'] !== 'single_metric' && raw['answerShape'] !== 'list')) return undefined;
+  const periodRaw = raw['period'];
+  const period = periodRaw && typeof periodRaw === 'object' && !Array.isArray(periodRaw)
+    ? (() => {
+      const p = periodRaw as Record<string, unknown>;
+      return typeof p['fromDate'] === 'string' && isCivilDate(p['fromDate']) && typeof p['toDate'] === 'string' && isCivilDate(p['toDate'])
+        ? { fromDate: p['fromDate'], toDate: p['toDate'] } : undefined;
+    })()
+    : undefined;
+  const groupByRaw = raw['groupBy'];
+  const groupBy = groupByRaw === 'category' || groupByRaw === 'branch' || groupByRaw === 'vendor' ? groupByRaw : undefined;
+  const shownItemsRaw = Array.isArray(raw['shownItems']) ? raw['shownItems'].slice(0, MAX_SHOWN_ITEMS) : [];
+  const shownItems = shownItemsRaw.flatMap((item) => {
+    const parsed = parseReadMemoryShownItem(item);
+    return parsed ? [parsed] : [];
+  });
+  const documentStatus = boundedString(raw['documentStatus'], 64);
+  const paymentStatus = boundedString(raw['paymentStatus'], 64);
+  const categoryId = boundedString(raw['categoryId'], 200);
+  const categoryName = boundedString(raw['categoryName'], 200);
+  const vendorId = boundedString(raw['vendorId'], 200);
+  const vendorName = boundedString(raw['vendorName'], 200);
+  const branchId = boundedString(raw['branchId'], 200);
+  const branchName = boundedString(raw['branchName'], 200);
+  return {
+    tool, answerShape: raw['answerShape'], asOf,
+    ...(period && { period }),
+    ...(documentStatus && { documentStatus }),
+    ...(paymentStatus && { paymentStatus }),
+    ...(categoryId && { categoryId }),
+    ...(categoryName && { categoryName }),
+    ...(vendorId && { vendorId }),
+    ...(vendorName && { vendorName }),
+    ...(branchId && { branchId }),
+    ...(branchName && { branchName }),
+    ...(groupBy && { groupBy }),
+    ...(shownItems.length > 0 && { shownItems }),
+  };
+}
+
+function parseRecentReads(value: unknown[]): LineAiReadMemory[] | undefined {
+  const entries = value.slice(0, MAX_RECENT_READS).flatMap((item) => {
+    const parsed = parseReadMemoryEntry(item);
+    return parsed ? [parsed] : [];
+  });
+  return entries.length > 0 ? entries : undefined;
 }
 
 function parseDeliveredExpenseSummary(value: unknown): NonNullable<LineAiTurnRequest['conversationContext']>['deliveredExpenseSummary'] | undefined {

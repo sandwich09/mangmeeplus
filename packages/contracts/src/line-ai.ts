@@ -119,6 +119,10 @@ export type LineAiSemanticSubrequestV2 = {
   requestedFilters: Record<string, string | number | boolean | null>;
   /** Exact user phrase only; it is a lookup hint, never an entity/action ID. */
   entityReference?: { kind: 'user_text'; value: string };
+  /** tuning-7b (K1): router's best-guess read tool for this clause (e.g. "expense.get_breakdown"),
+   *  advisory only — the gateway may skip its own tool-planning call when it trusts this. Never
+   *  authority: a read tool still runs the full permission/entitlement check before it executes. */
+  toolHint?: string;
   dependsOn: number[];
   evidenceRefs?: LineAiSourceRefV2[];
 };
@@ -223,6 +227,9 @@ export const LINE_AI_ACTOR_DELEGATIONS_PER_TOOL = 8;
 export type LineAiConversationContextTurn = {
   at: string;
   userMessagePreview?: string;
+  /** True only when the API knows the stored USER preview was not truncated. Absent is ineligible
+   *  for deterministic follow-up candidates so older callers cannot accidentally widen evidence. */
+  userMessagePreviewComplete?: true;
   assistantReplyPreview?: string;
   intent?: string;
   agent?: string;
@@ -237,6 +244,45 @@ export type LineAiDeliveredExpenseSummary = {
   statusBasis: 'exclude_rejected_voided';
   continuationOfPrior?: true;
   ranges: Array<{ fromDate: string; toDate: string; branchId: string | null }>;
+};
+
+/**
+ * Spec §4 R-M1/R-M4: one entry the customer saw — a numbered record (expense.list_recent,
+ * reimbursement.list_pending_approvals), a breakdown group (expense.get_breakdown; `kind` names the
+ * axis), or the single record a detail read resolved (expense.get_detail, reimbursement.get_detail).
+ * `id` is the ONLY thing an ordinal reference ("รายการแรก", "หมวดแรก") may resolve to (R-M5); never an
+ * amount. `label`/`date` are display text for the router prompt, not business facts to compute from.
+ */
+export type LineAiReadMemoryShownItem = {
+  ordinal: number;
+  id: string;
+  label: string;
+  date?: string;
+  kind?: 'category' | 'branch' | 'vendor';
+};
+
+/**
+ * Spec §4 R-M1: what one successful read tool call actually applied, recorded by the API from the
+ * tool result's OWN `queryApplied`/resolved data — never the model's raw proposed input, so a
+ * follow-up can never inherit a filter that was rejected, ambiguous, or never really took effect.
+ * R-M6: carries NO amounts, ever — this is understanding-only memory; every number in an answer must
+ * come from this turn's own tool results.
+ */
+export type LineAiReadMemory = {
+  tool: string;
+  period?: { fromDate: string; toDate: string };
+  documentStatus?: string;
+  paymentStatus?: string;
+  categoryId?: string;
+  categoryName?: string;
+  vendorId?: string;
+  vendorName?: string;
+  branchId?: string;
+  branchName?: string;
+  groupBy?: 'category' | 'branch' | 'vendor';
+  answerShape: 'single_metric' | 'list';
+  shownItems?: LineAiReadMemoryShownItem[];
+  asOf: string;
 };
 
 export const LINE_AI_EXPENSE_CRITERION_REPLIES = {
@@ -255,6 +301,10 @@ export type LineAiConversationContext = {
   recentTurns: LineAiConversationContextTurn[];
   /** Latest fully evidenced expense summary delivered in this same chat and current access scope. */
   deliveredExpenseSummary?: LineAiDeliveredExpenseSummary;
+  /** Spec §4 R-M2: at most 3 read-tool results delivered in this same chat and current access scope,
+   *  newest first, within `windowMinutes`. `undefined` in a group/room chat (R-M7) or when the access
+   *  scope changed since — never a business-data source, understanding-only (R-M6). */
+  recentReads?: LineAiReadMemory[];
 };
 
 /** Internal request from API to AI Gateway for one LINE turn. */
@@ -349,6 +399,8 @@ export type LineAiPublicGeneralResponse = {
 
 const LINE_AI_V2_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
 const LINE_AI_SHA256 = /^[0-9a-f]{64}$/u;
+// tuning-7b (K1): exact "category.action" tool-name shape, e.g. "expense.get_breakdown".
+const LINE_AI_TOOL_HINT = /^[a-z_]+\.[a-z_]+$/u;
 const SEMANTIC_KINDS = ['read', 'general', 'write', 'help', 'public', 'file'] as const;
 const SEMANTIC_STATUSES = ['handled', 'denied', 'unsupported', 'needs_user'] as const;
 const TASK_SUBREQUEST_STATUSES = ['pending', ...SEMANTIC_STATUSES] as const;
@@ -431,7 +483,7 @@ export function parseLineAiSemanticSubrequests(value: unknown, messageText: stri
   const parsed: LineAiSemanticSubrequestV2[] = [];
   for (let i = 0; i < value.length; i += 1) {
     const raw = value[i];
-    if (!recordValue(raw) || !exactKeys(raw, ['index', 'kind', 'goal', 'requiredEvidence', 'requestedFilters', 'entityReference', 'dependsOn', 'evidenceRefs', 'taskRef', 'writeIntent'])
+    if (!recordValue(raw) || !exactKeys(raw, ['index', 'kind', 'goal', 'requiredEvidence', 'requestedFilters', 'entityReference', 'dependsOn', 'evidenceRefs', 'taskRef', 'writeIntent', 'toolHint'])
       || raw['index'] !== i || !SEMANTIC_KINDS.includes(raw['kind'] as typeof SEMANTIC_KINDS[number])
       || typeof raw['goal'] !== 'string' || !raw['goal'].trim() || raw['goal'].length > 800
       || !Array.isArray(raw['requiredEvidence']) || raw['requiredEvidence'].length > 8
@@ -459,6 +511,10 @@ export function parseLineAiSemanticSubrequests(value: unknown, messageText: stri
         || typeof ref['value'] !== 'string' || ref['value'].length > 160 || !messageText.includes(ref['value'])) return undefined;
       entityReference = { kind: 'user_text', value: ref['value'] };
     }
+    // tuning-7b (K1): an invalid toolHint drops ONLY the hint, never the whole subrequest — it is
+    // an advisory optimization, not evidence, so it must not fail parsing like taskRef/entityReference do.
+    const toolHint = typeof raw['toolHint'] === 'string' && raw['toolHint'].length >= 1 && raw['toolHint'].length <= 80
+      && LINE_AI_TOOL_HINT.test(raw['toolHint']) ? raw['toolHint'] : undefined;
     let evidenceRefs: LineAiSourceRefV2[] | undefined;
     if (raw['evidenceRefs'] !== undefined) {
       if (!evidence || !Array.isArray(raw['evidenceRefs']) || raw['evidenceRefs'].length > 8) return undefined;
@@ -472,7 +528,7 @@ export function parseLineAiSemanticSubrequests(value: unknown, messageText: stri
     if (evidence && !evidenceRefs?.length) return undefined;
     parsed.push({ index: i, kind: raw['kind'] as LineAiSemanticSubrequestV2['kind'], goal: raw['goal'].trim(),
       requiredEvidence: [...raw['requiredEvidence']] as string[], requestedFilters: { ...raw['requestedFilters'] } as LineAiSemanticSubrequestV2['requestedFilters'],
-      ...(entityReference ? { entityReference } : {}), ...(taskRef ? { taskRef } : {}), ...(raw['writeIntent'] ? { writeIntent: raw['writeIntent'] as LineAiSemanticSubrequestV2['writeIntent'] } : {}), dependsOn: [...raw['dependsOn']] as number[], ...(evidenceRefs ? { evidenceRefs } : {}) });
+      ...(entityReference ? { entityReference } : {}), ...(taskRef ? { taskRef } : {}), ...(raw['writeIntent'] ? { writeIntent: raw['writeIntent'] as LineAiSemanticSubrequestV2['writeIntent'] } : {}), ...(toolHint ? { toolHint } : {}), dependsOn: [...raw['dependsOn']] as number[], ...(evidenceRefs ? { evidenceRefs } : {}) });
   }
   return parsed;
 }
@@ -1193,7 +1249,11 @@ export type LineIntakeRouteRequest = {
   conversationContext?: LineAiConversationContext;
   /** Server-derived permission keys; the router may only propose routes the user could perform. */
   permissions: string[];
-  enabledFeatures?: string[];
+  /** null preserves the repository's legacy fail-open company entitlement semantics. */
+  enabledFeatures?: string[] | null;
+  /** API-derived, request-scoped upper bound of ERP tools this actor may invoke. The Gateway
+   *  intersects it with its own configured registry; absence on bound semantic-v2 fails closed. */
+  offeredToolNames?: string[];
   /** Active configured expense categories the model may choose from. */
   activeCategories?: Array<{ id: string; name: string }>;
   /** Deterministic amount/date readings of messageText (item 10F); captureHints.amount and

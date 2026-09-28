@@ -12,7 +12,26 @@ export type BedrockProviderConfig = {
   /** SDK attempts for one invocation. Set only under a SPLIT budget envelope, where the hold
    *  prices exactly one attempt (ADR 0013 §6); absent keeps the SDK's own default. */
   maxAttempts?: number;
+  /** Item 5 test hook: replaces the real throttle-retry wait so specs never actually sleep.
+   *  Defaults to a real, unref'd timer. */
+  sleep?: (ms: number) => Promise<void>;
 };
+
+/** Item 5 (223-turn eval, 14 `PROVIDER_THROTTLED` turns): Bedrock throttles under real sustained
+ *  sequential load. A small bounded retry absorbs a transient throttle instead of surfacing a
+ *  failure the customer cannot act on — capped low enough it can never itself become the slow path,
+ *  and only spent while there is genuinely time left before this call's own deadline. */
+const THROTTLE_MAX_RETRIES = 2;
+const THROTTLE_BACKOFF_MIN_MS = 400;
+const THROTTLE_BACKOFF_MAX_MS = 1200;
+
+function jitteredThrottleBackoffMs(): number {
+  return THROTTLE_BACKOFF_MIN_MS + Math.random() * (THROTTLE_BACKOFF_MAX_MS - THROTTLE_BACKOFF_MIN_MS);
+}
+
+function defaultThrottleSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); });
+}
 
 /** Minimum covered text before a cache checkpoint is worth emitting. Claude Sonnet 4.x will not
  *  cache a prefix under 1,024 tokens — it ignores the checkpoint entirely (no cache write, so no
@@ -187,29 +206,50 @@ export class BedrockProvider implements IModelProvider {
     let usage: TokenUsage | undefined;
     let usageEstimated = false;
     let errorCode: string | undefined;
+    let retryCount = 0;
     try {
-      const response = await this.client.send(command, { abortSignal: controller.signal });
-      usage = response.usage;
-      return { ok: true, ...parse(response) };
-    } catch (err) {
-      const timedOut = controller.signal.aborted;
-      const providerCode = (err as { code?: unknown })?.code;
-      const error = providerCode === 'PROVIDER_OUTPUT_INCOMPLETE' || providerCode === 'PROVIDER_BLOCKED'
-        || providerCode === 'PROVIDER_TOOL_ARGUMENT_INVALID'
-        ? { code: providerCode, message: 'The provider response was incomplete or invalid.', retryable: false } as ProviderError
-        : this.mapError(timedOut ? { name: 'ProviderTimeout' } : err);
-      if (timedOut) {
-        usage = conservativeTimeoutUsage(command);
-        usageEstimated = true;
+      // The retry lives INSIDE this one guarded call rather than at a call site: a throttled attempt
+      // bills nothing (Bedrock rejects it before doing any work), so looping here never spends an
+      // extra turn slot from the caller's budget grant, and `logUsage` below still runs exactly once
+      // for the whole invocation — the one entry the budget decorator's positional settlement expects.
+      for (;;) {
+        try {
+          const response = await this.client.send(command, { abortSignal: controller.signal });
+          usage = response.usage;
+          return { ok: true, ...parse(response) };
+        } catch (err) {
+          const timedOut = controller.signal.aborted;
+          const providerCode = (err as { code?: unknown })?.code;
+          const isProviderResponseError = providerCode === 'PROVIDER_OUTPUT_INCOMPLETE' || providerCode === 'PROVIDER_BLOCKED'
+            || providerCode === 'PROVIDER_TOOL_ARGUMENT_INVALID';
+          if (!isProviderResponseError && !timedOut && (err as { name?: unknown })?.name === 'ThrottlingException'
+            && retryCount < THROTTLE_MAX_RETRIES) {
+            const backoffMs = jitteredThrottleBackoffMs();
+            // Never retry past this call's own deadline — a retry that could not finish before the
+            // turn's work deadline is strictly worse than failing now and letting the caller decide.
+            if (context?.deadlineAt === undefined || Date.now() + backoffMs < context.deadlineAt) {
+              retryCount += 1;
+              await (this.cfg.sleep ?? defaultThrottleSleep)(backoffMs);
+              continue;
+            }
+          }
+          const error = isProviderResponseError
+            ? { code: providerCode, message: 'The provider response was incomplete or invalid.', retryable: false } as ProviderError
+            : this.mapError(timedOut ? { name: 'ProviderTimeout' } : err);
+          if (timedOut) {
+            usage = conservativeTimeoutUsage(command);
+            usageEstimated = true;
+          }
+          errorCode = error.code;
+          return { ok: false, error };
+        }
       }
-      errorCode = error.code;
-      return { ok: false, error };
     } finally {
       clearTimeout(timeout);
       context?.signal?.removeEventListener('abort', abortFromCaller);
       // Logged here so exactly one line is emitted whatever throws, and so logging can never
       // double-log or turn a success into an error.
-      this.logUsage(usageTag, startedAt, usage, errorCode, usageEstimated);
+      this.logUsage(usageTag, startedAt, usage, errorCode, usageEstimated, retryCount);
     }
   }
 
@@ -224,6 +264,7 @@ export class BedrockProvider implements IModelProvider {
     usage?: TokenUsage,
     errorCode?: string,
     usageEstimated = false,
+    retryCount = 0,
   ): void {
     const entry: AiUsageEntry = {
       tag: tag ?? 'untagged',
@@ -256,6 +297,7 @@ export class BedrockProvider implements IModelProvider {
           cacheWriteInputTokens: entry.cacheWriteInputTokens,
         } : {}),
         ...(usageEstimated ? { usageEstimated: true } : {}),
+        ...(retryCount > 0 ? { throttleRetryCount: retryCount } : {}),
         durationMs: entry.durationMs,
       }));
     } catch {

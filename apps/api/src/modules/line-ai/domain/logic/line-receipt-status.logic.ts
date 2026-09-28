@@ -11,8 +11,9 @@ const FILE_ATTEMPT_PATTERNS: readonly RegExp[] = [
   // "ส่งไม่ได้", "รับไม่ได้", "ทำไมถึงอ่านไม่ได้"
   /(?:ส่งไม่ได้|ส่งไม่สำเร็จ|รับไม่ได้|รับไม่สำเร็จ|อ่านไม่ได้|อ่านไม่ออก)/u,
   /ทำไม(?:ถึง)?(?:ส่ง|รับ|อ่าน|บันทึก)ไม่/u,
-  // "ใหญ่ไปไหม", "ขนาดไฟล์เท่าไร"
-  /(?:ใหญ่ไป|ใหญ่เกิน|เกินขนาด|ขนาด(?:ไฟล์)?)/u,
+  // "ใหญ่ไปไหม", "ขนาดไฟล์เท่าไร". Bare "ขนาด" (no "ไฟล์") is handled separately below —
+  // it collides with "ขนาดนี้/ขนาดนั้น" used as a plain intensifier.
+  /(?:ใหญ่ไป|ใหญ่เกิน|เกินขนาด|ขนาดไฟล์)/u,
   // "รองรับ PDF ไหม", "ส่ง PDF ได้ไหม"
   /(?:รองรับ ?pdf|ส่ง ?pdf ?ได้|pdf ?ได้ไหม|ไฟล์แบบไหน(?:ส่ง)?ได้)/iu,
   // "ต้องส่งใหม่ไหม"
@@ -26,6 +27,12 @@ const FILE_ATTEMPT_PATTERNS: readonly RegExp[] = [
   /\b(?:should|do) i (?:re-?send|send (?:it )?again|upload again)\b/iu,
   /\b(?:was|is) (?:it|the file|the photo|my file) saved\b/iu,
 ];
+
+// tuning-5c (C1, T-107-b): "ทำไม...พุ่งขนาดนี้คะ" (an expense-spike question) matched bare "ขนาด" —
+// "ขนาดนี้/ขนาดนั้น" is a plain intensifier, not a file-size reference. Only count it as a size
+// complaint when the message also names the thing that's too big.
+const BARE_SIZE_WORD = /ขนาด(?!ไฟล์)/u;
+const MEDIA_NOUN_PATTERN = /(?:ไฟล์|รูป|ภาพ|เอกสาร|pdf)/iu;
 
 /** A progress question is read-only. Do not turn editing, payment or tax questions into status. */
 export function receiptStatusQuestion(text: string): 'receipt' | 'contextual' | 'file_attempt' | null {
@@ -43,7 +50,9 @@ export function receiptStatusQuestion(text: string): 'receipt' | 'contextual' | 
 
 function isFileAttemptQuestion(original: string, normalized: string): boolean {
   const spaced = original.trim().replace(/[?？!]/gu, ' ').replace(/\s+/gu, ' ');
-  return FILE_ATTEMPT_PATTERNS.some((pattern) => pattern.test(normalized) || pattern.test(spaced));
+  if (FILE_ATTEMPT_PATTERNS.some((pattern) => pattern.test(normalized) || pattern.test(spaced))) return true;
+  // Bare "ขนาด" (not "ขนาดไฟล์", already covered above) needs a co-occurring media noun — see C1 above.
+  return BARE_SIZE_WORD.test(normalized) && MEDIA_NOUN_PATTERN.test(normalized);
 }
 
 export function receiptProgressLabel(status: string, verificationStatus?: string | null): string {

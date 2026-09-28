@@ -173,6 +173,21 @@ describe('reimbursement related-view ABAC', () => {
     assert.deepEqual(received.scopes, { branchIds: ['branch-1'] });
   });
 
+  // Item 1 (spec R-A1 row 18, eval: 15 turns): the summary now states its own own/related/company
+  // scope, the same classification requesterUserId/relatedUserId above already derive.
+  it('reports accessScope alongside the summary: related, own, and company', async () => {
+    const repoFor = () => ({ findPolicy: async () => null, listRequests: async () => [] } as any);
+    const audit = { log: async () => undefined } as any;
+    const related = await new GetReimbursementAiSummaryUseCase(repoFor(), audit).execute(ctx());
+    assert.equal(related.accessScope, 'related');
+    const own = await new GetReimbursementAiSummaryUseCase(repoFor(), audit)
+      .execute(ctx({ permissions: ['reimbursement.read_own'] }));
+    assert.equal(own.accessScope, 'own');
+    const company = await new GetReimbursementAiSummaryUseCase(repoFor(), audit)
+      .execute(ctx({ permissions: ['reimbursement.read', 'reimbursement.read_own'] }));
+    assert.equal(company.accessScope, 'company');
+  });
+
   it('pushes branch scope into the finance queue query', async () => {
     let received: any;
     const useCase = new ListFinanceQueueUseCase({
@@ -227,5 +242,22 @@ describe('reimbursement related-view ABAC', () => {
     assert.deepEqual(capturedExpenseWhere.AND[0], {
       OR: [{ branchId: { in: ['branch-1'] } }, { branchId: null }],
     });
+  });
+
+  // F2 (tuning-6b): rows created in the same instant (seeded data, bulk imports) came back in
+  // arbitrary order under a createdAt-only sort, so the LINE approval queue's "1./2." numbering
+  // ("ใบที่สอง") could point at a different claim between two asks of the same question.
+  it('breaks a createdAt tie with a stable id order, shared by the web approval list', async () => {
+    let capturedOrderBy: any;
+    const prisma = {
+      client: {
+        reimbursementRequest: {
+          findMany: async ({ orderBy }: any) => { capturedOrderBy = orderBy; return []; },
+        },
+      },
+    };
+    const repo = new PrismaReimbursementRepository(prisma as any, {} as any);
+    await repo.listRequests({ companyId: 'company-1' });
+    assert.deepEqual(capturedOrderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
   });
 });

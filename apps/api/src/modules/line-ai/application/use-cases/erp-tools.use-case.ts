@@ -7,7 +7,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { createHash } from 'node:crypto';
 import type { ExpensePaymentStatus, ExpenseStatus, ToolResult, SourceRef } from '@watchdog-bms/contracts';
-import { civilInstantDayRangeToUtc, civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { EXPENSE_PAYMENT_STATUSES, EXPENSE_STATUSES, civilInstantDayRangeToUtc, civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { ListProductsUseCase } from '../../../inventory/application/use-cases/list-products.use-case';
 import { GetStockBalanceUseCase, GetStockReportUseCase, ListMovementsUseCase } from '../../../inventory/application/use-cases/movement-query.use-cases';
@@ -17,10 +17,14 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import {
   BUSINESS_READ_BASIS_VERSION,
+  CATEGORY_NAME_STRIP_PREFIXES,
+  VENDOR_NAME_STRIP_PREFIXES,
   appliedQuery,
+  applyNameFilter,
   completeResult,
   fact,
   periodError,
+  resolveBranchCandidate,
   resolveBusinessReadPeriod,
   sourceRefId,
 } from '../../domain/logic/business-read-source.logic';
@@ -239,6 +243,112 @@ function encodeExpenseCursor(source: { expenseDate: Date; id: string }, fingerpr
   return Buffer.from(JSON.stringify({ v: 1, f: fingerprint, d: source.expenseDate.toISOString(), id: source.id })).toString('base64url');
 }
 
+export type BranchFilterOutcome =
+  | { ok: true; branchId?: string; branchName?: string }
+  | { ok: false; result: ToolResult };
+
+/**
+ * Resolves a branchId/code/name/number the model copied from the user (typos included) against the
+ * caller's own SCOPED branches: exact id/code, then exact name — the catalog respects branch ABAC, a
+ * branch-restricted user never sees names outside their scope. C3 (batch 5c, T-148-b): the model
+ * sent branchId "2" for "สาขา 2" and both exact lookups missed it, so a normalized contains/trailing-
+ * number match runs next (`resolveBranchCandidate`) before giving up. Still unresolved in scope:
+ * checks whether the branch exists elsewhere in the COMPANY, with the SAME normalization, to return
+ * an honest permission boundary (`branchOutOfScope`) instead of a bare "unresolved" that reads like a
+ * typo for the model to retry. Shared by expense.list_recent and expense.get_breakdown — same branch
+ * catalog, same lookup rules.
+ */
+export async function resolveExpenseBranchFilter(
+  prisma: PrismaService,
+  toolName: string,
+  ctx: ErpToolContext,
+  requestedBranch: string | undefined,
+  nameLookupSourceRefs: SourceRef[],
+  asOf: string,
+): Promise<BranchFilterOutcome> {
+  if (!requestedBranch) return { ok: true };
+  const scopeWhere = {
+    companyId: ctx.companyId,
+    status: 'ACTIVE' as const,
+    ...(ctx.branchIds ? { id: { in: ctx.branchIds } } : {}),
+  };
+  // Exact identifiers are unique within a company; names are not. Resolve identifiers first, then
+  // require a unique name match. This avoids both arbitrary duplicate-name selection and the old
+  // first-100 scan hiding a valid exact id/code match.
+  const identifiers = await prisma.client.branch.findMany({
+    where: { ...scopeWhere, OR: [{ id: requestedBranch }, { code: requestedBranch }] },
+    select: { id: true, name: true, code: true },
+    take: 2,
+  });
+  if (identifiers.length > 1) {
+    return { ok: false, result: { toolName, status: 'ok', data: {
+      branchAmbiguous: requestedBranch,
+      availableBranches: identifiers.map((b) => ({ id: b.id, name: b.name, code: b.code })),
+    }, sourceRefs: nameLookupSourceRefs, asOf } };
+  }
+  let hit = identifiers[0];
+  if (!hit) {
+    const names = await prisma.client.branch.findMany({
+      where: { ...scopeWhere, name: requestedBranch },
+      select: { id: true, name: true, code: true },
+      take: 2,
+    });
+    if (names.length > 1) {
+      return { ok: false, result: { toolName, status: 'ok', data: {
+        branchAmbiguous: requestedBranch,
+        availableBranches: names.map((b) => ({ id: b.id, name: b.name, code: b.code })),
+      }, sourceRefs: nameLookupSourceRefs, asOf } };
+    }
+    hit = names[0];
+  }
+  if (!hit) {
+    const branches = await prisma.client.branch.findMany({
+      where: scopeWhere,
+      select: { id: true, name: true, code: true },
+      take: 101,
+    });
+    const lookupLimited = branches.length > 100;
+    const availableBranches = branches.slice(0, 100).map((b) => ({ id: b.id, name: b.name, code: b.code }));
+    const fuzzy = resolveBranchCandidate(requestedBranch, availableBranches);
+    if (fuzzy.kind === 'resolved') {
+      // Look up the already-fetched row rather than rebuilding one from `fuzzy` — `code` there is
+      // typed `string | null` for callers whose catalog allows it, but this one (Prisma's Branch.code)
+      // never is, and the row is already right here. Guaranteed present: `fuzzy` was resolved FROM
+      // `availableBranches` by the same id.
+      hit = availableBranches.find((b) => b.id === fuzzy.id)!;
+    } else if (fuzzy.kind === 'ambiguous') {
+      return { ok: false, result: { toolName, status: 'ok', data: {
+        branchAmbiguous: requestedBranch, availableBranches: fuzzy.matches,
+      }, sourceRefs: nameLookupSourceRefs, asOf } };
+    }
+    if (!hit) {
+      // Item 2 (T-148): a STAFF user asking for a branch that exists in this COMPANY but outside
+      // their OWN branch scope got a raw TOOL_RESULT_NO_SOURCE code — this tool must say so
+      // honestly instead (never the generic "unresolved", which reads like a typo the model should
+      // retry). Company-wide, never scoped to `ctx`'s branches, and returns no business data, only
+      // whether SOME active branch matches — the permission boundary stays exact because
+      // `availableBranches` above is still the caller's own scoped catalog, never anything about the
+      // forbidden branch itself.
+      const outOfScope = Boolean(ctx.branchIds) && await (async () => {
+        const companyWide = await prisma.client.branch.findMany({
+          where: { companyId: ctx.companyId, status: 'ACTIVE' },
+          select: { id: true, name: true, code: true },
+          take: 101,
+        });
+        return resolveBranchCandidate(requestedBranch, companyWide).kind !== 'not_found';
+      })();
+      if (outOfScope) {
+        return { ok: false, result: { toolName, status: 'ok', data: { branchOutOfScope: requestedBranch, availableBranches }, sourceRefs: nameLookupSourceRefs, asOf } };
+      }
+      return { ok: false, result: { toolName, status: 'ok', data: {
+        branchUnresolved: requestedBranch, availableBranches,
+        ...(lookupLimited ? { branchLookupLimited: true } : {}),
+      }, sourceRefs: nameLookupSourceRefs, asOf } };
+    }
+  }
+  return { ok: true, branchId: hit.id, branchName: hit.name };
+}
+
 @Injectable()
 export class ExpenseListRecentTool implements ErpReadToolPort {
   toolName = 'expense.list_recent';
@@ -246,7 +356,8 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
 
   async execute(ctx: ErpToolContext, input: {
     periodKey?: string; fromDate?: string; toDate?: string; branchId?: string;
-    categoryId?: string; vendorId?: string; documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus;
+    categoryId?: string; vendorId?: string; categoryName?: string; vendorName?: string;
+    documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus;
     limit?: number; cursor?: string;
   } = {}): Promise<ToolResult> {
     let asOf = now();
@@ -257,85 +368,63 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     const resolved = resolveBusinessReadPeriod(input);
     if (!resolved.ok) return periodError(this.toolName, asOf, resolved);
     const period = resolved.period;
-    const validStatuses: ExpenseStatus[] = ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'CONFIRMED', 'REJECTED', 'VOIDED'];
-    const validPaymentStatuses: ExpensePaymentStatus[] = ['UNPAID', 'PARTIALLY_PAID', 'PAID', 'VOIDED'];
-    if (input.documentStatus !== undefined && !validStatuses.includes(input.documentStatus)) {
+    if (input.documentStatus !== undefined && !(EXPENSE_STATUSES as readonly string[]).includes(input.documentStatus)) {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'Unsupported filter: documentStatus', sourceRefs: [], asOf };
     }
-    if (input.paymentStatus !== undefined && !validPaymentStatuses.includes(input.paymentStatus)) {
+    if (input.paymentStatus !== undefined && !(EXPENSE_PAYMENT_STATUSES as readonly string[]).includes(input.paymentStatus)) {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'Unsupported filter: paymentStatus', sourceRefs: [], asOf };
     }
     if (input.limit !== undefined && (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 50)) {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'limit must be 1-50', sourceRefs: [], asOf };
     }
-    // The model copies whatever the user said — a branch name, code, or id, typos included. Exact
-    // id/name/code resolves here; anything else returns the ACTIVE branches in this user's scope
-    // instead of records, so the MODEL does the semantic matching (retry with the right id, or ask)
-    // rather than this tool answering a confident zero for a branch that exists under another
-    // spelling. The catalog respects branch ABAC — a branch-restricted user never sees names
-    // outside their scope, and a name outside that scope stays unresolvable on purpose.
+    // Item 2 (223-turn eval batch 2, T-148): every branch/category/vendor resolution outcome below
+    // is still a real, permission-checked answer drawn from this company's own catalog — it needs a
+    // source citation like any other 'ok' result, or the gateway's enforceSourceHonesty boundary
+    // check (which requires at least one sourceRef on any 'ok' result) discards it as an opaque
+    // TOOL_RESULT_NO_SOURCE error before any caller ever sees availableBranches/Categories/Vendors.
+    const nameLookupSourceRefs: SourceRef[] = [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/expenses` }];
+    // The model copies whatever the user said — a branch name, code, or id, typos included — see
+    // `resolveExpenseBranchFilter` for the exact/fuzzy/out-of-scope lookup order (C3, batch 5c).
     const requestedBranch = typeof input?.branchId === 'string' && input.branchId.trim() ? input.branchId.trim() : undefined;
-    let branchId: string | undefined;
-    if (requestedBranch) {
-      const scopeWhere = {
-        companyId: ctx.companyId,
-        status: 'ACTIVE' as const,
-        ...(ctx.branchIds ? { id: { in: ctx.branchIds } } : {}),
-      };
-      // Exact identifiers are unique within a company; names are not. Resolve identifiers first,
-      // then require a unique name match. This avoids both arbitrary duplicate-name selection and
-      // the old first-100 scan hiding a valid exact id/code match.
-      const identifiers = await this.prisma.client.branch.findMany({
-        where: { ...scopeWhere, OR: [{ id: requestedBranch }, { code: requestedBranch }] },
-        select: { id: true, name: true, code: true },
-        take: 2,
-      });
-      if (identifiers.length > 1) {
-        return { toolName: this.toolName, status: 'ok', data: {
-          branchAmbiguous: requestedBranch,
-          availableBranches: identifiers.map((b) => ({ id: b.id, name: b.name, code: b.code })),
-        }, sourceRefs: [], asOf };
-      }
-      let hit = identifiers[0];
-      if (!hit) {
-        const names = await this.prisma.client.branch.findMany({
-          where: { ...scopeWhere, name: requestedBranch },
-          select: { id: true, name: true, code: true },
-          take: 2,
-        });
-        if (names.length > 1) {
-          return { toolName: this.toolName, status: 'ok', data: {
-            branchAmbiguous: requestedBranch,
-            availableBranches: names.map((b) => ({ id: b.id, name: b.name, code: b.code })),
-          }, sourceRefs: [], asOf };
-        }
-        hit = names[0];
-      }
-      if (!hit) {
-        const branches = await this.prisma.client.branch.findMany({
-          where: scopeWhere,
-          select: { id: true, name: true, code: true },
-          take: 101,
-        });
-        const lookupLimited = branches.length > 100;
-        return {
-          toolName: this.toolName,
-          status: 'ok',
-          data: {
-            branchUnresolved: requestedBranch,
-            availableBranches: branches.slice(0, 100).map((b) => ({ id: b.id, name: b.name, code: b.code })),
-            ...(lookupLimited ? { branchLookupLimited: true } : {}),
-          },
-          sourceRefs: [],
-          asOf,
-        };
-      }
-      branchId = hit.id;
+    const branchFilter = await resolveExpenseBranchFilter(this.prisma, this.toolName, ctx, requestedBranch, nameLookupSourceRefs, asOf);
+    if (!branchFilter.ok) return branchFilter.result;
+    const branchId = branchFilter.branchId;
+    // Spec §4 R-M1: the resolved display name, not the raw id/code/name the model sent — this is
+    // what read memory (line-read-evidence.service.ts) shows back for a branch-scoped follow-up.
+    const branchName = branchFilter.branchName;
+    // categoryName/vendorName resolution (spec §3 row 6): same exact-then-contains match as the
+    // branch lookup above. Vendor candidates use the branch already resolved here, not the raw
+    // input, so a branch name plus a vendor name narrow together.
+    const requestedCategoryName = typeof input?.categoryName === 'string' && input.categoryName.trim() ? input.categoryName.trim() : undefined;
+    const requestedVendorName = typeof input?.vendorName === 'string' && input.vendorName.trim() ? input.vendorName.trim() : undefined;
+    const categoryCandidates = requestedCategoryName ? await this.listExpenses.listCategoryCandidates(ctx.companyId) : [];
+    const categoryFilter = applyNameFilter(input.categoryId, requestedCategoryName, categoryCandidates, CATEGORY_NAME_STRIP_PREFIXES);
+    if (categoryFilter.status === 'conflict') {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'categoryId and categoryName resolve to different categories', sourceRefs: [], asOf };
     }
+    if (categoryFilter.status === 'ambiguous') {
+      return { toolName: this.toolName, status: 'ok', data: { categoryAmbiguous: requestedCategoryName, availableCategories: categoryFilter.matches }, sourceRefs: nameLookupSourceRefs, asOf };
+    }
+    if (categoryFilter.status === 'not_found') {
+      return { toolName: this.toolName, status: 'ok', data: { categoryUnresolved: requestedCategoryName, availableCategories: categoryFilter.available }, sourceRefs: nameLookupSourceRefs, asOf };
+    }
+    const vendorCandidates = requestedVendorName ? await this.listExpenses.readAiVendorCandidates(toCtx(ctx), branchId) : [];
+    const vendorFilter = applyNameFilter(input.vendorId, requestedVendorName, vendorCandidates, VENDOR_NAME_STRIP_PREFIXES);
+    if (vendorFilter.status === 'conflict') {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'vendorId and vendorName resolve to different vendors', sourceRefs: [], asOf };
+    }
+    if (vendorFilter.status === 'ambiguous') {
+      return { toolName: this.toolName, status: 'ok', data: { vendorAmbiguous: requestedVendorName, availableVendors: vendorFilter.matches }, sourceRefs: nameLookupSourceRefs, asOf };
+    }
+    if (vendorFilter.status === 'not_found') {
+      return { toolName: this.toolName, status: 'ok', data: { vendorUnresolved: requestedVendorName, availableVendors: vendorFilter.available }, sourceRefs: nameLookupSourceRefs, asOf };
+    }
+    const categoryId = categoryFilter.id;
+    const vendorId = vendorFilter.id;
     const cursorFingerprint = expenseCursorFingerprint({
       companyId: ctx.companyId, userId: ctx.userId, branchIds: ctx.branchIds ?? null,
       period: [period.fromDate, period.toDate], branchId: branchId ?? null,
-      categoryId: input.categoryId ?? null, vendorId: input.vendorId ?? null,
+      categoryId: categoryId ?? null, vendorId: vendorId ?? null,
       documentStatus: input.documentStatus ?? null, paymentStatus: input.paymentStatus ?? null,
     });
     const cursor = input.cursor === undefined ? undefined
@@ -345,12 +434,15 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     }
     const snapshot = await this.listExpenses.readAiSummary(toCtx(ctx), {
       fromDate: period.fromDate, toDate: period.toDate, ...(branchId && { branchId }),
-      ...(input.categoryId ? { expenseCategoryId: input.categoryId } : {}),
-      ...(input.vendorId ? { vendorCounterpartyId: input.vendorId } : {}),
+      ...(categoryId ? { expenseCategoryId: categoryId } : {}),
+      ...(vendorId ? { vendorCounterpartyId: vendorId } : {}),
       ...(input.documentStatus ? { status: input.documentStatus } : {}),
       ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
     }, input.limit ?? 20, cursor);
     asOf = snapshot.asOf.toISOString();
+    // Item 1 (spec R-A1 row 18): `readAiSummary` now echoes the scope it already applied; an older
+    // test double or caller that predates this field simply reads as company-wide, unchanged.
+    const accessScope = (snapshot as { accessScope?: 'own' | 'related' | 'company' }).accessScope ?? 'company';
     const sourceRefs: SourceRef[] = [{
       label: 'รายการค่าใช้จ่าย',
       module: 'expenses',
@@ -381,10 +473,14 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       dateBasis: 'expense_incurred_date',
       statusBasis: input.documentStatus ?? 'exclude_rejected_voided',
       dataset: 'operational_expense_records',
+      accessScope,
       filters: {
-        ...(input.categoryId ? { categoryId: input.categoryId } : {}),
-        ...(input.vendorId ? { vendorId: input.vendorId } : {}),
+        ...(categoryId ? { categoryId } : {}),
+        ...(categoryFilter.name ? { categoryName: categoryFilter.name } : {}),
+        ...(vendorId ? { vendorId } : {}),
+        ...(vendorFilter.name ? { vendorName: vendorFilter.name } : {}),
         ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
+        ...(branchName ? { branchName } : {}),
       },
     });
     const completeness = completeResult(snapshot.items.length, snapshot.hasMore);

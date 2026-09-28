@@ -881,7 +881,8 @@ describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)
     try {
       await client.requestLineIntakeRoute({
         requestId: 'transport-77', webhookEventId: 'evt-9001', companyId: 'company-1', userId: 'u1',
-        locale: 'th-TH', messageText: 'ยอดขายวันนี้', permissions: [],
+        locale: 'th-TH', messageText: 'ดูค่าใช้จ่ายเดือนนี้', permissions: ['ai.tool.invoke', 'expense.read'],
+        enabledFeatures: ['expenses', 'expenses.list'], offeredToolNames: ['expense.list_recent'],
       });
     } finally { fetchStub.restore(); }
 
@@ -897,6 +898,7 @@ describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)
     // And the field itself is inert on the wire: the intake router builds its prompt from an
     // explicit allowlist, so it never becomes model input.
     assert.equal(fetchStub.bodies[0].webhookEventId, 'evt-9001');
+    assert.deepEqual(fetchStub.bodies[0].offeredToolNames, ['expense.list_recent'], 'authority catalog survives API→Gateway JSON transport');
   });
 
   it('keeps the request-id fallback for an intake caller that sends no webhook event', async () => {
