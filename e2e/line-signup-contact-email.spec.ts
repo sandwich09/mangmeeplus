@@ -63,7 +63,7 @@ for (const width of [390, 1280]) {
     await expect(email).toHaveAttribute('type', 'email');
     await expect(email).not.toHaveAttribute('required', '');
     await expect(page.locator('input[type="password"]')).toHaveCount(0);
-    await expect(page.locator('#contact-email-help')).toContainText('ก่อนชำระแพ็กเกจ');
+    await expect(page.locator('#contact-email-help')).toContainText('อีเมลรับเอกสารกรอกได้ที่หน้าชำระเงิน');
     const discoveryOther = page.getByLabel('ระบุช่องทางอื่น ๆ', { exact: true });
     await expect(page.locator('input[name="discovery-source"]:checked')).toHaveCount(0);
     await expect(discoveryOther).toBeHidden();

@@ -70,7 +70,9 @@ describe('P10-L LIFF signup page', () => {
     assert.ok(html.includes('<label for="contact-email">อีเมลติดต่อร้าน (ไม่บังคับ)</label>'));
     assert.match(html, /<input id="contact-email"[^>]*type="email"[^>]*maxlength="254"/);
     assert.doesNotMatch(html, /<input id="contact-email"[^>]*\brequired\b/);
-    assert.ok(html.includes('ก่อนชำระแพ็กเกจ'));
+    // RV33 (D-PF-1): the email for documents is asked at checkout, not verified before paying.
+    assert.ok(html.includes('อีเมลรับเอกสารกรอกได้ที่หน้าชำระเงิน'));
+    assert.equal(html.includes('ก่อนชำระแพ็กเกจจะให้ยืนยันอีเมล'), false);
     assert.ok(!/<label for="phone-number">[^<]*ไม่บังคับ/.test(html), 'phone remains required');
     // R1 (Owner 2026-09-20): the page promises a shop, never free days.
     assert.ok(html.includes('ยอมรับและเปิดร้าน'));
