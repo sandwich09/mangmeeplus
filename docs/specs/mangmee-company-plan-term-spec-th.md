@@ -69,7 +69,7 @@
 
 - เข้าเขต warning (เหลือง): แจ้ง System Admin ผ่าน dashboard-notifications + แจ้ง **OWNER เท่านั้น** (Owner 2026-08-30: พนักงานไม่เห็น จนกว่าจะสั่งเปลี่ยน) เป็นบันได **7 / 3 / 1 วันก่อนครบกำหนด** — web แบนเนอร์เหลือง + แจ้งเตือน LINE ช่องเดิม, exactly-once ต่อจุดต่อ term, ต่ออายุแล้วหยุดทันทีไม่ขึ้นอีก
 - ครบกำหนด (แดง): on-access check ปฏิเสธ business routes ของบริษัทนั้นทันทีที่ now ≥ termEndsAt (แม้ sweep ยังไม่ทัน) + sweep ใน workers (ทุก ~5 นาที) เปลี่ยน `Company.status → DISABLED` ผ่าน logic ชุดเดียวกับ `PartnerLifecycleTransitionUseCase` (actor = system, reason `term_expired`, เขียน `termDisabledAt`) + แจ้งทั้งสองฝั่ง
-- ประสบการณ์ผู้ใช้บริษัทที่หมดอายุ: login ได้, เห็นบริษัทใน switcher ติดป้าย "หมดอายุ", เข้าแล้วเจอหน้าแจ้งต่ออายุ (แดง) — ไม่มี operation ข้อมูลใด ๆ ทำได้; web/LINE ใช้คำตรงว่า "แพ็กเกจใกล้หมดอายุ" / "แพ็กเกจหมดอายุแล้ว" และป้าย severity ภาษาไทยใช้ "สำคัญ" แทน "วิกฤต"
+- ประสบการณ์ผู้ใช้บริษัทที่หมดอายุ: login ได้, เห็นบริษัทใน switcher ติดป้ายตาม `lockReason`: "ยังไม่มีแพ็กเกจ" (no_package) / "หมดอายุ" (trial_ended); label ทุก surface มาจาก `planTermStateLabel()` ใน contracts (purchase-without-setup R-C7), เข้าแล้วเจอหน้าแจ้งต่ออายุ (แดง) — ไม่มี operation ข้อมูลใด ๆ ทำได้; web/LINE ใช้คำตรงว่า "แพ็กเกจใกล้หมดอายุ" / "แพ็กเกจหมดอายุแล้ว" และป้าย severity ภาษาไทยใช้ "สำคัญ" แทน "วิกฤต"
 - ระหว่าง ACTIVE→DISABLED ด้วยเหตุ term: ห้ามแตะ SUSPENDED/ARCHIVED และห้ามชนกับ disable ที่แอดมินสั่งเอง (ถ้า status ไม่ใช่ ACTIVE อยู่แล้ว sweep ข้ามเฉย ๆ)
 
 ### 4C. ต่ออายุ (renew)
