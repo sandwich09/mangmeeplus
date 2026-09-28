@@ -142,3 +142,20 @@ test('a package decision is confirmed before it moves what a customer pays', () 
   assert.match(source, /const accepted = await confirm\(\{[\s\S]{0,400}อนุมัติเปลี่ยนแพ็กเกจ/);
   assert.match(source, /if \(!accepted\) return;[\s\S]{0,200}decidePackageChangeRequest/);
 });
+
+test('R-C6 (purchase-without-setup): "เปลี่ยนแพ็กเกจให้" is withheld from a term-locked shop', () => {
+  // Approving would tell the shop "เปลี่ยนแล้ว" while the term keeps it locked at zero days — the
+  // operator renews it from the partner page first (the link stays reachable either way).
+  assert.match(source, /item\.billingReviewPath \? \([\s\S]{0,80}<Link href=\{item\.billingReviewPath\}/);
+  assert.match(source, /\(item\.planState === 'NO_PACKAGE' \|\| item\.planState === 'EXPIRED'\) \? \(/);
+  assert.match(source, /ร้านนี้ยังไม่มีแพ็กเกจ ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ/);
+  assert.match(source, /แพ็กเกจของร้านนี้หมดอายุแล้ว ต่ออายุในหน้าพาร์ทเนอร์ก่อน/);
+  assert.match(source, /href=\{`\/system\/partners\/\$\{item\.companyId\}`\}/);
+});
+
+test('the queue never shows a raw tier key to the operator confirming a package change', () => {
+  assert.match(source, /เป็น \$\{PLAN_TIER_PRESETS\[item\.requestedTierKey as PlanTierKey\]\?\.labelTh \?\? item\.requestedTierKey\}/);
+  // A shop with no package yet reads "ยังไม่มีแพ็กเกจ →", never the FREE_TRIAL_15 it still holds
+  // underneath — R-C7 forbids "ทดลองใช้" copy next to a no_package row.
+  assert.match(source, /item\.planState === 'NO_PACKAGE' \? 'ยังไม่มีแพ็กเกจ → '/);
+});

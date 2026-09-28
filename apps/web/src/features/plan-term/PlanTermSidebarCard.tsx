@@ -91,8 +91,14 @@ export function PlanTermSidebarCard({ companyId }: { companyId: string }) {
         <div className="h-1.5 rounded-full bg-warning-400" style={{ width: `${warningProgressPercent(notice.daysLeft)}%` }} />
       </div>
       <a
-        href={`tel:${PLAN_TERM_RENEW_PHONE.replace(/-/g, '')}`}
+        href={`/companies/${encodeURIComponent(companyId)}/billing`}
         className="mt-2.5 block rounded-lg bg-brand-700 px-2 py-2 text-center text-[12.5px] font-bold text-white"
+      >
+        ไปหน้าแพ็กเกจ
+      </a>
+      <a
+        href={`tel:${PLAN_TERM_RENEW_PHONE.replace(/-/g, '')}`}
+        className="mt-1.5 block rounded-lg border border-warning-200 bg-white px-2 py-2 text-center text-[12.5px] font-bold text-warning-700"
       >
         ติดต่อ {PLAN_TERM_RENEW_PHONE}
       </a>

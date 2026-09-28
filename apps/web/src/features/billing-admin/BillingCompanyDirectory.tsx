@@ -12,9 +12,10 @@ function payment(company: BillingOperatorCompany) {
 function access(company: BillingOperatorCompany) {
   const tone = company.accessState === 'ACTIVE' ? 'border-green-200 bg-green-50 text-green-800'
     : company.accessState === 'HELD' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-gray-200 bg-gray-100 text-gray-700';
-  return <span className={`inline-flex rounded-lg border px-2 py-1 text-sm ${tone}`}>{billingLabel('access', company.accessState)}</span>;
+  return <span className={`inline-flex rounded-lg border px-2 py-1 text-sm ${tone}`}>{company.planState === 'NO_PACKAGE' ? 'ยังไม่มีแพ็กเกจ' : billingLabel('access', company.accessState)}</span>;
 }
 function term(company: BillingOperatorCompany) {
+  if (company.planState === 'NO_PACKAGE') return <><span className="block text-xs text-gray-500">แพ็กเกจ</span>ยังไม่มีแพ็กเกจ</>;
   return company.termEndsAt ? <><span className="block text-xs text-gray-500">{company.source === 'TRIAL' ? 'ทดลองใช้ถึง' : 'ใช้งานถึง'}</span>{formatThaiDate(company.termEndsAt)}</> : 'ยังไม่กำหนด';
 }
 
@@ -62,7 +63,7 @@ export default function BillingCompanyDirectory({ overview, loading, error, requ
           <thead className="bg-gray-50 text-sm text-gray-600"><tr>{['บริษัท', 'แพ็กเกจ', 'การชำระเงิน', 'การใช้งาน', 'วันสิ้นสุดสิทธิ์'].map((heading, i) => <th key={heading} scope="col" className={`${i === 0 ? 'w-[28%]' : 'w-[18%]'} px-4 py-3 first:pl-6`}>{heading}</th>)}</tr></thead>
           <tbody className="divide-y divide-gray-100 text-sm">{companies.map(company => <tr key={company.companyId} className="align-top hover:bg-gray-50">
             <td className="break-words px-6 py-4"><Link onClick={leaving} href={`/system/billing/companies/${encodeURIComponent(company.companyId)}`} className="inline-flex min-h-11 items-center text-base font-semibold text-brand-800 underline-offset-4 hover:underline">{company.companyName}</Link></td>
-            <td className="px-4 py-5 text-gray-900">{billingPlanLabel(company.tierKey)}</td>
+            <td className="px-4 py-5 text-gray-900">{company.planState === 'NO_PACKAGE' ? 'ยังไม่มีแพ็กเกจ' : billingPlanLabel(company.tierKey)}</td>
             <td className="px-4 py-5 text-gray-700">{payment(company)}{company.paidThrough && <p className="mt-1 text-xs text-gray-500">ชำระไว้ถึง {formatThaiDate(company.paidThrough)}</p>}</td>
             <td className="px-4 py-4">{access(company)}</td>
             <td className="px-4 py-5 text-gray-700">{term(company)}</td>
@@ -71,7 +72,7 @@ export default function BillingCompanyDirectory({ overview, loading, error, requ
       </div>
       <div className="divide-y divide-gray-200 border-t border-gray-200 xl:hidden">{companies.map(company => <article key={company.companyId} aria-label={company.companyName} className="space-y-3 p-4 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-2"><Link onClick={leaving} href={`/system/billing/companies/${encodeURIComponent(company.companyId)}`} className="inline-flex min-h-11 items-center text-base font-semibold text-brand-800 underline underline-offset-4">{company.companyName}</Link>{access(company)}</div>
-        <dl className="grid grid-cols-2 gap-4 text-sm"><div><dt className="text-gray-500">แพ็กเกจ</dt><dd className="mt-1 text-base text-gray-900">{billingPlanLabel(company.tierKey)}</dd></div><div><dt className="text-gray-500">วันสิ้นสุดสิทธิ์</dt><dd className="mt-1 text-gray-900">{term(company)}</dd></div>
+        <dl className="grid grid-cols-2 gap-4 text-sm"><div><dt className="text-gray-500">แพ็กเกจ</dt><dd className="mt-1 text-base text-gray-900">{company.planState === 'NO_PACKAGE' ? 'ยังไม่มีแพ็กเกจ' : billingPlanLabel(company.tierKey)}</dd></div><div><dt className="text-gray-500">วันสิ้นสุดสิทธิ์</dt><dd className="mt-1 text-gray-900">{term(company)}</dd></div>
           <div className="col-span-2"><dt className="text-gray-500">การชำระเงิน</dt><dd className="mt-1 text-gray-900">{payment(company)}{company.paidThrough && <span className="block text-gray-600">ชำระไว้ถึง {formatThaiDate(company.paidThrough)}</span>}</dd></div></dl>
       </article>)}</div>
     </>}

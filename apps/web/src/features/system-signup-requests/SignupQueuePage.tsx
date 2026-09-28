@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   PLAN_TIER_PRESETS,
+  planTermStateLabel,
   type PlanTierKey,
   SIGNUP_REJECTION_REASON_MAX_LENGTH,
   SIGNUP_RESOLUTION_NOTE_MAX_LENGTH,
@@ -398,7 +399,7 @@ export default function SignupQueuePage() {
     const accepted = await confirm({
       title: action === 'APPROVE' ? 'อนุมัติเปลี่ยนแพ็กเกจ' : 'ไม่อนุมัติคำขอ',
       message: action === 'APPROVE'
-        ? `เปลี่ยนแพ็กเกจของร้าน ${item.companyName} เป็น ${item.requestedTierKey} และแจ้งลูกค้าทางไลน์ ใช่หรือไม่`
+        ? `เปลี่ยนแพ็กเกจของร้าน ${item.companyName} เป็น ${PLAN_TIER_PRESETS[item.requestedTierKey as PlanTierKey]?.labelTh ?? item.requestedTierKey} และแจ้งลูกค้าทางไลน์ ใช่หรือไม่`
         : `ปิดคำขอของร้าน ${item.companyName} โดยไม่เปลี่ยนแพ็กเกจ ใช่หรือไม่`,
       confirmLabel: action === 'APPROVE' ? 'เปลี่ยนแพ็กเกจ' : 'ไม่อนุมัติ',
       variant: action === 'APPROVE' ? 'primary' : 'danger',
@@ -755,6 +756,7 @@ export default function SignupQueuePage() {
                       <tr key={item.id} className="align-top hover:bg-gray-50">
                         <td className="px-4 py-3">
                           <p className="font-medium text-gray-900">{item.companyName}</p>
+                          {(item.planState === 'NO_PACKAGE' || item.planState === 'EXPIRED') && <span className="mt-1 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">{planTermStateLabel(item.planState)}</span>}
                           {item.note && <p className="mt-0.5 text-xs text-gray-500">{item.note}</p>}
                           {/* Per row: a note typed for one shop must not follow the operator to
                               the next one. Bounded and link-fenced server-side (SEC-05). */}
@@ -769,7 +771,7 @@ export default function SignupQueuePage() {
                           />
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">
-                          {item.currentTierKey ? `${PLAN_TIER_PRESETS[item.currentTierKey as PlanTierKey]?.labelTh ?? item.currentTierKey} → ` : ''}
+                          {item.planState === 'NO_PACKAGE' ? 'ยังไม่มีแพ็กเกจ → ' : item.currentTierKey ? `${PLAN_TIER_PRESETS[item.currentTierKey as PlanTierKey]?.labelTh ?? item.currentTierKey} → ` : ''}
                           {PLAN_TIER_PRESETS[item.requestedTierKey as PlanTierKey]?.labelTh ?? item.requestedTierKey}
                           {item.billingReviewPath && <p className="mt-2 text-sm">คำขอนี้จะปิดเมื่อชำระเงินและเปิดสิทธิ์แล้ว การให้สิทธิ์ชั่วคราวยังคงคำขอนี้ไว้</p>}
                         </td>
@@ -777,14 +779,22 @@ export default function SignupQueuePage() {
                         <td className="px-4 py-3 text-xs text-gray-500">{formatThaiDateTime(item.createdAt)}</td>
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-2">
-                            {item.billingReviewPath ? <Link href={item.billingReviewPath} className={`${rowActionClass} border-green-300 bg-green-50 text-green-700`}>ตรวจแพ็กเกจที่ชำระเงิน</Link> : <button
-                              type="button"
-                              disabled={busy} aria-busy={Boolean(busy)}
-                              onClick={() => void handlePackageDecision(item, 'APPROVE')}
-                              className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
-                            >
-                              {busy ? 'กำลังทำรายการ...' : 'เปลี่ยนแพ็กเกจให้'}
-                            </button>}
+                            {item.billingReviewPath ? (
+                              <Link href={item.billingReviewPath} className={`${rowActionClass} border-green-300 bg-green-50 text-green-700`}>ตรวจแพ็กเกจที่ชำระเงิน</Link>
+                            ) : (item.planState === 'NO_PACKAGE' || item.planState === 'EXPIRED') ? (
+                              // R-C6: approving would tell the shop "เปลี่ยนแล้ว" while the term keeps it
+                              // locked — the operator renews it from the partner page first (link below).
+                              <p className="text-xs text-amber-800">{item.planState === 'NO_PACKAGE' ? 'ร้านนี้ยังไม่มีแพ็กเกจ ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ' : 'แพ็กเกจของร้านนี้หมดอายุแล้ว ต่ออายุในหน้าพาร์ทเนอร์ก่อน'}</p>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={busy} aria-busy={Boolean(busy)}
+                                onClick={() => void handlePackageDecision(item, 'APPROVE')}
+                                className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
+                              >
+                                {busy ? 'กำลังทำรายการ...' : 'เปลี่ยนแพ็กเกจให้'}
+                              </button>
+                            )}
                             <button
                               type="button"
                               disabled={busy} aria-busy={Boolean(busy)}

@@ -25,7 +25,7 @@ import { BranchFilterProvider, BranchSelector, CompanySwitcher } from './Workspa
 import { PlanTermBanner } from '@/features/plan-term/PlanTermBanner';
 import { LockedShellProvider } from '@/features/plan-term/LockedShellScope';
 import { PlanTermSidebarCard } from '@/features/plan-term/PlanTermSidebarCard';
-import { fetchPlanTermNotice, type PlanTermNotice } from '@/features/plan-term/plan-term.api';
+import { fetchPlanTermNotice, PLAN_TERM_CHANGED_EVENT, type PlanTermNotice } from '@/features/plan-term/plan-term.api';
 import { isLockedShellPath } from '@/features/plan-term/plan-term.logic';
 import { accessContextFingerprint, fetchMyContext, type MyContext } from './workspace-scope.api';
 import { MenuFilterProvider } from './MenuFilterScope';
@@ -74,19 +74,45 @@ const ACCESS_CONTEXT_POLL_MS = 60_000;
 
 export default function WorkspaceLayoutClient({ children, companyId, session }: Props) {
   const pathname = usePathname();
+  const router = useRouter();
   // The shell's single plan-term read (spec §12): the locked two-menu sidebar, its banner and the
   // renewal redirect all answer from this one notice, so no page pays for a second call.
   const [loaded, setLoaded] = useState<{ companyId: string; notice: PlanTermNotice | null } | null>(null);
+  const [revision, setRevision] = useState(0);
+  const lockedRef = useRef(false);
   const settled = loaded?.companyId === companyId;
   const notice = settled ? loaded.notice : null;
 
   useEffect(() => {
     let active = true;
     void fetchPlanTermNotice(companyId).then((result) => {
-      if (active) setLoaded({ companyId, notice: result });
+      if (!active) return;
+      // RV30: leaving EXPIRED means the server layout's session/permissions are stale too
+      // (billing-reconciler.service apply) — refresh them; the shell below switches by itself.
+      const unlocked = result !== null && lockedRef.current && result.derivedState !== 'EXPIRED'; // result null = endpoint ล่ม ไม่ใช่ปลดล็อก
+      setLoaded({ companyId, notice: result });
+      if (unlocked) router.refresh();
     });
     return () => { active = false; };
-  }, [companyId]);
+  }, [companyId, revision, router]);
+
+  useEffect(() => { lockedRef.current = notice?.derivedState === 'EXPIRED'; }, [notice?.derivedState]);
+
+  // Only the locked shell listens: a running shop has nothing to unlock, and BusinessWorkspaceLayout
+  // already re-reads its access context on focus (see ACCESS_CONTEXT_STALE_EVENT below).
+  useEffect(() => {
+    if (notice?.derivedState !== 'EXPIRED') return;
+    const bump = () => setRevision((n) => n + 1);
+    const onVisible = () => { if (document.visibilityState === 'visible') bump(); };
+    window.addEventListener(PLAN_TERM_CHANGED_EVENT, bump);
+    window.addEventListener('focus', bump);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener(PLAN_TERM_CHANGED_EVENT, bump);
+      window.removeEventListener('focus', bump);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [notice?.derivedState]);
 
   // Nothing business-shaped may mount before the term is known: the business shell's first render
   // fires the nav, notification and access-context reads, which a locked shop answers with 403 —
