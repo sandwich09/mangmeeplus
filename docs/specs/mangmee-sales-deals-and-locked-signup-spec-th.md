@@ -109,7 +109,7 @@
 | `GET/PATCH /v1/sales/me/profile` | sales / lead | เปิดดูและแก้ profile ของตนเองโดยไม่แก้อัตราหัก ณ ที่จ่าย; อ่านและแก้มี audit ไม่มี PII ใน metadata |
 | `GET /v1/system/sales-agents/address-master?postalCode=` | SYSTEM_ADMIN / lead | รายการที่อยู่ไทยจาก master เดิมสำหรับฟอร์ม profile; จำกัด platform tenant และสิทธิ์ `sales.agent_profile.manage` หรือ `sales.team.manage`; ไม่คืน PII |
 | `GET /v1/companies/:id/package-change-requests` (เดิม) | OWNER | เพิ่ม `kind`, `deal` (ราคา, เดือน, สิทธิ์, หมดอายุ, description) |
-| `POST /v1/companies/:id/billing/quote` (เดิม) body `{ dealId }` | OWNER | quote จากดีล; ต้องมีอีเมลยืนยัน (ขั้นในหน้า) และที่อยู่บริษัท (D4) |
+| `POST /v1/companies/:id/billing/quote` (เดิม) body `{ dealId }` | OWNER | quote จากดีล; ~~ต้องมีอีเมลยืนยัน (ขั้นในหน้า) และที่อยู่บริษัท (D4)~~ → ไม่ต้อง (D-PF-1 ทับ D4, purchase-without-setup PR C 2026-09-28) |
 | `POST /v1/companies/:id/billing/checkout` (เดิม) | OWNER | Checkout ครั้งเดียว บัตร+PromptPay |
 
 Error codes ใหม่ต้องมี Thai สองที่ (`api-error-message.ts` + `BillingPage.errorText`): `CONTROL_DEAL_SUBSCRIPTION_ACTIVE`, `SALES_DEAL_STATE_CONFLICT`, `SALES_DEAL_SELF_APPROVAL`, `SALES_DEAL_EXPIRED`, `SALES_COMPANY_NOT_FOUND`, `BILLING_DEAL_EXPIRED`
@@ -149,7 +149,7 @@ Error codes ใหม่ต้องมี Thai สองที่ (`api-error-m
 | S13 | apply ดีล = term ตามเดือน + ลิมิต + เมนู + งบ AI + โควตารายเดือน — ต้องเป็นธุรกรรมเดียว + follow-up idempotent (เมนู/งบ AI) ตามแบบ special-invoice; source label ใหม่ `DEAL` ใน `billing-admin.service.ts:102` และ `BillingCompanyOverview.tsx:30` | special-invoice spec R6 | P3 (H) |
 | S14 | กติกาโหมดเดียวต่อบัญชีบล็อกดีลบน subscription เดิม → `CARD_AUTO` ที่ active/ไม่ค้างชำระเป็นข้อยกเว้นใน quote/checkout/status; snapshot ผูก subscription เดิมและ reconciler ยกเลิกหลัง APPLIED | `billing.service.ts`, `billing-reconciler.service.ts` | ปิดแล้ว §19.3 |
 | S15 | ร้าน manual/ดีลเดิมติด `BILLING_LEGACY_REVIEW_REQUIRED` เมื่อจะซื้อ catalog ทีหลัง → ผ่อนเมื่อมีดีล APPLIED มาก่อน (ทีมงานตรวจแล้ว) | `billing.service.ts:228-230` | P3 (M) |
-| S16 | อีเมลยืนยันเป็นเงื่อนไขก่อน Checkout (`verifiedAccountEmailProof`) ร้าน LINE-first ไม่มีอีเมล → ขั้นยืนยันอีเมลต้องอยู่ในหน้าแพ็กเกจ (มีแล้วบางส่วน) หรือผ่อน (D4) | `billing.service.ts:223` | P3 (H) |
+| S16 | อีเมลยืนยันเป็นเงื่อนไขก่อน Checkout (`verifiedAccountEmailProof`) ร้าน LINE-first ไม่มีอีเมล → ขั้นยืนยันอีเมลต้องอยู่ในหน้าแพ็กเกจ (มีแล้วบางส่วน) หรือผ่อน (D4) — **แก้แล้วโดย purchase-without-setup PR C (ถอด proof ที่ quote/checkout/repeat; Stripe Checkout ถามอีเมล)** | `billing.service.ts:223` | P3 (H) |
 | S17 | ดีลหมดอายุ 3 วัน: ไม่มี scan → derive ตอนอ่าน + scan รายวันปิดแถว (reuse scan-worker); การ์ดต้องหายทันทีเมื่อ derive EXPIRED | — | P2 (M) |
 | S18 | one-OPEN-per-company index: ดีล PENDING ชนกับคำขอเปลี่ยนแพ็กเกจของลูกค้า/ใบพิเศษ → กติกาแปลง/ปฏิเสธ | migration `20260904120000_line_first_signup` | P2 (M) |
 | S19 | LINE push งบ/กติกา: push ข้อเสนอถึง OWNER ต้องไม่มีตัวเลขและใช้ `ownerLineUserIds`; lane billing ไม่กัน group | `package-change-decision.use-case.ts:163-200`, `process-line-webhook.use-case.ts:2404-2412` | P2 (L) |
@@ -181,7 +181,7 @@ unit (สถานะดีล, snapshot, quoteTotals, ladder-less validation, l
 | D1 | ราคาพื้นสำหรับ "เตือน" (ไม่ห้าม) มีไหม | ไม่มีในรอบแรก; เตือนเฉพาะสูงกว่า catalog |
 | D2 | หัวหน้าเซลล์อนุมัติดีลของตัวเองได้ไหม | ไม่ได้ (Owner อนุมัติแทน) |
 | D3 | ข้อเสนอต่ออายุอัตโนมัติ 14 วันก่อนหมด เงื่อนไขเดิม ต้องให้หัวหน้าอนุมัติซ้ำไหม | ไม่ต้อง (เงื่อนไขเดิมที่เคยอนุมัติ) |
-| D4 | ก่อนจ่ายบังคับกรอกที่อยู่บริษัท + อีเมลยืนยันในหน้าแพ็กเกจ ใช่ไหม | ใช่ (ที่อยู่เพื่อเอกสาร, อีเมลเพื่อใบเสร็จ Stripe) |
+| D4 | ก่อนจ่ายบังคับกรอกที่อยู่บริษัท + อีเมลยืนยันในหน้าแพ็กเกจ ใช่ไหม | ใช่ (ที่อยู่เพื่อเอกสาร, อีเมลเพื่อใบเสร็จ Stripe) → ทับโดย D-PF-1 (2026-09-26): ไม่บังคับ; Stripe Checkout เก็บทั้งสอง |
 | D5 | ~~ร้านที่มี subscription catalog อยู่แล้ว รับดีลไม่ได้ (ต้องยกเลิกต่ออายุก่อน)~~ | **แทนที่โดยมติ §19.3/Q7: `CARD_AUTO` ที่ปกติรับดีลได้; ไม่มี proration ในระบบ** |
 
 ## 17. มติ Owner รอบ 2 (2026-09-20) และผลต่อกติกา
@@ -191,7 +191,7 @@ unit (สถานะดีล, snapshot, quoteTotals, ladder-less validation, l
 | D1 | ไม่มีราคาพื้น | เตือนเฉพาะราคาสูงกว่า catalog (R3 คงเดิม) |
 | D2 | หัวหน้าเซลล์อนุมัติดีลของตัวเองได้ | R5 แก้: ผู้สร้างที่เป็น `MANGMEE_SALES_LEAD`/SYSTEM_ADMIN อนุมัติเองได้; เซลล์ธรรมดาอนุมัติไม่ได้; audit ระบุ `selfApproved: true` |
 | D3 | ข้อเสนอต่ออายุต้องอนุมัติซ้ำ **และมีแจ้งเตือน** | J4/R4 แก้: 14 วันก่อนหมด ระบบสร้างดีลรอบถัดไปสถานะ PENDING_APPROVAL ผูกกับเซลล์เจ้าของดีล → แจ้งเตือนเซลล์ + หัวหน้า (เว็บ + LINE ถ้าผูก + สรุปรายวัน) → อนุมัติแล้วการ์ดถึงลูกค้า; ถ้าไม่มีใครอนุมัติภายใน 7 วันก่อนหมด เตือนซ้ำและแจ้ง Owner; ร้านล็อกตาม P29 เมื่อหมดรอบโดยไม่จ่าย |
-| D4 | บังคับที่อยู่บริษัท + อีเมลยืนยันก่อนจ่าย | R6/UI คงตามร่าง (ขั้นกรอกในหน้าแพ็กเกจ) |
+| D4 | บังคับที่อยู่บริษัท + อีเมลยืนยันก่อนจ่าย | R6/UI คงตามร่าง (ขั้นกรอกในหน้าแพ็กเกจ) → ทับโดย D-PF-1 (2026-09-26) |
 | D5 | ร้านที่มี `CARD_AUTO` catalog **รับดีลได้** | R9/S14 แก้: ดีลบนร้านที่มี subscription = "แปลงเป็นดีล": ราคาดีลเป็นราคาสุดท้ายที่เซลล์ระบุเอง (**ไม่มี proration/เครดิตส่วนต่างในระบบ**) → Checkout ครั้งเดียว (บัตร/PromptPay) → apply ดีลทันที (term ใหม่นับจากวันจ่าย) → ระบบยกเลิก subscription เดิมด้วย `prorate: false` หลัง apply ผ่าน operation ที่มี journal/observed/retry; ระหว่างยกเลิกค้าง ร้านยังใช้ดีลที่จ่ายแล้วได้แต่เริ่มรายการใหม่ไม่ได้; เงื่อนไข: subscription ต้อง `active` ไม่มีรายการค้าง (`assertNoDebt`) ไม่มี grace/refund/dispute/คำสั่งยกเลิก ไม่งั้นปฏิเสธ `CONTROL_DEAL_SUBSCRIPTION_REVIEW` |
 
 **รายงานและการนับยอด (มติ Owner):**
@@ -347,7 +347,7 @@ unit (สถานะดีล, snapshot, quoteTotals, ladder-less validation, l
 | D-P3-5 | เมนูของดีลเขียนผ่าน helper ธุรกรรมที่แยกออกจาก `set-partner-features.use-case.ts` (epoch/lastSeq/transition เดิม); ร้านที่ normalization ของ entitlement ยังค้าง → `CONTROL_DEAL_ENTITLEMENT_REVIEW` ตอน quote | ตัวเขียน entitlement ที่ถูกต้องมีที่เดียวและปฏิเสธเมื่อ normalization ค้าง |
 | D-P3-6 | admin overview แสดง source `DEAL` เมื่อ attempt ที่เป็นสัญญาปัจจุบันมี `quoteSnapshot.deal` | วันนี้ source คิดจาก `billingReceiptAccountId` จึงอ่านเป็น STRIPE |
 | D-P3-7 | เพดาน PromptPay: ตรวจเอกสาร Stripe; ถ้า Stripe กำหนดเพดานต่อรายการ → ค่าคงที่ใน contracts + ซ่อน PromptPay เมื่อเกิน; ถ้ามีแต่เพดานฝั่งธนาคารผู้จ่าย → ไม่กำหนดในระบบ (S38) | — |
-| D-P3-8 | ขั้นกรอกที่อยู่/อีเมล (D4) ของดีลใช้ `billingProfileHref` เดิมพร้อม `deal=<id>` (offer = tier ฐาน, interval = month) | `billingProfileSelection` ตรวจ tier ที่จ่ายได้เท่านั้น |
+| D-P3-8 | ขั้นกรอกที่อยู่/อีเมล (D4) ของดีลใช้ `billingProfileHref` เดิมพร้อม `deal=<id>` (offer = tier ฐาน, interval = month) → ไม่มีขั้นบังคับแล้ว (D-PF-1); ลิงก์โปรไฟล์เป็นทางเลือก (PR D) | `billingProfileSelection` ตรวจ tier ที่จ่ายได้เท่านั้น |
 | D-P3-9 | scan ปิด EXPIRED ข้ามดีลที่มี BillingAttempt ยังเปิดอยู่; session ที่จ่ายหลังหมดอายุยัง apply (S46) | `expireSweep` ของ Phase 2 ยังไม่รู้จัก attempt |
 | D-P3-10 | ตาราง `SalesAttribution` สร้างใน Phase 3 (แถวแรกเมื่อดีล APPLIED, source DEAL); Phase 4 เพิ่ม REFERRAL และรายงาน | ยังไม่มีตารางนี้ในโค้ด |
 | D-P3-11 | ไม่มี smoke ของโหมดครั้งเดียว (#667) ในระบบเลย → `billing-deal-smoke.ts` ต้องสร้าง fixture โหมด payment เอง (ต้นแบบ `billing-repeat-smoke.ts`) และครอบคลุมเส้นทางครั้งเดียวของ catalog ไปด้วย | `billing-http-smoke.ts` ยืนยัน `mode === 'subscription'` เท่านั้น |

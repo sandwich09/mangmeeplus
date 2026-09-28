@@ -17,8 +17,9 @@
 - LINE signup ผ่าน token ที่ backend ยืนยันแล้ว: contactEmail ไม่บังคับ ทั้ง first shop และ add shop
 - Web signup ที่ใช้ email claim เดิม: ยังต้องมี email ไม่เปลี่ยนเป็น web signup ที่ไร้ทั้ง LINE/email ไม่เปลี่ยน claim/reset-password link ให้เป็น OTP ในงานนี้
 - เพิ่ม/ยืนยัน/เปลี่ยน **email ของบัญชีที่ login อยู่** ใช้ email OTP การกรอก contact ตอนสมัครไม่ถือว่า verified
-- ก่อน user เริ่มชำระเงินหรือเพิ่มภาระการเรียกเก็บ ต้องมี current verified account email; warning ที่ UI มี API enforcement คู่กัน
-- **Design default D01:** รุ่นแรกใช้ current verified account email ของผู้กดชำระเป็น billing recipient ของรายการใหม่ ไม่มีช่องกรอก billing email อิสระ ข้อนี้เป็นตัวเลือกออกแบบที่เสนอ ไม่ใช่คำกล่าวว่าผู้ใช้ได้เลือกนโยบายอีเมลแผนกบัญชีแยกแล้ว หากต้องแยก ต้องเพิ่ม company-scoped recipient verification/permissions ก่อน ไม่ใช้ verified ของคนหนึ่งรับรองอีก email
+- ~~ก่อน user เริ่มชำระเงินหรือเพิ่มภาระการเรียกเก็บ ต้องมี current verified account email; warning ที่ UI มี API enforcement คู่กัน~~ → ยกเลิก (D-PF-1/R-A6, purchase-without-setup PR C 2026-09-28): อีเมลบัญชีเป็นทางเลือก; ผู้รับเอกสารแยกเป็น `BillingAccount.recipientEmail` ของบริษัท
+- → D01 แทนที่ (PR C 2026-09-28): ผู้รับ = `BillingAccount.recipientEmail`; company-scoped recipient OTP มีแล้ว (proofKind `BILLING_RECIPIENT` ผูก companyId) ตามที่ D01 เคยเสนอ
+- ~~**Design default D01:**~~ รุ่นแรกใช้ current verified account email ของผู้กดชำระเป็น billing recipient ของรายการใหม่ ไม่มีช่องกรอก billing email อิสระ ข้อนี้เป็นตัวเลือกออกแบบที่เสนอ ไม่ใช่คำกล่าวว่าผู้ใช้ได้เลือกนโยบายอีเมลแผนกบัญชีแยกแล้ว หากต้องแยก ต้องเพิ่ม company-scoped recipient verification/permissions ก่อน ไม่ใช้ verified ของคนหนึ่งรับรองอีก email
 - ไม่สร้าง user/company/trial ใหม่จากการผูก email ไม่ auto-merge ด้วย email และไม่บังคับตั้งรหัสผ่านก่อนสแกนหรือจ่าย
 - Provider outage ไม่ปิดงานรายจ่ายทั้งระบบ และการไม่ผ่าน email gate ไม่หยุด reconcile เงินที่จ่ายไปแล้ว
 - ข้อกำหนดเพิ่มเติมจากผู้ใช้: UAT และ Production ต้องพร้อมใช้เมื่อ release เสร็จ ไม่มีงานค้างให้เปิด/ปิด feature flag หรือเปลี่ยน provider ภายหลัง ใช้ release contract §10; readiness ที่ยังไม่ผ่านต้องทำให้ release ไม่สำเร็จ ไม่ส่งมอบหน้าที่ใช้งานต่อไม่ได้
@@ -79,11 +80,11 @@ Invariant E01–E12:
 
 LINE → ชื่อร้าน/มือถือ + “อีเมล (ไม่บังคับ)” → ยอมรับข้อกำหนด → auto หรือ manual ตาม eligibility → เปิดร้านเดิมได้ผ่าน LINE
 
-ข้อความใต้ email: “เพิ่มภายหลังได้ ก่อนชำระแพ็กเกจจะให้ยืนยันอีเมลสำหรับรับเอกสาร” หลังเปิดร้านเสนอ “ตั้งวิธีเข้าสำรอง” แบบข้ามได้ ไม่บังคับกรอก email ซ้ำทันที
+ข้อความใต้ email: ~~“เพิ่มภายหลังได้ ก่อนชำระแพ็กเกจจะให้ยืนยันอีเมลสำหรับรับเอกสาร”~~ → “เพิ่มภายหลังได้ อีเมลรับเอกสารกรอกที่หน้าชำระเงิน” (RV33) หลังเปิดร้านเสนอ “ตั้งวิธีเข้าสำรอง” แบบข้ามได้ ไม่บังคับกรอก email ซ้ำทันที
 
 ### 5.2 ก่อนจ่าย
 
-เลือกบริษัท → เลือกแพ็กเกจ/รอบ → ถ้าไม่มี verified email แสดงขั้น “ยืนยันอีเมลก่อนชำระเงิน” → กรอก/ตรวจ email → ส่ง OTP → กรอกรหัส → สำเร็จ → ดึงราคา/สิทธิ์ล่าสุด → แสดงสรุปและให้กดยืนยันจ่ายอีกครั้ง → provider
+เลือกบริษัท → เลือกแพ็กเกจ/รอบ → ~~ถ้าไม่มี verified email แสดงขั้น “ยืนยันอีเมลก่อนชำระเงิน”~~ (→ ไม่มีขั้นนี้แล้ว; Stripe Checkout ถามอีเมล — purchase-without-setup) → กรอก/ตรวจ email → ส่ง OTP → กรอกรหัส → สำเร็จ → ดึงราคา/สิทธิ์ล่าสุด → แสดงสรุปและให้กดยืนยันจ่ายอีกครั้ง → provider
 
 - เห็นราคา/catalog ได้ก่อน OTP แต่ firm quote/financial action ต้องผ่าน gate ตาม §8
 - Copy: “ยืนยันอีเมลเพื่อรับเอกสารการชำระเงิน” ปุ่มหลัก “ส่งรหัสยืนยัน” ปุ่มรอง “ไว้ภายหลัง” กลับไปใช้งานที่สิทธิ์เดิมอนุญาต
@@ -118,6 +119,7 @@ LINE → ชื่อร้าน/มือถือ + “อีเมล (ไ�
 | ป้องกัน mail bombing | recipient budget 5 ครั้ง/ชั่วโมง + existing trusted-client-IP limits; ใช้ infrastructure limiter เดิม แยก account/recipient จาก shared-office IP |
 | หลังเกินโควตา | 429 พร้อม retryAfter; กลับไปใช้สิทธิ์เดิม/ดูเอกสาร/support ได้ ไม่มี admin bypass verified |
 
+- (หมายเหตุ 2026-09-28: recipient OTP ของบริษัท — purchase-without-setup PR C §4.8 — ไม่บังคับ reauth ตาม DQ11; เหตุผลอยู่ใน brief นั้น กติกาข้อนี้ใช้กับอีเมลบัญชีเท่านั้น)
 - เปลี่ยน/เพิ่ม email เป็น sensitive account mutation ต้อง active authenticated principal และ current permission เดิม; ถ้ามี usable credential ให้ตรวจ current password; LINE-only ใช้ fresh server-verified LINE reauthentication ผูก nonce/transaction/purpose/user/channel อายุไม่เกิน 5 นาทีเมื่อเริ่ม challenge ห้ามบังคับสร้าง password เพื่อผูก email การ confirm ภายในอายุ challenge 10 นาทีไม่ถามรหัสผ่านซ้ำเพียงเพราะครบ 5 นาที แต่ต้องตรวจ security binding ปัจจุบันเสมอ; request รุ่นใหม่ที่เกินช่วง reauthentication ต้องยืนยันตัวตนใหม่โดยเก็บ target/context เดิมไว้
 - Reauthentication เป็นข้อมูลคนละชุดกับ mailbox OTP: OTP พิสูจน์กล่องใหม่ ไม่พิสูจน์ว่า requester มีสิทธิ์เปลี่ยนบัญชีเดิม session ที่ถูกขโมยอย่างเดียวต้องไม่พอเปิดวิธี recovery ใหม่
 - Challenge ผูก user ID, normalized target email, email revision, credential/security binding, purpose และ expiry ห้ามย้าย proof ไป user/company/action อื่น
@@ -178,15 +180,15 @@ P0 ต้องรวม `auth/application/use-cases/account-merge.use-case.ts` 
 | เส้นทาง | Email gate |
 |---|---|
 | ดู catalog/ราคาเบื้องต้น/สถานะ/ประวัติ/เอกสารที่มีสิทธิ์ | ไม่กั้น ให้เตือนและลิงก์ไปยืนยันได้ |
-| firm quote, new checkout, repeat purchase, upgrade, restart | ต้อง current verified email, ไม่มี pending change และ D01 recipient ตรงกัน |
-| resume ที่จะสร้าง/เปิดทางจ่ายใหม่, manual pay/retry หนี้, เปิดกลับ auto-renewal หรือแก้บัตรที่อาจกระตุ้นเรียกเก็บ | ตรวจ gate ก่อนเริ่ม side effect; ไม่ให้ hidden endpoint/worker/direct provider handoff bypass |
+| firm quote, new checkout, repeat purchase, upgrade, restart | ~~ต้อง current verified email, ไม่มี pending change และ D01 recipient ตรงกัน~~ → ไม่ต้องมี verified email; op ผู้รับค้าง (BILLING_EMAIL_UPDATE_PENDING) เป็นตัวบล็อกเดียว; ผู้รับเปลี่ยนตั้งแต่ quote → BILLING_QUOTE_STALE |
+| resume ที่จะสร้าง/เปิดทางจ่ายใหม่, manual pay/retry หนี้, เปิดกลับ auto-renewal หรือแก้บัตรที่อาจกระตุ้นเรียกเก็บ | ตรวจ gate ก่อนเริ่ม side effect; ไม่ให้ hidden endpoint/worker/direct provider handoff bypass → portal/RESUME_RENEWAL/CANCEL_DOWNGRADE ไม่ผูกอีเมลบัญชีแล้ว (DQ2); op ผู้รับค้างยังกัน portal |
 | cancel auto-renewal / downgrade ที่ลดภาระและไม่เรียกเก็บทันที | ไม่บังคับ OTP เพิ่ม ใช้ current permission/consent เดิม อย่าล็อกผู้ใช้ให้หยุดจ่ายไม่ได้ |
 | GET attempt, refresh/reconcile, webhook, apply paid rights, refund/credit note สำหรับเงินเดิม | ไม่บล็อกเพราะ email ปัจจุบันหาย/เปลี่ยน เก็บ source authority และหลักฐานเงินเดิม |
 | auto-renewal ตาม contract ที่อนุมัติไปแล้ว | ไม่ขอ OTP รายเดือนแบบ unattended; ใช้ retained authorization/recipient ของ contract ตาม cohort §10 การเปลี่ยนราคา/ผู้รับ/เปิดใหม่ต้องผ่าน flow ของตน |
 
 ### 8.2 Gate ที่ mutation boundary
 
-- `quote` อ่าน email จาก user ปัจจุบัน ไม่ใช้ free-text body เป็น authority; old client ส่ง billingEmail ต่างจาก verified email ให้ coded refusal/upgrade path ไม่ silently ยอมรับหรือ silently เปลี่ยนผู้รับ
+- ~~`quote` อ่าน email จาก user ปัจจุบัน ไม่ใช้ free-text body เป็น authority; old client ส่ง billingEmail ต่างจาก verified email ให้ coded refusal/upgrade path ไม่ silently ยอมรับหรือ silently เปลี่ยนผู้รับ~~ → `quote.billingEmail` = recipientEmail ?? verified account email ?? null; body `billingEmail` optional และถูกละเลย
 - ตรวจ proof/version/permission อีกครั้งใน transaction ที่ reserve attempt และก่อน first provider mutation ที่สร้าง financial authorization; stale quote จาก tab อื่นให้ refresh summary ไม่ auto retry จ่าย
 - Reuse idempotency/attempt/lease และ current authority checks เดิม ไม่เพิ่ม provider call ภายใน DB transaction
 - เก็บ proof snapshot ไว้กับ attempt ก่อน dispatch กำหนดจุดเริ่มการจ่ายชัด: หลัง authorization ถูกส่งออกไปแล้วรายการนั้นผูกกับ verified recipient/version ณ เวลาที่อนุมัติ ไม่อ้างว่าสามารถห้าม provider เก็บเงินได้ทุก millisecond จากการเปลี่ยน User ในภายหลัง
@@ -352,4 +354,4 @@ Current implementation and measured boundaries are recorded in [local evidence](
 ### Final compatibility corrections — 2026-09-16
 
 - Password reauthentication accepts the existing login/password contract, including passwords longer than128 characters. Do not truncate a password or force an existing user to rotate it solely to link email; request-body and persistent attempt budgets remain enforced.
-- Recheck current company/customer/settings/authority/email proof after Stripe creates a payment-method portal session and before returning its URL. A concurrent change withholds that capability; an unexposed provider session does not authorize a new charge. Native portal configuration must refuse customer email editing so it cannot bypass account OTP/company recipient consent.
+- (2026-09-28, DQ2: portal ไม่ตรวจ email proof แล้ว; ยังตรวจ company/customer/settings/authority และ portal config ห้ามแก้อีเมล) Recheck current company/customer/settings/authority/~~email proof~~ after Stripe creates a payment-method portal session and before returning its URL. A concurrent change withholds that capability; an unexposed provider session does not authorize a new charge. Native portal configuration must refuse customer email editing so it cannot bypass account OTP/company recipient consent.

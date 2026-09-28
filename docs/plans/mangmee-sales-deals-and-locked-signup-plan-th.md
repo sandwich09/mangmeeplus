@@ -16,7 +16,7 @@
 - Billing (develop bb87c556, PR #667): `BillingPurchaseMode` + gate ต่อโหมด, quote `purchaseMode`, Checkout `mode: 'payment'`, `paidPackageCheckoutEvidence({ paymentMethod })`, reconciler apply ครั้งเดียว + `bindPromptPayRenewal`, `BillingAccount.renewalMode/billingAnchorDay/contractAttemptId`, OWNER ยกเลิก Checkout; async events, `quoteTotals`
 - ผู้ใช้/รหัสผ่านชั่วคราว: employee-access (`create-employee`, `regenerate-employee-credential`); platform tenant `seed-watchdog-system-company`; registry roles/permissions (`permission-registry.ts`)
 - web: `/system` layout + `SystemHeader`; workspace nav/locked shell; `BillingPage.tsx`; `SignupQueuePage` (คำขอเปลี่ยนแพ็กเกจ)
-- ห้ามแตะเพิ่มจาก origin/develop (พิสูจน์ด้วย diff ว่างเทียบ develop): `paid-invoice.ts`, `paid-checkout-invoice.ts`, `billing-collection.ts`, `billing-schedule.ts`, `billing-upgrade.ts`, `billing-refund-source.ts`
+- ห้ามแตะเพิ่มจาก origin/develop (พิสูจน์ด้วย diff ว่างเทียบ develop): `paid-invoice.ts`, `paid-checkout-invoice.ts` → เหลือ 2 ไฟล์หลักฐานนี้เท่านั้น (RV34, 2026-09-28: purchase-without-setup PR C แก้ `billing-collection.ts` ตาม DQ2; `billing-schedule.ts` ยังไม่แตะ แต่ไม่อยู่ในรายการห้ามของแผนนี้อีก; ~~`billing-collection.ts`, `billing-schedule.ts`, `billing-upgrade.ts`, `billing-refund-source.ts`~~)
 
 ## Implementation Rules
 
@@ -80,7 +80,7 @@
 6. web `BillingPage.tsx`: การ์ดข้อเสนอเป็นการ์ดแรก (ชื่อ tier ฐาน + "ข้อเสนอพิเศษสำหรับร้านคุณ", ราคา/รวม N เดือน, สาขา·ผู้ใช้·ใบต่อเดือน, เมนู, ใช้ได้ถึง, ตัวเลือกโหมด reuse ของ #667 จำกัดตาม `deal.purchaseModes`, ปุ่ม "เลือกข้อเสนอนี้"; ปิดทั้งสอง gate → "ติดต่อทีมงาน"), ขั้น D4 ผ่าน `billingProfileHref(..., { deal })` กลับมาการ์ดเดิม, copy S04, error labels สอง map, `billing-preview.fixture.ts` เพิ่ม fixture ดีลแยก (S44); theme Mangmee เดิม, 390px
 7. admin: `BillingCompanyOverview` source `DEAL` คู่ `renewalMode` (S43); label ใน `billing-admin.service.ts`
 8. rollout (Owner): เปิด PromptPay บนบัญชี Stripe live; เปิด gate `card_once`/`promptpay_once` หลัง UAT ของ #667 ผ่าน (S37); เปลี่ยน copy "บัตรออนไลน์" → "บัตรหรือ PromptPay" (S42); บันทึกใน runbook billing
-9. ห้ามแตะเพิ่มจาก origin/develop: `paid-invoice.ts`, `paid-checkout-invoice.ts`, `billing-collection.ts`, `billing-schedule.ts`, `billing-upgrade.ts`, `billing-refund-source.ts` (พิสูจน์ด้วย diff ว่างเทียบ develop)
+9. ห้ามแตะเพิ่มจาก origin/develop: `paid-invoice.ts`, `paid-checkout-invoice.ts` (พิสูจน์ด้วย diff ว่างเทียบ develop) → เหลือ 2 ไฟล์หลักฐานนี้เท่านั้น (RV34, 2026-09-28: purchase-without-setup PR C แก้ `billing-collection.ts` ตาม DQ2; ~~`billing-collection.ts`, `billing-schedule.ts`, `billing-upgrade.ts`, `billing-refund-source.ts`~~)
 
 ### Tests
 - unit: `dealOffer`, `appendPackageInterval(count)` (กุมภาพันธ์/เดือนสั้น/12 เดือน = 1 ปี), `assertDealSnapshot`, `dealPurchaseModes` (เพดาน, gate ปิด, ตระกูลโหมด)
