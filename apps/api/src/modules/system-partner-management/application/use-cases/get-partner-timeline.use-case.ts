@@ -164,7 +164,9 @@ export class GetPartnerTimelineUseCase {
     if(companyStatus!=='ACTIVE')return all(companyStatus==='DISABLED'
       ? (term?.termDisabledAt ? (planTermLockReason(term)==='no_package' ? 'ยังไม่มีแพ็กเกจ ลูกค้าเลือกซื้อเองได้จากหน้าแพ็กเกจ' : 'แพ็กเกจหมดอายุแล้ว') : 'ร้านถูกพักใช้งานโดยผู้ดูแล')
       : companyStatus==='ARCHIVED'?'ร้านถูกเก็บเข้าประวัติแล้ว':'ร้านยังไม่พร้อมใช้งาน');
-    if(term&&term.termEndsAt<=now)return all('แพ็กเกจหมดอายุแล้ว');
+    // item 10: a placeholder (never-purchased) term also has termEndsAt<=now, but that is "no
+    // package" — the same lock-reason split line 165 already makes for the DISABLED/sweep case.
+    if(term&&term.termEndsAt<=now)return all(planTermLockReason(term)==='no_package'?'ยังไม่มีแพ็กเกจ ลูกค้าเลือกซื้อเองได้จากหน้าแพ็กเกจ':'แพ็กเกจหมดอายุแล้ว');
     const channelId=this.config.lineMessagingChannelId;
     if(!channelId)return {label:'ยังใช้ AI ผ่าน LINE ไม่ได้',detail:'ยังไม่ได้ตั้งค่าการเชื่อมต่อ LINE ของระบบ'};
     const linked=await this.prisma.client.externalIdentity.findFirst({where:{provider:'LINE',providerChannelId:channelId,status:'ACTIVE',
