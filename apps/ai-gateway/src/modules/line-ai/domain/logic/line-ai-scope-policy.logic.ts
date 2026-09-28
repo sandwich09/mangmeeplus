@@ -116,8 +116,16 @@ const LINE_ACTION_RULES: readonly LineActionRule[] = [
 // REQUEST the action — a status question ending in one of these markers is never a command.
 const STATUS_QUESTION_MARKERS_TH = ['ใช่ป่ะ', 'ใช่ไหม', 'ใช่มั้ย', 'หรือยัง', 'รึยัง', 'หรือเปล่า', 'รึเปล่า'];
 
+// Whole-chain acceptance regression (T-089-a-manager-pending-thismonth, "ใบเบิกรออนุมัติเดือนนี้มีกี่
+// รายการครับ" — "how many claims are pending approval?"): "รออนุมัติ" contains the bare verb "อนุมัติ"
+// as a substring, but names a STATE (awaiting approval), not a command. Requiring an explicit
+// request marker — never a bare noun+verb co-occurrence — is the conservative fix: it recognizes
+// every real "please do X" phrasing in the eval evidence without guessing at every way a status
+// description might also contain the same verb.
+const REQUEST_MARKERS_TH = ['ช่วย', 'กรุณา', 'หน่อย', 'ทีนะ', 'ทีค่ะ', 'ทีครับ'];
+
 function lineActionRuleFor(text: string): LineActionRule | undefined {
-  if (includesAny(text, STATUS_QUESTION_MARKERS_TH)) return undefined;
+  if (!includesAny(text, REQUEST_MARKERS_TH) || includesAny(text, STATUS_QUESTION_MARKERS_TH)) return undefined;
   return LINE_ACTION_RULES.find((rule) => includesAny(text, rule.noun) && includesAny(text, rule.verb));
 }
 

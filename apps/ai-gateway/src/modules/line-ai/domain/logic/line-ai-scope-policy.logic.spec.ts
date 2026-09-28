@@ -137,6 +137,13 @@ describe('item 2: LINE approve/reject/pay/confirm/void action boundary (spec §1
     assert.equal(lineActionBoundaryReplyText('ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ', [], 'th'), undefined);
     assert.equal(lineActionBoundaryReplyText('ใบเบิกอนุมัติหรือยังคะ', [], 'th'), undefined);
   });
+
+  it('does not fire for "รออนุมัติ" (pending approval, a STATE) with no request marker (whole-chain regression T-089)', () => {
+    // "how many claims are pending approval this month?" — a plain count/read question routed to
+    // reimbursement.list_pending_approvals; "รออนุมัติ" contains the bare verb "อนุมัติ" as a
+    // substring but names a state, never a command, and the sentence carries no request marker.
+    assert.equal(lineActionBoundaryReplyText('ใบเบิกรออนุมัติเดือนนี้มีกี่รายการครับ', [], 'th'), undefined);
+  });
 });
 
 describe('item 3: a read-only role asking to record, upload, or capture (spec §8 "นอกสิทธิ์")', () => {
