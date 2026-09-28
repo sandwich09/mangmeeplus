@@ -112,6 +112,35 @@ test('billing mobile exposes useful tools, plain trial state and local error ref
   }
 });
 
+// R-C6/R-C7 (purchase-without-setup): a shop the term locked at zero days — no trial ever granted —
+// must read as "ยังไม่มีแพ็กเกจ" everywhere on this directory, never "ทดลองใช้..." (there was no trial)
+// and never "แพ็กเกจหมดอายุแล้ว" (nothing expired; nothing was ever bought).
+test('billing mobile reads a no_package shop as "ยังไม่มีแพ็กเกจ", never a stale trial or expired label', async ({ page }) => {
+  const databaseUrl = process.env['DATABASE_URL'];
+  test.skip(!databaseUrl, 'DATABASE_URL is required for the isolated billing directory fixtures');
+  const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+  const id = unique('billing-mobile-no-package');
+  try {
+    const now = new Date();
+    await client.company.create({ data: { id, name: id, status: 'DISABLED', disabledAt: now } });
+    await client.companyPlanTerm.create({ data: {
+      companyId: id, tierKey: 'FREE_TRIAL_15', branchLimit: 1, employeeLimit: 2, monthlySlipLimit: 15,
+      termStartAt: now, termEndsAt: now, renewCount: 0, termDisabledAt: now,
+    } });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page);
+    await page.goto(`/system/billing?search=${encodeURIComponent(id)}`);
+    const directory = page.getByRole('region', { name: 'แพ็กเกจและการชำระเงินของบริษัท' });
+    await expect(directory.getByRole('status')).toContainText('พบ 1 บริษัท');
+    const article = directory.getByRole('article', { name: id, exact: true });
+    expect(await article.getByText('ยังไม่มีแพ็กเกจ').count()).toBeGreaterThanOrEqual(1);
+    await expect(article).not.toContainText('ทดลองใช้');
+    await expect(article).not.toContainText('แพ็กเกจหมดอายุแล้ว');
+  } finally {
+    await client.company.deleteMany({ where: { id } });
+    await client.$disconnect();
+  }
+});
 
 test('billing issue queue uses themed filters, preserves page on return, and recovers from read errors without mutations', async ({ page }) => {
   const databaseUrl = process.env['DATABASE_URL'];

@@ -136,12 +136,19 @@ test('BILLING-UX recovery never mounts business reads and picker rejects an unow
   expect(businessReads).toEqual([]);
   await page.goto(`/account/email?company=${companyId}&interval=year`);
   await expect(page.getByRole('heading', { name: 'จัดการอีเมลบัญชี', exact: true })).toBeVisible();
+  // E3 (purchase-without-setup §18.2): the description now covers login/notifications, not only
+  // "verify then buy" — OTP sign-in is a real use of this email, not just a billing-document detour.
+  await expect(page.getByText('จัดการอีเมลสำหรับเข้าสู่ระบบและรับแจ้งเตือน แล้วกลับไปหน้าแพ็กเกจได้', { exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true })).toBeVisible();
   const back = page.getByRole('link', { name: 'กลับไปเลือกแพ็กเกจ', exact: true });
   await expect(back).toHaveAttribute('href', `/companies/${companyId}/billing?interval=year`);
   await back.click();
   await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
   expect(businessReads).toEqual([]);
+  // R-B4 (purchase-without-setup §18.2): reopening this page outside LINE's own browser keeps
+  // `channel=line` on the URL, so a session-less /login?next=<this> auto-starts LINE login (R-B5).
+  await page.goto(`/account/email?company=${companyId}&channel=line`);
+  await expect(page).toHaveURL(/channel=line/);
   await page.goto('/billing/companies?fromCompany=not-an-owned-company');
   await expect(page.getByRole('heading', { name: 'เลือกบริษัทที่จะจัดการแพ็กเกจ' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'กลับหน้าหลัก', exact: true })).toHaveAttribute('href', '/');
