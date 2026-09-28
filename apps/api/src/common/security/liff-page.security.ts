@@ -174,16 +174,21 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     expired: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ เข้าสู่ระบบบนเว็บแล้วเลือกแพ็กเกจเพื่อเริ่มใช้งานได้เลยนะคะ',
     no_membership: 'บัญชี LINE นี้ยังไม่ได้อยู่ในร้านไหนค่ะ ให้เจ้าของร้านส่งลิงก์เชิญให้อีกครั้งนะคะ'
   };
-  /** R-C2: the two lock states a shop can be in, and the button that fixes each (short: LINE-length buttons). */
+  /** R-C2: the two lock states a shop can be in, as the short state chip. A chip never goes inside a
+   *  sentence ("ร้าน หมดอายุ"): sentences use LOCK_SENTENCE_TH, and both states are fixed the same way,
+   *  by choosing a package — "ต่ออายุ" is never a customer button (glossary 2026-09-29). */
   const LOCK_LABEL_TH = { no_package: 'ยังไม่มีแพ็กเกจ', trial_ended: 'หมดอายุ' };
-  const LOCK_ACTION_TH = { no_package: 'เลือกแพ็กเกจ', trial_ended: 'ต่ออายุ' };
+  const LOCK_SENTENCE_TH = { no_package: 'ยังไม่มีแพ็กเกจ', trial_ended: 'แพ็กเกจหมดอายุแล้ว' };
+  const LOCK_HINT_TH = { no_package: 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน', trial_ended: 'เลือกแพ็กเกจเพื่อใช้งานต่อ' };
   /** startSession() options for a locked shop: the same handoff, labelled for the package page it opens. */
   const PACKAGE_START = { buttonLabel: 'เลือกแพ็กเกจ', readyText: 'พร้อมแล้วค่ะ กดเลือกแพ็กเกจเพื่อเปิดหน้าแพ็กเกจในเบราว์เซอร์' };
-  const lockLabel = function (company) { return LOCK_LABEL_TH[company.lockReason] || LOCK_LABEL_TH.trial_ended; };
-  const lockAction = function (company) { return LOCK_ACTION_TH[company.lockReason] || LOCK_ACTION_TH.trial_ended; };
+  /** The row button only PREPARES the link; #open-web ("เลือกแพ็กเกจ") is what opens it. */
+  const PREPARE_PACKAGE_LINK_TH = 'เตรียมลิงก์หน้าแพ็กเกจ';
+  const lockKey = function (company) { return company.lockReason === 'no_package' ? 'no_package' : 'trial_ended'; };
+  const lockLabel = function (company) { return LOCK_LABEL_TH[lockKey(company)]; };
   const FAIL_TITLE_TH = {
     employee: 'เชื่อม LINE ไม่สำเร็จ',
-    customer: 'Registration failed',
+    customer: 'ลงทะเบียนไม่สำเร็จ',
     signup: 'ส่งคำขอไม่สำเร็จ',
     start: 'เปิดหน้าเว็บไม่สำเร็จ'
   };
@@ -254,6 +259,10 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   };
   const GENERIC_ERROR = { tone: 'error', text: 'ระบบขัดข้อง ส่งคำขอไม่สำเร็จ', advice: 'ลองใหม่อีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH };
   const NETWORK_GUIDANCE = { tone: 'warning', text: 'ยังยืนยันผลการส่งไม่ได้', advice: 'ข้อมูลเดิมยังอยู่ แตะลองอีกครั้งเพื่อตรวจหรือทำคำขอเดิมต่อได้ค่ะ' };
+  /** Preparing the package-page link is not a submit: nothing was sent, so NETWORK_GUIDANCE would lie. */
+  const PREPARE_LINK_GUIDANCE = { tone: 'warning', text: 'ยังเตรียมลิงก์หน้าแพ็กเกจไม่สำเร็จ', advice: 'แตะ ตรวจสอบสถานะอีกครั้ง เพื่อลองใหม่ค่ะ' };
+  /** The one read on open failed, so nothing is on screen yet: the retry view is the way back. */
+  const STATUS_READ_GUIDANCE = { tone: 'warning', text: 'ยังโหลดสถานะคำขอไม่สำเร็จ', advice: 'แตะ ลองอีกครั้ง ด้านล่างเพื่อโหลดใหม่ค่ะ' };
   const SUPPORT_NETWORK_GUIDANCE = { tone: 'warning', text: 'ยังส่งข้อความหาเจ้าหน้าที่ไม่ได้', advice: SUPPORT_TH };
   const BUSY_LABEL_TH = 'กำลังส่ง…';
 
@@ -440,7 +449,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   async function initLiff() {
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(liffId)) throw new Error('LINE_LIFF_ID is not configured.');
     if (!apiBase) throw new Error('Invalid API origin.');
-    setStatus(mode === 'employee' ? 'กำลังตรวจการเชื่อมต่อ LINE…' : 'Initializing LIFF...', '', 'info');
+    setStatus(mode === 'employee' ? 'กำลังตรวจการเชื่อมต่อ LINE…' : 'กำลังเตรียมหน้าให้ค่ะ…', '', 'info');
     await liff.init({ liffId });
     if (!liff.isLoggedIn()) {
       liff.login({ redirectUri: location.href });
@@ -452,7 +461,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   function currentIdToken() {
     const decoded = liff.getDecodedIDToken();
     if (!decoded || !decoded.exp || decoded.exp * 1000 < Date.now() + 60000) {
-      setStatus('Refreshing LINE session...', '', 'info');
+      setStatus('กำลังเชื่อมต่อ LINE ใหม่ค่ะ…', '', 'info');
       liff.logout();
       liff.login({ redirectUri: location.href });
       return '';
@@ -524,11 +533,12 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     const lineChannelId = validChannelId(query.get('lineChannelId'));
     const consentEl = document.getElementById('consent');
     if (!lineChannelId) throw new Error('Missing or invalid LINE channel.');
-    if (!consentEl.checked) throw new Error('Consent is required.');
+    // Thai on purpose: a non-Thai detail is shown as UNAVAILABLE_TH, which would misname this one.
+    if (!consentEl.checked) throw new Error('กรุณาติ๊กยินยอมตามประกาศความเป็นส่วนตัวก่อนนะคะ');
     if (!await initLiff()) return;
     const idToken = currentIdToken();
     if (!idToken) return;
-    setStatus('Registering...', '', 'info');
+    setStatus('กำลังลงทะเบียน…', '', 'info');
     const res = await fetch(apiBase + '/auth/line/customer-register', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -536,7 +546,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     });
     const text = await res.text();
     if (!res.ok) throw new Error(text || ('Registration failed: ' + res.status));
-    setStatus('Registered. You can close this page and continue in LINE.', '', 'success');
+    setStatus('ลงทะเบียนแล้วค่ะ ปิดหน้านี้แล้วกลับไปที่ LINE ได้เลย', '', 'success');
   }
 
   // Nest answers a refusal as {"message":"<code>"}; a 429 also carries retryAfterSeconds.
@@ -671,9 +681,9 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
         if (company.canManagePlan === true) {
           const choose = document.createElement('button');
           choose.type = 'button';
-          choose.textContent = lockAction(company);
+          choose.textContent = PREPARE_PACKAGE_LINK_TH;
           choose.addEventListener('click', function () {
-            void runWith(function () { return startSession(company.companyId, PACKAGE_START); }, choose, 'กำลังเตรียมลิงก์…');
+            void runWith(function () { return preparePackageLink(company.companyId); }, choose, 'กำลังเตรียมลิงก์…');
           });
           listEl.appendChild(choose);
         }
@@ -725,18 +735,22 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
         const locked = progress.lockedEntryCompanyId
           ? companies.find(function (company) { return company.companyId === progress.lockedEntryCompanyId; })
           : undefined;
-        if (locked && locked.canManagePlan === true) {
-          // R-C2: the shop exists and is waiting for its package. Prepare the handoff NOW so the
-          // primary button is one tap (GW02 only forbids opening it without a gesture).
-          document.getElementById('progress-title').textContent = 'เปิดร้านแล้ว ขั้นต่อไปเลือกแพ็กเกจ';
-          document.getElementById('progress-text').textContent = shop + ' เปิดให้แล้วค่ะ เลือกแพ็กเกจเพื่อเริ่มใช้งาน ระบบจะพาไปหน้าแพ็กเกจในเบราว์เซอร์ให้ค่ะ';
-          const retry = document.getElementById('retry-status');
-          retry.hidden = false;
-          void runWith(function () { return startSession(locked.companyId, PACKAGE_START); }, retry, 'กำลังเตรียมลิงก์…');
-          showSupport();
-        } else if (locked) {
-          document.getElementById('progress-title').textContent = 'เปิดร้านแล้ว รอเลือกแพ็กเกจ';
-          document.getElementById('progress-text').textContent = shop + ' ' + lockLabel(locked) + ' ให้เจ้าของร้านหรือผู้ดูแลแพ็กเกจเลือกแพ็กเกจก่อน แล้วเข้าใช้งานได้เลยค่ะ';
+        if (locked) {
+          // R-C2: the shop exists and is waiting for its package. Only a shop opened just now is
+          // "เปิดร้านแล้ว"; one that came back (RETURN_EXISTING) or whose package ran out says its
+          // state, as a sentence — never the chip word inside one (review 2026-09-29).
+          const key = lockKey(locked);
+          const opened = !returned && key === 'no_package';
+          const manager = locked.canManagePlan === true;
+          document.getElementById('progress-title').textContent = !opened ? LOCK_SENTENCE_TH[key]
+            : manager ? 'เปิดร้านแล้ว ขั้นต่อไปเลือกแพ็กเกจ' : 'เปิดร้านแล้ว รอเลือกแพ็กเกจ';
+          document.getElementById('progress-text').textContent = manager
+            ? shop + (opened ? ' เปิดให้แล้วค่ะ ' : ' ' + LOCK_SENTENCE_TH[key] + ' ') + LOCK_HINT_TH[key] + ' ระบบจะพาไปหน้าแพ็กเกจในเบราว์เซอร์ให้ค่ะ'
+            : shop + ' ' + LOCK_SENTENCE_TH[key] + ' ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน แล้วเข้าใช้งานได้เลยค่ะ';
+          // Prepare the handoff NOW so the primary button is one tap (GW02 only forbids opening it
+          // without a gesture) — and not with #retry-status as its busy button: a tap on that very
+          // button can be what rendered this, and the two overlapping runs left it "กำลังตรวจสอบ…".
+          if (manager) void preparePackageLink(locked.companyId).catch(function () { setGuidance(PREPARE_LINK_GUIDANCE); });
           showSupport();
         } else {
           document.getElementById('progress-title').textContent = 'ร้านนี้ยังเข้าใช้ไม่ได้';
@@ -1061,10 +1075,29 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     if (!handoffUrl) throw new Error(UNAVAILABLE_TH);
     if (!openWebBtn) throw new Error(UNAVAILABLE_TH);
     preparedHandoffUrl = handoffUrl;
-    openWebBtn.textContent = (opts && opts.buttonLabel) || 'เปิดหน้าเว็บ';
+    // R-C3: the server lands a locked shop's plan manager on the package page; the button says so.
+    const labels = opts || (session.packagePage === true ? PACKAGE_START : null);
+    openWebBtn.textContent = (labels && labels.buttonLabel) || 'เปิดหน้าเว็บ';
     openWebBtn.hidden = false;
-    setStatus((opts && opts.readyText) || 'พร้อมแล้วค่ะ กดเปิดหน้าเว็บเพื่อเข้าร้าน', '', 'info');
+    setStatus((labels && labels.readyText) || 'พร้อมแล้วค่ะ กดเปิดหน้าเว็บเพื่อเข้าร้าน', '', 'info');
   }
+
+  /** Signup mode's one way to a fresh link. Every sentence about a new link names this button, so
+   *  it is shown wherever such a sentence can appear. */
+  function showStatusRetry() {
+    const el = document.getElementById('retry-status');
+    if (el) el.hidden = false;
+  }
+
+  /** Signup mode: prepare a locked shop's package-page handoff. A failure is a link not prepared yet,
+   *  never "ยังยืนยันผลการส่งไม่ได้" — nothing was sent (review 2026-09-29). */
+  function preparePackageLink(companyId) {
+    showStatusRetry();
+    return startSession(companyId, PACKAGE_START).catch(function () { throw refusal(PREPARE_LINK_GUIDANCE); });
+  }
+
+  /** Where a customer gets a new link: signup mode has no "ลองอีกครั้ง" button on screen. */
+  const NEW_LINK_TH = mode === 'signup' ? 'แตะ ตรวจสอบสถานะอีกครั้ง เพื่อรับลิงก์ใหม่ค่ะ' : 'ให้กดลองอีกครั้งเพื่อเปิดลิงก์ใหม่ค่ะ';
 
   if (openWebBtn) openWebBtn.addEventListener('click', function (event) {
     event.preventDefault();
@@ -1072,12 +1105,13 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     const url = preparedHandoffUrl;
     preparedHandoffUrl = '';
     openWebBtn.hidden = true;
+    if (mode === 'signup') showStatusRetry();
     try {
       if (liff.isInClient()) liff.openWindow({ url, external: true });
       else location.assign(url);
-      setStatus('หากหน้าเว็บยังไม่เปิด หรือกลับมาใช้ลิงก์เดิม ให้กดลองอีกครั้งเพื่อเปิดลิงก์ใหม่ค่ะ', '', 'info');
+      setStatus('หากหน้าเว็บยังไม่เปิด หรือกลับมาใช้ลิงก์เดิม ' + NEW_LINK_TH, '', 'info');
     } catch {
-      setStatus('ยังเปิดหน้าเว็บไม่ได้ค่ะ กดลองอีกครั้งเพื่อสร้างลิงก์ใหม่', '', 'warning');
+      setStatus('ยังเปิดหน้าเว็บไม่ได้ค่ะ ' + NEW_LINK_TH, '', 'warning');
     }
   });
 
@@ -1120,6 +1154,11 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       // details off the customer page and gives one natural next step.
       if (error && error.guidance) {
         setGuidance(error.guidance);
+      } else if (mode === 'signup' && signupInitialized && lastSignupStatus === null) {
+        // The one read on open failed, so no view is on screen: without the retry view this page
+        // had no button at all.
+        setGuidance(STATUS_READ_GUIDANCE);
+        showOnly('retry-view');
       } else if (mode === 'signup' && signupInitialized) {
         setGuidance(NETWORK_GUIDANCE);
       } else if (mode === 'signup') {
@@ -1130,7 +1169,10 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
         const detail = errorDetail(error);
         setStatus(FAIL_TITLE_TH.employee, /^(การเชื่อมต่อเดิม|ยังทำรายการ|QR นี้)/.test(detail) ? detail : 'กรุณาแตะเชื่อม LINE เพื่อลอง QR เดิมอีกครั้ง หากหมดอายุหรือใช้บัญชี LINE ไม่ตรง ให้ผู้ดูแลออก QR ใหม่', 'error');
       } else {
-        setStatus(FAIL_TITLE_TH[mode] || 'Link failed', errorDetail(error), 'error');
+        // A customer reads #detail too: a server string with no Thai in it (a code, an English
+        // message) becomes the one plain sentence instead.
+        const detail = errorDetail(error);
+        setStatus(FAIL_TITLE_TH[mode] || 'ทำรายการไม่สำเร็จ', /[ก-๙]/.test(detail) ? detail : UNAVAILABLE_TH, 'error');
       }
       if (button) {
         button.textContent = label;

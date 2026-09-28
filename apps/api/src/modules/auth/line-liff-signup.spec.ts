@@ -72,6 +72,8 @@ describe('P10-L LIFF signup page', () => {
     assert.doesNotMatch(html, /<input id="contact-email"[^>]*\brequired\b/);
     // RV33 (D-PF-1): the email for documents is asked at checkout, not verified before paying.
     assert.ok(html.includes('อีเมลรับเอกสารกรอกได้ที่หน้าชำระเงิน'));
+    // A new shop is locked until it buys, so the form must not promise LINE use "right away".
+    assert.equal(html.includes('ใช้งานผ่าน LINE ได้ทันที'), false);
     assert.equal(html.includes('ก่อนชำระแพ็กเกจจะให้ยืนยันอีเมล'), false);
     assert.ok(!/<label for="phone-number">[^<]*ไม่บังคับ/.test(html), 'phone remains required');
     // R1 (Owner 2026-09-20): the page promises a shop, never free days.
@@ -191,6 +193,15 @@ describe('P10-L LIFF signup page', () => {
     assert.ok(html.includes(`href="${WEB_BASE}/privacy"`));
     assert.equal(html.includes('href="https://api.example.test'), false);
     assert.equal(html.includes('href="/terms"'), false, 'never a bare path against the API host');
+  });
+
+  // Review 2026-09-29 (e): the statuses a customer reads while the page works are Thai.
+  it('writes no English status, title or button label into the page script', () => {
+    for (const english of ['Initializing LIFF', 'Refreshing LINE session', 'Registering...', 'Registered.',
+      "customer: 'Registration failed'", "'Link failed'", 'Consent is required']) {
+      assert.equal(LIFF_PAGE_SCRIPT.includes(english), false, english);
+    }
+    assert.equal(LIFF_PAGE_SCRIPT.includes("'ต่ออายุ'"), false, '"ต่ออายุ" is never a customer button');
   });
 
   it('renders the start page with an external-browser fallback link', () => {
@@ -329,6 +340,7 @@ describe('P10-L LIFF client script', () => {
     ];
     const calls: Array<{ url: string; init: any }> = [];
     const sentMessages: unknown[] = [];
+    const opened: unknown[] = [];
     let closed = 0;
     const storage = new Map(Object.entries(options.stored ?? {}));
     runInNewContext(LIFF_PAGE_SCRIPT, {
@@ -342,7 +354,8 @@ describe('P10-L LIFF client script', () => {
         getElementById: (id: string) => elements[id] ?? views.find((view) => view.id === id) ?? null,
         querySelectorAll: (selector: string) => selector === 'input[name="discovery-source"]' ? choices : (selector === '[data-close]' ? closeButtons : views),
         querySelector: () => choices.find((choice) => choice.checked) ?? null,
-        createElement: () => element('created-' + Math.random()),
+        // `key` is the handler bucket, so a test can tap a button the script created itself.
+        createElement: () => { const key = 'created-' + Math.random(); return element(key, { key }); },
       },
       liff: {
         init: async () => { if (options.initFails) throw options.initFails; },
@@ -350,7 +363,8 @@ describe('P10-L LIFF client script', () => {
         getDecodedIDToken: () => ({ exp: Math.floor(Date.now() / 1000) + 3600, name: 'นิด', sub: 'Uabc123' }),
         getIDToken: () => 'aaa.bbb.ccc',
         closeWindow: () => { closed += 1; },
-        openWindow: () => {},
+        isInClient: () => true,
+        openWindow: (input: unknown) => { opened.push(input); },
         sendMessages: async (messages: unknown) => {
           if (options.sendMessagesFails) throw options.sendMessagesFails;
           sentMessages.push(messages);
@@ -377,7 +391,7 @@ describe('P10-L LIFF client script', () => {
       },
     });
     return {
-      elements, views, calls, handlers, storage, sentMessages,
+      elements, views, calls, handlers, storage, sentMessages, opened,
       closed: () => closed,
       focused,
       chooseDiscovery: async (value: string) => {
@@ -531,21 +545,131 @@ describe('P10-L LIFF client script', () => {
         await settle(); await settle();
 
         assert.equal(h.elements['progress-title']!.textContent, 'เปิดร้านแล้ว รอเลือกแพ็กเกจ');
-        assert.match(h.elements['progress-text']!.textContent, /ร้านนิด ยังไม่มีแพ็กเกจ/);
+        assert.match(h.elements['progress-text']!.textContent, /ร้านนิด ยังไม่มีแพ็กเกจ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
         assert.equal(h.calls.length, 1, 'no handoff is prepared for someone who cannot buy');
         assert.equal(h.elements.support!.hidden, false);
       });
+
+      // Review 2026-09-29 (g): a shop that came BACK (RETURN_EXISTING) was not "เปิดให้แล้ว", and an
+      // expired one says so as a sentence — the chip "หมดอายุ" never sits inside one.
+      const returnedExpired = (canManagePlan: boolean) => signupStatus(
+        { state: 'COMPLETED', resolution: 'RETURN_EXISTING', lockedEntryCompanyId: 'co-1' },
+        [{ companyId: 'co-1', companyName: 'ร้านนิด', status: 'EXPIRED', canEnter: false, lockReason: 'trial_ended', canManagePlan }],
+      );
+
+      it('tells a returning plan manager their package ran out, not that the shop was opened', async () => {
+        const statusBody = returnedExpired(true);
+        const h = runSignupScript(statusBody, [
+          { status: 200, body: statusBody },
+          { status: 200, body: JSON.stringify({ handoffUrl: 'https://app.example.test/l/RAW' }) },
+        ]);
+        await settle(); await settle(); await settle(); await settle();
+
+        assert.equal(h.elements['progress-title']!.textContent, 'แพ็กเกจหมดอายุแล้ว');
+        assert.equal(h.elements['progress-text']!.textContent,
+          'ร้านนิด แพ็กเกจหมดอายุแล้ว เลือกแพ็กเกจเพื่อใช้งานต่อ ระบบจะพาไปหน้าแพ็กเกจในเบราว์เซอร์ให้ค่ะ');
+        assert.equal(h.elements['open-web']!.textContent, 'เลือกแพ็กเกจ');
+      });
+
+      it('never puts the chip word inside the staff sentence either', async () => {
+        const h = runSignupScript(returnedExpired(false));
+        await settle(); await settle();
+
+        assert.equal(h.elements['progress-title']!.textContent, 'แพ็กเกจหมดอายุแล้ว');
+        assert.match(h.elements['progress-text']!.textContent, /^ร้านนิด แพ็กเกจหมดอายุแล้ว ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
+        assert.doesNotMatch(h.elements['progress-text']!.textContent, /ร้านนิด หมดอายุ|เปิดให้แล้ว/);
+      });
+
+      // (a): preparing the link is not a submit, so its failure never says "ยังยืนยันผลการส่งไม่ได้",
+      // and the retry it names is on screen.
+      it('names a failed link as a link, and points at the retry that is on screen', async () => {
+        const statusBody = lockedCompleted(true);
+        const h = runSignupScript(statusBody, [
+          { status: 200, body: statusBody },
+          { status: 500, body: JSON.stringify({ message: 'line_liff_session_failed' }) },
+        ]);
+        await settle(); await settle(); await settle(); await settle();
+
+        assert.match(h.elements.status!.textContent, /^ยังเตรียมลิงก์หน้าแพ็กเกจไม่สำเร็จ\nแตะ ตรวจสอบสถานะอีกครั้ง เพื่อลองใหม่ค่ะ$/);
+        assert.doesNotMatch(h.elements.status!.textContent, /ยังยืนยันผลการส่งไม่ได้|line_liff/);
+        assert.equal(h.elements['retry-status']!.hidden, false);
+        assert.equal(h.elements['open-web']!.hidden, true);
+      });
+
+      // (d): the auto-prepare used to borrow #retry-status as its busy button. Tapping that button
+      // re-rendered this view, the inner run captured "กำลังตรวจสอบ…" as the label to restore, and
+      // the button stayed on it for good.
+      it('gives #retry-status its own label back after a tap that re-prepares the link', async () => {
+        const statusBody = lockedCompleted(true);
+        const handoff = { status: 200, body: JSON.stringify({ handoffUrl: 'https://app.example.test/l/RAW' }) };
+        const h = runSignupScript(statusBody, [{ status: 200, body: statusBody }, handoff, { status: 200, body: statusBody }, handoff]);
+        await settle(); await settle(); await settle(); await settle();
+        h.elements['retry-status']!.textContent = 'ตรวจสอบสถานะอีกครั้ง';
+
+        await h.click('retry-status');
+        await settle(); await settle(); await settle(); await settle();
+
+        assert.equal(h.calls.length, 4, 'one status read and one new link');
+        assert.equal(h.elements['retry-status']!.textContent, 'ตรวจสอบสถานะอีกครั้ง');
+        assert.equal(h.elements['retry-status']!.disabled, false);
+        assert.equal(h.elements['open-web']!.textContent, 'เลือกแพ็กเกจ');
+      });
+
+      // (b): signup mode has no "ลองอีกครั้ง" button, so the sentence names the one it has.
+      it('after opening the link, names the retry this page actually shows', async () => {
+        const statusBody = lockedCompleted(true);
+        const h = runSignupScript(statusBody, [
+          { status: 200, body: statusBody },
+          { status: 200, body: JSON.stringify({ handoffUrl: 'https://app.example.test/l/RAW' }) },
+        ]);
+        await settle(); await settle(); await settle(); await settle();
+
+        for (const handler of h.handlers['open-web'] ?? []) await (handler as (event: unknown) => unknown)({ preventDefault() {} });
+
+        assert.equal(h.opened.length, 1);
+        assert.match(h.elements.status!.textContent, /แตะ ตรวจสอบสถานะอีกครั้ง เพื่อรับลิงก์ใหม่ค่ะ$/);
+        assert.doesNotMatch(h.elements.status!.textContent, /กดลองอีกครั้ง/);
+        assert.equal(h.elements['retry-status']!.hidden, false);
+      });
     });
 
-    it('lists a locked shop as a note with its own "เลือกแพ็กเกจ" button when there is no progress yet', async () => {
-      const h = runSignupScript(JSON.stringify({
+    // (c): the one read on open failed, and the page used to show no view and so no button at all.
+    it('offers the retry view when the status cannot be read on open', async () => {
+      const h = runSignupScript('null', [{ status: 500, body: JSON.stringify({ message: 'internal_error' }) }]);
+      await settle(); await settle(); await settle();
+
+      assert.equal(h.views.find((view) => view.id === 'retry-view')!.hidden, false);
+      assert.match(h.elements.status!.textContent, /^ยังโหลดสถานะคำขอไม่สำเร็จ\n/);
+      assert.doesNotMatch(h.elements.status!.textContent, /ยังยืนยันผลการส่งไม่ได้|internal_error/);
+      // The retry view's button runs the read again.
+      await h.click('retry');
+      await settle(); await settle(); await settle();
+      assert.equal(h.calls.length, 2);
+      assert.equal(h.views.find((view) => view.id === 'form-view')!.hidden, false, 'a good second read shows the form');
+    });
+
+    // Review 2026-09-29 (h): the row button only PREPARES the link, so it no longer wears the label
+    // of #open-web — two "เลือกแพ็กเกจ" buttons, one of which opened nothing, read as a dead tap.
+    it('lists a locked shop as a note with its own "prepare the link" button when there is no progress yet', async () => {
+      const statusBody = JSON.stringify({
         progress: null,
-        eligibleCompanies: [{ companyId: 'co-1', companyName: 'ร้านนิด', status: 'EXPIRED', canEnter: false, lockReason: 'no_package', canManagePlan: true }],
-      }));
+        eligibleCompanies: [{ companyId: 'co-1', companyName: 'ร้านนิด', status: 'EXPIRED', canEnter: false, lockReason: 'trial_ended', canManagePlan: true }],
+      });
+      const h = runSignupScript(statusBody, [
+        { status: 200, body: statusBody },
+        { status: 200, body: JSON.stringify({ handoffUrl: 'https://app.example.test/l/RAW' }) },
+      ]);
       await settle(); await settle();
 
-      assert.equal(h.elements['existing-companies']!.children[0]!.textContent, 'ร้านนิด · ยังไม่มีแพ็กเกจ');
-      assert.equal(h.elements['existing-companies']!.children[1]!.textContent, 'เลือกแพ็กเกจ');
+      assert.equal(h.elements['existing-companies']!.children[0]!.textContent, 'ร้านนิด · หมดอายุ');
+      const prepare = h.elements['existing-companies']!.children[1]!;
+      assert.equal(prepare.textContent, 'เตรียมลิงก์หน้าแพ็กเกจ', '"ต่ออายุ" is never a customer button either');
+      await h.click(prepare.key);
+      await settle(); await settle();
+      assert.deepEqual(JSON.parse(h.calls[1]!.init.body), { idToken: 'aaa.bbb.ccc', companyId: 'co-1' });
+      assert.equal(h.elements['open-web']!.hidden, false);
+      assert.equal(h.elements['open-web']!.textContent, 'เลือกแพ็กเกจ', 'the one button that opens the package page');
+      assert.equal(prepare.textContent, 'เตรียมลิงก์หน้าแพ็กเกจ', 'and the row button gets its words back');
     });
 
     it('shows a provisioning failure as saved work needing recovery', async () => {
@@ -1351,7 +1475,8 @@ describe('ExchangeLiffSessionUseCase', () => {
     const result = await useCase.execute({ idToken: 'a.b.c' });
 
     assert.equal(minted[0].targetPath, '/companies/co-1/billing?channel=line');
-    assert.ok('handoffUrl' in result);
+    // Review 2026-09-29 (i): the LIFF start page labels its button from this, not from a guess.
+    assert.deepEqual(result, { handoffUrl: `${WEB_BASE}/l/RAWTOKEN`, packagePage: true });
   });
 
   it('keeps a locked shop\'s non-manager member on /renew, same as before', async () => {
