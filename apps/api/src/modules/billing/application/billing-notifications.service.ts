@@ -11,7 +11,7 @@ import { DEFAULT_ENABLED_CHANNELS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMP
 import { isInQuietHours, resolveDeliveryOutcome } from '../../dashboard-notifications/domain/logic/notification.logic';
 import { EmailDeliveryService } from '../../auth/application/email-delivery.service';
 import { PostmarkSendError } from '../../auth/infrastructure/postmark.client';
-import { renderBillingRecipientChangedEmail, renderBillingStatusEmail } from '../../auth/infrastructure/auth-email.templates';
+import { renderBillingRecipientAdminNoticeEmail, renderBillingRecipientChangedEmail, renderBillingStatusEmail } from '../../auth/infrastructure/auth-email.templates';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { planManagerRoleFilter } from '../../access-control/domain/logic/plan-manager.logic';
 import { BillingService, type BillingSnapshot } from './billing.service';
@@ -26,6 +26,9 @@ const APPLIED = 'billing.invoice.applied';
 /** R-A7: `recipientUserId` null = the company's document recipient (the column), not a user. */
 type NoticePayload = { data?: { recipientUserId?: unknown } };
 const defer = (code: string) => new PostmarkSendError('RETRY', code, 60);
+/** PR E (R-E2): the copy mailed to the OLD recipient never spells out the new address in full. */
+const maskRecipientEmail = (email: string) => { const at = email.indexOf('@');
+  return at <= 0 ? email : `${email.slice(0, Math.min(2, at))}***${email.slice(at)}`; };
 
 @Injectable()
 export class BillingNotificationsService {
@@ -337,27 +340,37 @@ export class BillingNotificationsService {
     });
   }
 
-  /** R-A8: after a completed recipient change, mail the old recipient and tell every plan manager on web/LINE. */
+  /** Looks up the latest attempt of a prepared notice, retries it once if transient, and sends `content`
+   *  when it is still due. A suppressed address has nobody to tell, so that alone is not an error. */
+  private async sendRecipientNotice(intentKey: string, content: ReturnType<typeof renderBillingStatusEmail>) {
+    try {
+      let attempt = await this.prisma.client.emailSendAttempt.findFirstOrThrow({ where: { intentKey }, orderBy: { generation: 'desc' } });
+      if (attempt.status === 'RETRY' && attempt.generation < 5) attempt = await this.email.prepare({ purpose: 'billing_status', recipient: attempt.recipient, intentKey });
+      if (['READY', 'SENDING'].includes(attempt.status) && !attempt.dispatchStartedAt) await this.email.send(attempt, content);
+    } catch (error) { if (!(error instanceof PostmarkSendError) || error.kind !== 'SUPPRESSED') throw error; }
+  }
+
+  /** R-A8/R-E2: after a completed recipient change (customer OTP/account email, or PR E admin), mail the
+   *  old recipient — and, for an admin change, the new one too (a social-engineering target) — and tell
+   *  every plan manager on web/LINE. `source`/`newNoticeAttemptId` are additive PR E outbox fields. */
   private async recipientChanged(row: OutboxEvent) {
     const lease = await this.prisma.client.outboxEvent.findFirst({ where: { id: row.id, status: 'PROCESSING', claimToken: row.claimToken,
       lockedAt: { gt: new Date(Date.now() - 300000) } } });
     if (!lease) throw new Error('billing.notification_lease_lost');
     const account = await this.prisma.client.billingAccount.findUnique({ where: { id: row.aggregateId } });
-    const data = (row.payloadJson as { data?: { operationId?: unknown; noticeAttemptId?: unknown } }).data ?? {};
+    const data = (row.payloadJson as { data?: { operationId?: unknown; source?: unknown; noticeAttemptId?: unknown; newNoticeAttemptId?: unknown } }).data ?? {};
     if (!this.billing.stripe.enabled || !account || account.companyId !== row.companyId || account.stripeAccountId !== this.billing.stripe.accountId ||
         account.livemode !== this.billing.stripe.livemode || typeof data.operationId !== 'string') throw new Error('billing.notification_source_changed');
     const company = await this.prisma.client.company.findUniqueOrThrow({ where: { id: account.companyId } });
+    const admin = data.source === 'ADMIN', href = this.billingHref(company.id);
     const intentKey = `billing-recipient-notice:${data.operationId}`;
-    const first = typeof data.noticeAttemptId === 'string' && this.email.isPostmark
-      ? await this.prisma.client.emailSendAttempt.findFirst({ where: { id: data.noticeAttemptId, intentKey, purpose: 'billing_status' } }) : null;
-    if (first) {
-      try {
-        let attempt = await this.prisma.client.emailSendAttempt.findFirstOrThrow({ where: { intentKey }, orderBy: { generation: 'desc' } });
-        // A transient failure is retried under the same intent; a suppressed old address has nobody to tell.
-        if (attempt.status === 'RETRY' && attempt.generation < 5) attempt = await this.email.prepare({ purpose: 'billing_status', recipient: attempt.recipient, intentKey });
-        if (['READY', 'SENDING'].includes(attempt.status) && !attempt.dispatchStartedAt)
-          await this.email.send(attempt, renderBillingRecipientChangedEmail(company.name, this.billingHref(company.id)));
-      } catch (error) { if (!(error instanceof PostmarkSendError) || error.kind !== 'SUPPRESSED') throw error; }
+    if (typeof data.noticeAttemptId === 'string' && this.email.isPostmark) {
+      await this.sendRecipientNotice(intentKey, admin
+        ? renderBillingRecipientAdminNoticeEmail(company.name, href, account.recipientEmail ? maskRecipientEmail(account.recipientEmail) : 'อีเมลใหม่')
+        : renderBillingRecipientChangedEmail(company.name, href));
+    }
+    if (admin && typeof data.newNoticeAttemptId === 'string' && this.email.isPostmark && account.recipientEmail) {
+      await this.sendRecipientNotice(`${intentKey}:new`, renderBillingRecipientAdminNoticeEmail(company.name, href, account.recipientEmail));
     }
     // The LINE delivery joins an applied invoice (drainDeliveries); without one there is nothing to anchor it.
     const latest = await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id, applyStatus: 'APPLIED', appliedAt: { not: null } },
@@ -368,8 +381,10 @@ export class BillingNotificationsService {
       const managers = await this.planManagers(company.id, tx);
       // Existing trigger (a new key is blocked by stored preferences, F12); the period key makes it a new event.
       await this.events.executeInTransaction({ companyId: company.id, triggerKey: 'billing.package_updated', sourceModule: 'billing', sourceType: 'invoice',
-        sourceId: latest.id, periodKey: `recipient-changed:${data.operationId}`, severity: 'info', title: 'เปลี่ยนอีเมลรับเอกสารแล้ว',
-        body: 'อีเมลรับเอกสารการชำระเงินของบริษัทถูกเปลี่ยนแล้ว หากไม่ได้ทำรายการนี้ กรุณาติดต่อทีมงานทันที',
+        sourceId: latest.id, periodKey: `recipient-changed:${data.operationId}`, severity: 'info',
+        title: admin ? 'อัปเดตผู้รับเอกสาร' : 'เปลี่ยนอีเมลรับเอกสารแล้ว',
+        body: admin ? 'ทีมงานเปลี่ยนอีเมลรับเอกสารให้ตามคำขอแล้ว ตรวจสอบได้ในหน้าแพ็กเกจ หากไม่ได้ขอเปลี่ยน กรุณาติดต่อทีมงาน'
+          : 'อีเมลรับเอกสารการชำระเงินของบริษัทถูกเปลี่ยนแล้ว หากไม่ได้ทำรายการนี้ กรุณาติดต่อทีมงานทันที',
         deepLinkHref: `/companies/${encodeURIComponent(company.id)}/billing`, recipientUserIds: managers.map(m => m.userId) }, tx);
     });
   }

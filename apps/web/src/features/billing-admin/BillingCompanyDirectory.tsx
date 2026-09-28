@@ -19,11 +19,14 @@ function term(company: BillingOperatorCompany) {
   return company.termEndsAt ? <><span className="block text-xs text-gray-500">{company.source === 'TRIAL' ? 'ทดลองใช้ถึง' : 'ใช้งานถึง'}</span>{formatThaiDate(company.termEndsAt)}</> : 'ยังไม่กำหนด';
 }
 
-export default function BillingCompanyDirectory({ overview, loading, error, requestId, search, query, page, onSearchChange, onSearch, onClear, onPage, onReload, leaving }: {
+export default function BillingCompanyDirectory({ overview, loading, error, requestId, search, query, page, onSearchChange, onSearch, onClear, onPage, onReload, leaving,
+  lookup, onLookupChange, onLookup, lookupError }: {
   overview: BillingOperatorOverview | null; loading: boolean; error: string; requestId: string | null;
   search: string; query: string; page: number; onSearchChange: (value: string) => void;
   onSearch: () => void; onClear: () => void; onPage: (page: number) => void; onReload: () => void;
   leaving: (event: MouseEvent<HTMLAnchorElement>) => void;
+  /** Purchase without setup PR E (R-E4): search by the 8-char reference a customer reads out. */
+  lookup: string; onLookupChange: (value: string) => void; onLookup: () => void; lookupError: string;
 }) {
   const companies = overview?.companies ?? [];
   const pagination = overview?.pagination;
@@ -42,6 +45,17 @@ export default function BillingCompanyDirectory({ overview, loading, error, requ
           <button type="button" onClick={onClear} title="ล้างคำค้นและกลับหน้าแรก" className={`${billingControl} flex-1 whitespace-nowrap sm:flex-none`}>ล้างตัวกรอง</button>
         </div>
       </form>
+      {/* Purchase without setup PR E (R-E4/RV27): the reference a customer reads out over the phone. */}
+      <form onSubmit={event => { event.preventDefault(); onLookup(); }} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="min-w-0 flex-1">
+          <label htmlFor="billing-reference-lookup" className="mb-2 block text-sm font-medium text-gray-700">ค้นหาด้วยเลขอ้างอิง</label>
+          <input id="billing-reference-lookup" type="search" value={lookup} maxLength={128} onChange={event => onLookupChange(event.target.value)} placeholder="เลขอ้างอิง 8 ตัวจากลูกค้า หรือเลขใบแจ้งหนี้" className="mangmee-input min-h-11 w-full !text-base" />
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <button type="submit" className={`${billingControl} flex-1 sm:flex-none`}>เปิดรายการ</button>
+        </div>
+      </form>
+      {lookupError && <p role="alert" className="text-sm text-red-700">{lookupError}</p>}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p role="status" className="text-sm text-gray-600">{loading ? 'กำลังโหลดบริษัท…' : error ? 'ยังโหลดรายชื่อไม่ได้' : total === undefined ? `แสดง ${companies.length} บริษัท` : `พบ ${total.toLocaleString('th-TH')} บริษัท${query ? ` สำหรับ “${query}”` : ''}`}</p>
         <button type="button" onClick={onReload} disabled={loading} aria-busy={Boolean(loading)} title="โหลดข้อมูลที่มั่งมีบันทึกไว้ล่าสุด" className="min-h-11 rounded-lg px-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">โหลดรายการใหม่</button>

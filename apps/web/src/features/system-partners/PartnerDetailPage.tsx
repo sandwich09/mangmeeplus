@@ -20,10 +20,13 @@ import {
   type MenuEntitlementBinding,
   type PartnerFeatureEntitlementDto,
   type PlanTierKey,
+  type PartnerIdentityControlDto,
+  type PatchPartnerIdentityDto,
 } from '@watchdog-bms/contracts';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { BackLink } from '@/common/components/app-shell/BackLink';
+import { ThaiAddressFields } from '@/common/components/field/ThaiAddressFields';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { getMangmeeMenuTone, mangmeeToneClass } from '@/common/components/mangmee';
@@ -65,6 +68,8 @@ import {
   sendPartnerLineMessage,
   getPartnerAiCreditHolds,
   actOnPartnerAiCreditHold,
+  getPartnerIdentityControl,
+  patchPartnerIdentity,
 } from './system-partners.api';
 import type {
   PartnerCompanyDetailDto,
@@ -187,6 +192,13 @@ const STATUS_CLASS: Record<PartnerStatus, string> = {
 };
 
 const STATUS_LABEL: Record<PartnerStatus,string> = { ACTIVE:'ใช้งานอยู่', DISABLED:'ปิดใช้งาน', ARCHIVED:'เก็บถาวร', SUSPENDED:'ระงับชั่วคราว' };
+// Purchase without setup PR E (R-E3): the identity form's "ลักษณะการแก้ไข" and CORRECTION "สาเหตุ".
+const CHANGE_KIND_LABEL: Record<string,string> = {
+  INITIAL_CAPTURE: 'กรอกครั้งแรก (ยังอยู่ในช่วงตั้งค่า)',
+  CORRECTION: 'แก้คำผิด/รูปแบบ (ข้อมูลเดิมถูกต้องตามกฎหมายอยู่แล้ว)',
+  LEGAL_CHANGE: 'เปลี่ยนตามเอกสารทางการ (มีวันที่มีผล)',
+};
+const CORRECTION_REASON_LABEL: Record<string,string> = { TYPO: 'พิมพ์ผิด', FORMATTING: 'รูปแบบ/การเว้นวรรค', TRANSLITERATION: 'การสะกดชื่อ' };
 
 function StatusBadge({ status }: { status: PartnerStatus }) {
   return (
@@ -2982,6 +2994,22 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
 
+  // Purchase without setup PR E (R-E3, DQ9): registered name / tax id / address.
+  const [identityEditMode, setIdentityEditMode] = useState(false);
+  const [identityLoading, setIdentityLoading] = useState(false);
+  const [identityControl, setIdentityControl] = useState<PartnerIdentityControlDto | null>(null);
+  const [identityRegisteredName, setIdentityRegisteredName] = useState('');
+  const [identityTaxId, setIdentityTaxId] = useState('');
+  const [identityLine1, setIdentityLine1] = useState('');
+  const [identityLine2, setIdentityLine2] = useState('');
+  const [identityAddress, setIdentityAddress] = useState({ postalCode: '', province: '', district: '', subdistrict: '' });
+  const [identityChangeKind, setIdentityChangeKind] = useState<'INITIAL_CAPTURE' | 'CORRECTION' | 'LEGAL_CHANGE'>('CORRECTION');
+  const [identityCorrectionReason, setIdentityCorrectionReason] = useState<'TYPO' | 'FORMATTING' | 'TRANSLITERATION'>('TYPO');
+  const [identityEffectiveFrom, setIdentityEffectiveFrom] = useState('');
+  const [identityEvidenceRef, setIdentityEvidenceRef] = useState('');
+  const [identityNote, setIdentityNote] = useState('');
+  const [identityReason, setIdentityReason] = useState('');
+
   // AI model
   const [aiModelLoading, setAiModelLoading] = useState(false);
   const [aiModelInput, setAiModelInput] = useState('');
@@ -3041,6 +3069,69 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
       showToast(apiErrorMessage(err), 'error');
     } finally {
       setEditLoading(false);
+    }
+  };
+
+  const startIdentityEdit = async () => {
+    if (!detail) return;
+    setIdentityRegisteredName(detail.registeredName ?? '');
+    setIdentityTaxId(detail.taxId ?? '');
+    setIdentityLine1(detail.addressJson?.line1 ?? '');
+    setIdentityLine2(detail.addressJson?.line2 ?? '');
+    setIdentityAddress({
+      postalCode: detail.addressJson?.postalCode ?? '', province: detail.addressJson?.province ?? '',
+      district: detail.addressJson?.district ?? '', subdistrict: detail.addressJson?.subdistrict ?? '',
+    });
+    setIdentityChangeKind('CORRECTION');
+    setIdentityCorrectionReason('TYPO');
+    setIdentityEffectiveFrom('');
+    setIdentityEvidenceRef('');
+    setIdentityNote('');
+    setIdentityReason('');
+    setIdentityEditMode(true);
+    try {
+      setIdentityControl(await getPartnerIdentityControl(companyId));
+    } catch (err) {
+      setIdentityEditMode(false);
+      showToast(apiErrorMessage(err), 'error');
+    }
+  };
+
+  const handleIdentitySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!identityControl) return;
+    setIdentityLoading(true);
+    try {
+      const body: PatchPartnerIdentityDto = {
+        expectedLegalIdentityVersion: identityControl.legalIdentityVersion,
+        changeKind: identityChangeKind,
+        registeredName: identityRegisteredName.trim(),
+        taxId: identityTaxId.replace(/\D/g, ''),
+        addressJson: {
+          line1: identityLine1.trim(), line2: identityLine2.trim() || undefined,
+          subdistrict: identityAddress.subdistrict, district: identityAddress.district,
+          province: identityAddress.province, postalCode: identityAddress.postalCode,
+        },
+        ...(identityChangeKind === 'CORRECTION' ? { correctionReason: identityCorrectionReason, note: identityNote.trim() || undefined } : {}),
+        ...(identityChangeKind === 'LEGAL_CHANGE' ? { effectiveFrom: identityEffectiveFrom, evidenceRef: identityEvidenceRef.trim() || undefined } : {}),
+        reason: identityReason.trim(),
+      };
+      const updated = await patchPartnerIdentity(companyId, body);
+      setDetail(updated);
+      setIdentityEditMode(false);
+      showToast('บันทึกข้อมูลจดทะเบียนแล้ว ระบบจะปรับข้อมูลลูกค้าใน Stripe ให้ตามหลัง', 'success');
+    } catch (err) {
+      const e2 = err as Error & { status?: number; code?: string; details?: { details?: { allowedChangeKinds?: string[] } } };
+      if (e2.code === 'identity_change_kind_not_allowed') {
+        const labels = (e2.details?.details?.allowedChangeKinds ?? []).map((kind) => CHANGE_KIND_LABEL[kind] ?? kind).join(', ');
+        showToast(`เลือกลักษณะการแก้ไขที่ระบบอนุญาต: ${labels}`, 'error');
+      } else if (e2.status === 409) {
+        showToast('ข้อมูลบริษัทเพิ่งถูกแก้จากที่อื่น กรุณาโหลดใหม่', 'error');
+      } else {
+        showToast(apiErrorMessage(err), 'error');
+      }
+    } finally {
+      setIdentityLoading(false);
     }
   };
 
@@ -3153,6 +3244,12 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
   // frozen-fields notice both need to say WHY, and the lifecycle "เปิดใช้งานบริษัท" button (which the
   // sweep would just undo again within ~5 minutes) must not appear for it.
   const lockedState = detail.planState === 'NO_PACKAGE' || detail.planState === 'EXPIRED' ? detail.planState : null;
+  // R-E3/RV26: a DISABLED company that the sweep locked for a run-out term (lockedState truthy) is
+  // a customer state, not an operator hold — profile/identity stay editable; features/AI (fieldsLocked,
+  // unchanged above) stay read-only per RV25. ARCHIVED and a true admin hold (DISABLED without a
+  // term lock) keep the full freeze.
+  const termLocked = currentStatus === 'DISABLED' && Boolean(lockedState);
+  const profileLocked = currentStatus === 'ARCHIVED' || (currentStatus === 'DISABLED' && !termLocked);
 
   return (
     <main className="mx-auto max-w-7xl space-y-6 break-words p-4 text-base sm:p-6 lg:p-8">
@@ -3160,7 +3257,7 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
       <BackLink href="/system/partners" label="กลับรายชื่อบริษัท"/>
       <header className="space-y-3"><div className="flex flex-wrap items-center gap-3"><h1 className="text-2xl font-semibold text-gray-900">{detail.name}</h1><StatusBadge status={currentStatus}/>{lockedState && <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">{planTermStateLabel(lockedState)}</span>}</div>{detail.brandName&&<p className="text-gray-600">ชื่อร้าน / แบรนด์: {detail.brandName}</p>}<p className="text-gray-600">เลือกเรื่องที่ต้องการดูแล ข้อมูลทั่วไปอยู่ในภาพรวม</p></header>
       <nav aria-label="หมวดข้อมูลบริษัท" className="flex flex-wrap gap-x-5 border-b border-gray-200">{COMPANY_VIEWS.map(item=><Link key={item.key} href={viewUrl(item.key)} scroll={false} aria-current={view===item.key?'page':undefined} className={`inline-flex min-h-14 items-center border-b-2 px-1 font-semibold ${view===item.key?'border-brand-700 text-brand-800':'border-transparent text-gray-600 hover:text-gray-900'}`} onClick={event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();window.history.pushState(null,'',viewUrl(item.key));}}>{item.label}</Link>)}</nav>
-      {fieldsLocked&&<p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">บริษัทนี้{lockedState ? (lockedState === 'NO_PACKAGE' ? 'ยังไม่มีแพ็กเกจ' : 'แพ็กเกจหมดอายุ') : STATUS_LABEL[currentStatus]} ข้อมูลบริษัท ฟีเจอร์ และ AI จึงอ่านได้อย่างเดียว {lockedState ? 'ลูกค้าซื้อแพ็กเกจเองได้จากหน้าแพ็กเกจ หรือต่ออายุได้ในหมวดแพ็กเกจ' : 'เปลี่ยนสถานะได้ในหมวดภาพรวม'}</p>}
+      {fieldsLocked&&<p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">บริษัทนี้{lockedState ? (lockedState === 'NO_PACKAGE' ? 'ยังไม่มีแพ็กเกจ' : 'แพ็กเกจหมดอายุ') : STATUS_LABEL[currentStatus]} {termLocked ? 'แก้ข้อมูลบริษัทและข้อมูลติดต่อได้ ส่วนฟีเจอร์และ AI อ่านได้อย่างเดียว' : 'ข้อมูลบริษัท ฟีเจอร์ และ AI จึงอ่านได้อย่างเดียว'} {lockedState ? 'ลูกค้าซื้อแพ็กเกจเองได้จากหน้าแพ็กเกจ หรือต่ออายุได้ในหมวดแพ็กเกจ' : 'เปลี่ยนสถานะได้ในหมวดภาพรวม'}</p>}
       {opened('overview')&&<section hidden={view!=='overview'} aria-label="ภาพรวมบริษัท" className="space-y-5">
         <SectionCard title="ข้อมูลบริษัท">
           <div className="grid gap-4 sm:grid-cols-3">
@@ -3183,12 +3280,85 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
             <CompanyReferralField companyId={companyId} createdAt={detail.createdAt} referral={companyReferral(detail)} disabled={fieldsLocked} showToast={showToast} onSaved={load}/>
           </div>
           <div className="flex flex-wrap gap-3 border-t border-gray-100 pt-4">
-            <button type="button" className={btnSecondary} disabled={fieldsLocked} onClick={startEdit}>แก้ไขข้อมูลบริษัท</button>
+            <button type="button" className={btnSecondary} disabled={profileLocked} onClick={startEdit}>แก้ไขข้อมูลบริษัท</button>
+            <button type="button" className={btnSecondary} disabled={profileLocked} onClick={()=>void startIdentityEdit()}>แก้ไขข้อมูลจดทะเบียน</button>
             <Link className="inline-flex min-h-11 items-center px-2 text-brand-800 underline underline-offset-4" href={`/system/billing/companies/${encodeURIComponent(companyId)}`}>ดูการชำระเงินของบริษัท</Link>
           </div>
         </SectionCard>
+        {/* Purchase without setup PR E (R-E3): registered name / tax id / address */}
+        {identityEditMode && !profileLocked && identityControl && (
+          <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-4">
+            <h2 className="text-sm font-semibold text-gray-900">แก้ไขข้อมูลจดทะเบียน</h2>
+            <form onSubmit={handleIdentitySubmit} className="space-y-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-0.5">ชื่อจดทะเบียน *</label>
+                  <input className={inputClass} required maxLength={255} aria-label="ชื่อจดทะเบียน" value={identityRegisteredName} onChange={(e) => setIdentityRegisteredName(e.target.value)} disabled={identityLoading} />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-0.5">เลขประจำตัวผู้เสียภาษี *</label>
+                  <input className={inputClass} required inputMode="numeric" maxLength={13} aria-label="เลขประจำตัวผู้เสียภาษี" value={identityTaxId} onChange={(e) => setIdentityTaxId(e.target.value.replace(/\D/g, '').slice(0, 13))} disabled={identityLoading} />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-0.5">ที่อยู่ (บ้านเลขที่ ถนน) *</label>
+                  <input className={inputClass} required aria-label="ที่อยู่ (บ้านเลขที่ ถนน)" value={identityLine1} onChange={(e) => setIdentityLine1(e.target.value)} disabled={identityLoading} />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-0.5">ที่อยู่เพิ่มเติม</label>
+                  <input className={inputClass} aria-label="ที่อยู่เพิ่มเติม" value={identityLine2} onChange={(e) => setIdentityLine2(e.target.value)} disabled={identityLoading} />
+                </div>
+              </div>
+              <ThaiAddressFields addressMasterPath="/system/partners/address-master" value={identityAddress} onChange={setIdentityAddress} disabled={identityLoading} required />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-0.5">ลักษณะการแก้ไข *</label>
+                  <select className={inputClass} aria-label="ลักษณะการแก้ไข" value={identityChangeKind} disabled={identityLoading}
+                    onChange={(e) => setIdentityChangeKind(e.target.value as typeof identityChangeKind)}>
+                    {identityControl.allowedChangeKinds.map((kind) => <option key={kind} value={kind}>{CHANGE_KIND_LABEL[kind] ?? kind}</option>)}
+                  </select>
+                </div>
+                {identityChangeKind === 'CORRECTION' && (
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-0.5">สาเหตุ *</label>
+                    <select className={inputClass} aria-label="สาเหตุ" value={identityCorrectionReason} disabled={identityLoading}
+                      onChange={(e) => setIdentityCorrectionReason(e.target.value as typeof identityCorrectionReason)}>
+                      {(['TYPO', 'FORMATTING', 'TRANSLITERATION'] as const).map((reason) => <option key={reason} value={reason}>{CORRECTION_REASON_LABEL[reason]}</option>)}
+                    </select>
+                  </div>
+                )}
+                {identityChangeKind === 'LEGAL_CHANGE' && (<>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-0.5">วันที่มีผล *</label>
+                    <ThemedDate value={identityEffectiveFrom} onChange={(e) => setIdentityEffectiveFrom(e.target.value)} max={new Date().toISOString().slice(0, 10)} disabled={identityLoading} aria-label="วันที่มีผล" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-0.5">เลขอ้างอิงเอกสาร (ถ้ามี)</label>
+                    <input className={inputClass} maxLength={200} aria-label="เลขอ้างอิงเอกสาร" value={identityEvidenceRef} onChange={(e) => setIdentityEvidenceRef(e.target.value)} disabled={identityLoading} />
+                  </div>
+                </>)}
+              </div>
+              {identityChangeKind === 'CORRECTION' && (
+                <div>
+                  <label className="block text-xs text-gray-500 mb-0.5">หมายเหตุ</label>
+                  <input className={inputClass} maxLength={500} aria-label="หมายเหตุ" value={identityNote} onChange={(e) => setIdentityNote(e.target.value)} disabled={identityLoading} />
+                </div>
+              )}
+              <div>
+                <label className="block text-xs text-gray-500 mb-0.5">เหตุผลภายใน (ลูกค้าไม่เห็น) *</label>
+                <textarea className={`${inputClass} min-h-20`} required maxLength={500} aria-label="เหตุผลภายใน" value={identityReason} onChange={(e) => setIdentityReason(e.target.value)} disabled={identityLoading} />
+              </div>
+              <p className="text-sm text-gray-600">ข้อมูลนี้ใช้ออกเอกสารและยื่นภาษี ระบบเก็บเป็นเวอร์ชันและตรวจย้อนหลังได้ ใบที่ออกไปแล้วไม่เปลี่ยน</p>
+              <div className="flex items-center gap-2">
+                <button type="submit" className={btnPrimary} disabled={identityLoading} aria-busy={Boolean(identityLoading)}>
+                  {identityLoading ? 'กำลังบันทึก…' : 'บันทึกข้อมูลจดทะเบียน'}
+                </button>
+                <button type="button" className={btnSecondary} onClick={() => setIdentityEditMode(false)} disabled={identityLoading}>ยกเลิก</button>
+              </div>
+            </form>
+          </div>
+        )}
         {/* Edit profile form */}
-        {editMode && !fieldsLocked && (
+        {editMode && !profileLocked && (
           <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-4">
             <h2 className="text-sm font-semibold text-gray-900">แก้ไขข้อมูลบริษัท</h2>
             <form onSubmit={handleEditSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-2">

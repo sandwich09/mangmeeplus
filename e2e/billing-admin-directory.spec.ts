@@ -515,3 +515,49 @@ test('billing operation history is readable, preserves return context and keeps 
     await client.$disconnect();
   }
 });
+
+// Purchase without setup PR E (R-E4/RV27): a customer reads out the last 8 characters of an
+// invoice, checkout or case id over the phone; the operator must land straight on that record.
+test('billing directory opens the matching invoice from an 8-character reference and reports a clean miss', async ({ page }) => {
+  const databaseUrl = process.env['DATABASE_URL'];
+  test.skip(!databaseUrl, 'DATABASE_URL is required for the isolated billing directory fixtures');
+  const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+  const companyId = unique('billing-lookup-co');
+  let accountId = '';
+  let invoiceId = '';
+  try {
+    await client.company.create({ data: { id: companyId, name: companyId } });
+    const account = await client.billingAccount.create({ data: { companyId, stripeAccountId: 'acct_test_e2e_lookup', livemode: false } });
+    accountId = account.id;
+    const invoice = await client.billingInvoice.create({ data: {
+      billingAccountId: account.id, providerInvoiceId: `in_${randomUUID()}`, offerSnapshot: {}, policyRevisionId: 'e2e-lookup-policy',
+      currency: 'thb', totalSatang: 99900, paidSatang: 99900, periodStart: new Date(), periodEnd: new Date(Date.now() + 86400000),
+      providerStatus: 'paid', evidenceHash: 'e2e-lookup-evidence',
+    } });
+    invoiceId = invoice.id;
+    const suffix = invoice.id.slice(-8);
+    await page.setViewportSize({ width: 1512, height: 900 });
+    await login(page);
+    const directory = page.getByRole('region', { name: 'แพ็กเกจและการชำระเงินของบริษัท' });
+    const lookup = page.getByRole('searchbox', { name: 'ค้นหาด้วยเลขอ้างอิง', exact: true });
+
+    await lookup.fill('short1');
+    await directory.getByRole('button', { name: 'เปิดรายการ', exact: true }).click();
+    await expect(directory.getByRole('alert')).toHaveText('เลขอ้างอิงต้องมีอย่างน้อย 8 ตัวอักษร');
+
+    await lookup.fill('00000000');
+    await directory.getByRole('button', { name: 'เปิดรายการ', exact: true }).click();
+    await expect(directory.getByRole('alert')).toHaveText('ไม่พบรายการจากเลขอ้างอิงนี้ หรืออยู่นอกบริษัทที่คุณดูแล');
+    await expect(page).toHaveURL(/\/system\/billing$/);
+
+    await lookup.fill(suffix);
+    await directory.getByRole('button', { name: 'เปิดรายการ', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/system/billing/companies/${companyId}/invoices/${invoiceId}$`));
+    await expectNoClientError(page);
+  } finally {
+    if (invoiceId) await client.billingInvoice.deleteMany({ where: { id: invoiceId } });
+    if (accountId) await client.billingAccount.deleteMany({ where: { id: accountId } });
+    await client.company.deleteMany({ where: { id: companyId } });
+    await client.$disconnect();
+  }
+});

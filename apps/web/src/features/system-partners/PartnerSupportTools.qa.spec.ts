@@ -80,3 +80,30 @@ test('platform sales roles have a Thai operator label', () => {
   assert.equal(roleKeyDisplayName('MANGMEE_SALES_LEAD'), 'หัวหน้าทีมขายมั่งมี');
   assert.equal(roleKeyDisplayName('MANGMEE_SALES'), 'เซลล์มั่งมี');
 });
+
+// Purchase without setup PR E (R-E3, DQ9). The identity form is gated server-side
+// (system.identity_reconciliation.resolve on both GET/PATCH .../identity); the console has no
+// existing pattern for fine-grained client-side permission checks — every other control on this
+// page (feature toggles, AI model, plan term) relies on the same backend 403, not a hidden button.
+test('the identity edit button opens a form wired to the admin identity API', () => {
+  assert.match(partnerPage, /แก้ไขข้อมูลจดทะเบียน/);
+  assert.match(partnerPage, /getPartnerIdentityControl\(companyId\)/);
+  assert.match(partnerPage, /patchPartnerIdentity\(companyId, body\)/);
+  assert.match(partnerPage, /<ThaiAddressFields addressMasterPath="\/system\/partners\/address-master"/);
+});
+
+/**
+ * R-E3/RV26: a shop the sweep disabled for a run-out term (termLocked) is a customer state, not an
+ * operator hold — the profile and identity forms must stay reachable even though `fieldsLocked`
+ * (features/AI, RV25) stays frozen. `profileLocked` is the separate gate this brief introduces.
+ */
+test('a term-locked shop keeps the profile and identity forms open (RV26), unlike an admin hold', () => {
+  assert.match(partnerPage, /const termLocked = currentStatus === 'DISABLED' && Boolean\(lockedState\)/);
+  assert.match(partnerPage, /const profileLocked = currentStatus === 'ARCHIVED' \|\| \(currentStatus === 'DISABLED' && !termLocked\)/);
+  assert.match(partnerPage, /disabled=\{profileLocked\} onClick=\{startEdit\}/);
+  assert.match(partnerPage, /disabled=\{profileLocked\} onClick=\{\(\)=>void startIdentityEdit\(\)\}/);
+  assert.match(partnerPage, /identityEditMode && !profileLocked/);
+  assert.match(partnerPage, /editMode && !profileLocked/);
+  // The frozen-fields notice must say what is still editable when termLocked, not "everything is read-only".
+  assert.match(partnerPage, /แก้ข้อมูลบริษัทและข้อมูลติดต่อได้ ส่วนฟีเจอร์และ AI อ่านได้อย่างเดียว/);
+});

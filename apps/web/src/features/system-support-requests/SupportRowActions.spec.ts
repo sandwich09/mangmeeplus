@@ -62,6 +62,20 @@ describe('SupportRowActions — the inbox row, rendered', () => {
     assert.match(markup, /เปิดหน้าร้าน/);
   });
 
+  // Purchase without setup PR E (R-E5): a request that started from a billing card/message links
+  // straight to the invoice/checkout it names, alongside (not instead of) the shop link.
+  it('offers a second link to the billing reference when the request carries one', () => {
+    const markup = render({ referenceKind: 'invoice', referenceId: 'inv-1' });
+    assert.match(markup, /href="\/system\/billing\/companies\/co-1\/invoices\/inv-1"/);
+    assert.match(markup, /เปิดรายการ/);
+    assert.match(markup, /เปิดหน้าร้าน/, 'the shop link stays alongside it');
+  });
+
+  it('offers no reference link when the request carries none', () => {
+    const markup = render({ status: 'OPEN' });
+    assert.doesNotMatch(markup, /เปิดรายการ/);
+  });
+
   it('shows the green active state with reply, resolution and release on a live case', () => {
     const markup = render({ status: 'ANSWERED', assignedToMe: true, assigneeDisplayName: 'พี่แอดมิน' });
     assert.match(markup, /ตอบใน LINE/);

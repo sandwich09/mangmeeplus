@@ -4244,6 +4244,9 @@ model LineSupportRequest {
   /// The pending application this asker is travelling on, when there is one: the queue is then the
   /// page an operator can actually act on.
   signupRequestId    String?
+  /// Where the ask started (R-E5): 'attempt' | 'invoice'. Strings like `closedReason`; staff-only — never returned to LINE.
+  referenceKind      String?
+  referenceId        String?
   requestedAt        DateTime                 @default(now())
   /// ≤200 chars of the question that was on the screen when they tapped (§3). IMMUTABLE: it is the
   /// thing an operator is answering, and a nudge ("มีอัปเดตไหมคะ") or an unrelated receipt photo
