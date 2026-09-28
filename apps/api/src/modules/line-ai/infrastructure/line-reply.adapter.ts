@@ -5,6 +5,7 @@ import { LineMessagingCredentialsService } from '../../../common/config/line-mes
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
+import { withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { LINE_FLEX_PREVIEW_LIMIT, lineMessagePreview } from '../domain/logic/line-message-preview.logic';
 
@@ -20,13 +21,17 @@ export type LineReplyMessage = {
   | { type: 'flex'; altText: string; canonicalText?: string; contents: Record<string, unknown> }
 );
 
-/** Internal recovery text stays in the durable outcome, never in the LINE wire schema. */
+/** Internal recovery text stays in the durable outcome, never in the LINE wire schema — and every
+ *  web link leaves LINE's in-app browser (spec R-B1, Owner D-PF-2). Applied HERE, after
+ *  `linePushRetryKey` was computed from the caller's payload and after `recordTurnOutcome` stored
+ *  it, so the retry identity, the stored outcome and an orphan replay all keep the plain bytes;
+ *  the rewrite is deterministic and idempotent, so first send and replay put identical bytes on the wire. */
 function providerMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
-  return messages.map((message) => {
+  return withLineExternalBrowserLinks(messages.map((message) => {
     if (message.type !== 'flex') return message;
     const { canonicalText: _canonicalText, ...providerMessage } = message;
     return providerMessage;
-  });
+  }));
 }
 
 /** `failed_token` = LINE rejected the request (400): expired/used reply token

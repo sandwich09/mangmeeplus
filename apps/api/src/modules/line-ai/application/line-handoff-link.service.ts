@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { stripLineExternalBrowserParam } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { MintLineHandoffTokenUseCase } from '../../auth/application/use-cases/mint-line-handoff-token.use-case';
 import { lineHandoffUrl } from '../../auth/domain/logic/line-handoff.logic';
@@ -116,8 +117,10 @@ export class LineHandoffLinkService {
   private async handoffFor(url: string, ctx: LineHandoffContext): Promise<string | null> {
     try {
       const parsed = new URL(url);
-      // The destination is the path the message already decided to send, never the whole URL.
-      return await this.linkFor(ctx, `${parsed.pathname}${parsed.search}`);
+      // The destination is the path the message already decided to send, never the whole URL — and
+      // never the in-app-browser escape: the exit adds it to `/l/<token>` itself (R-B1), so a stored
+      // target must not carry it into the post-exchange redirect.
+      return await this.linkFor(ctx, stripLineExternalBrowserParam(`${parsed.pathname}${parsed.search}`));
     } catch {
       return null;
     }
@@ -141,7 +144,7 @@ export class LineHandoffLinkService {
         companyId: ctx.companyId,
         lineUserId: ctx.lineUserId,
         surface: ctx.surface,
-        targetPath,
+        targetPath: stripLineExternalBrowserParam(targetPath),
       });
       return lineHandoffUrl(this.config.webBaseUrl!, rawToken);
     } catch (error) {

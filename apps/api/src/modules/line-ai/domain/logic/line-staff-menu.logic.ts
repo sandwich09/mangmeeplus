@@ -12,6 +12,13 @@ export const VIEW_PACKAGES_COMMAND = 'โปรโมชั่น';
 export const EMPLOYEE_DOOR_COMMAND = 'ฉันเป็นพนักงาน';
 export const STAFF_CONTACT_COMMAND = 'ติดต่อเจ้าหน้าที่';
 /**
+ * G19 (purchase-without-setup spec §12/RV32): the promotion card's "ask the team" is a CALLBACK request,
+ * not a package-change request and not "ติดต่อเจ้าหน้าที่" — it must not silence the assistant for 24 h.
+ * Travels as a postback so the words never enter the chat as something the customer typed.
+ */
+export const PACKAGE_CALLBACK_COMMAND = 'ให้ทีมงานติดต่อกลับ';
+export const PACKAGE_CALLBACK_POSTBACK = 'action=package-callback';
+/**
  * The way BACK from a support pause (line-support-request-spec-th §2.4, §2.2 delta รอบ 6 ข้อ 6).
  * Without it the only exit from "a human is handling this" was waiting 24 hours — the customer had
  * no button and no words.
@@ -62,6 +69,8 @@ export type CompanyPickerItem = {
    * worse than the one that always worked.
    */
   webUrl?: string;
+  /** R-C8: "ยังไม่มีแพ็กเกจ" / "หมดอายุ" for a locked shop only; absent keeps an ACTIVE bubble's bytes. */
+  stateLabel?: string;
 };
 
 /**
@@ -115,6 +124,8 @@ export type CompanyContextCard = {
    * the card exactly as it rendered before, the same rule `CompanyPickerItem.webUrl` follows.
    */
   openWebUrl?: string;
+  /** R-C8: the same lock wording the picker shows; absent for an ACTIVE shop. */
+  stateLabel?: string;
 };
 
 /**
@@ -240,6 +251,7 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
       body: { type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px', contents: [
         { type: 'text', text: 'บริษัทของฉัน', weight: 'bold', size: 'lg', color: '#101828' },
         { type: 'text', text: `🏢 ${companyName}`, weight: 'bold', size: 'md', color: '#101828', wrap: true },
+        ...(context.stateLabel ? [{ type: 'text', text: `🔒 ${context.stateLabel}`, size: 'sm', color: '#B42318' }] : []),
         { type: 'text', text: `👤 คุณ${displayName}`, size: 'sm', color: '#475467', wrap: true },
         { type: 'text', text: `💼 ${roleLabel}`, size: 'sm', color: '#475467', wrap: true },
         ...(pendingLine ? [{ type: 'text', text: pendingLine, size: 'sm', color: '#475467', wrap: true }] : []),
@@ -307,7 +319,7 @@ export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', 
       type: 'bubble', size: 'mega',
       body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
         { type: 'text', text: '🎁 Package ที่เหมาะกับร้านคุณ', weight: 'bold', size: 'md', color: '#101828', wrap: true },
-        { type: 'text', text: 'รายเดือน 249 / 499 / 999 บาท และแพ็กเกจธุรกิจ 1,999 บาท ครบทุกเมนูรวมภาษี เลือกและชำระในแอปได้เองค่ะ', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: 'รายเดือน 249 / 499 / 999 บาท และแพ็กเกจธุรกิจ 1,999 บาท ที่เพิ่มเอกสารภาษี ภ.ง.ด.53 และ 50 ทวิ เลือกและชำระในแอปได้เองค่ะ', size: 'sm', color: '#475467', wrap: true },
         ...(audience === 'employee'
           ? [{ type: 'text', text: 'เจ้าของร้านเป็นคนเลือกแพ็กเกจให้ร้านนะคะ', size: 'sm', color: '#667085', wrap: true }]
           : []),
@@ -316,9 +328,10 @@ export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', 
         ...(url ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: stranger ? 'เปิดร้านใหม่' : 'เลือกแพ็กเกจ', uri: url } }] : []),
         { type: 'button', style: 'secondary', action: { type: 'uri', label: stranger ? 'ดูแพ็กเกจบนเว็บ' : 'ดูรายละเอียดบนเว็บ', uri: 'https://official.mangmeeplus.com/' } },
         // Spec §3.7: the promotion card is a PULL, so the one thing it must let the reader do is
-        // ask — the request lands in the admin queue rather than changing anything by itself. A
-        // stranger has no shop yet, so that ask only exists once they have one.
-        ...(stranger ? [] : [{ type: 'button', style: 'secondary', action: { type: 'message', label: 'ให้ทีมงานช่วยเลือก', text: PACKAGE_CHANGE_COMMAND } }]),
+        // ask — the request lands in the support inbox as a callback rather than changing anything
+        // by itself. A stranger has no shop yet, so that ask only exists once they have one.
+        // G19: a callback request that files a support row without pausing the assistant (RV32).
+        ...(stranger ? [] : [{ type: 'button', style: 'secondary', action: { type: 'postback', label: PACKAGE_CALLBACK_COMMAND, data: PACKAGE_CALLBACK_POSTBACK, displayText: PACKAGE_CALLBACK_COMMAND } }]),
         { type: 'button', style: 'secondary', action: { type: 'message', label: 'คุยกับทีมงาน', text: 'ติดต่อเรา' } },
       ] },
     },
@@ -415,6 +428,7 @@ function companyBubble(company: CompanyPickerItem, selectionNumber: number, curr
       type: 'box', layout: 'vertical', spacing: 'md', contents: [
         { type: 'text', text: `🏢 บริษัท ${selectionNumber}`, size: 'sm', color: '#667085' },
         { type: 'text', text: boundedLabel(company.companyName, 'ไม่ระบุบริษัท'), weight: 'bold', size: 'lg', color: '#101828', wrap: true },
+        ...(company.stateLabel ? [{ type: 'text', text: `🔒 ${company.stateLabel}`, size: 'sm', color: '#B42318' }] : []),
         ...(current ? [{ type: 'text', text: '✓ ใช้งานอยู่', size: 'sm', color: '#16A34A', weight: 'bold' }] : []),
         ...(!current ? [{ type: 'text', text: `ตอบ ${selectionNumber} หรือกดปุ่มด้านล่าง`, size: 'sm', color: '#667085', wrap: true }] : []),
         // Only where a switch actually happens. On the ✓ ใช้งานอยู่ bubble the chat is already on
@@ -610,7 +624,7 @@ export type StaffMenuCommand =
   | 'main' | 'query' | 'approval' | 'receipt' | 'services' | 'contact' | 'talk' | 'promotion'
   // P10-L §3.7/§7. The four commands the LINE-first flow answers. All exact whole-string matches,
   // because every one of them is printed on a button — a customer never has to spell them.
-  | 'package_change' | 'employee' | 'staff_contact' | 'profile_guard' | 'profile_guard_later'
+  | 'package_change' | 'employee' | 'staff_contact' | 'package_callback' | 'profile_guard' | 'profile_guard_later'
   // §2.4 delta: the typed aliases of the way out of the support pause. The tile's own words are
   // `talk`, which the use case routes by pause state.
   | 'resume_ai'
@@ -649,6 +663,7 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
   if (normalized === PACKAGE_CHANGE_COMMAND || normalized === 'ขอเปลี่ยนแพ็คเกจ') return 'package_change';
   if (normalized === EMPLOYEE_DOOR_COMMAND) return 'employee';
   if (normalized === STAFF_CONTACT_COMMAND) return 'staff_contact';
+  if (normalized === PACKAGE_CALLBACK_COMMAND) return 'package_callback';
   if (RESUME_AI_ALIASES.some((alias) => normalized === menuCommandKey(alias))) return 'resume_ai';
   if (normalized === PROFILE_GUARD_COMMAND) return 'profile_guard';
   if (normalized === PROFILE_GUARD_LATER_COMMAND) return 'profile_guard_later';
@@ -671,6 +686,7 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
 const POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
   'line-rich-talk': RESUME_AI_COMMAND,
   'package-change': PACKAGE_CHANGE_COMMAND,
+  'package-callback': PACKAGE_CALLBACK_COMMAND,
   'profile-guard': PROFILE_GUARD_COMMAND,
   'profile-guard-later': PROFILE_GUARD_LATER_COMMAND,
 };

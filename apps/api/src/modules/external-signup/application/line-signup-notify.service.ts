@@ -49,12 +49,13 @@ export const SUPPORT_REQUEST_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
  *  R1: the shop opens LOCKED, so the very first thing it is told is the one step that unlocks it.
  *  Nothing here invites a receipt photo — the assistant would only refuse it. */
 export function approvedMessageTh(companyName: string): string {
-  return `🎉 เปิดร้าน ${companyName} ให้แล้วค่ะ ขั้นต่อไปคือเลือกแพ็กเกจเพื่อเริ่มใช้งาน `
-    + 'กดเปิดหน้าเว็บเพื่อดูแพ็กเกจและชำระเงินได้เลยนะคะ';
+  return `🎉 เปิดร้าน ${companyName} ให้แล้วค่ะ ขั้นต่อไปเลือกแพ็กเกจเพื่อเริ่มใช้งาน `
+    + 'กดปุ่มด้านล่าง แล้วกดเปิดหน้าเว็บเพื่อดูแพ็กเกจและชำระเงินได้เลยนะคะ';
 }
 
 export function attachedMessageTh(companyName: string): string {
-  return `🎉 เพิ่มร้าน ${companyName} ให้บัญชีของคุณแล้วค่ะ สลับร้านได้ในเมนู หรือกดเปิดหน้าเว็บนะคะ`;
+  return `🎉 เพิ่มร้าน ${companyName} ให้บัญชีของคุณแล้วค่ะ ขั้นต่อไปเลือกแพ็กเกจให้ร้านนี้ `
+    + 'กดปุ่มด้านล่างได้เลยนะคะ สลับร้านได้ในเมนู บริษัทของฉัน';
 }
 
 export function rejectedMessageTh(displayName: string | null, companyName: string): string {
@@ -350,8 +351,10 @@ export class LineSignupNotifyService {
   }
 
   /**
-   * §3.4/§7: "เริ่มใช้งาน" opens the CENTRAL LIFF start URL. No token travels in the message
-   * (LINE-ONBOARD-01) — the handoff is minted when the button is tapped.
+   * §3.4/§7, R-C4 (§18.2): the button opens the CENTRAL LIFF start URL. No token travels in the
+   * message (LINE-ONBOARD-01; a 15-minute token would be dead before a push retried for hours) —
+   * the handoff is minted when the button is tapped, and the start page lands a plan manager on the
+   * package page (R-C3). Two taps from the push, by design (DQ3).
    */
   private readyMessage(kind: LineSignupPushKind, companyName: string): unknown {
     const text = kind === 'attached' ? attachedMessageTh(companyName) : approvedMessageTh(companyName);
@@ -363,11 +366,11 @@ export class LineSignupNotifyService {
       contents: {
         type: 'bubble', size: 'kilo',
         body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
-          { type: 'text', text: 'พร้อมใช้งานแล้ว', weight: 'bold', size: 'md', color: '#101828', wrap: true },
+          { type: 'text', text: kind === 'attached' ? 'เพิ่มร้านแล้ว' : 'เปิดร้านแล้ว', weight: 'bold', size: 'md', color: '#101828', wrap: true },
           { type: 'text', text, size: 'sm', color: '#475467', wrap: true },
         ] },
         footer: { type: 'box', layout: 'vertical', contents: [
-          { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เริ่มใช้งาน', uri: `https://liff.line.me/${liffId}/start` } },
+          { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เลือกแพ็กเกจ', uri: `https://liff.line.me/${liffId}/start` } },
         ] },
       },
     };

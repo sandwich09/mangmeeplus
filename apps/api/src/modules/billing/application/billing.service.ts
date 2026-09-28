@@ -20,6 +20,7 @@ import type { RequestContext } from '../../auth/domain/models/request-context.mo
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { StripeClient, StripeRequestError, safeStripeUrl, stripeId } from '../infrastructure/stripe.client';
 import { assertCompanyCanBuy, companyCanBuy, assertPolicyReady, assertStripePrice, assertStripePortalConfiguration, billingError, billingMonth, effectiveBillingGates, hashBilling, paidVariant, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
+import { canManagePlan } from '../../access-control/domain/logic/plan-manager.logic';
 
 import { BillingRepeat, type RepeatSource } from './billing-repeat';
 import { BillingCollection } from './billing-collection';
@@ -114,8 +115,7 @@ export class BillingService {
         },
       },
     });
-    if (!member || member.status !== 'ACTIVE' || member.user.status !== 'ACTIVE' ||
-        !member.roles.some((r) => r.role.permissions.some((rp) => rp.permission.key === 'company.plan.manage'))) {
+    if (!member || member.status !== 'ACTIVE' || member.user.status !== 'ACTIVE' || !canManagePlan(member.roles)) {
       throw new ForbiddenException('ต้องได้รับสิทธิ์จัดการแพ็กเกจบริษัท');
     }
   }

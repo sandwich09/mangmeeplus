@@ -174,6 +174,13 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     expired: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ เข้าสู่ระบบบนเว็บแล้วเลือกแพ็กเกจเพื่อเริ่มใช้งานได้เลยนะคะ',
     no_membership: 'บัญชี LINE นี้ยังไม่ได้อยู่ในร้านไหนค่ะ ให้เจ้าของร้านส่งลิงก์เชิญให้อีกครั้งนะคะ'
   };
+  /** R-C2: the two lock states a shop can be in, and the button that fixes each (short: LINE-length buttons). */
+  const LOCK_LABEL_TH = { no_package: 'ยังไม่มีแพ็กเกจ', trial_ended: 'หมดอายุ' };
+  const LOCK_ACTION_TH = { no_package: 'เลือกแพ็กเกจ', trial_ended: 'ต่ออายุ' };
+  /** startSession() options for a locked shop: the same handoff, labelled for the package page it opens. */
+  const PACKAGE_START = { buttonLabel: 'เลือกแพ็กเกจ', readyText: 'พร้อมแล้วค่ะ กดเลือกแพ็กเกจเพื่อเปิดหน้าแพ็กเกจในเบราว์เซอร์' };
+  const lockLabel = function (company) { return LOCK_LABEL_TH[company.lockReason] || LOCK_LABEL_TH.trial_ended; };
+  const lockAction = function (company) { return LOCK_ACTION_TH[company.lockReason] || LOCK_ACTION_TH.trial_ended; };
   const FAIL_TITLE_TH = {
     employee: 'เชื่อม LINE ไม่สำเร็จ',
     customer: 'Registration failed',
@@ -656,9 +663,20 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
         });
         listEl.appendChild(button);
       } else {
+        // R-C2: the state in the body text (buttons are length-limited), the fix as a short button
+        // for whoever may buy; staff see the state and the support door the caller already shows.
         const note = document.createElement('p');
-        note.textContent = company.companyName + ' หมดอายุแล้ว ติดต่อทีมงานเพื่อเลือกแพ็กเกจก่อนเข้าใช้งานค่ะ';
+        note.textContent = company.companyName + ' · ' + lockLabel(company);
         listEl.appendChild(note);
+        if (company.canManagePlan === true) {
+          const choose = document.createElement('button');
+          choose.type = 'button';
+          choose.textContent = lockAction(company);
+          choose.addEventListener('click', function () {
+            void runWith(function () { return startSession(company.companyId, PACKAGE_START); }, choose, 'กำลังเตรียมลิงก์…');
+          });
+          listEl.appendChild(choose);
+        }
       }
     }
     return canEnter;
@@ -704,9 +722,27 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
         : shop + ' เปิดสำเร็จแล้วค่ะ', progress);
       const entered = renderEligibleCompanies(companies, progress.entryCompanyId || '', true);
       if (!entered) {
-        document.getElementById('progress-title').textContent = 'ร้านนี้ยังเข้าใช้ไม่ได้';
-        document.getElementById('progress-text').textContent = 'สิทธิ์หรือแพ็กเกจปัจจุบันยังไม่พร้อมให้เข้าใช้ กรุณาติดต่อทีมงานเพื่อตรวจสอบค่ะ';
-        showSupport();
+        const locked = progress.lockedEntryCompanyId
+          ? companies.find(function (company) { return company.companyId === progress.lockedEntryCompanyId; })
+          : undefined;
+        if (locked && locked.canManagePlan === true) {
+          // R-C2: the shop exists and is waiting for its package. Prepare the handoff NOW so the
+          // primary button is one tap (GW02 only forbids opening it without a gesture).
+          document.getElementById('progress-title').textContent = 'เปิดร้านแล้ว ขั้นต่อไปเลือกแพ็กเกจ';
+          document.getElementById('progress-text').textContent = shop + ' เปิดให้แล้วค่ะ เลือกแพ็กเกจเพื่อเริ่มใช้งาน ระบบจะพาไปหน้าแพ็กเกจในเบราว์เซอร์ให้ค่ะ';
+          const retry = document.getElementById('retry-status');
+          retry.hidden = false;
+          void runWith(function () { return startSession(locked.companyId, PACKAGE_START); }, retry, 'กำลังเตรียมลิงก์…');
+          showSupport();
+        } else if (locked) {
+          document.getElementById('progress-title').textContent = 'เปิดร้านแล้ว รอเลือกแพ็กเกจ';
+          document.getElementById('progress-text').textContent = shop + ' ' + lockLabel(locked) + ' ให้เจ้าของร้านหรือผู้ดูแลแพ็กเกจเลือกแพ็กเกจก่อน แล้วเข้าใช้งานได้เลยค่ะ';
+          showSupport();
+        } else {
+          document.getElementById('progress-title').textContent = 'ร้านนี้ยังเข้าใช้ไม่ได้';
+          document.getElementById('progress-text').textContent = 'สิทธิ์หรือแพ็กเกจปัจจุบันยังไม่พร้อมให้เข้าใช้ กรุณาติดต่อทีมงานเพื่อตรวจสอบค่ะ';
+          showSupport();
+        }
       }
       document.getElementById('add-shop').hidden = false;
       return;
@@ -987,7 +1023,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
 
   // Prepare on the network, then open synchronously from a user gesture. A normal anchor would
   // consume this single-use credential in LINE's browser, leaving Safari/Chrome signed out.
-  async function startSession(companyId) {
+  async function startSession(companyId, opts) {
     preparedHandoffUrl = '';
     if (openWebBtn) openWebBtn.hidden = true;
     for (const id of ['companies', 'go-signup']) {
@@ -1025,8 +1061,9 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     if (!handoffUrl) throw new Error(UNAVAILABLE_TH);
     if (!openWebBtn) throw new Error(UNAVAILABLE_TH);
     preparedHandoffUrl = handoffUrl;
+    openWebBtn.textContent = (opts && opts.buttonLabel) || 'เปิดหน้าเว็บ';
     openWebBtn.hidden = false;
-    setStatus('พร้อมแล้วค่ะ กดเปิดหน้าเว็บเพื่อเข้าร้าน', '', 'info');
+    setStatus((opts && opts.readyText) || 'พร้อมแล้วค่ะ กดเปิดหน้าเว็บเพื่อเข้าร้าน', '', 'info');
   }
 
   if (openWebBtn) openWebBtn.addEventListener('click', function (event) {
@@ -1052,7 +1089,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       const company = companies[index];
       const button = document.createElement('button');
       // textContent, never innerHTML: a shop name is customer-typed data on a page with no CSP escape.
-      button.textContent = company.name;
+      // R-C2/R-C3: a locked shop says so in the button; the server decides its landing (billing or renew).
+      button.textContent = company.name + (company.lockReason ? ' · ' + lockLabel(company) : '');
       button.addEventListener('click', function () {
         listEl.hidden = true;
         void runWith(function () { return startSession(company.id); });
@@ -1074,6 +1112,9 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     }
     try {
       await action();
+      // A secondary button that showed a busy label gets its words and its tap back on success; the
+      // form's own button keeps the existing rule (the view moves on and re-enables it itself).
+      if (button && busyLabel) { button.textContent = label; button.disabled = false; }
     } catch (error) {
       // A refusal we understand carries its own guidance. Signup always keeps implementation
       // details off the customer page and gives one natural next step.

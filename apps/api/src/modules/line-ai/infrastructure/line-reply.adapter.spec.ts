@@ -153,6 +153,36 @@ describe('LINE push delivery retry identity', () => {
     } finally { globalThis.fetch = originalFetch; }
   });
 
+  it('sends every web link outside LINE while the retry key and the caller payload keep the plain bytes (R-B1)', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ key: string | null; body: string }> = [];
+    try {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        calls.push({ key: new Headers(init?.headers).get('X-Line-Retry-Key'), body: String(init?.body) });
+        return new Response('', { status: 200 });
+      }) as typeof fetch;
+      const messages = [
+        { type: 'text' as const, text: 'ดูแพ็กเกจ https://app.example.test/companies/c/billing' },
+        { type: 'flex' as const, altText: 'การ์ด', canonicalText: 'ดู https://app.example.test/companies/c/billing', contents: { type: 'bubble', footer: { type: 'box', contents: [
+          { type: 'button', action: { type: 'uri', label: 'เปิด', uri: 'https://app.example.test/companies/c/billing?channel=line' } },
+        ] } } },
+        { type: 'image' as const, originalContentUrl: 'https://app.example.test/a.png', previewImageUrl: 'https://app.example.test/a.png' },
+      ];
+      const snapshot = structuredClone(messages);
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'secret' } as any), {} as any);
+      await adapter.sendPush('U-recipient', messages, 'op-1');
+      await adapter.sendPush('U-recipient', messages, 'op-1');
+      assert.deepEqual(messages, snapshot);
+      assert.equal(calls[0]!.key, linePushRetryKey('op-1', 'U-recipient', snapshot));
+      assert.equal(calls[1]!.body, calls[0]!.body);
+      const wire = JSON.parse(calls[0]!.body).messages;
+      assert.equal(wire[0].text, 'ดูแพ็กเกจ https://app.example.test/companies/c/billing?openExternalBrowser=1');
+      assert.equal(Object.hasOwn(wire[1], 'canonicalText'), false);
+      assert.equal(wire[1].contents.footer.contents[0].action.uri, 'https://app.example.test/companies/c/billing?channel=line&openExternalBrowser=1');
+      assert.deepEqual(wire[2], snapshot[2]);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   it('keeps its identity across JSONB key ordering but separates other recipients and changed payloads', () => {
     const original = [{ type: 'flex' as const, altText: 'saved', contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [] } } }];
     const fromJsonb = [{ contents: { body: { contents: [], layout: 'vertical', type: 'box' }, type: 'bubble' }, altText: 'saved', type: 'flex' as const }];
@@ -204,6 +234,20 @@ describe('v2 exact frozen delivery', () => {
       assert.equal(bodies.length, 2); assert.equal(bodies[0], bodies[1]); assert.equal(keys[0], keys[1]);
       assert.equal(JSON.parse(bodies[0]!).messages[0].text, frozen.messages[0]!.text);
     } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+  });
+  it('puts the frozen v2 wire on LINE untouched; only the legacy push exit adds the escape (R-B1 exit 4 vs exit 1)', async () => {
+    const originalFetch = globalThis.fetch;
+    const bodies: string[] = [];
+    try {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => { bodies.push(String(init?.body)); return new Response('', { status: 200 }); }) as typeof fetch;
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic' } as any), {} as any);
+      const messages = [{ type: 'text' as const, text: 'เปิด https://app.example.test/companies/c/billing' }];
+      assert.equal((await adapter.sendFrozenV2({ transport: 'PUSH', target: 'U1', messages, pushRetryKey: 'f7265b4a-c1ef-4522-81f3-c50d14cba431', timeoutMs: 5_000 })).kind, 'accepted');
+      assert.doesNotMatch(bodies[0]!, /openExternalBrowser/);
+      assert.deepEqual(JSON.parse(bodies[0]!).messages, messages);
+      await adapter.sendPush('U1', messages, 'op-legacy');
+      assert.match(bodies[1]!, /companies\/c\/billing\?openExternalBrowser=1/);
+    } finally { globalThis.fetch = originalFetch; }
   });
   it('keeps a stalled error body uncertain rather than treating headers as token rejection', async () => {
     const { createServer } = await import('node:http');

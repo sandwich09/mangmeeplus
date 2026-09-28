@@ -70,7 +70,9 @@ describe('P10-L LIFF signup page', () => {
     assert.ok(html.includes('<label for="contact-email">อีเมลติดต่อร้าน (ไม่บังคับ)</label>'));
     assert.match(html, /<input id="contact-email"[^>]*type="email"[^>]*maxlength="254"/);
     assert.doesNotMatch(html, /<input id="contact-email"[^>]*\brequired\b/);
-    assert.ok(html.includes('ก่อนชำระแพ็กเกจ'));
+    // RV33 (D-PF-1): the email for documents is asked at checkout, not verified before paying.
+    assert.ok(html.includes('อีเมลรับเอกสารกรอกได้ที่หน้าชำระเงิน'));
+    assert.equal(html.includes('ก่อนชำระแพ็กเกจจะให้ยืนยันอีเมล'), false);
     assert.ok(!/<label for="phone-number">[^<]*ไม่บังคับ/.test(html), 'phone remains required');
     // R1 (Owner 2026-09-20): the page promises a shop, never free days.
     assert.ok(html.includes('ยอมรับและเปิดร้าน'));
@@ -288,6 +290,9 @@ describe('P10-L LIFF client script', () => {
       'existing-companies': { textContent: '', children: [], appendChild(child: unknown) { this.children.push(child); } },
       'retry-intake': element('retry-intake', { hidden: true }),
       'retry-status': element('retry-status', { hidden: true }),
+      // R-C2: the COMPLETED+locked branch prepares this handoff itself (§3.12 ค) — the signup page
+      // carries the same #open-web fallback button the start page does (auth.controller.ts:564/663).
+      'open-web': element('open-web', { hidden: true }),
       'edit-email': element('edit-email', { hidden: true }),
       'add-shop': element('add-shop', { hidden: true }),
       support: element('support', { hidden: true }),
@@ -389,7 +394,10 @@ describe('P10-L LIFF client script', () => {
   const settle = () => new Promise((resolve) => { setImmediate(resolve); });
   const signupStatus = (
     overrides: Record<string, unknown> = {},
-    eligibleCompanies: Array<{ companyId: string; companyName: string; status: 'ACTIVE' | 'EXPIRED'; canEnter: boolean }> = [],
+    eligibleCompanies: Array<{
+      companyId: string; companyName: string; status: 'ACTIVE' | 'EXPIRED'; canEnter: boolean;
+      lockReason?: 'no_package' | 'trial_ended'; canManagePlan?: boolean;
+    }> = [],
   ) => JSON.stringify({
     progress: {
       requestId: 'r1',
@@ -489,6 +497,55 @@ describe('P10-L LIFF client script', () => {
       await h.click('add-shop');
       assert.equal(h.views.find((view) => view.id === 'form-view')!.hidden, false);
       assert.equal(h.elements.link!.textContent, 'ยืนยันเปิดร้านเพิ่ม');
+    });
+
+    // R-C2 (§18.2 purchase-without-setup): a locked shop is "opened, waiting for its package", not
+    // "cannot enter" — and for whoever may buy, the handoff is prepared the moment this renders.
+    describe('COMPLETED for a locked shop (R-C2)', () => {
+      const lockedCompleted = (canManagePlan: boolean) => signupStatus(
+        { state: 'COMPLETED', resolution: 'NEW_SHOP', lockedEntryCompanyId: 'co-1' },
+        [{ companyId: 'co-1', companyName: 'ร้านนิด', status: 'EXPIRED', canEnter: false, lockReason: 'no_package', canManagePlan }],
+      );
+
+      it('names the next step and has the handoff ready for a plan manager', async () => {
+        const statusBody = lockedCompleted(true);
+        const h = runSignupScript(statusBody, [
+          { status: 200, body: statusBody },
+          { status: 200, body: JSON.stringify({ handoffUrl: 'https://app.example.test/l/RAW' }) },
+        ]);
+        await settle(); await settle(); await settle(); await settle();
+
+        assert.equal(h.elements['progress-title']!.textContent, 'เปิดร้านแล้ว ขั้นต่อไปเลือกแพ็กเกจ');
+        assert.equal(h.calls[1]?.url, 'https://api.example.test/v1/auth/line/liff/session');
+        assert.deepEqual(JSON.parse(h.calls[1]!.init.body), { idToken: 'aaa.bbb.ccc', companyId: 'co-1' });
+        assert.equal(h.elements['open-web']!.hidden, false);
+        assert.equal(h.elements['open-web']!.textContent, 'เลือกแพ็กเกจ');
+        // (ฉ) busy-label fix: the secondary button gets its tap back, not stuck on "กำลังเตรียมลิงก์…".
+        assert.equal(h.elements['retry-status']!.hidden, false);
+        assert.equal(h.elements['retry-status']!.disabled, false);
+        assert.notEqual(h.elements['retry-status']!.textContent, 'กำลังเตรียมลิงก์…');
+      });
+
+      it('points staff at support instead of preparing a handoff they cannot use', async () => {
+        const h = runSignupScript(lockedCompleted(false));
+        await settle(); await settle();
+
+        assert.equal(h.elements['progress-title']!.textContent, 'เปิดร้านแล้ว รอเลือกแพ็กเกจ');
+        assert.match(h.elements['progress-text']!.textContent, /ร้านนิด ยังไม่มีแพ็กเกจ/);
+        assert.equal(h.calls.length, 1, 'no handoff is prepared for someone who cannot buy');
+        assert.equal(h.elements.support!.hidden, false);
+      });
+    });
+
+    it('lists a locked shop as a note with its own "เลือกแพ็กเกจ" button when there is no progress yet', async () => {
+      const h = runSignupScript(JSON.stringify({
+        progress: null,
+        eligibleCompanies: [{ companyId: 'co-1', companyName: 'ร้านนิด', status: 'EXPIRED', canEnter: false, lockReason: 'no_package', canManagePlan: true }],
+      }));
+      await settle(); await settle();
+
+      assert.equal(h.elements['existing-companies']!.children[0]!.textContent, 'ร้านนิด · ยังไม่มีแพ็กเกจ');
+      assert.equal(h.elements['existing-companies']!.children[1]!.textContent, 'เลือกแพ็กเกจ');
     });
 
     it('shows a provisioning failure as saved work needing recovery', async () => {
@@ -1110,7 +1167,18 @@ describe('P10-L LIFF client script', () => {
 
 // ── ExchangeLiffSessionUseCase ──
 
-type Membership = { companyId: string; company: { name: string; status?: string; planTerm?: { termDisabledAt: Date | null; termEndsAt?: Date } | null } };
+type Membership = {
+  companyId: string;
+  company: {
+    name: string;
+    status?: string;
+    // R-C3: termStartAt/renewCount are only read (planTermLockReason) when a needsSelection row is
+    // built for a locked company — every pre-existing fixture below stays valid without them.
+    planTerm?: { termDisabledAt: Date | null; termEndsAt?: Date; termStartAt?: Date; renewCount?: number } | null;
+  };
+  /** R-C11: only read when the shop is locked (canManagePlan gates `wanted` behind `isLocked && …`). */
+  roles?: Array<{ role: { permissions: Array<{ permission: { key: string } }> } }>;
+};
 
 function makeUseCase(input: {
   identity?: { userId: string; status?: string; user: { status: string } } | null;
@@ -1269,7 +1337,72 @@ describe('ExchangeLiffSessionUseCase', () => {
     await assert.rejects(() => useCase.execute({ idToken: 'a.b.c' }), ServiceUnavailableException);
   });
 
+  // R-C3 (§18.2 purchase-without-setup): a locked shop lands its plan manager on the package page
+  // directly, not the locked shell's /renew (Q5) — the same predicate assertOwner uses (R-C11).
+  const lockedNoPackage = { termStartAt: new Date(0), termEndsAt: new Date(0), renewCount: 0, termDisabledAt: new Date() };
+  const planManageRole = { role: { permissions: [{ permission: { key: 'company.plan.manage' } }] } };
 
+  it('lands a locked shop\'s plan manager on the package page, not renew', async () => {
+    const { useCase, minted } = makeUseCase({
+      identity: activeIdentity,
+      memberships: [{ companyId: 'co-1', company: { name: 'ร้านหนึ่ง', status: 'DISABLED', planTerm: lockedNoPackage }, roles: [planManageRole] }],
+    });
+
+    const result = await useCase.execute({ idToken: 'a.b.c' });
+
+    assert.equal(minted[0].targetPath, '/companies/co-1/billing?channel=line');
+    assert.ok('handoffUrl' in result);
+  });
+
+  it('keeps a locked shop\'s non-manager member on /renew, same as before', async () => {
+    const { useCase, minted } = makeUseCase({
+      identity: activeIdentity,
+      memberships: [{
+        companyId: 'co-1', company: { name: 'ร้านหนึ่ง', status: 'DISABLED', planTerm: lockedNoPackage },
+        roles: [{ role: { permissions: [{ permission: { key: 'company.expenses.manage' } }] } }],
+      }],
+    });
+
+    await useCase.execute({ idToken: 'a.b.c' });
+
+    assert.equal(minted[0].targetPath, '/companies/co-1/renew');
+  });
+
+  it('sends a plan manager to billing for an ACTIVE row whose term simply ran out, same lock boundary as renew', async () => {
+    const { useCase, minted } = makeUseCase({
+      identity: activeIdentity,
+      memberships: [{
+        companyId: 'co-1',
+        company: { name: 'ร้านหนึ่ง', status: 'ACTIVE', planTerm: { termStartAt: new Date(0), termEndsAt: new Date(Date.now() - 1000), renewCount: 1, termDisabledAt: null } },
+        roles: [planManageRole],
+      }],
+    });
+
+    await useCase.execute({ idToken: 'a.b.c' });
+
+    assert.equal(minted[0].targetPath, '/companies/co-1/billing?channel=line');
+  });
+
+  it('needsSelection names lockReason/canManagePlan only for the locked row, leaving an ACTIVE row byte-identical', async () => {
+    const { useCase } = makeUseCase({
+      identity: activeIdentity,
+      memberships: [
+        membership('co-active', 'ร้านหนึ่ง'),
+        { companyId: 'co-locked', company: { name: 'ร้านสอง', status: 'DISABLED', planTerm: lockedNoPackage }, roles: [planManageRole] },
+      ],
+      context: null,
+    });
+
+    const result = await useCase.execute({ idToken: 'a.b.c' });
+
+    assert.deepEqual(result, {
+      needsSelection: true,
+      companies: [
+        { id: 'co-active', name: 'ร้านหนึ่ง' },
+        { id: 'co-locked', name: 'ร้านสอง', lockReason: 'no_package', canManagePlan: true },
+      ],
+    });
+  });
 });
 
 
