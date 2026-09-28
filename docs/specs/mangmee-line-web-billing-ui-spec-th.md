@@ -75,7 +75,7 @@ flowchart TD
 5. เมื่อเลือกแล้ว backend mint handoff ณ การใช้งาน โดยผูก user/company/targetPath; hash-only, TTL 15 นาที และ single-use ตามของเดิม. อนุญาตเป้าหมายเฉพาะ billing overview/renew ที่ server กำหนด. **แก้ 2026-09-28 (purchase-without-setup R-C2/R-C3):** surface คง `liff_start` (ไม่มี `liff_billing` แยก); ปุ่มบนหน้าผลลัพธ์สมัคร (LIFF signup, ร้านล็อก+`company.plan.manage`) = "เลือกแพ็กเกจ" เตรียม handoff ทันทีตอน render (ก่อนกด — GW02 ห้ามเฉพาะการเปิดอัตโนมัติ); ปุ่มบนหน้า start (`liff/session`) ยังเป็น "เปิดหน้าเว็บ"; เรียก liff.openWindow ด้วย external=true จากการกดตรง ๆ ไม่ await การเรียกเครือข่ายก่อนเปิดหน้าต่าง.
 6. เป้าหมายแรกของ external browser คือ /l/<token> ที่ตั้ง httpOnly session แล้วล้าง token จาก URL ก่อนโหลด app. ทำให้ไม่ต้องแชร์ cookie ระหว่าง LIFF กับ Safari/Chrome. ห้าม consume token ใน LIFF ก่อนแล้วเอา token เดิมไปเปิดอีก browser. ถ้าเปิดจาก external browser อยู่แล้ว ใช้ navigation ปกติ ไม่พึ่ง liff.openWindow.
 7. หมดอายุ/ถูกใช้แล้ว/เปิดไม่ขึ้น: กลับ LIFF ขอ handoff ใหม่หลังตรวจ identity หรือใช้ LINE login/QR ที่มีจริงและ safe next. ไม่ส่ง raw token ให้ copy หรือใส่ analytics; ไม่ใช้ GET link preview เป็นคำสั่งเริ่มเก็บเงิน. แสดงชื่อบัญชีและบริษัทใน review เสมอเพราะ handoff อาจแทน session เดิมบนเครื่องร่วมกัน.
-8. ที่ app ใช้หน้าจอ/Checkout/Portal เดียวกับเว็บ. ผู้สมัคร LINE ไม่ต้องตั้งรหัสผ่านเพียงเพื่อจ่าย และไม่ต้องยืนยันอีเมล login ถ้าไม่ได้เปลี่ยน identity. เก็บ billing email สำหรับ Stripe documents แยกจาก account recovery (= `BillingAccount.recipientEmail`; แก้ได้ด้วย OTP ของบริษัท — purchase-without-setup PR C §4.8; ไม่ต้องมีอีเมล/ที่อยู่ก่อนซื้อ).
+8. ที่ app ใช้หน้าจอ/Checkout/Portal เดียวกับเว็บ. ผู้สมัคร LINE ไม่ต้องตั้งรหัสผ่านเพียงเพื่อจ่าย และไม่ต้องยืนยันอีเมล login ถ้าไม่ได้เปลี่ยน identity. เก็บ billing email สำหรับ Stripe documents แยกจาก account recovery (= `BillingAccount.recipientEmail`; แก้ได้ด้วย OTP ของบริษัท — purchase-without-setup PR C §4.8; ไม่ต้องมีอีเมล/ที่อยู่ก่อนซื้อ). อีเมลรับเอกสารเก็บที่ Stripe Checkout แล้วคัดลอกกลับ (D-PF-1, 2026-09-26); เปลี่ยนภายหลังด้วย OTP ไปอีเมลใหม่จากหน้า return/แท็บการต่ออายุ (R-A8/R-D2).
 9. กลับจาก Stripe ใน browser เดิมเพื่ออ่านสถานะ. “กลับ LINE” เป็นทางเลือกผ่าน OA link ที่ตั้งค่าไว้; ไม่บังคับ auto deep-link/closeWindow และไม่ถือว่ากลับ LINE ได้ทุกเครื่อง. เข้าเมนูเดิมอีกครั้งจะเห็นข้อมูลล่าสุด แม้ปิด browser ก่อนกลับ.
 
 **Recovery ที่ต้องทำจริง:** เพิ่มเงื่อนไขแบบเดียวกันใน LIFF selection, handoff exchange, auth/company resolution, web proxy/layout และ backend billing guards. ยกเว้นเฉพาะ term-expiry สำหรับ recovery; surface string จาก client ไม่ใช่สิทธิ์. ไม่เปิด dashboard/ธุรกรรมของบริษัทหมดอายุหรือยก admin/security/platform hold. ทดสอบ LINE-only OWNER ที่มีแต่บริษัท DISABLED และคนที่มีบริษัท A ACTIVE + B EXPIRED โดยเริ่มจาก B.
@@ -91,9 +91,9 @@ flowchart TD
 | U03 | LINE card + LIFF /billing | อธิบายว่าจะเปิดเว็บ, identity loading/denied/เลือกบริษัท/hand-off ready/expired/open blocked; ไม่กรอกบัตรในแชต |
 | U04 | B overview | แพ็กเกจปัจจุบัน, usage/limit/reset, trial/paid-through, การต่ออายุ/วันตัดถัดไป, pending action, billing email และประวัติ |
 | U05 | B/plans | เปรียบเทียบ offer ที่ซื้อได้, current plan, quota คงเหลือหลังเปลี่ยน, unavailable reason; enterprise/contact ตาม catalog |
-| U06 | B/review?offerKey=… | บริษัท/แพ็กเกจ, ยอดวันนี้และรอบถัดไป/ภาษี, service period, trial ที่เหลือ, email/ข้อมูลออกเอกสารที่ต้องมี, consent, “ดำเนินการชำระเงิน” |
+| U06 | B/review?offerKey=… | บริษัท/แพ็กเกจ, ยอดวันนี้และรอบถัดไป/ภาษี, service period, trial ที่เหลือ, ข้อมูลออกเอกสาร: ชื่อ · ที่อยู่ · อีเมล (ว่างได้ — Checkout ของ Stripe ถาม; D-PF-1), consent, “ดำเนินการชำระเงิน” |
 | U07 | Stripe hosted Checkout | บัตร/3DS/decline และยอดสุดท้าย; branding/ภาษาเท่าที่ Stripe รองรับ. ไม่สร้างช่อง card/CVC ใน app |
-| U08 | B/return?attemptId=… | checking, action-required, pending, paid/applying, applied, held, canceled/expired, outage; อ่าน backend ก่อนแสดงผลทุกครั้ง |
+| U08 | B/return?attemptId=… | checking, action-required, pending, paid/applying, applied, held, canceled/expired, outage; อ่าน backend ก่อนแสดงผลทุกครั้ง; canceled → “ยังไม่ได้ชำระ” + “เลือกแพ็กเกจใหม่” กดเดียว; paid → “ส่งเอกสารไปที่ {อีเมล}” + แก้อีเมลรับเอกสารเมื่อ applied |
 | U09 | B?tab=history | วัน/เลข Invoice/ยอด THB/สถานะ/รอบบริการ, เปิด Invoice/PDF/Receipt ตาม availability; empty/loading/error/pagination |
 | U10 | Stripe hosted Portal | จัดการบัตรและ billing contact, invoice history, เปลี่ยน/ยกเลิกตาม policy/config ที่อนุมัติ; กลับ B แล้ว sync สถานะ |
 | U11 | /companies/{companyId}/renew + banner | OWNER ต่ออายุ/แก้การชำระผ่าน B; employee ข้อความกลาง; expired, grace, cancel-scheduled, held และ provider outage ไม่ใช้ข้อความเดียว |
@@ -122,8 +122,8 @@ U06 ตรวจสอบก่อนชำระ
 รอบถัดไป {nextAmount/วิธีคำนวณที่อนุมัติ} วันที่ {date}
 สิทธิ์เริ่ม {effectiveAt} · trial คงเหลือ {ตาม B01}
 โควตาคงเหลือ {remaining} · reset {resetAt}
-ส่งเอกสารไปที่ {billingEmail} [แก้ไข]
-{ข้อมูลนิติบุคคล/ภาษีที่ B06 กำหนด} [แก้ไข]
+อีเมลรับเอกสาร {billingEmail | จะกรอกที่หน้าชำระเงิน} [แก้อีเมลรับเอกสาร — เมื่อมี Stripe Customer]
+ชื่อบนเอกสาร {ชื่อ} · ที่อยู่ {ที่อยู่ | จะกรอกที่หน้าชำระเงิน} [แก้ไขข้อมูลบริษัท]
 [ ] ยอมรับการเรียกเก็บรายเดือนและเงื่อนไขฉบับ {revision}
 [ดำเนินการชำระเงิน]                     [กลับไปเลือกแพ็กเกจ]
 ```
@@ -137,7 +137,14 @@ U08 ตัวอย่างเมื่อจ่ายแล้ว แต่ส
 [ตรวจสถานะอีกครั้ง] [กลับหน้าบริษัท] [ติดต่อทีมงาน]
 หลัง backend applied + access allowed:
 ใช้งานแพ็กเกจแล้ว · ใช้ได้ถึง {paidThrough}
+ส่งเอกสารไปที่ {อีเมล} [แก้อีเมลรับเอกสาร]
 [เริ่มใช้งาน] [ดู Invoice / Receipt] [กลับ LINE ถ้าเลือกใช้]
+```
+
+```text
+U08 กลับจาก Stripe โดยไม่จ่าย (cancel_url มี checkout=canceled)
+ยังไม่ได้ชำระ
+[เลือกแพ็กเกจใหม่]   [กลับไปยังรายการเดิม]
 ```
 
 Desktop ใช้สองคอลัมน์ใน review (รายละเอียด/สรุปยอด); mobile 390px เรียงหนึ่งคอลัมน์และ CTA ไม่บังเงื่อนไข/คีย์บอร์ด. ตาราง history ย่อเป็นรายการที่อ่านได้ ไม่บังคับเลื่อนแนวนอน. Reuse UI components/tokens เดิม; loading ต้องไม่กระพริบเป็น success/ไม่มีสิทธิ์. รองรับ keyboard, focus หลัง error, label/aria-live สำหรับสถานะ, ข้อความที่ไม่ใช้สีเพียงอย่างเดียว และวันเวลา Asia/Bangkok. ไม่มีราคา placeholder หรือข้อความ TBD ในหน้าขายจริง: ข้อมูลไม่ครบให้ปิด action พร้อมเหตุผลที่เข้าใจได้.
@@ -162,7 +169,7 @@ Payment, access, subscription และ document เป็นคนละแก�
 | 401 / 403 / 5xx / offline | เข้าบัญชีต่อที่เดิม / ไม่มีสิทธิ์ / ลองใหม่ | เปิดเผยเงินของบริษัทอื่นหรือเสีย attempt ตอน login |
 | ไม่มี/ยังไม่พร้อม document | ยังไม่มีเอกสาร/กำลังจัดเตรียม; กลับมาตรวจ | null link, PDF ว่าง หรือทำเลขเอกสารใหม่เอง |
 
-Polling U08: เริ่มอ่านทันที แล้วทุก 2 วินาทีไม่เกิน 30 วินาทีและทุก 5 วินาทีต่อจนครบ 2 นาที; เคารพ Retry-After/429. หยุดเมื่อซ่อนหน้า/offline/unmount/เปลี่ยนบริษัท/terminal; กลับ visible ให้อ่านใหม่โดยไม่เริ่มรอบ 2 นาทีซ้ำอัตโนมัติ. ครบเวลาแสดง “ยังตรวจสอบอยู่” พร้อม manual refresh/reference/support; ไม่เปลี่ยนเป็น failed. Backend reconciliation ทำงานต่อได้เมื่อปิดหน้า. กัน response เก่าของบริษัท A มาเขียนทับ B และ invalidation หลัง Portal/paid apply ต้องโหลด entitlement/session ใหม่.
+Polling U08: เริ่มอ่านทันที แล้วทุก 2 วินาทีไม่เกิน 30 วินาทีและทุก 5 วินาทีต่อจนครบ **3 นาที** (2026-09-27 G13); อ่านเฉพาะ attempt (1 GET/รอบ); `POST refresh` ไม่ถี่กว่า 30 วินาที; หยุดเมื่อ APPLIED/HELD/FAILED; เคารพ Retry-After/429. หยุดเมื่อซ่อนหน้า/offline/unmount/เปลี่ยนบริษัท/terminal; กลับ visible ให้อ่านใหม่โดยไม่เริ่มรอบ 3 นาทีซ้ำอัตโนมัติ. ครบเวลาแสดง “ยังตรวจสอบอยู่” พร้อม manual refresh/reference/support; ไม่เปลี่ยนเป็น failed. Backend reconciliation ทำงานต่อได้เมื่อปิดหน้า. กัน response เก่าของบริษัท A มาเขียนทับ B และ invalidation หลัง Portal/paid apply ต้องโหลด entitlement/session ใหม่.
 
 ## 5. Contract ที่จะ implement
 

@@ -16,15 +16,16 @@ const CODE_LABELS: Record<string, string> = {
 
   BILLING_RECIPIENT_UPDATE_REQUIRED: 'กรุณาตรวจและยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้ด้านบน แล้วตรวจสรุปการชำระเงินใหม่',
   BILLING_EMAIL_CHANGED: 'ข้อมูลอีเมลเปลี่ยนแล้ว กรุณาตรวจผู้รับเอกสารและสรุปรายการใหม่',
-  BILLING_EMAIL_VERIFICATION_REQUIRED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อยก่อนชำระเงิน',
-  BILLING_EMAIL_UPDATE_PENDING: 'กรุณาตรวจรายการเปลี่ยนผู้รับเอกสารให้เสร็จก่อนเริ่มรายการใหม่',
-  // Purchase without setup (pr-c §2.4): document recipient and resend.
+  // Purchase without setup (pr-d §3.3): only the recipient panel's "use my account email" path still asks for it.
+  BILLING_EMAIL_VERIFICATION_REQUIRED: 'การเปลี่ยนผู้รับเอกสารด้วยอีเมลบัญชีต้องยืนยันอีเมลบัญชีก่อน หรือเลือก "ใช้อีเมลอื่น" เพื่อยืนยันด้วยรหัสที่ส่งไปอีเมลนั้น',
+  BILLING_EMAIL_UPDATE_PENDING: 'มีคำขอเปลี่ยนอีเมลรับเอกสารค้างอยู่ กรุณายืนยันหรือยกเลิกคำขอในแท็บการต่ออายุและชำระเงินก่อนเริ่มรายการใหม่',
+  // Purchase without setup (pr-c §2.4, wording pr-d §2.3 ค): document recipient and resend.
   BILLING_RESEND_LIMIT: 'วันนี้ส่งเอกสารใบนี้ซ้ำครบจำนวนที่กำหนดแล้ว ลองใหม่ได้พรุ่งนี้ หรือเปิดเอกสารจากหน้านี้ได้ทันที',
-  BILLING_RESEND_UNAVAILABLE: 'ยังส่งเอกสารซ้ำไม่ได้ในตอนนี้ ตรวจอีเมลรับเอกสารแล้วลองใหม่ หรือเปิดเอกสารจากหน้านี้',
+  BILLING_RESEND_UNAVAILABLE: 'ยังส่งเอกสารนี้ซ้ำไม่ได้ในตอนนี้ กรุณาลองใหม่ภายหลัง หรือเปิดเอกสารจากปุ่มด้านบนแทน',
   BILLING_RECIPIENT_UNAVAILABLE: 'ตั้งอีเมลรับเอกสารได้หลังชำระเงินครั้งแรก',
   BILLING_RECIPIENT_UNCHANGED: 'อีเมลนี้เป็นอีเมลรับเอกสารปัจจุบันอยู่แล้ว ไม่ต้องเปลี่ยน',
   BILLING_RECIPIENT_PROOF_INVALID: 'การยืนยันอีเมลนี้หมดอายุหรือถูกใช้แล้ว กรุณาขอรหัสยืนยันใหม่',
-  BILLING_RECIPIENT_BOUNCED: 'อีเมลรับเอกสารส่งไม่ถึง กรุณาแก้อีเมลรับเอกสารก่อน',
+  BILLING_RECIPIENT_BOUNCED: 'อีเมลรับเอกสารปัจจุบันส่งไม่ถึง กรุณาแก้อีเมลรับเอกสารก่อน แล้วจึงส่งเอกสารซ้ำ',
   EMAIL_OTP_REQUIRED: 'กรุณาโหลดหน้านี้ใหม่เพื่อยืนยันอีเมลด้วยรหัส OTP',
   EMAIL_REAUTH_REQUIRED: 'กรุณากรอกรหัสผ่านปัจจุบัน หรือยืนยันตัวตนผ่าน LINE อีกครั้ง',
   EMAIL_DELIVERY_UNAVAILABLE: 'ยังส่งรหัสไม่ได้ กรุณาลองใหม่ภายหลัง หรือติดต่อทีมงาน 098-256-5628',
@@ -115,6 +116,68 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_SALES_CLOSED: 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน',
   BILLING_QUOTE_STALE: 'รายการหมดอายุหรือข้อมูลเปลี่ยน กรุณาเลือกราคาและยืนยันใหม่',
   BILLING_CAP_SELECTION_REQUIRED: 'จำนวนสาขาหรือผู้ใช้เกินแพ็กเกจที่เลือก กรุณาเลือกสิทธิ์ที่จะใช้ต่อก่อนยืนยัน',
+  // Purchase without setup (pr-d §2.3 ก, RV28): every `billingError('X')` has Thai here, so the package
+  // page falls through to this map (billing-error-text.ts) instead of keeping a second copy.
+  BILLING_CHECKOUT_PENDING: 'ระบบกำลังตรวจรายการชำระเงินเดิมกับ Stripe กรุณารอสักครู่แล้วกดอัปเดตข้อมูล',
+  BILLING_PURCHASE_PENDING: 'มีรายการชำระเงินเดิมที่ระบบกำลังตรวจอยู่ กรุณารอสักครู่แล้วลองใหม่',
+  BILLING_COLLECTION_PENDING: 'มีคำสั่งเรื่องการต่ออายุที่ยังไม่เสร็จ กรุณาตรวจในแท็บการต่ออายุและชำระเงินให้เสร็จก่อนซื้อเพิ่ม',
+  BILLING_COLLECTION_CLOSED: 'ยังจัดการการต่ออายุผ่านเว็บไม่ได้ในตอนนี้ กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
+  BILLING_COLLECTION_REVIEW: 'ข้อมูลการต่ออายุเปลี่ยนไปแล้ว กรุณาโหลดข้อมูลล่าสุดแล้วเริ่มคำสั่งใหม่ หากยังไม่ได้ให้ติดต่อทีมงานพร้อมเลขอ้างอิง',
+  BILLING_CONSENT_REQUIRED: 'กรุณาติ๊กยอมรับเงื่อนไขก่อนไปชำระเงิน',
+  BILLING_DOCUMENT_BINDING: 'ข้อมูลรายการนี้ยังยืนยันกับ Stripe ไม่ได้ กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
+  BILLING_EXISTING_SUBSCRIPTION: 'มีรายการชำระเงินเดิมที่ยังไม่จบ กรุณาตรวจสถานะรายการเดิมก่อนเริ่มรายการใหม่',
+  BILLING_IDEMPOTENCY_CONFLICT: 'รายการนี้ถูกส่งซ้ำด้วยข้อมูลที่ต่างจากเดิม กรุณาโหลดหน้าใหม่แล้วเริ่มรายการอีกครั้ง',
+  BILLING_IDEMPOTENCY_REQUIRED: 'ส่งรายการไม่ครบ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
+  BILLING_MAPPING_MISMATCH: 'ข้อมูลบิลต่ออายุไม่ตรงกับ Stripe กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
+  BILLING_MODE_CHANGE_PENDING: 'เปลี่ยนวิธีชำระเงินได้เมื่อแพ็กเกจปัจจุบันสิ้นสุด ตอนนี้เลือกวิธีชำระแบบเดิม หรือรอให้ครบกำหนดก่อน',
+  BILLING_OFFER_UNAVAILABLE: 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน กรุณาเลือกแพ็กเกจอื่น',
+  BILLING_PACKAGE_STATE_INVALID: 'ข้อมูลแพ็กเกจเดิมของบริษัทต้องให้ทีมงานตรวจก่อน กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
+  BILLING_PLAN_CHANGE_PENDING: 'มีแพ็กเกจที่ชำระล่วงหน้ารอเริ่มใช้งานอยู่ กรุณาตรวจรายการเดิมในแท็บการต่ออายุและชำระเงิน',
+  BILLING_PRICE_MISMATCH: 'ราคาในระบบไม่ตรงกับ Stripe กรุณาลองใหม่ภายหลัง หากยังไม่ได้ให้ติดต่อทีมงาน',
+  BILLING_REPEAT_REVIEW: 'รายการซื้อซ้ำต้องให้ทีมงานตรวจก่อน กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
+  BILLING_TAX_MISMATCH: 'การตั้งค่าภาษีของระบบยังไม่พร้อม กรุณาลองใหม่ภายหลัง หรือติดต่อทีมงาน',
+  BILLING_UPGRADE_BOUNDARY: 'ใกล้วันเปลี่ยนรอบแล้ว กรุณาตรวจสถานะใหม่หลังเปลี่ยนรอบ หรือติดต่อทีมงาน',
+  BILLING_UPGRADE_GIFT_ONLY: 'เวลาที่เหลือของแพ็กเกจเป็นวันที่ทีมงานให้ไว้ กรุณาซื้อแพ็กเกจเดิมเพิ่มก่อน แล้วจึงเปลี่ยนเป็นแพ็กเกจที่สูงขึ้น',
+  BILLING_UPGRADE_REVIEW: 'ข้อมูลส่วนต่างของแพ็กเกจต้องให้ทีมงานตรวจก่อน กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
+  BILLING_CHECKOUT_INVOICE_MISMATCH: 'หลักฐานการชำระเงินของรายการนี้ต้องให้ทีมงานตรวจก่อนเปิดสิทธิ์ กรุณาดูสถานะรายการเดิม',
+  BILLING_INVOICE_MISMATCH: 'หลักฐานใบแจ้งหนี้ของรายการนี้ต้องให้ทีมงานตรวจก่อนเปิดสิทธิ์ กรุณาดูสถานะรายการเดิม',
+  SPECIAL_PRICE_RETURN_REVIEW: 'ราคาพิเศษของร้านยังปรับกลับเป็นราคาปกติไม่ได้ ทีมงานกำลังตรวจสอบ',
+  // These had Thai only on the package page; the shared map carries them now, same wording.
+  BILLING_CADENCE_PENDING_CHANGE: 'มีรายการเปลี่ยนแพ็กเกจรอบถัดไป กรุณาตรวจสอบและยกเลิกรายการนั้นในแท็บการต่ออายุและชำระเงิน ก่อนซื้อรายปี',
+  BILLING_REPEAT_NOT_READY: 'การซื้อซ้ำหรือเปลี่ยนแพ็กเกจระหว่างรอบยังไม่เปิดให้บริการ กรุณาติดต่อทีมงาน หรือรอให้แพ็กเกจปัจจุบันสิ้นสุดแล้วซื้อใหม่',
+  BILLING_RESTART_REVIEW: 'ต้องตรวจสมาชิกหรือยอดค้างเดิมก่อนเริ่มแพ็กเกจใหม่ กรุณาติดต่อทีมงานพร้อมเลขบริษัท',
+  BILLING_DOCUMENT_PENDING: 'Stripe กำลังเตรียมเอกสาร กรุณาลองเปิดอีกครั้ง',
+  BILLING_PORTAL_UNAVAILABLE: 'ยังเปิดหน้าแก้บัตรไม่ได้ กรุณาโหลดสถานะล่าสุดแล้วลองอีกครั้ง',
+  BILLING_PORTAL_CONFIG_MISMATCH: 'ทีมงานต้องตรวจการตั้งค่าหน้าแก้บัตรก่อน กรุณาติดต่อทีมมั่งมี',
+  BILLING_COMPANY_HELD: 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมมั่งมี',
+  BILLING_SOURCE_REVIEW_REQUIRED: 'ข้อมูลการชำระเงินเดิมของบริษัทนี้ยังไม่ตรงกัน กรุณาติดต่อทีมมั่งมีก่อนเริ่มรายการใหม่',
+  BILLING_ENTITLEMENT_REVIEW_REQUIRED: 'ข้อมูลสิทธิ์เมนูเดิมยังไม่พร้อม กรุณาติดต่อทีมมั่งมีก่อนชำระเงิน',
+  BILLING_REFUND_PENDING: 'กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ กรุณาโหลดสถานะล่าสุดหรือติดต่อทีมมั่งมี',
+  BILLING_NOT_READY: 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน',
+  // Operator copy (pr-d §2.3 จ): System Admin screens read these through apiErrorMessage.
+  CONTROL_ASSIGNEE_REVIEW: 'ผู้รับงานหรือผู้สำรองไม่มีสิทธิ์ดูแลบริษัทนี้แล้ว กรุณาเลือกใหม่หรือคืนเคสเข้าคิว',
+  CONTROL_CHECKOUT_OUTCOME_UNKNOWN: 'ยังยืนยันผลยุติหน้าชำระเงินเดิมไม่ได้ กรุณาตรวจรายการเดิมอีกครั้ง',
+  CONTROL_CHECKOUT_SOURCE_CHANGED: 'ข้อมูลหน้าชำระเงินเดิมเปลี่ยนหรือยังไม่ครบ กรุณาตรวจรายการเดิมอีกครั้ง',
+  CONTROL_COLLECTION_REVIEW: 'ข้อมูลการเก็บเงินเปลี่ยนหรือยังยืนยันไม่ได้ เปิดรายการเดิมเพื่อตรวจสอบ',
+  CONTROL_EXPORT_CHANGED: 'ข้อมูลหรือสิทธิ์เปลี่ยนแล้ว โหลดประวัติล่าสุดก่อนดาวน์โหลดอีกครั้ง',
+  CONTROL_FREE_DAYS_REVIEW: 'ยังปรับวันไม่ได้ ตรวจรายการต่ออายุเดิมแล้วลองรายการนี้อีกครั้ง',
+  CONTROL_IDEMPOTENCY_CONFLICT: 'คำขอนี้ต่างจากรายการเดิม เปิดรายการเดิมเพื่อตรวจสอบ',
+  CONTROL_INVOICE_IDENTITY_NOT_READY: 'ตั้งค่าเลขภาษีนี้เป็นค่าเริ่มต้นของเอกสารใน Stripe แล้วตรวจสอบใหม่',
+  CONTROL_INVOICE_SOURCE_CHANGED: 'บัญชีหรือผลตรวจต้นทางเปลี่ยนแล้ว ยกเลิกคำสั่งเดิมและตรวจใหม่',
+  CONTROL_INVOICE_TARGET_REQUIRED: 'เลือกใบเสร็จหรือผลตรวจใบแจ้งหนี้เดิมก่อน แล้วตรวจผลกระทบใหม่',
+  CONTROL_ISSUER_REQUIRED: 'กรุณาระบุข้อมูลกิจการและเลขภาษีที่ตั้งค่าใน Stripe',
+  CONTROL_OPERATION_IN_PROGRESS: 'มีคำสั่งเดิมที่ยังตรวจไม่จบ เปิดประวัติคำสั่งของบริษัทเพื่อดำเนินการต่อ',
+  CONTROL_POLICY_NOT_SUPPORTED: 'นโยบายปัจจุบันให้เริ่มและชำระทันที รายการนี้จึงทำไม่ได้',
+  CONTROL_PROVIDER_DISABLED: 'ยังไม่ได้ตั้งค่าบัญชีผู้ให้บริการ ติดต่อผู้ดูแลการเชื่อมต่อ',
+  CONTROL_REFUNDS_CLOSED: 'ยังไม่เปิดรับคำขอคืนเงิน ติดต่อผู้ดูแลการตั้งค่า',
+  CONTROL_REFUND_AGED_UNKNOWN: 'ยังยืนยันรายการเดิมไม่ได้ ให้เจ้าหน้าที่ตรวจ Stripe ก่อนดำเนินการต่อ',
+  CONTROL_REFUND_CONFIG_REQUIRED: 'กำหนดวงเงินคืนเงินและขออนุมัตินโยบายก่อนเปิดการคืนเงิน',
+  CONTROL_REFUND_LIMIT: 'ยอดนี้เกินวงเงินต่อคำขอ กรุณาติดต่อผู้ดูแลวงเงิน',
+  CONTROL_REFUND_SOURCE_CHANGED: 'หลักฐานการคืนเงินเปลี่ยนหรือยังไม่ครบ กรุณาตรวจรายการเดิมอีกครั้ง',
+  CONTROL_SCAN_BUSY: 'มีงานตรวจที่ยังไม่จบ กรุณาเปิดงานเดิมก่อน',
+  CONTROL_SCOPE_TARGET_INVALID: 'เลือกเจ้าหน้าที่ที่มีบทบาทระดับระบบสำหรับงานการเงินอยู่แล้ว ผู้ดูแลระบบมีขอบเขตทั้งหมดอยู่แล้ว',
+  CONTROL_SCHEDULE_INVALID: 'กำหนดเวลาไม่ถูกต้อง กรุณาเลือกเวลาใหม่แล้วตรวจผลกระทบอีกครั้ง',
+  CONTROL_NOTIFICATION_REVIEW: 'รายการส่งนี้ยังมีเงื่อนไขที่ต้องแก้ก่อน เปิดรายการส่งเดิมเพื่อตรวจสาเหตุ แล้วจึงสั่งอีกครั้ง',
   reimbursement_source_unavailable: 'ไม่พบค่าใช้จ่ายต้นทางที่เปิดได้ กรุณาเลือกใหม่',
   reimbursement_source_currency_mismatch: 'สกุลเงินของค่าใช้จ่ายต้องตรงกับใบเบิก',
   reimbursement_source_already_settled: 'รายการนี้บันทึกบัญชี จ่ายเงิน หรือปิดรายการแล้ว จึงนำมาเบิกซ้ำไม่ได้',
@@ -1282,10 +1345,12 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
       return `แพ็กเกจปัจจุบันรองรับ ${capacity.limit} สาขา และใช้งานครบแล้ว หากต้องการเพิ่มสาขา กรุณาเปลี่ยนแพ็กเกจ`;
     }
   }
-  if (code === 'BILLING_RATE_LIMIT') {
+  // A short, bounded wait is worth naming; a long one (a resend limit resets tomorrow) is not.
+  if (code === 'BILLING_RATE_LIMIT' || code === 'BILLING_RESEND_LIMIT' || code === 'EMAIL_OTP_RATE_LIMITED') {
     const seconds = details?.retryAfterSeconds ?? error?.retryAfterSeconds;
     if (typeof seconds === 'number' && Number.isInteger(seconds) && seconds >= 1 && seconds <= 300) {
-      return `ทำรายการถี่เกินไป กรุณารอ ${seconds} วินาที แล้วลองรายการเดิมอีกครั้ง`;
+      return code === 'BILLING_RATE_LIMIT' ? `ทำรายการถี่เกินไป กรุณารอ ${seconds} วินาที แล้วลองรายการเดิมอีกครั้ง`
+        : `${CODE_LABELS[code]} (ลองใหม่ได้ใน ${seconds} วินาที)`;
     }
   }
   if (typeof code === 'string') {

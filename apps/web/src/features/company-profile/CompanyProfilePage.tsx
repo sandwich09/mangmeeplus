@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { billingProfileReturnHref } from '@/features/billing/billing-profile-navigation';
+import { billingApi } from '@/features/billing/billing.api';
 import { AccountEmailOtpPanel } from '@/features/auth/AccountEmailOtpPanel';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { todayCivilDate, DBD_TSIC_ACTIVITIES, COMPANY_BUSINESS_TYPE_OTHER_MAX, type CompanyIdentityResponse, type CompanyLegalAddress, type VatRegistrationStatus } from '@watchdog-bms/contracts';
@@ -26,11 +27,15 @@ import {
 import {
   addressErrorMessages,
   buildShopSave,
+  checkoutAddressDiffers,
+  checkoutAddressText,
+  checkoutAddressToForm,
   clearChecklistCache,
   isThaiMobileInput,
   passwordFormError,
   sectionIdFromHash,
   usernameFieldRequired,
+  NO_CHANGES_MESSAGE,
   PHONE_ERROR_MESSAGE,
   PHONE_HINT,
 } from './company-profile.logic';
@@ -101,6 +106,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [billingReturnHref, setBillingReturnHref] = useState<string | null>(null);
   useEffect(() => { setBillingReturnHref(billingProfileReturnHref(companyId, window.location.search)); }, [companyId]);
+  const [checkoutAddress, setCheckoutAddress] = useState<CompanyLegalAddress | null>(null);
 
   // L1: the dashboard card caches its answer for 10 minutes, so without this the item the owner
   // just completed keeps reading as missing on the next dashboard visit.
@@ -178,6 +184,16 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   // the write. Editing needs both — typing over values you cannot see is destructive, and typing
   // values you may not save is a 403 dressed up as a form.
   const canEditShop = full !== null && canManageShop;
+  // DQ5: the address typed at Stripe Checkout, offered — never written — to this form. The billing
+  // status needs company.plan.manage; without it (or on any failure) the offer simply does not show.
+  const canManagePlan = permissions.includes('company.plan.manage');
+  const checkoutFill = checkoutAddress ? checkoutAddressToForm(checkoutAddress) : null;
+  useEffect(() => {
+    if (!canEditShop || !canManagePlan) return;
+    let active = true;
+    void billingApi(companyId).status().then((status) => { if (active) setCheckoutAddress(status.checkoutAddress ?? null); }).catch(() => {});
+    return () => { active = false; };
+  }, [canEditShop, canManagePlan, companyId]);
   const masked = identity?.identity && identity.identity.masked ? identity.identity : null;
   const serverVatStatus = identity?.vatRegistration?.status ?? 'UNKNOWN';
   // `PasswordLoginUseCase` looks accounts up by username OR the stored account email. With neither, a
@@ -196,6 +212,8 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
       { current: serverVatStatus, chosen: vatChoice },
     );
     if ('error' in plan) {
+      // F29: nothing to save on the way back to a purchase is not an error — just go back.
+      if (plan.error === NO_CHANGES_MESSAGE && billingReturnHref) { window.location.assign(billingReturnHref); return; }
       setShopError(plan.error);
       return;
     }
@@ -343,7 +361,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
           <SectionHeading
             id="shop"
             title="ข้อมูลร้าน"
-            hint="ใช้ตอนออกใบกำกับภาษีและเอกสารทางการ ถ้ายังไม่มีก็เว้นไว้ก่อนได้ค่ะ"
+            hint="ใช้ออกใบแจ้งหนี้ ใบเสร็จ และเอกสารทางการ ไม่ต้องกรอกก่อนซื้อแพ็กเกจ (กรอกที่หน้าชำระเงินได้) ถ้ากรอกที่อยู่ให้กรอกครบทุกช่องค่ะ"
           />
           {!canEditShop && (
             <div className="mb-4">
@@ -415,6 +433,14 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             <div className="grid gap-4 sm:grid-cols-2">
               {addressField('line1', 'ที่อยู่ (บ้านเลขที่ ถนน)')}
               {addressField('line2', 'ที่อยู่เพิ่มเติม', false)}
+              {canEditShop && checkoutAddress && checkoutFill && checkoutAddressDiffers(checkoutAddress, address) && (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm sm:col-span-2">
+                  <p>มีที่อยู่ที่กรอกไว้ตอนชำระเงิน: <span className="break-words">{checkoutAddressText(checkoutAddress)}</span></p>
+                  <button type="button" className={`${ACTION_BUTTON} mangmee-btn-secondary mt-2`} disabled={shopSaving}
+                    onClick={() => setAddress((current) => ({ ...current, ...checkoutFill }))}>ใช้ที่อยู่จากการชำระเงิน</button>
+                  <p className="mt-1 text-gray-600">เติมลงฟอร์มให้ตรวจก่อน ยังไม่บันทึกจนกว่าจะกดบันทึกข้อมูลร้าน</p>
+                </div>
+              )}
             </div>
           </div>
           )}

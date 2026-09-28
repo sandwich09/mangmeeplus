@@ -1,5 +1,5 @@
 'use client';
-import type { BillingEmailRecipient, BillingEmailRecipientOperation, BillingCatalog, BillingQuote, BillingStatus, BillingCheckoutBody, BillingCheckoutResult, BillingInvoiceItem, BillingAttemptView, BillingCollectionAction, BillingCollectionOperation, BillingPurchaseMode } from '@watchdog-bms/contracts';
+import type { BillingEmailRecipient, BillingEmailRecipientOperation, BillingCatalog, BillingQuote, BillingStatus, BillingCheckoutBody, BillingCheckoutResult, BillingInvoiceItem, BillingAttemptView, BillingCollectionAction, BillingCollectionOperation, BillingPurchaseMode, BillingRecipientOtpChallenge, BillingRecipientOtpProof, BillingDocumentResendResult } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
@@ -11,7 +11,10 @@ export function billingApi(companyId: string) {
     headers: { 'Content-Type': 'application/json', 'X-Company-Id': companyId, ...(key ? { 'Idempotency-Key': key } : {}) }, body: JSON.stringify(body), suppressErrorToast: true });
   return {
     recipient: () => get<BillingEmailRecipient>(`${base}/recipient`),
-    recipientPreview: () => post<BillingEmailRecipientOperation>('/recipient/preview', {}),
+    // No proof = the original "use my verified account email" review; a proof = a mailbox proven by a code (R-A8).
+    recipientPreview: (recipientProofId?: string) => post<BillingEmailRecipientOperation>('/recipient/preview', recipientProofId ? { recipientProofId } : {}),
+    recipientOtpRequest: (email: string, requestKey: string) => post<BillingRecipientOtpChallenge>('/recipient/otp/request', { email, requestKey }),
+    recipientOtpConfirm: (challengeId: string, code: string) => post<BillingRecipientOtpProof>('/recipient/otp/confirm', { challengeId, code }),
     recipientOperation: (id: string) => get<BillingEmailRecipientOperation>(`${base}/recipient/${encodeURIComponent(id)}`),
     recipientSubmit: (operation: BillingEmailRecipientOperation) => post<BillingEmailRecipientOperation>(`/recipient/${operation.id}/submit`,
       { expectedVersion: operation.version, previewHash: operation.previewHash, accepted: true }, `billing-recipient-${operation.id}`),
@@ -20,9 +23,9 @@ export function billingApi(companyId: string) {
     attempt: (attemptId: string) => get<BillingAttemptView>(`${base}/attempts/${encodeURIComponent(attemptId)}`),
     history: (cursor?: string) => get<BillingHistory>(`${base}/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
     // `dealId` still sends the deal's base tier and 'month' — the API prices the offer from the
-    // approved snapshot, never from this body (S36).
+    // approved snapshot, never from this body (S36). No recipient yet = no key: Checkout asks (RV05).
     quote: (offerKey: string, interval: string, billingEmail: string, capacity?: BillingCapacitySelection, purchaseMode: BillingPurchaseMode = 'CARD_AUTO', dealId?: string, purchaseIntent?: 'FULL_PACKAGE') =>
-      post<BillingQuote>('/quote', { offerKey, interval, billingEmail, capacity, purchaseMode, ...(dealId ? { dealId } : {}), ...(purchaseIntent ? { purchaseIntent } : {}) }),
+      post<BillingQuote>('/quote', { offerKey, interval, ...(billingEmail ? { billingEmail } : {}), capacity, purchaseMode, ...(dealId ? { dealId } : {}), ...(purchaseIntent ? { purchaseIntent } : {}) }),
     capacity: (offerKey: string, interval: string) => get<BillingCapacityOptions>(`${base}/capacity?offerKey=${encodeURIComponent(offerKey)}&interval=${encodeURIComponent(interval)}`),
     repairCapacity: (attemptId: string, expectedVersion: number, selection: BillingCapacitySelection, key: string) => post<{ operationId: string; queued: boolean }>(`/attempts/${encodeURIComponent(attemptId)}/capacity`, { expectedVersion, selection, accepted: true }, key),
     checkout: (body: BillingCheckoutBody, key: string) => post<BillingCheckoutResult>('/checkout', body, key),
@@ -37,5 +40,7 @@ export function billingApi(companyId: string) {
       expectedVersion: operation.version, previewHash: operation.previewHash, accepted: true }, `billing-collection-${operation.id}`),
     collectionWithdraw: (operation: BillingCollectionOperation) => post<BillingCollectionOperation>(`/collection/${operation.id}/withdraw`, { expectedVersion: operation.version }),
     document: (id: string, kind: 'invoice' | 'receipt' | 'pdf') => post<{ url: string }>(`/documents/${encodeURIComponent(id)}/open`, { kind }),
+    // R-D1: synchronous under the account lease; the API needs no Idempotency-Key here.
+    resendDocument: (invoiceId: string) => post<BillingDocumentResendResult>(`/documents/${encodeURIComponent(invoiceId)}/resend`, {}),
   };
 }
