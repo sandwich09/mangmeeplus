@@ -2786,7 +2786,7 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.equal(sentMessages.length, 1, 'one card, never a card plus a text');
       const card = sentMessages[0];
       assert.equal(card.type, 'flex');
-      assert.equal(card.contents.header.contents[0].text, 'ยังไม่ได้สมัครแพ็กเกจ');
+      assert.equal(card.contents.header.contents[0].text, 'ยังไม่มีแพ็กเกจ');
       assert.match(card.canonicalText, /น้องมั่งมียังตอบไม่ได้จนกว่าจะเลือกแพ็กเกจ/);
       assert.match(card.canonicalText, /ข้อมูลทั้งหมดยังอยู่ครบ/);
       const buttons = card.contents.footer.contents.map((b: any) => b.action);
@@ -2833,7 +2833,7 @@ describe('ProcessLineWebhookUseCase', () => {
       await useCase.executeReceiptUpload({ ...BASE_EVENT, lineMessageId: 'locked-image', messageType: 'image' });
 
       assert.equal(sentMessages[0].type, 'flex');
-      assert.equal(sentMessages[0].contents.header.contents[0].text, 'ยังไม่ได้สมัครแพ็กเกจ');
+      assert.equal(sentMessages[0].contents.header.contents[0].text, 'ยังไม่มีแพ็กเกจ');
       assert.equal(ocrCalls, 0, 'a locked shop never costs a document read');
       assert.equal(getAiGatewayCalled(), false);
       assert.equal((updates.at(-1) as any).data.status, 'package_required');
