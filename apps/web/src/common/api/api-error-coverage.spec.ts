@@ -57,9 +57,29 @@ function openFeatureErrorCodes(): Map<string, string> {
   return codes;
 }
 
-// `validation` is an internal return-shape discriminator in the legal-identity logic, never an HTTP
-// answer. Listed rather than filtered by a pattern, so the exemption stays visible.
-const NOT_USER_FACING = new Set(['validation']);
+// Codes the discovery above finds that never reach the web as an HTTP answer. Listed rather than
+// filtered by a pattern, so each exemption stays visible and has its reason next to it.
+const NOT_USER_FACING = new Set([
+  // An internal return-shape discriminator in the legal-identity logic.
+  'validation',
+  // LINE send outcomes: what `LineReplyAdapter.sendFrozenV2` returns about one LINE API call to its
+  // callers (webhook replay, ledger drain, receipt notifier). `API_ACCEPTED` is the success value.
+  'API_ACCEPTED', 'CHANNEL_CHANGED', 'CHANNEL_UNAVAILABLE', 'FLEX_REJECTED', 'INVALID_FROZEN_WIRE',
+  'PROVIDER_ACCEPTANCE_UNKNOWN', 'PROVIDER_REJECTED', 'RATE_LIMITED', 'REPLY_TOKEN_REJECTED',
+  // Receipt-result notification outcomes (`line-capture-result-notifier.use-case.ts`): the
+  // accepted/retryable/permanent verdicts it returns to the notification worker.
+  'CAPTURE_ACCESS_OR_SOURCE_CHANGED', 'CAPTURE_CHECKPOINT_LOST', 'CAPTURE_LEASE_CHANGED', 'CAPTURE_MORE_BATCHES',
+  'CAPTURE_NOT_DISPATCHABLE', 'CAPTURE_SOURCE_CHANGED', 'CAPTURE_SOURCE_MISSING', 'LINE_DELIVERY_NOT_ACCEPTED',
+  'LINE_OUTCOME_RECOVERY_REQUIRED', 'LINE_PROVIDER_REJECTED', 'WAITING_CONTINUATION',
+  // The API's own check of its contract with the AI Gateway (`ai-gateway.client.ts`). Only the LINE
+  // webhook, the ledger drain and the document-QA worker call it; no web request does.
+  'AI_CONTRACT_UNSUPPORTED',
+  // LINE reimbursement drafts (`line-reimbursement-draft.use-case.ts`, the draft-action repository):
+  // thrown inside the LINE draft flow. The web draft page's endpoints (getForWeb / confirmForWeb /
+  // cancelForWeb) catch them and answer with a status the page renders through its own Thai copy.
+  'reimbursement_action_changed', 'reimbursement_action_identity_conflict', 'reimbursement_active_action_exists',
+  'reimbursement_target_missing', 'state_not_editable',
+]);
 
 describe('Thai coverage for default-open feature error codes', () => {
   it('finds the API codes at all, so a moved path fails loudly instead of passing empty', () => {
