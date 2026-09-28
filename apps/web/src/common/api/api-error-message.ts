@@ -646,6 +646,9 @@ const CODE_LABELS: Record<string, string> = {
   // Same sentence the profile form shows before it submits (PHONE_ERROR_MESSAGE in
   // features/company-profile/company-profile.logic.ts): one rule must not have two wordings.
   invalid_phone_number: 'เบอร์มือถือต้องมี 10 หลัก เช่น 0812345678',
+  partner_owner_name_invalid: 'กรุณากรอกชื่อ 1–160 ตัวอักษร โดยไม่มีอักขระควบคุม',
+  partner_owner_name_unavailable: 'ไม่พบเจ้าของร้านที่แก้ชื่อได้ในบริษัทนี้ กรุณาโหลดข้อมูลใหม่',
+  partner_owner_name_conflict: 'ชื่อบัญชีถูกแก้ไขแล้ว กรุณาโหลดข้อมูลล่าสุดก่อนบันทึกอีกครั้ง',
   // spec §15.4.1 C: EMAIL_PROVIDER=disabled — the request is refused before a token exists,
   // rather than answering 202 over a letter that was never sent.
   email_delivery_unavailable: 'ตอนนี้ระบบยังส่งอีเมลยืนยันไม่ได้ค่ะ ติดต่อทีมงาน โทร 098-256-5628 หรืออีเมล contact@mangmeeplus.com',

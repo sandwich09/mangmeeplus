@@ -1,4 +1,5 @@
 import PartnerDetailPage from '@/features/system-partners/PartnerDetailPage';
+import { fetchServerSession } from '@/common/auth/server-session';
 
 /** The one value in a search param that could be more than one: a repeated key arrives as array. */
 const first = (value: string | string[] | undefined): string | undefined =>
@@ -15,11 +16,12 @@ export default async function SystemPartnerDetailRoute({
   // `useSearchParams`, which would need a Suspense boundary around a page that is otherwise static.
   searchParams: Promise<{ support?: string | string[]; asker?: string | string[] }>;
 }) {
-  const [{ companyId }, query] = await Promise.all([params, searchParams]);
+  const [{ companyId }, query, session] = await Promise.all([params, searchParams, fetchServerSession()]);
   return (
     <PartnerDetailPage
       key={companyId}
       companyId={companyId}
+      canManageMembers={session?.permissions.includes('system.partner_member.manage') ?? false}
       supportRequestId={first(query.support)}
       supportAskerRef={first(query.asker)}
     />
