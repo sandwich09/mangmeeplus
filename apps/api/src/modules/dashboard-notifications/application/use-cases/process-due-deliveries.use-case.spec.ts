@@ -209,9 +209,10 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
       const payload = JSON.parse(requests[0]?.init.body);
       assert.equal(payload.messages[0]?.type, 'flex');
       assert.equal(payload.messages[0]?.contents.footer.contents[0]?.action.type, 'uri');
+      // R-B1: the push exit sends the web link outside LINE's in-app browser.
       assert.equal(
         payload.messages[0]?.contents.footer.contents[0]?.action.uri,
-        'https://uat.mangmeeplus.com/companies/co-1/reimbursements?tab=approvals&focus=rb-1',
+        'https://uat.mangmeeplus.com/companies/co-1/reimbursements?tab=approvals&focus=rb-1&openExternalBrowser=1',
       );
       assert.match(payload.messages[0]?.altText, /RB-202608-00002/);
       assert.doesNotMatch(JSON.stringify(payload.messages[0]?.contents.body), /https:\/\//, 'no naked URL or LINE link preview');

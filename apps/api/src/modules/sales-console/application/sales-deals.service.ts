@@ -34,7 +34,7 @@ import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.serv
 import { AuditService } from '../../audit/application/audit.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { pushSystemLineMessages } from '../../auth/infrastructure/system-line-push';
-import { ownerLineUserIds } from '../../system-partner-management/application/use-cases/package-change-decision.use-case';
+import { planManagerLineUserIds } from '../../access-control/domain/logic/plan-manager.logic';
 import { SalesDealPriceService } from '../../billing/application/sales-deal-price.service';
 import {
   autoRenewOf,
@@ -513,15 +513,14 @@ export class SalesDealsService {
   }
 
   /**
-   * S19: the shop's OWNERs learn an offer exists — and nothing more. No price, no tier, no months.
-   * Prices never travel over LINE (R14), so the message is a pointer to the package page.
+   * S19 + R-C11: the shop's plan managers learn an offer exists — and nothing more (no price, tier or months).
    */
   private async notifyOwners(companyId: string): Promise<void> {
     const credentials = await this.lineCredentials.get().catch(() => null);
     const token = credentials?.accessToken;
     if (!token || !credentials?.channelId) return;
     const message = salesOfferNoticeMessage(this.config.webBaseUrl, companyId);
-    for (const providerUserId of await ownerLineUserIds(this.prisma, companyId, credentials.channelId)) {
+    for (const providerUserId of await planManagerLineUserIds(this.prisma.client, companyId, credentials.channelId)) {
       if (!await pushSystemLineMessages(token, providerUserId, [message])) {
         this.logger.warn({ event: 'sales.deal.offer_notice_failed', riskLevel: 'LOW' }, 'sales.deal.offer_notice_failed');
       }

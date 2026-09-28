@@ -1,6 +1,7 @@
 // P10 Flow B — public auto-register + admin review queue contracts.
 // Spec: docs/specs/mangmee-external-signup-contract-spec-th.md (amendment v2 2026-08-30).
 import type { PackageChangeDealOffer, PackageChangeRequestKind } from './sales.js';
+import type { PlanTermLockReason } from './plan-term.js';
 
 /** Self-reported discovery, separate from a signup rail or an influencer referral code. */
 export const SIGNUP_DISCOVERY_SOURCE_OPTIONS = [
@@ -369,8 +370,16 @@ export type LineSignupEligibleCompanyDto = {
   companyName: string;
   /** EXPIRED is term-disabled and remains visible for the renewal/support path. */
   status: 'ACTIVE' | 'EXPIRED';
-  /** Only ACTIVE is a valid RETURN_EXISTING target and direct entry. */
+  /**
+   * Only ACTIVE is a valid RETURN_EXISTING target and direct entry (FIRST_SHOP/RETURN_EXISTING rules in
+   * submit-line-signup.use-case.ts read this — never widen it). A locked shop is reachable through
+   * `lockReason` + `canManagePlan` below, which are display-only (spec §18.2 R-C2).
+   */
   canEnter: boolean;
+  /** Present only for a locked shop (status EXPIRED): why it is locked, for the page's wording. */
+  lockReason?: PlanTermLockReason;
+  /** Present only for a locked shop: the tapping account may buy/renew (`company.plan.manage`). */
+  canManagePlan?: boolean;
 };
 
 export type LineSignupProgressDto = {
@@ -400,6 +409,11 @@ export type LineSignupProgressDto = {
   companyCreated: boolean;
   /** Permission-checked navigation target, whether newly created or an explicitly resolved existing shop. */
   entryCompanyId?: string;
+  /**
+   * The shop this request created/resolved when it exists but is locked (no package yet, or expired).
+   * Display-only — the page offers "เลือกแพ็กเกจ" for it; it never grants entry (that stays `entryCompanyId`).
+   */
+  lockedEntryCompanyId?: string;
 };
 
 export type LineSignupStatusDto = {

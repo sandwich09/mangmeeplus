@@ -11,6 +11,7 @@ import { PrismaNotificationRuleRepository } from '../../infrastructure/prisma-no
 import { PrismaAlertStateRepository } from '../../infrastructure/prisma-notification.repository';
 import { buildDedupKey, isInCooldown, computeCooldownUntil, isImplementedTrigger, isRetryable, isInQuietHours, resolveDeliveryOutcome, notificationSourceHref } from '../../domain/logic/notification.logic';
 import type { NotificationSummaryDto, NotificationPreferenceDto, NotificationRuleDto, UnreadCountDto, UpdatePreferenceDto, UpdateRuleDto } from '@watchdog-bms/contracts';
+import { withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
 import { IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, DEFAULT_ENABLED_CHANNELS, DELIVERY_SWEEP_BATCH_LIMIT } from '../../domain/models/notification.model';
 import { AuditService } from '../../../audit/application/audit.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -792,7 +793,9 @@ export async function pushLineMessage(
         Authorization: `Bearer ${token}`,
         'X-Line-Retry-Key': notificationLineRetryKey(deliveryId),
       },
-      body: JSON.stringify({ to: lineUserId, messages: [message] }),
+      // R-B1: exit-side only. `buildLineMessage` output is what billing-notifications.service.ts hashes
+      // into its binding and what `notificationLineRetryKey` never sees — both stay stable.
+      body: JSON.stringify({ to: lineUserId, messages: withLineExternalBrowserLinks([message]) }),
       signal: AbortSignal.timeout(30_000),
     });
     const acceptedRequestId = res.status === 409 ? res.headers.get('x-line-accepted-request-id') : null;

@@ -177,11 +177,11 @@ describe('the approval notice pushed to shop owners (S19/R14)', () => {
   it('links only into the shop own tree on the configured origin', () => {
     assert.equal(
       tenantBillingLink('https://app.example.test', 'co-1'),
-      'https://app.example.test/companies/co-1/billing?openExternalBrowser=1',
+      'https://app.example.test/companies/co-1/billing',
     );
     // A shop id that tries to climb out is encoded, never resolved.
     const escaped = tenantBillingLink('https://app.example.test', '../../evil');
-    assert.equal(escaped, 'https://app.example.test/companies/..%2F..%2Fevil/billing?openExternalBrowser=1');
+    assert.equal(escaped, 'https://app.example.test/companies/..%2F..%2Fevil/billing');
     assert.ok(escaped!.startsWith('https://app.example.test/companies/'));
   });
 
@@ -199,7 +199,7 @@ describe('the approval notice pushed to shop owners (S19/R14)', () => {
     const card = message.contents as any;
     assert.equal(card.type, 'bubble');
     assert.deepEqual(card.footer.contents[0].action, {
-      type: 'uri', label: 'เปิดหน้าแพ็กเกจ', uri: 'https://app.example.test/companies/co-1/billing?openExternalBrowser=1',
+      type: 'uri', label: 'เปิดหน้าแพ็กเกจ', uri: 'https://app.example.test/companies/co-1/billing',
     });
     assert.doesNotMatch(`${message.altText} ${JSON.stringify(card.header)} ${JSON.stringify(card.body)}`, /https?:\/\//);
   });

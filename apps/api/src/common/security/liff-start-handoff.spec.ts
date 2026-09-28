@@ -60,4 +60,21 @@ describe('GW02 actual LIFF script, provider boundary simulated', () => {
     assert.match(h.elements.status.textContent, /ยังเปิดหน้าเว็บไม่ได้/);
     assert.equal(h.elements.link.disabled, false);
   });
+
+  // R-C2/R-C3 (§18.2 purchase-without-setup): the picker names a locked shop's state; the server
+  // (not this label) decides whether tapping it lands on billing or renew.
+  it('labels a locked shop in the picker, leaves an unlocked one plain', async () => {
+    const h = start();
+    await settle();
+    h.setReply({ needsSelection: true, companies: [
+      { id: 'co-1', name: 'ร้านหนึ่ง', lockReason: 'no_package', canManagePlan: true },
+      { id: 'co-2', name: 'ร้านสอง' },
+    ] });
+    h.click('link');
+    await settle();
+
+    assert.deepEqual(h.elements.companies.children.map((child: any) => child.textContent), [
+      'ร้านหนึ่ง · ยังไม่มีแพ็กเกจ', 'ร้านสอง',
+    ]);
+  });
 });

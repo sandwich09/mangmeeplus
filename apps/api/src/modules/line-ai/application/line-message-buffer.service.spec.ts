@@ -349,6 +349,16 @@ describe('LineMessageBufferService – legal acceptance pre-storage gate', () =>
     assert.equal(services.rows.get('legal-services')?.status, 'legal_acceptance_required');
   });
 
+  it('lets the callback request through the legal gate like its twin ติดต่อเจ้าหน้าที่ (G19)', async () => {
+    const h = makeHarness({ legalAcceptanceRequired: true, debounceMs: 5_000 });
+    await h.service.enqueue(textEnv('legal-callback', 'ให้ทีมงานติดต่อกลับ'));
+    await sleep(20);
+    assert.equal(h.preflightCalls.length, 0);
+    assert.deepEqual(h.executed.map((event) => event.messageText), ['ให้ทีมงานติดต่อกลับ']);
+    assert.equal(h.replies.length, 0, 'the use case answers the request, never the legal notice');
+    assert.notEqual(h.rows.get('legal-callback')?.status, 'legal_acceptance_required');
+  });
+
   it('preserves the existing unlinked/unresolved path when preflight says continue', async () => {
     const h = makeHarness({ debounceMs: 0 });
     const envelope = textEnv('preflight-continue', 'ขอเชื่อมบัญชี');
