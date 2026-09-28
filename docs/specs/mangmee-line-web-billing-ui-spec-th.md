@@ -68,7 +68,7 @@ flowchart TD
 
 ### 2.2 LINE OA / LIFF
 
-1. เมนู “แพ็กเกจและการชำระเงิน”, quota CTA และข้อความหมดอายุ ใช้ generic LIFF URL `https://liff.line.me/<LIFF_ID>/billing`; ไม่มี bearer handoff, Checkout URL, Portal URL หรือ Invoice URL เก็บค้างในแชต. ใน group/room ให้เพียงทางเข้าไปยืนยันตัวตนส่วนบุคคล ไม่เปิดเผยยอด/เอกสาร/สถานะหนี้.
+1. เมนู “แพ็กเกจและการชำระเงิน”, quota CTA และข้อความหมดอายุ ใช้ generic LIFF URL `https://liff.line.me/<LIFF_ID>/billing`; ไม่มี bearer handoff, Checkout URL, Portal URL หรือ Invoice URL เก็บค้างในแชต. ใน group/room ให้เพียงทางเข้าไปยืนยันตัวตนส่วนบุคคล ไม่เปิดเผยยอด/เอกสาร/สถานะหนี้. แก้ 2026-09-28 (purchase-without-setup R-B2): การ์ดล็อก/ตอบขอเปลี่ยนแพ็กเกจ/การ์ดโปรโมชั่นถือ `/l/<token>` ที่ mint ในเลนก่อนบันทึก (payload ที่บันทึก = ที่ส่ง); ในกลุ่ม/ห้องเป็น URL ธรรมดา + `openExternalBrowser=1`; ลิงก์ทุกลิงก์ที่ออกจาก LINE ได้ param นี้ที่ทางออก (R-B1)
 2. เพิ่มหน้า `/v1/auth/line/link-page/billing` ใต้ LIFF endpoint เดิม; reuse liffPageHtml/CSP/SDK และ token verifier. เมื่อ init พร้อม ส่ง ID token ให้ backend ตรวจ channel/audience/expiry/identity; ไม่รับ profile/userId ที่ client อ้างเป็นหลักฐาน. ไม่ย้าย LIFF endpoint ทั้งระบบเพื่อหน้าจ่ายหน้าเดียว.
 3. ขยาย POST `/v1/auth/line/liff/session` ด้วย optional `purpose=start|billing` (default start คงพฤติกรรมเดิม). billing branch ตรวจ current OWNER + company.setup.manage + membership และสร้างรายการ ACTIVE/term-expired ที่เข้าขอบเขต recovery. ถ้ามีหลายบริษัทให้เลือกเสมอ; company hint จาก URL ไม่ใช่สิทธิ์. explicit company ผิดต้องปฏิเสธ ไม่ fallback ไปบริษัทอื่น.
 4. บัญชีถูกระงับ/LINE link ถูกถอดให้แจ้งเข้าไม่ได้/เข้าสู่ระบบบัญชีเดิม; ไม่ส่งไปสร้างร้านใหม่อัตโนมัติ. ไม่มี identity จริงจึงเสนอ “เข้าสู่ระบบบัญชีเดิม” และ “สมัครใช้มั่งมี”. contact email ไม่ใช้ merge บัญชี.
