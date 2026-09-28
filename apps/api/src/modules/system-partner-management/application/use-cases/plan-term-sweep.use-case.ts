@@ -3,6 +3,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { lockPlanTermCompany } from '../lock-plan-term-company';
+import { planManagersOf } from '../../../access-control/domain/logic/plan-manager.logic';
 import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
 import {
   LADDER_SENT_COLUMN,
@@ -157,10 +158,11 @@ export class PlanTermSweepUseCase {
   }
 
   /**
-   * Two audiences, one machinery. The company's OWNERs get WEB + LINE through the notification
-   * event of their OWN company; System Admins get the same news as a dashboard notification inside
-   * the platform company they are members of — a recipient is only ever created for a user who
-   * holds an ACTIVE membership in the event's company, so the two cannot be one event.
+   * Two audiences, one machinery. The company's plan managers (R-C11: `company.plan.manage`, not
+   * only OWNER) get WEB + LINE through the notification event of their OWN company; System Admins
+   * get the same news as a dashboard notification inside the platform company they are members of —
+   * a recipient is only ever created for a user who holds an ACTIVE membership in the event's
+   * company, so the two cannot be one event.
    */
   private async notify(
     companyId: string,
@@ -174,10 +176,8 @@ export class PlanTermSweepUseCase {
     },
     tx: Prisma.TransactionClient,
   ): Promise<void> {
-    const owners = await tx.companyMembership.findMany({
-      where: { companyId, status: 'ACTIVE', roles: { some: { role: { key: 'OWNER' } } } },
-      select: { userId: true },
-    });
+    // R-C11: the same people the web lets buy get the warning/expiry notice, inside this transaction.
+    const owners = await planManagersOf(tx, companyId);
     if (owners.length > 0) {
       await this.notifications.executeInTransaction({
         companyId,
