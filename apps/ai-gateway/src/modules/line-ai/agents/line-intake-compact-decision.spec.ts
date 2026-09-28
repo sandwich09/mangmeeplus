@@ -291,7 +291,101 @@ describe('compact LINE intake decision', () => {
     assert.equal(guessed?.preparedPlan, undefined, 'e2 was never shown this chat — never grounded by messageText or memory');
     assert.equal(guessed?.simpleReadRejection, 'filter_not_grounded');
   });
+});
 
+describe('tuning-3 item 2: a groupBy-only follow-up carries the latest matching read\'s other filters (spec §4 R-M4)', () => {
+  const BREAKDOWN_LIST_FAMILY = new Set(['expense.get_breakdown::list']);
+  const breakdownSimpleRead = (confidence = 0.9) => ({
+    subrequest: 0, tool: 'expense.get_breakdown', subject: 'expense', agent: 'accounting', answerShape: 'list', confidence,
+  });
+
+  it('T-004#2: "แยกตามหมวดให้ดูหน่อย" after a documentStatus filter carries documentStatus into the new groupBy request', async () => {
+    const text = 'แยกตามหมวดให้ดูหน่อย';
+    const created = await fixture(text);
+    const recentReads = [{
+      tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-09-27T23:06:36.944Z',
+      period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, documentStatus: 'NEEDS_REVIEW',
+    }];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' }, breakdownSimpleRead(0.91)),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: BREAKDOWN_LIST_FAMILY, language: 'th', recentReads,
+    });
+    assert.ok(parsed?.preparedPlan, 'the carried documentStatus must still ground as a recentReads-equal value');
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['documentStatus'], 'NEEDS_REVIEW');
+    assert.equal(parsed.semanticSubrequests[0]?.requestedFilters['documentStatus'], 'NEEDS_REVIEW');
+  });
+
+  it('T-013#2: "จ่ายร้านไหนเยอะสุดคะ" carries a recentReads paymentStatus even though this message never says "จ่ายแล้ว"', async () => {
+    const text = 'จ่ายร้านไหนเยอะสุดคะ';
+    const created = await fixture(text);
+    const recentReads = [{
+      tool: 'expense.get_breakdown', answerShape: 'list' as const, asOf: '2026-09-27T23:11:35.571Z',
+      period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, groupBy: 'category' as const, paymentStatus: 'PAID',
+    }];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'vendor' }, breakdownSimpleRead()),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: BREAKDOWN_LIST_FAMILY, language: 'th', recentReads,
+    });
+    assert.ok(parsed?.preparedPlan, 'paymentStatus must fall back to recentReads when the text names no payment-state word');
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['paymentStatus'], 'PAID');
+  });
+
+  it('never carries a different business subject\'s recentReads filter (reimbursement into an expense groupBy request)', async () => {
+    const text = 'แยกตามหมวดให้ดูหน่อย';
+    const created = await fixture(text);
+    const recentReads = [
+      // Same subject (expense) grounds the period but has no status of its own to carry.
+      { tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-09-27T23:06:30.000Z',
+        period: { fromDate: '2026-09-01', toDate: '2026-09-28' } },
+      // A different subject's status must never leak in even though it is the ONLY documentStatus in memory.
+      { tool: 'reimbursement.list_pending_approvals', answerShape: 'list' as const, asOf: '2026-09-27T23:06:36.944Z',
+        documentStatus: 'NEEDS_REVIEW' },
+    ];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' }, breakdownSimpleRead(0.91)),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: BREAKDOWN_LIST_FAMILY, language: 'th', recentReads,
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['documentStatus'], undefined);
+  });
+
+  it('never overrides a filter the current clause already names of its own', async () => {
+    const text = 'แยกตามหมวดเฉพาะที่ยืนยันแล้วให้ดูหน่อย';
+    const created = await fixture(text);
+    const recentReads = [{
+      tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-09-27T23:06:36.944Z',
+      period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, documentStatus: 'NEEDS_REVIEW',
+    }];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category', documentStatus: 'CONFIRMED' }, breakdownSimpleRead(0.91)),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: BREAKDOWN_LIST_FAMILY, language: 'th', recentReads,
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['documentStatus'], 'CONFIRMED');
+  });
+
+  it('does not carry when the clause names no groupBy at all (unrelated to this rule)', async () => {
+    const text = 'เดือนนี้ยอดรวมเท่าไหร่คะ';
+    const created = await fixture(text);
+    const recentReads = [{
+      tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-09-27T23:06:36.944Z',
+      period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, documentStatus: 'NEEDS_REVIEW',
+    }];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: '2026-09-01', toDate: '2026-09-28' }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', recentReads,
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['documentStatus'], undefined);
+  });
+});
+
+describe('compact LINE intake decision: write clauses and other coverage', () => {
   it('C4: keeps a write clause whose writeIntent no tool supports (e.g. invoicing) instead of failing the whole decision', async () => {
     const text = 'ช่วยออกใบแจ้งหนี้ให้ลูกค้าหน่อยค่ะ';
     const created = await fixture(text);
