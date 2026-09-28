@@ -73,4 +73,15 @@ describe('resend result copy', () => {
     assert.match(billingResendText({ invoiceSent: true, receiptUpdated: false, recipientEmail: 'a@example.test', remainingToday: 0 }),
       /^ส่งใบแจ้งหนี้ไปที่ a@example\.test แล้ว ใบเสร็จไม่ส่งซ้ำ.* วันนี้ส่งซ้ำได้อีก 0 ครั้ง$/);
   });
+
+  // The recipient panel has no resend button above this text (only the documents page does), so it
+  // must not point at one.
+  it('points the recipient panel at payment history instead of a button it does not have', () => {
+    const result = { invoiceSent: true, receiptUpdated: false, recipientEmail: 'a@example.test', remainingToday: 3 } as const;
+    const documents = billingResendText(result), recipient = billingResendText(result, 'recipient');
+    assert.match(documents, /เปิดได้จากปุ่มด้านบน/);
+    assert.doesNotMatch(recipient, /ปุ่มด้านบน/);
+    assert.match(recipient, /ประวัติการชำระเงิน/);
+    assert.match(recipient, /^ส่งใบแจ้งหนี้ไปที่ a@example\.test แล้ว.* วันนี้ส่งซ้ำได้อีก 3 ครั้ง$/);
+  });
 });
