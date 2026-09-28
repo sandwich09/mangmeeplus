@@ -24,12 +24,24 @@ export async function GET(request: NextRequest) {
   const state = randomUrlToken();
   const emailReauth = request.nextUrl.searchParams.get('purpose') === 'email-reauth';
   const returnTo = sanitizeReturnTo(request.nextUrl.searchParams.get('returnTo'));
+  // purchase-without-setup R-B5 (4): how often a LINE link met the login wall. `from`/`auto` come
+  // from LoginPage's auto-start; a manual tap on the LINE button carries only the returnTo signal.
+  if (!emailReauth && returnTo && /[?&]channel=line(?:&|$)/.test(returnTo)) {
+    const from = request.nextUrl.searchParams.get('from');
+    console.info(JSON.stringify({ event: 'login_wall_from_line_link', from: from === 'handoff-expired' || from === 'channel-line' ? from : null,
+      auto: request.nextUrl.searchParams.get('auto') === '1',
+      hasSession: Boolean(joinCookieChunks((name) => request.cookies.get(name)?.value, ACCESS_TOKEN_COOKIE)) }));
+  }
   let nonce = randomUrlToken(), channelId: string;
   if (emailReauth) {
     // Account security is always available for an already-linked account. It does not
     // enable the separate public LINE login feature or create/link an identity.
     const accessToken = joinCookieChunks(name => request.cookies.get(name)?.value, ACCESS_TOKEN_COOKIE);
-    if (!accessToken) return NextResponse.redirect(new URL('/login', origin));
+    // R-B4: the LINE-in-app-browser reopen sends the OUTSIDE browser here with `channel=line` in
+    // `returnTo`. If it has no session (first time, or cookies cleared), send it through the
+    // ordinary sign-in wall with `next` set — R-B5 then starts LINE login for it automatically —
+    // instead of an empty `/login` that strands `returnTo` and dead-ends the reopen.
+    if (!accessToken) return NextResponse.redirect(new URL(returnTo ? `/login?next=${encodeURIComponent(returnTo)}` : '/login', origin));
     const result = await fetch(`${internalApiV1Base()}/auth/account/email/otp/line-reauth/start`, {
       method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store', signal: AbortSignal.timeout(10_000),
     }).catch(() => null);

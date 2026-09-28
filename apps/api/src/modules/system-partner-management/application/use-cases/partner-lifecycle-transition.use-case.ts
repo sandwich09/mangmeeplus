@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { planTermLockReason, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { lockPlanTermCompany } from '../lock-plan-term-company';
@@ -19,6 +20,10 @@ export type PartnerLifecycleResult = {
   disabledAt?: string;
   archivedAt?: string;
 };
+
+export const partnerActivationTermLocked = (reason: PlanTermLockReason) => new ConflictException({ code: 'partner_activation_term_locked',
+  message: reason === 'no_package' ? 'ร้านนี้ยังไม่มีแพ็กเกจ ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ'
+    : 'แพ็กเกจของร้านนี้หมดอายุแล้ว ต่ออายุในหมวดแพ็กเกจ หรือให้ลูกค้าซื้อเองจากหน้าแพ็กเกจ' });
 
 // Timestamp rules per target status
 function timestampData(targetStatus: 'ACTIVE' | 'DISABLED' | 'ARCHIVED'): Record<string, Date | null> {
@@ -45,6 +50,15 @@ export class PartnerLifecycleTransitionUseCase {
     // SUSPENDED is a separate security state — not managed here
     if ((cmd.targetStatus as string) === 'SUSPENDED') {
       throw new UnprocessableEntityException('SUSPENDED is not a valid targetStatus for lifecycle management.');
+    }
+
+    // R-C6 (purchase-without-setup §18.2): a human re-activating a shop the TERM locked is undone by
+    // the sweep within ~5 minutes (plan-term-sweep.use-case.ts picks ACTIVE + expired). The renewal
+    // path is safe here: RenewCompanyPlanTermUseCase moves termEndsAt BEFORE it calls this use case
+    // in the same transaction, so this read sees the new end.
+    if (cmd.targetStatus === 'ACTIVE' && cmd.requestingAdminUserId !== null) {
+      const term = await tx.companyPlanTerm.findUnique({ where: { companyId: cmd.companyId }, select: { termStartAt: true, termEndsAt: true, renewCount: true } });
+      if (term && term.termEndsAt.getTime() <= Date.now()) throw partnerActivationTermLocked(planTermLockReason(term));
     }
 
     const fromStatus = company.status;

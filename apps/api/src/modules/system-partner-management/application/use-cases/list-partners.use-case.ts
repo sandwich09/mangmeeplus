@@ -1,7 +1,14 @@
 import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
-import type { LineContextHealth, PaginatedPartnersDto, PartnerCompanySummaryDto } from '@watchdog-bms/contracts';
+import {
+  planTermLockReason,
+  planTermState,
+  type LineContextHealth,
+  type PaginatedPartnersDto,
+  type PartnerCompanySummaryDto,
+  type PlanTierKey,
+} from '@watchdog-bms/contracts';
 
 export type ListPartnersQuery = {
   q?: string;
@@ -55,6 +62,7 @@ export class ListPartnersUseCase {
           activatedAt: true,
           disabledAt: true,
           archivedAt: true,
+          planTerm: { select: { tierKey: true, termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } },
           featureEntitlements: {
             where: { enabled: true },
             select: { featureKey: true },
@@ -80,6 +88,7 @@ export class ListPartnersUseCase {
       this.prisma.client.company.count({ where }),
     ]);
 
+    const now = new Date();
     const items: PartnerCompanySummaryDto[] = companies.map((c) => {
       const hasLinkedUser = c.memberships.some((m) => m.user.externalIdentities.length > 0);
       const lineContextHealth: LineContextHealth = hasLinkedUser ? 'LINKED' : 'UNLINKED';
@@ -99,6 +108,9 @@ export class ListPartnersUseCase {
         // A budget-only row leaves modelId null (spec §6.8); the summary means "no model configured".
         configuredModelId: c.aiConfiguration?.modelId ?? undefined,
         lineContextHealth,
+        planState: planTermState(c.planTerm, now, c.status),
+        ...(c.planTerm && c.planTerm.termEndsAt.getTime() <= now.getTime() ? { lockReason: planTermLockReason(c.planTerm) } : {}),
+        ...(c.planTerm ? { tierKey: c.planTerm.tierKey as PlanTierKey, termEndsAt: c.planTerm.termEndsAt.toISOString() } : {}),
       };
     });
 

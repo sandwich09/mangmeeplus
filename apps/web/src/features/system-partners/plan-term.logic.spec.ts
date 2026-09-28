@@ -4,7 +4,6 @@ import type { CompanyPlanTermDto } from '@watchdog-bms/contracts';
 import {
   parseDaysInput,
   parseLimitInput,
-  planTermDisabledChip,
   planTermLimitsText,
   planTermStatusChip,
   renewedEndsAt,
@@ -28,32 +27,40 @@ function term(overrides: Partial<CompanyPlanTermDto> = {}): CompanyPlanTermDto {
 }
 
 describe('planTermStatusChip', () => {
+  // Inside the fixture's own term window (2026-08-01..08-31): planTermState needs a `now` before
+  // termEndsAt to read the term as running at all, whatever `derivedState`/`daysLeft` say.
+  const runningNow = new Date('2026-08-20T00:00:00.000Z');
+
   it('shows the days left in green while the term is healthy', () => {
-    assert.deepEqual(planTermStatusChip(term()), { label: 'เหลือ 12 วัน', tone: 'success' });
+    assert.deepEqual(planTermStatusChip(term(), 'ACTIVE', runningNow), { label: 'เหลือ 12 วัน', tone: 'success' });
   });
 
   it('keeps the same wording in yellow inside the warning window', () => {
-    assert.deepEqual(planTermStatusChip(term({ derivedState: 'WARNING', daysLeft: 3 })), {
+    assert.deepEqual(planTermStatusChip(term({ derivedState: 'WARNING', daysLeft: 3 }), 'ACTIVE', runningNow), {
       label: 'เหลือ 3 วัน',
       tone: 'warning',
     });
   });
 
-  it('drops the countdown once the term is over', () => {
-    assert.deepEqual(planTermStatusChip(term({ derivedState: 'EXPIRED', daysLeft: 0 })), {
-      label: 'หมดอายุแล้ว',
+  it('drops the countdown and reads "หมดอายุ" once a real term is over', () => {
+    assert.deepEqual(planTermStatusChip(term({ derivedState: 'EXPIRED', daysLeft: 0 }), 'ACTIVE'), {
+      label: 'หมดอายุ',
       tone: 'danger',
     });
   });
-});
 
-describe('planTermDisabledChip', () => {
-  it('appears only for a company the expiry sweep paused', () => {
-    assert.equal(planTermDisabledChip(term()), null);
-    assert.deepEqual(planTermDisabledChip(term({ termDisabledAt: '2026-08-31T00:00:00.000Z' })), {
-      label: 'พักการใช้งานแล้ว',
-      tone: 'danger',
-    });
+  it('reads "ยังไม่มีแพ็กเกจ" for the zero-day term the sweep disabled, never "หมดอายุ"', () => {
+    assert.deepEqual(
+      planTermStatusChip(
+        term({ derivedState: 'EXPIRED', daysLeft: 0, termStartAt: '2026-08-31T00:00:00.000Z', termEndsAt: '2026-08-31T00:00:00.000Z', renewCount: 0, termDisabledAt: '2026-08-31T00:00:00.000Z' }),
+        'DISABLED',
+      ),
+      { label: 'ยังไม่มีแพ็กเกจ', tone: 'danger' },
+    );
+  });
+
+  it('reads "พักการใช้งาน" for a company an admin disabled by hand (no termDisabledAt)', () => {
+    assert.deepEqual(planTermStatusChip(term(), 'DISABLED'), { label: 'พักการใช้งาน', tone: 'danger' });
   });
 });
 

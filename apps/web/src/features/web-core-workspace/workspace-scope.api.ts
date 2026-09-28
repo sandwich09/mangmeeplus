@@ -2,8 +2,9 @@
 // Cookie-session model: same-origin BFF (`/api/v1/*`) with the httpOnly cookie via authedApiFetch —
 // no localStorage bearer token, no cross-origin call.
 import { authedApiFetch } from '@/common/api/authed-fetch';
+import type { PlanTermLockReason, PlanTermState } from '@watchdog-bms/contracts';
 
-export type MyCompany = { companyId: string; companyName: string; roles: string[]; canManagePlan?: boolean; expired?: boolean };
+export type MyCompany = { companyId: string; companyName: string; roles: string[]; canManagePlan?: boolean; expired?: boolean; planState?: PlanTermState; lockReason?: PlanTermLockReason };
 
 export async function fetchMyCompanies(): Promise<MyCompany[]> {
   const body = await authedApiFetch<{ data: MyCompany[] }>('/v1/auth/me/companies');
