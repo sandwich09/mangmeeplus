@@ -124,9 +124,24 @@ const STATUS_QUESTION_MARKERS_TH = ['ใช่ป่ะ', 'ใช่ไหม', 
 // description might also contain the same verb.
 const REQUEST_MARKERS_TH = ['ช่วย', 'กรุณา', 'หน่อย', 'ทีนะ', 'ทีค่ะ', 'ทีครับ'];
 
+// C2 (batch 5c, T-084-b "เช็คใบเบิกที่รออนุมัติหน่อยครับ"): these phrases NAME a state, they are never
+// a command, but each one contains one of the bare verbs above as a substring ("รออนุมัติ" contains
+// "อนุมัติ", "จ่ายแล้ว" contains "จ่าย"...). Stripped before verb matching only — the noun check still
+// runs on the full text — so a real action verb elsewhere in the same message still matches, e.g.
+// "ช่วยอนุมัติใบเบิกที่รออนุมัติหน่อย" keeps the standalone "อนุมัติ" from "ช่วยอนุมัติ".
+const STATE_PHRASES_TH = [
+  'รออนุมัติ', 'อนุมัติแล้ว', 'ที่อนุมัติแล้ว', 'รอจ่าย', 'จ่ายแล้ว', 'ยังไม่จ่าย',
+  'รอยืนยัน', 'ยืนยันแล้ว', 'ถูกปฏิเสธ', 'ปฏิเสธแล้ว', 'ถูกยกเลิก', 'ยกเลิกแล้ว',
+];
+
+function withoutStatePhrases(text: string): string {
+  return STATE_PHRASES_TH.reduce((withoutPhrase, phrase) => withoutPhrase.split(phrase).join(''), text);
+}
+
 function lineActionRuleFor(text: string): LineActionRule | undefined {
   if (!includesAny(text, REQUEST_MARKERS_TH) || includesAny(text, STATUS_QUESTION_MARKERS_TH)) return undefined;
-  return LINE_ACTION_RULES.find((rule) => includesAny(text, rule.noun) && includesAny(text, rule.verb));
+  const verbCheckText = withoutStatePhrases(text);
+  return LINE_ACTION_RULES.find((rule) => includesAny(text, rule.noun) && includesAny(verbCheckText, rule.verb));
 }
 
 /** Never "ดึงข้อมูลไม่ได้" — an honest reason: do it on the web when the actor may, or that their
