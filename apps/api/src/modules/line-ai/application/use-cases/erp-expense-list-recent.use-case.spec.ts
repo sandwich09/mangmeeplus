@@ -488,6 +488,16 @@ describe('ExpenseListRecentTool', () => {
       assert.equal((result.data as any).queryApplied.filters.categoryName, 'ค่าเดินทาง');
     });
 
+    // batch 9a real repro, through the real tool: the model itself sent categoryName "ค่าเดินทาน"
+    // (one Thai character off "ค่าเดินทาง") calling this tool, not a user typo forwarded verbatim.
+    it('resolves the model\'s one-character miswrite of a categoryName the same way through the real tool', async () => {
+      const { tool, filters } = makeNameResolutionTool({ categories: [{ id: 'cat1', name: 'ค่าเดินทาง' }, { id: 'cat2', name: 'ค่าน้ำมัน' }] });
+      const result = await tool.execute(baseCtx, { categoryName: 'ค่าเดินทาน' } as any);
+
+      assert.equal(filters[0]?.expenseCategoryId, 'cat1');
+      assert.equal((result.data as any).queryApplied.filters.categoryName, 'ค่าเดินทาง');
+    });
+
     it('resolves a vendor name that only appears as a substring of one candidate', async () => {
       const { tool, filters } = makeNameResolutionTool({ vendors: [{ id: 'v1', name: 'ร้านสมใจการค้า' }] });
       const result = await tool.execute(baseCtx, { vendorName: 'สมใจ' } as any);
@@ -656,6 +666,44 @@ describe('normalizeNameQuery / resolveNameCandidate (Thai-safe name matching hel
       assert.equal(result.kind, 'ambiguous');
     });
   });
+
+  // batch 9a: the MODEL itself (not the user) misspelled a category name by one Thai character
+  // calling a read tool — "ค่าเดินทาน" for "ค่าเดินทาง" — in two separate real-model runs. This
+  // last-resort stage only runs once (a)-(d) above all find nothing (tested there already).
+  describe('near-match last resort (e) (batch 9a)', () => {
+    it('resolves the model\'s one-character miswrite of a category name (real repro)', () => {
+      const candidates = [{ id: 'cat1', name: 'ค่าเดินทาง' }, { id: 'cat2', name: 'ค่าน้ำมัน' }];
+      assert.deepEqual(
+        resolveNameCandidate('ค่าเดินทาน', candidates),
+        { kind: 'resolved', id: 'cat1', name: 'ค่าเดินทาง' },
+      );
+    });
+
+    it('resolves a one-character typo of a vendor name when it is the only near match', () => {
+      const candidates = [{ id: 'v1', name: 'ร้านกาแฟ' }];
+      assert.deepEqual(
+        resolveNameCandidate('ร้านขาแฟ', candidates),
+        { kind: 'resolved', id: 'v1', name: 'ร้านกาแฟ' },
+      );
+    });
+
+    it('is ambiguous when two candidates are each one edit away from the query', () => {
+      const candidates = [{ id: 'c1', name: 'roast' }, { id: 'c2', name: 'toast' }];
+      const result = resolveNameCandidate('coast', candidates);
+      assert.equal(result.kind, 'ambiguous');
+      if (result.kind === 'ambiguous') assert.deepEqual(result.matches.map((m) => m.id), ['c1', 'c2']);
+    });
+
+    it('never near-matches a 3-code-point query, however close a candidate is', () => {
+      const candidates = [{ id: 'c1', name: 'cat' }];
+      assert.deepEqual(resolveNameCandidate('cot', candidates), { kind: 'not_found', available: candidates });
+    });
+
+    it('leaves a distance-2 query unresolved', () => {
+      const candidates = [{ id: 'c1', name: 'count' }];
+      assert.deepEqual(resolveNameCandidate('coast', candidates), { kind: 'not_found', available: candidates });
+    });
+  });
 });
 
 // C3 (batch 5c, T-148-b): branches get their own matcher, not `resolveNameCandidate` — a space
@@ -694,5 +742,25 @@ describe('resolveBranchCandidate (branch matching helper)', () => {
     // "สาขา 2" itself contains "สาขา 2" AND "สำนักงานใหญ่" does not — only relevant here because the
     // exact stage must be the one that resolves it, not a coincidental single contains match.
     assert.deepEqual(resolveBranchCandidate('สาขา 2', BRANCHES), { kind: 'resolved', id: 'b2', name: 'สาขา 2', code: 'BR2' });
+  });
+
+  // batch 9a: same last-resort near-match stage as resolveNameCandidate, for a one-character slip
+  // in a branch NAME (not a number — see the guard test right below).
+  describe('near-match last resort (batch 9a)', () => {
+    it('resolves a one-character typo of a branch name when it is the only near match', () => {
+      const candidates = [{ id: 'b1', name: 'สาขาลาดพร้าว', code: 'LP' }];
+      assert.deepEqual(
+        resolveBranchCandidate('สาขาลาคพร้าว', candidates),
+        { kind: 'resolved', id: 'b1', name: 'สาขาลาดพร้าว', code: 'LP' },
+      );
+    });
+
+    // Regression guard: "สาขา 1" and "สาขา 2" are one edit apart, but a branch number is an
+    // identifier, never a spelling slip of its neighbour — the near-match stage must not blur them
+    // even though it would otherwise be well within distance 1.
+    it('never near-matches across two different branch numbers', () => {
+      const candidates = [{ id: 'b1', name: 'สาขา 1', code: 'BR1' }];
+      assert.deepEqual(resolveBranchCandidate('สาขา 2', candidates), { kind: 'not_found' });
+    });
   });
 });

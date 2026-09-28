@@ -152,16 +152,56 @@ function stripLeadingWord(query: string, prefixes: readonly string[]): string | 
   return undefined;
 }
 
+/** Code-point length — a Thai tone mark or vowel sign is its own code point, so this counts the way
+ *  a person reads the string rather than by UTF-16 unit. */
+function codePointLength(value: string): number {
+  return [...value].length;
+}
+
+/** Levenshtein edit distance over code points (insert/delete/substitute, cost 1 each). */
+function levenshteinDistance(a: string, b: string): number {
+  const left = [...a];
+  const right = [...b];
+  let prevRow = Array.from({ length: right.length + 1 }, (_, col) => col);
+  for (let row = 1; row <= left.length; row += 1) {
+    const currentRow = [row];
+    for (let col = 1; col <= right.length; col += 1) {
+      const cost = left[row - 1] === right[col - 1] ? 0 : 1;
+      currentRow[col] = Math.min(
+        prevRow[col]! + 1, // deletion
+        currentRow[col - 1]! + 1, // insertion
+        prevRow[col - 1]! + cost, // substitution
+      );
+    }
+    prevRow = currentRow;
+  }
+  return prevRow[right.length]!;
+}
+
+const NEAR_MATCH_MAX_DISTANCE = 1;
+const NEAR_MATCH_MIN_QUERY_LENGTH = 4;
+
+/** Last-resort stage (batch 9a): the MODEL itself misspelled a category name by one Thai character
+ *  calling a read tool — "ค่าเดินทาน" for "ค่าเดินทาง" — in two separate real-model runs. Only
+ *  reached once every stage above found nothing. Gated on query length so a short query (which would
+ *  near-match almost anything at distance 1) never reaches it. */
+function nearMatches<T>(query: string, rows: readonly T[], normOf: (row: T) => string): T[] {
+  if (codePointLength(query) < NEAR_MATCH_MIN_QUERY_LENGTH) return [];
+  return rows.filter((row) => levenshteinDistance(query, normOf(row)) <= NEAR_MATCH_MAX_DISTANCE);
+}
+
 /**
  * categoryName/vendorName resolution (spec §3 row 6; relaxed per 2026-09-27 review — Thai users
  * routinely type a leading "หมวด"/"ร้าน" word the stored name never carries, or name the category
- * inside a longer phrase). Four stages, tried in order; a stage's result is used and the walk stops
+ * inside a longer phrase). Five stages, tried in order; a stage's result is used and the walk stops
  * the moment a stage is non-empty — later stages never widen or override an earlier match:
  *   (a) exact match on the normalised name;
  *   (b) forward contains — the candidate's name contains the query;
  *   (c) strip a leading category/vendor word from the QUERY only, then repeat (a) and (b);
  *   (d) reverse contains — the query contains the candidate's name — for candidates 2+ chars only,
  *       so a one-character category/vendor name can't match almost anything.
+ *   (e) last resort (batch 9a): edit distance ≤ 1 against the whole normalised name, only for a
+ *       query 4+ code points long — see `nearMatches`.
  * At most 10 candidates come back either way, as near-matches or as the available catalog to pick
  * from.
  */
@@ -182,6 +222,10 @@ export function resolveNameCandidate(
 
   if (pool.length === 0) {
     pool = scored.filter((row) => row.norm.length >= 2 && query.includes(row.norm));
+  }
+
+  if (pool.length === 0) {
+    pool = nearMatches(query, scored, (row) => row.norm);
   }
 
   if (pool.length === 1) return { kind: 'resolved', id: pool[0]!.candidate.id, name: pool[0]!.candidate.name };
@@ -211,6 +255,16 @@ function trailingDigits(normalized: string): string | undefined {
   return /(\d+)$/u.exec(normalized)?.[1];
 }
 
+/** A branch number is an identifier, not a spelling — "สาขา 1" and "สาขา 2" are one edit distance
+ *  apart but name two different branches, never a slip of the same one. Rejects a near-match
+ *  candidate whenever query and candidate both end in digits and those digits disagree; a query or
+ *  candidate with no trailing number at all is never rejected by this check. */
+function trailingDigitsConflict(query: string, candidateNormName: string): boolean {
+  const queryDigits = trailingDigits(query);
+  const candidateDigits = trailingDigits(candidateNormName);
+  return queryDigits !== undefined && candidateDigits !== undefined && queryDigits !== candidateDigits;
+}
+
 /**
  * Matches a branchId/code/name/number the model copied from the user, once the CALLER has already
  * tried an exact (case/whitespace-sensitive) id/code/name lookup and found nothing. Staged, like
@@ -220,6 +274,9 @@ function trailingDigits(normalized: string): string | undefined {
  *   2. otherwise, a unique match: the normalized query is contained in the normalized name, OR the
  *      query is a bare number equal to the trailing number of the normalized name (the two ways of
  *      matching are unioned before counting, since either can name the same branch).
+ *   3. last resort (batch 9a): edit distance ≤ 1 against the normalized name, only for a query 4+
+ *      code points long — same one-character-slip fallback as `resolveNameCandidate` (`nearMatches`)
+ *      — MINUS any candidate `trailingDigitsConflict` flags as a different branch number.
  * More than one candidate at whichever stage matches is ambiguous; none is not_found.
  */
 export function resolveBranchCandidate(rawQuery: string, candidates: readonly BranchCandidate[]): BranchResolution {
@@ -237,6 +294,11 @@ export function resolveBranchCandidate(rawQuery: string, candidates: readonly Br
     const queryDigits = /^\d+$/u.test(query) ? query : undefined;
     pool = scored.filter((row) => row.normName.includes(query)
       || (queryDigits !== undefined && trailingDigits(row.normName) === queryDigits));
+  }
+
+  if (pool.length === 0) {
+    pool = nearMatches(query, scored, (row) => row.normName)
+      .filter((row) => !trailingDigitsConflict(query, row.normName));
   }
 
   if (pool.length === 1) {
