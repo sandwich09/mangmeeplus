@@ -722,3 +722,62 @@ describe('E4: a read with good results, or a GENERAL item, never dead-ends when 
     assert.ok(result.replyText.includes('ลองพิมพ์ถามอีกครั้ง'), result.replyText);
   });
 });
+
+// H3 (tuning-7, T-107-b/T-111-b root cause): a call that fails binding/routing used to force its
+// WHOLE index to TOOL_INPUT_NOT_AUTHORIZED immediately — even when a SIBLING call for that same
+// index (same control round) had already produced a good result, which is exactly what happened for
+// both real-model eval turns once the planner correctly returned two expense.get_breakdown calls.
+// Isolated here from H1/H2 with a deliberately unrelated second call (an unoffered tool name), so
+// this specifically exercises the "defer until every call has had its chance" mechanism rather than
+// the groupBy/name-filter fixes.
+describe('H3: one call failing to bind never sinks an index a sibling call already answered', () => {
+  it('a bogus second call for the same index is dropped silently once the first call already succeeded', async () => {
+    const request: LineAiTurnRequest = {
+      requestId: 'req-h3-a', webhookEventId: 'event-h3-a', messageText: 'ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่คะ',
+      messagePreviewHash: 'f'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ยอดค่าใช้จ่ายเดือนนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const sourceRef = { id: 'expenses:expense_summary:summary', label: 'รายการค่าใช้จ่าย', module: 'expenses',
+      entityType: 'expense_summary', permissionChecked: true as const, asOf: '2026-09-28T01:00:00.000Z' };
+    const toolResult: ToolResult = { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-28T01:00:00.000Z',
+      sourceRefs: [sourceRef], facts: [], data: { total: 3 } };
+    const queue = [
+      JSON.stringify({ calls: [
+        { index: 0, toolName: 'expense.list_recent', input: {} },
+        // Not a real offered tool — `meta` resolves to undefined, so this fails binding the same
+        // way a genuinely misrouted or ungrounded call would (item 3/R-L2's `TOOL_INPUT_NOT_AUTHORIZED`
+        // branch), independent of anything H1/H2 changed.
+        { index: 0, toolName: 'expense.does_not_exist', input: {} },
+      ], questions: [] }),
+      JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'เดือนนี้มีค่าใช้จ่าย 3 รายการค่ะ', sourceRefIds: [sourceRef.id] }] }),
+    ];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    let invoked = 0;
+    const result = await runSemanticTurnV2({
+      req: request, provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { invoked += 1; return toolResult; },
+    });
+    assert.equal(invoked, 1, 'only the real tool ever executes — the bogus one is never invoked');
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+    assert.ok(!result.replyText.includes('ยังดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
+  });
+
+  it('still forces TOOL_INPUT_NOT_AUTHORIZED when EVERY call for the index fails to bind (no regression)', async () => {
+    const request: LineAiTurnRequest = {
+      requestId: 'req-h3-b', webhookEventId: 'event-h3-b', messageText: 'ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่คะ',
+      messagePreviewHash: '1'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ยอดค่าใช้จ่ายเดือนนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const result = await runSemanticTurnV2({
+      req: request, provider: wrongToolControlProvider('expense.does_not_exist'),
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('a nonexistent tool must never be invoked'); },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.status, 'unsupported');
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+  });
+});

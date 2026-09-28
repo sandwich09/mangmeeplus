@@ -82,11 +82,26 @@ describe('persona prompt content', () => {
     assert.match(line!, /never an ISO date/);
   });
 
-  it('batch5 A5: requires brevity — a direct first line and a short-bullets rule for knowledge answers', () => {
+  it('batch5 A5: requires brevity — a direct first line for the customer-visible text', () => {
     const line = MANGMEE_PERSONA_LINES.find((candidate) => candidate.includes('be brief'));
     assert.ok(line, 'expected a brevity persona line');
     assert.match(line!, /6 short lines/);
-    assert.match(line!, /4 short bullets/);
+  });
+
+  it('tuning-7 H5: caps total length, list bullets (with a link-to-full-list note), and knowledge-answer bullets tighter than before', () => {
+    const line = MANGMEE_PERSONA_LINES.find((candidate) => candidate.includes('be brief'));
+    assert.ok(line, 'expected a brevity persona line');
+    assert.match(line!, /80 Thai words/);
+    assert.match(line!, /8 bullets/);
+    assert.match(line!, /how many more/);
+    assert.match(line!, /3 short bullets/);
+    assert.doesNotMatch(line!, /4 short bullets/);
+  });
+
+  it('tuning-7 H5: still requires facts, limitations, scope, and questions to survive the brevity cut', () => {
+    const line = MANGMEE_PERSONA_LINES.find((candidate) => candidate.includes('be brief'));
+    assert.ok(line, 'expected a brevity persona line');
+    assert.match(line!, /never drop a fact, limitation, scope line, or question/);
   });
 });
 

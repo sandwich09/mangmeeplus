@@ -145,3 +145,35 @@ describe('E6: a composed answer built from an own/related-scoped result always s
     assert.ok(!result.replyText.includes('ขอบเขต:'), result.replyText);
   });
 });
+
+// tuning-7 (H4, run 6 T-108-a "ทำไมเดือนนี้ยังไม่จ่ายเยอะจังครับ"/T-012-b t3 "ทำไมรอตรวจเยอะจังคะ"):
+// the old why-rule ("explain with the largest contributors... name, amount, share") let compose
+// list six vendors with no category ever named, and separately a category list with share but no
+// amount. The rule now names a definite shape — categories first (bounded), a vendor/branch only
+// when it adds insight — so compose has less room to drift back into an open vendor dump.
+describe('tuning-7 H4: ANSWER_PROMPT directs a why-answer to lead with categories, not an open vendor list', () => {
+  it('sends the category-first why-rule to compose', async () => {
+    const request: LineAiTurnRequest = {
+      requestId: 'req-h4', webhookEventId: 'event-h4', messageText: 'ทำไมเดือนนี้ยังไม่จ่ายเยอะจังครับ',
+      messagePreviewHash: 'd'.repeat(16), valueCandidates: EMPTY_CANDIDATES,
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามสาเหตุยังไม่จ่ายเยอะ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const toolResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-28T01:00:00.000Z',
+      sourceRefs: [SOURCE_REF], facts: [], data: { totalAmount: '10621.00' } };
+    const { provider, calls } = recordingProvider([
+      JSON.stringify({ calls: [{ index: 0, toolName: 'expense.get_breakdown', input: { groupBy: 'vendor' } }], questions: [] }),
+      JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'ยังไม่จ่าย 10,621 บาทค่ะ', sourceRefIds: [SOURCE_REF.id] }] }),
+    ]);
+    await runSemanticTurnV2({
+      req: request, provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { return toolResult; },
+    });
+    const compose = calls.find((call) => call.usageTag === 'line.compose');
+    assert.ok(compose, 'expected a compose call');
+    assert.match(compose!.systemPrompt, /lead with the top categories/);
+    assert.match(compose!.systemPrompt, /up to 3: name, amount, share/);
+    assert.match(compose!.systemPrompt, /add a vendor or branch only when it adds insight/);
+  });
+});

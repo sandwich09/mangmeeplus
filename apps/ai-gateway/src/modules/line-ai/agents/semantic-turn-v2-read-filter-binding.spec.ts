@@ -210,13 +210,13 @@ describe('E5: a why-question about a read gets a category/vendor breakdown added
       controlCall: { calls: [{ index: 0, toolName: 'expense.get_breakdown',
         input: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า' } }] },
     });
-    // (b)'s unfiltered call is invoked directly (never through `calls`/`bindRequestedReadFilters` —
-    // see semantic-turn-v2.ts's E5 comment), so it lands in `invokedInputs` before the control
-    // round's own filtered call executes; the ORDER is an implementation detail, so sort first.
-    const sorted = [...invokedInputs].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-    assert.deepEqual(sorted, [
-      { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'vendor' } },
+    // H2 (tuning-7): (b)'s unfiltered call now goes through `calls`/`bindRequestedReadFilters` like
+    // every other call (see semantic-turn-v2.ts's E5 comment), pushed AFTER the control round's own
+    // calls — so the execution loop (which processes `calls` in array order) runs the control
+    // round's own filtered call first, then this addition.
+    assert.deepEqual(invokedInputs, [
       { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า' } },
+      { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'vendor' } },
     ]);
   });
 
@@ -237,5 +237,75 @@ describe('E5: a why-question about a read gets a category/vendor breakdown added
       controlCall: { calls: [{ index: 0, toolName: 'expense.list_recent', input: {} }] },
     });
     assert.deepEqual(invokedInputs, [{ tool: 'expense.list_recent', input: {} }]);
+  });
+});
+
+// H1/H2/H3 (tuning-7, run 6 real-model failures): here the PLANNER itself already followed
+// CONTROL_PROMPT's own why-question instruction and returned two expense.get_breakdown calls in
+// ONE control round (E5 above never needs to add anything) — the dead end was entirely inside
+// `bindRequestedReadFilters`/the execution loop: the second call's own `groupBy` conflicted with the
+// requestedFilters' `groupBy` (H1), and/or the requested name filter got re-merged onto the call
+// grouped by that same dimension (H2), so binding failed and forced the WHOLE index unsupported even
+// though the first call had already succeeded (H3). Both eval turns reproduced end to end with a
+// recording provider — a real control response followed by a real compose response.
+describe('H1/H2/H3: a why-question\'s own two-call plan (categoryName+vendor / vendorName+category) never dead-ends', () => {
+  it('T-107-b-style ("ทำไมค่าเดินทางเดือนนี้พุ่งขนาดนี้คะ"): both breakdown calls execute and compose runs', async () => {
+    const MESSAGE_TEXT = 'ทำไมค่าเดินทางเดือนนี้พุ่งขนาดนี้คะ';
+    const valueCandidates = await candidatesV2(MESSAGE_TEXT, 'turn-h123-a');
+    assert.ok(valueCandidates.periods.some(p => p.fromDate === '2026-09-01' && p.toDate === '2026-09-28'), 'sanity: this-month is grounded');
+    const request: LineAiTurnRequest = {
+      requestId: 'req-h123-a', webhookEventId: 'event-h123-a', messageText: MESSAGE_TEXT,
+      messagePreviewHash: '7'.repeat(16), valueCandidates,
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามสาเหตุค่าเดินทางพุ่ง', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+        requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28', categoryName: 'ค่าเดินทาง', groupBy: 'vendor' } }],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const toolResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-28T01:42:00.000Z',
+      sourceRefs: [{ id: 'expenses:expense_summary:summary', label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, asOf: '2026-09-28T01:42:00.000Z' }],
+      facts: [], data: { totalAmount: '3777.50' } };
+    const { result, invokedInputs } = await run({
+      request, invokeResult: toolResult, answerText: 'ค่าเดินทางเดือนนี้รวม 3777.50 บาทค่ะ',
+      controlCall: { calls: [
+        { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', categoryName: 'ค่าเดินทาง', groupBy: 'vendor' } },
+        { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' } },
+      ] },
+    });
+    assert.deepEqual(invokedInputs, [
+      { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', categoryName: 'ค่าเดินทาง', groupBy: 'vendor' } },
+      { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' } },
+    ]);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+    assert.ok(!result.replyText.includes('ยังดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
+  });
+
+  it('T-111-b-style ("ทำไมจ่ายร้านสมใจการค้าเยอะจังเดือนนี้ครับ"): both breakdown calls execute and compose runs', async () => {
+    const MESSAGE_TEXT = 'ทำไมจ่ายร้านสมใจการค้าเยอะจังเดือนนี้ครับ';
+    const valueCandidates = await candidatesV2(MESSAGE_TEXT, 'turn-h123-b');
+    assert.ok(valueCandidates.periods.some(p => p.fromDate === '2026-09-01' && p.toDate === '2026-09-28'), 'sanity: this-month is grounded');
+    const request: LineAiTurnRequest = {
+      requestId: 'req-h123-b', webhookEventId: 'event-h123-b', messageText: MESSAGE_TEXT,
+      messagePreviewHash: '8'.repeat(16), valueCandidates,
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามสาเหตุจ่ายร้านสมใจการค้าเยอะ', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+        requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า', groupBy: 'vendor' } }],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const toolResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-28T01:42:00.000Z',
+      sourceRefs: [{ id: 'expenses:expense_summary:summary', label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, asOf: '2026-09-28T01:42:00.000Z' }],
+      facts: [], data: { totalAmount: '17765.00' } };
+    const { result, invokedInputs } = await run({
+      request, invokeResult: toolResult, answerText: 'ร้านสมใจการค้าเดือนนี้รวม 17765 บาทค่ะ',
+      controlCall: { calls: [
+        { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า', groupBy: 'category' } },
+        { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'vendor' } },
+      ] },
+    });
+    assert.deepEqual(invokedInputs, [
+      { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า', groupBy: 'category' } },
+      { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'vendor' } },
+    ]);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+    assert.ok(!result.replyText.includes('ยังดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
   });
 });
