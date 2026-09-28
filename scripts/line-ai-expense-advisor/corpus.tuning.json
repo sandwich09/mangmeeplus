@@ -1083,7 +1083,20 @@
                   "expenseId": {
                     "$fromShownItems": 0
                   }
-                }
+                },
+                "alternatives": [
+                  {
+                    "tool": "expense.list_recent",
+                    "input": {
+                      "period": {
+                        "$period": "this_month_to_date"
+                      },
+                      "documentStatus": "NEEDS_REVIEW",
+                      "limit": 1
+                    },
+                    "answerShape": "list"
+                  }
+                ]
               }
             ]
           }
