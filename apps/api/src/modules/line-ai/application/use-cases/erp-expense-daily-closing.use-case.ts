@@ -18,6 +18,15 @@ import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-rea
 import { bangkokToday } from './erp-tools.use-case';
 
 const TIME_ZONE = 'Asia/Bangkok';
+const THAI_MONTH_ABBR = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+
+/** C6 (batch 5c): the customer-facing source label used a raw ISO date ("สรุปปิดร้าน 2026-09-28") —
+ *  day + abbreviated Thai month + Buddhist year, matching how the gateway formatter states every
+ *  other date in this tool's own answer. `date` is already `isCivilDate`-checked by the caller. */
+function thaiAbbrDateLabel(isoDate: string): string {
+  const [year, month, day] = isoDate.split('-');
+  return `${Number(day)} ${THAI_MONTH_ABBR[Number(month) - 1]} ${Number(year) + 543}`;
+}
 const DEFAULT_DETAIL_LIMIT = 5;
 const MAX_DETAIL_LIMIT = 10;
 const QUERY_COUNT = 16;
@@ -261,7 +270,7 @@ export class ExpenseGetDailyClosingTool implements ErpReadToolPort {
     const excluded = Object.fromEntries((snapshot.excludedRows as Array<{ status: string; _count: { _all: number } }>)
       .map((row) => [row.status, row._count._all]));
     const sourceRefs: SourceRef[] = [{
-      label: `สรุปปิดร้าน ${date}`,
+      label: `สรุปปิดร้าน ${thaiAbbrDateLabel(date)}`,
       module: 'expenses',
       entityType: 'expense_daily_closing',
       asOf,

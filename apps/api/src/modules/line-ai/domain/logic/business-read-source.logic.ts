@@ -189,6 +189,64 @@ export function resolveNameCandidate(
   return { kind: 'not_found', available: candidates.slice(0, NAME_MATCH_DISPLAY_LIMIT) };
 }
 
+// ---- branchId resolution (C3, batch 5c, T-148-b: "branchId": "2" for "สาขา 2" never resolved) ----
+
+export type BranchCandidate = { id: string; name: string; code: string | null };
+
+export type BranchResolution =
+  | { kind: 'resolved'; id: string; name: string; code: string | null }
+  | { kind: 'ambiguous'; matches: BranchCandidate[] }
+  | { kind: 'not_found' };
+
+/** NFC + lowercase + ALL whitespace removed. Branches differ from each other only by a space
+ *  ("สาขา 2" vs "สาขา2") or case ("BR2" vs "br2") far more often than category/vendor names do, so
+ *  this is its own normalizer rather than `normalizeNameQuery` above (which only trims the ends). */
+function normalizeBranchText(raw: string): string {
+  return raw.normalize('NFC').toLowerCase().replace(/\s+/gu, '');
+}
+
+/** The trailing run of digits in a normalized name, if any — lets a bare "2" resolve "สาขา 2"
+ *  without the customer repeating "สาขา". */
+function trailingDigits(normalized: string): string | undefined {
+  return /(\d+)$/u.exec(normalized)?.[1];
+}
+
+/**
+ * Matches a branchId/code/name/number the model copied from the user, once the CALLER has already
+ * tried an exact (case/whitespace-sensitive) id/code/name lookup and found nothing. Staged, like
+ * `resolveNameCandidate` above — a stage that finds anything stops the walk before the next stage
+ * ever runs:
+ *   1. exact match on the normalized name or code;
+ *   2. otherwise, a unique match: the normalized query is contained in the normalized name, OR the
+ *      query is a bare number equal to the trailing number of the normalized name (the two ways of
+ *      matching are unioned before counting, since either can name the same branch).
+ * More than one candidate at whichever stage matches is ambiguous; none is not_found.
+ */
+export function resolveBranchCandidate(rawQuery: string, candidates: readonly BranchCandidate[]): BranchResolution {
+  const query = normalizeBranchText(rawQuery);
+  if (!query) return { kind: 'not_found' };
+  const scored = candidates.map((candidate) => ({
+    candidate,
+    normName: normalizeBranchText(candidate.name),
+    normCode: candidate.code ? normalizeBranchText(candidate.code) : undefined,
+  }));
+
+  let pool = scored.filter((row) => row.normName === query || row.normCode === query);
+
+  if (pool.length === 0) {
+    const queryDigits = /^\d+$/u.test(query) ? query : undefined;
+    pool = scored.filter((row) => row.normName.includes(query)
+      || (queryDigits !== undefined && trailingDigits(row.normName) === queryDigits));
+  }
+
+  if (pool.length === 1) {
+    const b = pool[0]!.candidate;
+    return { kind: 'resolved', id: b.id, name: b.name, code: b.code };
+  }
+  if (pool.length > 1) return { kind: 'ambiguous', matches: pool.map((row) => row.candidate) };
+  return { kind: 'not_found' };
+}
+
 export type AppliedNameFilter =
   | { status: 'applied'; id?: string; name?: string }
   | { status: 'ambiguous'; matches: NameCandidate[] }

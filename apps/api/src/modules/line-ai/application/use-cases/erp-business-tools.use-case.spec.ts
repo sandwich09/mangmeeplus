@@ -555,6 +555,62 @@ describe('ExpenseGetBreakdownTool', () => {
   // read_own scoping) is covered against ExpenseListRecentTool in
   // erp-expense-list-recent.use-case.spec.ts; these confirm expense.get_breakdown is wired to the
   // same helper and shapes its own responses the same way.
+  // C3 (batch 5c, T-148-b): this tool had NO branch resolution at all — a branchId that was really a
+  // name/code/number (e.g. "2" for "สาขา 2") reached the repository as a literal id and silently
+  // matched nothing. Now shares `resolveExpenseBranchFilter` with expense.list_recent (full exact/
+  // fuzzy/out-of-scope coverage lives in erp-expense-list-recent.use-case.spec.ts); these two confirm
+  // this tool is actually wired to it.
+  describe('branchId resolution (C3, batch 5c)', () => {
+    function fakeBranchPrisma(branches: Array<{ id: string; name: string; code?: string }>) {
+      const rows = branches.map((b) => ({ id: b.id, name: b.name, code: b.code ?? null }));
+      const allowed = (where: any) => rows.filter((b) => {
+        if (where?.id?.in && !where.id.in.includes(b.id)) return false;
+        if (where?.name && where.name !== b.name) return false;
+        if (where?.OR && !where.OR.some((term: any) => (term.id !== undefined && term.id === b.id)
+          || (term.code !== undefined && term.code === b.code) || (term.name !== undefined && term.name === b.name))) return false;
+        return true;
+      });
+      return { client: { branch: { findMany: async ({ where, take }: any) => allowed(where).slice(0, take) } } } as any;
+    }
+
+    function makeBranchTool(filters: any[], branches: Array<{ id: string; name: string; code?: string }>) {
+      const source = {
+        readAiBreakdown: async (_ctx: any, filter: any) => {
+          filters.push(filter);
+          return {
+            asOf: new Date(), byCurrency: [{ currency: 'THB', count: 0, totalAmount: '0' }],
+            byCategory: [], byBranch: [], byVendor: [], categoryHasMore: false, branchHasMore: false, vendorHasMore: false,
+          };
+        },
+        listCategoryCandidates: async () => [], readAiVendorCandidates: async () => [],
+      } as any;
+      return new ExpenseGetBreakdownTool(source, fakeBranchPrisma(branches));
+    }
+
+    it('resolves "2" to the branch whose name ends in that number, instead of filtering on the literal string', async () => {
+      const filters: any[] = [];
+      const tool = makeBranchTool(filters, [
+        { id: 'b1', name: 'สำนักงานใหญ่', code: 'BR1' },
+        { id: 'b2', name: 'สาขา 2', code: 'BR2' },
+      ]);
+      const result = await tool.execute({ ...baseCtx, permissions: ['expense.read'] }, { branchId: '2' } as any);
+
+      assert.equal(result.status, 'ok');
+      assert.equal(filters[0]?.branchId, 'b2');
+      assert.equal((result.data as any).queryApplied?.branch?.branchId, 'b2');
+    });
+
+    it('returns the branch catalog instead of a (silently empty) breakdown when the branch cannot be resolved', async () => {
+      const filters: any[] = [];
+      const tool = makeBranchTool(filters, [{ id: 'b1', name: 'สาขา 1', code: 'BR1' }]);
+      const result = await tool.execute({ ...baseCtx, permissions: ['expense.read'] }, { branchId: 'สาขา 99' } as any);
+
+      assert.equal(filters.length, 0);
+      assert.equal((result.data as any).branchUnresolved, 'สาขา 99');
+      assert.ok(result.sourceRefs.length > 0);
+    });
+  });
+
   describe('categoryName / vendorName resolution', () => {
     function makeNamedSource(categories: Array<{ id: string; name: string }>, vendors: Array<{ id: string; name: string }>) {
       const filters: any[] = [];

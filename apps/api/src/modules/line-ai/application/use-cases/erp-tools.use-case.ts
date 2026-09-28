@@ -24,6 +24,7 @@ import {
   completeResult,
   fact,
   periodError,
+  resolveBranchCandidate,
   resolveBusinessReadPeriod,
   sourceRefId,
 } from '../../domain/logic/business-read-source.logic';
@@ -242,6 +243,112 @@ function encodeExpenseCursor(source: { expenseDate: Date; id: string }, fingerpr
   return Buffer.from(JSON.stringify({ v: 1, f: fingerprint, d: source.expenseDate.toISOString(), id: source.id })).toString('base64url');
 }
 
+export type BranchFilterOutcome =
+  | { ok: true; branchId?: string; branchName?: string }
+  | { ok: false; result: ToolResult };
+
+/**
+ * Resolves a branchId/code/name/number the model copied from the user (typos included) against the
+ * caller's own SCOPED branches: exact id/code, then exact name — the catalog respects branch ABAC, a
+ * branch-restricted user never sees names outside their scope. C3 (batch 5c, T-148-b): the model
+ * sent branchId "2" for "สาขา 2" and both exact lookups missed it, so a normalized contains/trailing-
+ * number match runs next (`resolveBranchCandidate`) before giving up. Still unresolved in scope:
+ * checks whether the branch exists elsewhere in the COMPANY, with the SAME normalization, to return
+ * an honest permission boundary (`branchOutOfScope`) instead of a bare "unresolved" that reads like a
+ * typo for the model to retry. Shared by expense.list_recent and expense.get_breakdown — same branch
+ * catalog, same lookup rules.
+ */
+export async function resolveExpenseBranchFilter(
+  prisma: PrismaService,
+  toolName: string,
+  ctx: ErpToolContext,
+  requestedBranch: string | undefined,
+  nameLookupSourceRefs: SourceRef[],
+  asOf: string,
+): Promise<BranchFilterOutcome> {
+  if (!requestedBranch) return { ok: true };
+  const scopeWhere = {
+    companyId: ctx.companyId,
+    status: 'ACTIVE' as const,
+    ...(ctx.branchIds ? { id: { in: ctx.branchIds } } : {}),
+  };
+  // Exact identifiers are unique within a company; names are not. Resolve identifiers first, then
+  // require a unique name match. This avoids both arbitrary duplicate-name selection and the old
+  // first-100 scan hiding a valid exact id/code match.
+  const identifiers = await prisma.client.branch.findMany({
+    where: { ...scopeWhere, OR: [{ id: requestedBranch }, { code: requestedBranch }] },
+    select: { id: true, name: true, code: true },
+    take: 2,
+  });
+  if (identifiers.length > 1) {
+    return { ok: false, result: { toolName, status: 'ok', data: {
+      branchAmbiguous: requestedBranch,
+      availableBranches: identifiers.map((b) => ({ id: b.id, name: b.name, code: b.code })),
+    }, sourceRefs: nameLookupSourceRefs, asOf } };
+  }
+  let hit = identifiers[0];
+  if (!hit) {
+    const names = await prisma.client.branch.findMany({
+      where: { ...scopeWhere, name: requestedBranch },
+      select: { id: true, name: true, code: true },
+      take: 2,
+    });
+    if (names.length > 1) {
+      return { ok: false, result: { toolName, status: 'ok', data: {
+        branchAmbiguous: requestedBranch,
+        availableBranches: names.map((b) => ({ id: b.id, name: b.name, code: b.code })),
+      }, sourceRefs: nameLookupSourceRefs, asOf } };
+    }
+    hit = names[0];
+  }
+  if (!hit) {
+    const branches = await prisma.client.branch.findMany({
+      where: scopeWhere,
+      select: { id: true, name: true, code: true },
+      take: 101,
+    });
+    const lookupLimited = branches.length > 100;
+    const availableBranches = branches.slice(0, 100).map((b) => ({ id: b.id, name: b.name, code: b.code }));
+    const fuzzy = resolveBranchCandidate(requestedBranch, availableBranches);
+    if (fuzzy.kind === 'resolved') {
+      // Look up the already-fetched row rather than rebuilding one from `fuzzy` — `code` there is
+      // typed `string | null` for callers whose catalog allows it, but this one (Prisma's Branch.code)
+      // never is, and the row is already right here. Guaranteed present: `fuzzy` was resolved FROM
+      // `availableBranches` by the same id.
+      hit = availableBranches.find((b) => b.id === fuzzy.id)!;
+    } else if (fuzzy.kind === 'ambiguous') {
+      return { ok: false, result: { toolName, status: 'ok', data: {
+        branchAmbiguous: requestedBranch, availableBranches: fuzzy.matches,
+      }, sourceRefs: nameLookupSourceRefs, asOf } };
+    }
+    if (!hit) {
+      // Item 2 (T-148): a STAFF user asking for a branch that exists in this COMPANY but outside
+      // their OWN branch scope got a raw TOOL_RESULT_NO_SOURCE code — this tool must say so
+      // honestly instead (never the generic "unresolved", which reads like a typo the model should
+      // retry). Company-wide, never scoped to `ctx`'s branches, and returns no business data, only
+      // whether SOME active branch matches — the permission boundary stays exact because
+      // `availableBranches` above is still the caller's own scoped catalog, never anything about the
+      // forbidden branch itself.
+      const outOfScope = Boolean(ctx.branchIds) && await (async () => {
+        const companyWide = await prisma.client.branch.findMany({
+          where: { companyId: ctx.companyId, status: 'ACTIVE' },
+          select: { id: true, name: true, code: true },
+          take: 101,
+        });
+        return resolveBranchCandidate(requestedBranch, companyWide).kind !== 'not_found';
+      })();
+      if (outOfScope) {
+        return { ok: false, result: { toolName, status: 'ok', data: { branchOutOfScope: requestedBranch, availableBranches }, sourceRefs: nameLookupSourceRefs, asOf } };
+      }
+      return { ok: false, result: { toolName, status: 'ok', data: {
+        branchUnresolved: requestedBranch, availableBranches,
+        ...(lookupLimited ? { branchLookupLimited: true } : {}),
+      }, sourceRefs: nameLookupSourceRefs, asOf } };
+    }
+  }
+  return { ok: true, branchId: hit.id, branchName: hit.name };
+}
+
 @Injectable()
 export class ExpenseListRecentTool implements ErpReadToolPort {
   toolName = 'expense.list_recent';
@@ -276,89 +383,15 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     // check (which requires at least one sourceRef on any 'ok' result) discards it as an opaque
     // TOOL_RESULT_NO_SOURCE error before any caller ever sees availableBranches/Categories/Vendors.
     const nameLookupSourceRefs: SourceRef[] = [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/expenses` }];
-    // The model copies whatever the user said — a branch name, code, or id, typos included. Exact
-    // id/name/code resolves here; anything else returns the ACTIVE branches in this user's scope
-    // instead of records, so the MODEL does the semantic matching (retry with the right id, or ask)
-    // rather than this tool answering a confident zero for a branch that exists under another
-    // spelling. The catalog respects branch ABAC — a branch-restricted user never sees names
-    // outside their scope, and a name outside that scope stays unresolvable on purpose.
+    // The model copies whatever the user said — a branch name, code, or id, typos included — see
+    // `resolveExpenseBranchFilter` for the exact/fuzzy/out-of-scope lookup order (C3, batch 5c).
     const requestedBranch = typeof input?.branchId === 'string' && input.branchId.trim() ? input.branchId.trim() : undefined;
-    let branchId: string | undefined;
+    const branchFilter = await resolveExpenseBranchFilter(this.prisma, this.toolName, ctx, requestedBranch, nameLookupSourceRefs, asOf);
+    if (!branchFilter.ok) return branchFilter.result;
+    const branchId = branchFilter.branchId;
     // Spec §4 R-M1: the resolved display name, not the raw id/code/name the model sent — this is
     // what read memory (line-read-evidence.service.ts) shows back for a branch-scoped follow-up.
-    let branchName: string | undefined;
-    if (requestedBranch) {
-      const scopeWhere = {
-        companyId: ctx.companyId,
-        status: 'ACTIVE' as const,
-        ...(ctx.branchIds ? { id: { in: ctx.branchIds } } : {}),
-      };
-      // Exact identifiers are unique within a company; names are not. Resolve identifiers first,
-      // then require a unique name match. This avoids both arbitrary duplicate-name selection and
-      // the old first-100 scan hiding a valid exact id/code match.
-      const identifiers = await this.prisma.client.branch.findMany({
-        where: { ...scopeWhere, OR: [{ id: requestedBranch }, { code: requestedBranch }] },
-        select: { id: true, name: true, code: true },
-        take: 2,
-      });
-      if (identifiers.length > 1) {
-        return { toolName: this.toolName, status: 'ok', data: {
-          branchAmbiguous: requestedBranch,
-          availableBranches: identifiers.map((b) => ({ id: b.id, name: b.name, code: b.code })),
-        }, sourceRefs: nameLookupSourceRefs, asOf };
-      }
-      let hit = identifiers[0];
-      if (!hit) {
-        const names = await this.prisma.client.branch.findMany({
-          where: { ...scopeWhere, name: requestedBranch },
-          select: { id: true, name: true, code: true },
-          take: 2,
-        });
-        if (names.length > 1) {
-          return { toolName: this.toolName, status: 'ok', data: {
-            branchAmbiguous: requestedBranch,
-            availableBranches: names.map((b) => ({ id: b.id, name: b.name, code: b.code })),
-          }, sourceRefs: nameLookupSourceRefs, asOf };
-        }
-        hit = names[0];
-      }
-      if (!hit) {
-        const branches = await this.prisma.client.branch.findMany({
-          where: scopeWhere,
-          select: { id: true, name: true, code: true },
-          take: 101,
-        });
-        const lookupLimited = branches.length > 100;
-        const availableBranches = branches.slice(0, 100).map((b) => ({ id: b.id, name: b.name, code: b.code }));
-        // Item 2 (T-148): a STAFF user asking for a branch that exists in this COMPANY but outside
-        // their OWN branch scope got a raw TOOL_RESULT_NO_SOURCE code — this tool must say so
-        // honestly instead (never the generic "unresolved", which reads like a typo the model
-        // should retry). The existence check below is company-wide but never scoped to `ctx`'s
-        // branches; it returns no business data, only whether SOME active branch matches — the
-        // permission boundary stays exact because `availableBranches` above is still the caller's
-        // own scoped catalog, never anything about the forbidden branch itself.
-        const outOfScope = Boolean(ctx.branchIds) && await this.prisma.client.branch.findFirst({
-          where: { companyId: ctx.companyId, status: 'ACTIVE', OR: [{ id: requestedBranch }, { code: requestedBranch }, { name: requestedBranch }] },
-          select: { id: true },
-        }) !== null;
-        if (outOfScope) {
-          return { toolName: this.toolName, status: 'ok', data: { branchOutOfScope: requestedBranch, availableBranches }, sourceRefs: nameLookupSourceRefs, asOf };
-        }
-        return {
-          toolName: this.toolName,
-          status: 'ok',
-          data: {
-            branchUnresolved: requestedBranch,
-            availableBranches,
-            ...(lookupLimited ? { branchLookupLimited: true } : {}),
-          },
-          sourceRefs: nameLookupSourceRefs,
-          asOf,
-        };
-      }
-      branchId = hit.id;
-      branchName = hit.name;
-    }
+    const branchName = branchFilter.branchName;
     // categoryName/vendorName resolution (spec §3 row 6): same exact-then-contains match as the
     // branch lookup above. Vendor candidates use the branch already resolved here, not the raw
     // input, so a branch name plus a vendor name narrow together.

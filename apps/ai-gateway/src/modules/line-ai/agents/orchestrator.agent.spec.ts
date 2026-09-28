@@ -553,8 +553,9 @@ describe('OrchestratorAgent', () => {
       lineAiDeterministicResponseFamilies: ['expense.list_recent::list'],
     })).run({ ...req, preparedPlan, intakeIntent: 'BUSINESS_READ_QUESTION', actorDelegations: { 'expense.list_recent': ['test-delegation'] } });
     // The compiled expense.list_recent::list formatter's numbered rows must be served...
-    assert.match(result.replyText, /\n1\. 2026-08-05 ร้านสมใจ 500\.00 บาท \(ยืนยันแล้ว\)/);
-    assert.match(result.replyText, /\n2\. 2026-08-02 ร้านใจดี 700\.00 บาท \(พร้อมยืนยัน\)/);
+    // C6 (batch 5c): a short list-item date, year-free within the tool's own as-of year.
+    assert.match(result.replyText, /\n1\. 5 ส\.ค\. ร้านสมใจ 500\.00 บาท \(ยืนยันแล้ว\)/);
+    assert.match(result.replyText, /\n2\. 2 ส\.ค\. ร้านใจดี 700\.00 บาท \(พร้อมยืนยัน\)/);
     // ...never the single-metric "basis" line (R-A3 lists never carry it; R-A1 basis is single-metric only).
     assert.ok(!result.replyText.includes('ฐานยอด'), 'must not fall back to the single-metric summary reply');
     assert.equal(result.presentation?.cards[0]?.text, result.replyText);
@@ -985,6 +986,51 @@ describe('prepared simple-read lane telemetry', () => {
     await other.run({ ...makeReq('สวัสดีค่ะ'), intakeIntent: 'ADVISOR_CONVERSATION' } as LineAiTurnRequest);
     assert.deepEqual(laneLogs(otherLogs), []);
   });
+
+  // C4 (batch 5c, T-008-b "แล้วร้านกาแฟอเมซอนล่ะคะ"): expense.list_recent's own vendorUnresolved
+  // result matches no compiled formatter, so the lane owns the turn as an honest terminal — which
+  // used to mean the generic "ยังดึงข้อมูลส่วนนี้ไม่ได้" line instead of the tool's own catalog answer.
+  it('renders the name-resolution reply (not the generic read-failure line) and drops the generic web link', async () => {
+    const erp = {
+      invoke: async (tool: any) => ({
+        toolName: tool.name, status: 'ok',
+        data: { vendorUnresolved: 'ร้านกาแฟอเมซอน', availableVendors: [{ id: 'v1', name: 'ร้านสมใจ' }] },
+        sourceRefs: [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, webPath: '/companies/company-1/expenses' }],
+        asOf: new Date().toISOString(),
+      }),
+    } as any;
+    const orchestrator = new OrchestratorAgent(erp, laneConfig(['expense.list_recent::single_metric']));
+    const logs = sink(orchestrator);
+    const req = makeReq('แล้วร้านกาแฟอเมซอนล่ะคะ');
+    req.userContext.permissions.push('expense.read');
+    // The sanitizer requires any date in the proposed call to be backed by a value candidate (P0) — a
+    // plain August-2026 month candidate, same shape used elsewhere in this file, keeps that orthogonal
+    // to what this test actually proves (vendor-name resolution in the fast lane).
+    req.valueCandidates = { amounts: [], dates: [], periods: [
+      { span: 'August 2026', kind: 'month', fromDate: '2026-08-01', toDate: '2026-08-31', monthKey: '2026-08', source: 'explicit', label: 'สิงหาคม 2569', assumptions: [] },
+    ] } as any;
+    const preparedPlan = parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'single_metric',
+      intakeIntent: 'BUSINESS_READ_QUESTION',
+      intentPlan: {
+        status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }],
+      },
+      proposedCalls: [{ toolName: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', vendorName: 'ร้านกาแฟอเมซอน' } }],
+    });
+    assert.ok(preparedPlan);
+    const result = await orchestrator.run({
+      ...req, preparedPlan, intakeIntent: 'BUSINESS_READ_QUESTION',
+      actorDelegations: { 'expense.list_recent': ['test-delegation'] },
+    });
+    assert.match(result.replyText, /ไม่พบร้านชื่อ "ร้านกาแฟอเมซอน" ค่ะ/);
+    assert.match(result.replyText, /ร้านสมใจ/);
+    assert.doesNotMatch(result.replyText, /ยังดึงข้อมูลส่วนนี้ไม่ได้/);
+    // The reply already lists the real catalog and asks for a name — a generic "Expenses page" link
+    // would be redundant, and the classic path (expenseBranchResolutionReply) attaches none either.
+    assert.deepEqual(result.webLinks, []);
+    assert.ok(laneLogs(logs).some((e) => e.msg === 'line.ai.prepared_simple_read.honest_terminal'));
+  });
 });
 
 // ── H4 period resolution (period-resolution spec §3.2/§3.3/§3.4, P-02/P-03/P-05) ──
@@ -1410,12 +1456,16 @@ describe('run-level expense follow-up execution', () => {
     const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
     assert.equal(inputs.length, 1);
     assert.match(result.replyText, /หลายสาขาที่ใช้ชื่อเดียวกัน/);
-    assert.match(result.replyText, /เลือกสาขาจากหน้าเว็บ/);
+    // C4 (batch 5c): the old "กรุณาเลือกสาขาจากหน้าเว็บ" dead end is gone — same-name matches ask for
+    // more context in the chat instead, still without printing a code or an internal id.
+    assert.match(result.replyText, /ลองเพิ่มรายละเอียดอื่น/);
     assert.doesNotMatch(result.replyText, /uuid-secret|รหัส|\bA\b|\bB\b|0\.00|0 รายการ/);
     assert.equal(result.deterministicExpenseSummary, undefined);
   });
 
-  it('explains an unresolved branch without repeating its code or claiming there are no expenses', async () => {
+  // C4 (batch 5c): "secret-code" here is the branch text the CUSTOMER typed ("...สาขา secret-code"),
+  // not a hidden internal id — echoing back what they asked for is the point of "ไม่พบ...ชื่อ "X" ค่ะ".
+  it('explains an unresolved branch by naming what was searched, without claiming there are no expenses', async () => {
     configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', branchId: 'secret-code' } }]);
     const req = makeReq('ค่าใช้จ่ายเดือนสิงหาคม 2569 สาขา secret-code');
     req.userContext.permissions.push('expense.read');
@@ -1424,9 +1474,9 @@ describe('run-level expense follow-up execution', () => {
       branchUnresolved: 'secret-code', availableBranches: [{ id: 'uuid-secret', name: 'สาขากลาง' }],
     }, sourceRefs: [], asOf: new Date().toISOString() }) } as any;
     const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
-    assert.match(result.replyText, /ยังระบุสาขาที่ต้องการไม่ได้/);
-    assert.match(result.replyText, /เลือกสาขาจากหน้าเว็บ/);
-    assert.doesNotMatch(result.replyText, /secret-code|uuid-secret|0\.00|0 รายการ/);
+    assert.match(result.replyText, /ไม่พบสาขาชื่อ "secret-code" ค่ะ/);
+    assert.match(result.replyText, /พิมพ์ชื่อที่ต้องการมาได้เลยค่ะ/);
+    assert.doesNotMatch(result.replyText, /uuid-secret|0\.00|0 รายการ/);
   });
 
   it('explains an out-of-scope branch by naming only the caller\'s own branches, never the forbidden one', async () => {
@@ -1467,7 +1517,9 @@ describe('run-level expense follow-up execution', () => {
       categoryUnresolved: 'ยานยนต์', availableCategories: [{ id: 'c1', name: 'ค่าเดินทาง' }, { id: 'c2', name: 'ค่าน้ำมัน' }],
     }, sourceRefs: [], asOf: new Date().toISOString() }) } as any;
     const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
-    assert.match(result.replyText, /ยังระบุหมวดที่ต้องการไม่ได้/);
+    // C4 (batch 5c, T-064-a): "ยังระบุ...ไม่ได้" read as a system limitation — the eval wants an
+    // honest "ไม่พบ" instead.
+    assert.match(result.replyText, /ไม่พบหมวดชื่อ "ยานยนต์" ค่ะ/);
     assert.match(result.replyText, /ค่าเดินทาง/);
     assert.match(result.replyText, /ค่าน้ำมัน/);
     assert.doesNotMatch(result.replyText, /\bc1\b|\bc2\b|0\.00|0 รายการ/);

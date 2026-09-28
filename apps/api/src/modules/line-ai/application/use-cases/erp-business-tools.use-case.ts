@@ -26,6 +26,9 @@ import {
   resolveBusinessReadPeriod,
   sourceRefId,
 } from '../../domain/logic/business-read-source.logic';
+// C3 (batch 5c): same branch catalog, same lookup rules as expense.list_recent — shared rather than
+// duplicated, per the established cross-file helper pattern in this module (see e.g. bangkokToday).
+import { resolveExpenseBranchFilter } from './erp-tools.use-case';
 
 function now(): string { return new Date().toISOString(); }
 
@@ -348,7 +351,10 @@ export class CompanyEmployeeDetailTool implements ErpReadToolPort {
 @Injectable()
 export class ExpenseGetBreakdownTool implements ErpReadToolPort {
   toolName = 'expense.get_breakdown';
-  constructor(private readonly listExpenses: ListExpensesUseCase) {}
+  // `prisma` stays optional so the many existing single-arg `new ExpenseGetBreakdownTool(source)`
+  // fakes in the spec file — none of which ever pass a branchId — keep compiling unchanged;
+  // `resolveExpenseBranchFilter` never dereferences it unless a branchId was actually requested.
+  constructor(private readonly listExpenses: ListExpensesUseCase, private readonly prisma?: PrismaService) {}
 
   async execute(ctx: ErpToolContext, input: {
     periodKey?: string; fromDate?: string; toDate?: string; branchId?: string;
@@ -385,6 +391,13 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
     // check (which requires at least one sourceRef on any 'ok' result) discards it as an opaque
     // TOOL_RESULT_NO_SOURCE error before any caller ever sees availableCategories/availableVendors.
     const nameLookupSourceRefs: SourceRef[] = [{ label: 'สรุปค่าใช้จ่ายแยกกลุ่ม', module: 'expenses', entityType: 'expense_breakdown', asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/expenses` }];
+    // C3 (batch 5c, T-148-b): this tool had NO branch resolution at all — a branchId that was really
+    // a name/code/number (e.g. "2" for "สาขา 2") reached the repository query as a literal id and
+    // silently matched nothing. Same exact/fuzzy/out-of-scope lookup as expense.list_recent.
+    const requestedBranch = typeof input?.branchId === 'string' && input.branchId.trim() ? input.branchId.trim() : undefined;
+    const branchFilter = await resolveExpenseBranchFilter(this.prisma!, this.toolName, ctx, requestedBranch, nameLookupSourceRefs, asOf);
+    if (!branchFilter.ok) return branchFilter.result;
+    const branchId = branchFilter.branchId;
     const categoryCandidates = requestedCategoryName ? await this.listExpenses.listCategoryCandidates(ctx.companyId) : [];
     const categoryFilter = applyNameFilter(input.categoryId, requestedCategoryName, categoryCandidates, CATEGORY_NAME_STRIP_PREFIXES);
     if (categoryFilter.status === 'conflict') {
@@ -396,7 +409,7 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
     if (categoryFilter.status === 'not_found') {
       return { toolName: this.toolName, status: 'ok', data: { categoryUnresolved: requestedCategoryName, availableCategories: categoryFilter.available }, sourceRefs: nameLookupSourceRefs, asOf };
     }
-    const vendorCandidates = requestedVendorName ? await this.listExpenses.readAiVendorCandidates(toCtx(ctx), input.branchId) : [];
+    const vendorCandidates = requestedVendorName ? await this.listExpenses.readAiVendorCandidates(toCtx(ctx), branchId) : [];
     const vendorFilter = applyNameFilter(input.vendorId, requestedVendorName, vendorCandidates, VENDOR_NAME_STRIP_PREFIXES);
     if (vendorFilter.status === 'conflict') {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'vendorId and vendorName resolve to different vendors', sourceRefs: [], asOf };
@@ -411,7 +424,7 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
     const vendorId = vendorFilter.id;
     const snapshot = await this.listExpenses.readAiBreakdown(toCtx(ctx), {
       fromDate: period.fromDate, toDate: period.toDate,
-      ...(input.branchId ? { branchId: input.branchId } : {}),
+      ...(branchId ? { branchId } : {}),
       ...(categoryId ? { expenseCategoryId: categoryId } : {}),
       ...(vendorId ? { vendorCounterpartyId: vendorId } : {}),
       ...(input.documentStatus ? { status: input.documentStatus } : {}),
@@ -429,7 +442,7 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
       asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/expenses`,
     }];
     const queryApplied = appliedQuery(period, {
-      branch: { mode: input.branchId ? 'selected' : 'all_authorized', branchId: input.branchId ?? null },
+      branch: { mode: branchId ? 'selected' : 'all_authorized', branchId: branchId ?? null },
       dateBasis: 'expense_incurred_date', statusBasis: input.documentStatus ?? 'exclude_rejected_voided',
       dataset: 'operational_expense_records',
       accessScope,

@@ -144,6 +144,19 @@ describe('item 2: LINE approve/reject/pay/confirm/void action boundary (spec §1
     // substring but names a state, never a command, and the sentence carries no request marker.
     assert.equal(lineActionBoundaryReplyText('ใบเบิกรออนุมัติเดือนนี้มีกี่รายการครับ', [], 'th'), undefined);
   });
+
+  it('does not fire for a STATE phrase even WITH a request marker on the read verb (C2, T-084-b)', () => {
+    // "เช็ค...หน่อยครับ" ("please check...") carries a request marker, but it requests a CHECK, not
+    // an approval — "รออนุมัติ"/"จ่ายแล้ว" here name the claim's state, not a command.
+    assert.equal(lineActionBoundaryReplyText('เช็คใบเบิกที่รออนุมัติหน่อยครับ', [], 'th'), undefined);
+    assert.equal(lineActionBoundaryReplyText('รบกวนเช็คใบเบิกที่รออนุมัติอยู่ด้วยค่ะ', [], 'th'), undefined);
+    assert.equal(lineActionBoundaryReplyText('ขอดูใบเบิกที่จ่ายแล้วหน่อย', [], 'th'), undefined);
+  });
+
+  it('still fires when a real action verb accompanies the state phrase (C2)', () => {
+    const text = lineActionBoundaryReplyText('ช่วยอนุมัติใบเบิกที่รออนุมัติหน่อย', APPROVER, 'th')!;
+    assert.ok(text.includes('LINE ไม่ได้'), text);
+  });
 });
 
 describe('item 3: a read-only role asking to record, upload, or capture (spec §8 "นอกสิทธิ์")', () => {

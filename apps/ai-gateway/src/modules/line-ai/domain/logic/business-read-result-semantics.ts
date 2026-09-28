@@ -91,30 +91,53 @@ export function expenseNameResolutionIssue(outputs: SpecialistOutput[]): Expense
 const EXPENSE_NAME_FIELD_TH: Record<ExpenseNameResolutionIssue['field'], string> = { branch: 'สาขา', category: 'หมวด', vendor: 'ร้าน' };
 const EXPENSE_NAME_FIELD_EN: Record<ExpenseNameResolutionIssue['field'], string> = { branch: 'branch', category: 'category', vendor: 'vendor' };
 
-/** Ambiguous -> a real clarifying question (spec: "หมายถึงร้านไหนคะ" + up to 5 options) when the
- *  matches have distinct display names — an actual chat-answerable question. Several matches
- *  sharing the EXACT same display name cannot be told apart in text at all (never print the
- *  internal id/code that could): that case, like not-found, is a terminal statement pointing at
- *  the web app, never a question, never a waiting task. Out-of-scope (branch only) is likewise
- *  terminal — it states the caller's OWN visible branches, never the forbidden branch's data. */
+/** Up to 5 display names, comma-joined — every branch below uses the same list rendering. */
+function joinedNames(names: string[]): string {
+  return names.join(', ');
+}
+
+/** C4 (batch 5c): the eval scored "เลือกจากหน้าเว็บ" as a dead end/refusal — every reply must leave
+ *  the customer something to DO in the chat, so this is the one line every terminal (non-question)
+ *  branch below ends on. */
+function nameResolutionNextStepText(english: boolean): string {
+  return english ? 'Just type the name you mean.' : 'พิมพ์ชื่อที่ต้องการมาได้เลยค่ะ';
+}
+
+/** Ambiguous -> a real clarifying question ("หมายถึงร้านไหนคะ" + up to 5 options) when the matches
+ *  have distinct display names — an actual chat-answerable question. Several matches sharing the
+ *  EXACT same display name cannot be told apart in text at all (never print the internal id/code
+ *  that could, nor `issue.requested` itself — see the branch below): C4 asks for other context
+ *  instead, never "select it on the web". Out-of-scope (branch only) states the caller's OWN
+ *  visible branches, never the forbidden branch's data, then invites them to ask about what they
+ *  CAN see. Not-found never claims certainty the model doesn't have ("ยังระบุ...ไม่ได้" read as a
+ *  system limitation) — it states the fact ("ไม่พบ...") and asks for the name again, matching the
+ *  eval's "ไม่พบ|ไม่มี" honesty check. */
 export function expenseNameResolutionReplyText(issue: ExpenseNameResolutionIssue, english: boolean): string {
   const th = EXPENSE_NAME_FIELD_TH[issue.field], en = EXPENSE_NAME_FIELD_EN[issue.field];
   const uniqueNames = [...new Set(issue.names)];
+  const names = joinedNames(uniqueNames);
   if (issue.kind === 'ambiguous') {
     if (uniqueNames.length > 1) {
-      return english ? `Which ${en} do you mean? ${uniqueNames.join(', ')}` : `หมายถึง${th}ไหนคะ ${uniqueNames.join(', ')}`;
+      return english
+        ? `A few ${en}s have a name similar to "${issue.requested}": ${names}. Which ${en} do you mean?`
+        : `มี${th}ที่ชื่อคล้าย "${issue.requested}" หลาย${th}ค่ะ: ${names} หมายถึง${th}ไหนคะ`;
     }
+    // Every match has the SAME display name, so — unlike the distinct-names case above — neither
+    // `issue.requested` nor a candidate's own id/code is safe to print here: none of it would help
+    // tell them apart, and the caller-sent value in `requested` is not always a name the customer
+    // themselves typed (e.g. a raw id the model echoed back). Ask for other context instead.
     return english
-      ? `Several records share the same ${en} name, so I could not identify which one you mean. Please select it in the web app.`
-      : `มีหลาย${th}ที่ใช้ชื่อเดียวกัน จึงยังระบุ${th}ที่ต้องการไม่ได้ค่ะ กรุณาเลือก${th}จากหน้าเว็บ`;
+      ? `A few ${en}s share that exact name, so I can't tell them apart from the name alone. Try adding another detail and asking again.`
+      : `มีหลาย${th}ที่ใช้ชื่อเดียวกันค่ะ แยกให้ไม่ได้จากชื่ออย่างเดียว ลองเพิ่มรายละเอียดอื่น แล้วถามอีกครั้งได้เลยค่ะ`;
   }
-  const available = uniqueNames.join(', ');
   if (issue.kind === 'out_of_scope') {
-    return english ? `You can only view branch(es): ${available}` : `คุณดูข้อมูลได้เฉพาะสาขา ${available} ค่ะ`;
+    return english
+      ? `You can only view branch(es): ${names}. Feel free to ask about those.`
+      : `คุณดูข้อมูลได้เฉพาะสาขา ${names} ค่ะ ถามข้อมูลสาขาที่ดูได้เลยค่ะ`;
   }
   return english
-    ? `I could not identify the requested ${en}.${available ? ` Available: ${available}.` : ''} Please check and select it in the web app.`
-    : `ยังระบุ${th}ที่ต้องการไม่ได้ค่ะ${available ? ` ${th}ที่มี: ${available}` : ''} กรุณาตรวจสอบและเลือก${th}จากหน้าเว็บ`;
+    ? `I could not find a ${en} named "${issue.requested}".${names ? ` ${en}s available: ${names}.` : ''} ${nameResolutionNextStepText(true)}`
+    : `ไม่พบ${th}ชื่อ "${issue.requested}" ค่ะ${names ? ` ${th}ที่มี เช่น ${names}` : ''} ${nameResolutionNextStepText(false)}`;
 }
 
 // ─── reimbursement.list_pending_approvals forbidden outcome ────────────────────────────────────
