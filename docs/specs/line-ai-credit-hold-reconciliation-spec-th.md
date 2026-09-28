@@ -1,5 +1,7 @@
 # Spec: LINE AI — การเคลียร์เครดิตที่กันไว้ค้าง (unresolved holds และ breach)
 
+> มติ customer display 2026-09-29: [add-on spec §17](chat-credit-and-receipt-addons-spec-th.md) ไม่แสดงยอดกันไว้ให้ลูกค้า และรวม admin+paid เป็นยอดเพิ่มเติม. การจอง/กู้รายการและ operator view ในเอกสารนี้ยังต้องทำงานตามเดิม; ห้ามคืนยอดที่จองเพียงเพื่อซ่อนตัวเลขหรือใช้ customer projectionแทนข้อมูลที่ operatorต้องตรวจ
+
 ## 1. สถานะและขอบเขต
 
 - วันที่: 2026-09-18

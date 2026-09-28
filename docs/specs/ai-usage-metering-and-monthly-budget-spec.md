@@ -1,5 +1,7 @@
 # AI Usage Metering & Monthly Budget Spec (Admin-Only)
 
+2026-09-29 commercial extension: [CHAT/image add-on spec §18](chat-credit-and-receipt-addons-spec-th.md) separates grants/funding from cost evidence and operational caps. Admin-only costs/holds and their guards stay internal; the new customer balance reads commercial units from the canonical projection, not `monthly budget - spent`. All callers, corrections and operator recovery must participate in the source mapping before rollout; no activation is implied by this note.
+
 2026-09-17 design extension: the owner requested separate CHAT/OCR caps, accurate refusal/receipt UX, intake cost reduction and usage visibility in the [combined NOGROUP remediation spec](line-ai-ledger-lifecycle-remediation-spec-th.md). Its §11–12 defines additive reporting and opt-in SPLIT reservation semantics; the bounded-overshoot policy below describes legacy SHARED behavior. The extension is specified, not implemented or activated. Admin-only access, Bangkok month, actual metering and OCR/package gates remain authoritative.
 
 ## 1. Status

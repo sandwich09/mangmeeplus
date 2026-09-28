@@ -7,6 +7,8 @@
 - Review gates: R-01…R-08, R-10 of the [round-2 impact review](../research/line-ai-remediation-impact-review-2026-09-17-th.md)
 - Extends: [AI usage metering and monthly budget](../specs/ai-usage-metering-and-monthly-budget-spec.md)
 
+2026-09-29 scope clarification: [add-on spec §18](../specs/chat-credit-and-receipt-addons-spec-th.md) adds commercial CHAT/image funding alongside operational policy. SPLIT activation, allocation sums and month-change rules remain operational controls, not prerequisites to creating an authorized gift lot. Purchased-credit reservations must also work for eligible SHARED cohorts without silently activating SPLIT. Preserve evidence settlement, source authority and locks; extend the parent context to commercial cycle/funding without treating a gateway body month as authority. No runtime change or activation is recorded here.
+
 ## 1. Context
 
 The owner chose **separate** monthly caps for chat/general AI (`CHAT`) and document reading (`OCR`) inside the existing monthly total; neither bucket may borrow from the other. Today's gate (`runWithCompanyAiBudgetAdmission`) takes a per-company single-flight lease, compares the live month aggregate with the effective total and records the actual cost after the provider returns. That is a *bounded-overshoot* design: the one admitted action can cross the cap, and chat/media lanes can each have one action in flight. It cannot honour "each part never exceeds its own cap", so SPLIT needs money to be **reserved before** each provider invocation and **settled exactly once** afterwards.

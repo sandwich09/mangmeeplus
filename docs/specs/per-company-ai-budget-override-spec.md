@@ -1,5 +1,7 @@
 # Per-Company AI Budget Override Spec
 
+2026-09-29 add-on scope: [CHAT/image add-on spec §18](chat-credit-and-receipt-addons-spec-th.md) defines customer balances and admin gifts separately from these operational ceilings. This writer is not a credit-grant API. Preserve existing config semantics and guards; after the specified cohort migration, use the shared commercial projection for customer balances and distinguish legacy allowance provenance from operational limits. This note does not implement or activate the new flow.
+
 ## 1. Status
 
 - Date: 2026-07-28 (Asia/Bangkok)

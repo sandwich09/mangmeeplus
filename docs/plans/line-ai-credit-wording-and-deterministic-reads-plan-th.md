@@ -1,5 +1,7 @@
 # แผนงาน: LINE AI wave 2 — "เครดิต AI", ข้อความอ่านเอกสาร และคำตอบ deterministic
 
+> Follow-up 2026-09-29: Customer add-on wording/fields ใช้ [spec §17](../specs/chat-credit-and-receipt-addons-spec-th.md) และ [plan §13](chat-credit-and-receipt-addons-plan-th.md). เพิ่ม safe customer projection, commercial-vs-operational cause และ queued LINE template compatibility. หลักฐาน H1 เดิมเป็นของพฤติกรรมเดิม ไม่ใช้รับรอง D10/E28–E42 ใหม่; operator hold warnings/recovery และ deterministic scopeคงเดิม
+
 - Spec: [line-ai-credit-wording-and-deterministic-reads-spec-th.md](../specs/line-ai-credit-wording-and-deterministic-reads-spec-th.md)
 - Task memory: `docs/agent-memory/line-ai-credit-wording-wave2-2026-09-18.md`
 - วิธีทำงาน: Opus 5 implement, Fable 5.1 คุม/ตรวจ bug-gap-impact, merge `develop` + `main` หลัง CI เขียว (เหมือน wave 1)
