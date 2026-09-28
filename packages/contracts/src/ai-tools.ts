@@ -1,6 +1,7 @@
 // AI Tool contracts – shared by API (tool adapters) and AI Gateway (orchestration).
 
 import type { LineAiBusinessSubject } from './line-ai.js';
+import { EXPENSE_PAYMENT_STATUSES, EXPENSE_STATUSES } from './expenses.js';
 
 export type ToolCategory = 'read_summary' | 'read_detail' | 'report' | 'suggestion' | 'evidence_capture' | 'draft_create' | 'draft_update' | 'approval_request' | 'final_mutation';
 
@@ -92,6 +93,11 @@ export type ToolQueryApplied = {
   statusBasis: string;
   dataset: string;
   filters?: Record<string, string | number | boolean | null | readonly string[]>;
+  /** Item 1 (spec R-A1 row 18): the caller's own effective read scope, from the SAME permission
+   *  logic that already narrows the query (never inferred downstream) — 'company' when the caller
+   *  can read every record, 'related' when narrowed to records tied to the caller's own relation,
+   *  'own' when narrowed to only the caller's own records. Omitted keeps existing tools byte-identical. */
+  accessScope?: 'own' | 'related' | 'company';
 };
 
 export type ToolResult<TData = unknown> = {
@@ -134,6 +140,12 @@ export type ToolMeta = {
   requiredInputFields?: readonly string[];
   /** Optional input fields the model may pass (whitelisted; anything else is dropped). */
   optionalInputFields?: readonly string[];
+  /** Exact canonical string values accepted for enum fields. Model-facing catalogs expose these
+   *  values; Gateway normalization may only choose a unique case-insensitive match from this list. */
+  inputEnumValues?: Readonly<Record<string, readonly string[]>>;
+  /** Inclusive character-length bounds for free-text input fields (e.g. a name the model copies
+   *  from the user's message). Enforced generically by the internal tools executor. */
+  inputLengthLimits?: Readonly<Record<string, { min: number; max: number }>>;
   /** Company features that own this tool's data, when the module-level default is not precise
    *  enough. Any one of them entitles the tool. Defaults to `TOOL_MODULE_FEATURE_KEYS[sourceModule]`. */
   featureKeys?: readonly string[];
@@ -442,7 +454,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.list_recent',
-    description: 'Read expense totals and bounded records for the current month by default or an explicit date range, including dates, vendors, status, payment status, and web links. Optional branchId scopes one branch and accepts a branch id, exact branch name, or branch code; an unrecognized value returns branchUnresolved with availableBranches to re-pick from (match the user wording to a real name and retry with its id, or ask) instead of records.',
+    description: 'Read expense totals and bounded records for the current month by default or an explicit date range, including dates, vendors, status, payment status, and web links. Optional branchId scopes one branch and accepts a branch id, exact branch name, or branch code; an unrecognized value returns branchUnresolved with availableBranches to re-pick from (match the user wording to a real name and retry with its id, or ask) instead of records. Optional categoryName/vendorName resolve a free-text category or vendor name the same way: exactly one match filters by it, several matches return categoryAmbiguous/vendorAmbiguous with availableCategories/availableVendors to disambiguate, and no match returns categoryUnresolved/vendorUnresolved with the available names, instead of records.',
     businessSubjects: ['expense'],
     questionKinds: ['summary', 'list', 'detail'],
     category: 'read_summary',
@@ -452,7 +464,9 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'cfo'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'documentStatus', 'paymentStatus', 'limit', 'cursor'],
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'categoryName', 'vendorName', 'documentStatus', 'paymentStatus', 'limit', 'cursor'],
+    inputEnumValues: { documentStatus: EXPENSE_STATUSES, paymentStatus: EXPENSE_PAYMENT_STATUSES },
+    inputLengthLimits: { categoryName: { min: 1, max: 80 }, vendorName: { min: 1, max: 80 } },
   },
   {
     name: 'expense.get_detail',
@@ -594,7 +608,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.get_daily_closing',
-    description: 'Read a one-day operational expense-closing checklist only: occurred, paid, outstanding, due, overdue, review, evidence, duplicate, and bounded details by currency. Do not use for week, month, or date-range totals.',
+    description: 'Read a one-day operational expense-closing checklist only: occurred, paid, outstanding, due, overdue, review, evidence, duplicate, and bounded details by currency. Do not use for week, month, or date-range totals. This alone already answers a general "what do I need to do/check today", "สรุปวันนี้", or "closing วันนี้" question — never also call notifications.list_open_alerts, dashboard.get_business_health_summary, or reimbursement.list_pending_approvals for that same question. Call reimbursement.list_pending_approvals as a separate, additional read only when the user explicitly names pending/รออนุมัติ approvals.',
     businessSubjects: ['expense'],
     questionKinds: ['summary', 'list', 'breakdown'],
     category: 'read_summary',
@@ -963,7 +977,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.get_breakdown',
-    description: 'Read expense totals grouped by category and branch for a period.',
+    description: 'Read expense totals grouped by category, branch, and vendor (byVendor, top 10 by amount descending) for a period. Optional categoryName/vendorName resolve a free-text category or vendor name: exactly one match filters by it, several matches return categoryAmbiguous/vendorAmbiguous with availableCategories/availableVendors to disambiguate, and no match returns categoryUnresolved/vendorUnresolved with the available names, instead of a breakdown. Optional groupBy (category, branch, or vendor; default category) is a presentation hint only — it selects which grouping the answer features first; all three groupings are still returned regardless of its value.',
     businessSubjects: ['expense'],
     questionKinds: ['summary', 'breakdown'],
     category: 'read_summary',
@@ -973,7 +987,9 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     supportedAgents: ['accounting', 'general'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
-    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'documentStatus', 'paymentStatus'],
+    optionalInputFields: ['periodKey', 'fromDate', 'toDate', 'branchId', 'categoryId', 'vendorId', 'categoryName', 'vendorName', 'documentStatus', 'paymentStatus', 'groupBy'],
+    inputEnumValues: { documentStatus: EXPENSE_STATUSES, paymentStatus: EXPENSE_PAYMENT_STATUSES, groupBy: ['category', 'branch', 'vendor'] },
+    inputLengthLimits: { categoryName: { min: 1, max: 80 }, vendorName: { min: 1, max: 80 } },
   },
   {
     name: 'public.lookup',

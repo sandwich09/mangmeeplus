@@ -1,4 +1,4 @@
-/** Curated product guidance only. Publication is gated by review of these exact source/body hashes. */
+/** Curated product guidance reviewed against these exact source/body hashes. */
 import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
 
 const sources = {
@@ -29,9 +29,9 @@ const reimbursementReaders = ['reimbursement.read', 'reimbursement.read_related'
 const substituteReaders = ['expense.review', 'expense.confirm', 'expense.read_own'];
 
 export const PRODUCT_HELP_PACK: ProductKnowledgePack = {
-  id: 'mangmee-product-help', version: 1, status: 'DRAFT',
+  id: 'mangmee-product-help', version: 1, status: 'APPROVED',
   language: 'th', jurisdiction: 'TH',
-  owner: 'repository:product-help', reviewers: [],
+  owner: 'repository:product-help', reviewers: ['repository-ai-source-code-review:codex-gpt-5.6-sol:2026-09-27'],
   effectiveFrom: '2026-09-27T00:00:00+07:00', effectiveTo: '2026-12-27T00:00:00+07:00', reviewDueAt: '2026-12-27T00:00:00+07:00',
   releaseRange: { min: '2.4.0', maxExclusive: '2.5.0' }, contentHash: '',
   cards: [

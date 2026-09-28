@@ -115,7 +115,16 @@ export class LineLedgerDeliveryService {
     return !!owner && owner.event.deliveryOwnerId === 'webhook' && (!companyId || owner.companyId === companyId);
   }
 
-  async savePlan(fence: LineDeliveryOwnerFence, plan: DeliveryPlanV2, purgeAt: Date, now = new Date(), newWebhookEventId?: string): Promise<LineDeliveryPlan | null> {
+  async savePlan(fence: LineDeliveryOwnerFence, plan: DeliveryPlanV2, purgeAt: Date, now = new Date(), newWebhookEventId?: string,
+    // Spec §4 R-M2, and the pre-existing deliveredExpenseSummary/expense-criterion-confirmation
+    // proofs: the SAME LineTurnOutcome.authorizationJson shape the legacy recordTurnOutcome upsert
+    // persists. Graduating to a delivery plan replaces messagesJson with a sentinel (the real
+    // payload moves into planJson) — it must not ALSO silently drop this proof to JSON null, or a
+    // future turn's loadConversationContext can never read expenseSummary/readMemory back for any
+    // turn whose reply used the v2 path. Optional: an owner fence with nothing to prove (e.g. a
+    // public/casual turn) omits it and keeps today's JSON-null behavior.
+    authorizationJson?: Prisma.InputJsonValue,
+  ): Promise<LineDeliveryPlan | null> {
     validateLineDeliveryPlan(plan);
     if (purgeAt < new Date(plan.createdAt)) throw new Error('LINE_PLAN_INVALID_RETENTION');
     return this.prisma.client.$transaction(async tx => {
@@ -125,7 +134,7 @@ export class LineLedgerDeliveryService {
         if (owner.count !== 1) return null;
         const existing = await tx.lineTurnOutcome.findUnique({ where: { webhookEventId: newWebhookEventId } });
         if (existing && existing.id !== fence.id) return null;
-        if (!existing) await tx.lineTurnOutcome.create({ data: { id: fence.id, webhookEventId: newWebhookEventId, companyId: plan.authorization.kind === 'PRIVATE' ? plan.authorization.actor.companyId : null, messagesJson: LINE_DELIVERY_PLAN_SENTINEL, presentationKind: 'delivery_plan_v2' } });
+        if (!existing) await tx.lineTurnOutcome.create({ data: { id: fence.id, webhookEventId: newWebhookEventId, companyId: plan.authorization.kind === 'PRIVATE' ? plan.authorization.actor.companyId : null, messagesJson: LINE_DELIVERY_PLAN_SENTINEL, presentationKind: 'delivery_plan_v2', authorizationJson: authorizationJson ?? Prisma.JsonNull } });
       }
       if (!await this.planOwnerCurrent(tx, fence, plan, now)) return null;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`line-delivery-plan:${plan.planId}`}))`;
@@ -140,10 +149,10 @@ export class LineLedgerDeliveryService {
         userId: plan.authorization.kind === 'PRIVATE' ? plan.authorization.actor.userId : plan.authorization.actorUserId,
         planJson: plan as unknown as Prisma.InputJsonValue, planHash: deliveryHash(plan), batchStateJson: initialDeliveryBatchStates(plan) as unknown as Prisma.InputJsonValue,
         createdAt: new Date(plan.createdAt), nextAttemptAt: now, expiresAt: new Date(plan.expiresAt), purgeAt } });
-      if (fence.kind === 'WEBHOOK') await tx.lineTurnOutcome.update({ where: { id: fence.id }, data: { messagesJson: LINE_DELIVERY_PLAN_SENTINEL, presentationKind: 'delivery_plan_v2', authorizationJson: Prisma.JsonNull } });
+      if (fence.kind === 'WEBHOOK') await tx.lineTurnOutcome.update({ where: { id: fence.id }, data: { messagesJson: LINE_DELIVERY_PLAN_SENTINEL, presentationKind: 'delivery_plan_v2', authorizationJson: authorizationJson ?? Prisma.JsonNull } });
       if (fence.kind === 'LEDGER') {
         const parent = await tx.lineLedgerDelivery.findUniqueOrThrow({ where: { id: fence.id } });
-        await tx.lineLedgerDelivery.update({ where: { id: fence.id }, data: { status: 'READY', messagesJson: LINE_DELIVERY_PLAN_SENTINEL, authorizationJson: Prisma.JsonNull,
+        await tx.lineLedgerDelivery.update({ where: { id: fence.id }, data: { status: 'READY', messagesJson: LINE_DELIVERY_PLAN_SENTINEL, authorizationJson: authorizationJson ?? Prisma.JsonNull,
           completionJson: { ...(parent.completionJson as Record<string, Prisma.InputJsonValue> ?? {}), deliveryPlanVersion: 2, deliveryPlanId: plan.planId } } });
       }
       if (fence.kind === 'CAPTURE_OUTBOX') {

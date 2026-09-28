@@ -58,6 +58,9 @@ export class GetReimbursementAiSummaryUseCase {
       unpaidApprovedCount: unpaidApproved,
       overdueApprovalCount: overdueApproval,
       totalUnpaidAmount: decStr(totalUnpaid),
+      // Item 1 (spec R-A1 row 18): mirrors the requesterUserId/relatedUserId precedence above exactly
+      // (related wins whenever canReadRelated is true, same as `relatedUserId` there).
+      accessScope: canReadAll ? 'company' : canReadRelated ? 'related' : 'own',
     };
   }
 }

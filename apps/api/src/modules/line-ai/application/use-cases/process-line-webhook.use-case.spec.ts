@@ -2,15 +2,18 @@ import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
-import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages } from './process-line-webhook.use-case';
+import { canAdvertiseReceiptCapture, createLineAiInputEvidence, LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
+import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, lineIntakeOfferedToolNames, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages, validLineAiReadMemoryEntries } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
+import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
+import { ROLE_GRANTS } from '../../../auth/permission-registry';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { buildLineAssistantTextCardMessage } from '../../domain/logic/line-business-card.logic';
 import { STAFF_CONTACT_COMMAND } from '../../domain/logic/line-staff-menu.logic';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
+import { LineReadEvidenceService } from '../line-read-evidence.service';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 const CLEAN_SCANNER = { assertClean: async () => undefined } as any;
@@ -55,6 +58,56 @@ const closedLaunchGate = {
 const brokenLaunchGate = {
   assertLaunchRouteOpen: async () => { throw new Error('connection terminated'); },
 } as any;
+
+describe('LINE intake offered tool authority', () => {
+  const starter = new Set(TIER_FEATURE_PRESETS.STARTER_249);
+
+  it('derives owner, requester, and read-only catalogs from production role grants plus the sold Starter package', () => {
+    const owner = filterPermissionsByEntitlement(ROLE_GRANTS.OWNER, starter);
+    const requester = filterPermissionsByEntitlement(ROLE_GRANTS.STAFF, starter);
+    const readOnly = filterPermissionsByEntitlement(ROLE_GRANTS.AUDITOR_READONLY, starter);
+    for (const [role, permissions] of [['OWNER', owner], ['STAFF', requester], ['AUDITOR_READONLY', readOnly]] as const) {
+      const names = lineIntakeOfferedToolNames({ permissions, entitledFeatureKeys: starter });
+      assert.ok(names.includes('expense.list_recent'), `${role} can read its permitted expense scope`);
+      assert.ok(names.includes('dashboard.get_business_health_summary'), `${role} can read the Starter dashboard`);
+      for (const forbidden of ['sales.get_sales_summary', 'ledger.get_financial_summary', 'reports.get_monthly_report_summary', 'inventory.search_products']) {
+        assert.equal(names.includes(forbidden), false, `${role} cannot be offered unpurchased ${forbidden}`);
+      }
+    }
+    assert.equal(canAdvertiseReceiptCapture(requester, starter), true, 'the Starter requester keeps native receipt capture');
+    assert.equal(canAdvertiseReceiptCapture(readOnly, starter), false, 'the read-only role is not offered native receipt capture');
+  });
+
+  it('recomputes revocation and preserves legacy-null versus missing authority semantics', () => {
+    const owner = filterPermissionsByEntitlement(ROLE_GRANTS.OWNER, starter);
+    const normal = lineIntakeOfferedToolNames({ permissions: owner, entitledFeatureKeys: starter });
+    assert.ok(normal.includes('expense.list_recent'));
+    assert.deepEqual(lineIntakeOfferedToolNames({ permissions: owner.filter((key) => key !== 'ai.tool.invoke'), entitledFeatureKeys: starter }), []);
+    assert.equal(lineIntakeOfferedToolNames({ permissions: owner, entitledFeatureKeys: new Set(['ai_line_assistant']) }).includes('expense.list_recent'), false);
+    assert.deepEqual(lineIntakeOfferedToolNames({ permissions: owner, entitledFeatureKeys: undefined }), []);
+    assert.ok(lineIntakeOfferedToolNames({ permissions: owner, entitledFeatureKeys: null }).includes('expense.list_recent'));
+  });
+
+  it('puts the same Starter authority snapshot on the real API intake request', async () => {
+    const { prisma } = makePrisma();
+    const owner = filterPermissionsByEntitlement(ROLE_GRANTS.OWNER, starter);
+    const h = makeUseCase(prisma, { permissions: owner, intakeRouteFn: () => ({
+      status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98,
+    }) });
+    const handler = h.useCase as any;
+    handler.reliabilityContext = async () => ({});
+    await handler.tryRouteIntake({
+      requestId: 'starter-authority', companyId: 'company-1', userId: 'user-1', permissions: owner,
+      enabledFeatures: [...starter], entitledFeatureKeys: starter, messageText: 'ดูรายจ่ายเดือนนี้',
+    });
+    assert.equal(h.intakeRequests.length, 1);
+    assert.deepEqual(h.intakeRequests[0].enabledFeatures, [...starter]);
+    assert.ok(h.intakeRequests[0].offeredToolNames.includes('expense.list_recent'));
+    for (const forbidden of ['sales.get_sales_summary', 'ledger.get_financial_summary', 'reports.get_monthly_report_summary', 'inventory.search_products']) {
+      assert.equal(h.intakeRequests[0].offeredToolNames.includes(forbidden), false);
+    }
+  });
+});
 
 describe('receipt owner summary and fallback', () => {
   it('orders the five receipt facts and shows taxes and other charges only when nonzero', () => {
@@ -705,6 +758,130 @@ const BASE_EVENT = Object.freeze({
   messagingChannelId: 'msg-channel-1',
 });
 
+it('fails a bound semantic turn before pending media, ERP reads, or a LINE turn when compact intake is invalid', async () => {
+  const { prisma, updates } = makePrisma();
+  prisma.client.lineIntakePendingMedia.findMany = async () => { throw new Error('pending media must stay untouched'); };
+  prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+  const h = makeUseCase(prisma, {
+    permissions: ['line.ai.query'],
+    config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+      lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+    intakeRouteFn: () => ({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
+      errorCode: 'ROUTER_SEMANTIC_SCHEMA_INVALID' }),
+    aiGatewayFn: () => assert.fail('invalid compact intake must not start the LINE turn'),
+  });
+  const event: any = { ...BASE_EVENT, webhookEventId: 'compact-invalid-boundary', messageText: 'ดูรายจ่ายตามเงื่อนไขที่ไม่รองรับ' };
+  const evidence = await createLineAiInputEvidence({ turnKey: 'compact-invalid-boundary', parts: [{ partId: 'part-0',
+    eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] });
+  assert.ok(evidence);
+  event.inputEvidence = evidence.inputEvidence;
+  const flow = h.useCase as any;
+  const delivered: string[] = [];
+  flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string }>) => {
+    delivered.push(...messages.flatMap((message) => message.text ? [message.text] : [])); return 'ok';
+  };
+  flow.contextV2 = {
+    admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+    projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+  };
+  flow.prepareTextGrantV2 = async () => ({ turnKey: evidence.inputEvidence.turnKey });
+  flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+  await h.useCase.execute(event);
+  assert.equal(h.intakeRequests.length, 1, 'the accepted input is classified once');
+  assert.equal(h.getAiGatewayCalled(), false, 'invalid intake never reaches requestLineTurn');
+  assert.equal(delivered.length, 1);
+  // Schema-invalid model output is "I don't understand", never the transient "system is slow" copy.
+  assert.match(delivered[0]!, /ยังไม่แน่ใจว่าหมายถึงอะไร/);
+  // The real gateway errorCode is logged, not the generic AI_CONTRACT_UNSUPPORTED that used to hide it.
+  const logged = updates.find((u: any) => u.data?.errorCode === 'ROUTER_SEMANTIC_SCHEMA_INVALID');
+  assert.ok(logged, 'the durable row keeps the real gateway errorCode');
+});
+
+// Item 5 (223-turn eval batch 2): a route that failed because the PROVIDER throttled or timed out
+// never reached the model at all — same "system is slow" bucket as ROUTER_UNREACHABLE, never the
+// "I don't understand you" copy a genuinely unroutable plan gets.
+for (const errorCode of ['PROVIDER_THROTTLED', 'PROVIDER_TIMEOUT']) {
+  it(`treats a ${errorCode} route as transient, not "I don't understand" (item 5, 223-turn eval batch 2)`, async () => {
+    const { prisma, updates } = makePrisma();
+    prisma.client.lineIntakePendingMedia.findMany = async () => { throw new Error('pending media must stay untouched'); };
+    prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+    const h = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+        lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+      intakeRouteFn: () => ({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode }),
+      aiGatewayFn: () => assert.fail('a throttled/timed-out route must not start the LINE turn'),
+    });
+    const event: any = { ...BASE_EVENT, webhookEventId: `compact-${errorCode}-boundary`, messageText: 'เดือนนี้จ่ายไปเท่าไหร่แล้วคะ' };
+    const evidence = await createLineAiInputEvidence({ turnKey: `compact-${errorCode}-boundary`, parts: [{ partId: 'part-0',
+      eventIdHash: 'b'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] });
+    assert.ok(evidence);
+    event.inputEvidence = evidence.inputEvidence;
+    const flow = h.useCase as any;
+    const delivered: string[] = [];
+    flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string }>) => {
+      delivered.push(...messages.flatMap((message) => message.text ? [message.text] : [])); return 'ok';
+    };
+    flow.contextV2 = {
+      admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+      projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+    };
+    flow.prepareTextGrantV2 = async () => ({ turnKey: evidence.inputEvidence.turnKey });
+    flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+    await h.useCase.execute(event);
+    assert.equal(delivered.length, 1);
+    assert.match(delivered[0]!, /ระบบตอบช้ากว่าปกติ/);
+    assert.doesNotMatch(delivered[0]!, /ยังไม่แน่ใจว่าหมายถึงอะไร/);
+    const logged = updates.find((u: any) => u.data?.errorCode === errorCode);
+    assert.ok(logged, 'the durable row keeps the real gateway errorCode');
+  });
+}
+
+it('answers a bound general question once before two pending files can intercept it', async () => {
+  const { prisma } = makePrisma();
+  let pendingReads = 0;
+  prisma.client.lineIntakePendingMedia.findMany = async () => { pendingReads += 1; return [{ id: 'file-1' }, { id: 'file-2' }]; };
+  prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+  const h = makeUseCase(prisma, {
+    permissions: ['line.ai.query'],
+    config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+      lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+    // tuning-7b (K1d): toolHint rides here too (harmless on a "general" clause — the gateway only
+    // consults it for a read clause) so this same pass-through test also proves the API's use-case
+    // forwards it unchanged, with no field-by-field reconstruction dropping it before the gateway call.
+    intakeRouteFn: () => ({ status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.98,
+      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'อธิบายกำไรขั้นต้น', requiredEvidence: [], requestedFilters: {}, dependsOn: [], toolHint: 'expense.get_breakdown' }] }),
+    aiGatewayFn: (request) => ({ requestId: request.requestId, replyText: 'กำไรขั้นต้นคือรายได้หักต้นทุนขาย', intent: 'casual_conversation',
+      agent: 'general', durationMs: 1, webLinks: [], sourceLabels: [], sourceRefs: [], toolsInvoked: [], refused: false,
+      semanticCoverage: [{ index: 0, status: 'handled' }] }),
+  });
+  const event: any = { ...BASE_EVENT, webhookEventId: 'general-before-two-files', messageText: 'กำไรขั้นต้นคืออะไร' };
+  const evidence = await createLineAiInputEvidence({ turnKey: 'general-before-two-files', parts: [{ partId: 'part-0',
+    eventIdHash: 'b'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] });
+  assert.ok(evidence); event.inputEvidence = evidence.inputEvidence;
+  const flow = h.useCase as any, grant = { turnKey: evidence.inputEvidence.turnKey };
+  const context = { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: new Date().toISOString(), userMessagePreview: 'กำไรคืออะไร' }] };
+  const delivered: string[] = [];
+  flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+    projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+    createTurn: async (_owner: unknown, _epoch: number, data: unknown) => ({ id: 'turn-1', data }) };
+  flow.prepareTextGrantV2 = async (acceptedEvent: object) => { flow.budgetGrantsV2.set(acceptedEvent, grant); return grant; };
+  flow.loadConversationContext = async () => context;
+  flow.aiGateway.narrowLineReliabilityGrant = async () => grant;
+  flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string }>) => {
+    delivered.push(...messages.flatMap((message) => message.text ? [message.text] : [])); return 'ok';
+  };
+  await h.useCase.execute(event);
+  assert.equal(h.intakeRequests.length, 1, 'the same intake result is reused downstream');
+  assert.equal(h.intakeRequests[0]?.conversationContext, context);
+  assert.equal('userMessagePreviewComplete' in context.recentTurns[0]!, false, 'legacy callers do not gain completeness implicitly');
+  assert.equal(h.aiGatewayRequests.length, 1);
+  assert.equal(h.aiGatewayRequests[0].conversationContext, context);
+  assert.equal(h.aiGatewayRequests[0].semanticSubrequests?.[0]?.toolHint, 'expense.get_breakdown', 'toolHint survives the routePlan -> turnRequest mapping');
+  assert.equal(pendingReads, 0, 'a general question does not enumerate or consume pending private files');
+  assert.match(delivered.join('\n'), /กำไรขั้นต้น/);
+});
+
 describe('AP22 live actor delivery fence', () => {
   for (const lane of ['text', 'media'] as const) for (const change of ['membership', 'role', 'branch', 'feature', 'company', 'unlink', 'optout', 'disabled', 'pause'] as const) {
     it(`${lane} suppresses derived content when ${change} changes during model work`, async () => {
@@ -902,6 +1079,53 @@ describe('toAiTurnIntent (free-form model intent → AiTurn enum)', () => {
     assert.equal(toAiTurnIntent('transfer_funds', 'mutation_blocked'), 'MUTATION_REQUEST');
     assert.equal(toAiTurnIntent('weather', 'feature_disabled'), 'UNSUPPORTED_MODULE');
     assert.equal(toAiTurnIntent('x', 'forbidden_permission'), 'FORBIDDEN');
+  });
+});
+
+describe('validLineAiReadMemoryEntries (spec §4 R-M2)', () => {
+  const entry = (over: Record<string, unknown> = {}) => ({
+    tool: 'expense.list_recent', answerShape: 'list', asOf: '2026-09-27T09:00:00.000Z', ...over,
+  });
+
+  it('accepts a well-formed entry with every optional field, and an entry with none of them', () => {
+    const full = entry({
+      period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, documentStatus: 'CONFIRMED', paymentStatus: 'UNPAID',
+      categoryId: 'c1', categoryName: 'อาหาร', vendorId: 'v1', vendorName: 'ร้านสมใจ', branchId: 'b1', branchName: 'สาขาลาดพร้าว',
+      groupBy: 'category', shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้านสมใจ', date: '2026-08-05', kind: 'category' }],
+    });
+    assert.deepEqual(validLineAiReadMemoryEntries([full]), [full]);
+    const minimal = entry();
+    assert.deepEqual(validLineAiReadMemoryEntries([minimal]), [minimal]);
+  });
+
+  it('rejects a missing/invalid tool, answerShape, or asOf', () => {
+    assert.equal(validLineAiReadMemoryEntries([entry({ tool: '' })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([entry({ tool: 42 })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([entry({ answerShape: 'both' })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([entry({ asOf: 'not-a-date' })]), undefined);
+  });
+
+  it('spec R-M6: rejects an entry carrying any field outside LineAiReadMemory\'s own known list (e.g. an amount)', () => {
+    assert.equal(validLineAiReadMemoryEntries([entry({ amount: '500.00' })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([entry({ totalAmount: 500 })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้าน', amount: '500.00' }] }]), undefined);
+  });
+
+  it('rejects a malformed shownItems entry (bad ordinal, missing id/label, or an unknown kind)', () => {
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: [{ ordinal: 0, id: 'e1', label: 'x' }] }]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: [{ ordinal: 1, id: '', label: 'x' }] }]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: [{ ordinal: 1, id: 'e1', label: '' }] }]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: [{ ordinal: 1, id: 'e1', label: 'x', kind: 'other' }] }]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([{ ...entry(), shownItems: Array.from({ length: 11 }, (_, i) => ({ ordinal: i + 1, id: `e${i}`, label: 'x' })) }]), undefined);
+  });
+
+  it('rejects a malformed period or an unknown groupBy', () => {
+    assert.equal(validLineAiReadMemoryEntries([entry({ period: { fromDate: '2026-08-01' } })]), undefined);
+    assert.equal(validLineAiReadMemoryEntries([entry({ groupBy: 'region' })]), undefined);
+  });
+
+  it('drops the whole batch when any one entry is invalid', () => {
+    assert.equal(validLineAiReadMemoryEntries([entry(), entry({ tool: '' })]), undefined);
   });
 });
 
@@ -2079,6 +2303,176 @@ describe('ProcessLineWebhookUseCase', () => {
   });
 
   /**
+   * Spec §4 R-M1/R-M2, controller finding 2026-09-27: a real Bedrock run showed turn 2's intake
+   * request carrying NO recentReads at all, even though turn 1 (a prepared/fast-lane list read) was
+   * delivered fine. Every prior test mocks `aiGatewayFn` at the top-level RPC boundary, which skips
+   * the real internal-tools-controller callback that calls `LineReadEvidenceService.record()` — so
+   * nothing before this test ever ran record() → recentReadsForTurn() → deliverySources →
+   * recordTurnOutcome() → loadConversationContext() end to end. This does, with no model involved:
+   * turn 1 records evidence the way the real controller would, turn 2 (a FRESH use-case instance,
+   * same backing store — proving this is delivery-backed memory, not process-local state, same as
+   * the existing "remembers only the delivered public topic" test above) must see it in the intake
+   * request it builds. The gateway's own rendering of conversationContext into the model prompt is
+   * already covered by "passes bounded conversation context to model routing payloads, spec §4 R-M3
+   * recentReads included" in intent-router.agent.spec.ts — this test closes the gap before it.
+   */
+  it('spec §4 R-M2: a delivered prepared-lane read persists memory the next turn carries into its intake request (no model)', async () => {
+    const { prisma, outcomeStore } = makePrisma({
+      recentTurns: [{ webhookEventId: 'evt-mem-1', createdAt: new Date(), userMessagePreview: 'ขอดูรายการล่าสุดหน่อยครับ',
+        replyPreview: 'ค่าใช้จ่าย 3 รายการ', intent: 'READ_SUMMARY', agent: 'accounting', refused: false, status: 'COMPLETED' }],
+    });
+    // Two fixture gaps `makePrisma()` never needed before this feature: an in-memory `lineReadEvidence`
+    // table (R-M1's own store) and `lineTurnOutcome.findMany` (what `loadConversationContext` reads
+    // delivered evidence back through). Patched locally so the shared fixture stays untouched for
+    // every other test in this file.
+    const evidenceRows: any[] = [];
+    prisma.client.lineReadEvidence = {
+      create: async ({ data }: any) => {
+        const row = { id: `evid-${evidenceRows.length + 1}`, createdAt: new Date(), ...data };
+        evidenceRows.push(row);
+        return { id: row.id };
+      },
+      count: async ({ where }: any) => evidenceRows.filter((row) =>
+        row.companyId === where.companyId && row.userId === where.userId && row.requestId === where.requestId).length,
+      findMany: async ({ where, take }: any) => {
+        const rows = evidenceRows
+          .filter((row) => row.companyId === where.companyId && row.userId === where.userId && row.requestId === where.requestId
+            && (!where.toolName?.in || where.toolName.in.includes(row.toolName)))
+          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
+        return take ? rows.slice(0, take) : rows;
+      },
+    };
+    // record()'s own transaction (advisory lock + count + create) — process-line-webhook.use-case.ts
+    // never calls $transaction itself, so replacing it here cannot affect the rest of this turn.
+    prisma.client.$transaction = async (work: any) => work({ $executeRaw: async () => undefined, lineReadEvidence: prisma.client.lineReadEvidence });
+    prisma.client.lineTurnOutcome.findMany = async ({ where }: any) => {
+      const ids: string[] = where.webhookEventId?.in ?? [];
+      return ids.flatMap((id) => {
+        const row = outcomeStore.get(id);
+        return row && row.deliveredAt != null ? [{ webhookEventId: id, deliveredAt: row.deliveredAt, authorizationJson: row.authorizationJson }] : [];
+      });
+    };
+    // Real service, not the harness's default `{ forTurn: async () => [] }` stub (which has no
+    // recentReadsForTurn/deliveredExpenseSummaryForTurn at all) — those conditional-existence checks
+    // in process-line-webhook.use-case.ts exist for that stub, so overriding with the real service is
+    // what actually exercises the feature instead of always short-circuiting it to undefined. verify/
+    // verifyDelivery are a SEPARATE, pre-existing re-authorization check (mayDeliverBusinessReply,
+    // unrelated to R-M2) that the harness's own default stubs out the same way for every other test —
+    // kept stubbed here too so this test stays about the memory chain, not that unrelated gate.
+    const realReadEvidence = new LineReadEvidenceService(prisma, {} as any, new Map());
+    const readEvidence = {
+      record: realReadEvidence.record.bind(realReadEvidence),
+      forTurn: realReadEvidence.forTurn.bind(realReadEvidence),
+      deliveredExpenseSummaryForTurn: realReadEvidence.deliveredExpenseSummaryForTurn.bind(realReadEvidence),
+      recentReadsForTurn: realReadEvidence.recentReadsForTurn.bind(realReadEvidence),
+      verify: async () => true,
+      verifyDelivery: async () => false,
+    };
+    const config = { lineAiPreparedSimpleReadEnabled: true, lineAiTerminalOutcomeReplayEnabled: true };
+    const prepared = parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'list',
+      intentPlan: {
+        status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }],
+      },
+      proposedCalls: [{ toolName: 'expense.list_recent', input: {} }],
+    });
+    assert.ok(prepared, 'prepared-plan fixture parses');
+
+    // Turn 1: the prepared (fast-lane) list read the real orchestrator would serve. aiGatewayFn
+    // stands in for the whole gateway turn, so it also does the ONE thing the real internal-tools
+    // controller does that the mock otherwise skips: record read evidence for a successful read.
+    const h1 = makeUseCase(prisma, {
+      permissions: ['line.ai.query'], config,
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, preparedPlan: prepared }),
+      aiGatewayFn: async (req: any) => {
+        await readEvidence.record({
+          requestId: req.requestId, companyId: req.userContext.companyId, userId: req.userContext.internalUserId,
+          membershipId: req.userContext.membershipId, permissions: req.userContext.permissions, locale: req.userContext.locale,
+          chatKeyHash: req.userContext.chatKeyHash,
+        }, {}, {
+          toolName: 'expense.list_recent', status: 'ok',
+          data: { total: 3, items: [
+            { id: 'expense-1', vendorNameSnapshot: 'ร้านหนึ่ง', expenseDate: '2026-09-10T00:00:00.000Z' },
+            { id: 'expense-2', vendorNameSnapshot: 'ร้านสอง', expenseDate: '2026-09-12T00:00:00.000Z' },
+            { id: 'expense-3', vendorNameSnapshot: 'ร้านสามการค้า', expenseDate: '2026-09-16T00:00:00.000Z' },
+          ] },
+          sourceRefs: [{ module: 'expenses', entityType: 'expense', permissionChecked: true, label: 'รายการค่าใช้จ่าย' }],
+          asOf: '2026-09-28T09:00:00.000Z',
+        } as any);
+        return {
+          requestId: req.requestId, replyText: 'ค่าใช้จ่าย: 3 รายการ', sourceRefs: [], sourceLabels: [], webLinks: [],
+          intent: 'read_summary', agent: 'accounting', refused: false,
+          toolsInvoked: ['expense.list_recent'], toolCalls: [{ name: 'expense.list_recent', status: 'ok' }],
+          modelCallCount: 1, modelLineage: [], usage: [], durationMs: 10,
+        };
+      },
+    });
+    (h1.useCase as any).readEvidence = readEvidence;
+    await h1.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-mem-1', messageText: 'ขอดูรายการล่าสุดหน่อยครับ' });
+
+    const outcome1 = outcomeStore.get('evt-mem-1');
+    assert.ok(outcome1?.deliveredAt, 'turn 1 must be recorded as delivered before its memory can carry forward');
+    assert.equal(outcome1.authorizationJson?.readMemory?.entries?.[0]?.tool, 'expense.list_recent');
+    assert.equal(outcome1.authorizationJson.readMemory.entries[0].shownItems[2]?.id, 'expense-3', 'R-M1 keeps display order for ordinal lookups');
+
+    // Turn 2: a FRESH use-case instance, same backing store — same proof shape the existing "remembers
+    // only the delivered public topic across instances" test above already uses for a different field.
+    const h2 = makeUseCase(prisma, {
+      permissions: ['line.ai.query'], config,
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }),
+      aiGatewayFn: () => ({
+        requestId: 'req-mem-2', replyText: 'รายการที่ 3 คือร้านสามการค้าค่ะ', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_detail', agent: 'accounting', refused: false, toolsInvoked: [], toolCalls: [],
+        modelCallCount: 1, modelLineage: [], usage: [], durationMs: 10,
+      }),
+    });
+    (h2.useCase as any).readEvidence = readEvidence;
+    await h2.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-mem-2', messageText: 'รายการที่ 3 คือร้านอะไรครับ' });
+
+    // This is the exact drop the controller reported: the intake-route request the API builds for
+    // turn 2 must itself carry recentReads with the shownItems id "รายการที่ 3" resolves to.
+    assert.equal(h2.intakeRequests.length, 1);
+    const recentReads = h2.intakeRequests[0]?.conversationContext?.recentReads;
+    assert.ok(recentReads?.length, 'turn 2 intake request must carry turn 1 read memory');
+    assert.equal(recentReads[0].tool, 'expense.list_recent');
+    assert.equal(recentReads[0].shownItems?.[2]?.id, 'expense-3', '"รายการที่ 3" must resolve to the third shown item\'s id');
+    assert.equal(
+      recentReads[0].shownItems.some((item: any) => 'amount' in item || 'grandTotalAmount' in item),
+      false,
+      'R-M6: memory carries no amounts',
+    );
+
+    // Regression (present on main since v2.4 turned delivery-plan-v2 on by default, controller
+    // finding 2026-09-27): sendMessagesV2's LineTurnOutcome rows carry presentationKind
+    // 'delivery_plan_v2' instead of 'text'/'flex' — separately fixed in line-ledger-delivery.service.ts
+    // so that write no longer nulls authorizationJson. loadConversationContext itself never switches
+    // on presentationKind, so the SAME already-proven-correct row (just re-labelled, same access-proof
+    // fields untouched) must keep working — and an expenseSummary proof alongside it must too, since
+    // that pre-existing field shares the exact same read path and regressed the exact same way.
+    outcome1.presentationKind = 'delivery_plan_v2';
+    outcome1.authorizationJson = { ...outcome1.authorizationJson,
+      expenseSummary: { ...outcome1.authorizationJson.readMemory, statusBasis: 'exclude_rejected_voided', continuationOfPrior: false,
+        ranges: [{ fromDate: '2026-09-01', toDate: '2026-09-28', branchId: null }] } };
+    delete outcome1.authorizationJson.expenseSummary.entries;
+    const h3 = makeUseCase(prisma, {
+      permissions: ['line.ai.query'], config,
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }),
+      aiGatewayFn: () => ({
+        requestId: 'req-mem-3', replyText: 'รายการที่ 3 คือร้านสามการค้าค่ะ', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_detail', agent: 'accounting', refused: false, toolsInvoked: [], toolCalls: [],
+        modelCallCount: 1, modelLineage: [], usage: [], durationMs: 10,
+      }),
+    });
+    (h3.useCase as any).readEvidence = readEvidence;
+    await h3.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-mem-3', messageText: 'รายการที่ 3 คือร้านอะไรครับ' });
+    const recentReadsV2 = h3.intakeRequests[0]?.conversationContext?.recentReads;
+    assert.ok(recentReadsV2?.length, 'a delivery_plan_v2-labelled outcome must still surface recentReads');
+    assert.equal(recentReadsV2[0].shownItems?.[2]?.id, 'expense-3');
+    assert.ok(h3.intakeRequests[0]?.conversationContext?.deliveredExpenseSummary, 'and deliveredExpenseSummary, which regressed the same way on the v2 path');
+  });
+
+  /**
    * Spec `line-ai-draft-control-spec-th.md` §5.3, case E4, replayed end to end from the UAT log of
    * 2026-09-03. The owner asked why the service charge on his own bill was a separate line. The
    * intake router placed it BUSINESS_READ_QUESTION at 0.55 — too low to propose a tool, so it
@@ -2166,11 +2560,12 @@ describe('ProcessLineWebhookUseCase', () => {
 	    assert.equal(LINE_AI_CONTEXT_MAX_TURNS, 15, 'the owner-selected history bound is exactly 15 turns');
 	    const now = Date.now();
 	    const inWindow = LINE_AI_CONTEXT_MAX_TURNS + 1; // one more than the cap
+	    const boundedPreview = 'ก'.repeat(240);
 	    const recentTurns = [
 	      { createdAt: new Date(now - 16 * 60_000), userMessagePreview: 'old gap', replyPreview: 'old reply', intent: 'READ_SUMMARY', agent: 'general', refused: false },
 	      ...Array.from({ length: inWindow }, (_, i) => ({
 	        createdAt: new Date(now - (inWindow - i) * 1000),
-	        userMessagePreview: `user-${i + 1}`,
+	        userMessagePreview: i === inWindow - 1 ? boundedPreview : `user-${i + 1}`,
 	        replyPreview: `reply-${i + 1}`,
 	        intent: 'READ_DETAIL',
 	        agent: 'inventory',
@@ -2203,7 +2598,9 @@ describe('ProcessLineWebhookUseCase', () => {
 	    assert.equal(intakeContext?.maxTurns, LINE_AI_CONTEXT_MAX_TURNS);
 	    assert.equal(intakeContext?.recentTurns.length, LINE_AI_CONTEXT_MAX_TURNS);
 	    assert.equal(intakeContext?.recentTurns[0]?.userMessagePreview, 'user-2');
-	    assert.equal(intakeContext?.recentTurns.at(-1)?.userMessagePreview, `user-${LINE_AI_CONTEXT_MAX_TURNS + 1}`);
+	    assert.equal(intakeContext?.recentTurns[0]?.userMessagePreviewComplete, true);
+	    assert.equal(intakeContext?.recentTurns.at(-1)?.userMessagePreview, boundedPreview);
+	    assert.equal(intakeContext?.recentTurns.at(-1)?.userMessagePreviewComplete, undefined, 'a 240-character bounded preview may be truncated');
 	    assert.deepEqual(turnContext, intakeContext);
 	  });
 

@@ -6,7 +6,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS, type ExpensePaymentStatus, type ExpenseStatus, type ToolResult, type SourceRef } from '@watchdog-bms/contracts';
+import { ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS, EXPENSE_PAYMENT_STATUSES, EXPENSE_STATUSES, type ExpensePaymentStatus, type ExpenseStatus, type ToolResult, type SourceRef } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { ListDocumentsUseCase } from '../../../accounting-documents/application/use-cases/document.use-case';
@@ -16,13 +16,19 @@ import type { RequestContext } from '../../../auth/domain/models/request-context
 import { ListExpensesUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import {
   BUSINESS_READ_BASIS_VERSION,
+  CATEGORY_NAME_STRIP_PREFIXES,
+  VENDOR_NAME_STRIP_PREFIXES,
   appliedQuery,
+  applyNameFilter,
   completeResult,
   fact,
   periodError,
   resolveBusinessReadPeriod,
   sourceRefId,
 } from '../../domain/logic/business-read-source.logic';
+// C3 (batch 5c): same branch catalog, same lookup rules as expense.list_recent — shared rather than
+// duplicated, per the established cross-file helper pattern in this module (see e.g. bangkokToday).
+import { resolveExpenseBranchFilter } from './erp-tools.use-case';
 
 function now(): string { return new Date().toISOString(); }
 
@@ -345,13 +351,21 @@ export class CompanyEmployeeDetailTool implements ErpReadToolPort {
 @Injectable()
 export class ExpenseGetBreakdownTool implements ErpReadToolPort {
   toolName = 'expense.get_breakdown';
-  constructor(private readonly listExpenses: ListExpensesUseCase) {}
+  // `prisma` stays optional so the many existing single-arg `new ExpenseGetBreakdownTool(source)`
+  // fakes in the spec file — none of which ever pass a branchId — keep compiling unchanged;
+  // `resolveExpenseBranchFilter` never dereferences it unless a branchId was actually requested.
+  constructor(private readonly listExpenses: ListExpensesUseCase, private readonly prisma?: PrismaService) {}
 
   async execute(ctx: ErpToolContext, input: {
     periodKey?: string; fromDate?: string; toDate?: string; branchId?: string;
-    categoryId?: string; vendorId?: string; documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus;
+    categoryId?: string; vendorId?: string; categoryName?: string; vendorName?: string;
+    documentStatus?: ExpenseStatus; paymentStatus?: ExpensePaymentStatus; groupBy?: string;
   } = {}): Promise<ToolResult> {
     let asOf = now();
+    // Spec §4 R-M1: groupBy is a pure presentation hint (gateway formatter picks the axis; this tool
+    // always computes and returns all three) — echo the EFFECTIVE value back in queryApplied so read
+    // memory records what the answer actually featured, not whatever string the model sent.
+    const groupBy = input.groupBy === 'branch' || input.groupBy === 'vendor' ? input.groupBy : 'category';
     const canReadAll = ctx.permissions.includes('expense.read') || ctx.permissions.includes('expense.review');
     const canReadRelated = ctx.permissions.includes('expense.read_related');
     if (!canReadAll && !canReadRelated && !ctx.permissions.includes('expense.read_own')) {
@@ -360,15 +374,66 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
     const resolved = resolveBusinessReadPeriod(input);
     if (!resolved.ok) return periodError(this.toolName, asOf, resolved);
     const period = resolved.period;
+    if (input.documentStatus !== undefined && !(EXPENSE_STATUSES as readonly string[]).includes(input.documentStatus)) {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'Unsupported filter: documentStatus', sourceRefs: [], asOf };
+    }
+    if (input.paymentStatus !== undefined && !(EXPENSE_PAYMENT_STATUSES as readonly string[]).includes(input.paymentStatus)) {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'Unsupported filter: paymentStatus', sourceRefs: [], asOf };
+    }
+    // categoryName/vendorName resolution (spec §3 row 6): same exact-then-contains match as
+    // list_recent, applied before the repository read so an ambiguous/unresolved name never
+    // silently aggregates over the wrong (or every) category/vendor.
+    const requestedCategoryName = typeof input?.categoryName === 'string' && input.categoryName.trim() ? input.categoryName.trim() : undefined;
+    const requestedVendorName = typeof input?.vendorName === 'string' && input.vendorName.trim() ? input.vendorName.trim() : undefined;
+    // Item 2 (223-turn eval batch 2): an ambiguous/unresolved name is still a real, permission-
+    // checked answer drawn from this company's own category/vendor catalog — it needs a source
+    // citation like every other 'ok' result below, or the gateway's enforceSourceHonesty boundary
+    // check (which requires at least one sourceRef on any 'ok' result) discards it as an opaque
+    // TOOL_RESULT_NO_SOURCE error before any caller ever sees availableCategories/availableVendors.
+    const nameLookupSourceRefs: SourceRef[] = [{ label: 'สรุปค่าใช้จ่ายแยกกลุ่ม', module: 'expenses', entityType: 'expense_breakdown', asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/expenses` }];
+    // C3 (batch 5c, T-148-b): this tool had NO branch resolution at all — a branchId that was really
+    // a name/code/number (e.g. "2" for "สาขา 2") reached the repository query as a literal id and
+    // silently matched nothing. Same exact/fuzzy/out-of-scope lookup as expense.list_recent.
+    const requestedBranch = typeof input?.branchId === 'string' && input.branchId.trim() ? input.branchId.trim() : undefined;
+    const branchFilter = await resolveExpenseBranchFilter(this.prisma!, this.toolName, ctx, requestedBranch, nameLookupSourceRefs, asOf);
+    if (!branchFilter.ok) return branchFilter.result;
+    const branchId = branchFilter.branchId;
+    const categoryCandidates = requestedCategoryName ? await this.listExpenses.listCategoryCandidates(ctx.companyId) : [];
+    const categoryFilter = applyNameFilter(input.categoryId, requestedCategoryName, categoryCandidates, CATEGORY_NAME_STRIP_PREFIXES);
+    if (categoryFilter.status === 'conflict') {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'categoryId and categoryName resolve to different categories', sourceRefs: [], asOf };
+    }
+    if (categoryFilter.status === 'ambiguous') {
+      return { toolName: this.toolName, status: 'ok', data: { categoryAmbiguous: requestedCategoryName, availableCategories: categoryFilter.matches }, sourceRefs: nameLookupSourceRefs, asOf };
+    }
+    if (categoryFilter.status === 'not_found') {
+      return { toolName: this.toolName, status: 'ok', data: { categoryUnresolved: requestedCategoryName, availableCategories: categoryFilter.available }, sourceRefs: nameLookupSourceRefs, asOf };
+    }
+    const vendorCandidates = requestedVendorName ? await this.listExpenses.readAiVendorCandidates(toCtx(ctx), branchId) : [];
+    const vendorFilter = applyNameFilter(input.vendorId, requestedVendorName, vendorCandidates, VENDOR_NAME_STRIP_PREFIXES);
+    if (vendorFilter.status === 'conflict') {
+      return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'vendorId and vendorName resolve to different vendors', sourceRefs: [], asOf };
+    }
+    if (vendorFilter.status === 'ambiguous') {
+      return { toolName: this.toolName, status: 'ok', data: { vendorAmbiguous: requestedVendorName, availableVendors: vendorFilter.matches }, sourceRefs: nameLookupSourceRefs, asOf };
+    }
+    if (vendorFilter.status === 'not_found') {
+      return { toolName: this.toolName, status: 'ok', data: { vendorUnresolved: requestedVendorName, availableVendors: vendorFilter.available }, sourceRefs: nameLookupSourceRefs, asOf };
+    }
+    const categoryId = categoryFilter.id;
+    const vendorId = vendorFilter.id;
     const snapshot = await this.listExpenses.readAiBreakdown(toCtx(ctx), {
       fromDate: period.fromDate, toDate: period.toDate,
-      ...(input.branchId ? { branchId: input.branchId } : {}),
-      ...(input.categoryId ? { expenseCategoryId: input.categoryId } : {}),
-      ...(input.vendorId ? { vendorCounterpartyId: input.vendorId } : {}),
+      ...(branchId ? { branchId } : {}),
+      ...(categoryId ? { expenseCategoryId: categoryId } : {}),
+      ...(vendorId ? { vendorCounterpartyId: vendorId } : {}),
       ...(input.documentStatus ? { status: input.documentStatus } : {}),
       ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
     });
     asOf = snapshot.asOf.toISOString();
+    // Item 1 (spec R-A1 row 18): `readAiBreakdown` now echoes the scope it already applied; an
+    // older test double or caller that predates this field simply reads as company-wide, unchanged.
+    const accessScope = (snapshot as { accessScope?: 'own' | 'related' | 'company' }).accessScope ?? 'company';
     const totalCount = snapshot.byCurrency.reduce((sum, row) => sum + row.count, 0);
     const soleCurrency = snapshot.byCurrency.length === 1 ? snapshot.byCurrency[0] : undefined;
 
@@ -377,16 +442,24 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
       asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/expenses`,
     }];
     const queryApplied = appliedQuery(period, {
-      branch: { mode: input.branchId ? 'selected' : 'all_authorized', branchId: input.branchId ?? null },
+      branch: { mode: branchId ? 'selected' : 'all_authorized', branchId: branchId ?? null },
       dateBasis: 'expense_incurred_date', statusBasis: input.documentStatus ?? 'exclude_rejected_voided',
       dataset: 'operational_expense_records',
+      accessScope,
       filters: {
-        ...(input.categoryId ? { categoryId: input.categoryId } : {}),
-        ...(input.vendorId ? { vendorId: input.vendorId } : {}),
+        ...(categoryId ? { categoryId } : {}),
+        ...(categoryFilter.name ? { categoryName: categoryFilter.name } : {}),
+        ...(vendorId ? { vendorId } : {}),
+        ...(vendorFilter.name ? { vendorName: vendorFilter.name } : {}),
         ...(input.paymentStatus ? { paymentStatus: input.paymentStatus } : {}),
+        groupBy,
       },
     });
-    const completeness = completeResult(0, false, snapshot.byCategory.length + snapshot.byBranch.length, snapshot.categoryHasMore || snapshot.branchHasMore);
+    const completeness = completeResult(
+      0, false,
+      snapshot.byCategory.length + snapshot.byBranch.length + snapshot.byVendor.length,
+      snapshot.categoryHasMore || snapshot.branchHasMore || snapshot.vendorHasMore,
+    );
     const facts = snapshot.byCurrency.map((row) => fact({
       id: `expense.breakdown.total.${row.currency}`, metric: 'expense_total', value: row.totalAmount,
       unit: 'money', currency: row.currency, period: queryApplied.period ?? null,
@@ -413,6 +486,13 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
           branch: group.label ?? (group.branchId ?? 'ส่วนกลาง (ไม่ระบุสาขา)'),
           currency: group.currency, count: group.count, totalAmount: group.totalAmount,
         })),
+        byVendor: snapshot.byVendor.map((group) => ({
+          vendorId: group.vendorCounterpartyId,
+          vendor: group.label ?? (group.vendorCounterpartyId ?? 'ไม่ระบุร้าน'),
+          linked: group.linked,
+          currency: group.currency, count: group.count, totalAmount: group.totalAmount,
+        })),
+        vendorHasMore: snapshot.vendorHasMore,
         queryApplied,
         completeness,
       },

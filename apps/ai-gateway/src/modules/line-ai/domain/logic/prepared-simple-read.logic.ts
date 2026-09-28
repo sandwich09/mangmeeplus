@@ -14,7 +14,13 @@ import type { LineAiPreparedCall, LineAiPreparedPlan, ToolMeta } from '@watchdog
 
 /** Read families a simple read may format deterministically; a capture/mutation tool is never simple. */
 const SIMPLE_READ_CATEGORIES = new Set<ToolMeta['category']>(['read_summary', 'read_detail', 'report']);
-const CONFIDENCE_VETO_FLOOR = 0.85;
+// tuning-5b (B3a): mirrors the same floor in line-intake-compact-decision.ts's simpleReadPlan, which
+// builds the plan this function re-verifies at the orchestrator's pre-call check
+// (preparedSimplePreCallCheck, called from both intent-router.agent.ts's routeIntake and
+// OrchestratorAgent.run). Moved 0.85 -> 0.75 together with that file — leaving one of the two floors
+// at 0.85 would silently re-reject every 0.75-0.85 plan the decoder now allows through. Run 4: 17
+// simple reads at 0.82 and 9 at 0.78 fell to the slow path, e.g. "มีร่างค้างอยู่ไหมคะ".
+const CONFIDENCE_VETO_FLOOR = 0.75;
 
 const TOOL_BY_NAME = new Map(LINE_TOOL_REGISTRY.map((tool) => [tool.name, tool] as const));
 

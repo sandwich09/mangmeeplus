@@ -803,7 +803,7 @@ direct-answer cohort -> `knowledge` UAT/canary -> `company` UAT/canary -> wider 
 ห้ามเปิด `knowledge` หรือ `company` จนกว่าจะครบ:
 
 - fixed eval และ adversarial suite ผ่าน
-- official knowledge cards มี source/reviewer/effective window ครบ
+- official knowledge cards มี immutable source hash, source-review metadata และ effective window ครบ; reviewer metadata ต้องบอกตามจริงว่าเป็น human หรือ repository/AI source review
 - HIGH card ที่เลย `nextReviewAt` ถูก exclude แบบ fail-closed, LOW/MEDIUM แสดง dated caveat ภายในผ่อนผันเท่านั้น,
   reviewer alert 14 วัน และ source review queue ใช้งานได้
 - configured-provider replay ผ่าน quality, grounding, latency และ cost thresholds
@@ -813,7 +813,8 @@ direct-answer cohort -> `knowledge` UAT/canary -> `company` UAT/canary -> wider 
 - LINE terminal response มี durable replay/fallback ตาม dependency ของ UAT correctness release — blockers #1
   (durable terminal replay) และ #3 (Flex -> text fallback) ต้องปิดก่อน `knowledge` UAT ไม่ใช่แค่ก่อน production
 - source/freshness dashboard และ kill switch ใช้งานได้
-- Product + Accounting/Tax owner ลงนาม knowledge scope ที่จะเปิด
+- standing owner policy วันที่ 2026-09-27 อนุญาตให้เปิด basic product/business knowledge เมื่อ repository/AI review ยืนยันว่า body ตรงกับ source/code ที่ระบุ โดยไม่ต้องขออนุมัติราย card ซ้ำและห้ามอ้างว่าเป็น human signoff; general tax knowledge ใช้กติกาเดียวกันได้เมื่อมี corpus จากเอกสารทางการของกรมสรรพากรที่ตรวจสอบแล้ว
+- คำวินิจฉัยภาษี/บัญชีเฉพาะกรณีหรือ high-risk guidance ยังต้องผ่าน accuracy/source safeguards และ domain-owner review ที่กำหนดไว้สำหรับความเสี่ยงนั้น
 
 ## 19. Acceptance criteria
 

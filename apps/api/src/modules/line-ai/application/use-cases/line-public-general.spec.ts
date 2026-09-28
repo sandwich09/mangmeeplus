@@ -11,6 +11,11 @@ function fixture() {
   const forbidden = () => { throw new Error('PRIVATE_PREFETCH'); };
   const handler: any = Object.create(ProcessLineWebhookUseCase.prototype);
   Object.assign(handler, { mediaTextContinuations: new WeakMap(), config, logger: { log() {} }, claimWebhookEvent: async () => true, launchGate: { assertLaunchRouteOpen: async () => undefined },
+    // buildTurnAuthorizationJson (called from executePublicGeneral) reads these WeakMaps directly on
+    // `this`, same as the real class fields — empty here since this fixture's whole point is a public
+    // turn with no private access/read/expenseSummary/readMemory proof to carry.
+    deliveryAccess: new WeakMap(), deliverySources: new WeakMap(), publicPolicyTopics: new WeakMap(), deliveryDraftPreviews: new WeakMap(),
+    deliveryReceiptSources: new WeakMap(), deliverySubstituteSources: new WeakMap(), deliveryCandidates: new WeakMap(),
     legalAcceptance: { isPublicAiAcceptanceRequired: async () => false, isRequired: forbidden },
     permissionResolver: { resolveAccess: forbidden }, contextV2: { load: forbidden }, expenseRepo: { listCategories: forbidden },
     prisma: { client: { lineChannelBinding: { findMany: async () => [{ id: 'binding', companyId: 'payer', updatedAt: now }] },

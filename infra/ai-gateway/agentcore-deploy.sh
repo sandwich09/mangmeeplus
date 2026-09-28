@@ -178,7 +178,10 @@ EOF
 AGENTCORE_LINE_AI_FUSED_PLAN_SHADOW_ENABLED="${LINE_AI_FUSED_PLAN_SHADOW_ENABLED:-true}"
 AGENTCORE_LINE_AI_PREPARED_SIMPLE_READ_ENABLED="${LINE_AI_PREPARED_SIMPLE_READ_ENABLED:-true}"
 AGENTCORE_LINE_AI_DRAFT_EDIT_ENABLED="${LINE_AI_DRAFT_EDIT_ENABLED:-true}"
-AGENTCORE_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES="${LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES:-sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric}"
+# Same allowlist as packages/config's LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES default and the Kamal
+# ai-gateway override: turns execute here, so a narrower list silently disables prepared shapes the
+# intake router (Kamal) already plans for (expense advisor program, 2026-09-28).
+AGENTCORE_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES="${LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES:-sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric,expense.list_recent::list,expense.get_breakdown::list,reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric,expense.get_detail::single_metric,reimbursement.get_detail::single_metric}"
 
 ENV_VARS=$(cat <<EOF
 {

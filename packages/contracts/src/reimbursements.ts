@@ -559,6 +559,9 @@ export type ReimbursementAiSummary = {
   unpaidApprovedCount: number;
   overdueApprovalCount: number;
   totalUnpaidAmount: string;
+  /** Item 1 (spec R-A1 row 18): the caller's own effective read scope, from the same own/related/
+   *  company permission check `GetReimbursementAiSummaryUseCase` already applies above. */
+  accessScope: 'own' | 'related' | 'company';
 };
 
 // ---- Document sequence keys ----

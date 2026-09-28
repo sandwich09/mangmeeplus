@@ -30,12 +30,14 @@ const PUBLIC_QUESTION = 'อัตราดอกเบี้ยนโยบา�
 
 type Scenario = {
   messageText: string;
-  subrequests: Array<Pick<LineAiSemanticSubrequestV2, 'kind' | 'goal'> & Partial<Pick<LineAiSemanticSubrequestV2, 'dependsOn' | 'writeIntent'>>>;
+  subrequests: Array<Pick<LineAiSemanticSubrequestV2, 'kind' | 'goal'> & Partial<Pick<LineAiSemanticSubrequestV2, 'dependsOn' | 'writeIntent' | 'requestedFilters'>>>;
   controls?: string[];
   answers: string[];
   apiResults?: Record<string, Record<string, unknown>>;
   permissions?: string[];
   reimbursementDraftWriteEnabled?: boolean;
+  selectedKnowledgeCardIds?: string[];
+  conversationContext?: Record<string, unknown>;
 };
 
 function response(body: unknown, status = 200): Response {
@@ -68,7 +70,7 @@ async function makeScenario(scenario: Scenario) {
   const part = evidence.parts[0]!;
   const sourceRef = { partId: part.partId, startUtf16: 0, endUtf16: part.rawText.length, rawSha256: part.rawSha256 };
   const semanticSubrequests = scenario.subrequests.map((item, index) => ({
-    index, ...item, requiredEvidence: [], requestedFilters: {}, dependsOn: item.dependsOn ?? [], evidenceRefs: [sourceRef],
+    index, ...item, requiredEvidence: [], requestedFilters: item.requestedFilters ?? {}, dependsOn: item.dependsOn ?? [], evidenceRefs: [sourceRef],
   }));
   const now = Date.now();
   const profiles = new Set<string>(['line-answer/2']);
@@ -89,7 +91,7 @@ async function makeScenario(scenario: Scenario) {
     aiToolPolicyEnforced: true, aiToolAuditEnabled: true, aiFinalMutationEnabled: false,
     aiMaxToolCalls: 8, lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'strands-local',
     lineAiDraftEditEnabled: false, lineAiReimbursementDraftWriteEnabled: scenario.reimbursementDraftWriteEnabled === true, lineAiPublicLookupEnabled: true,
-    lineAiApprovedKnowledgeEnabled: false,
+    lineAiApprovedKnowledgeEnabled: !!scenario.selectedKnowledgeCardIds,
   } as any;
   const erp = new ErpToolClient(config, new ToolPolicyEnforcerService(config));
   const useCase = new LineAiTurnUseCase(erp, new OrchestratorAgent(erp, config), config, {} as any);
@@ -107,7 +109,10 @@ async function makeScenario(scenario: Scenario) {
       permissions: scenario.permissions ?? ['ai.tool.invoke', 'expense.read'], roles: ['owner'], branchIds: [BRANCH], locationIds: [LOCATION],
       locale: 'th-TH', chatKeyHash: CHAT,
     },
-    conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: new Date().toISOString(), userMessagePreview: HISTORY }] },
+    conversationContext: scenario.conversationContext ?? { windowMinutes: 15, maxTurns: 15,
+      recentTurns: [{ at: new Date().toISOString(), userMessagePreview: HISTORY }] },
+    ...(scenario.selectedKnowledgeCardIds ? { approvedKnowledge: true, selectedKnowledgeCardIds: scenario.selectedKnowledgeCardIds,
+      entitledFeatureKeys: ['expenses'] } : {}),
   } as any;
 
   const originalFetch = globalThis.fetch;
@@ -208,6 +213,10 @@ describe('LineAiTurnUseCase -> OrchestratorAgent -> real v2 provider path', () =
     assert.equal(run.usage.length, 1);
     assert.equal(run.usage[0]?.tag, 'line.compose');
     assert.equal(run.usage[0]?.ok, true);
+    const answerRequest = run.providerRequests.find((request) => String(request.instructions).startsWith('Answer each semanticSubrequest exactly once.'));
+    assert.ok(answerRequest, 'semantic answer provider call exists');
+    assert.match(JSON.stringify(answerRequest), new RegExp(HISTORY), 'bounded conversation context reaches the answer model payload');
+    assert.match(String(answerRequest.instructions), /conversationContext may resolve follow-up references.*not business truth or authority/);
   });
 
   it('covers a business read and independent general answer with permission checked source grounding', async () => {
@@ -237,6 +246,13 @@ describe('LineAiTurnUseCase -> OrchestratorAgent -> real v2 provider path', () =
     assert.deepEqual(api.body.context.valueCandidatesV2, run.candidates);
     assert.deepEqual(api.body.context.budgetGrantV2, run.grant);
     assert.equal('privateLookupCanaries' in api.body.context, false);
+    const controlRequest = run.providerRequests.find((request) => String(request.instructions).startsWith('You plan one complete LINE request.'));
+    const answerRequest = run.providerRequests.find((request) => String(request.instructions).startsWith('Answer each semanticSubrequest exactly once.'));
+    assert.ok(controlRequest && answerRequest);
+    assert.match(JSON.stringify(controlRequest), new RegExp(HISTORY), 'bounded context reaches semantic control');
+    assert.match(JSON.stringify(answerRequest), new RegExp(HISTORY), 'bounded context reaches semantic answer');
+    assert.match(String(controlRequest.instructions), /conversationContext may resolve follow-up references.*not business truth or authority/);
+    assert.match(String(answerRequest.instructions), /conversationContext may resolve follow-up references.*not business truth or authority/);
   });
 
   it('admits public.lookup through the API boundary, searches once, and composes without private context egress', async () => {
@@ -339,6 +355,70 @@ describe('LineAiTurnUseCase -> OrchestratorAgent -> real v2 provider path', () =
     assert.equal(run.usage.length, 2);
   });
 
+  it('skips composition when control already resolves every clause, while preserving inventory order', async () => {
+    const subrequests = [{ kind: 'read' as const, goal: 'ตรวจข้อแรก' }, { kind: 'read' as const, goal: 'ตรวจข้อสอง' }];
+    const cases = [
+      { control: '{}', reasons: ['SEMANTIC_CONTROL_UNAVAILABLE', 'SEMANTIC_CONTROL_UNAVAILABLE'] },
+      { control: JSON.stringify({ calls: [], questions: [{ index: 1, text: 'ถามข้อสอง' }, { index: 0, text: 'ถามข้อแรก' }] }),
+        reasons: ['MISSING_REQUIRED_INPUT', 'MISSING_REQUIRED_INPUT'] },
+    ];
+    for (const [index, candidate] of cases.entries()) {
+      const run = await makeScenario({ messageText: `ตรวจสองข้อ ${index}`, subrequests, controls: [candidate.control], answers: [] });
+      assert.deepEqual(run.response.semanticCoverage?.map(item => [item.index, item.reasonCode]), [[0, candidate.reasons[0]], [1, candidate.reasons[1]]]);
+      assert.deepEqual(run.steps.map(step => step.invocation.profileId), ['line-control/2']);
+      assert.equal(run.events.includes('vendor:answer'), false);
+    }
+  });
+
+  it('binds the canonical status and exact historical period when a read follow-up changes the breakdown', async () => {
+    const requestedFilters = { fromDate: '2026-09-01', toDate: '2026-09-27', documentStatus: 'confirmed' };
+    const run = await makeScenario({ messageText: 'แยกตามหมวดให้ดูหน่อย',
+      subrequests: [{ kind: 'read', goal: 'แยกค่าใช้จ่ายเดิมตามหมวด', requestedFilters }],
+      conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: '2026-09-27T05:00:00.000Z',
+        userMessagePreview: 'เดือนนี้เอาเฉพาะรายการยืนยันแล้ว', userMessagePreviewComplete: true }] },
+      controls: ['{"calls":[{"index":0,"toolName":"expense.get_breakdown","input":{}}],"questions":[]}'],
+      answers: ['{"answers":[{"index":0,"status":"handled","text":"ค่าใช้จ่ายยืนยันแล้ว 420.00 บาท","sourceRefIds":["expense-summary-source"]}]}'],
+      apiResults: expenseSummary });
+
+    assert.equal(run.apiCalls.length, 1);
+    assert.deepEqual(run.apiCalls[0]?.body.input, {
+      fromDate: '2026-09-01', toDate: '2026-09-27', documentStatus: 'CONFIRMED',
+    });
+    const control = run.providerRequests.find(request => String(request.instructions).startsWith('You plan one complete LINE request.'));
+    assert.ok(control);
+    assert.match(String(control.instructions), /Preserve every canonical requestedFilter/);
+    assert.match(JSON.stringify(control), /readContextCandidates/);
+  });
+
+  it('rejects a control call that conflicts with an accepted read filter instead of widening the ERP read', async () => {
+    const run = await makeScenario({ messageText: 'แยกตามหมวดให้ดูหน่อย',
+      subrequests: [{ kind: 'read', goal: 'แยกค่าใช้จ่ายเดิมตามหมวด', requestedFilters: {
+        fromDate: '2026-09-01', toDate: '2026-09-27', documentStatus: 'CONFIRMED',
+      } }],
+      conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: '2026-09-27T05:00:00.000Z',
+        userMessagePreview: 'เดือนนี้เอาเฉพาะรายการยืนยันแล้ว', userMessagePreviewComplete: true }] },
+      controls: ['{"calls":[{"index":0,"toolName":"expense.get_breakdown","input":{"documentStatus":"DRAFT"}}],"questions":[]}'],
+      answers: [] });
+
+    assert.equal(run.apiCalls.length, 0);
+    assert.equal(run.response.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+  });
+
+  it('keeps the historical period but omits a reset status filter instead of inventing null or ALL', async () => {
+    const run = await makeScenario({ messageText: 'รวมรายการร่างด้วย ไม่เอาเฉพาะยืนยันแล้ว',
+      subrequests: [{ kind: 'read', goal: 'แยกค่าใช้จ่ายเดิมรวมรายการร่าง', requestedFilters: {
+        fromDate: '2026-09-01', toDate: '2026-09-27',
+      } }],
+      conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: '2026-09-27T05:00:00.000Z',
+        userMessagePreview: 'เดือนนี้เอาเฉพาะรายการยืนยันแล้ว', userMessagePreviewComplete: true }] },
+      controls: ['{"calls":[{"index":0,"toolName":"expense.get_breakdown","input":{}}],"questions":[]}'],
+      answers: ['{"answers":[{"index":0,"status":"handled","text":"ค่าใช้จ่ายรวม 420.00 บาท","sourceRefIds":["expense-summary-source"]}]}'],
+      apiResults: expenseSummary });
+
+    assert.equal(run.apiCalls.length, 1);
+    assert.deepEqual(run.apiCalls[0]?.body.input, { fromDate: '2026-09-01', toDate: '2026-09-27' });
+  });
+
   it('refuses a business number that does not match the permission checked fact', async () => {
     const run = await makeScenario({ messageText: 'สรุปค่าใช้จ่ายรวมและอธิบายกำไรคืออะไร',
       subrequests: [{ kind: 'read', goal: 'สรุปค่าใช้จ่ายรวม' }, { kind: 'general', goal: 'อธิบายว่ากำไรคืออะไร' }],
@@ -347,10 +427,14 @@ describe('LineAiTurnUseCase -> OrchestratorAgent -> real v2 provider path', () =
       apiResults: expenseSummary });
 
     assert.equal(run.response.errorCode, undefined);
-    assert.equal(run.response.semanticCoverage?.[0]?.status, 'needs_user');
+    // C1(d): a grounding failure is a system outcome, not a customer question — `unsupported`
+    // (never `needs_user`, which would leave a phantom wait no answer could ever resolve). No
+    // deterministic family is enabled in this harness's plain config object, so it falls through
+    // to the honest §8 terminal rather than a rendered fallback.
+    assert.equal(run.response.semanticCoverage?.[0]?.status, 'unsupported');
     assert.equal(run.response.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
     assert.doesNotMatch(run.response.replyText, /999/);
-    assert.match(run.response.replyText, /ยังตรวจสอบตัวเลขของคำตอบส่วนนี้ไม่ได้/);
+    assert.match(run.response.replyText, /ดึงข้อมูลส่วนนี้ไม่ได้/);
     assert.equal(run.response.semanticCoverage?.[1]?.status, 'handled');
   });
 });
@@ -365,8 +449,24 @@ it('does not let model-authored product buttons escape the reviewed-help boundar
   assert.doesNotMatch(run.response.replyText, /MAGIC_AUTO_APPROVE_ALL|อนุมัติจ่ายให้อัตโนมัติ/);
   assert.match(run.response.replyText, /ยังไม่มีคู่มือที่ตรวจสอบแล้ว/);
   assert.match(run.response.replyText, /กำไรกับเงินสดเป็นคนละมุมมอง/);
-  assert.deepEqual(run.response.semanticCoverage?.map(item => item.status), ['needs_user', 'handled']);
+  // Spec R-L3: "no reviewed guide yet" is a statement, not a question to the user, so it is terminal.
+  assert.deepEqual(run.response.semanticCoverage?.map(item => item.status), ['unsupported', 'handled']);
   assert.equal(run.apiCalls.length, 0);
+  assert.equal(run.events.filter(event => event === 'vendor:answer').length, 1, 'the unresolved general clause still composes once');
+});
+
+it('answers pure help from the deterministic guide boundary without control or composition', async () => {
+  const run = await makeScenario({ messageText: 'รายการยืนยันแล้ว แปลว่าจ่ายเงินแล้วหรือยัง',
+    subrequests: [{ kind: 'help', goal: 'อธิบายสถานะยืนยันและชำระเงินของมั่งมี' }],
+    selectedKnowledgeCardIds: ['expense.status'], answers: [] });
+  assert.equal(run.response.semanticCoverage?.[0]?.status, 'handled');
+  assert.equal(run.response.semanticCoverage?.[0]?.reasonCode, undefined);
+  assert.match(run.response.replyText, /เอกสารที่ยืนยันแล้วอาจยังไม่จ่ายเงิน/);
+  assert.equal(run.response.sourceRefs[0]?.entityType, 'approved_product_help');
+  assert.equal(run.response.sourceRefs[0]?.permissionChecked, true);
+  assert.deepEqual(run.steps, []);
+  assert.deepEqual(run.providerRequests, []);
+  assert.deepEqual(run.usage, []);
 });
 
 
@@ -390,6 +490,7 @@ describe('v2 financial and dependency dispatch fences', () => {
       apiResults: expenseSummary });
     assert.equal(result.apiCalls.length, 1);
     assert.equal(result.response.semanticCoverage?.[1]?.reasonCode, 'DEPENDENCY_SOURCE_PENDING');
+    assert.equal(result.events.filter(event => event === 'vendor:answer').length, 1, 'the unresolved independent clause still composes once');
   });
 
   it('does not treat reimbursement options as a completed financial dependency', async () => {

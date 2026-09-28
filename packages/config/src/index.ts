@@ -283,7 +283,8 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // Latency/autonomy Phase 4: default OFF. On, the API also forwards the prepared plan so the gateway
   // may consume it for a one-call simple read; forwarding is OR-gated with the shadow flag so the two
   // gateway lanes stay independent (the gateway alone decides whether to execute from it).
-  LINE_AI_PREPARED_SIMPLE_READ_ENABLED: envBoolean.default(false),
+  // Owner policy 2026-09-27: defaults ON, no manual rollout gate (spec R-L4).
+  LINE_AI_PREPARED_SIMPLE_READ_ENABLED: envBoolean.default(true),
   // Substitute-receipt semantic routing mode (substitute-semantic-routing spec §7). Default 'off' keeps
   // the EXACT legacy regex-first behavior; 'primary' makes the semantic route authoritative (narrow
   // canonical fallback only on UNAVAILABLE). 'shadow' is a reserved NO-GO scaffold: the legacy path
@@ -543,14 +544,18 @@ export const aiGatewayConfigSchema = baseConfigSchema.extend({
   // compares (never executes); Phase 4 consumes a server-eligible prepared plan but a family must also
   // be allow-listed by Phase 5 (empty default → no simple read is deterministic-eligible).
   LINE_AI_FUSED_PLAN_SHADOW_ENABLED: envBoolean.default(false),
-  LINE_AI_PREPARED_SIMPLE_READ_ENABLED: envBoolean.default(false),
+  // Owner policy 2026-09-27: defaults ON, no manual rollout gate (spec R-L4).
+  LINE_AI_PREPARED_SIMPLE_READ_ENABLED: envBoolean.default(true),
   // Same switch as the API's, read here so the five `draft_update` tools are absent from the
   // catalog the model is offered when it is off — "refused later" would still have advertised an
   // ability this deployment does not have. Both containers carry it (deploy.sh).
   LINE_AI_DRAFT_EDIT_ENABLED: envBoolean.default(true),
   // Exact family allowlist (comma-separated; empty = none enabled). Only families with a verified
-  // deterministic formatter + fixed fixture and passed blind pairwise eval belong here.
-  LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: z.string().default(''),
+  // deterministic formatter + fixed fixture and passed blind pairwise eval belong here. Spec R-L4:
+  // code default and the UAT/production override use the same list (docs/specs/mangmee-ai-expense-
+  // advisor-spec-th.md §5) — the four families already active plus list_recent::list, get_breakdown::
+  // list, and both reimbursement families.
+  LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: z.string().default('sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric,expense.list_recent::list,expense.get_breakdown::list,reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric,expense.get_detail::single_metric,reimbursement.get_detail::single_metric'),
   // Phase 6 secondary runtime experiments. RESERVED / INERT: these three flags parse and expose getters
   // but are NOT wired to any behavior yet — toggling them changes nothing at runtime. They exist so the
   // env contract is stable ahead of the wiring; keep them default-false and do not document them as active
