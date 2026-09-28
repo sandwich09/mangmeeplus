@@ -21,7 +21,7 @@ for stage in uat production; do
   env -i PATH="$PATH" DEPLOY_ENVIRONMENT="$stage" bash "$tmp_dir/runtime-env.sh" \
     | jq -e '.LINE_AI_FUSED_PLAN_SHADOW_ENABLED=="true"
       and .LINE_AI_PREPARED_SIMPLE_READ_ENABLED=="true" and .LINE_AI_DRAFT_EDIT_ENABLED=="true"
-      and .LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES=="sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric"
+      and .LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES=="sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric,expense.list_recent::list,expense.get_breakdown::list,reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric,expense.get_detail::single_metric,reimbursement.get_detail::single_metric"
       and .AI_FINAL_MUTATION_ENABLED=="false" and .AI_PROMPT_LOGGING_ENABLED=="false"' >/dev/null
   env -i PATH="$PATH" DEPLOY_ENVIRONMENT="$stage" LINE_AI_FUSED_PLAN_SHADOW_ENABLED=false \
     LINE_AI_PREPARED_SIMPLE_READ_ENABLED=false LINE_AI_DRAFT_EDIT_ENABLED=false \
