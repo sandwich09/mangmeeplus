@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
-  "sourceRevision": "ca06479fb172d9710366ba8cf9fc0a541870753b",
-  "checkoutBranch": "claude/mangmee-ai-advisor-fixes6b",
+  "sourceRevision": "1c55ea9b14e444bf9272b1b654c47628dac74add",
+  "checkoutBranch": "claude/mangmee-ai-advisor-fixes7b",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -181,7 +181,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "72299088a467c7e275577f3085744dcab19b21e0457ad56284eeded8c7ea1545"
+      "sha256": "cf67a25980331211441bc267299117c03977e5851e279457a3daeff5ad6bc0bc"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-28T05:48:31.143Z",
-  "manifestDigest": "b8257f4931785a1a593e373772ac9a1bfeb38d9b4d21061aafb1d9779431293d"
+  "generatedAt": "2026-09-28T07:24:12.689Z",
+  "manifestDigest": "44aa10c5b0d1ce2b82bfe71a51fbea0993eb6ecc3b47c7c6830ec22d3d32a52d"
 }
