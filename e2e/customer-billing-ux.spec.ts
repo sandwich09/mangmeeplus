@@ -60,30 +60,42 @@ for (const width of [1280, 390]) {
   });
 }
 
-test('BILLING-UX reads account email without an editor and fails closed for recipient changes', async ({ authedPage: page, companyId }) => {
-  let failRead = false, requirement = 'READY';
-  await page.route('**/api/v1/auth/account/email/otp', route => route.fulfill({ status: failRead ? 503 : 200, json: failRead ? { message: 'Temporary test outage' } : {
+test('BILLING-UX recipient panel offers the verified account email only when it is verified and never reads it for buying', async ({ authedPage: page, companyId }) => {
+  let failRead = false, requirement = 'READY', accountReads = 0;
+  await page.route('**/api/v1/auth/account/email/otp', route => { accountReads++; return route.fulfill({ status: failRead ? 503 : 200, json: failRead ? { message: 'Temporary test outage' } : {
     email: 'owner@example.com', emailVerified: true, emailRequirement: requirement, emailRevision: 0,
     hasPassword: true, lineLinked: false, challenge: null, serverNow: new Date().toISOString(),
-  } }));
+  } }); });
+  await page.route(`**/api/v1/companies/${companyId}/billing`, async route => {
+    const data = await (await route.fetch()).json();
+    await route.fulfill({ json: { ...data, recipient: { email: 'accounts@example.com', source: 'STRIPE_CHECKOUT', bouncedAt: null, canChange: true } } });
+  });
   await page.route(`**/api/v1/companies/${companyId}/billing/recipient`, route => route.fulfill({ json: { hasCustomer: true, email: 'accounts@example.com', operation: null, busy: false } }));
   await page.goto(`/companies/${companyId}/billing`);
+  await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toBeVisible();
+  // RV05: buying never waits on the account email, so the package page does not read it.
+  expect(accountReads).toBe(0);
   await page.getByRole('button', { name: 'การต่ออายุและชำระเงิน', exact: true }).click();
   const recipient = page.getByRole('region', { name: 'ผู้รับเอกสารของบริษัท', exact: true });
-  const changeRecipient = recipient.getByRole('button', { name: 'ใช้เมลที่ยืนยันแล้วสำหรับเอกสารในอนาคต', exact: true });
-  await expect(changeRecipient).toBeEnabled();
+  await expect(recipient).toContainText('accounts@example.com');
+  await recipient.getByRole('button', { name: 'แก้อีเมลรับเอกสาร', exact: true }).click();
+  const accountOption = recipient.getByRole('radio', { name: /ใช้อีเมลบัญชีที่ยืนยันแล้ว/ });
+  await expect(accountOption).toHaveAccessibleName(/owner@example\.com/);
+  await expect(recipient.getByRole('radio', { name: 'ใช้อีเมลอื่น', exact: true })).toBeVisible();
+  // An unreadable account email is simply not offered; the code path stays open.
+  failRead = true;
+  await recipient.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
+  await recipient.getByRole('button', { name: 'แก้อีเมลรับเอกสาร', exact: true }).click();
+  await expect(recipient.getByRole('radio', { name: 'ใช้อีเมลอื่น', exact: true })).toBeVisible();
+  await expect(accountOption).toHaveCount(0);
+  await expect(page.getByRole('alert').filter({ hasText: 'ยังตรวจสอบอีเมลบัญชีไม่ได้' })).toHaveCount(0);
+  failRead = false; requirement = 'CHANGE_PENDING';
+  await recipient.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
+  await recipient.getByRole('button', { name: 'แก้อีเมลรับเอกสาร', exact: true }).click();
+  await expect(recipient.getByRole('radio', { name: 'ใช้อีเมลอื่น', exact: true })).toBeVisible();
+  await expect(accountOption).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'เปลี่ยนอีเมล', exact: true })).toHaveCount(0);
-  failRead = true;
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await expect(page.getByRole('alert').filter({ hasText: 'ยังตรวจสอบอีเมลบัญชีไม่ได้' })).toBeVisible();
-  await expect(changeRecipient).toBeDisabled();
-  failRead = false; requirement = 'CHANGE_PENDING';
-  await page.getByRole('button', { name: 'ลองใหม่', exact: true }).click();
-  await expect(page.getByRole('alert').filter({ hasText: 'ยังตรวจสอบอีเมลบัญชีไม่ได้' })).toHaveCount(0);
-  await expect(changeRecipient).toBeDisabled();
-  await expect(recipient.getByRole('link', { name: 'ไปที่บัญชีของฉัน', exact: true })).toHaveAttribute('href', `/companies/${companyId}/settings/profile#account`);
-  await expect(recipient).toContainText('accounts@example.com');
 });
 
 test('BILLING-UX payment recheck tells the truth and documents return to history', async ({ authedPage: page, companyId }) => {
@@ -136,9 +148,8 @@ test('BILLING-UX recovery never mounts business reads and picker rejects an unow
   expect(businessReads).toEqual([]);
   await page.goto(`/account/email?company=${companyId}&interval=year`);
   await expect(page.getByRole('heading', { name: 'จัดการอีเมลบัญชี', exact: true })).toBeVisible();
-  // E3 (purchase-without-setup §18.2): the description now covers login/notifications, not only
-  // "verify then buy" — OTP sign-in is a real use of this email, not just a billing-document detour.
-  await expect(page.getByText('จัดการอีเมลสำหรับเข้าสู่ระบบและรับแจ้งเตือน แล้วกลับไปหน้าแพ็กเกจได้', { exact: true })).toBeVisible();
+  // pr-d §3.11: the account email is for sign-in and notices; buying never waits on it (RV05).
+  await expect(page.getByText('ไม่ต้องยืนยันก่อนซื้อแพ็กเกจ')).toBeVisible();
   await expect(page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true })).toBeVisible();
   const back = page.getByRole('link', { name: 'กลับไปเลือกแพ็กเกจ', exact: true });
   await expect(back).toHaveAttribute('href', `/companies/${companyId}/billing?interval=year`);

@@ -25,7 +25,7 @@ export default async function AccountEmailPage({ searchParams }: { searchParams:
   if (result.session.legalAcceptanceRequired !== false) redirect(legalAcceptancePath(next, result.session.companyId));
   const billingReturn = company && result.session.permissions.includes('company.plan.manage');
   const backHref = billingReturn ? `/companies/${encodeURIComponent(company)}/billing${query.has('interval') ? `?interval=${query.get('interval')}` : ''}` : '/billing/companies';
-  return <BillingCustomerFrame eyebrow="บัญชีของฉัน" title="จัดการอีเมลบัญชี" description="จัดการอีเมลสำหรับเข้าสู่ระบบและรับแจ้งเตือน แล้วกลับไปหน้าแพ็กเกจได้"
+  return <BillingCustomerFrame eyebrow="บัญชีของฉัน" title="จัดการอีเมลบัญชี" description="อีเมลบัญชีใช้เข้าสู่ระบบสำรองและรับแจ้งเตือน ไม่ต้องยืนยันก่อนซื้อแพ็กเกจ ส่วนอีเมลรับเอกสารกรอกได้ที่หน้าชำระเงิน"
     backHref={backHref} backLabel={billingReturn ? 'กลับไปเลือกแพ็กเกจ' : 'กลับหน้าเลือกบริษัท'}>
     <AccountEmailOtpPanel reauthReturnTo={next} />
   </BillingCustomerFrame>;

@@ -39,8 +39,9 @@ function sourceFiles(dir: string): string[] {
 }
 
 /**
- * Codes the API answers with. Both spellings the codebase uses: the bare-string exception
- * (`throw new ConflictException('stale_claim_snapshot')`) and the object form carrying `code:`.
+ * Codes the API answers with. Every spelling the codebase uses: the bare-string exception
+ * (`throw new ConflictException('stale_claim_snapshot')`), the object form carrying `code:`, and
+ * billing's `billingError('X', …)` helper, whose code the other two patterns never saw (RV28).
  */
 function openFeatureErrorCodes(): Map<string, string> {
   const codes = new Map<string, string>();
@@ -50,6 +51,7 @@ function openFeatureErrorCodes(): Map<string, string> {
       const found = [
         ...source.matchAll(/(?:BadRequest|UnprocessableEntity|Conflict|Forbidden|Unauthorized|NotFound|Gone|PayloadTooLarge|TooManyRequests|ServiceUnavailable)Exception\(\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
         ...source.matchAll(/code:\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
+        ...source.matchAll(/billingError\(\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
       ];
       for (const match of found) if (!codes.has(match[1]!)) codes.set(match[1]!, moduleName);
     }

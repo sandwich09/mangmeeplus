@@ -70,10 +70,6 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
       } });
       if (url.pathname === `${base}/history` && request.method() === 'GET') return route.fulfill({ json: { items: [], nextCursor: null } });
       if (url.pathname === `${base}/recipient` && request.method() === 'GET') return route.fulfill({ json: { email: null, hasCustomer: false, operation: null } });
-      if (url.pathname === '/api/v1/auth/account/email/otp' && request.method() === 'GET') return route.fulfill({ json: {
-        email: 'owner@example.test', emailVerified: true, emailRevision: 1, emailRequirement: 'READY', hasPassword: true,
-        emailLoginEnabled: true, lineLinked: false, serverNow: '2030-01-01T00:00:00.000Z', challenge: null,
-      } });
       if (url.pathname === `${base}/quote` && request.method() === 'POST') {
         const body = request.postDataJSON();
         quotes.push({ dealId: body.dealId, purchaseMode: body.purchaseMode });
@@ -103,6 +99,8 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
     await dealCard.getByRole('button', { name: 'เลือกข้อเสนอนี้', exact: true }).click();
     const review = page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true });
     await expect(review.getByRole('region', { name: 'กำหนดการเริ่มดีลล่วงหน้า', exact: true })).toBeVisible();
+    // R-A11: the quote names the address the documents already go to.
+    await expect(review.getByLabel('ข้อมูลออกเอกสาร')).toContainText('owner@example.test');
     const shownStart = await page.evaluate(value => new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }), startsAt);
     const shownEnd = await page.evaluate(value => new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }), firstCycleEndsAt);
     await expect(review).toContainText(`สิทธิ์ดีลตั้งแต่ ${shownStart}`);
