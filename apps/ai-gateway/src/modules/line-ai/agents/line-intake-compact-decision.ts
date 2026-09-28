@@ -238,13 +238,22 @@ function periodSelectionGrounded(
  */
 const CARRIED_GROUPING_FILTER_KEYS = ['documentStatus', 'paymentStatus', 'categoryId', 'categoryName', 'vendorId', 'vendorName', 'branchId', 'branchName'] as const;
 
+// R1(b): an explicit topic return/restart must never inherit the previous read's status/payment/
+// category/vendor/branch filters (see the matching router rule in intent-router.agent.ts). "อีกที" alone
+// is far too common in an ordinary elliptical follow-up ("แยกตามหมวดอีกที") to mean restart by itself, so
+// it only counts paired with a topic word ("เรื่อง"/"เรื่องเดิม") in the same short clause, mirroring
+// "เรื่องเดิม…อีกที" in that router rule; the other four markers are distinctive enough alone.
+const RESTART_MARKER_PATTERN = /กลับมาเรื่อง|กลับมาที่|เริ่มใหม่|ขอดูใหม่|เรื่อง[\s\S]{0,30}อีกที/u;
+
 function withCarriedGroupingFilters(
   filters: Record<string, string | number | boolean | null>,
   tool: ToolMeta,
   allowedFilters: ReadonlySet<string>,
+  messageText: string,
   recentReads?: readonly LineAiReadMemory[],
 ): Record<string, string | number | boolean | null> {
   if (filters['groupBy'] === undefined || CARRIED_GROUPING_FILTER_KEYS.some((key) => filters[key] !== undefined)) return filters;
+  if (RESTART_MARKER_PATTERN.test(messageText)) return filters;
   const subject = tool.name.split('.')[0];
   const source = (recentReads ?? []).find((entry) => entry.tool.split('.')[0] === subject);
   if (!source) return filters;
@@ -323,7 +332,7 @@ function simpleReadPlan(input: {
   if (!rawCanonicalFilters) return { rejection: 'filter_not_grounded' };
   const allowedFilters = new Set([...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? [])]);
   const canonicalFilters = withoutRemovedStatusFilters(
-    withCarriedGroupingFilters(rawCanonicalFilters, tool, allowedFilters, recentReads),
+    withCarriedGroupingFilters(rawCanonicalFilters, tool, allowedFilters, messageText, recentReads),
     messageText,
   );
   if (!periodSelectionGrounded(canonicalFilters, valueCandidates, recentReads)) return { rejection: 'filter_not_grounded' };

@@ -590,6 +590,18 @@ describe('IntentRouterAgent – conversation read memory (spec §4 R-M3/R-M4)', 
     assert.doesNotMatch(prompt, /never add that categoryId\/vendorName/);
   });
 
+  // R1(a): a topic return/restart, or a self-contained list request naming no status of its own,
+  // must never inherit an earlier status/payment/category/vendor/branch filter — only the period plus
+  // whatever the new message itself states. The decoder-side backstop for the fast lane's own
+  // recentReads carry lives in line-intake-compact-decision.ts (see its own spec).
+  it('R1(a): an explicit topic restart drops every inherited status/payment/category/vendor/branch filter in the compact decisionV1 lane', () => {
+    const prompt = intakeRouterSystemPrompt({}, false, true);
+    assert.match(prompt, /An explicit topic return or restart — "กลับมาเรื่อง…", "กลับมาที่…", "เรื่องเดิม…อีกที", "ขอดูใหม่", "เริ่มใหม่"/);
+    assert.match(prompt, /a self-contained list request naming no status of its own \("ขอดูรายการล่าสุด N รายการ", "ขอ list…"\)/);
+    assert.match(prompt, /dropping every inherited status, payment, category, vendor and branch filter/);
+    assert.match(prompt, /is NOT a restart and keeps carrying exactly as above/);
+  });
+
   it('item 3 (spec §3 row 8): the compact simpleRead guidance covers an ordinal reference to expense.get_detail/reimbursement.get_detail', () => {
     const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true, false,
       new Set(['expense.get_detail::single_metric', 'reimbursement.get_detail::single_metric']));
