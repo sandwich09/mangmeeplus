@@ -270,6 +270,12 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     if (input.limit !== undefined && (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 50)) {
       return { toolName: this.toolName, status: 'error', errorCode: 'UNSUPPORTED_FILTER', errorMessage: 'limit must be 1-50', sourceRefs: [], asOf };
     }
+    // Item 2 (223-turn eval batch 2, T-148): every branch/category/vendor resolution outcome below
+    // is still a real, permission-checked answer drawn from this company's own catalog — it needs a
+    // source citation like any other 'ok' result, or the gateway's enforceSourceHonesty boundary
+    // check (which requires at least one sourceRef on any 'ok' result) discards it as an opaque
+    // TOOL_RESULT_NO_SOURCE error before any caller ever sees availableBranches/Categories/Vendors.
+    const nameLookupSourceRefs: SourceRef[] = [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/expenses` }];
     // The model copies whatever the user said — a branch name, code, or id, typos included. Exact
     // id/name/code resolves here; anything else returns the ACTIVE branches in this user's scope
     // instead of records, so the MODEL does the semantic matching (retry with the right id, or ask)
@@ -299,7 +305,7 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
         return { toolName: this.toolName, status: 'ok', data: {
           branchAmbiguous: requestedBranch,
           availableBranches: identifiers.map((b) => ({ id: b.id, name: b.name, code: b.code })),
-        }, sourceRefs: [], asOf };
+        }, sourceRefs: nameLookupSourceRefs, asOf };
       }
       let hit = identifiers[0];
       if (!hit) {
@@ -312,7 +318,7 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
           return { toolName: this.toolName, status: 'ok', data: {
             branchAmbiguous: requestedBranch,
             availableBranches: names.map((b) => ({ id: b.id, name: b.name, code: b.code })),
-          }, sourceRefs: [], asOf };
+          }, sourceRefs: nameLookupSourceRefs, asOf };
         }
         hit = names[0];
       }
@@ -323,15 +329,30 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
           take: 101,
         });
         const lookupLimited = branches.length > 100;
+        const availableBranches = branches.slice(0, 100).map((b) => ({ id: b.id, name: b.name, code: b.code }));
+        // Item 2 (T-148): a STAFF user asking for a branch that exists in this COMPANY but outside
+        // their OWN branch scope got a raw TOOL_RESULT_NO_SOURCE code — this tool must say so
+        // honestly instead (never the generic "unresolved", which reads like a typo the model
+        // should retry). The existence check below is company-wide but never scoped to `ctx`'s
+        // branches; it returns no business data, only whether SOME active branch matches — the
+        // permission boundary stays exact because `availableBranches` above is still the caller's
+        // own scoped catalog, never anything about the forbidden branch itself.
+        const outOfScope = Boolean(ctx.branchIds) && await this.prisma.client.branch.findFirst({
+          where: { companyId: ctx.companyId, status: 'ACTIVE', OR: [{ id: requestedBranch }, { code: requestedBranch }, { name: requestedBranch }] },
+          select: { id: true },
+        }) !== null;
+        if (outOfScope) {
+          return { toolName: this.toolName, status: 'ok', data: { branchOutOfScope: requestedBranch, availableBranches }, sourceRefs: nameLookupSourceRefs, asOf };
+        }
         return {
           toolName: this.toolName,
           status: 'ok',
           data: {
             branchUnresolved: requestedBranch,
-            availableBranches: branches.slice(0, 100).map((b) => ({ id: b.id, name: b.name, code: b.code })),
+            availableBranches,
             ...(lookupLimited ? { branchLookupLimited: true } : {}),
           },
-          sourceRefs: [],
+          sourceRefs: nameLookupSourceRefs,
           asOf,
         };
       }
@@ -343,12 +364,6 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
     // input, so a branch name plus a vendor name narrow together.
     const requestedCategoryName = typeof input?.categoryName === 'string' && input.categoryName.trim() ? input.categoryName.trim() : undefined;
     const requestedVendorName = typeof input?.vendorName === 'string' && input.vendorName.trim() ? input.vendorName.trim() : undefined;
-    // Item 2 (223-turn eval batch 2): an ambiguous/unresolved name is still a real, permission-
-    // checked answer drawn from this company's own category/vendor catalog — it needs a source
-    // citation like every other 'ok' result below, or the gateway's enforceSourceHonesty boundary
-    // check (which requires at least one sourceRef on any 'ok' result) discards it as an opaque
-    // TOOL_RESULT_NO_SOURCE error before any caller ever sees availableCategories/availableVendors.
-    const nameLookupSourceRefs: SourceRef[] = [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/expenses` }];
     const categoryCandidates = requestedCategoryName ? await this.listExpenses.listCategoryCandidates(ctx.companyId) : [];
     const categoryFilter = applyNameFilter(input.categoryId, requestedCategoryName, categoryCandidates, CATEGORY_NAME_STRIP_PREFIXES);
     if (categoryFilter.status === 'conflict') {

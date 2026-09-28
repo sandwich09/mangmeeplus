@@ -316,9 +316,25 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
+/** `expense.get_daily_closing`'s `data.observability.queryDurationMs` is real per-call DB timing
+ *  (`Date.now() - startedAt` around its own `$transaction`), not a business fact — re-executing the
+ *  SAME query for `verify()` always measures a different duration even when nothing changed, so an
+ *  unchanged daily-closing read could never pass re-verification. Strip only that one field, like
+ *  `sourceRefs[].asOf` below: every other observability field (queryCount, truncated) stays, since
+ *  those DO change when the underlying rows actually do. */
+function withoutVolatileObservability(data: unknown): unknown {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
+  const record = data as Record<string, unknown>;
+  const observability = record['observability'];
+  if (!observability || typeof observability !== 'object' || Array.isArray(observability)
+    || !('queryDurationMs' in observability)) return data;
+  const { queryDurationMs: _duration, ...restObservability } = observability as Record<string, unknown>;
+  return { ...record, observability: restObservability };
+}
+
 /** Ignore only read-observation timestamps; preserve business values, references and result order. */
 export function lineReadResultHash(result: ToolResult): string {
-  const material = { toolName: result.toolName, status: result.status, data: result.data,
+  const material = { toolName: result.toolName, status: result.status, data: withoutVolatileObservability(result.data),
     sourceRefs: result.sourceRefs.map(({ asOf: _observation, ...source }) => source) };
   return createHash('sha256').update(JSON.stringify(canonical(JSON.parse(JSON.stringify(material))))).digest('hex');
 }

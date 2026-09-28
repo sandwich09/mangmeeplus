@@ -63,6 +63,14 @@ describe('ReimbursementListPendingApprovalsTool', () => {
 
     assert.equal(result.status, 'forbidden');
     assert.equal(called, false);
+    // Item 3 (T-143): a bare 'forbidden' gave the gateway nothing to render, so a STAFF user asking
+    // for the approval queue could end up shown their own claims summary instead with no statement
+    // that they cannot see the queue. A typed errorCode survives enforceSourceHonesty (the gateway's
+    // non-'ok' passthrough keeps only toolName/status/sourceRefs/asOf/errorCode/errorMessage) so it
+    // can render an honest denial instead of any answer shaped like the approval queue.
+    assert.equal(result.errorCode, 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED');
+    assert.deepEqual(result.sourceRefs, []);
+    assert.equal(result.data, undefined);
   });
 
   // Approver eligibility and branch scope live in the use case, so the tool must hand it the
