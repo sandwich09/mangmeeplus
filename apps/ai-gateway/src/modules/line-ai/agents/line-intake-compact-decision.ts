@@ -144,7 +144,13 @@ function isGroundedFilterValue(
   if (typeof value === 'string' && NAME_FILTER_GROUNDING_FIELDS.has(key) && nameFilterGroundedInText(value, messageText)) return true;
   // Item 1: paymentStatus needs its own word-level check — see paymentStatusGroundedInText — before
   // the generic enum-membership fallback below, which would otherwise wave through ANY listed value.
-  if (key === 'paymentStatus' && typeof value === 'string') return paymentStatusGroundedInText(value, messageText);
+  // tuning-3 item 2: that word-level check only ever sees THIS message's text, so a value inherited
+  // from recentReads (spec R-M5 — grounded the same way a candidates/recentReads match already is
+  // for every other field below) needs the same recentReads fallback here, or a grouping-only
+  // follow-up like "จ่ายร้านไหนเยอะสุดคะ" can never carry forward a prior paymentStatus filter.
+  if (key === 'paymentStatus' && typeof value === 'string') {
+    return paymentStatusGroundedInText(value, messageText) || recentReadsFilterValue(key, value, recentReads);
+  }
   if (typeof value === 'string' && tool.inputEnumValues?.[key]?.includes(value)) return true;
   if (typeof value === 'string' && recentReadsFilterValue(key, value, recentReads)) return true;
   if (key === 'fromDate') return (candidates?.periods ?? []).some((period) => period.fromDate === value)
@@ -181,6 +187,37 @@ function periodSelectionGrounded(
   }
   if (periodKey !== undefined) return (candidates?.periods ?? []).some((period) => period.monthKey === periodKey);
   return true;
+}
+
+/**
+ * tuning-3 item 2 (spec §4 R-M4 "แยกตาม… ให้ใช้ breakdown ในขอบเขตเดิม"; eval T-004#2 "แยกตามหมวดให้
+ * ดูหน่อย" after "เอาเฉพาะที่รอตรวจอยู่ครับ", T-013#2 "จ่ายร้านไหนเยอะสุดคะ" after a paymentStatus
+ * filter): a follow-up that names a NEW groupBy and nothing else is a presentation change, never a
+ * scope change, so it should still inherit the latest matching read's other filters exactly like a
+ * follow-up naming no filter of its own already does (the router prompt says so, but a real model
+ * sometimes reads "I named a filter — groupBy" and drops the rest anyway). Deterministic here rather
+ * than only hoped for in the prompt: only fires when this clause named groupBy and NO other business
+ * filter of its own, only copies a field the target tool actually accepts, and only from a recentReads
+ * entry for the SAME business subject (tool name prefix) — never across e.g. expense/reimbursement.
+ */
+const CARRIED_GROUPING_FILTER_KEYS = ['documentStatus', 'paymentStatus', 'categoryId', 'categoryName', 'vendorId', 'vendorName', 'branchId', 'branchName'] as const;
+
+function withCarriedGroupingFilters(
+  filters: Record<string, string | number | boolean | null>,
+  tool: ToolMeta,
+  allowedFilters: ReadonlySet<string>,
+  recentReads?: readonly LineAiReadMemory[],
+): Record<string, string | number | boolean | null> {
+  if (filters['groupBy'] === undefined || CARRIED_GROUPING_FILTER_KEYS.some((key) => filters[key] !== undefined)) return filters;
+  const subject = tool.name.split('.')[0];
+  const source = (recentReads ?? []).find((entry) => entry.tool.split('.')[0] === subject);
+  if (!source) return filters;
+  const carried = { ...filters };
+  for (const key of CARRIED_GROUPING_FILTER_KEYS) {
+    const value = (source as unknown as Record<string, unknown>)[key];
+    if (typeof value === 'string' && allowedFilters.has(key)) carried[key] = value;
+  }
+  return carried;
 }
 
 function semanticIntentFor(category: ToolMeta['category']): 'read_summary' | 'read_detail' | 'report_request' {
@@ -221,9 +258,10 @@ function simpleReadPlan(input: {
   }
   if (!tool.supportedAgents.includes(raw['agent'])) return { rejection: 'tool_agent_mismatch' };
 
-  const canonicalFilters = canonicalizeReadToolEnums(tool, only.requestedFilters) as Record<string, string | number | boolean | null> | undefined;
-  if (!canonicalFilters) return { rejection: 'filter_not_grounded' };
+  const rawCanonicalFilters = canonicalizeReadToolEnums(tool, only.requestedFilters) as Record<string, string | number | boolean | null> | undefined;
+  if (!rawCanonicalFilters) return { rejection: 'filter_not_grounded' };
   const allowedFilters = new Set([...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? [])]);
+  const canonicalFilters = withCarriedGroupingFilters(rawCanonicalFilters, tool, allowedFilters, recentReads);
   if (!periodSelectionGrounded(canonicalFilters, valueCandidates, recentReads)) return { rejection: 'filter_not_grounded' };
   for (const [key, value] of Object.entries(canonicalFilters)) {
     if (!allowedFilters.has(key)) {

@@ -560,6 +560,18 @@ describe('IntentRouterAgent – conversation read memory (spec §4 R-M3/R-M4)', 
     assert.match(prompt, /a clear change of subject copies nothing/);
   });
 
+  it('tuning-3 item 2 (T-004#2/T-013#2): naming only a new groupBy still copies the rest of the matching recentReads entry (fused prepared plan)', () => {
+    const prompt = intakeRouterSystemPrompt({ fusedPlan: true });
+    assert.match(prompt, /a message that names ONLY a new groupBy .* still copies that SAME entry's other filters too/);
+    assert.match(prompt, /grouping is a presentation change, never a scope change/);
+  });
+
+  it('tuning-3 item 2 (T-004#2/T-013#2): the same groupBy-carries-filters guidance is in the compact decisionV1 lane semantic-turn planning uses', () => {
+    const prompt = intakeRouterSystemPrompt({}, false, true);
+    assert.match(prompt, /a follow-up clause naming ONLY a new groupBy .* is a presentation change, never a scope change/);
+    assert.match(prompt, /copy that SAME period and its other filters .* from the newest matching conversationContext\.recentReads entry/);
+  });
+
   it('item 3 (spec §3 row 8): the compact simpleRead guidance covers an ordinal reference to expense.get_detail/reimbursement.get_detail', () => {
     const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true, false,
       new Set(['expense.get_detail::single_metric', 'reimbursement.get_detail::single_metric']));
