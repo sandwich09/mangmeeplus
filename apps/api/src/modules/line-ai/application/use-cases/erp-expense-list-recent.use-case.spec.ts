@@ -38,7 +38,8 @@ function fakePrisma(branches: Array<{ id: string; name: string; code?: string }>
     if (where?.status && where.status !== 'ACTIVE') return false;
     if (where?.id?.in && !where.id.in.includes(b.id)) return false;
     if (where?.name && where.name !== b.name) return false;
-    if (where?.OR && !where.OR.some((term: any) => term.id ? term.id === b.id : term.code === b.code)) return false;
+    if (where?.OR && !where.OR.some((term: any) => (term.id !== undefined && term.id === b.id)
+      || (term.code !== undefined && term.code === b.code) || (term.name !== undefined && term.name === b.name))) return false;
     return true;
   });
   return {
@@ -308,10 +309,18 @@ describe('ExpenseListRecentTool', () => {
     const data = result.data as any;
     assert.equal(data.branchUnresolved, 'สาธุประดิด');
     assert.deepEqual(data.availableBranches, [{ id: 'branch-1', code: 'C-branch-1', name: 'สาธุประดิษฐ์' }]);
-    assert.deepEqual(result.sourceRefs, []);
+    // Item 2 (T-148): status 'ok' with an empty sourceRefs made the gateway's enforceSourceHonesty
+    // boundary discard this whole answer as an opaque TOOL_RESULT_NO_SOURCE error.
+    assert.equal(result.sourceRefs.length, 1);
+    assert.equal(result.sourceRefs[0]?.permissionChecked, true);
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses');
   });
 
-  it('keeps branches outside the caller branch scope out of the catalog and unresolvable', async () => {
+  // Item 2 (T-148): a STAFF user asking for a branch outside their own scope used to get the same
+  // ambiguous "unresolved" shape as a typo — and, combined with the missing sourceRefs above, a raw
+  // TOOL_RESULT_NO_SOURCE code. It must say so honestly instead, without ever exposing anything
+  // about the forbidden branch itself.
+  it('reports an out-of-scope branch honestly instead of the ambiguous unresolved shape', async () => {
     const { tool, filters } = makeFilterCapturingTool([
       { id: 'branch-1', name: 'สาธุประดิษฐ์' },
       { id: 'branch-2', name: 'บางนา' },
@@ -321,8 +330,27 @@ describe('ExpenseListRecentTool', () => {
 
     assert.equal(filters.length, 0);
     const data = result.data as any;
-    assert.equal(data.branchUnresolved, 'บางนา');
+    assert.equal(data.branchOutOfScope, 'บางนา');
+    assert.equal(data.branchUnresolved, undefined);
+    // Never the forbidden branch's own data — only the identifiers this caller can already see.
     assert.deepEqual(data.availableBranches, [{ id: 'branch-1', code: 'C-branch-1', name: 'สาธุประดิษฐ์' }]);
+    assert.equal(result.sourceRefs.length, 1);
+    assert.equal(result.sourceRefs[0]?.permissionChecked, true);
+  });
+
+  // A branch that is genuinely nonexistent (typo) for a branch-restricted caller must still read as
+  // a plain "unresolved" catalog, not the more specific out-of-scope outcome — the two must not
+  // collapse into one shape once a scope restriction is present.
+  it('still reports a genuinely nonexistent branch as unresolved, not out-of-scope, for a scoped caller', async () => {
+    const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-1', name: 'สาธุประดิษฐ์' }]);
+    const scopedCtx = { ...baseCtx, branchIds: ['branch-1'] };
+    const result = await tool.execute(scopedCtx, { branchId: 'ไม่มีสาขานี้' });
+
+    assert.equal(filters.length, 0);
+    const data = result.data as any;
+    assert.equal(data.branchUnresolved, 'ไม่มีสาขานี้');
+    assert.equal(data.branchOutOfScope, undefined);
+    assert.equal(result.sourceRefs.length, 1);
   });
 
   it('reads one snapshot and marks bounded detail rows without degrading the complete aggregate', async () => {
