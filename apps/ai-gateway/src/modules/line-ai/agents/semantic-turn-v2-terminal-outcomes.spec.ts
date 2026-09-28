@@ -656,3 +656,67 @@ describe('item 4: routing guards — the model still tries a misrouted tool, the
     assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
   });
 });
+
+// E4 (tuning-6a, run 5 dead ends): previously only a two-period comparison got a deterministic
+// rescue when compose produced no usable answer (SEMANTIC_ANSWER_UNAVAILABLE) — every other read
+// with good tool results, and every GENERAL/social item, still dead-ended into the generic §8
+// terminal. `'{}'` stands in for "compose produced nothing usable": valid JSON, so it is never
+// mistaken for E3's plain-text rescue, but the wrong shape (no `answers` array), so `parsed` stays
+// undefined exactly like a repair-exhausted or structurally invalid response would.
+describe('E4: a read with good results, or a GENERAL item, never dead-ends when compose gives nothing usable', () => {
+  const EMPTY_CANDIDATES: LineAiTurnRequest['valueCandidates'] = {
+    version: 2, inputDigest: 'a'.repeat(64), extractorVersion: 'value-v2', todayIso: '2026-09-28',
+    completeness: 'complete', counts: { amounts: 0, dates: 0, periods: 0 }, amounts: [], dates: [], periods: [],
+  };
+  const SOURCE_REF = { id: 'expenses:expense_summary:summary', label: 'รายการค่าใช้จ่าย', module: 'expenses',
+    entityType: 'expense_summary', permissionChecked: true as const, asOf: '2026-09-27T18:20:29.656Z' };
+
+  function goodResult(): ToolResult {
+    return { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [SOURCE_REF],
+      facts: [], data: { total: 1, items: [], summary: { totalAmount: '1000' } } };
+  }
+
+  async function runWithEmptyCompose(kind: 'read' | 'general', enabledDeterministicFamilies?: ReadonlySet<string>) {
+    const req: LineAiTurnRequest = {
+      requestId: 'req-e4-1', webhookEventId: 'event-e4-1',
+      messageText: kind === 'read' ? 'ทำไมเดือนนี้ค้างจ่ายเยอะจังคะ' : 'ขอบคุณค่ะ',
+      messagePreviewHash: 'f'.repeat(16), valueCandidates: EMPTY_CANDIDATES,
+      semanticSubrequests: [{ index: 0, kind, goal: kind === 'read' ? 'ถามค้างจ่าย' : 'ขอบคุณ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(),
+    };
+    const queue = kind === 'read'
+      ? [JSON.stringify({ calls: [{ index: 0, toolName: 'expense.list_recent', input: {} }], questions: [] }), '{}']
+      : ['{}'];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    return runSemanticTurnV2({
+      req, provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      enabledDeterministicFamilies,
+      async invoke(): Promise<ToolResult> { return goodResult(); },
+    });
+  }
+
+  it('T-015-a/T-057-a-style: routes a read with good results through the deterministic fallback instead of the honest terminal', async () => {
+    const result = await runWithEmptyCompose('read', new Set(['expense.list_recent::single_metric', 'expense.list_recent::list']));
+    const coverage = result.semanticCoverage?.[0];
+    assert.equal(coverage?.status, 'handled');
+    assert.equal(coverage?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
+    assert.ok(result.replyText.includes('1,000'), result.replyText);
+  });
+
+  it('still falls back to the honest §8 terminal, unchanged, when no deterministic family is enabled', async () => {
+    const result = await runWithEmptyCompose('read');
+    const coverage = result.semanticCoverage?.[0];
+    assert.equal(coverage?.status, 'unsupported');
+    assert.equal(coverage?.reasonCode, 'SEMANTIC_ANSWER_UNAVAILABLE');
+    assert.ok(result.replyText.includes('ดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
+  });
+
+  it('T-010-b/T-151-b-style: a GENERAL item with no compose answer gets a friendly line, never the Expenses-page pointer', async () => {
+    const result = await runWithEmptyCompose('general');
+    const coverage = result.semanticCoverage?.[0];
+    assert.equal(coverage?.status, 'unsupported');
+    assert.equal(coverage?.reasonCode, 'SEMANTIC_ANSWER_UNAVAILABLE');
+    assert.ok(!result.replyText.includes('หน้ารายจ่ายบนเว็บ'), result.replyText);
+    assert.ok(result.replyText.includes('ลองพิมพ์ถามอีกครั้ง'), result.replyText);
+  });
+});
