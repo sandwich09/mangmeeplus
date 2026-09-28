@@ -25,6 +25,12 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_RECIPIENT_UNCHANGED: 'อีเมลนี้เป็นอีเมลรับเอกสารปัจจุบันอยู่แล้ว ไม่ต้องเปลี่ยน',
   BILLING_RECIPIENT_PROOF_INVALID: 'การยืนยันอีเมลนี้หมดอายุหรือถูกใช้แล้ว กรุณาขอรหัสยืนยันใหม่',
   BILLING_RECIPIENT_BOUNCED: 'อีเมลรับเอกสารส่งไม่ถึง กรุณาแก้อีเมลรับเอกสารก่อน',
+  // Purchase without setup PR E (2026-09-27): admin document tools.
+  BILLING_RECIPIENT_BUSY: 'บริษัทมีรายการซื้อ คำสั่งต่ออายุ หรือคำขอเปลี่ยนผู้รับของลูกค้าค้างอยู่ รอให้เสร็จก่อน',
+  BILLING_RECIPIENT_NO_CUSTOMER: 'บริษัทนี้ยังไม่มีบัญชีลูกค้าใน Stripe จึงยังไม่มีผู้รับเอกสารให้เปลี่ยน',
+  BILLING_RECIPIENT_INVALID: 'รูปแบบอีเมลไม่ถูกต้อง',
+  BILLING_LOOKUP_TOO_SHORT: 'เลขอ้างอิงต้องมีอย่างน้อย 8 ตัวอักษร',
+  BILLING_LOOKUP_AMBIGUOUS: 'เลขอ้างอิงนี้ตรงหลายรายการ ให้ใช้เลขใบแจ้งหนี้หรือรหัสเต็ม',
   EMAIL_OTP_REQUIRED: 'กรุณาโหลดหน้านี้ใหม่เพื่อยืนยันอีเมลด้วยรหัส OTP',
   EMAIL_REAUTH_REQUIRED: 'กรุณากรอกรหัสผ่านปัจจุบัน หรือยืนยันตัวตนผ่าน LINE อีกครั้ง',
   EMAIL_DELIVERY_UNAVAILABLE: 'ยังส่งรหัสไม่ได้ กรุณาลองใหม่ภายหลัง หรือติดต่อทีมงาน 098-256-5628',
