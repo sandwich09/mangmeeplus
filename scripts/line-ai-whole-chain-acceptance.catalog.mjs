@@ -402,6 +402,12 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'scripts/line-ai-reliability-evaluation.spec.ts',
     'scripts/line-ai-reliability-fixtures.spec.ts',
     'scripts/line-ai-reliability-runtime.spec.ts',
+    'scripts/line-ai-expense-advisor/types.spec.ts',
+    'scripts/line-ai-expense-advisor/scorer.spec.ts',
+    'scripts/line-ai-expense-advisor/template.spec.ts',
+    'scripts/line-ai-expense-advisor/report.spec.ts',
+    'scripts/line-ai-expense-advisor/oracle.spec.ts',
+    'scripts/line-ai-expense-advisor/run-rescore.spec.ts',
   ] },
   {
     id: 'api-behavior',
