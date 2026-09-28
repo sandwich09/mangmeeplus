@@ -87,6 +87,10 @@ describe('compact LINE intake decision', () => {
   });
 
   it('does not prepare a read from dates mixed across two candidate periods', async () => {
+    // tuning-5b (B3): this message also says "เปรียบเทียบ" (compare), so the deterministic why/compare/
+    // advice guard now rejects it before the mixed-period filter check ever runs — a more specific and
+    // equally safe reason for the exact same "never prepare this" outcome (see the guard's own dedicated
+    // test below for a message that isolates just the mixed-period path).
     const text = 'เปรียบเทียบค่าใช้จ่ายเดือนนี้กับเดือนที่แล้ว';
     const created = await fixture(text);
     const candidates = extractValueCandidates(text, '2026-09-27');
@@ -97,7 +101,7 @@ describe('compact LINE intake decision', () => {
       messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
     });
     assert.equal(parsed?.preparedPlan, undefined);
-    assert.equal(parsed?.simpleReadRejection, 'filter_not_grounded');
+    assert.equal(parsed?.simpleReadRejection, 'why_compare_advice_question');
   });
 
   it('accepts a monthKey selected from a relative named-period candidate', async () => {
@@ -531,5 +535,104 @@ describe('compact LINE intake decision: write clauses and other coverage', () =>
     });
     assert.equal(parsed?.preparedPlan, undefined);
     assert.equal(parsed?.simpleReadRejection, 'filter_not_grounded');
+  });
+});
+
+describe('tuning-5b: confidence floor, why/compare/advice guard, and derived subject/agent/shape', () => {
+  it('B3 (eval T-107-b): a why-question never takes the fast lane even with a single period and high confidence', async () => {
+    const text = 'ทำไมค่าเดินทางเดือนนี้พุ่งขนาดนี้คะ';
+    const created = await fixture(text);
+    const candidates = extractValueCandidates(text, '2026-09-27');
+    const period = candidates.periods?.[0]!;
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: period.fromDate, toDate: period.toDate, categoryName: 'ค่าเดินทาง' }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th', valueCandidates: candidates,
+    });
+    assert.equal(parsed?.preparedPlan, undefined);
+    assert.equal(parsed?.simpleReadRejection, 'why_compare_advice_question');
+    assert.equal(parsed?.semanticSubrequests.length, 1, 'the full clause still survives for normal planning');
+  });
+
+  it('B3: an advice question ("ควร") is also blocked from the fast lane', async () => {
+    const text = 'เดือนนี้ควรลดค่าใช้จ่ายหมวดไหนดีคะ';
+    const created = await fixture(text);
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, {}),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+    });
+    assert.equal(parsed?.preparedPlan, undefined);
+    assert.equal(parsed?.simpleReadRejection, 'why_compare_advice_question');
+  });
+
+  it('B3a (eval T-090-a): this decoder\'s own gate now clears 0.75-0.85 (0.70 is still invalid_simple_shape)', async () => {
+    // NOTE: parseLineAiPreparedPlan (packages/contracts/src/line-ai-prepared-plan.ts) enforces its OWN
+    // LINE_AI_PREPARED_PLAN_BOUNDS.simpleConfidenceFloor = 0.85 as the platform-wide trust-boundary veto
+    // for every `complexity: 'simple'` plan (API forwarder, AI Gateway, AgentCore all share it) — that
+    // shared, cross-app constant is out of this batch's scope (not this decoder, not ai-gateway-only) and
+    // was left untouched, so 0.75-0.85 still cannot reach a preparedPlan end-to-end today. This test
+    // documents what this decoder's OWN gate now does: 0.80 passes it (fails one step later, at the
+    // shared parser, as prepared_contract_invalid, not at this file's invalid_simple_shape check), while
+    // 0.70 is still rejected right here, exactly like before. See the batch report for the full finding.
+    const text = 'ใบเบิกที่ขอไปได้รึยังอ่ะคะ';
+    const created = await fixture(text);
+    const families = new Set(['reimbursement.get_summary::single_metric']);
+    const simpleReadAt = (confidence: number) => ({
+      subrequest: 0, tool: 'reimbursement.get_summary', subject: 'reimbursement', agent: 'accounting', answerShape: 'single_metric', confidence,
+    });
+
+    const clearsThisGate = parseLineIntakeCompactDecision({
+      raw: decision(text, {}, simpleReadAt(0.80)),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: families, language: 'th',
+    });
+    assert.equal(clearsThisGate?.simpleReadRejection, 'prepared_contract_invalid',
+      '0.80 now clears this file\'s own floor and only fails at the shared parser\'s still-0.85 floor');
+
+    const rejected = parseLineIntakeCompactDecision({
+      raw: decision(text, {}, simpleReadAt(0.70)),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: families, language: 'th',
+    });
+    assert.equal(rejected?.preparedPlan, undefined);
+    assert.equal(rejected?.simpleReadRejection, 'invalid_simple_shape', '0.70 is still below this file\'s own 0.75 floor');
+  });
+
+  it('B1c/B2 (eval T-143-a): derives subject/agent/answerShape from the registry, ignoring a mismatched model value', async () => {
+    const text = 'ใบเบิกของฉันถึงไหนแล้ว';
+    const created = await fixture(text);
+    const families = new Set(['reimbursement.get_summary::single_metric']);
+    // The model sends agent "general" (never listed first for this tool) and answerShape "list" (this
+    // tool's only enabled family is single_metric) — both used to reject; both are now ignored/normalized.
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, {}, { subrequest: 0, tool: 'reimbursement.get_summary', subject: 'reimbursement', agent: 'general', answerShape: 'list', confidence: 0.9 }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: families, language: 'th',
+    });
+    assert.ok(parsed?.preparedPlan);
+    assert.equal(parsed.preparedPlan.answerShape, 'single_metric');
+    assert.equal(parsed.preparedPlan.intentPlan.intents[0]?.agent, 'accounting');
+    assert.equal(parsed.preparedPlan.intentPlan.intents[0]?.subject, 'reimbursement');
+  });
+
+  it('B4e (eval T-004-b): a filter-removal phrase drops a documentStatus the carry logic would otherwise re-add', async () => {
+    const text = 'ไม่เอาตัวกรองแล้วครับ ดูรวมทุกสถานะเลย';
+    const created = await fixture(text);
+    const recentReads = [{
+      tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-09-28T02:00:00.000Z',
+      period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, documentStatus: 'NEEDS_REVIEW',
+    }];
+    const breakdownListFamily = new Set(['expense.get_breakdown::list']);
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' },
+        { subrequest: 0, tool: 'expense.get_breakdown', subject: 'expense', agent: 'accounting', answerShape: 'list', confidence: 0.9 }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: breakdownListFamily, language: 'th', recentReads,
+    });
+    assert.ok(parsed?.preparedPlan, 'period + groupBy alone are still grounded and gave a valid plan');
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['documentStatus'], undefined,
+      'the removal phrase must win over the recentReads carry');
+    assert.equal(parsed.preparedPlan.proposedCalls[0]?.input['groupBy'], 'category', 'grouping itself is untouched');
   });
 });
