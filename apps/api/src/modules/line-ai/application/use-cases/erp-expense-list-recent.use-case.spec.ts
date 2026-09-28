@@ -10,6 +10,7 @@ import {
   CATEGORY_NAME_STRIP_PREFIXES,
   VENDOR_NAME_STRIP_PREFIXES,
   normalizeNameQuery,
+  resolveBranchCandidate,
   resolveNameCandidate,
 } from '../../domain/logic/business-read-source.logic';
 
@@ -282,6 +283,66 @@ describe('ExpenseListRecentTool', () => {
 
     assert.equal(filters.length, 0);
     assert.equal((result.data as any).branchAmbiguous, 'STP');
+  });
+
+  // C3 (batch 5c, T-148-b): "ขอดูค่าใช้จ่ายของสาขา 2" sent branchId "2" — the exact id/code/name
+  // lookups above all missed it, and the customer got "ยังระบุสาขาที่ต้องการไม่ได้ค่ะ" for a branch
+  // that was right there in the list. A normalized contains/trailing-number match now runs first.
+  describe('fuzzy branch match after exact lookups miss (C3)', () => {
+    it('resolves a bare number to the one branch whose name ends in that number', async () => {
+      const { tool, filters } = makeFilterCapturingTool([
+        { id: 'branch-1', name: 'สำนักงานใหญ่', code: 'BR1' },
+        { id: 'branch-2', name: 'สาขา 2', code: 'BR2' },
+      ]);
+      const result = await tool.execute(baseCtx, { branchId: '2' });
+
+      assert.equal(filters[0]?.branchId, 'branch-2');
+      assert.equal((result.data as any).queryApplied?.filters?.branchName, 'สาขา 2');
+    });
+
+    it('resolves a branch name typed without the space the stored name has', async () => {
+      const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-2', name: 'สาขา 2', code: 'BR2' }]);
+      await tool.execute(baseCtx, { branchId: 'สาขา2' });
+      assert.equal(filters[0]?.branchId, 'branch-2');
+    });
+
+    it('resolves a branch code typed in a different case', async () => {
+      const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-2', name: 'สาขา 2', code: 'BR2' }]);
+      await tool.execute(baseCtx, { branchId: 'br2' });
+      assert.equal(filters[0]?.branchId, 'branch-2');
+    });
+
+    it('reports an ambiguous number match instead of guessing between two branches', async () => {
+      const { tool, filters } = makeFilterCapturingTool([
+        { id: 'branch-2', name: 'สาขา 2', code: 'BR2' },
+        { id: 'branch-12', name: 'คลังสาขา 2', code: 'WH2' },
+      ]);
+      const result = await tool.execute(baseCtx, { branchId: '2' });
+
+      assert.equal(filters.length, 0);
+      assert.equal((result.data as any).branchAmbiguous, '2');
+    });
+
+    it('still reports an unknown name as unresolved, never a fuzzy guess', async () => {
+      const { tool, filters } = makeFilterCapturingTool([{ id: 'branch-2', name: 'สาขา 2', code: 'BR2' }]);
+      const result = await tool.execute(baseCtx, { branchId: 'สาขา 99' });
+
+      assert.equal(filters.length, 0);
+      assert.equal((result.data as any).branchUnresolved, 'สาขา 99');
+    });
+
+    it('normalizes the out-of-scope existence check the same way, so a spacing difference does not misreport it as unknown', async () => {
+      const { tool, filters } = makeFilterCapturingTool([
+        { id: 'branch-1', name: 'สาขา 1', code: 'BR1' },
+        { id: 'branch-2', name: 'สาขา 2', code: 'BR2' },
+      ]);
+      const scopedCtx = { ...baseCtx, branchIds: ['branch-1'] };
+      const result = await tool.execute(scopedCtx, { branchId: 'สาขา2' });
+
+      assert.equal(filters.length, 0);
+      assert.equal((result.data as any).branchOutOfScope, 'สาขา2');
+      assert.equal((result.data as any).branchUnresolved, undefined);
+    });
   });
 
   it('does not widen an incomplete or invalid date range to 1970 or the current month', async () => {
@@ -594,5 +655,44 @@ describe('normalizeNameQuery / resolveNameCandidate (Thai-safe name matching hel
       const result = resolveNameCandidate('สมใจ', candidates, VENDOR_NAME_STRIP_PREFIXES);
       assert.equal(result.kind, 'ambiguous');
     });
+  });
+});
+
+// C3 (batch 5c, T-148-b): branches get their own matcher, not `resolveNameCandidate` — a space
+// ("สาขา 2" vs "สาขา2") or a case difference ("BR2" vs "br2") is the common case here, and a bare
+// number should resolve the branch whose name ends in it.
+describe('resolveBranchCandidate (branch matching helper)', () => {
+  const BRANCHES = [
+    { id: 'b1', name: 'สำนักงานใหญ่', code: 'BR1' },
+    { id: 'b2', name: 'สาขา 2', code: 'BR2' },
+  ];
+
+  it('matches a bare number against the trailing number of exactly one name', () => {
+    assert.deepEqual(resolveBranchCandidate('2', BRANCHES), { kind: 'resolved', id: 'b2', name: 'สาขา 2', code: 'BR2' });
+  });
+
+  it('matches a name typed without the space the stored name has', () => {
+    assert.deepEqual(resolveBranchCandidate('สาขา2', BRANCHES), { kind: 'resolved', id: 'b2', name: 'สาขา 2', code: 'BR2' });
+  });
+
+  it('matches a code typed in a different case', () => {
+    assert.deepEqual(resolveBranchCandidate('br2', BRANCHES), { kind: 'resolved', id: 'b2', name: 'สาขา 2', code: 'BR2' });
+  });
+
+  it('is ambiguous when the bare number ends two different names', () => {
+    const candidates = [{ id: 'b2', name: 'สาขา 2', code: 'BR2' }, { id: 'b12', name: 'คลังสาขา 2', code: 'WH2' }];
+    const result = resolveBranchCandidate('2', candidates);
+    assert.equal(result.kind, 'ambiguous');
+    if (result.kind === 'ambiguous') assert.deepEqual(result.matches.map((m) => m.id).sort(), ['b12', 'b2']);
+  });
+
+  it('is not_found for a name outside the catalog', () => {
+    assert.deepEqual(resolveBranchCandidate('สาขา 99', BRANCHES), { kind: 'not_found' });
+  });
+
+  it('an exact match short-circuits before a contains match ever runs', () => {
+    // "สาขา 2" itself contains "สาขา 2" AND "สำนักงานใหญ่" does not — only relevant here because the
+    // exact stage must be the one that resolves it, not a coincidental single contains match.
+    assert.deepEqual(resolveBranchCandidate('สาขา 2', BRANCHES), { kind: 'resolved', id: 'b2', name: 'สาขา 2', code: 'BR2' });
   });
 });
