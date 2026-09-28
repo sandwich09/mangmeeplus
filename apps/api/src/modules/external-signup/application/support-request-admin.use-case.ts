@@ -46,6 +46,13 @@ export const SUPPORT_RESOLUTION_NOTE_MAX_LENGTH = 500;
  */
 const THREAD_MAX_MESSAGES = 500;
 
+/** PR E (R-E5): same 8-char suffix formatting as `billingSupportReference` (apps/web/.../billing-display.ts)
+ *  — `referenceId` here is always a raw UUID, so the short-form (invoice-number) branch never applies. */
+function supportRequestReferenceLabel(id: string): string {
+  const tail = id.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(-8);
+  return `${tail.slice(0, 4)}-${tail.slice(4)}`;
+}
+
 /** What the thread read selects: never `lineMessageId`, `operationId` or `senderUserId` (§3). */
 const SUPPORT_MESSAGE_SELECT = {
   id: true, direction: true, kind: true, text: true, senderName: true,
@@ -304,6 +311,8 @@ export class SupportRequestAdminUseCase {
           ? { resolvedByDisplayName: userName.get(row.resolvedByUserId)! }
           : {}),
         ...(row.resolutionNote ? { resolutionNote: row.resolutionNote } : {}),
+        ...(row.referenceKind === 'attempt' || row.referenceKind === 'invoice' ? { referenceKind: row.referenceKind } : {}),
+        ...(row.referenceId ? { referenceId: row.referenceId, referenceLabel: supportRequestReferenceLabel(row.referenceId) } : {}),
     }));
   }
 
