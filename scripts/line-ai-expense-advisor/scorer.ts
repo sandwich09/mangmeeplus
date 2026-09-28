@@ -25,6 +25,11 @@ export type CapturedEvidence = {
   /** Every delivered message's user-visible text, concatenated — Flex `altText` AND any text/body
    * bubble content, so a fact printed only inside a Flex card still counts as "in the reply". */
   deliveredText: string;
+  /** Same text as `deliveredText`, but with quick-reply item text/labels excluded — used only by
+   * the machine-token quality check (`scoreMachineTokens`, task item D3), which must judge the
+   * message BODY a customer actually reads, never a quick-reply button. Optional and falls back to
+   * `deliveredText` (gold-oracle-pass.ts always sets it; a hand-written spec fixture need not). */
+  deliveredTextExcludingQuickReplies?: string;
   /** accepted (webhook admitted) -> last required delivery, ms. Null when nothing was delivered. */
   latencyMs: number | null;
   modelCalls: number;
@@ -53,9 +58,10 @@ function canonicalizePeriod(input: Record<string, unknown>, now: Date): { fromDa
 /** The period range the API itself actually queried — `queryApplied.period.{startDate,endDate}`,
  * present on every "ok" ExpenseListRecentTool/ExpenseGetBreakdownTool result today. Preferred over
  * re-deriving a range client-side (task item 3, "equivalence on the tool's resolved queryApplied
- * period where available") — the two sides can only disagree here if the API itself queried
- * different data, never a coincidence of which input shape (`periodKey` vs `fromDate`/`toDate`)
- * either side happened to send. */
+ * period where available") — a genuine disagreement here means the API itself queried different
+ * data, never a coincidence of which input shape (`periodKey` vs `fromDate`/`toDate`) either side
+ * happened to send (still subject to the current-month relaxation below, D1: a resolved "full
+ * current month" and a resolved "month so far" queried identical rows today). */
 function resolvedQueryPeriod(result: ToolResultLike | undefined): { startDate: string; endDate: string } | null {
   if (!result || result.status !== 'ok') return null;
   const data = (result.data ?? {}) as Record<string, unknown>;
@@ -64,13 +70,14 @@ function resolvedQueryPeriod(result: ToolResultLike | undefined): { startDate: s
   return typeof startDate === 'string' && typeof endDate === 'string' ? { startDate, endDate } : null;
 }
 
-/** Task item 3 ("period equivalence"): a `periodKey` naming the CURRENT month resolves to that
+/** Task item 3 ("period equivalence"), widened by D1 to the RESOLVED `queryApplied.period` path
+ * too, not just the raw-input fallback: a `periodKey` naming the CURRENT month resolves to that
  * month's FULL range, but there is no future-dated data — querying "the whole month" and "the
  * month so far" return identical rows today, so a gold `periodKey: "2026-09"` and an actual
- * `fromDate: "2026-09-01", toDate: <today>` (or vice versa) must score equal. A PAST month gets no
- * such relaxation: both sides already resolve to the identical full range, so a genuinely
- * truncated past-month range (missing its last few days) still correctly fails, because its
- * `toDate` is not today's date. */
+ * `fromDate: "2026-09-01", toDate: <today>` (or vice versa) must score equal, whether compared via
+ * their raw inputs or via their own captured/oracle results. A PAST month gets no such relaxation:
+ * both sides already resolve to the identical full range, so a genuinely truncated past-month range
+ * (missing its last few days) still correctly fails, because its `toDate` is not today's date. */
 function periodRangesEquivalent(a: { fromDate: string; toDate: string }, b: { fromDate: string; toDate: string }, today: string): boolean {
   if (a.fromDate === b.fromDate && a.toDate === b.toDate) return true;
   if (a.fromDate !== b.fromDate) return false;
@@ -136,17 +143,23 @@ export function callMatchesGold(actual: CapturedToolCall, gold: { tool: string; 
   if (actual.tool !== gold.tool) return false;
   const goldWantsPeriod = Object.keys(gold.input).some((key) => PERIOD_KEYS.has(key));
   if (goldWantsPeriod) {
+    const today = todayCivilDate(DEFAULT_COMPANY_TIME_ZONE, now);
     const goldQueryPeriod = resolvedQueryPeriod(gold.result);
     const actualQueryPeriod = resolvedQueryPeriod(actual.result);
     if (goldQueryPeriod && actualQueryPeriod) {
-      if (goldQueryPeriod.startDate !== actualQueryPeriod.startDate || goldQueryPeriod.endDate !== actualQueryPeriod.endDate) return false;
+      // D1: the SAME current-month relaxation `periodRangesEquivalent` already gives the raw-input
+      // fallback below applies here too — a resolved "full current month" and a resolved "month so
+      // far" queried the identical rows today (no future-dated data exists), so they must score
+      // equal here as well, never just when a captured result happens to be missing on one side.
+      const goldRange = { fromDate: goldQueryPeriod.startDate, toDate: goldQueryPeriod.endDate };
+      const actualRange = { fromDate: actualQueryPeriod.startDate, toDate: actualQueryPeriod.endDate };
+      if (!periodRangesEquivalent(goldRange, actualRange, today)) return false;
     } else {
       // No captured result on (at least) one side (e.g. a bare unit test with only raw inputs):
-      // fall back to canonicalising each side's raw input, with the current-month relaxation above.
+      // fall back to canonicalising each side's raw input, with the same current-month relaxation.
       const goldPeriod = canonicalizePeriod(gold.input, now);
       const actualPeriod = canonicalizePeriod(actual.input, now);
       if (goldPeriod === 'invalid' || actualPeriod === 'invalid') return false;
-      const today = todayCivilDate(DEFAULT_COMPANY_TIME_ZONE, now);
       if (!periodRangesEquivalent(goldPeriod, actualPeriod, today)) return false;
     }
   }
@@ -179,13 +192,34 @@ function goldTotalAmountFact(goldResult: ToolResultLike | undefined): ExpectedFa
   return value != null ? { kind: 'money', value: value as string | number, label: 'total' } : null;
 }
 
+/** D2: true when gold's OWN name resolution (whichever category/vendor/branch dimension its input
+ * named) came back ambiguous or unresolved (`resolvedOutcome`) — there is no total to state at all
+ * in that case (`goldTotalAmountFact` returns null), so the right reply is the clarification/
+ * not-found message instead, never a number. */
+function goldNameResolutionUnresolved(call: GoldCall, goldResult: ToolResultLike | undefined): boolean {
+  if (!goldResult) return false;
+  const input = call.input as Record<string, unknown>;
+  return (Object.keys(DIMENSION_INPUT_KEYS) as Dimension[]).some((dimension) => {
+    if (!dimensionRequested(input, dimension)) return false;
+    const kind = resolvedOutcome(goldResult, dimension).kind;
+    return kind === 'ambiguous' || kind === 'unresolved';
+  });
+}
+
 /** `expense.list_recent` in its default (`single_metric`) shape asks "what's the total" —
  * `expense.get_breakdown` for the SAME resolved period/filters answers a strictly BIGGER question
- * (the total, broken down by category) — task item "equivalent tool for totals". Accepted only
- * when the reply actually states the gold total: calling a different tool that never surfaces the
- * number asked for is still a wrong answer. Deliberately NOT reversible — a `breakdown` gold call
- * is never satisfied by a plain `list_recent` actual call (checked by the ordinary candidate match
- * below, tool names simply differ), because a total alone cannot answer "broken down by what". */
+ * (the total, broken down by category) — task item "equivalent tool for totals". Accepted when the
+ * reply actually states the gold total: calling a different tool that never surfaces the number
+ * asked for is still a wrong answer. Deliberately NOT reversible — a `breakdown` gold call is never
+ * satisfied by a plain `list_recent` actual call (checked by the ordinary candidate match below,
+ * tool names simply differ), because a total alone cannot answer "broken down by what".
+ *
+ * D2: when gold's name resolution was ambiguous/unresolved there is no total to check the reply
+ * against — accept the `get_breakdown` call on resolution-OUTCOME equivalence alone instead (same
+ * rules `callMatchesGold` already applies to an ordinary ambiguous-vs-ambiguous match), never on a
+ * total that does not exist (T-063-b: "เดือนนี้จ่ายสมใจไปเท่าไหร่คะ" — the model called
+ * get_breakdown{vendorName:"สมใจ"} and correctly asked which "สมใจ" shop, but scoring failed on the
+ * tool name alone). */
 function breakdownSatisfiesSingleMetricTotal(
   call: GoldCall, goldResult: ToolResultLike | undefined, actualCalls: CapturedToolCall[], deliveredText: string, now: Date,
 ): boolean {
@@ -193,7 +227,7 @@ function breakdownSatisfiesSingleMetricTotal(
   // most gold calls never set answerShape explicitly, so treat an unset one as single_metric too.
   if (call.tool !== 'expense.list_recent' || (call.answerShape ?? 'single_metric') !== 'single_metric') return false;
   const totalFact = goldTotalAmountFact(goldResult);
-  if (!totalFact || !factInText(totalFact, deliveredText)) return false;
+  if (totalFact ? !factInText(totalFact, deliveredText) : !goldNameResolutionUnresolved(call, goldResult)) return false;
   const goldAsListRecent = { tool: call.tool, input: call.input as Record<string, unknown>, result: goldResult };
   return actualCalls.some((actual) => actual.tool === 'expense.get_breakdown' && callMatchesGold({ ...actual, tool: call.tool }, goldAsListRecent, now));
 }
@@ -343,6 +377,43 @@ export function scoreTags(tags: TurnTags, evidence: CapturedEvidence): CheckResu
   return { ok: reasons.length === 0, reasons };
 }
 
+// D3: the owner requires plain Thai in every customer-visible reply, no machine tokens — a raw
+// internal field name, an uppercase status enum, an ISO date, or a stray markdown artifact leaking
+// out of a template. Each check below names one `<kind>` for the `machine_token:<kind>` reason.
+const MACHINE_TOKEN_INTERNAL_KEYS = ['expense_total', 'expense_incurred_date', 'exclude_rejected_voided', 'statusBasis', 'dateBasis', 'queryApplied'];
+// Case-sensitive and whole-word on purpose — a vendor name like "Grab" must never match.
+const MACHINE_TOKEN_STATUS_ENUM = /\b(PAID|UNPAID|PARTIALLY_PAID|NEEDS_REVIEW|DRAFT|CONFIRMED|REJECTED|VOIDED|READY_FOR_CONFIRMATION)\b/;
+const MACHINE_TOKEN_STATUS_GLOSS = /\((?:Draft|Needs Review|Confirmed|Paid|Unpaid)\)/i;
+const MACHINE_TOKEN_ISO_DATE = /\b20\d\d-\d\d-\d\d\b/;
+const MACHINE_TOKEN_VERSION_LABEL = /\(v\d+,/i;
+const MACHINE_TOKEN_URL = /https?:\/\/\S+/g;
+
+function hasMachineTokenMarkdown(text: string): boolean {
+  if (text.includes('**') || text.includes('```')) return true;
+  return text.split('\n').some((line) => {
+    const trimmed = line.trim();
+    return trimmed.startsWith('#') || (trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.length > 1);
+  });
+}
+
+/** D3: flags a machine token in the customer-visible reply — the owner requires plain Thai, never
+ * a raw internal field name, enum, ISO date or markdown artifact leaking out of a template. Applied
+ * to EVERY turn, regardless of what else the turn expects, over
+ * `deliveredTextExcludingQuickReplies` (never a quick-reply button's own text/label — see
+ * `CapturedEvidence`). URLs are stripped first so a dashed URL never reads as an ISO date. One
+ * reason per KIND found, never per occurrence. */
+export function scoreMachineTokens(deliveredText: string): CheckResult {
+  const text = deliveredText.replace(MACHINE_TOKEN_URL, '');
+  const reasons: string[] = [];
+  if (hasMachineTokenMarkdown(text)) reasons.push('machine_token:markdown');
+  if (MACHINE_TOKEN_INTERNAL_KEYS.some((key) => text.includes(key))) reasons.push('machine_token:internal_key');
+  if (MACHINE_TOKEN_STATUS_ENUM.test(text)) reasons.push('machine_token:status_enum');
+  if (MACHINE_TOKEN_STATUS_GLOSS.test(text)) reasons.push('machine_token:status_gloss');
+  if (MACHINE_TOKEN_ISO_DATE.test(text)) reasons.push('machine_token:iso_date');
+  if (MACHINE_TOKEN_VERSION_LABEL.test(text)) reasons.push('machine_token:version_label');
+  return { ok: reasons.length === 0, reasons };
+}
+
 export type TurnScore = {
   conversationId: string;
   turnIndex: number;
@@ -368,6 +439,9 @@ export function scoreTurn(
     reasons.push(...scoreFacts(expectedFacts, evidence.deliveredText).reasons);
   }
   if (turn.expect.tags) reasons.push(...scoreTags(turn.expect.tags, evidence).reasons);
+  // D3: unconditional — every turn delivers customer-visible text, whether or not it also carries
+  // a data/tag expectation, and it must never leak a machine token.
+  reasons.push(...scoreMachineTokens(evidence.deliveredTextExcludingQuickReplies ?? evidence.deliveredText).reasons);
   return { conversationId: context.conversationId, turnIndex: context.turnIndex, category: turn.category, passed: reasons.length === 0, reasons };
 }
 

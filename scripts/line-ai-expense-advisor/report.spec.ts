@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { deliveredReplyForReport, gatewayCoverageForReport, renderReport } from './report';
+import { deliveredReplyForReport, gatewayCoverageForReport, renderReport, summarizeLatencyByLane } from './report';
 import { summarizeScores, type TurnScore } from './scorer';
 import type { Corpus } from './types';
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
@@ -139,5 +139,70 @@ describe('renderReport', () => {
     const passing: TurnScore[] = [{ conversationId: 'conv-1', turnIndex: 0, category: '1', passed: true, reasons: [] }];
     const report = renderReport({ sourceCommit: 'abc123', now: NOW, summary: summarizeScores(passing), scores: passing, corpus, turnEvidence: [] });
     assert.doesNotMatch(report, /Subset run/);
+  });
+
+  it('counts turns with machine tokens and breaks them down by kind (task item D3)', () => {
+    const withTokens: TurnScore[] = [
+      { conversationId: 'conv-1', turnIndex: 0, category: '1', passed: false, reasons: ['machine_token:iso_date'] },
+      { conversationId: 'conv-1', turnIndex: 1, category: '1', passed: false, reasons: ['machine_token:iso_date', 'machine_token:markdown'] },
+    ];
+    const report = renderReport({ sourceCommit: 'abc123', now: NOW, summary: summarizeScores(withTokens), scores: withTokens, corpus, turnEvidence: [] });
+    assert.match(report, /Turns with machine tokens.*\| 2 \(iso_date: 2, markdown: 1\) \|/);
+  });
+
+  it('reports zero turns with machine tokens, and "none" for the breakdown, when there are none', () => {
+    const passing: TurnScore[] = [{ conversationId: 'conv-1', turnIndex: 0, category: '1', passed: true, reasons: [] }];
+    const report = renderReport({ sourceCommit: 'abc123', now: NOW, summary: summarizeScores(passing), scores: passing, corpus, turnEvidence: [] });
+    assert.match(report, /Turns with machine tokens.*\| 0 \(none\) \|/);
+  });
+
+  it('renders the latency-by-lane table with n, p50, p95, max, over-threshold counts and cost (task item D5)', () => {
+    const passing: TurnScore[] = [{ conversationId: 'conv-1', turnIndex: 0, category: '1', passed: true, reasons: [] }];
+    const turnEvidence = [fakeEvidence({ acceptedAtMs: 0, modelWorkCompletedAtMs: 1000, providerUsage: [{ usageTag: 'line.intake-route', costSatang: 50 }] })];
+    const report = renderReport({ sourceCommit: 'abc123', now: NOW, summary: summarizeScores(passing), scores: passing, corpus, turnEvidence });
+    assert.match(report, /## Latency by lane/);
+    assert.match(report, /\| fast \| 1 \| 1000 \| 1000 \| 1000 \| 0 \| 0 \| 0\.50 \|/);
+  });
+});
+
+describe('summarizeLatencyByLane (task item D5)', () => {
+  it('buckets a turn with ONLY line.intake-route usage as "fast"', () => {
+    const turnEvidence = [fakeEvidence({ acceptedAtMs: 0, modelWorkCompletedAtMs: 900, providerUsage: [{ usageTag: 'line.intake-route', costSatang: 50 }] })];
+    const [fast, full, other] = summarizeLatencyByLane(turnEvidence);
+    assert.deepEqual(fast, { lane: 'fast', n: 1, p50: 900, p95: 900, max: 900, over15s: 0, over30s: 0, costThb: 0.5 });
+    assert.equal(full!.n, 0);
+    assert.equal(other!.n, 0);
+  });
+
+  it('buckets a turn that reached line.loop or line.compose as "full", even alongside intake-route', () => {
+    const turnEvidence = [
+      fakeEvidence({ turnIndex: 0, acceptedAtMs: 0, modelWorkCompletedAtMs: 20_000, providerUsage: [{ usageTag: 'line.intake-route', costSatang: 30 }, { usageTag: 'line.loop', costSatang: 300 }] }),
+      fakeEvidence({ turnIndex: 1, acceptedAtMs: 0, modelWorkCompletedAtMs: 40_000, providerUsage: [{ usageTag: 'line.compose', costSatang: 200 }] }),
+    ];
+    const [, full] = summarizeLatencyByLane(turnEvidence);
+    assert.equal(full!.n, 2);
+    assert.equal(full!.over15s, 2);
+    assert.equal(full!.over30s, 1);
+    assert.equal(full!.max, 40_000);
+    assert.equal(full!.costThb, 5.3);
+  });
+
+  it('buckets anything else (e.g. OCR-only tags) as "other", and skips a turn with no provider usage at all', () => {
+    const turnEvidence = [
+      fakeEvidence({ turnIndex: 0, acceptedAtMs: 0, modelWorkCompletedAtMs: 500, providerUsage: [{ usageTag: 'ocr.receipt.extract', costSatang: 10 }] }),
+      fakeEvidence({ turnIndex: 1, providerUsage: [] }),
+    ];
+    const [fast, full, other] = summarizeLatencyByLane(turnEvidence);
+    assert.equal(fast!.n, 0);
+    assert.equal(full!.n, 0);
+    assert.equal(other!.n, 1);
+    assert.equal(other!.costThb, 0.1);
+  });
+
+  it('excludes a turn with no modelWorkCompletedAtMs from the latency samples but still counts its cost', () => {
+    const turnEvidence = [fakeEvidence({ modelWorkCompletedAtMs: null, providerUsage: [{ usageTag: 'line.intake-route', costSatang: 75 }] })];
+    const [fast] = summarizeLatencyByLane(turnEvidence);
+    assert.equal(fast!.n, 0);
+    assert.equal(fast!.costThb, 0.75);
   });
 });

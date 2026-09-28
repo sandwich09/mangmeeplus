@@ -12,6 +12,57 @@ import { renderUserText } from './template';
 
 const REPORT_REPLY_MAX_CHARS = 600;
 
+/** D5: which latency lane a turn's model calls fall into, by the SET of `providerUsage[].usageTag`
+ * values it made — "fast" is the intake-route-only path, "full" is any turn that reached the
+ * orchestrator loop or the composer, "other" is everything else (e.g. OCR-only tags). */
+export type LatencyLane = 'fast' | 'full' | 'other';
+
+function laneForUsageTags(usageTags: readonly string[]): LatencyLane {
+  const tags = new Set(usageTags);
+  if (tags.size === 1 && tags.has('line.intake-route')) return 'fast';
+  if (tags.has('line.loop') || tags.has('line.compose')) return 'full';
+  return 'other';
+}
+
+/** Nearest-rank percentile (matches apps/api/src/scripts/a5-capacity-mutating.logic.ts's own
+ * `percentile` — duplicated rather than imported across an app/script boundary for one function). */
+function percentile(values: readonly number[], percent: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((percent / 100) * sorted.length) - 1));
+  return sorted[index]!;
+}
+
+export type LatencyLaneSummary = { lane: LatencyLane; n: number; p50: number; p95: number; max: number; over15s: number; over30s: number; costThb: number };
+
+/** D5: buckets every turn that made at least one model call into fast/full/other (by usage tag) and
+ * summarizes its `modelWorkCompletedAtMs - acceptedAtMs` latency plus total provider cost per lane.
+ * A turn with NO provider usage at all (a deterministic reply, no model call) has no lane and is
+ * skipped — this section is about MODEL latency, meaningless for a turn that never called one. */
+export function summarizeLatencyByLane(turnEvidence: readonly RuntimeTurnEvidence[]): LatencyLaneSummary[] {
+  const byLane = new Map<LatencyLane, { latencies: number[]; costSatang: number }>();
+  for (const evidence of turnEvidence) {
+    const usage = evidence.providerUsage as Array<{ usageTag?: string; costSatang?: number | null }>;
+    if (!usage.length) continue;
+    const lane = laneForUsageTags(usage.map((row) => row.usageTag ?? ''));
+    const bucket = byLane.get(lane) ?? { latencies: [], costSatang: 0 };
+    if (evidence.modelWorkCompletedAtMs !== null) bucket.latencies.push(evidence.modelWorkCompletedAtMs - evidence.acceptedAtMs);
+    bucket.costSatang += usage.reduce((sum, row) => sum + (row.costSatang ?? 0), 0);
+    byLane.set(lane, bucket);
+  }
+  return (['fast', 'full', 'other'] as const).map((lane) => {
+    const bucket = byLane.get(lane) ?? { latencies: [], costSatang: 0 };
+    return {
+      lane, n: bucket.latencies.length,
+      p50: percentile(bucket.latencies, 50), p95: percentile(bucket.latencies, 95),
+      max: bucket.latencies.length ? Math.max(...bucket.latencies) : 0,
+      over15s: bucket.latencies.filter((ms) => ms > 15_000).length,
+      over30s: bucket.latencies.filter((ms) => ms > 30_000).length,
+      costThb: bucket.costSatang / 100,
+    };
+  });
+}
+
 /** Every text a delivered LINE message could carry a fact in: a plain text bubble's `text`, and a
  * Flex message's `altText` plus any `text` node inside its `contents` tree. Duplicated from
  * run-real.ts's own `extractDeliveredText` (kept private there) — small enough, and about
@@ -82,6 +133,17 @@ export function renderReport(input: {
     : '';
   const byCategoryRows = Object.entries(summary.byCategory).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
     .map(([category, row]) => `| ${category} | ${row.passed}/${row.total} |`).join('\n');
+  // D3: every `machine_token:<kind>` reason any turn carries, regardless of whether that turn also
+  // failed for other reasons — one turn can contribute more than one kind, never more than once per
+  // kind (scorer.ts scoreMachineTokens already dedupes per kind).
+  const machineTokenKindsByTurn = scores.map((score) => score.reasons.filter((reason) => reason.startsWith('machine_token:')).map((reason) => reason.slice('machine_token:'.length)));
+  const machineTokenTurnCount = machineTokenKindsByTurn.filter((kinds) => kinds.length > 0).length;
+  const machineTokenCountsByKind = new Map<string, number>();
+  for (const kinds of machineTokenKindsByTurn) for (const kind of kinds) machineTokenCountsByKind.set(kind, (machineTokenCountsByKind.get(kind) ?? 0) + 1);
+  const machineTokenBreakdown = [...machineTokenCountsByKind.entries()].sort(([a], [b]) => a.localeCompare(b))
+    .map(([kind, count]) => `${kind}: ${count}`).join(', ') || 'none';
+  const latencyRows = summarizeLatencyByLane(turnEvidence)
+    .map((row) => `| ${row.lane} | ${row.n} | ${row.p50} | ${row.p95} | ${row.max} | ${row.over15s} | ${row.over30s} | ${row.costThb.toFixed(2)} |`).join('\n');
   const failureSections = summary.failures.map((failure) => {
     const conversation = corpus.conversations.find((row) => row.id === failure.conversationId)!;
     const turn = conversation.turns[failure.turnIndex]!;
@@ -106,7 +168,9 @@ export function renderReport(input: {
     + `- Source commit: \`${sourceCommit}\`\n- Run started: ${now.toISOString()}\n- Corpus: ${corpus.conversations.length} conversations, ${scores.length} turns\n\n`
     + subsetBanner
     + rescoredBanner
-    + `## Summary\n\n| | |\n|---|---|\n| Passed | ${summary.passed} |\n| Failed | ${summary.failed} |\n| Pass rate | ${(summary.passRate * 100).toFixed(1)}% |\n\n`
+    + `## Summary\n\n| | |\n|---|---|\n| Passed | ${summary.passed} |\n| Failed | ${summary.failed} |\n| Pass rate | ${(summary.passRate * 100).toFixed(1)}% |\n`
+    + `| Turns with machine tokens (D3) | ${machineTokenTurnCount} (${machineTokenBreakdown}) |\n\n`
     + `## By category (spec §3 row)\n\n| Category | Passed/Total |\n|---|---|\n${byCategoryRows}\n\n`
+    + `## Latency by lane (D5)\n\n| Lane | n | p50 ms | p95 ms | max ms | >15s | >30s | Cost (THB) |\n|---|---|---|---|---|---|---|---|\n${latencyRows}\n\n`
     + `## Failures\n\n${failureSections || '_none_'}\n`;
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  callMatchesGold, factInText, factsForMatchedCandidate, moneyTextVariants, scoreFacts, scoreTags, scoreToolCalls, scoreTurn, summarizeScores,
+  callMatchesGold, factInText, factsForMatchedCandidate, moneyTextVariants, scoreFacts, scoreMachineTokens, scoreTags, scoreToolCalls, scoreTurn, summarizeScores,
   type CapturedEvidence, type ExpectedFact,
 } from './scorer';
 import { extractExpectedFacts, extractExpectedFactsForCall } from './oracle';
@@ -168,12 +168,46 @@ describe('callMatchesGold', () => {
 
   it('queryApplied.period mismatch fails even when the raw inputs look alike', () => {
     const actual = {
+      // A different START date is never relaxed (D1 only relaxes a truncated END date within the
+      // current month) — this still proves a genuinely different resolved range fails, even though
+      // both sides' raw input is the identical periodKey "2026-09".
       tool: 'expense.list_recent', input: { periodKey: '2026-09' },
-      result: { status: 'ok', data: { queryApplied: { period: { startDate: '2026-09-01', endDate: '2026-09-27' } } } },
+      result: { status: 'ok', data: { queryApplied: { period: { startDate: '2026-09-05', endDate: '2026-09-27' } } } },
     };
     const gold = {
       tool: 'expense.list_recent', input: { periodKey: '2026-09' },
       result: { status: 'ok', data: { queryApplied: { period: { startDate: '2026-09-01', endDate: '2026-09-30' } } } },
+    };
+    assert.equal(callMatchesGold(actual, gold, NOW), false);
+  });
+
+  it('D1: the current-month relaxation also applies once BOTH sides have a captured queryApplied.period', () => {
+    // Gold ran list_recent explicitly bounded to today (month-to-date); actual ran get_breakdown
+    // with periodKey "2026-09", which the API resolved to the FULL month — no future-dated data
+    // exists, so these queried identical rows today (T-009-a t0/t1/t2, T-052-a t0). Before D1 this
+    // failed because callMatchesGold compared the two RESOLVED endDates for exact equality.
+    const actual = {
+      tool: 'expense.get_breakdown', input: { periodKey: '2026-09' },
+      result: { status: 'ok', data: { queryApplied: { period: { startDate: '2026-09-01', endDate: '2026-09-30' } } } },
+    };
+    const gold = {
+      tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-27' },
+      result: { status: 'ok', data: { queryApplied: { period: { startDate: '2026-09-01', endDate: '2026-09-27' } } } },
+    };
+    assert.equal(callMatchesGold(actual, gold, NOW), true);
+  });
+
+  it('D1: a genuinely truncated PAST month still fails on the RESOLVED path too', () => {
+    // Mirrors the raw-input "does NOT relax a PAST month" case above, but with both queryApplied
+    // periods captured — August 2026 is already fully elapsed by NOW (27 Sep 2026), so a truncated
+    // August range is missing real data, not "no future data yet", on either comparison path.
+    const actual = {
+      tool: 'expense.get_breakdown', input: { periodKey: '2026-08' },
+      result: { status: 'ok', data: { queryApplied: { period: { startDate: '2026-08-01', endDate: '2026-08-27' } } } },
+    };
+    const gold = {
+      tool: 'expense.get_breakdown', input: { periodKey: '2026-08' },
+      result: { status: 'ok', data: { queryApplied: { period: { startDate: '2026-08-01', endDate: '2026-08-31' } } } },
     };
     assert.equal(callMatchesGold(actual, gold, NOW), false);
   });
@@ -334,6 +368,32 @@ describe('scoreToolCalls', () => {
       assert.equal(scoreToolCalls(listShapeGold, actual, NOW, goldResults, deliveredText).ok, false);
     });
   });
+
+  describe('expense.get_breakdown as an equivalent tool for an ambiguous/unresolved name (task item D2)', () => {
+    // T-063-b: "เดือนนี้จ่ายสมใจไปเท่าไหร่คะ" — gold's own vendorName resolution came back ambiguous,
+    // so there is no total (goldTotalAmountFact is null) for the reply to state at all; the
+    // clarifying question itself is checked separately by the turn's own must_ask_choice tag.
+    const ambiguousVendor = { vendorAmbiguous: 'สมใจ', availableVendors: [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }] };
+    const gold = [{ tool: 'expense.list_recent', input: { vendorName: 'สมใจ', fromDate: '2026-09-01', toDate: '2026-09-27' } }];
+    const goldResults = [{ status: 'ok', data: { ...ambiguousVendor, queryApplied: { period: { startDate: '2026-09-01', endDate: '2026-09-27' } } } }];
+
+    it('accepts a get_breakdown call whose resolution outcome matches gold\'s (never on a total that does not exist)', () => {
+      const actual = [{
+        tool: 'expense.get_breakdown', input: { vendorName: 'สมใจ', fromDate: '2026-09-01', toDate: '2026-09-27' },
+        result: { status: 'ok', data: { ...ambiguousVendor, queryApplied: { period: { startDate: '2026-09-01', endDate: '2026-09-27' } } } },
+      }];
+      const deliveredText = 'หมายถึงร้านไหนคะ ร้านสมใจ, ร้านสมใจการค้า';
+      assert.equal(scoreToolCalls(gold, actual, NOW, goldResults, deliveredText).ok, true);
+    });
+
+    it('still rejects a get_breakdown call that resolved DIFFERENTLY (resolved id vs ambiguous)', () => {
+      const actual = [{
+        tool: 'expense.get_breakdown', input: { vendorId: 'v1', fromDate: '2026-09-01', toDate: '2026-09-27' },
+        result: { status: 'ok', data: { queryApplied: { filters: { vendorId: 'v1' }, period: { startDate: '2026-09-01', endDate: '2026-09-27' } } } },
+      }];
+      assert.equal(scoreToolCalls(gold, actual, NOW, goldResults, '').ok, false);
+    });
+  });
 });
 
 describe('factsForMatchedCandidate', () => {
@@ -425,6 +485,69 @@ describe('scoreTags', () => {
   });
 });
 
+describe('scoreMachineTokens (task item D3)', () => {
+  it('passes ordinary Thai text, including a money amount', () => {
+    assert.equal(scoreMachineTokens('เดือนนี้จ่ายไป 1,200.00 บาทค่ะ').ok, true);
+  });
+
+  it('flags markdown: bold, a table, a heading, and a code block', () => {
+    assert.deepEqual(scoreMachineTokens('ปกติ **หนาว** นะคะ').reasons, ['machine_token:markdown']);
+    assert.deepEqual(scoreMachineTokens('| หมวด | จำนวนเงิน | สัดส่วน |\n|---|---|---|').reasons, ['machine_token:markdown']);
+    assert.deepEqual(scoreMachineTokens('# หัวข้อ').reasons, ['machine_token:markdown']);
+    assert.deepEqual(scoreMachineTokens('```code```').reasons, ['machine_token:markdown']);
+  });
+
+  it('does not mistake a pipe-separated line that neither starts nor ends with | for a table', () => {
+    // Real run-4 example: no leading/trailing "|", so this is NOT the table shape — it is still
+    // flagged, but only for its internal keys and ISO dates below, never for markdown.
+    const result = scoreMachineTokens('expense_total: 3367 THB | expense_incurred_date | exclude_rejected_voided | 2026-09-01 ถึง 2026-09-28');
+    assert.ok(!result.reasons.includes('machine_token:markdown'));
+  });
+
+  it('flags internal keys and ISO dates together, one reason per kind (real run-4 example)', () => {
+    const result = scoreMachineTokens('expense_total: 3367 THB | expense_incurred_date | exclude_rejected_voided | 2026-09-01 ถึง 2026-09-28');
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.reasons.sort(), ['machine_token:internal_key', 'machine_token:iso_date']);
+  });
+
+  it('flags queryApplied/statusBasis/dateBasis as internal keys', () => {
+    assert.deepEqual(scoreMachineTokens('queryApplied ใช้ statusBasis และ dateBasis').reasons, ['machine_token:internal_key']);
+  });
+
+  it('flags an uppercase status enum as a whole word, case-sensitively, but never a vendor name like Grab', () => {
+    assert.deepEqual(scoreMachineTokens('(สถานะ PAID)').reasons, ['machine_token:status_enum']);
+    assert.equal(scoreMachineTokens('Grab: 1,944.50 บาท').ok, true);
+  });
+
+  it('flags every listed status enum word', () => {
+    for (const word of ['PAID', 'UNPAID', 'PARTIALLY_PAID', 'NEEDS_REVIEW', 'DRAFT', 'CONFIRMED', 'REJECTED', 'VOIDED', 'READY_FOR_CONFIRMATION']) {
+      assert.ok(scoreMachineTokens(`สถานะ ${word} ค่ะ`).reasons.includes('machine_token:status_enum'), `expected ${word} to be flagged`);
+    }
+  });
+
+  it('flags an English status gloss in parentheses, case-insensitively', () => {
+    assert.deepEqual(scoreMachineTokens('ฉบับร่างนี้ (Draft) ค่ะ').reasons, ['machine_token:status_gloss']);
+    assert.deepEqual(scoreMachineTokens('ฉบับร่างนี้ (draft) ค่ะ').reasons, ['machine_token:status_gloss']);
+    assert.deepEqual(scoreMachineTokens('รายการนี้ (Needs Review) ค่ะ').reasons, ['machine_token:status_gloss']);
+  });
+
+  it('flags an ISO date but never a Thai-formatted date', () => {
+    assert.deepEqual(scoreMachineTokens('ข้อมูล ณ 2026-09-28').reasons, ['machine_token:iso_date']);
+    assert.equal(scoreMachineTokens('ข้อมูล ณ 28 ก.ย. 2569').ok, true);
+  });
+
+  it('flags a version label like (v1, ...)', () => {
+    const result = scoreMachineTokens('ฉบับร่างต่างจากยืนยันแล้วอย่างไร (v1, 2026-09-27)');
+    assert.equal(result.ok, false);
+    // The date inside the version label is independently a real ISO date too — both fire.
+    assert.deepEqual(result.reasons.sort(), ['machine_token:iso_date', 'machine_token:version_label']);
+  });
+
+  it('strips a URL before matching, even one containing dashes that look like a date', () => {
+    assert.equal(scoreMachineTokens('ดูรายละเอียดที่ https://example.com/report-2026-09-28 นะคะ').ok, true);
+  });
+});
+
 describe('scoreTurn', () => {
   const ctx = { conversationId: 'conv-1', turnIndex: 0 };
 
@@ -445,6 +568,34 @@ describe('scoreTurn', () => {
     const turn: Turn = { user: 'สวัสดีค่ะ', category: '19', expect: { tags: { no_tool: true, must_answer: true } } };
     const result = scoreTurn(ctx, turn, evidence({ deliveredText: 'สวัสดีค่ะ มีอะไรให้ช่วยไหมคะ' }), [], NOW);
     assert.equal(result.passed, true);
+  });
+
+  describe('D3: the machine-token check runs on EVERY turn, unconditionally', () => {
+    it('fails an otherwise-passing tag-only turn whose reply leaks a machine token', () => {
+      const turn: Turn = { user: 'สวัสดีค่ะ', category: '19', expect: { tags: { no_tool: true, must_answer: true } } };
+      const result = scoreTurn(ctx, turn, evidence({ deliveredText: 'สวัสดีค่ะ (สถานะ PAID)' }), [], NOW);
+      assert.equal(result.passed, false);
+      assert.ok(result.reasons.includes('machine_token:status_enum'));
+    });
+
+    it('fails an otherwise-passing data turn whose reply leaks a machine token', () => {
+      const turn: Turn = { user: 'เดือนนี้จ่ายไปเท่าไหร่', category: '1', expect: { calls: [{ tool: 'expense.list_recent', input: {} }] } };
+      const result = scoreTurn(ctx, turn, evidence({
+        toolCalls: [{ tool: 'expense.list_recent', input: {} }], deliveredText: 'เดือนนี้จ่ายไป 1,200.00 บาทค่ะ ข้อมูล ณ 2026-09-28',
+      }), [{ kind: 'money', value: '1200.00' }], NOW);
+      assert.equal(result.passed, false);
+      assert.deepEqual(result.reasons, ['machine_token:iso_date']);
+    });
+
+    it('judges deliveredTextExcludingQuickReplies, not deliveredText, when both are present', () => {
+      // Simulates a machine token that exists only inside a quick-reply item's own text/label
+      // (already stripped out of the "excluding" variant) — it must NOT fail the turn.
+      const turn: Turn = { user: 'สวัสดีค่ะ', category: '19', expect: { tags: { no_tool: true, must_answer: true } } };
+      const result = scoreTurn(ctx, turn, evidence({
+        deliveredText: 'สวัสดีค่ะ (สถานะ PAID)', deliveredTextExcludingQuickReplies: 'สวัสดีค่ะ',
+      }), [], NOW);
+      assert.equal(result.passed, true);
+    });
   });
 });
 

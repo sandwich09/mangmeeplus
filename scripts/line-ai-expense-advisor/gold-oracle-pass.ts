@@ -30,13 +30,16 @@ import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 export const turnKey = (conversationId: string, turnIndex: number): string => `${conversationId}#${turnIndex}`;
 
 /** Every text a delivered LINE message could carry a fact in: a plain text bubble's `text`, and a
- * Flex message's `altText` plus any `text` node inside its `contents` tree. */
-function extractDeliveredText(messages: unknown): string {
+ * Flex message's `altText` plus any `text` node inside its `contents` tree — INCLUDING a quick
+ * reply's own item text/label, since those are LINE message JSON too (`excludeQuickReplies` below
+ * is the variant that skips them, for the one check that must). */
+function extractDeliveredText(messages: unknown, excludeQuickReplies = false): string {
   const parts: string[] = [];
   const visit = (value: unknown, depth: number): void => {
     if (!value || typeof value !== 'object' || depth > 12) return;
     if (Array.isArray(value)) { for (const item of value) visit(item, depth + 1); return; }
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (excludeQuickReplies && key === 'quickReply') continue;
       if ((key === 'text' || key === 'altText') && typeof child === 'string') parts.push(child);
       else visit(child, depth + 1);
     }
@@ -52,13 +55,16 @@ export function toCapturedEvidence(evidence: RuntimeTurnEvidence): CapturedEvide
   // name-resolution equivalence check (scorer.ts resolvedOutcome) reads it directly off here.
   const toolCalls = evidence.toolResults.map((call) => ({ tool: call.tool, input: call.input as Record<string, unknown>, result: call.result as ToolResultLike | undefined }));
   const deliveredText = evidence.receipts.map((receipt) => extractDeliveredText(receipt.messages)).join('\n');
+  // D3: the machine-token quality check must judge the message body a customer reads, never a
+  // quick-reply button's own text/label.
+  const deliveredTextExcludingQuickReplies = evidence.receipts.map((receipt) => extractDeliveredText(receipt.messages, true)).join('\n');
   const lastReceiptAt = evidence.receipts.length ? Math.max(...evidence.receipts.map((receipt) => receipt.at)) : null;
   const usage = evidence.providerUsage as Array<{ costSatang: number | null; usageBasis: string }>;
   const costSatang = usage.length && usage.every((row) => row.usageBasis === 'PROVIDER_REPORTED')
     ? usage.reduce((sum, row) => sum + (row.costSatang ?? 0), 0) : null;
   const offeredChoices = toolCalls.flatMap((call) => (call.result ? extractOfferedChoices(call.result) ?? [] : []));
   return {
-    toolCalls, deliveredText,
+    toolCalls, deliveredText, deliveredTextExcludingQuickReplies,
     latencyMs: lastReceiptAt !== null ? lastReceiptAt - evidence.acceptedAtMs : null,
     modelCalls: usage.length, costSatang,
     offeredChoices,

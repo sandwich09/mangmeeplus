@@ -5157,13 +5157,21 @@
             "calls": [
               {
                 "tool": "reimbursement.list_pending_approvals",
-                "input": {}
+                "input": {},
+                "alternatives": [
+                  {
+                    "tool": "reimbursement.get_summary",
+                    "input": {}
+                  }
+                ]
               }
             ],
             "tags": {
               "must_answer": true,
               "must_mention_any": [
-                "ไม่มีสิทธิ์"
+                "ไม่มีสิทธิ์",
+                "เกี่ยวข้องกับคุณ",
+                "ของคุณ"
               ]
             }
           }
@@ -5246,7 +5254,9 @@
               ],
               "must_mention_any": [
                 "ไม่มีสิทธิ์",
-                "อ่านอย่างเดียว"
+                "อ่านอย่างเดียว",
+                "ดูข้อมูลได้อย่างเดียว",
+                "ดูได้อย่างเดียว"
               ]
             }
           }
@@ -5265,12 +5275,6 @@
             "th"
           ],
           "expect": {
-            "calls": [
-              {
-                "tool": "reimbursement.list_pending_approvals",
-                "input": {}
-              }
-            ],
             "tags": {
               "must_answer": true,
               "must_not_claim": [
