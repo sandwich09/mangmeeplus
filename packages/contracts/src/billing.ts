@@ -241,7 +241,7 @@ export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED';
    *  removed so an older client that still reads it keeps compiling against this contract. */
   trial?: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
 
-export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_FREE_DAYS' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS' | 'SCHEDULE_PRICE_RETURN' | 'APPLY_PLAN_MENUS';
+export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_FREE_DAYS' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS' | 'SCHEDULE_PRICE_RETURN' | 'APPLY_PLAN_MENUS' | 'UPDATE_BILLING_EMAIL' | 'CUSTOMER_PROFILE_SYNC';
 export type BillingOperationState = 'DRAFT' | 'PREVIEW' | 'AWAITING_APPROVAL' | 'SCHEDULED' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'UNKNOWN' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
 export type BillingScope = { kind: 'COMPANY'; companyId: string; mode: BillingMode } | { kind: 'PLATFORM'; mode: BillingMode };
 export type BillingConfigurationCheckItem = { kind:'POLICY'|'ACCOUNT'|'PRICE'|'PREPAID_PRICE'|'PORTAL'|'TAX'; offerKey?:BillingOfferKey;
@@ -420,3 +420,17 @@ export type BillingRecipientOtpChallenge = { challengeId: string; email: string;
 export type BillingRecipientOtpProof = { recipientProofId: string; email: string; expiresAt: string };
 /** `receiptUpdated` false = Stripe did not resend the receipt because its email did not change. */
 export type BillingDocumentResendResult = { invoiceSent: boolean; receiptUpdated: boolean; recipientEmail: string; remainingToday: number };
+
+/** PR E admin tools (spec §18.2 R-E1/R-E2/R-E4). An admin recipient change is the same `UPDATE_BILLING_EMAIL`
+ *  operation the customer OTP flow uses (`source: 'ADMIN'`), reviewed like a refund and reusing its
+ *  `billing.recipient.changed` notification mechanism — see billing-email-recipient.ts. */
+export type BillingRecipientAdminReview = { companyId: string; companyName: string; invoiceId: string; invoiceNumber: string | null; mode: BillingMode;
+  currentEmail: string | null; currentSource: BillingRecipientSource | null; bouncedAt: string | null; canChange: boolean; blockedReason: string | null;
+  sourceHash: string; observedAt: string };
+export type BillingRecipientAdminInput = { newEmail: string; reason: string; sourceHash: string; supportRequestId?: string };
+export type BillingRecipientAdminOperation = BillingOperationView & { type: 'UPDATE_BILLING_EMAIL'; sourceVersion: number; previewHash: string;
+  companyName: string; invoiceNumber: string | null; previousEmail: string | null; newEmail: string; supportRequestId: string | null;
+  allowedActions: ('submit' | 'approve' | 'cancel' | 'run')[]; dispatchedAt: string | null; reviewCaseId: string | null; notifiedAt: string | null };
+/** Admin document resend needs an internal reason; the result shape is `BillingDocumentResendResult` above. */
+export type BillingDocumentAdminResendInput = { reason: string };
+export type BillingReferenceLookup = { kind: 'INVOICE' | 'ATTEMPT' | 'OPERATION' | 'ISSUE'; id: string; companyId: string; companyName: string; href: string };

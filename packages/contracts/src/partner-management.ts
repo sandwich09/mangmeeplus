@@ -547,3 +547,32 @@ export type SystemUserLookupItemDto = {
 };
 
 export type SystemUserLookupDto = { items: SystemUserLookupItemDto[] };
+
+// ---- Purchase without setup PR E (R-E3, DQ9): admin legal-identity edit ----
+
+/** GET .../identity — the CAS token and which change kinds the form may offer. Mirrors
+ *  `CompanyIdentityControl` (company-tax-identity.ts) but adds `allowedChangeKinds`, which the
+ *  console needs and the company's own wizard derives client-side from `USER_LEGAL_IDENTITY_CHANGE_KINDS`. */
+export type PartnerIdentityControlDto = {
+  legalIdentityVersion: number;
+  captureWindowOpen: boolean;
+  authoritativeLatched: boolean;
+  fieldLatched: { registeredName: boolean; addressJson: boolean };
+  allowedChangeKinds: string[];
+};
+
+/** PATCH .../identity body: the company identity fields, plus the two the console adds. */
+export type PatchPartnerIdentityDto = {
+  expectedLegalIdentityVersion: number;
+  changeKind: string;
+  registeredName?: string;
+  taxId?: string;
+  addressJson?: CompanyLegalAddress;
+  effectiveFrom?: CivilDate;
+  correctionReason?: string;
+  note?: string;
+  evidenceRef?: string;
+  /** Internal reason (never shown to the customer). */
+  reason: string;
+  supportRequestId?: string;
+};

@@ -1,5 +1,5 @@
 import { PLAN_TIER_PRESETS, type PlanTierKey } from './plan-term.js';
-import type { BillingTimelineEntry } from './billing.js';
+import type { BillingRecipientSource, BillingTimelineEntry } from './billing.js';
 
 const labels: Record<'mode'|'channel'|'company'|'payment'|'apply'|'access'|'subscription'|'delivery'|'event'|'issue'|'operation'|'document'|'priority'|'scope'|'tax'|'attempt'|'quote', Record<string,string>> = {
   priority: { NORMAL:'ปกติ', HIGH:'เร่งด่วน', CRITICAL:'เร่งด่วนมาก' },
@@ -41,7 +41,8 @@ export function billingOfferLabel(value:string):string {
 const permissionNames:Record<string,string>={read:'ดูข้อมูลการชำระเงิน','financial.read':'ดูยอดเงิน','document.read':'เปิดเอกสารการชำระเงิน','issue.manage':'ดูแลเคส',
   'reconcile.run':'ตรวจสถานะกับผู้ให้บริการ','apply.retry':'ตรวจการเปิดสิทธิ์จากยอดชำระเดิม','policy.manage':'ตั้งนโยบาย','gate.manage':'เปิด–ปิดบริการ',
   'approval.approve':'อนุมัติคำขอ','notification.retry':'กู้คืนการส่งข้อความ','collection.manage':'จัดการต่ออายุ','refund.manage':'จัดการคำขอคืนเงิน',
-  'override.manage':'จัดการสิทธิ์ชั่วคราว','audit.read':'ดูประวัติการดำเนินการ',export:'ส่งออกข้อมูล'};
+  // 2026-09-27 (purchase-without-setup R-E6/DQ7): also gates admin document resend + recipient change.
+  'override.manage':'จัดการสิทธิ์ชั่วคราวและเอกสารการชำระเงิน','audit.read':'ดูประวัติการดำเนินการ',export:'ส่งออกข้อมูล'};
 export function billingPermissionLabel(value:string):string {
   const key=value.replace(/^system\.billing\./,'');
   return Object.hasOwn(permissionNames,key)?permissionNames[key]!:'สิทธิ์อื่นที่ต้องตรวจสอบ';
@@ -83,7 +84,16 @@ const operationKinds: Record<string,string> = {
   SCHEDULE_DOWNGRADE:'ตั้งเวลาลดแพ็กเกจ', PREPAID_PLAN_CHANGE:'ซื้อแพ็กเกจรอบถัดไป', CANCEL_DOWNGRADE:'ยกเลิกการลดแพ็กเกจ', CANCEL_COLLECTION:'หยุดต่ออายุ', RESUME_COLLECTION:'เปิดต่ออายุอีกครั้ง',
   SCAN_PROVIDER_INVOICES:'ตรวจประวัติใบแจ้งหนี้ Stripe', RECORD_SUPPORT_OUTCOME:'บันทึกผลติดต่อ', PUBLISH_POLICY:'เปลี่ยนนโยบายการชำระเงิน',
   SET_ACTION_GATE:'เปลี่ยนการเปิดบริการ', CHECK_PROVIDER_CONFIGURATION:'ตรวจการเชื่อมต่อ Stripe', REFUND:'คืนเงิน', GRANT_RECEIPTS:'เพิ่มใบเสร็จโดยผู้ดูแล', REVOKE_RECEIPTS:'ถอนใบเสร็จที่ผู้ดูแลเพิ่ม', GRANT_OVERRIDE:'ให้สิทธิ์ชั่วคราว', REVOKE_OVERRIDE:'ถอนสิทธิ์ชั่วคราว', SCHEDULE_PRICE_RETURN:'ตั้งเวลากลับไปราคาปกติ', APPLY_PLAN_MENUS:'ย้ายชุดเมนูตามแพ็กเกจใหม่',
+  // Purchase without setup PR E (2026-09-27): admin document tools.
+  UPDATE_BILLING_EMAIL:'เปลี่ยนอีเมลรับเอกสาร', CUSTOMER_PROFILE_SYNC:'ปรับข้อมูลลูกค้าใน Stripe ให้ตรงกับข้อมูลบริษัท',
 };
+/** Who set the current document recipient (PR E §1.5). */
+const recipientSources: Record<string,string> = {
+  ACCOUNT_EMAIL:'อีเมลบัญชีเจ้าของร้าน', CUSTOMER_OTP:'ลูกค้ายืนยันด้วยรหัส OTP', STRIPE_CHECKOUT:'กรอกที่หน้าชำระเงิน', ADMIN:'ทีมงานเปลี่ยนให้',
+};
+export function billingRecipientSourceLabel(value: string | null | undefined): string {
+  return value ? recipientSources[value] ?? 'ต้องตรวจสอบแหล่งที่มา' : 'ยังไม่มีข้อมูล';
+}
 export function billingTimelineLabel(entry: BillingTimelineEntry): {title:string;state:string} {
   if (entry.kind === 'PLAN_TERM') return {title:'แพ็กเกจปัจจุบัน',state:billingPlanLabel(entry.state)};
   if (entry.kind === 'INVOICE') { const [paid,applied] = entry.state.split(' / '); return {title:'ใบแจ้งหนี้',state:billingLabel('payment',paid)+' · '+billingLabel('apply',applied)}; }
