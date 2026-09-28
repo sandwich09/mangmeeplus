@@ -148,7 +148,11 @@ export function lineActionBoundaryReplyText(text: string, permissions: readonly 
 
 // ---- Item 3: a read-only role asking to record, upload, or capture -----------------------------
 
-const CAPTURE_VERB_TH = ['ถ่ายรูป', 'ถ่ายภาพ', 'ส่งเข้าระบบ', 'บันทึกรายจ่าย', 'บันทึกค่าใช้จ่าย', 'บันทึกใบเสร็จ', 'อัปโหลด', 'อัพโหลด', 'สร้างร่าง', 'สแกนใบเสร็จ'];
+// "สร้างร่าง" (create a draft) was dropped: it is ambiguous with creating a REIMBURSEMENT draft
+// (whole-chain acceptance regression, "สร้างร่างเบิกค่าเดินทาง" — gated on reimbursement.create, a
+// different permission this check does not know about), and it never appears in the eval evidence
+// this item fixes (T-146 uses ถ่ายรูป/ส่งเข้าระบบ). Every remaining verb here is expense/receipt-only.
+const CAPTURE_VERB_TH = ['ถ่ายรูป', 'ถ่ายภาพ', 'ส่งเข้าระบบ', 'บันทึกรายจ่าย', 'บันทึกค่าใช้จ่าย', 'บันทึกใบเสร็จ', 'อัปโหลด', 'อัพโหลด', 'สแกนใบเสร็จ'];
 const EXPENSE_CREATE_PERMISSIONS = ['expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload'];
 
 /** Base it on the permissions the request actually carries, never the role name: AUDITOR_READONLY

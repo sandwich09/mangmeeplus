@@ -169,6 +169,14 @@ describe('item 3: a read-only role asking to record, upload, or capture (spec §
     // expense-capture request and must not be blocked by this check.
     assert.equal(readOnlyCaptureReplyText('ขอสร้างใบเบิกใหม่ค่ะ', AUDITOR_READONLY_PERMISSIONS, 'th'), undefined);
   });
+
+  it('never blocks creating a REIMBURSEMENT draft, even without expense-create permission (whole-chain regression)', () => {
+    // "create a draft to reimburse travel expenses" — "สร้างร่าง" alone is ambiguous between an
+    // expense capture and a reimbursement draft; this check only ever gates the expense-capture
+    // reading, so it must stay silent here regardless of permissions.
+    assert.equal(readOnlyCaptureReplyText('สร้างร่างเบิกค่าเดินทาง', [], 'th'), undefined);
+    assert.equal(readOnlyCaptureReplyText('สร้างร่างเบิกค่าเดินทาง', ['reimbursement.create'], 'th'), undefined);
+  });
 });
 
 describe('scopePolicyOverride: combined entry point and kind exemption', () => {
