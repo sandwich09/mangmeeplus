@@ -2,6 +2,7 @@ import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity, type Pla
 import { TIER_FEATURE_PRESETS } from './menu-entitlements.js';
 import type { SalesDealBaseTier, SalesDealCadence } from './sales.js';
 import type { BillingCompanyProfile } from './billing-company-profile.js';
+import type { CompanyLegalAddress } from './company-tax-identity.js';
 
 export const STRIPE_API_VERSION = '2026-08-26.dahlia' as const;
 /** Owner 2026-09-21: ENTERPRISE opened for purchase once WHT/50 ทวิ shipped; it is a tier like any other. */
@@ -124,7 +125,9 @@ export type BillingQuote = {
   purchaseMode?: BillingPurchaseMode;
   offer: BillingOffer; subtotalSatang: number; taxSatang: number; totalSatang: number;
   taxTreatment: BillingTaxTreatment; consentRevision: string; paidStart: 'IMMEDIATE' | 'AFTER_TRIAL';
-  billingEmail: string; trialEndsAt: string | null; usage: BillingReceiptUsage;
+  /** Purchase without setup (R-A2): the company's document recipient, else the buyer's verified
+   *  account email; `null` = Stripe Checkout asks for it. */
+  billingEmail: string | null; trialEndsAt: string | null; usage: BillingReceiptUsage;
   previousSource?: BillingPurchaseSource; previousTermEndsAt?: string | null;
   featureImpact?: BillingFeatureImpact;
   /** Present only on a sales-deal quote (spec §19.2): what the confirm screen names. */
@@ -190,6 +193,11 @@ export type BillingStatus = {
   pendingPlanChange?: BillingCollectionOperation | null;
   planCapacityRepair?: { operationId: string; version: number; offerKey: string; interval: BillingInterval } | null;
   capacityRepair?: { attemptId: string; attemptVersion: number; offerKey: string; interval: BillingInterval } | null;
+  /** Purchase without setup (R-A7/R-A8): who receives the billing documents. Written when a payment
+   *  applies, so it stays empty between PAID and APPLIED. */
+  recipient?: BillingRecipientInfo;
+  /** DQ5: the address typed at Stripe Checkout, offered to the shop profile; never written to the company. */
+  checkoutAddress?: CompanyLegalAddress | null;
 };
 export type BillingCollectionAction = 'CANCEL_RENEWAL' | 'RESUME_RENEWAL' | 'SCHEDULE_DOWNGRADE' | 'CANCEL_DOWNGRADE' | 'PREPAID_PLAN_CHANGE' | 'EXTEND_TERM' | 'ADMIN_PAUSE_COLLECTION' | 'ADMIN_RESUME_COLLECTION';
 export type BillingCollectionOperation = { id: string; companyId: string; action: BillingCollectionAction; state: string; version: number;
@@ -209,7 +217,8 @@ export type BillingAttemptView = {
 };
 export type BillingInvoiceItem = { id: string; number: string | null; currency: 'THB'; amountSatang: number;
   refundedSatang: number; disputed: boolean; financialObservedAt: string | null;
-  paymentState: string; applyState: string; periodStart: string; periodEnd: string; createdAt: string; hasDocuments: boolean };
+  paymentState: string; applyState: string; periodStart: string; periodEnd: string; createdAt: string; hasDocuments: boolean;
+  documentActions?: { canResend: boolean } };
 export type BillingAdjustmentKind = 'refunds' | 'credit-notes';
 /** Implemented customer recovery pages only; this never grants business or Admin access. */
 export function isBillingCustomerRecoveryPath(path: string, companyId: string): boolean {
@@ -220,7 +229,8 @@ export function isBillingCustomerRecoveryPath(path: string, companyId: string): 
 export type BillingAdjustmentItem = { id: string; number: string | null; amountSatang: number; createdAt: string;
   status: 'pending' | 'requires_action' | 'succeeded' | 'failed' | 'canceled' | 'unknown' | 'issued' | 'void' };
 export type BillingAdjustments = { invoiceId: string; invoiceNumber: string | null; kind: BillingAdjustmentKind; mode: BillingMode;
-  items: BillingAdjustmentItem[]; nextCursor: string | null; observedAt: string; canOpenDocuments: boolean };
+  items: BillingAdjustmentItem[]; nextCursor: string | null; observedAt: string; canOpenDocuments: boolean;
+  documentActions?: { canResend: boolean }; recipientEmail?: string | null };
 export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED'; policyRevision: string | null;
   catalogRevision: string; generatedAt: string; validUntil: string; taxTreatment: BillingTaxTreatment | null; offers: BillingOffer[];
   /**
@@ -311,12 +321,13 @@ export type BillingRepairOperation = BillingOperationView & { sourceVersion: num
   findingImpact?: {scanId:string;findingId:string;beforeState:string;invoiceCreatedAt:string};
   invoiceImpact?: { id:string;beforeState:string;periodStart:string;periodEnd:string };
   eventImpact?: { eventType: string; beforeState: string; attempts: number };
-  deliveryImpact?:{channel:string;recipientUserId:string;recipientName?:string|null;beforeState:string;afterState:'QUEUED'|'OBSERVED';attemptCount:number;retryUntil:string|null;possibleDuplicate?:boolean};
+  deliveryImpact?:{channel:string;recipientUserId:string|null;recipientName?:string|null;beforeState:string;afterState:'QUEUED'|'OBSERVED';attemptCount:number;retryUntil:string|null;possibleDuplicate?:boolean};
   allowedActions: ('submit' | 'retry' | 'cancel')[]; observed: { pendingAttemptId: string | null; issueCount: number; deliveryId?:string; deliveryState?:string; eventState?: string;invoiceId?:string;invoiceApplyState?:string } | null };
 export type BillingProviderEventView = { id: string; mode: BillingMode; eventType: string; state: string; attempts: number;
   receivedAt: string; processedAt: string | null; retryAt: string; leaseUntil: string | null; errorCode: string | null;
   sourceHash: string; canRetry: boolean; issueId: string | null };
-export type BillingDeliveryView = { id:string;companyId:string;mode:BillingMode;channel:'WEB'|'LINE'|'EMAIL';invoiceId:string;recipientUserId:string;
+/** `recipientUserId` is null for mail addressed to the company's document recipient (R-A7), not to a user. */
+export type BillingDeliveryView = { id:string;companyId:string;mode:BillingMode;channel:'WEB'|'LINE'|'EMAIL';invoiceId:string;recipientUserId:string|null;
   companyName?:string;recipientName?:string|null;invoiceNumber?:string|null;
   state:string;attemptCount:number;updatedAt:string;nextAttemptAt:string|null;acceptedAt:string|null;confirmedAt:string|null;
   errorCode:string|null;recoveryBlockedReason:string|null;accountVersion:number;retryOperationId:string|null;canRetry:boolean;canReconcile:boolean;possibleDuplicate:boolean;
@@ -392,5 +403,19 @@ export type BillingPlanAdjustments = {companyId:string;companyName:string;source
   unchanged:BillingPlanAdjustmentUnchanged|null;items:BillingPlanAdjustmentOperation[];nextCursor:string|null};
 
 export type BillingEmailRecipientOperation = { id: string; state: string; version: number; previewHash: string; expiresAt: string;
-  previousEmail: string | null; newEmail: string; canSubmit: boolean; canCancel: boolean };
-export type BillingEmailRecipient = { email: string | null; hasCustomer: boolean; busy?: boolean; operation: BillingEmailRecipientOperation | null };
+  previousEmail: string | null; newEmail: string; canSubmit: boolean; canCancel: boolean; source?: BillingRecipientSource };
+/** `email` is the Stripe Customer's; `stored` is the column this system owns (they differ only after a Dashboard edit). */
+export type BillingEmailRecipient = { email: string | null; hasCustomer: boolean; busy?: boolean; operation: BillingEmailRecipientOperation | null;
+  stored?: BillingRecipientInfo };
+
+/** Purchase without setup (spec §18.2 R-A4/R-A8). `ACCOUNT_EMAIL` also marks recipients that predate the column. */
+export type BillingRecipientSource = 'ACCOUNT_EMAIL' | 'CUSTOMER_OTP' | 'STRIPE_CHECKOUT' | 'ADMIN';
+export type BillingRecipientInfo = { email: string | null; source: BillingRecipientSource | null; bouncedAt: string | null;
+  /** A Stripe Customer exists and no purchase or recipient change is in flight (R-A8: opens once the payment applied). */
+  canChange: boolean };
+/** No `serverNow`: count down from `retryAt` minus the device clock. */
+export type BillingRecipientOtpChallenge = { challengeId: string; email: string; expiresAt: string; retryAt: string;
+  attemptsRemaining: number; deliveryStatus: string; delivered: boolean };
+export type BillingRecipientOtpProof = { recipientProofId: string; email: string; expiresAt: string };
+/** `receiptUpdated` false = Stripe did not resend the receipt because its email did not change. */
+export type BillingDocumentResendResult = { invoiceSent: boolean; receiptUpdated: boolean; recipientEmail: string; remainingToday: number };
