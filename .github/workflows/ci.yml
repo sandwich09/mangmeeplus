@@ -540,7 +540,7 @@ jobs:
       - run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
       - name: Test company profile, discovery and billing prerequisites
         run: |
-          pnpm exec tsx --test packages/contracts/src/company-business-type.spec.ts packages/contracts/src/billing-company-profile.spec.ts
+          pnpm exec tsx --test packages/contracts/src/company-business-type.spec.ts packages/contracts/src/billing-company-profile.spec.ts packages/contracts/src/plan-term.spec.ts
           pnpm --filter @watchdog-bms/api exec tsx --test src/modules/data-model-core/presentation/http/company-business-type.controller.spec.ts src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.spec.ts src/modules/billing/application/billing-company-profile.spec.ts src/modules/billing/application/billing-profile-recovery.spec.ts
           pnpm --filter @watchdog-bms/web exec tsx --test src/features/billing/billing-profile-navigation.spec.ts
       - name: Test billing and partner pagination
