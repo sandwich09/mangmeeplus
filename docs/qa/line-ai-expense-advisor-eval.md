@@ -19,11 +19,11 @@ production permission/entitlement registries (`ROLE_GRANTS`, `SYSTEM_ROLES`, `PE
 | `scorer.ts` | Pure, model-free scoring: tool/input equivalence (period-aware; category/vendor/branch names judged by what the API RESOLVED, not raw text), fact-in-text checks (Thai amount formatting), and the 7 turn tags. Unit-tested with fake evidence. |
 | `corpus.sample.json` | 20 turns across 8 conversations covering spec §3 rows 1, 2, 3, 4, 7, 8, 10, 15, 17, 18 (plus 11 and 19 as a bonus), all 5 roles, both companies, and one 4-turn memory chain. |
 | `run-preflight.ts` | CLI: create/migrate the eval DB if needed, seed it, run every gold call through the oracle, print a coverage summary. No gateway, no model. |
-| `run-real.ts` | CLI (implemented, **not executed** by this delivery): runs the corpus through a real, already-listening gateway via `runLineReliabilityRuntime`, scores with `scorer.ts`, writes JSON evidence + a markdown report (`report.ts`). |
+| `run-real.ts` | CLI: runs the corpus through a real, already-listening gateway via `runLineReliabilityRuntime`, scores with `scorer.ts`, writes JSON evidence + a markdown report (`report.ts`). |
 | `gold-oracle-pass.ts` | The oracle pass itself (DB truncate+seed, run every gold call, resolve `$period`/`$fromShownItems`) plus the shared scoring loop (`scoreAllTurns`, `toCapturedEvidence`) — split out of `run-real.ts` so `run-rescore.ts` runs the EXACT same code, never a second copy that could silently drift. |
 | `run-rescore.ts` | CLI: re-score a saved `*.evidence.json` against the CURRENT corpus/scorer, with no gateway and no model call — re-runs only `gold-oracle-pass.ts`'s oracle pass (at the ORIGINAL run's clock, from the evidence's own `startedAt`) and writes a new report next to the input file. For confirming a scorer/corpus fix without re-paying for Bedrock calls. |
 | `report.ts` | Pure markdown report builder (split out of `run-real.ts` so it is unit-testable without that script's side effects): per failing turn, the transcript so far with each turn's delivered reply (Flex altText/text, truncated to ~600 chars), the tools called with their inputs, and the Gateway's semantic coverage status/reasonCode. Also renders the subset-run and rescore banners. |
-| `launch-gateway.mjs` | Spawns the compiled AI Gateway with this harness's own DB/Redis/ports (**not executed** by this delivery). |
+| `launch-gateway.mjs` | Spawns the compiled AI Gateway with this harness's own DB/Redis/ports. |
 | `types.spec.ts`, `scorer.spec.ts`, `template.spec.ts`, `report.spec.ts`, `oracle.spec.ts`, `run-rescore.spec.ts` | `node:test` unit tests for the validator, the scorer, the placeholder renderer, the report builder, `resolveGoldCallInput`/fact-category selection, and the rescorer's pure parts — registered in `scripts/line-ai-whole-chain-acceptance.catalog.mjs`'s `reliability-contracts-evaluation-v2` group. |
 
 ## Running preflight (no model, no gateway)
@@ -400,3 +400,12 @@ node_modules/.bin/tsx --test scripts/line-ai-expense-advisor/types.spec.ts scrip
 
 (`scorer.spec.ts` imports the real `resolveBusinessReadPeriod`, so `packages/contracts` must be
 built first — see the preflight command above.)
+
+## Results
+
+- Tuning corpus: ten full real-model runs, 2026-09-27/28 (39.0% → 97.3%).
+- Held-out corpus: three runs on 2026-09-28. Run 1 was aborted when the eval containers were stopped from outside. Run 2 scored 90.1%. Run 3, on the final commit, scored 91.5% (65/71).
+- Between runs 2 and 3, two general fixes landed: near-match name resolution and a filter reset on topic restart. So run 3 is not a fully unseen measurement.
+- The numbers, bar-by-bar, and the known limits are in the spec, [§13](../specs/mangmee-ai-expense-advisor-spec-th.md#13-ผลวัดจริงรอบสุดท้าย-2026-09-28).
+- The held-out corpus was written separately and used only for measurement. `corpus.heldout.json` is committed after its final use, as a regression set. Any future tuning program must write a fresh held-out set.
+- Run it like the tuning corpus, with `MANGMEE_EVAL_CORPUS=scripts/line-ai-expense-advisor/corpus.heldout.json`.

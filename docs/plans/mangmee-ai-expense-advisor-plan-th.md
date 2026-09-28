@@ -3,6 +3,29 @@
 สเปก: [mangmee-ai-expense-advisor-spec-th.md](../specs/mangmee-ai-expense-advisor-spec-th.md) · บันทึกงาน: [mangmee-ai-expense-advisor-2026-09-27.md](../agent-memory/mangmee-ai-expense-advisor-2026-09-27.md)
 Branch หลัก: `claude/mangmee-ai-advisor-20260927` (แตกจาก d78114f5) · worktree `/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus-ai-advisor-20260927`
 
+## สถานะ (2026-09-28)
+
+- **P0–P6 เสร็จ:**
+  - แก้บั๊กจากรีวิว ขยายทางลัด เพิ่มความจำบทสนทนา เพิ่มเครื่องมือ และสร้างชุดทดสอบ (ชุดจูน 223 ข้อ, ชุดเก็บไว้ทดสอบ 71 ข้อ)
+  - วนแก้เก้าชุด รันชุดจูนกับโมเดลจริงสิบรอบ และชุดเก็บไว้ทดสอบสามรอบ (รอบแรกหยุดกลางทาง) ผลรอบสุดท้ายอยู่ในสเปก §13
+  - ชุดจูนผ่าน 97.3% ชุดเก็บไว้ทดสอบผ่าน 91.5% เกณฑ์ที่ยังไม่ผ่านคือทางปกติ p95 และในชุดเก็บไว้ทดสอบคือคำถามต่อเนื่องกับทางตันหนึ่งครั้ง ผู้คุมตัดสินใจ merge โดยบันทึกช่องว่างไว้ในสเปก §13
+- **P7 ความเร็ว:**
+  - ทำแล้ว:
+    - ตัด output ของ router: JSON บรรทัดเดียว ไม่มี `reason` ไม่มี subject/agent
+    - ให้ router บอกเครื่องมือ (`toolHint`) เพื่อข้าม planner
+    - ลดความยาวคำตอบ
+    - ขยายทางลัดด้วยเกณฑ์ความมั่นใจ 0.75 และจับคู่ shape อัตโนมัติ
+  - ส่วน `turn_summary`: lane และ fallbackReason แยกไปทำใน PR #834/#835 ส่วน costSatang ยังว่างโดยตั้งใจ (เหตุผลในสเปก §13)
+- **P8 ปิดงาน:**
+  - เอกสารอัปเดตแล้ว
+  - ตรวจแล้ว:
+    - `git diff --check` สะอาด
+    - ไม่แตะไฟล์ที่ถูก pin
+    - spec ใหม่ลงทะเบียนครบ
+    - whole-chain acceptance ผ่าน
+  - ถัดไป: PR เข้า develop และ main (ยกผลต่างทั้งหมดไปใส่ branch ที่แตกจาก main เพราะไฟล์ที่แตะเหมือนกันทั้งสองฝั่ง), admin merge และหยุดบริการของชุดทดสอบ
+- **deploy ยังไม่ทำ:** ต้องทำตาม runbook ร่วมกับ owner ใช้ fast lane สิบแบบทั้ง Kamal gateway และ AgentCore
+
 ## วิธีทำงาน
 
 - **ผู้คุม (Claude, main thread):** เขียน brief ให้แต่ละงาน ตรวจ diff ทุกชิ้น (bug, gap, impact, กติกา §11) ตัดสินใจเรื่องออกแบบ รันการประเมินกับโมเดลจริง push และ merge และสื่อสารกับ owner
