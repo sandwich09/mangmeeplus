@@ -309,3 +309,103 @@ describe('H1/H2/H3: a why-question\'s own two-call plan (categoryName+vendor / v
     assert.ok(!result.replyText.includes('ยังดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
   });
 });
+
+// M4 (tuning-8, T-110-a): "เดือนนี้ค่าใช้จ่ายเพิ่มขึ้นเพราะอะไรคะ" — the router correctly planned a
+// second read for the calendar month right before the grounded "this month" (August, to compare
+// against), but the customer's own words never name August. Binding used to reject that range
+// outright, leaving the comparison half of the answer as "ยังดึงข้อมูลส่วนนี้ไม่ได้ค่ะ". Reuses this
+// file's own `run`/`candidatesV2`/`baseUserContext` harness.
+describe('M4: a why/compare question implies the previous calendar month as its unstated baseline', () => {
+  it('grounds an unstated previous-month read planned alongside a grounded "this month" why-question', async () => {
+    const MESSAGE_TEXT = 'เดือนนี้ค่าใช้จ่ายเพิ่มขึ้นเพราะอะไรคะ';
+    const valueCandidates = await candidatesV2(MESSAGE_TEXT, 'turn-m4-a');
+    assert.ok(valueCandidates.periods.some(p => p.fromDate === '2026-09-01' && p.toDate === '2026-09-28'), 'sanity: this-month is grounded');
+    const request: LineAiTurnRequest = {
+      requestId: 'req-m4-a', webhookEventId: 'event-m4-a', messageText: MESSAGE_TEXT,
+      messagePreviewHash: '9'.repeat(16), valueCandidates,
+      semanticSubrequests: [
+        { index: 0, kind: 'read', goal: 'ยอดเดือนนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+          requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' } },
+        { index: 1, kind: 'read', goal: 'ยอดเดือนก่อนเทียบ', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+          requestedFilters: { fromDate: '2026-08-01', toDate: '2026-08-31', groupBy: 'category' } },
+      ],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const toolResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-28T01:42:00.000Z',
+      sourceRefs: [{ id: 'expenses:expense_summary:summary', label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, asOf: '2026-09-28T01:42:00.000Z' }],
+      facts: [], data: { totalAmount: '17765.00' } };
+    const { invokedInputs } = await run({
+      request, invokeResult: toolResult,
+      controlCall: { calls: [
+        { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' } },
+        { index: 1, toolName: 'expense.get_breakdown', input: { fromDate: '2026-08-01', toDate: '2026-08-31', groupBy: 'category' } },
+      ] },
+    });
+    assert.deepEqual(invokedInputs, [
+      { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' } },
+      { tool: 'expense.get_breakdown', input: { fromDate: '2026-08-01', toDate: '2026-08-31', groupBy: 'category' } },
+    ]);
+  });
+
+  it('still rejects the same previous-month range for a plain (non why/compare) total question', async () => {
+    const MESSAGE_TEXT = 'เดือนนี้ค่าใช้จ่ายเท่าไหร่คะ';
+    const valueCandidates = await candidatesV2(MESSAGE_TEXT, 'turn-m4-b');
+    assert.ok(valueCandidates.periods.some(p => p.fromDate === '2026-09-01' && p.toDate === '2026-09-28'), 'sanity: this-month is grounded');
+    const request: LineAiTurnRequest = {
+      requestId: 'req-m4-b', webhookEventId: 'event-m4-b', messageText: MESSAGE_TEXT,
+      messagePreviewHash: '0'.repeat(16), valueCandidates,
+      semanticSubrequests: [
+        { index: 0, kind: 'read', goal: 'ยอดเดือนนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+          requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28' } },
+        { index: 1, kind: 'read', goal: 'ยอดเดือนก่อน', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+          requestedFilters: { fromDate: '2026-08-01', toDate: '2026-08-31' } },
+      ],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const toolResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-28T01:42:00.000Z',
+      sourceRefs: [{ id: 'expenses:expense_summary:summary', label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, asOf: '2026-09-28T01:42:00.000Z' }],
+      facts: [], data: { totalAmount: '17765.00' } };
+    const { result, invokedInputs } = await run({
+      request, invokeResult: toolResult,
+      controlCall: { calls: [
+        { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28' } },
+        { index: 1, toolName: 'expense.get_breakdown', input: { fromDate: '2026-08-01', toDate: '2026-08-31' } },
+      ] },
+    });
+    assert.deepEqual(invokedInputs, [{ tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28' } }]);
+    assert.equal(result.semanticCoverage?.[1]?.status, 'unsupported');
+    assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+  });
+
+  it('still rejects a range two months before the grounded month, even for a why-question', async () => {
+    const MESSAGE_TEXT = 'เดือนนี้ค่าใช้จ่ายเพิ่มขึ้นเพราะอะไรคะ';
+    const valueCandidates = await candidatesV2(MESSAGE_TEXT, 'turn-m4-c');
+    assert.ok(valueCandidates.periods.some(p => p.fromDate === '2026-09-01' && p.toDate === '2026-09-28'), 'sanity: this-month is grounded');
+    const request: LineAiTurnRequest = {
+      requestId: 'req-m4-c', webhookEventId: 'event-m4-c', messageText: MESSAGE_TEXT,
+      messagePreviewHash: '1'.repeat(16), valueCandidates,
+      semanticSubrequests: [
+        { index: 0, kind: 'read', goal: 'ยอดเดือนนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+          requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' } },
+        { index: 1, kind: 'read', goal: 'ยอดสองเดือนก่อน', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+          requestedFilters: { fromDate: '2026-07-01', toDate: '2026-07-31', groupBy: 'category' } },
+      ],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const toolResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-28T01:42:00.000Z',
+      sourceRefs: [{ id: 'expenses:expense_summary:summary', label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, asOf: '2026-09-28T01:42:00.000Z' }],
+      facts: [], data: { totalAmount: '17765.00' } };
+    const { result, invokedInputs } = await run({
+      request, invokeResult: toolResult,
+      controlCall: { calls: [
+        { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' } },
+        { index: 1, toolName: 'expense.get_breakdown', input: { fromDate: '2026-07-01', toDate: '2026-07-31', groupBy: 'category' } },
+      ] },
+    });
+    assert.deepEqual(invokedInputs, [
+      { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' } },
+    ]);
+    assert.equal(result.semanticCoverage?.[1]?.status, 'unsupported');
+    assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+  });
+});

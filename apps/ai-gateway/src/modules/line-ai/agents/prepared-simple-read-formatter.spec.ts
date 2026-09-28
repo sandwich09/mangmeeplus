@@ -1341,6 +1341,31 @@ describe('R-L4 F9 expense.get_breakdown::list — แยกค่าใช้จ
     if (byBranch.kind === 'answer') assert.match(byBranch.replyText, /^ค่าใช้จ่ายแยกตามสาขา/);
   });
 
+  // M2 (tuning-8, T-057-a): the full path's deterministic fallback (semantic-turn-v2.ts's
+  // deterministicReadFallback) calls this formatter with NO proposedInput at all — the applied
+  // grouping must still come from the tool's own queryApplied.filters.groupBy, or a vendor/branch
+  // breakdown mislabels itself "แยกตามหมวด" (run 8 T-057-a: "ของฉันจ่ายร้านไหนเยอะสุดคะ" called
+  // get_breakdown groupBy vendor, but the fallback rendered the category headline).
+  it('reads the applied groupBy from queryApplied.filters when proposedInput carries none (deterministic-fallback shape)', () => {
+    const byVendor = formatPreparedSimpleRead(BREAKDOWN,
+      breakdownOutput(breakdownData({ queryApplied: { filters: { groupBy: 'vendor' } } })), TH);
+    assert.equal(byVendor.kind, 'answer');
+    if (byVendor.kind === 'answer') {
+      assert.match(byVendor.replyText, /^ค่าใช้จ่ายแยกตามร้าน/);
+      assert.match(byVendor.replyText, /\n• ร้านสมใจ: 2,000\.00 บาท \(40\.0%, 4 รายการ\)/);
+    }
+    const byBranchApplied = formatPreparedSimpleRead(BREAKDOWN,
+      breakdownOutput(breakdownData({ queryApplied: { filters: { groupBy: 'branch' } } })), TH);
+    assert.equal(byBranchApplied.kind, 'answer');
+    if (byBranchApplied.kind === 'answer') assert.match(byBranchApplied.replyText, /^ค่าใช้จ่ายแยกตามสาขา/);
+    // proposedInput still wins over the applied echo when both are present.
+    const overridden = formatPreparedSimpleRead(BREAKDOWN,
+      breakdownOutput(breakdownData({ queryApplied: { filters: { groupBy: 'vendor' } } })),
+      { ...TH, proposedInput: { groupBy: 'branch' } });
+    assert.equal(overridden.kind, 'answer');
+    if (overridden.kind === 'answer') assert.match(overridden.replyText, /^ค่าใช้จ่ายแยกตามสาขา/);
+  });
+
   it('folds groups beyond the top 8 into one "อื่นๆ" row with an exact summed amount and count (R-A2)', () => {
     const many = Array.from({ length: 10 }, (_, i) => ({ categoryId: `c${i}`, category: `หมวด${i}`, currency: 'THB', count: 1, totalAmount: '100.00' }));
     const r = formatPreparedSimpleRead(BREAKDOWN, breakdownOutput(breakdownData({ totalCount: 10, totalAmount: '1000.00', byCategory: many })), TH);

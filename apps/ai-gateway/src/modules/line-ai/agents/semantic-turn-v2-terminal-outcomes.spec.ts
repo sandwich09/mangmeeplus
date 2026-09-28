@@ -730,6 +730,43 @@ describe('E4: a read with good results, or a GENERAL item, never dead-ends when 
     assert.ok(result.replyText.includes('ค่าบริการ'), result.replyText);
   });
 
+  it('M3 (tuning-8, T-111-b): a why-question fallback with two breakdowns renders the UNFILTERED ranking, not the name-filtered split', async () => {
+    const req: LineAiTurnRequest = {
+      requestId: 'req-e4-m3', webhookEventId: 'event-e4-m3', messageText: 'ทำไมจ่ายร้านสมใจการค้าเยอะจังเดือนนี้ครับ',
+      messagePreviewHash: 'd'.repeat(16), valueCandidates: EMPTY_CANDIDATES,
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามสาเหตุจ่ายร้านสมใจการค้าเยอะ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(),
+    };
+    const queue = [JSON.stringify({ calls: [
+      { index: 0, toolName: 'expense.get_breakdown', input: { vendorName: 'ร้านสมใจการค้า' } },
+      { index: 0, toolName: 'expense.get_breakdown', input: { groupBy: 'vendor' } },
+    ], questions: [] }), '{}'];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    const appliedBase = { timezone: 'Asia/Bangkok', dateBasis: 'expense_incurred_date', statusBasis: 'exclude_rejected_voided', dataset: 'operational_expense_records' } as const;
+    const filtered: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [SOURCE_REF], facts: [],
+      queryApplied: { ...appliedBase, filters: { vendorName: 'ร้านสมใจการค้า' } },
+      data: { period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, totalAmount: '4188.5', totalCount: 3, currency: 'THB',
+        byCategory: [{ category: 'ค่าน้ำมัน', currency: 'THB', count: 1, totalAmount: '2355' }], byBranch: [],
+        byVendor: [{ vendor: 'ร้านสมใจการค้า', currency: 'THB', count: 3, totalAmount: '4188.5' }],
+        queryApplied: { filters: { vendorName: 'ร้านสมใจการค้า' } } } };
+    const unfiltered: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [SOURCE_REF], facts: [],
+      queryApplied: { ...appliedBase, filters: { groupBy: 'vendor' } },
+      data: { period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, totalAmount: '17765', totalCount: 14, currency: 'THB',
+        byCategory: [], byBranch: [],
+        byVendor: [{ vendor: 'ร้านสมใจการค้า', currency: 'THB', count: 3, totalAmount: '4188.5' },
+          { vendor: 'ปั๊มน้ำมัน ปตท.', currency: 'THB', count: 2, totalAmount: '3203' }],
+        queryApplied: { filters: { groupBy: 'vendor' } } } };
+    const result = await runSemanticTurnV2({
+      req, provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      enabledDeterministicFamilies: new Set(['expense.get_breakdown::list']),
+      async invoke(_meta, _ctx, args): Promise<ToolResult> { return (args as { groupBy?: string }).groupBy === 'vendor' ? unfiltered : filtered; },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
+    assert.ok(result.replyText.includes('17,765'), result.replyText);
+    assert.ok(result.replyText.includes('ร้านสมใจการค้า'), result.replyText);
+    assert.ok(!result.replyText.includes('ตัวกรอง'), result.replyText);
+  });
+
   it('still falls back to the honest §8 terminal, unchanged, when no deterministic family is enabled', async () => {
     const result = await runWithEmptyCompose('read');
     const coverage = result.semanticCoverage?.[0];
