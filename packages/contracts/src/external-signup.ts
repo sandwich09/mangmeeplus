@@ -590,6 +590,12 @@ export type SupportRequestItemDto = {
   closedReason?: SupportRequestClosedReason;
   resolvedByDisplayName?: string;
   resolutionNote?: string;
+  /** Purchase without setup PR E (R-E5): where the ask started, when it began from a billing
+   *  card/message — derived server-side, never from the customer. `referenceLabel` is the same
+   *  8-char suffix the customer sees (billingSupportReference), for the out-of-company lookup link. */
+  referenceKind?: 'attempt' | 'invoice';
+  referenceId?: string;
+  referenceLabel?: string;
 };
 
 export type SupportRequestQueueDto = {

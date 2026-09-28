@@ -6,6 +6,7 @@ import { BillingSettlementService } from './application/billing-settlement.servi
 import { Module } from '@nestjs/common';
 import { BillingReadinessService } from './application/billing-readiness.service';
 import { BillingRefundsService } from './application/billing-refunds.service';
+import { BillingDocumentAdminService } from './application/billing-document-admin.service';
 import { RedisRateLimitService } from '../../common/security/redis-rate-limit.service';
 import { SystemPartnerManagementModule } from '../system-partner-management/system-partner-management.module';
 import { AuthModule } from '../auth/auth.module';
@@ -27,7 +28,7 @@ import { BillingAdminController, BillingCatalogController, BillingController, Bi
 @Module({
   imports: [SystemPartnerManagementModule, AuthModule, DataModelCoreModule, DashboardNotificationsModule],
   controllers: [BillingAdminController, BillingCatalogController, BillingController, BillingInternalController, StripeEventsController],
-  providers: [BillingPlanAdjustmentsService, BillingReceiptAdjustmentsService, BillingBatchesService, BillingCheckoutExpiryService, BillingSettlementService, BillingRefundsService, BillingReadinessService, BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingRecipientOtpService, BillingReconcilerService, SalesDealPriceService, StripeClient, RedisRateLimitService,
+  providers: [BillingPlanAdjustmentsService, BillingReceiptAdjustmentsService, BillingBatchesService, BillingCheckoutExpiryService, BillingSettlementService, BillingRefundsService, BillingDocumentAdminService, BillingReadinessService, BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingRecipientOtpService, BillingReconcilerService, SalesDealPriceService, StripeClient, RedisRateLimitService,
     { provide: STRIPE_FETCH, useFactory: () => globalThis.fetch.bind(globalThis) }],
   // D-P5-3: the sales console approves the deal; the per-company Stripe Price is a billing write,
   // so its one writer lives here and is lent out rather than reimplemented next door.

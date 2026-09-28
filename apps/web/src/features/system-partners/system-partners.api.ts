@@ -47,6 +47,8 @@ import type {
   PartnerTimelineEntryDto,
   PartnerLineMessageBody,
   PartnerLineMessageResultDto,
+  PartnerIdentityControlDto,
+  PatchPartnerIdentityDto,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 
@@ -401,4 +403,13 @@ export async function setPartnerVatRegistration(
 
 export function getPartnerPlanAdjustments(companyId: string, cursor?: string): Promise<PartnerPlanAdjustmentHistory> {
   return apiFetch(`/v1/system/partners/${companyId}/plan-term/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, {suppressErrorToast:true});
+}
+
+// Purchase without setup PR E (R-E3, DQ9): registered name / tax id / address, one path with the
+// company's own (CompanyIdentityUseCase), gated on system.identity_reconciliation.resolve.
+export function getPartnerIdentityControl(companyId: string): Promise<PartnerIdentityControlDto> {
+  return apiFetch(`/v1/system/partners/${companyId}/identity`, { suppressErrorToast: true });
+}
+export function patchPartnerIdentity(companyId: string, dto: PatchPartnerIdentityDto): Promise<PartnerCompanyDetailDto> {
+  return apiFetch(`/v1/system/partners/${companyId}/identity`, { method: 'PATCH', body: JSON.stringify(dto), suppressErrorToast: true });
 }

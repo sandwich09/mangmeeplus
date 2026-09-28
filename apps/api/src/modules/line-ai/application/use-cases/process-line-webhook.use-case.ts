@@ -2628,6 +2628,9 @@ export class ProcessLineWebhookUseCase {
     lineUserId: string,
     asker: { companyId: string | null; signupRequestId?: string } | null,
     text: string | undefined,
+    /** PR E (R-E5): where the ask started, derived server-side (deriveSupportBillingReference) —
+     *  never taken from the client. Written on both the create and the raced-live-row update. */
+    reference?: { kind: 'attempt' | 'invoice'; id: string },
   ): Promise<{ id: string; status?: string } | null> {
     return this.prisma.client.$transaction(async (tx) => {
       const lockKey = `line-support:${hashMessagePreview(lineUserId)}`;
@@ -2640,7 +2643,8 @@ export class ProcessLineWebhookUseCase {
         const touched = await tx.lineSupportRequest.updateMany({
           where: { id: raced.id, status: raced.status },
           data: { lastMessageAt: new Date(), ...(raced.status === 'ANSWERED'
-            ? { status: 'OPEN', reopenedCount: { increment: 1 } } : {}) },
+            ? { status: 'OPEN', reopenedCount: { increment: 1 } } : {}),
+            ...(reference ? { referenceKind: reference.kind, referenceId: reference.id } : {}) },
         });
         if (touched.count === 0) throw new ConflictException('line_support_state_changed');
         return raced;
@@ -2653,6 +2657,7 @@ export class ProcessLineWebhookUseCase {
           lineUserIdHash: hashMessagePreview(lineUserId),
           ...(asker?.companyId ? { companyId: asker.companyId } : {}),
           ...(asker?.signupRequestId ? { signupRequestId: asker.signupRequestId } : {}),
+          ...(reference ? { referenceKind: reference.kind, referenceId: reference.id } : {}),
           // Both, from the same sentence: `requestText` is the question and never changes again,
           // `lastMessageText` is where the thread has got to and is rewritten by every follow-up.
           ...(text ? { requestText: text, lastMessageText: text } : {}),
@@ -2672,20 +2677,24 @@ export class ProcessLineWebhookUseCase {
    */
   private async handlePackageCallback(event: LineTextEvent, requestId: string): Promise<void> {
     const asker = await this.resolveSupportAsker(event);
+    // R-E5/A13: the postback carries no id (SEC-04) — the reference is derived here, server-side,
+    // from the sender's own company, never from the button.
+    const reference = await this.deriveSupportBillingReference(asker);
     const live = await this.findLiveSupportRequest(event.lineUserId);
     if (live) {
-      await this.recordSupportFollowUp(event.lineUserId, requestId, { text: PACKAGE_CALLBACK_NOTE }, { extendPause: false });
+      await this.recordSupportFollowUp(event.lineUserId, requestId, { text: PACKAGE_CALLBACK_NOTE }, { extendPause: false }, reference);
       await this.deliverReply(event, PACKAGE_CALLBACK_ALREADY_OPEN_REPLY);
       await this.audit.log({
         action: 'signup.line.support_requested',
         ...(asker?.companyId ? { companyId: asker.companyId } : {}),
         targetType: 'line_support_request', targetId: live.id, requestId, result: 'SUCCESS', riskLevel: 'LOW',
-        metadataJson: { kind: 'package_callback', alreadyOpen: true, reopened: live.status === 'ANSWERED', paused: false },
+        metadataJson: { kind: 'package_callback', alreadyOpen: true, reopened: live.status === 'ANSWERED', paused: false,
+          referenceKind: reference?.kind ?? null, hasReference: Boolean(reference) },
       });
       await this.updateEventLog(event.webhookEventId, 'support_already_open');
       return;
     }
-    const created = await this.openSupportRequest(event.lineUserId, asker, PACKAGE_CALLBACK_NOTE);
+    const created = await this.openSupportRequest(event.lineUserId, asker, PACKAGE_CALLBACK_NOTE, reference);
     if (!created) {
       await this.deliverReply(event, SUPPORT_DAILY_LIMIT_REPLY);
       await this.audit.log({
@@ -2704,9 +2713,37 @@ export class ProcessLineWebhookUseCase {
       action: 'signup.line.support_requested',
       ...(asker?.companyId ? { companyId: asker.companyId } : {}),
       targetType: 'line_support_request', targetId: created.id, requestId, result: 'SUCCESS', riskLevel: 'LOW',
-      metadataJson: { kind: 'package_callback', paused: false, linked: Boolean(asker), hasPendingSignup: Boolean(asker?.signupRequestId) },
+      metadataJson: { kind: 'package_callback', paused: false, linked: Boolean(asker), hasPendingSignup: Boolean(asker?.signupRequestId),
+        referenceKind: reference?.kind ?? null, hasReference: Boolean(reference) },
     });
     await this.updateEventLog(event.webhookEventId, 'package_callback_requested');
+  }
+
+  /**
+   * PR E (R-E5, A13): the sender's own billing reference — the latest attempt still in flight, else
+   * the latest invoice, else none. Read-only; never asserts membership beyond what
+   * resolveSupportAsker/lockedCompanyFor already picked (both already scope to the sender).
+   */
+  private async deriveSupportBillingReference(
+    asker: { companyId: string | null; userId?: string } | null,
+  ): Promise<{ kind: 'attempt' | 'invoice'; id: string } | undefined> {
+    const stripeAccountId = this.config.stripeAccountId;
+    if (!stripeAccountId || !['test', 'live'].includes(this.config.billingMode)) return undefined;
+    let companyId = asker?.companyId ?? null;
+    // A locked shop (term ended) never resolves a companyId above (resolveCompanyForLineUser
+    // filters it out) — fall back to the same lookup the locked-card handoff uses.
+    if (!companyId && asker?.userId) companyId = (await lockedCompanyFor(this.prisma, asker.userId, false))?.companyId ?? null;
+    if (!companyId) return undefined;
+    const account = await this.prisma.client.billingAccount.findUnique({ where: { companyId_stripeAccountId_livemode: {
+      companyId, stripeAccountId, livemode: this.config.billingMode === 'live' } } });
+    if (!account) return undefined;
+    const attempt = await this.prisma.client.billingAttempt.findFirst({
+      where: { billingAccountId: account.id, status: { in: ['CREATING', 'REQUESTING', 'OPEN', 'UNKNOWN'] } },
+      orderBy: { updatedAt: 'desc' }, select: { id: true } });
+    if (attempt) return { kind: 'attempt', id: attempt.id };
+    const invoice = await this.prisma.client.billingInvoice.findFirst({
+      where: { billingAccountId: account.id }, orderBy: { createdAt: 'desc' }, select: { id: true } });
+    return invoice ? { kind: 'invoice', id: invoice.id } : undefined;
   }
 
   /**
@@ -2723,6 +2760,10 @@ export class ProcessLineWebhookUseCase {
     companyId: string | null;
     signupRequestId?: string;
     lastMessageText?: string;
+    /** PR E (R-E5): the resolved LINE-linked user, even when `companyId` is null because every
+     *  membership is locked (resolveCompanyForLineUser filters those out) — deriveSupportBillingReference
+     *  uses it to fall back to lockedCompanyFor. */
+    userId?: string;
   } | null> {
     const { lineUserId } = event;
     const identity = await this.resolveLineIdentity(event);
@@ -2740,7 +2781,7 @@ export class ProcessLineWebhookUseCase {
       }))?.companyId ?? null;
     if (!companyId) {
       const pending = await this.pendingSignupFor(lineUserId);
-      return { companyId: null, ...(pending ? { signupRequestId: pending } : {}) };
+      return { companyId: null, userId: identity.userId, ...(pending ? { signupRequestId: pending } : {}) };
     }
     // §2.2.1: the one line of context an operator needs before opening the shop. `AiTurn` is the
     // only durable record of what a customer typed (the buffer is in-process and the webhook log
@@ -2751,7 +2792,7 @@ export class ProcessLineWebhookUseCase {
       select: { userMessagePreview: true },
     });
     const lastMessageText = lastTurn?.userMessagePreview?.trim().slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH);
-    return { companyId, ...(lastMessageText ? { lastMessageText } : {}) };
+    return { companyId, userId: identity.userId, ...(lastMessageText ? { lastMessageText } : {}) };
   }
 
   /** The application this asker is still travelling on, if any — the queue link of §2.1.1. Same
@@ -2836,6 +2877,8 @@ export class ProcessLineWebhookUseCase {
     message: { text?: string; lineMessageId?: string },
     /** `extendPause: false` (G19 callback) records the message without re-arming a running pause. */
     options: { extendPause?: boolean } = {},
+    /** PR E (R-E5): where the ask started, derived server-side. Newest context wins on a repeat call. */
+    reference?: { kind: 'attempt' | 'invoice'; id: string },
   ): Promise<SupportFollowUpOutcome> {
     try {
       const live = await this.findLiveSupportRequest(lineUserId);
@@ -2854,6 +2897,7 @@ export class ProcessLineWebhookUseCase {
           // the count is what lets the inbox say "ตอบแล้ว N ครั้ง · ลูกค้าตอบกลับ" rather than
           // pretending nobody ever replied.
           ...(reopened ? { status: 'OPEN' as const, reopenedCount: { increment: 1 } } : {}),
+          ...(reference ? { referenceKind: reference.kind, referenceId: reference.id } : {}),
         },
       });
       if (moved.count === 0) return 'none';

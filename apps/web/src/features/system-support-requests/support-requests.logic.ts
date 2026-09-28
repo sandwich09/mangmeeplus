@@ -133,6 +133,22 @@ export function supportAnswerLabel(item: SupportRequestItemDto): string {
   return item.companyId ? 'เปิดหน้าร้าน' : 'เปิดคิวสมัคร';
 }
 
+/**
+ * Purchase without setup PR E (R-E5): the invoice/checkout the request started from, when the ask
+ * came from a billing card or message. Known company → straight to the page; a locked shop's
+ * request has no `companyId` (§2.1.1), so it opens the admin reference lookup instead (§3), which
+ * scopes to the caller's own companies itself.
+ */
+export function supportReferenceHref(item: Pick<SupportRequestItemDto, 'companyId' | 'referenceKind' | 'referenceId' | 'referenceLabel'>): string | null {
+  if (!item.referenceId) return null;
+  if (item.companyId) {
+    return item.referenceKind === 'invoice'
+      ? `/system/billing/companies/${encodeURIComponent(item.companyId)}/invoices/${encodeURIComponent(item.referenceId)}`
+      : `/system/billing/companies/${encodeURIComponent(item.companyId)}/checkouts/${encodeURIComponent(item.referenceId)}`;
+  }
+  return item.referenceLabel ? `/system/billing?lookup=${encodeURIComponent(item.referenceLabel)}` : null;
+}
+
 export function supportReplyChip(
   status: SupportRequestItemDto['lastReplyDeliveryStatus'],
 ): Chip | null {

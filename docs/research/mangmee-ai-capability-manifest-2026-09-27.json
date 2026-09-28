@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "4f0d7f2e8f6672a88f83b94a579ae42c1157a41a",
-  "checkoutBranch": "claude/w00-manifest-regen-20260928",
-  "checkoutDirty": false,
+  "sourceRevision": "f637ffb454868894fc592e1ed6a804b5bbaa847c",
+  "checkoutBranch": "claude/purchase-pr-e-admin-tools-20260928",
+  "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "15bf411e138216e0b88c8763b9db1f2dc6dc149061516396bd3fb2e5df0d13c3"
+      "sha256": "18b1d7ad4aa6b97e5a738d550f0abf6f0d18df72b2662659918c95d115b3bbe4"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-28T15:10:07.406Z",
-  "manifestDigest": "c603875e27e8a5fc0c8d0c01d04cb1e1cd09cc73507a0b78f3a0fb97c8552301"
+  "generatedAt": "2026-09-28T16:23:25.788Z",
+  "manifestDigest": "597c71225b257d5858dcd2bd8a2409d85ed49d828231fa1d190f1d90318cc8ff"
 }

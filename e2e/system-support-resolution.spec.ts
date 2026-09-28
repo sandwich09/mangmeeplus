@@ -98,6 +98,56 @@ test.describe('system support resolution', () => {
     }
   });
 
+  test('a company case shows a reference link to the invoice that started the conversation', async ({ page }, info) => {
+    const databaseUrl = process.env['DATABASE_URL'];
+    test.skip(!databaseUrl, 'DATABASE_URL is required for the support resolution fixture');
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    const id = unique('e2e-support-reference').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const companyId = unique('e2e-support-reference-co').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const billingAccountId = unique('e2e-support-reference-ba').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const invoiceId = unique('e2e-support-reference-inv').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const requestedAt = new Date('2000-01-01T00:00:00.000Z');
+    const question = `ถามเรื่องใบแจ้งหนี้ที่เพิ่งได้รับ ยอดดูไม่ตรงกับที่คุยไว้ ช่วยตรวจให้หน่อยค่ะ ${id.slice(-8)}`;
+    try {
+      await client.company.create({ data: { id: companyId, name: `ร้านทดสอบอ้างอิงใบแจ้งหนี้ ${id.slice(-6)}` } });
+      await client.billingAccount.create({ data: {
+        id: billingAccountId, companyId, stripeAccountId: 'acct_test_e2e', livemode: false,
+      } });
+      await client.billingInvoice.create({ data: {
+        id: invoiceId, billingAccountId, providerInvoiceId: `in_${invoiceId}`,
+        offerSnapshot: {}, policyRevisionId: 'e2e-policy', currency: 'thb',
+        totalSatang: 199900, paidSatang: 199900, periodStart: requestedAt, periodEnd: requestedAt,
+        providerStatus: 'paid', evidenceHash: 'e2e-evidence-hash',
+      } });
+      await client.lineSupportRequest.create({ data: {
+        id, companyId, lineUserId: `U-${id}`, lineUserIdHash: '0123456789abcdef',
+        referenceKind: 'invoice', referenceId: invoiceId,
+        requestedAt, requestText: question, lastMessageText: question, lastMessageAt: requestedAt,
+        notifiedAt: requestedAt, status: 'OPEN',
+      } });
+
+      await loginSystemAdmin(page);
+      await page.goto('/system/support-requests');
+      const row = page.getByRole('row').filter({ hasText: question });
+      await expect(row).toBeVisible();
+      const referenceLink = row.getByRole('link', { name: 'เปิดรายการ' });
+      await expect(referenceLink).toBeVisible();
+      await expect(referenceLink).toHaveAttribute('href', `/system/billing/companies/${companyId}/invoices/${invoiceId}`);
+
+      await referenceLink.click();
+      await page.waitForURL(new RegExp(`/system/billing/companies/${companyId}/invoices/${invoiceId}`));
+      await expect(page.getByRole('heading', { name: 'ใบแจ้งหนี้และใบเสร็จ' })).toBeVisible();
+      await expectNoClientError(page);
+      await page.screenshot({ path: info.outputPath('support-reference-invoice-link.png'), fullPage: true });
+    } finally {
+      await client.lineSupportRequest.deleteMany({ where: { id } }).catch(() => {});
+      await client.billingInvoice.deleteMany({ where: { id: invoiceId } }).catch(() => {});
+      await client.billingAccount.deleteMany({ where: { id: billingAccountId } }).catch(() => {});
+      await client.company.deleteMany({ where: { id: companyId } }).catch(() => {});
+      await client.$disconnect();
+    }
+  });
+
   test('a company owner cannot read the system support inbox by UI or API', async ({ authedPage, api }) => {
     const response = await api.get('system/support-requests?status=OPEN');
     expect(response.status()).toBe(403);

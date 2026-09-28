@@ -14,11 +14,15 @@ import { StripeRequestError, type StripeClient, type StripeObject } from '../inf
 import type { BillingService } from './billing.service';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 
-const TYPE = 'UPDATE_BILLING_EMAIL';
+/** PR E: BillingDocumentAdminService creates/dispatches its own rows of this same type (`source: 'ADMIN'`)
+ *  — see pendingAdminRecipientChange() below. Exported so it tags them identically. */
+export const TYPE = 'UPDATE_BILLING_EMAIL';
 /** Outbox event the billing notifications drain turns into the old-recipient mail and the plan-manager push. */
 export const BILLING_RECIPIENT_CHANGED = 'billing.recipient.changed';
-/** Who proved the new recipient: the buyer's verified account email, or a code sent to a new mailbox (R-A8). */
-type Target = { email: string; source: 'ACCOUNT_EMAIL' | 'CUSTOMER_OTP'; emailProof?: EmailProof; challengeId?: string };
+/** Who proved the new recipient: the buyer's verified account email, a code sent to a new mailbox (R-A8),
+ *  or an admin acting under a reviewed op (PR E, R-E1/R-E2 — its own preview/submit/approve, never this
+ *  class's `preview`/`command`, which require account ownership this class has no way to grant an admin). */
+type Target = { email: string; source: 'ACCOUNT_EMAIL' | 'CUSTOMER_OTP' | 'ADMIN'; emailProof?: EmailProof; challengeId?: string };
 /** `emailProof` at the top level is the shape proposed before purchase-without-setup; it still advances. */
 type Proposed = { accountId: string; customerId: string; previousEmail: string | null; target?: Target; emailProof?: EmailProof };
 const targetOf = (p: Proposed): Target => p.target ?? { email: p.emailProof!.email, source: 'ACCOUNT_EMAIL', emailProof: p.emailProof };
@@ -46,6 +50,20 @@ export async function assertRecipientProof(tx: Prisma.TransactionClient, proof: 
   if (other) throw proofInvalid('การยืนยันอีเมลนี้ถูกใช้แล้ว กรุณาขอรหัสยืนยันใหม่');
   if (!opId && Date.now() - token.usedAt.getTime() > BILLING_RECIPIENT_PROOF_TTL_MS) throw proofInvalid('การยืนยันอีเมลนี้หมดอายุแล้ว กรุณาขอรหัสยืนยันใหม่');
   return token;
+}
+
+/**
+ * PR E (spec §18.2 R-E1, A11): an admin-initiated recipient change in flight for this account. It is
+ * the same `UPDATE_BILLING_EMAIL` type as this file's own op but never occupies `activeEmailOperationId`
+ * — BillingDocumentAdminService has its own lease and drain — so both directions check this explicitly:
+ * this class's own preview/submit below, and that service's guards before it creates or dispatches one.
+ */
+export async function pendingAdminRecipientChange(tx: Prisma.TransactionClient,
+  account: Pick<BillingAccount, 'companyId' | 'stripeAccountId' | 'livemode'>, excludeId?: string) {
+  return tx.billingOperation.findFirst({ where: { type: TYPE, companyId: account.companyId, stripeAccountId: account.stripeAccountId,
+    livemode: account.livemode, proposedJson: { path: ['target', 'source'], equals: 'ADMIN' },
+    state: { in: ['PREVIEW', 'AWAITING_APPROVAL', 'QUEUED', 'RUNNING', 'UNKNOWN', 'BLOCKED'] },
+    ...(excludeId ? { id: { not: excludeId } } : {}) } });
 }
 
 export class BillingEmailRecipient {
@@ -88,6 +106,9 @@ export class BillingEmailRecipient {
     if (!account?.customerId) return { email: null, hasCustomer: false, operation: null };
     const customer = await this.stripe.request('GET', `/customers/${account.customerId}`);
     const operation = account.activeEmailOperationId ? await this.prisma.client.billingOperation.findUnique({ where: { id: account.activeEmailOperationId } }) : null;
+    // PR E: an admin-initiated change never sets activeEmailOperationId (it has its own drain), so it
+    // would otherwise not show as busy here even while it holds the account.
+    const adminPending = await pendingAdminRecipientChange(this.prisma.client, account);
     const email = this.customer(customer, account), legacy = storable(email);
     // Lazy backfill (§3.3) of a recipient that predates the column. Not while a purchase is in flight:
     // its apply captures the Checkout recipient with the right source.
@@ -96,9 +117,9 @@ export class BillingEmailRecipient {
     const stored = await this.billing.account(context.companyId);
     return { email, hasCustomer: true,
       operation: operation ? this.view(operation, context.userId) : null,
-      busy: Boolean(operation),
+      busy: Boolean(operation) || Boolean(adminPending),
       stored: { email: stored?.recipientEmail ?? null, source: (stored?.recipientSource as BillingRecipientSource | null) ?? null,
-        bouncedAt: stored?.recipientBouncedAt?.toISOString() ?? null, canChange: !operation && !stored?.activeAttemptId } };
+        bouncedAt: stored?.recipientBouncedAt?.toISOString() ?? null, canChange: !operation && !adminPending && !stored?.activeAttemptId } };
   }
   /** `recipientProofId` absent = the original "use my verified account email" review. */
   async preview(context: RequestContext, recipientProofId?: string) {
@@ -119,7 +140,8 @@ export class BillingEmailRecipient {
       await this.company(context, tx);
       await this.assertTarget(tx, target, context.companyId, context.userId);
       const current = await this.billing.account(context.companyId, tx);
-      if (!current || current.version !== account.version || current.activeAttemptId || current.activeCollectionOperationId || current.activeEmailOperationId) throw review();
+      if (!current || current.version !== account.version || current.activeAttemptId || current.activeCollectionOperationId || current.activeEmailOperationId ||
+          await pendingAdminRecipientChange(tx, current)) throw review();
       const row = await tx.billingOperation.create({ data: { type: TYPE, companyId: context.companyId, stripeAccountId: account.stripeAccountId,
         livemode: account.livemode, initiatorUserId: context.userId, sourceVersion: account.version,
         requestHash: hashBilling([account.id, account.version, proposed]), proposedJson: proposed as unknown as Prisma.InputJsonValue,
@@ -144,7 +166,8 @@ export class BillingEmailRecipient {
         await this.company(context, tx);
         await this.assertTarget(tx, targetOf(proposed), context.companyId, context.userId, row.id);
         if (!this.view(row).canSubmit || row.requestHash !== previewHash || account.version !== row.sourceVersion ||
-            account.activeAttemptId || account.activeCollectionOperationId || account.activeEmailOperationId) throw review();
+            account.activeAttemptId || account.activeCollectionOperationId || account.activeEmailOperationId ||
+            await pendingAdminRecipientChange(tx, account)) throw review();
         await tx.billingAccount.update({ where: { id: account.id }, data: { activeEmailOperationId: row.id, version: { increment: 1 }, nextReconcileAt: new Date() } });
       }
       const updated = await tx.billingOperation.update({ where: { id }, data: {

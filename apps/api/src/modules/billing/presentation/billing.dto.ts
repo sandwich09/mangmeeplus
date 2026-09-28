@@ -124,6 +124,15 @@ export class BillingDocumentDto {
   @IsOptional() @IsString() @MaxLength(124) creditNoteId?: string;
 }
 
+// Purchase without setup PR E (admin tools, DQ7/DQ10).
+export class BillingRecipientAdminDto extends BillingEventPreviewDto {
+  @IsString() @MaxLength(254) newEmail!: string;
+  @IsOptional() @IsString() @MaxLength(64) supportRequestId?: string;
+}
+export class BillingDocumentResendAdminDto {
+  @IsString() @MinLength(1) @MaxLength(500) reason!: string;
+}
+
 export class BillingPlanAdjustmentDto extends BillingEventPreviewDto {
   @IsIn(['GRANT_OVERRIDE','REVOKE_OVERRIDE','GRANT_FREE_DAYS','CHANGE_COLLECTION']) type!: string;
   @IsOptional() @IsIn(['PAUSE','RESUME']) collectionAction?: string;
