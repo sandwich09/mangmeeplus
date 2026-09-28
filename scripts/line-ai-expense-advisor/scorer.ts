@@ -210,6 +210,26 @@ function goldCallSatisfied(call: GoldCall, goldResult: ToolResultLike | undefine
   return breakdownSatisfiesSingleMetricTotal(call, goldResult, actualCalls, deliveredText, now);
 }
 
+/** Task item 4 ("ambiguous golds"): a question like "เดือนนี้มีรายการค้างจัดการเยอะไหมคะ"
+ * legitimately means drafts OR needs-review — the CORPUS names one `documentStatus` as the primary
+ * and the other as an `alternatives` entry, but the two answers have DIFFERENT facts (different
+ * totals/counts), so scoring must check whichever candidate the model ACTUALLY called, never
+ * always the primary's. `candidates[0]` is the primary's own (oracle-derived) facts, `candidates[i]`
+ * (i>0) the i-th alternative's; picks whichever one some actual call satisfies (same equivalence
+ * `callMatchesGold` already uses for the tool-call check), falling back to the primary's facts when
+ * NONE match, so an actually-wrong call still gets a (necessarily failing) fact list to report. */
+export function factsForMatchedCandidate(
+  call: GoldCall, candidates: ReadonlyArray<{ tool: string; input: Record<string, unknown>; facts: ExpectedFact[] }>,
+  actualCalls: CapturedToolCall[], now: Date,
+): ExpectedFact[] {
+  const goldCandidates = [{ tool: call.tool, input: call.input as Record<string, unknown> }, ...(call.alternatives ?? [])
+    .map((alt) => ({ tool: alt.tool, input: alt.input as Record<string, unknown> }))];
+  for (let i = 0; i < goldCandidates.length; i++) {
+    if (actualCalls.some((actual) => callMatchesGold(actual, goldCandidates[i]!, now))) return candidates[i]?.facts ?? [];
+  }
+  return candidates[0]?.facts ?? [];
+}
+
 /** Every gold call must be satisfied by some captured call (R-U4: several questions in one turn
  * need several tool calls, all present — not just one of them). `goldResults[i]` is the oracle's
  * own result for `goldCalls[i]` (task item "one more scorer rule"); omit it (or leave a gap with

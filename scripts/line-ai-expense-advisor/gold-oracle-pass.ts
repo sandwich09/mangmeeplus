@@ -17,12 +17,13 @@
  *    `"[object Object]"`), which is exactly the T-068 bug this fixes: the model called
  *    `expense.get_detail` with the correct id and the score still said `missing_or_wrong_call`.
  */
+import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { buildCompanySeed, applySeedRows, truncateAllTables, SHARED_ACCESS_ROWS, type CompanySeed, type PgClientLike } from './seed';
 import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFactsForCall, extractOfferedChoices } from './oracle';
 import type { ShownItem } from './oracle';
-import { scoreTurn, type CapturedEvidence, type ExpectedFact, type ToolResultLike, type TurnScore } from './scorer';
+import { scoreTurn, factsForMatchedCandidate, type CapturedEvidence, type ExpectedFact, type ToolResultLike, type TurnScore } from './scorer';
 import type { Conversation, Corpus, EvalCompany, GoldCall, Turn } from './types';
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 
@@ -78,10 +79,16 @@ export function scoreAllTurns(
     if (!evidence) throw new Error(`no captured evidence for ${conversation.id}#${turnIndex}`);
     const captured = toCapturedEvidence(evidence);
     const key = turnKey(conversation.id, turnIndex);
-    // All three come from collectGoldResults' independent oracle pass — never from the model's own
+    // All come from collectGoldResults' independent oracle pass — never from the model's own
     // (possibly wrong) captured result, per "never hand-type expected numbers, always the oracle".
-    const expectedFacts = goldPass.factsByTurn.get(key) ?? [];
     const goldResults = goldPass.resultsByTurn.get(key) ?? [];
+    // Task item 4 ("ambiguous golds"): when the turn's (one, per today's corpus) ambiguous call has
+    // `alternatives`, check facts against whichever candidate the model actually called, never
+    // always the primary's — see factsForMatchedCandidate's own doc comment.
+    const ambiguous = goldPass.alternativeFactsByTurn.get(key);
+    const expectedFacts = ambiguous
+      ? factsForMatchedCandidate(turn.expect.calls![ambiguous.callIndex]!, ambiguous.candidates, captured.toolCalls, now)
+      : goldPass.factsByTurn.get(key) ?? [];
     // T-068: score against the RESOLVED input the oracle actually ran, never turn.expect.calls'
     // raw corpus literal (e.g. an unresolved `{ $fromShownItems: 2 }`) — see this file's header.
     const resolvedCalls = goldPass.resolvedCallsByTurn.get(key);
@@ -94,6 +101,13 @@ export type GoldOraclePass = {
   resultsByTurn: Map<string, Array<ToolResultLike | undefined>>;
   factsByTurn: Map<string, ExpectedFact[]>;
   resolvedCallsByTurn: Map<string, GoldCall[]>;
+  /** Task item 4 ("ambiguous golds"): only set for a turn whose gold call at `callIndex` declares
+   * `alternatives` — `candidates[0]` is that call's own (primary) facts, `candidates[i]` (i>0) the
+   * i-th alternative's, each a SEPARATE oracle run. Assumes at most one ambiguous call per turn
+   * (true of every corpus turn today, and asserted where this is populated) — replaces the WHOLE
+   * turn's `factsByTurn` entry at scoring time (scoreAllTurns), not spliced in alongside other
+   * calls' facts, so a turn with a second, non-ambiguous call would need this extended first. */
+  alternativeFactsByTurn: Map<string, { callIndex: number; candidates: Array<{ tool: string; input: Record<string, unknown>; facts: ExpectedFact[] }> }>;
 };
 
 export async function collectGoldResults(
@@ -111,6 +125,7 @@ export async function collectGoldResults(
   const resultsByTurn = new Map<string, Array<ToolResultLike | undefined>>();
   const factsByTurn = new Map<string, ExpectedFact[]>();
   const resolvedCallsByTurn = new Map<string, GoldCall[]>();
+  const alternativeFactsByTurn: GoldOraclePass['alternativeFactsByTurn'] = new Map();
   try {
     await applySeedRows(oracle.prisma as never, SHARED_ACCESS_ROWS);
     for (const company of Object.values(companies)) await applySeedRows(oracle.prisma as never, company.rows.slice(SHARED_ACCESS_ROWS.length));
@@ -125,14 +140,33 @@ export async function collectGoldResults(
         const results: Array<ToolResultLike | undefined> = [];
         const facts: ExpectedFact[] = [];
         const resolvedCalls: GoldCall[] = [];
-        for (const call of turn.expect.calls) {
+        let ambiguousCallIndex = -1;
+        for (const [callIndex, call] of turn.expect.calls.entries()) {
           const resolvedInput = resolveGoldCallInput(call, now, priorShownItems);
           const result = await oracle.invoke(call.tool, ctx, resolvedInput) as ToolResultLike;
           results.push(result);
-          facts.push(...extractExpectedFactsForCall(call.tool, result, call, turn.expect.requiredFacts));
+          const callFacts = extractExpectedFactsForCall(call.tool, result, call, turn.expect.requiredFacts);
+          facts.push(...callFacts);
           resolvedCalls.push({ ...call, input: resolvedInput });
           const shown = extractShownItems(call.tool, result);
           if (shown.length) priorShownItems = shown;
+
+          // Task item 4 ("ambiguous golds"): run each alternative through the SAME oracle/seed
+          // state too, so scoring can check facts against whichever one the model actually called
+          // (scoreAllTurns/factsForMatchedCandidate) instead of always the primary's. Its own
+          // shown-items never feed `priorShownItems` — only the PRIMARY interpretation is real
+          // "what happened" for a later turn's `$fromShownItems` to reference.
+          if (call.alternatives?.length) {
+            assert.equal(ambiguousCallIndex, -1, `${conversation.id}#${turnIndex}: more than one ambiguous (alternatives-bearing) call in one turn is not supported yet`);
+            ambiguousCallIndex = callIndex;
+            const candidates = [{ tool: call.tool, input: resolvedInput, facts: callFacts }];
+            for (const alt of call.alternatives) {
+              const altResolvedInput = resolveGoldCallInput(alt, now, priorShownItems);
+              const altResult = await oracle.invoke(alt.tool, ctx, altResolvedInput) as ToolResultLike;
+              candidates.push({ tool: alt.tool, input: altResolvedInput, facts: extractExpectedFactsForCall(alt.tool, altResult, alt, turn.expect.requiredFacts) });
+            }
+            alternativeFactsByTurn.set(turnKey(conversation.id, turnIndex), { callIndex, candidates });
+          }
         }
         resultsByTurn.set(turnKey(conversation.id, turnIndex), results);
         factsByTurn.set(turnKey(conversation.id, turnIndex), facts);
@@ -142,5 +176,5 @@ export async function collectGoldResults(
   } finally {
     await oracle.close();
   }
-  return { resultsByTurn, factsByTurn, resolvedCallsByTurn };
+  return { resultsByTurn, factsByTurn, resolvedCallsByTurn, alternativeFactsByTurn };
 }

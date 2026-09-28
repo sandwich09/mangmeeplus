@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  callMatchesGold, factInText, moneyTextVariants, scoreFacts, scoreTags, scoreToolCalls, scoreTurn, summarizeScores,
+  callMatchesGold, factInText, factsForMatchedCandidate, moneyTextVariants, scoreFacts, scoreTags, scoreToolCalls, scoreTurn, summarizeScores,
   type CapturedEvidence, type ExpectedFact,
 } from './scorer';
 import { extractExpectedFacts, extractExpectedFactsForCall } from './oracle';
@@ -333,6 +333,36 @@ describe('scoreToolCalls', () => {
       const deliveredText = 'ยอดรวม 1,500.00 บาท';
       assert.equal(scoreToolCalls(listShapeGold, actual, NOW, goldResults, deliveredText).ok, false);
     });
+  });
+});
+
+describe('factsForMatchedCandidate', () => {
+  // T-101: "เดือนนี้มีรายการค้างจัดการเยอะไหมคะ" legitimately means drafts OR needs-review.
+  const call = {
+    tool: 'expense.list_recent',
+    input: { period: { $period: 'this_month_to_date' }, documentStatus: 'DRAFT' },
+    alternatives: [{ tool: 'expense.list_recent', input: { period: { $period: 'this_month_to_date' }, documentStatus: 'NEEDS_REVIEW' } }],
+  };
+  const draftFacts: ExpectedFact[] = [{ kind: 'money', value: '500.00', label: 'total' }, { kind: 'count', value: 2, label: 'count' }];
+  const needsReviewFacts: ExpectedFact[] = [{ kind: 'money', value: '900.00', label: 'total' }, { kind: 'count', value: 3, label: 'count' }];
+  const candidates = [
+    { tool: 'expense.list_recent', input: { documentStatus: 'DRAFT' }, facts: draftFacts },
+    { tool: 'expense.list_recent', input: { documentStatus: 'NEEDS_REVIEW' }, facts: needsReviewFacts },
+  ];
+
+  it('checks the PRIMARY\'s facts when the model called the primary interpretation (DRAFT)', () => {
+    const actual = [{ tool: 'expense.list_recent', input: { documentStatus: 'DRAFT' } }];
+    assert.deepEqual(factsForMatchedCandidate(call, candidates, actual, NOW), draftFacts);
+  });
+
+  it('checks the ALTERNATIVE\'s facts when the model called that interpretation (NEEDS_REVIEW) instead', () => {
+    const actual = [{ tool: 'expense.list_recent', input: { documentStatus: 'NEEDS_REVIEW' } }];
+    assert.deepEqual(factsForMatchedCandidate(call, candidates, actual, NOW), needsReviewFacts);
+  });
+
+  it('falls back to the primary\'s facts when neither candidate matches (a genuinely wrong call)', () => {
+    const actual = [{ tool: 'expense.list_recent', input: { documentStatus: 'CONFIRMED' } }];
+    assert.deepEqual(factsForMatchedCandidate(call, candidates, actual, NOW), draftFacts);
   });
 });
 

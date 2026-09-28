@@ -4092,7 +4092,18 @@
                     "$period": "this_month_to_date"
                   },
                   "documentStatus": "DRAFT"
-                }
+                },
+                "alternatives": [
+                  {
+                    "tool": "expense.list_recent",
+                    "input": {
+                      "period": {
+                        "$period": "this_month_to_date"
+                      },
+                      "documentStatus": "NEEDS_REVIEW"
+                    }
+                  }
+                ]
               }
             ]
           }

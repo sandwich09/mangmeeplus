@@ -207,7 +207,13 @@ A turn's `expect` needs at least one of:
     that answers as either `single_metric` (its default) or `list` (row 7, needs `"answerShape":
     "list"` in gold).
   - `alternatives`: an array of other `{tool, input}` shapes that would equally correctly answer
-    the same question.
+    the same question — e.g. a genuinely ambiguous "ค้างจัดการ" ("pending, to be handled") reading
+    as either `documentStatus: "DRAFT"` or `"NEEDS_REVIEW"` (task item 4; T-101). Each alternative
+    is run through the oracle too (`gold-oracle-pass.ts`), so the REQUIRED FACTS come from
+    whichever candidate the model actually called, never always the primary's — DRAFT and
+    NEEDS_REVIEW have different totals/counts, so checking the wrong one's facts would fail a
+    correct reply (`scorer.ts` `factsForMatchedCandidate`). Assumes at most one such ambiguous call
+    per turn (true of every corpus turn today; asserted where it is populated).
 - **`tags`** — `no_tool`, `must_answer`, `must_not_refuse`, `must_ask_choice` (booleans),
   `must_mention_any`, `must_not_claim`, `forbidden_tools` (string arrays, substring/exact-name
   checks against the delivered text or the captured tool-call list). `must_ask_choice` is for a
