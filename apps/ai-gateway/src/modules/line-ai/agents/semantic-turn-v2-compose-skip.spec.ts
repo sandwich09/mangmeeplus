@@ -261,6 +261,29 @@ describe('H6: a fully router-hinted read turn skips the line.loop planning round
     assert.equal(result.semanticCoverage?.[1]?.status, 'handled');
   });
 
+  it('run 7 T-009-a: a hinted read whose requested periodKey is an alias still executes once bound (no self-conflict)', async () => {
+    const request: LineAiTurnRequest = {
+      requestId: 'req-h6-alias', webhookEventId: 'event-h6-alias', messageText: 'เดือนนิจ่ายไปเทาไหร่แล้วค้า',
+      messagePreviewHash: '6'.repeat(16), valueCandidates: EMPTY_CANDIDATES,
+      semanticSubrequests: [{ ...hintedReadItem(0, 'ยอดรวมค่าใช้จ่ายเดือนนี้', 'expense.list_recent'), requestedFilters: { periodKey: 'this_month' } }],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const listResult: ToolResult = { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-28T01:00:00.000Z', sourceRefs: [SOURCE_REF], facts: [], data: { total: 14 } };
+    const { provider, calls } = recordingProvider([
+      JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'เดือนนี้มีค่าใช้จ่าย 14 รายการค่ะ', sourceRefIds: [SOURCE_REF.id] }] }),
+    ]);
+    const invoked: Array<Record<string, unknown>> = [];
+    const result = await runSemanticTurnV2({
+      req: request, provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(_meta, _ctx, args): Promise<ToolResult> { invoked.push(args); return listResult; },
+    });
+    assert.deepEqual(calls.map((call) => call.usageTag), ['line.compose']);
+    assert.deepEqual(invoked, [{ periodKey: '2026-09' }]);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+  });
+
   it('one unhinted read alongside a hinted one: falls back to calling the planner exactly as today', async () => {
     const request: LineAiTurnRequest = {
       requestId: 'req-h6-b', webhookEventId: 'event-h6-b', messageText: 'เดือนนี้ค่าใช้จ่ายเท่าไหร่ และแยกตามหมวดให้ดูหน่อยค่ะ',

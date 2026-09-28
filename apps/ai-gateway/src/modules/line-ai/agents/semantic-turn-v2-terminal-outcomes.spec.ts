@@ -705,6 +705,31 @@ describe('E4: a read with good results, or a GENERAL item, never dead-ends when 
     assert.ok(result.replyText.includes('1,000'), result.replyText);
   });
 
+  it('run 7 T-015-a: a why-question fallback renders the breakdown, not the bare list total', async () => {
+    const req: LineAiTurnRequest = {
+      requestId: 'req-e4-why', webhookEventId: 'event-e4-why', messageText: 'ทำไมมีร่างค้างเยอะจังคะ',
+      messagePreviewHash: 'e'.repeat(16), valueCandidates: EMPTY_CANDIDATES,
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'อธิบายว่าทำไมมีร่างค้างเยอะ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(),
+    };
+    const queue = [JSON.stringify({ calls: [
+      { index: 0, toolName: 'expense.list_recent', input: {} },
+      { index: 0, toolName: 'expense.get_breakdown', input: { groupBy: 'category' } },
+    ], questions: [] }), '{}'];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    const breakdown: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [SOURCE_REF], facts: [],
+      data: { period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, totalAmount: '1396.5', totalCount: 1, currency: 'THB',
+        byCategory: [{ category: 'ค่าบริการ', currency: 'THB', count: 1, totalAmount: '1396.5' }], byBranch: [], byVendor: [],
+        queryApplied: { filters: { groupBy: 'category' } } } };
+    const result = await runSemanticTurnV2({
+      req, provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      enabledDeterministicFamilies: new Set(['expense.list_recent::single_metric', 'expense.list_recent::list', 'expense.get_breakdown::list']),
+      async invoke(meta): Promise<ToolResult> { return meta.name === 'expense.get_breakdown' ? breakdown : goodResult(); },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
+    assert.ok(result.replyText.includes('ค่าบริการ'), result.replyText);
+  });
+
   it('still falls back to the honest §8 terminal, unchanged, when no deterministic family is enabled', async () => {
     const result = await runWithEmptyCompose('read');
     const coverage = result.semanticCoverage?.[0];
