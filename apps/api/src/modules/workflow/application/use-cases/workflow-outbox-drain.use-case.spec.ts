@@ -87,6 +87,8 @@ describe('DrainWorkflowOutboxUseCase', () => {
     assert.deepEqual(claims[0].excludeEventTypes, [
       'billing.invoice.applied',
       'billing.status.email',
+      // Purchase without setup (R-A8): the recipient-change notice belongs to the billing notifications drain.
+      'billing.recipient.changed',
       'email.postmark.event.received',
       'auth.email.security_notice',
       'storage.object_version_cleanup.requested',
