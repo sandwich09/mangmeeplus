@@ -30,6 +30,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(enterprise).toContainText('500 ใบ ได้ทันทีเมื่อชำระสำเร็จ');
   await plans.getByRole('button', { name: 'รายปี', exact: true }).click();
   await expect(plans).toContainText('ใช้งาน 12 เดือน · ประหยัด ฿498.00');
+  await expect(plans).toContainText('เฉลี่ยเดือนละ ฿415.83');
   // Enterprise keeps the shared starter set and adds only PND53 and system 50 ทวิ.
   await expect(plans.getByText('เร็ว ๆ นี้', { exact: true })).toHaveCount(0);
   await expect(enterprise.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true })).toBeEnabled();
@@ -51,6 +52,9 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true })).toContainText('การทดลองใช้จะสิ้นสุดเมื่อชำระสำเร็จ');
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true })).toContainText('ยกยอดจากทดลองใช้9 ใบ');
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true })).toContainText('369 ใบ');
+  const firstReview = page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true });
+  await expect(firstReview.getByLabel('ข้อมูลออกเอกสาร')).toContainText('จะกรอกที่หน้าชำระเงิน');
+  await expect(firstReview.getByRole('button', { name: 'แก้อีเมลรับเอกสาร' })).toHaveCount(0);
   await expect(plans).toHaveCount(0);
   const quoteHeading = await page.getByRole('heading', { name: /^ยืนยันซื้อ .* รายปี$/ }).boundingBox();
   expect(quoteHeading!.y).toBeGreaterThanOrEqual(width < 640 ? 112 : 68);
@@ -227,6 +231,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await scenario.selectOption('one-time');
   await expect(plans.getByRole('radio', { name: 'บัตร · จ่ายครั้งเดียว' })).toBeChecked();
   await expect(plans.getByRole('radio', { name: 'บัตร · ต่ออายุอัตโนมัติ' })).not.toBeChecked();
+  await expect(plans.getByRole('button', { name: 'วิธีชำระอื่น' })).toHaveAttribute('aria-expanded', 'true');
   const oneTimeCurrent = plans.locator('article').filter({ has: page.getByText('แพ็กเกจปัจจุบัน', { exact: true }) });
   await expect(oneTimeCurrent).toContainText('เติบโต (BASIC)');
   const pro = plans.locator('article').filter({ has: page.getByRole('heading', { name: 'มืออาชีพ (PRO)', exact: true }) });
@@ -259,6 +264,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   // Monthly → annual charges the annual price, carries paid time and starts annual renewal at the extended end.
   await scenario.selectOption('upgrade');
   await page.getByRole('button', { name: 'ซื้อหรือเปลี่ยนแพ็กเกจ', exact: true }).click();
+  await plans.getByRole('button', { name: 'วิธีชำระอื่น' }).click();
   await plans.getByRole('radio', { name: 'บัตร · จ่ายครั้งเดียว' }).check();
   await expect(plans.getByRole('status')).toContainText('ยังชำระซ้อนกับสมาชิกเดิมไม่ได้');
   await expect(plans.getByRole('button', { name: 'หยุดต่ออายุอัตโนมัติ' })).toBeVisible();
@@ -461,12 +467,13 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await page.getByRole('button', { name: 'เลือกสิทธิ์สำหรับรอบที่จ่ายแล้ว', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'เลือกสาขาและผู้ใช้ที่จะใช้งานต่อ', exact: true })).toBeVisible();
   await scenario.selectOption('pending');
-  await page.getByRole('button', { name: 'ยุติรายการที่ยังไม่ชำระ', exact: true }).click();
-  await page.getByRole('button', { name: 'ยืนยันยุติหน้าชำระเงิน', exact: true }).click();
-  await expect(page.getByText('ยุติหน้าชำระเงินแล้ว เลือกแพ็กเกจใหม่ได้', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'เลือกแพ็กเกจใหม่', exact: true }).click();
+  await expect(page.getByText('ยุติหน้าชำระเงินเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย', { exact: true })).toBeVisible();
+  await expect(plans).toBeVisible();
+  await expect(page.getByRole('button', { name: 'ยุติรายการที่ยังไม่ชำระ' })).toHaveCount(0);
   await scenario.selectOption('start');
   await expect(plans).toBeVisible();
+  await plans.getByRole('button', { name: 'วิธีชำระอื่น' }).click();
   await plans.getByRole('radio', { name: 'บัตร · จ่ายครั้งเดียว' }).check();
   await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' })).toContainText('ไม่มีการตัดเงินงวดถัดไป');
@@ -485,6 +492,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: info.outputPath(`billing-preview-plans-${width}.png`), fullPage: true });
   await scenario.selectOption('start');
+  await plans.getByRole('button', { name: 'วิธีชำระอื่น' }).click();
   await plans.getByRole('radio', { name: 'บัตร · จ่ายครั้งเดียว' }).check();
   await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
   await page.getByLabel('ฉันตรวจสอบข้อมูลและยืนยันเงื่อนไขจ่ายครั้งเดียว', { exact: true }).check();
