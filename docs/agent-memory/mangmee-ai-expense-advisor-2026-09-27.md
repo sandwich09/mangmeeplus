@@ -1,6 +1,6 @@
 # Agent Memory: Mangmee AI expense advisor (takeover of the stopped Codex filter-context work)
 
-Status: TUNING — P1–P4 and fix batches 1–4 merged on this branch (tip 221575c4, 2026-09-28). Real-model tuning run 4 = 83.4% (186/223). Batch 5 in progress (grounding tokenizer, persona/format, router trim + fast-lane coverage, deterministic replies, scorer fairness). Not yet pushed; nothing merged to develop/main.
+Status: TUNING — batches 1–5 merged on this branch (tip ca06479f, 2026-09-28). Real-model tuning run 5 = 95.1% (212/223), zero machine tokens. Batch 6 in progress (JSON robustness, compose plain-text rescue, why augmentation, scope-line guard, read-correction routing, approval-queue order, daily-closing branch names). Not yet pushed; nothing merged to develop/main.
 Owner: thawatchai (solo admin). Controller: Claude (main thread) — briefs, reviews bug/gap/impact, delegates implementation to lower-model subagents; push/PR/merge/owner comms stay in the main thread.
 Scope: LINE AI "น้องมั่งมี" as an expense advisor inside the customer's enabled package. Today the sold tiers are STARTER/BASIC/PRO (same preset: expenses + reimbursements) and ENTERPRISE (+ WHT PND53 / 50 bis). Sales documents and reports are not sold and stay out of scope.
 Base: branch `claude/mangmee-ai-advisor-20260927` from d78114f5 (the Codex branch `codex/line-ai-filter-context-20260927`, 5 commits on develop abdf93b9, never pushed). Worktree `/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus-ai-advisor-20260927`.
@@ -32,6 +32,18 @@ Verification:
   - run 1 39.0% · run 2 55.6% · run 3 65.5% raw / 76.2% after scorer+corpus corrections · run 4 83.4% (source 221575c4).
   - Run 4 weak rows: 13 daily closing 1/6, 14 why-questions 3/9, 6 names 9/15, 18 permission 5/9.
   - Run 4 latency: fast lane p50 6.4 s / p95 8.6 s (bar 6/8); full path p50 13.3 s / p95 21.4 s (bar p95 15); none over 30 s; 2 router provider timeouts at 16 s.
+- Run 5 (candidate ca06479f + scorer 179c5a3b, 2026-09-28):
+  - Totals: 95.1% (212/223); machine tokens 0; male particles 0.
+  - A2 tool+filter 98.2%; A3 follow-ups 90.0%; A4 refusals 0; A5 scope 40/40.
+  - A6: 6 dead ends.
+  - A7: fast lane (one router call) p50 5.3 s / p95 6.2 s; full path p50 13.8 s / p95 22.4 s; max 29.5 s.
+  - Cost 173 THB.
+- Run 5 root causes:
+  - (a) The batch-5 persona line "Reply in plain LINE text only" made compose answer in plain text instead of JSON: 24/77 calls, which caused retries and dead ends, including for "ขอบคุณ".
+  - (b) Minified router JSON gained brace errors (6/8) and unescaped inner quotes (2/8), which caused two router attempts and then a dead end.
+  - (c) The approval queue orders by createdAt only, so seeded ties flip "ใบแรก/ใบที่สอง" between the oracle and the run.
+  - (d) The why-planner sometimes planned only list_recent, or only the filtered breakdown.
+  - (e) A read correction "ไม่ใช่ X ต่างหาก" was routed as an expense-capture correction.
 - Run 4 root causes found by the controller (2026-09-28):
   - (a) The number-grounding tokenizer read ISO dates as negative numbers, which rejected 76/89 composed answers (offline replay; 21 with a date-aware tokenizer). Most full-path answers were really the deterministic fallback.
   - (b) Raw fact lines (expense_total … | exclude_rejected_voided) were appended to customer answers.
