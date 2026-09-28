@@ -59,6 +59,7 @@ function harness(options: {
   const planTermCalls: any[] = [];
   const audits: any[] = [];
   const updates: any[] = [];
+  const membershipQueries: any[] = [];
 
   const prisma = {
     client: {
@@ -84,7 +85,7 @@ function harness(options: {
       auditLog: { create: async (args: any) => { audits.push(args.data); return {}; } },
       companyMembership: {
         count:async()=>1,findFirst:async()=>({id:'admin-membership'}),
-        findMany: async () => (options.ownerLineUserIds ?? ['Uowner-1']).map(() => ({ userId: 'owner-1' })),
+        findMany: async (args: any) => { membershipQueries.push(args); return (options.ownerLineUserIds ?? ['Uowner-1']).map(() => ({ userId: 'owner-1' })); },
       },
       externalIdentity: {
         findMany: async () => (options.ownerLineUserIds ?? ['Uowner-1']).map((providerUserId) => ({ providerUserId })),
@@ -117,7 +118,7 @@ function harness(options: {
 
   return {
     controller: new SystemPackageChangeController(useCase),
-    planTermCalls, audits, updates, logs,
+    planTermCalls, audits, updates, logs, membershipQueries,
     row: () => current,
   };
 }
@@ -199,6 +200,22 @@ describe('POST /system/package-change-requests/:id/decision — APPROVE', () => 
     assert.match(pushes[0]!.text, /ขอบคุณค่ะ/);
     // Owner copy rule: no plus sign anywhere in customer text.
     assert.doesNotMatch(pushes[0]!.text, /\+/);
+  });
+
+  // R-C11: since any plan manager may open this request, the reply must reach every plan manager —
+  // not only the OWNER-only query this used before.
+  it('asks for every plan manager, not only OWNERs (R-C11)', async () => {
+    const h = harness();
+    await h.controller.decide('pcr-1', { action: 'APPROVE' }, REQ);
+
+    assert.equal(h.membershipQueries.length, 1);
+    const where = h.membershipQueries[0]!.where;
+    assert.equal(where.companyId, 'co-1');
+    assert.equal(where.status, 'ACTIVE');
+    assert.equal(where.user.status, 'ACTIVE');
+    assert.equal(where.roles.some.role.permissions.some.permission.key, 'company.plan.manage');
+    // The old OWNER-only filter must be gone, not merely widened.
+    assert.doesNotMatch(JSON.stringify(where), /"key":"OWNER"/);
   });
 
   it('is idempotent: repeating the decision buys no second tier change', async () => {
