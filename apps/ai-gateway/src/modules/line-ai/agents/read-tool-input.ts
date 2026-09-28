@@ -1,5 +1,5 @@
 import { LINE_AI_VALUE_CANDIDATES_V2_LIMITS, extractValueCandidates, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, resolvePeriodCandidates } from '@watchdog-bms/contracts';
-import type { LineAiConversationContext, LineAiValueCandidates, ToolMeta } from '@watchdog-bms/contracts';
+import type { LineAiConversationContext, LineAiInputEvidenceV2, LineAiSourceRefV2, LineAiValueCandidates, ToolMeta } from '@watchdog-bms/contracts';
 
 export type ConversationReadCandidates = {
   turns: Array<{ at: string; todayIso: string; dates: LineAiValueCandidates['dates']; periods: NonNullable<LineAiValueCandidates['periods']> }>;
@@ -113,4 +113,56 @@ export function canonicalizeReadToolEnums(
     canonical[key] = matches[0];
   }
   return canonical;
+}
+
+/** Item 1 (spec §2/§3 row 17): the exact customer words a semantic subrequest's evidenceRefs quote
+ *  out of the current inputEvidence — the same provenance runSemanticTurnV2 already trusts for
+ *  numeric grounding, reused here so a scope-policy check is grounded in what the customer actually
+ *  typed for THIS clause, not the model's paraphrase or an unrelated clause in the same message.
+ *  Falls back to the whole message when no evidence is available (older/simple callers). */
+export function evidenceRefsText(
+  evidenceRefs: readonly LineAiSourceRefV2[] | undefined,
+  inputEvidence: LineAiInputEvidenceV2 | undefined,
+  fallback: string,
+): string {
+  if (!evidenceRefs?.length || !inputEvidence) return fallback;
+  const quoted = evidenceRefs
+    .map(ref => inputEvidence.parts.find(part => part.partId === ref.partId)?.rawText.slice(ref.startUtf16, ref.endUtf16) ?? '')
+    .filter(Boolean)
+    .join(' ');
+  return quoted || fallback;
+}
+
+/** Item 4 (spec row 3, eval T-093-b): "ใบเบิก"/"เบิกเงิน"/"ขอเบิก" name the reimbursement CLAIM, a
+ *  different record than the expense ledger — expense.list_recent/get_breakdown must never answer
+ *  it (e.g. a paymentStatus on the expense ledger is not the claim's own approve/pay status). A
+ *  message that separately names the expense ledger itself ("ค่าใช้จ่าย"/"รายจ่าย") is unaffected. */
+const REIMBURSEMENT_STATUS_WORDS_TH = ['ใบเบิก', 'เบิกเงิน', 'ขอเบิก'];
+const EXPENSE_LEDGER_WORDS_TH = ['ค่าใช้จ่าย', 'รายจ่าย'];
+
+function includesAny(text: string, needles: readonly string[]): boolean {
+  return needles.some(needle => text.includes(needle));
+}
+
+export function reimbursementStatusQuestion(text: string): boolean {
+  return includesAny(text, REIMBURSEMENT_STATUS_WORDS_TH) && !includesAny(text, EXPENSE_LEDGER_WORDS_TH);
+}
+
+/** Item 4 (spec row 14, eval T-107-b): line.explain_file_attempt explains a file/photo the customer
+ *  says was sent in THIS chat. A "ทำไม"/category/spending question that names no file/photo/document
+ *  at all has nothing to do with an upload attempt and must never route there. */
+const FILE_REFERENCE_WORDS_TH = ['ไฟล์', 'รูป', 'เอกสาร', 'สลิป', 'ใบเสร็จ'];
+const FILE_REFERENCE_WORDS_EN = ['file', 'photo', 'image', 'document', 'pdf', 'slip'];
+
+export function fileAttemptReferenceGrounded(text: string): boolean {
+  return includesAny(text, FILE_REFERENCE_WORDS_TH) || includesAny(text.toLocaleLowerCase('en-US'), FILE_REFERENCE_WORDS_EN);
+}
+
+/** Item 4: the one guard shared by the prepared-simple fast lane (`preparedSimplePreCallCheck`) and
+ *  the classic per-turn tool loop (`runSemanticTurnV2`) — a proposed tool that this clause's own
+ *  quoted text rules out, regardless of which lane picked it. */
+export function misroutedReadTool(toolName: string, text: string): boolean {
+  if (toolName === 'line.explain_file_attempt') return !fileAttemptReferenceGrounded(text);
+  if (toolName === 'expense.list_recent' || toolName === 'expense.get_breakdown') return reimbursementStatusQuestion(text);
+  return false;
 }

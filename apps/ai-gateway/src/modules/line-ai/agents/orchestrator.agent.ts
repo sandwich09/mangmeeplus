@@ -30,7 +30,8 @@ import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config
 import { createProvider } from '../infrastructure/provider/provider.factory';
 import { currentBudgetGrantV2 } from '../../../common/usage/usage-context';
 import type { IModelProvider, ProviderToolCall, ProviderToolMessage, ProviderToolResult, ProviderToolSpec } from '../infrastructure/provider/provider.port';
-import { canonicalizeReadToolEnums, conversationReadCandidates, nameFilterGroundedInText } from './read-tool-input';
+import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, misroutedReadTool, nameFilterGroundedInText } from './read-tool-input';
+import { scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic';
 
 // Spec item 2(b): same grounding rule as the fast lane's isGroundedFilterValue — a categoryName/
 // vendorName the model proposes in the classic tool loop must also trace back to this turn's text.
@@ -1067,6 +1068,12 @@ export function preparedSimplePreCallCheck(
   eligibilityCtx: PreparedSimpleReadContext,
   req: MinimalTurnRequest,
 ): PreparedSimplePreCallResult {
+  // Item 4 (spec §3 rows 3/11, eval T-093/T-107): a tool this turn's own text rules out (a
+  // reimbursement claim question answered by the expense ledger, or a file-attempt explanation
+  // naming no file/photo) must never run on the fast lane either — same guard as the classic
+  // per-turn tool loop (runSemanticTurnV2), checked here first so intake never even proposes it.
+  const proposedTool = plan.proposedCalls[0]?.toolName;
+  if (proposedTool && misroutedReadTool(proposedTool, req.messageText)) return { ok: false, reason: 'misrouted_tool' };
   if ((req.valueCandidates?.periods?.length ?? 0) > 1) return { ok: false, reason: 'multiple_periods' };
   const eligibility = preparedSimpleReadEligibility(plan, eligibilityCtx);
   if (!eligibility.eligible) return { ok: false, reason: eligibility.reason };
@@ -1100,6 +1107,25 @@ export class OrchestratorAgent {
   ) {}
 
   async run(req: LineAiTurnRequest): Promise<AgentRunResult> {
+    // Items 1-3 (spec §2/§3 rows 17-18, §8, §11): checked before the prepared-simple fast lane
+    // below, which only re-verifies input shape/period grounding (`preparedSimplePreCallCheck`) —
+    // never topic/action scope. A turn with more than one subrequest never qualifies for that fast
+    // lane (`inventory.length === 1` a few lines down) and always reaches runSemanticTurnV2
+    // instead, which carries the SAME check per subrequest so a mixed message still answers its
+    // allowed part.
+    const policyCheckStartedMs = Date.now();
+    const soleItem = req.semanticSubrequests?.length === 1 ? req.semanticSubrequests[0] : undefined;
+    if (soleItem) {
+      const language = req.responsePreferences?.language ?? (req.userContext.locale.startsWith('en') ? 'en' : 'th');
+      const text = evidenceRefsText(soleItem.evidenceRefs, req.inputEvidence, req.messageText);
+      const override = scopePolicyOverride(text, soleItem.kind, req.userContext.permissions,
+        req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, language);
+      if (override) {
+        return { plan: { status: 'ROUTABLE', language, intents: [], refusals: [], requiresHumanReview: false },
+          outputs: [], replyText: override.text, sourceRefs: [], webLinks: [], durationMs: Date.now() - policyCheckStartedMs,
+          semanticCoverage: [{ index: soleItem.index, status: 'unsupported', reasonCode: override.reasonCode }] };
+      }
+    }
     if (req.inputEvidence && req.budgetGrantV2 && req.semanticSubrequests?.length) {
       const started = Date.now(), inventory = req.semanticSubrequests, item = inventory[0]!;
       const prepared = parseLineAiPreparedPlan(req.preparedPlan);

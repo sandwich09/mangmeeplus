@@ -15,9 +15,10 @@ import { formatPreparedSimpleRead } from './prepared-simple-read-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
 import { MANGMEE_PERSONA_PROMPT, sanitizeMangmeePersonaText } from './mangmee-persona';
-import { canonicalizeReadToolEnums, conversationReadCandidates, resolvePeriodKeyAlias } from './read-tool-input';
+import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, misroutedReadTool, resolvePeriodKeyAlias } from './read-tool-input';
 import { expenseNameResolutionIssue, expenseNameResolutionReplyText, type ExpenseNameResolutionIssue,
   expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares, type ExpensePeriodComparison } from '../domain/logic/business-read-result-semantics';
+import { scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic';
 
 const logger = new Logger('SemanticTurnV2');
 
@@ -326,6 +327,25 @@ export async function runSemanticTurnV2(input: {
   const language = req.responsePreferences?.language ?? (/[ก-๙]/u.test(req.messageText) ? 'th' : 'en');
   const plan = { status: 'ROUTABLE' as const, language, intents: [], refusals: [], requiresHumanReview: false };
   const results: Array<{ index: number; result: ToolResult }> = [], questions = new Map<number, string>(), forced = new Map<number, { status: LineAiSemanticCoverageV2['status']; reasonCode: string; text: string }>();
+  // Items 1-3 (spec §2/§3 rows 17-18, §8, §11): the SAME deterministic scope/permission override
+  // OrchestratorAgent.run() applies to a turn's sole fast-lane-eligible subrequest, applied here to
+  // EVERY subrequest so a multi-clause (never fast-laned) turn still answers its allowed part and
+  // states the limit for the blocked one — grounded in this clause's own quoted text, never the
+  // model's paraphrase. `scopePolicyForcedIndices` also blocks any tool call the model still
+  // proposes for that index below; no unsold/unpermitted tool is ever invoked, in any round.
+  // `itemText` is also reused by item 4's per-call routing guard further down.
+  const entitledFeatureKeys = req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys;
+  const itemText = new Map<number, string>();
+  const scopePolicyForcedIndices = new Set<number>();
+  for (const item of inventory) {
+    const text = evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText);
+    itemText.set(item.index, text);
+    const override = scopePolicyOverride(text, item.kind, req.userContext.permissions, entitledFeatureKeys, language);
+    if (override) {
+      forced.set(item.index, { status: 'unsupported', reasonCode: override.reasonCode, text: override.text });
+      scopePolicyForcedIndices.add(item.index);
+    }
+  }
   const canaries = values([req.userContext, req.conversationContext, req.taskProjection]);
   const ctx: ErpToolContext = { requestId: req.requestId, companyId: req.userContext.companyId, userId: req.userContext.internalUserId,
     membershipId: req.userContext.membershipId, permissions: req.userContext.permissions, branchIds: req.userContext.branchIds,
@@ -388,6 +408,9 @@ export async function runSemanticTurnV2(input: {
       for (const q of rawQuestions) questions.set(Number(q.index), String(q.text));
       for (const call of calls) {
         const index = Number(call.index), item = inventory.find(item => item.index === index)!, meta = offered.find(meta => meta.name === call.toolName);
+        // Items 1-3: this index already has its final, non-negotiable answer (see above) — never
+        // let a model-proposed call reach execution for it, in this or any later round.
+        if (scopePolicyForcedIndices.has(index)) continue;
         // A preview/options response is not a committed financial source. Never execute a
         // dependent clause early or collapse two financial actions into the one open draft.
         if (item.dependsOn.some(parent => inventory.find(candidate => candidate.index === parent)?.kind === 'write'
@@ -405,11 +428,15 @@ export async function runSemanticTurnV2(input: {
         if (prior) { results.push({ index, result: prior.result }); continue; }
         if (seen.has(key) || questions.has(index)) continue;
         if (!meta || !normalizedInput || meta.category.startsWith('draft') && item.kind !== 'write'
-          || meta.name === 'public.lookup' && item.kind !== 'public') {
+          || meta.name === 'public.lookup' && item.kind !== 'public'
+          || misroutedReadTool(meta.name, itemText.get(index) ?? req.messageText)) {
           // Item 3/R-L2: whatever remains here after root-causing the common bindable-but-mismatched
           // shapes above (an ungrounded value, or a window field the picked tool cannot take) is a
           // planning-side outcome, not something the customer did wrong — never phrase it as a
           // permission problem, and never leave it `needs_user` with no real question to answer.
+          // Item 4: a tool this clause's own quoted text rules out (a reimbursement claim answered
+          // by the expense ledger tools, or a file-attempt explanation with no file/photo named)
+          // falls into this same honest terminal instead of executing.
           forced.set(index, { status: 'unsupported', reasonCode: 'TOOL_INPUT_NOT_AUTHORIZED', text: READ_UNAVAILABLE_TEXT[language] }); continue;
         }
         seen.add(key);

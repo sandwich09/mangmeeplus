@@ -443,3 +443,40 @@ describe('prepared simple-read lane — eligible deterministic answer (no model,
     }
   });
 });
+
+describe('item 1 (spec §2/§3 row 17, §8): the unsold-module scope policy runs before the fast lane', () => {
+  it('item 1: an unsold-module question is blocked even with an otherwise-valid, eligible prepared plan', async () => {
+    const { client, calls } = makeErp();
+    // v2Req's default plan/tool (sales.get_sales_summary) IS the real, otherwise-eligible sales
+    // read — proving the block is a scope decision, not a side effect of a malformed/ineligible plan.
+    const req = await v2Req({ userContext: { permissions: ['crm.report.read'], entitledFeatureKeys: ['expenses'] } as any });
+    const result = await new OrchestratorAgent(client, makeConfig()).run(req);
+    assert.equal(calls.length, 0, 'the fast lane must never run for an unsold-module clause');
+    assert.equal(fetchCalls, 0, 'no model call is needed either — a deterministic, code-side override');
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+    assert.ok(result.replyText.includes('แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่อง'), result.replyText);
+  });
+
+  it('item 1: the same sales question is NOT blocked once sales_documents is entitled', async () => {
+    const { client, calls } = makeErp();
+    const req = await v2Req({ userContext: { permissions: ['crm.report.read'], entitledFeatureKeys: ['expenses', 'sales_documents'] } as any });
+    const result = await new OrchestratorAgent(client, makeConfig()).run(req);
+    assert.deepEqual(calls, ['sales.get_sales_summary']);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+  });
+});
+
+describe('item 4 (spec §3 rows 3/11): the misrouted-tool guard runs before the fast lane too', () => {
+  it('a reimbursement-claim question never runs the fast lane through the expense ledger (eval T-093-b)', async () => {
+    const { client, calls } = makeErp();
+    const messageText = 'ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ';
+    const plan = rawPreparedSales({
+      intentPlan: { status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }] },
+      proposedCalls: [{ toolName: 'expense.list_recent', input: { paymentStatus: 'UNPAID' } }],
+    });
+    const req = await v2Req({ messageText, userContext: { permissions: ['expense.read', 'reimbursement.read_own'] } as any }, plan);
+    const result = await new OrchestratorAgent(client, makeConfig({ lineAiDeterministicResponseFamilies: ['expense.list_recent::single_metric'] })).run(req);
+    assert.equal(calls.length, 0, 'the fast lane must never answer a reimbursement claim question with the expense ledger');
+  });
+});
