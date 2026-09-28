@@ -260,12 +260,14 @@ const WELCOME_BACK_REPLY = '👋 ยินดีต้อนรับกลั�
  * Owner copy 2026-09-21: the first hello, sent IN FRONT of the door card to someone who has just
  * added the OA. The card alone answered "which door" without ever answering "what is this and what
  * does it cost", so a follower had to guess both. Verbatim Owner wording — edit only on their word.
+ * The business-package line follows the Owner's sign-off of 2026-09-27 (purchase-without-setup G20:
+ * the 1,999 package has the same menus as the others and adds ภ.ง.ด.53 and 50 ทวิ).
  */
 const FOLLOW_WELCOME_REPLY = 'สวัสดีค่ะ 🙏 ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\n'
   + 'น้องมั่งมีเป็นผู้ช่วยบัญชี AI สำหรับร้านค้าและ SME ค่ะ\n'
   + '📸 ถ่ายใบเสร็จส่งในแชทนี้ ระบบอ่านและบันทึกค่าใช้จ่ายให้เอง\n'
   + '📊 ถามยอดขาย ค่าใช้จ่าย สรุปบัญชี ได้ทุกเมื่อ\n'
-  + '🧾 แพ็กเกจธุรกิจออกเอกสารและภาษีได้ครบ รวม ภ.ง.ด.53 และ 50 ทวิ\n'
+  + '🧾 แพ็กเกจธุรกิจเพิ่มเอกสารภาษี ภ.ง.ด.53 และ 50 ทวิ\n'
   + '\n'
   + 'เริ่มใช้งานง่าย ๆ 3 ขั้นค่ะ 👇\n'
   + '1. กด "เปิดร้านใหม่" ในการ์ดด้านล่าง กรอกข้อมูลร้านไม่ถึง 2 นาที\n'
