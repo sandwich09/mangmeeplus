@@ -91,6 +91,14 @@ describe('LineHandoffLinkService text rewriting', () => {
     assert.equal(calls[0].targetPath, `/companies/${COMPANY}/expenses?status=DRAFT`);
   });
 
+  it('never stores the in-app-browser escape in a target, whichever door the path came in by (R-B1)', async () => {
+    const { service, calls } = makeService();
+    await service.wrapOutgoingLineContent(CTX, [text(`${WEB}/companies/${COMPANY}/billing?openExternalBrowser=1`)]);
+    assert.equal(calls[0].targetPath, `/companies/${COMPANY}/billing`);
+    assert.equal(await service.linkFor({ ...CTX, companyId: 'co-2' }, '/companies/co-2/dashboard?openExternalBrowser=1'), `${WEB}/l/tok2`);
+    assert.equal(calls[1].targetPath, '/companies/co-2/dashboard');
+  });
+
   it('mints one token per distinct URL and reuses it for a repeat of the same URL', async () => {
     const { service, calls } = makeService();
     const url = `${WEB}/companies/${COMPANY}/expenses/exp-1`;

@@ -54,6 +54,10 @@ test('DI capture outbox freezes real PostgreSQL source, replays after UNKNOWN/fl
       config.lineAiReliabilityV2Mode = 'off'; config.lineAiDeliveryPlanV2Enabled = false; accept = true;
       await ready(event.id); assert.equal((await notifier.execute()).pushed, 1);
       assert.equal(reads, 1); assert.deepEqual(sends[1].messages, sends[0].messages); assert.equal(sends[1].pushRetryKey, sends[0].pushRetryKey);
+      // R-B1 exit 4: every result link was escaped once when the plan froze; the replay adds nothing.
+      const wire = JSON.stringify(sends[0].messages);
+      assert.equal(wire.split('openExternalBrowser=1').length, wire.split('https://example.test/').length);
+      assert.ok(wire.includes('openExternalBrowser=1'));
       assert.equal((await client.outboxEvent.findUniqueOrThrow({ where: { id: event.id } })).status, 'PUBLISHED');
     });
     await t.test('source revision changes refuse saved output without another send', async () => {

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
 import { parseOutcomeMessages, type LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { isCompleteLineBusinessAnswerPresentation } from './line-business-card.logic';
 
@@ -74,7 +75,11 @@ function destination(auth: DeliveryAuthorizationV2): [string, string] {
   return auth.kind === 'PRIVATE' ? [auth.actor.channelId, auth.actor.recipientHash] : [auth.destination.channelId, auth.destination.targetHash];
 }
 function freeze(planId: string, index: number, messages: LineReplyMessage[], auth: DeliveryAuthorizationV2, variant: 'primary' | 'fallback'): FrozenRepresentation {
-  const wire = lineDeliveryWireMessages(messages);
+  // R-B1: a Flex `uri` leaves LINE's in-app browser from HERE, before wireHash/pushRetryKey, so the
+  // stored plan, LINE and every retry/drain/replay carry one byte sequence. Text parts were escaped
+  // through their item (buildLineDeliveryPlan) and must stay equal to their span — never rewrite them here.
+  const wire = lineDeliveryWireMessages(messages)
+    .map((message) => message.type === 'flex' ? withLineExternalBrowserLinks([message])[0]! : message);
   if (!parseOutcomeMessages(wire)) fail('PLAN_INVALID_WIRE');
   const wireHash = deliveryHash([...destination(auth), wire]);
   return { messages: wire, wireHash, pushRetryKey: lineDeliveryRetryKey(planId, index, variant, wireHash) };
@@ -105,12 +110,19 @@ export function buildLineDeliveryPlan(input: Omit<DeliveryPlanV2, 'v' | 'planId'
 }): DeliveryPlanV2 {
   const { controlMessage, preferredMessages, ...base } = input;
   const planId = lineDeliveryPlanId(input.producerKind, input.producerId);
-  const items = input.answer.items.map((item, i) => ({ ...item, id: `${planId}:item:${i}` }));
+  // R-B1: escape web links in the ITEM text so span coverage (validateLineDeliveryPlan) still
+  // rebuilds each item from its frozen parts. Uncapped per item (splitLineDeliveryText keeps every part
+  // ≤ 4,800); if the escaped total would pass the plan's 60,000 bound, every item stays as is.
+  const escapeAll = input.answer.items.reduce((n, item) => n + withLineExternalBrowserText(item.text, Number.POSITIVE_INFINITY).length, 0) <= 60_000;
+  const escape = (text: string) => escapeAll ? withLineExternalBrowserText(text, Number.POSITIVE_INFINITY) : text;
+  const items = input.answer.items.map((item, i) => ({ ...item, text: escape(item.text), id: `${planId}:item:${i}` }));
   if (preferredMessages && preferredMessages.length !== items.length) fail('PLAN_INVALID_PRESENTATION');
   const all: Array<{ primary: LineReplyMessage; fallback?: LineReplyMessage; span?: DeliveryPlanV2['batches'][number]['spans'][number] }> = [];
   for (const [i, item] of items.entries()) {
     const parts = splitLineDeliveryText(item.text), preferred = preferredMessages?.[i] ?? null;
-    const matches = preferred?.type === 'text' ? preferred.text === item.text : preferred?.type === 'flex' ? preferred.canonicalText === item.text : false;
+    // Same escaped form as `item.text`; the presentation proof below still reads the ORIGINAL object.
+    const matches = preferred?.type === 'text' ? escape(preferred.text) === item.text
+      : preferred?.type === 'flex' ? preferred.canonicalText !== undefined && escape(preferred.canonicalText) === item.text : false;
     const quickReply = matches && preferred && controlActions(preferred).length === 0 ? preferred.quickReply : undefined;
     if (preferred?.type === 'flex' && matches && isCompleteLineBusinessAnswerPresentation(preferred)
       && parts.length === 1 && controlActions(preferred).length === 0

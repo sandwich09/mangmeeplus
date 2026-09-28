@@ -4,7 +4,31 @@ import {
   LINE_RETRY_AFTER_MAX_SECONDS,
   buildTemporaryPasswordFlexMessage,
   parseLineRetryAfterSeconds,
+  pushLineMessages,
 } from './system-line-push';
+
+describe('pushLineMessages exit (R-B1)', () => {
+  it('opens web links outside LINE and keeps LIFF links and the caller retry key as they were', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ key: string | null; body: string }> = [];
+    try {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        calls.push({ key: new Headers(init?.headers).get('X-Line-Retry-Key'), body: String(init?.body) });
+        return new Response('', { status: 200 });
+      }) as typeof fetch;
+      const messages = [{ type: 'flex', altText: 'แพ็กเกจ', contents: { type: 'bubble', footer: { type: 'box', contents: [
+        { type: 'button', action: { type: 'uri', label: 'ดูแพ็กเกจ', uri: 'https://app/companies/c/billing' } },
+        { type: 'button', action: { type: 'uri', label: 'เลือกแพ็กเกจ', uri: 'https://liff.line.me/1-a/start' } },
+      ] } } }];
+      const snapshot = structuredClone(messages);
+      assert.deepEqual(await pushLineMessages({ token: 't', lineUserId: 'U1', messages, retryKey: 'key-1' }), { ok: true });
+      assert.equal(calls[0]!.key, 'key-1');
+      assert.match(calls[0]!.body, /"uri":"https:\/\/app\/companies\/c\/billing\?openExternalBrowser=1"/);
+      assert.match(calls[0]!.body, /"uri":"https:\/\/liff\.line\.me\/1-a\/start"/);
+      assert.deepEqual(messages, snapshot);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+});
 
 describe('temporary password flex card', () => {
   const card = buildTemporaryPasswordFlexMessage('Tmp_9xYz', ['ใช้ได้ถึง 27 ส.ค. 2569 21:55']) as any;
