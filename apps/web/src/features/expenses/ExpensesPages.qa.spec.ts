@@ -38,10 +38,12 @@ test('the quota branch raises the latch that paints the banner and disables the 
 });
 
 test('the quota banner offers the two things the shop can still do', () => {
-  // The receipt IS saved — only the read was refused — so the draft must stay reachable, and the
-  // upgrade link must go somewhere true. `/renew` is the P29 expired-term screen and this shop has
-  // not expired, so settings is the closest honest route until L-E ships the plan page.
-  assert.match(source, /href=\{`\/companies\/\$\{companyId\}\/settings`\}[^>]*>ขอเปลี่ยนแพ็กเกจ</);
+  // The receipt IS saved — only the read was refused — so the draft must stay reachable. G18: the
+  // package page is where the quota is bought; staff without company.plan.manage cannot buy, so
+  // they are told who can instead of being sent to settings, which just bounces them.
+  assert.match(source, /canManagePlan\s*\?\s*<Link href=\{`\/companies\/\$\{companyId\}\/billing`\}[^>]*>เปลี่ยนแพ็กเกจ</);
+  assert.match(source, /แจ้งเจ้าของร้านให้เปลี่ยนแพ็กเกจ/);
+  assert.doesNotMatch(source, /href=\{`\/companies\/\$\{companyId\}\/settings`\}[^>]*>ขอเปลี่ยนแพ็กเกจ/);
   assert.match(source, /blockedExpenseId && \(/);
   assert.match(source, /href=\{`\/companies\/\$\{companyId\}\/expenses\/\$\{blockedExpenseId\}`\}/);
   assert.doesNotMatch(source, /\/companies\/\$\{companyId\}\/renew/);

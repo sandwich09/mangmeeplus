@@ -4,9 +4,9 @@
 
 import {
   PLAN_TIER_PRESETS,
+  planTermLockReason,
   type CompanyPlanTermDto,
   type PlanTermDerivedState,
-  type PlanTermLockReason,
   type PlanTierKey,
 } from '@watchdog-bms/contracts';
 import { effectivePlanCapacity } from './plan-capacity';
@@ -60,24 +60,10 @@ export function isExpired(termEndsAt: Date, now: Date): boolean {
   return now.getTime() >= termEndsAt.getTime();
 }
 
-/**
- * Sales/locked-signup spec R2 — the ONE definition of why a locked shop is locked, read by the
- * plan-term notice, billing status and the LINE lock card so all three say the same sentence.
- *
- * A zero-length term nobody ever renewed is a shop provisioning opened and immediately locked
- * because there is no free trial any more (Owner 2026-09-20). Everything else that reached its
- * end had a real term behind it, including every shop still running the old 30-day trial.
- *
- * Deliberately NOT asking whether the term has expired: callers already know that (they hold
- * `derivedState`/`accessState`) and this stays a pure classification of the row.
- */
-export function planTermLockReason(
-  term: { termStartAt: Date; termEndsAt: Date; renewCount: number },
-): PlanTermLockReason {
-  return term.termEndsAt.getTime() <= term.termStartAt.getTime() && term.renewCount === 0
-    ? 'no_package'
-    : 'trial_ended';
-}
+// Sales/locked-signup spec R2 — moved to contracts/plan-term.ts (purchase-without-setup R-C7) so
+// the web can classify a term row without importing an API module. Re-exported here unchanged:
+// 6 call sites in this module still import `planTermLockReason` from this path.
+export { planTermLockReason };
 
 /**
  * Deepest ladder point the term has entered, or null when it is still outside the 7-day window.
@@ -135,6 +121,7 @@ export function toPlanTermDto(row: PlanTermRow, now: Date): CompanyPlanTermDto {
       : { warmupSlipLimit: row.warmupSlipLimit }),
     derivedState,
     daysLeft,
+    ...(derivedState === 'EXPIRED' ? { lockReason: planTermLockReason(row) } : {}),
     ...(row.billingReceiptAccountId ? {paidPlan:true,effectiveCapacity:effectivePlanCapacity(row,now)} : {}),
   };
 }

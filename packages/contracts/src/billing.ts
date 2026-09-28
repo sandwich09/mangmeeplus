@@ -1,4 +1,4 @@
-import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity, type PlanTermLockReason } from './plan-term.js';
+import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity, type PlanTermLockReason, type PlanTermState } from './plan-term.js';
 import { TIER_FEATURE_PRESETS } from './menu-entitlements.js';
 import type { SalesDealBaseTier, SalesDealCadence } from './sales.js';
 import type { BillingCompanyProfile } from './billing-company-profile.js';
@@ -272,6 +272,7 @@ export type BillingOperatorCompany = {
   tierKey: string | null; termEndsAt: string | null; companyStatus: string; pendingAttemptId: string | null;
   /** 'DEAL' (S43/D-P3-6): the contract attempt behind the current term carries a sales-deal snapshot. */
   source: 'TRIAL' | 'MANUAL' | 'STRIPE' | 'DEAL' | 'OTHER_BILLING' | 'NONE';
+  planState?: PlanTermState;
   effectiveCapacity?: CompanyPlanCapacity|null;
   paymentState: BillingStatus['paymentState']; applyState: BillingStatus['applyState']; accessState: BillingStatus['accessState']; documentState: BillingStatus['documentState'];
   graceEndsAt: string | null; cancelEffectiveAt: string | null; origin: 'web' | 'line' | null;

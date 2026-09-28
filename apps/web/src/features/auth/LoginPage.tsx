@@ -37,8 +37,9 @@ const LINE_NOTICE_TEXT: Record<string, string> = {
   // P12-3a: a scanned desktop QR landed on the approve page without a session.
   'qr-approve': 'เข้าสู่ระบบก่อน แล้วระบบจะพากลับไปหน้ายืนยันการเข้าสู่ระบบบนคอมพิวเตอร์',
   // P12-3b: a LINE deep-link handoff token was expired, already used, or no longer authorised.
-  // Not an error — `next` still carries the record, so signing in finishes the journey.
-  'handoff-expired': 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว กรุณาเข้าสู่ระบบเพื่อเปิดรายการนี้',
+  // Not an error — `next` still carries the record, so signing in finishes the journey. Seen only
+  // when LINE login is not available — otherwise R-B5's auto-start effect leaves before this shows.
+  'handoff-expired': 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว เข้าสู่ระบบด้วย LINE หรือรหัสผ่านเพื่อเปิดรายการนี้',
 };
 
 // P12-3a desktop QR login. The poll is deliberately slower than the API's per-IP poll bucket
@@ -174,6 +175,12 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   // Link mode: a verified LINE account with no linked user. One password sign-in, then the
   // page hands the browser straight back to LINE so the callback can link it.
   const linkMode = lineNotice === 'link-required';
+  // R-B5 ขยาย (purchase-without-setup §18.2): a LINE link — an expired handoff, or a plain URL that
+  // carries `channel=line` — must never end at a password form. With no session, LINE login starts
+  // by itself; the callback lands on `next`. Loop-safe: every LINE failure returns as
+  // `/login?line=failed|canceled|unavailable` WITHOUT `next`, which is not a LINE link any more.
+  const fromLineLink = !linkMode && (lineNotice === 'handoff-expired' || /[?&]channel=line(?:&|$)/.test(nextPath ?? ''));
+  const [autoStartingLine, setAutoStartingLine] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -214,6 +221,18 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // R-B5 ขยาย: a session-less arrival from a LINE link starts LINE login immediately — no password
+  // form flashes first. `checkingSession` gates this until refresh-cookie recovery has had its shot
+  // (a session that recovers navigates away above, never reaching here); `lineLoginState==='available'`
+  // gates it until the availability probe answers, so an `unavailable`/`error` outcome falls through
+  // to the ordinary form instead of stalling on a lane that will never redirect.
+  useEffect(() => {
+    if (checkingSession || !fromLineLink || accessState === 'CLOSED' || lineLoginState !== 'available') return;
+    setAutoStartingLine(true);
+    const reason = lineNotice === 'handoff-expired' ? 'handoff-expired' : 'channel-line';
+    window.location.assign(withLineExternalBrowser(`${lineStartUrl(nextPath ?? '/')}&from=${reason}&auto=1`, navigator.userAgent));
+  }, [checkingSession, fromLineLink, accessState, lineLoginState, lineNotice, nextPath]);
 
   const requestQr = useCallback(async () => {
     setQrImageUrl(null);
@@ -389,11 +408,21 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
     );
   }
 
+  if (autoStartingLine) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center p-4">
+        <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-8 text-center shadow-sm">
+          <p role="status" className="text-sm text-gray-500">{lineNotice === 'handoff-expired' ? 'ลิงก์นี้หมดอายุแล้ว กำลังเข้าสู่ระบบด้วย LINE ให้…' : 'กำลังเข้าสู่ระบบด้วย LINE…'}</p>
+        </div>
+      </div>
+    );
+  }
+
   // P12-3a: the qr-approve lane arrives from a phone that just scanned a LINE QR, so LINE is the
   // shortest way back — it leads and the password form drops below the divider. Every other lane
   // keeps the password form first. Both positions use the same button, so `next` still rides the
   // LINE round trip and still escapes the LINE in-app browser.
-  const qrApproveLead = lineNotice === 'qr-approve' && lineLoginAvailable;
+  const lineLeadLane = (lineNotice === 'qr-approve' || fromLineLink) && lineLoginAvailable;
 
   const orDivider = (
     <div className="mt-5 flex items-center gap-3">
@@ -414,6 +443,103 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
       <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-md bg-[#06C755] text-sm font-extrabold text-white">L</span>
       {locale === 'th' ? 'เข้าสู่ระบบด้วย LINE' : 'Sign in with LINE'}
     </button>
+  );
+
+  // R-B5 ขยาย: moved out of the JSX tree so a LINE-link arrival can fold it under a <details> below
+  // the LINE button instead of showing it first (§4 L3).
+  const passwordForm = (
+    <form onSubmit={handleSubmit} className="mt-6 space-y-4" noValidate>
+      <div>
+        <label htmlFor="login-identifier" className="mb-2 block text-[13.5px] font-semibold text-gray-700">
+          {t('auth.login.identifier', locale)}
+        </label>
+        <div className="relative">
+          <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7C8C82" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+          </span>
+          <input
+            id="login-identifier"
+            name="username"
+            autoComplete="username"
+            required
+            aria-invalid={fieldErrors.identifier ? true : undefined}
+            aria-describedby={fieldErrors.identifier ? 'login-identifier-error' : undefined}
+            value={identifier}
+            onChange={(event) => {
+              setIdentifier(event.target.value);
+              if (fieldErrors.identifier) setFieldErrors((prev) => ({ ...prev, identifier: undefined }));
+            }}
+            onBlur={(event) => setIdentifier(trimmed(event.target.value))}
+            className={`${heroInputClass} ${fieldErrors.identifier ? '!border-red-400' : ''}`}
+          />
+        </div>
+        {fieldErrors.identifier ? (
+          <p id="login-identifier-error" className="mt-1.5 text-sm font-medium text-red-700">{fieldErrors.identifier}</p>
+        ) : null}
+      </div>
+
+      <div>
+        <div className="mb-2 flex items-baseline justify-between">
+          <label htmlFor="login-password" className="text-[13.5px] font-semibold text-gray-700">
+            {t('auth.login.password', locale)}
+          </label>
+          <Link href="/forgot-password" className="text-[13px] font-semibold text-brand-700 hover:text-brand-800">
+            {t('auth.login.forgot', locale)}
+          </Link>
+        </div>
+        <div className="relative">
+          <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7C8C82" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+          </span>
+          <input
+            id="login-password"
+            name="password"
+            type={showPassword ? 'text' : 'password'}
+            autoComplete="current-password"
+            required
+            aria-invalid={fieldErrors.password ? true : undefined}
+            aria-describedby={fieldErrors.password ? 'login-password-error' : undefined}
+            value={password}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              if (fieldErrors.password) setFieldErrors((prev) => ({ ...prev, password: undefined }));
+            }}
+            className={`${heroInputClass} pr-11 ${fieldErrors.password ? '!border-red-400' : ''}`}
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword((visible) => !visible)}
+            aria-label={t(showPassword ? 'auth.login.hide_password' : 'auth.login.show_password', locale)}
+            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          >
+            {showPassword ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18 18 0 0 1-2.16 3.19M6.61 6.61A18 18 0 0 0 2 12s3 8 10 8a9 9 0 0 0 5.39-1.61" /><path d="M1 1l22 22" /></svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
+            )}
+          </button>
+        </div>
+        {fieldErrors.password ? (
+          <p id="login-password-error" className="mt-1.5 text-sm font-medium text-red-700">{fieldErrors.password}</p>
+        ) : null}
+      </div>
+
+      <label className="flex cursor-pointer items-center gap-2.5 pt-1 text-[13.5px] text-gray-700">
+        <input
+          type="checkbox"
+          name="remember"
+          checked={remember}
+          onChange={(event) => setRemember(event.target.checked)}
+          className="h-5 w-5 rounded-md border-gray-300 accent-brand-700"
+        />
+        {t('auth.login.remember', locale)}
+      </label>
+
+      <Button type="submit" size="lg" className="w-full !rounded-xl shadow-[0_12px_24px_rgba(21,128,61,.3)]" loading={loading}>
+        {linkMode ? 'เข้าสู่ระบบและเชื่อม LINE' : t('auth.login.submit', locale)}
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+      </Button>
+    </form>
   );
 
   return (
@@ -479,109 +605,23 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             </div>
           ) : null}
 
-          {qrApproveLead ? (
+          {lineLeadLane ? (
             <>
               {lineLoginButton}
               {orDivider}
             </>
           ) : null}
 
-          <form onSubmit={handleSubmit} className="mt-6 space-y-4" noValidate>
-            <div>
-              <label htmlFor="login-identifier" className="mb-2 block text-[13.5px] font-semibold text-gray-700">
-                {t('auth.login.identifier', locale)}
-              </label>
-              <div className="relative">
-                <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7C8C82" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
-                </span>
-                <input
-                  id="login-identifier"
-                  name="username"
-                  autoComplete="username"
-                  required
-                  aria-invalid={fieldErrors.identifier ? true : undefined}
-                  aria-describedby={fieldErrors.identifier ? 'login-identifier-error' : undefined}
-                  value={identifier}
-                  onChange={(event) => {
-                    setIdentifier(event.target.value);
-                    if (fieldErrors.identifier) setFieldErrors((prev) => ({ ...prev, identifier: undefined }));
-                  }}
-                  onBlur={(event) => setIdentifier(trimmed(event.target.value))}
-                  className={`${heroInputClass} ${fieldErrors.identifier ? '!border-red-400' : ''}`}
-                />
-              </div>
-              {fieldErrors.identifier ? (
-                <p id="login-identifier-error" className="mt-1.5 text-sm font-medium text-red-700">{fieldErrors.identifier}</p>
-              ) : null}
-            </div>
-
-            <div>
-              <div className="mb-2 flex items-baseline justify-between">
-                <label htmlFor="login-password" className="text-[13.5px] font-semibold text-gray-700">
-                  {t('auth.login.password', locale)}
-                </label>
-                <Link href="/forgot-password" className="text-[13px] font-semibold text-brand-700 hover:text-brand-800">
-                  {t('auth.login.forgot', locale)}
-                </Link>
-              </div>
-              <div className="relative">
-                <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7C8C82" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
-                </span>
-                <input
-                  id="login-password"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  required
-                  aria-invalid={fieldErrors.password ? true : undefined}
-                  aria-describedby={fieldErrors.password ? 'login-password-error' : undefined}
-                  value={password}
-                  onChange={(event) => {
-                    setPassword(event.target.value);
-                    if (fieldErrors.password) setFieldErrors((prev) => ({ ...prev, password: undefined }));
-                  }}
-                  className={`${heroInputClass} pr-11 ${fieldErrors.password ? '!border-red-400' : ''}`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((visible) => !visible)}
-                  aria-label={t(showPassword ? 'auth.login.hide_password' : 'auth.login.show_password', locale)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  {showPassword ? (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18 18 0 0 1-2.16 3.19M6.61 6.61A18 18 0 0 0 2 12s3 8 10 8a9 9 0 0 0 5.39-1.61" /><path d="M1 1l22 22" /></svg>
-                  ) : (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
-                  )}
-                </button>
-              </div>
-              {fieldErrors.password ? (
-                <p id="login-password-error" className="mt-1.5 text-sm font-medium text-red-700">{fieldErrors.password}</p>
-              ) : null}
-            </div>
-
-            <label className="flex cursor-pointer items-center gap-2.5 pt-1 text-[13.5px] text-gray-700">
-              <input
-                type="checkbox"
-                name="remember"
-                checked={remember}
-                onChange={(event) => setRemember(event.target.checked)}
-                className="h-5 w-5 rounded-md border-gray-300 accent-brand-700"
-              />
-              {t('auth.login.remember', locale)}
-            </label>
-
-            <Button type="submit" size="lg" className="w-full !rounded-xl shadow-[0_12px_24px_rgba(21,128,61,.3)]" loading={loading}>
-              {linkMode ? 'เข้าสู่ระบบและเชื่อม LINE' : t('auth.login.submit', locale)}
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-            </Button>
-          </form>
+          {fromLineLink && lineLoginAvailable ? (
+            <details className="mt-6">
+              <summary className="min-h-11 cursor-pointer list-none text-center text-sm font-semibold text-gray-600">เข้าสู่ระบบด้วยรหัสผ่านแทน</summary>
+              {passwordForm}
+            </details>
+          ) : passwordForm}
 
           {!linkMode && <><Link href={nextPath ? `/email-access?next=${encodeURIComponent(nextPath)}` : "/email-access"} className="mt-3 block rounded-xl border px-4 py-3 text-center text-base font-semibold text-brand-700">{locale === 'th' ? 'เข้าสู่ระบบด้วยรหัส OTP' : 'Sign in with an email code'}</Link><p className="mt-2 text-center text-sm text-gray-500">{locale === 'th' ? 'รับรหัส 6 หลักทางอีเมล เพื่อใช้แทนรหัสผ่าน' : 'Get a 6-digit code by email instead of using a password.'}</p></>}
 
-          {qrApproveLead ? null : (
+          {lineLeadLane ? null : (
             <>
               {orDivider}
               {lineLoginButton}

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { planTermStateLabel } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -17,6 +18,9 @@ const STATUS_CLASS = {
   SUSPENDED: 'border-red-200 bg-red-50 text-red-700',
 };
 const LINE_LABEL = { LINKED: 'เชื่อมแล้ว', UNLINKED: 'ยังไม่เชื่อม', NEEDS_COMPANY_SELECTION: 'รอเลือกบริษัท', UNKNOWN: 'ไม่ทราบสถานะ' };
+// R-C6/R-C7: a term-locked shop reads by WHY it is locked, never the admin "ปิดใช้งาน" label — that
+// stays reserved for a shop an admin actually disabled by hand.
+const rowLabel = (c: PartnerCompanySummaryDto) => c.planState === 'NO_PACKAGE' || c.planState === 'EXPIRED' ? planTermStateLabel(c.planState) : STATUS_LABEL[c.status];
 
 export default function PartnerListPage() {
   const searchParams = useSearchParams();
@@ -127,7 +131,7 @@ export default function PartnerListPage() {
                   <tbody className="divide-y divide-gray-100">
                     {items.map(company => <tr key={company.id} className="hover:bg-gray-50">
                       <td className="break-words px-4 py-4 sm:px-6"><p className="font-medium text-gray-900">{company.name}</p>{company.registeredName && company.registeredName !== company.name && <p className="mt-1 text-sm text-gray-500">{company.registeredName}</p>}</td>
-                      <td className="px-2 py-4"><span className={`inline-flex rounded-lg border px-2 py-1 text-sm ${STATUS_CLASS[company.status]}`}>{STATUS_LABEL[company.status]}</span></td>
+                      <td className="px-2 py-4"><span className={`inline-flex rounded-lg border px-2 py-1 text-sm ${STATUS_CLASS[company.status]}`}>{rowLabel(company)}</span></td>
                       <td className="hidden px-2 py-4 text-sm text-gray-600 md:table-cell">{LINE_LABEL[company.lineContextHealth]}</td>
                       <td className="hidden px-2 py-4 text-sm text-gray-600 lg:table-cell">{formatThaiDate(company.createdAt)}</td>
                       <td className="px-2 py-4"><Link href={`/system/partners/${company.id}`} className="inline-flex min-h-11 items-center rounded px-1 text-sm font-medium text-brand-800 underline-offset-4 hover:underline focus-visible:outline-brand-700" aria-label={`ดูรายละเอียด ${company.name}`}>ดูรายละเอียด</Link></td>

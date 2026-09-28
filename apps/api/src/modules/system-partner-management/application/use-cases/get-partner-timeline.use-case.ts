@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   PLAN_TIER_PRESETS,
+  planTermLockReason,
   type PartnerTimelineDto,
   type PartnerTimelineEntryDto,
   type PlanTierKey,
@@ -82,6 +83,7 @@ export class GetPartnerTimelineUseCase {
         select: {
           tierKey: true, monthlySlipLimit: true, warmupUntil: true,
           warmupSlipLimit: true, termEndsAt: true,
+          termStartAt: true, renewCount: true, termDisabledAt: true,
         },
       }),
     ]);
@@ -152,13 +154,16 @@ export class GetPartnerTimelineUseCase {
     term: {
       tierKey: string; monthlySlipLimit: number; warmupUntil: Date | null;
       warmupSlipLimit: number | null; termEndsAt: Date;
+      termStartAt: Date; renewCount: number; termDisabledAt: Date | null;
     } | null,
     now: Date,
   ): Promise<{label:string;detail:string} | null> {
     const all=(detail:string)=>({label:'ตอนนี้ AI ยังทำงานให้ร้านไม่ได้',detail});
     const chat=(detail:string)=>({label:'ตอนนี้ยังคุยกับ AI ไม่ได้',detail});
     const receipt=(detail:string)=>({label:'ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้',detail});
-    if(companyStatus!=='ACTIVE')return all(companyStatus==='DISABLED'?'ร้านถูกพักใช้งาน':companyStatus==='ARCHIVED'?'ร้านถูกเก็บเข้าประวัติแล้ว':'ร้านยังไม่พร้อมใช้งาน');
+    if(companyStatus!=='ACTIVE')return all(companyStatus==='DISABLED'
+      ? (term?.termDisabledAt ? (planTermLockReason(term)==='no_package' ? 'ยังไม่มีแพ็กเกจ ลูกค้าเลือกซื้อเองได้จากหน้าแพ็กเกจ' : 'แพ็กเกจหมดอายุแล้ว') : 'ร้านถูกพักใช้งานโดยผู้ดูแล')
+      : companyStatus==='ARCHIVED'?'ร้านถูกเก็บเข้าประวัติแล้ว':'ร้านยังไม่พร้อมใช้งาน');
     if(term&&term.termEndsAt<=now)return all('แพ็กเกจหมดอายุแล้ว');
     const channelId=this.config.lineMessagingChannelId;
     if(!channelId)return {label:'ยังใช้ AI ผ่าน LINE ไม่ได้',detail:'ยังไม่ได้ตั้งค่าการเชื่อมต่อ LINE ของระบบ'};

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PartnerLifecycleTransitionUseCase } from './partner-lifecycle-transition.use-case';
 
 function makeCmd(target: string, companyStatus = 'ACTIVE') {
@@ -13,7 +13,7 @@ function makeCmd(target: string, companyStatus = 'ACTIVE') {
   };
 }
 
-function makePrisma(opts: { companyFound?: boolean; currentStatus?: string } = {}) {
+function makePrisma(opts: { companyFound?: boolean; currentStatus?: string; term?: { termStartAt: Date; termEndsAt: Date; renewCount: number } | null } = {}) {
   const found = opts.companyFound ?? true;
   const status = opts.currentStatus ?? 'ACTIVE';
   let auditArgs: any = null;
@@ -36,7 +36,9 @@ function makePrisma(opts: { companyFound?: boolean; currentStatus?: string } = {
       $transaction: async (fn: (tx: any) => Promise<any>) => {
         const tx = {
           $queryRaw: async () => [],
-          companyPlanTerm: { updateMany: async () => ({ count: 0 }) },
+          // R-C6 (purchase-without-setup): the guard in `execute()` reads the term before it lets a
+          // human actor flip a shop to ACTIVE.
+          companyPlanTerm: { updateMany: async () => ({ count: 0 }), findUnique: async () => opts.term ?? null },
           company: prisma.client.company,
           auditLog: prisma.client.auditLog,
         };
@@ -122,5 +124,40 @@ describe('PartnerLifecycleTransitionUseCase', () => {
     await uc.execute({ companyId: 'co-1', targetStatus: 'ARCHIVED', requestingAdminUserId: 'admin-1', requestId: 'req-1' });
     const args = prisma.updateArgs();
     assert.ok(args.data.archivedAt instanceof Date);
+  });
+
+  // R-C6 (purchase-without-setup §18.2): a human "เปิดใช้งานบริษัท" on a shop the TERM locked would
+  // just be undone by the sweep within ~5 minutes — the console must refuse it up front instead.
+  describe('R-C6 term-lock guard on human → ACTIVE', () => {
+    const expiredTerm = { termStartAt: new Date(Date.now() - 60_000), termEndsAt: new Date(Date.now() - 1000), renewCount: 0 };
+    const runningTerm = { termStartAt: new Date(Date.now() - 60_000), termEndsAt: new Date(Date.now() + 60_000), renewCount: 0 };
+
+    it('refuses an admin actor reactivating a shop whose term already ended', async () => {
+      const prisma = makePrisma({ currentStatus: 'DISABLED', term: expiredTerm });
+      const uc = new PartnerLifecycleTransitionUseCase(prisma);
+      await assert.rejects(
+        () => uc.execute({ companyId: 'co-1', targetStatus: 'ACTIVE', requestingAdminUserId: 'admin-1', requestId: 'req-1' }),
+        (err: unknown) => {
+          assert.ok(err instanceof ConflictException);
+          assert.equal((err as any).getResponse().code, 'partner_activation_term_locked');
+          return true;
+        },
+      );
+      assert.equal(prisma.updateArgs(), null, 'company.update must not run once the guard refuses');
+    });
+
+    it('lets the reconciler (no human actor) reactivate a term-expired shop — that is its own recovery path', async () => {
+      const prisma = makePrisma({ currentStatus: 'DISABLED', term: expiredTerm });
+      const uc = new PartnerLifecycleTransitionUseCase(prisma);
+      const result = await uc.execute({ companyId: 'co-1', targetStatus: 'ACTIVE', requestingAdminUserId: null, requestId: 'req-1' });
+      assert.equal(result.status, 'ACTIVE');
+    });
+
+    it('lets an admin reactivate a shop whose term has not ended yet', async () => {
+      const prisma = makePrisma({ currentStatus: 'DISABLED', term: runningTerm });
+      const uc = new PartnerLifecycleTransitionUseCase(prisma);
+      const result = await uc.execute({ companyId: 'co-1', targetStatus: 'ACTIVE', requestingAdminUserId: 'admin-1', requestId: 'req-1' });
+      assert.equal(result.status, 'ACTIVE');
+    });
   });
 });

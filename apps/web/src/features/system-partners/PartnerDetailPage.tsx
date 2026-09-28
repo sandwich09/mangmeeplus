@@ -7,6 +7,8 @@ import {
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
   PLAN_TIER_PRESETS,
   partnerAdjustmentReason,
+  planTermState,
+  planTermStateLabel,
   SALES_DEAL_REASON_MAX,
   signupDiscoveryLabel,
   companyBusinessTypeLabel,
@@ -128,7 +130,6 @@ import {
 import {
   parseDaysInput,
   parseLimitInput,
-  planTermDisabledChip,
   planTermLimitsText,
   planTermStatusChip,
   renewedEndsAt,
@@ -2582,6 +2583,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
   const adminDisabled = companyStatus === 'DISABLED' && !term?.termDisabledAt;
   const previewDays = parseDaysInput(renewDays);
   const warmupActive = Boolean(term?.warmupUntil && new Date(term.warmupUntil).getTime() > Date.now());
+  const termState = term ? planTermState(term, new Date(), companyStatus) : null;
 
   return (
     <><SectionCard title="แพ็กเกจและอายุการใช้งาน">
@@ -2611,9 +2613,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
           {term !== null && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
-                <PlanTermBadge chip={planTermStatusChip(term)} />
-                {planTermDisabledChip(term) && <PlanTermBadge chip={planTermDisabledChip(term)!} />}
-                <span className="text-sm font-medium text-gray-900">{PLAN_TIER_PRESETS[term.tierKey].labelTh}</span>
+                <PlanTermBadge chip={planTermStatusChip(term, companyStatus)} />
+                {termState !== 'NO_PACKAGE' && <span className="text-sm font-medium text-gray-900">{PLAN_TIER_PRESETS[term.tierKey].labelTh}</span>}
               </div>
 
               <p className="text-sm text-gray-700">{planTermLimitsText(term)}</p>
@@ -2632,8 +2633,17 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
               )}
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <ReadOnlyField label="เริ่มใช้งาน" value={formatDate(term.termStartAt)} />
-                <ReadOnlyField label="ครบกำหนด" value={formatDate(term.termEndsAt)} />
+                {termState === 'NO_PACKAGE' ? (
+                  <>
+                    <ReadOnlyField label="แพ็กเกจ" value="ยังไม่ได้เลือกแพ็กเกจ ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ" />
+                    <ReadOnlyField label="เปิดร้านเมื่อ" value={formatDate(term.termStartAt)} />
+                  </>
+                ) : (
+                  <>
+                    <ReadOnlyField label="เริ่มใช้งาน" value={formatDate(term.termStartAt)} />
+                    <ReadOnlyField label="ครบกำหนด" value={formatDate(term.termEndsAt)} />
+                  </>
+                )}
                 <ReadOnlyField label="แจ้งเตือนล่วงหน้า" value={`${term.warningDays} วัน`} />
                 <ReadOnlyField
                   label="ต่ออายุแล้ว"
@@ -2769,7 +2779,13 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                 : `ครบกำหนด: ${formatDate(term.termEndsAt)} → ${formatDate(renewedEndsAt(term.termEndsAt, previewDays).toISOString())}`}
             </p>
             <label className="block text-base">เหตุผลที่ต่ออายุ<textarea aria-label="เหตุผลที่ต่ออายุ" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={renewReason} disabled={renewing||uncertain} onChange={e=>setRenewReason(e.target.value)} /></label>
-            <p className="text-base text-gray-600">ต่ออายุการใช้งานโดยผู้ดูแล ไม่ใช่การซื้อแพ็กเกจ ไม่มีการเรียกเก็บเงินหรือเพิ่มใบเสร็จจากรายการนี้</p>
+            {termState === 'NO_PACKAGE' ? (
+              <div role="note" className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                ร้านนี้ยังไม่มีแพ็กเกจ ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ การต่ออายุ = ให้วันใช้งานฟรี และเปิดสิทธิ์ทดลองใช้: ให้ AI อ่านใบเสร็จ 15 ใบ/เดือน, เครดิตแชตเริ่มต้น, เมนูแพ็กเกจเริ่มต้น, ใบที่อ่านไปยกยอดได้ไม่เกิน 15 ใบเมื่อซื้อครั้งแรก และหน้าจอของลูกค้าจะเรียกช่วงนี้ว่า "ช่วงทดลอง" — ไม่มีการเรียกเก็บเงิน
+              </div>
+            ) : (
+              <p className="text-base text-gray-600">ต่ออายุการใช้งานโดยผู้ดูแล ไม่ใช่การซื้อแพ็กเกจ ไม่มีการเรียกเก็บเงินหรือเพิ่มใบเสร็จจากรายการนี้</p>
+            )}
             {adminDisabled && (
               <div className="rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
                 บริษัทนี้ถูกปิดโดยแอดมิน การต่ออายุจะไม่เปิดใช้งานอัตโนมัติ
@@ -3133,14 +3149,18 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
   // DISABLED/ARCHIVED companies are metadata-frozen (API enforces the same rule):
   // only lifecycle transitions stay available.
   const fieldsLocked = currentStatus === 'DISABLED' || currentStatus === 'ARCHIVED';
+  // R-C6/R-C7: a term-locked shop must never read as an admin "ปิดใช้งาน" — the state chip and the
+  // frozen-fields notice both need to say WHY, and the lifecycle "เปิดใช้งานบริษัท" button (which the
+  // sweep would just undo again within ~5 minutes) must not appear for it.
+  const lockedState = detail.planState === 'NO_PACKAGE' || detail.planState === 'EXPIRED' ? detail.planState : null;
 
   return (
     <main className="mx-auto max-w-7xl space-y-6 break-words p-4 text-base sm:p-6 lg:p-8">
       {lifecycleAction&&<LifecycleConfirmModal action={lifecycleAction} loading={lifecycleLoading} onConfirm={handleLifecycleConfirm} onCancel={()=>setLifecycleAction(null)}/>}
       <BackLink href="/system/partners" label="กลับรายชื่อบริษัท"/>
-      <header className="space-y-3"><div className="flex flex-wrap items-center gap-3"><h1 className="text-2xl font-semibold text-gray-900">{detail.name}</h1><StatusBadge status={currentStatus}/></div>{detail.brandName&&<p className="text-gray-600">ชื่อร้าน / แบรนด์: {detail.brandName}</p>}<p className="text-gray-600">เลือกเรื่องที่ต้องการดูแล ข้อมูลทั่วไปอยู่ในภาพรวม</p></header>
+      <header className="space-y-3"><div className="flex flex-wrap items-center gap-3"><h1 className="text-2xl font-semibold text-gray-900">{detail.name}</h1><StatusBadge status={currentStatus}/>{lockedState && <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">{planTermStateLabel(lockedState)}</span>}</div>{detail.brandName&&<p className="text-gray-600">ชื่อร้าน / แบรนด์: {detail.brandName}</p>}<p className="text-gray-600">เลือกเรื่องที่ต้องการดูแล ข้อมูลทั่วไปอยู่ในภาพรวม</p></header>
       <nav aria-label="หมวดข้อมูลบริษัท" className="flex flex-wrap gap-x-5 border-b border-gray-200">{COMPANY_VIEWS.map(item=><Link key={item.key} href={viewUrl(item.key)} scroll={false} aria-current={view===item.key?'page':undefined} className={`inline-flex min-h-14 items-center border-b-2 px-1 font-semibold ${view===item.key?'border-brand-700 text-brand-800':'border-transparent text-gray-600 hover:text-gray-900'}`} onClick={event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();window.history.pushState(null,'',viewUrl(item.key));}}>{item.label}</Link>)}</nav>
-      {fieldsLocked&&<p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">บริษัทนี้{STATUS_LABEL[currentStatus]} ข้อมูลบริษัท ฟีเจอร์ และ AI จึงอ่านได้อย่างเดียว เปลี่ยนสถานะได้ในหมวดภาพรวม</p>}
+      {fieldsLocked&&<p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">บริษัทนี้{lockedState ? (lockedState === 'NO_PACKAGE' ? 'ยังไม่มีแพ็กเกจ' : 'แพ็กเกจหมดอายุ') : STATUS_LABEL[currentStatus]} ข้อมูลบริษัท ฟีเจอร์ และ AI จึงอ่านได้อย่างเดียว {lockedState ? 'ลูกค้าซื้อแพ็กเกจเองได้จากหน้าแพ็กเกจ หรือต่ออายุได้ในหมวดแพ็กเกจ' : 'เปลี่ยนสถานะได้ในหมวดภาพรวม'}</p>}
       {opened('overview')&&<section hidden={view!=='overview'} aria-label="ภาพรวมบริษัท" className="space-y-5">
         <SectionCard title="ข้อมูลบริษัท">
           <div className="grid gap-4 sm:grid-cols-3">
@@ -3210,7 +3230,7 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
 
         <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">สถานะจด VAT ของบริษัท</summary><VatRegistrationField companyId={companyId} value={detail.vatRegistration} disabled={fieldsLocked} showToast={showToast} onSaved={load}/></details>
         <SectionCard title="การเชื่อมบัญชี LINE"><div className="flex flex-wrap items-center gap-3"><LineContextBadge health={detail.lineContextHealth}/><p className="text-gray-600">สถานะการผูก LINE ของสมาชิกบริษัทนี้</p></div><p className="text-sm text-gray-600">หากสมาชิกอยู่หลายบริษัท อาจต้องเลือกบริษัทก่อนใช้ผ่าน LINE ดูสมาชิกแต่ละคนได้ในหมวดสมาชิก</p></SectionCard>
-        <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เปิด–ปิดการใช้งานบริษัท</summary><div className="space-y-4 pt-3"><p className="text-gray-600">การปิดใช้งานและเก็บถาวรมีผลกับสมาชิกทุกคน ต้องยืนยันก่อนเปลี่ยนสถานะ</p><div className="flex flex-wrap gap-3">{currentStatus!=='ACTIVE'&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('ACTIVE')}>เปิดใช้งานบริษัท</button>}{currentStatus==='ACTIVE'&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('DISABLED')}>ปิดใช้งานบริษัท</button>}{currentStatus!=='ARCHIVED'&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('ARCHIVED')}>เก็บบริษัทถาวร</button>}</div></div></details>
+        <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เปิด–ปิดการใช้งานบริษัท</summary><div className="space-y-4 pt-3"><p className="text-gray-600">การปิดใช้งานและเก็บถาวรมีผลกับสมาชิกทุกคน ต้องยืนยันก่อนเปลี่ยนสถานะ</p><div className="flex flex-wrap gap-3">{currentStatus!=='ACTIVE'&&!lockedState&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('ACTIVE')}>เปิดใช้งานบริษัท</button>}{currentStatus==='ACTIVE'&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('DISABLED')}>ปิดใช้งานบริษัท</button>}{currentStatus!=='ARCHIVED'&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('ARCHIVED')}>เก็บบริษัทถาวร</button>}</div>{lockedState&&<p className="text-sm text-gray-600">ร้านนี้ถูกพักเพราะ{lockedState==='NO_PACKAGE'?'ยังไม่มีแพ็กเกจ':'แพ็กเกจหมดอายุ'} เปิดใช้งานจากที่นี่ไม่ได้ (ระบบจะพักกลับอัตโนมัติ) ลูกค้าซื้อแพ็กเกจเองได้จากหน้าแพ็กเกจ หรือกดต่ออายุในหมวดแพ็กเกจ</p>}</div></details>
         <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="min-h-11 cursor-pointer py-2 text-sm text-gray-600">ข้อมูลอ้างอิงบริษัท</summary><dl className="grid gap-4 py-3 sm:grid-cols-3"><ReadOnlyField label="รหัสบริษัท" value={detail.id}/><ReadOnlyField label="วันที่เปิดใช้งาน" value={formatDate(detail.activatedAt)}/><ReadOnlyField label="วันที่ปิดใช้งาน" value={formatDate(detail.disabledAt)}/></dl></details>
       </section>}
       {opened('members')&&<section hidden={view!=='members'} aria-label="สมาชิกบริษัท" className="space-y-5"><p className="text-gray-600">ตรวจสมาชิกและการผูก LINE เลือกดำเนินการเฉพาะคนที่ต้องการดูแล</p><MembersSection companyId={companyId} canManageMembers={canManageMembers} showToast={showToast}/></section>}

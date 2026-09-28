@@ -1,7 +1,7 @@
 // P10 Flow B — public auto-register + admin review queue contracts.
 // Spec: docs/specs/mangmee-external-signup-contract-spec-th.md (amendment v2 2026-08-30).
 import type { PackageChangeDealOffer, PackageChangeRequestKind } from './sales.js';
-import type { PlanTermLockReason } from './plan-term.js';
+import type { PlanTermLockReason, PlanTermState } from './plan-term.js';
 
 /** Self-reported discovery, separate from a signup rail or an influencer referral code. */
 export const SIGNUP_DISCOVERY_SOURCE_OPTIONS = [
@@ -464,6 +464,9 @@ export type AdminPackageChangeItemDto = PackageChangeRequestDto & {
   /** Paid sources use the reviewed control; a legacy direct approval cannot change purchased fields. */
   billingReviewPath?: string;
   requestedByDisplayName?: string;
+  /** R-C6: approving a request cannot unlock a shop; the queue must show the lock first. */
+  planState?: PlanTermState;
+  lockReason?: PlanTermLockReason;
 };
 
 export type AdminPackageChangeQueueDto = { items: AdminPackageChangeItemDto[] };

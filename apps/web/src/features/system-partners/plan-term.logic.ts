@@ -2,28 +2,23 @@
 // The renewal date is computed here as well as on the server: the dialog has to show the admin
 // the exact end date they are about to commit to before the request goes out.
 
-import type { CompanyPlanTermDto } from '@watchdog-bms/contracts';
+import { planTermState, planTermStateLabel, type CompanyPlanTermDto } from '@watchdog-bms/contracts';
 
 export type PlanTermChipTone = 'neutral' | 'warning' | 'danger' | 'success';
 export type PlanTermChip = { label: string; tone: PlanTermChipTone };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Green while healthy, yellow inside the warning window, red once the term has run out. */
-export function planTermStatusChip(term: CompanyPlanTermDto): PlanTermChip {
-  if (term.derivedState === 'EXPIRED') return { label: 'หมดอายุแล้ว', tone: 'danger' };
-  return {
-    label: `เหลือ ${term.daysLeft} วัน`,
-    tone: term.derivedState === 'WARNING' ? 'warning' : 'success',
-  };
-}
-
 /**
- * Only set when the expiry sweep disabled the company. An admin-disabled company has no
- * `termDisabledAt`, and renewing it must not read as if it will come back on its own (§4C).
+ * Green while healthy, yellow inside the warning window, red once locked — for any of the three
+ * reasons a shop can be locked (R-C7): a human hold, no package ever bought, or a term that ran
+ * out. One chip instead of the old pair (status chip + a separate "พักการใช้งานแล้ว" chip), so a
+ * `no_package` shop never shows three labels ("หมดอายุแล้ว" + "พักการใช้งานแล้ว" + "ทดลองใช้ฟรี") at once.
  */
-export function planTermDisabledChip(term: CompanyPlanTermDto): PlanTermChip | null {
-  return term.termDisabledAt ? { label: 'พักการใช้งานแล้ว', tone: 'danger' } : null;
+export function planTermStatusChip(term: CompanyPlanTermDto, companyStatus: string, now = new Date()): PlanTermChip {
+  const state = planTermState(term, now, companyStatus);
+  if (state === 'ADMIN_HOLD' || state === 'NO_PACKAGE' || state === 'EXPIRED') return { label: planTermStateLabel(state), tone: 'danger' };
+  return { label: `เหลือ ${term.daysLeft} วัน`, tone: term.derivedState === 'WARNING' ? 'warning' : 'success' };
 }
 
 export function planTermLimitsText(term: {

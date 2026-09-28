@@ -4,6 +4,7 @@ import type { CivilDate } from './civil-date.js';
 import type { CompanyLegalAddress, VatRegistrationStatus } from './company-tax-identity.js';
 import type { CompanyBusinessType } from './company-business-type.js';
 import type { SignupDiscoverySource } from './external-signup.js';
+import type { PlanTermLockReason, PlanTermState, PlanTierKey } from './plan-term.js';
 import type { SalesReferralSource } from './sales.js';
 
 export type PartnerCompanyStatus = 'ACTIVE' | 'DISABLED' | 'ARCHIVED' | 'SUSPENDED';
@@ -62,6 +63,11 @@ export type PartnerCompanySummaryDto = {
   enabledFeatureKeys: string[];
   configuredModelId?: string;
   lineContextHealth: LineContextHealth;
+  /** R-C6/R-C7: the term's own state, so a term-locked shop never reads as "ปิดใช้งาน". */
+  planState?: PlanTermState;
+  lockReason?: PlanTermLockReason;
+  tierKey?: PlanTierKey;
+  termEndsAt?: string;
 };
 
 export type PaginatedPartnersDto = {
@@ -118,6 +124,8 @@ export type PartnerCompanyDetailDto = {
    * refused (`company_entitlement_normalization_pending`). The package screen renders read-only.
    */
   entitlementNormalizationPending: boolean;
+  planState?: PlanTermState;
+  lockReason?: PlanTermLockReason;
 };
 
 export type PartnerMembershipStatus = 'ACTIVE' | 'INVITED' | 'SUSPENDED' | 'DISABLED';

@@ -36,7 +36,7 @@ import {
   LINE_ID_TOKEN_MAX_LENGTH,
   LINE_ID_TOKEN_PATTERN,
 } from '../../../common/security/liff-page.security';
-import { CURRENT_LEGAL_DOCUMENTS, legalAcceptanceStatements, SIGNUP_DISCOVERY_SOURCE_OPTIONS, SIGNUP_DISCOVERY_OTHER_MAX } from '@watchdog-bms/contracts';
+import { CURRENT_LEGAL_DOCUMENTS, legalAcceptanceStatements, planTermLockReason, planTermState, SIGNUP_DISCOVERY_SOURCE_OPTIONS, SIGNUP_DISCOVERY_OTHER_MAX } from '@watchdog-bms/contracts';
 import { currentLegalRelease } from '../application/legal-acceptance.service';
 // The one place the signup form's length limit is decided; the input must not drift from it.
 import { LINE_SIGNUP_COMPANY_NAME_MAX } from '../../external-signup/domain/line-signup.logic';
@@ -1083,7 +1083,7 @@ export class AuthController {
       },
       select: {
         companyId: true,
-        company: { select: { name: true, status: true, planTerm: { select: { termEndsAt: true } } } },
+        company: { select: { name: true, status: true, planTerm: { select: { tierKey: true, termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } } } },
         roles: {
           where: { role: { status: 'ACTIVE' } },
           select: { role: { select: { key: true, permissions: { select: { permission: { select: { key: true } } } } } } },
@@ -1102,6 +1102,9 @@ export class AuthController {
         expired:
           m.company.status === 'DISABLED' ||
           (m.company.planTerm ? m.company.planTerm.termEndsAt.getTime() <= now : false),
+        // R-C5/R-C7: the picker and the switcher say WHY the shop is locked, from the one helper.
+        planState: planTermState(m.company.planTerm, new Date(now), m.company.status),
+        ...(m.company.planTerm && m.company.planTerm.termEndsAt.getTime() <= now ? { lockReason: planTermLockReason(m.company.planTerm) } : {}),
       })),
     };
   }

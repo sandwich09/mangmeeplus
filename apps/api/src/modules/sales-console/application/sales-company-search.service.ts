@@ -8,38 +8,22 @@
 import { Injectable } from '@nestjs/common';
 import {
   billingOffer,
+  planTermState,
   SALES_COMPANY_SEARCH_LIMIT,
   SALES_COMPANY_SEARCH_MIN_CHARS,
   SALES_DEAL_BASE_TIERS,
+  type PlanTermStateInput,
   type PlanTierKey,
   type SalesDealBaseTier,
-  type SalesCompanyAccessState,
   type SalesCompanySearchDto,
   type SalesCompanySearchItem,
   type SalesDealStatus,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AuditService } from '../../audit/application/audit.service';
-import { planTermLockReason } from '../../system-partner-management/domain/logic/plan-term.logic';
 import { PLATFORM_SEAT_EXEMPT_ROLE } from '../../system-partner-management/application/plan-term-limit';
 import { DEAL_KIND, derivedDealStatus } from '../domain/sales-deal.logic';
 import { salesBadRequest, salesNotFound } from './sales-context';
-
-type TermRow = {
-  tierKey: string; termStartAt: Date; termEndsAt: Date; renewCount: number; termDisabledAt: Date | null;
-} | null;
-
-/**
- * P29 term semantics, read-only (spec R2). A company with NO term row is legacy/grandfathered and
- * reads ACTIVE — the same "fail open" the limit gates use, so this view never accuses an old shop
- * of being locked.
- */
-export function accessStateOf(term: TermRow, now: Date): SalesCompanyAccessState {
-  if (!term) return 'ACTIVE';
-  if (planTermLockReason(term) === 'no_package') return 'NO_PACKAGE';
-  if (term.termEndsAt.getTime() <= now.getTime() || term.termDisabledAt) return 'EXPIRED';
-  return term.tierKey === 'FREE_TRIAL_15' ? 'TRIAL' : 'ACTIVE';
-}
 
 /**
  * The catalog list price the deal form compares against (S31 warning), per month.
@@ -132,7 +116,7 @@ export class SalesCompanySearchService {
   }
 
   private async decorate(
-    companies: ReadonlyArray<{ id: string; name: string; addressJson: unknown; createdAt: Date; planTerm: TermRow }>,
+    companies: ReadonlyArray<{ id: string; name: string; addressJson: unknown; createdAt: Date; planTerm: PlanTermStateInput | null }>,
     now: Date,
   ): Promise<SalesCompanySearchItem[]> {
     if (companies.length === 0) return [];
@@ -163,7 +147,7 @@ export class SalesCompanySearchService {
       return {
         companyId: company.id,
         name: company.name,
-        accessState: accessStateOf(company.planTerm, now),
+        accessState: planTermState(company.planTerm, now),
         tierKey: (company.planTerm?.tierKey as PlanTierKey | undefined) ?? null,
         province: provinceOf(company.addressJson),
         createdAt: company.createdAt.toISOString(),
@@ -171,7 +155,7 @@ export class SalesCompanySearchService {
         openDealStatus: stillOpen ? status : null,
         branchCount: usage.branchCount,
         employeeCount: usage.employeeCount,
-        catalogMonthlyPriceSatang: catalogMonthlyPriceFor(company.planTerm?.tierKey),
+        catalogMonthlyPriceSatang: catalogMonthlyPriceFor(company.planTerm?.tierKey ?? undefined),
       };
     });
   }
