@@ -579,6 +579,17 @@ describe('IntentRouterAgent – conversation read memory (spec §4 R-M3/R-M4)', 
     assert.match(prompt, /copy that SAME period and its other filters .* from the newest matching conversationContext\.recentReads entry/);
   });
 
+  // N2 (tuning-8, T-107-b): reverses B4h (tuning-5b) — dropping categoryName/vendorName left the
+  // router's own call an unfiltered ranking and nothing else, so "ทำไมค่าเดินทางเดือนนี้พุ่งขนาดนี้คะ"
+  // never looked inside ค่าเดินทาง. semantic-turn-v2.ts's H2 already adds the unfiltered ranking sibling
+  // whenever a name-filtered expense.get_breakdown call exists, so the router keeping the name now lets
+  // the answer cover both the drivers and the rank.
+  it('tuning-8 (T-107-b): a why-question about one named category or vendor keeps that name in the compact decisionV1 lane', () => {
+    const prompt = intakeRouterSystemPrompt({}, false, true);
+    assert.match(prompt, /A ทำไม\/why question about one named category or vendor KEEPS that categoryName\/vendorName exactly as the user typed it/);
+    assert.doesNotMatch(prompt, /never add that categoryId\/vendorName/);
+  });
+
   it('item 3 (spec §3 row 8): the compact simpleRead guidance covers an ordinal reference to expense.get_detail/reimbursement.get_detail', () => {
     const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true, false,
       new Set(['expense.get_detail::single_metric', 'reimbursement.get_detail::single_metric']));
