@@ -12,6 +12,7 @@ import { AuthModule } from '../auth/auth.module';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
 import { DashboardNotificationsModule } from '../dashboard-notifications/dashboard-notifications.module';
 import { BillingNotificationsService } from './application/billing-notifications.service';
+import { BillingRecipientOtpService } from './application/billing-recipient-otp.service';
 import { BillingService } from './application/billing.service';
 import { BillingReconcilerService } from './application/billing-reconciler.service';
 import { BillingAdminService } from './application/billing-admin.service';
@@ -26,7 +27,7 @@ import { BillingAdminController, BillingCatalogController, BillingController, Bi
 @Module({
   imports: [SystemPartnerManagementModule, AuthModule, DataModelCoreModule, DashboardNotificationsModule],
   controllers: [BillingAdminController, BillingCatalogController, BillingController, BillingInternalController, StripeEventsController],
-  providers: [BillingPlanAdjustmentsService, BillingReceiptAdjustmentsService, BillingBatchesService, BillingCheckoutExpiryService, BillingSettlementService, BillingRefundsService, BillingReadinessService, BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingReconcilerService, SalesDealPriceService, StripeClient, RedisRateLimitService,
+  providers: [BillingPlanAdjustmentsService, BillingReceiptAdjustmentsService, BillingBatchesService, BillingCheckoutExpiryService, BillingSettlementService, BillingRefundsService, BillingReadinessService, BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingRecipientOtpService, BillingReconcilerService, SalesDealPriceService, StripeClient, RedisRateLimitService,
     { provide: STRIPE_FETCH, useFactory: () => globalThis.fetch.bind(globalThis) }],
   // D-P5-3: the sales console approves the deal; the per-company Stripe Price is a billing write,
   // so its one writer lives here and is lent out rather than reimplemented next door.
