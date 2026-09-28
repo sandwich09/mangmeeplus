@@ -177,6 +177,22 @@ describe('compact LINE intake decision', () => {
     assert.deepEqual(reasons, []);
   });
 
+  // N1 (tuning-8, T-068-a run 8): both router attempts on this turn ("รายการที่ 3 คือร้านอะไรครับ")
+  // produced a correct decision the decoder still rejected — attempt 1 sent "taskRef": null.
+  it('N1 (T-068-a): treats a null taskRef as absent, never as malformed', async () => {
+    const text = 'รายการที่ 3 คือร้านอะไรครับ';
+    const created = await fixture(text);
+    const reasons: string[] = [];
+    const parsed = parseLineIntakeCompactDecision({
+      raw: { subrequests: [{ kind: 'read', goal: text, sources: [{ part: 0, whole: true }], filters: {}, taskRef: null }] },
+      messageText: text, inputEvidence: created.inputEvidence,
+      enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+      onReject: (reason) => reasons.push(reason),
+    });
+    assert.deepEqual(reasons, []);
+    assert.equal(parsed?.semanticSubrequests[0]?.taskRef, undefined);
+  });
+
   it('strictly rejects malformed or conflicting compact source modes', async () => {
     const text = 'ดูค่าใช้จ่าย';
     const created = await fixture(text);
@@ -186,6 +202,34 @@ describe('compact LINE intake decision', () => {
         messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
       });
       assert.equal(parsed, undefined);
+    }
+  });
+
+  // N1 (tuning-8, T-068-a run 8 attempt 2): the router's second attempt sent {"part":"part-0"} instead
+  // of {"part":0} on an otherwise-correct decision.
+  it('N1 (T-068-a): accepts a "part-N" string source naming an existing part, as the number N', async () => {
+    const text = 'รายการที่ 3 คือร้านอะไรครับ';
+    const created = await fixture(text);
+    const parsed = parseLineIntakeCompactDecision({
+      raw: { subrequests: [{ kind: 'read', goal: text, sources: [{ part: 'part-0', whole: true }], filters: {} }] },
+      messageText: text, inputEvidence: created.inputEvidence,
+      enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+    });
+    assert.deepEqual(parsed?.semanticSubrequests[0]?.evidenceRefs, [{
+      partId: 'part-0', startUtf16: 0, endUtf16: text.length, rawSha256: created.inputEvidence.parts[0]!.rawSha256,
+    }]);
+  });
+
+  it('N1: still rejects a "part-N" source string naming a part that does not exist, and any other non-numeric shape', async () => {
+    const text = 'ดูค่าใช้จ่าย';
+    const created = await fixture(text);
+    for (const part of ['part-9', 'part-0x', 'partition-0', 'part-', 'part0', 0.5]) {
+      const parsed = parseLineIntakeCompactDecision({
+        raw: { subrequests: [{ kind: 'read', goal: text, sources: [{ part, whole: true }], filters: {} }] },
+        messageText: text, inputEvidence: created.inputEvidence,
+        enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+      });
+      assert.equal(parsed, undefined, JSON.stringify(part));
     }
   });
 

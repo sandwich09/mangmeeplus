@@ -91,12 +91,27 @@ function exactKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>)
   return Object.keys(value).every((key) => allowed.has(key));
 }
 
+// N1 (tuning-8, T-068-a run 8 attempt 2): the router sent {"part":"part-0"} instead of {"part":0} on an
+// otherwise-correct decision — accept that exact "part-N" string shape as the number N, still gated by
+// the same evidence.parts lookup below, so any other string (a typo, a different prefix, a name for a
+// part that does not exist) stays invalid exactly as today.
+const PART_REF_PATTERN = /^part-(\d+)$/;
+
+function sourcePartIndex(value: unknown): number | undefined {
+  if (Number.isSafeInteger(value)) return value as number;
+  if (typeof value !== 'string') return undefined;
+  const match = PART_REF_PATTERN.exec(value);
+  return match ? Number(match[1]) : undefined;
+}
+
 function sourceRefs(raw: unknown, evidence: LineAiInputEvidenceV2): LineAiSemanticSubrequestV2['evidenceRefs'] | undefined {
   if (!Array.isArray(raw) || raw.length < 1 || raw.length > 8) return undefined;
   const refs: NonNullable<LineAiSemanticSubrequestV2['evidenceRefs']> = [];
   for (const value of raw) {
-    if (!plainObject(value) || !exactKeys(value, SOURCE_KEYS) || !Number.isSafeInteger(value['part'])) return undefined;
-    const part = evidence.parts[Number(value['part'])];
+    if (!plainObject(value) || !exactKeys(value, SOURCE_KEYS)) return undefined;
+    const partIndex = sourcePartIndex(value['part']);
+    if (partIndex === undefined) return undefined;
+    const part = evidence.parts[partIndex];
     if (!part) return undefined;
     const hasWhole = Object.prototype.hasOwnProperty.call(value, 'whole');
     const hasQuote = Object.prototype.hasOwnProperty.call(value, 'quote');
@@ -379,7 +394,12 @@ export function parseLineIntakeCompactDecision(input: {
     // taskId string instead of the {taskId,taskRevision,subrequestIndex} object. Verify every field's
     // presence and type here (not just the key set) so that specific mistake gets its own reason code
     // rather than falling through to the shared parseLineAiSemanticSubrequests's generic rejection.
-    const taskRef = item['taskRef'];
+    // N1 (tuning-8, T-068-a run 8 attempt 1): the router sent "taskRef": null on an otherwise-correct
+    // decision — a null taskRef means the same thing as an absent one (no continuation), so normalize it
+    // here before the malformed-shape check below, which must still reject any other non-object, missing
+    // field, extra key, or wrong-typed field exactly as today.
+    const rawTaskRef = item['taskRef'];
+    const taskRef = rawTaskRef === null ? undefined : rawTaskRef;
     if (taskRef !== undefined && (!plainObject(taskRef) || !exactKeys(taskRef, TASK_REF_KEYS)
       || typeof taskRef['taskId'] !== 'string' || !taskRef['taskId']
       || typeof taskRef['taskRevision'] !== 'number' || !Number.isFinite(taskRef['taskRevision'])
