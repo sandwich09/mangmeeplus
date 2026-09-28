@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
-  "sourceRevision": "15eb588b848ca80d6e1bcafd3d06b8bcb0aa9b16",
-  "checkoutBranch": "claude/mangmee-ai-advisor-20260927",
+  "sourceRevision": "ca073cef6f1ccfadb4aa09e2547bd80b312c12d2",
+  "checkoutBranch": "claude/mangmee-ai-advisor-fixes4a",
   "checkoutDirty": false,
   "sourceHashes": [
     {
@@ -33,7 +33,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
-      "sha256": "29921ca6ae01c271a9ac37a938c2eb822d02fb0cbac85e87da1214c53ca9b5c6"
+      "sha256": "f1e7bc892d8215cb056a0345fad8ebd9c08ad862d4f1ea5b36bc7513794b8766"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-reimbursement-draft.service.ts",
@@ -77,7 +77,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-reimbursement-tools.use-case.ts",
-      "sha256": "b2bb66b5c1600102714145a5636fbd5b04ec858a7bfb18807c9fc9fd8d03e317"
+      "sha256": "bf33e494ef21fc97a0a1f49602dc14c7e4f1fc592511b7a8854f268d1c61d421"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-report-tools.use-case.ts",
@@ -89,7 +89,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts",
-      "sha256": "aa6570ba43e8108528605a352a89de2d50db46cff95534dc3e73a711713d77f7"
+      "sha256": "6f896921e0f25586642524f7d773d08d429a717cf58a193c16ea2e4916d2160a"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-workflow-tools.use-case.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-27T23:02:08.095Z",
-  "manifestDigest": "589afeba62ceaa80fbbe88f9de5b1d4d561de29bbef274b0bb3d223871961169"
+  "generatedAt": "2026-09-28T00:22:38.570Z",
+  "manifestDigest": "e84ec0ffe9266d6003c06ba4184707b6c14b429d187ea6e57daa6517796ef534"
 }
