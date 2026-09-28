@@ -722,7 +722,20 @@ function dailyClosingDetail(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makeDailyClosingPrisma() {
+// F3 (tuning-6b): the caller's own scoped branch catalog (`dailyClosingCtx.branchIds` defaults to
+// ['b1']) — `resolveExpenseBranchFilter` reads `prisma.client.branch.findMany` directly (never inside
+// the $transaction below), same fake shape as `erp-expense-list-recent.use-case.spec.ts`'s fakePrisma.
+function makeDailyClosingPrisma(branches: Array<{ id: string; name: string; code?: string }> = [{ id: 'b1', name: 'สาขา 1', code: 'BR1' }]) {
+  const branchRows = branches.map((b) => ({ id: b.id, name: b.name, code: b.code ?? null }));
+  const allowedBranches = (where: any) => branchRows.filter((b) => {
+    if (where?.companyId && where.companyId !== 'c1') return false;
+    if (where?.status && where.status !== 'ACTIVE') return false;
+    if (where?.id?.in && !where.id.in.includes(b.id)) return false;
+    if (where?.name !== undefined && where.name !== b.name) return false;
+    if (where?.OR && !where.OR.some((term: any) => (term.id !== undefined && term.id === b.id)
+      || (term.code !== undefined && term.code === b.code) || (term.name !== undefined && term.name === b.name))) return false;
+    return true;
+  });
   const groupResults = [
     [
       { currency: 'THB', paymentStatus: 'PAID', _count: { _all: 1 }, _sum: { grandTotalAmount: '100.0000', paidAmount: '100.0000', outstandingAmount: '0' } },
@@ -764,19 +777,55 @@ function makeDailyClosingPrisma() {
         calls.isolationLevel = options.isolationLevel;
         return fn(db);
       },
+      branch: {
+        findMany: async ({ where, take }: any) => allowedBranches(where).slice(0, take),
+      },
     },
   };
   return { prisma: prisma as any, calls };
 }
 
 describe('ExpenseGetDailyClosingTool', () => {
-  it('fails before querying for missing permission, invalid date, or out-of-scope branch', async () => {
+  it('fails before querying for missing permission or invalid date', async () => {
     const { prisma, calls } = makeDailyClosingPrisma();
     const tool = new ExpenseGetDailyClosingTool(prisma);
     assert.equal((await tool.execute({ ...dailyClosingCtx, permissions: [] }, { date: '2026-08-16' })).status, 'forbidden');
     assert.equal((await tool.execute(dailyClosingCtx, { date: '2026-02-30' })).errorCode, 'INVALID_DATE');
-    assert.equal((await tool.execute(dailyClosingCtx, { date: '2026-08-16', branchId: 'b2' })).status, 'forbidden');
     assert.equal(calls.groupBy.length, 0);
+  });
+
+  // F3 (tuning-6b, T-105-b/run4): branch resolution now reuses resolveExpenseBranchFilter, the same
+  // lookup expense.list_recent/get_breakdown already use — a bare id-equality check here used to
+  // return 'forbidden' for a real branch name/number the model copied verbatim from the user.
+  describe('branch resolution (F3, tuning-6b)', () => {
+    it('resolves a bare number to the caller\'s own scoped branch, instead of a bare forbidden', async () => {
+      const { prisma, calls } = makeDailyClosingPrisma([{ id: 'b1', name: 'สาขา 2', code: 'BR2' }]);
+      const result = await new ExpenseGetDailyClosingTool(prisma).execute(dailyClosingCtx, { date: '2026-08-16', branchId: '2' });
+      assert.equal(result.status, 'ok');
+      assert.deepEqual((result.data as any).scope, { kind: 'selected_branch', branchId: 'b1' });
+      assert.ok(calls.groupBy.length > 0, 'the transaction runs once the branch resolves');
+    });
+
+    it('reports an unresolved branch instead of silently querying a nonexistent id and reporting zero (unrestricted caller)', async () => {
+      const { prisma, calls } = makeDailyClosingPrisma([{ id: 'b1', name: 'สาขา 1', code: 'BR1' }]);
+      const unrestrictedCtx = { ...dailyClosingCtx, branchIds: undefined };
+      const result = await new ExpenseGetDailyClosingTool(prisma).execute(unrestrictedCtx, { date: '2026-08-16', branchId: 'สาขา 99' });
+      assert.equal(result.status, 'ok');
+      assert.equal((result.data as any).branchUnresolved, 'สาขา 99');
+      assert.equal(calls.groupBy.length, 0, 'never queries a branch it could not resolve');
+    });
+
+    it('reports an out-of-scope branch honestly instead of a bare forbidden (T-105-b/run4 exact case)', async () => {
+      const { prisma, calls } = makeDailyClosingPrisma([
+        { id: 'b1', name: 'สาขา 1', code: 'BR1' },
+        { id: 'b2', name: 'สาขา 2', code: 'BR2' },
+      ]);
+      const result = await new ExpenseGetDailyClosingTool(prisma).execute(dailyClosingCtx, { date: '2026-08-16', branchId: 'สาขา 2' });
+      assert.equal(result.status, 'ok');
+      assert.equal((result.data as any).branchOutOfScope, 'สาขา 2');
+      assert.equal(calls.groupBy.length, 0);
+      assert.ok(result.sourceRefs.length > 0, 'an honest boundary is still a grounded answer, not a bare error');
+    });
   });
 
   // Item 1 (spec R-A1 row 18, eval: 15 turns): this tool computes its own own/related/company

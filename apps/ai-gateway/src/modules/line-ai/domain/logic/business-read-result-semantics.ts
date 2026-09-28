@@ -74,12 +74,14 @@ function expenseNameResolutionIssueFromData(data: UnknownRecord | undefined): Ex
   return undefined;
 }
 
-/** Same lookup across every read this turn's expense.list_recent/expense.get_breakdown outputs
- *  carried, classic-path or fast-lane alike. */
+/** Same lookup across every read this turn's expense.list_recent/expense.get_breakdown/
+ *  expense.get_daily_closing outputs carried, classic-path or fast-lane alike. F3 (tuning-6b): the
+ *  daily closing tool now resolves its branchId the same way (resolveExpenseBranchFilter), so its
+ *  ambiguous/unresolved/out-of-scope result needs the same honest reply, not the generic fallback. */
 export function expenseNameResolutionIssue(outputs: SpecialistOutput[]): ExpenseNameResolutionIssue | undefined {
   for (const output of outputs) {
     for (const entry of output.toolData ?? []) {
-      if (entry.tool !== 'expense.list_recent' && entry.tool !== 'expense.get_breakdown') continue;
+      if (entry.tool !== 'expense.list_recent' && entry.tool !== 'expense.get_breakdown' && entry.tool !== 'expense.get_daily_closing') continue;
       const data = entry.data && typeof entry.data === 'object' && !Array.isArray(entry.data) ? entry.data as UnknownRecord : undefined;
       const issue = expenseNameResolutionIssueFromData(data);
       if (issue) return issue;

@@ -777,9 +777,16 @@ function formatExpenseDailyClosingSingleMetric(output: SpecialistOutput, ctx: Pr
     : (english ? `On ${thaiAbbrDate(day, true) ?? day}` : ctx.periodLabel ? ctx.periodLabel : `วันที่ ${thaiAbbrDate(day, false) ?? day}`);
 
   // Honest zero: a day with nothing recorded says so, and states no amount the tool did not return.
-  const headline = english
-    ? `${dayPhrase}: ${plural(count, 'expense record')}${totals ? `, total ${totals}` : ''}`
-    : `${dayPhrase} มีค่าใช้จ่าย ${groupThousands(String(count))} รายการ${totals ? ` รวม ${totals}` : ''}`;
+  // F5 (tuning-6b, T-102-a/T-017-a): "มีค่าใช้จ่าย 0 รายการ" reads as "nothing happened today" even
+  // when submittedToday/pendingReview below are non-zero — this count is expenses DATED today, never
+  // what was submitted today. State that explicitly on the zero case; keep the >0 shape unchanged.
+  const headline = count === 0
+    ? (english
+      ? `${dayPhrase}: no expense records dated ${isToday ? 'today' : 'that day'}`
+      : `${dayPhrase} ยังไม่มีรายการค่าใช้จ่ายที่ลงวันที่${isToday ? 'วันนี้' : 'วันนั้น'}`)
+    : (english
+      ? `${dayPhrase}: ${plural(count, 'expense record')}${totals ? `, total ${totals}` : ''}`
+      : `${dayPhrase} มีค่าใช้จ่าย ${groupThousands(String(count))} รายการ${totals ? ` รวม ${totals}` : ''}`);
   const settledText = paid || outstanding
     ? (english
       ? `\n${[paid && `Paid ${paid}`, outstanding && `Unpaid ${outstanding}`].filter(Boolean).join(' · ')}`

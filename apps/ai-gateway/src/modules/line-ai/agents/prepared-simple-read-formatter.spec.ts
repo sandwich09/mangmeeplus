@@ -708,11 +708,31 @@ describe('F3 expense.get_daily_closing::single_metric — ค่าใช้จ�
     const r = formatPreparedSimpleRead(DAILY, dailyOutput(emptyDay()), TH);
     assert.equal(r.kind, 'answer');
     if (r.kind !== 'answer') return;
-    assert.match(r.replyText, /^วันนี้ \(26 ส\.ค\.\) มีค่าใช้จ่าย 0 รายการ\n/);
+    // F5 (tuning-6b, T-102-a/T-017-a): "มีค่าใช้จ่าย 0 รายการ" read as "nothing happened today" — say
+    // explicitly that this counts expenses DATED today, never what was submitted.
+    assert.match(r.replyText, /^วันนี้ \(26 ส\.ค\.\) ยังไม่มีรายการค่าใช้จ่ายที่ลงวันที่วันนี้\n/);
+    assert.doesNotMatch(r.replyText, /มีค่าใช้จ่าย 0 รายการ/);
     assert.doesNotMatch(r.replyText, /รวม |จ่ายแล้ว|ยังไม่ได้จ่าย|รอตรวจหลักฐาน/);
     // C5: every checklist section is zero on this fixture, so no bullet (•) renders at all.
     assert.doesNotMatch(r.replyText, /•|ส่งเข้ามาวันนี้|รอตรวจสอบ|ครบกำหนดจ่าย|เกินกำหนดจ่าย|ค้างจ่าย/);
     assert.match(r.replyText, /ไม่ใช่ยอดเงินเข้าออกธนาคาร\)$/, 'the honesty line is required even on an empty day');
+  });
+
+  // F5 (tuning-6b, T-102-a exact fixture): zero expenses DATED today must not read as "nothing
+  // happened today" when the checklist right below it shows real same-day activity.
+  it('states the zero headline as "no records dated today", not a bare zero, even when the checklist below has real counts', () => {
+    const r = formatPreparedSimpleRead(DAILY, dailyOutput(dailyData({
+      occurredToday: { totals: [], paid: [], outstanding: [], items: bounded(0) },
+      submittedToday: { count: 32 },
+      pendingReview: { count: 12, items: bounded(12) },
+      unscheduledOutstanding: { totals: [{ currency: 'THB', count: 22, total: '37843.0000' }], items: bounded(22) },
+      evidenceBlockers: { count: 28, items: bounded(28) },
+    })), TH);
+    assert.equal(r.kind, 'answer');
+    if (r.kind !== 'answer') return;
+    assert.match(r.replyText, /^วันนี้ \(26 ส\.ค\.\) ยังไม่มีรายการค่าใช้จ่ายที่ลงวันที่วันนี้\n/);
+    assert.doesNotMatch(r.replyText, /มีค่าใช้จ่าย 0 รายการ/);
+    assert.match(r.replyText, /• ส่งเข้ามาวันนี้ 32 รายการ/);
   });
 
   it('states each currency the tool returned and never adds currencies together', () => {

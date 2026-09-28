@@ -243,4 +243,21 @@ describe('reimbursement related-view ABAC', () => {
       OR: [{ branchId: { in: ['branch-1'] } }, { branchId: null }],
     });
   });
+
+  // F2 (tuning-6b): rows created in the same instant (seeded data, bulk imports) came back in
+  // arbitrary order under a createdAt-only sort, so the LINE approval queue's "1./2." numbering
+  // ("ใบที่สอง") could point at a different claim between two asks of the same question.
+  it('breaks a createdAt tie with a stable id order, shared by the web approval list', async () => {
+    let capturedOrderBy: any;
+    const prisma = {
+      client: {
+        reimbursementRequest: {
+          findMany: async ({ orderBy }: any) => { capturedOrderBy = orderBy; return []; },
+        },
+      },
+    };
+    const repo = new PrismaReimbursementRepository(prisma as any, {} as any);
+    await repo.listRequests({ companyId: 'company-1' });
+    assert.deepEqual(capturedOrderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
+  });
 });
