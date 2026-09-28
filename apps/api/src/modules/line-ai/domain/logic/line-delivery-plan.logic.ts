@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { parseOutcomeMessages, type LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import { isCompleteLineBusinessAnswerPresentation } from './line-business-card.logic';
 
 export const LINE_DELIVERY_PLAN_VERSION = 2;
 export const LINE_DELIVERY_PLAN_SENTINEL = [{ type: 'text' as const, text: 'ผลลัพธ์นี้ใช้การส่งรุ่นใหม่' }];
@@ -99,26 +100,45 @@ function matchingControl(message: LineReplyMessage, control: DeliveryControlV2):
 }
 export function buildLineDeliveryPlan(input: Omit<DeliveryPlanV2, 'v' | 'planId' | 'batches' | 'answer'> & {
   answer: Omit<DeliveryPlanV2['answer'], 'items'> & { items: Array<Omit<DeliveryItem, 'id'>> };
+  preferredMessages?: Array<LineReplyMessage | null>;
   controlMessage?: LineReplyMessage;
 }): DeliveryPlanV2 {
-  const { controlMessage, ...base } = input;
+  const { controlMessage, preferredMessages, ...base } = input;
   const planId = lineDeliveryPlanId(input.producerKind, input.producerId);
   const items = input.answer.items.map((item, i) => ({ ...item, id: `${planId}:item:${i}` }));
-  const all: Array<{ message: LineReplyMessage; span?: DeliveryPlanV2['batches'][number]['spans'][number] }> = [];
-  for (const item of items) for (const part of splitLineDeliveryText(item.text)) all.push({ message: { type: 'text', text: part.text }, span: { itemId: item.id, start: part.start, end: part.end, messageIndex: 0 } });
+  if (preferredMessages && preferredMessages.length !== items.length) fail('PLAN_INVALID_PRESENTATION');
+  const all: Array<{ primary: LineReplyMessage; fallback?: LineReplyMessage; span?: DeliveryPlanV2['batches'][number]['spans'][number] }> = [];
+  for (const [i, item] of items.entries()) {
+    const parts = splitLineDeliveryText(item.text), preferred = preferredMessages?.[i] ?? null;
+    const matches = preferred?.type === 'text' ? preferred.text === item.text : preferred?.type === 'flex' ? preferred.canonicalText === item.text : false;
+    const quickReply = matches && preferred && controlActions(preferred).length === 0 ? preferred.quickReply : undefined;
+    if (preferred?.type === 'flex' && matches && isCompleteLineBusinessAnswerPresentation(preferred)
+      && parts.length === 1 && controlActions(preferred).length === 0
+      && parseOutcomeMessages(lineDeliveryWireMessages([preferred]))) {
+      const part = parts[0]!;
+      all.push({ primary: preferred, fallback: { type: 'text', text: part.text, ...(quickReply ? { quickReply } : {}) },
+        span: { itemId: item.id, start: part.start, end: part.end, messageIndex: 0 } });
+      continue;
+    }
+    for (const [partIndex, part] of parts.entries()) all.push({
+      primary: { type: 'text', text: part.text, ...(partIndex === parts.length - 1 && quickReply ? { quickReply } : {}) },
+      span: { itemId: item.id, start: part.start, end: part.end, messageIndex: 0 },
+    });
+  }
   if (!!input.control !== !!controlMessage) fail('PLAN_CONTROL_MISSING');
-  if (controlMessage) all.push({ message: controlMessage });
+  if (controlMessage) all.push({ primary: controlMessage, fallback: { type: 'text', text: 'ตรวจสอบรายละเอียดทั้งหมดด้านบนก่อนยืนยัน',
+    quickReply: { items: controlActions(controlMessage).map(action => ({ type: 'action' as const, action })) } } });
   if (!all.length || all.length > 15) fail('PLAN_TOO_LARGE');
   const batches: DeliveryPlanV2['batches'] = [];
   for (let offset = 0; offset < all.length; offset += 5) {
     const index = batches.length, part = all.slice(offset, offset + 5);
-    const messages = part.map(p => p.message);
+    const messages = part.map(p => p.primary);
+    const fallbackMessages = part.some(p => p.fallback) ? part.map(p => p.fallback ?? p.primary) : null;
     if (all.length > 10 && index === 1) {
-      const last = messages[messages.length - 1]!;
-      messages[messages.length - 1] = { ...last, quickReply: { items: [{ type: 'action', action: { type: 'postback', label: 'ยังมีคำตอบต่อ · อ่านต่อ', data: `action=line_answer_continue&plan=${planId}&next=2` } }] } };
+      const quickReply = { items: [{ type: 'action' as const, action: { type: 'postback' as const, label: 'ยังมีคำตอบต่อ · อ่านต่อ', data: `action=line_answer_continue&plan=${planId}&next=2` } }] };
+      messages[messages.length - 1] = { ...messages[messages.length - 1]!, quickReply };
+      if (fallbackMessages) fallbackMessages[fallbackMessages.length - 1] = { ...fallbackMessages[fallbackMessages.length - 1]!, quickReply };
     }
-    const fallbackMessages = controlMessage && part.some(p => p.message === controlMessage) ? messages.map(message => message === controlMessage
-      ? { type: 'text' as const, text: 'ตรวจสอบรายละเอียดทั้งหมดด้านบนก่อนยืนยัน', quickReply: { items: controlActions(message).map(action => ({ type: 'action' as const, action })) } } : message) : null;
     batches.push({ id: `${planId}:batch:${index}`, index, spans: part.flatMap((p, messageIndex) => p.span ? [{ ...p.span, messageIndex }] : []), primary: freeze(planId, index, messages, input.authorization, 'primary'), fallback: fallbackMessages ? freeze(planId, index, fallbackMessages, input.authorization, 'fallback') : null });
   }
   const plan: DeliveryPlanV2 = { ...base, v: 2, planId, answer: { ...input.answer, items }, batches };
@@ -157,9 +177,10 @@ export function validateLineDeliveryPlan(plan: DeliveryPlanV2): void {
     for (const span of batch.spans) {
       const item = plan.answer.items.find(x => x.id === span.itemId), prior = covered.get(span.itemId);
       if (!item || prior === undefined || span.start !== prior.length || !Number.isSafeInteger(span.end) || span.end <= span.start || span.end > item.text.length) fail('PLAN_INCOMPLETE_COVERAGE');
-      const expected = item.text.slice(span.start, span.end), message = batch.primary.messages[span.messageIndex];
-      if (!message || message.type !== 'text' || message.text !== expected || ![...segmenter.segment(item.text)].some(s => s.index + s.segment.length === span.end)) fail('PLAN_INCOMPLETE_COVERAGE');
-      if (batch.fallback) { const fallback = batch.fallback.messages[span.messageIndex]; if (fallback?.type !== 'text' || fallback.text !== expected) fail('PLAN_INVALID_FALLBACK'); }
+      const expected = item.text.slice(span.start, span.end), message = batch.primary.messages[span.messageIndex], fallback = batch.fallback?.messages[span.messageIndex];
+      if (!message || message.type === 'image' || (message.type === 'text' ? message.text !== expected : fallback?.type !== 'text' || fallback.text !== expected)
+        || ![...segmenter.segment(item.text)].some(s => s.index + s.segment.length === span.end)) fail('PLAN_INCOMPLETE_COVERAGE');
+      if (batch.fallback && (fallback?.type !== 'text' || fallback.text !== expected)) fail('PLAN_INVALID_FALLBACK');
       covered.set(item.id, prior + expected);
     }
   }

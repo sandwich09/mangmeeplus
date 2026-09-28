@@ -14,7 +14,9 @@ describe('LINE queued exact-delivery reservation on isolated PostgreSQL', { skip
   it('retains first output and fences stale/concurrent producers independently for each stream entry', async t => {
     const url = new URL(databaseUrl!);
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
-    assert.ok((url.port === '15432' && url.pathname === '/mangmee_billing_20260912') || (url.port === '5432' && url.pathname === '/watchdog_postmark_ci'));
+    assert.ok((url.port === '15432' && url.pathname === '/mangmee_billing_20260912')
+      || (url.port === '15439' && url.pathname === '/watchdog_bms_ai_reliability_20260927')
+      || (url.port === '5432' && url.pathname === '/watchdog_postmark_ci'));
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     let companyId = '', userId = '';
     try {

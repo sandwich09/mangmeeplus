@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { branchInputMatchesMessage, buildAnswerPresentation, expenseCriterionOnlyMessage, OrchestratorAgent, uncertainExpenseFilter, unsupportedExpenseFilter, validExpensePeriodSelection, withoutRefusedCoverage } from './orchestrator.agent';
+import { branchInputMatchesMessage, buildAnswerPresentation, expenseBranchScopeRequested, expenseCriterionOnlyMessage, ORCHESTRATOR_TOOL_LOOP_PROMPT, OrchestratorAgent, uncertainExpenseFilter, unsupportedExpenseFilter, validExpensePeriodSelection, withoutRefusedCoverage } from './orchestrator.agent';
 import { ResponseComposerAgent } from './response-composer.agent';
 import { extractValueCandidates, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { LineAiPreparedPlan, LineAiTurnRequest } from '@watchdog-bms/contracts';
@@ -466,10 +466,12 @@ describe('OrchestratorAgent', () => {
     assert.ok(result.replyText.includes('11,875.00'));
     assert.ok(!result.replyText.includes('สิ้นกำหนดวันนี้'));
     assert.ok(!result.replyText.includes('เกินกำหนด'));
-    assert.ok(result.replyText.startsWith(`ค่าใช้จ่าย: 11,875.00 บาท (7 รายการ)\nช่วง: 1 ${thaiMonth} ${thaiYear} – ${todayDay} ${thaiMonth} ${thaiYear}`));
+    assert.equal(result.replyText.split('\n')[0], 'ค่าใช้จ่าย: 11,875.00 บาท (7 รายการ)');
+    assert.ok(result.replyText.includes('\nฐานยอด: รวมรายการรอดำเนินการ 0.00 บาท (ในนั้นเป็นร่าง 0.00 บาท) และรายการยืนยันแล้ว 11,875.00 บาท'));
+    assert.ok(result.replyText.includes(`\nช่วง: 1 ${thaiMonth} ${thaiYear} – ${todayDay} ${thaiMonth} ${thaiYear}`));
     assert.ok(result.replyText.includes(`\nข้อมูล ณ ${todayDay} ${thaiMonth} ${thaiYear}`));
     assert.doesNotMatch(result.replyText, new RegExp(today));
-    assert.doesNotMatch(result.replyText, /รอตรวจสอบ|ยืนยันแล้ว|จ่ายแล้ว|ยังไม่จ่าย|บริษัท โฟลว์แอคเคาท์/);
+    assert.doesNotMatch(result.replyText, /รอตรวจสอบ|จ่ายแล้ว|ยังไม่จ่าย|บริษัท โฟลว์แอคเคาท์/);
     assert.ok(!result.replyText.includes('expense-draft-empty'));
     assert.deepEqual(result.webLinks, [{ label: 'รายการค่าใช้จ่าย', path: '/companies/company-1/expenses' }]);
     assert.equal(result.sourceRefs[0]?.permissionChecked, true);
@@ -511,6 +513,54 @@ describe('OrchestratorAgent', () => {
     assert.deepEqual(prepared.webLinks, full.webLinks);
     assert.ok(prepared.replyText.includes(`\nช่วง: 1 ${thaiMonth} ${thaiYear} – ${todayDay} ${thaiMonth} ${thaiYear}`));
     assert.ok(prepared.replyText.includes(`\nข้อมูล ณ ${todayDay} ${thaiMonth} ${thaiYear}`));
+  });
+
+  it('item 1 (spec §3 row 7): a list-shape prepared read serves the compiled numbered-list formatter, not the single-metric summary', async () => {
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+    const currentMonthStart = `${today.slice(0, 7)}-01`;
+    const erpTools = {
+      invoke: async (tool: any) => ({
+        toolName: tool.name,
+        status: 'ok',
+        data: {
+          total: 2,
+          period: { fromDate: currentMonthStart, toDate: today, defaultedToCurrentMonth: true },
+          // Same summary shape the single-metric family reads (incl. the basis-line amounts), so a
+          // real bug that reruns the single-metric formatter on a list-shape read would still show up.
+          summary: { totalAmount: 1200, countedItems: 2, cancelledCount: 0, pendingAmount: 0, draftAmount: 0, confirmedAmount: 1200 },
+          items: [
+            { id: 'e1', expenseDate: '2026-08-05T10:00:00.000Z', vendorNameSnapshot: 'ร้านสมใจ', status: 'CONFIRMED', grandTotalAmount: '500.00' },
+            { id: 'e2', expenseDate: '2026-08-02T10:00:00.000Z', vendorNameSnapshot: 'ร้านใจดี', status: 'READY_FOR_CONFIRMATION', grandTotalAmount: '700.00' },
+          ],
+        },
+        sourceRefs: [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, webPath: '/companies/company-1/expenses' }],
+        asOf: new Date().toISOString(),
+      }),
+    } as any;
+    const req = makeReq('ขอดูรายการล่าสุดหน่อยครับ');
+    req.userContext.permissions.push('expense.read');
+    const preparedPlan = parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'list',
+      intentPlan: {
+        status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }],
+      },
+      proposedCalls: [{ toolName: 'expense.list_recent', input: {} }],
+    });
+    assert.ok(preparedPlan);
+    const result = await new OrchestratorAgent(erpTools, makeConfig({
+      lineAiPreparedSimpleReadEnabled: true,
+      lineAiDeterministicResponseFamilies: ['expense.list_recent::list'],
+    })).run({ ...req, preparedPlan, intakeIntent: 'BUSINESS_READ_QUESTION', actorDelegations: { 'expense.list_recent': ['test-delegation'] } });
+    // The compiled expense.list_recent::list formatter's numbered rows must be served...
+    // C6 (batch 5c): a short list-item date, year-free within the tool's own as-of year.
+    assert.match(result.replyText, /\n1\. 5 ส\.ค\. ร้านสมใจ 500\.00 บาท \(ยืนยันแล้ว\)/);
+    assert.match(result.replyText, /\n2\. 2 ส\.ค\. ร้านใจดี 700\.00 บาท \(พร้อมยืนยัน\)/);
+    // ...never the single-metric "basis" line (R-A3 lists never carry it; R-A1 basis is single-metric only).
+    assert.ok(!result.replyText.includes('ฐานยอด'), 'must not fall back to the single-metric summary reply');
+    assert.equal(result.presentation?.cards[0]?.text, result.replyText);
+    // deliveredExpenseSummary (R-M2) is a single-metric-only memory proof; a list reply must never set it.
+    assert.equal(result.deterministicExpenseSummary, undefined);
   });
 
   it('expense query with unavailable tool does not fall back to accounting no-data copy', async () => {
@@ -844,7 +894,7 @@ describe('OrchestratorAgent – prepared-plan lanes (latency/autonomy Phases 3�
   it('Phase 4 default off: a forwarded prepared plan is ignored; the router runs and no prepared-lane log is emitted', async () => {
     const logs: any[] = [];
     const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig());
-    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: () => {} };
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: (e: any) => logs.push(e) };
     await orchestrator.run({ ...makeReq('ดูสต็อกสินค้าใกล้หมด'), intakeIntent: 'BUSINESS_READ_QUESTION', preparedPlan: preparedInventoryPlan() });
     assert.ok(!logs.some((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read')), 'prepared lane untouched when flag off');
     assert.ok(!logs.some((e) => e.msg === 'line.ai.fused_plan.shadow'), 'no shadow when flag off');
@@ -853,7 +903,7 @@ describe('OrchestratorAgent – prepared-plan lanes (latency/autonomy Phases 3�
   it('Phase 4 on with empty family allowlist: eligibility fails on the formatter family and falls back to the router', async () => {
     const logs: any[] = [];
     const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiPreparedSimpleReadEnabled: true, lineAiDeterministicResponseFamilies: [] }));
-    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: () => {} };
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: (e: any) => logs.push(e) };
     const result = await orchestrator.run({ ...makeReq('ดูสต็อกสินค้าใกล้หมด'), intakeIntent: 'BUSINESS_READ_QUESTION', preparedPlan: preparedInventoryPlan() });
     const fallback = logs.find((e) => e.msg === 'line.ai.prepared_simple_read.fallback');
     assert.ok(fallback, 'the gate ran and logged a fallback');
@@ -864,7 +914,7 @@ describe('OrchestratorAgent – prepared-plan lanes (latency/autonomy Phases 3�
   it('Phase 3 shadow on: logs a best-effort comparison and still executes via the router', async () => {
     const logs: any[] = [];
     const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiFusedPlanShadowEnabled: true }));
-    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: () => {} };
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: (e: any) => logs.push(e) };
     await orchestrator.run({ ...makeReq('ดูสต็อกสินค้าใกล้หมด'), intakeIntent: 'BUSINESS_READ_QUESTION', preparedPlan: preparedInventoryPlan() });
     assert.ok(logs.some((e) => e.msg === 'line.ai.fused_plan.shadow'), 'shadow comparison logged');
   });
@@ -882,7 +932,7 @@ describe('prepared simple-read lane telemetry', () => {
   });
   function sink(orchestrator: OrchestratorAgent) {
     const logs: any[] = [];
-    (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: () => {}, error: () => {} };
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: (e: any) => logs.push(e), error: () => {} };
     return logs;
   }
   const laneLogs = (logs: any[]) => logs.filter((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read'));
@@ -936,6 +986,51 @@ describe('prepared simple-read lane telemetry', () => {
     await other.run({ ...makeReq('สวัสดีค่ะ'), intakeIntent: 'ADVISOR_CONVERSATION' } as LineAiTurnRequest);
     assert.deepEqual(laneLogs(otherLogs), []);
   });
+
+  // C4 (batch 5c, T-008-b "แล้วร้านกาแฟอเมซอนล่ะคะ"): expense.list_recent's own vendorUnresolved
+  // result matches no compiled formatter, so the lane owns the turn as an honest terminal — which
+  // used to mean the generic "ยังดึงข้อมูลส่วนนี้ไม่ได้" line instead of the tool's own catalog answer.
+  it('renders the name-resolution reply (not the generic read-failure line) and drops the generic web link', async () => {
+    const erp = {
+      invoke: async (tool: any) => ({
+        toolName: tool.name, status: 'ok',
+        data: { vendorUnresolved: 'ร้านกาแฟอเมซอน', availableVendors: [{ id: 'v1', name: 'ร้านสมใจ' }] },
+        sourceRefs: [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, webPath: '/companies/company-1/expenses' }],
+        asOf: new Date().toISOString(),
+      }),
+    } as any;
+    const orchestrator = new OrchestratorAgent(erp, laneConfig(['expense.list_recent::single_metric']));
+    const logs = sink(orchestrator);
+    const req = makeReq('แล้วร้านกาแฟอเมซอนล่ะคะ');
+    req.userContext.permissions.push('expense.read');
+    // The sanitizer requires any date in the proposed call to be backed by a value candidate (P0) — a
+    // plain August-2026 month candidate, same shape used elsewhere in this file, keeps that orthogonal
+    // to what this test actually proves (vendor-name resolution in the fast lane).
+    req.valueCandidates = { amounts: [], dates: [], periods: [
+      { span: 'August 2026', kind: 'month', fromDate: '2026-08-01', toDate: '2026-08-31', monthKey: '2026-08', source: 'explicit', label: 'สิงหาคม 2569', assumptions: [] },
+    ] } as any;
+    const preparedPlan = parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'single_metric',
+      intakeIntent: 'BUSINESS_READ_QUESTION',
+      intentPlan: {
+        status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }],
+      },
+      proposedCalls: [{ toolName: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', vendorName: 'ร้านกาแฟอเมซอน' } }],
+    });
+    assert.ok(preparedPlan);
+    const result = await orchestrator.run({
+      ...req, preparedPlan, intakeIntent: 'BUSINESS_READ_QUESTION',
+      actorDelegations: { 'expense.list_recent': ['test-delegation'] },
+    });
+    assert.match(result.replyText, /ไม่พบร้านชื่อ "ร้านกาแฟอเมซอน" ค่ะ/);
+    assert.match(result.replyText, /ร้านสมใจ/);
+    assert.doesNotMatch(result.replyText, /ยังดึงข้อมูลส่วนนี้ไม่ได้/);
+    // The reply already lists the real catalog and asks for a name — a generic "Expenses page" link
+    // would be redundant, and the classic path (expenseBranchResolutionReply) attaches none either.
+    assert.deepEqual(result.webLinks, []);
+    assert.ok(laneLogs(logs).some((e) => e.msg === 'line.ai.prepared_simple_read.honest_terminal'));
+  });
 });
 
 // ── H4 period resolution (period-resolution spec §3.2/§3.3/§3.4, P-02/P-03/P-05) ──
@@ -951,7 +1046,7 @@ describe('OrchestratorAgent period resolution', () => {
   });
   function sink(orchestrator: OrchestratorAgent) {
     const logs: any[] = [];
-    (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: () => {}, error: () => {} };
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: (e: any) => logs.push(e), error: () => {} };
     return logs;
   }
   const laneLogs = (logs: any[]) => logs.filter((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read'));
@@ -1227,6 +1322,26 @@ describe('expense follow-up branch scope', () => {
     const wrongBranch = { ...correct, branchId: 'B' };
     assert.equal(validExpensePeriodSelection(wrongBranch, wrongBranch, req), false);
   });
+
+  it('R-U1: treats a status word after เฉพาะ/เอาเฉพาะ/ดูเฉพาะ (with or without ที่/รายการที่/อันที่) as a filter, not a branch', () => {
+    const table: Array<[string, boolean]> = [
+      ['แล้วยอดเดือนนี้ ถ้าเอาเฉพาะที่ยืนยันแล้วล่ะ', false],
+      ['เอาเฉพาะยืนยันแล้ว', false],
+      ['เอาเฉพาะที่จ่ายแล้ว', false],
+      ['เอาเฉพาะยังไม่จ่าย', false],
+      ['เอาเฉพาะที่ค้างจ่าย', false],
+      ['เอาเฉพาะรายการที่อนุมัติ', false],
+      ['เอาเฉพาะร่าง', false],
+      ['เอาเฉพาะอันที่รอตรวจ', false],
+      ['เอาเฉพาะปฏิเสธ', false],
+      ['เอาเฉพาะที่ยกเลิก', false],
+      ['ดูเฉพาะสาขาลาดพร้าว', true],
+      ['เอาเฉพาะลาดพร้าว', true],
+      ['เฉพาะ BKK', true],
+      ['เฉพาะกันยายน', false],
+    ];
+    for (const [text, expected] of table) assert.equal(expenseBranchScopeRequested(text), expected, text);
+  });
 });
 
 describe('run-level expense follow-up execution', () => {
@@ -1341,12 +1456,16 @@ describe('run-level expense follow-up execution', () => {
     const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
     assert.equal(inputs.length, 1);
     assert.match(result.replyText, /หลายสาขาที่ใช้ชื่อเดียวกัน/);
-    assert.match(result.replyText, /เลือกสาขาจากหน้าเว็บ/);
+    // C4 (batch 5c): the old "กรุณาเลือกสาขาจากหน้าเว็บ" dead end is gone — same-name matches ask for
+    // more context in the chat instead, still without printing a code or an internal id.
+    assert.match(result.replyText, /ลองเพิ่มรายละเอียดอื่น/);
     assert.doesNotMatch(result.replyText, /uuid-secret|รหัส|\bA\b|\bB\b|0\.00|0 รายการ/);
     assert.equal(result.deterministicExpenseSummary, undefined);
   });
 
-  it('explains an unresolved branch without repeating its code or claiming there are no expenses', async () => {
+  // C4 (batch 5c): "secret-code" here is the branch text the CUSTOMER typed ("...สาขา secret-code"),
+  // not a hidden internal id — echoing back what they asked for is the point of "ไม่พบ...ชื่อ "X" ค่ะ".
+  it('explains an unresolved branch by naming what was searched, without claiming there are no expenses', async () => {
     configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', branchId: 'secret-code' } }]);
     const req = makeReq('ค่าใช้จ่ายเดือนสิงหาคม 2569 สาขา secret-code');
     req.userContext.permissions.push('expense.read');
@@ -1355,9 +1474,108 @@ describe('run-level expense follow-up execution', () => {
       branchUnresolved: 'secret-code', availableBranches: [{ id: 'uuid-secret', name: 'สาขากลาง' }],
     }, sourceRefs: [], asOf: new Date().toISOString() }) } as any;
     const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
-    assert.match(result.replyText, /ยังระบุสาขาที่ต้องการไม่ได้/);
-    assert.match(result.replyText, /เลือกสาขาจากหน้าเว็บ/);
-    assert.doesNotMatch(result.replyText, /secret-code|uuid-secret|0\.00|0 รายการ/);
+    assert.match(result.replyText, /ไม่พบสาขาชื่อ "secret-code" ค่ะ/);
+    assert.match(result.replyText, /พิมพ์ชื่อที่ต้องการมาได้เลยค่ะ/);
+    assert.doesNotMatch(result.replyText, /uuid-secret|0\.00|0 รายการ/);
+  });
+
+  it('explains an out-of-scope branch by naming only the caller\'s own branches, never the forbidden one', async () => {
+    configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', branchId: 'บางนา' } }]);
+    const req = makeReq('ค่าใช้จ่ายเดือนสิงหาคม 2569 สาขา บางนา');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    const erp = { invoke: async (tool: any) => ({ toolName: tool.name, status: 'ok', data: {
+      branchOutOfScope: 'บางนา', availableBranches: [{ id: 'uuid-own', name: 'สาธุประดิษฐ์' }],
+    }, sourceRefs: [], asOf: new Date().toISOString() }) } as any;
+    const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
+    assert.match(result.replyText, /คุณดูข้อมูลได้เฉพาะสาขา/);
+    assert.match(result.replyText, /สาธุประดิษฐ์/);
+    assert.doesNotMatch(result.replyText, /บางนา|uuid-own|0\.00|0 รายการ/);
+  });
+
+  it('item 2c: asks which vendor when a name resolves to several distinct vendors', async () => {
+    configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', vendorName: 'สมใจ' } }]);
+    const req = makeReq('ร้านสมใจจ่ายไปเท่าไหร่เดือนสิงหาคม 2569');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    const erp = { invoke: async (tool: any) => ({ toolName: tool.name, status: 'ok', data: {
+      vendorAmbiguous: 'สมใจ', availableVendors: [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }],
+    }, sourceRefs: [], asOf: new Date().toISOString() }) } as any;
+    const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
+    assert.match(result.replyText, /หมายถึงร้านไหนคะ/, 'spec item 2c: the exact ambiguous-vendor question');
+    assert.match(result.replyText, /ร้านสมใจการค้า/);
+    assert.doesNotMatch(result.replyText, /\bv1\b|\bv2\b|0\.00|0 รายการ/);
+  });
+
+  it('item 2c: names the available categories when a breakdown category name is not found (widened to get_breakdown)', async () => {
+    const breakdownPlan = (messageText: string) => ({ status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.get_breakdown'], missingContext: [] }], refusals: [], requiresHumanReview: false });
+    configureLoopProvider(text => breakdownPlan(text), [{ callTool: 'expense.get_breakdown', input: { fromDate: '2026-08-01', toDate: '2026-08-31', categoryName: 'ยานยนต์' } }]);
+    const req = makeReq('แยกค่าใช้จ่ายหมวดยานยนต์เดือนสิงหาคม 2569');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    const erp = { invoke: async (tool: any) => ({ toolName: tool.name, status: 'ok', data: {
+      categoryUnresolved: 'ยานยนต์', availableCategories: [{ id: 'c1', name: 'ค่าเดินทาง' }, { id: 'c2', name: 'ค่าน้ำมัน' }],
+    }, sourceRefs: [], asOf: new Date().toISOString() }) } as any;
+    const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
+    // C4 (batch 5c, T-064-a): "ยังระบุ...ไม่ได้" read as a system limitation — the eval wants an
+    // honest "ไม่พบ" instead.
+    assert.match(result.replyText, /ไม่พบหมวดชื่อ "ยานยนต์" ค่ะ/);
+    assert.match(result.replyText, /ค่าเดินทาง/);
+    assert.match(result.replyText, /ค่าน้ำมัน/);
+    assert.doesNotMatch(result.replyText, /\bc1\b|\bc2\b|0\.00|0 รายการ/);
+  });
+
+  it('item 2b: drops an ungrounded categoryName from the classic-path tool call instead of inventing a filter', async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    // The message never says "เครื่องเขียน" — a model-invented category name must not reach the ERP
+    // call. The rest of the call (fromDate/toDate) still proceeds; only the ungrounded field is dropped.
+    configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', categoryName: 'เครื่องเขียน' } }]);
+    const req = makeReq('ค่าใช้จ่ายเดือนสิงหาคม 2569');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    const result = await new OrchestratorAgent(expenseErp(inputs), makeConfig()).run(req);
+    assert.deepEqual(inputs, [{ tool: 'expense.list_recent', fromDate: '2026-08-01', toDate: '2026-08-31' }]);
+    assert.equal(result.deterministicExpenseSummary, true);
+  });
+
+  it('spec §4 R-M5: keeps a categoryName the message never states when it matches conversationContext.recentReads', async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', categoryName: 'เครื่องเขียน' } }]);
+    const req = makeReq('เดือนนี้เท่าไหร่');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads: [{
+      tool: 'expense.list_recent', answerShape: 'single_metric', asOf: '2026-08-25T09:00:00.000Z', categoryName: 'เครื่องเขียน',
+    }] };
+    await new OrchestratorAgent(expenseErp(inputs), makeConfig()).run(req);
+    assert.deepEqual(inputs, [{ tool: 'expense.list_recent', fromDate: '2026-08-01', toDate: '2026-08-31', categoryName: 'เครื่องเขียน' }]);
+  });
+
+  it('spec §4 R-M5: expense.get_detail\'s expenseId is accepted only from conversationContext.recentReads shownItems', async () => {
+    const detailPlan = (messageText: string) => ({ status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.get_detail'], missingContext: [] }], refusals: [], requiresHumanReview: false });
+    const inputs: Array<Record<string, unknown>> = [];
+    const erp = { invoke: async (tool: any, _ctx: unknown, input: Record<string, unknown> = {}) => {
+      inputs.push({ tool: tool.name, ...input });
+      return { toolName: tool.name, status: 'ok', data: { id: 'e1', vendorName: 'ร้านสมใจ', expenseDate: '2026-08-05T10:00:00.000Z', grandTotalAmount: '500.00' },
+        sourceRefs: [{ label: 'ค่าใช้จ่าย', module: 'expenses', entityType: 'expense', permissionChecked: true, webPath: '/companies/company-1/expenses/e1' }], asOf: new Date().toISOString() };
+    } } as any;
+    const recentReads = [{ tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-08-25T09:00:00.000Z',
+      shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้านสมใจ', date: '2026-08-05' }] }];
+
+    configureLoopProvider(text => detailPlan(text), [{ callTool: 'expense.get_detail', input: { expenseId: 'e1' } }]);
+    const grounded = makeReq('รายการแรกจ่ายหรือยัง');
+    grounded.userContext.permissions.push('expense.read');
+    grounded.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads };
+    await new OrchestratorAgent(erp, makeConfig()).run(grounded);
+    assert.deepEqual(inputs, [{ tool: 'expense.get_detail', expenseId: 'e1' }], 'e1 is in shownItems, so the call proceeds with it');
+
+    inputs.length = 0;
+    configureLoopProvider(text => detailPlan(text), [{ callTool: 'expense.get_detail', input: { expenseId: 'e2' } }]);
+    const guessed = makeReq('รายการแรกจ่ายหรือยัง');
+    guessed.userContext.permissions.push('expense.read');
+    guessed.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], recentReads };
+    await new OrchestratorAgent(erp, makeConfig()).run(guessed);
+    assert.deepEqual(inputs, [{ tool: 'expense.get_detail' }], 'e2 was never shown this chat, so expenseId is dropped from the call like any other ungrounded field — the API itself then fails the now-missing-required-field call');
   });
 
   it('does not present an August-only result as complete when a misspelled July was also requested', async () => {
@@ -1454,7 +1672,7 @@ describe('run-level expense follow-up execution', () => {
   it('keeps sales when an unsupported expense filter is requested and never reads an unfiltered expense total', async () => {
     const calls: string[] = [];
     configureLoopProvider(mixedPlan, [{ callTool: 'sales.get_sales_summary', input: {} }]);
-    const req = makeReq('ยอดขายวันนี้และค่าใช้จ่ายเฉพาะยืนยันแล้ว');
+    const req = makeReq('ยอดขายวันนี้และค่าใช้จ่ายรวมรายการยกเลิกด้วย');
     req.userContext.permissions.push('crm.report.read', 'expense.read');
     const result = await new OrchestratorAgent(mixedErp(calls), makeConfig()).run(req);
     assert.deepEqual(calls, ['sales.get_sales_summary']);
@@ -1517,9 +1735,12 @@ describe('run-level expense follow-up execution', () => {
     assert.equal(uncertainExpenseFilter('ยอดขายไม่รวมปฎิเสด', true), false);
   });
 
-  it('recognizes unsupported expense status, category, and actual-paid filters', () => {
-    for (const text of ['ค่าใช้จ่ายเฉพาะยืนยันแล้ว', 'ค่าใช้จ่ายเฉพาะจ่ายแล้ว', 'ค่าใช้จ่ายรวมรายการยกเลิก',
-      'ค่าใช้จ่ายเฉพาะหมวดเดินทาง', 'ค่าใช้จ่ายจ่ายจริงเท่าไร']) assert.equal(unsupportedExpenseFilter(text), true, text);
+  it('reaches normal routing for status, category, and actual-paid filters; only "include rejected/voided in the total" stays unsupported', () => {
+    for (const text of ['ค่าใช้จ่ายรวมรายการยกเลิก', 'ค่าใช้จ่ายรวมถูกปฏิเสธด้วย']) assert.equal(unsupportedExpenseFilter(text), true, text);
+    // documentStatus/paymentStatus filters, category filters, and "จ่ายจริง" are tool-supported now
+    // (expense.list_recent/expense.get_breakdown) and must reach normal routing, not the canned reply.
+    for (const text of ['ค่าใช้จ่ายเฉพาะยืนยันแล้ว', 'ค่าใช้จ่ายเฉพาะจ่ายแล้ว',
+      'ค่าใช้จ่ายเฉพาะหมวดเดินทาง', 'ค่าใช้จ่ายจ่ายจริงเท่าไร', 'ค่าใช้จ่ายจ่ายแล้วกี่ใบ']) assert.equal(unsupportedExpenseFilter(text), false, text);
     assert.equal(uncertainExpenseFilter('ค่าใช้จ่ายไม่รวมปฎิเสธ'), true);
     assert.equal(uncertainExpenseFilter('ค่าใช้จ่ายเฉพาะสิงหาคม'), false);
     assert.equal(uncertainExpenseFilter('ค่าใช้จ่ายไม่รวมค่าขนส่ง'), true);
@@ -1614,4 +1835,13 @@ describe('approved knowledge orchestration', () => {
     assert.equal(result.presentation?.kind, 'answer_cards');
     if (result.presentation?.kind === 'answer_cards') assert.ok(result.presentation.cards.length >= 2);
   }));
+});
+
+describe('item 3 (R-M4): the classic tool-loop prompt names recentReads inheritance', () => {
+  it('tells the model to inherit period/filters from recentReads and resolve ordinals via shownItems', () => {
+    assert.match(ORCHESTRATOR_TOOL_LOOP_PROMPT, /conversationContext\.recentReads/);
+    assert.match(ORCHESTRATOR_TOOL_LOOP_PROMPT, /a value the CURRENT message states always overrides/);
+    assert.match(ORCHESTRATOR_TOOL_LOOP_PROMPT, /resolves to the id at that ordinal/);
+    assert.match(ORCHESTRATOR_TOOL_LOOP_PROMPT, /A clear change of subject inherits nothing from recentReads/);
+  });
 });

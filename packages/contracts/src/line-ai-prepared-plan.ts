@@ -28,8 +28,13 @@ export const LINE_AI_PREPARED_PLAN_BOUNDS = {
   maxStringBytes: 512,
   /** Longest bounded label/enum-ish string carried inside the plan wrapper. */
   maxLabelBytes: 200,
-  /** Veto floor a plan claiming `simple` must clear at parse; below it the plan drops to fallback. */
-  simpleConfidenceFloor: 0.85,
+  /** Veto floor a plan claiming `simple` must clear at parse; below it the plan drops to fallback.
+   *  tuning-5 (2026-09-28): 0.85 -> 0.75, together with the gateway decoder and pre-call floors. The
+   *  router's self-reported confidence is uncalibrated: in the run-4 eval every single read it scored
+   *  0.75-0.84 was a genuinely simple read (e.g. "มีร่างค้างอยู่ไหมคะ"). Every structural veto below
+   *  still applies, and why/compare/advice questions are kept off this lane by a deterministic guard
+   *  in the gateway decoder. */
+  simpleConfidenceFloor: 0.75,
 } as const;
 
 const COMPLEXITIES = new Set<LineAiPreparedPlan['complexity']>(['simple', 'complex']);

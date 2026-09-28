@@ -212,12 +212,15 @@ describe('question-only durable QA and owner/source/lease fences on PostgreSQL',
     assert.equal(await client.attachmentBlob.count({ where: { attachmentId: shared.attachmentId } }), 1);
   });
 
-  it('commits an exact-version cleanup receipt with external orphan removal and retries a failed storage deletion', async () => {
+  it('commits an exact-version cleanup receipt with external orphan removal and retries a failed storage deletion', async (t) => {
     const f = await fixture('external-orphan');
     await client.attachmentObject.update({ where: { id: f.attachmentId }, data: { createdAt: new Date(0),
       objectVersionId: hash(bytes.get(f.attachmentId)!), metadataJson: { lineDocumentQaOnly: true } } });
     failStorageDelete = true;
-    try { await jobs.purgeExpired(); } finally { failStorageDelete = false; }
+    // The outbox row uses the API clock while PostgreSQL claims against its own `now()`. Pin the
+    // producer one minute behind the database so the new row is deterministically due on this tick.
+    t.mock.timers.enable({ apis: ['Date'], now: new Date(Date.now() - 60_000) });
+    try { await jobs.purgeExpired(); } finally { t.mock.timers.reset(); failStorageDelete = false; }
     assert.equal(await client.attachmentObject.findUnique({ where: { id: f.attachmentId } }), null);
     assert.equal(bytes.has(f.attachmentId), true);
     const receipt = await client.outboxEvent.findFirstOrThrow({ where: { companyId: f.input.companyId, eventType: LINE_DOCUMENT_QA_RAW_CLEANUP_EVENT } });

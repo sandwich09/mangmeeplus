@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_TOOL_REGISTRY, civilPeriodRange, isCivilPeriodKey, hasToolFeature, hasToolPermissions, type ToolResult, type LineAiConversationContext, type LineAiTurnRequest, type LineAiTurnResponse } from '@watchdog-bms/contracts';
+import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_TOOL_REGISTRY, civilPeriodRange, isCivilPeriodKey, hasToolFeature, hasToolPermissions, type ToolResult, type LineAiConversationContext, type LineAiReadMemory, type LineAiReadMemoryShownItem, type LineAiTurnRequest, type LineAiTurnResponse } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { PermissionResolverService } from '../../access-control/application/permission-resolver.service';
@@ -50,10 +50,145 @@ function expenseSummaryEvidence(result: ToolResult): ExpenseSummaryEvidence | un
     defaultedToCurrentMonth: range['defaultedToCurrentMonth'], statusBasis: EXPENSE_STATUS_BASIS, truncated: data['truncated'] === true };
 }
 
-function expenseBranchScopeRequested(text: string): boolean {
+// ---- read memory (spec §4 R-M1) ----
+// Every tool a follow-up question can reasonably refer back to ("รายการแรก", "อันที่ 2 จ่ายหรือยัง",
+// "แยกตามสาขาด้วย"). NOT expense.explain_record or the draft_update tools: those already have their
+// own chat-scoped record-continuity rule (chatKeyHash on the capture itself), and a draft preview is
+// never something a later turn should silently re-target.
+const READ_MEMORY_TOOLS = new Set([
+  'expense.list_recent', 'expense.get_breakdown', 'expense.get_detail', 'expense.get_daily_closing',
+  'reimbursement.list_pending_approvals', 'reimbursement.get_summary', 'reimbursement.get_detail',
+]);
+
+/** Hardcoded per tool, not derived from the data shape: a detail read is a "single_metric"-style
+ *  answer (one record) even though it also produces exactly one `shownItems` entry for that record. */
+const READ_MEMORY_ANSWER_SHAPE: Record<string, 'single_metric' | 'list'> = {
+  'expense.list_recent': 'list',
+  'expense.get_breakdown': 'list',
+  'expense.get_detail': 'single_metric',
+  'expense.get_daily_closing': 'single_metric',
+  'reimbursement.list_pending_approvals': 'list',
+  'reimbursement.get_summary': 'single_metric',
+  'reimbursement.get_detail': 'single_metric',
+};
+
+const READ_MEMORY_MAX_SHOWN_ITEMS = 10;
+/** Matches the gateway's own R-A2 cap (prepared-simple-read-formatter.ts) so "the first group" means
+ *  the same thing in memory as in the reply that was actually shown. */
+const READ_MEMORY_MAX_BREAKDOWN_GROUPS = 8;
+
+function readMemoryAmountNumber(value: unknown): number {
+  return typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/,/g, '')) : NaN;
+}
+
+function readMemoryLabel(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value ? value : fallback;
+}
+
+/** Numbered records in display order (expense.list_recent, reimbursement.list_pending_approvals) —
+ *  the tool's own array order, never re-sorted; R-A3's formatter reads the same order. */
+function readMemoryRecordItems(items: unknown, idKey: string, labelKey: string, labelFallback: string, dateKey: string): LineAiReadMemoryShownItem[] {
+  if (!Array.isArray(items)) return [];
+  return items.slice(0, READ_MEMORY_MAX_SHOWN_ITEMS).flatMap((raw, index) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    const item = raw as Record<string, unknown>;
+    const id = item[idKey];
+    if (typeof id !== 'string' || !id) return [];
+    const date = item[dateKey];
+    return [{ ordinal: index + 1, id, label: readMemoryLabel(item[labelKey], labelFallback),
+      ...(typeof date === 'string' ? { date: date.slice(0, 10) } : {}) }];
+  });
+}
+
+/** Breakdown groups (expense.get_breakdown): sorted by amount descending, top 8 kept individually —
+ *  the SAME order and cap `formatExpenseBreakdownList` (gateway) renders, so an ordinal here means the
+ *  same group there. A group whose id is null (the "ไม่ระบุ.../ส่วนกลาง" catch-all bucket) keeps its
+ *  true display ordinal but is dropped from the array: there is nothing to look a null id back up by. */
+function readMemoryBreakdownGroups(data: Record<string, unknown>, axis: 'category' | 'branch' | 'vendor'): LineAiReadMemoryShownItem[] {
+  const axisField = { category: ['byCategory', 'categoryId', 'category'], branch: ['byBranch', 'branchId', 'branch'], vendor: ['byVendor', 'vendorId', 'vendor'] }[axis];
+  const [dataKey, idKey, nameKey] = axisField;
+  const rows = data[dataKey!];
+  if (!Array.isArray(rows)) return [];
+  const sorted = [...rows].sort((a, b) => readMemoryAmountNumber((b as Record<string, unknown>)?.['totalAmount']) - readMemoryAmountNumber((a as Record<string, unknown>)?.['totalAmount']));
+  return sorted.slice(0, READ_MEMORY_MAX_BREAKDOWN_GROUPS).flatMap((raw, index) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    const row = raw as Record<string, unknown>;
+    const id = row[idKey!];
+    if (typeof id !== 'string' || !id) return [];
+    return [{ ordinal: index + 1, id, label: readMemoryLabel(row[nameKey!], 'ไม่ระบุ'), kind: axis }];
+  });
+}
+
+/**
+ * Spec §4 R-M1: what this ONE successful read tool call actually applied and showed, from the
+ * TOOL RESULT (`queryApplied`/resolved `data`) — never the raw `input` argument, so a follow-up can
+ * never inherit a filter that was ambiguous, unresolved, or otherwise never really took effect.
+ * R-M6: no amount ever reaches this object. Returns undefined for any tool outside the memory set,
+ * or a shape too malformed to trust — a missing memory entry is always safe; an invented one is not.
+ */
+// Exported (unlike its single-tool sibling expenseSummaryEvidence): this dispatches across 7 tool
+// result shapes, so a direct unit test per shape is worth more than only the record()/pg round-trip.
+export function readMemoryEvidence(result: ToolResult): LineAiReadMemory | undefined {
+  if (!READ_MEMORY_TOOLS.has(result.toolName) || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)
+    || !Number.isFinite(Date.parse(result.asOf))) return undefined;
+  const data = result.data as Record<string, unknown>;
+  const applied = result.queryApplied;
+  const appliedFilters = applied?.filters ?? {};
+  const stringFilter = (key: string): string | undefined => typeof appliedFilters[key] === 'string' ? appliedFilters[key] as string : undefined;
+  const period = applied?.period && isCivilDate(applied.period.startDate) && isCivilDate(applied.period.endDate)
+    ? { fromDate: applied.period.startDate, toDate: applied.period.endDate } : undefined;
+  const documentStatus = typeof applied?.statusBasis === 'string' && applied.statusBasis !== 'exclude_rejected_voided' ? applied.statusBasis : undefined;
+  const branchId = typeof applied?.branch?.branchId === 'string' ? applied.branch.branchId : undefined;
+  const groupByRaw = stringFilter('groupBy');
+  const groupBy = groupByRaw === 'category' || groupByRaw === 'branch' || groupByRaw === 'vendor' ? groupByRaw : undefined;
+
+  let shownItems: LineAiReadMemoryShownItem[] | undefined;
+  if (result.toolName === 'expense.list_recent') {
+    shownItems = readMemoryRecordItems(data['items'], 'id', 'vendorNameSnapshot', 'ไม่ระบุร้าน', 'expenseDate');
+  } else if (result.toolName === 'reimbursement.list_pending_approvals') {
+    shownItems = readMemoryRecordItems(data['items'], 'id', 'requesterDisplayName', 'ไม่ระบุผู้ขอ', 'submittedAt');
+  } else if (result.toolName === 'expense.get_breakdown') {
+    shownItems = readMemoryBreakdownGroups(data, groupBy ?? 'category');
+  } else if (result.toolName === 'expense.get_detail' || result.toolName === 'reimbursement.get_detail') {
+    const id = data['id'];
+    if (typeof id === 'string' && id) {
+      const dateKey = result.toolName === 'expense.get_detail' ? 'expenseDate' : 'incurredDate';
+      const labelKey = result.toolName === 'expense.get_detail' ? 'vendorName' : 'requesterDisplayName';
+      const date = data[dateKey];
+      shownItems = [{ ordinal: 1, id, label: readMemoryLabel(data[labelKey], 'ไม่ระบุ'),
+        ...(typeof date === 'string' ? { date: date.slice(0, 10) } : {}) }];
+    }
+  } else if (result.toolName === 'expense.get_daily_closing') {
+    const date = data['date'];
+    return {
+      tool: result.toolName, answerShape: READ_MEMORY_ANSWER_SHAPE[result.toolName]!, asOf: result.asOf,
+      ...(typeof date === 'string' && isCivilDate(date) ? { period: { fromDate: date, toDate: date } } : {}),
+    };
+  }
+
+  return {
+    tool: result.toolName,
+    answerShape: READ_MEMORY_ANSWER_SHAPE[result.toolName]!,
+    asOf: result.asOf,
+    ...(period ? { period } : {}),
+    ...(documentStatus ? { documentStatus } : {}),
+    ...(stringFilter('paymentStatus') ? { paymentStatus: stringFilter('paymentStatus') } : {}),
+    ...(stringFilter('categoryId') ? { categoryId: stringFilter('categoryId') } : {}),
+    ...(stringFilter('categoryName') ? { categoryName: stringFilter('categoryName') } : {}),
+    ...(stringFilter('vendorId') ? { vendorId: stringFilter('vendorId') } : {}),
+    ...(stringFilter('vendorName') ? { vendorName: stringFilter('vendorName') } : {}),
+    ...(branchId ? { branchId } : {}),
+    ...(stringFilter('branchName') ? { branchName: stringFilter('branchName') } : {}),
+    ...(groupBy ? { groupBy } : {}),
+    ...(shownItems && shownItems.length > 0 ? { shownItems } : {}),
+  };
+}
+
+export function expenseBranchScopeRequested(text: string): boolean {
   const withoutAllBranches = text.replace(/ทุก\s*สาขา|\ball\s+branches\b/giu, '');
   if (/(?:สาขา|\bbranch\b)/iu.test(withoutAllBranches)) return true;
-  return /เฉพาะ(?!\s*(?:เดือน|ช่วง|งวด|หมวด|รายการ|ยืนยัน|จ่าย|ปฏิเสธ|ยกเลิก|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|กรกฏาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม|ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.))[\u0E00-\u0E7F]{3,}/iu.test(text);
+  // A document/payment status word (optionally after ที่/รายการที่/อันที่) is a filter, not a branch name.
+  return /เฉพาะ(?!\s*(?:เดือน|ช่วง|งวด|หมวด|รายการ|(?:รายการที่|อันที่|ที่)?\s*(?:ยืนยัน|อนุมัติ|ยังไม่จ่าย|ค้างจ่าย|จ่าย|ร่าง|รอ|ปฏิเสธ|ยกเลิก)|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|กรกฏาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม|ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.))[\u0E00-\u0E7F]{3,}/iu.test(text);
 }
 
 function allExpenseBranchesRequested(text: string): boolean {
@@ -181,9 +316,25 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
+/** `expense.get_daily_closing`'s `data.observability.queryDurationMs` is real per-call DB timing
+ *  (`Date.now() - startedAt` around its own `$transaction`), not a business fact — re-executing the
+ *  SAME query for `verify()` always measures a different duration even when nothing changed, so an
+ *  unchanged daily-closing read could never pass re-verification. Strip only that one field, like
+ *  `sourceRefs[].asOf` below: every other observability field (queryCount, truncated) stays, since
+ *  those DO change when the underlying rows actually do. */
+function withoutVolatileObservability(data: unknown): unknown {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
+  const record = data as Record<string, unknown>;
+  const observability = record['observability'];
+  if (!observability || typeof observability !== 'object' || Array.isArray(observability)
+    || !('queryDurationMs' in observability)) return data;
+  const { queryDurationMs: _duration, ...restObservability } = observability as Record<string, unknown>;
+  return { ...record, observability: restObservability };
+}
+
 /** Ignore only read-observation timestamps; preserve business values, references and result order. */
 export function lineReadResultHash(result: ToolResult): string {
-  const material = { toolName: result.toolName, status: result.status, data: result.data,
+  const material = { toolName: result.toolName, status: result.status, data: withoutVolatileObservability(result.data),
     sourceRefs: result.sourceRefs.map(({ asOf: _observation, ...source }) => source) };
   return createHash('sha256').update(JSON.stringify(canonical(JSON.parse(JSON.stringify(material))))).digest('hex');
 }
@@ -202,8 +353,9 @@ export class LineReadEvidenceService {
       || !ctx.requestId || !ctx.membershipId) throw new Error('LINE_READ_EVIDENCE_UNSUPPORTED');
     // Grounding text belongs to draft preview and is deliberately never persisted here.
     const expenseSummary = expenseSummaryEvidence(result);
+    const readMemory = readMemoryEvidence(result);
     const snapshot = JSON.stringify({ input, locale: ctx.locale, ...(ctx.chatKeyHash ? { chatKeyHash: ctx.chatKeyHash } : {}),
-      ...(expenseSummary ? { expenseSummary } : {}) });
+      ...(expenseSummary ? { expenseSummary } : {}), ...(readMemory ? { readMemory } : {}) });
     if (Buffer.byteLength(snapshot, 'utf8') > LINE_READ_EVIDENCE_MAX_INPUT_BYTES) throw new Error('LINE_READ_EVIDENCE_INPUT_LIMIT');
     const resultHash = lineReadResultHash(result);
     return this.prisma.client.$transaction(async tx => {
@@ -345,6 +497,37 @@ export class LineReadEvidenceService {
       && (requestedPeriods.length === 0 || /เฉพาะ|only|just/iu.test(request.messageText));
     return { version: 1, deliveredAt: new Date().toISOString(), statusBasis: 'exclude_rejected_voided', ranges,
       ...(continuationOfPrior ? { continuationOfPrior: true as const } : {}) };
+  }
+
+  /**
+   * Spec §4 R-M1/R-M2/R-M7: this turn's own read-memory entries (oldest read first), for the caller
+   * to persist once delivery is confirmed so a FUTURE turn's `loadConversationContext` can offer them
+   * as `recentReads`. Group/room chats have no `chatKeyHash` (R-M7) and get undefined, same as
+   * `deliveredExpenseSummaryForTurn`. A row whose tool the gateway did not report as a successful call
+   * makes the whole result untrustworthy (undefined) rather than silently dropping just that one —
+   * the same conservative failure mode `forTurn` uses for its own evidence/telemetry cross-check.
+   */
+  async recentReadsForTurn(request: LineAiTurnRequest, response: LineAiTurnResponse): Promise<LineAiReadMemory[] | undefined> {
+    if (response.refused || !request.userContext.chatKeyHash || !Array.isArray(response.toolCalls)) return undefined;
+    const rows = await this.prisma.client.lineReadEvidence.findMany({
+      where: { companyId: request.userContext.companyId!, userId: request.userContext.internalUserId!, requestId: request.requestId,
+        toolName: { in: [...READ_MEMORY_TOOLS] } },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take: LINE_READ_EVIDENCE_MAX + 1,
+      select: { toolName: true, membershipId: true, inputJson: true },
+    });
+    if (rows.length > LINE_READ_EVIDENCE_MAX) return undefined;
+    if (rows.length === 0) return [];
+    const okToolNames = new Set(response.toolCalls.filter(call => call.status === 'ok').map(call => call.name));
+    const entries: LineAiReadMemory[] = [];
+    for (const row of rows) {
+      if (!okToolNames.has(row.toolName) || row.membershipId !== request.userContext.membershipId) return undefined;
+      const saved = row.inputJson as { chatKeyHash?: unknown; readMemory?: unknown } | null;
+      if (!saved || saved.chatKeyHash !== request.userContext.chatKeyHash) return undefined;
+      const memory = saved.readMemory as LineAiReadMemory | undefined;
+      if (!memory || memory.tool !== row.toolName) return undefined;
+      entries.push(memory);
+    }
+    return entries;
   }
 
   async isReadFreeExpenseCriterionConfirmation(request: LineAiTurnRequest, response: LineAiTurnResponse): Promise<boolean> {

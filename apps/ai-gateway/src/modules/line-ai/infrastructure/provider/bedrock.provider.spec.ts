@@ -9,7 +9,9 @@ import {
 } from '@watchdog-bms/contracts';
 
 function makeProvider(timeoutMs = 10000) {
-  return new BedrockProvider({ region: 'ap-southeast-1', modelId: 'test-model', timeoutMs });
+  // item 5: a no-op sleep so every existing test that happens to throttle still runs instantly —
+  // dedicated retry/backoff specs below pass their own `sleep` to observe the real behavior.
+  return new BedrockProvider({ region: 'ap-southeast-1', modelId: 'test-model', timeoutMs, sleep: async () => {} });
 }
 
 /** Collects the provider's `ai.usage` lines without letting them reach the test output. */
@@ -178,6 +180,123 @@ describe('BedrockProvider error mapping', () => {
     const result = await provider.generateText({ messages: [{ role: 'user', text: 'ดูสต็อก' }] });
     assert.equal(result.ok, true);
     if (result.ok) assert.equal(result.text, 'ข้อมูลสต็อก: 5 รายการ');
+  });
+});
+
+// ── Item 5: bounded, jittered throttle retry (223-turn eval, 14 PROVIDER_THROTTLED turns) ────
+
+/** A fake `client.send` that throttles the first `throttleCount` calls, then succeeds. */
+function throttleThenSucceed(throttleCount: number) {
+  let calls = 0;
+  return {
+    send: async () => {
+      calls += 1;
+      if (calls <= throttleCount) {
+        const e: any = new Error('Rate limit exceeded');
+        e.name = 'ThrottlingException';
+        throw e;
+      }
+      return { stopReason: 'end_turn', output: { message: { content: [{ text: 'ok' }] } } };
+    },
+    get calls() { return calls; },
+  };
+}
+
+/** A fake `client.send` that always throttles. */
+function alwaysThrottle() {
+  let calls = 0;
+  return {
+    send: async () => {
+      calls += 1;
+      const e: any = new Error('Rate limit exceeded');
+      e.name = 'ThrottlingException';
+      throw e;
+    },
+    get calls() { return calls; },
+  };
+}
+
+/** Records every delay the provider asked to sleep, resolving instantly so specs never wait. */
+function recordingSleep() {
+  const delaysMs: number[] = [];
+  return { delaysMs, sleep: async (ms: number) => { delaysMs.push(ms); } };
+}
+
+describe('BedrockProvider throttle retry (item 5)', () => {
+  it('retries a throttled call up to 2 times with jittered 400-1200ms backoff, then succeeds', async () => {
+    const { delaysMs, sleep } = recordingSleep();
+    const provider = new BedrockProvider({ region: 'ap-southeast-1', modelId: 'test-model', timeoutMs: 10000, sleep });
+    const fake = throttleThenSucceed(2);
+    (provider as any).client = fake;
+    const result = await provider.generateText({ messages: [{ role: 'user', text: 'q' }] });
+    assert.equal(result.ok, true);
+    assert.equal(fake.calls, 3, 'the original attempt plus exactly 2 retries');
+    assert.equal(delaysMs.length, 2);
+    for (const ms of delaysMs) assert.ok(ms >= 400 && ms < 1200, `backoff ${ms}ms out of the 400-1200ms band`);
+  });
+
+  it('gives up after 2 retries and reports PROVIDER_THROTTLED, never an unbounded loop', async () => {
+    const { sleep } = recordingSleep();
+    const provider = new BedrockProvider({ region: 'ap-southeast-1', modelId: 'test-model', timeoutMs: 10000, sleep });
+    const fake = alwaysThrottle();
+    (provider as any).client = fake;
+    const result = await provider.generateText({ messages: [{ role: 'user', text: 'q' }] });
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.code, 'PROVIDER_THROTTLED');
+      assert.equal(result.error.retryable, true);
+    }
+    assert.equal(fake.calls, 3, 'the original attempt plus exactly 2 retries, never more');
+  });
+
+  it('never retries past this call\'s own deadline', async () => {
+    const { delaysMs, sleep } = recordingSleep();
+    const provider = new BedrockProvider({ region: 'ap-southeast-1', modelId: 'test-model', timeoutMs: 10000, sleep });
+    const fake = alwaysThrottle();
+    (provider as any).client = fake;
+    // The shortest possible backoff (400ms) already cannot finish before this deadline, so the
+    // very first throttle must fail closed instead of spending a retry it cannot use.
+    const result = await provider.generateText({ messages: [{ role: 'user', text: 'q' }], deadlineAt: Date.now() + 100 });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.code, 'PROVIDER_THROTTLED');
+    assert.equal(fake.calls, 1, 'no time left for even one retry');
+    assert.equal(delaysMs.length, 0);
+  });
+
+  it('only retries a genuine ThrottlingException, not another provider error', async () => {
+    const { delaysMs, sleep } = recordingSleep();
+    const provider = new BedrockProvider({ region: 'ap-southeast-1', modelId: 'test-model', timeoutMs: 10000, sleep });
+    let calls = 0;
+    (provider as any).client = { send: async () => {
+      calls += 1;
+      const e: any = new Error('denied');
+      e.name = 'AccessDeniedException';
+      throw e;
+    } };
+    const result = await provider.generateText({ messages: [{ role: 'user', text: 'q' }] });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.code, 'PROVIDER_ACCESS_NOT_READY');
+    assert.equal(calls, 1, 'a non-throttling error never retries');
+    assert.equal(delaysMs.length, 0);
+  });
+
+  it('logs exactly one ai.usage line for the whole invocation, whatever the retry count', async () => {
+    const { sleep } = recordingSleep();
+    const provider = new BedrockProvider({ region: 'ap-southeast-1', modelId: 'test-model', timeoutMs: 10000, sleep });
+    (provider as any).client = throttleThenSucceed(1);
+    const capture = captureUsageLines();
+    try {
+      await provider.generateText({ messages: [{ role: 'user', text: 'q' }] });
+    } finally {
+      capture.restore();
+    }
+    // Item 5 root-cause note: the budget decorator settles `tagged[0]` of the usage rows this call
+    // appends — a SECOND row per retry would make it settle the wrong (zero-usage, throttled)
+    // attempt instead of the eventual success. Exactly one line keeps that positional attribution
+    // sound, and still names the retry count for CloudWatch/ops visibility.
+    assert.equal(capture.lines.length, 1);
+    assert.equal(capture.lines[0]!['ok'], true);
+    assert.equal(capture.lines[0]!['throttleRetryCount'], 1);
   });
 });
 

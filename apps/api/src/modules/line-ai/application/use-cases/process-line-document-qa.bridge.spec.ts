@@ -138,6 +138,34 @@ it('asks a new question about the same owned bytes and keeps original event proo
   assert.deepEqual(f.trace, []); assert.match(f.delivered.at(-1)!, /เลขหน้าที่ขอ/);
 });
 
+it('reads a pending receipt without creating an expense when the user says read only', async () => {
+  const f = fixture(), event = Object.assign(f.event, {
+    messageText: 'ดูอย่างเดียวยังไม่บันทึก', inputEvidence: { joinedSha256: 'digest' },
+  });
+  f.flow.budgetGrantsV2.set(event, { turnKey: 'read-only-turn' });
+  f.flow.prisma.client.lineIntakePendingMedia.findMany = async () => [{
+    id: 'pending', attachmentId: 'attachment', status: 'RESOLVED_RECEIPT', readJobId: 'old-job',
+    revision: 4, mimeType: 'image/png', askedQuestionJson: {},
+  }];
+  f.flow.documentQa.getById = async () => ({ ...f.owner, ownerMembershipId: 'member', ownerEpoch: 3,
+    attachmentsJson: [{ attachmentId: 'attachment', requestedPages: [1] }] });
+  f.flow.documentQa.admit = async (input: any) => {
+    assert.equal(input.question, event.messageText);
+    assert.equal(input.turnId, 'read-only-turn');
+    assert.deepEqual(input.attachments, [{ attachmentId: 'attachment', requestedPages: [1] }]);
+    return { jobId: 'job', foregroundDeadlineAt: new Date(Date.now() + 10_000).toISOString() };
+  };
+  const statuses: string[] = [];
+  f.flow.prisma.client.lineIntakePendingMedia.updateMany = async ({ data }: any) => {
+    statuses.push(data.status); return { count: 1 };
+  };
+  assert.equal(await f.flow.resumeDocumentQuestionV2(event, 'request', {
+    semanticSubrequests: [{ index: 0, kind: 'file', goal: 'อ่านไฟล์โดยไม่บันทึก', requestedFilters: {} }],
+  }, f.access), true);
+  assert.deepEqual(statuses, ['PENDING', 'RESOLVED_RECEIPT']);
+  assert.match(f.delivered.at(-1)!, /ข้อความต้นทาง/);
+});
+
 
 it('cancels the exact owned job without provider calls, and keeps ready results immutable while stopping pending delivery', async () => {
   for (const status of ['READING', 'ANSWER_READY']) {

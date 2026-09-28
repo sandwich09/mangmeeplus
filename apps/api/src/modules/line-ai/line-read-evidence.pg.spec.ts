@@ -30,6 +30,7 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
     const url = new URL(databaseUrl!);
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
     assert.ok((url.port === '15432' && url.pathname === '/mangmee_billing_20260912')
+      || (url.port === '15439' && url.pathname === '/watchdog_bms_ai_reliability_20260927')
       || (url.port === '5432' && url.pathname === '/watchdog_postmark_ci'), 'only a dedicated disposable local/CI database');
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     const prisma = { client } as unknown as PrismaService, tag = randomUUID();

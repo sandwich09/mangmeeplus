@@ -12,7 +12,7 @@ import {
 } from './line-business-card.logic';
 
 const response = (cards?: NonNullable<LineAiTurnResponse['presentation']>['cards']): LineAiTurnResponse => ({
-  requestId: 'r1', replyText: 'fallback', sourceRefs: [], sourceLabels: [], webLinks: [],
+  requestId: 'r1', replyText: cards?.map(card => card.text).join('\n\n') ?? 'fallback', sourceRefs: [], sourceLabels: [], webLinks: [],
   intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: ['company.get_current_context'], durationMs: 1,
   ...(cards ? { presentation: { kind: 'answer_cards', cards } } : {}),
 });
@@ -21,8 +21,24 @@ describe('LINE business answer card renderer', () => {
   it('returns a fallback card when presentation is absent', () => {
     const message = buildLineBusinessAnswerMessage({ ...response(), toolsInvoked: ['expense.list_recent'] }, 'plain fallback', 'https://app.example.com', 'c1');
     assert.equal(message.type, 'flex');
-    assert.match(JSON.stringify(message), /plain fallback/);
+    assert.match(JSON.stringify(message), /fallback/);
+    assert.doesNotMatch(JSON.stringify(message), /plain fallback/);
     assert.equal((message.contents as any).header.contents[0].text, 'น้องมั่งมีสรุปค่าใช้จ่ายให้นะคะ');
+  });
+
+  it('keeps full cardless reply, source basis and only a safe tenant link', () => {
+    const message = buildLineBusinessAnswerMessage({
+      ...response(), replyText: 'ยอด 500 บาท\nยังไม่รวมรายการที่รอตรวจสอบ', sourceLabels: ['ค่าใช้จ่าย'],
+      webLinks: [
+        { label: 'เปิดค่าใช้จ่าย', path: '/companies/c1/expenses' },
+        { label: 'ห้ามเปิด', path: '/companies/c2/expenses' },
+      ],
+    }, 'ignored fallback', 'https://app.example.com', 'c1');
+    assert.equal(message.type, 'flex');
+    assert.match(message.canonicalText ?? '', /ยังไม่รวมรายการที่รอตรวจสอบ/);
+    assert.match(message.canonicalText ?? '', /แหล่งข้อมูล: ค่าใช้จ่าย/);
+    assert.match(message.canonicalText ?? '', /https:\/\/app\.example\.com\/companies\/c1\/expenses/);
+    assert.doesNotMatch(message.canonicalText ?? '', /companies\/c2/);
   });
 
   it('uses trusted contextual headings and preserves explicit titles', () => {
@@ -44,7 +60,7 @@ describe('LINE business answer card renderer', () => {
   });
 
   it('fails closed to a trusted fallback card when a refused response unexpectedly carries cards', () => {
-    const refused = { ...response([{ text: 'ข้อมูลที่ห้ามแสดง' }]), refused: true };
+    const refused = { ...response([{ text: 'ข้อมูลที่ห้ามแสดง' }]), replyText: 'ไม่มีสิทธิ์', refused: true };
     const message = buildLineBusinessAnswerMessage(refused, 'ไม่มีสิทธิ์', 'https://app.example.com', 'c1');
     assert.equal(message.type, 'flex');
     assert.match(JSON.stringify(message), /ไม่มีสิทธิ์/);
@@ -109,14 +125,16 @@ describe('LINE business answer card renderer', () => {
     assert.match(json, /#1A2E22/);
     assert.match(json, /https:\/\/app\.example\.com\/companies\/c1\/expenses\?month=2026-07/);
     assert.match(json, /แหล่งข้อมูล: ค่าใช้จ่าย/);
+    assert.equal(message.type === 'flex' && message.canonicalText,
+      'ยังไม่มีค่าใช้จ่าย รวม 0.00 บาท\n\nค่าใช้จ่ายเดือนนี้\n\nแหล่งข้อมูล: ค่าใช้จ่าย\n\nเปิดดู: เปิดค่าใช้จ่าย https://app.example.com/companies/c1/expenses?month=2026-07');
   });
 
-  it('renders many answers as a carousel capped at twelve cards', () => {
+  it('uses complete text when a carousel would omit the thirteenth card', () => {
     const cards = Array.from({ length: 14 }, (_, index) => ({ title: `คำตอบ ${index + 1}`, text: `ข้อมูล ${index + 1}` }));
     const message = buildLineBusinessAnswerMessage(response(cards), 'fallback', 'https://app.example.com', 'c1');
-    assert.equal(message.type, 'flex');
-    assert.equal((message.contents as any).type, 'carousel');
-    assert.equal((message.contents as any).contents.length, 12);
+    assert.equal(message.type, 'text');
+    assert.match(message.text, /คำตอบ 14/);
+    assert.match(message.text, /ข้อมูล 14/);
   });
 
   it('omits absolute, cross-tenant, protocol-relative, and traversing links', () => {
@@ -132,16 +150,33 @@ describe('LINE business answer card renderer', () => {
         text: 'ข้อมูล', webLink: { label: 'เปิด', path },
       }]), 'fallback', 'https://app.example.com', 'c1');
       assert.doesNotMatch(JSON.stringify(message), /"type":"button"/, path);
+      assert.doesNotMatch(JSON.stringify(message), /evil\.example|companies\/c2|%2f|\.\.\//i, path);
     }
   });
 
-  it('bounds card text and alt text without splitting unicode code points', () => {
+  it('uses complete text rather than hiding card body overflow', () => {
     const message = buildLineBusinessAnswerMessage(response([{ title: 'หัวข้อ', text: '🌱'.repeat(2_000) }]), 'fallback', undefined, 'c1');
-    assert.equal(message.type, 'flex');
-    assert.ok(Array.from(message.altText).length <= 400);
-    const bodyText = ((message.contents as any).body.contents[0].text as string);
-    assert.equal(Array.from(bodyText).length, 1_200);
-    assert.equal(bodyText.endsWith('🌱'), true);
+    assert.equal(message.type, 'text');
+    assert.equal(Array.from(message.text.match(/🌱/gu) ?? []).length, 2_000);
+  });
+
+  it('falls back to complete text when reply caveats are absent from the cards', () => {
+    const message = buildLineBusinessAnswerMessage({
+      ...response([{ title: 'ค่าใช้จ่ายเดือนนี้', text: 'รวม 500 บาท' }]),
+      replyText: 'รวม 500 บาท\nยังไม่รวมรายการที่รอตรวจสอบ',
+    }, 'fallback', 'https://app.example.com', 'c1');
+    assert.equal(message.type, 'text');
+    assert.match(message.text, /ยังไม่รวมรายการที่รอตรวจสอบ/);
+    assert.match(message.text, /ค่าใช้จ่ายเดือนนี้/);
+  });
+
+  it('deduplicates only exact blocks so a short distinct card fact is retained', () => {
+    const message = buildLineBusinessAnswerMessage({
+      ...response([{ title: 'ยอด', text: '500 บาท' }]),
+      replyText: 'ยอดรวม 1,500 บาท',
+    }, 'fallback', undefined, 'c1');
+    assert.equal(message.type, 'text');
+    assert.match(message.text, /ยอดรวม 1,500 บาท\n\nยอด\n\n500 บาท/);
   });
 });
 

@@ -14,6 +14,7 @@ import { InventoryGetStockBalanceTool, InventoryListLowStockTool, InventorySearc
 import { NotificationsListOpenAlertsTool } from './erp-dashboard-tools.use-case';
 import { WorkflowListAssignedTasksTool, WorkflowListRecentFailuresTool, WorkflowSummarizeRuleHealthTool } from './erp-workflow-tools.use-case';
 import { ExpenseGetDailyClosingTool } from './erp-expense-daily-closing.use-case';
+import { mergeVendorBreakdownGroups, type VendorBreakdownRawGroup } from '../../../expenses/infrastructure/prisma-expense.repository';
 
 const baseCtx = { companyId: 'c1', userId: 'u1', locale: 'th-TH' } as any;
 
@@ -84,10 +85,22 @@ describe('§3.3 default period: current month (daily closing: today)', () => {
   it('expense.get_breakdown reads the current month', async () => {
     const source = { readAiBreakdown: async () => ({
       asOf: new Date(), byCurrency: [{ currency: 'THB', count: 0, totalAmount: '0' }],
-      byCategory: [], byBranch: [], categoryHasMore: false, branchHasMore: false,
+      byCategory: [], byBranch: [], byVendor: [], categoryHasMore: false, branchHasMore: false, vendorHasMore: false,
     }) } as any;
     const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read'] });
     assert.deepEqual((result.data as any).period, { ...month(), defaultedToCurrentMonth: true });
+  });
+
+  it('expense.get_breakdown rejects invalid document/payment enums before reading the repository', async () => {
+    let calls = 0;
+    const source = { readAiBreakdown: async () => { calls++; throw new Error('must not run'); } } as any;
+    const tool = new ExpenseGetBreakdownTool(source);
+    for (const input of [{ documentStatus: 'confirmed' }, { paymentStatus: 'settled' }]) {
+      const result = await tool.execute({ ...baseCtx, permissions: ['expense.read'] }, input as any);
+      assert.equal(result.status, 'error');
+      assert.equal(result.errorCode, 'UNSUPPORTED_FILTER');
+    }
+    assert.equal(calls, 0);
   });
 
   it('expense.get_daily_closing reads TODAY — the documented per-day exception', async () => {
@@ -338,7 +351,7 @@ describe('CompanyEmployeeDetailTool', () => {
 });
 
 describe('ExpenseGetBreakdownTool', () => {
-  function makeSource(captured: { ctx?: any; filter?: any } = {}) {
+  function makeSource(captured: { ctx?: any; filter?: any } = {}, overrides: { byVendor?: any[]; vendorHasMore?: boolean } = {}) {
     return {
       readAiBreakdown: async (ctx: any, filter: any) => {
         captured.ctx = ctx; captured.filter = filter;
@@ -350,9 +363,12 @@ describe('ExpenseGetBreakdownTool', () => {
             { branchId: 'b1', currency: 'THB', count: 2, totalAmount: '200.0000', label: 'สาขาลาดพร้าว' },
             { branchId: null, currency: 'THB', count: 1, totalAmount: '100.0000', label: null },
           ],
-          categoryHasMore: false, branchHasMore: false,
+          byVendor: overrides.byVendor ?? [],
+          categoryHasMore: false, branchHasMore: false, vendorHasMore: overrides.vendorHasMore ?? false,
         };
       },
+      listCategoryCandidates: async () => [],
+      readAiVendorCandidates: async () => [],
     } as any;
   }
 
@@ -372,6 +388,13 @@ describe('ExpenseGetBreakdownTool', () => {
     assert.equal(data.period.defaultedToCurrentMonth, true);
   });
 
+  it('spec §4 R-M1: echoes the effective groupBy in queryApplied, defaulting to category', async () => {
+    const defaulted = await new ExpenseGetBreakdownTool(makeSource()).execute({ ...baseCtx, permissions: ['expense.read'] });
+    assert.equal(defaulted.queryApplied?.filters?.['groupBy'], 'category');
+    const byVendor = await new ExpenseGetBreakdownTool(makeSource()).execute({ ...baseCtx, permissions: ['expense.read'] }, { groupBy: 'vendor' } as any);
+    assert.equal(byVendor.queryApplied?.filters?.['groupBy'], 'vendor');
+  });
+
   it('applies the caller branch scope to the query (10D ABAC)', async () => {
     const captured: { ctx?: any; filter?: any } = {};
     await new ExpenseGetBreakdownTool(makeSource(captured)).execute({ ...baseCtx, permissions: ['expense.read'], branchIds: ['b1'] });
@@ -388,6 +411,277 @@ describe('ExpenseGetBreakdownTool', () => {
     const captured: { ctx?: any } = {};
     await new ExpenseGetBreakdownTool(makeSource(captured)).execute({ ...baseCtx, permissions: ['expense.read_related'] });
     assert.deepEqual(captured.ctx.permissions, ['expense.read_related']);
+  });
+
+  // Item 1 (spec R-A1 row 18, eval: 15 turns): echoes readAiBreakdown's own accessScope into
+  // queryApplied so the answer can state "only your own records" instead of a bare own-scoped total.
+  it('echoes a non-company accessScope from readAiBreakdown into queryApplied', async () => {
+    const source = {
+      readAiBreakdown: async () => ({
+        asOf: new Date('2026-07-31T00:00:00Z'), byCurrency: [], byCategory: [], byBranch: [], byVendor: [],
+        categoryHasMore: false, branchHasMore: false, vendorHasMore: false, accessScope: 'related',
+      }),
+      listCategoryCandidates: async () => [], readAiVendorCandidates: async () => [],
+    } as any;
+    const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read_related'] });
+    assert.equal((result.data as any).queryApplied.accessScope, 'related');
+  });
+
+  it('defaults to company scope when the use case predates accessScope', async () => {
+    const result = await new ExpenseGetBreakdownTool(makeSource()).execute({ ...baseCtx, permissions: ['expense.read'] });
+    assert.equal((result.data as any).queryApplied.accessScope, 'company');
+  });
+
+  // byVendor (spec §3 row 5 / plan P4.1): top 10 by amount descending, the null-vendor group
+  // labelled "ไม่ระบุร้าน", and vendorHasMore folded into the pooled completeness.groups signal.
+  describe('byVendor', () => {
+    const vendorGroup = (i: number, amount: number) => ({
+      vendorCounterpartyId: `v${i}`, currency: 'THB', count: 1, totalAmount: amount.toFixed(4), label: `ร้าน ${i}`, linked: true,
+    });
+
+    it('orders vendors by amount descending and labels the no-vendor group', async () => {
+      const byVendor = [vendorGroup(1, 500), { vendorCounterpartyId: null, currency: 'THB', count: 2, totalAmount: '50.0000', label: null, linked: false }, vendorGroup(2, 100)];
+      const result = await new ExpenseGetBreakdownTool(makeSource({}, { byVendor })).execute({ ...baseCtx, permissions: ['expense.read'] });
+      const data = result.data as any;
+      assert.deepEqual(data.byVendor.map((v: any) => v.vendorId), ['v1', null, 'v2']);
+      assert.equal(data.byVendor[0].vendor, 'ร้าน 1');
+      assert.equal(data.byVendor[0].linked, true);
+      assert.equal(data.byVendor[1].vendor, 'ไม่ระบุร้าน');
+      assert.equal(data.byVendor[1].linked, false);
+      assert.equal(data.byVendor[0].totalAmount, '500.0000');
+    });
+
+    it('surfaces vendorHasMore and folds it into the pooled completeness signal', async () => {
+      const byVendor = Array.from({ length: 10 }, (_, i) => vendorGroup(i, 1000 - i));
+      const result = await new ExpenseGetBreakdownTool(makeSource({}, { byVendor, vendorHasMore: true })).execute({ ...baseCtx, permissions: ['expense.read'] });
+      const data = result.data as any;
+      assert.equal(data.byVendor.length, 10);
+      assert.equal(data.vendorHasMore, true);
+      assert.equal(data.completeness.groups.hasMore, true);
+      assert.equal(data.completeness.groups.returned, data.byCategory.length + data.byBranch.length + data.byVendor.length);
+    });
+  });
+
+  // 2026-09-27 review: "ไม่ระบุร้าน" was misleading — a reimbursement projection (never linked to a
+  // counterparty, CON-4) and an older snapshot-only expense both HAVE a real vendor name. These
+  // test the repository's merge logic directly (mergeVendorBreakdownGroups), since the tool-level
+  // fakes above bypass the repository and can't exercise it.
+  describe('mergeVendorBreakdownGroups (repository merge, spec §3 row 5 review)', () => {
+    const raw = (over: Partial<VendorBreakdownRawGroup>): VendorBreakdownRawGroup => ({
+      vendorCounterpartyId: null, vendorNameSnapshot: null, currency: 'THB', count: 1, totalAmount: '100.0000', ...over,
+    });
+
+    it('a linked vendor keeps its counterparty id and is marked linked', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([raw({ vendorCounterpartyId: 'v1', vendorNameSnapshot: 'ร้านเดิม' })], 500, 10);
+      assert.deepEqual(vendorPage, [{ vendorCounterpartyId: 'v1', snapshotLabel: null, currency: 'THB', count: 1, totalAmount: '100.0000' }]);
+    });
+
+    it('an unlinked snapshot-only vendor is labelled from its snapshot, not "ไม่ระบุร้าน"', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([raw({ vendorNameSnapshot: '  ร้านเก่าไม่ผูกคู่ค้า  ' })], 500, 10);
+      assert.equal(vendorPage[0]!.vendorCounterpartyId, null);
+      assert.equal(vendorPage[0]!.snapshotLabel, 'ร้านเก่าไม่ผูกคู่ค้า');
+    });
+
+    it('a reimbursement projection keeps its "เบิกคืนพนักงาน: …" snapshot as an unlinked label', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([raw({ vendorNameSnapshot: 'เบิกคืนพนักงาน: สมชาย ใจดี' })], 500, 10);
+      assert.equal(vendorPage[0]!.vendorCounterpartyId, null);
+      assert.equal(vendorPage[0]!.snapshotLabel, 'เบิกคืนพนักงาน: สมชาย ใจดี');
+    });
+
+    it('only a row with neither an id nor a snapshot becomes the "unknown" group', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([raw({ vendorNameSnapshot: null }), raw({ vendorNameSnapshot: '   ' })], 500, 10);
+      // Both rows have no real name (one null, one whitespace-only) and share the currency, so
+      // they merge into ONE unknown row, not two.
+      assert.equal(vendorPage.length, 1);
+      assert.equal(vendorPage[0]!.vendorCounterpartyId, null);
+      assert.equal(vendorPage[0]!.snapshotLabel, null);
+      assert.equal(vendorPage[0]!.count, 2);
+    });
+
+    it('merges every snapshot variant of one linked vendor into its single canonical row', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([
+        raw({ vendorCounterpartyId: 'v1', vendorNameSnapshot: 'ร้านสมใจ', totalAmount: '100.0000', count: 1 }),
+        raw({ vendorCounterpartyId: 'v1', vendorNameSnapshot: 'ร้านสมใจ (สาขา 2)', totalAmount: '50.0000', count: 2 }),
+      ], 500, 10);
+      assert.equal(vendorPage.length, 1);
+      assert.equal(vendorPage[0]!.vendorCounterpartyId, 'v1');
+      assert.equal(vendorPage[0]!.totalAmount, '150.0000');
+      assert.equal(vendorPage[0]!.count, 3);
+    });
+
+    it('keeps currencies separate for the same vendor', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([
+        raw({ vendorCounterpartyId: 'v1', currency: 'THB', totalAmount: '100.0000' }),
+        raw({ vendorCounterpartyId: 'v1', currency: 'USD', totalAmount: '10.0000' }),
+      ], 500, 10);
+      assert.equal(vendorPage.length, 2);
+    });
+
+    it('ranks the merged (not raw) rows by amount descending', () => {
+      const { vendorPage } = mergeVendorBreakdownGroups([
+        // Split across two snapshot rows, a linked vendor's TRUE total (250) outranks a bigger
+        // single raw row (200) only once the two are merged first.
+        raw({ vendorCounterpartyId: 'v1', vendorNameSnapshot: 'A', totalAmount: '150.0000' }),
+        raw({ vendorCounterpartyId: 'v2', vendorNameSnapshot: 'B', totalAmount: '200.0000' }),
+        raw({ vendorCounterpartyId: 'v1', vendorNameSnapshot: 'A (2)', totalAmount: '100.0000' }),
+      ], 500, 10);
+      assert.deepEqual(vendorPage.map((v) => v.vendorCounterpartyId), ['v1', 'v2']);
+      assert.equal(vendorPage[0]!.totalAmount, '250.0000');
+    });
+
+    it('sets vendorHasMore when the raw fetch hits the fetch bound, even with 10 or fewer merged vendors', () => {
+      const rows = Array.from({ length: 6 }, (_, i) => raw({ vendorCounterpartyId: `v${i}`, totalAmount: '10.0000' }));
+      const { vendorHasMore, vendorPage } = mergeVendorBreakdownGroups(rows, 5, 10);
+      assert.equal(vendorHasMore, true);
+      assert.equal(vendorPage.length, 5);
+    });
+
+    it('sets vendorHasMore when the merged population exceeds the display cap, even under the fetch bound', () => {
+      const rows = Array.from({ length: 12 }, (_, i) => raw({ vendorCounterpartyId: `v${i}`, totalAmount: `${12 - i}.0000` }));
+      const { vendorHasMore, vendorPage } = mergeVendorBreakdownGroups(rows, 500, 10);
+      assert.equal(vendorHasMore, true);
+      assert.equal(vendorPage.length, 10);
+    });
+
+    it('does not set vendorHasMore when everything fits', () => {
+      const rows = [raw({ vendorCounterpartyId: 'v1' })];
+      const { vendorHasMore } = mergeVendorBreakdownGroups(rows, 500, 10);
+      assert.equal(vendorHasMore, false);
+    });
+  });
+
+  // categoryName/vendorName resolution (spec §3 row 6): wired identically to expense.list_recent —
+  // the full match-semantics matrix (exact, contains, ambiguous, not_found, id/name conflict,
+  // read_own scoping) is covered against ExpenseListRecentTool in
+  // erp-expense-list-recent.use-case.spec.ts; these confirm expense.get_breakdown is wired to the
+  // same helper and shapes its own responses the same way.
+  // C3 (batch 5c, T-148-b): this tool had NO branch resolution at all — a branchId that was really a
+  // name/code/number (e.g. "2" for "สาขา 2") reached the repository as a literal id and silently
+  // matched nothing. Now shares `resolveExpenseBranchFilter` with expense.list_recent (full exact/
+  // fuzzy/out-of-scope coverage lives in erp-expense-list-recent.use-case.spec.ts); these two confirm
+  // this tool is actually wired to it.
+  describe('branchId resolution (C3, batch 5c)', () => {
+    function fakeBranchPrisma(branches: Array<{ id: string; name: string; code?: string }>) {
+      const rows = branches.map((b) => ({ id: b.id, name: b.name, code: b.code ?? null }));
+      const allowed = (where: any) => rows.filter((b) => {
+        if (where?.id?.in && !where.id.in.includes(b.id)) return false;
+        if (where?.name && where.name !== b.name) return false;
+        if (where?.OR && !where.OR.some((term: any) => (term.id !== undefined && term.id === b.id)
+          || (term.code !== undefined && term.code === b.code) || (term.name !== undefined && term.name === b.name))) return false;
+        return true;
+      });
+      return { client: { branch: { findMany: async ({ where, take }: any) => allowed(where).slice(0, take) } } } as any;
+    }
+
+    function makeBranchTool(filters: any[], branches: Array<{ id: string; name: string; code?: string }>) {
+      const source = {
+        readAiBreakdown: async (_ctx: any, filter: any) => {
+          filters.push(filter);
+          return {
+            asOf: new Date(), byCurrency: [{ currency: 'THB', count: 0, totalAmount: '0' }],
+            byCategory: [], byBranch: [], byVendor: [], categoryHasMore: false, branchHasMore: false, vendorHasMore: false,
+          };
+        },
+        listCategoryCandidates: async () => [], readAiVendorCandidates: async () => [],
+      } as any;
+      return new ExpenseGetBreakdownTool(source, fakeBranchPrisma(branches));
+    }
+
+    it('resolves "2" to the branch whose name ends in that number, instead of filtering on the literal string', async () => {
+      const filters: any[] = [];
+      const tool = makeBranchTool(filters, [
+        { id: 'b1', name: 'สำนักงานใหญ่', code: 'BR1' },
+        { id: 'b2', name: 'สาขา 2', code: 'BR2' },
+      ]);
+      const result = await tool.execute({ ...baseCtx, permissions: ['expense.read'] }, { branchId: '2' } as any);
+
+      assert.equal(result.status, 'ok');
+      assert.equal(filters[0]?.branchId, 'b2');
+      assert.equal((result.data as any).queryApplied?.branch?.branchId, 'b2');
+    });
+
+    it('returns the branch catalog instead of a (silently empty) breakdown when the branch cannot be resolved', async () => {
+      const filters: any[] = [];
+      const tool = makeBranchTool(filters, [{ id: 'b1', name: 'สาขา 1', code: 'BR1' }]);
+      const result = await tool.execute({ ...baseCtx, permissions: ['expense.read'] }, { branchId: 'สาขา 99' } as any);
+
+      assert.equal(filters.length, 0);
+      assert.equal((result.data as any).branchUnresolved, 'สาขา 99');
+      assert.ok(result.sourceRefs.length > 0);
+    });
+  });
+
+  describe('categoryName / vendorName resolution', () => {
+    function makeNamedSource(categories: Array<{ id: string; name: string }>, vendors: Array<{ id: string; name: string }>) {
+      const filters: any[] = [];
+      return {
+        readAiBreakdown: async (_ctx: any, filter: any) => {
+          filters.push(filter);
+          return {
+            asOf: new Date(), byCurrency: [{ currency: 'THB', count: 0, totalAmount: '0' }],
+            byCategory: [], byBranch: [], byVendor: [], categoryHasMore: false, branchHasMore: false, vendorHasMore: false,
+          };
+        },
+        listCategoryCandidates: async () => categories,
+        readAiVendorCandidates: async () => vendors,
+        filters,
+      } as any;
+    }
+
+    it('resolves an exact category name to its id', async () => {
+      const source = makeNamedSource([{ id: 'cat1', name: 'ค่าน้ำมัน' }, { id: 'cat2', name: 'ค่าไฟ' }], []);
+      const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read'] }, { categoryName: 'ค่าน้ำมัน' } as any);
+      assert.equal(result.status, 'ok');
+      assert.equal(source.filters[0].expenseCategoryId, 'cat1');
+      assert.equal((result.data as any).queryApplied.filters.categoryName, 'ค่าน้ำมัน');
+    });
+
+    // batch 9a real repro, through the real tool: the model itself sent categoryName "ค่าเดินทาน"
+    // (one Thai character off "ค่าเดินทาง") calling this tool, not a user typo forwarded verbatim.
+    it('resolves the model\'s one-character miswrite of a category name to its id', async () => {
+      const source = makeNamedSource([{ id: 'cat1', name: 'ค่าเดินทาง' }, { id: 'cat2', name: 'ค่าน้ำมัน' }], []);
+      const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read'] }, { categoryName: 'ค่าเดินทาน' } as any);
+      assert.equal(result.status, 'ok');
+      assert.equal(source.filters[0].expenseCategoryId, 'cat1');
+      assert.equal((result.data as any).queryApplied.filters.categoryName, 'ค่าเดินทาง');
+    });
+
+    it('returns a structured ambiguity for several vendor name matches', async () => {
+      const source = makeNamedSource([], [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }]);
+      const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read'] }, { vendorName: 'สมใจ' } as any);
+      assert.equal(result.status, 'ok');
+      assert.equal(source.filters.length, 0);
+      assert.equal((result.data as any).vendorAmbiguous, 'สมใจ');
+      assert.deepEqual((result.data as any).availableVendors, [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }]);
+      // Item 2 (223-turn eval batch 2): this 'ok' result must carry a real source citation, or the
+      // gateway's enforceSourceHonesty boundary check discards it as TOOL_RESULT_NO_SOURCE before
+      // any caller (classic or model-driven) ever sees availableVendors.
+      assert.ok(result.sourceRefs.length > 0);
+      assert.ok(result.sourceRefs.every((ref) => ref.permissionChecked === true && ref.module === 'expenses'));
+    });
+
+    it('returns a not-found result listing the available categories instead of a breakdown', async () => {
+      const source = makeNamedSource([{ id: 'cat1', name: 'ค่าน้ำมัน' }, { id: 'cat2', name: 'ค่าไฟ' }], []);
+      const result = await new ExpenseGetBreakdownTool(source).execute({ ...baseCtx, permissions: ['expense.read'] }, { categoryName: 'ค่าเช่า' } as any);
+      assert.equal(result.status, 'ok');
+      assert.equal(source.filters.length, 0);
+      assert.equal((result.data as any).categoryUnresolved, 'ค่าเช่า');
+      assert.deepEqual((result.data as any).availableCategories, [{ id: 'cat1', name: 'ค่าน้ำมัน' }, { id: 'cat2', name: 'ค่าไฟ' }]);
+      // Item 2: same source-honesty requirement as the ambiguous case above.
+      assert.ok(result.sourceRefs.length > 0);
+      assert.ok(result.sourceRefs.every((ref) => ref.permissionChecked === true && ref.module === 'expenses'));
+    });
+
+    it('returns an input error when categoryId and categoryName disagree', async () => {
+      const source = makeNamedSource([{ id: 'cat1', name: 'ค่าน้ำมัน' }], []);
+      const result = await new ExpenseGetBreakdownTool(source).execute(
+        { ...baseCtx, permissions: ['expense.read'] },
+        { categoryId: 'cat-other', categoryName: 'ค่าน้ำมัน' } as any,
+      );
+      assert.equal(result.status, 'error');
+      assert.equal(result.errorCode, 'UNSUPPORTED_FILTER');
+      assert.equal(source.filters.length, 0);
+    });
   });
 });
 
@@ -438,7 +732,20 @@ function dailyClosingDetail(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makeDailyClosingPrisma() {
+// F3 (tuning-6b): the caller's own scoped branch catalog (`dailyClosingCtx.branchIds` defaults to
+// ['b1']) — `resolveExpenseBranchFilter` reads `prisma.client.branch.findMany` directly (never inside
+// the $transaction below), same fake shape as `erp-expense-list-recent.use-case.spec.ts`'s fakePrisma.
+function makeDailyClosingPrisma(branches: Array<{ id: string; name: string; code?: string }> = [{ id: 'b1', name: 'สาขา 1', code: 'BR1' }]) {
+  const branchRows = branches.map((b) => ({ id: b.id, name: b.name, code: b.code ?? null }));
+  const allowedBranches = (where: any) => branchRows.filter((b) => {
+    if (where?.companyId && where.companyId !== 'c1') return false;
+    if (where?.status && where.status !== 'ACTIVE') return false;
+    if (where?.id?.in && !where.id.in.includes(b.id)) return false;
+    if (where?.name !== undefined && where.name !== b.name) return false;
+    if (where?.OR && !where.OR.some((term: any) => (term.id !== undefined && term.id === b.id)
+      || (term.code !== undefined && term.code === b.code) || (term.name !== undefined && term.name === b.name))) return false;
+    return true;
+  });
   const groupResults = [
     [
       { currency: 'THB', paymentStatus: 'PAID', _count: { _all: 1 }, _sum: { grandTotalAmount: '100.0000', paidAmount: '100.0000', outstandingAmount: '0' } },
@@ -480,19 +787,66 @@ function makeDailyClosingPrisma() {
         calls.isolationLevel = options.isolationLevel;
         return fn(db);
       },
+      branch: {
+        findMany: async ({ where, take }: any) => allowedBranches(where).slice(0, take),
+      },
     },
   };
   return { prisma: prisma as any, calls };
 }
 
 describe('ExpenseGetDailyClosingTool', () => {
-  it('fails before querying for missing permission, invalid date, or out-of-scope branch', async () => {
+  it('fails before querying for missing permission or invalid date', async () => {
     const { prisma, calls } = makeDailyClosingPrisma();
     const tool = new ExpenseGetDailyClosingTool(prisma);
     assert.equal((await tool.execute({ ...dailyClosingCtx, permissions: [] }, { date: '2026-08-16' })).status, 'forbidden');
     assert.equal((await tool.execute(dailyClosingCtx, { date: '2026-02-30' })).errorCode, 'INVALID_DATE');
-    assert.equal((await tool.execute(dailyClosingCtx, { date: '2026-08-16', branchId: 'b2' })).status, 'forbidden');
     assert.equal(calls.groupBy.length, 0);
+  });
+
+  // F3 (tuning-6b, T-105-b/run4): branch resolution now reuses resolveExpenseBranchFilter, the same
+  // lookup expense.list_recent/get_breakdown already use — a bare id-equality check here used to
+  // return 'forbidden' for a real branch name/number the model copied verbatim from the user.
+  describe('branch resolution (F3, tuning-6b)', () => {
+    it('resolves a bare number to the caller\'s own scoped branch, instead of a bare forbidden', async () => {
+      const { prisma, calls } = makeDailyClosingPrisma([{ id: 'b1', name: 'สาขา 2', code: 'BR2' }]);
+      const result = await new ExpenseGetDailyClosingTool(prisma).execute(dailyClosingCtx, { date: '2026-08-16', branchId: '2' });
+      assert.equal(result.status, 'ok');
+      assert.deepEqual((result.data as any).scope, { kind: 'selected_branch', branchId: 'b1' });
+      assert.ok(calls.groupBy.length > 0, 'the transaction runs once the branch resolves');
+    });
+
+    it('reports an unresolved branch instead of silently querying a nonexistent id and reporting zero (unrestricted caller)', async () => {
+      const { prisma, calls } = makeDailyClosingPrisma([{ id: 'b1', name: 'สาขา 1', code: 'BR1' }]);
+      const unrestrictedCtx = { ...dailyClosingCtx, branchIds: undefined };
+      const result = await new ExpenseGetDailyClosingTool(prisma).execute(unrestrictedCtx, { date: '2026-08-16', branchId: 'สาขา 99' });
+      assert.equal(result.status, 'ok');
+      assert.equal((result.data as any).branchUnresolved, 'สาขา 99');
+      assert.equal(calls.groupBy.length, 0, 'never queries a branch it could not resolve');
+    });
+
+    it('reports an out-of-scope branch honestly instead of a bare forbidden (T-105-b/run4 exact case)', async () => {
+      const { prisma, calls } = makeDailyClosingPrisma([
+        { id: 'b1', name: 'สาขา 1', code: 'BR1' },
+        { id: 'b2', name: 'สาขา 2', code: 'BR2' },
+      ]);
+      const result = await new ExpenseGetDailyClosingTool(prisma).execute(dailyClosingCtx, { date: '2026-08-16', branchId: 'สาขา 2' });
+      assert.equal(result.status, 'ok');
+      assert.equal((result.data as any).branchOutOfScope, 'สาขา 2');
+      assert.equal(calls.groupBy.length, 0);
+      assert.ok(result.sourceRefs.length > 0, 'an honest boundary is still a grounded answer, not a bare error');
+    });
+  });
+
+  // Item 1 (spec R-A1 row 18, eval: 15 turns): this tool computes its own own/related/company
+  // classification (no queryApplied wrapper here), so accessScope rides `data.accessScope` directly.
+  it('reports accessScope: own for a read_own-only caller, company for a full reader', async () => {
+    const own = await new ExpenseGetDailyClosingTool(makeDailyClosingPrisma().prisma)
+      .execute({ ...dailyClosingCtx, permissions: ['expense.read_own'] }, { date: '2026-08-16' });
+    assert.equal((own.data as any).accessScope, 'own');
+    const company = await new ExpenseGetDailyClosingTool(makeDailyClosingPrisma().prisma)
+      .execute(dailyClosingCtx, { date: '2026-08-16' });
+    assert.equal((company.data as any).accessScope, 'company');
   });
 
   it('returns one repeatable-read, bounded, multi-currency daily-closing snapshot', async () => {
