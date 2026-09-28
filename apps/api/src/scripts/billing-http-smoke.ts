@@ -339,13 +339,19 @@ async function main() {
       await page.getByRole('heading', { name: 'แพ็กเกจและการชำระเงิน', exact: true }).waitFor();
       cases.push('browser-owner-company-picker-retains-plan-interval-and-line-origin');
       assert.doesNotMatch(await page.locator('main').last().innerText(), /ซื้อใบเพิ่ม|ซื้อเฉพาะใบ/);
+      // Purchase without setup (R-A9/R-A11): an empty address never blocks — a note, not a popup — and
+      // the confirm box says Stripe Checkout will ask. The shop profile stays an optional detour.
+      assert.match(await page.getByRole('note').filter({ hasText: 'เอกสารจะออกในชื่อ' }).innerText(), /ที่อยู่กรอกได้ที่หน้าชำระเงิน/);
       await page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true }).click();
       await page.getByRole('button', { name: 'รายปี', exact: true }).click();
       await page.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
-      await page.getByRole('dialog', { name: 'กรอกข้อมูลบริษัทก่อนซื้อแพ็กเกจ' }).waitFor();
+      await page.getByRole('heading', { name: /ยืนยันซื้อ/ }).waitFor();
+      assert.equal(await page.getByRole('dialog').count(), 0);
+      const documents = page.getByLabel('ข้อมูลออกเอกสาร', { exact: true });
+      assert.match(await documents.innerText(), /จะกรอกที่หน้าชำระเงิน/);
       await page.setViewportSize({ width: 390, height: 900 });
-      await page.screenshot({ path: `${browser.evidenceDir}/company-profile-required-mobile.png`, fullPage: true });
-      await page.getByRole('link', { name: 'กรอกข้อมูลบริษัท', exact: true }).click();
+      await page.screenshot({ path: `${browser.evidenceDir}/purchase-no-setup-review-mobile.png`, fullPage: true });
+      await documents.getByRole('link', { name: 'แก้ไขข้อมูลบริษัท', exact: true }).click();
       await page.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true }).waitFor();
       for (const [label, value] of Object.entries({ 'ที่อยู่ (บ้านเลขที่ ถนน)': BILLING_TEST_ADDRESS.line1,
         'ตำบล / แขวง': BILLING_TEST_ADDRESS.subdistrict, 'อำเภอ / เขต': BILLING_TEST_ADDRESS.district,
@@ -354,12 +360,13 @@ async function main() {
       }
       await page.getByRole('button', { name: 'บันทึกและกลับไปซื้อแพ็กเกจ', exact: true }).click();
       await page.getByRole('heading', { name: /ยืนยันซื้อ/ }).waitFor();
-      assert.match(page.url(), /offer=PRO_999&interval=year&channel=line&purchaseMode=CARD_AUTO&profile=updated/);
+      // F30: the resumed selection leaves the URL (a reload must not quote it again); the LINE origin stays.
+      assert.match(page.url(), /channel=line/); assert.doesNotMatch(page.url(), /profile=updated|offer=/);
       assert.match(await page.getByLabel('ข้อมูลออกเอกสาร', { exact: true }).innerText(), /บริษัท ทดสอบเอกสาร จำกัด/);
       assert.equal(checkoutCalls, 0);
       await page.screenshot({ path: `${browser.evidenceDir}/company-profile-purchase-review-mobile.png`, fullPage: true });
       await page.setViewportSize({ width: 1280, height: 900 });
-      cases.push('browser-profile-popup-missing-fields-expired-owner-save-return-selected-package-name-address-review-no-auto-charge');
+      cases.push('browser-no-setup-review-without-profile-popup-optional-profile-detour-returns-to-selected-package-no-auto-charge');
       const toggleSales = async (enabled: boolean) => {
         await client.billingSettings.update({ where: { id: `${accountId}:test` }, data: {
           gatesJson: Object.fromEntries(BILLING_ACTIONS.map(action => [action, action === 'new_sales' ? enabled : action!=='refunds'])), version: { increment: 1 },

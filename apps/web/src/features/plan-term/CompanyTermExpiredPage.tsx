@@ -95,7 +95,6 @@ export default function CompanyTermExpiredPage({ companyId }: { companyId: strin
             </p>
           ) : null}
           <a className="mangmee-btn mangmee-btn-primary mt-5 w-full" href={`/companies/${companyId}/billing`}>{PLAN_LOCK_CTA}</a>
-          <a className="mangmee-btn mangmee-btn-secondary mt-2.5 w-full" href={`/companies/${companyId}/settings/profile`}>กรอกข้อมูลบริษัท</a>
           <a
             href={`tel:${PLAN_TERM_RENEW_PHONE.replace(/-/g, '')}`}
             className="mangmee-btn mangmee-btn-secondary mt-2.5 w-full"
@@ -108,6 +107,8 @@ export default function CompanyTermExpiredPage({ companyId }: { companyId: strin
           >
             อีเมล {PLAN_TERM_CONTACT_EMAIL}
           </a>
+          {/* F28: Stripe Checkout collects the address, so the shop profile is optional, and last. */}
+          <a className="mt-3 inline-flex min-h-11 w-full items-center justify-center text-sm text-brand-700 underline" href={`/companies/${companyId}/settings/profile#shop`}>เติมข้อมูลร้านไว้ล่วงหน้า (ไม่บังคับ)</a>
         </div>
       ) : (
         <div role="status" className="mangmee-card p-5 sm:p-7">

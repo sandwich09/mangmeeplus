@@ -5,10 +5,12 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { billingControl, billingField, billingLabel, billingLink } from './billing-display';
 import { useEffect, useRef, useState } from 'react';
-import type { BillingAdjustmentKind, BillingAdjustments, BillingEndPackageReview } from '@watchdog-bms/contracts';
+import type { BillingAdjustmentKind, BillingAdjustments, BillingDocumentResendResult, BillingEndPackageReview } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { PLAN_TERM_CONTACT_EMAIL } from '@/features/plan-term/plan-term.logic';
+import { billingApi } from './billing.api';
+import { billingResendText } from './billing-error-text';
 
 const button=billingControl;
 const money=(n:number)=>new Intl.NumberFormat('th-TH',{style:'currency',currency:'THB'}).format(n/100);
@@ -23,12 +25,13 @@ const documentError=(cause:unknown)=>{
   return {title:'อ่านข้อมูลจาก Stripe ไม่สำเร็จ',detail:'ลองอ่านข้อมูลอีกครั้ง ระบบยังไม่ได้เปลี่ยนยอดเงินหรือแพ็กเกจ',kind:'retry'};
 };
 const labels={pending:'รอดำเนินการคืนเงิน',requires_action:'ต้องทำขั้นตอนเพิ่มเติม',succeeded:'Stripe ดำเนินการคืนเงินสำเร็จ',failed:'คืนเงินไม่สำเร็จ',canceled:'ยกเลิกการคืนเงิน',unknown:'ยังยืนยันสถานะคืนเงินไม่ได้',issued:'ออกเอกสารแล้ว',void:'เอกสารถูกยกเลิก'};
-export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,preview}:{companyId:string;invoiceId:string;admin?:boolean;preview?: { read: (kind: BillingAdjustmentKind) => Promise<BillingAdjustments>; open: (kind: string) => void; back: () => void }}) {
+export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,preview}:{companyId:string;invoiceId:string;admin?:boolean;preview?: { read: (kind: BillingAdjustmentKind) => Promise<BillingAdjustments>; open: (kind: string) => void; back: () => void; resend?: () => Promise<BillingDocumentResendResult> }}) {
   const base=admin?`/system/billing/companies/${encodeURIComponent(companyId)}`:`/companies/${encodeURIComponent(companyId)}/billing`;
   const back=admin?`${base}?view=payments`:`/companies/${encodeURIComponent(companyId)}/billing#billing-history`;
   const [kind,setKind]=useState<BillingAdjustmentKind>('refunds'),[cursor,setCursor]=useState<string|null>(null),[reload,setReload]=useState(0);
   const [data,setData]=useState<BillingAdjustments|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState<ReturnType<typeof documentError>|null>(null),[opening,setOpening]=useState(false);
   const [adjustmentsOpen,setAdjustmentsOpen]=useState(!admin);
+  const [resend,setResend]=useState<{busy:boolean;result:BillingDocumentResendResult|null;error:string}>({busy:false,result:null,error:''});
   const [endReview,setEndReview]=useState<BillingEndPackageReview|null>(null),[endOpen,setEndOpen]=useState(false),[endReason,setEndReason]=useState(''),[endPassword,setEndPassword]=useState(''),[endBusy,setEndBusy]=useState(false),[endMessage,setEndMessage]=useState('');
   const generation=useRef(0);
   useEffect(()=>{
@@ -66,6 +69,12 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
     } catch(cause) {if(started===generation.current){setData(null);setError(documentError(cause));}}
     finally{if(started===generation.current)setOpening(false);}
   }
+  // R-D1: the customer sends this invoice (and, when the email changed, its receipt) to the recipient again.
+  async function resendDocument() {
+    setResend({busy:true,result:null,error:''});
+    try { setResend({busy:false,result:await (preview?.resend ? preview.resend() : billingApi(companyId).resendDocument(invoiceId)),error:''}); }
+    catch(cause) { setResend({busy:false,result:null,error:apiErrorMessage(cause)}); }
+  }
   const content = <>
     {admin && <><Link className={billingLink} href={back}>กลับไปประวัติการชำระเงิน</Link>
     <header><h1 className="text-2xl font-semibold text-gray-900">ใบแจ้งหนี้และใบเสร็จ</h1><p className="mt-2 text-gray-600">เปิดเอกสารจาก Stripe ของรายการชำระเงินนี้</p></header></>}
@@ -78,7 +87,12 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
     {data&&<>
       <section aria-label="เอกสารจาก Stripe" className="mangmee-card space-y-4 p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">{data.invoiceNumber??'เอกสารของรายการนี้'}</h2><button className="min-h-11 px-2 text-sm text-gray-600 underline" disabled={loading||opening} onClick={()=>setReload(n=>n+1)}>อัปเดตข้อมูล</button></div>
-        {data.canOpenDocuments?<div className="divide-y divide-gray-100">{([['receipt','ใบเสร็จรับเงิน','หลักฐานรับชำระเงินจากลูกค้า'],['invoice','ใบแจ้งหนี้','รายละเอียดราคาและยอดเรียกเก็บ'],['pdf','ไฟล์ PDF ใบแจ้งหนี้','สำหรับดาวน์โหลดและเก็บเอกสาร']] as const).map(([documentKind,title,description])=><div key={documentKind} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><h3 className="font-medium">{title}</h3><p className="mt-1 text-gray-600">{description}</p></div><button className={button} disabled={opening} onClick={()=>void open(documentKind)}>เปิด{title}</button></div>)}</div>:<p className="text-gray-600">บัญชีนี้ดูสถานะได้ แต่ไม่มีสิทธิ์เปิดเอกสาร</p>}
+        {data.canOpenDocuments?<div className="divide-y divide-gray-100">{([['receipt','ใบเสร็จรับเงิน','หลักฐานรับชำระเงินจากลูกค้า'],['invoice','ใบแจ้งหนี้','รายละเอียดราคาและยอดเรียกเก็บ'],['pdf','ไฟล์ PDF ใบแจ้งหนี้','สำหรับดาวน์โหลดและเก็บเอกสาร']] as const).map(([documentKind,title,description])=><div key={documentKind} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><h3 className="font-medium">{title}</h3><p className="mt-1 text-gray-600">{description}</p></div><button className={button} disabled={opening} onClick={()=>void open(documentKind)}>เปิด{title}</button></div>)}
+          {!admin&&data.documentActions?.canResend&&<div className="flex flex-wrap items-center justify-between gap-3 py-4"><div className="min-w-0"><h3 className="font-medium">ส่งเอกสารไปอีเมลอีกครั้ง</h3><p className="mt-1 break-all text-gray-600">ส่งใบแจ้งหนี้และใบเสร็จของรายการนี้ไปที่ {data.recipientEmail??'อีเมลรับเอกสารของบริษัท'}</p>
+            <a className={billingLink} href={`/companies/${encodeURIComponent(companyId)}/billing#billing-recipient`}>แก้อีเมลรับเอกสาร</a></div>
+            <button className={button} disabled={resend.busy||opening} aria-busy={resend.busy} onClick={()=>void resendDocument()}>ส่งเอกสารไปอีเมลอีกครั้ง</button></div>}</div>:<p className="text-gray-600">บัญชีนี้ดูสถานะได้ แต่ไม่มีสิทธิ์เปิดเอกสาร</p>}
+        {resend.result&&<p role="status" className="break-all rounded-xl bg-green-50 p-3">{billingResendText(resend.result)}</p>}
+        {resend.error&&<p role="alert" className="rounded-xl bg-red-50 p-3">{resend.error}</p>}
         <p className="text-sm text-gray-500">{billingLabel('mode',data.mode)} · ตรวจข้อมูลเมื่อ {time(data.observedAt)}</p>
       </section>
       <details className="rounded-xl border border-gray-200 bg-white p-5 sm:p-6" open={adjustmentsOpen} onToggle={e=>setAdjustmentsOpen(e.currentTarget.open)}>

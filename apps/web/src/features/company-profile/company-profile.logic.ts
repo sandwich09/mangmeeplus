@@ -10,6 +10,7 @@ import {
   type UserLegalIdentityChangeKind,
   type VatFactStatus,
   type VatRegistrationStatus,
+  type CompanyLegalAddress,
 } from '@watchdog-bms/contracts';
 
 export type IdentityField = 'taxId' | 'registeredName' | 'addressJson';
@@ -144,6 +145,26 @@ export function addressErrorMessages(error: unknown): string[] {
     if (!messages.includes(text)) messages.push(text);
   }
   return messages;
+}
+
+const CHECKOUT_ADDRESS_KEYS = ['line1', 'line2', 'subdistrict', 'district', 'province', 'postalCode'] as const;
+
+/**
+ * DQ5: the address typed at Stripe Checkout, offered to the shop form — its filled boxes only, so a
+ * box Stripe cannot fill (it has no sub-district) never blanks what the owner already typed. Filling
+ * the form saves nothing; the owner still reviews it and presses save.
+ */
+export function checkoutAddressToForm(address: CompanyLegalAddress): Partial<CompanyLegalAddress> {
+  return Object.fromEntries(CHECKOUT_ADDRESS_KEYS.map((key) => [key, (address[key] ?? '').trim()]).filter(([, value]) => value));
+}
+
+export function checkoutAddressText(address: CompanyLegalAddress): string {
+  return Object.values(checkoutAddressToForm(address)).join(' ');
+}
+
+/** Whether the offer would change anything in the form at all. */
+export function checkoutAddressDiffers(address: CompanyLegalAddress, form: Record<string, string | null | undefined>): boolean {
+  return Object.entries(checkoutAddressToForm(address)).some(([key, value]) => (form[key] ?? '').trim() !== value);
 }
 
 /** Every required box left blank — the state a shop that has never filled in an address is in. */

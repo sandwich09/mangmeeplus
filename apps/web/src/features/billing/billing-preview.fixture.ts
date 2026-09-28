@@ -25,6 +25,8 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
   const currentPaidThrough = extend(date(), currentOffer.interval);
   const paidThrough = prepaidChange ? extend(currentPaidThrough, 'month') : selected?.purchase?.projectedPaidThrough ?? currentPaidThrough;
   const paid = ['success', 'upgrade', 'one-time', 'one-time-pending', 'one-time-capacity', 'activating', 'scheduled-change'].includes(scenario);
+  // R-A4: the recipient and the Checkout address are written when the payment applies, not when it is paid.
+  const applied = paid && scenario !== 'activating';
   const attempted = ['success', 'pending', 'activating', 'failed', 'held'].includes(scenario);
   const currentMode = scenario === 'one-time' || prepaidChange ? 'CARD_ONCE' : selected?.purchaseMode ?? 'CARD_AUTO';
   const currentOneTime = currentMode === 'CARD_ONCE' || currentMode === 'PROMPTPAY_ONCE';
@@ -52,6 +54,8 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     allowedActions: prepaidChange || attempted && !paid ? [] : paid ? currentOneTime ? ['new_sales'] : ['new_sales', 'portal_cancel_subscription', 'plan_changes', ...(currentMode === 'PROMPTPAY_RENEW' ? [] : ['portal_payment_method' as const])] : ['new_sales'],
     usage: { used: selected ? 0 : 6, limit: paid ? selected?.purchase?.projectedRemainingReceipts ?? currentOffer.receiptAllowance : 15, remaining: paid ? selected?.purchase?.projectedRemainingReceipts ?? currentOffer.receiptAllowance - 6 : 9,
       cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: prepaidChange ? currentPaidThrough : paidThrough }, issues: [],
+    ...(applied ? { recipient: { email: 'preview@example.com', source: 'STRIPE_CHECKOUT' as const, bouncedAt: null, canChange: true },
+      checkoutAddress: { line1: '99 ถนนตัวอย่าง', line2: null, subdistrict: '', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' } } : {}),
   };
   // S44: a separate scenario, so the four pinned modes and prices of the other previews never move.
   // `status.deal` is the whole approved offer — the card draws from it alone, as it does live.
@@ -85,7 +89,7 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
       version: status.pendingPlanChange.version, offerKey: 'STARTER_249', interval: 'month' };
   }
   let quote: BillingQuote | null = null, collection: BillingCollectionOperation | null = null, recipient: BillingEmailRecipientOperation | null = null;
-  let quoteFailures = scenario === 'quote-error' ? 1 : 0;
+  let quoteFailures = scenario === 'quote-error' ? 1 : 0, otpEmail = 'new@example.com';
   // R1: no trial block — new signups get none (Owner 2026-09-20), so the preview no longer emits one.
   const catalog = (): BillingCatalog => ({ schemaVersion: 1, mode: 'TEST', policyRevision: 'preview-policy', catalogRevision: 'preview-catalog',
     generatedAt: date(), validUntil: new Date(Date.now() + 60_000).toISOString(), taxTreatment: 'NOT_VAT_REGISTERED', offers, aiMonthlyBudgetSatang: 200_000 });
@@ -97,12 +101,13 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     status: async () => ({ ...status }), catalog: async () => catalog(),
     history: async () => ({ items: paid ? [{ id: 'preview-invoice', number: 'PREVIEW-0001', currency: 'THB', amountSatang: currentOffer.priceSatang,
       refundedSatang: 0, disputed: false, financialObservedAt: date(), paymentState: 'PAID', applyState: status.applyState,
-      periodStart: date(), periodEnd: paidThrough, createdAt: date(), hasDocuments: true }] : [], nextCursor: null }),
+      periodStart: date(), periodEnd: paidThrough, createdAt: date(), hasDocuments: true, documentActions: { canResend: applied } }] : [], nextCursor: null }),
     attempt: async () => ({ attemptId: 'preview-attempt', state: status.applyState, errorCode: null, observedAt: date(),
       paymentState: status.paymentState === 'PAID' ? 'PAID' : status.paymentState === 'FAILED' ? 'FAILED' : 'PENDING', applyState: status.applyState, invoiceReference: paid ? 'PREVIEW-0001' : null,
       // The attempt is what tells the return page a deal paid for this term.
       ...(selected?.deal ? { deal: { dealId: previewDeal.dealId, baseLabel: previewDeal.baseLabel, months: previewDeal.months } } : {}) }),
-    quote: async (offerKey, interval, billingEmail, capacity, purchaseMode, dealId, purchaseIntent) => {
+    quote: async (offerKey, interval, _billingEmail, capacity, purchaseMode, dealId, purchaseIntent) => {
+      const billingEmail = applied ? 'preview@example.com' : null;
       if (quoteFailures-- > 0) throw Object.assign(new Error('ราคาเปลี่ยนแล้ว'), { code: 'BILLING_QUOTE_STALE' });
       if (dealId) {
         // Priced from the deal snapshot, never from the catalog row (S36): N months in one
@@ -190,9 +195,18 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
       status.observedAt = date(); return collection;
     },
     collectionWithdraw: async operation => { collection = { ...operation, state: 'CANCELLED', allowedActions: [] }; return collection; },
-    recipient: async () => ({ hasCustomer: paid, email: 'preview@example.com', operation: recipient, busy: false }),
+    // Like the API: `operation` is only a change still running; a finished one shows as the new email.
+    recipient: async () => ({ hasCustomer: paid, email: recipient?.state === 'COMPLETED' ? recipient.newEmail : 'preview@example.com', operation: null, busy: false }),
     recipientOperation: async () => recipient!,
-    recipientPreview: async () => { throw new Error('อีเมลพรีวิวตรงกับผู้รับเอกสารแล้ว'); },
+    recipientPreview: async proofId => {
+      recipient = { id: 'preview-recipient-op', state: 'PREVIEW', version: 1, previewHash: 'preview-hash', expiresAt: date(1),
+        previousEmail: 'preview@example.com', newEmail: proofId ? otpEmail : 'preview@example.com', canSubmit: true, canCancel: true };
+      return recipient;
+    },
+    recipientOtpRequest: async email => { otpEmail = email; return { challengeId: 'preview-challenge', email, expiresAt: date(1),
+      retryAt: new Date(Date.now() + 60_000).toISOString(), attemptsRemaining: 5, deliveryStatus: 'ACCEPTED', delivered: true }; },
+    recipientOtpConfirm: async () => ({ recipientProofId: 'preview-proof', email: otpEmail, expiresAt: date(1) }),
+    resendDocument: async () => ({ invoiceSent: true, receiptUpdated: true, recipientEmail: recipient?.state === 'COMPLETED' ? recipient.newEmail : 'preview@example.com', remainingToday: 2 }),
     recipientSubmit: async operation => { recipient = { ...operation, state: 'COMPLETED', canSubmit: false }; return recipient; },
     recipientCancel: async operation => { recipient = { ...operation, state: 'CANCELLED', canSubmit: false }; return recipient; },
   };
