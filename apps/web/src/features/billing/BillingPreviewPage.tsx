@@ -19,8 +19,6 @@ export default function BillingPreviewPage({ companyId }: { companyId: string })
   const [documentKind, setDocumentKind] = useState('receipt');
   const preview = useMemo(() => ({
     api: createBillingPreview(companyId, scenario, checkout, quote => { setCheckout(quote); setView('checkout'); }),
-    readAccountEmail: async () => ({ email: 'preview@example.com', emailVerified: true, emailRevision: 0, emailRequirement: 'READY' as const,
-      hasPassword: true, lineLinked: false, serverNow: new Date().toISOString(), challenge: null }),
     navigate: (url: string, kind: 'checkout' | 'portal' | 'document') => {
       setReturnSection(kind === 'portal' ? 'payment' : kind === 'document' ? 'history' : 'package');
       if (kind === 'document') { setDocumentKind(new URL(url).searchParams.get('kind') ?? 'receipt'); setView('document'); }
@@ -32,8 +30,10 @@ export default function BillingPreviewPage({ companyId }: { companyId: string })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [companyId, scenario, revision]);
   const documentPreview = useMemo(() => ({
-    read: async (kind: BillingAdjustmentKind) => ({ invoiceId: 'preview-invoice', invoiceNumber: 'PREVIEW-0001', kind, mode: 'TEST' as const, canOpenDocuments: true, items: [], nextCursor: null, observedAt: new Date().toISOString() }),
+    read: async (kind: BillingAdjustmentKind) => ({ invoiceId: 'preview-invoice', invoiceNumber: 'PREVIEW-0001', kind, mode: 'TEST' as const, canOpenDocuments: true, items: [], nextCursor: null, observedAt: new Date().toISOString(),
+      documentActions: { canResend: true }, recipientEmail: 'preview@example.com' }),
     open: (kind: string) => { setDocumentKind(kind); setView('document'); },
+    resend: async () => ({ invoiceSent: true, receiptUpdated: true, recipientEmail: 'preview@example.com', remainingToday: 2 }),
     back: () => setView('journey'),
   }), []);
   function choose(next: PreviewScenario) {

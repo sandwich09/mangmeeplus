@@ -7,6 +7,9 @@ import {
   addressErrorMessages,
   buildIdentityPatch,
   buildShopSave,
+  checkoutAddressDiffers,
+  checkoutAddressText,
+  checkoutAddressToForm,
   checklistIsComplete,
   companyProfileHref,
   clearChecklistCache,
@@ -140,6 +143,18 @@ describe('addressChanged', () => {
   it('counts a real edit and ignores a no-op', () => {
     assert.equal(addressChanged({ ...FULL_ADDRESS, province: 'เชียงใหม่' }, FULL_ADDRESS), true);
     assert.equal(addressChanged(FULL_ADDRESS, FULL_ADDRESS), false);
+  });
+});
+
+describe('the Stripe Checkout address offer (DQ5)', () => {
+  // Stripe has no sub-district, so that box always arrives empty and must not blank what was typed.
+  const CHECKOUT = { line1: '99/1 ถนนสุขุมวิท', line2: null, subdistrict: '', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' };
+  it('fills only the boxes Checkout filled and says nothing when the form already holds them', () => {
+    assert.deepEqual(checkoutAddressToForm(CHECKOUT), { line1: '99/1 ถนนสุขุมวิท', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' });
+    assert.equal(checkoutAddressText(CHECKOUT), '99/1 ถนนสุขุมวิท คลองเตย กรุงเทพมหานคร 10110');
+    assert.equal(checkoutAddressDiffers(CHECKOUT, BLANK_ADDRESS), true);
+    assert.equal(checkoutAddressDiffers(CHECKOUT, FULL_ADDRESS), false);
+    assert.equal(checkoutAddressDiffers(CHECKOUT, { ...FULL_ADDRESS, province: 'เชียงใหม่' }), true);
   });
 });
 

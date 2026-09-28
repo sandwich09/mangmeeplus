@@ -159,9 +159,13 @@ function LockedWorkspaceLayout({ children, companyId, session, notice }: Props &
         activeKey={resolveMenuKey(pathname, collectMenuTargets(navItems)) ?? undefined}
       >
         <LockedShellProvider value={true}>
-          {isLockedShellPath(pathname, companyId) ? children : (
-            <p role="status" aria-live="polite" className="p-8 text-gray-500">กำลังพาไปหน้าที่ใช้ได้…</p>
-          )}
+          {/* F22/F20: the billing pages render inside this shell's header and sidebar, not their own
+              recovery header with a "กลับหน้าเลือกบริษัท" link that loops back to /renew. */}
+          <BillingWorkspaceContext.Provider value={true}>
+            {isLockedShellPath(pathname, companyId) ? children : (
+              <p role="status" aria-live="polite" className="p-8 text-gray-500">กำลังพาไปหน้าที่ใช้ได้…</p>
+            )}
+          </BillingWorkspaceContext.Provider>
         </LockedShellProvider>
       </WorkspaceShell>
     </div>
