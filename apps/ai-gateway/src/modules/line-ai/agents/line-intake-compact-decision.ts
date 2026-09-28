@@ -1,5 +1,4 @@
 import {
-  LINE_AI_BUSINESS_SUBJECTS,
   LINE_TOOL_REGISTRY,
   parseLineAiPreparedPlan,
   parseLineAiSemanticSubrequests,
@@ -32,6 +31,28 @@ const WRITE_INTENTS = new Set<NonNullable<LineAiSemanticSubrequestV2['writeInten
   'SUBSTITUTE_RECEIPT_CONTINUATION', 'REIMBURSEMENT_REQUEST_START',
 ]);
 const SIMPLE_READ_CATEGORIES = new Set<ToolMeta['category']>(['read_summary', 'read_detail', 'report']);
+// tuning-5b (B3a): mirrors CONFIDENCE_VETO_FLOOR in prepared-simple-read.logic.ts, which independently
+// re-verifies this same plan.confidence at the orchestrator's pre-call check (preparedSimplePreCallCheck)
+// before a route response is ever allowed to keep a preparedPlan — both moved 0.85 -> 0.75 together, or a
+// plan built here at 0.75-0.85 would still be silently dropped there. Run 4: 17 simple reads at 0.82 and
+// 9 at 0.78 fell to the slow path, e.g. "มีร่างค้างอยู่ไหมคะ", "ใบเบิกที่ขอไปได้รึยังอ่ะคะ".
+const SIMPLE_READ_CONFIDENCE_FLOOR = 0.75;
+// tuning-5b (B2): each of these tools has exactly one enabled formatter shape in production config, so
+// the model's answerShape guess is normalized to it before the family gate instead of being rejected as
+// formatter_family_not_allowed. Run 4: 39 expense.get_breakdown proposals said single_metric.
+const SINGLE_SHAPE_TOOLS: Readonly<Record<string, 'single_metric' | 'list'>> = {
+  'expense.get_breakdown': 'list',
+  'reimbursement.list_pending_approvals': 'list',
+  'expense.get_daily_closing': 'single_metric',
+  'reimbursement.get_summary': 'single_metric',
+  'expense.get_detail': 'single_metric',
+  'reimbursement.get_detail': 'single_metric',
+};
+// tuning-5b (B3): a why/explain/compare/advice question is never a single deterministic metric — it
+// needs the full agentic path to reason about a cause or produce a recommendation, however confident the
+// model's simpleRead guess looks. Checked on the RAW message text (not the model's own paraphrased
+// `goal`) so the guard holds even when the model mislabels its own intent.
+const WHY_COMPARE_ADVICE_PATTERN = /ทำไม|เพราะอะไร|สาเหตุ|อธิบาย|เทียบ|เปรียบเทียบ|ต่างกัน|ควร|แนะนำ|\bwhy\b|\bexplain\b|\bcompare\b|\bversus\b|\bvs\b/iu;
 const TOOL_BY_NAME = new Map(LINE_TOOL_REGISTRY.map((tool) => [tool.name, tool] as const));
 const KNOWN_FILTER_KEYS = new Set(LINE_TOOL_REGISTRY.flatMap((tool) => [
   ...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? []),
@@ -46,13 +67,13 @@ export type CompactSimpleReadRejection =
   | 'invalid_simple_shape'
   | 'tool_not_enabled'
   | 'tool_not_read'
-  | 'tool_subject_mismatch'
-  | 'tool_agent_mismatch'
   | 'formatter_family_not_allowed'
   | 'filter_not_supported'
   | 'filter_not_grounded'
   | 'required_filter_missing'
-  | 'prepared_contract_invalid';
+  | 'prepared_contract_invalid'
+  // tuning-5b (B3): the deterministic why/explain/compare/advice guard — see WHY_COMPARE_ADVICE_PATTERN.
+  | 'why_compare_advice_question';
 
 export type CompactDecisionResult = {
   semanticSubrequests: LineAiSemanticSubrequestV2[];
@@ -220,6 +241,21 @@ function withCarriedGroupingFilters(
   return carried;
 }
 
+// tuning-5b (B4e / T-004-b): "ไม่เอาตัวกรองแล้ว", "ดูรวมทุกสถานะ", "ทุกสถานะ", "ดูทั้งหมด", "ไม่ต้องกรอง"
+// ask to drop the status/payment filter, but withCarriedGroupingFilters above (or the model's own stale
+// filter) can still re-add it from recentReads — checked last, on the raw message, so a removal phrase
+// always wins regardless of which side produced the value. Period, tool and groupBy are untouched.
+const FILTER_REMOVAL_PATTERN = /ไม่เอาตัวกรองแล้ว|ดูรวมทุกสถานะ|ทุกสถานะ|ดูทั้งหมด|ไม่ต้องกรอง/u;
+
+function withoutRemovedStatusFilters(
+  filters: Record<string, string | number | boolean | null>,
+  messageText: string,
+): Record<string, string | number | boolean | null> {
+  if (!FILTER_REMOVAL_PATTERN.test(messageText)) return filters;
+  const { documentStatus: _documentStatus, paymentStatus: _paymentStatus, ...rest } = filters;
+  return rest;
+}
+
 function semanticIntentFor(category: ToolMeta['category']): 'read_summary' | 'read_detail' | 'report_request' {
   return category === 'read_detail' ? 'read_detail' : category === 'report' ? 'report_request' : 'read_summary';
 }
@@ -240,28 +276,41 @@ function simpleReadPlan(input: {
     || only.entityReference || only.taskRef || only.writeIntent || only.requiredEvidence.length) {
     return { rejection: 'not_single_independent_read' };
   }
+  // tuning-5b (B3): checked before the shape/tool checks below so a why/compare/advice question never
+  // takes the fast lane regardless of how the rest of the payload looks.
+  if (WHY_COMPARE_ADVICE_PATTERN.test(messageText)) return { rejection: 'why_compare_advice_question' };
+  // tuning-5b (B1c/B3a): subject/agent are no longer required — derived below from the tool's own
+  // registry entry instead of trusted from the model (run 4: 7 reimbursement.get_summary proposals sent
+  // agent "general", 8 sent none; both used to fail here for no safety reason). Confidence floor lowered
+  // 0.85 -> 0.75, see SIMPLE_READ_CONFIDENCE_FLOOR.
   if (!plainObject(raw) || !exactKeys(raw, SIMPLE_READ_KEYS) || raw['subrequest'] !== 0
-    || typeof raw['tool'] !== 'string' || typeof raw['subject'] !== 'string' || typeof raw['agent'] !== 'string'
+    || typeof raw['tool'] !== 'string'
     || !['single_metric', 'list'].includes(String(raw['answerShape']))
     || typeof raw['confidence'] !== 'number' || !Number.isFinite(raw['confidence'])
-    || raw['confidence'] < 0.85 || raw['confidence'] > 1) return { rejection: 'invalid_simple_shape' };
+    || raw['confidence'] < SIMPLE_READ_CONFIDENCE_FLOOR || raw['confidence'] > 1) return { rejection: 'invalid_simple_shape' };
 
   const tool = TOOL_BY_NAME.get(raw['tool']);
   if (!tool || !enabledTools.has(raw['tool'])) return { rejection: 'tool_not_enabled' };
   if (!SIMPLE_READ_CATEGORIES.has(tool.category)) return { rejection: 'tool_not_read' };
-  if (!enabledPreparedFamilies.has(preparedFamilyKey(tool.name, String(raw['answerShape'])))) {
+  // tuning-5b (B2): normalize to the tool's one enabled shape before the family gate — see
+  // SINGLE_SHAPE_TOOLS. A tool with more than one enabled shape (e.g. expense.list_recent) keeps
+  // trusting the model's own answerShape choice.
+  const answerShape = SINGLE_SHAPE_TOOLS[tool.name] ?? (raw['answerShape'] as 'single_metric' | 'list');
+  if (!enabledPreparedFamilies.has(preparedFamilyKey(tool.name, answerShape))) {
     return { rejection: 'formatter_family_not_allowed' };
   }
-  if (!LINE_AI_BUSINESS_SUBJECTS.includes(raw['subject'] as typeof LINE_AI_BUSINESS_SUBJECTS[number])
-    || !tool.businessSubjects.includes(raw['subject'] as typeof tool.businessSubjects[number])) {
-    return { rejection: 'tool_subject_mismatch' };
-  }
-  if (!tool.supportedAgents.includes(raw['agent'])) return { rejection: 'tool_agent_mismatch' };
+  // Derived, canonical (first-listed) registry values — never the model's raw['subject']/raw['agent'],
+  // which are no longer read at all.
+  const subject = tool.businessSubjects[0]!;
+  const agent = tool.supportedAgents[0]!;
 
   const rawCanonicalFilters = canonicalizeReadToolEnums(tool, only.requestedFilters) as Record<string, string | number | boolean | null> | undefined;
   if (!rawCanonicalFilters) return { rejection: 'filter_not_grounded' };
   const allowedFilters = new Set([...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? [])]);
-  const canonicalFilters = withCarriedGroupingFilters(rawCanonicalFilters, tool, allowedFilters, recentReads);
+  const canonicalFilters = withoutRemovedStatusFilters(
+    withCarriedGroupingFilters(rawCanonicalFilters, tool, allowedFilters, recentReads),
+    messageText,
+  );
   if (!periodSelectionGrounded(canonicalFilters, valueCandidates, recentReads)) return { rejection: 'filter_not_grounded' };
   for (const [key, value] of Object.entries(canonicalFilters)) {
     if (!allowedFilters.has(key)) {
@@ -279,13 +328,13 @@ function simpleReadPlan(input: {
     confidence: raw['confidence'],
     intentPlan: {
       status: 'ROUTABLE', language,
-      intents: [{ intent: semanticIntentFor(tool.category), subject: raw['subject'], agent: raw['agent'], priority: 1,
+      intents: [{ intent: semanticIntentFor(tool.category), subject, agent, priority: 1,
         requiredTools: [tool.name], missingContext: [] }],
       refusals: [], requiresHumanReview: false,
     },
     proposedCalls: [{ toolName: tool.name, input: { ...canonicalFilters } }],
     responseMode: 'simple_grounded',
-    answerShape: raw['answerShape'],
+    answerShape,
   };
   const preparedPlan = parseLineAiPreparedPlan(candidate);
   return preparedPlan ? { preparedPlan, canonicalFilters } : { rejection: 'prepared_contract_invalid' };
