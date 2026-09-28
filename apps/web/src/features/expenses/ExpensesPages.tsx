@@ -286,7 +286,7 @@ const CAPTURE_STATE_LABELS: Record<CaptureUploadState, DictionaryKey> = {
 };
 
 // ── Upload Panel (info strip + dropzone + LINE gradient card) ─────────────────
-function UploadPanel({ companyId, branchId, onSuccess, onBatchSuccess, onNoDocument }: { companyId: string; branchId?: string; onSuccess: (expenseId: string, notice: ExtractionNotice) => void; onBatchSuccess?: (created: Array<{ expenseId: string; notice: ExtractionNotice }>) => void; onNoDocument?: () => void }) {
+function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuccess, onNoDocument }: { companyId: string; branchId?: string; canManagePlan: boolean; onSuccess: (expenseId: string, notice: ExtractionNotice) => void; onBatchSuccess?: (created: Array<{ expenseId: string; notice: ExtractionNotice }>) => void; onNoDocument?: () => void }) {
   const locale = useWorkspaceLocale();
   const fileRef = useRef<HTMLInputElement>(null);
   // One file is one expense (A01), and so is each of several: picking three receipts runs today's
@@ -518,10 +518,11 @@ function UploadPanel({ companyId, branchId, onSuccess, onBatchSuccess, onNoDocum
           <div role="alert" className="mb-4 rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm text-error-700">
             <p className="font-medium">⚠ {quotaLatch!.message}</p>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-semibold">
-              {/* Until L-E ships the plan/profile page, settings is the closest existing route that
-                  is TRUE for this shop — `/renew` renders the P29 expired-term screen, and this shop
-                  has not expired, it has run out of reads. */}
-              <Link href={`/companies/${companyId}/settings`} className="underline">ขอเปลี่ยนแพ็กเกจ</Link>
+              {/* G18: the package page is where the quota is bought; staff without the permission
+                  cannot buy, so they are told who can instead of being sent to a page that bounces. */}
+              {canManagePlan
+                ? <Link href={`/companies/${companyId}/billing`} className="underline">เปลี่ยนแพ็กเกจ</Link>
+                : <span>แจ้งเจ้าของร้านให้เปลี่ยนแพ็กเกจ</span>}
               {blockedExpenseId && (
                 <Link href={`/companies/${companyId}/expenses/${blockedExpenseId}`} className="underline">
                   กรอกใบเสร็จที่เพิ่งอัปโหลดเอง
@@ -2967,7 +2968,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
               field?.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }}>
             <fieldset disabled={!createBranchId} className="min-w-0">
-              {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} onBatchSuccess={(created) => { for (const row of created) storeExtractionNotice(row.expenseId, row.notice); router.push(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(created.at(-1)!.expenseId)}`); }} />}
+              {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} canManagePlan={permissions.includes('company.plan.manage')} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} onBatchSuccess={(created) => { for (const row of created) storeExtractionNotice(row.expenseId, row.notice); router.push(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(created.at(-1)!.expenseId)}`); }} />}
               {tab === 'manual' && <ManualExpensePanel companyId={companyId} branchId={createBranchId} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} onSuccess={openListExpense} />}
             </fieldset>
             </div>

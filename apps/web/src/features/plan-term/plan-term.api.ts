@@ -54,3 +54,10 @@ export async function fetchPlanTermNotice(companyId?: string): Promise<PlanTermN
     return null;
   }
 }
+
+export const PLAN_TERM_CHANGED_EVENT = 'watchdog:plan-term-changed';
+
+/** RV30: BillingPage fires this the moment a purchase is confirmed inside the locked shell. */
+export function notifyPlanTermChanged(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(PLAN_TERM_CHANGED_EVENT));
+}

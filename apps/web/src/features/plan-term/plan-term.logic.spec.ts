@@ -1,6 +1,7 @@
 import { cardCollapsed, warningBucket, warningProgressPercent } from './plan-term.logic';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { planTermStateLabel } from '@watchdog-bms/contracts';
 import {
   PLAN_LOCK_COPY,
   isLockedShellPath,
@@ -132,6 +133,8 @@ describe('lock reason', () => {
   it('never tells a shop that never had a package that it ran out of one', () => {
     assert.match(PLAN_LOCK_COPY.no_package.banner, /ยังไม่มีแพ็กเกจ/);
     assert.match(PLAN_LOCK_COPY.no_package.title, /ยังไม่มีแพ็กเกจ/);
+    // R-C7: the title matches the one shared label the picker/switcher/console/BillingPage all read.
+    assert.equal(PLAN_LOCK_COPY.no_package.title, planTermStateLabel('NO_PACKAGE'));
     for (const line of Object.values(PLAN_LOCK_COPY.no_package)) assert.doesNotMatch(line, /ครบกำหนด|ต่ออายุ/);
     assert.match(PLAN_LOCK_COPY.trial_ended.banner, /แพ็กเกจของร้านหมดอายุแล้ว/);
     // Owner copy rule for every customer-facing string in this journey.

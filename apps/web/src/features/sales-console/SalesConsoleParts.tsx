@@ -55,7 +55,9 @@ export function SalesCompanyLine({ company }: { company: SalesCompanySearchItem 
       <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
         <SalesAccessStateBadge state={company.accessState} />
         {/* The row printed the raw tier key (PRO_999) at a เซลล์ standing in the shop. */}
-        {company.tierKey && <span>{billingPlanLabel(company.tierKey)}</span>}
+        {/* R-C7: a no_package shop still carries the provisioning trial tierKey underneath — never
+            show it next to "ยังไม่มีแพ็กเกจ", or the row contradicts its own badge. */}
+        {company.accessState !== 'NO_PACKAGE' && company.tierKey && <span>{billingPlanLabel(company.tierKey)}</span>}
         {company.province && <span>{company.province}</span>}
         <span>เปิดร้าน {formatThaiDate(company.createdAt)}</span>
       </p>

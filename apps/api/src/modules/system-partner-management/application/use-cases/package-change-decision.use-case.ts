@@ -1,12 +1,15 @@
 import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
-import { Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
   PLAN_TIER_PRESETS,
+  planTermLockReason,
+  planTermState,
   type AdminPackageChangeDecisionBody,
   type AdminPackageChangeDecisionDto,
   type AdminPackageChangeItemDto,
   type AdminPackageChangeQueueDto,
   type PackageChangeRequestStatus,
+  type PlanTermLockReason,
   type PlanTierKey,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -33,6 +36,13 @@ export function packageChangeRejectedMessageTh(note?: string): string {
     + `ติดต่อทีมงานได้ที่ โทร 098-256-5628 (จันทร์–เสาร์ 9:00–18:00) ค่ะ${note ? `\n${note}` : ''}`;
 }
 
+// R-C6/RV25 (purchase-without-setup §18.2): SetCompanyPlanTermUseCase's renew path never moves the
+// dates on approval (company-plan-term.use-cases.ts renew), so approving a request for a term-locked
+// shop would tell the customer "เปลี่ยนแล้ว" while the shop stays locked at zero days.
+export const packageChangeCompanyLocked = (reason: PlanTermLockReason) => new ConflictException({ code: 'package_change_company_locked',
+  message: reason === 'no_package' ? 'ร้านนี้ยังไม่มีแพ็กเกจ ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ'
+    : 'แพ็กเกจของร้านนี้หมดอายุแล้ว ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ หรือกดต่ออายุในหน้าพาร์ทเนอร์ก่อนแล้วค่อยเปลี่ยนแพ็กเกจ' });
+
 /**
  * P10-L §8, the admin half of the package-change queue.
  *
@@ -58,10 +68,11 @@ export class PackageChangeDecisionUseCase {
       orderBy: { createdAt: 'asc' },
       take: 200,
       include: {
-        company: { select: { name: true, planTerm: { select: { tierKey: true, billingReceiptAccountId: true } } } },
+        company: { select: { name: true, status: true, planTerm: { select: { tierKey: true, billingReceiptAccountId: true, termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } } } },
       },
     });
     if (rows.length === 0) return { items: [] };
+    const now = new Date();
 
     // One batched read rather than one per row: the requester's name is the only thing the row
     // itself cannot answer, and `requestedByUserId` is not a relation.
@@ -79,6 +90,8 @@ export class PackageChangeDecisionUseCase {
         requestedTierKey: row.requestedTierKey,
         ...(row.company.planTerm?.billingReceiptAccountId ? {billingReviewPath:`/system/billing/companies/${encodeURIComponent(row.companyId)}/plan-adjustments`} : {}),
         ...(row.company.planTerm?.tierKey ? { currentTierKey: row.company.planTerm.tierKey } : {}),
+        planState: planTermState(row.company.planTerm, now, row.company.status),
+        ...(row.company.planTerm && row.company.planTerm.termEndsAt.getTime() <= now.getTime() ? { lockReason: planTermLockReason(row.company.planTerm) } : {}),
         ...(nameByUserId.get(row.requestedByUserId)
           ? { requestedByDisplayName: nameByUserId.get(row.requestedByUserId)! }
           : {}),
@@ -126,6 +139,9 @@ export class PackageChangeDecisionUseCase {
       if(current.status!=='OPEN')return {status:current.status as PackageChangeRequestStatus,changed:false};
       const term=await tx.companyPlanTerm.findUnique({where:{companyId:row.companyId}});
       if(body.action==='APPROVE'&&term?.billingReceiptAccountId)throw paidPlanReviewRequired();
+      // R-C6/RV25: SetCompanyPlanTerm never moves the dates (company-plan-term.use-cases.ts renew),
+      // so approving would tell the shop "เปลี่ยนแพ็กเกจแล้ว" while it stays locked at zero days.
+      if(body.action==='APPROVE'&&term&&term.termEndsAt.getTime()<=Date.now())throw packageChangeCompanyLocked(planTermLockReason(term));
       const claimed=await tx.packageChangeRequest.updateMany({where:{id,status:'OPEN'},data:{status:target,decidedByUserId:adminUserId,decidedAt:new Date()}});
       if(claimed.count!==1){const latest=await tx.packageChangeRequest.findUnique({where:{id}});return {status:(latest?.status??'OPEN') as PackageChangeRequestStatus,changed:false};}
       if(body.action==='APPROVE'){

@@ -232,7 +232,23 @@ describe('the timeline last line: why the assistant is refusing right now', () =
       company: { id: 'co-1', name: 'ร้านนิด', status: 'DISABLED', createdAt: NOW },
       planTerm: liveTerm,
     });
-    assert.equal(detail, 'ร้านถูกพักใช้งาน');
+    assert.equal(detail, 'ร้านถูกพักใช้งานโดยผู้ดูแล');
+  });
+
+  // purchase-without-setup T1: a shop the term sweep disabled is waiting for a package, not held by an admin.
+  it('says a term-disabled shop has no package yet, or that its package ended', async () => {
+    const disabled = { id: 'co-1', name: 'ร้านนิด', status: 'DISABLED', createdAt: NOW };
+    const start = new Date('2026-09-01T00:00:00.000Z');
+    const noPackage = await refusalOf({
+      company: disabled,
+      planTerm: { ...liveTerm, termStartAt: start, termEndsAt: start, renewCount: 0, termDisabledAt: start },
+    });
+    assert.equal(noPackage, 'ยังไม่มีแพ็กเกจ ลูกค้าเลือกซื้อเองได้จากหน้าแพ็กเกจ');
+    const ended = await refusalOf({
+      company: disabled,
+      planTerm: { ...liveTerm, termStartAt: start, termEndsAt: new Date('2026-09-20T00:00:00.000Z'), renewCount: 1, termDisabledAt: new Date('2026-09-20T00:00:00.000Z') },
+    });
+    assert.equal(ended, 'แพ็กเกจหมดอายุแล้ว');
   });
 
   it('names an expired term', async () => {

@@ -3,6 +3,7 @@
 // Data comes from the cookie-session BFF (authedApiFetch); errors fall back silently to no selector.
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
+import { planTermStateLabel } from '@watchdog-bms/contracts';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import { AlertModal } from '@/common/components/modal';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
@@ -326,7 +327,7 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
               ) : null}
               {c.expired ? (
                 <span className="ml-1.5 rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-xs font-medium text-red-600">
-                  หมดอายุ
+                  {planTermStateLabel(c.planState === 'NO_PACKAGE' ? 'NO_PACKAGE' : 'EXPIRED')}
                 </span>
               ) : null}
               {c.companyId === companyId ? ' ✓' : ''}
