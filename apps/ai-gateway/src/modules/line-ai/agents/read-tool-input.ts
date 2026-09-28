@@ -1,5 +1,5 @@
 import { LINE_AI_VALUE_CANDIDATES_V2_LIMITS, extractValueCandidates, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, resolvePeriodCandidates } from '@watchdog-bms/contracts';
-import type { LineAiConversationContext, LineAiValueCandidates, ToolMeta } from '@watchdog-bms/contracts';
+import type { LineAiConversationContext, LineAiInputEvidenceV2, LineAiSourceRefV2, LineAiValueCandidates, ToolMeta } from '@watchdog-bms/contracts';
 
 export type ConversationReadCandidates = {
   turns: Array<{ at: string; todayIso: string; dates: LineAiValueCandidates['dates']; periods: NonNullable<LineAiValueCandidates['periods']> }>;
@@ -113,4 +113,22 @@ export function canonicalizeReadToolEnums(
     canonical[key] = matches[0];
   }
   return canonical;
+}
+
+/** Item 1 (spec §2/§3 row 17): the exact customer words a semantic subrequest's evidenceRefs quote
+ *  out of the current inputEvidence — the same provenance runSemanticTurnV2 already trusts for
+ *  numeric grounding, reused here so a scope-policy check is grounded in what the customer actually
+ *  typed for THIS clause, not the model's paraphrase or an unrelated clause in the same message.
+ *  Falls back to the whole message when no evidence is available (older/simple callers). */
+export function evidenceRefsText(
+  evidenceRefs: readonly LineAiSourceRefV2[] | undefined,
+  inputEvidence: LineAiInputEvidenceV2 | undefined,
+  fallback: string,
+): string {
+  if (!evidenceRefs?.length || !inputEvidence) return fallback;
+  const quoted = evidenceRefs
+    .map(ref => inputEvidence.parts.find(part => part.partId === ref.partId)?.rawText.slice(ref.startUtf16, ref.endUtf16) ?? '')
+    .filter(Boolean)
+    .join(' ');
+  return quoted || fallback;
 }

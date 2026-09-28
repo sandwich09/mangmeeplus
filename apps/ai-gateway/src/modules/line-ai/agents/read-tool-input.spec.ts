@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { conversationReadCandidates, nameFilterGroundedInText, paymentStatusGroundedInText, resolvePeriodKeyAlias } from './read-tool-input';
+import { conversationReadCandidates, evidenceRefsText, nameFilterGroundedInText, paymentStatusGroundedInText, resolvePeriodKeyAlias } from './read-tool-input';
 
 const context = (turns: any[]) => ({ windowMinutes: 15, maxTurns: 15, recentTurns: turns });
 
@@ -97,5 +97,37 @@ describe('item 3: periodKey alias resolution (T-009-a/T-052-a root cause)', () =
     assert.equal(resolvePeriodKeyAlias('this_week', '2026-09-28'), undefined);
     assert.equal(resolvePeriodKeyAlias('2026-09', '2026-09-28'), undefined);
     assert.equal(resolvePeriodKeyAlias('this_month', undefined), undefined);
+  });
+});
+
+describe('item 4: evidenceRefsText grounds a subrequest to its own quoted evidence', () => {
+  const salesSpan = 'ยอดขายเดือนนี้';
+  const expenseSpan = 'ค่าใช้จ่ายเดือนนี้';
+  const rawText = `${salesSpan} กับ${expenseSpan}ด้วยค่ะ`;
+  const evidence = { turnKey: 't', joinedSha256: 'x', parts: [{ partId: 'p0', rawText, rawSha256: 'h', eventIdHash: 'e', acceptedAtMs: 0 }] } as any;
+  const salesStart = rawText.indexOf(salesSpan);
+  const expenseStart = rawText.indexOf(expenseSpan);
+
+  it('returns the exact quoted span, not the whole message', () => {
+    const text = evidenceRefsText([{ partId: 'p0', startUtf16: salesStart, endUtf16: salesStart + salesSpan.length, rawSha256: 'h' }] as any, evidence, 'fallback');
+    assert.equal(text, salesSpan);
+  });
+
+  it('joins multiple refs with a space', () => {
+    const text = evidenceRefsText([
+      { partId: 'p0', startUtf16: salesStart, endUtf16: salesStart + salesSpan.length, rawSha256: 'h' },
+      { partId: 'p0', startUtf16: expenseStart, endUtf16: expenseStart + expenseSpan.length, rawSha256: 'h' },
+    ] as any, evidence, 'fallback');
+    assert.equal(text, `${salesSpan} ${expenseSpan}`);
+  });
+
+  it('falls back to the supplied text when there is no evidence (older/simple callers)', () => {
+    assert.equal(evidenceRefsText(undefined, undefined, 'fallback text'), 'fallback text');
+    assert.equal(evidenceRefsText([], evidence, 'fallback text'), 'fallback text');
+  });
+
+  it('falls back when a ref points at a part that is not in this evidence', () => {
+    const text = evidenceRefsText([{ partId: 'missing', startUtf16: 0, endUtf16: 3, rawSha256: 'h' }] as any, evidence, 'fallback text');
+    assert.equal(text, 'fallback text');
   });
 });

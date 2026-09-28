@@ -14,9 +14,10 @@ import { buildCapabilityHelp } from './response-composer.agent';
 import { formatPreparedSimpleRead } from './prepared-simple-read-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
-import { canonicalizeReadToolEnums, conversationReadCandidates, resolvePeriodKeyAlias } from './read-tool-input';
+import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, resolvePeriodKeyAlias } from './read-tool-input';
 import { expenseNameResolutionIssue, expenseNameResolutionReplyText, type ExpenseNameResolutionIssue,
   expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares, type ExpensePeriodComparison } from '../domain/logic/business-read-result-semantics';
+import { scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic';
 
 const logger = new Logger('SemanticTurnV2');
 
@@ -309,6 +310,22 @@ export async function runSemanticTurnV2(input: {
   const language = req.responsePreferences?.language ?? (/[ก-๙]/u.test(req.messageText) ? 'th' : 'en');
   const plan = { status: 'ROUTABLE' as const, language, intents: [], refusals: [], requiresHumanReview: false };
   const results: Array<{ index: number; result: ToolResult }> = [], questions = new Map<number, string>(), forced = new Map<number, { status: LineAiSemanticCoverageV2['status']; reasonCode: string; text: string }>();
+  // Item 1 (spec §2/§3 row 17, §8): the SAME deterministic scope-policy override
+  // OrchestratorAgent.run() applies to a turn's sole fast-lane-eligible subrequest, applied here to
+  // EVERY subrequest so a multi-clause (never fast-laned) turn still answers its allowed part and
+  // states the limit for the blocked one — grounded in this clause's own quoted text, never the
+  // model's paraphrase. `scopePolicyForcedIndices` also blocks any tool call the model still
+  // proposes for that index below; no unsold tool is ever invoked, in any round.
+  const entitledFeatureKeys = req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys;
+  const scopePolicyForcedIndices = new Set<number>();
+  for (const item of inventory) {
+    const text = evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText);
+    const override = scopePolicyOverride(text, item.kind, req.userContext.permissions, entitledFeatureKeys, language);
+    if (override) {
+      forced.set(item.index, { status: 'unsupported', reasonCode: override.reasonCode, text: override.text });
+      scopePolicyForcedIndices.add(item.index);
+    }
+  }
   const canaries = values([req.userContext, req.conversationContext, req.taskProjection]);
   const ctx: ErpToolContext = { requestId: req.requestId, companyId: req.userContext.companyId, userId: req.userContext.internalUserId,
     membershipId: req.userContext.membershipId, permissions: req.userContext.permissions, branchIds: req.userContext.branchIds,
@@ -371,6 +388,9 @@ export async function runSemanticTurnV2(input: {
       for (const q of rawQuestions) questions.set(Number(q.index), String(q.text));
       for (const call of calls) {
         const index = Number(call.index), item = inventory.find(item => item.index === index)!, meta = offered.find(meta => meta.name === call.toolName);
+        // Items 1-3: this index already has its final, non-negotiable answer (see above) — never
+        // let a model-proposed call reach execution for it, in this or any later round.
+        if (scopePolicyForcedIndices.has(index)) continue;
         // A preview/options response is not a committed financial source. Never execute a
         // dependent clause early or collapse two financial actions into the one open draft.
         if (item.dependsOn.some(parent => inventory.find(candidate => candidate.index === parent)?.kind === 'write'
