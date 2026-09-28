@@ -1,6 +1,6 @@
 # Agent Memory: Mangmee AI expense advisor (takeover of the stopped Codex filter-context work)
 
-Status: IMPLEMENTING — P1 (review defects), P2 (fast lane, tool integration) and P4 (tools) merged on this branch; P3 (conversation memory) next; answer-composition fixes (Track D) in progress; eval harness live (real model).
+Status: TUNING — P1–P4 and fix batches 1–4 merged on this branch (tip 221575c4, 2026-09-28). Real-model tuning run 4 = 83.4% (186/223). Batch 5 in progress (grounding tokenizer, persona/format, router trim + fast-lane coverage, deterministic replies, scorer fairness). Not yet pushed; nothing merged to develop/main.
 Owner: thawatchai (solo admin). Controller: Claude (main thread) — briefs, reviews bug/gap/impact, delegates implementation to lower-model subagents; push/PR/merge/owner comms stay in the main thread.
 Scope: LINE AI "น้องมั่งมี" as an expense advisor inside the customer's enabled package. Today the sold tiers are STARTER/BASIC/PRO (same preset: expenses + reimbursements) and ENTERPRISE (+ WHT PND53 / 50 bis). Sales documents and reports are not sold and stay out of scope.
 Base: branch `claude/mangmee-ai-advisor-20260927` from d78114f5 (the Codex branch `codex/line-ai-filter-context-20260927`, 5 commits on develop abdf93b9, never pushed). Worktree `/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus-ai-advisor-20260927`.
@@ -28,6 +28,19 @@ Artifacts:
 - Branches: main `claude/mangmee-ai-advisor-20260927`; tools `-tools` (merged); eval harness `-eval` (seed, corpus 223-turn tuning, oracle, scorer, runners, production AI profile); compose fixes `-compose` (in progress). Run worktree `mangmeeplus-ai-advisor-evalrun` (detached; builds + runs the eval gateway on :19205, API :19291, DB `watchdog_ai_reliability_replay_expense_advisor`, Redis db 13).
 - Held-out corpus (71 turns) kept OUTSIDE the repo until the final measurement.
 Verification:
+- Tuning runs (223 turns, Bedrock global Sonnet 4.6, production AI env; ≈1 THB/turn):
+  - run 1 39.0% · run 2 55.6% · run 3 65.5% raw / 76.2% after scorer+corpus corrections · run 4 83.4% (source 221575c4).
+  - Run 4 weak rows: 13 daily closing 1/6, 14 why-questions 3/9, 6 names 9/15, 18 permission 5/9.
+  - Run 4 latency: fast lane p50 6.4 s / p95 8.6 s (bar 6/8); full path p50 13.3 s / p95 21.4 s (bar p95 15); none over 30 s; 2 router provider timeouts at 16 s.
+- Run 4 root causes found by the controller (2026-09-28):
+  - (a) The number-grounding tokenizer read ISO dates as negative numbers, which rejected 76/89 composed answers (offline replay; 21 with a date-aware tokenizer). Most full-path answers were really the deterministic fallback.
+  - (b) Raw fact lines (expense_total … | exclude_rejected_voided) were appended to customer answers.
+  - (c) Compose used Markdown tables/bold, English status glosses and wrong BE years.
+  - (d) Fast-lane gate: 39 breakdown proposals were rejected on answerShape, ~26 simple reads were rejected at confidence 0.78–0.82, and agent/subject mismatches rejected more.
+  - (e) "ขนาดนี้" triggered the file-attempt reply; "เช็คใบเบิกที่รออนุมัติ" triggered the approval boundary.
+  - (f) The daily-closing formatter omitted pending review / outstanding / submitted counts.
+  - (g) Comparisons ignored groupBy vendor and duplicated per subrequest.
+  - (h) Branch "2" was not resolved to "สาขา 2".
 - Real-model baseline on P1+tools with production AI settings (sample corpus, 20 turns): 9/20. Fast lane correct every time (6.2–6.9 s). Failure clusters: C1 full-path answers rejected by numeric grounding (7), C2 control round unavailable after a filtered follow-up, C3 ordinal references (needs P3 memory), C4 out-of-package request → schema invalid. Full-path latency 11–24 s.
 - Harness facts: the eval must mirror production's AI env (fast lane, coverage critic, tool-use loop were off by default); seeded users need legal-acceptance records; the eval API must approve the global Sonnet profile.
-Next: collect research → write spec + plan → fix defects 1–8 → build eval corpus + runner → baseline → iterate → merge.
+Next: merge batch 5 (5a grounding/persona/comparison, 5b router trim + fast-lane gate, 5c deterministic replies + API branch resolution, 5d scorer) → tuning run 5 → further batches until the A1–A8 bars hold → held-out run (71 turns, same scorer) → docs (spec/plan results, known limits, AgentCore env note, deploy notes) → push, PR develop + main twin, admin-merge → stop pilot services → resume the purchase-without-setup program (owner directive 2026-09-28).
