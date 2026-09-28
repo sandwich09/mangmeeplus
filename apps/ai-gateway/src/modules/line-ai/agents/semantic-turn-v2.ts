@@ -14,7 +14,7 @@ import { buildCapabilityHelp } from './response-composer.agent';
 import { formatPreparedSimpleRead } from './prepared-simple-read-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
-import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, resolvePeriodKeyAlias } from './read-tool-input';
+import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, misroutedReadTool, resolvePeriodKeyAlias } from './read-tool-input';
 import { expenseNameResolutionIssue, expenseNameResolutionReplyText, type ExpenseNameResolutionIssue,
   expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares, type ExpensePeriodComparison } from '../domain/logic/business-read-result-semantics';
 import { scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic';
@@ -310,16 +310,19 @@ export async function runSemanticTurnV2(input: {
   const language = req.responsePreferences?.language ?? (/[ก-๙]/u.test(req.messageText) ? 'th' : 'en');
   const plan = { status: 'ROUTABLE' as const, language, intents: [], refusals: [], requiresHumanReview: false };
   const results: Array<{ index: number; result: ToolResult }> = [], questions = new Map<number, string>(), forced = new Map<number, { status: LineAiSemanticCoverageV2['status']; reasonCode: string; text: string }>();
-  // Item 1 (spec §2/§3 row 17, §8): the SAME deterministic scope-policy override
+  // Items 1-3 (spec §2/§3 rows 17-18, §8, §11): the SAME deterministic scope/permission override
   // OrchestratorAgent.run() applies to a turn's sole fast-lane-eligible subrequest, applied here to
   // EVERY subrequest so a multi-clause (never fast-laned) turn still answers its allowed part and
   // states the limit for the blocked one — grounded in this clause's own quoted text, never the
   // model's paraphrase. `scopePolicyForcedIndices` also blocks any tool call the model still
-  // proposes for that index below; no unsold tool is ever invoked, in any round.
+  // proposes for that index below; no unsold/unpermitted tool is ever invoked, in any round.
+  // `itemText` is also reused by item 4's per-call routing guard further down.
   const entitledFeatureKeys = req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys;
+  const itemText = new Map<number, string>();
   const scopePolicyForcedIndices = new Set<number>();
   for (const item of inventory) {
     const text = evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText);
+    itemText.set(item.index, text);
     const override = scopePolicyOverride(text, item.kind, req.userContext.permissions, entitledFeatureKeys, language);
     if (override) {
       forced.set(item.index, { status: 'unsupported', reasonCode: override.reasonCode, text: override.text });
@@ -408,11 +411,15 @@ export async function runSemanticTurnV2(input: {
         if (prior) { results.push({ index, result: prior.result }); continue; }
         if (seen.has(key) || questions.has(index)) continue;
         if (!meta || !normalizedInput || meta.category.startsWith('draft') && item.kind !== 'write'
-          || meta.name === 'public.lookup' && item.kind !== 'public') {
+          || meta.name === 'public.lookup' && item.kind !== 'public'
+          || misroutedReadTool(meta.name, itemText.get(index) ?? req.messageText)) {
           // Item 3/R-L2: whatever remains here after root-causing the common bindable-but-mismatched
           // shapes above (an ungrounded value, or a window field the picked tool cannot take) is a
           // planning-side outcome, not something the customer did wrong — never phrase it as a
           // permission problem, and never leave it `needs_user` with no real question to answer.
+          // Item 4: a tool this clause's own quoted text rules out (a reimbursement claim answered
+          // by the expense ledger tools, or a file-attempt explanation with no file/photo named)
+          // falls into this same honest terminal instead of executing.
           forced.set(index, { status: 'unsupported', reasonCode: 'TOOL_INPUT_NOT_AUTHORIZED', text: READ_UNAVAILABLE_TEXT[language] }); continue;
         }
         seen.add(key);

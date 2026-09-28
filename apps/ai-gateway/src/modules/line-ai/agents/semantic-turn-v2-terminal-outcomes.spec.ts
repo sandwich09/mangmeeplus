@@ -535,3 +535,60 @@ describe('item 3: a read-only role asking to record, upload, or capture (spec §
     assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'READONLY_ROLE_CANNOT_CREATE');
   });
 });
+
+describe('item 4: routing guards — the model still tries a misrouted tool, the guard blocks it', () => {
+  it('a reimbursement claim status question never calls expense.list_recent (eval T-093-b)', async () => {
+    const req: LineAiTurnRequest = {
+      requestId: 'req-route-claim', webhookEventId: 'event-route-claim', messageText: 'ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ', messagePreviewHash: '8'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามสถานะใบเบิก', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: { paymentStatus: 'UNPAID' } }],
+      userContext: baseUserContext(['expense.read', 'reimbursement.read_own']),
+    };
+    const result = await runSemanticTurnV2({
+      req, provider: wrongToolControlProvider('expense.list_recent', { paymentStatus: 'UNPAID' }),
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('must never answer a reimbursement claim question with the expense ledger'); },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+    assert.equal(result.semanticCoverage?.[0]?.status, 'unsupported');
+  });
+
+  it('a "ทำไม" category-spending question never routes to line.explain_file_attempt (eval T-107-b)', async () => {
+    const req: LineAiTurnRequest = {
+      requestId: 'req-route-file', webhookEventId: 'event-route-file', messageText: 'ทำไมค่าเดินทางเดือนนี้พุ่งขนาดนี้คะ', messagePreviewHash: '9'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามทำไมค่าเดินทางพุ่ง', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(['expense.read', 'expense.receipt.line_upload', 'expense.create']),
+    };
+    const result = await runSemanticTurnV2({
+      req, provider: wrongToolControlProvider('line.explain_file_attempt'),
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('must never explain a file attempt with no file/photo referenced'); },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+    assert.ok(!result.replyText.includes('ยังไม่พบไฟล์ที่จะอ่าน'), result.replyText);
+  });
+
+  it('line.explain_file_attempt still runs when a file/photo is actually named', async () => {
+    const req: LineAiTurnRequest = {
+      requestId: 'req-route-file-ok', webhookEventId: 'event-route-file-ok', messageText: 'ไฟล์เมื่อกี้ส่งไม่ได้เพราะอะไรคะ', messagePreviewHash: '0'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind: 'file', goal: 'ถามไฟล์เมื่อกี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(['expense.receipt.line_upload', 'expense.create']),
+    };
+    let invoked = 0;
+    const queue = [
+      JSON.stringify({ calls: [{ index: 0, toolName: 'line.explain_file_attempt', input: {} }], questions: [] }),
+      JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'เก็บไฟล์ไว้แล้วค่ะ', sourceRefIds: ['line-ai:file_attempt:summary'] }] }),
+    ];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    const result = await runSemanticTurnV2({
+      req, provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(meta): Promise<ToolResult> {
+        invoked += 1;
+        return { toolName: meta.name, status: 'ok', asOf: '2026-09-27T18:20:29.656Z',
+          sourceRefs: [{ id: 'line-ai:file_attempt:summary', label: 'ไฟล์ที่ส่งมา', module: 'line-ai', entityType: 'file_attempt', permissionChecked: true }],
+          data: {}, facts: [] };
+      },
+    });
+    assert.equal(invoked, 1, 'a genuinely file-referencing question still reaches the tool');
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+  });
+});

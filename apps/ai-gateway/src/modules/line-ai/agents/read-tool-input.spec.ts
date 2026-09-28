@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { conversationReadCandidates, evidenceRefsText, nameFilterGroundedInText, paymentStatusGroundedInText, resolvePeriodKeyAlias } from './read-tool-input';
+import { conversationReadCandidates, evidenceRefsText, fileAttemptReferenceGrounded, misroutedReadTool, nameFilterGroundedInText, paymentStatusGroundedInText, reimbursementStatusQuestion, resolvePeriodKeyAlias } from './read-tool-input';
 
 const context = (turns: any[]) => ({ windowMinutes: 15, maxTurns: 15, recentTurns: turns });
 
@@ -129,5 +129,53 @@ describe('item 4: evidenceRefsText grounds a subrequest to its own quoted eviden
   it('falls back when a ref points at a part that is not in this evidence', () => {
     const text = evidenceRefsText([{ partId: 'missing', startUtf16: 0, endUtf16: 3, rawSha256: 'h' }] as any, evidence, 'fallback text');
     assert.equal(text, 'fallback text');
+  });
+});
+
+describe('item 4: reimbursement-status routing guard (eval T-093-b root cause)', () => {
+  it('flags a claim-status question naming no expense ledger word', () => {
+    assert.equal(reimbursementStatusQuestion('ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ'), true);
+    assert.equal(reimbursementStatusQuestion('เบิกเงินอันนี้จ่ายหรือยังคะ'), true);
+    assert.equal(reimbursementStatusQuestion('ขอเบิกไปยังไม่ได้รับเลยค่ะ'), true);
+  });
+
+  it('does not flag a plain expense question, even one about payment status', () => {
+    assert.equal(reimbursementStatusQuestion('ค่าใช้จ่ายที่ยังไม่จ่ายมีเท่าไหร่คะ'), false);
+  });
+
+  it('does not flag a claim question that separately names the expense ledger too', () => {
+    assert.equal(reimbursementStatusQuestion('ใบเบิกกับค่าใช้จ่ายเดือนนี้ต่างกันตรงไหนคะ'), false);
+  });
+});
+
+describe('item 4: file-attempt reference grounding (eval T-107-b root cause)', () => {
+  it('is grounded when the customer names a file/photo/document/slip', () => {
+    assert.equal(fileAttemptReferenceGrounded('ไฟล์เมื่อกี้ส่งไม่ได้เพราะอะไร'), true);
+    assert.equal(fileAttemptReferenceGrounded('รูปที่ส่งไปบันทึกหรือยัง'), true);
+    assert.equal(fileAttemptReferenceGrounded('does the pdf I sent still need anything'), true);
+  });
+
+  it('is NOT grounded for a category/spending-trend question naming no file at all', () => {
+    assert.equal(fileAttemptReferenceGrounded('ทำไมค่าเดินทางเดือนนี้พุ่งขนาดนี้คะ'), false);
+  });
+});
+
+describe('item 4: misroutedReadTool combinator (shared by the fast lane and the classic tool loop)', () => {
+  it('blocks line.explain_file_attempt with no file/photo reference', () => {
+    assert.equal(misroutedReadTool('line.explain_file_attempt', 'ทำไมค่าเดินทางเดือนนี้พุ่งขนาดนี้คะ'), true);
+  });
+
+  it('allows line.explain_file_attempt when a file/photo is actually named', () => {
+    assert.equal(misroutedReadTool('line.explain_file_attempt', 'ไฟล์เมื่อกี้ส่งไม่ได้เพราะอะไร'), false);
+  });
+
+  it('blocks expense.list_recent/expense.get_breakdown for a reimbursement-claim status question', () => {
+    assert.equal(misroutedReadTool('expense.list_recent', 'ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ'), true);
+    assert.equal(misroutedReadTool('expense.get_breakdown', 'เบิกเงินอันนี้จ่ายหรือยังคะ'), true);
+  });
+
+  it('leaves every other tool/text combination alone', () => {
+    assert.equal(misroutedReadTool('expense.list_recent', 'ค่าใช้จ่ายเดือนนี้เท่าไหร่คะ'), false);
+    assert.equal(misroutedReadTool('reimbursement.get_summary', 'ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ'), false);
   });
 });

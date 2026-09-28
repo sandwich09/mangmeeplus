@@ -132,3 +132,37 @@ export function evidenceRefsText(
     .join(' ');
   return quoted || fallback;
 }
+
+/** Item 4 (spec row 3, eval T-093-b): "ใบเบิก"/"เบิกเงิน"/"ขอเบิก" name the reimbursement CLAIM, a
+ *  different record than the expense ledger — expense.list_recent/get_breakdown must never answer
+ *  it (e.g. a paymentStatus on the expense ledger is not the claim's own approve/pay status). A
+ *  message that separately names the expense ledger itself ("ค่าใช้จ่าย"/"รายจ่าย") is unaffected. */
+const REIMBURSEMENT_STATUS_WORDS_TH = ['ใบเบิก', 'เบิกเงิน', 'ขอเบิก'];
+const EXPENSE_LEDGER_WORDS_TH = ['ค่าใช้จ่าย', 'รายจ่าย'];
+
+function includesAny(text: string, needles: readonly string[]): boolean {
+  return needles.some(needle => text.includes(needle));
+}
+
+export function reimbursementStatusQuestion(text: string): boolean {
+  return includesAny(text, REIMBURSEMENT_STATUS_WORDS_TH) && !includesAny(text, EXPENSE_LEDGER_WORDS_TH);
+}
+
+/** Item 4 (spec row 14, eval T-107-b): line.explain_file_attempt explains a file/photo the customer
+ *  says was sent in THIS chat. A "ทำไม"/category/spending question that names no file/photo/document
+ *  at all has nothing to do with an upload attempt and must never route there. */
+const FILE_REFERENCE_WORDS_TH = ['ไฟล์', 'รูป', 'เอกสาร', 'สลิป', 'ใบเสร็จ'];
+const FILE_REFERENCE_WORDS_EN = ['file', 'photo', 'image', 'document', 'pdf', 'slip'];
+
+export function fileAttemptReferenceGrounded(text: string): boolean {
+  return includesAny(text, FILE_REFERENCE_WORDS_TH) || includesAny(text.toLocaleLowerCase('en-US'), FILE_REFERENCE_WORDS_EN);
+}
+
+/** Item 4: the one guard shared by the prepared-simple fast lane (`preparedSimplePreCallCheck`) and
+ *  the classic per-turn tool loop (`runSemanticTurnV2`) — a proposed tool that this clause's own
+ *  quoted text rules out, regardless of which lane picked it. */
+export function misroutedReadTool(toolName: string, text: string): boolean {
+  if (toolName === 'line.explain_file_attempt') return !fileAttemptReferenceGrounded(text);
+  if (toolName === 'expense.list_recent' || toolName === 'expense.get_breakdown') return reimbursementStatusQuestion(text);
+  return false;
+}
