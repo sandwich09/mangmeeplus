@@ -1,6 +1,6 @@
 # Agent Memory: purchase-without-setup-2026-09-26
 
-Status: PR A, PR B and PR C merged to develop (base f637ffb4). PR D (web billing without setup + Phase 5 polish) implemented and committed 2026-09-28 in worktree `mangmeeplus-purchase-pr-d` branch `claude/purchase-pr-d-web-billing-20260928` — NOT pushed/merged/deployed (push/PR/merge is the controller's step). PR E (admin tools) in progress in its own worktree. C+D ship together (release plan). DQ8 (30-day customer session) explicitly cut from PR B per Owner 2026-09-27 — stays 7 days.
+Status: IMPLEMENTED 2026-09-29 — PR A–E merged to develop + main (#842/#843, #848/#849, #850/#851, #852/#853, #854/#855); NOT deployed. C+D are both on main. Remaining are release steps only (see "Next — release" at the end).
 Owner: thawatchai / Claude (controller)
 Scope: ทำให้ร้านใหม่ซื้อแพ็กเกจได้จากการ์ดในแชตโดยไม่ตั้งค่าในแอป (Stripe เก็บอีเมล/ที่อยู่แล้วคัดลอกกลับ), สถานะ "ยังไม่มีแพ็กเกจ" เข้าได้ทุกทาง, ลิงก์จาก LINE เปิดนอกเบราว์เซอร์ LINE, แก้เอกสารด้วยตัวเอง (ส่งซ้ำ/เปลี่ยนผู้รับ/ออกใบใหม่), เครื่องมือแอดมินรองรับทุก "ติดต่อทีมงาน"
 Decisions:
@@ -144,3 +144,13 @@ Verification (this session, 2026-09-28): `pnpm --filter @watchdog-bms/contracts 
 - Docs amended: `mangmee-billing-controls-spec-th.md` (new top amendment note), `billing-single-admin-spec-2026-09-16.md:14` (recipient-change added to the self-confirm flow list), `mangmee-company-plan-term-spec-th.md` §5 (RV25/RV26 profile-lock distinction), `line-support-request-spec-th.md` (§2.1 field list + §2.3 inbox link), new runbook `docs/runbooks/billing-document-correction-manual.md` (manual Stripe Dashboard procedure for a wrong name/address/tax id on an *already-issued* document — the reissue engine itself was never built, per the 2026-09-27 review below), `mangmee-purchase-without-setup-plan-th.md` §P4 + delegation table row.
 - Verification: focused specs green throughout (see the test list above); heavy checks (pins `--check`, api/web typecheck, DI metadata guard, contracts build/typecheck/test, `api test`, `web test`, `api test:boot`, whole-chain acceptance) run once at the end under `/tmp/mangmee-heavy.lock` — see the commit history on `claude/purchase-pr-e-admin-tools-20260928` for the exact result.
 - Next: controller reviews the diff, resolves any drift against develop since `f637ffb4` (PR D was landing concurrently in a separate worktree — check whether `BillingPage.tsx`/`BillingDeliveryPanel.tsx` or `api-error-message.ts` need a merge reconciliation), pushes the branch, PR to develop + twin main, dispatches Extended Tests (PG spec + the three new/extended e2e specs) and records the run id, then the program moves to Phase 6 (integration verification and UAT/production rollout per plan §P6).
+
+## Next — release (2026-09-29)
+- Extended Tests (manual dispatch; GitHub Actions has been in startup_failure since 2026-09-25): the PG specs of PR A/C/E, the smokes including `BILLING_NO_SETUP_ONLY=1`, the customer suite browser block, and e2e `billing-no-setup`, `customer-billing-ux`, `billing-preview`, `billing-advance-deal` and PR E's 3 files. Record the run ids here.
+- Release per `docs/runbooks/uat-production-v2-deployment.md`:
+  - there are 2 pending migrations (`20260928200000`, `20260928210000`), so READY takes the `APPEND_ONLY_PENDING` path;
+  - run `backfill-billing-recipients.ts` right after `migrate deploy`;
+  - deploy while no repeat purchase attempt is in flight (RV17);
+  - `ci.yml` and `extended-tests.yml` on main must match develop (true at merge time).
+- UAT: xx §6 readbacks (`LINE_WEB_HANDOFF_ENABLED=true`, the replay flag, BILLING_MODE, the Postmark UAT allowlist for the email typed at Checkout), U1–U15, and real devices for AC10 (iPhone/Android, links opening outside LINE).
+- Copy the owner may still adjust (already shipped as written): PR B D4/D6/Q2 (admin console); PR D the `CONTROL_NOTIFICATION_REVIEW` text, "อีเมลรับเอกสารของบริษัท", and the reused "ใช้เมลที่ยืนยันแล้วสำหรับเอกสารในอนาคต".
