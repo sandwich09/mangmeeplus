@@ -725,14 +725,18 @@ export async function runSemanticTurnV2(input: {
   // `sourceRefIds` for a read item, none for general — so it flows through the SAME per-item
   // grounding check below as any JSON answer; it can be dropped by grounding just like one, never
   // bypass it.
-  if (!parsed && needsComposition && inventory.length === 1 && lastComposeText?.trim()) {
+  // A truncated or broken JSON envelope (e.g. cut off at maxTokens) is not prose: rescuing it would
+  // show the customer raw `{"answers":[…` text, so only text that does not start like JSON qualifies.
+  const rescuableProse = lastComposeText?.trim() && !/^(?:```|\{|\[)/u.test(lastComposeText.trim()) && !lastComposeText.includes('"answers"')
+    ? lastComposeText.trim() : undefined;
+  if (!parsed && needsComposition && inventory.length === 1 && rescuableProse) {
     const item = inventory[0]!;
     if (item.kind === 'read' || item.kind === 'general') {
       const sourceRefIds = item.kind === 'read'
         ? results.filter(entry => entry.index === item.index && entry.result.status === 'ok').flatMap(entry => entry.result.sourceRefs.map(sourceId))
         : [];
       logger.log({ msg: 'line.ai.semantic_turn.compose_plain_text_rescued', requestId: req.requestId, kind: item.kind });
-      parsed = { answers: [{ index: item.index, status: 'handled', text: lastComposeText.trim(), sourceRefIds }] };
+      parsed = { answers: [{ index: item.index, status: 'handled', text: rescuableProse, sourceRefIds }] };
     }
   }
   // A6 (batch5): sanitizeMangmeeComposedText (persona backstop + Markdown/status-key/CE-year fixes)

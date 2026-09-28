@@ -171,6 +171,25 @@ describe('E3: a non-JSON but non-empty compose response is rescued for a single 
     assert.ok(!result.replyText.includes('ยินดีเลยค่ะ แล้วพบกันใหม่นะคะ'), result.replyText);
   });
 
+  it('never rescues a truncated JSON envelope as prose — raw JSON must not reach the customer', async () => {
+    const request: LineAiTurnRequest = {
+      requestId: 'req-e3-truncated', webhookEventId: 'event-e3-truncated', messageText: 'ขอบคุณค่ะ', messagePreviewHash: '5'.repeat(16),
+      valueCandidates: EMPTY_CANDIDATES,
+      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'ขอบคุณ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(['expense.read']),
+    };
+    // A compose response cut off mid-envelope (e.g. at maxTokens): unparseable, but not prose.
+    const { provider } = recordingProvider(['{"answers":[{"index":0,"status":"handled","text":"ยินดีเลยค่ะ มีอะไร']);
+    const result = await runSemanticTurnV2({
+      req: request, provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('a GENERAL item never calls a tool'); },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'SEMANTIC_ANSWER_UNAVAILABLE');
+    assert.ok(!result.replyText.includes('"answers"'), result.replyText);
+    assert.ok(!result.replyText.includes('{'), result.replyText);
+  });
+
   it('still rejects a rescued READ answer whose numbers do not match the actual tool result (grounding is never bypassed)', async () => {
     const messageText = 'ไม่เอาตัวกรองแล้วครับ ดูรวมทุกสถานะเลย';
     const request: LineAiTurnRequest = {
