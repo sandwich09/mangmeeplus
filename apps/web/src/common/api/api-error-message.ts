@@ -18,6 +18,13 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_EMAIL_CHANGED: 'ข้อมูลอีเมลเปลี่ยนแล้ว กรุณาตรวจผู้รับเอกสารและสรุปรายการใหม่',
   BILLING_EMAIL_VERIFICATION_REQUIRED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อยก่อนชำระเงิน',
   BILLING_EMAIL_UPDATE_PENDING: 'กรุณาตรวจรายการเปลี่ยนผู้รับเอกสารให้เสร็จก่อนเริ่มรายการใหม่',
+  // Purchase without setup (pr-c §2.4): document recipient and resend.
+  BILLING_RESEND_LIMIT: 'วันนี้ส่งเอกสารใบนี้ซ้ำครบจำนวนที่กำหนดแล้ว ลองใหม่ได้พรุ่งนี้ หรือเปิดเอกสารจากหน้านี้ได้ทันที',
+  BILLING_RESEND_UNAVAILABLE: 'ยังส่งเอกสารซ้ำไม่ได้ในตอนนี้ ตรวจอีเมลรับเอกสารแล้วลองใหม่ หรือเปิดเอกสารจากหน้านี้',
+  BILLING_RECIPIENT_UNAVAILABLE: 'ตั้งอีเมลรับเอกสารได้หลังชำระเงินครั้งแรก',
+  BILLING_RECIPIENT_UNCHANGED: 'อีเมลนี้เป็นอีเมลรับเอกสารปัจจุบันอยู่แล้ว ไม่ต้องเปลี่ยน',
+  BILLING_RECIPIENT_PROOF_INVALID: 'การยืนยันอีเมลนี้หมดอายุหรือถูกใช้แล้ว กรุณาขอรหัสยืนยันใหม่',
+  BILLING_RECIPIENT_BOUNCED: 'อีเมลรับเอกสารส่งไม่ถึง กรุณาแก้อีเมลรับเอกสารก่อน',
   EMAIL_OTP_REQUIRED: 'กรุณาโหลดหน้านี้ใหม่เพื่อยืนยันอีเมลด้วยรหัส OTP',
   EMAIL_REAUTH_REQUIRED: 'กรุณากรอกรหัสผ่านปัจจุบัน หรือยืนยันตัวตนผ่าน LINE อีกครั้ง',
   EMAIL_DELIVERY_UNAVAILABLE: 'ยังส่งรหัสไม่ได้ กรุณาลองใหม่ภายหลัง หรือติดต่อทีมงาน 098-256-5628',
