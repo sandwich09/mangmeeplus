@@ -1,7 +1,9 @@
 import { BillingEmailRecipient } from './billing-email-recipient';
-import { assertBillingProfileUnchanged, requireBillingProfile, stripeBillingProfile, stripeBillingProfileMatches } from './billing-company-profile';
-import { companyBillingProfile } from '@watchdog-bms/contracts';
-import { assertAccountEmailProof, lockAccountEmail, verifiedAccountEmailProof } from '../../auth/application/account-email-state';
+import { BillingDocumentResend } from './billing-document-resend';
+import { checkoutAddressOf } from './billing-recipient-capture';
+import { assertBillingProfileUnchanged, billingProfileComplete, stripeCustomerSyncPayload, stripeCustomerSynced } from './billing-company-profile';
+import { companyBillingProfile, type BillingRecipientSource } from '@watchdog-bms/contracts';
+import { accountEmailState } from '../../auth/application/account-email-state';
 import type { EmailProof } from '../../auth/domain/logic/email-otp.logic';
 import { BillingAdminCollection } from './billing-admin-collection';
 import { effectivePlanCapacity } from '../../system-partner-management/domain/logic/plan-capacity';
@@ -52,6 +54,7 @@ import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.lo
 /** D-P5-6: the future contract a `SCHEDULE_PRICE_RETURN` writes. The invoice that applies it puts
  *  the shop back on the tier's default menus, AI credit and limits (Q1) even though it is a RENEWAL. */
 export type DealReturnSource = { dealRequestId: string; returnAt: string; creditScope?: 'CHAT' | 'TOTAL' };
+/** `emailProof` is read from snapshots written before purchase-without-setup only; new quotes carry none. */
 export type BillingSnapshot = { trialCarryover?: TrialCarryoverSource; emailProof?: EmailProof; quote: BillingQuote; deal?: DealSource; dealReturn?: DealReturnSource; subscriptionConversion?: { subscriptionId: string; paidThrough: string }; advanceDeal?: { invoiceId: string; contractAttemptId: string; paidThrough: string; firstCycleEndsAt: string; anchorDay: number }; priceId: string; productId?: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; featurePlan?: BillingFeaturePlan; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; oneTime?: { invoiceId: string; paidThrough: string; anchorDay: number; offerKey: string; interval: string }; oneTimeChange?: { effectiveAt: string; currentOffer: BillingOffer }; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
 const oneTimeMode = (mode: BillingPurchaseMode | undefined) => mode === 'CARD_ONCE' || mode === 'PROMPTPAY_ONCE';
 /**
@@ -68,13 +71,25 @@ function assertPurchaseMode(mode: unknown): asserts mode is BillingPurchaseMode 
     throw billingError('BILLING_MODE_NOT_READY', 'วิธีชำระเงินนี้ยังไม่เปิดให้บริการ');
 }
 const CLOSED_GATES = Object.fromEntries(BILLING_ACTIONS.map((key) => [key, false]));
+/** R-A5/R-A10: a recipient changed since the quote makes it stale — judged against the column, never Stripe.
+ *  An empty column is not drift: the email the quote pinned (if any) becomes the recipient. */
+function assertRecipientUnchanged(account: Pick<BillingAccount, 'recipientEmail'> | null, snapshot: BillingSnapshot) {
+  if (account?.recipientEmail && account.recipientEmail !== (snapshot.quote.billingEmail ?? null))
+    throw billingError('BILLING_QUOTE_STALE', 'อีเมลรับเอกสารเปลี่ยน กรุณาตรวจสอบรายการใหม่');
+}
+/** R-D1: resend needs a paid, applied invoice, a recipient and no recipient change in flight. */
+export function canResendDocuments(row: { providerStatus: string; applyStatus: string },
+  account: Pick<BillingAccount, 'recipientEmail' | 'activeEmailOperationId'>): boolean {
+  return row.providerStatus === 'paid' && row.applyStatus === 'APPLIED' && !!account.recipientEmail && !account.activeEmailOperationId;
+}
 
 @Injectable()
 export class BillingService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, readonly stripe: StripeClient,
     @Optional() private readonly lifecycle?: PartnerLifecycleTransitionUseCase) {}
 
-  get emailRecipient() { return new BillingEmailRecipient(this.prisma, this.stripe, this); }
+  get emailRecipient() { return new BillingEmailRecipient(this.prisma, this.stripe, this, this.config); }
+  get documentResend() { return new BillingDocumentResend(this.prisma, this.stripe, this); }
   get freeDays() { return new BillingFreeDays(this.prisma, this, this.lifecycle); }
   get repeater() { return new BillingRepeat(this.prisma, this.stripe, this, this.lifecycle); }
   get collection() { return new BillingCollection(this.prisma, this.stripe, this); }
@@ -272,7 +287,7 @@ export class BillingService {
     });
   }
 
-  async quote(context: RequestContext, body: { offerKey?: string; interval?: string; billingEmail: string; capacity?: unknown; purchaseMode?: BillingPurchaseMode; purchaseIntent?: 'FULL_PACKAGE'; dealId?: string }): Promise<BillingQuote> {
+  async quote(context: RequestContext, body: { offerKey?: string; interval?: string; billingEmail?: string; capacity?: unknown; purchaseMode?: BillingPurchaseMode; purchaseIntent?: 'FULL_PACKAGE'; dealId?: string }): Promise<BillingQuote> {
     await this.assertOwner(context);
     const purchaseMode = body.purchaseMode ?? 'CARD_AUTO';
     assertPurchaseMode(purchaseMode);
@@ -298,14 +313,18 @@ export class BillingService {
     if (state.policy.paidStart !== 'IMMEDIATE') throw billingError('CONTROL_POLICY_NOT_SUPPORTED', 'การเริ่มสมาชิกต้องชำระทันทีตามนโยบายปัจจุบัน');
     const priceId = state.policy.priceIds[`${tier}:${interval}`];
     if (!priceId) throw billingError('BILLING_OFFER_UNAVAILABLE', 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน');
-    const emailProof = await verifiedAccountEmailProof(this.prisma.client, context.userId);
-    // Retain the old input shape for cached clients; the reviewed quote always derives its recipient from the account.
+    // R-A1/R-A6: neither an account email nor an address is required to buy. The body's `billingEmail`
+    // stays accepted for cached clients and is ignored; the quote derives the recipient itself.
+    const emailState = await accountEmailState(this.prisma.client, context.userId);
+    const verifiedAccountEmail = emailState.requirement === 'READY' ? emailState.user.email!.trim().toLowerCase() : null;
     const company = await this.prisma.client.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
     if (!company) throw new NotFoundException();
     const term = company.planTerm;
-    const billingProfile = requireBillingProfile(company);
+    const billingProfile = companyBillingProfile(company);
     if (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && term?.termDisabledAt)) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน');
     const existing = await this.account(company.id);
+    // R-A2: the current document recipient first, then the buyer's verified account email; null = Checkout asks.
+    const recipientEmail = existing?.recipientEmail ?? verifiedAccountEmail;
     // Q7: a live CARD_AUTO subscription may convert only after the deal payment applies. The
     // snapshot freezes the exact subscription, so Checkout cannot turn a changed account into a
     // second charge; the reconciler then journals and retries the provider cancellation.
@@ -329,11 +348,8 @@ export class BillingService {
     const purchaseSource = await this.purchaseSource(company, existing);
     if (purchaseSource === 'PAID_OTHER_MODE' || purchaseSource === 'SOURCE_INCONSISTENT')
       throw billingError('BILLING_SOURCE_REVIEW_REQUIRED', 'ข้อมูลการชำระเงินเดิมไม่ตรงกัน กรุณาติดต่อทีมงานก่อนเริ่มรายการใหม่');
-    if (existing?.customerId) {
-      const customer = await this.stripe.request('GET', `/customers/${existing.customerId}`);
-      if (customer.id !== existing.customerId || customer.metadata?.billingAccountId !== existing.id || customer.email !== emailProof.email)
-        throw billingError('BILLING_RECIPIENT_UPDATE_REQUIRED', 'กรุณาตรวจและยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้ก่อนเริ่มชำระเงินใหม่');
-    }
+    // R-A5: no Customer email comparison here any more. Checkout re-reads the Customer binding, and a
+    // recipient changed since this quote is BILLING_QUOTE_STALE against the column, not Stripe.
     if (!deal) offer = purchasedCapacityOffer(offer, term, existing);
     if(existing)await assertNoPendingRefund(this.prisma.client,existing);
     if (existing?.activeEmailOperationId) throw billingError('BILLING_EMAIL_UPDATE_PENDING', 'กรุณาตรวจรายการเปลี่ยนผู้รับเอกสารให้เสร็จก่อน');
@@ -461,7 +477,7 @@ export class BillingService {
       purchaseMode,
       expiresAt: new Date(Date.now() + 600_000).toISOString(), offer: { ...offer, availability: 'AVAILABLE', reason: null },
       ...quoteTotals(upgrade?.amountSatang ?? offer.priceSatang, state.policy.taxTreatment), taxTreatment: state.policy.taxTreatment!, consentRevision: state.policy.consentRevision,
-      paidStart: state.policy.paidStart!, billingEmail: emailProof.email, billingProfile,
+      paidStart: state.policy.paidStart!, billingEmail: recipientEmail, billingProfile,
       trialEndsAt: term?.tierKey === 'FREE_TRIAL_15' && term.termEndsAt > new Date() ? term.termEndsAt.toISOString() : null,
       previousSource: purchaseSource, previousTermEndsAt: term?.termEndsAt.toISOString() ?? null,
       ...(featurePreview ? { featureImpact: featurePreview.impact } : {}),
@@ -501,7 +517,7 @@ export class BillingService {
       months: deal.months, salesUserId: dealRow!.salesUserId!, aiMonthlyBudgetSatang: deal.aiMonthlyBudgetSatang,
       creditScope: deal.version === 4 ? 'CHAT' : 'TOTAL',
       ...(auto.autoRenew ? { cadence: auto.cadence, cycles: auto.cycles } : {}) } : undefined;
-    const snapshot: BillingSnapshot = { ...(trialCarryover ? { trialCarryover } : {}), emailProof, ...(dealSource ? { deal: dealSource } : {}), ...(subscriptionConversion ? { subscriptionConversion } : {}), ...(advanceDeal ? { advanceDeal } : {}), ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId: snapshotPriceId, productId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(featurePinned && featurePreview ? { featurePlan: featurePreview.plan } : {}), ...(repeat ? { repeat } : {}), ...(oneTime ? { oneTime } : {}), ...(oneTimeChange ? { oneTimeChange } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
+    const snapshot: BillingSnapshot = { ...(trialCarryover ? { trialCarryover } : {}), ...(dealSource ? { deal: dealSource } : {}), ...(subscriptionConversion ? { subscriptionConversion } : {}), ...(advanceDeal ? { advanceDeal } : {}), ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId: snapshotPriceId, productId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(featurePinned && featurePreview ? { featurePlan: featurePreview.plan } : {}), ...(repeat ? { repeat } : {}), ...(oneTime ? { oneTime } : {}), ...(oneTimeChange ? { oneTimeChange } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
     await this.prisma.client.billingQuote.create({ data: { id: quoteId, companyId: company.id, initiatingUserId: context.userId,
       policyRevisionId: state.revision.id, snapshotJson: snapshot as unknown as Prisma.InputJsonValue, expiresAt: new Date(quote.expiresAt) } });
     return quote;
@@ -526,8 +542,6 @@ export class BillingService {
           quote.policyRevisionId !== state.revision?.id) throw billingError('BILLING_QUOTE_STALE', 'รายการหมดอายุหรือราคาเปลี่ยน กรุณาตรวจสอบอีกครั้ง');
       if (await tx.billingAttempt.findUnique({ where: { quoteId: quote.id } })) throw billingError('BILLING_QUOTE_STALE', 'กรุณาตรวจสอบราคาและยืนยันรายการใหม่');
       const snapshot = quote.snapshotJson as unknown as BillingSnapshot;
-      await lockAccountEmail(tx, context.userId);
-      await assertAccountEmailProof(tx, context.userId, snapshot.emailProof);
       if(account)await assertNoPendingRefund(tx,account);
       if (account?.activeEmailOperationId) throw billingError('BILLING_EMAIL_UPDATE_PENDING', 'กรุณาตรวจรายการเปลี่ยนผู้รับเอกสารให้เสร็จก่อน');
       if (account?.activeCollectionOperationId) throw billingError('BILLING_COLLECTION_PENDING', 'กรุณาตรวจคำสั่งต่ออายุเดิมให้เสร็จก่อนซื้อเพิ่ม');
@@ -548,6 +562,7 @@ export class BillingService {
       const company = await tx.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
       if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ');
       assertBillingProfileUnchanged(company, snapshot.quote);
+      assertRecipientUnchanged(account, snapshot);
       const source = await this.purchaseSource(company, account, tx);
       if (source === 'PAID_OTHER_MODE' || source === 'SOURCE_INCONSISTENT') throw billingError('BILLING_SOURCE_REVIEW_REQUIRED', 'ข้อมูลการชำระเงินเดิมไม่ตรงกัน กรุณาติดต่อทีมงาน');
       if (snapshot.quote.previousSource && source !== snapshot.quote.previousSource) throw billingError('BILLING_QUOTE_STALE', 'แพ็กเกจเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
@@ -617,11 +632,10 @@ export class BillingService {
         await this.prisma.client.$transaction(async tx => {
           await lockPlanTermCompany(tx, context.companyId);
           await this.assertOwner(context, tx);
-          await lockAccountEmail(tx, context.userId);
-          await assertAccountEmailProof(tx, context.userId, snapshot.emailProof);
         });
         customerRequestUnconfirmed = true;
-        const customer = await this.stripe.request('POST', '/customers', { ...stripeBillingProfile(snapshot.quote.billingProfile!), email: snapshot.quote.billingEmail,
+        // R-A2: no email when the quote pinned none — Checkout then asks for it and stores it on the Customer.
+        const customer = await this.stripe.request('POST', '/customers', { ...stripeCustomerSyncPayload(snapshot),
           metadata: { billingAccountId: account.id } }, `mm:${account.id}:customer`);
         if (typeof customer.id !== 'string' || !customer.id.startsWith('cus_')) throw new StripeRequestError('UNKNOWN', 'invalid_customer');
         customerId = customer.id;
@@ -631,17 +645,18 @@ export class BillingService {
         customerRequestUnconfirmed = false;
       }
       const customer = await this.stripe.request('GET', `/customers/${customerId}`);
-      if (customer.id !== customerId || customer.email !== snapshot.quote.billingEmail || customer.metadata?.billingAccountId !== account.id)
-        throw billingError('BILLING_RECIPIENT_UPDATE_REQUIRED', 'ผู้รับเอกสารเปลี่ยนแล้ว กรุณาตรวจข้อมูลบริษัทก่อนเริ่มชำระเงินใหม่');
-      if (!stripeBillingProfileMatches(customer, snapshot.quote.billingProfile!)) {
+      if (customer.id !== customerId || customer.metadata?.billingAccountId !== account.id)
+        throw billingError('BILLING_MAPPING_MISMATCH', 'ข้อมูลลูกค้าใน Stripe ไม่ตรงกับบริษัท กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง');
+      if (!stripeCustomerSynced(customer, snapshot)) {
         // Retain an ambiguous profile write until its original idempotent command is settled.
-        // No Checkout can be sent while this marker is unconfirmed.
+        // No Checkout can be sent while this marker is unconfirmed. The payload may set the email the
+        // quote pinned: the column recipient (already checked for drift) or a verified account email.
         const profileSync = { startedAt: new Date().toISOString(), customerId, confirmed: false };
         await this.prisma.client.billingAttempt.update({ where: { id: attempt.id }, data: { collectionJson: { profileSync } } });
         customerRequestUnconfirmed = true;
         const updated = await this.stripe.request('POST', `/customers/${customerId}`,
-          stripeBillingProfile(snapshot.quote.billingProfile!), `mm:${attempt.id}:billing-profile`);
-        if (updated.id !== customerId || updated.metadata?.billingAccountId !== account.id || !stripeBillingProfileMatches(updated, snapshot.quote.billingProfile!))
+          stripeCustomerSyncPayload(snapshot), `mm:${attempt.id}:billing-profile`);
+        if (updated.id !== customerId || updated.metadata?.billingAccountId !== account.id || !stripeCustomerSynced(updated, snapshot))
           throw new StripeRequestError('UNKNOWN', 'customer_profile_unconfirmed');
         await this.prisma.client.billingAttempt.update({ where: { id: attempt.id }, data: { collectionJson: { profileSync: { ...profileSync, confirmed: true } } } });
         customerRequestUnconfirmed = false;
@@ -657,7 +672,9 @@ export class BillingService {
         const company = await tx.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
         if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ');
         assertBillingProfileUnchanged(company, snapshot.quote);
-        const source = await this.purchaseSource(company, await this.account(context.companyId, tx), tx);
+        const barrierAccount = await this.account(context.companyId, tx);
+        assertRecipientUnchanged(barrierAccount, snapshot);
+        const source = await this.purchaseSource(company, barrierAccount, tx);
         if (source === 'PAID_OTHER_MODE' || source === 'SOURCE_INCONSISTENT' || (snapshot.quote.previousSource && source !== snapshot.quote.previousSource))
           throw billingError('BILLING_QUOTE_STALE', 'แพ็กเกจเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
         if (snapshot.advanceDeal) {
@@ -672,18 +689,20 @@ export class BillingService {
         if ((packageMenuPurchaseSource(source) || snapshot.deal || snapshot.quote.purchase?.kind === 'FULL_PACKAGE_UPGRADE') && (!snapshot.featurePlan || (await billingFeaturePlan(tx, context.companyId)).plan.sourceHash !== snapshot.featurePlan.sourceHash))
           throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์เมนูเปลี่ยน กรุณาตรวจสอบใหม่');
         if ((company.planTerm?.updatedAt.toISOString() ?? null) !== snapshot.termVersion || company.name !== snapshot.quote.companyName) throw billingError('BILLING_QUOTE_STALE', 'ข้อมูลบริษัทหรือสิทธิ์เปลี่ยน กรุณาตรวจสอบใหม่');
-        await lockAccountEmail(tx, context.userId);
-        await assertAccountEmailProof(tx, context.userId, snapshot.emailProof);
         const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: 'CREATING', version: 0 }, data: { status: 'REQUESTING', version: { increment: 1 } } });
         if (changed.count !== 1) throw billingError('BILLING_PURCHASE_PENDING', 'กำลังตรวจสอบรายการเดิม');
       });
       const origin = this.config.sesWebBaseUrl;
       if (!origin) throw new StripeRequestError('REJECTED', 'missing_web_origin');
       const returnUrl = new URL(`/companies/${context.companyId}/billing/return?attempt=${attempt.id}`, origin).toString();
+      // G12/RV29: the return page tells a cancelled Checkout from a pending one by this marker.
+      const cancelUrl = `${returnUrl}&checkout=canceled`;
+      // R-A3/RV16: 'auto' writes the Checkout address onto the Customer, so only a complete profile keeps it.
+      const customerUpdate = { address: billingProfileComplete(snapshot.quote.billingProfile) ? 'never' : 'auto' } as const;
       if (account.customerId) {
         const customer = await this.stripe.request('GET', `/customers/${customerId}`);
-        if (customer.id !== customerId || customer.email !== snapshot.quote.billingEmail || customer.metadata?.billingAccountId !== account.id)
-          throw billingError('BILLING_RECIPIENT_UPDATE_REQUIRED', 'ผู้รับเอกสารเปลี่ยนแล้ว กรุณาตรวจข้อมูลบริษัทก่อนเริ่มชำระเงินใหม่');
+        if (customer.id !== customerId || customer.metadata?.billingAccountId !== account.id)
+          throw billingError('BILLING_MAPPING_MISMATCH', 'ข้อมูลลูกค้าใน Stripe ไม่ตรงกับบริษัท กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง');
       }
       await this.assertTaxSettings(snapshot.policy);
       if (paymentCheckoutSnapshot(snapshot)) {
@@ -718,12 +737,14 @@ export class BillingService {
         line_items: [{ quantity: 1, price_data: { product: snapshot.productId, currency: 'thb',
           unit_amount: snapshot.upgrade?.amountSatang ?? snapshot.quote.offer.priceSatang, tax_behavior: snapshot.policy.taxTreatment === 'EXCLUSIVE_VAT_7' ? 'exclusive' : 'inclusive' },
           ...(snapshot.policy.taxRateId ? { tax_rates: [snapshot.policy.taxRateId] } : {}) }],
-        success_url: returnUrl, cancel_url: returnUrl, locale: 'th', billing_address_collection: 'required',
+        success_url: returnUrl, cancel_url: cancelUrl, locale: 'th', billing_address_collection: 'required',
+        customer_update: customerUpdate,
         expires_at: Math.floor(Date.now() / 1000) + 1800,
       } : {
         mode: 'subscription', customer: customerId, client_reference_id: attempt.id, payment_method_types: ['card'],
         line_items: [{ price: snapshot.priceId, quantity: 1, ...(snapshot.policy.taxRateId ? { tax_rates: [snapshot.policy.taxRateId] } : {}) }],
-        success_url: returnUrl, cancel_url: returnUrl, locale: 'th', billing_address_collection: 'required',
+        success_url: returnUrl, cancel_url: cancelUrl, locale: 'th', billing_address_collection: 'required',
+        customer_update: customerUpdate,
         metadata, subscription_data: { billing_mode: { type: 'classic' }, metadata },
         expires_at: Math.floor(Date.now() / 1000) + 1800,
       }, `mm:${attempt.id}:checkout`);
@@ -914,19 +935,23 @@ export class BillingService {
       capacityRepair: !held && attempt && invoice?.sourceAttemptId === attempt.id && invoice.applyStatus === 'HELD' && invoice.errorCode === 'BILLING_CAP_SELECTION_REQUIRED'
         ? { attemptId: attempt.id, attemptVersion: attempt.version, offerKey: (attempt.quoteSnapshot as unknown as BillingSnapshot).quote.offer.offerKey,
           interval: (attempt.quoteSnapshot as unknown as BillingSnapshot).quote.offer.interval } : null,
+      // R-A7/R-A8: the column only — no Stripe read here, so it stays empty until the payment applies.
+      recipient: { email: account?.recipientEmail ?? null, source: (account?.recipientSource as BillingRecipientSource | null) ?? null,
+        bouncedAt: account?.recipientBouncedAt?.toISOString() ?? null,
+        canChange: !!account?.customerId && !account.activeEmailOperationId && !account.activeAttemptId },
+      checkoutAddress: checkoutAddressOf(account?.checkoutAddressJson),
       issues: issues.map((i) => ({ reference: i.id, code: i.kind })) };
   }
 
   async portal(context: RequestContext): Promise<{ url: string }> {
     await this.assertOwner(context);
-    const emailProof = await verifiedAccountEmailProof(this.prisma.client, context.userId);
+    // DQ2: managing the card no longer needs a verified account email; the portal configuration
+    // cannot edit the Customer email, and a pending recipient change still blocks it below.
     const account = await this.account(context.companyId), state = await this.settings();
     if (!account?.customerId || !account.baseSubscriptionId || account.renewalMode !== 'CARD_AUTO' || account.activeEmailOperationId || !state.policy?.portalConfigurationId || !state.gates.portal_payment_method) throw billingError('BILLING_PORTAL_UNAVAILABLE', 'กรุณาติดต่อทีมงานเพื่อจัดการการชำระเงิน');
     const assertCurrent = async (tx: Prisma.TransactionClient) => {
       await lockPlanTermCompany(tx, context.companyId);
       await this.assertOwner(context, tx);
-      await lockAccountEmail(tx, context.userId);
-      await assertAccountEmailProof(tx, context.userId, emailProof);
       const company = await tx.company.findUniqueOrThrow({ where: { id: context.companyId }, include: { planTerm: true } });
       if (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))
         throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน');
@@ -1018,7 +1043,8 @@ export class BillingService {
     return { items: page.map((row) => ({ id: row.id, number: row.providerNumber, currency: 'THB', amountSatang: row.totalSatang,
       refundedSatang: row.refundedSatang, disputed: row.disputed, financialObservedAt: row.financialObservedAt?.toISOString() ?? null,
       paymentState: row.providerStatus, applyState: row.applyStatus, periodStart: row.periodStart.toISOString(), periodEnd: row.periodEnd.toISOString(),
-      createdAt: row.createdAt.toISOString(), hasDocuments: row.providerStatus === 'paid' })), nextCursor: rows.length > input.limit ? page.at(-1)!.id : null };
+      createdAt: row.createdAt.toISOString(), hasDocuments: row.providerStatus === 'paid',
+      documentActions: { canResend: canResendDocuments(row, account) } })), nextCursor: rows.length > input.limit ? page.at(-1)!.id : null };
   }
 
   private async ownedInvoice(context: RequestContext, id: string) {
@@ -1033,7 +1059,7 @@ export class BillingService {
     const {account,row}=await this.ownedInvoice(context,id);
     const result=await readInvoiceAdjustments(this.stripe,account,row,kind,cursor);
     const current=await this.ownedInvoice(context,id);sameInvoiceSource(account,row,current.account,current.row);
-    return {...result,canOpenDocuments:true};
+    return {...result,canOpenDocuments:true,documentActions:{canResend:canResendDocuments(current.row,current.account)},recipientEmail:current.account.recipientEmail??null};
   }
   async document(context: RequestContext, id: string, kind: 'invoice'|'receipt'|'pdf'|'credit-note', creditNoteId?: string): Promise<{url:string}> {
     const {account,row}=await this.ownedInvoice(context,id);

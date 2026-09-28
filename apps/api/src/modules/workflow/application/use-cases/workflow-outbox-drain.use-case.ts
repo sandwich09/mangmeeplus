@@ -88,6 +88,7 @@ export class DrainWorkflowOutboxUseCase {
       excludeEventTypes: [
         'billing.invoice.applied', // Billing owns delivery; generic workflow publishing must not swallow it.
         'billing.status.email',
+        'billing.recipient.changed',
         POSTMARK_EVENT_TYPE,
         EMAIL_SECURITY_NOTICE_EVENT,
         OBJECT_VERSION_CLEANUP_EVENT_TYPE,

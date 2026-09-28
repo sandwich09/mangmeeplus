@@ -16,43 +16,77 @@ import { PostmarkSendError } from '../infrastructure/postmark.client';
 
 export const EMAIL_SECURITY_NOTICE_EVENT = 'auth.email.security_notice';
 const OTP_REQUEST_ACTION = 'auth.email.otp.requested';
-const OTP_WRONG_ACTION = 'auth.email.otp.invalid';
+/** Shared with the company recipient OTP (billing): one wrong-code budget of 20 per hour per user. */
+export const OTP_WRONG_ACTION = 'auth.email.otp.invalid';
 type Caller = { userId: string; tokenId: string; requestId: string };
 type RequestInput = Caller & { newEmail: string; requestKey: string; expectedEmailRevision: number; currentPassword?: string };
+type OtpConfig = Pick<AppConfigService, 'isLocal' | 'appEnv' | 'deploymentIdentity' | 'emailProvider' | 'postmarkServerId' |
+  'emailOtpHmacKey' | 'emailOtpHmacKeyVersion' | 'postmarkUatAllowedRecipients'>;
+
+export function emailOtpEnvironment(config: OtpConfig): string {
+  if (config.isLocal || config.appEnv === 'local') return 'local';
+  const environment = config.deploymentIdentity?.targetEnvironment;
+  if (!['uat', 'production'].includes(environment)) throw emailError('EMAIL_DELIVERY_UNAVAILABLE', 'ยังส่งรหัสยืนยันไม่ได้ กรุณาลองใหม่ภายหลัง', 503);
+  return environment;
+}
+
+export function assertEmailOtpDeliveryReady(config: OtpConfig, email: string): void {
+  if (config.emailProvider !== 'postmark' || !config.postmarkServerId ||
+      !/^[a-f0-9]{64}$/.test(config.emailOtpHmacKey ?? '') || !config.emailOtpHmacKeyVersion) {
+    throw emailError('EMAIL_DELIVERY_UNAVAILABLE', 'ยังส่งรหัสยืนยันไม่ได้ กรุณาลองใหม่ภายหลัง', 503);
+  }
+  // The shared transport also enforces environment identity at its final send boundary.
+  if (emailOtpEnvironment(config) === 'uat') {
+    if (!config.postmarkUatAllowedRecipients.includes(email)) {
+      throw emailError('EMAIL_DELIVERY_UNAVAILABLE', 'อีเมลนี้ยังไม่ได้รับอนุญาตให้รับเมลทดสอบ UAT', 503);
+    }
+  }
+}
+
+export async function activeSessionOf(tx: Prisma.TransactionClient, caller: { userId: string; tokenId: string }, now: Date) {
+  await tx.$queryRaw`SELECT id FROM "AuthSession" WHERE "userId" = ${caller.userId}
+    AND ("tokenId" = ${caller.tokenId} OR "previousTokenId" = ${caller.tokenId}) FOR SHARE`;
+  const session = await tx.authSession.findFirst({ where: { userId: caller.userId, status: 'ACTIVE', expiresAt: { gt: now },
+    OR: [{ tokenId: caller.tokenId }, { previousTokenId: caller.tokenId }] } });
+  if (!session) throw emailError('EMAIL_REAUTH_REQUIRED', 'กรุณาเข้าสู่ระบบอีกครั้งเพื่อยืนยันอีเมล', 401);
+  return session;
+}
+
+/**
+ * Mail budget for one OTP request: 1/minute, 5/hour and 10/day per user and code kind, plus 5/hour per
+ * recipient shared by account OTP, company recipient OTP and email access. Locks the recipient too,
+ * so several accounts cannot exceed its budget. A positive result is the wait in seconds.
+ */
+export async function emailOtpRetryAfterSeconds(tx: Prisma.TransactionClient,
+  input: { userId: string; email: string; now: Date; proofKind: string }): Promise<number> {
+  const { now, email } = input;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`email-otp-recipient:${email}`}, 0))`;
+  const recent = await tx.emailVerificationToken.findMany({ where: { userId: input.userId, proofKind: input.proofKind,
+    createdAt: { gt: new Date(now.getTime() - 86_400_000) } }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } });
+  const hourly = recent.filter(t => t.createdAt.getTime() > now.getTime() - 3_600_000);
+  const recipientRecent = await tx.emailVerificationToken.findMany({ where: { newEmail: email, proofKind: { in: ['OTP', 'BILLING_RECIPIENT'] },
+    createdAt: { gt: new Date(now.getTime() - 3_600_000) } }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } });
+  const accessRecent = await tx.emailAccessChallenge.findMany({ where: { email, createdAt: { gt: new Date(now.getTime() - 3_600_000) } }, select: { createdAt: true } });
+  const sharedRecent = [...recipientRecent, ...accessRecent].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const retryTimes = [
+    recent[0] ? recent[0].createdAt.getTime() + EMAIL_OTP_COOLDOWN_MS : 0,
+    hourly.length >= 5 ? hourly[hourly.length - 1]!.createdAt.getTime() + 3_600_000 : 0,
+    recent.length >= 10 ? recent[recent.length - 1]!.createdAt.getTime() + 86_400_000 : 0,
+    sharedRecent.length >= 5 ? sharedRecent[0]!.createdAt.getTime() + 3_600_000 : 0,
+  ];
+  return Math.ceil((Math.max(...retryTimes) - now.getTime()) / 1000);
+}
 
 @Injectable()
 export class AccountEmailOtpService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService,
     private readonly delivery: EmailDeliveryService) {}
 
-  private environment(): string {
-    if (this.config.isLocal || this.config.appEnv === 'local') return 'local';
-    const environment = this.config.deploymentIdentity?.targetEnvironment;
-    if (!['uat', 'production'].includes(environment)) throw emailError('EMAIL_DELIVERY_UNAVAILABLE', 'ยังส่งรหัสยืนยันไม่ได้ กรุณาลองใหม่ภายหลัง', 503);
-    return environment;
-  }
+  private environment(): string { return emailOtpEnvironment(this.config); }
 
-  private assertReady(email: string) {
-    if (this.config.emailProvider !== 'postmark' || !this.config.postmarkServerId ||
-        !/^[a-f0-9]{64}$/.test(this.config.emailOtpHmacKey ?? '') || !this.config.emailOtpHmacKeyVersion) {
-      throw emailError('EMAIL_DELIVERY_UNAVAILABLE', 'ยังส่งรหัสยืนยันไม่ได้ กรุณาลองใหม่ภายหลัง', 503);
-    }
-    // The shared transport also enforces environment identity at its final send boundary.
-    if (this.environment() === 'uat') {
-      if (!this.config.postmarkUatAllowedRecipients.includes(email)) {
-        throw emailError('EMAIL_DELIVERY_UNAVAILABLE', 'อีเมลนี้ยังไม่ได้รับอนุญาตให้รับเมลทดสอบ UAT', 503);
-      }
-    }
-  }
+  private assertReady(email: string) { assertEmailOtpDeliveryReady(this.config, email); }
 
-  private async session(tx: Prisma.TransactionClient, caller: Caller, now: Date) {
-    await tx.$queryRaw`SELECT id FROM "AuthSession" WHERE "userId" = ${caller.userId}
-      AND ("tokenId" = ${caller.tokenId} OR "previousTokenId" = ${caller.tokenId}) FOR SHARE`;
-    const session = await tx.authSession.findFirst({ where: { userId: caller.userId, status: 'ACTIVE', expiresAt: { gt: now },
-      OR: [{ tokenId: caller.tokenId }, { previousTokenId: caller.tokenId }] } });
-    if (!session) throw emailError('EMAIL_REAUTH_REQUIRED', 'กรุณาเข้าสู่ระบบอีกครั้งเพื่อยืนยันอีเมล', 401);
-    return session;
-  }
+  private async session(tx: Prisma.TransactionClient, caller: Caller, now: Date) { return activeSessionOf(tx, caller, now); }
 
   private async audit(tx: Prisma.TransactionClient, caller: Caller, action: string, challengeId: string) {
     await tx.auditLog.create({ data: { actorType: 'USER', actorUserId: caller.userId, action,
@@ -154,21 +188,7 @@ export class AccountEmailOtpService {
         AND (lower(email) = ${email} OR lower(username) = ${email}) LIMIT 1`;
       if (taken.length) throw emailError('EMAIL_CONFLICT', 'อีเมลนี้ใช้กับบัญชีอื่นแล้ว กรุณาใช้อีเมลอื่น');
       // Lock recipient as well as user so multiple accounts cannot exceed its mail budget.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`email-otp-recipient:${email}`}, 0))`;
-      const recent = await tx.emailVerificationToken.findMany({ where: { userId: user.id, proofKind: 'OTP',
-        createdAt: { gt: new Date(now.getTime() - 86_400_000) } }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } });
-      const hourly = recent.filter(t => t.createdAt.getTime() > now.getTime() - 3_600_000);
-      const recipientRecent = await tx.emailVerificationToken.findMany({ where: { newEmail: email, proofKind: 'OTP',
-        createdAt: { gt: new Date(now.getTime() - 3_600_000) } }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } });
-      const accessRecent = await tx.emailAccessChallenge.findMany({ where: { email, createdAt: { gt: new Date(now.getTime() - 3_600_000) } }, select: { createdAt: true } });
-      const sharedRecent = [...recipientRecent, ...accessRecent].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-      const retryTimes = [
-        recent[0] ? recent[0].createdAt.getTime() + EMAIL_OTP_COOLDOWN_MS : 0,
-        hourly.length >= 5 ? hourly[hourly.length - 1]!.createdAt.getTime() + 3_600_000 : 0,
-        recent.length >= 10 ? recent[recent.length - 1]!.createdAt.getTime() + 86_400_000 : 0,
-        sharedRecent.length >= 5 ? sharedRecent[0]!.createdAt.getTime() + 3_600_000 : 0,
-      ];
-      const retryAfterSeconds = Math.ceil((Math.max(...retryTimes) - now.getTime()) / 1000);
+      const retryAfterSeconds = await emailOtpRetryAfterSeconds(tx, { userId: user.id, email, now, proofKind: 'OTP' });
       if (retryAfterSeconds > 0) throw emailError('EMAIL_OTP_RATE_LIMITED', 'กรุณารอก่อนขอรหัสใหม่', 429, { retryAfterSeconds });
       const id = randomUUID(), expiresAt = new Date(now.getTime() + EMAIL_OTP_TTL_MS);
       // prepare/audit failures roll back replacement, preserving the previous working code.

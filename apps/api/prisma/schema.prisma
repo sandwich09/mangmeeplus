@@ -807,11 +807,14 @@ model EmailVerificationToken {
   sendAttemptId String?
   requestKey String?
   requestFingerprint String?
+  /// Set only for proofKind BILLING_RECIPIENT: the company whose document recipient this code changes (R-A8).
+  companyId String?
   user      User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, status, expiresAt])
   @@unique([userId, requestKey])
   @@index([newEmail, createdAt])
+  @@index([companyId, proofKind, status])
 }
 
 model PasswordResetToken {
@@ -9814,6 +9817,15 @@ model BillingAccount {
   observedAt          DateTime?
   leaseToken          String?
   leaseUntil          DateTime?
+  // Purchase without setup (spec §18.2 §9, R-A4/R-A7): the company's document recipient is a column
+  // this system owns, kept equal to the Stripe Customer email by the UPDATE_BILLING_EMAIL operation.
+  // Billing values are String, not Prisma enums: ACCOUNT_EMAIL | CUSTOMER_OTP | STRIPE_CHECKOUT | ADMIN.
+  recipientEmail            String?   @db.VarChar(320)
+  recipientSource           String?
+  recipientBouncedAt        DateTime?
+  recipientBounceNotifiedAt DateTime?
+  /// Address Stripe Checkout collected, kept as a document snapshot. Never written into Company (RV02/DQ5).
+  checkoutAddressJson       Json?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   receiptGrants       BillingReceiptGrant[]
@@ -9825,6 +9837,7 @@ model BillingAccount {
   @@unique([stripeAccountId, livemode, customerId])
   @@unique([stripeAccountId, livemode, baseSubscriptionId])
   @@index([observedAt])
+  @@index([recipientEmail])
 }
 
 /// Purchased, once-only trial carryover, or independently approved Admin units. Only a manual Admin grant has no paid account.
