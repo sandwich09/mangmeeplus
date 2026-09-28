@@ -150,7 +150,7 @@ model EmailVerificationToken {              // :788 — เพิ่มหลั
 
 ไม่มี enum ใหม่, ไม่มี relation ใหม่ (companyId เป็น string ธรรมดาเหมือน `BillingOperation.companyId`)
 
-### 3.2 Migration `apps/api/prisma/migrations/20260927120000_billing_recipient_columns/migration.sql`
+### 3.2 Migration `apps/api/prisma/migrations/20260928200000_billing_recipient_columns/migration.sql`
 
 (ชื่อตาม convention `YYYYMMDDHHMMSS_snake`; ล่าสุดคือ `20260926120000_counterparty_receipt_uploader`; รูปแบบ `ADD COLUMN IF NOT EXISTS` ตามไฟล์นั้น)
 

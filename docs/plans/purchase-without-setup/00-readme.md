@@ -40,7 +40,7 @@ Spec: [../../specs/mangmee-purchase-without-setup-spec-th.md](../../specs/mangme
 | `status.recipient.email` ระหว่าง PAID→APPLIED | PR C เขียนคอลัมน์ตอน apply เท่านั้น (ไม่อ่าน Customer ใน status) → PR D ใช้ข้อความ fallback "ส่งเอกสารไปที่อีเมลที่กรอกไว้ที่หน้าชำระเงิน" จน APPLIED |
 | audit เปลี่ยนผู้รับ | ชื่อเดียว `billing.recipient.changed` (HIGH/CRITICAL ตามผู้ทำ) metadata `{ source: ACCOUNT_EMAIL\|CUSTOMER_OTP\|ADMIN, operationId, hadPrevious }` ไม่มีอีเมล — PR C (OTP/บัญชี) และ PR E (ADMIN) |
 | payload sync Customer (PR E `CUSTOMER_PROFILE_SYNC`) | `stripeCustomerSyncPayload({ quote: { billingProfile: companyBillingProfile(company), billingEmail: account.recipientEmail ?? null, companyName: company.name } })` + readback `stripeCustomerSynced(customer, arg)` (pr-c §4.2; `stripeBillingProfileMatches` ถูกลบ) |
-| schema | PR C `20260927120000_billing_recipient_columns` (BillingAccount 5 คอลัมน์ + index, `EmailVerificationToken.companyId` + index); PR E `20260927130000_line_support_request_reference` (2 คอลัมน์) |
+| schema | PR C `20260928200000_billing_recipient_columns` (BillingAccount 5 คอลัมน์ + index, `EmailVerificationToken.companyId` + index); PR E `20260928210000_line_support_request_reference` (2 คอลัมน์) |
 
 ### 2. เจ้าของงานที่ซ้อนกัน (web)
 
