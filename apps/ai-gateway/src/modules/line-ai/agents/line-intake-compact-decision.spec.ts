@@ -566,15 +566,9 @@ describe('tuning-5b: confidence floor, why/compare/advice guard, and derived sub
     assert.equal(parsed?.simpleReadRejection, 'why_compare_advice_question');
   });
 
-  it('B3a (eval T-090-a): this decoder\'s own gate now clears 0.75-0.85 (0.70 is still invalid_simple_shape)', async () => {
-    // NOTE: parseLineAiPreparedPlan (packages/contracts/src/line-ai-prepared-plan.ts) enforces its OWN
-    // LINE_AI_PREPARED_PLAN_BOUNDS.simpleConfidenceFloor = 0.85 as the platform-wide trust-boundary veto
-    // for every `complexity: 'simple'` plan (API forwarder, AI Gateway, AgentCore all share it) — that
-    // shared, cross-app constant is out of this batch's scope (not this decoder, not ai-gateway-only) and
-    // was left untouched, so 0.75-0.85 still cannot reach a preparedPlan end-to-end today. This test
-    // documents what this decoder's OWN gate now does: 0.80 passes it (fails one step later, at the
-    // shared parser, as prepared_contract_invalid, not at this file's invalid_simple_shape check), while
-    // 0.70 is still rejected right here, exactly like before. See the batch report for the full finding.
+  it('B3a (eval T-090-a): a 0.75-0.85 simple read now reaches a preparedPlan (0.70 is still invalid_simple_shape)', async () => {
+    // The shared contract floor (LINE_AI_PREPARED_PLAN_BOUNDS.simpleConfidenceFloor) moved 0.85 -> 0.75
+    // together with this decoder's own floor, so 0.80 now builds a plan end to end.
     const text = 'ใบเบิกที่ขอไปได้รึยังอ่ะคะ';
     const created = await fixture(text);
     const families = new Set(['reimbursement.get_summary::single_metric']);
@@ -587,8 +581,8 @@ describe('tuning-5b: confidence floor, why/compare/advice guard, and derived sub
       messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
       enabledPreparedFamilies: families, language: 'th',
     });
-    assert.equal(clearsThisGate?.simpleReadRejection, 'prepared_contract_invalid',
-      '0.80 now clears this file\'s own floor and only fails at the shared parser\'s still-0.85 floor');
+    assert.equal(clearsThisGate?.simpleReadRejection, undefined);
+    assert.equal(clearsThisGate?.preparedPlan?.confidence, 0.80);
 
     const rejected = parseLineIntakeCompactDecision({
       raw: decision(text, {}, simpleReadAt(0.70)),
