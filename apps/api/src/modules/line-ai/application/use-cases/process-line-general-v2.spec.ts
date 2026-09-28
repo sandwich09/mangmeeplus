@@ -184,10 +184,13 @@ it('freezes the trusted expense card and safe link through the actual webhook v2
   const primary = saved!.batches[0]!.primary.messages[0]!, fallback = saved!.batches[0]!.fallback!.messages[0]!;
   assert.equal(primary.type, 'flex'); assert.equal((primary as any).canonicalText, undefined);
   assert.match(JSON.stringify(primary), /https:\/\/app\.example\.com\/companies\/company\/expenses/);
+  // R-B1 exit 4: frozen once, in the card uri and in the fallback's link line alike.
+  assert.equal(JSON.stringify(primary).split('openExternalBrowser=1').length, 2);
   assert.equal(fallback.type, 'text');
   if (fallback.type === 'text') {
     assert.match(fallback.text, /ค่าใช้จ่ายเดือนนี้ 500 บาท/);
     assert.match(fallback.text, /แหล่งข้อมูล: ค่าใช้จ่าย/);
     assert.match(fallback.text, /https:\/\/app\.example\.com\/companies\/company\/expenses/);
+    assert.equal(fallback.text.split('openExternalBrowser=1').length, 2);
   }
 });

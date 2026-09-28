@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { lineIntakeContactComplete } from '../domain/line-signup.logic';
 import type {
+  LineSignupEligibleCompanyDto,
   LineSignupIntent,
   LineSignupReviewResolution,
   LineSignupStatusDto,
+  PlanTermLockReason,
   SignupDiscoverySource,
 } from '@watchdog-bms/contracts';
 import type { CompanySignupRequest } from '../../../generated/prisma/client';
@@ -13,6 +15,8 @@ import { LineIdTokenService } from '../../auth/application/line-id-token.service
 import { AuthRateLimitService } from '../../auth/application/auth-rate-limit.service';
 import { isBusinessHours } from '../domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
+import { canManagePlan } from '../../access-control/domain/logic/plan-manager.logic';
+import { planTermLockReason } from '../../system-partner-management/domain/logic/plan-term.logic';
 
 export type VerifiedLineSignupIdentity = Readonly<{ providerUserId: string; channelId: string }>;
 
@@ -62,7 +66,12 @@ export async function lineSignupStatusForVerified(
             ],
           },
           orderBy: { createdAt: 'asc' },
-          select: { companyId: true, company: { select: { name: true, status: true } } },
+          select: {
+            companyId: true,
+            company: { select: { name: true, status: true, planTerm: { select: { termStartAt: true, termEndsAt: true, renewCount: true } } } },
+            // Only what `canManagePlan` reads; the `some` filter above already keeps ACTIVE roles.
+            roles: { where: { role: { status: 'ACTIVE' } }, select: { role: { select: { permissions: { select: { permission: { select: { key: true } } } } } } } },
+          },
         })
       : Promise.resolve([]),
   ]);
@@ -70,12 +79,20 @@ export async function lineSignupStatusForVerified(
     days: config.lineSignupBusinessDays,
     hours: config.lineSignupBusinessHours,
   });
-  const eligibleCompanies = memberships.map((membership) => ({
-    companyId: membership.companyId,
-    companyName: membership.company.name,
-    status: membership.company.status === 'ACTIVE' ? 'ACTIVE' as const : 'EXPIRED' as const,
-    canEnter: membership.company.status === 'ACTIVE',
-  }));
+  const eligibleCompanies: LineSignupEligibleCompanyDto[] = memberships.map((membership) => {
+    const locked = membership.company.status !== 'ACTIVE';
+    return {
+      companyId: membership.companyId,
+      companyName: membership.company.name,
+      status: locked ? 'EXPIRED' as const : 'ACTIVE' as const,
+      canEnter: !locked,
+      // R-C2 (§18.2): display fields for a locked shop only, so an ACTIVE row keeps its exact shape.
+      ...(locked ? {
+        lockReason: membership.company.planTerm ? planTermLockReason(membership.company.planTerm) : 'trial_ended' as const,
+        canManagePlan: canManagePlan(membership.roles),
+      } : {}),
+    };
+  });
   return {
     progress: request ? toProgress(request, identity !== null, businessHours, verified, eligibleCompanies) : null,
     eligibleCompanies,
@@ -87,7 +104,7 @@ function toProgress(
   existingAccount: boolean,
   businessHours: boolean,
   verified: VerifiedLineSignupIdentity,
-  eligibleCompanies: Array<{ companyId: string; canEnter: boolean }>,
+  eligibleCompanies: Array<{ companyId: string; canEnter: boolean; lockReason?: PlanTermLockReason }>,
 ) {
   const resolution = RESOLUTIONS.has(request.reviewResolution as LineSignupReviewResolution)
     ? request.reviewResolution as LineSignupReviewResolution
@@ -98,6 +115,12 @@ function toProgress(
     : request.companyId;
   const entryCompanyId = storedEntryCompanyId
     && eligibleCompanies.some((company) => company.companyId === storedEntryCompanyId && company.canEnter)
+    ? storedEntryCompanyId
+    : undefined;
+  // The same stored shop when it exists but is locked: the page names the next step (choose a
+  // package) instead of "cannot enter". Display only — `entryCompanyId` above stays the grant.
+  const lockedEntryCompanyId = !entryCompanyId && storedEntryCompanyId
+    && eligibleCompanies.some((company) => company.companyId === storedEntryCompanyId && !company.canEnter && company.lockReason)
     ? storedEntryCompanyId
     : undefined;
   const sideEffectsStarted = request.companyId !== null
@@ -127,6 +150,7 @@ function toProgress(
       && request.reviewResolution !== 'NEW_SHOP' && EDITABLE_STATES.has(request.state),
     companyCreated: request.companyId !== null,
     ...(entryCompanyId ? { entryCompanyId } : {}),
+    ...(lockedEntryCompanyId ? { lockedEntryCompanyId } : {}),
   };
 }
 

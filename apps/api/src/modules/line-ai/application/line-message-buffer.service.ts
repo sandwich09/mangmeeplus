@@ -183,9 +183,10 @@ export class LineMessageBufferService implements OnModuleDestroy {
     const publicCommand = envelope.item.kind === 'text' && staffMenuCommand(envelope.item.text);
     // P10-L: the door commands join the bypass for the same reason the first three are on it — the
     // reply carries no company data, and a greeting or "I am staff" must answer before there is an
-    // account to have accepted anything.
+    // account to have accepted anything. G19's callback request is `staff_contact`'s twin: a person
+    // asking to be called, no company data in the answer, nothing sent to the AI.
     const legal = publicAdmission ? { status: 'continue' as const, companyId: publicAdmission.companyId } : publicCommand === 'contact' || publicCommand === 'talk' || publicCommand === 'promotion'
-      || publicCommand === 'follow' || publicCommand === 'employee' || publicCommand === 'staff_contact'
+      || publicCommand === 'follow' || publicCommand === 'employee' || publicCommand === 'staff_contact' || publicCommand === 'package_callback'
       ? { status: 'continue' as const, companyId: undefined }
       : await this.processWebhook.preflightLegalAcceptance({
           lineUserId: envelope.lineUserId,

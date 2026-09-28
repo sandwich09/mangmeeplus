@@ -13,6 +13,7 @@ import { EmailDeliveryService } from '../../auth/application/email-delivery.serv
 import { PostmarkSendError } from '../../auth/infrastructure/postmark.client';
 import { renderBillingStatusEmail } from '../../auth/infrastructure/auth-email.templates';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
+import { planManagerRoleFilter } from '../../access-control/domain/logic/plan-manager.logic';
 import { BillingService, type BillingSnapshot } from './billing.service';
 import { BillingAdminService } from './billing-admin.service';
 import { billingError, hashBilling } from '../domain/billing-policy';
@@ -66,7 +67,7 @@ export class BillingNotificationsService {
     const account=invoice?await tx.billingAccount.findUnique({where:{id:invoice.billingAccountId}}):null;
     if(!row||!invoice||!account||account.companyId!==companyId||account.stripeAccountId!==this.billing.stripe.accountId||account.livemode!==this.billing.stripe.livemode)throw new NotFoundException();
     const company=await tx.company.findUniqueOrThrow({where:{id:companyId},include:{planTerm:true}}),settings=await this.billing.settings(tx);
-    const owner=(await this.owners(companyId,tx)).find(m=>m.userId===row.recipient.userId);
+    const owner=(await this.planManagers(companyId,tx)).find(m=>m.userId===row.recipient.userId);
     const preference=await tx.notificationPreference.findUnique({where:{companyId_userId:{companyId,userId:row.recipient.userId}}});
     const channelId=this.config.lineMessagingChannelId,identity=channelId?await tx.externalIdentity.findFirst({where:{userId:row.recipient.userId,provider:'LINE',providerChannelId:channelId,status:'ACTIVE'}}):null;
     const channels=Array.isArray(preference?.enabledChannelsJson)?preference.enabledChannelsJson:DEFAULT_ENABLED_CHANNELS;
@@ -227,11 +228,17 @@ export class BillingNotificationsService {
       roles: { some: { role: { key: 'OWNER', status: 'ACTIVE' } } } }, include: { user: true } });
   }
 
+  /** R-C11: LINE/web recipients are whoever may manage the package; email keeps `owners()` until R-A7 moves it to the document recipient (PR C). */
+  private async planManagers(companyId: string, tx: Prisma.TransactionClient = this.prisma.client) {
+    return tx.companyMembership.findMany({ where: { companyId, status: 'ACTIVE', user: { status: 'ACTIVE' }, ...planManagerRoleFilter() }, include: { user: true } });
+  }
+
   private async produce(row: OutboxEvent) {
     await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, row.companyId!);
-      const { invoice, company } = await this.source(row, tx), owners = await this.owners(company.id, tx);
-      if (!owners.length) throw defer('recipient_pending');
+      const { invoice, company } = await this.source(row, tx);
+      const managers = await this.planManagers(company.id, tx), owners = await this.owners(company.id, tx);
+      if (!managers.length) throw defer('recipient_pending');
       const contract = invoice.contractSnapshot as unknown as BillingSnapshot | null;
       const purchaseMode = contract?.quote.purchaseMode;
       // S41: the deal wording, on the existing trigger. No price and no months travel over LINE.
@@ -244,7 +251,7 @@ export class BillingNotificationsService {
           : 'ตรวจสอบสิทธิ์ วันต่ออายุ และประวัติการชำระเงินได้ในหน้าบริษัท';
       await this.events.executeInTransaction({ companyId: company.id, triggerKey: 'billing.package_updated', sourceModule: 'billing', sourceType: 'invoice',
         sourceId: invoice.id, severity: 'info', title: 'อัปเดตแพ็กเกจมั่งมี', body,
-        deepLinkHref: `/companies/${encodeURIComponent(company.id)}/billing`, recipientUserIds: owners.map(m => m.userId) }, tx);
+        deepLinkHref: `/companies/${encodeURIComponent(company.id)}/billing`, recipientUserIds: managers.map(m => m.userId) }, tx);
       for (const owner of owners.filter(m => m.user.email && m.user.emailVerifiedAt)) {
         await tx.outboxEvent.upsert({ where: { eventKey: `billing:notice-email:${invoice.id}:${owner.userId}` }, update: {}, create: {
           companyId: company.id, eventType: BILLING_NOTICE_EMAIL, aggregateType: 'BillingInvoice', aggregateId: invoice.id,
@@ -344,7 +351,7 @@ export class BillingNotificationsService {
         data: { status, nextAttemptAt: null, errorCode: code } }).then(() => ({ issue: code, id }));
       const retryOperationId=(row.metadataJson as {retryOperationId?:string}).retryOperationId;
       try{await this.retryAuthority(retryOperationId,companyId,id,tx);}catch{return finish('FAILED','CONTROL_PERMISSION_CHANGED');}
-      if (event.status !== 'OPEN' || !(await this.owners(companyId, tx)).some(m => m.userId === row.recipient.userId)) {
+      if (event.status !== 'OPEN' || !(await this.planManagers(companyId, tx)).some(m => m.userId === row.recipient.userId)) {
         return finish('SUPPRESSED', 'RECIPIENT_OR_EVENT_INACTIVE');
       }
       if (row.channel === 'WEB') {
@@ -391,7 +398,7 @@ export class BillingNotificationsService {
       await this.retryAuthority(claimed.retryOperationId,companyId,id);
       await this.invoiceSource(claimed.invoiceId, companyId);
       const current = await this.prisma.client.notificationDelivery.findFirst({ where: { ...fence, nextAttemptAt: { gt: new Date() }, recipient: { event: { status: 'OPEN' } } } });
-      const owner = (await this.owners(companyId)).some(m => m.userId === claimed.userId);
+      const owner = (await this.planManagers(companyId)).some(m => m.userId === claimed.userId);
       const identity = await this.prisma.client.externalIdentity.findFirst({ where: { userId: claimed.userId, provider: 'LINE', status: 'ACTIVE',
         providerChannelId: claimed.channelId, providerUserId: claimed.lineUserId } });
       if (!current || !owner || !identity || this.config.lineMessagingChannelId !== claimed.channelId) throw new Error('billing.line_source_changed');

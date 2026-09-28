@@ -1,3 +1,5 @@
+import { withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
+
 /**
  * What one push attempt did. `retryAfterSeconds` is LINE's own answer to "when may I try again",
  * and it is the only honest schedule for a 429 — a fixed backoff either wastes the window or
@@ -47,7 +49,8 @@ export async function pushLineMessages(input: {
         Authorization: `Bearer ${input.token}`,
         ...(input.retryKey ? { 'X-Line-Retry-Key': input.retryKey } : {}),
       },
-      body: JSON.stringify({ to: input.lineUserId, messages: input.messages }),
+      // R-B1: exit-side rewrite; `input.retryKey` was computed by the caller from its own payload.
+      body: JSON.stringify({ to: input.lineUserId, messages: withLineExternalBrowserLinks(input.messages) }),
       signal: AbortSignal.timeout(input.timeoutMs ?? LINE_PUSH_TIMEOUT_MS),
     });
     if (res.ok || (res.status === 409 && Boolean(res.headers.get('x-line-accepted-request-id')))) {

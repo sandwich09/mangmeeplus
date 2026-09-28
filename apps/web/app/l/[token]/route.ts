@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { forwardedClientHeaders } from '@/common/api/forwarded-client-headers';
 import { internalApiV1Base } from '@/common/api/internal-api-base';
 import { generateCsrfToken, setAuthCookies } from '@/common/auth/auth-cookies.server';
 import { publicOriginFromHeaders, sanitizeReturnTo } from '@/features/auth/line-login-bff.logic';
@@ -17,6 +18,15 @@ type HandoffExchangeResult = {
 
 /** A refusal for a token the API recognised carries the destination the user was trying to open. */
 type HandoffRefusal = { targetPath?: unknown };
+
+/**
+ * Link previews and reachability probes send HEAD. Next.js would otherwise derive HEAD from GET and
+ * RUN it — spending the single-use token before the person taps (deeplink spec §G7, RV22). 204 and
+ * nothing else: the token never reaches the API on a HEAD.
+ */
+export function HEAD() {
+  return new Response(null, { status: 204 });
+}
 
 /**
  * P12-3b: the LINE deep-link entry point.
@@ -49,7 +59,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
   try {
     apiRes = await fetch(`${internalApiV1Base()}/auth/line/handoff/exchange`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      // RV22: the API keys its exchange limiter (20/60 s) on `trustedClientIp`; without the visitor's
+      // chain every tap in the country shares the web container's one bucket and overflows to /login.
+      headers: { 'Content-Type': 'application/json', ...forwardedClientHeaders(request.headers) },
       body: JSON.stringify({ token }),
       cache: 'no-store',
     });

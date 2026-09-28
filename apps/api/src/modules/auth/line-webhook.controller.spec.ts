@@ -113,6 +113,20 @@ describe('LineWebhookController', () => {
     assert.equal(enqueued[0].item.timestamp, 1751700000000);
   });
 
+  it('maps the promotion card callback postback to its command words, carrying no id (G19)', async () => {
+    const { controller, enqueued } = makeController();
+    await controller.lineWebhook(requestFor({
+      events: [{
+        type: 'postback', webhookEventId: 'evt-callback', replyToken: 'reply-callback',
+        source: { type: 'user', userId: 'line-user-1' },
+        postback: { data: 'action=package-callback' },
+      }],
+    }));
+    assert.equal(enqueued.length, 1);
+    assert.equal(enqueued[0].item.kind, 'text');
+    assert.equal(enqueued[0].item.text, 'ให้ทีมงานติดต่อกลับ');
+  });
+
   it('passes only a strictly shaped preview id with draft confirm/cancel postbacks', async () => {
     const { controller, enqueued } = makeController(undefined, true);
     const previewId = '550e8400-e29b-41d4-a716-446655440000';
