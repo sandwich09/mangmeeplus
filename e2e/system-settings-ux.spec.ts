@@ -20,6 +20,59 @@ async function noOverflow(page:Page) {
   expect(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth)).toBeLessThanOrEqual(1);
 }
 const when='2026-09-16T10:00:00.000Z';
+
+test('console renames an owner without employee credentials and retains drafts on conflict', async ({ page }) => {
+  const ownerId = 'ui-only-owner';
+  let name = 'MangmeePlus.Test', conflict = false;
+  const writes: unknown[] = [];
+  await page.route(`**/v1/system/partners/${COMPANY_ID}/members`, route => route.fulfill({ json: { items: [
+    { userId: ownerId, displayName: name, roles: ['OWNER'], membershipStatus: 'ACTIVE', lineLinked: true },
+    { userId: 'ui-only-staff', displayName: 'Employee', roles: ['STAFF'], membershipStatus: 'ACTIVE', lineLinked: false },
+  ] } }));
+  await page.route(`**/v1/system/partners/${COMPANY_ID}/members/${ownerId}/display-name`, route => {
+    const body = route.request().postDataJSON();
+    writes.push(body);
+    if (conflict) return route.fulfill({ status: 409, json: { code: 'partner_owner_name_conflict' } });
+    expect(route.request().method()).toBe('PATCH');
+    expect(body.expectedDisplayName).toBe(name);
+    expect(Object.keys(body).sort()).toEqual(['displayName', 'expectedDisplayName']);
+    name = body.displayName;
+    return route.fulfill({ json: { displayName: name } });
+  });
+  await login(page);
+  await page.goto(`/system/partners/${COMPANY_ID}?view=members`);
+  const ownerRow = page.getByRole('row').filter({ hasText: 'MangmeePlus.Test' });
+  await ownerRow.getByText('จัดการสมาชิก', { exact: true }).click();
+  await ownerRow.getByRole('button', { name: 'แก้ไขชื่อที่แสดง', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'แก้ไขชื่อที่แสดง', exact: true });
+  await expect(dialog.getByRole('button', { name: 'บันทึกชื่อ', exact: true })).toBeDisabled();
+  await dialog.getByLabel('ชื่อที่แสดง', { exact: true }).fill('ยกเลิกชื่อนี้');
+  await dialog.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
+  expect(writes).toEqual([]);
+  await ownerRow.getByRole('button', { name: 'แก้ไขชื่อที่แสดง', exact: true }).click();
+  await dialog.getByLabel('ชื่อที่แสดง', { exact: true }).fill('สมชาย ทดสอบ');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await noOverflow(page);
+  await dialog.getByRole('button', { name: 'บันทึกชื่อ', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('row').filter({ hasText: 'สมชาย ทดสอบ' })).toContainText('OWNER');
+  await page.reload();
+  const renamed = page.getByRole('row').filter({ hasText: 'สมชาย ทดสอบ' });
+  await renamed.getByText('จัดการสมาชิก', { exact: true }).click();
+  await renamed.getByRole('button', { name: 'แก้ไขชื่อที่แสดง', exact: true }).click();
+  conflict = true;
+  await dialog.getByLabel('ชื่อที่แสดง', { exact: true }).fill('ชื่อร่างที่ต้องเก็บ');
+  await dialog.getByRole('button', { name: 'บันทึกชื่อ', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('ชื่อบัญชีถูกแก้ไขแล้ว');
+  await expect(dialog.getByLabel('ชื่อที่แสดง', { exact: true })).toHaveValue('ชื่อร่างที่ต้องเก็บ');
+  expect(writes).toHaveLength(2);
+  await dialog.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
+  const staff = page.getByRole('row').filter({ hasText: 'Employee' });
+  await staff.getByText('จัดการสมาชิก', { exact: true }).click();
+  await expect(staff.getByRole('button', { name: 'แก้ไขชื่อที่แสดง', exact: true })).toHaveCount(0);
+  await expectNoClientError(page);
+});
+
 const mail: SystemEmailDeliveryDto={observedAt:when,windowStartedAt:'2026-09-09T10:00:00.000Z',configured:true,outboundSelected:true,
   totals:{intents:8,attempts:10,accepted:7,delivered:6,suppressed:1,possibleDuplicates:1},pending:{attempts:3,oldestCreatedAt:when,needsReview:1,overdueRecovery:2},callbacks:null,
   items:[{id:'ui-only-email',purpose:'password_reset',state:'UNKNOWN',generation:1,createdAt:when,submittedAt:null,deliveredAt:null,suppressedAt:null,deadlineAt:null,nextRecoveryAt:null,possibleDuplicate:false,needsReview:true,signupHistoryPath:null,billingHistoryPath:null}],nextCursor:'ui-only-next'};

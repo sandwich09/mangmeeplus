@@ -56,6 +56,7 @@ import {
   issuePartnerMemberLineLinkToken,
   resetPartnerMemberPassword,
   setPartnerMemberContact,
+  setPartnerOwnerName,
   revealPartnerMemberTempPassword,
   endPartnerPlanTermWarmup,
   getPartnerTimeline,
@@ -458,9 +459,11 @@ function EyeIcon({ off }: { off?: boolean }) {
 
 function MembersSection({
   companyId,
+  canManageMembers,
   showToast,
 }: {
   companyId: string;
+  canManageMembers: boolean;
   showToast: (message: string, variant: 'success' | 'error') => void;
 }) {
   const [members, setMembers] = useState<PartnerMemberDto[] | null>(null);
@@ -487,6 +490,28 @@ function MembersSection({
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [contactEditing, setContactEditing] = useState<{ userId: string; email: string; phoneNumber: string } | null>(null);
+  const [nameEditing, setNameEditing] = useState<{ userId: string; displayName: string; expectedDisplayName: string } | null>(null);
+  const [nameSaving, setNameSaving] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+
+  const saveOwnerName = async () => {
+    if (!nameEditing || nameSaving) return;
+    setNameSaving(true);
+    setNameError(null);
+    try {
+      const saved = await setPartnerOwnerName(companyId, nameEditing.userId, {
+        displayName: nameEditing.displayName.trim(), expectedDisplayName: nameEditing.expectedDisplayName,
+      });
+      setMembers(current => current?.map(member => member.userId === nameEditing.userId
+        ? { ...member, displayName: saved.displayName } : member) ?? null);
+      setNameEditing(null);
+      showToast('บันทึกชื่อแล้ว ให้เจ้าของร้านรีเฟรชหน้าเพื่อเห็นชื่อใหม่', 'success');
+    } catch (err) {
+      setNameError(apiErrorMessage(err));
+    } finally {
+      setNameSaving(false);
+    }
+  };
 
   const handleSaveContact = async () => {
     if (!contactEditing) return;
@@ -703,6 +728,14 @@ function MembersSection({
                     </td>
                     <td className="py-2.5">
                       <details><summary className="min-h-11 cursor-pointer py-2 font-medium text-brand-800">จัดการสมาชิก</summary><div className="flex min-w-48 flex-col items-start gap-2 py-2">
+                        {canManageMembers && m.roles.includes('OWNER') && (
+                          <button type="button" className={btnSecondary} onClick={() => {
+                            setNameError(null);
+                            setNameEditing({ userId: m.userId, displayName: m.displayName, expectedDisplayName: m.displayName });
+                          }}>
+                            แก้ไขชื่อที่แสดง
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="min-h-11 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
@@ -746,6 +779,24 @@ function MembersSection({
           </table>
         </div>
       )}
+      <Modal open={nameEditing !== null} onClose={() => { if (!nameSaving) setNameEditing(null); }} title="แก้ไขชื่อที่แสดง">
+        <form className="space-y-4" onSubmit={event => { event.preventDefault(); void saveOwnerName(); }}>
+          <p className="break-words text-sm text-gray-600">ชื่อปัจจุบัน: {nameEditing?.expectedDisplayName}</p>
+          <label className="block space-y-1 text-sm font-medium text-gray-700">
+            <span>ชื่อที่แสดง</span>
+            <input className={inputClass} value={nameEditing?.displayName ?? ''} required maxLength={160} disabled={nameSaving}
+              aria-describedby="owner-name-hint" onChange={event => setNameEditing(current => current ? { ...current, displayName: event.target.value } : null)} />
+          </label>
+          <p id="owner-name-hint" className="text-sm text-gray-600">ชื่อนี้ใช้ทุกบริษัทที่บัญชีนี้เข้าใช้ ไม่เปลี่ยนชื่อร้านหรือชื่อในทะเบียนพนักงาน</p>
+          {nameError && <p role="alert" className="text-sm text-red-600">{nameError}</p>}
+          <div className="flex justify-end gap-2">
+            <button type="button" className={btnSecondary} disabled={nameSaving} onClick={() => setNameEditing(null)}>ยกเลิก</button>
+            <button type="submit" className={btnPrimary} aria-busy={nameSaving} disabled={nameSaving || !nameEditing?.displayName.trim() || nameEditing.displayName.trim() === nameEditing.expectedDisplayName}>
+              {nameSaving ? 'กำลังบันทึก…' : 'บันทึกชื่อ'}
+            </button>
+          </div>
+        </form>
+      </Modal>
       {issuedQr && (
         <div className="mt-4 space-y-2 rounded border border-green-200 bg-green-50 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2869,8 +2920,9 @@ function ShopMessageSection({ companyId, supportRequestId, supportAskerRef, show
 
 const COMPANY_VIEWS = [{key:'overview',label:'ภาพรวม'}, {key:'members',label:'สมาชิก'}, {key:'package',label:'แพ็กเกจและฟีเจอร์'}, {key:'ai',label:'AI และโควตา'}, {key:'contact',label:'ติดต่อและประวัติ'}] as const;
 
-export default function PartnerDetailPage({ companyId, supportRequestId, supportAskerRef }: {
+export default function PartnerDetailPage({ companyId, canManageMembers = false, supportRequestId, supportAskerRef }: {
   companyId: string;
+  canManageMembers?: boolean;
   /** From `?support=`/`?asker=` on the support inbox's "เปิดหน้าร้าน" link — see the route file. */
   supportRequestId?: string;
   supportAskerRef?: string;
@@ -3161,7 +3213,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
         <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เปิด–ปิดการใช้งานบริษัท</summary><div className="space-y-4 pt-3"><p className="text-gray-600">การปิดใช้งานและเก็บถาวรมีผลกับสมาชิกทุกคน ต้องยืนยันก่อนเปลี่ยนสถานะ</p><div className="flex flex-wrap gap-3">{currentStatus!=='ACTIVE'&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('ACTIVE')}>เปิดใช้งานบริษัท</button>}{currentStatus==='ACTIVE'&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('DISABLED')}>ปิดใช้งานบริษัท</button>}{currentStatus!=='ARCHIVED'&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('ARCHIVED')}>เก็บบริษัทถาวร</button>}</div></div></details>
         <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="min-h-11 cursor-pointer py-2 text-sm text-gray-600">ข้อมูลอ้างอิงบริษัท</summary><dl className="grid gap-4 py-3 sm:grid-cols-3"><ReadOnlyField label="รหัสบริษัท" value={detail.id}/><ReadOnlyField label="วันที่เปิดใช้งาน" value={formatDate(detail.activatedAt)}/><ReadOnlyField label="วันที่ปิดใช้งาน" value={formatDate(detail.disabledAt)}/></dl></details>
       </section>}
-      {opened('members')&&<section hidden={view!=='members'} aria-label="สมาชิกบริษัท" className="space-y-5"><p className="text-gray-600">ตรวจสมาชิกและการผูก LINE เลือกดำเนินการเฉพาะคนที่ต้องการดูแล</p><MembersSection companyId={companyId} showToast={showToast}/></section>}
+      {opened('members')&&<section hidden={view!=='members'} aria-label="สมาชิกบริษัท" className="space-y-5"><p className="text-gray-600">ตรวจสมาชิกและการผูก LINE เลือกดำเนินการเฉพาะคนที่ต้องการดูแล</p><MembersSection companyId={companyId} canManageMembers={canManageMembers} showToast={showToast}/></section>}
       {opened('package')&&<section hidden={view!=='package'} aria-label="แพ็กเกจและฟีเจอร์บริษัท" className="space-y-5"><PlanTermSection key={`term-${companyId}`} companyId={companyId} companyStatus={currentStatus} fieldsLocked={fieldsLocked} showToast={showToast}/><PackageMenuSection companyId={companyId} entitlements={detail.featureEntitlements} setVersion={detail.setVersion} fieldsLocked={fieldsLocked} normalizationPending={isNormalizationPending(detail.entitlementNormalizationPending)} showToast={showToast} onSaved={load}/></section>}
       {opened('ai')&&<section hidden={view!=='ai'} aria-label="AI และโควตาบริษัท" className="space-y-5"><p className="text-gray-600">ดูการใช้งานและปรับเครดิต AI หรือจำนวนเอกสาร ระบบให้ตรวจผลกระทบก่อนบันทึก</p>
         <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} onChanged={()=>setAiHistoryRefresh(n=>n+1)} />

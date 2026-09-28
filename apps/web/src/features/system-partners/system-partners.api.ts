@@ -30,6 +30,8 @@ import type {
   LineContextHealth,
   PartnerMemberDto,
   PartnerMembersDto,
+  SetPartnerOwnerNameInput,
+  SetPartnerOwnerNameResult,
   PartnerMemberPasswordResetDto,
   PartnerMemberTempPasswordDto,
   CompanyPlanTermDto,
@@ -256,6 +258,16 @@ export async function lookupUsers(q: string, status?: string): Promise<SystemUse
 
 export async function getPartnerMembers(companyId: string): Promise<PartnerMembersDto> {
   return apiFetch<PartnerMembersDto>(`/v1/system/partners/${companyId}/members`);
+}
+
+export async function setPartnerOwnerName(
+  companyId: string,
+  memberUserId: string,
+  body: SetPartnerOwnerNameInput,
+): Promise<SetPartnerOwnerNameResult> {
+  return apiFetch<SetPartnerOwnerNameResult>(`/v1/system/partners/${companyId}/members/${memberUserId}/display-name`, {
+    method: 'PATCH', body: JSON.stringify(body), suppressErrorToast: true,
+  });
 }
 
 export async function unlinkPartnerMemberLine(companyId: string, memberUserId: string): Promise<{ unlinked: true }> {
