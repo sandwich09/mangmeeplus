@@ -283,12 +283,13 @@ field existed. Each category maps onto the SAME facts the table above already de
 name+amount, `items`↔a list's per-item amount+vendor, `amount`/`date`/`vendor`↔a detail's three
 default facts) plus one new one:
 
-- **`status`** — `detail` only. Payment AND document status, each already mapped to the Thai label
-  a reply would actually use (`ExpenseStatus`/`ExpensePaymentStatus`/`ReimbursementRequestStatus`/
-  `ReimbursementPaymentStatus`, `apps/api/prisma/schema.prisma`, read from source — e.g. `PAID` →
-  "จ่ายแล้ว", never the raw enum). Never part of `detail`'s default (adding it there would change
-  existing behavior); only required when a turn's own `requiredFacts` names it, e.g. for
-  "จ่ายหรือยัง": `"requiredFacts": ["status"]`.
+- **`status`** — `detail` only. Payment AND document status, each already mapped to EVERY Thai
+  synonym a reply might use for that one value (`ExpenseStatus`/`ExpensePaymentStatus`/
+  `ReimbursementRequestStatus`/`ReimbursementPaymentStatus`, `apps/api/prisma/schema.prisma`, read
+  from source — e.g. `PAID` → `["จ่ายแล้ว","ชำระแล้ว"]`, never the raw enum; the plain-verb
+  ("จ่าย...") and the contracts ("ชำระ...") wordings are both real, so `factInText` accepts either).
+  Never part of `detail`'s default (adding it there would change existing behavior); only required
+  when a turn's own `requiredFacts` names it, e.g. for "จ่ายหรือยัง": `"requiredFacts": ["status"]`.
 
 ### Equivalent tool for a total: `expense.get_breakdown` in place of `expense.list_recent`
 

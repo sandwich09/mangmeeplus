@@ -226,22 +226,28 @@ function dateFact(data: Record<string, unknown>, key: string, label: string, cat
   return data[key] ? [{ kind: 'date', value: String(data[key]), label, category }] : [];
 }
 
-// Thai label for every ExpenseStatus/ExpensePaymentStatus/ReimbursementRequestStatus/
-// ReimbursementPaymentStatus value (apps/api/prisma/schema.prisma, read from source) — one shared
-// map, since the same word ("จ่ายแล้ว" for PAID) means the same thing regardless of which of the
-// four enums it came from. EXTRACTING has no natural customer-facing phrasing and is omitted on
-// purpose: a reply would never be asked to state it, so no fact should ever require it.
-const STATUS_LABELS_TH: Record<string, string> = {
-  DRAFT: 'ร่าง', NEEDS_REVIEW: 'รอตรวจสอบ', READY_FOR_CONFIRMATION: 'รอยืนยัน', CONFIRMED: 'ยืนยันแล้ว',
-  REJECTED: 'ถูกปฏิเสธ', VOIDED: 'ยกเลิกแล้ว', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'อนุมัติแล้ว',
-  CANCELLED: 'ยกเลิกแล้ว', FINANCE_REVIEW: 'รอฝ่ายบัญชีตรวจสอบ', READY_FOR_PAYMENT: 'รอจ่ายเงิน',
-  UNPAID: 'ยังไม่จ่าย', PARTIALLY_PAID: 'จ่ายบางส่วน', PAID: 'จ่ายแล้ว', NOT_PAYABLE: 'ไม่ต้องจ่าย',
+// Every Thai synonym a reply might use for one ExpenseStatus/ExpensePaymentStatus/
+// ReimbursementRequestStatus/ReimbursementPaymentStatus value (apps/api/prisma/schema.prisma, read
+// from source) — one shared map, since the same words mean the same thing regardless of which of
+// the four enums the value came from. The real gateway/agent prompts use the CONTRACTS wording
+// ("ชำระ...") at least as often as the plain-verb wording ("จ่าย...") this map originally had only
+// one of each for — scorer follow-up (task item 2, "status synonyms"): a reply is correct either
+// way, so BOTH must be accepted, never just one. EXTRACTING has no natural customer-facing
+// phrasing and is omitted on purpose: a reply would never be asked to state it, so no fact should
+// ever require it.
+const STATUS_LABELS_TH: Record<string, string[]> = {
+  DRAFT: ['ร่าง', 'ฉบับร่าง'], NEEDS_REVIEW: ['รอตรวจ', 'รอตรวจสอบ'], READY_FOR_CONFIRMATION: ['รอยืนยัน'],
+  CONFIRMED: ['ยืนยันแล้ว'], REJECTED: ['ถูกปฏิเสธ'], VOIDED: ['ยกเลิกแล้ว'], PENDING_APPROVAL: ['รออนุมัติ'],
+  APPROVED: ['อนุมัติแล้ว'], CANCELLED: ['ยกเลิกแล้ว'], FINANCE_REVIEW: ['รอฝ่ายบัญชีตรวจสอบ'], READY_FOR_PAYMENT: ['รอจ่ายเงิน'],
+  UNPAID: ['ยังไม่จ่าย', 'ยังไม่ชำระ', 'ค้างจ่าย', 'ค้างชำระ'], PARTIALLY_PAID: ['จ่ายบางส่วน', 'ชำระบางส่วน'],
+  PAID: ['จ่ายแล้ว', 'ชำระแล้ว'], NOT_PAYABLE: ['ไม่ต้องจ่าย'],
 };
 
 /** Payment/document status (task item 2), for a detail answer to "จ่ายหรือยัง"-style questions —
- * in the Thai label a reply would actually use, never the raw enum value. Never part of `detail`'s
- * DEFAULT facts (see `SHAPE_DEFAULT_CATEGORIES` below); only required when a turn's own
- * `requiredFacts` names `'status'`. */
+ * every Thai synonym a reply might use for that ONE underlying value (scorer.ts factInText matches
+ * ANY of them), never the raw enum value. Never part of `detail`'s DEFAULT facts (see
+ * `SHAPE_DEFAULT_CATEGORIES` below); only required when a turn's own `requiredFacts` names
+ * `'status'`. */
 function statusFact(data: Record<string, unknown>, key: string, label: string): ExpectedFact[] {
   const raw = data[key];
   const value = typeof raw === 'string' ? STATUS_LABELS_TH[raw] : undefined;

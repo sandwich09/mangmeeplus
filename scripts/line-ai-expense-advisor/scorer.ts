@@ -218,10 +218,11 @@ export type ExpectedFact =
    * or without a leading zero) — this harness does not own the reply's Thai date formatting, so
    * it cannot assert the exact rendered string, only that the right day was mentioned somewhere. */
   | { kind: 'date'; value: string; label?: string; category?: RequiredFactCategory }
-  /** Payment/document status (task item 2), already mapped to the Thai label a reply would
-   * actually use (e.g. "จ่ายแล้ว", never the raw enum PAID) — exact substring, like `text`. For
-   * "จ่ายหรือยัง"-style detail questions, via a turn's `requiredFacts: ['status']`. */
-  | { kind: 'status'; value: string; label?: string; category?: RequiredFactCategory };
+  /** Payment/document status (task item 2), already mapped to every Thai synonym label a reply
+   * might use for that ONE underlying status (e.g. PAID -> ["จ่ายแล้ว","ชำระแล้ว"], never the raw
+   * enum) — matched like `text`, but true if ANY synonym is present. For "จ่ายหรือยัง"-style
+   * detail questions, via a turn's `requiredFacts: ['status']`. */
+  | { kind: 'status'; value: string[]; label?: string; category?: RequiredFactCategory };
 
 function normalizeForSearch(text: string): string {
   return text.replace(/,/g, '');
@@ -233,7 +234,7 @@ export function factInText(fact: ExpectedFact, deliveredText: string): boolean {
   if (fact.kind === 'count') return haystack.includes(String(fact.value));
   if (fact.kind === 'money') return moneyTextVariants(fact.value).some((variant) => haystack.includes(normalizeForSearch(variant)));
   if (fact.kind === 'text') return deliveredText.includes(fact.value);
-  if (fact.kind === 'status') return deliveredText.includes(fact.value);
+  if (fact.kind === 'status') return fact.value.some((synonym) => deliveredText.includes(synonym));
   const day = new Date(fact.value).getUTCDate();
   if (!Number.isFinite(day)) return false;
   return haystack.includes(String(day)) || haystack.includes(String(day).padStart(2, '0'));

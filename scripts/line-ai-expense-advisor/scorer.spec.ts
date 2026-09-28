@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   callMatchesGold, factInText, moneyTextVariants, scoreFacts, scoreTags, scoreToolCalls, scoreTurn, summarizeScores,
-  type CapturedEvidence,
+  type CapturedEvidence, type ExpectedFact,
 } from './scorer';
 import { extractExpectedFacts, extractExpectedFactsForCall } from './oracle';
 import type { Turn } from './types';
@@ -55,6 +55,49 @@ describe('factInText', () => {
   it('finds a required zero-valued money fact in any Thai-acceptable formatting', () => {
     assert.ok(factInText({ kind: 'money', value: '0.0000' }, 'ยอดคงเหลือ 0 บาท'));
     assert.ok(factInText({ kind: 'money', value: 0 }, 'ยอดคงเหลือ 0.00 บาท'));
+  });
+
+  describe('status: the plain-verb AND the contracts wording are both accepted (task item 2)', () => {
+    it('UNPAID: ยังไม่จ่าย / ยังไม่ชำระ / ค้างจ่าย / ค้างชำระ', () => {
+      const fact: ExpectedFact = { kind: 'status', value: ['ยังไม่จ่าย', 'ยังไม่ชำระ', 'ค้างจ่าย', 'ค้างชำระ'] };
+      assert.ok(factInText(fact, 'สถานะ: ยังไม่จ่าย'));
+      assert.ok(factInText(fact, 'สถานะการชำระ: ยังไม่ชำระ'));
+      assert.ok(factInText(fact, 'ยังค้างจ่ายอยู่ค่ะ'));
+      assert.ok(factInText(fact, 'ค้างชำระอยู่นะคะ'));
+      assert.equal(factInText(fact, 'จ่ายแล้วค่ะ'), false);
+    });
+
+    it('PAID: จ่ายแล้ว / ชำระแล้ว', () => {
+      const fact: ExpectedFact = { kind: 'status', value: ['จ่ายแล้ว', 'ชำระแล้ว'] };
+      assert.ok(factInText(fact, 'รายการนี้จ่ายแล้วค่ะ'));
+      assert.ok(factInText(fact, 'ชำระแล้วเรียบร้อยค่ะ'));
+    });
+
+    it('PARTIALLY_PAID: จ่ายบางส่วน / ชำระบางส่วน', () => {
+      const fact: ExpectedFact = { kind: 'status', value: ['จ่ายบางส่วน', 'ชำระบางส่วน'] };
+      assert.ok(factInText(fact, 'จ่ายบางส่วนแล้วค่ะ'));
+      assert.ok(factInText(fact, 'ชำระบางส่วนแล้วค่ะ'));
+    });
+
+    it('NEEDS_REVIEW: รอตรวจ / รอตรวจสอบ', () => {
+      const fact: ExpectedFact = { kind: 'status', value: ['รอตรวจ', 'รอตรวจสอบ'] };
+      assert.ok(factInText(fact, 'อยู่ระหว่างรอตรวจค่ะ'));
+      assert.ok(factInText(fact, 'รอตรวจสอบอยู่ค่ะ'));
+    });
+
+    it('DRAFT: ร่าง / ฉบับร่าง', () => {
+      const fact: ExpectedFact = { kind: 'status', value: ['ร่าง', 'ฉบับร่าง'] };
+      assert.ok(factInText(fact, 'ยังเป็นร่างอยู่ค่ะ'));
+      assert.ok(factInText(fact, 'เป็นฉบับร่างค่ะ'));
+    });
+
+    it('CONFIRMED: ยืนยันแล้ว', () => {
+      assert.ok(factInText({ kind: 'status', value: ['ยืนยันแล้ว'] }, 'รายการนี้ยืนยันแล้วค่ะ'));
+    });
+
+    it('fails when none of the synonyms are present', () => {
+      assert.equal(factInText({ kind: 'status', value: ['จ่ายแล้ว', 'ชำระแล้ว'] }, 'ยังไม่ชำระค่ะ'), false);
+    });
   });
 });
 

@@ -74,10 +74,11 @@ describe('extractExpectedFacts: task item 2 (per-turn requiredFacts)', () => {
     assert.deepEqual(new Set(facts.map((f) => f.label)), new Set(['vendor', 'date']));
   });
 
-  it('"จ่ายหรือยัง" — requiredFacts:[\'status\'] requires the Thai payment/document status labels, never amount/date/vendor', () => {
+  it('"จ่ายหรือยัง" — requiredFacts:[\'status\'] requires every Thai synonym for the payment/document status, never amount/date/vendor', () => {
     const facts = extractExpectedFacts('expense.get_detail', detailResult, undefined, ['status']);
-    assert.deepEqual(facts.map((f) => ({ kind: f.kind, value: f.value })).sort((a, b) => a.value.localeCompare(b.value)), [
-      { kind: 'status', value: 'จ่ายบางส่วน' }, { kind: 'status', value: 'ยืนยันแล้ว' },
+    const sorted = [...facts].sort((a, b) => a.label!.localeCompare(b.label!));
+    assert.deepEqual(sorted.map((f) => ({ kind: f.kind, value: f.value })), [
+      { kind: 'status', value: ['ยืนยันแล้ว'] }, { kind: 'status', value: ['จ่ายบางส่วน', 'ชำระบางส่วน'] },
     ]);
   });
 
