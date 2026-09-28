@@ -553,6 +553,13 @@ describe('IntentRouterAgent – conversation read memory (spec §4 R-M3/R-M4)', 
     assert.match(prompt, /resolve that ONLY to the id at that ordinal in the newest matching entry's shownItems/);
   });
 
+  it('tuning-6b (F1, T-014-b): a same-turn correction of the PREVIOUS READ stays BUSINESS_READ_QUESTION, never EXPENSE_CAPTURE_CORRECTION', () => {
+    const prompt = intakeRouterSystemPrompt();
+    assert.match(prompt, /a short "ไม่ใช่ X", "X ต่างหาก", or "หมายถึง X" reply right after a BUSINESS_READ_QUESTION answer \(conversationContext\.recentReads present, no pending capture draft\/task\) corrects that PREVIOUS QUESTION, not a captured record/);
+    assert.match(prompt, /it stays BUSINESS_READ_QUESTION, repeating the same read with the corrected value/);
+    assert.match(prompt, /"ไม่ใช่ ค่าออฟฟิศต่างหากค่ะ" repeats that same read for categoryName ค่าออฟฟิศ, never a correction/);
+  });
+
   it('lets the fused prepared plan copy a non-branch filter from recentReads, current message still wins', () => {
     const prompt = intakeRouterSystemPrompt({ fusedPlan: true });
     assert.match(prompt, /you may instead copy THAT entry's period and its non-branch filters/);

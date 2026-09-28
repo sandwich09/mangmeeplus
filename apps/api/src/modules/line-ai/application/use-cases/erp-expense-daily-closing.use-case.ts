@@ -15,7 +15,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { branchScopeWhere } from '../../../data-model-core/domain/logic/branch.logic';
 import { expenseRelatedToUserWhere } from '../../../expenses/infrastructure/prisma-expense.repository';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
-import { bangkokToday } from './erp-tools.use-case';
+import { bangkokToday, resolveExpenseBranchFilter } from './erp-tools.use-case';
 
 const TIME_ZONE = 'Asia/Bangkok';
 const THAI_MONTH_ABBR = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
@@ -164,10 +164,24 @@ export class ExpenseGetDailyClosingTool implements ErpReadToolPort {
     if (!isCivilDate(date)) {
       return { toolName: this.toolName, status: 'error', errorCode: 'INVALID_DATE', sourceRefs: [], asOf };
     }
-    const branchId = typeof input?.branchId === 'string' && input.branchId ? input.branchId : undefined;
-    if (branchId && ctx.branchIds && !ctx.branchIds.includes(branchId)) {
-      return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
-    }
+    // F3 (tuning-6b, T-105-b/run4): the model copies whatever the user said — a branch name, code, or
+    // number, typos included (e.g. "สาขา 2") — never a raw id. An exact-id-only check here used to
+    // return a bare 'forbidden' for a restricted caller (T-105-b: "2" → forbidden → a dead-end reply)
+    // or silently query a nonexistent id and report zero for an unrestricted one. Same lookup as
+    // expense.list_recent/get_breakdown (resolveExpenseBranchFilter): exact id/code, exact name, then
+    // fuzzy contains/trailing-number, with an honest out-of-scope outcome before giving up.
+    const sourceRefs: SourceRef[] = [{
+      label: `สรุปปิดร้าน ${thaiAbbrDateLabel(date)}`,
+      module: 'expenses',
+      entityType: 'expense_daily_closing',
+      asOf,
+      permissionChecked: true,
+      webPath: `/companies/${ctx.companyId}/expenses`,
+    }];
+    const requestedBranch = typeof input?.branchId === 'string' && input.branchId.trim() ? input.branchId.trim() : undefined;
+    const branchFilter = await resolveExpenseBranchFilter(this.prisma, this.toolName, ctx, requestedBranch, sourceRefs, asOf);
+    if (!branchFilter.ok) return branchFilter.result;
+    const branchId = branchFilter.branchId;
     const detailLimit = typeof input?.detailLimit === 'number' && Number.isFinite(input.detailLimit)
       ? Math.max(1, Math.min(MAX_DETAIL_LIMIT, Math.trunc(input.detailLimit)))
       : DEFAULT_DETAIL_LIMIT;
@@ -269,14 +283,7 @@ export class ExpenseGetDailyClosingTool implements ErpReadToolPort {
       && hasPositiveSum(row, 'outstandingAmount'));
     const excluded = Object.fromEntries((snapshot.excludedRows as Array<{ status: string; _count: { _all: number } }>)
       .map((row) => [row.status, row._count._all]));
-    const sourceRefs: SourceRef[] = [{
-      label: `สรุปปิดร้าน ${thaiAbbrDateLabel(date)}`,
-      module: 'expenses',
-      entityType: 'expense_daily_closing',
-      asOf,
-      permissionChecked: true,
-      webPath: `/companies/${ctx.companyId}/expenses`,
-    }];
+    // `sourceRefs` (branch-resolution citation) was already built above, before the branch lookup.
 
     return {
       toolName: this.toolName,

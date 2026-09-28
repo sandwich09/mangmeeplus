@@ -172,13 +172,16 @@ const EXPENSE_CREATE_PERMISSIONS = ['expense.create', 'expense.receipt.upload', 
 
 /** Base it on the permissions the request actually carries, never the role name: AUDITOR_READONLY
  *  keeps its own reimbursement self-service create permission, so only the EXPENSE-capture
- *  permissions gate this — a role that has any of them is not read-only for this action. */
+ *  permissions gate this — a role that has any of them is not read-only for this action.
+ *  F4 (tuning-6b, T-145-a): the old copy ("ดูข้อมูลได้อย่างเดียว... ไม่สามารถ...") had no next step and
+ *  never said "ไม่มีสิทธิ์"/"อ่านอย่างเดียว" — the words customers and the eval look for — so it read as
+ *  a dead end instead of an honest permission boundary. */
 export function readOnlyCaptureReplyText(text: string, permissions: readonly string[], language: ScopePolicyLanguage): string | undefined {
   if (!includesAny(text, CAPTURE_VERB_TH)) return undefined;
   if (EXPENSE_CREATE_PERMISSIONS.some((permission) => permissions.includes(permission))) return undefined;
   return language === 'en'
-    ? 'Your role can only view records here — it cannot record or upload one.'
-    : 'บทบาทของคุณดูข้อมูลได้อย่างเดียวค่ะ ไม่สามารถบันทึกหรือถ่ายรูปส่งรายการได้ค่ะ';
+    ? "Your account has read-only access, so you can't record or submit a receipt yet. Ask your company admin to grant that permission first."
+    : 'บัญชีของคุณเป็นสิทธิ์แบบอ่านอย่างเดียวค่ะ จึงยังไม่มีสิทธิ์บันทึกหรือส่งใบเสร็จเข้าระบบ ถ้าต้องการบันทึก ให้ผู้ดูแลบริษัทเพิ่มสิทธิ์ให้ก่อนนะคะ';
 }
 
 // ---- Combined entry point ----------------------------------------------------------------------

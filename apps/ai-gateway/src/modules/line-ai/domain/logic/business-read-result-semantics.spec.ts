@@ -66,6 +66,16 @@ describe('item 2: expense name resolution (ambiguous/not-found)', () => {
     const issue = expenseNameResolutionIssue(output({ branchOutOfScope: 'บางนา', availableBranches: [{ name: 'Head Office' }] }));
     assert.match(expenseNameResolutionReplyText(issue!, true), /You can only view branch\(es\): Head Office/);
   });
+
+  // F3 (tuning-6b): expense.get_daily_closing now resolves branchId the same way as list_recent/
+  // get_breakdown (resolveExpenseBranchFilter), so its ambiguous/unresolved/out-of-scope result must
+  // be recognized here too, not just the two original tools.
+  it('also reads expense.get_daily_closing\'s branch resolution outcome (F3, tuning-6b)', () => {
+    const dailyClosingOutput = [{ agent: 'accounting' as const, status: 'SUCCEEDED' as const, summary: '', suggestions: [], requiresHumanReview: false,
+      facts: [], toolCalls: [], toolData: [{ tool: 'expense.get_daily_closing', data: { branchOutOfScope: 'สาขา 2', availableBranches: [{ name: 'สาขา 1' }] } }] }];
+    const issue = expenseNameResolutionIssue(dailyClosingOutput);
+    assert.deepEqual(issue, { kind: 'out_of_scope', field: 'branch', requested: 'สาขา 2', names: ['สาขา 1'] });
+  });
 });
 
 describe('reimbursement.list_pending_approvals forbidden outcome (REIMBURSEMENT_APPROVAL_NOT_PERMITTED)', () => {

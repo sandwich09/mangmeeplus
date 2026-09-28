@@ -581,7 +581,9 @@ describe('item 3: a read-only role asking to record, upload, or capture (spec §
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool for a read-only capture request'); },
     });
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'READONLY_ROLE_CANNOT_CREATE');
-    assert.ok(result.replyText.startsWith('บทบาทของคุณดูข้อมูลได้อย่างเดียวค่ะ'), result.replyText);
+    // F4 (tuning-6b, T-145-a): readOnlyCaptureReplyText's copy changed to name "อ่านอย่างเดียว"/"ไม่มีสิทธิ์"
+    // and a next step — see line-ai-scope-policy.logic.ts.
+    assert.ok(result.replyText.startsWith('บัญชีของคุณเป็นสิทธิ์แบบอ่านอย่างเดียวค่ะ'), result.replyText);
   });
 
   it('the same request is NOT blocked for a role that can create expenses', async () => {

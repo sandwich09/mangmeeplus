@@ -165,7 +165,17 @@ describe('item 3: a read-only role asking to record, upload, or capture (spec §
 
   it('blocks a capture request for a role with no expense-create permission', () => {
     const text = readOnlyCaptureReplyText('ถ่ายรูปใบเสร็จแล้วส่งเข้าระบบให้หน่อยค่ะ', AUDITOR_READONLY_PERMISSIONS, 'th')!;
-    assert.ok(text.startsWith('บทบาทของคุณดูข้อมูลได้อย่างเดียวค่ะ'), text);
+    // F4 (tuning-6b, T-145-a): customers and the eval look for "ไม่มีสิทธิ์"/"อ่านอย่างเดียว" plus a next
+    // step — the old text ("ดูข้อมูลได้อย่างเดียว... ไม่สามารถ...") had neither.
+    assert.ok(text.includes('อ่านอย่างเดียว'), text);
+    assert.ok(text.includes('ไม่มีสิทธิ์'), text);
+    assert.ok(text.includes('ผู้ดูแลบริษัท'), text);
+  });
+
+  it('states the same read-only boundary and next step in English', () => {
+    const text = readOnlyCaptureReplyText('ถ่ายรูปใบเสร็จแล้วส่งเข้าระบบให้หน่อยค่ะ', AUDITOR_READONLY_PERMISSIONS, 'en')!;
+    assert.ok(text.includes('read-only'), text);
+    assert.ok(text.includes('admin'), text);
   });
 
   it('does not block the same request for a role that can create expenses', () => {
