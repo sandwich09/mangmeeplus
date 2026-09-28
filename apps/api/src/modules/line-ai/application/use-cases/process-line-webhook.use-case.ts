@@ -28,7 +28,7 @@ import { LineMessagingCredentialsService } from '../../../../common/config/line-
  * 7. Persist turn
  */
 import { HttpException, Inject, forwardRef, Injectable, Logger, Optional, ForbiddenException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
-import { LineReadEvidenceService } from '../line-read-evidence.service';
+import { LINE_READ_EVIDENCE_MAX, LineReadEvidenceService } from '../line-read-evidence.service';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -142,14 +142,15 @@ import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
-import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFallbackReason, ReceiptOcrFieldResult, ReceiptOcrResponse, RequestContext } from '@watchdog-bms/contracts';
-import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, extractValueCandidatesV2, mapThaiDigits, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiReadMemory, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFallbackReason, ReceiptOcrFieldResult, ReceiptOcrResponse, RequestContext } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, extractValueCandidatesV2, mapThaiDigits, todayCivilDate, hasToolFeature, hasToolPermissions, lineToolRegistryFor, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
+import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer, type PublicPolicyTopic } from '../../domain/logic/line-public-policy.logic';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -426,6 +427,22 @@ const BUSY_FOLLOW_UP_REPLY = '⏳ น้องมั่งมีกำลัง�
  *  lease frees between a media turn's model calls, so a queued chat message usually slips into
  *  one of those gaps well inside this window; LINE's loading indicator covers the wait. */
 const LINE_AI_LIVE_BUSY_WAIT_MS = 25_000;
+
+/** Request-scoped ERP catalog upper bound from the same authority snapshot used downstream. */
+export function lineIntakeOfferedToolNames(input: {
+  permissions: readonly string[];
+  entitledFeatureKeys: ReadonlySet<string> | null | undefined;
+  draftEditEnabled?: boolean;
+  publicLookupEnabled?: boolean;
+  reimbursementDraftWriteEnabled?: boolean;
+}): string[] {
+  const entitled = input.entitledFeatureKeys;
+  if (!input.permissions.includes('ai.tool.invoke') || entitled === undefined) return [];
+  return lineToolRegistryFor(input)
+    .filter((tool) => hasToolPermissions(tool, input.permissions) && hasToolFeature(tool, entitled))
+    .map((tool) => tool.name)
+    .sort();
+}
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
 /** C3: what someone who is NOT the owner of a locked shop hears. No tier, no date, no price — the
  *  same "ask the shop owner" rule the web banner follows — but it no longer tells a connected
@@ -620,6 +637,22 @@ function aiBudgetReasonTh(errorCode?: string): string | null {
  *  the money codes only and must keep doing exactly that everywhere else. */
 const isDocumentReadingCreditSpent = (errorCode?: string): boolean =>
   isAiBudgetPermanentRefusal(errorCode) || errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED';
+
+/**
+ * Spec §8: an intake route that never reached the model — the gateway call itself did not complete
+ * (`ROUTER_UNREACHABLE`, tryRouteIntake's own catch block), the provider itself could not be reached
+ * in time (`PROVIDER_THROTTLED`/`PROVIDER_TIMEOUT` — the two provider codes the gateway always marks
+ * `retryable: true`, in `bedrock.provider.ts`/`openai.provider.ts`, regardless of which call site hit
+ * them), or our AI budget gate could not run or is exhausted — reads to the customer as "the system
+ * is slow right now", never "I don't understand you". Everything else with `status !== 'ROUTED'`
+ * (the model answered but produced an invalid or unroutable plan, e.g. `ROUTER_SEMANTIC_SCHEMA_INVALID`)
+ * is the model genuinely not making sense of the text.
+ */
+const isTransientLineAiRouteFailure = (errorCode?: string): boolean =>
+  errorCode === 'ROUTER_UNREACHABLE' || errorCode === 'PROVIDER_THROTTLED' || errorCode === 'PROVIDER_TIMEOUT'
+  || isAiBudgetRefusalCode(errorCode);
+const LINE_AI_ROUTE_TRANSIENT_REPLY = 'ขอโทษค่ะ ระบบตอบช้ากว่าปกติ ลองส่งข้อความเดิมอีกครั้งได้เลยค่ะ';
+const LINE_AI_ROUTE_UNCLEAR_REPLY = 'ขอโทษค่ะ น้องมั่งมียังไม่แน่ใจว่าหมายถึงอะไร ช่วยพิมพ์อีกแบบได้ไหมคะ เช่น "เดือนนี้จ่ายไปเท่าไหร่" หรือ "แยกค่าใช้จ่ายตามหมวด"';
 
 /**
  * §9.2/B-04: the money gate closed the read AND this picture was NOT kept. Three different ways that
@@ -1060,6 +1093,44 @@ export function isAffirmativeText(text: string): boolean {
 
 export function chatKeyHashOf(event: { lineUserId: string; pushTargetId?: string }): string {
   return hashMessagePreview(event.pushTargetId ?? event.lineUserId);
+}
+
+const READ_MEMORY_SHOWN_ITEM_KEYS = new Set(['ordinal', 'id', 'label', 'date', 'kind']);
+function validLineAiReadMemoryShownItem(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return typeof item['ordinal'] === 'number' && Number.isSafeInteger(item['ordinal']) && item['ordinal'] >= 1
+    && typeof item['id'] === 'string' && item['id'].length > 0 && item['id'].length <= 200
+    && typeof item['label'] === 'string' && item['label'].length > 0 && item['label'].length <= 200
+    && (item['date'] === undefined || typeof item['date'] === 'string')
+    && (item['kind'] === undefined || item['kind'] === 'category' || item['kind'] === 'branch' || item['kind'] === 'vendor')
+    && Object.keys(item).every(key => READ_MEMORY_SHOWN_ITEM_KEYS.has(key));
+}
+
+const READ_MEMORY_STRING_FIELDS = ['documentStatus', 'paymentStatus', 'categoryId', 'categoryName', 'vendorId', 'vendorName', 'branchId', 'branchName'] as const;
+const READ_MEMORY_ENTRY_KEYS = new Set(['tool', 'period', ...READ_MEMORY_STRING_FIELDS, 'groupBy', 'answerShape', 'shownItems', 'asOf']);
+
+/** Spec §4 R-M2: defense in depth on `readMemory` this same service wrote into `lineTurnOutcome` — a
+ *  malformed entry, or one carrying any field outside LineAiReadMemory's own known list (an `amount`
+ *  would already fail here, R-M6), drops the WHOLE stored batch for that turn rather than admit a
+ *  half-trusted one into the model's prompt. */
+export function validLineAiReadMemoryEntries(raw: readonly unknown[]): LineAiReadMemory[] | undefined {
+  for (const value of raw) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const entry = value as Record<string, unknown>;
+    if (typeof entry['tool'] !== 'string' || !entry['tool']
+      || (entry['answerShape'] !== 'single_metric' && entry['answerShape'] !== 'list')
+      || typeof entry['asOf'] !== 'string' || !Number.isFinite(Date.parse(entry['asOf']))) return undefined;
+    const period = entry['period'];
+    if (period !== undefined && (!period || typeof period !== 'object' || Array.isArray(period)
+      || typeof (period as Record<string, unknown>)['fromDate'] !== 'string' || typeof (period as Record<string, unknown>)['toDate'] !== 'string')) return undefined;
+    if (READ_MEMORY_STRING_FIELDS.some(key => entry[key] !== undefined && typeof entry[key] !== 'string')) return undefined;
+    if (entry['groupBy'] !== undefined && entry['groupBy'] !== 'category' && entry['groupBy'] !== 'branch' && entry['groupBy'] !== 'vendor') return undefined;
+    const shownItems = entry['shownItems'];
+    if (shownItems !== undefined && (!Array.isArray(shownItems) || shownItems.length > 10 || !shownItems.every(validLineAiReadMemoryShownItem))) return undefined;
+    if (!Object.keys(entry).every(key => READ_MEMORY_ENTRY_KEYS.has(key))) return undefined;
+  }
+  return raw as LineAiReadMemory[];
 }
 
 /** Shape label recorded on the durable outcome, using the same vocabulary the presentation manifest
@@ -1799,7 +1870,7 @@ export class ProcessLineWebhookUseCase {
   private readonly budgetGrantsV2 = new WeakMap<object, AiBudgetGrantV2>();
   private readonly deliveryAccess = new WeakMap<object, { userId: string; companyId: string; membershipId: string; fingerprint: string; allowDuringSupportPause?: boolean }>();
   private readonly deliveryDenialNotified = new WeakSet<object>();
-  private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null; expenseSummary?: LineAiConversationContext['deliveredExpenseSummary']; expenseCriterionConfirmation?: boolean }>();
+  private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null; expenseSummary?: LineAiConversationContext['deliveredExpenseSummary']; expenseCriterionConfirmation?: boolean; recentReads?: LineAiConversationContext['recentReads'] }>();
   private readonly deliveryDraftPreviews = new WeakMap<object, { context: RequestContext; chatKeyHash: string; requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' }>();
   private readonly deliveryReceiptSources = new WeakMap<object, { context: RequestContext; chatKeyHash: string;
     records: Map<string, string | null>; categories: Map<string, string | null>; draftChoices?: LineExpenseDraftRouteContext[] }>();
@@ -2104,7 +2175,9 @@ export class ProcessLineWebhookUseCase {
   private async tryRouteIntake(input: {
     requestId: string;
     event?: LineTextEvent;
-    enabledFeatures?: string[];
+    enabledFeatures?: string[] | null;
+    /** Current server-resolved company entitlements; undefined means authority snapshot missing. */
+    entitledFeatureKeys?: ReadonlySet<string> | null;
     /** The original webhook event — the intake's money ATTEMPT identity (ADR 0013 §4). */
     webhookEventId?: string;
     retryWebhookEventId?: string;
@@ -2134,6 +2207,13 @@ export class ProcessLineWebhookUseCase {
       const activeCategories = !budgetGrantV2 && this.expenseRepo
         ? (await this.expenseRepo.listCategories(input.companyId)).map((c) => ({ id: c.id, name: c.name }))
         : [];
+      const offeredToolNames = lineIntakeOfferedToolNames({
+        permissions: input.permissions,
+        entitledFeatureKeys: input.entitledFeatureKeys,
+        draftEditEnabled: this.config.lineAiDraftEditEnabled,
+        publicLookupEnabled: this.config.lineAiPublicLookupEnabled,
+        reimbursementDraftWriteEnabled: this.config.lineAiReimbursementDraftWriteEnabled,
+      });
       return await this.aiGateway.requestLineIntakeRoute({
         requestId: input.requestId,
         // Not part of the model payload — the intake router builds its prompt from an explicit
@@ -2146,7 +2226,8 @@ export class ProcessLineWebhookUseCase {
         ...reliabilityContext,
         ...(input.event && this.retainedTaskSources?.get(input.event) ? { retainedTaskSource: this.retainedTaskSources.get(input.event)!.source } : {}),
         ...(budgetGrantV2 && input.event?.inputEvidence ? { inputEvidence: input.event.inputEvidence, budgetGrantV2, contractCapabilities: ['input-evidence-v2' as const, 'budget-envelope-v2' as const] } : {}),
-        ...(input.enabledFeatures ? { enabledFeatures: input.enabledFeatures } : {}),
+        ...(input.enabledFeatures !== undefined ? { enabledFeatures: input.enabledFeatures } : {}),
+        offeredToolNames,
         ...(input.conversationContext && { conversationContext: input.conversationContext }),
         ...(input.valueCandidates && { valueCandidates: input.valueCandidates }),
         ...(input.openClarifications && { openClarifications: input.openClarifications }),
@@ -3119,14 +3200,14 @@ export class ProcessLineWebhookUseCase {
     companyId: string,
     access: { permissions: string[]; roles: string[] },
   ): Promise<LineReplyMessage> {
-    return {
+    return inheritCompleteLineBusinessAnswerPresentation(message, {
       ...message,
       quickReply: buildStaffCompletionQuickReply({
         permissions: access.permissions,
         entitledFeatureKeys: await loadEntitledFeatureKeys(this.prisma, companyId),
         isOwner: access.roles.includes('OWNER'),
       }),
-    };
+    });
   }
 
   private async deliverCompletedReply(
@@ -3414,10 +3495,17 @@ export class ProcessLineWebhookUseCase {
   /** Already classified from full input, without reading expense/context repositories. */
   private async deliverPureGeneralV2(event: LineTextEvent, requestId: string, route: GovernedLineIntakeRoutePlan,
     access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>, features: ReadonlySet<string> | readonly string[] | null,
-    candidates: LineAiTurnRequest['valueCandidates']): Promise<void> {
+    candidates: LineAiTurnRequest['valueCandidates'], conversationContext?: LineAiConversationContext): Promise<void> {
     const bound = this.boundConversations.get(event), initial = this.budgetGrantsV2.get(event);
     if (!bound || !initial || !event.inputEvidence || !route.semanticSubrequests?.length) throw new Error('AI_CONTRACT_UNSUPPORTED');
-    const grant = await this.aiGateway.narrowLineReliabilityGrant(initial, 'general', ['line-answer/2']);
+    let grant;
+    try { grant = await this.aiGateway.narrowLineReliabilityGrant(initial, 'general', ['line-answer/2']); }
+    catch (error) {
+      if (!(error instanceof LineAiBudgetDeadlineExceededError)) throw error;
+      await this.deliverReply(event, formatRefusal('ai_timeout'));
+      await this.updateEventLog(event.webhookEventId, 'ai_timeout', error.code, bound.owner.companyId);
+      return;
+    }
     if (!grant) {
       await this.deliverReply(event, 'ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง');
       await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_ADMISSION_UNAVAILABLE', bound.owner.companyId);
@@ -3438,6 +3526,7 @@ export class ProcessLineWebhookUseCase {
       inputEvidence: event.inputEvidence, budgetGrantV2: grant, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
       semanticSubrequests: route.semanticSubrequests, ...await this.reliabilityContext(event),
       ...(candidates ? { valueCandidates: candidates } : {}), intakeIntent: route.intent,
+      ...(conversationContext ? { conversationContext } : {}),
       ...(features ? { entitledFeatureKeys: [...features] } : {}),
       ...(this.config.lineAiApprovedKnowledgeEnabled ? { approvedKnowledge: true, selectedKnowledgeCardIds: route.selectedKnowledgeCardIds } : {}) };
     const ledgerId = await this.ledger?.appendTurn({ messagingChannelId: event.messagingChannelId, companyId: bound.owner.companyId,
@@ -4117,8 +4206,13 @@ export class ProcessLineWebhookUseCase {
       : controlIndex >= 0 && previewProof && draft?.previewId ? { kind: 'EXPENSE_EDIT_CONFIRM' as const, previewId: draft.previewId, previewRevision: String(previewProof.previewRevision), expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) } : null;
     const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt,
       firstDispatchDeadlineAt: new Date(this.documentQaDelivery.get(event)?.jobDeadlineAt.getTime() ?? (log.budgetAuthorityJson as { grant?: { finalDeadlineAtMs?: number } } | null)?.grant?.finalDeadlineAtMs ?? log.createdAt.getTime() + 40_000).toISOString(), authorization, control, businessResult: reimbursement?.status === 'applied' ? { kind: 'REIMBURSEMENT_DRAFT', operationKey: String(reimbursement.receipt.actionId), committedAt: String(reimbursement.receipt.committedAt), recordIds: [String(reimbursement.receipt.requestId)], resultingRevisions: [String(reimbursement.receipt.appliedRequestUpdatedAt)] } : null,
-      answer: { status: pendingSubrequestIds.length ? 'PARTIAL' : 'COMPLETE', pendingSubrequestIds, items }, ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) });
-    const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId);
+      answer: { status: pendingSubrequestIds.length ? 'PARTIAL' : 'COMPLETE', pendingSubrequestIds, items },
+      preferredMessages: items.map((_item, index) => index < messages.length && index !== financialControlIndex ? messages[index]! : null),
+      ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) });
+    // Spec §4 R-M2 / deliveredExpenseSummary regression: graduating to a delivery plan must not
+    // silently drop the SAME access-proof recordTurnOutcome persists — see buildTurnAuthorizationJson.
+    const authorizationJson = this.buildTurnAuthorizationJson(event, randomUUID());
+    const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId, authorizationJson);
     if (!saved) return 'failed_other';
     return this.replayDeliveryPlan(saved.id, event, 2);
   }
@@ -4552,6 +4646,50 @@ export class ProcessLineWebhookUseCase {
   }
 
   /** Only a provider-rejected representation can be replaced; ordinary fallback cannot rewrite facts. */
+  /** Spec §4 R-M2, and the pre-existing deliveredExpenseSummary/expense-criterion-confirmation
+   *  proofs: the SAME access-proof shape every LineTurnOutcome.authorizationJson write persists, so
+   *  loadConversationContext reads either writer back the same way — the legacy upsert path
+   *  (recordTurnOutcome, below) or the delivery-plan-v2 path (sendMessagesV2, via
+   *  LineLedgerDeliveryService.savePlan). A pure function of the event's own WeakMap state, never DB
+   *  state, so either caller can build it before its own, very different write happens. */
+  private buildTurnAuthorizationJson(
+    event: { webhookEventId: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string },
+    producerId: string,
+  ): Prisma.InputJsonValue {
+    const access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
+    const topic = this.publicPolicyTopics.get(event);
+    const recipientHash = lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '');
+    const noOtherSource = !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event)
+      && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event);
+    return { v: 1, producerId,
+      ...(topic ? { publicPolicy: { topic, recipientHash } } : {}),
+      ...(access && sources?.ids?.length === 0 && sources.expenseCriterionConfirmation === true && noOtherSource ? { access: {
+        kind: 'expense_criterion_confirmation', userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
+        fingerprint: access.fingerprint, webhookEventId: event.webhookEventId, recipientHash, channelId: event.messagingChannelId ?? '',
+        chatKeyHash: chatKeyHashOf(event),
+      } } : {}),
+      ...(access && sources?.ids?.length && noOtherSource ? { read: {
+        userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
+        requestId: sources.requestId, ids: sources.ids, webhookEventId: event.webhookEventId,
+        recipientHash, channelId: event.messagingChannelId ?? '',
+      } } : {}),
+      ...(access && sources?.expenseSummary && sources.ids?.length && noOtherSource ? { expenseSummary: {
+        userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
+        fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event), recipientHash,
+        statusBasis: sources.expenseSummary.statusBasis, continuationOfPrior: sources.expenseSummary.continuationOfPrior === true,
+        ranges: sources.expenseSummary.ranges,
+      } } : {}),
+      // Spec §4 R-M2: same access-proof shape as expenseSummary above, so loadConversationContext's
+      // existing identity/chat/recipient re-check (§4 R-M7: none of this survives a scope change)
+      // covers this too without a second verification path.
+      ...(access && sources?.recentReads?.length && sources.ids?.length && noOtherSource ? { readMemory: {
+        userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
+        fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event), recipientHash,
+        entries: sources.recentReads,
+      } } : {}),
+    };
+  }
+
   private async recordTurnOutcome(
     event: { webhookEventId: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string },
     messages: LineReplyMessage[],
@@ -4574,33 +4712,8 @@ export class ProcessLineWebhookUseCase {
         if (updated.count !== 1) return null;
         return { messages, accepted: false };
       }
-     const producerId = randomUUID(), access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
-     const topic = this.publicPolicyTopics.get(event);
-      const recipientHash = lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '');
-      const authorizationJson = { v: 1, producerId,
-        ...(topic ? { publicPolicy: { topic,
-          recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
-        } } : {}),
-        ...(access && sources?.ids?.length === 0 && sources.expenseCriterionConfirmation === true
-          && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { access: {
-            kind: 'expense_criterion_confirmation', userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
-            fingerprint: access.fingerprint, webhookEventId, recipientHash, channelId: event.messagingChannelId ?? '',
-            chatKeyHash: chatKeyHashOf(event),
-          } } : {}),
-        ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { read: {
-          userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
-          requestId: sources.requestId, ids: sources.ids, webhookEventId,
-          recipientHash,
-          channelId: event.messagingChannelId ?? '',
-        } } : {}),
-        ...(access && sources?.expenseSummary && sources.ids?.length && !this.deliveryDraftPreviews.has(event)
-          && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { expenseSummary: {
-            userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
-            fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event), recipientHash,
-            statusBasis: sources.expenseSummary.statusBasis, continuationOfPrior: sources.expenseSummary.continuationOfPrior === true,
-            ranges: sources.expenseSummary.ranges,
-          } } : {}),
-      };
+      const producerId = randomUUID();
+      const authorizationJson = this.buildTurnAuthorizationJson(event, producerId);
       const outcome = await this.prisma.client.lineTurnOutcome.upsert({
         where: { webhookEventId },
         create: { webhookEventId, companyId: log?.companyId ?? null, messagesJson, authorizationJson, presentationKind, attempts: 1 },
@@ -4742,7 +4855,10 @@ export class ProcessLineWebhookUseCase {
       initiatorHash: deliveryHash(event.lineUserId), admissionPolicyDigest: admission.policyDigest, sourceManifestDigest: deliveryHash('public-general:2.4'), approvedPublicSourceIds: [], issuedAt: now.toISOString(), expiresAt };
     const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt, firstDispatchDeadlineAt: new Date(grant.finalDeadlineAtMs).toISOString(), authorization,
       control: null, businessResult: null, answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: response.replyText, required: true, sourceProofIds: [] }] } });
-    const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId);
+    // Same access-proof shape recordTurnOutcome persists — see buildTurnAuthorizationJson. A public
+    // turn has no deliveryAccess/deliverySources of its own, so this is just {v, producerId}.
+    const authorizationJson = this.buildTurnAuthorizationJson(event, randomUUID());
+    const saved = await this.deliveryPlans.savePlan({ kind: 'WEBHOOK', id: outcomeId }, plan, new Date(log.createdAt.getTime() + this.config.aiDataRetentionDays * 86400000), now, event.webhookEventId, authorizationJson);
     if (!saved) { await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_OUTCOME_RECOVERY_REQUIRED'); return; }
     const delivered = await this.replayDeliveryPlan(saved.id, event, 2);
     await this.updateEventLog(event.webhookEventId, delivered === 'ok' ? 'completed' : 'delivery_pending', delivered === 'ok' ? undefined : 'LINE_DELIVERY_V2_PENDING', admission.companyId);
@@ -5191,20 +5307,28 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    // V2 classifies from accepted input and bounded task state before any private ERP prefetch.
-    if (canQuery && this.boundConversations.has(event)) {
+    // V2 classifies once from accepted input plus the authorized, bounded chat/task snapshot before
+    // pending-media/draft interceptors can consume or write. Source-specific ERP candidates stay below
+    // this point and are loaded only for a route that needs their existing domain flow.
+    const boundSemanticV2 = canQuery && this.boundConversations.has(event);
+    let conversationContext: LineAiConversationContext | undefined = boundSemanticV2
+      ? await this.loadConversationContext(companyId, identity.userId, event) : undefined;
+    let semanticRoutePlan: GovernedLineIntakeRoutePlan | undefined;
+    if (boundSemanticV2) {
       const candidates = await this.textValueCandidates(event, event.messageText);
-      const earlyRoute = await this.tryRouteIntake({ event, requestId, webhookEventId: event.webhookEventId,
-        companyId, userId: identity.userId, permissions: resolvedAccess.permissions, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : [],
-        messageText: event.messageText, ...(candidates ? { valueCandidates: candidates } : {}) });
-      this.intakePlansV2.set(event, earlyRoute);
-      if (earlyRoute.status !== 'ROUTED' || !earlyRoute.semanticSubrequests?.length) {
-        await this.deliverReply(event, 'ยังตรวจสอบขอบเขตข้อความชุดนี้ไม่สำเร็จค่ะ ยังไม่ได้ทำรายการให้');
-        await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_CONTRACT_UNSUPPORTED', companyId); return;
+      semanticRoutePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({ event, requestId, webhookEventId: event.webhookEventId,
+        companyId, userId: identity.userId, permissions: resolvedAccess.permissions, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : null,
+        entitledFeatureKeys,
+        messageText: event.messageText, conversationContext, ...(candidates ? { valueCandidates: candidates } : {}) }));
+      this.intakePlansV2.set(event, semanticRoutePlan);
+      if (semanticRoutePlan.status !== 'ROUTED' || !semanticRoutePlan.semanticSubrequests?.length) {
+        await this.deliverReply(event, isTransientLineAiRouteFailure(semanticRoutePlan.errorCode)
+          ? LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY);
+        await this.updateEventLog(event.webhookEventId, 'provider_unavailable', semanticRoutePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
-      if (await this.resumeDocumentQuestionV2(event, requestId, earlyRoute, resolvedAccess)) return;
-      if (earlyRoute.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
-        await this.deliverPureGeneralV2(event, requestId, earlyRoute, resolvedAccess, entitledFeatureKeys, candidates); return;
+      if (await this.resumeDocumentQuestionV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
+      if (semanticRoutePlan.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
+        await this.deliverPureGeneralV2(event, requestId, semanticRoutePlan, resolvedAccess, entitledFeatureKeys, candidates, conversationContext); return;
       }
     }
 
@@ -5329,7 +5453,9 @@ export class ProcessLineWebhookUseCase {
       // re-ask about THAT file instead of asking the customer to send one.
     }
 
-    const conversationContext = canQuery ? await this.loadConversationContext(companyId, identity.userId, event) : undefined;
+    if (!boundSemanticV2 && canQuery) {
+      conversationContext = await this.loadConversationContext(companyId, identity.userId, event);
+    }
     const valueCandidates = await this.textValueCandidates(event, normalizedText);
     // Item 10F: chatKey = groupId ?? roomId ?? userId (same as the buffer); open waiting_user
     // ledger entries ride the turn as DATA so the model can complete the ORIGINAL request.
@@ -5837,8 +5963,9 @@ export class ProcessLineWebhookUseCase {
     // One busy-wait budget for the WHOLE live turn (intake + gateway turn share it), so a turn
     // queued behind an in-flight media turn waits for the lease instead of bouncing the user.
     const busyWaitDeadlineMs = Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS;
-    let routePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({
-      event, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : [],
+    let routePlan = semanticRoutePlan ?? await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({
+      event, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : null,
+      entitledFeatureKeys,
       requestId,
       webhookEventId: event.webhookEventId,
       companyId,
@@ -5877,15 +6004,23 @@ export class ProcessLineWebhookUseCase {
     const initialGrantV2 = this.budgetGrantsV2.get(event);
     if (this.boundConversations.has(event)) {
       if (!initialGrantV2 || routePlan.status !== 'ROUTED') {
-        await this.deliverReply(event, 'ยังดำเนินการข้อความชุดนี้ไม่ได้ค่ะ ระบบตรวจสอบขอบเขตคำขอไม่สำเร็จ ยังไม่ได้ทำรายการให้');
-        await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_CONTRACT_UNSUPPORTED', companyId); return;
+        // A missing grant is a system/budget-admission gap, not a text the model failed to parse.
+        await this.deliverReply(event, !initialGrantV2 || isTransientLineAiRouteFailure(routePlan.errorCode)
+          ? LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY);
+        await this.updateEventLog(event.webhookEventId, 'provider_unavailable', routePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
       const hasPublic = routePlan.semanticSubrequests?.some(item => item.kind === 'public') === true && this.config.lineAiPublicLookupEnabled;
       const onlyGeneral = routePlan.semanticSubrequests?.every(item => ['general', 'help'].includes(item.kind)) === true;
       const lane = hasPublic ? 'public' : onlyGeneral ? 'general' : !routePlan.semanticSubrequests && (routePlan.intent === 'ADVISOR_CONVERSATION' || routePlan.intent === 'UNSUPPORTED') ? 'general'
         : routePlan.preparedPlan?.complexity === 'simple' ? 'simple' : 'mixed';
       const profiles: AiBudgetProfileIdV2[] = lane === 'public' ? ['line-control/2', 'line-answer/2', 'public-lookup/2'] : lane === 'general' ? ['line-answer/2'] : ['line-control/2', 'line-answer/2'];
-      const narrowed = await this.aiGateway.narrowLineReliabilityGrant(initialGrantV2, lane, profiles);
+      let narrowed;
+      try { narrowed = await this.aiGateway.narrowLineReliabilityGrant(initialGrantV2, lane, profiles); }
+      catch (error) {
+        if (!(error instanceof LineAiBudgetDeadlineExceededError)) throw error;
+        await this.deliverReply(event, formatRefusal('ai_timeout'));
+        await this.updateEventLog(event.webhookEventId, 'ai_timeout', error.code, companyId); return;
+      }
       if (!narrowed) { await this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_BUDGET_UNAVAILABLE', companyId); return; }
       this.budgetGrantsV2.set(event, narrowed);
     }
@@ -6771,8 +6906,14 @@ export class ProcessLineWebhookUseCase {
       ? await this.readEvidence.deliveredExpenseSummaryForTurn(turnRequest, turnResponse).catch(() => undefined) : undefined;
     const expenseCriterionConfirmation = evidenceIds?.length === 0 && this.readEvidence.isReadFreeExpenseCriterionConfirmation
       ? await this.readEvidence.isReadFreeExpenseCriterionConfirmation(turnRequest, turnResponse).catch(() => false) : false;
+    // Spec §4 R-M2: computed here (request-scoped access to this turn's OWN evidence, same as
+    // expenseSummary above) but only usable by a FUTURE turn once loadConversationContext reads it
+    // back from the delivery-confirmed lineTurnOutcome row (recordTurnOutcome persists it below).
+    const recentReads = evidenceIds && this.readEvidence.recentReadsForTurn
+      ? await this.readEvidence.recentReadsForTurn(turnRequest, turnResponse).catch(() => undefined) : undefined;
     this.deliverySources.set(event, { requestId, ids: evidenceIds, ...(expenseSummary ? { expenseSummary } : {}),
-      ...(expenseCriterionConfirmation ? { expenseCriterionConfirmation: true } : {}) });
+      ...(expenseCriterionConfirmation ? { expenseCriterionConfirmation: true } : {}),
+      ...(recentReads?.length ? { recentReads } : {}) });
 
     // 9. Persist the turn + audit FIRST, so a LINE delivery failure can never lose the record.
     if (turnResponse.refusalReason === 'mutation_blocked') {
@@ -7365,15 +7506,18 @@ export class ProcessLineWebhookUseCase {
     // bounded stored preview is inspected only to recognize a fixed capability-help routing hint.
     // Its contents never enter model input, and the help examples use current access again.
     const recentTurns = [...rows].reverse().map((row) => {
+      const userMessagePreview = row.userMessagePreview ?? undefined;
       return {
         at: row.createdAt.toISOString(),
-        ...(row.userMessagePreview && { userMessagePreview: row.userMessagePreview }),
+        ...(userMessagePreview && { userMessagePreview,
+          ...(userMessagePreview.length < PREVIEW_MAX_CHARS ? { userMessagePreviewComplete: true as const } : {}) }),
         ...(row.intent && { intent: capabilityHistoryIntent(row.replyPreview) ?? String(row.intent) }),
         ...(row.agent && { agent: row.agent }),
         refused: row.refused,
       };
     });
     let deliveredExpenseSummary: LineAiConversationContext['deliveredExpenseSummary'];
+    let recentReads: LineAiReadMemory[] | undefined;
     const current = this.deliveryAccess.get(event);
     const chatKeyHash = chatKeyHashOf(event);
     if (current && typeof this.prisma.client.lineTurnOutcome?.findMany === 'function') {
@@ -7410,11 +7554,33 @@ export class ProcessLineWebhookUseCase {
       const distinctScopes = new Set(sorted.map(item => JSON.stringify(item.descriptor.ranges
         .map(range => [range.fromDate, range.toDate, range.branchId]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))))));
       if (sorted.length && (distinctScopes.size === 1 || sorted[0]!.descriptor.continuationOfPrior)) deliveredExpenseSummary = sorted[0]!.descriptor;
+
+      // Spec §4 R-M2: same `outcomes` fetch, same identity/chat/recipient proof as expenseSummary
+      // above — but unlike it, every DISTINCT delivered turn's entries count (not just the latest),
+      // newest turn first, until the 3-entry cap. R-M7: `current`/chatKeyHash are already gated by
+      // conversationOwner()/deliveryAccess above, so a group/room chat never reaches this block.
+      const provedReads = outcomes.flatMap(outcome => {
+        const root = outcome.authorizationJson as Record<string, unknown> | null;
+        const saved = root?.['readMemory'] as Record<string, unknown> | undefined;
+        if (!outcome.deliveredAt || !saved || saved['userId'] !== userId || saved['companyId'] !== companyId
+          || saved['membershipId'] !== current.membershipId
+          || saved['fingerprint'] !== current.fingerprint || saved['chatKeyHash'] !== chatKeyHash
+          || saved['recipientHash'] !== lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '')
+          || !Array.isArray(saved['entries']) || saved['entries'].length === 0 || saved['entries'].length > LINE_READ_EVIDENCE_MAX) return [];
+        const entries = validLineAiReadMemoryEntries(saved['entries']);
+        if (!entries) return [];
+        const deliveredAt = outcome.deliveredAt instanceof Date ? outcome.deliveredAt : new Date(String(outcome.deliveredAt));
+        if (!Number.isFinite(deliveredAt.getTime())) return [];
+        return [{ at: deliveredAt, entries }];
+      });
+      const flattenedReads = provedReads.sort((a, b) => b.at.getTime() - a.at.getTime()).flatMap(item => item.entries).slice(0, 3);
+      if (flattenedReads.length) recentReads = flattenedReads;
     }
     return {
       windowMinutes: LINE_AI_CONTEXT_WINDOW_MINUTES,
       maxTurns: LINE_AI_CONTEXT_MAX_TURNS,
       lastTurnAt: recentTurns.at(-1)?.at,
+      ...(recentReads ? { recentReads } : {}),
       recentTurns,
       ...(deliveredExpenseSummary ? { deliveredExpenseSummary } : {}),
     };
@@ -7662,7 +7828,7 @@ export class ProcessLineWebhookUseCase {
 
 
 
-    const qaRoute = await this.routeDocumentQuestionBeforeCapture(event, ctx, access, captionText ?? '', media,
+    const qaRoute = await this.routeDocumentQuestionBeforeCapture(event, ctx, access, captionText ?? '', media, entitledFeatureKeys,
       (identity) => { admissionAttempt.identity = identity; admissionAttempt.companyId = companyId; });
     if (qaRoute?.handled) return;
     if (!this.initReceiptUpload || !this.completeReceiptUpload) {
@@ -7734,6 +7900,8 @@ export class ProcessLineWebhookUseCase {
       companyId,
       userId: identity.userId,
       permissions: access.permissions,
+      enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : null,
+      entitledFeatureKeys,
       messageText: caption,
       attachment: { id: event.lineMessageId, mimeType: media.mimeType, contentBase64: media.contentBase64 },
       conversationContext,
@@ -8912,6 +9080,7 @@ ${link}`, ctx.companyId, access);
 
   private async routeDocumentQuestionBeforeCapture(event: LineReceiptUploadEvent, ctx: RequestContext,
     access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>, caption: string, media: DownloadedLineMedia,
+    entitledFeatureKeys: ReadonlySet<string> | null,
     onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void,
   ): Promise<{ handled?: boolean; route?: GovernedLineIntakeRoutePlan } | null> {
     if (!this.documentQa) return null;
@@ -8933,7 +9102,7 @@ ${link}`, ctx.companyId, access);
     this.deliveryAccess.set(textEvent, this.deliveryAccess.get(event)!);
     const route = await this.tryRouteIntake({ event: textEvent, requestId: ctx.requestId, webhookEventId: event.webhookEventId,
       retryWebhookEventId: event.webhookEventId, onAdmitted,
-      companyId: ctx.companyId, userId: ctx.userId, permissions: access.permissions, enabledFeatures: access.entitledFeatureKeys ?? [], messageText: caption,
+      companyId: ctx.companyId, userId: ctx.userId, permissions: access.permissions, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : null, entitledFeatureKeys, messageText: caption,
       attachment: { id: event.lineMessageId, mimeType: media.mimeType,
         ...((media.mimeType === 'image/png' || media.mimeType === 'image/jpeg') && media.contentBase64 ? { contentBase64: media.contentBase64 } : {}) },
       valueCandidates: await this.textValueCandidates(textEvent, caption) });

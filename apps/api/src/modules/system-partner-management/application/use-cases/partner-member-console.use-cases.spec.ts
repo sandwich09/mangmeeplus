@@ -6,6 +6,7 @@ import { PartnerMemberLineUnlinkUseCase } from './partner-member-line-unlink.use
 import { PartnerMemberPasswordResetUseCase } from './partner-member-password-reset.use-case';
 import { PartnerMemberPasswordRevealUseCase } from './partner-member-password-reveal.use-case';
 import { SetPartnerMemberContactUseCase } from './set-partner-member-contact.use-case';
+import { SetPartnerOwnerNameUseCase } from './set-partner-owner-name.use-case';
 import { encryptCredential } from '../../domain/logic/credential-cipher.logic';
 import { verifyPassword } from '../../../auth/domain/logic/password-credential.logic';
 
@@ -64,6 +65,94 @@ function makePrisma(opts: {
 }
 
 const cmd = { companyId: 'co-1', memberUserId: 'user-1', requestingAdminUserId: 'admin-1', requestId: 'req-1' };
+
+describe('SetPartnerOwnerNameUseCase', () => {
+  function fixture(options: { unavailable?: boolean; race?: boolean; auditFails?: boolean } = {}) {
+    const state = { name: 'Old owner', audits: [] as any[], writes: [] as any[], reads: [] as any[] };
+    const target = {
+      id: 'user-1', isSystemProtected: false,
+      memberships: {
+        some: { companyId: 'co-1', roles: { some: { role: { key: 'OWNER' } } } },
+        none: { roles: { some: { role: { key: { in: ['SYSTEM_ADMIN', 'MANGMEE_SALES_LEAD', 'MANGMEE_SALES'] } } } } },
+      },
+    };
+    const tx = {
+      user: {
+        findFirst: async (args: any) => { state.reads.push(args); assert.deepEqual(args.where, target); return options.unavailable ? null : { displayName: state.name }; },
+        updateMany: async (args: any) => {
+          assert.deepEqual(args.where, { ...target, displayName: 'Old owner' });
+          assert.deepEqual(Object.keys(args.data), ['displayName']);
+          state.writes.push(args);
+          if (options.race) return { count: 0 };
+          state.name = args.data.displayName;
+          return { count: 1 };
+        },
+      },
+      auditLog: { create: async (args: any) => { if (options.auditFails) throw new Error('audit unavailable'); state.audits.push(args.data); } },
+    };
+    const prisma = { client: { $transaction: async (run: any) => {
+      const before = state.name;
+      try { return await run(tx); } catch (error) { state.name = before; throw error; }
+    } } } as any;
+    return { state, useCase: new SetPartnerOwnerNameUseCase(prisma) };
+  }
+  const rename = { ...cmd, displayName: '  New owner  ', expectedDisplayName: 'Old owner' };
+
+  it('renames an owner without any employee or credential access and audits without name values', async () => {
+    const { state, useCase } = fixture();
+    assert.deepEqual(await useCase.execute(rename), { displayName: 'New owner' });
+    assert.equal(state.name, 'New owner');
+    assert.equal(state.audits.length, 1);
+    assert.equal(state.audits[0].action, 'system.partner_member.display_name_update');
+    assert.equal(state.audits[0].actorUserId, cmd.requestingAdminUserId);
+    assert.equal(state.audits[0].targetId, cmd.memberUserId);
+    assert.ok(!JSON.stringify(state.audits).includes('owner'));
+  });
+
+  it('rejects unavailable targets (wrong company, non-owner or protected/platform account) before writing', async () => {
+    const { state, useCase } = fixture({ unavailable: true });
+    await assert.rejects(() => useCase.execute(rename), NotFoundException);
+    assert.equal(state.writes.length, 0);
+  });
+
+  it('rejects invalid names and missing snapshots before any database access', async () => {
+    const { state, useCase } = fixture();
+    for (const displayName of ['', '   ', 'a'.repeat(161), 'A\nB', 'A\u0000B', 'A\u202eB', null, 42]) {
+      await assert.rejects(() => useCase.execute({ ...rename, displayName: displayName as any }), UnprocessableEntityException);
+    }
+    await assert.rejects(() => useCase.execute({ ...rename, expectedDisplayName: undefined as any }), UnprocessableEntityException);
+    assert.equal(state.reads.length, 0);
+  });
+
+  it('accepts Thai names and the 160 UTF-16-unit boundary', async () => {
+    for (const displayName of ['สมชาย ใจดี', 'ก', 'ก'.repeat(160)]) {
+      const { useCase } = fixture();
+      assert.deepEqual(await useCase.execute({ ...rename, displayName }), { displayName });
+    }
+  });
+
+  it('does not mutate or audit an unchanged name', async () => {
+    const { state, useCase } = fixture();
+    await useCase.execute({ ...rename, displayName: ' Old owner ' });
+    assert.equal(state.writes.length, 0);
+    assert.equal(state.audits.length, 0);
+  });
+
+  it('rejects stale reads and a race at the final conditional write', async () => {
+    const { state, useCase } = fixture();
+    await assert.rejects(() => useCase.execute({ ...rename, expectedDisplayName: 'Stale' }), ConflictException);
+    assert.equal(state.writes.length, 0);
+    const raced = fixture({ race: true });
+    await assert.rejects(() => raced.useCase.execute(rename), ConflictException);
+    assert.equal(raced.state.audits.length, 0);
+  });
+
+  it('propagates audit failure through the transaction so the name is rolled back', async () => {
+    const { state, useCase } = fixture({ auditFails: true });
+    await assert.rejects(() => useCase.execute(rename), /audit unavailable/);
+    assert.equal(state.name, 'Old owner');
+  });
+});
 
 describe('PartnerMemberPasswordResetUseCase', () => {
   it('stores a hash + encrypted copy and returns the password once', async () => {

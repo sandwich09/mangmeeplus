@@ -28,6 +28,7 @@ import * as expenses from './expenses.js';
 // namespace so the discovery sweep below can resolve what it finds in index.ts.
 import * as index from './index.js';
 import * as lineAi from './line-ai.js';
+import * as lineDocumentQa from './line-document-qa.js';
 import * as procurement from './procurement.js';
 import * as transactionTax from './transaction-tax.js';
 
@@ -145,6 +146,7 @@ const SOURCES = {
   'expenses.ts': expenses,
   'index.ts': index,
   'line-ai.ts': lineAi,
+  'line-document-qa.ts': lineDocumentQa,
   'procurement.ts': procurement,
   'transaction-tax.ts': transactionTax,
 } as unknown as Record<string, Record<string, unknown>>;
@@ -167,6 +169,8 @@ const REGISTRY: Registration[] = [
   // Cross-named: procurement VAT modes and payment methods are stored in the shared accounting enums.
   { source: 'procurement.ts', arrayName: 'PROCUREMENT_VAT_MODES', prismaEnum: 'AccountingVatMode' },
   { source: 'procurement.ts', arrayName: 'PAYMENT_METHODS', prismaEnum: 'AccountingPaymentMethod' },
+  { source: 'expenses.ts', arrayName: 'EXPENSE_PAYMENT_STATUSES', prismaEnum: 'ExpensePaymentStatus' },
+  { source: 'expenses.ts', arrayName: 'EXPENSE_STATUSES', prismaEnum: 'ExpenseStatus' },
   { source: 'expenses.ts', arrayName: 'INPUT_VAT_CLAIM_STATUSES', prismaEnum: 'InputVatClaimStatus' },
   { source: 'expenses.ts', arrayName: 'EXPENSE_PAYMENT_METHODS', prismaEnum: 'ExpensePaymentMethod' },
   // Re-exported alias of line-ai.ts RECEIPT_ADDITIONAL_CHARGE_KINDS, so the discovery sweep below
@@ -174,6 +178,7 @@ const REGISTRY: Registration[] = [
   { source: 'expenses.ts', arrayName: 'EXPENSE_LINE_CHARGE_KINDS', prismaEnum: 'ExpenseLineChargeKind' },
   // Cross-named: the LINE turn intent list mirrors the Prisma AiTurnIntent enum.
   { source: 'line-ai.ts', arrayName: 'AI_TURN_INTENT_VALUES', prismaEnum: 'AiTurnIntent' },
+  { source: 'line-document-qa.ts', arrayName: 'LINE_DOCUMENT_QA_JOB_STATUSES', prismaEnum: 'LineDocumentQaJobStatus' },
   { source: 'transaction-tax.ts', arrayName: 'TAX_SOURCE_SYSTEMS', prismaEnum: 'TaxSourceSystem' },
   { source: 'transaction-tax.ts', arrayName: 'TRANSACTION_TAX_REGIMES', prismaEnum: 'TransactionTaxRegime' },
   { source: 'transaction-tax.ts', arrayName: 'TRANSACTION_TAX_DIRECTIONS', prismaEnum: 'TransactionTaxDirection' },

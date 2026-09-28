@@ -2236,7 +2236,11 @@ export class PrismaReimbursementRepository {
           approvalSteps: { where: { status: 'PENDING' as any } },
         }),
       },
-      orderBy: { createdAt: 'desc' },
+      // F2 (tuning-6b): rows created in the same instant (seeded data, bulk imports) came back in
+      // arbitrary order under createdAt alone, so the LINE list's "1./2." numbering ("ใบที่สอง") could
+      // point at a different claim between two asks. `id` is a stable, always-distinct tie-breaker —
+      // shared by this web approval list too, so it only narrows an existing tie, never reorders one.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip: where.skip,
       take: where.take,
     });

@@ -1,0 +1,891 @@
+{
+  "version": 1,
+  "conversations": [
+    {
+      "id": "H-owner-monthly-filter-chain",
+      "company": "B",
+      "role": "OWNER",
+      "turns": [
+        {
+          "user": "เดือนนี้ร้านจ่ายค่าใช้จ่ายไปทั้งหมดเท่าไหร่แล้วครับ",
+          "category": "1",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" } } }
+          ] }
+        },
+        {
+          "user": "เอาเฉพาะรายการที่ยืนยันแล้วนะครับ",
+          "category": "2",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "documentStatus": "CONFIRMED" } }
+          ] }
+        },
+        {
+          "user": "ช่วยแยกยอดพวกนี้ตามหมวดให้ดูหน่อย",
+          "category": "4",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.get_breakdown", "input": { "period": { "$period": "this_month_to_date" }, "documentStatus": "CONFIRMED" }, "groupBy": "category" }
+          ] }
+        },
+        {
+          "user": "เปลี่ยนเรื่องหน่อยครับ มีใบเบิกรออนุมัติกี่ใบตอนนี้",
+          "category": "10",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "reimbursement.list_pending_approvals", "input": {} }
+          ] }
+        },
+        {
+          "user": "กลับมาเรื่องรายจ่ายเดือนนี้อีกที ที่ยังไม่จ่ายมีเท่าไหร่ครับ",
+          "category": "3",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "paymentStatus": "UNPAID" } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-manager-period-compare-correction",
+      "company": "A",
+      "role": "MANAGER",
+      "turns": [
+        {
+          "user": "เดือนนี้ค่าไช้จ่ายรวมเท่าไหร่แล้ว",
+          "category": "1",
+          "language": ["misspelled"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" } } }
+          ] }
+        },
+        {
+          "user": "เทียบกับเดือนที่แล้วเป็นไงบ้าง",
+          "category": "9",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "last_month" } } }
+          ] }
+        },
+        {
+          "user": "เอ๊ย ขอโทษทีค่ะ หมายถึงเฉพาะรายการที่ยืนยันแล้วในเดือนนี้ ไม่ใช่เดือนที่แล้ว",
+          "category": "2",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "documentStatus": "CONFIRMED" } }
+          ] }
+        },
+        {
+          "user": "ขอดูรายการล่าสุด 5 รายการเลยได้ไหม",
+          "category": "7",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "limit": 5 }, "answerShape": "list" }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-staff-vendor-breakdown-ordinal",
+      "company": "B",
+      "role": "STAFF",
+      "turns": [
+        {
+          "user": "จ่ายร้านไหนเยอะสุดเดือนนี้อะ",
+          "category": "5",
+          "language": ["spoken"],
+          "expect": { "calls": [
+            { "tool": "expense.get_breakdown", "input": { "period": { "$period": "this_month_to_date" } }, "groupBy": "vendor" }
+          ] }
+        },
+        {
+          "user": "งั้นขอดูเป็นรายการเรียงเลยได้ไหมคะ 5 อันดับแรก",
+          "category": "7",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "limit": 5 }, "answerShape": "list" }
+          ] }
+        },
+        {
+          "user": "อันแรกเนี่ย จ่ายไปหรือยังคะ",
+          "category": "8",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.get_detail", "input": { "expenseId": { "$fromShownItems": 0 } } }
+          ] }
+        },
+        {
+          "user": "แล้วอันที่ 3 ล่ะคะ ยอดเท่าไหร่",
+          "category": "8",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.get_detail", "input": { "expenseId": { "$fromShownItems": 2 } } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-accountant-breakdown-explain",
+      "company": "A",
+      "role": "ACCOUNTANT",
+      "turns": [
+        {
+          "user": "แยกค่าใช้จ่ายเดือนนี้ตามหมวดให้หน่อยค่ะ",
+          "category": "4",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.get_breakdown", "input": { "period": { "$period": "this_month_to_date" } }, "groupBy": "category" }
+          ] }
+        },
+        {
+          "user": "ทำไมเดือนนี้ยอดรวมเยอะจังคะ",
+          "category": "14",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.get_breakdown", "input": { "period": { "$period": "this_month_to_date" } }, "groupBy": "category" }
+          ] }
+        },
+        {
+          "user": "เดี๋ยวขอพักก่อนนะคะ ขอบคุณมากค่ะ",
+          "category": "19",
+          "language": ["th"],
+          "expect": { "tags": { "no_tool": true, "must_answer": true } }
+        }
+      ]
+    },
+    {
+      "id": "H-auditor-payment-status-chain",
+      "company": "B",
+      "role": "AUDITOR_READONLY",
+      "turns": [
+        {
+          "user": "ยังไม่จ่ายมีเท่าไหร่คะเดือนนี้",
+          "category": "3",
+          "language": ["th"],
+          "expect": { "calls": [
+            {
+              "tool": "expense.list_recent",
+              "input": { "period": { "$period": "this_month_to_date" }, "paymentStatus": "UNPAID" },
+              "alternatives": [
+                { "tool": "expense.get_breakdown", "input": { "period": { "$period": "this_month_to_date" }, "paymentStatus": "UNPAID" }, "groupBy": "category" }
+              ]
+            }
+          ] }
+        },
+        {
+          "user": "แล้วที่จ่ายบางส่วนล่ะ มีกี่รายการ",
+          "category": "3",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "paymentStatus": "PARTIALLY_PAID" } }
+          ] }
+        },
+        {
+          "user": "เอ๊ะ ไม่ใช่ค่ะ หนูหมายถึงจ่ายครบแล้วต่างหาก",
+          "category": "3",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "paymentStatus": "PAID" } }
+          ] }
+        },
+        {
+          "user": "ถ้างั้นเดือนที่แล้วจ่ายไปทั้งหมดเท่าไหร่คะ",
+          "category": "1",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "last_month" } } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-staff-category-correction",
+      "company": "A",
+      "role": "STAFF",
+      "turns": [
+        {
+          "user": "ค่าน้ำมันเดือนนี้จ่ายไปเท่าไหร่",
+          "category": "6",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "categoryName": "ค่าน้ำมัน" } }
+          ] }
+        },
+        {
+          "user": "เอ๊ยย ไม่ช่ายค่ะ หมายถึงค่าเดินทางต่างหาก",
+          "category": "6",
+          "language": ["misspelled", "slang"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "categoryName": "ค่าเดินทาง" } }
+          ] }
+        },
+        {
+          "user": "ขอดูเป็นรายการเลยได้มั้ยคะ",
+          "category": "7",
+          "language": ["spoken"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "categoryName": "ค่าเดินทาง" }, "answerShape": "list" }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-manager-approvals-daily-closing",
+      "company": "B",
+      "role": "MANAGER",
+      "turns": [
+        {
+          "user": "วันนี้มีใบเบิกรออนุมัติกี่ใบครับ",
+          "category": "10",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "reimbursement.list_pending_approvals", "input": {} }
+          ] }
+        },
+        {
+          "user": "ใบแรกเนี่ย ใครขอเบิกครับ",
+          "category": "8",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "reimbursement.get_detail", "input": { "reimbursementId": { "$fromShownItems": 0 } } }
+          ] }
+        },
+        {
+          "user": "เปลี่ยนเรื่องนิดนึง วันนี้มีอะไรต้องปิดงานบ้างครับ",
+          "category": "13",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.get_daily_closing", "input": {} }
+          ] }
+        },
+        {
+          "user": "อ้อ กลับไปเรื่องใบเบิกอีกที มีรออนุมัติเพิ่มมั้ยครับตอนนี้",
+          "category": "10",
+          "language": ["spoken"],
+          "expect": { "calls": [
+            { "tool": "reimbursement.list_pending_approvals", "input": {} }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-owner-multi-question-chain",
+      "company": "A",
+      "role": "OWNER",
+      "turns": [
+        {
+          "user": "เดือนนี้จ่ายไปเท่าไหร่แล้ว แล้วมีใบเบิกรออนุมัติกี่ใบคะ",
+          "category": "1",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" } } },
+            { "tool": "reimbursement.list_pending_approvals", "input": {} }
+          ] }
+        },
+        {
+          "user": "ขอดูรายการล่าสุดเป็นลิสต์เลยค่ะ",
+          "category": "7",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" } }, "answerShape": "list" }
+          ] }
+        },
+        {
+          "user": "อันที่ 2 นี่จ่ายรึยังคะ",
+          "category": "8",
+          "language": ["slang"],
+          "expect": { "calls": [
+            { "tool": "expense.get_detail", "input": { "expenseId": { "$fromShownItems": 1 } } }
+          ] }
+        },
+        {
+          "user": "เอ๊ย พิมพ์ผิด หมายถึงอันที่ 4 ค่ะ ไม่ใช่อันที่ 2",
+          "category": "8",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.get_detail", "input": { "expenseId": { "$fromShownItems": 3 } } }
+          ] }
+        },
+        {
+          "user": "เทียบกับเดือนก่อนหน้าเป็นยังไงบ้างคะ",
+          "category": "9",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "last_month" } } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-staff-outofperm-company-total",
+      "company": "A",
+      "role": "STAFF",
+      "turns": [
+        {
+          "user": "รวมทั้งบริษัทเดือนนี้จ่ายไปเท่าไหร่คะ",
+          "category": "18",
+          "language": ["th"],
+          "expect": {
+            "calls": [
+              { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" } } }
+            ],
+            "tags": { "must_not_claim": ["ทั้งบริษัท", "ทุกสาขา"] }
+          }
+        }
+      ]
+    },
+    {
+      "id": "H-accountant-outofperm-approvals",
+      "company": "B",
+      "role": "ACCOUNTANT",
+      "turns": [
+        {
+          "user": "ช่วยดูให้หน่อยว่ามีใบเบิกของพนักงานรออนุมัติกี่ใบคะ",
+          "category": "18",
+          "language": ["th"],
+          "expect": { "tags": { "forbidden_tools": ["reimbursement.list_pending_approvals"], "must_answer": true } }
+        }
+      ]
+    },
+    {
+      "id": "H-auditor-outofperm-approvals",
+      "company": "A",
+      "role": "AUDITOR_READONLY",
+      "turns": [
+        {
+          "user": "ตอนนี้มีใบเบิกค้างอนุมัติกี่รายการคะ",
+          "category": "18",
+          "language": ["th"],
+          "expect": { "tags": { "forbidden_tools": ["reimbursement.list_pending_approvals"], "must_answer": true } }
+        }
+      ]
+    },
+    {
+      "id": "H-staff-outofperm-team-reimb",
+      "company": "B",
+      "role": "STAFF",
+      "turns": [
+        {
+          "user": "ใบเบิกของทีมทั้งหมดตอนนี้ถึงไหนกันบ้างคะ",
+          "category": "18",
+          "language": ["th"],
+          "expect": {
+            "calls": [
+              { "tool": "reimbursement.get_summary", "input": {} }
+            ],
+            "tags": { "must_not_claim": ["ทั้งทีม", "พนักงานทุกคน"] }
+          }
+        }
+      ]
+    },
+    {
+      "id": "H-owner-outofpackage-invoice",
+      "company": "A",
+      "role": "OWNER",
+      "turns": [
+        {
+          "user": "ช่วยออกใบแจ้งหนี้ให้ลูกค้าใบนึงหน่อยครับ",
+          "category": "17",
+          "language": ["th"],
+          "expect": { "tags": {
+            "no_tool": true,
+            "must_answer": true,
+            "forbidden_tools": ["sales.get_sales_summary", "accounting.list_recent_documents"],
+            "must_mention_any": ["แพ็กเกจ"]
+          } }
+        }
+      ]
+    },
+    {
+      "id": "H-manager-outofpackage-report",
+      "company": "B",
+      "role": "MANAGER",
+      "turns": [
+        {
+          "user": "ขอรายงานกำไรขาดทุน (P&L) เดือนนี้แบบละเอียดหน่อยค่ะ",
+          "category": "17",
+          "language": ["en-mixed"],
+          "expect": { "tags": {
+            "no_tool": true,
+            "must_answer": true,
+            "forbidden_tools": ["reports.get_monthly_report_summary", "ledger.get_report_summary"],
+            "must_mention_any": ["แพ็กเกจ"]
+          } }
+        }
+      ]
+    },
+    {
+      "id": "H-accountant-outofpackage-procurement",
+      "company": "A",
+      "role": "ACCOUNTANT",
+      "turns": [
+        {
+          "user": "สั่งซื้อของจากซัพพลายเออร์ยังไงคะในระบบนี้",
+          "category": "17",
+          "language": ["en-mixed"],
+          "expect": { "tags": {
+            "no_tool": true,
+            "must_answer": true,
+            "forbidden_tools": ["procurement.get_summary", "procurement.search_suppliers", "procurement.get_ap_outstanding"],
+            "must_mention_any": ["แพ็กเกจ"]
+          } }
+        }
+      ]
+    },
+    {
+      "id": "H-staff-outofpackage-stock",
+      "company": "B",
+      "role": "STAFF",
+      "turns": [
+        {
+          "user": "เช็คสต็อกสินค้าคงเหลือหน่อยจ้า มีของเหลือกี่ชิ้น 📦",
+          "category": "17",
+          "language": ["slang", "emoji"],
+          "expect": { "tags": {
+            "no_tool": true,
+            "must_answer": true,
+            "forbidden_tools": ["inventory.get_stock_balance", "inventory.list_low_stock", "inventory.search_products"],
+            "must_mention_any": ["แพ็กเกจ"]
+          } }
+        }
+      ]
+    },
+    {
+      "id": "H-owner-ambiguous-vendor-1",
+      "company": "A",
+      "role": "OWNER",
+      "turns": [
+        {
+          "user": "สมใจจ่ายไปเท่าไหร่แล้วเดือนนี้คะ",
+          "category": "6",
+          "language": ["th"],
+          "expect": {
+            "calls": [
+              { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "vendorName": "สมใจ" } }
+            ],
+            "tags": { "must_ask_choice": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "H-manager-ambiguous-vendor-2",
+      "company": "B",
+      "role": "MANAGER",
+      "turns": [
+        {
+          "user": "สมใจ จ่ายไปเท่าไหร่คะเดือนนี้",
+          "category": "6",
+          "language": ["th"],
+          "expect": {
+            "calls": [
+              { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "vendorName": "สมใจ" } }
+            ],
+            "tags": { "must_ask_choice": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "H-accountant-ambiguous-vendor-3",
+      "company": "A",
+      "role": "ACCOUNTANT",
+      "turns": [
+        {
+          "user": "อยากรู้ว่าร้านสมใจการค้าหรือร้านสมใจเนี่ยจ่ายไปเท่าไหร่ งงเองอ่ะ เอาที่ชื่อสมใจเฉยๆก็ได้ค่ะ ช่วยเช็คให้หน่อย",
+          "category": "6",
+          "language": ["slang", "run-on"],
+          "expect": {
+            "calls": [
+              { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "vendorName": "สมใจ" } }
+            ],
+            "tags": { "must_ask_choice": true }
+          }
+        }
+      ]
+    },
+    {
+      "id": "H-manager-daily-closing-2",
+      "company": "A",
+      "role": "MANAGER",
+      "turns": [
+        {
+          "user": "วันนี้มีอะไรต้องเคลียร์บ้างคะก่อนปิดร้าน",
+          "category": "13",
+          "language": ["en-mixed"],
+          "expect": { "calls": [
+            { "tool": "expense.get_daily_closing", "input": {} }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-owner-drafts-pending",
+      "company": "B",
+      "role": "OWNER",
+      "turns": [
+        {
+          "user": "มีรายการที่ยังเป็นร่างค้างอยู่มั้ยคะ ต้องรีบจัดการเลย",
+          "category": "12",
+          "language": ["spoken"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "documentStatus": "DRAFT" } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-staff-needsreview-pending",
+      "company": "A",
+      "role": "STAFF",
+      "turns": [
+        {
+          "user": "มีบิลที่ค้างรอตรวจสอบอยู่บ้างป่ะ",
+          "category": "12",
+          "language": ["slang"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "documentStatus": "NEEDS_REVIEW" } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-accountant-reimbursement-summary-1",
+      "company": "B",
+      "role": "ACCOUNTANT",
+      "turns": [
+        {
+          "user": "ใบเบิกของหนูตอนนี้ถึงไหนแล้วคะ",
+          "category": "11",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "reimbursement.get_summary", "input": {} }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-staff-reimbursement-summary-2",
+      "company": "A",
+      "role": "STAFF",
+      "turns": [
+        {
+          "user": "เบิกไปยังไม่ได้เงินเลยได้รึยังคะ 🥲",
+          "category": "11",
+          "language": ["slang", "emoji"],
+          "expect": { "calls": [
+            { "tool": "reimbursement.get_summary", "input": {} }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-owner-howto-receipt-photo",
+      "company": "B",
+      "role": "OWNER",
+      "turns": [
+        {
+          "user": "ถ่ายรูปใบเสร็จส่งเข้าระบบยังไงคะ",
+          "category": "15",
+          "language": ["th"],
+          "expect": { "tags": { "no_tool": true, "must_answer": true } }
+        }
+      ]
+    },
+    {
+      "id": "H-manager-howto-line-upload",
+      "company": "A",
+      "role": "MANAGER",
+      "turns": [
+        {
+          "user": "อยาก upload ใบเสร็จเข้า line ทำไงคะ งงมาก",
+          "category": "15",
+          "language": ["en-mixed", "spoken"],
+          "expect": { "tags": { "no_tool": true, "must_answer": true } }
+        }
+      ]
+    },
+    {
+      "id": "H-accountant-general-tax-invoice",
+      "company": "B",
+      "role": "ACCOUNTANT",
+      "turns": [
+        {
+          "user": "ใบกำกับภาษีกับใบเสร็จต่างกันยังไงคะ",
+          "category": "16",
+          "language": ["th"],
+          "expect": { "tags": { "no_tool": true, "must_answer": true } }
+        }
+      ]
+    },
+    {
+      "id": "H-auditor-general-vat",
+      "company": "A",
+      "role": "AUDITOR_READONLY",
+      "turns": [
+        {
+          "user": "VAT 7% คิดยังไงคะ ถ้าราคาสินค้ารวมภาษีแล้ว",
+          "category": "16",
+          "language": ["en-mixed"],
+          "expect": { "tags": { "no_tool": true, "must_answer": true } }
+        }
+      ]
+    },
+    {
+      "id": "H-staff-explain-why-high",
+      "company": "B",
+      "role": "STAFF",
+      "turns": [
+        {
+          "user": "ทำไมเดือนนี้ค่าใช้จ่ายเยอะกว่าปกติอ่ะคะ งงเลย",
+          "category": "14",
+          "language": ["spoken"],
+          "expect": { "calls": [
+            { "tool": "expense.get_breakdown", "input": { "period": { "$period": "this_month_to_date" } }, "groupBy": "category" }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-owner-multi-question-2",
+      "company": "A",
+      "role": "OWNER",
+      "turns": [
+        {
+          "user": "เดือนนี้ค้างจ่ายเท่าไหร่ แล้วใบเบิกของผมเองถึงไหนแล้วบ้างครับ",
+          "category": "3",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "paymentStatus": "UNPAID" } },
+            { "tool": "reimbursement.get_summary", "input": {} }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-staff-greeting-short",
+      "company": "B",
+      "role": "STAFF",
+      "turns": [
+        {
+          "user": "สวัสดีค่ะ 😊",
+          "category": "19",
+          "language": ["emoji", "short"],
+          "expect": { "tags": { "no_tool": true, "must_answer": true } }
+        }
+      ]
+    },
+    {
+      "id": "H-accountant-vendor-breakdown-2",
+      "company": "A",
+      "role": "ACCOUNTANT",
+      "turns": [
+        {
+          "user": "อันดับร้านค้าที่จ่ายเยอะสุด 3 อันดับ (Top 3) เดือนนี้มีร้านไหนบ้างคะ",
+          "category": "5",
+          "language": ["en-mixed"],
+          "expect": { "calls": [
+            { "tool": "expense.get_breakdown", "input": { "period": { "$period": "this_month_to_date" } }, "groupBy": "vendor" }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-owner-branch-breakdown",
+      "company": "B",
+      "role": "OWNER",
+      "turns": [
+        {
+          "user": "แยกยอดรายจ่ายเดือนนี้ตามสาขา (by branch) ให้หน่อยครับ มีสองสาขา",
+          "category": "4",
+          "language": ["en-mixed"],
+          "expect": { "calls": [
+            { "tool": "expense.get_breakdown", "input": { "period": { "$period": "this_month_to_date" } }, "groupBy": "branch" }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-manager-buddhist-year-chain",
+      "company": "A",
+      "role": "MANAGER",
+      "turns": [
+        {
+          "user": "เดือนนิค่าไช้จ่ายรวมเท่าไหร่แล้วคะ",
+          "category": "1",
+          "language": ["misspelled"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" } } }
+          ] }
+        },
+        {
+          "user": "ถ้า{{last_month_abbr_th}} {{last_month_be_year}} ล่ะคะ จ่ายไปเท่าไหร่",
+          "category": "1",
+          "language": ["buddhist-year"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "last_month" } } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-manager-runon-mixed-chain",
+      "company": "B",
+      "role": "MANAGER",
+      "turns": [
+        {
+          "user": "เดือนนี้จ่ายไปเท่าไหร่แล้วอะคะพอดีจะปิดยอดให้เจ้าของร้านดูด้วยอ่ะค่ะรีบๆหน่อยนะคะขอบคุณค่ะ",
+          "category": "1",
+          "language": ["spoken", "run-on"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" } } }
+          ] }
+        },
+        {
+          "user": "breakdown แยกตามหมวดให้ดูหน่อยได้ไหมคะ",
+          "category": "4",
+          "language": ["en-mixed"],
+          "expect": { "calls": [
+            { "tool": "expense.get_breakdown", "input": { "period": { "$period": "this_month_to_date" } }, "groupBy": "category" }
+          ] }
+        },
+        {
+          "user": "thx ค่ะ 🙏",
+          "category": "19",
+          "language": ["en-mixed", "emoji", "short"],
+          "expect": { "tags": { "no_tool": true, "must_answer": true } }
+        }
+      ]
+    },
+    {
+      "id": "H-auditor-short-message",
+      "company": "A",
+      "role": "AUDITOR_READONLY",
+      "turns": [
+        {
+          "user": "เดือนนี้ยอดเท่าไหร่",
+          "category": "1",
+          "language": ["spoken", "short"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" } } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-staff-confirm-mixed",
+      "company": "B",
+      "role": "STAFF",
+      "turns": [
+        {
+          "user": "เอาเฉพาะที่ confirm แล้วนะคะ เดือนนี้",
+          "category": "2",
+          "language": ["en-mixed"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "documentStatus": "CONFIRMED" } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-owner-unpaid-casual",
+      "company": "A",
+      "role": "OWNER",
+      "turns": [
+        {
+          "user": "เดือนนี้ค้างจ่ายอยู่เท่าไหร่ครับ อยากรู้จะได้เคลียร์",
+          "category": "3",
+          "language": ["en-mixed"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "paymentStatus": "UNPAID" } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-accountant-vendor-grab-mixed",
+      "company": "B",
+      "role": "ACCOUNTANT",
+      "turns": [
+        {
+          "user": "เดือนนี้จ่าย Grab ไปกี่บาทคะ",
+          "category": "6",
+          "language": ["en-mixed"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" }, "vendorName": "Grab" } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-manager-today-total",
+      "company": "A",
+      "role": "MANAGER",
+      "turns": [
+        {
+          "user": "วันนี้จ่ายไปเท่าไหร่แล้ว",
+          "category": "1",
+          "language": ["th"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "today" } } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-owner-placeholder-full-month",
+      "company": "A",
+      "role": "OWNER",
+      "turns": [
+        {
+          "user": "เดือน{{this_month_th}} ปี {{this_be_year}} นี้ยอดรวมเท่าไหร่แล้วคะ",
+          "category": "1",
+          "language": ["buddhist-year"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" } } }
+          ] }
+        },
+        {
+          "user": "แล้วช่วง{{last_month_th}}ที่ผ่านมาล่ะคะ ยอดเท่าไหร่",
+          "category": "9",
+          "language": ["buddhist-year"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "last_month" } } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-accountant-abbr-year-casual",
+      "company": "B",
+      "role": "ACCOUNTANT",
+      "turns": [
+        {
+          "user": "ยอด{{this_month_abbr_th}} ปี{{this_be_year_short}} เท่าไหร่แล้วคะ พอดีจะสรุปให้บอส",
+          "category": "1",
+          "language": ["buddhist-year", "en-mixed"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" } } }
+          ] }
+        }
+      ]
+    },
+    {
+      "id": "H-manager-today-day-ce-year",
+      "company": "A",
+      "role": "MANAGER",
+      "turns": [
+        {
+          "user": "as of วันที่ {{today_day}} เดือนนี้ ({{this_ce_year}}) spend ไปเท่าไหร่แล้วครับ",
+          "category": "1",
+          "language": ["en-mixed", "buddhist-year"],
+          "expect": { "calls": [
+            { "tool": "expense.list_recent", "input": { "period": { "$period": "this_month_to_date" } } }
+          ] }
+        }
+      ]
+    }
+  ]
+}

@@ -347,6 +347,62 @@ describe('AgentCore Runtime – payload validation', () => {
 	    assert.equal(payload?.conversationContext?.recentTurns[0]?.assistantReplyPreview, `reply-${20 - LINE_AI_CONTEXT_MAX_TURNS + 1}`);
 	    assert.equal(payload?.conversationContext?.recentTurns[0]?.userMessagePreview?.length, 500);
 	  });
+
+	  // Spec §4 R-M2/R-M3: the runtime HTTP entrypoint re-parses conversationContext field-by-field
+	  // rather than casting the request body, so recentReads needs the same explicit acceptance as
+	  // deliveredExpenseSummary got when it was added.
+	  it('accepts recentReads, bounded to 3 entries and 10 shownItems, with every LineAiReadMemory field', () => {
+	    const oneContext = (turnId: string, recentReads: unknown) => ({
+	      turnId, companyId: 'c-1', userId: 'u-1', messageText: 'รายการแรกคืออะไร',
+	      conversationContext: { recentTurns: [{ at: '2026-09-27T09:00:00.000Z' }], recentReads },
+	    });
+	    const full = validatePayload(oneContext('t-full', [{
+	      tool: 'expense.list_recent', answerShape: 'list', asOf: '2026-09-27T09:00:00.000Z',
+	      period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, documentStatus: 'CONFIRMED', paymentStatus: 'UNPAID',
+	      categoryId: 'c1', categoryName: 'อาหาร', vendorId: 'v1', vendorName: 'ร้านสมใจ', branchId: 'b1', branchName: 'สาขาลาดพร้าว',
+	      groupBy: 'category', shownItems: [{ ordinal: 1, id: 'e1', label: 'ร้านสมใจ', date: '2026-08-05', kind: 'category' }],
+	    }]));
+	    const entry = full?.conversationContext?.recentReads?.[0];
+	    assert.equal(entry?.tool, 'expense.list_recent');
+	    assert.deepEqual(entry?.period, { fromDate: '2026-08-01', toDate: '2026-08-31' });
+	    assert.equal(entry?.categoryName, 'อาหาร');
+	    assert.equal(entry?.branchName, 'สาขาลาดพร้าว');
+	    assert.equal(entry?.shownItems?.[0]?.id, 'e1');
+
+	    const many = validatePayload(oneContext('t-many', Array.from({ length: 5 }, (_, i) => ({
+	      tool: 'reimbursement.get_summary', answerShape: 'single_metric', asOf: '2026-09-27T09:00:00.000Z', documentStatus: `s${i}`,
+	    }))));
+	    assert.equal(many?.conversationContext?.recentReads?.length, 3);
+
+	    const manyItems = validatePayload(oneContext('t-items', [{
+	      tool: 'expense.list_recent', answerShape: 'list', asOf: '2026-09-27T09:00:00.000Z',
+	      shownItems: Array.from({ length: 15 }, (_, i) => ({ ordinal: i + 1, id: `e${i}`, label: 'x' })),
+	    }]));
+	    assert.equal(manyItems?.conversationContext?.recentReads?.[0]?.shownItems?.length, 10);
+	  });
+
+	  it('spec R-M6: never carries an amount field through, and rejects a malformed recentReads entry entirely', () => {
+	    const oneContext = (recentReads: unknown) => ({
+	      turnId: 't-1', companyId: 'c-1', userId: 'u-1', messageText: 'รายการแรกคืออะไร',
+	      conversationContext: { recentTurns: [{ at: '2026-09-27T09:00:00.000Z' }], recentReads },
+	    });
+	    const withAmount = validatePayload(oneContext([{
+	      tool: 'expense.list_recent', answerShape: 'list', asOf: '2026-09-27T09:00:00.000Z', amount: '999999.99', totalAmount: 500,
+	    }]));
+	    const entry = withAmount?.conversationContext?.recentReads?.[0] as Record<string, unknown> | undefined;
+	    assert.equal(entry?.['amount'], undefined);
+	    assert.equal(entry?.['totalAmount'], undefined);
+
+	    for (const bad of [
+	      'not-an-array',
+	      [{ tool: '', answerShape: 'list', asOf: '2026-09-27T09:00:00.000Z' }],
+	      [{ tool: 'expense.list_recent', answerShape: 'both', asOf: '2026-09-27T09:00:00.000Z' }],
+	      [{ tool: 'expense.list_recent', answerShape: 'list', asOf: 'not-a-date' }],
+	    ]) {
+	      const payload = validatePayload(oneContext(bad));
+	      assert.equal(payload?.conversationContext?.recentReads, undefined, JSON.stringify(bad));
+	    }
+	  });
 	});
 
 // ── HTTP behavior tests ────────────────────────────────────────────────────────

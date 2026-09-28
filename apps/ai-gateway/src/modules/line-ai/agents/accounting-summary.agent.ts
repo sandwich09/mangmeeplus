@@ -406,11 +406,47 @@ export class AccountingSummaryAgent {
         if (!rendered) { readFailed = true; toolData.pop(); continue; }
         pushFacts({ label: TOOL_FACT_LABELS[tool.name]!, value: rendered });
       } else if (tool.name === 'expense.get_breakdown') {
+        // Same shape as list_recent's branchUnresolved below: a categoryName/vendorName the caller
+        // sent can resolve to several matches or none, so the tool returns the name catalog instead
+        // of a breakdown. Keep this in toolData (never popped) and out of readFailed so the
+        // orchestrator's generalized name-resolution reply (spec item 2c) can read it — popping here
+        // was the bug: it silently turned a legitimate clarification into "ไม่สามารถดึงข้อมูลได้".
+        const nameIssueField = (['category', 'vendor'] as const).find(
+          (field) => typeof data[`${field}Ambiguous`] === 'string' || typeof data[`${field}Unresolved`] === 'string',
+        );
+        if (nameIssueField) {
+          const ambiguous = data[`${nameIssueField}Ambiguous`];
+          const requestedName = String(ambiguous ?? data[`${nameIssueField}Unresolved`]);
+          const availableKey = nameIssueField === 'category' ? 'availableCategories' : 'availableVendors';
+          const names = Array.isArray(data[availableKey])
+            ? (data[availableKey] as Array<Record<string, unknown>>).map((entry) => String(entry['name'] ?? '')).filter(Boolean)
+            : [];
+          const fieldLabel = nameIssueField === 'category' ? 'หมวด' : 'ร้าน';
+          pushFacts({
+            label: fieldLabel,
+            value: typeof ambiguous === 'string'
+              ? `"${requestedName}" มีหลาย${fieldLabel}${names.length ? `: ${names.join(', ')}` : ''}`
+              : `ไม่พบ${fieldLabel} "${requestedName}"${names.length ? ` ${fieldLabel}ที่มี: ${names.join(', ')}` : ''}`,
+          });
+          continue;
+        }
         if (data['totalCount'] === undefined || data['totalAmount'] === undefined) { readFailed = true; toolData.pop(); continue; }
         pushFacts({
           label: 'ค่าใช้จ่าย',
           value: `${String(data['totalCount'])} รายการ รวม ${formatMoney(data['totalAmount'])} บาท`,
         });
+        // R-L4/spec §3 row 4-5: the whole point of a breakdown question is which group is which —
+        // the model previously saw only the grand total and had nothing to compose a breakdown
+        // answer from. Top 8 per axis (R-A2's own cap); each group's own amount is already the
+        // tool's grounded number, never recomputed here.
+        const group = (rows: unknown, label: string, nameKey: string) => {
+          for (const row of (Array.isArray(rows) ? rows as Array<Record<string, unknown>> : []).slice(0, 8)) {
+            pushFacts({ label, value: `${String(row[nameKey] ?? '-')} ${formatMoney(row['totalAmount'])} บาท (${String(row['count'] ?? '-')} รายการ)` });
+          }
+        };
+        group(data['byCategory'], 'หมวด', 'category');
+        group(data['byBranch'], 'สาขา', 'branch');
+        group(data['byVendor'], 'ร้าน', 'vendor');
       } else if (tool.name === 'expense.get_daily_closing') {
         const dailyFacts = dailyClosingFacts(data);
         if (!dailyFacts) { readFailed = true; toolData.pop(); continue; }

@@ -49,6 +49,37 @@ describe('expense related-view ABAC', () => {
     assert.equal(captured[2], ctx.userId);
   });
 
+  // Item 1 (spec R-A1 row 18, eval: 15 turns): the AI answer must state when a read is scoped to
+  // less than the whole company. `readAiSummary`/`readAiBreakdown` now echo the SAME own/related/
+  // company classification `aiReadScope` already uses to build the repository filter/scope above,
+  // so a tool adapter can read it off the snapshot without re-deriving the permission logic.
+  it('readAiSummary echoes accessScope: related for a read_related-only caller (same ctx as above)', async () => {
+    const repo = { readAiExpenseSummary: async () => ({ total: 0 }) } as any;
+    const result = await new ListExpensesUseCase(repo).readAiSummary(ctx, { fromDate: '2026-08-01', toDate: '2026-08-31' }, 20);
+    assert.equal((result as any).accessScope, 'related');
+  });
+
+  it('readAiSummary echoes accessScope: own for a read_own-only caller', async () => {
+    const repo = { readAiExpenseSummary: async () => ({ total: 0 }) } as any;
+    const ownCtx = { ...ctx, permissions: ['expense.read_own'] };
+    const result = await new ListExpensesUseCase(repo).readAiSummary(ownCtx, { fromDate: '2026-08-01', toDate: '2026-08-31' }, 20);
+    assert.equal((result as any).accessScope, 'own');
+  });
+
+  it('readAiSummary echoes accessScope: company for a full expense.read caller, even with read_own too', async () => {
+    const repo = { readAiExpenseSummary: async () => ({ total: 0 }) } as any;
+    const fullCtx = { ...ctx, permissions: ['expense.read', 'expense.read_own'] };
+    const result = await new ListExpensesUseCase(repo).readAiSummary(fullCtx, { fromDate: '2026-08-01', toDate: '2026-08-31' }, 20);
+    assert.equal((result as any).accessScope, 'company');
+  });
+
+  it('readAiBreakdown echoes the same accessScope classification as readAiSummary', async () => {
+    const repo = { readAiExpenseBreakdown: async () => ({}) } as any;
+    const ownCtx = { ...ctx, permissions: ['expense.read_own'] };
+    const result = await new ListExpensesUseCase(repo).readAiBreakdown(ownCtx, { fromDate: '2026-08-01', toDate: '2026-08-31' });
+    assert.equal((result as any).accessScope, 'own');
+  });
+
   it('scopes the substitute-receipt hub to all persisted relations, not only the payer', async () => {
     let capturedScope: any;
     const repo = {

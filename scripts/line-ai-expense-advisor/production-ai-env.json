@@ -1,0 +1,32 @@
+{
+  "_note": "Non-secret AI settings of the production release captured 2026-09-26 (api-web and ai-gateway resolved env). The eval applies them so a run measures what customers get. LINE_AI_AGENT_RUNTIME stays strands-local (AgentCore is AWS-hosted); families come from MANGMEE_EVAL_DETERMINISTIC_RESPONSE_FAMILIES.",
+  "api": {
+    "LINE_AI_ADVISOR_MODE": "social",
+    "LINE_AI_BUFFER_DEBOUNCE_MS": "1000",
+    "LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED": "false",
+    "LINE_AI_DRAFT_EDIT_ENABLED": "true",
+    "LINE_AI_EXACT_GREETING_ENABLED": "true",
+    "LINE_AI_FLEX_TEXT_FALLBACK_ENABLED": "true",
+    "LINE_AI_FUSED_PLAN_SHADOW_ENABLED": "true",
+    "LINE_AI_LEDGER_ENABLED": "true",
+    "LINE_AI_LOADING_ON_ACCEPT_ENABLED": "true",
+    "LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED": "true",
+    "LINE_AI_PREPARED_SIMPLE_READ_ENABLED": "true",
+    "LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED": "true"
+  },
+  "gateway": {
+    "AI_AGENT_REGISTRY_ENABLED": "true",
+    "AI_FINAL_MUTATION_ENABLED": "false",
+    "AI_MAX_TOOL_CALLS": "8",
+    "AI_PROMPT_LOGGING_ENABLED": "false",
+    "AI_TOOL_AUDIT_ENABLED": "true",
+    "AI_TOOL_POLICY_ENFORCED": "true",
+    "AI_TOOL_TIMEOUT_MS": "15000",
+    "LINE_AI_AGENT_ORCHESTRATION_ENABLED": "true",
+    "LINE_AI_COVERAGE_CRITIC_ENABLED": "true",
+    "LINE_AI_DRAFT_EDIT_ENABLED": "true",
+    "LINE_AI_FUSED_PLAN_SHADOW_ENABLED": "true",
+    "LINE_AI_PREPARED_SIMPLE_READ_ENABLED": "true",
+    "LINE_AI_TOOLUSE_LOOP_ENABLED": "true"
+  }
+}

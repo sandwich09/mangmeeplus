@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
-  "sourceRevision": "114b90b5c573959a81ae9f7f0566e100c40c0f1e",
+  "sourceRevision": "1ff441c3aa2dc069a9e8d05deb333d799ff35f21",
   "checkoutBranch": "claude/line-ai-turn-summary-telemetry",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -33,7 +33,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
-      "sha256": "8ab6e76220d8ec822b5a5fe2f9f921a7b4b4fa06cfcca4a8cd8e9a3aea6d2e93"
+      "sha256": "f1e7bc892d8215cb056a0345fad8ebd9c08ad862d4f1ea5b36bc7513794b8766"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-reimbursement-draft.service.ts",
@@ -45,7 +45,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts",
-      "sha256": "70b71d5053f88b411d4a3d6b09654625fc19fb139f825f11a6ed8a610324f9e8"
+      "sha256": "44e607a7b9ad253e03250ce49cf8a845ba967502768cfcf4f692bce96b4aea09"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
@@ -69,7 +69,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-expense-daily-closing.use-case.ts",
-      "sha256": "993db2b9de6111187494e80acd7371e901264e4ee79b3d8c932251c37548c31e"
+      "sha256": "dc8365b1baca1ab9d972845fc4377b621a06a89e452d35c62c4dd781d4722278"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-procurement-ledger-tools.use-case.ts",
@@ -77,7 +77,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-reimbursement-tools.use-case.ts",
-      "sha256": "b2bb66b5c1600102714145a5636fbd5b04ec858a7bfb18807c9fc9fd8d03e317"
+      "sha256": "bf33e494ef21fc97a0a1f49602dc14c7e4f1fc592511b7a8854f268d1c61d421"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-report-tools.use-case.ts",
@@ -89,7 +89,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts",
-      "sha256": "0b0536ab5042b51447c3ffa627e0413ebad1c744c08c47058b45ff22c1615be0"
+      "sha256": "d920e4259d7ebdbca8624b3b2c54acedf4fc00ce88e43a04dfd28febff9a7149"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-workflow-tools.use-case.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "98f3fd34887e53ba878e8725934a227a83b61a399b99c3d57b3c84662a8d1bef"
+      "sha256": "324ff3564076fa31b522294d0bc8a2c72107d91805e235900287581c5badc930"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -129,7 +129,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
-      "sha256": "9710dcc58f0cc81a17cb58bd98d42b92edf240c5c35525479f659bec27630df3"
+      "sha256": "282e9c644081bc895f86ae8f9a81eacaf2eaabfed2f1f4cb69a7e485e20eb7eb"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/line-ai-ledger-internal.controller.ts",
@@ -169,11 +169,11 @@
     },
     {
       "path": "packages/config/src/index.ts",
-      "sha256": "1cf3dc49ced48479282c107747251639336972aaf5caf5f31ae2ad26a880cec8"
+      "sha256": "12555d439cd0f6deed69d5f4364ede807b0c0ea07e7052214523f26c0dcf9654"
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "0daf53e07447dc03e4e09cfb049408f8473c1458d6712bc34051bba6102c847f"
+      "sha256": "84c19b251350870878601b1dab9a36b491e4efa57c79fc099a95664444a143a7"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -181,7 +181,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "e33873eb04a1df148dee50818582990e64e3ce834e78068d1d9ee6129fa4300a"
+      "sha256": "cf67a25980331211441bc267299117c03977e5851e279457a3daeff5ad6bc0bc"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -1377,6 +1377,7 @@
         "optional": [
           "branchId",
           "categoryId",
+          "categoryName",
           "cursor",
           "documentStatus",
           "fromDate",
@@ -1384,11 +1385,13 @@
           "paymentStatus",
           "periodKey",
           "toDate",
-          "vendorId"
+          "vendorId",
+          "vendorName"
         ],
         "allowed": [
           "branchId",
           "categoryId",
+          "categoryName",
           "cursor",
           "documentStatus",
           "fromDate",
@@ -1396,7 +1399,8 @@
           "paymentStatus",
           "periodKey",
           "toDate",
-          "vendorId"
+          "vendorId",
+          "vendorName"
         ]
       },
       "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
@@ -4585,22 +4589,28 @@
         "optional": [
           "branchId",
           "categoryId",
+          "categoryName",
           "documentStatus",
           "fromDate",
+          "groupBy",
           "paymentStatus",
           "periodKey",
           "toDate",
-          "vendorId"
+          "vendorId",
+          "vendorName"
         ],
         "allowed": [
           "branchId",
           "categoryId",
+          "categoryName",
           "documentStatus",
           "fromDate",
+          "groupBy",
           "paymentStatus",
           "periodKey",
           "toDate",
-          "vendorId"
+          "vendorId",
+          "vendorName"
         ]
       },
       "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
@@ -8636,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-28T09:14:59.039Z",
-  "manifestDigest": "3672d8b7f7ab50756ca090190279aabdcb005b0f5c443a3f5fefa0f36809971f"
+  "generatedAt": "2026-09-28T13:27:00.795Z",
+  "manifestDigest": "a19afb3184344a4d70af94b91f0176077fc7477796bf82fbfbc40a98b088f6e6"
 }

@@ -26,8 +26,15 @@ export class ReimbursementListPendingApprovalsTool implements ErpReadToolPort {
 
   async execute(ctx: ErpToolContext, _input?: Record<string, unknown>): Promise<ToolResult> {
     const asOf = new Date().toISOString();
+    // Item 3 (223-turn eval batch 2, T-143): a bare 'forbidden' gave the caller nothing to render,
+    // so a STAFF user asking for the approval queue got their own claims summary instead (either a
+    // silent fallback to a different tool, or a swap the model made on its own) with no statement
+    // that they cannot see the queue at all. A typed errorCode survives the gateway's
+    // enforceSourceHonesty boundary (non-'ok' results keep only toolName/status/sourceRefs/asOf/
+    // errorCode/errorMessage) so the gateway can render an honest "คุณไม่มีสิทธิ์ดูรายการรออนุมัติ"
+    // instead of any answer shaped like the approval queue.
     if (!ctx.permissions.includes('reimbursement.approve')) {
-      return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
+      return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf, errorCode: 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED' };
     }
 
     const rows = await this.approvalQueue.execute(toCtx(ctx));

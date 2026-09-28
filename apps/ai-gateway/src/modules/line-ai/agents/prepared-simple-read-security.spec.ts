@@ -73,7 +73,7 @@ function makeErp(result: Partial<ToolResult> = {}) {
 /** A capturing logger so the exact prepared-lane fallback reason can be asserted per case. */
 function withLogSink(orchestrator: OrchestratorAgent) {
   const logs: any[] = [];
-  (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: () => {}, error: () => {} };
+  (orchestrator as any).logger = { log: (e: any) => logs.push(e), warn: (e: any) => logs.push(e), error: () => {} };
   return logs;
 }
 const fallbackReason = (logs: any[]): string | undefined =>
@@ -143,7 +143,7 @@ type CaseSpec = {
 
 /** Honest terminal: an authoritative outcome line with NO number of any kind (nothing fabricated). */
 const assertNoFabricatedNumber = (result: AgentRunResult) => {
-  assert.match(result.replyText, /^[⏳🔒]/u, 'a non-success prepared outcome uses the deterministic terminal copy');
+  assert.match(result.replyText, /^🔒|ยังดึงข้อมูลส่วนนี้ไม่ได้|can't fetch this data/u, 'a non-success prepared outcome uses the deterministic terminal copy');
   assert.doesNotMatch(result.replyText, /\d/u, 'the terminal must not carry any number');
   assert.deepEqual(result.sourceRefs, [], 'an honest terminal claims no source');
 };
@@ -249,7 +249,7 @@ describe('v2 prepared simple-read preserves the two-call grant and semantic cove
       assert.equal(fetchCalls, 0, 'never spend the remaining slot on an unusable plan');
       assert.deepEqual(spy, { compose: 0, judge: 0, route: 0 });
       assert.ok(parseLineAiSemanticCoverage(result.semanticCoverage, req.semanticSubrequests!));
-      assert.equal(result.semanticCoverage?.[0]?.status, name === 'prepared-explicit-empty' ? 'handled' : 'needs_user');
+      assert.equal(result.semanticCoverage?.[0]?.status, name === 'prepared-explicit-empty' ? 'handled' : 'unsupported');
       if (scenario.expectCalls) scenario.assertOutcome?.(result);
       else assert.deepEqual(result.outputs, []);
     });
@@ -272,7 +272,7 @@ describe('v2 prepared simple-read preserves the two-call grant and semantic cove
       })).run(req);
       assert.deepEqual(calls, []); assert.equal(fetchCalls, 0);
       assert.equal(result.semanticCoverage?.length, req.semanticSubrequests!.length);
-      assert.ok(result.semanticCoverage?.every(coverage => coverage.status === 'needs_user'));
+      assert.ok(result.semanticCoverage?.every(coverage => coverage.status === 'unsupported'));
       assert.ok(parseLineAiSemanticCoverage(result.semanticCoverage, req.semanticSubrequests!));
       assert.deepEqual(result.sourceRefs, []);
     });
@@ -282,7 +282,7 @@ describe('v2 prepared simple-read preserves the two-call grant and semantic cove
     const { client, calls } = makeErp({ sourceRefs: [{ label: 'unverified', module: 'sales', entityType: 'summary', permissionChecked: false }] as unknown as ToolResult['sourceRefs'] });
     const result = await new OrchestratorAgent(client, makeConfig()).run(await v2Req());
     assert.equal(calls.length, 1); assert.equal(fetchCalls, 0);
-    assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
+    assert.equal(result.semanticCoverage?.[0]?.status, 'unsupported');
     assertNoFabricatedNumber(result);
   });
 
@@ -362,9 +362,13 @@ describe('prepared simple-read lane — eligible deterministic answer (no model,
     assert.equal(spy.compose, 0, 'ResponseComposer.compose === 0');
     assert.equal(spy.judge, 0, 'CoverageCritic.judge === 0');
     assert.match(result.replyText, /12,345/); // grounded number, from the tool
-    assert.match(result.replyText, new RegExp(`ช่วง: ${BACKED_DATE}`)); // period from the validated input
-    assert.match(result.replyText, /ที่มา: ยอดขายรวม/); // source reference
-    assert.match(result.replyText, /ข้อมูล ณ 2026-07-15/); // as-of state
+    // C6 (batch 5c): the period/as-of lines are now Thai calendar dates, not the raw ISO strings.
+    assert.match(result.replyText, /ช่วง: 20 ส\.ค\. 2569/); // period from the validated input
+    // C6 (batch 5c): the reply text no longer states "ที่มา:" — the API appends "แหล่งข้อมูล:" from
+    // sourceRefs already, so a line here doubled it.
+    assert.doesNotMatch(result.replyText, /ที่มา:|Source:/);
+    assert.equal(result.sourceRefs[0]?.label, 'ยอดขายรวม'); // source reference still carried structurally
+    assert.match(result.replyText, /ข้อมูล ณ 15 ก\.ค\. 2569/); // as-of state
     assert.equal(result.webLinks[0]?.path, '/sales'); // link
     assert.equal(result.presentation?.kind, 'answer_cards');
   });
@@ -376,8 +380,8 @@ describe('prepared simple-read lane — eligible deterministic answer (no model,
       rawPreparedSales({ intentPlan: { status: 'ROUTABLE', language: 'en', requiresHumanReview: false, refusals: [], intents: [{ intent: 'read_summary', subject: 'sale', agent: 'sales', priority: 1, requiredTools: ['sales.get_sales_summary'], missingContext: [] }] } }),
     ));
     assert.match(result.replyText, /Sales: 12,345 THB/);
-    assert.match(result.replyText, /Source: ยอดขายรวม/);
-    assert.match(result.replyText, /Data as of 2026-07-15/);
+    assert.doesNotMatch(result.replyText, /ที่มา:|Source:/);
+    assert.equal(result.sourceRefs[0]?.label, 'ยอดขายรวม');
   });
 
   // P0: any input the sanitizer would CHANGE must fall back BEFORE a call — never strip-and-execute.
@@ -441,5 +445,42 @@ describe('prepared simple-read lane — eligible deterministic answer (no model,
       assert.equal(calls.length, 0, 'no compiled family enabled → zero prepared calls');
       assert.equal(fallbackReason(logs), 'formatter_family_not_allowed');
     }
+  });
+});
+
+describe('item 1 (spec §2/§3 row 17, §8): the unsold-module scope policy runs before the fast lane', () => {
+  it('item 1: an unsold-module question is blocked even with an otherwise-valid, eligible prepared plan', async () => {
+    const { client, calls } = makeErp();
+    // v2Req's default plan/tool (sales.get_sales_summary) IS the real, otherwise-eligible sales
+    // read — proving the block is a scope decision, not a side effect of a malformed/ineligible plan.
+    const req = await v2Req({ userContext: { permissions: ['crm.report.read'], entitledFeatureKeys: ['expenses'] } as any });
+    const result = await new OrchestratorAgent(client, makeConfig()).run(req);
+    assert.equal(calls.length, 0, 'the fast lane must never run for an unsold-module clause');
+    assert.equal(fetchCalls, 0, 'no model call is needed either — a deterministic, code-side override');
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+    assert.ok(result.replyText.includes('แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่อง'), result.replyText);
+  });
+
+  it('item 1: the same sales question is NOT blocked once sales_documents is entitled', async () => {
+    const { client, calls } = makeErp();
+    const req = await v2Req({ userContext: { permissions: ['crm.report.read'], entitledFeatureKeys: ['expenses', 'sales_documents'] } as any });
+    const result = await new OrchestratorAgent(client, makeConfig()).run(req);
+    assert.deepEqual(calls, ['sales.get_sales_summary']);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+  });
+});
+
+describe('item 4 (spec §3 rows 3/11): the misrouted-tool guard runs before the fast lane too', () => {
+  it('a reimbursement-claim question never runs the fast lane through the expense ledger (eval T-093-b)', async () => {
+    const { client, calls } = makeErp();
+    const messageText = 'ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ';
+    const plan = rawPreparedSales({
+      intentPlan: { status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }] },
+      proposedCalls: [{ toolName: 'expense.list_recent', input: { paymentStatus: 'UNPAID' } }],
+    });
+    const req = await v2Req({ messageText, userContext: { permissions: ['expense.read', 'reimbursement.read_own'] } as any }, plan);
+    const result = await new OrchestratorAgent(client, makeConfig({ lineAiDeterministicResponseFamilies: ['expense.list_recent::single_metric'] })).run(req);
+    assert.equal(calls.length, 0, 'the fast lane must never answer a reimbursement claim question with the expense ledger');
   });
 });

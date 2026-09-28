@@ -31,6 +31,16 @@ it('resumes the selected exact revision, retains accepted fields, and keeps a si
   assert.equal(f.projection().tasks[2].state, 'completed');
   assert.equal(f.projection().tasks[1].revision, 2);
 });
+it('closes a system give-up (unsupported) as completed like a success, never waiting_user, and records no question', async () => {
+  const f = fixture();
+  assert.equal(await f.flow.preserveSemanticTask(f.event, [resume, { index: 1, kind: 'read', goal: 'ยอดเดือนนี้เท่าไหร่', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }]), true);
+  assert.equal(f.projection().tasks.length, 3);
+  await f.flow.settleSemanticTask(f.event, [{ index: 0, status: 'needs_user', question: 'confirm preview' },
+    { index: 1, status: 'unsupported', reasonCode: 'READ_SOURCE_UNAVAILABLE' }], ['action']);
+  assert.equal(f.projection().tasks[0].state, 'waiting_user', 'a genuine missing-value clarification still waits on the user');
+  assert.equal(f.projection().tasks[2].state, 'completed', 'a system give-up closes the task instead of leaving it waiting');
+  assert.deepEqual(f.projection().tasks[2].deliveredQuestionRefs ?? [], [], 'an unsupported give-up records no delivered question');
+});
 it('rejects stale, unknown, duplicate or wrong-kind task selection before changing state', async () => {
   for (const item of [
     { ...resume, taskRef: { ...resume.taskRef, taskRevision: 3 } },

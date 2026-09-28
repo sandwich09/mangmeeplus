@@ -12,9 +12,10 @@
  * `unverified` when the output does not match the family's exact shape, so the caller falls back to an
  * honest terminal without claiming success. No provider, no tool re-invocation.
  */
+import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS } from '@watchdog-bms/contracts';
 import type { LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
-import { aggregationIncomplete, appliedPeriod } from '../domain/logic/business-read-result-semantics';
+import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
 
 export type PreparedFormatResult =
   | { kind: 'answer'; replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[] }
@@ -37,7 +38,7 @@ export type PreparedFormatContext = {
   asOfLabel?: string;
 };
 
-const isEnglish = (ctx: PreparedFormatContext): boolean =>
+export const isEnglish = (ctx: PreparedFormatContext): boolean =>
   ctx.language.toLowerCase().startsWith('en') || (!/[฀-๿]/.test(ctx.language) && ctx.locale.toLowerCase().startsWith('en'));
 
 /** Group the source thousands like the ERP does; leaves a non-numeric string untouched. */
@@ -51,12 +52,21 @@ function groupThousands(value: string): string {
 function asOfLine(asOf: string | undefined, english: boolean, thaiLabel?: string): string {
   if (!asOf) return '';
   const day = asOf.slice(0, 10);
-  return english ? `\nData as of ${day}` : `\nข้อมูล ณ ${thaiLabel ?? day}`;
+  // C6 (batch 5c): always a Thai/English calendar date, never the bare ISO string — "ข้อมูล ณ 28 ก.ย.
+  // 2569" / "Data as of 28 Sep 2026", always with the year. `thaiLabel` (expense-summary's own
+  // full-month override, e.g. "28 กันยายน 2569") still wins when the caller supplies one.
+  const label = !english && thaiLabel ? thaiLabel : thaiAbbrDate(day, english);
+  return english ? `\nData as of ${label ?? day}` : `\nข้อมูล ณ ${label ?? day}`;
 }
 
-function rangePhrase(from: string | undefined, to: string | undefined): string | undefined {
-  if (from && to) return from === to ? from : `${from} – ${to}`;
-  return from ?? to;
+/** Pairs a from/to into one range phrase, each side rendered as a Thai/English calendar date when it is
+ *  a day-precision ISO date. C6 (batch 5c): every call site here used to print the raw ISO string —
+ *  `periodLabel` (checked before `periodLine` ever reaches this) was the only path that was already
+ *  Thai, and only for a Thai answer. */
+function rangePhrase(from: string | undefined, to: string | undefined, english: boolean): string | undefined {
+  const label = (value: string) => thaiAbbrDate(value, english) ?? value;
+  if (from && to) return from === to ? label(from) : `${label(from)} – ${label(to)}`;
+  return from ? label(from) : to ? label(to) : undefined;
 }
 
 const THAI_FULL_MONTH_NAMES = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
@@ -102,20 +112,22 @@ function periodLine(
   periodLabel?: string,
 ): string {
   // The label already reads as Thai ("เดือนที่แล้ว (1–31 ส.ค. 2569)"), so it replaces the bare ISO
-  // range for a Thai answer; an English answer keeps the ISO dates it has always printed.
+  // range for a Thai answer.
   if (!english && periodLabel) return `\nช่วง: ${periodLabel}`;
   const effective = appliedPeriod(data);
   const from = effective?.fromDate ?? (typeof proposedInput?.['fromDate'] === 'string' ? proposedInput['fromDate'] as string : undefined);
   const to = effective?.toDate ?? (typeof proposedInput?.['toDate'] === 'string' ? proposedInput['toDate'] as string : undefined);
-  let phrase = rangePhrase(from, to);
+  let phrase = rangePhrase(from, to, english);
   if (!phrase) {
     const echoed = data?.['period'];
+    // A free-text echo (e.g. a period KEY like "2026-08") is not a day-precision date — render as-is.
     if (typeof echoed === 'string' && echoed.trim()) phrase = echoed;
     else if (echoed && typeof echoed === 'object') {
       const e = echoed as Record<string, unknown>;
       phrase = rangePhrase(
         typeof e['fromDate'] === 'string' ? e['fromDate'] as string : undefined,
         typeof e['toDate'] === 'string' ? e['toDate'] as string : undefined,
+        english,
       );
     }
   }
@@ -201,13 +213,19 @@ function isMoney(value: unknown): value is string | number {
     : typeof value === 'string' && PLAIN_DECIMAL.test(value.replace(/,/g, ''));
 }
 
-/** The specialist's permission-checked source: its reference, the `Source:` line, and the deep link that
- *  is the answer's next action. Taken from the fact the tool grounded — never invented here. */
+/** The specialist's permission-checked source reference and the deep link that is the answer's next
+ *  action — taken from the fact the tool grounded, never invented here. `sourceText` is always ''
+ *  (C6, batch 5c): apps/api's process-line-webhook (`formatLineReply`) and the Flex card
+ *  (line-business-card.logic.ts) already append "แหล่งข้อมูล: <label>" from `sourceRefs` to every LINE
+ *  answer that has one, so a "ที่มา:"/"Source:" line here made the customer read the source twice.
+ *  Kept in the return shape — every caller below still interpolates it — so this is the one place
+ *  that changed, not the ~15 reply templates. `english` stays a parameter for call-site parity. */
 function groundedSource(sourceRef: SourceRef | undefined, english: boolean): { sourceRefs: SourceRef[]; webLinks: LineAiWebLink[]; sourceText: string } {
+  void english;
   return {
     sourceRefs: sourceRef ? [sourceRef] : [],
     webLinks: sourceRef?.webPath ? [{ label: sourceRef.label, path: sourceRef.webPath }] : [],
-    sourceText: sourceRef ? (english ? `\nSource: ${sourceRef.label}` : `\nที่มา: ${sourceRef.label}`) : '',
+    sourceText: '',
   };
 }
 
@@ -238,9 +256,8 @@ function formatSalesSummarySingleMetric(output: SpecialistOutput, ctx: PreparedF
   const countText = hasCount
     ? (english ? ` (${String(count)} transactions)` : ` (${String(count)} รายการ)`)
     : '';
-  const sourceText = sourceRef
-    ? (english ? `\nSource: ${sourceRef.label}` : `\nที่มา: ${sourceRef.label}`)
-    : '';
+  // C6 (batch 5c): no "ที่มา:/Source:" line — see groundedSource's docstring above.
+  const sourceText = '';
 
   const replyText = `${label}: ${amount}${countText}${periodLine(ctx.proposedInput, data, english, ctx.periodLabel)}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
@@ -258,6 +275,66 @@ function formatSalesSummarySingleMetric(output: SpecialistOutput, ctx: PreparedF
 function formatExpenseListRecentSingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
   return formatExpenseSummary(sourceData(output, 'expense.list_recent'), ctx,
     output.facts.find((fact) => fact.sourceRef)?.sourceRef, output.asOf);
+}
+
+/** Humanizes an UPPER_SNAKE enum key for an English answer (`CONFIRMED` → `Confirmed`). */
+function humanizedEnum(key: string): string {
+  return key.charAt(0) + key.slice(1).toLowerCase().replace(/_/g, ' ');
+}
+
+/** Item 1 (spec R-A1 row 18): state the scope whenever it is not company-wide, so a STAFF/related
+ *  reader with a correct own/related-only total is never left thinking it is the whole company's.
+ *  Read from the tool's own TRUSTED `accessScope` echo (never inferred here) — set by the same
+ *  permission logic that already narrows the query (`aiReadScope` in expense-draft.use-case.ts, and
+ *  its reimbursement/daily-closing equivalents). */
+function scopeLine(accessScope: unknown, english: boolean): string {
+  if (accessScope === 'own') return english ? '\nScope: only your own records' : '\nขอบเขต: เฉพาะรายการของคุณ';
+  if (accessScope === 'related') return english ? '\nScope: only records related to you' : '\nขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ';
+  return '';
+}
+
+/** Spec R-A1's ตัวกรอง line — document/payment status, resolved category/vendor name, and branch —
+ *  read off `queryApplied` (the tool's own TRUSTED echo of what it actually applied, never the model's
+ *  raw proposed input). Shared by every `expense.list_recent`/`expense.get_breakdown`-shaped family
+ *  (today: list_recent's single_metric and list; R-L4 adds get_breakdown's list) so they never phrase
+ *  the same filters differently. `hasStatusFilter` is returned separately because only list_recent's
+ *  single-metric basis line needs it — a status filter redefines what "pending"/"confirmed" mean, so
+ *  that breakdown must hide instead of quietly disagreeing with the headline total. `scopeText` is
+ *  item 1's own/related access-scope line (see `scopeLine`).
+ *  Read-only reference: erp-tools.use-case.ts's expense.list_recent/get_breakdown handlers (~queryApplied). */
+function expenseFilterLine(
+  data: Record<string, unknown> | undefined,
+  ctx: PreparedFormatContext,
+  english: boolean,
+): { filtersText: string; hasStatusFilter: boolean; scopeText: string } {
+  const queryApplied = data?.['queryApplied'];
+  const appliedFilters = queryApplied && typeof queryApplied === 'object' && !Array.isArray(queryApplied)
+    ? queryApplied as Record<string, unknown> : undefined;
+  const statusBasis = appliedFilters?.['statusBasis'];
+  const documentStatus = typeof statusBasis === 'string' && statusBasis !== 'exclude_rejected_voided' ? statusBasis : undefined;
+  const otherFiltersRaw = appliedFilters?.['filters'];
+  const otherFilters = otherFiltersRaw && typeof otherFiltersRaw === 'object' && !Array.isArray(otherFiltersRaw)
+    ? otherFiltersRaw as Record<string, unknown> : undefined;
+  const stringFilter = (key: string): string | undefined => typeof otherFilters?.[key] === 'string' ? otherFilters[key] as string : undefined;
+  const paymentStatus = stringFilter('paymentStatus');
+  // Spec item 2(d): the resolved display name a categoryName/vendorName input matched to — never the
+  // model's raw free-text guess — so the filter line always names the SAME category/vendor the numbers
+  // above were actually computed from.
+  const categoryName = stringFilter('categoryName');
+  const vendorName = stringFilter('vendorName');
+  const filterPhrases: string[] = [];
+  const documentStatusLabel = documentStatus ? (EXPENSE_STATUS_LABELS as Record<string, string>)[documentStatus] : undefined;
+  if (documentStatus && documentStatusLabel) filterPhrases.push(english ? `only ${humanizedEnum(documentStatus)}` : `เฉพาะที่${documentStatusLabel}`);
+  const paymentStatusLabel = paymentStatus ? (EXPENSE_PAYMENT_STATUS_LABELS as Record<string, string>)[paymentStatus] : undefined;
+  if (paymentStatus && paymentStatusLabel) filterPhrases.push(english ? `only ${humanizedEnum(paymentStatus)}` : `เฉพาะที่${paymentStatusLabel}`);
+  if (categoryName) filterPhrases.push(english ? `category ${categoryName}` : `เฉพาะหมวด${categoryName}`);
+  if (vendorName) filterPhrases.push(english ? `vendor ${vendorName}` : `เฉพาะร้าน${vendorName}`);
+  if (ctx.branchLabel) filterPhrases.push(english ? `branch ${ctx.branchLabel}` : `เฉพาะสาขา${ctx.branchLabel}`);
+  return {
+    filtersText: filterPhrases.length ? (english ? `\nFilters: ${filterPhrases.join(', ')}` : `\nตัวกรอง: ${filterPhrases.join(', ')}`) : '',
+    hasStatusFilter: documentStatus !== undefined || paymentStatus !== undefined,
+    scopeText: scopeLine(appliedFilters?.['accessScope'], english),
+  };
 }
 
 /** Shared by prepared and full replies; the tool's effective period and count are authoritative. */
@@ -291,10 +368,27 @@ export function formatExpenseSummary(
     ? (english ? `\nExcludes ${plural(cancelled, 'rejected or voided record')}`
       : `\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ ${groupThousands(String(cancelled))} รายการ`)
     : '';
+  // expense.list_recent narrows `summary` itself when documentStatus/paymentStatus is applied (the
+  // basis text below is computed from the SAME narrowed set), so with documentStatus=CONFIRMED the old
+  // unconditional basis line printed "pending 0.00 (draft 0.00)" even though a draft genuinely exists —
+  // it was simply excluded by the filter, not absent.
+  const { filtersText, hasStatusFilter, scopeText } = expenseFilterLine(data, ctx, english);
+
+  const draftAmount = totals['draftAmount'];
+  const pendingAmount = totals['pendingAmount'];
+  const confirmedAmount = totals['confirmedAmount'];
+  const validBasisAmount = (value: unknown): value is string | number => typeof value === 'number'
+    ? Number.isFinite(value)
+    : typeof value === 'string' && PLAIN_DECIMAL.test(value.replace(/,/g, ''));
+  const basisText = !hasStatusFilter && validBasisAmount(pendingAmount) && validBasisAmount(draftAmount) && validBasisAmount(confirmedAmount)
+    ? english
+      ? `\nAmount basis: includes ${moneyText(pendingAmount)} THB pending (including ${moneyText(draftAmount)} THB draft) and ${moneyText(confirmedAmount)} THB confirmed`
+      : `\nฐานยอด: รวมรายการรอดำเนินการ ${moneyText(pendingAmount)} บาท (ในนั้นเป็นร่าง ${moneyText(draftAmount)} บาท) และรายการยืนยันแล้ว ${moneyText(confirmedAmount)} บาท`
+    : '';
 
   const localizedAsOf = ctx.asOfLabel ?? thaiExpenseAsOfLabel(asOf);
   const asOfText = english ? asOfLine(asOf, true) : localizedAsOf ? asOfLine(asOf, false, localizedAsOf) : '';
-  const replyText = `${label}: ${amount}${countText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfText}`;
+  const replyText = `${label}: ${amount}${countText}${filtersText}${scopeText}${basisText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfText}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -308,6 +402,210 @@ const ACCOUNTING_DOCUMENT_TYPE_TH: Record<string, string> = {
 function documentTypeLabel(type: string, english: boolean): string {
   if (english) return type.charAt(0) + type.slice(1).toLowerCase().replace(/_/g, ' ');
   return ACCOUNTING_DOCUMENT_TYPE_TH[type] ?? type;
+}
+
+/** R-A3: enough expense records to be useful in one LINE bubble; the rest are admitted by the
+ *  "showing N of M" line, same convention as the document-type and breakdown-group caps below. */
+const MAX_EXPENSE_LIST_LINES = 10;
+
+/**
+ * R-L4/R-A3 — `expense.list_recent` as a numbered list ("ค่าใช้จ่ายล่าสุด 10 รายการ"). States the
+ * grounded total count (the SAME `total`/countedItems basis formatExpenseSummary uses — never
+ * `items.length`, which the tool may page below it), then up to 10 numbered records (date, vendor,
+ * amount, status), a "showing N of M" note when more exist, the same filter line as the single-metric
+ * family, period, source, as-of and link.
+ */
+function formatExpenseListRecentList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'expense.list_recent');
+  const total = data?.['total'];
+  const items = data?.['items'];
+  if (!isCount(total) || !Array.isArray(items)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+  // Item 2: a "list" answer still states the FILTERED SET's own total amount, not only its items
+  // (R-A1) — the same summary.totalAmount formatExpenseSummary already requires, so a mixed-currency
+  // set (no single total) stays honestly unverified here too rather than a list with no aggregate.
+  const summary = data?.['summary'];
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return { kind: 'unverified' };
+  const totalAmount = (summary as Record<string, unknown>)['totalAmount'];
+  if (!isMoney(totalAmount)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const rows: Array<{ date: string; vendor: string; amount: string | number; status: string }> = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { kind: 'unverified' };
+    const item = raw as Record<string, unknown>;
+    const date = item['expenseDate'];
+    const amount = item['grandTotalAmount'];
+    const status = item['status'];
+    if (typeof date !== 'string' || !isMoney(amount) || typeof status !== 'string') return { kind: 'unverified' };
+    const vendor = typeof item['vendorNameSnapshot'] === 'string' && item['vendorNameSnapshot']
+      ? item['vendorNameSnapshot'] as string : (english ? 'Unknown vendor' : 'ไม่ระบุร้าน');
+    rows.push({ date: date.slice(0, 10), vendor, amount, status });
+  }
+
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const shown = rows.slice(0, MAX_EXPENSE_LIST_LINES);
+  const statusLabel = (status: string): string => english ? humanizedEnum(status) : (EXPENSE_STATUS_LABELS as Record<string, string>)[status] ?? status;
+  // C6 (batch 5c): list-item dates are short and year-free within the tool's own as-of year
+  // ("16 ก.ย."), never the raw ISO string.
+  const listYear = civilYear(output.asOf);
+  const itemLines = shown.map((row, index) => {
+    const dateLabel = thaiAbbrDate(row.date, english, listYear) ?? row.date;
+    return english
+      ? `\n${index + 1}. ${dateLabel} ${row.vendor} ${moneyText(row.amount)} THB (${statusLabel(row.status)})`
+      : `\n${index + 1}. ${dateLabel} ${row.vendor} ${moneyText(row.amount)} บาท (${statusLabel(row.status)})`;
+  }).join('');
+  const moreText = total > shown.length
+    ? (english ? `\nShowing ${shown.length} of ${plural(total, 'record')}` : `\nแสดง ${shown.length} จาก ${groupThousands(String(total))} รายการ`)
+    : '';
+  const { filtersText, scopeText } = expenseFilterLine(data, ctx, english);
+
+  const headline = english
+    ? `Expenses: ${moneyText(totalAmount)} THB (${plural(total, 'record')})`
+    : `ค่าใช้จ่าย: ${moneyText(totalAmount)} บาท (${groupThousands(String(total))} รายการ)`;
+  const replyText = `${headline}${itemLines}${moreText}${filtersText}${scopeText}`
+    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/**
+ * Item 3 (spec §3 row 8, "รายการที่ 3 คือร้านอะไรครับ") — `expense.get_detail` as one record's
+ * identity, for an ordinal follow-up about a single already-shown expense. Unlike the summary/list
+ * families this reads ONE permission-checked record, not a page of an aggregate, so it never checks
+ * `aggregationIncomplete` — there is nothing here a page cap could understate. States the date (Thai
+ * calendar), vendor (or the honest "unnamed vendor" label list_recent's own list already uses),
+ * total amount, document/payment status in the SAME Thai labels expense.list_recent's filter line
+ * uses, the category the tool names (when it does — erp-core-detail-tools.use-case.ts does not send
+ * one today; kept optional so a future field is rendered rather than requiring a shape change here),
+ * the access-scope line when not company-wide (same `scopeLine` convention as every other family),
+ * source and link.
+ */
+function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'expense.get_detail');
+  const expenseDate = data?.['expenseDate'];
+  const amount = data?.['grandTotalAmount'];
+  const status = data?.['status'];
+  const paymentStatus = data?.['paymentStatus'];
+  if (typeof expenseDate !== 'string' || typeof status !== 'string' || !status
+    || typeof paymentStatus !== 'string' || !paymentStatus || !isMoney(amount)) return { kind: 'unverified' };
+  const dateLabel = thaiIsoDate(expenseDate.slice(0, 10));
+  if (!dateLabel) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const vendor = typeof data?.['vendorName'] === 'string' && data['vendorName']
+    ? data['vendorName'] as string : (english ? 'Unknown vendor' : 'ไม่ระบุร้าน');
+  const documentStatusLabel = english ? humanizedEnum(status) : (EXPENSE_STATUS_LABELS as Record<string, string>)[status] ?? status;
+  const paymentStatusLabel = english ? humanizedEnum(paymentStatus) : (EXPENSE_PAYMENT_STATUS_LABELS as Record<string, string>)[paymentStatus] ?? paymentStatus;
+  const category = data?.['categoryName'];
+  const categoryText = typeof category === 'string' && category
+    ? (english ? `\nCategory: ${category}` : `\nหมวด: ${category}`) : '';
+  const scopeText = scopeLine(data?.['accessScope'], english);
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+
+  // C6 (batch 5c): the English headline printed the raw ISO date while the Thai side already used
+  // `dateLabel` — `expenseDate` already passed `thaiIsoDate`'s stricter real-calendar check above.
+  const headline = english
+    ? `Expense: ${vendor}, ${thaiAbbrDate(expenseDate.slice(0, 10), true) ?? expenseDate.slice(0, 10)}, ${moneyText(amount)} THB`
+    : `ค่าใช้จ่าย: ${vendor} วันที่ ${dateLabel} ยอด ${moneyText(amount)} บาท`;
+  const statusText = english
+    ? `\nDocument status: ${documentStatusLabel} · Payment status: ${paymentStatusLabel}`
+    : `\nสถานะเอกสาร: ${documentStatusLabel} · สถานะการจ่าย: ${paymentStatusLabel}`;
+
+  const replyText = `${headline}${statusText}${categoryText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/** R-A2: enough breakdown groups to stay readable in one bubble; the rest are folded into "อื่นๆ". */
+const MAX_BREAKDOWN_GROUPS = 8;
+
+/** The three axes `expense.get_breakdown` groups by; `groupBy` (spec item 3) is a pure PRESENTATION
+ *  hint that picks which one leads the answer — the tool always computes and returns all three. */
+const BREAKDOWN_AXES = {
+  category: { dataKey: 'byCategory', nameKey: 'category', labelTh: 'หมวด', labelEn: 'category' },
+  branch: { dataKey: 'byBranch', nameKey: 'branch', labelTh: 'สาขา', labelEn: 'branch' },
+  vendor: { dataKey: 'byVendor', nameKey: 'vendor', labelTh: 'ร้าน', labelEn: 'vendor' },
+} as const;
+type BreakdownAxis = keyof typeof BREAKDOWN_AXES;
+
+function moneyNumber(value: string | number): number {
+  return typeof value === 'number' ? value : Number(value.replace(/,/g, ''));
+}
+
+/** M2 (tuning-8, T-057-a): `queryApplied.filters.groupBy` is the tool's own trusted echo of the
+ *  grouping it actually used — the same source `expenseFilterLine` already reads other applied
+ *  filters from. */
+function appliedGroupBy(data: Record<string, unknown> | undefined): unknown {
+  const queryApplied = data?.['queryApplied'];
+  const filters = queryApplied && typeof queryApplied === 'object' && !Array.isArray(queryApplied)
+    ? (queryApplied as Record<string, unknown>)['filters'] : undefined;
+  return filters && typeof filters === 'object' && !Array.isArray(filters) ? (filters as Record<string, unknown>)['groupBy'] : undefined;
+}
+
+/**
+ * R-L4/R-A2 — `expense.get_breakdown` as a grouped list ("แยกค่าใช้จ่ายตามหมวด"). `ctx.proposedInput`
+ * carries the validated `groupBy` the fast lane actually sent (defaulting to category, same as the
+ * tool's own default) — this only selects which of the tool's three ALREADY-COMPUTED axes leads the
+ * answer, it never re-groups anything client-side. Groups sort by amount descending with a percentage
+ * share of the tool's own `totalAmount`; the top 8 are named, the rest are folded into one "อื่นๆ" row
+ * (its amount/count are an exact sum of the tool's own per-group numbers, not an estimate), then the
+ * overall total, filter line, period, source, as-of and link — the same order as spec R-A2.
+ */
+function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'expense.get_breakdown');
+  const totalCount = data?.['totalCount'];
+  const totalAmount = data?.['totalAmount'];
+  if (!isCount(totalCount) || !isMoney(totalAmount)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  // M2 (tuning-8, T-057-a): the full path's deterministic fallback (semantic-turn-v2.ts's
+  // deterministicReadFallback) calls this formatter with NO proposedInput at all — fall back to the
+  // grouping the tool itself actually applied before defaulting to category, so a vendor/branch
+  // breakdown never mislabels itself "แยกตามหมวด".
+  const requestedAxis = ctx.proposedInput?.['groupBy'] ?? appliedGroupBy(data);
+  const axisKey: BreakdownAxis = requestedAxis === 'branch' || requestedAxis === 'vendor' ? requestedAxis : 'category';
+  const axis = BREAKDOWN_AXES[axisKey];
+  const rawGroups = data?.[axis.dataKey];
+  if (!Array.isArray(rawGroups)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const groups: Array<{ name: string; amount: string | number; count: number }> = [];
+  for (const raw of rawGroups) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { kind: 'unverified' };
+    const row = raw as Record<string, unknown>;
+    const name = row[axis.nameKey];
+    const amount = row['totalAmount'];
+    const count = row['count'];
+    if (typeof name !== 'string' || !name || !isMoney(amount) || !isCount(count)) return { kind: 'unverified' };
+    groups.push({ name, amount, count });
+  }
+  groups.sort((a, b) => moneyNumber(b.amount) - moneyNumber(a.amount));
+
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const totalNumber = moneyNumber(totalAmount);
+  const percentText = (part: number): string => `${(totalNumber > 0 ? part / totalNumber * 100 : 0).toFixed(1)}%`;
+  const shown = groups.slice(0, MAX_BREAKDOWN_GROUPS);
+  const rest = groups.slice(MAX_BREAKDOWN_GROUPS);
+  const groupLine = (name: string, amount: number, count: number) => english
+    ? `\n• ${name}: ${moneyText(amount)} THB (${percentText(amount)}, ${plural(count, 'record')})`
+    : `\n• ${name}: ${moneyText(amount)} บาท (${percentText(amount)}, ${groupThousands(String(count))} รายการ)`;
+  const groupLines = shown.map((g) => groupLine(g.name, moneyNumber(g.amount), g.count)).join('');
+  const othersLine = rest.length > 0
+    ? groupLine(
+      `${english ? 'Other' : 'อื่นๆ'} (${rest.length})`,
+      rest.reduce((sum, g) => sum + moneyNumber(g.amount), 0),
+      rest.reduce((sum, g) => sum + g.count, 0),
+    )
+    : '';
+  const totalText = english
+    ? `\nTotal: ${moneyText(totalAmount)} THB (${plural(totalCount, 'record')})`
+    : `\nรวมทั้งหมด: ${moneyText(totalAmount)} บาท (${groupThousands(String(totalCount))} รายการ)`;
+  const { filtersText, scopeText } = expenseFilterLine(data, ctx, english);
+
+  const axisLabel = english ? axis.labelEn : axis.labelTh;
+  const headline = english ? `Expenses by ${axisLabel}` : `ค่าใช้จ่ายแยกตาม${axisLabel}`;
+  const replyText = `${headline}${groupLines}${othersLine}${totalText}${filtersText}${scopeText}`
+    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
 /** Enough document types to be useful in one LINE bubble; the rest are admitted by the "of N types" line. */
@@ -366,7 +664,29 @@ function formatAccountingSummaryList(output: SpecialistOutput, ctx: PreparedForm
 /** Thai month abbreviations, spelled out so the day phrase is identical in every runtime (a locale-driven
  *  month name would drift with the host's ICU build, and a compiled answer must not). */
 const THAI_MONTH_ABBR = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+const EN_MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const CIVIL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** C6 (batch 5c): every raw ISO date a formatter would otherwise print becomes day + abbreviated month,
+ *  with the year added only when it differs from `referenceYear` — a LIST ITEM's own convention
+ *  ("16 ก.ย." this year, "16 ก.ย. 2568" a year ago). `asOfLine` below always passes no reference, so its
+ *  own date always carries the year. `referenceYear` is read from the tool's own as-of, never the
+ *  gateway process's wall clock, so a compiled answer stays deterministic. */
+function thaiAbbrDate(isoDay: string, english: boolean, referenceYear?: number): string | undefined {
+  if (!CIVIL_DATE.test(isoDay)) return undefined;
+  const [, year, month, day] = CIVIL_DATE.exec(isoDay)!;
+  const showYear = referenceYear === undefined || Number(year) !== referenceYear;
+  return english
+    ? `${Number(day)} ${EN_MONTH_ABBR[Number(month) - 1]}${showYear ? ` ${year}` : ''}`
+    : `${Number(day)} ${THAI_MONTH_ABBR[Number(month) - 1]}${showYear ? ` ${Number(year) + 543}` : ''}`;
+}
+
+/** The calendar year of an ISO instant/day, or undefined when unparsable — the "current year" reference
+ *  for `thaiAbbrDate`'s list-item calls, taken from the tool's own as-of rather than wall-clock `now`. */
+function civilYear(isoDayOrInstant: string | undefined): number | undefined {
+  const day = isoDayOrInstant?.slice(0, 10);
+  return day && CIVIL_DATE.test(day) ? Number(day.slice(0, 4)) : undefined;
+}
 
 /** The tool's as-of instant read in the tool's OWN timezone: the civil day it lands on (so the answer can
  *  say "today" only when the data really is today) and the wall-clock time the numbers stop at. Returns
@@ -401,15 +721,42 @@ function moneyGroupsText(value: unknown, english: boolean): string | undefined {
   return parts.join(' · ');
 }
 
+/** `submittedToday`/`pendingReview`/`evidenceBlockers` are all `{count, items}` — a plain record count,
+ *  no money. Hidden (C5, batch 5c) when the tool reports none, so "มีอะไรต้องทำบ้าง" lists only what
+ *  actually needs doing today. */
+function dailyClosingCountBullet(labelTh: string, labelEn: string, group: unknown, english: boolean): string | undefined {
+  const count = group && typeof group === 'object' && !Array.isArray(group) ? (group as Record<string, unknown>)['count'] : undefined;
+  if (typeof count !== 'number' || count <= 0) return undefined;
+  return english ? `${labelEn} ${plural(count, 'record')}` : `${labelTh} ${groupThousands(String(count))} รายการ`;
+}
+
+/** `dueEndOfDay`/`overdue`/`unscheduledOutstanding` are `{totals, items}`: `items.total` is the record
+ *  count across EVERY currency (same convention `occurredToday` uses above — never sum `totals[].count`,
+ *  which is only one currency's share), `totals` the per-currency amounts via `moneyGroupsText`. */
+function dailyClosingMoneyBullet(labelTh: string, labelEn: string, group: unknown, english: boolean): string | undefined {
+  const record = group && typeof group === 'object' && !Array.isArray(group) ? group as Record<string, unknown> : undefined;
+  const items = record?.['items'];
+  const count = items && typeof items === 'object' && !Array.isArray(items) ? (items as Record<string, unknown>)['total'] : undefined;
+  if (typeof count !== 'number' || count <= 0) return undefined;
+  const totalsText = moneyGroupsText(record?.['totals'], english);
+  if (!totalsText) return undefined;
+  return english ? `${labelEn} ${plural(count, 'record')}, total ${totalsText}` : `${labelTh} ${groupThousands(String(count))} รายการ รวม ${totalsText}`;
+}
+
 /**
- * F3 — `expense.get_daily_closing` as one day's spend metric ("ค่าใช้จ่ายวันนี้"). Owner decision
- * 2026-08-26 narrowed this question to the EXPENSE side only (no revenue tool exists yet), so the answer
- * never speaks of money in, profit, or a bank balance. From the tool's real result it states the day, the
- * occurred-today record count (`occurredToday.items.total`) and the per-currency totals it returned
- * (`occurredToday.totals` / `.paid` / `.outstanding` — 4-decimal strings, one row per currency, never
- * summed across currencies), the open evidence backlog, source, as-of, and the REQUIRED source-honesty
+ * F3 — `expense.get_daily_closing` as one day's spend metric ("ค่าใช้จ่ายวันนี้"/"วันนี้มีอะไรต้องทำ
+ * บ้าง"). Owner decision 2026-08-26 narrowed this question to the EXPENSE side only (no revenue tool
+ * exists yet), so the answer never speaks of money in, profit, or a bank balance. From the tool's real
+ * result it states the day, the occurred-today record count (`occurredToday.items.total`) and the
+ * per-currency totals it returned (`occurredToday.totals` / `.paid` / `.outstanding` — 4-decimal strings,
+ * one row per currency, never summed across currencies), source, as-of, and the REQUIRED source-honesty
  * line: these are entries recorded in the system, not bank movement (spec G5, §5-F3). "วันนี้" is claimed
  * only when the tool's own as-of day equals the day it answered for.
+ *
+ * C5 (batch 5c, T-102-a): "มีอะไรต้องทำบ้าง" is a TO-DO question, not just a spend total — the headline
+ * alone buried 32 submissions and 12 pending reviews behind a lone evidence-backlog line. After the
+ * headline, every NON-EMPTY one of submittedToday/pendingReview/dueEndOfDay/overdue/
+ * unscheduledOutstanding/evidenceBlockers renders its own bullet, in that fixed order.
  */
 function formatExpenseDailyClosingSingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
   const data = sourceData(output, 'expense.get_daily_closing');
@@ -433,38 +780,58 @@ function formatExpenseDailyClosingSingleMetric(output: SpecialistOutput, ctx: Pr
   if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
 
   const asOfHere = asOfInZone(output.asOf, data?.['timezone']);
-  const [, , month, dayOfMonth] = CIVIL_DATE.exec(day)!;
-  const dayPhrase = asOfHere?.day === day
-    ? (english ? `Today (${day})` : `วันนี้ (${Number(dayOfMonth)} ${THAI_MONTH_ABBR[Number(month) - 1]})`)
-    // Spec §3.4: "ปิดยอดเมื่อวาน" answers for "เมื่อวาน (17 ก.ย. 2569)", not a bare ISO day.
-    : (english ? `On ${day}` : ctx.periodLabel ? ctx.periodLabel : `วันที่ ${day}`);
+  const isToday = asOfHere?.day === day;
+  const [, dayYear, month, dayOfMonth] = CIVIL_DATE.exec(day)!;
+  // C6 (batch 5c): "Today (2026-08-26)"/"On 2026-08-25" were raw ISO dates in English; the Thai
+  // fallback (no periodLabel) was too. "Today" stays year-free (own year as the reference omits it),
+  // matching the Thai side; the named-day branch always keeps its year (spec §3.4's own "17 ก.ย. 2569"
+  // example) since it is the one day being stated, not a list of many.
+  const dayPhrase = isToday
+    ? (english ? `Today (${thaiAbbrDate(day, true, Number(dayYear)) ?? day})` : `วันนี้ (${Number(dayOfMonth)} ${THAI_MONTH_ABBR[Number(month) - 1]})`)
+    : (english ? `On ${thaiAbbrDate(day, true) ?? day}` : ctx.periodLabel ? ctx.periodLabel : `วันที่ ${thaiAbbrDate(day, false) ?? day}`);
 
   // Honest zero: a day with nothing recorded says so, and states no amount the tool did not return.
-  const headline = english
-    ? `${dayPhrase}: ${plural(count, 'expense record')}${totals ? `, total ${totals}` : ''}`
-    : `${dayPhrase} มีค่าใช้จ่าย ${groupThousands(String(count))} รายการ${totals ? ` รวม ${totals}` : ''}`;
+  // F5 (tuning-6b, T-102-a/T-017-a): "มีค่าใช้จ่าย 0 รายการ" reads as "nothing happened today" even
+  // when submittedToday/pendingReview below are non-zero — this count is expenses DATED today, never
+  // what was submitted today. State that explicitly on the zero case; keep the >0 shape unchanged.
+  const headline = count === 0
+    ? (english
+      ? `${dayPhrase}: no expense records dated ${isToday ? 'today' : 'that day'}`
+      : `${dayPhrase} ยังไม่มีรายการค่าใช้จ่ายที่ลงวันที่${isToday ? 'วันนี้' : 'วันนั้น'}`)
+    : (english
+      ? `${dayPhrase}: ${plural(count, 'expense record')}${totals ? `, total ${totals}` : ''}`
+      : `${dayPhrase} มีค่าใช้จ่าย ${groupThousands(String(count))} รายการ${totals ? ` รวม ${totals}` : ''}`);
   const settledText = paid || outstanding
     ? (english
       ? `\n${[paid && `Paid ${paid}`, outstanding && `Unpaid ${outstanding}`].filter(Boolean).join(' · ')}`
       : `\n${[paid && `จ่ายแล้ว ${paid}`, outstanding && `ยังไม่ได้จ่าย ${outstanding}`].filter(Boolean).join(' · ')}`)
     : '';
-  // The evidence backlog the tool returns is every OPEN blocker, not only today's, so it is stated as a
-  // total rather than implied to belong to this day.
-  const blockers = data?.['evidenceBlockers'];
-  const blockerCount = blockers && typeof blockers === 'object' && !Array.isArray(blockers)
-    ? (blockers as Record<string, unknown>)['count'] : undefined;
-  const blockerText = typeof blockerCount === 'number' && blockerCount > 0
-    ? (english ? `\n${plural(blockerCount, 'record')} awaiting evidence review in total`
-      : `\nรอตรวจหลักฐานทั้งหมด ${groupThousands(String(blockerCount))} รายการ`)
-    : '';
+  // C5: the to-do list, one bullet per NON-EMPTY section, fixed order. Money bullets are per currency
+  // (never summed, like `totals`/`paid`/`outstanding` above); the evidence backlog is every OPEN
+  // blocker, not only today's, same as before this list existed.
+  const checklist = [
+    // "วันนี้" is claimed only when this closing really is for today (same check as `dayPhrase` above)
+    // — `submittedToday`/`dueEndOfDay` are both scoped to the REPORTED day, which "ปิดยอดเมื่อวาน" backs
+    // to a past day, so the bare "today" wording would misstate which day these counts are for.
+    dailyClosingCountBullet(isToday ? 'ส่งเข้ามาวันนี้' : 'ส่งเข้ามาวันนั้น', isToday ? 'Submitted today:' : 'Submitted that day:', data?.['submittedToday'], english),
+    dailyClosingCountBullet('รอตรวจสอบ', 'Pending review:', data?.['pendingReview'], english),
+    dailyClosingMoneyBullet(isToday ? 'ครบกำหนดจ่ายวันนี้' : 'ครบกำหนดจ่ายวันนั้น', isToday ? 'Due today:' : 'Due that day:', data?.['dueEndOfDay'], english),
+    dailyClosingMoneyBullet('เกินกำหนดจ่าย', 'Overdue:', data?.['overdue'], english),
+    dailyClosingMoneyBullet('ค้างจ่าย (ยังไม่กำหนดวันจ่าย)', 'Unpaid (no due date scheduled):', data?.['unscheduledOutstanding'], english),
+    dailyClosingCountBullet('รอตรวจหลักฐาน', 'Awaiting evidence review:', data?.['evidenceBlockers'], english),
+  ].filter((line): line is string => Boolean(line));
+  const checklistText = checklist.length > 0 ? `\n${checklist.map((line) => `• ${line}`).join('\n')}` : '';
 
   const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
   // REQUIRED (spec G5, §5-F3): recorded entries, never bank movement. There is no bank feed (P18).
   const honestyText = english
     ? `\n(From entries recorded in the system${asOfHere ? `, up to ${asOfHere.time}` : ''} — not bank money in/out)`
     : `\n(จากรายการที่บันทึกในระบบ${asOfHere ? ` ถึง ${asOfHere.time}` : ''} — ไม่ใช่ยอดเงินเข้าออกธนาคาร)`;
+  // Item 1: this tool has no `queryApplied` wrapper, so its own scope echo rides `data.accessScope`
+  // directly (see erp-expense-daily-closing.use-case.ts's `accessClauses`).
+  const scopeText = scopeLine(data?.['accessScope'], english);
 
-  const replyText = `${headline}${settledText}${blockerText}${sourceText}${asOfLine(output.asOf, english)}${honestyText}`;
+  const replyText = `${headline}${settledText}${checklistText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}${honestyText}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -557,9 +924,11 @@ function formatApOutstandingSingleMetric(output: SpecialistOutput, ctx: Prepared
 
   const english = isEnglish(ctx);
   const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  // C6 (batch 5c): "ณ 2026-08-25" was a raw ISO date; a stated cut-off day always carries its year.
+  const asOfDateLabel = thaiAbbrDate(asOfDate, english) ?? asOfDate;
   const headline = english
-    ? `Unpaid supplier bills as of ${asOfDate}: ${moneyText(total)} THB (${plural(suppliers, 'supplier')})`
-    : `ยอดค้างจ่ายเจ้าหนี้ ณ ${asOfDate}: ${moneyText(total)} บาท (เจ้าหนี้ ${groupThousands(String(suppliers))} ราย)`;
+    ? `Unpaid supplier bills as of ${asOfDateLabel}: ${moneyText(total)} THB (${plural(suppliers, 'supplier')})`
+    : `ยอดค้างจ่ายเจ้าหนี้ ณ ${asOfDateLabel}: ${moneyText(total)} บาท (เจ้าหนี้ ${groupThousands(String(suppliers))} ราย)`;
 
   const replyText = `${headline}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
@@ -589,9 +958,12 @@ function formatCrmCustomerSummaryList(output: SpecialistOutput, ctx: PreparedFor
   // The window is CLOSED since the tool gained `newUntil` (spec §3.3), so the answer states both ends
   // rather than implying "…until now"; a tool version that sends no end keeps the old open phrasing.
   const closed = typeof until === 'string' && CIVIL_DATE.test(until);
+  // C6 (batch 5c): "2026-08-01 – 2026-08-31" was raw ISO in both languages.
+  const sinceLabel = thaiAbbrDate(since, english) ?? since;
+  const untilLabel = closed ? thaiAbbrDate(until as string, english) ?? until : undefined;
   const window = english
-    ? (closed ? `${since} – ${until}` : `since ${since}`)
-    : (closed ? `${since} – ${until}` : `ตั้งแต่ ${since}`);
+    ? (closed ? `${sinceLabel} – ${untilLabel}` : `since ${sinceLabel}`)
+    : (closed ? `${sinceLabel} – ${untilLabel}` : `ตั้งแต่ ${sinceLabel}`);
   const headline = english
     ? `New customers ${window}: ${plural(created, 'customer')}`
     : `ลูกค้าใหม่${closed ? ' ' : ''}${window}: ${groupThousands(String(created))} ราย`;
@@ -615,20 +987,174 @@ function formatCrmCustomerSummaryList(output: SpecialistOutput, ctx: PreparedFor
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
+/** R-L4: enough pending-approval rows to be useful in one bubble — the tool itself already caps
+ *  `items` at 10 (erp-reimbursement-tools.use-case.ts), this narrows the DISPLAY further to 5. */
+const MAX_REIMBURSEMENT_APPROVAL_LINES = 5;
+
+/**
+ * R-L4 — `reimbursement.list_pending_approvals` as a numbered list ("เบิกจ่ายรออนุมัติมีอะไรบ้าง").
+ * `total` is the tool's TRUE count (computed before its own page cap), so it is always safe to state;
+ * `items` is capped at 10 by the tool, so summing only the shown rows would UNDERSTATE the real total
+ * whenever more than 10 are pending — the same anti-fabrication rule `expense.list_recent`'s
+ * `aggregationIncomplete` enforces elsewhere. A total amount is therefore only ever stated when nothing
+ * was truncated (`total` does not exceed the rows actually returned) and every shown row shares one
+ * currency; otherwise the count stands alone rather than risk an amount the tool never itself totalled.
+ */
+function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'reimbursement.list_pending_approvals');
+  const total = data?.['total'];
+  const items = data?.['items'];
+  if (!isCount(total) || !Array.isArray(items)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const rows: Array<{ requester: string; date?: string; amount: string | number; currency: string }> = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { kind: 'unverified' };
+    const item = raw as Record<string, unknown>;
+    const amount = item['amount'];
+    const currency = item['currency'];
+    if (!isMoney(amount) || typeof currency !== 'string' || !currency) return { kind: 'unverified' };
+    const requester = typeof item['requesterDisplayName'] === 'string' && item['requesterDisplayName']
+      ? item['requesterDisplayName'] as string : (english ? 'Unknown requester' : 'ไม่ระบุผู้ขอ');
+    const submittedAt = typeof item['submittedAt'] === 'string' ? item['submittedAt'].slice(0, 10) : undefined;
+    rows.push({ requester, date: submittedAt, amount, currency });
+  }
+
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const moneyWithCurrency = (amount: string | number, currency: string) => `${moneyText(amount)} ${!english && currency === 'THB' ? 'บาท' : currency}`;
+  const shown = rows.slice(0, MAX_REIMBURSEMENT_APPROVAL_LINES);
+  // C6 (batch 5c): list-item dates are short and year-free within the tool's own as-of year.
+  const listYear = civilYear(output.asOf);
+  const itemLines = shown.map((row, index) => {
+    const dateLabel = row.date ? thaiAbbrDate(row.date, english, listYear) ?? row.date : undefined;
+    return `\n${index + 1}. ${row.requester}${dateLabel ? ` (${dateLabel})` : ''}: ${moneyWithCurrency(row.amount, row.currency)}`;
+  }).join('');
+  const moreText = total > shown.length
+    ? (english ? `\nShowing ${shown.length} of ${plural(total, 'request')}` : `\nแสดง ${shown.length} จาก ${groupThousands(String(total))} รายการ`)
+    : '';
+
+  const sumGrounded = total <= items.length && rows.every((row) => row.currency === rows[0]?.currency);
+  const totalText = sumGrounded && rows[0]
+    ? (english
+      ? `, totaling ${moneyWithCurrency(rows.reduce((sum, row) => sum + moneyNumber(row.amount), 0), rows[0].currency)}`
+      : ` รวม ${moneyWithCurrency(rows.reduce((sum, row) => sum + moneyNumber(row.amount), 0), rows[0].currency)}`)
+    : '';
+  const headline = english
+    ? `Pending approvals: ${plural(total, 'request')}${totalText}`
+    : `เบิกจ่ายรออนุมัติ: ${groupThousands(String(total))} รายการ${totalText}`;
+
+  const replyText = `${headline}${itemLines}${moreText}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/**
+ * R-L4 — `reimbursement.get_summary` as one status metric ("มีใบเบิกรออนุมัติกี่ใบ"). The tool returns
+ * 4 counts/amounts (ReimbursementAiSummary), never a single figure. C8 (batch 5c, T-143-a): leading
+ * with the unpaid TOTAL read as "nothing owed" whenever every pending claim happened to still be
+ * unapproved (a true 0.00 that said nothing about the 2 claims actually waiting) — the answer now
+ * leads with the STATUS COUNTS a customer asks about, and only states the unpaid-approved amount once
+ * unpaidApprovedCount says there is one; overdue stays hidden at zero, same as before. Every field is
+ * read verbatim from the tool, nothing recomputed.
+ */
+function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'reimbursement.get_summary');
+  const pending = data?.['pendingApprovalCount'];
+  const unpaidApproved = data?.['unpaidApprovedCount'];
+  const overdue = data?.['overdueApprovalCount'];
+  const totalUnpaid = data?.['totalUnpaidAmount'];
+  if (!isCount(pending) || !isCount(unpaidApproved) || !isCount(overdue) || !isMoney(totalUnpaid)) return { kind: 'unverified' };
+  if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const clauses = [
+    english ? `${plural(pending, 'request')} pending approval` : `รออนุมัติ ${groupThousands(String(pending))} รายการ`,
+    // The unpaid-approved amount only means something once at least one claim has reached that state.
+    english
+      ? `${plural(unpaidApproved, 'request')} approved, unpaid${unpaidApproved > 0 ? `, totaling ${moneyText(totalUnpaid)} THB` : ''}`
+      : `อนุมัติแล้วรอจ่าย ${groupThousands(String(unpaidApproved))} รายการ${unpaidApproved > 0 ? ` รวม ${moneyText(totalUnpaid)} บาท` : ''}`,
+    overdue > 0 ? (english ? `${plural(overdue, 'request')} overdue` : `เกินกำหนด ${groupThousands(String(overdue))} รายการ`) : undefined,
+  ].filter((clause): clause is string => Boolean(clause));
+  const headline = english ? `Reimbursements: ${clauses.join(' · ')}` : `ใบเบิก: ${clauses.join(' · ')}`;
+  // Item 1: this tool has no `queryApplied` wrapper either, so its scope echo also rides
+  // `data.accessScope` directly (see GetReimbursementAiSummaryUseCase's own own/related/company check).
+  const scopeText = scopeLine(data?.['accessScope'], english);
+
+  const replyText = `${headline}${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
+/** Same Thai wording the web app already shows for these exact status values
+ *  (apps/web/src/features/reimbursements/reimbursements.model.ts REQUEST_STATUS_LABELS) — kept as
+ *  one small local map the same way ACCOUNTING_DOCUMENT_TYPE_TH above is: no cross-app import, only
+ *  the one formatter that needs it. An unknown/legacy status keeps its raw key, never a guess. */
+const REIMBURSEMENT_STATUS_TH: Record<string, string> = {
+  DRAFT: 'ร่าง', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'อนุมัติแล้ว', REJECTED: 'ปฏิเสธ',
+  CANCELLED: 'ยกเลิก', FINANCE_REVIEW: 'รอตรวจสอบการเงิน', READY_FOR_PAYMENT: 'พร้อมจ่าย',
+  PARTIALLY_PAID: 'จ่ายบางส่วน', PAID: 'จ่ายแล้ว', VOIDED: 'เพิกถอน',
+};
+
+/**
+ * Item 3 (spec §3 row 8) — `reimbursement.get_detail` as one claim's identity, for an ordinal
+ * follow-up about a single already-shown reimbursement. One permission-checked record, not a page
+ * of an aggregate, so — like expense.get_detail's single-record family — this never checks
+ * `aggregationIncomplete`. States the requester (or an honest "unnamed requester", the same label
+ * list_pending_approvals already uses), incurred date (Thai calendar), amount, status in the SAME
+ * wording the web app already uses for this exact value, source and link.
+ */
+function formatReimbursementGetDetailSingleMetric(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'reimbursement.get_detail');
+  const incurredDate = data?.['incurredDate'];
+  const amount = data?.['amount'];
+  const status = data?.['status'];
+  if (typeof incurredDate !== 'string' || typeof status !== 'string' || !status || !isMoney(amount)) return { kind: 'unverified' };
+  const dateLabel = thaiIsoDate(incurredDate.slice(0, 10));
+  if (!dateLabel) return { kind: 'unverified' };
+
+  const english = isEnglish(ctx);
+  const requester = typeof data?.['requesterDisplayName'] === 'string' && data['requesterDisplayName']
+    ? data['requesterDisplayName'] as string : (english ? 'Unknown requester' : 'ไม่ระบุผู้ขอ');
+  const statusLabel = english ? humanizedEnum(status) : REIMBURSEMENT_STATUS_TH[status] ?? status;
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+
+  // C6 (batch 5c): the English headline printed the raw ISO date while the Thai side already used
+  // `dateLabel` — `incurredDate` already passed `thaiIsoDate`'s stricter real-calendar check above.
+  const headline = english
+    ? `Reimbursement: ${requester}, ${thaiAbbrDate(incurredDate.slice(0, 10), true) ?? incurredDate.slice(0, 10)}, ${moneyText(amount)} THB`
+    : `ใบเบิกจ่าย: ${requester} วันที่ ${dateLabel} ยอด ${moneyText(amount)} บาท`;
+  const statusText = english ? `\nStatus: ${statusLabel}` : `\nสถานะ: ${statusLabel}`;
+
+  const replyText = `${headline}${statusText}${sourceText}${asOfLine(output.asOf, english)}`;
+  return { kind: 'answer', replyText, sourceRefs, webLinks };
+}
+
 /**
  * Authoritative deterministic terminal copy for a prepared read that did NOT reach a verified success —
  * an unavailable/error/failed source, or a success the compiled formatter could not verify. It states an
  * honest outcome with NO fabricated facts, numbers, source, or completion, and instantiates no composer /
- * router / critic / model. `PERMISSION_DENIED` (a post-plan state change) gets the forbidden line.
+ * router / critic / model. `PERMISSION_DENIED` (a post-plan state change) gets the forbidden line, except
+ * the one typed reimbursement-approval denial, which names the self-serve alternative instead.
  */
 export function preparedTerminalReply(output: SpecialistOutput, ctx: PreparedFormatContext): string {
   const english = isEnglish(ctx);
   if (output.status === 'PERMISSION_DENIED') {
+    if (output.toolCalls.some((call) => call.errorCode === REIMBURSEMENT_APPROVAL_NOT_PERMITTED)) {
+      return reimbursementApprovalNotPermittedReplyText(english);
+    }
     return english ? '🔒 You do not have permission to view this information.' : '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ';
   }
+  // C4 (batch 5c, T-008-b/T-019-a/T-064-a): expense.list_recent/get_breakdown's own not-found/
+  // ambiguous/out-of-scope branch/category/vendor result is a real, grounded answer from the tool's
+  // catalog — no compiled formatter above claims it (none of their shapes match), so it fell through
+  // to the generic "system read failure" line below. Give it the same honest reply the classic path
+  // (orchestrator's `expenseBranchResolutionReply`) already gives, before that generic fallback.
+  const nameIssue = expenseNameResolutionIssue([output]);
+  if (nameIssue) return expenseNameResolutionReplyText(nameIssue, english);
+  // Spec §8 "อ่านข้อมูลไม่ได้ ฝั่งระบบ": a system-side read failure, not a question — no "try again".
   return english
-    ? '⏳ This information is not available right now. Please check the web app.'
-    : '⏳ ตอนนี้ยังดึงข้อมูลส่วนนี้ไม่ได้ กรุณาตรวจสอบในเว็บแอปนะคะ';
+    ? "I can't fetch this data right now. You can view it on the Expenses page on the web."
+    : 'ตอนนี้น้องมั่งมียังดึงข้อมูลส่วนนี้ไม่ได้ค่ะ ดูได้ที่หน้ารายจ่ายบนเว็บ';
 }
 
 /** Exact compiled registry: `${tool}::${answerShape}` → formatter. Add one verified family at a time. */
@@ -636,6 +1162,12 @@ const COMPILED_FORMATTERS: ReadonlyMap<string, (output: SpecialistOutput, ctx: P
   new Map([
     [preparedFamilyKey('sales.get_sales_summary', 'single_metric'), formatSalesSummarySingleMetric],
     [preparedFamilyKey('expense.list_recent', 'single_metric'), formatExpenseListRecentSingleMetric],
+    [preparedFamilyKey('expense.list_recent', 'list'), formatExpenseListRecentList],
+    [preparedFamilyKey('expense.get_detail', 'single_metric'), formatExpenseGetDetailSingleMetric],
+    [preparedFamilyKey('expense.get_breakdown', 'list'), formatExpenseBreakdownList],
+    [preparedFamilyKey('reimbursement.list_pending_approvals', 'list'), formatReimbursementPendingApprovalsList],
+    [preparedFamilyKey('reimbursement.get_summary', 'single_metric'), formatReimbursementGetSummarySingleMetric],
+    [preparedFamilyKey('reimbursement.get_detail', 'single_metric'), formatReimbursementGetDetailSingleMetric],
     [preparedFamilyKey('accounting.get_summary', 'list'), formatAccountingSummaryList],
     [preparedFamilyKey('expense.get_daily_closing', 'single_metric'), formatExpenseDailyClosingSingleMetric],
     [preparedFamilyKey('tax.get_vat_summary', 'single_metric'), formatTaxVatSummarySingleMetric],

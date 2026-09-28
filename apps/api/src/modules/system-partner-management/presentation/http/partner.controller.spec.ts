@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ForbiddenException, ValidationPipe, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { PartnerAiCreditHoldActionBodyDto, PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto, SetOcrConfigBodyDto } from './partner.controller';
+import { OwnerNameBodyDto, PartnerAiCreditHoldActionBodyDto, PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto, SetOcrConfigBodyDto } from './partner.controller';
 import { SystemAiBudgetController } from './system-ai-budget.controller';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
@@ -32,6 +32,7 @@ function makeUCs() {
     resetMemberPassword: { execute: async () => ({ userId: 'u-1', temporaryPassword: 'tmp', expiresAt: '' }) } as any,
     revealMemberPassword: { execute: async () => ({ temporaryPassword: 'tmp' }) } as any,
     setMemberContact: { execute: async () => ({ updated: true }) } as any,
+    setOwnerName: { execute: async (cmd: any) => ({ displayName: cmd.displayName }) } as any,
     getPlanTerm: { execute: async () => ({ term: null }) } as any,
     setPlanTerm: { execute: async () => ({ term: { companyId: 'co-1', tierKey: 'STARTER_249' } }) } as any,
     renewPlanTerm: { execute: async () => ({ term: { companyId: 'co-1', renewCount: 1 } }) } as any,
@@ -57,7 +58,7 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
     // VAT registration: delegated to the company's own service, not re-implemented here.
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
     uc.getPlanTerm, {execute:async()=>({items:[],nextCursor:null})} as any, uc.setPlanTerm, uc.renewPlanTerm, uc.endWarmup,
-    uc.timeline, uc.lineMessage, uc.aiCreditHolds,
+    uc.timeline, uc.lineMessage, uc.aiCreditHolds, uc.setOwnerName,
   );
 }
 
@@ -285,6 +286,7 @@ describe('PartnerController', () => {
       ['acknowledgeAiCreditBreach', 'system.partner_ai_model.manage'],
       // Issuing a bearer QR is a member-management action, gated like unlink and password reset.
       ['issueLineLinkToken', 'system.partner_member.manage'],
+      ['setDisplayName', 'system.partner_member.manage'],
     ];
     for (const [method, perm] of cases) {
       const perms: string[] | undefined = Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, proto[method] as object);
@@ -301,6 +303,35 @@ describe('PartnerController', () => {
     assert.equal(result.lineLink.cmd.memberUserId, 'user-9');
     assert.equal(result.lineLink.cmd.requestingAdminUserId, 'admin-1');
     assert.ok(result.lineLink.cmd.apiBaseUrl.startsWith('https://'), result.lineLink.cmd.apiBaseUrl);
+  });
+
+  it('setDisplayName uses the route target and trusted admin context', async () => {
+    let command: any;
+    const ctrl = makeCtrl({ setOwnerName: { execute: async (cmd: any) => { command = cmd; return { displayName: cmd.displayName }; } } as any });
+    await ctrl.setDisplayName('customer', 'owner', { displayName: 'New', expectedDisplayName: 'Old' }, makeReq());
+    assert.deepEqual(command, { companyId: 'customer', memberUserId: 'owner', displayName: 'New', expectedDisplayName: 'Old', requestingAdminUserId: 'admin-1', requestId: 'req-1' });
+  });
+
+  it('owner rename DTO rejects missing fields, wrong types and unrelated mutations', async () => {
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    const metadata = { type: 'body' as const, metatype: OwnerNameBodyDto };
+    for (const body of [{ displayName: 'New' }, { displayName: null, expectedDisplayName: 'Old' }, { displayName: 1, expectedDisplayName: 'Old' }, { displayName: 'New', expectedDisplayName: 'Old', roleIds: ['OWNER'] }]) {
+      await assert.rejects(() => pipe.transform(body, metadata), BadRequestException);
+    }
+    await pipe.transform({ displayName: 'New', expectedDisplayName: 'Old' }, metadata);
+  });
+
+  it('owner rename refuses tenant and read-only callers through the real permission guard', () => {
+    const guard = new DenyByDefaultGuard(new Reflector());
+    const context = (permissions: string[]) => ({
+      getHandler: () => PartnerController.prototype.setDisplayName,
+      getClass: () => PartnerController,
+      switchToHttp: () => ({ getRequest: () => ({ context: { permissions } }) }),
+    }) as unknown as ExecutionContext;
+    for (const permissions of [[], ['access.employee.update'], ['system.partner_member.read']]) {
+      assert.throws(() => guard.canActivate(context(permissions)), ForbiddenException);
+    }
+    assert.equal(guard.canActivate(context(['system.partner_member.manage'])), true);
   });
 
   // Spec §11.2/D-03: "ห้ามเพิ่ม tenant endpoint สำหรับอ่าน usage/budget". These two routes ARE the

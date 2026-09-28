@@ -569,6 +569,20 @@ describe('LineAiInternalController', () => {
     assert.deepEqual(legit.capabilities, { fusedPlan: true }, 'literal-true survives; false is dropped');
   });
 
+  it('preserves the request-scoped offered tool catalog through the HTTP receiver', async () => {
+    const controller = new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret', modelProvider: 'disabled' } as any,
+      { execute: async () => { throw new Error('should not execute'); } } as any,
+    );
+    const body: any = {
+      requestId: 'req-tools', companyId: 'c', userId: 'u', locale: 'th', messageText: 'ดูรายจ่าย',
+      permissions: ['ai.tool.invoke', 'expense.read'], enabledFeatures: ['expenses', 'expenses.list'],
+      offeredToolNames: ['expense.list_recent'],
+    };
+    await controller.lineIntakeRoute('secret', body);
+    assert.deepEqual(body.offeredToolNames, ['expense.list_recent']);
+  });
+
   it('bank statement extract rejects non-image mime types and fails typed with no provider', async () => {
     const controller = new LineAiInternalController(
       { aiGatewayInternalSecret: 'secret', modelProvider: 'disabled', aiToolTimeoutMs: 1000 } as any,

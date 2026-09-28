@@ -14,7 +14,8 @@ import type { BuyerEntityKind } from './company-tax-identity.js';
 import type { ExpenseCaptureReadStatus } from './expense-capture.js';
 import type { ExpenseDocumentDateStatus } from './line-ai-value-normalizer.js';
 
-export type ExpenseStatus = 'DRAFT' | 'EXTRACTING' | 'NEEDS_REVIEW' | 'READY_FOR_CONFIRMATION' | 'CONFIRMED' | 'REJECTED' | 'VOIDED';
+export const EXPENSE_STATUSES = ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'CONFIRMED', 'REJECTED', 'VOIDED'] as const;
+export type ExpenseStatus = (typeof EXPENSE_STATUSES)[number];
 export type ExtractionStatus = 'NOT_REQUESTED' | 'NOT_CONFIGURED' | 'QUEUED' | 'PROCESSING' | 'SUCCEEDED' | 'PARTIAL' | 'FAILED';
 export type ExpenseExtractionResult = {
   status: 'ok' | 'not_expense_document' | 'not_configured' | 'unsupported' | 'no_attachment' | 'failed';
@@ -34,7 +35,8 @@ export type ExpenseExtractionResult = {
 };
 export type AiVerificationStatus = 'NOT_VERIFIED' | 'VERIFYING' | 'AI_VERIFIED' | 'PARTIAL' | 'NEEDS_REVIEW' | 'FAILED' | 'HUMAN_VERIFIED';
 export type DuplicateStatus = 'NOT_CHECKED' | 'NO_MATCH' | 'POSSIBLE_DUPLICATE' | 'CONFIRMED_DUPLICATE' | 'OVERRIDDEN';
-export type ExpensePaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'VOIDED';
+export const EXPENSE_PAYMENT_STATUSES = ['UNPAID', 'PARTIALLY_PAID', 'PAID', 'VOIDED'] as const;
+export type ExpensePaymentStatus = (typeof EXPENSE_PAYMENT_STATUSES)[number];
 export type ExpensePaymentRecordStatus = 'RECORDED' | 'VOIDED';
 export type ExpensePostingStatus = 'not_required' | 'pending' | 'posted' | 'posting_error' | 'reversed';
 export type ExpensePostingSourceType = 'expense.record' | 'expense.payment';
