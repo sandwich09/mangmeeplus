@@ -1942,7 +1942,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(summary.webhookEventId, 'evt-trace-1');
     assert.ok(typeof summary.requestId === 'string' && summary.requestId.length > 0);
     assert.equal(summary.preparedPlanVersion, null, 'Phase 2: no producer, so null (not invented)');
-    assert.equal(summary.lane, null, 'lane is null because the gateway RESPONSE does not expose which internal lane served the turn (the prepared lane is live but default-off/evidence-gated) — not because lanes are unimplemented');
+    assert.equal(summary.lane, 'other', 'no prepared plan, no planner/compose call and no semantic coverage: neither the prepared nor the semantic lane');
     assert.equal(summary.intent, 'read_summary');
     assert.equal(summary.refused, false);
     assert.equal(summary.modelCallCount, 3);
@@ -1950,11 +1950,11 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(summary.deliveryResult, 'ok');
     assert.equal(summary.usageInputTokens, 100);
     assert.equal(summary.usageOutputTokens, 40);
-    assert.equal(summary.costSatang, null, 'cost is metered elsewhere → null here, not invented');
+    assert.equal(summary.costSatang, null, 'cost is priced at settle time and stored per call in AiUsageEvent → null here, not re-priced');
     // Actual model identity derived from lineage + usage (deduped), not invented.
     assert.equal(summary.modelProvider, 'bedrock');
     assert.deepEqual([...summary.modelIds].sort(), ['apac.anthropic.claude-3-5-sonnet-20241022-v2:0', 'apac.anthropic.claude-3-haiku-20240307-v1:0']);
-    // fallback is a distinct field, always null here (not observable), never conflated with refusal/error.
+    // fallback is a distinct field, never conflated with refusal/error: no semantic coverage → null.
     assert.equal(summary.fallbackReason, null);
 
     // No raw message text or LINE user id in any trace event.
@@ -1962,6 +1962,66 @@ describe('ProcessLineWebhookUseCase', () => {
       const keys = Object.keys(event);
       assert.ok(!keys.includes('lineUserId') && !keys.includes('messageText') && !keys.includes('text'), 'no raw identifiers/text');
     }
+  });
+
+  it('derives the turn summary lane and fallback reason from what the gateway turn response carries', async () => {
+    const prepared = parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'single_metric',
+      intentPlan: {
+        status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_summary', subject: 'sale', agent: 'sales', priority: 1, requiredTools: ['sales.get_sales_summary'], missingContext: [] }],
+      },
+      proposedCalls: [{ toolName: 'sales.get_sales_summary', input: {} }],
+    });
+    assert.ok(prepared, 'prepared-plan fixture parses');
+    const usageEntry = (tag: string) => ({ tag, modelId: 'global.anthropic.claude-sonnet-4-6', ok: true, inputTokens: 10, outputTokens: 5,
+      cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 5 });
+    const summaryFor = async (webhookEventId: string, options: { preparedPlan?: boolean; usage: unknown[]; semanticCoverage?: unknown[] }) => {
+      const { prisma } = makePrisma();
+      const { useCase } = makeUseCase(prisma, {
+        permissions: ['line.ai.query'],
+        config: { lineAiPreparedSimpleReadEnabled: true },
+        intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9,
+          ...(options.preparedPlan ? { preparedPlan: prepared } : {}) }),
+        aiGatewayFn: () => ({
+          requestId: 'req-ai', replyText: 'ยอดขายวันนี้ 1,000 บาท', sourceRefs: [], sourceLabels: [], webLinks: [],
+          intent: 'read_summary', agent: 'sales', refused: false, toolsInvoked: [], toolCalls: [],
+          modelLineage: [], usage: options.usage, durationMs: 10,
+          ...(options.semanticCoverage ? { semanticCoverage: options.semanticCoverage } : {}),
+        }),
+      });
+      const logs: any[] = [];
+      (useCase as any).logger = { log: (entry: any) => logs.push(entry), warn: () => undefined, error: () => undefined };
+      await useCase.execute({ ...BASE_EVENT, webhookEventId, messageText: 'ยอดขายวันนี้เท่าไหร่' });
+      const summary = logs.find((entry) => entry.msg === 'line.ai.turn_summary');
+      assert.ok(summary, `${webhookEventId}: turn summary emitted`);
+      return summary;
+    };
+
+    // Prepared lane: a simple_grounded plan was forwarded and the turn made no model call at all.
+    const preparedTurn = await summaryFor('evt-lane-prepared', { preparedPlan: true, usage: [], semanticCoverage: [{ index: 0, status: 'handled' }] });
+    assert.equal(preparedTurn.lane, 'prepared');
+    assert.equal(preparedTurn.preparedPlanVersion, 1);
+    assert.equal(preparedTurn.fallbackReason, null);
+
+    // The same forwarded plan, but the gateway still composed: the plan was not used.
+    const downgraded = await summaryFor('evt-lane-downgraded', { preparedPlan: true, usage: [usageEntry('line.compose')],
+      semanticCoverage: [{ index: 0, status: 'handled' }] });
+    assert.equal(downgraded.lane, 'semantic');
+    assert.equal(downgraded.preparedPlanVersion, 1, 'a forwarded-but-unused plan stays visible next to the semantic lane');
+
+    // Semantic lane with one item the system could not answer: its reasonCode is the fallback reason.
+    const partial = await summaryFor('evt-lane-semantic', { usage: [usageEntry('line.loop'), usageEntry('line.compose')],
+      semanticCoverage: [{ index: 0, status: 'handled' }, { index: 1, status: 'unsupported', reasonCode: 'TOOL_INPUT_NOT_AUTHORIZED' }] });
+    assert.equal(partial.lane, 'semantic');
+    assert.equal(partial.fallbackReason, 'TOOL_INPUT_NOT_AUTHORIZED');
+    assert.equal(partial.costSatang, null);
+
+    // Semantic lane answered without any model call (e.g. a period comparison): the deterministic fallback.
+    const deterministic = await summaryFor('evt-lane-deterministic', { usage: [],
+      semanticCoverage: [{ index: 0, status: 'handled', reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED' }] });
+    assert.equal(deterministic.lane, 'semantic');
+    assert.equal(deterministic.fallbackReason, 'DETERMINISTIC_FALLBACK_RENDERED');
   });
 
   it('forwards the intake prepared plan into the turn only when a downstream lane flag is on (Phase 3/4 independent, default off)', async () => {

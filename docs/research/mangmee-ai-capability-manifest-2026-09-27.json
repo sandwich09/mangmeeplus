@@ -2,9 +2,9 @@
   "schemaVersion": "line-ai-capability-manifest/v1",
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
-  "baseRevision": "0617d914b7174110749ad4862cc53a9a71776757",
-  "sourceRevision": "0617d914b7174110749ad4862cc53a9a71776757",
-  "checkoutBranch": "codex/mangmee-ai-default-activation-20260927",
+  "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
+  "sourceRevision": "114b90b5c573959a81ae9f7f0566e100c40c0f1e",
+  "checkoutBranch": "claude/line-ai-turn-summary-telemetry",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "33e5a0108d274c99c3e09299136012b12a84e03168c40167ec3267a29f13f920"
+      "sha256": "98f3fd34887e53ba878e8725934a227a83b61a399b99c3d57b3c84662a8d1bef"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8636,6 +8636,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-27T02:38:47.970Z",
-  "manifestDigest": "bcbb909349f1420d1f1d64e59b27d82aa3cf0a15572476c106f1bb9d85931a85"
+  "generatedAt": "2026-09-28T09:14:59.039Z",
+  "manifestDigest": "3672d8b7f7ab50756ca090190279aabdcb005b0f5c443a3f5fefa0f36809971f"
 }
