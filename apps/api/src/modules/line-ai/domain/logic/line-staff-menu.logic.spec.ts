@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CALLBACK_COMMAND, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import { isPublicPolicyFollowUp, resolvePublicPolicyAnswer } from './line-public-policy.logic';
 import { buildPublicPolicyCardMessage } from './line-business-card.logic';
@@ -693,11 +693,22 @@ describe('promotion menu (rich menu v2 ver2)', () => {
       'the package page is the owner\'s to open');
     assert.match(JSON.stringify(buildPromotionCard('employee')), /เจ้าของร้านเป็นคนเลือกแพ็กเกจ/);
     assert.deepEqual(employee.map((action: any) => action.label),
-      ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานช่วยเลือก', 'คุยกับทีมงาน']);
-    assert.equal(employee[1].text, PACKAGE_CHANGE_COMMAND, 'same request payload, new label');
+      ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานติดต่อกลับ', 'คุยกับทีมงาน']);
+    // G19: a callback request travels as a postback with no id or state in it (SEC-04).
+    assert.deepEqual(employee[1], { type: 'postback', label: PACKAGE_CALLBACK_COMMAND, data: 'action=package-callback', displayText: PACKAGE_CALLBACK_COMMAND });
     // An unusable URL drops its button rather than sending a broken link, like every card here.
     assert.deepEqual(actions('stranger').map((action: any) => action.label), ['ดูแพ็กเกจบนเว็บ', 'คุยกับทีมงาน']);
-    assert.deepEqual(actions('owner').map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานช่วยเลือก', 'คุยกับทีมงาน']);
+    assert.deepEqual(actions('owner').map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานติดต่อกลับ', 'คุยกับทีมงาน']);
+    assert.deepEqual(actions('owner')[1], employee[1]);
+    // G20: the business package adds tax documents; it never "opens every menu".
+    assert.doesNotMatch(JSON.stringify(buildPromotionCard('owner', 'https://x/l/t')), /ครบทุกเมนู/);
+    assert.match(JSON.stringify(buildPromotionCard('owner', 'https://x/l/t')), /เพิ่มเอกสารภาษี ภ\.ง\.ด\.53 และ 50 ทวิ/);
+  });
+
+  it('matches the callback words as their own command, typed or from the postback', () => {
+    assert.equal(staffMenuCommand(PACKAGE_CALLBACK_COMMAND), 'package_callback');
+    assert.equal(staffMenuCommand(` ${PACKAGE_CALLBACK_COMMAND} `), 'package_callback');
+    assert.equal(staffMenuCommand(`${PACKAGE_CALLBACK_COMMAND}ด่วน`), null);
   });
 });
 
@@ -773,11 +784,11 @@ describe('public policy conversation', () => {
 
   it('answers documented public policies without claiming an account action succeeded', () => {
     const cases = [
-      ['ทดลองฟรีกี่วัน', 'trial_limits', /ตั้งค่าข้อมูลร้านและบัญชี[\s\S]*249 \/ 499 \/ 999[\s\S]*แพ็กเกจธุรกิจ 1,999 เปิดครบทุกเมนู/],
+      ['ทดลองฟรีกี่วัน', 'trial_limits', /ตั้งค่าข้อมูลร้านและบัญชี[\s\S]*249 \/ 499 \/ 999[\s\S]*แพ็กเกจธุรกิจ 1,999 ได้เมนูเดียวกัน/],
       // Owner 2026-09-21: the menu question asked without the word "ทดลอง" reaches the same answer.
       ['แพ็กเกจไหนได้เมนูอะไรบ้าง', 'trial_limits', /ผู้ช่วย AI ทาง LINE[\s\S]*ต่างกันที่จำนวนสาขา ผู้ใช้ และใบเสร็จ/],
-      ['แพ็กเกจธุรกิจได้อะไรบ้าง', 'trial_limits', /ภ\.ง\.ด\.53 และ 50 ทวิ[\s\S]*คลังสินค้า CRM บัญชีธนาคาร/],
-      ['แพ็คเกจธุรกิจมีอะไรบ้างคะ', 'trial_limits', /เปิดครบทุกเมนู/],
+      ['แพ็กเกจธุรกิจได้อะไรบ้าง', 'trial_limits', /ภ\.ง\.ด\.53 และ 50 ทวิ/],
+      ['แพ็คเกจธุรกิจมีอะไรบ้างคะ', 'trial_limits', /เพิ่มเอกสารภาษี/],
       ['ทดลองใช้ฟรีต้องผูกบัตรไหม', 'card', /ไม่ต้องผูกบัตร/],
       ['หมดโปรฟรีแล้วข้อมูลหายไหม', 'data', /ไม่ได้ถูกลบทันที/],
       ['ขอลบข้อมูลต้องทำยังไง', 'data', /ยังไม่ได้ลบข้อมูล/],

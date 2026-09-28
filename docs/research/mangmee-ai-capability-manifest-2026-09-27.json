@@ -2,9 +2,9 @@
   "schemaVersion": "line-ai-capability-manifest/v1",
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
-  "baseRevision": "016b43c69a88dbf8596106c366651ab95bc88e43",
-  "sourceRevision": "1ff441c3aa2dc069a9e8d05deb333d799ff35f21",
-  "checkoutBranch": "claude/line-ai-turn-summary-telemetry",
+  "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
+  "sourceRevision": "596b15912731fd9f8ac74c1a4467a9d2216e8e74",
+  "checkoutBranch": "claude/purchase-pr-a-line-liff-20260928",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "324ff3564076fa31b522294d0bc8a2c72107d91805e235900287581c5badc930"
+      "sha256": "15bf411e138216e0b88c8763b9db1f2dc6dc149061516396bd3fb2e5df0d13c3"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-28T13:27:00.795Z",
-  "manifestDigest": "a19afb3184344a4d70af94b91f0176077fc7477796bf82fbfbc40a98b088f6e6"
+  "generatedAt": "2026-09-28T14:42:32.052Z",
+  "manifestDigest": "eea49b638bcf204e13f2aff3eaa1b9a9648d6a5d5f03ed8545966161d21ff153"
 }

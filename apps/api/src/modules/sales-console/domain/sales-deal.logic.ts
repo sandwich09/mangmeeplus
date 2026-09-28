@@ -216,8 +216,7 @@ export function tenantBillingLink(webBaseUrl: string | undefined, companyId: str
     const base = new URL(webBaseUrl);
     if (base.protocol !== 'https:' && base.protocol !== 'http:') return undefined;
     const link = new URL(`/companies/${encodeURIComponent(companyId)}/billing`, `${base.origin}/`);
-    // LINE's browser and the system browser have separate cookies; start the billing login in one browser.
-    link.searchParams.set('openExternalBrowser', '1');
+    // The in-app-browser escape is added by the push exit (system-line-push.ts, R-B1), not here.
     return link.origin === base.origin ? link.toString() : undefined;
   } catch {
     return undefined;

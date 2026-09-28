@@ -13,8 +13,15 @@ import {
 type PageState =
   | { kind: 'loading' }
   | { kind: 'ready'; result: ReimbursementDraftActionResponse; submitting?: 'confirm' | 'cancel' }
-  | { kind: 'unknown'; message: string }
-  | { kind: 'error'; message: string };
+  | { kind: 'unknown'; notice: 'result_unconfirmed' | 'connection_lost' }
+  | { kind: 'error'; notice: 'read_failed' };
+
+/** The page's own recovery copy. State carries a key, never free text, so no caught error can reach the screen. */
+const noticeText = {
+  read_failed: 'ไม่สามารถอ่านสถานะล่าสุดได้ กรุณาลองอีกครั้ง',
+  result_unconfirmed: 'ยังยืนยันผลไม่ได้ ระบบจะตรวจจากร่างเดิมโดยไม่สร้างใบเบิกซ้ำ',
+  connection_lost: 'การเชื่อมต่อขาดระหว่างตรวจผล กรุณาอ่านสถานะเดิมก่อน ห้ามสร้างรายการใหม่',
+} as const;
 
 const stateText: Record<string, string> = {
   cancelled: 'ยกเลิกร่างนี้แล้ว โดยไม่ยกเลิกใบเบิกใด ๆ',
@@ -83,8 +90,8 @@ export function ReimbursementDraftActionView({ companyId, state, onConfirm, onCa
   onRefresh: () => void;
 }) {
   if (state.kind === 'loading') return <main className="mx-auto max-w-4xl p-6" aria-busy="true">กำลังตรวจสอบตัวอย่างใบเบิก…</main>;
-  if (state.kind === 'unknown') return <main className="mx-auto max-w-4xl p-6"><h1 className="text-xl font-semibold">กำลังตรวจสอบผลการบันทึก</h1><p className="mt-2">{state.message}</p><button type="button" className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-white" onClick={onRefresh}>ตรวจสถานะจากระบบ</button></main>;
-  if (state.kind === 'error') return <main className="mx-auto max-w-4xl p-6"><h1 className="text-xl font-semibold">เปิดตัวอย่างไม่ได้</h1><p className="mt-2">{state.message}</p><button type="button" className="mt-4 rounded-lg border px-4 py-2" onClick={onRefresh}>ลองอ่านสถานะอีกครั้ง</button></main>;
+  if (state.kind === 'unknown') return <main className="mx-auto max-w-4xl p-6"><h1 className="text-xl font-semibold">กำลังตรวจสอบผลการบันทึก</h1><p className="mt-2">{noticeText[state.notice]}</p><button type="button" className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-white" onClick={onRefresh}>ตรวจสถานะจากระบบ</button></main>;
+  if (state.kind === 'error') return <main className="mx-auto max-w-4xl p-6"><h1 className="text-xl font-semibold">เปิดตัวอย่างไม่ได้</h1><p className="mt-2">{noticeText[state.notice]}</p><button type="button" className="mt-4 rounded-lg border px-4 py-2" onClick={onRefresh}>ลองอ่านสถานะอีกครั้ง</button></main>;
   const result = state.result;
   if (result.status === 'applied') return <main className="mx-auto max-w-4xl p-6"><h1 className="text-xl font-semibold text-emerald-800">บันทึกร่างใบเบิกแล้ว</h1><p className="mt-2">ยอด {money(result.receipt.amount, result.receipt.currency)} · สถานะปัจจุบัน {REQUEST_STATUS_LABELS[String(result.receipt.currentState ?? result.receipt.committedState)] ?? 'กรุณาเปิดใบเบิกเพื่อตรวจสอบ'}</p>{result.receipt.requestId && <Link className="mt-4 inline-block rounded-lg bg-gray-900 px-4 py-2 text-white" href={`/companies/${encodeURIComponent(companyId)}/reimbursements/${encodeURIComponent(result.receipt.requestId)}`}>เปิดใบเบิก</Link>}</main>;
   if (result.status !== 'preview') {
@@ -114,7 +121,7 @@ export function ReimbursementDraftActionPage({ companyId, actionId }: { companyI
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
     try { setState({ kind: 'ready', result: await getReimbursementDraftAction(companyId, actionId) }); }
-    catch { setState({ kind: 'error', message: 'ไม่สามารถอ่านสถานะล่าสุดได้ กรุณาลองอีกครั้ง' }); }
+    catch { setState({ kind: 'error', notice: 'read_failed' }); }
   }, [actionId, companyId]);
   useEffect(() => { void load(); }, [load]);
   const mutate = async (kind: 'confirm' | 'cancel') => {
@@ -126,10 +133,10 @@ export function ReimbursementDraftActionPage({ companyId, actionId }: { companyI
         ? await confirmReimbursementDraftAction(companyId, actionId, { previewRevision, confirmationDigest })
         : await cancelReimbursementDraftAction(companyId, actionId, { previewRevision, confirmationDigest });
       setState(result.status === 'result_unknown'
-        ? { kind: 'unknown', message: 'ยังยืนยันผลไม่ได้ ระบบจะตรวจจากร่างเดิมโดยไม่สร้างใบเบิกซ้ำ' }
+        ? { kind: 'unknown', notice: 'result_unconfirmed' }
         : { kind: 'ready', result });
     } catch {
-      setState({ kind: 'unknown', message: 'การเชื่อมต่อขาดระหว่างตรวจผล กรุณาอ่านสถานะเดิมก่อน ห้ามสร้างรายการใหม่' });
+      setState({ kind: 'unknown', notice: 'connection_lost' });
     }
   };
   return <ReimbursementDraftActionView companyId={companyId} state={state} onConfirm={() => void mutate('confirm')} onCancel={() => void mutate('cancel')} onRefresh={() => void load()} />;

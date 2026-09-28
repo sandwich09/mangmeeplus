@@ -1,9 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { LineAiTurnResponse } from '@watchdog-bms/contracts';
+import { stripLineExternalBrowserParam, type LineAiTurnResponse } from '@watchdog-bms/contracts';
 import {
   buildExpenseDraftCardMessage,
   buildAiBudgetExceededMessage,
+  buildPackageRequiredMessage,
+  buildSignupDoorCard,
   buildLineAssistantTextCardMessage,
   buildLineBusinessAnswerMessage,
   buildReceiptQuotaExceededMessage,
@@ -15,6 +17,34 @@ const response = (cards?: NonNullable<LineAiTurnResponse['presentation']>['cards
   requestId: 'r1', replyText: cards?.map(card => card.text).join('\n\n') ?? 'fallback', sourceRefs: [], sourceLabels: [], webLinks: [],
   intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: ['company.get_current_context'], durationMs: 1,
   ...(cards ? { presentation: { kind: 'answer_cards', cards } } : {}),
+});
+
+describe('package-required card one-tap link (R-B2 (b))', () => {
+  const firstUri = (message: ReturnType<typeof buildPackageRequiredMessage>) =>
+    (message as any).contents.footer.contents[0].action.uri as string;
+  const plain = 'https://app.example.test/companies/co-1/billing?channel=line';
+
+  it('uses the lane-minted handoff link on the web origin', () => {
+    assert.equal(firstUri(buildPackageRequiredMessage({ lockReason: 'no_package', companyId: 'co-1',
+      webBaseUrl: 'https://app.example.test', packageUrl: 'https://app.example.test/l/tok' })), 'https://app.example.test/l/tok');
+  });
+
+  it('keeps the plain tenant link for anything that is not our own /l/<token>', () => {
+    for (const packageUrl of [undefined, 'https://evil.example/l/tok', 'https://app.example.test/companies/co-1/billing',
+      'https://app.example.test/l/', 'not a url']) {
+      assert.equal(firstUri(buildPackageRequiredMessage({ lockReason: 'trial_ended', companyId: 'co-1',
+        webBaseUrl: 'https://app.example.test', ...(packageUrl ? { packageUrl } : {}) })), plain, String(packageUrl));
+    }
+  });
+});
+
+describe('signup door card (R-B1: the exit adds the escape)', () => {
+  it('builds the link-required login URL without the in-app-browser param', () => {
+    const buttons = (buildSignupDoorCard('1234567890-abcdef', 'https://app.example.test') as any).contents.footer.contents;
+    const link = buttons.map((button: any) => button.action.uri).find((uri: string | undefined) => uri?.includes('/login'));
+    assert.equal(link, 'https://app.example.test/login?line=link-required&next=%2F');
+    assert.equal(stripLineExternalBrowserParam(link), link);
+  });
 });
 
 describe('LINE business answer card renderer', () => {

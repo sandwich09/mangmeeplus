@@ -11,6 +11,7 @@ import {
 } from './line-staff-menu.logic';
 
 import { PUBLIC_PACKAGE_URL, type PublicPolicyAnswer } from './line-public-policy.logic';
+import { HANDOFF_PATH_PREFIX } from '../../../auth/domain/logic/line-handoff.logic';
 
 const THEME = {
   brand: '#22C55E',
@@ -438,16 +439,15 @@ export function buildSignupDoorCard(liffId: string | undefined, webBaseUrl?: str
  * `line=link-required` is the notice `LoginPage` renders for exactly this case: sign in once with a
  * password and the page hands the browser back to LINE, which links the account. `next=/` because
  * the session gate resolves the company itself; a card is built before anyone is identified.
- * `openExternalBrowser=1` is hardcoded (as `line-web-qr.logic.ts` does) because a Flex URI is a
- * static string — the client-side UA helper cannot run here, and the login cookie has to land in
- * the same browser that finishes the round trip.
+ * `openExternalBrowser=1` is added by the reply exit (`line-reply.adapter.ts`, R-B1), never here:
+ * the login cookie still lands in the same browser that finishes the round trip.
  */
 function existingAccountLinkUrl(webBaseUrl: string | undefined): string | undefined {
   if (!webBaseUrl) return undefined;
   try {
     const base = new URL(webBaseUrl);
     if (base.protocol !== 'https:' && base.protocol !== 'http:') return undefined;
-    return `${base.origin}/login?line=link-required&next=%2F&openExternalBrowser=1`;
+    return `${base.origin}/login?line=link-required&next=%2F`;
   } catch {
     return undefined;
   }
@@ -533,13 +533,28 @@ export function buildAiBudgetExceededMessage(
   };
 }
 
+/** Accepts only a handoff URL on our own web origin (`<web>/l/<token>`); anything else keeps the plain link. */
+function oneTapPackageLink(webBaseUrl: string | undefined, candidate: string | undefined): string | undefined {
+  if (!webBaseUrl || !candidate) return undefined;
+  try {
+    const base = new URL(webBaseUrl);
+    const url = new URL(candidate);
+    if (base.protocol !== 'https:' && base.protocol !== 'http:') return undefined;
+    return url.origin === base.origin && url.pathname.startsWith(HANDOFF_PATH_PREFIX)
+      && url.pathname.length > HANDOFF_PATH_PREFIX.length ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Spec J1/R14. The shop has no package that can be used, so the assistant answers ONE card and
  * nothing else — no router, no model, no OCR, and no price anywhere on LINE.
  *
  * Modelled on `buildAiBudgetExceededMessage`: say what happened, promise the data is safe, and
- * offer the one action that fixes it plus the door that reaches a person. The link is built by
- * `safeTenantLink`, so it can only ever point inside this company's own web tenant.
+ * offer the one action that fixes it plus the door that reaches a person. The link is either the
+ * lane's one-tap `/l/<token>` (R-B2) or built by `safeTenantLink`, so it can only ever point at
+ * this web origin — the handoff page or this company's own web tenant.
  */
 export function buildPackageRequiredMessage(input: {
   lockReason: PlanTermLockReason;
@@ -547,9 +562,12 @@ export function buildPackageRequiredMessage(input: {
   /** Absent when billing is closed or no web base is configured — the card then keeps only the
    *  staff door, which is still better than a link that goes nowhere. */
   webBaseUrl?: string;
+  /** R-B2 (b): the `<web>/l/<token>` the lane minted before recording; must be on the web origin
+   *  under `/l/`, otherwise the plain tenant link is used. */
+  packageUrl?: string;
 }): LineReplyMessage {
   const text = 'น้องมั่งมียังตอบไม่ได้จนกว่าจะเลือกแพ็กเกจค่ะ ข้อมูลทั้งหมดยังอยู่ครบ';
-  const link = safeTenantLink(input.webBaseUrl, input.companyId,
+  const link = oneTapPackageLink(input.webBaseUrl, input.packageUrl) ?? safeTenantLink(input.webBaseUrl, input.companyId,
     `/companies/${encodeURIComponent(input.companyId)}/billing?channel=line`);
   return {
     type: 'flex',

@@ -176,6 +176,24 @@ describe('P10-L push delivery', () => {
     // LINE-ONBOARD-01: nothing that could be a credential travels in a chat message.
     assert.equal(/\/l\/|token/i.test(sent), false);
     assert.equal(h.pushes[0].init.headers['X-Line-Retry-Key'], lineSignupPushRetryKey('r1', 'approved'));
+    // R-C4: the card names the next step in both the bold title and the button, not "ready to use".
+    assert.match(sent, /เปิดร้านแล้ว/);
+    assert.match(sent, /"label":"เลือกแพ็กเกจ"/);
+    assert.equal(sent.includes('พร้อมใช้งานแล้ว'), false);
+    assert.equal(sent.includes('เริ่มใช้งาน"'), false);
+    // The exit-point transform (line-reply.adapter.ts et al.) skips liff.line.me; the URL here is untouched.
+    assert.equal(sent.includes('openExternalBrowser'), false);
+  });
+
+  it('titles the second-shop card "เพิ่มร้านแล้ว" with the same button and LIFF start URL (R-C4)', async () => {
+    const h = harness({ request: completed({ attachUserId: 'user-9' }) });
+    await h.service.deliver('r1', 'attached');
+    h.restore();
+
+    const sent = JSON.stringify(h.pushes[0].body);
+    assert.match(sent, /เพิ่มร้านแล้ว/);
+    assert.match(sent, /"label":"เลือกแพ็กเกจ"/);
+    assert.match(sent, /https:\/\/liff\.line\.me\/1234567890-abcdef\/start/);
   });
 
   it('says "second shop" for an attach, and the polite refusal for a rejection', async () => {

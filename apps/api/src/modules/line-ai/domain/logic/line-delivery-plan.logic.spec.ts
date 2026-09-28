@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLineDeliveryPlan, deliveryHash, initialDeliveryBatchStates, parseDeliveryBatchStates, parseLineDeliveryPlan, splitLineDeliveryText, type DeliveryAuthorizationV2 } from './line-delivery-plan.logic';
+import { withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
+import { buildLineDeliveryPlan, deliveryHash, initialDeliveryBatchStates, lineDeliveryRetryKey, parseDeliveryBatchStates, parseLineDeliveryPlan, splitLineDeliveryText, type DeliveryAuthorizationV2 } from './line-delivery-plan.logic';
 import { buildLineBusinessAnswerMessage, inheritCompleteLineBusinessAnswerPresentation } from './line-business-card.logic';
 const createdAt = '2026-09-27T00:00:00.000Z', expiresAt = '2026-09-27T00:59:00.000Z';
 const authorization: DeliveryAuthorizationV2 = { v: 2, kind: 'PUBLIC_GENERAL', admissionOwner: { kind: 'WEBHOOK', id: 'event-1', revision: 0 }, destination: { channelId: 'oa-1', channel: 'line', channelKind: 'GROUP', lineTargetId: 'group-1', targetHash: 'target-hash', chatKeyHash: 'chat-hash' }, actorUserId: null, initiatorHash: 'actor-hash', admissionPolicyDigest: 'policy', sourceManifestDigest: 'manifest', approvedPublicSourceIds: [], issuedAt: createdAt, expiresAt };
@@ -65,11 +66,48 @@ test('freezes a bounded trusted Flex and exact same-slot text fallback', () => {
   const p = plan([text], [preferred]), batch = p.batches[0]!;
   assert.equal(batch.primary.messages[0]!.type, 'flex');
   assert.equal((batch.primary.messages[0] as any).canonicalText, undefined);
-  assert.deepEqual((batch.primary.messages[0] as any).contents, preferred.contents);
-  assert.deepEqual(batch.fallback?.messages, [{ type: 'text', text, quickReply: preferred.quickReply }]);
+  // R-B1 exit 4: the card's web link is escaped in the frozen bytes; the proof read the original object.
+  assert.deepEqual((batch.primary.messages[0] as any).contents, (withLineExternalBrowserLinks([preferred])[0] as any).contents);
+  assert.match(JSON.stringify((batch.primary.messages[0] as any).contents), /companies\/company\/expenses\?openExternalBrowser=1/);
+  assert.deepEqual(batch.fallback?.messages, [{ type: 'text', text: withLineExternalBrowserText(text, Number.POSITIVE_INFINITY), quickReply: preferred.quickReply }]);
   assert.notEqual(batch.primary.wireHash, batch.fallback?.wireHash);
   assert.notEqual(batch.primary.pushRetryKey, batch.fallback?.pushRetryKey);
   assert.ok(parseLineDeliveryPlan(JSON.parse(JSON.stringify(p))));
+});
+test('R-B1 exit 4: web links in item text are escaped once before the wire hash, idempotently and deterministically', () => {
+  const link = 'https://app.example.com/companies/company/expenses';
+  const p = plan([`ดูรายการ ${link}`]), primary = p.batches[0]!.primary.messages[0] as { type: 'text'; text: string };
+  assert.equal(p.answer.items[0]!.text, `ดูรายการ ${link}?openExternalBrowser=1`);
+  assert.equal(primary.text, `ดูรายการ ${link}?openExternalBrowser=1`);
+  assert.ok(parseLineDeliveryPlan(JSON.parse(JSON.stringify(p))));
+  assert.equal(deliveryHash(plan([`ดูรายการ ${link}`])), deliveryHash(p));
+  const already = plan([`ดูรายการ ${link}?openExternalBrowser=1`]);
+  assert.equal(already.answer.items[0]!.text, `ดูรายการ ${link}?openExternalBrowser=1`);
+  assert.deepEqual(already.batches, p.batches);
+  const kept = 'เปิด https://liff.line.me/1-a/start หรือ https://official.mangmeeplus.com/';
+  assert.equal(plan([kept]).answer.items[0]!.text, kept);
+});
+test('R-B1 exit 4: a plan frozen before the escape existed still parses and keeps its bytes', () => {
+  const link = 'https://app.example.com/companies/company/expenses';
+  const old = structuredClone(plan([`ดูรายการ ${link}`]));
+  const plainText = `ดูรายการ ${link}`;
+  old.answer.items[0]!.text = plainText;
+  const batch = old.batches[0]!;
+  batch.primary.messages = [{ type: 'text', text: plainText }];
+  batch.spans[0]!.end = plainText.length;
+  batch.primary.wireHash = deliveryHash(['oa-1', 'target-hash', batch.primary.messages]);
+  batch.primary.pushRetryKey = lineDeliveryRetryKey(old.planId, 0, 'primary', batch.primary.wireHash);
+  const stored = JSON.parse(JSON.stringify(old));
+  const parsed = parseLineDeliveryPlan(stored);
+  assert.ok(parsed);
+  assert.deepEqual(parsed, old);
+  assert.doesNotMatch(JSON.stringify(parsed), /openExternalBrowser/);
+});
+test('R-B1 exit 4: the 60,000 item bound wins over the escape', () => {
+  const text = 'x'.repeat(59_965) + ' https://app.example.com/a';
+  const p = plan([text]);
+  assert.equal(p.answer.items[0]!.text, text);
+  assert.doesNotMatch(JSON.stringify(p.batches), /openExternalBrowser/);
 });
 test('unproved generic Flex with a truncated visible body uses the lossless text primary', () => {
   const text = 'ก'.repeat(2_000), preferred = { type: 'flex' as const, altText: 'คำตอบ', canonicalText: text,

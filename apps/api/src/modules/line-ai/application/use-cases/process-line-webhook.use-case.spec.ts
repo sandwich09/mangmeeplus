@@ -400,7 +400,7 @@ function makePrisma(opts: {
 	  /** Channel the stored identity was linked on; the lookup is channel-scoped first. */
 	  identityChannelId?: string;
 	  aiAssistantOptOutAt?: Date | null;
-	  memberships?: Array<{ companyId: string; company?: { name: string; brandName?: string | null }; roles?: Array<{ role: { key: string; name?: string } }> }>;
+	  memberships?: Array<{ companyId: string; company?: { name: string; brandName?: string | null; status?: string; planTerm?: { termStartAt: Date; termEndsAt: Date; renewCount: number; termDisabledAt?: Date | null } | null }; roles?: Array<{ role: { key: string; name?: string; status?: string; permissions?: Array<{ permission: { key: string } }> } }> }>;
 	  /** `aiPausedUntil` in the future is a support hold (§8): the assistant stays out, the app does not. */
 	  lineCompanyContext?: { companyId: string; aiPausedUntil?: Date | null } | null;
 	  previousEventLog?: { webhookEventId: string; status: string; createdAt: Date } | null;
@@ -418,7 +418,7 @@ function makePrisma(opts: {
 	   *  exactly why the people in them reach the "no company" branch where the lock probe lives. */
 	  termExpiredMemberships?: Array<{
 	    companyId: string;
-	    roles?: Array<{ role: { key: string } }>;
+	    roles?: Array<{ role: { key: string; status?: string; permissions?: Array<{ permission: { key: string } }> } }>;
 	    /** Default = a 30-day term that ran out, i.e. `trial_ended`. */
 	    term?: { termStartAt: Date; termEndsAt: Date; renewCount: number };
 	    /** true = the company is still ACTIVE and only its term has ended. */
@@ -438,7 +438,7 @@ function makePrisma(opts: {
   let quotaNoticeSentMonthKey = planTerm?.quotaNoticeSentMonthKey ?? null;
   const endedAt = new Date(Date.now() - 60_000);
   const termExpiredRows = termExpiredMemberships.map((row) => ({
-    roles: [{ role: { key: 'OWNER' } }],
+    roles: [{ role: { key: 'OWNER', status: 'ACTIVE', permissions: [{ permission: { key: 'company.plan.manage' } }] } }] as Array<{ role: { key: string; status?: string; permissions?: Array<{ permission: { key: string } }> } }>,
     term: { termStartAt: new Date(endedAt.getTime() - 30 * 86_400_000), termEndsAt: endedAt, renewCount: 0 },
     ...row,
   }));
@@ -454,7 +454,7 @@ function makePrisma(opts: {
   const toolInvocations: any[] = [];
   const membershipRows = memberships.map((membership) => ({
     company: { name: membership.companyId, brandName: null, ...membership.company },
-    roles: membership.roles ?? [{ role: { key: 'OWNER' } }],
+    roles: membership.roles ?? [{ role: { key: 'OWNER', status: 'ACTIVE', permissions: [{ permission: { key: 'company.plan.manage' } }] } }],
     ...membership,
   }));
   const markerWrites: any[] = [];
@@ -532,15 +532,16 @@ function makePrisma(opts: {
         findMany: async () => membershipRows,
         // P29/J1 lock probe, reached only when no company resolved. Honours both halves of the
         // real predicate: the company must match one of the two LOCKED shapes, and the role filter
-        // must match — a staff-only locked company answers null to the OWNER probe, exactly as
-        // Postgres would, which is what sends it on to the member reply.
+        // must match — a staff-only locked company answers null to the plan-manager probe (R-C11),
+        // exactly as Postgres would, which is what sends it on to the member reply.
         findFirst: async (args: any) => {
           const where = args?.where ?? {};
           const shapes = where.company?.OR;
           if (!Array.isArray(shapes)) return null;
-          const requiredRole = where.roles?.some?.role?.key;
-          const row = termExpiredRows.find((candidate) =>
-            !requiredRole || candidate.roles.some((assigned) => assigned.role.key === requiredRole));
+          const wantsManager = Boolean(where.roles?.some?.role?.permissions);
+          const row = termExpiredRows.find((candidate) => !wantsManager || candidate.roles.some((assigned: any) =>
+            (assigned.role.status ?? 'ACTIVE') === 'ACTIVE'
+            && (assigned.role.permissions ?? []).some((rp: any) => rp.permission.key === 'company.plan.manage')));
           if (!row) return null;
           // An ACTIVE-but-expired shop matches only the second shape, and a DISABLED one only the
           // first, so dropping either half of the predicate has to make a test red.
@@ -2870,6 +2871,81 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.equal((updates.at(-1) as any).data.status, 'package_required');
     });
 
+    // R-B2 (b): the lane mints before `recordTurnOutcome`, so the card is one tap with the replay
+    // flag on (production — the seam never wraps then) and off, and what is stored is what is sent.
+    for (const replayFlag of [true, false]) {
+      it(`mints the one-tap package link in the lane before recording (replay flag ${replayFlag})`, async () => {
+        const calls: Array<{ ctx: any; path: string }> = [];
+        const { prisma, turnOutcomeWrites } = makePrisma({
+          memberships: [],
+          termExpiredMemberships: [{ companyId: 'company-1', term: NO_PACKAGE }],
+        });
+        const { useCase, sentMessageBatches } = makeUseCase(prisma, {
+          config: { billingMode: 'test', lineAiTerminalOutcomeReplayEnabled: replayFlag },
+          handoffLinks: {
+            linkFor: async (ctx: any, path: string) => { calls.push({ ctx, path }); return 'https://app.example.com/l/tok-1'; },
+            wrapOutgoingLineContent: async (_ctx: unknown, messages: unknown) => messages,
+          },
+        });
+
+        await useCase.execute({ ...BASE_EVENT });
+
+        const card = sentMessageBatches[0]![0];
+        assert.equal(card.contents.footer.contents[0].action.uri, 'https://app.example.com/l/tok-1');
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0]!.ctx.surface, 'locked_card_packages');
+        assert.equal(calls[0]!.path, '/companies/company-1/billing?channel=line');
+        assert.equal(calls[0]!.ctx.lineUserId, BASE_EVENT.lineUserId);
+        if (replayFlag) {
+          assert.deepEqual(turnOutcomeWrites[0]!.create.messagesJson, sentMessageBatches[0], 'recorded == sent: one token, one retry identity');
+        } else {
+          assert.equal(turnOutcomeWrites.length, 0);
+        }
+      });
+    }
+
+    it('keeps the plain package page when the mint is refused', async () => {
+      const { prisma } = makePrisma({ memberships: [], termExpiredMemberships: [{ companyId: 'company-1', term: NO_PACKAGE }] });
+      const { useCase, sentMessages } = makeUseCase(prisma, {
+        config: { billingMode: 'test' },
+        handoffLinks: { linkFor: async () => null, wrapOutgoingLineContent: async (_ctx: unknown, messages: unknown) => messages },
+      });
+
+      await useCase.execute({ ...BASE_EVENT });
+
+      assert.equal(sentMessages[0].contents.footer.contents[0].action.uri, 'https://app.example.com/companies/company-1/billing?channel=line');
+    });
+
+    it('never mints a one-tap link for a group or room chat (RV08)', async () => {
+      // Group and room events go to the public lane before any of these lanes (execute()), so the
+      // guard is proven on the helper itself — defence in depth for the day that routing changes.
+      const calls: unknown[] = [];
+      const { prisma } = makePrisma();
+      const { useCase } = makeUseCase(prisma, {
+        handoffLinks: { linkFor: async (...args: unknown[]) => { calls.push(args); return 'https://app.example.com/l/tok-1'; } },
+      });
+      for (const chat of [`C${'a'.repeat(32)}`, `R${'b'.repeat(32)}`]) {
+        assert.equal(await (useCase as any).oneTapPackageUrl({ lineUserId: BASE_EVENT.lineUserId, pushTargetId: chat },
+          'user-1', 'company-1', 'locked_card_packages'), undefined);
+      }
+      assert.equal(calls.length, 0);
+    });
+
+    it('gives the package card to a custom role that may manage the package (R-C11)', async () => {
+      const { prisma, updates } = makePrisma({
+        memberships: [],
+        termExpiredMemberships: [{ companyId: 'company-1', term: NO_PACKAGE,
+          roles: [{ role: { key: 'ACCOUNTANT', status: 'ACTIVE', permissions: [{ permission: { key: 'company.plan.manage' } }] } }] }],
+      });
+      const { useCase, sentMessages } = makeUseCase(prisma, { config: { billingMode: 'test' } });
+
+      await useCase.execute({ ...BASE_EVENT });
+
+      assert.equal(sentMessages[0].type, 'flex');
+      assert.equal(sentMessages[0].contents.footer.contents[0].action.label, 'เลือกแพ็กเกจ');
+      assert.equal((updates.at(-1) as any).data.status, 'package_required');
+    });
+
     it('leaves someone with no membership at all on the generic unlinked reply', async () => {
       // The probe must not answer for an ordinary unlinked user, nor for a company an admin
       // disabled by hand — that one carries no `termDisabledAt` and never reaches this row.
@@ -2950,6 +3026,30 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(JSON.stringify(ownerPicker), /บริษัทหนึ่ง/);
     assert.match(JSON.stringify(ownerPicker), /บริษัทสอง/);
     assert.match(JSON.stringify((ownerPicker as any).contents.contents[0]), /ใช้งานอยู่/);
+    assert.doesNotMatch(JSON.stringify(sentMessageBatches[0]), /🔒/, 'an ACTIVE shop carries no lock label');
+  });
+
+  it('labels a locked shop in the picker and the context card with the LIFF wording (R-C8)', async () => {
+    const at = new Date(Date.now() - 60_000);
+    const { prisma } = makePrisma({
+      memberships: [
+        { companyId: 'co-1', company: { name: 'ร้านเปิดอยู่', status: 'ACTIVE' } },
+        { companyId: 'co-2', company: { name: 'ร้านใหม่', status: 'DISABLED', planTerm: { termStartAt: at, termEndsAt: at, renewCount: 0, termDisabledAt: at } } },
+        { companyId: 'co-3', company: { name: 'ร้านเดิม', status: 'DISABLED',
+          planTerm: { termStartAt: new Date(at.getTime() - 30 * 86_400_000), termEndsAt: at, renewCount: 1, termDisabledAt: at } } },
+      ],
+      lineCompanyContext: { companyId: 'co-2' },
+    });
+    const { useCase, sentMessageBatches } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-companies-locked', messageText: '/companies' });
+
+    const [contextCard, picker] = sentMessageBatches[0]!;
+    assert.match(JSON.stringify(contextCard), /🔒 ยังไม่มีแพ็กเกจ/);
+    const bubble = (name: string) => JSON.stringify((picker as any).contents.contents.find((item: any) => JSON.stringify(item).includes(name)));
+    assert.match(bubble('ร้านใหม่'), /🔒 ยังไม่มีแพ็กเกจ/);
+    assert.match(bubble('ร้านเดิม'), /🔒 หมดอายุ/);
+    assert.doesNotMatch(bubble('ร้านเปิดอยู่'), /🔒/);
   });
 
   /**

@@ -13,7 +13,11 @@ function statusHarness(
   verifyThrows?: Error,
   attemptBucketFull = false,
   account = false,
-  membershipRows?: Array<{ companyId: string; company: { name: string; status: string } }>,
+  membershipRows?: Array<{
+    companyId: string;
+    company: { name: string; status: string; planTerm?: { termStartAt: Date; termEndsAt: Date; renewCount: number } | null };
+    roles?: Array<{ role: { permissions: Array<{ permission: { key: string } }> } }>;
+  }>,
 ) {
   const queries: any[] = [];
   const saved = row ? {
@@ -92,6 +96,59 @@ describe('GetLineSignupStatusUseCase', () => {
     }]);
   });
 
+  // R-C2/R-C3 (§18.2): a shop this request created is locked (no package yet) rather than
+  // unreachable — the page names the next step instead of "cannot enter" (liff-page.security.ts).
+  it('names the next step for a locked shop this request created, rather than granting entry', async () => {
+    const h = statusHarness(
+      { id: 'signup-1', state: 'COMPLETED', companyName: 'ร้านมั่งมี', companyId: 'co-1' },
+      undefined, false, true,
+      [{
+        companyId: 'co-1',
+        company: { name: 'ร้านมั่งมี', status: 'DISABLED', planTerm: { termStartAt: NOW, termEndsAt: NOW, renewCount: 0 } },
+        roles: [{ role: { permissions: [{ permission: { key: 'company.plan.manage' } }] } }],
+      }],
+    );
+    const status = await h.useCase.execute('aaaa.bbbb.cccc', NOW);
+
+    assert.deepEqual(status.eligibleCompanies, [{
+      companyId: 'co-1', companyName: 'ร้านมั่งมี', status: 'EXPIRED', canEnter: false,
+      lockReason: 'no_package', canManagePlan: true,
+    }]);
+    assert.equal(status.progress?.entryCompanyId, undefined, 'a locked shop is never a direct-entry grant');
+    assert.equal(status.progress?.lockedEntryCompanyId, 'co-1');
+  });
+
+  it('leaves canManagePlan false for a role that holds no plan-manage permission', async () => {
+    const h = statusHarness(
+      { id: 'signup-1', state: 'COMPLETED', companyName: 'ร้านมั่งมี', companyId: 'co-1' },
+      undefined, false, true,
+      [{
+        companyId: 'co-1',
+        company: { name: 'ร้านมั่งมี', status: 'DISABLED', planTerm: { termStartAt: NOW, termEndsAt: NOW, renewCount: 0 } },
+        roles: [{ role: { permissions: [{ permission: { key: 'company.expenses.manage' } }] } }],
+      }],
+    );
+    const status = await h.useCase.execute('aaaa.bbbb.cccc', NOW);
+
+    assert.equal(status.eligibleCompanies[0]?.canManagePlan, false);
+    assert.equal(status.progress?.lockedEntryCompanyId, 'co-1', 'still shown as locked, just not to a manager');
+  });
+
+  it('reads lockReason as trial_ended once the shop has been renewed at least once', async () => {
+    const h = statusHarness(
+      { id: 'signup-1', state: 'COMPLETED', companyName: 'ร้านมั่งมี', companyId: 'co-1' },
+      undefined, false, true,
+      [{
+        companyId: 'co-1',
+        company: { name: 'ร้านมั่งมี', status: 'DISABLED', planTerm: { termStartAt: NOW, termEndsAt: NOW, renewCount: 1 } },
+        roles: [{ role: { permissions: [{ permission: { key: 'company.plan.manage' } }] } }],
+      }],
+    );
+    const status = await h.useCase.execute('aaaa.bbbb.cccc', NOW);
+
+    assert.equal(status.eligibleCompanies[0]?.lockReason, 'trial_ended');
+  });
+
   it('reports that this request created a shop without offering entry after current access is gone', async () => {
     const h = statusHarness({
       id: 'signup-1', state: 'SUSPENDED', companyName: 'ร้านมั่งมี', companyId: 'co-1',
@@ -127,7 +184,8 @@ describe('GetLineSignupStatusUseCase', () => {
     assert.equal(status.progress, null);
     assert.deepEqual(status.eligibleCompanies, [
       { companyId: 'co-active', companyName: 'ร้านพร้อมใช้', status: 'ACTIVE', canEnter: true },
-      { companyId: 'co-expired', companyName: 'ร้านหมดอายุ', status: 'EXPIRED', canEnter: false },
+      // R-C2: locked with no planTerm/roles on the fixture falls back to trial_ended/not-a-manager.
+      { companyId: 'co-expired', companyName: 'ร้านหมดอายุ', status: 'EXPIRED', canEnter: false, lockReason: 'trial_ended', canManagePlan: false },
     ]);
   });
 

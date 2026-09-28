@@ -73,8 +73,9 @@ function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ comp
       },
       companyMembership: {
         findMany: async ({ where }: any) => {
-          const wantsOwner = JSON.stringify(where.roles).includes('OWNER');
-          if (wantsOwner) return owners.map((userId) => ({ userId }));
+          // R-C11: the recipient lookup now asks for the plan-manage PERMISSION, not the OWNER role key.
+          const wantsManagers = JSON.stringify(where.roles ?? {}).includes('company.plan.manage');
+          if (wantsManagers) return owners.map((userId) => ({ userId }));
           return admins.map((admin) => ({ companyId: admin.companyId, userId: admin.userId }));
         },
       },
@@ -191,7 +192,7 @@ describe('PlanTermSweepUseCase — expiry', () => {
     assert.equal(result.expired, 1);
   });
 
-  it('notifies the OWNER on WEB and LINE plus the System Admin dashboard, with the Thai copy', async () => {
+  it('notifies the plan managers on WEB and LINE plus the System Admin dashboard, with the Thai copy', async () => {
     const world = makeWorld([{ companyId: 'co-1', companyName: 'ร้านหนึ่ง', companyStatus: 'ACTIVE', termEndsAt: past(1) }]);
     await world.sweep.execute();
 
@@ -208,6 +209,22 @@ describe('PlanTermSweepUseCase — expiry', () => {
     assert.equal(adminEvent.companyId, 'sys-co');
     assert.equal(adminEvent.sourceId, 'co-1');
     assert.equal(adminEvent.deepLinkHref, '/system/partners/co-1');
+  });
+
+  // R-C11 (D-PF-10): a custom role granted company.plan.manage must get this notice exactly like
+  // OWNER — proven here at the query shape, since the fake cannot otherwise distinguish "OWNER" from
+  // "a role with the permission" once the code stops asking for the role key at all.
+  it('asks for the plan-manage permission, not the OWNER role key, when finding who to notify', async () => {
+    const world = makeWorld([{ companyId: 'co-1', companyName: 'ร้านหนึ่ง', companyStatus: 'ACTIVE', termEndsAt: past(1) }]);
+    const queries: any[] = [];
+    const original = world.prisma.client.companyMembership.findMany;
+    world.prisma.client.companyMembership.findMany = async (args: any) => { queries.push(args); return original(args); };
+
+    await world.sweep.execute();
+
+    const managerQuery = queries.find((args) => JSON.stringify(args.where.roles ?? {}).includes('company.plan.manage'));
+    assert.ok(managerQuery, 'the recipient lookup filters by the plan-manage permission');
+    assert.equal(JSON.stringify(managerQuery.where.roles).includes('"OWNER"'), false, 'no longer gated on the OWNER role key');
   });
 });
 
