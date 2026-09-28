@@ -545,6 +545,36 @@ export class InternalToolsController {
         errorCode: 'UNSUPPORTED_FILTER', errorMessage: `Unsupported input fields: ${unsupportedFields.sort().join(', ')}`,
       };
     }
+    const invalidEnumFields = Object.entries(meta.inputEnumValues ?? {}).flatMap(([field, values]) => {
+      const value = dto.input?.[field];
+      return value === undefined || typeof value === 'string' && values.includes(value) ? [] : [field];
+    });
+    if (invalidEnumFields.length > 0) {
+      await this.auditToolOutcome({
+        companyId: ctx.companyId, actorUserId: ctx.userId, requestId: auditRequestId,
+        toolName: dto.toolName, reasonCode: 'UNSUPPORTED_FILTER', riskLevel: 'LOW', startedAt,
+        extra: { invalidEnumFields: invalidEnumFields.sort() },
+      });
+      return {
+        toolName: dto.toolName, status: 'error', sourceRefs: [], asOf: new Date().toISOString(),
+        errorCode: 'UNSUPPORTED_FILTER', errorMessage: `Unsupported filter values: ${invalidEnumFields.sort().join(', ')}`,
+      };
+    }
+    const invalidLengthFields = Object.entries(meta.inputLengthLimits ?? {}).flatMap(([field, limit]) => {
+      const value = dto.input?.[field];
+      return value === undefined || typeof value === 'string' && value.length >= limit.min && value.length <= limit.max ? [] : [field];
+    });
+    if (invalidLengthFields.length > 0) {
+      await this.auditToolOutcome({
+        companyId: ctx.companyId, actorUserId: ctx.userId, requestId: auditRequestId,
+        toolName: dto.toolName, reasonCode: 'UNSUPPORTED_FILTER', riskLevel: 'LOW', startedAt,
+        extra: { invalidLengthFields: invalidLengthFields.sort() },
+      });
+      return {
+        toolName: dto.toolName, status: 'error', sourceRefs: [], asOf: new Date().toISOString(),
+        errorCode: 'UNSUPPORTED_FILTER', errorMessage: `Unsupported filter values: ${invalidLengthFields.sort().join(', ')}`,
+      };
+    }
 
     try {
       const result = await tool.execute(ctx, dto.input ?? {});

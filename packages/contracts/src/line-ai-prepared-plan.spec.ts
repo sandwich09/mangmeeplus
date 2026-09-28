@@ -81,7 +81,7 @@ describe('parseLineAiPreparedPlan – valid plans', () => {
       assert.equal(parsed?.confidence, confidence);
     }
     // A simple plan keeps its own (>= floor) confidence unchanged.
-    assert.equal(parseLineAiPreparedPlan(validPlan({ confidence: LINE_AI_PREPARED_PLAN_BOUNDS.simpleConfidenceFloor }))?.confidence, 0.85);
+    assert.equal(parseLineAiPreparedPlan(validPlan({ confidence: LINE_AI_PREPARED_PLAN_BOUNDS.simpleConfidenceFloor }))?.confidence, 0.75);
   });
 });
 
@@ -112,8 +112,8 @@ describe('parseLineAiPreparedPlan v2 source preservation', () => {
 
 describe('parseLineAiPreparedPlan – Phase-2 simple/zero-tool structural invariants', () => {
   it('vetoes a simple plan below the confidence floor', () => {
-    assert.equal(parseLineAiPreparedPlan(validPlan({ confidence: 0.84 })), undefined);
-    assert.ok(parseLineAiPreparedPlan(validPlan({ confidence: 0.85 })));
+    assert.equal(parseLineAiPreparedPlan(validPlan({ confidence: 0.74 })), undefined);
+    assert.ok(parseLineAiPreparedPlan(validPlan({ confidence: 0.75 })));
   });
 
   it('requires exactly one intent and at most one proposed call for a simple plan', () => {

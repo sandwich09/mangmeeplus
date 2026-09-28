@@ -5,7 +5,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../generated/prisma/client';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import type { AppConfigService } from '../../../common/config/app-config.service';
-import { LineAiBudgetAuthorityService, documentQaAuthorityInputDigest, type IssueLineAiBudgetGrant } from './line-ai-budget-authority.service';
+import { LineAiBudgetAuthorityService, LineAiBudgetDeadlineExceededError, documentQaAuthorityInputDigest, type IssueLineAiBudgetGrant } from './line-ai-budget-authority.service';
 import { settleAiBudgetStep } from './company-ai-budget-reservation';
 import { LineConversationContextService } from './line-conversation-context.service';
 import type { AiBudgetGrantV2, AiBudgetInvocationV2, AiBudgetProfileIdV2 } from '@watchdog-bms/contracts';
@@ -143,12 +143,18 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
     await client.lineWebhookEventLog.update({ where: { id: grant.authorityId }, data: { processedAt: new Date() } });
     const first = await service.reserve(invocation(grant, 0, 'line-intake-text/2')); assert.ok(first.ok);
     await settle(first.envelope.invocationKey);
-    const narrowed = await service.narrow(grant, 'simple', ['line-answer/2']); assert.ok(narrowed);
+    const storedBefore = await client.lineWebhookEventLog.findUniqueOrThrow({ where: { id: grant.authorityId } });
+    const altered = { ...grant, finalDeadlineAtMs: grant.finalDeadlineAtMs + 60_000, workDeadlineAtMs: grant.workDeadlineAtMs + 60_000 };
+    assert.equal(await service.narrow(altered, 'simple', ['line-answer/2'], new Date(grant.admittedAtMs + 8_000)), null);
+    const afterAltered = await client.lineWebhookEventLog.findUniqueOrThrow({ where: { id: grant.authorityId } });
+    assert.equal(afterAltered.budgetAuthorityRevision, storedBefore.budgetAuthorityRevision, 'reused signature cannot mutate the durable authority');
+    assert.deepEqual(afterAltered.budgetAuthorityJson, storedBefore.budgetAuthorityJson);
+    const narrowed = await service.narrow(grant, 'simple', ['line-answer/2'], new Date(grant.admittedAtMs + 8_000)); assert.ok(narrowed);
     assert.equal(narrowed.maxTurnSlots, 2);
     assert.equal(narrowed.admittedAtMs, input.admittedAtMs);
-    assert.equal(narrowed.finalDeadlineAtMs, input.admittedAtMs + 15000);
-    assert.equal(narrowed.workDeadlineAtMs, input.admittedAtMs + 12000);
-    assert.deepEqual(await service.narrow(grant, 'simple', ['line-answer/2']), narrowed);
+    assert.equal(narrowed.finalDeadlineAtMs, grant.finalDeadlineAtMs);
+    assert.equal(narrowed.workDeadlineAtMs, grant.workDeadlineAtMs);
+    assert.deepEqual(await service.narrow(grant, 'simple', ['line-answer/2'], new Date(grant.admittedAtMs + 9_000)), narrowed);
     assert.equal(await service.narrow(narrowed, 'mixed', ['line-control/2', 'line-answer/2']), null);
     assert.equal((await service.reserve(invocation(grant, 1, 'line-answer/2'))).ok, false, 'old broader authority is no longer spendable');
     assert.equal((await service.reserve(invocation(narrowed, 1, 'line-control/2'))).ok, false);
@@ -156,6 +162,31 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
     await settle(second.envelope.invocationKey);
     assert.equal((await service.reserve(invocation(narrowed, 2, 'line-answer/2'))).ok, false);
     assert.equal(await client.aiUsageEvent.count({ where: { companyId: grant.payerCompanyId } }), 2);
+    await assert.rejects(service.narrow(narrowed, 'simple', ['line-answer/2'], new Date(grant.workDeadlineAtMs)), LineAiBudgetDeadlineExceededError);
+  });
+
+  it('keeps the admitted envelope across every private lane and expires first narrowing only at its stored work deadline', async () => {
+    const cases = [
+      { suffix: 'general-before', lane: 'general' as const, profiles: ['line-answer/2' as const], offset: 6_999, slots: 2 },
+      { suffix: 'general-after', lane: 'general' as const, profiles: ['line-answer/2' as const], offset: 7_001, slots: 2 },
+      { suffix: 'simple-after', lane: 'simple' as const, profiles: ['line-answer/2' as const], offset: 7_001, slots: 2 },
+      { suffix: 'mixed-after', lane: 'mixed' as const, profiles: ['line-control/2' as const, 'line-answer/2' as const], offset: 7_001, slots: 4 },
+    ];
+    for (const item of cases) {
+      const { grant } = await fixture(item.suffix, 'SPLIT', false);
+      const intake = await service.reserve(invocation(grant, 0, 'line-intake-text/2')); assert.ok(intake.ok);
+      await settle(intake.envelope.invocationKey);
+      const narrowed = await service.narrow(grant, item.lane, item.profiles, new Date(grant.admittedAtMs + item.offset)); assert.ok(narrowed);
+      assert.equal(narrowed.finalDeadlineAtMs, grant.finalDeadlineAtMs);
+      assert.equal(narrowed.workDeadlineAtMs, grant.workDeadlineAtMs);
+      assert.equal(narrowed.nextOrdinal, 1); assert.equal(narrowed.maxTurnSlots, item.slots);
+      assert.deepEqual(narrowed.allowedProfileIds, item.profiles);
+    }
+    const { grant } = await fixture('first-expired', 'SPLIT', false);
+    const intake = await service.reserve(invocation(grant, 0, 'line-intake-text/2')); assert.ok(intake.ok); await settle(intake.envelope.invocationKey);
+    await assert.rejects(service.narrow(grant, 'general', ['line-answer/2'], new Date(grant.workDeadlineAtMs)), LineAiBudgetDeadlineExceededError);
+    const row = await client.lineWebhookEventLog.findUniqueOrThrow({ where: { id: grant.authorityId } });
+    assert.equal((row.budgetAuthorityJson as any).narrowedLane, undefined);
   });
 
   it('honors a reviewed model output ceiling before spending and validates the live owner and input', async () => {

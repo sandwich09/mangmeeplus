@@ -657,9 +657,9 @@ function isExplicitEmptyData(data: unknown): boolean {
   if (Array.isArray(data)) return data.length === 0;
   if (!data || typeof data !== 'object') return false;
   const record = data as Record<string, unknown>;
-  const zeroKeys = ['total', 'count', 'openCount', 'transactionCount', 'blockingIssueCount', 'matches'];
+  const zeroKeys = ['total', 'count', 'openCount', 'transactionCount', 'blockingIssueCount', 'matches', 'totalCount'];
   if (zeroKeys.some((key) => record[key] === 0 || record[key] === '0')) return true;
-  const collectionKeys = ['items', 'branches', 'products', 'obligations', 'citPeriods', 'rows', 'candidates'];
+  const collectionKeys = ['items', 'branches', 'products', 'obligations', 'citPeriods', 'rows', 'candidates', 'byCategory', 'byBranch', 'byVendor'];
   return collectionKeys.some((key) => Array.isArray(record[key]) && (record[key] as unknown[]).length === 0);
 }
 

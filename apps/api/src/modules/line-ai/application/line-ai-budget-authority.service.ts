@@ -50,6 +50,11 @@ export function documentQaAuthorityInputDigest(job: { questionText: string; atta
 const MAX_AUTHORITY_BYTES = 32 * 1024;
 const sameModel = (left: AiBudgetGrantV2['model'], right: AiBudgetGrantV2['model']) => left.provider === right.provider && left.modelId === right.modelId && left.region === right.region;
 
+export class LineAiBudgetDeadlineExceededError extends Error {
+  readonly code = 'DEADLINE_EXCEEDED';
+  constructor() { super('LINE_AI_BUDGET_DEADLINE_EXCEEDED'); this.name = 'LineAiBudgetDeadlineExceededError'; }
+}
+
 /** Durable event/ledger authority, independent of the 15-minute conversational projection.
  * The existing admitted webhook path is the only caller of issue(); HTTP exposes only reserve(). */
 @Injectable()
@@ -261,18 +266,22 @@ export class LineAiBudgetAuthorityService {
       const delegate = this.parent(tx, grant.authorityKind);
       const row = await delegate.findUnique({ where: { id: grant.authorityId } });
       const state = row?.budgetAuthorityJson as BudgetAuthority | undefined;
-      if (!state || state.transferredToQa || !this.parentCurrent(row, grant.authorityKind, state.owner, now) || !await this.ownerCurrent(tx, state.owner)) return null;
-      if (state.narrowedLane) return state.grant.nonce === grant.nonce && state.narrowedLane === lane
-        && canonical(state.grant.allowedProfileIds) === canonical(allowedProfileIds) ? state.grant : null;
+      if (!state || state.transferredToQa || !this.authentic(state.grant)
+        || !this.parentCurrent(row, grant.authorityKind, state.owner, now) || !await this.ownerCurrent(tx, state.owner)) return null;
+      if (state.narrowedLane) {
+        if (state.grant.nonce !== grant.nonce || state.narrowedLane !== lane
+          || canonical(state.grant.allowedProfileIds) !== canonical(allowedProfileIds)) return null;
+        if (state.grant.workDeadlineAtMs <= now.getTime()) throw new LineAiBudgetDeadlineExceededError();
+        return state.grant;
+      }
       if (state.owner.kind === 'PUBLIC_GENERAL' && allowedProfileIds.includes('line-control/2')) return null;
       if (state.grant.signature !== grant.signature || state.nextOrdinal < 1 || state.nextOrdinal > 2) return null;
+      if (state.grant.workDeadlineAtMs <= now.getTime()) throw new LineAiBudgetDeadlineExceededError();
       const maxTurnSlots = lane === 'general' || lane === 'simple' ? 2 : 4;
-      const finalDeadlineAtMs = Math.min(grant.finalDeadlineAtMs, grant.admittedAtMs + baseCeilings[lane] + (state.coalescingExtraMs ?? 0));
-      const { signature: _, ...unsigned } = grant;
-      const nextUnsigned = { ...unsigned, nextOrdinal: state.nextOrdinal, allowedProfileIds: [...allowedProfileIds], maxTurnSlots: maxTurnSlots as 2 | 4,
-        finalDeadlineAtMs, workDeadlineAtMs: finalDeadlineAtMs - 3000 };
+      const { signature: _, ...unsigned } = state.grant;
+      const nextUnsigned = { ...unsigned, nextOrdinal: state.nextOrdinal, allowedProfileIds: [...allowedProfileIds], maxTurnSlots: maxTurnSlots as 2 | 4 };
       const nextGrant = parseAiBudgetGrantV2({ ...nextUnsigned, signature: this.sign(nextUnsigned) });
-      if (!nextGrant || nextGrant.workDeadlineAtMs <= now.getTime()) return null;
+      if (!nextGrant) return null;
       const next = { ...state, grant: nextGrant, narrowedLane: lane };
       const changed = await delegate.updateMany({ where: { id: row.id, budgetAuthorityRevision: row.budgetAuthorityRevision },
         data: { budgetAuthorityJson: next as unknown as Prisma.InputJsonValue, budgetAuthorityRevision: { increment: 1 } } });

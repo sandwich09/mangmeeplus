@@ -55,6 +55,15 @@ describe('§17.5 question detection', () => {
     assert.equal(receiptStatusQuestion('ยกเลิกไฟล์เมื่อกี้'), null);
     assert.equal(receiptStatusQuestion('ขอบคุณค่ะ'), null);
   });
+
+  // C1 (T-107-b): "ขนาดนี้/ขนาดนั้น" is an intensifier ("พุ่งขนาดนี้" = spiked THIS much), not a file
+  // reference — it must not steal an expense-spike question into the file-attempt answer.
+  it('a bare "ขนาดนี้" intensifier is not a file question, but naming the file still is', () => {
+    assert.equal(receiptStatusQuestion('ทำไมค่าเดินทางเดือนนี้พุ่งขนาดนี้คะ'), null);
+    assert.equal(receiptStatusQuestion('ค่าใช้จ่ายเยอะขนาดนั้นเลยเหรอ'), null);
+    assert.equal(receiptStatusQuestion('ไฟล์ใหญ่ไปไหม'), 'file_attempt');
+    assert.equal(receiptStatusQuestion('ขนาดไฟล์เท่าไร'), 'file_attempt');
+  });
 });
 
 describe('§17.5 answer table', () => {
