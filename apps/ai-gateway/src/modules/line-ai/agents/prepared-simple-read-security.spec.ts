@@ -362,9 +362,13 @@ describe('prepared simple-read lane — eligible deterministic answer (no model,
     assert.equal(spy.compose, 0, 'ResponseComposer.compose === 0');
     assert.equal(spy.judge, 0, 'CoverageCritic.judge === 0');
     assert.match(result.replyText, /12,345/); // grounded number, from the tool
-    assert.match(result.replyText, new RegExp(`ช่วง: ${BACKED_DATE}`)); // period from the validated input
-    assert.match(result.replyText, /ที่มา: ยอดขายรวม/); // source reference
-    assert.match(result.replyText, /ข้อมูล ณ 2026-07-15/); // as-of state
+    // C6 (batch 5c): the period/as-of lines are now Thai calendar dates, not the raw ISO strings.
+    assert.match(result.replyText, /ช่วง: 20 ส\.ค\. 2569/); // period from the validated input
+    // C6 (batch 5c): the reply text no longer states "ที่มา:" — the API appends "แหล่งข้อมูล:" from
+    // sourceRefs already, so a line here doubled it.
+    assert.doesNotMatch(result.replyText, /ที่มา:|Source:/);
+    assert.equal(result.sourceRefs[0]?.label, 'ยอดขายรวม'); // source reference still carried structurally
+    assert.match(result.replyText, /ข้อมูล ณ 15 ก\.ค\. 2569/); // as-of state
     assert.equal(result.webLinks[0]?.path, '/sales'); // link
     assert.equal(result.presentation?.kind, 'answer_cards');
   });
@@ -376,8 +380,8 @@ describe('prepared simple-read lane — eligible deterministic answer (no model,
       rawPreparedSales({ intentPlan: { status: 'ROUTABLE', language: 'en', requiresHumanReview: false, refusals: [], intents: [{ intent: 'read_summary', subject: 'sale', agent: 'sales', priority: 1, requiredTools: ['sales.get_sales_summary'], missingContext: [] }] } }),
     ));
     assert.match(result.replyText, /Sales: 12,345 THB/);
-    assert.match(result.replyText, /Source: ยอดขายรวม/);
-    assert.match(result.replyText, /Data as of 2026-07-15/);
+    assert.doesNotMatch(result.replyText, /ที่มา:|Source:/);
+    assert.equal(result.sourceRefs[0]?.label, 'ยอดขายรวม');
   });
 
   // P0: any input the sanitizer would CHANGE must fall back BEFORE a call — never strip-and-execute.

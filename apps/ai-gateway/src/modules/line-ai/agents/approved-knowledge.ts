@@ -138,13 +138,17 @@ export function renderApprovedKnowledge(pack: ProductKnowledgePack, selected: un
   return {
     replyText: cards.map((card) => `${card.title}\n${card.body}`).join('\n\n'),
     sourceRefs: cards.map((card, i) => ({
+      // C6 (batch 5c): the version/effective date belong in the audit trail (`entityId` already
+      // carries both pack and card version), never the customer-facing label — the API appends
+      // "แหล่งข้อมูล: <label>" to every LINE answer, so a customer previously read
+      // "(v1, 2026-09-27)" machine tokens in their own chat.
       module: 'knowledge', entityType: 'approved_product_help', entityId: `${pack.id}:${pack.version}:${card.id}:${card.version}`,
-      label: `${card.title} (v${card.version}, ${pack.effectiveFrom.slice(0, 10)})`,
+      label: card.title,
       permissionChecked: true, webPath: webLinks[i]!.path,
     })),
     webLinks,
     presentation: { kind: 'answer_cards', cards: cards.map((card, i) => ({
-      title: card.title, text: card.body, sourceLabels: [`${card.title} v${card.version}`], webLink: webLinks[i]!,
+      title: card.title, text: card.body, sourceLabels: [card.title], webLink: webLinks[i]!,
     })) },
   };
 }

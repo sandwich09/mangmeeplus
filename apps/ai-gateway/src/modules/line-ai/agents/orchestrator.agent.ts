@@ -1881,8 +1881,12 @@ export class OrchestratorAgent {
     // invocation, no fabricated facts/source/completion, no card. Just an honest outcome line.
     const ctx = { language: plan.language, locale: req.userContext.locale };
     const replyText = preparedTerminalReply(output, ctx);
-    // The copy above points at the Expenses page only on a real read failure, never on denial.
-    const webLinks = output.status === 'PERMISSION_DENIED' ? [] : expensesWebLink(req.userContext.companyId, isEnglish(ctx));
+    // The copy above points at the Expenses page only on a real read failure — never on denial, and
+    // (C4, batch 5c) never on a name-resolution reply, matching the classic path's
+    // `expenseBranchResolutionReply` terminal shape (empty sourceRefs/webLinks): that reply already
+    // lists the real catalog and asks the customer to type a name, so a generic web link adds nothing.
+    const webLinks = output.status === 'PERMISSION_DENIED' || expenseNameResolutionIssue([output])
+      ? [] : expensesWebLink(req.userContext.companyId, isEnglish(ctx));
     return {
       plan, outputs: [output], replyText,
       sourceRefs: [], webLinks,
