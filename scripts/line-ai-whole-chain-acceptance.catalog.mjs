@@ -356,6 +356,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     // tuning-3 item 3: น้องมั่งมี's persona (ค่ะ, never ครับ/ผม, no English jargon) in compose too.
     'src/modules/line-ai/agents/mangmee-persona.spec.ts',
     'src/modules/line-ai/agents/semantic-turn-v2-persona-sanitize.spec.ts',
+    // tuning-3 item 4: grouped two-period comparisons skip compose and rank their own groups.
+    'src/modules/line-ai/agents/semantic-turn-v2-compose-skip.spec.ts',
     'src/modules/line-ai/domain/logic/business-read-result-semantics.spec.ts',
     'src/modules/line-ai/infrastructure/provider/public-lookup.spec.ts',
     'src/modules/line-ai/presentation/http/line-reliability-capabilities.controller.spec.ts',

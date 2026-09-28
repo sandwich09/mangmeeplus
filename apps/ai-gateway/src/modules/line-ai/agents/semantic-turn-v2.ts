@@ -512,7 +512,13 @@ export async function runSemanticTurnV2(input: {
     // cite these instead of re-deriving a difference or percentage from the raw toolResults figures.
     ...(derivedFactsByIndex.size ? { derivedFacts: [...derivedFactsByIndex].map(([index, facts]) => ({ index, facts })) } : {}) };
   let parsed: Record<string, unknown> | undefined;
-  const needsComposition = inventory.some(item => item.kind !== 'help' && !forced.has(item.index) && !questions.has(item.index) && !nameIssues.has(item.index));
+  // tuning-3 item 4 (T-016/T-082): a two-period comparison already has a full, exact deterministic
+  // answer in comparisonByIndex (including its own ranked groups — see expensePeriodComparisonReplyText)
+  // before compose ever runs; asking the model to re-derive the same numbers only risks the 30s
+  // turn deadline (two grouped breakdowns' worth of context, up to 2 compose attempts) for an answer
+  // that, when it fails grounding, falls back to this exact same text anyway (Item 3(c) below).
+  const needsComposition = inventory.some(item => item.kind !== 'help' && !forced.has(item.index) && !questions.has(item.index)
+    && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index));
   for (let attempt = 0; needsComposition && attempt < 2; attempt++) {
     if (attempt) {
       const state = currentBudgetState();

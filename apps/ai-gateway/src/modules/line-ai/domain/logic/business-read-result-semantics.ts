@@ -176,14 +176,27 @@ function periodLabel(period: { fromDate: string; toDate: string }): string {
   return period.fromDate === period.toDate ? period.fromDate : `${period.fromDate} – ${period.toDate}`;
 }
 
+/** tuning-3 item 4: same cap as prepared-simple-read-formatter.ts's MAX_BREAKDOWN_GROUPS (R-A2) —
+ *  its own constant, since this domain/logic module has no dependency on that agents-layer file. */
+const MAX_COMPARISON_GROUPS = 8;
+
 export type ExpensePeriodComparison = {
   /** Labelled facts (Thai) for the compose context AND, via the same decimals() extraction every
-   *  other allowed number already goes through, the grounding allow-set — see runSemanticTurnV2. */
+   *  other allowed number already goes through, the grounding allow-set — see runSemanticTurnV2.
+   *  Unconditionally includes every matching byLabel row (get_breakdown's categories/vendors/branches,
+   *  or list_recent's paid/unpaid/confirmed/draft/pending split) — unbounded, and never gated by
+   *  tool, so a model composing its own prose always has the full grounding it had before tuning-3. */
   factsText: string;
   periodA: { label: string; totalAmount: string; count: number };
   periodB: { label: string; totalAmount: string; count: number };
   diffAmount: string;
   percent?: string;
+  /** tuning-3 item 4 (T-016/T-082): the SAME per-label lines as in `factsText`, but only for a
+   *  GROUPED read (expense.get_breakdown's categories/vendors/branches — never list_recent's fixed
+   *  status split, which is not a "group" the customer asked for), ranked by whichever period's
+   *  amount is larger and capped like the single-period breakdown formatter — for
+   *  `expensePeriodComparisonReplyText` to append to the deterministic customer-facing reply. */
+  groupLines: string[];
 };
 
 /**
@@ -202,15 +215,24 @@ export function expensePeriodComparison(toolName: string, dataA: UnknownRecord, 
     `ช่วง ${labelB}: ${formatSignedMoney(Number(b.totalAmount))} บาท (${b.count} รายการ)`,
     `ต่างกัน ${formatSignedMoney(total.diff)} บาท${formatSignedPercent(total.percent) ? ` (${formatSignedPercent(total.percent)})` : ''}`,
   ];
-  for (const rowA of a.byLabel) {
-    const rowB = b.byLabel.find((row) => row.label === rowA.label);
-    if (!rowB) continue;
-    const sub = moneyDiff(rowA.totalAmount, rowB.totalAmount);
-    const subPercent = formatSignedPercent(sub.percent);
-    lines.push(`${rowA.label} — ${labelA}: ${formatSignedMoney(Number(rowA.totalAmount))} บาท, ${labelB}: ${formatSignedMoney(Number(rowB.totalAmount))} บาท, ต่างกัน ${formatSignedMoney(sub.diff)} บาท${subPercent ? ` (${subPercent})` : ''}`);
-  }
+  const matched = a.byLabel
+    .flatMap((rowA) => { const rowB = b.byLabel.find((row) => row.label === rowA.label); return rowB ? [{ rowA, rowB }] : []; })
+    .map(({ rowA, rowB }) => {
+      const sub = moneyDiff(rowA.totalAmount, rowB.totalAmount);
+      const subPercent = formatSignedPercent(sub.percent);
+      return { rank: Math.max(Number(rowA.totalAmount), Number(rowB.totalAmount)),
+        line: `${rowA.label} — ${labelA}: ${formatSignedMoney(Number(rowA.totalAmount))} บาท, ${labelB}: ${formatSignedMoney(Number(rowB.totalAmount))} บาท, ต่างกัน ${formatSignedMoney(sub.diff)} บาท${subPercent ? ` (${subPercent})` : ''}` };
+    });
+  for (const { line } of matched) lines.push(line);
+  // tuning-3 item 4 (T-016/T-082): ranked by whichever period's amount is larger, same cap as the
+  // single-period breakdown formatter, only a label BOTH periods actually returned (spec's own "the
+  // change for groups present in both") — get_breakdown only, never list_recent's fixed status
+  // split, which already reads fine as the 3 lines above (T-076/077/078/080/081, unflagged today).
+  const groupLines = toolName === 'expense.get_breakdown'
+    ? matched.sort((left, right) => right.rank - left.rank).slice(0, MAX_COMPARISON_GROUPS).map(({ line }) => line)
+    : [];
   return {
-    factsText: lines.join('\n'),
+    factsText: lines.join('\n'), groupLines,
     periodA: { label: labelA, totalAmount: a.totalAmount, count: a.count },
     periodB: { label: labelB, totalAmount: b.totalAmount, count: b.count },
     diffAmount: formatSignedMoney(total.diff),
@@ -221,13 +243,18 @@ export function expensePeriodComparison(toolName: string, dataA: UnknownRecord, 
 /**
  * Item 3(c): the deterministic answer when compose still fails a two-period comparison even with
  * expensePeriodComparison's facts allowed. Exact shape from the spec: "ช่วง A: X บาท (n รายการ) /
- * ช่วง B: Y บาท (m รายการ) / ต่างกัน Z บาท (±P%)"; source/link are attached by the caller.
+ * ช่วง B: Y บาท (m รายการ) / ต่างกัน Z บาท (±P%)", PLUS (tuning-3 item 4) a grouped read's own
+ * ranked `groupLines`; source/link are attached by the caller.
  */
 export function expensePeriodComparisonReplyText(comparison: ExpensePeriodComparison): string {
   const percent = comparison.percent ? ` (${comparison.percent})` : '';
-  return `ช่วง ${comparison.periodA.label}: ${formatSignedMoney(Number(comparison.periodA.totalAmount))} บาท (${comparison.periodA.count} รายการ)\n`
-    + `ช่วง ${comparison.periodB.label}: ${formatSignedMoney(Number(comparison.periodB.totalAmount))} บาท (${comparison.periodB.count} รายการ)\n`
-    + `ต่างกัน ${comparison.diffAmount} บาท${percent}`;
+  const lines = [
+    `ช่วง ${comparison.periodA.label}: ${formatSignedMoney(Number(comparison.periodA.totalAmount))} บาท (${comparison.periodA.count} รายการ)`,
+    `ช่วง ${comparison.periodB.label}: ${formatSignedMoney(Number(comparison.periodB.totalAmount))} บาท (${comparison.periodB.count} รายการ)`,
+    `ต่างกัน ${comparison.diffAmount} บาท${percent}`,
+    ...comparison.groupLines,
+  ];
+  return lines.join('\n');
 }
 
 /**

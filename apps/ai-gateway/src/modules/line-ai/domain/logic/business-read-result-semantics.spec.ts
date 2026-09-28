@@ -81,20 +81,65 @@ describe('item 3(a)/(c): expense period comparison', () => {
     assert.equal(expensePeriodComparison('expense.get_breakdown', {}, THIS_MONTH), undefined);
   });
 
-  it('renders the exact spec shape: ช่วง A / ช่วง B / ต่างกัน', () => {
-    const comparison = expensePeriodComparison('expense.get_breakdown', LAST_MONTH, THIS_MONTH)!;
+  it('renders the exact spec shape ช่วง A / ช่วง B / ต่างกัน when the tool carries no matching sub-split (expense.list_recent)', () => {
+    const augData = { period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, total: 14, summary: { totalAmount: '40453' } };
+    const sepData = { period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, total: 14, summary: { totalAmount: '17765' } };
+    const comparison = expensePeriodComparison('expense.list_recent', augData, sepData)!;
     const text = expensePeriodComparisonReplyText(comparison);
     assert.equal(text, 'ช่วง 2026-08-01 – 2026-08-31: 40,453.00 บาท (14 รายการ)\n'
       + 'ช่วง 2026-09-01 – 2026-09-28: 17,765.00 บาท (14 รายการ)\n'
       + 'ต่างกัน -22,688.00 บาท (-56.1%)');
   });
 
-  it('also compares expense.list_recent by payment/document status amounts', () => {
+  it('also compares expense.list_recent by payment/document status amounts, but never in the deterministic reply (spec §3 row 9 is totals-only)', () => {
     const augData = { period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, total: 8, summary: { totalAmount: '20157', paidAmount: '0', unpaidAmount: '20157' } };
     const sepData = { period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, total: 8, summary: { totalAmount: '10621', paidAmount: '0', unpaidAmount: '10621' } };
     const comparison = expensePeriodComparison('expense.list_recent', augData, sepData);
     assert.ok(comparison);
+    // factsText (compose's grounding context) still carries the status split...
     assert.match(comparison.factsText, /ยังไม่จ่าย.*-9,536\.00/su);
+    // ...but the deterministic customer-facing reply stays the plain 3 lines for this tool.
+    assert.doesNotMatch(expensePeriodComparisonReplyText(comparison), /ยังไม่จ่าย/su);
+  });
+
+  it('tuning-3 item 4 (T-016/T-082): a grouped (get_breakdown) comparison\'s deterministic reply also ranks in its matching category lines', () => {
+    const comparison = expensePeriodComparison('expense.get_breakdown', LAST_MONTH, THIS_MONTH)!;
+    const text = expensePeriodComparisonReplyText(comparison);
+    assert.equal(text, [
+      'ช่วง 2026-08-01 – 2026-08-31: 40,453.00 บาท (14 รายการ)',
+      'ช่วง 2026-09-01 – 2026-09-28: 17,765.00 บาท (14 รายการ)',
+      'ต่างกัน -22,688.00 บาท (-56.1%)',
+      ...comparison.groupLines,
+    ].join('\n'), 'the reply is the 3 summary lines plus the ranked groupLines');
+    assert.match(text, /ค่าบริการ.*-6,576\.00.*-61\.1%/su);
+    assert.match(text, /ค่าใช้จ่ายอื่นๆ.*-2,576\.00/su);
+    // ค่าบริการ (10,764.50 บาท, the larger of its two periods) ranks ahead of ค่าใช้จ่ายอื่นๆ (7,175.50).
+    assert.ok(text.indexOf('ค่าบริการ') < text.indexOf('ค่าใช้จ่ายอื่นๆ'), 'groups rank by amount, largest first');
+  });
+
+  it('tuning-3 item 4: never a group either period did not actually return, and ranked by the larger side first', () => {
+    const augOnly = { period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, totalAmount: '10000', totalCount: 3,
+      byCategory: [{ category: 'ค่าน้ำมัน', totalAmount: '1000' }, { category: 'ค่าเดินทางเท่านั้นเดือนสิงหา', totalAmount: '9000' }] };
+    const sepOnly = { period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, totalAmount: '2000', totalCount: 2,
+      byCategory: [{ category: 'ค่าน้ำมัน', totalAmount: '2000' }] };
+    const comparison = expensePeriodComparison('expense.get_breakdown', augOnly, sepOnly)!;
+    const text = expensePeriodComparisonReplyText(comparison);
+    assert.match(text, /ค่าน้ำมัน/);
+    assert.doesNotMatch(text, /ค่าเดินทางเท่านั้นเดือนสิงหา/, 'a category the OTHER period never returned must never be printed');
+  });
+
+  it('tuning-3 item 4: ranks by amount (not input order) and caps at the same 8-group bound as the single-period formatter', () => {
+    const category = (n: number) => `หมวด${n}`;
+    // Deliberately NOT pre-sorted, so only a real sort-by-amount keeps the two smallest (idx 1, 6) out.
+    const amounts = [500, 100, 900, 300, 1000, 700, 200, 800, 600, 400];
+    const rows = amounts.map((totalAmount, i) => ({ category: category(i), totalAmount: String(totalAmount) }));
+    const total = String(amounts.reduce((sum, value) => sum + value, 0));
+    const augMany = { period: { fromDate: '2026-08-01', toDate: '2026-08-31' }, totalAmount: total, totalCount: 10, byCategory: rows };
+    const sepMany = { period: { fromDate: '2026-09-01', toDate: '2026-09-28' }, totalAmount: total, totalCount: 10, byCategory: rows };
+    const comparison = expensePeriodComparison('expense.get_breakdown', augMany, sepMany)!;
+    const text = expensePeriodComparisonReplyText(comparison);
+    for (const i of [0, 2, 3, 4, 5, 7, 8, 9]) assert.match(text, new RegExp(category(i)), `top-8 amount ${category(i)} must be shown`);
+    for (const i of [1, 6]) assert.doesNotMatch(text, new RegExp(category(i)), `the two smallest amounts (${category(i)}) must be dropped by the cap`);
   });
 });
 
