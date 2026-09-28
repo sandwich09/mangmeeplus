@@ -1090,7 +1090,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       const button = document.createElement('button');
       // textContent, never innerHTML: a shop name is customer-typed data on a page with no CSP escape.
       // R-C2/R-C3: a locked shop says so in the button; the server decides its landing (billing or renew).
-      button.textContent = company.name + (company.lockReason ? ' · ' + LOCK_LABEL_TH[company.lockReason] : '');
+      button.textContent = company.name + (company.lockReason ? ' · ' + lockLabel(company) : '');
       button.addEventListener('click', function () {
         listEl.hidden = true;
         void runWith(function () { return startSession(company.id); });
