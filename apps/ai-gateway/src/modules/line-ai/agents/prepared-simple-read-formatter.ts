@@ -531,6 +531,16 @@ function moneyNumber(value: string | number): number {
   return typeof value === 'number' ? value : Number(value.replace(/,/g, ''));
 }
 
+/** M2 (tuning-8, T-057-a): `queryApplied.filters.groupBy` is the tool's own trusted echo of the
+ *  grouping it actually used — the same source `expenseFilterLine` already reads other applied
+ *  filters from. */
+function appliedGroupBy(data: Record<string, unknown> | undefined): unknown {
+  const queryApplied = data?.['queryApplied'];
+  const filters = queryApplied && typeof queryApplied === 'object' && !Array.isArray(queryApplied)
+    ? (queryApplied as Record<string, unknown>)['filters'] : undefined;
+  return filters && typeof filters === 'object' && !Array.isArray(filters) ? (filters as Record<string, unknown>)['groupBy'] : undefined;
+}
+
 /**
  * R-L4/R-A2 — `expense.get_breakdown` as a grouped list ("แยกค่าใช้จ่ายตามหมวด"). `ctx.proposedInput`
  * carries the validated `groupBy` the fast lane actually sent (defaulting to category, same as the
@@ -547,7 +557,11 @@ function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedForma
   if (!isCount(totalCount) || !isMoney(totalAmount)) return { kind: 'unverified' };
   if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
 
-  const requestedAxis = ctx.proposedInput?.['groupBy'];
+  // M2 (tuning-8, T-057-a): the full path's deterministic fallback (semantic-turn-v2.ts's
+  // deterministicReadFallback) calls this formatter with NO proposedInput at all — fall back to the
+  // grouping the tool itself actually applied before defaulting to category, so a vendor/branch
+  // breakdown never mislabels itself "แยกตามหมวด".
+  const requestedAxis = ctx.proposedInput?.['groupBy'] ?? appliedGroupBy(data);
   const axisKey: BreakdownAxis = requestedAxis === 'branch' || requestedAxis === 'vendor' ? requestedAxis : 'category';
   const axis = BREAKDOWN_AXES[axisKey];
   const rawGroups = data?.[axis.dataKey];

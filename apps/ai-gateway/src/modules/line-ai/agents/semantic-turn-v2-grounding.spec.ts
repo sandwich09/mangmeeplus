@@ -296,6 +296,91 @@ describe('item 3 (223-turn eval batch 2): a two-period comparison is answered wi
     assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
     assert.ok(result.replyText.includes('23.6%'));
   });
+
+  it('M1 (tuning-8, T-111-b): derived facts accumulate across two breakdown results for the same index, not just the first', async () => {
+    const text = 'ทำไมจ่ายร้านสมใจการค้าเยอะจังเดือนนี้ครับ';
+    const req: LineAiTurnRequest = {
+      requestId: 'req-m1-1', webhookEventId: 'event-m1-1', messageText: text, messagePreviewHash: 'b'.repeat(16),
+      valueCandidates: extractValueCandidates(text, '2026-09-28'),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามสาเหตุจ่ายร้านสมใจการค้าเยอะ', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+        requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า' } }],
+      userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
+        permissions: ['expense.read'], roles: ['owner'], branchIds: [], locationIds: [], locale: 'th-TH' },
+    };
+    const control = JSON.stringify({ calls: [
+      { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า' } },
+      { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'vendor' } },
+    ] });
+    // Filtered (vendorName set): only this vendor's own spend, its own internal category split.
+    const filteredResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [CMP_SOURCE_REF],
+      data: { period: { fromDate: '2026-09-01', toDate: '2026-09-28', defaultedToCurrentMonth: false }, totalCount: 3, totalAmount: '4188.5', currency: 'THB',
+        totalsByCurrency: [{ currency: 'THB', count: 3, totalAmount: '4188.5' }], mixedCurrency: false,
+        byCategory: [{ categoryId: null, category: 'ค่าน้ำมัน', currency: 'THB', count: 1, totalAmount: '2355' }],
+        byBranch: [], byVendor: [{ vendorId: null, vendor: 'ร้านสมใจการค้า', currency: 'THB', count: 3, totalAmount: '4188.5' }] } };
+    // Unfiltered (grouped by vendor): the whole month, every vendor — carries the 23.6% share, which
+    // exists ONLY here, never in the filtered result above.
+    const unfilteredResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [CMP_SOURCE_REF],
+      data: { period: { fromDate: '2026-09-01', toDate: '2026-09-28', defaultedToCurrentMonth: false }, totalCount: 14, totalAmount: '17765', currency: 'THB',
+        totalsByCurrency: [{ currency: 'THB', count: 14, totalAmount: '17765' }], mixedCurrency: false,
+        byCategory: [], byBranch: [],
+        byVendor: [{ vendorId: null, vendor: 'ร้านสมใจการค้า', currency: 'THB', count: 3, totalAmount: '4188.5' },
+          { vendorId: null, vendor: 'ปั๊มน้ำมัน ปตท.', currency: 'THB', count: 2, totalAmount: '3203' }] } };
+    const answer = JSON.stringify({ answers: [{ index: 0, status: 'handled',
+      text: 'ร้านสมใจการค้าเดือนนี้จ่ายไป 4,188.50 บาท คิดเป็น 23.6% ของค่าใช้จ่ายทั้งหมดในเดือนนี้ (17,765 บาท) อยู่อันดับ 1 ค่ะ',
+      sourceRefIds: ['expenses:expense_breakdown:summary'] }] });
+    const queue = [control, answer];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    const result = await runSemanticTurnV2({
+      req, provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(_meta, _ctx, args): Promise<ToolResult> { return (args as { groupBy?: string }).groupBy === 'vendor' ? unfilteredResult : filteredResult; },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+    assert.ok(result.replyText.includes('23.6%'), result.replyText);
+  });
+
+  it('M1 (tuning-8, T-111-b): accumulates regardless of which of the two breakdown calls the control round lists first', async () => {
+    // Same fixture as the test above, but the control round lists the UNFILTERED call first and the
+    // vendor-filtered one second — the opposite order from E5's own augmentation. `derivedFactsByIndex`
+    // must APPEND per index rather than keep only the LAST-processed entry's shares, or this ordering
+    // would silently lose the 23.6% share again (this time to the filtered entry's own 100.0%/56.2%).
+    const text = 'ทำไมจ่ายร้านสมใจการค้าเยอะจังเดือนนี้ครับ';
+    const req: LineAiTurnRequest = {
+      requestId: 'req-m1-2', webhookEventId: 'event-m1-2', messageText: text, messagePreviewHash: 'c'.repeat(16),
+      valueCandidates: extractValueCandidates(text, '2026-09-28'),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามสาเหตุจ่ายร้านสมใจการค้าเยอะ', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+        requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า' } }],
+      userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
+        permissions: ['expense.read'], roles: ['owner'], branchIds: [], locationIds: [], locale: 'th-TH' },
+    };
+    const control = JSON.stringify({ calls: [
+      { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'vendor' } },
+      { index: 0, toolName: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', vendorName: 'ร้านสมใจการค้า' } },
+    ] });
+    const filteredResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [CMP_SOURCE_REF],
+      data: { period: { fromDate: '2026-09-01', toDate: '2026-09-28', defaultedToCurrentMonth: false }, totalCount: 3, totalAmount: '4188.5', currency: 'THB',
+        totalsByCurrency: [{ currency: 'THB', count: 3, totalAmount: '4188.5' }], mixedCurrency: false,
+        byCategory: [{ categoryId: null, category: 'ค่าน้ำมัน', currency: 'THB', count: 1, totalAmount: '2355' }],
+        byBranch: [], byVendor: [{ vendorId: null, vendor: 'ร้านสมใจการค้า', currency: 'THB', count: 3, totalAmount: '4188.5' }] } };
+    const unfilteredResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [CMP_SOURCE_REF],
+      data: { period: { fromDate: '2026-09-01', toDate: '2026-09-28', defaultedToCurrentMonth: false }, totalCount: 14, totalAmount: '17765', currency: 'THB',
+        totalsByCurrency: [{ currency: 'THB', count: 14, totalAmount: '17765' }], mixedCurrency: false,
+        byCategory: [], byBranch: [],
+        byVendor: [{ vendorId: null, vendor: 'ร้านสมใจการค้า', currency: 'THB', count: 3, totalAmount: '4188.5' },
+          { vendorId: null, vendor: 'ปั๊มน้ำมัน ปตท.', currency: 'THB', count: 2, totalAmount: '3203' }] } };
+    const answer = JSON.stringify({ answers: [{ index: 0, status: 'handled',
+      text: 'ร้านสมใจการค้าเดือนนี้จ่ายไป 4,188.50 บาท คิดเป็น 23.6% ของค่าใช้จ่ายทั้งหมดในเดือนนี้ (17,765 บาท) อยู่อันดับ 1 ค่ะ',
+      sourceRefIds: ['expenses:expense_breakdown:summary'] }] });
+    const queue = [control, answer];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    const result = await runSemanticTurnV2({
+      req, provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(_meta, _ctx, args): Promise<ToolResult> { return (args as { groupBy?: string }).groupBy === 'vendor' ? unfilteredResult : filteredResult; },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'ANSWER_NUMBER_NOT_GROUNDED');
+    assert.ok(result.replyText.includes('23.6%'), result.replyText);
+  });
 });
 
 // ── Item 2 (spec §3 row 8, "รายการที่ 3 คือร้านอะไรครับ") ────────────────────────────────────────

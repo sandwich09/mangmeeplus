@@ -224,9 +224,20 @@ function deterministicReadFallback(
   if (comparison) return { status: 'handled', replyText: expensePeriodComparisonReplyText(comparison), sourceRefIds };
   // tuning-7 (run 7 T-015-a): a why-question's fallback should show the breakdown that explains the
   // amount (planned alongside the list by the why augmentation), not the bare list total.
-  const primary = (WHY_QUESTION_PATTERN.test(messageText) ? good.find(result => result.toolName === 'expense.get_breakdown') : undefined) ?? good[0];
+  // M3 (tuning-8, T-111-b): several breakdown results can exist for a why-question (E5's vendor-
+  // filtered breakdown plus its unfiltered ranking sibling) — prefer the one WITHOUT a vendor/
+  // category name filter (BREAKDOWN_NAME_FILTER_KEYS below): it carries the named entity's own
+  // amount, share and rank among ALL its peers, the same ranking ANSWER_PROMPT asks compose to lead
+  // with. A name-filtered breakdown only shows that one name's own internal split. Falls back to any
+  // breakdown, then the first result overall — unchanged when only one breakdown result exists.
+  const breakdowns = WHY_QUESTION_PATTERN.test(messageText) ? good.filter(result => result.toolName === 'expense.get_breakdown') : [];
+  const primary = breakdowns.find(result => !BREAKDOWN_NAME_FILTER_KEYS.some(key => result.queryApplied?.filters?.[key] !== undefined))
+    ?? breakdowns[0] ?? good[0];
   if (primary) {
-    const output = toSpecialistOutput(good);
+    // `sourceData` (prepared-simple-read-formatter.ts) reads the FIRST toolData entry for a given
+    // tool name — `primary` first keeps that lookup pointed at the SAME result just chosen above,
+    // even when `good` carries more than one result for that same tool.
+    const output = toSpecialistOutput([primary, ...good.filter(result => result !== primary)]);
     for (const shape of preferredAnswerShapes(primary.toolName, primary.data, messageText)) {
       const key = preparedFamilyKey(primary.toolName, shape);
       if (!enabledFamilies.has(key)) continue;
@@ -305,6 +316,13 @@ function validInput(meta: ToolMeta, input: unknown, req: LineAiTurnRequest,
   // from raw recent-turn text (conversationReadCandidates above), and the only source at all when
   // that turn's own wording (a typo, or no date word) left nothing to re-extract.
   for (const entry of req.conversationContext?.recentReads ?? []) if (entry.period) { dates.add(entry.period.fromDate); dates.add(entry.period.toDate); }
+  // M4 (tuning-8, T-110-a): see impliedPreviousMonths above — the SAME widening
+  // bindRequestedReadFilters applies to its own period-pair check must also clear THIS independent
+  // date check, or the previous month it just accepted gets rejected right back here.
+  for (const period of impliedPreviousMonths(req.messageText,
+    [...periods, ...(req.conversationContext?.recentReads ?? []).flatMap(entry => entry.period ? [entry.period] : [])])) {
+    dates.add(period.fromDate); dates.add(period.toDate);
+  }
   for (const key of ['fromDate', 'toDate', 'date', 'newSince', 'newUntil']) if (canonicalInput[key] !== undefined && !dates.has(String(canonicalInput[key]))) return undefined;
   if (canonicalInput.periodKey !== undefined) {
     const rawPeriodKey = String(canonicalInput.periodKey);
@@ -331,12 +349,50 @@ const PERIOD_WINDOW_FILTER_KEYS = new Set(['fromDate', 'toDate', 'periodKey', 'd
 // only (that file is outside this batch's owned files, so the terms are copied rather than shared).
 const WHY_QUESTION_PATTERN = /ทำไม|เพราะอะไร|สาเหตุ|\bwhy\b/iu;
 
+// M4 (tuning-8, T-110-a): broader than WHY_QUESTION_PATTERN on purpose — "เพิ่มขึ้น"/"เทียบ"/
+// "กว่าเดือน" etc. also imply a month-over-month comparison without a why-word. Used ONLY by
+// impliedPreviousMonths below, never by the name-filter suppression above (that stays scoped to
+// WHY_QUESTION_PATTERN, unchanged).
+const WHY_OR_COMPARE_PATTERN = /ทำไม|เพราะอะไร|สาเหตุ|เพิ่มขึ้น|ลดลง|เทียบ|เปรียบเทียบ|กว่าปกติ|กว่าเดือน|\bwhy\b|\bcompare\b|\bincrease\b|\bdecrease\b/iu;
+
 // H2 (tuning-7, T-107-b/T-111-b): the name-filter keys a why-question's unfiltered ranking call
 // (grouped by this same dimension) must never carry — see the suppression note in
 // `bindRequestedReadFilters` below.
 const BREAKDOWN_NAME_KEYS_BY_DIMENSION: Record<string, readonly string[]> = {
   vendor: ['vendorName', 'vendorId'], category: ['categoryName', 'categoryId'],
 };
+// M3 (tuning-8, T-111-b): the same 4 keys, flattened — a breakdown result carrying ANY of them was
+// answering one specific vendor/category, not the ranking among all of them. Used by
+// deterministicReadFallback's own breakdown choice earlier in this file.
+const BREAKDOWN_NAME_FILTER_KEYS: readonly string[] = Object.values(BREAKDOWN_NAME_KEYS_BY_DIMENSION).flat();
+
+/** M4 (tuning-8, T-110-a): the calendar month immediately before the one `isoDate` starts — only
+ *  when `isoDate` IS a month's first day; any other date is not itself "a month", so it implies no
+ *  previous month. */
+function precedingCalendarMonth(isoDate: string): { fromDate: string; toDate: string } | undefined {
+  const match = /^(\d{4})-(\d{2})-01$/u.exec(isoDate);
+  if (!match) return undefined;
+  const year = Number(match[1]), month = Number(match[2]);
+  const iso = (date: Date) => date.toISOString().slice(0, 10);
+  return { fromDate: iso(new Date(Date.UTC(year, month - 2, 1))), toDate: iso(new Date(Date.UTC(year, month - 1, 0))) };
+}
+
+/** M4 (tuning-8, T-110-a): "เดือนนี้ค่าใช้จ่ายเพิ่มขึ้นเพราะอะไรคะ" implies its comparison baseline is
+ *  the calendar month right before whatever month is already grounded (a value-candidate period or a
+ *  recentReads period) — the router plans that second read, but the customer's own words never name
+ *  August, so neither `bindRequestedReadFilters`'s period-pair check nor `validInput`'s own date
+ *  check would otherwise ground it. Exactly one hop from an ALREADY grounded month (never chained:
+ *  this never runs on its own output), and only for a matching question — every other period keeps
+ *  today's exact grounding untouched. */
+function impliedPreviousMonths(messageText: string, groundedPeriods: ReadonlyArray<{ fromDate: string }>): Array<{ fromDate: string; toDate: string }> {
+  if (!WHY_OR_COMPARE_PATTERN.test(messageText)) return [];
+  const seen = new Set<string>(), result: Array<{ fromDate: string; toDate: string }> = [];
+  for (const period of groundedPeriods) {
+    const prev = precedingCalendarMonth(period.fromDate);
+    if (prev && !seen.has(prev.fromDate)) { seen.add(prev.fromDate); result.push(prev); }
+  }
+  return result;
+}
 
 /** A periodKey alias ("this_month") and the month key validInput resolves it to ("2026-09") name the
  *  same window — compare them as one value when checking a requested filter against a bound call. */
@@ -408,8 +464,12 @@ function bindRequestedReadFilters(meta: ToolMeta, item: NonNullable<LineAiTurnRe
     // typo'd prior turn's) is still grounded per spec R-M5 — recentReads is the API's own record of
     // what a prior tool call actually applied, not a re-guess from text.
     const recentReadPeriods = req.conversationContext?.recentReads ?? [];
+    // M4 (tuning-8, T-110-a): see impliedPreviousMonths above.
+    const impliedPeriods = impliedPreviousMonths(req.messageText,
+      [...periods, ...recentReadPeriods.flatMap(entry => entry.period ? [entry.period] : [])]);
     if (!periods.some(period => period.fromDate === fromDate && period.toDate === toDate)
       && !recentReadPeriods.some(entry => entry.period?.fromDate === fromDate && entry.period?.toDate === toDate)
+      && !impliedPeriods.some(period => period.fromDate === fromDate && period.toDate === toDate)
       && !(fromDate === toDate && dates.includes(String(fromDate)))) return undefined;
   }
   return validInput(meta, bound, req, retainedCandidates, readCandidates);
@@ -734,10 +794,15 @@ export async function runSemanticTurnV2(input: {
   for (const item of inventory) {
     if (item.kind !== 'read') continue;
     const good = results.filter(entry => entry.index === item.index && entry.result.status === 'ok').map(entry => entry.result);
-    const primary = good.find(result => (COMPARISON_TOOLS as readonly string[]).includes(result.toolName));
-    const period = primary && object(primary.data) ? primary.data['period'] : undefined;
-    if (primary && object(period) && typeof period['fromDate'] === 'string' && typeof period['toDate'] === 'string') {
-      readEntries.push({ index: item.index, result: primary, fromDate: period['fromDate'], toDate: period['toDate'] });
+    // M1 (tuning-8, T-111-b): a why-question's vendor-filtered breakdown and its unfiltered ranking
+    // sibling (E5's (b) addition, same index) both carry period data — `find` used to keep only the
+    // first, discarding the second's shares entirely. Every matching result now joins readEntries,
+    // so derivedFactsByIndex below can accumulate both.
+    for (const match of good.filter(result => (COMPARISON_TOOLS as readonly string[]).includes(result.toolName))) {
+      const period = object(match.data) ? match.data['period'] : undefined;
+      if (object(period) && typeof period['fromDate'] === 'string' && typeof period['toDate'] === 'string') {
+        readEntries.push({ index: item.index, result: match, fromDate: period['fromDate'], toDate: period['toDate'] });
+      }
     }
   }
   const comparisonByIndex = new Map<number, ExpensePeriodComparison>();
@@ -764,7 +829,10 @@ export async function runSemanticTurnV2(input: {
     // comparison's own index skips compose for its FINAL answer (comparisonByIndex below).
     const comparison = comparisonByIndex.get(entry.index);
     if (comparison) parts.push(comparison.factsText, comparison.directionLine, ...comparison.rankLines);
-    if (parts.length) derivedFactsByIndex.set(entry.index, parts.join('\n'));
+    // M1 (tuning-8, T-111-b): APPEND — readEntries can now carry two results for the same index, and
+    // the second `.set()` must not erase the first's already-derived shares (e.g. the unfiltered
+    // breakdown's own-vendor share, which used to be the one discarded above).
+    if (parts.length) derivedFactsByIndex.set(entry.index, [derivedFactsByIndex.get(entry.index), parts.join('\n')].filter(Boolean).join('\n'));
   }
   // A3 (batch5, T-084-b): reimbursement.list_pending_approvals carries no period, so it never joins
   // `readEntries` above — its own code-computed total joins the SAME derivedFacts path directly from
