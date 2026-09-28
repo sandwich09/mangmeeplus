@@ -48,7 +48,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
     void authedApiFetch<BillingRecipientAdminReview>(`${base}/invoices/${encodeURIComponent(invoiceId)}/recipient-review`,{cache:'no-store',suppressErrorToast:true}).then(value=>{if(active)setRecipientReview(value);}).catch(()=>{});
     return()=>{active=false;};
   },[admin,preview,base,invoiceId,reload]);
-  async function resend(){
+  async function adminResend(){
     if(resendBusy||!resendReason.trim()||!resendPassword)return;setResendBusy(true);setResendMessage('');
     const post=<T,>(path:string,body:unknown)=>authedApiFetch<T>(path,{method:'POST',cache:'no-store',suppressErrorToast:true,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     try{
@@ -141,7 +141,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
         <div className="space-y-3 py-3">
           <p className="text-gray-600">อีเมลผู้รับเอกสารปัจจุบัน: {recipientReview.currentEmail??'ยังไม่มี'} · ที่มา: {billingRecipientSourceLabel(recipientReview.currentSource)}</p>
           {recipientReview.bouncedAt&&<p className="text-red-700">อีเมลนี้ตีกลับเมื่อ {time(recipientReview.bouncedAt)}</p>}
-          {!resendOpen?<button className={button} onClick={()=>setResendOpen(true)}>ส่งเอกสารซ้ำ</button>:<form className="space-y-3" onSubmit={e=>{e.preventDefault();void resend();}}>
+          {!resendOpen?<button className={button} onClick={()=>setResendOpen(true)}>ส่งเอกสารซ้ำ</button>:<form className="space-y-3" onSubmit={e=>{e.preventDefault();void adminResend();}}>
             <label className="block">เหตุผลภายใน (ลูกค้าไม่เห็น)<textarea className={billingField} required maxLength={500} value={resendReason} disabled={resendBusy} onChange={e=>setResendReason(e.target.value)}/></label>
             <label className="block">รหัสผ่านปัจจุบัน<input className={billingField} type="password" autoComplete="current-password" required maxLength={1024} value={resendPassword} disabled={resendBusy} onChange={e=>setResendPassword(e.target.value)}/></label>
             <div className="flex flex-wrap gap-3"><button className={button} disabled={resendBusy||!resendReason.trim()||!resendPassword} aria-busy={resendBusy}>ส่งอีกครั้ง</button><button type="button" className={button} disabled={resendBusy} onClick={()=>setResendOpen(false)}>ยกเลิก</button></div>
