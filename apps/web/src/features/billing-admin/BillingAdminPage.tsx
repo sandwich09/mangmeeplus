@@ -4,7 +4,7 @@ import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import BillingSupportOutcomesPanel from './BillingSupportOutcomesPanel';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import BillingCompanyOverview from './BillingCompanyOverview';
 import type { BillingOperatorOverview, BillingOperatorCompanyDetail, BillingOperatorIssue, BillingScopeDirectory } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
@@ -24,7 +24,7 @@ const states: Record<string, string> = { OPEN: 'รอรับงาน', ASSIG
 export default function BillingAdminPage({ companyId, issueId, issuesOnly = false, userId }: {
   companyId?: string; issueId?: string; issuesOnly?: boolean; userId: string;
 }) {
-  const params=useSearchParams(),queuePage=Boolean(issuesOnly||issueId);
+  const params=useSearchParams(),router=useRouter(),queuePage=Boolean(issuesOnly||issueId);
   const directory = !companyId && !issueId && !issuesOnly;
   const rawDirectoryPage = Number(params.get('page') ?? 1);
   const directoryPage = Number.isSafeInteger(rawDirectoryPage) && rawDirectoryPage > 0 && rawDirectoryPage <= 1_000_000 ? rawDirectoryPage : 1;
@@ -43,6 +43,24 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
   const [search,setSearch]=useState(query);
   const [requestId,setRequestId]=useState<string|null>(null);
   useEffect(()=>setSearch(query),[query]);
+  // Purchase without setup PR E (R-E4): the "เปิดรายการ" link from the support inbox / package-change
+  // queue lands here with ?lookup=<ref> and searches automatically, once.
+  const initialLookup=directory?params.get('lookup')??'':'';
+  const [lookup,setLookup]=useState(initialLookup),[lookupError,setLookupError]=useState('');
+  const autoLookedUp=useRef(false);
+  async function runLookup(value=lookup) {
+    if(!value.trim())return;setLookupError('');
+    try{
+      const result=await get<{href:string}>(`/lookup?reference=${encodeURIComponent(value.trim())}`);
+      router.push(`/system/billing${result.href}`);
+    }catch(e){
+      const status=(e as {status?:number}).status,code=apiErrorCode(e);
+      setLookupError(status===404?'ไม่พบรายการจากเลขอ้างอิงนี้ หรืออยู่นอกบริษัทที่คุณดูแล':code==='BILLING_LOOKUP_TOO_SHORT'?'เลขอ้างอิงต้องมีอย่างน้อย 8 ตัวอักษร':code==='BILLING_LOOKUP_AMBIGUOUS'?'เลขอ้างอิงนี้ตรงหลายรายการ ให้ใช้เลขใบแจ้งหนี้หรือรหัสเต็ม':apiErrorMessage(e));
+    }
+  }
+  useEffect(()=>{
+    if(!initialLookup||autoLookedUp.current)return;autoLookedUp.current=true;void runLookup(initialLookup);
+  },[initialLookup]); // eslint-disable-line react-hooks/exhaustive-deps
   function changeDirectory(searchValue: string, pageValue = 1) {
     const next = new URLSearchParams();
     if (searchValue.trim()) next.set('search', searchValue.trim());
@@ -170,7 +188,8 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       {(!companyId&&!issueId || error) && <button className={button} disabled={loading || saving || refreshing} aria-busy={Boolean(loading || saving || refreshing)} onClick={refresh}>{issueId ? 'ลองโหลดอีกครั้ง' : 'โหลดข้อมูลล่าสุด'}</button>}
     </>}
     {directory && <BillingCompanyDirectory overview={overview} loading={loading} error={error} requestId={requestId} search={search} query={query} page={directoryPage}
-      onSearchChange={setSearch} onSearch={()=>changeDirectory(search)} onClear={()=>{setSearch('');changeDirectory('');}} onPage={page=>changeDirectory(query,page)} onReload={refresh} leaving={leaving} />}
+      onSearchChange={setSearch} onSearch={()=>changeDirectory(search)} onClear={()=>{setSearch('');changeDirectory('');}} onPage={page=>changeDirectory(query,page)} onReload={refresh} leaving={leaving}
+      lookup={lookup} onLookupChange={setLookup} onLookup={()=>void runLookup()} lookupError={lookupError} />}
     {issuesOnly && <BillingIssueDirectory items={issues?.items ?? []} loading={loading} error={error} requestId={requestId}
       queue={queue} cursor={queueCursor} nextCursor={issues?.nextCursor ?? null} disabled={overview?.mode === 'DISABLED'} scoped={Boolean(overview && !overview.platformScope)}
       onFilter={value=>changeQueue(value)} onPage={cursor=>changeQueue(queue,cursor)} onReload={refresh}

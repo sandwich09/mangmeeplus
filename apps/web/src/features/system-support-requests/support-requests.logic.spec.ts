@@ -7,6 +7,7 @@ import {
   supportAnswerHref,
   supportAnswerLabel,
   supportClosedReasonTh,
+  supportReferenceHref,
   supportReopenedChip,
   supportReplyChip,
   supportReplyWithinRetryWindow,
@@ -314,5 +315,36 @@ describe('supportMediaErrorTh — a photo without bytes says why', () => {
     assert.match(supportMediaErrorTh('media_limit_reached'), /สูงสุด/);
     assert.match(supportMediaErrorTh('media_fetch_failed'), /LINE/);
     assert.match(supportMediaErrorTh(undefined), /LINE/);
+  });
+});
+
+describe('supportReferenceHref — purchase without setup PR E (R-E5)', () => {
+  it('opens the invoice page when the ask started from a paid invoice', () => {
+    assert.equal(
+      supportReferenceHref({ companyId: 'co-1', referenceKind: 'invoice', referenceId: 'inv-1', referenceLabel: 'ABCD-1234' }),
+      '/system/billing/companies/co-1/invoices/inv-1',
+    );
+  });
+
+  it('opens the checkout page when the ask started from an in-flight attempt', () => {
+    assert.equal(
+      supportReferenceHref({ companyId: 'co-1', referenceKind: 'attempt', referenceId: 'att-1', referenceLabel: 'ABCD-1234' }),
+      '/system/billing/companies/co-1/checkouts/att-1',
+    );
+  });
+
+  it('falls back to the admin reference lookup when there is no companyId (a locked shop)', () => {
+    assert.equal(
+      supportReferenceHref({ companyId: undefined, referenceKind: 'invoice', referenceId: 'inv-1', referenceLabel: 'ABCD-1234' }),
+      '/system/billing?lookup=ABCD-1234',
+    );
+  });
+
+  it('is null when the request carries no reference', () => {
+    assert.equal(supportReferenceHref({ companyId: 'co-1', referenceKind: undefined, referenceId: undefined, referenceLabel: undefined }), null);
+  });
+
+  it('is null with no companyId and no label to look up by', () => {
+    assert.equal(supportReferenceHref({ companyId: undefined, referenceKind: 'invoice', referenceId: 'inv-1', referenceLabel: undefined }), null);
   });
 });

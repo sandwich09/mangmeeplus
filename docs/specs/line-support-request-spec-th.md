@@ -58,7 +58,7 @@
 ### 2.1 ตอนกด (`handleStaffContact`)
 1. หา "ร้านปัจจุบัน" ใหม่ทุกครั้ง: identity LINE ACTIVE → user → membership ACTIVE ในร้าน ACTIVE (ถ้าหลายร้าน ใช้ร้านที่ context ชี้ **เฉพาะเมื่อ** ยังเป็นสมาชิกอยู่ ไม่งั้นร้านแรก); ไม่มี → `companyId = null` + หา `CompanySignupRequest` ที่ค้าง (`lineProviderUserId` = ผู้กด, state ยังไม่จบ) เพื่อใส่ลิงก์คิวสมัคร
 2. ตั้ง pause เฉพาะเมื่อผู้กดผูกกับร้านนั้นจริง (identity ACTIVE); ผู้ที่เลิกผูกแล้วไม่มี AI ให้หยุด → ไม่ตั้ง pause แต่ยังแจ้งแอดมิน
-3. บันทึกแถว **`LineSupportRequest`** (ตารางใหม่ เล็ก): id, companyId?, lineUserId (เก็บ hash + providerUserId ตามแบบ audit เดิม — ดูว่า audit ใช้อะไร), signupRequestId?, requestedAt, lastMessageText (ข้อความล่าสุดที่ผู้ใช้พิมพ์ก่อนกด ≤ 200 ตัวอักษร ถ้ามี), notifiedAdminCount, status `OPEN | ANSWERED | CLOSED`, answeredAt, answeredByUserId, closedAt, closedReason (`admin | customer_resumed | expired`)
+3. บันทึกแถว **`LineSupportRequest`** (ตารางใหม่ เล็ก): id, companyId?, lineUserId (เก็บ hash + providerUserId ตามแบบ audit เดิม — ดูว่า audit ใช้อะไร), signupRequestId?, requestedAt, lastMessageText (ข้อความล่าสุดที่ผู้ใช้พิมพ์ก่อนกด ≤ 200 ตัวอักษร ถ้ามี), notifiedAdminCount, status `OPEN | ANSWERED | CLOSED`, answeredAt, answeredByUserId, closedAt, closedReason (`admin | customer_resumed | expired`) — **เพิ่ม 2026-09-28 (purchase-without-setup R-E5, PR E):** `referenceKind?` (`attempt | invoice`) / `referenceId?`, derive ฝั่ง server เฉพาะตอน `handlePackageCallback` (ไม่ใช่ `handleStaffContact` — path นี้ไม่แตะ) จาก billing attempt ที่ยังไม่นิ่ง (`CREATING|REQUESTING|OPEN|UNKNOWN`) หรือใบล่าสุดของบริษัท; staff-only ไม่ส่งกลับ LINE
 4. ตอบลูกค้า: "รับเรื่องแล้วค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) หากรีบ โทร 098-256-5628 ได้เลยค่ะ · พิมพ์ 'คุยกับ AI ต่อ' ถ้าต้องการให้น้องมั่งมีตอบต่อ"
 
 ### 2.2 ส่งถึงแอดมิน (`deliverSupportNotice`)
@@ -240,6 +240,7 @@ Owner กด "ติดต่อเจ้าหน้าที่" 10:58 แล�
 - badge จำนวน OPEN บนเมนู system (ถ้ามีแบบเดิมของคิวสมัคร ใช้แบบเดียวกัน)
 - API: `GET /system/support-requests?status=`, `POST /system/support-requests/:id/answered`, `POST /system/support-requests/:id/resume-ai`; contracts ใน `packages/contracts`
 - การส่งข้อความจากหน้า partner ถึงร้านที่มีคำขอ OPEN → ตั้ง ANSWERED อัตโนมัติ (hook ใน `send-partner-line-message.use-case.ts`)
+- **เพิ่ม 2026-09-28 (purchase-without-setup R-E5, PR E):** แถวที่มี `referenceKind`/`referenceId` แสดงลิงก์ "เปิดรายการ" ไปหน้าใบแจ้งหนี้/checkout ของบริษัทนั้นโดยตรง (`companyId` มี) หรือไปช่องค้นหาเลขอ้างอิงที่ `/system/billing?lookup=` (ไม่มี `companyId` — ผู้ถามยังไม่ผูกร้าน); คิวสมัคร (`PACKAGE_CHANGE` tab) แสดงลิงก์เดียวกันเมื่อ note มีรูปแบบ "อ้างอิง XXXX-XXXX"
 
 ### 2.4 ลูกค้าปลดเอง
 - ปุ่ม/คำว่า "คุยกับน้องมั่งมี" (ไทล์ริชเมนู หรือพิมพ์ — §2.2 delta รอบ 6 ข้อ 6) และ alias ที่พิมพ์ได้ "คุยกับ AI ต่อ" / "ให้ AI ตอบ" / "คุยกับ AI" / "คุยกับมั่งมี" (เทียบทั้งประโยคผ่าน `menuCommandKey`) → ล้าง pause ของ LINE user นั้น + CLOSED `customer_resumed` + ตอบ "น้องมั่งมีกลับมาแล้วค่ะ" — alias ไม่ต้องผูกก็พิมพ์ได้ (ไม่มี pause ก็ตอบเหมือนกัน); ไทล์ที่ไม่มี pause ทักทายตามปกติ

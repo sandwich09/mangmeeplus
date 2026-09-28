@@ -10,6 +10,7 @@ import { DenyByDefaultGuard } from '../../../../common/security/deny-by-default.
 import { ALL_FEATURE_ENTITLEMENT_KEYS } from '@watchdog-bms/contracts';
 import { NORMALIZER_VERSION } from '../../../employee-access/application/normalize-entitlements';
 import { GetPartnerDetailUseCase } from '../../application/use-cases/get-partner-detail.use-case';
+import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 import 'reflect-metadata';
 
 // ponytail: unit-level; all use cases mocked inline; permission-guard tested separately in auth.guard.spec.ts
@@ -45,6 +46,13 @@ function makeUCs() {
       chargeAtBound: async (cmd: any) => ({ id: cmd.reservationId, action: 'charge_at_bound', status: 'SETTLED', chargedSatang: 47, cmd }),
       acknowledgeBreach: async (cmd: any) => ({ id: cmd.reservationId, action: 'acknowledge_breach', status: 'SETTLED', chargedSatang: 0, cmd }),
     } as any,
+    // Purchase without setup PR E (R-E3, DQ9).
+    updateIdentity: {
+      execute: async (cmd: any) => ({ ...SUMMARY, id: cmd.companyId }),
+      getControl: async (companyId: string) => ({ legalIdentityVersion: 3, captureWindowOpen: false, authoritativeLatched: true,
+        fieldLatched: { registeredName: false, addressJson: false }, allowedChangeKinds: ['CORRECTION', 'LEGAL_CHANGE'], companyId }),
+    } as any,
+    listThaiAddresses: { execute: async (postalCode: string) => ([{ postalCode, provinceCode: '10', provinceTh: 'กรุงเทพมหานคร', districtCode: '1', districtTh: 'ดุสิต', subdistrictCode: '1', subdistrictTh: 'ดุสิต' }]) } as any,
   };
 }
 
@@ -59,6 +67,7 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
     uc.getPlanTerm, {execute:async()=>({items:[],nextCursor:null})} as any, uc.setPlanTerm, uc.renewPlanTerm, uc.endWarmup,
     uc.timeline, uc.lineMessage, uc.aiCreditHolds, uc.setOwnerName,
+    uc.updateIdentity, uc.listThaiAddresses,
   );
 }
 
@@ -287,11 +296,58 @@ describe('PartnerController', () => {
       // Issuing a bearer QR is a member-management action, gated like unlink and password reset.
       ['issueLineLinkToken', 'system.partner_member.manage'],
       ['setDisplayName', 'system.partner_member.manage'],
+      // Purchase without setup PR E (R-E3, DQ9): CRITICAL identity key, not system.partner_company.update.
+      ['addresses', 'system.identity_reconciliation.resolve'],
+      ['identityControl', 'system.identity_reconciliation.resolve'],
+      ['updateIdentityFields', 'system.identity_reconciliation.resolve'],
     ];
     for (const [method, perm] of cases) {
       const perms: string[] | undefined = Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, proto[method] as object);
       assert.ok(perms && perms.includes(perm), `${method} missing @RequirePermissions('${perm}')`);
     }
+  });
+
+  it('identityControl() returns the CAS token and allowed change kinds from the use case', async () => {
+    const result = await makeCtrl().identityControl('co-1') as any;
+    assert.equal(result.legalIdentityVersion, 3);
+    assert.deepEqual(result.allowedChangeKinds, ['CORRECTION', 'LEGAL_CHANGE']);
+  });
+
+  it('updateIdentityFields() separates reason/supportRequestId from the identity body', async () => {
+    let called: any;
+    const ctrl = makeCtrl({ updateIdentity: { execute: async (cmd: any) => { called = cmd; return SUMMARY; }, getControl: async () => ({}) } as any });
+    await ctrl.updateIdentityFields('co-1', {
+      expectedLegalIdentityVersion: 3, changeKind: 'CORRECTION', registeredName: 'New Co Ltd', taxId: '1234567890123',
+      correctionReason: 'TYPO', reason: 'ลูกค้าแจ้งพิมพ์ผิด', supportRequestId: 'sr-1',
+    } as any, makeReq());
+    assert.equal(called.companyId, 'co-1');
+    assert.equal(called.reason, 'ลูกค้าแจ้งพิมพ์ผิด');
+    assert.equal(called.supportRequestId, 'sr-1');
+    assert.equal(called.requestingAdminUserId, 'admin-1');
+    assert.equal(called.body.changeKind, 'CORRECTION');
+    assert.equal(called.body.registeredName, 'New Co Ltd');
+    assert.equal((called.body as Record<string, unknown>).reason, undefined, 'reason must not leak into the identity patch body');
+  });
+
+  it('updateIdentityFields() omits supportRequestId from the command when absent', async () => {
+    let called: any;
+    const ctrl = makeCtrl({ updateIdentity: { execute: async (cmd: any) => { called = cmd; return SUMMARY; }, getControl: async () => ({}) } as any });
+    await ctrl.updateIdentityFields('co-1', { expectedLegalIdentityVersion: 3, changeKind: 'CORRECTION', correctionReason: 'TYPO', reason: 'r' } as any, makeReq());
+    assert.equal('supportRequestId' in called, false);
+  });
+
+  // R-E3: address-master must be registered before ':partnerCompanyId' so it is never caught as an
+  // id — verified by declaration order in partner.controller.ts (system-support-request.controller.ts
+  // has the same pattern); this test covers the handler's own behaviour.
+  it('addresses() asserts the platform tenant and delegates to ListThaiAddressesUseCase', async () => {
+    const result = await makeCtrl().addresses('101', { context: { companyId: PLATFORM_TENANT_ID } } as any) as any;
+    assert.equal(result[0].postalCode, '101');
+  });
+
+  it('addresses() refuses a caller outside the platform tenant', () => {
+    // assertPlatformTenant throws synchronously (before any await), so this is assert.throws,
+    // not assert.rejects.
+    assert.throws(() => makeCtrl().addresses('101', { context: { companyId: 'some-customer-co' } } as any), ForbiddenException);
   });
 
   it('issueLineLinkToken() passes both ids and the trusted api base to the use case', async () => {

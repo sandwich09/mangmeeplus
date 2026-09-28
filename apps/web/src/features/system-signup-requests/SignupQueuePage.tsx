@@ -83,6 +83,14 @@ function SkeletonRow() {
 const rowActionClass =
   'min-h-10 rounded border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40';
 
+/** Purchase without setup PR E (R-E5, DQ4): the web "ask for help" note carries a reference the
+ *  customer read off the billing page (`อ้างอิง XXXX-XXXX`); the queue opens it through the admin
+ *  reference lookup (§3), which scopes to the caller's own companies itself. */
+function packageChangeReferenceHref(note: string | undefined): string | null {
+  const match = note?.match(/อ้างอิง ([A-Z0-9]{4}-[A-Z0-9]{4})/);
+  return match ? `/system/billing?lookup=${encodeURIComponent(match[1]!)}` : null;
+}
+
 
 /**
  * The buttons one queue row offers. Extracted from the table so the gating can be RENDERED in a
@@ -758,6 +766,11 @@ export default function SignupQueuePage() {
                           <p className="font-medium text-gray-900">{item.companyName}</p>
                           {(item.planState === 'NO_PACKAGE' || item.planState === 'EXPIRED') && <span className="mt-1 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">{planTermStateLabel(item.planState)}</span>}
                           {item.note && <p className="mt-0.5 text-xs text-gray-500">{item.note}</p>}
+                          {packageChangeReferenceHref(item.note) && (
+                            <Link href={packageChangeReferenceHref(item.note)!} className="mt-1 inline-flex text-xs font-medium text-brand-700 underline underline-offset-2">
+                              เปิดรายการ
+                            </Link>
+                          )}
                           {/* Per row: a note typed for one shop must not follow the operator to
                               the next one. Bounded and link-fenced server-side (SEC-05). */}
                           <input

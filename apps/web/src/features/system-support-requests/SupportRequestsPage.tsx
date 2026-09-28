@@ -27,6 +27,7 @@ import {
   supportAnswerLabel,
   supportClosedReasonTh,
   supportComposerMode,
+  supportReferenceHref,
   supportReopenedChip,
   supportReplyChip,
   supportReplyWithinRetryWindow,
@@ -73,6 +74,7 @@ export function SupportRowActions({
   showReply?: boolean;
 }) {
   const href = supportAnswerHref(item);
+  const referenceHref = supportReferenceHref(item);
   const live = item.status !== 'CLOSED';
   return (
     <div className="flex flex-wrap gap-2">
@@ -92,6 +94,15 @@ export function SupportRowActions({
           className={`${rowActionClass} border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100`}
         >
           {supportAnswerLabel(item)}
+        </a>
+      )}
+      {/* Purchase without setup PR E (R-E5): the invoice/checkout this ask started from, when there is one. */}
+      {referenceHref && (
+        <a
+          href={referenceHref}
+          className={`${rowActionClass} border-gray-300 bg-white text-gray-700 hover:bg-gray-50`}
+        >
+          เปิดรายการ
         </a>
       )}
       {live && !item.assignedAt && (

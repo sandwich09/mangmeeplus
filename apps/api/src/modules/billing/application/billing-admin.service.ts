@@ -3,7 +3,7 @@ import { billingHistoryExport } from './billing-history-export';
 import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
 import { planTermLockReason, planTermState, type BillingAdjustmentKind } from '@watchdog-bms/contracts';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import type { BillingSupportOutcome, BillingSupportOutcomeInput, BillingOperatorCompany, BillingOperatorCompanyDetail, BillingOperatorIssue, BillingOperatorOverview, BillingProviderEventView } from '@watchdog-bms/contracts';
+import type { BillingSupportOutcome, BillingSupportOutcomeInput, BillingOperatorCompany, BillingOperatorCompanyDetail, BillingOperatorIssue, BillingOperatorOverview, BillingProviderEventView, BillingReferenceLookup } from '@watchdog-bms/contracts';
 import type { BillingAccount, BillingIssue, BillingOperation, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
@@ -130,6 +130,57 @@ export class BillingAdminService {
       companies: await Promise.all(companies.slice(0,25).map(c => this.companyView(c,accounts.find(a=>a.companyId===c.id) ?? null))),
       ...(page === undefined ? {} : { pagination: { page, pageSize: 25, total: total! } }),
       nextCursor: companies.length > 25 ? companies[24]!.id : null };
+  }
+  /** PR E (R-E4, RV27): find by the 8-char suffix the customer sees (`billingSupportReference`), a
+   *  provider id, or an invoice number. Out of scope or not found both answer with an empty 404 —
+   *  the lookup itself must not confirm a reference exists outside the caller's companies. */
+  private ambiguous() { return billingError('BILLING_LOOKUP_AMBIGUOUS', 'เลขอ้างอิงนี้ตรงหลายรายการ ให้ใช้เลขใบแจ้งหนี้หรือรหัสเต็ม'); }
+  private async lookupResult(kind: BillingReferenceLookup['kind'], id: string, companyId: string, opType?: string): Promise<BillingReferenceLookup> {
+    const company = await this.prisma.client.company.findUnique({ where: { id: companyId }, select: { name: true } });
+    if (!company) throw new NotFoundException();
+    const href = kind === 'INVOICE' ? `/system/billing/companies/${companyId}/invoices/${id}`
+      : kind === 'ATTEMPT' ? `/system/billing/companies/${companyId}/checkouts/${id}`
+      : kind === 'ISSUE' ? `/system/billing/issues/${id}`
+      : opType === 'REFUND' ? `/system/billing/refunds/${id}`
+        : opType === 'UPDATE_BILLING_EMAIL' ? `/system/billing/recipient-changes/${id}` : `/system/billing/operations/${id}`;
+    return { kind, id, companyId, companyName: company.name, href };
+  }
+  async lookup(context: RequestContext, reference: string): Promise<BillingReferenceLookup> {
+    const access = await this.access(context, 'system.billing.read');
+    const raw = reference.trim(), upper = raw.toUpperCase(), clean = upper.replace(/[^A-Z0-9]/g, '');
+    if (clean.length < 8 && !/^[A-Z0-9]{4,12}-\d{4}$/.test(upper)) throw billingError('BILLING_LOOKUP_TOO_SHORT', 'เลขอ้างอิงต้องมีอย่างน้อย 8 ตัวอักษร');
+    const suffix = clean.slice(-8).toLowerCase();
+    const stripeAccountId = this.billing.stripe.accountId, livemode = this.billing.stripe.livemode;
+    const companyScope = access.platformScope ? {} : { companyId: { in: access.companyIds } };
+    const opScope = access.platformScope ? { not: null } : { in: access.companyIds };
+    // BillingInvoice/BillingAttempt only carry billingAccountId (no declared relation field to
+    // navigate), so scope them by first resolving which accounts are in scope.
+    const accounts = await this.prisma.client.billingAccount.findMany({ where: { ...companyScope, stripeAccountId, livemode }, select: { id: true, companyId: true } });
+    const accountIds = accounts.map(a => a.id), companyOfAccount = new Map(accounts.map(a => [a.id, a.companyId]));
+
+    const invoices = accountIds.length ? await this.prisma.client.billingInvoice.findMany({
+      where: { billingAccountId: { in: accountIds }, OR: [{ providerNumber: upper }, { providerInvoiceId: raw }, { providerChargeId: raw }, { id: { endsWith: suffix } }] },
+      select: { id: true, billingAccountId: true }, take: 2 }) : [];
+    if (invoices.length > 1) throw this.ambiguous();
+    if (invoices.length === 1) return this.lookupResult('INVOICE', invoices[0]!.id, companyOfAccount.get(invoices[0]!.billingAccountId)!);
+
+    const attempts = accountIds.length ? await this.prisma.client.billingAttempt.findMany({
+      where: { billingAccountId: { in: accountIds }, OR: [{ checkoutSessionId: raw }, { id: { endsWith: suffix } }] },
+      select: { id: true, billingAccountId: true }, take: 2 }) : [];
+    if (attempts.length > 1) throw this.ambiguous();
+    if (attempts.length === 1) return this.lookupResult('ATTEMPT', attempts[0]!.id, companyOfAccount.get(attempts[0]!.billingAccountId)!);
+
+    const operations = await this.prisma.client.billingOperation.findMany({
+      where: { id: { endsWith: suffix }, stripeAccountId, livemode, companyId: opScope }, select: { id: true, companyId: true, type: true }, take: 2 });
+    if (operations.length > 1) throw this.ambiguous();
+    if (operations.length === 1) return this.lookupResult('OPERATION', operations[0]!.id, operations[0]!.companyId!, operations[0]!.type);
+
+    const issues = await this.prisma.client.billingIssue.findMany({
+      where: { id: { endsWith: suffix }, stripeAccountId, livemode, companyId: opScope }, select: { id: true, companyId: true }, take: 2 });
+    if (issues.length > 1) throw this.ambiguous();
+    if (issues.length === 1) return this.lookupResult('ISSUE', issues[0]!.id, issues[0]!.companyId!);
+
+    throw new NotFoundException();
   }
   async scopedCompany(context: RequestContext, companyId: string, tx:Prisma.TransactionClient=this.prisma.client) {
     const access = await this.access(context, 'system.billing.read',tx);

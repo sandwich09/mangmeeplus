@@ -447,6 +447,10 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/billing/application/billing-recipient-otp.service.spec.ts',
       'src/modules/billing/application/billing-document-resend.spec.ts',
       'src/modules/billing/application/billing-notifications-recipient.spec.ts',
+      // Purchase-without-setup PR E: admin document tools (recipient change, resend, lookup, identity).
+      'src/modules/billing/application/billing-document-admin.service.spec.ts',
+      'src/modules/billing/application/billing-admin-lookup.spec.ts',
+      'src/modules/system-partner-management/application/use-cases/update-partner-identity.use-case.spec.ts',
       'src/modules/system-partner-management/domain/logic/plan-capacity.spec.ts',
       'src/modules/billing/application/billing-collection.spec.ts',
       'src/modules/billing/application/billing-free-days.spec.ts',
