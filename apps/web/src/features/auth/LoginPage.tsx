@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic';
+import { lineLinkReason, withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/common/components/button';
@@ -37,9 +37,10 @@ const LINE_NOTICE_TEXT: Record<string, string> = {
   // P12-3a: a scanned desktop QR landed on the approve page without a session.
   'qr-approve': 'เข้าสู่ระบบก่อน แล้วระบบจะพากลับไปหน้ายืนยันการเข้าสู่ระบบบนคอมพิวเตอร์',
   // P12-3b: a LINE deep-link handoff token was expired, already used, or no longer authorised.
-  // Not an error — `next` still carries the record, so signing in finishes the journey. Seen only
-  // when LINE login is not available — otherwise R-B5's auto-start effect leaves before this shows.
-  'handoff-expired': 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว เข้าสู่ระบบด้วย LINE หรือรหัสผ่านเพื่อเปิดรายการนี้',
+  // Not an error — `next` still carries the record, so signing in finishes the journey. Seen when
+  // LINE login is not available, or after "เข้าสู่ระบบวิธีอื่น" stopped R-B5's auto-start — so it also
+  // names the way back that needs no sign-in at all: a fresh link from บริษัทของฉัน in LINE.
+  'handoff-expired': 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว เข้าสู่ระบบด้วย LINE หรือรหัสผ่านเพื่อเปิดรายการนี้ หรือกลับไปที่ LINE แล้วกด บริษัทของฉัน เพื่อรับลิงก์ใหม่',
 };
 
 // P12-3a desktop QR login. The poll is deliberately slower than the API's per-IP poll bucket
@@ -175,12 +176,20 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   // Link mode: a verified LINE account with no linked user. One password sign-in, then the
   // page hands the browser straight back to LINE so the callback can link it.
   const linkMode = lineNotice === 'link-required';
-  // R-B5 ขยาย (purchase-without-setup §18.2): a LINE link — an expired handoff, or a plain URL that
-  // carries `channel=line` — must never end at a password form. With no session, LINE login starts
-  // by itself; the callback lands on `next`. Loop-safe: every LINE failure returns as
-  // `/login?line=failed|canceled|unavailable` WITHOUT `next`, which is not a LINE link any more.
-  const fromLineLink = !linkMode && (lineNotice === 'handoff-expired' || /[?&]channel=line(?:&|$)/.test(nextPath ?? ''));
+  // R-B5 ขยาย (purchase-without-setup §18.2): a LINE link — an expired handoff, or a URL that carries
+  // `channel=line` or the `openExternalBrowser=1` every LINE notice adds — must never end at a
+  // password form. With no session, LINE login starts by itself; the callback lands on `next`.
+  // Loop-safe: every LINE failure returns as `/login?line=failed|canceled|unavailable` WITHOUT
+  // `next`, which is not a LINE link any more.
+  const lineLink = lineLinkReason(nextPath);
+  const fromLineLink = !linkMode && (lineNotice === 'handoff-expired' || lineLink !== null);
   const [autoStartingLine, setAutoStartingLine] = useState(false);
+  // …and never a trap: `auto=0` is the "เข้าสู่ระบบวิธีอื่น" link below, and a Back press from LINE's
+  // own page (a reload, or the back-forward cache restoring this page mid-redirect) must not bounce
+  // straight forward again.
+  const [autoStartSuppressed, setAutoStartSuppressed] = useState(() => searchParams.get('auto') === '0'
+    || (typeof performance !== 'undefined'
+      && (performance.getEntriesByType?.('navigation')[0] as PerformanceNavigationTiming | undefined)?.type === 'back_forward'));
 
   useEffect(() => {
     let active = true;
@@ -228,11 +237,21 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   // gates it until the availability probe answers, so an `unavailable`/`error` outcome falls through
   // to the ordinary form instead of stalling on a lane that will never redirect.
   useEffect(() => {
-    if (checkingSession || !fromLineLink || accessState === 'CLOSED' || lineLoginState !== 'available') return;
+    if (checkingSession || !fromLineLink || autoStartSuppressed || accessState === 'CLOSED' || lineLoginState !== 'available') return;
     setAutoStartingLine(true);
-    const reason = lineNotice === 'handoff-expired' ? 'handoff-expired' : 'channel-line';
+    const reason = lineNotice === 'handoff-expired' ? 'handoff-expired' : lineLink;
     window.location.assign(withLineExternalBrowser(`${lineStartUrl(nextPath ?? '/')}&from=${reason}&auto=1`, navigator.userAgent));
-  }, [checkingSession, fromLineLink, accessState, lineLoginState, lineNotice, nextPath]);
+  }, [checkingSession, fromLineLink, autoStartSuppressed, accessState, lineLoginState, lineNotice, lineLink, nextPath]);
+
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      setAutoStartSuppressed(true);
+      setAutoStartingLine(false);
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
 
   const requestQr = useCallback(async () => {
     setQrImageUrl(null);
@@ -409,10 +428,17 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   }
 
   if (autoStartingLine) {
+    // A real reload with `auto=0`: it replaces the navigation already heading to LINE, and the page
+    // it lands on shows the normal form.
+    const otherWay = new URLSearchParams(searchParams.toString());
+    otherWay.set('auto', '0');
     return (
       <div className="flex min-h-dvh items-center justify-center p-4">
         <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-8 text-center shadow-sm">
           <p role="status" className="text-sm text-gray-500">{lineNotice === 'handoff-expired' ? 'ลิงก์นี้หมดอายุแล้ว กำลังเข้าสู่ระบบด้วย LINE ให้…' : 'กำลังเข้าสู่ระบบด้วย LINE…'}</p>
+          <a href={`/login?${otherWay.toString()}`} className="mt-4 inline-flex min-h-11 items-center justify-center px-3 text-sm font-semibold text-brand-700 underline">
+            เข้าสู่ระบบวิธีอื่น
+          </a>
         </div>
       </div>
     );

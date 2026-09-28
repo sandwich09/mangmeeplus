@@ -112,9 +112,9 @@ export default function CompanyTermExpiredPage({ companyId }: { companyId: strin
         </div>
       ) : (
         <div role="status" className="mangmee-card p-5 sm:p-7">
-          <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">บริษัทนี้พักการใช้งานชั่วคราว</h1>
+          <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">{copy.title}</h1>
           <p className="mt-3 text-[15px] leading-7 text-gray-600">
-            ข้อมูลทั้งหมดยังอยู่ครบ กรุณาติดต่อเจ้าของร้านเพื่อเปิดใช้งานอีกครั้ง
+            {copy.staff} ข้อมูลทั้งหมดยังอยู่ครบ
           </p>
           <a className="mangmee-btn mangmee-btn-secondary mt-5 w-full" href={`/companies/${companyId}/settings`}>ตั้งค่า</a>
         </div>

@@ -35,12 +35,32 @@ describe('LoginPage qr-approve lane', () => {
 });
 
 describe('LoginPage R-B5 extended (a LINE link never dead-ends at a password form)', () => {
-  it('recognizes a LINE link by an expired handoff or a `channel=line` next path', () => {
-    assert.match(source, /const fromLineLink = !linkMode && \(lineNotice === 'handoff-expired' \|\| \/\[\?&\]channel=line\(\?:&\|\$\)\/\.test\(nextPath \?\? ''\)\);/);
+  it('recognizes a LINE link by an expired handoff, `channel=line` or `openExternalBrowser=1` in next', () => {
+    // Review 2026-09-29: most LINE notices link straight to the web with openExternalBrowser=1, and
+    // the proxy keeps it inside `next` — `lineLinkReason` (line-in-app-browser.logic) knows both.
+    assert.match(source, /const lineLink = lineLinkReason\(nextPath\);/);
+    assert.match(source, /const fromLineLink = !linkMode && \(lineNotice === 'handoff-expired' \|\| lineLink !== null\);/);
+    assert.match(source, /const reason = lineNotice === 'handoff-expired' \? 'handoff-expired' : lineLink;/);
   });
 
   it('auto-starts LINE login through the in-app-browser escape, carrying `from` and `auto=1`', () => {
     assert.match(source, /window\.location\.assign\(withLineExternalBrowser\(`\$\{lineStartUrl\(nextPath \?\? '\/'\)\}&from=\$\{reason\}&auto=1`, navigator\.userAgent\)\);/);
+  });
+
+  // Review 2026-09-29: the auto-start screen had no way out, and a Back press from LINE's own page
+  // bounced straight forward again.
+  it('never traps: `auto=0`, a back navigation or a back-forward-cache restore stops the auto-start', () => {
+    assert.match(source, /if \(checkingSession \|\| !fromLineLink \|\| autoStartSuppressed \|\| accessState === 'CLOSED' \|\| lineLoginState !== 'available'\) return;/);
+    assert.match(source, /searchParams\.get\('auto'\) === '0'/);
+    assert.match(source, /\?\.type === 'back_forward'/);
+    assert.match(source, /window\.addEventListener\('pageshow', onPageShow\);/);
+    assert.match(source, /if \(!event\.persisted\) return;\s*setAutoStartSuppressed\(true\);\s*setAutoStartingLine\(false\);/);
+  });
+
+  it('offers "เข้าสู่ระบบวิธีอื่น" on the auto-start screen, as a reload with auto=0', () => {
+    const autoStarting = source.slice(source.indexOf('if (autoStartingLine) {'), source.indexOf('// P12-3a: the qr-approve lane'));
+    assert.match(autoStarting, /otherWay\.set\('auto', '0'\);/);
+    assert.match(autoStarting, /<a href=\{`\/login\?\$\{otherWay\.toString\(\)\}`\}[^>]*>\s*เข้าสู่ระบบวิธีอื่น\s*<\/a>/);
   });
 
   it('returns the auto-starting notice before the password form ever renders', () => {
@@ -55,9 +75,9 @@ describe('LoginPage R-B5 extended (a LINE link never dead-ends at a password for
     assert.match(source, /เข้าสู่ระบบด้วยรหัสผ่านแทน/);
   });
 
-  it('never mentions the password form before LINE in the expired-handoff notice', () => {
-    const text = 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว เข้าสู่ระบบด้วย LINE หรือรหัสผ่านเพื่อเปิดรายการนี้';
-    assert.match(source, /'handoff-expired': 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว เข้าสู่ระบบด้วย LINE หรือรหัสผ่านเพื่อเปิดรายการนี้',/);
+  it('never mentions the password form before LINE in the expired-handoff notice, and offers a fresh link', () => {
+    const text = 'ลิงก์นี้หมดอายุหรือถูกใช้ไปแล้ว เข้าสู่ระบบด้วย LINE หรือรหัสผ่านเพื่อเปิดรายการนี้ หรือกลับไปที่ LINE แล้วกด บริษัทของฉัน เพื่อรับลิงก์ใหม่';
+    assert.ok(source.includes(`'handoff-expired': '${text}',`));
     assert.ok(text.indexOf('LINE') < text.indexOf('รหัสผ่าน'), 'LINE must read before รหัสผ่าน in the notice');
   });
 });

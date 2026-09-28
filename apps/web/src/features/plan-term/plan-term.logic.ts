@@ -51,17 +51,21 @@ export function planLockReason(source: { lockReason?: PlanLockReason } | null | 
 /**
  * The one wording table for a locked shop (spec R2/R10), read by the shell banner, the renewal
  * page and the package page. A shop that never had a package is told it has none to renew.
+ * `staff` is for a member who cannot buy (review 2026-09-29): it says who can, since a hint with
+ * no button under it was a dead end — and never "พักการใช้งาน" for a shop that is only unpaid.
  */
-export const PLAN_LOCK_COPY: Record<PlanLockReason, { banner: string; title: string; body: string }> = {
+export const PLAN_LOCK_COPY: Record<PlanLockReason, { banner: string; title: string; body: string; staff: string }> = {
   no_package: {
     banner: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ · เลือกแพ็กเกจเพื่อเริ่มใช้งาน',
     title: 'ยังไม่มีแพ็กเกจ',
     body: 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน ข้อมูลร้านและการตั้งค่าของคุณอยู่ครบ',
+    staff: 'ร้านนี้ยังไม่มีแพ็กเกจ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อเริ่มใช้งาน',
   },
   trial_ended: {
     banner: 'แพ็กเกจของร้านหมดอายุแล้ว · เลือกแพ็กเกจเพื่อใช้งานต่อ',
     title: 'แพ็กเกจหมดอายุแล้ว',
     body: 'ข้อมูลทั้งหมดยังอยู่ครบ ไม่มีอะไรหาย เมื่อเลือกแพ็กเกจแล้วใช้งานต่อได้ทันที',
+    staff: 'แพ็กเกจของร้านหมดอายุแล้ว ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อใช้งานต่อ',
   },
 };
 
