@@ -12,6 +12,7 @@ import { checkEmailPasswordReset } from './email-password-reset-smoke';
 import { checkEmailVerification } from './email-verification-smoke';
 import { checkEmailMonitoring } from './email-monitoring-smoke';
 import { checkBillingApplyRetry } from './billing-apply-retry-smoke';
+import { checkBillingNoSetup } from './billing-no-setup-smoke';
 import { RedisRateLimitService } from '../common/security/redis-rate-limit.service';
 import { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
 import { BillingService } from '../modules/billing/application/billing.service';
@@ -121,6 +122,8 @@ async function main() {
       assert.equal(form.get('subscription_data[billing_mode][type]'), 'classic');
       assert.ok(['price_ProYear', 'price_StarterYear'].includes(form.get('line_items[0][price]') ?? ''));
       assert.equal(form.get('payment_method_types[0]'), 'card');
+      // R-A3: a complete profile keeps the synced address; Checkout's cancel returns with a marker.
+      assert.equal(form.get('customer_update[address]'), 'never'); assert.match(form.get('cancel_url') ?? '', /&checkout=canceled$/);
       const session = { object: 'checkout.session', id: `cs_${run}${checkoutCalls}`, livemode: false, mode: 'subscription', status: 'open', customer: form.get('customer'), subscription: null,
         client_reference_id: form.get('client_reference_id'),
         metadata: { billingAccountId: form.get('metadata[billingAccountId]'), billingAttemptId: form.get('metadata[billingAttemptId]') }, url: `https://checkout.stripe.com/c/pay/${run}` };
@@ -164,7 +167,7 @@ async function main() {
     await client.externalIdentity.create({ data: { userId: userIds[0]!, provider: 'LINE', providerChannelId: `channel-${run}`, providerUserId: `U${run}` } });
     const permission = await client.permission.upsert({ where: { key: 'account.session.read' }, create: { key: 'account.session.read', description: 'Read own session' }, update: {} });
     const role = await client.role.create({ data: { companyId: companyIds[0]!, scopeKey: companyIds[0]!, key: 'OWNER', name: 'Synthetic owner', permissions: { create: { permissionId: permission.id } } } }); roleId = role.id;
-    for(const key of ['notification.read','notification.delivery.retry','company.setup.manage','company.setup.read','company.legal_identity.read','company.legal_identity.manage','company.vat_registration.read','company.vat_registration.manage']){
+    for(const key of ['company.plan.manage','notification.read','notification.delivery.retry','company.setup.manage','company.setup.read','company.legal_identity.read','company.legal_identity.manage','company.vat_registration.read','company.vat_registration.manage']){
       const noticePermission = await client.permission.upsert({ where: { key }, create: { key, description: key }, update: {} });
       await client.rolePermission.create({ data: { roleId, permissionId: noticePermission.id } });
     }
@@ -204,6 +207,17 @@ async function main() {
         drainOperations:()=>request('/v1/internal/billing/drain','POST',{}, {'x-worker-token':workerToken}),
         drain:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}});
     };
+    if(process.env.BILLING_NO_SETUP_ONLY==='1'){
+      cases.push(...await checkBillingNoSetup({app,request,prisma,companyId:companyIds[0]!,userId:userIds[0]!,stripeAccountId:accountId,
+        drain:()=>request('/v1/internal/billing/drain','POST',{}, {'x-worker-token':workerToken}),drainNotifications,
+        reconcile:id=>app.get(BillingReconcilerService).reconcileAccount(id),transport:hook=>{journeyTransport=hook;},
+        event:async(type,objectId,eventId)=>{
+          const payload=JSON.stringify({id:eventId,object:'event',api_version:STRIPE_API_VERSION,livemode:false,type,data:{object:{id:objectId}}});
+          const timestamp=Math.floor(Date.now()/1000),hash=createHmac('sha256',webhookSecret).update(`${timestamp}.${payload}`).digest('hex');
+          return (await fetch(`${origin}/v1/public/stripe-events`,{method:'POST',headers:{'content-type':'application/json','stripe-signature':`t=${timestamp},v1=${hash}`},body:payload})).status;
+        }}));
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-provider-simulation',passed:cases,simulatedProviders:['Stripe','Postmark'],realProviderPayment:false}));return;
+    }
     if(process.env.BILLING_EMAIL_ACCESS_ONLY==='1'){
       const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
       cases.push(...await checkEmailAccess({app,prisma,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));
@@ -267,9 +281,11 @@ async function main() {
     if (process.env.BILLING_CONFIG_ONLY !== '1') {
     const companyId = companyIds[0]!, profilePath = `/v1/companies/${companyId}/identity`;
     await client.company.update({ where: { id: companyId }, data: { addressJson: {}, registeredName: null } });
+    // R-A1: an incomplete profile quotes; the confirm page reads missingFields, Checkout collects the address.
     const missingProfile = await request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'ignored@example.test' });
-    assert.equal(missingProfile.body.code, 'BILLING_COMPANY_PROFILE_REQUIRED');
-    assert.deepEqual(missingProfile.body.missingFields, ['line1', 'subdistrict', 'district', 'province', 'postalCode']);
+    assert.equal(missingProfile.status, 200, JSON.stringify(missingProfile.body));
+    assert.deepEqual(missingProfile.body.billingProfile.missingFields, ['line1', 'subdistrict', 'district', 'province', 'postalCode']);
+    assert.equal(missingProfile.body.billingEmail, `${userIds[0]}@example.test`, 'the quote pins the verified owner email and ignores the body');
     assert.equal(provider.customers.length, 0); assert.equal(checkoutCalls, 0);
     await client.company.update({ where: { id: companyId }, data: { addressJson: BILLING_TEST_ADDRESS, registeredName: ' ' } });
     const fallbackQuote = await request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'ignored@example.test' });
@@ -279,7 +295,7 @@ async function main() {
     await client.company.update({ where: { id: companyId }, data: { registeredName: 'บริษัท ทดสอบเอกสาร จำกัด' } });
     assert.equal((await request(`${base}/checkout`, 'POST', staleBody, { 'idempotency-key': randomUUID() })).body.code, 'BILLING_QUOTE_STALE');
     await client.company.update({ where: { id: companyId }, data: { addressJson: { ...BILLING_TEST_ADDRESS, postalCode: '1011a' } } });
-    assert.equal((await request(`${base}/checkout`, 'POST', staleBody, { 'idempotency-key': randomUUID() })).body.code, 'BILLING_COMPANY_PROFILE_REQUIRED');
+    assert.equal((await request(`${base}/checkout`, 'POST', staleBody, { 'idempotency-key': randomUUID() })).body.code, 'BILLING_QUOTE_STALE');
     assert.equal(await client.billingAttempt.count({ where: { initiatingUserId: userIds[0] } }), 0);
     await client.company.update({ where: { id: companyId }, data: { addressJson: BILLING_TEST_ADDRESS, status: 'DISABLED' } });
     await client.companyPlanTerm.update({ where: { companyId }, data: { termDisabledAt: new Date() } });
@@ -292,7 +308,7 @@ async function main() {
     await client.role.update({ where: { id: roleId }, data: { key: 'OWNER' } });
     await client.company.update({ where: { id: companyId }, data: { addressJson: BILLING_TEST_ADDRESS, status: 'ACTIVE' } });
     await client.companyPlanTerm.update({ where: { companyId }, data: { termDisabledAt: null } });
-    cases.push('company-profile-required-before-quote-or-checkout-registered-name-priority-fallback-stale-quote-expired-owner-repair');
+    cases.push('company-profile-optional-before-quote-or-checkout-registered-name-priority-fallback-stale-quote-expired-owner-repair');
     assert.equal((await fetch(`${origin}${base}`)).status, 401);
     assert.equal((await request(base, 'GET', undefined, { 'x-company-id': companyIds[1]! })).status, 403);
     const before = await request(base); assert.equal(before.status, 200); assert.equal(before.body.accessState, trialCarryoverOnly ? 'ACTIVE' : 'EXPIRED');
@@ -398,7 +414,9 @@ async function main() {
     cases.push('quote-line-checkout-replay-cross-tenant-and-no-return-url-unlock');
     const session = provider.sessions[0]!, start = Math.floor(Date.now() / 1000) - 1, end = start + 365 * 86400;
     const subId = `sub_${run}`, invoiceId = `in_${run}`, intentId = `pi_${run}`, chargeId = `ch_${run}`;
-    Object.assign(session, { status: 'complete', subscription: subId });
+    Object.assign(session, { status: 'complete', subscription: subId, customer_details: { email: `${userIds[0]}@example.test`,
+      address: { country: 'TH', line1: BILLING_TEST_ADDRESS.line1, line2: null, city: BILLING_TEST_ADDRESS.district, state: BILLING_TEST_ADDRESS.province, postal_code: '10110' } } });
+    provider.customers[0]!.email ??= `${userIds[0]}@example.test`;
     const subscription: ProviderObject = { id: subId, object: 'subscription', livemode: false, customer: session.customer, metadata: session.metadata, status: 'active', cancel_at_period_end: false, collection_method: 'charge_automatically', billing_mode: { type: 'classic' }, billing_cycle_anchor: start,
       items: { data: [{ id: `si_${run}`, price: 'price_ProYear', quantity: 1, current_period_start: start, current_period_end: end }] } }; provider.subscriptions.push(subscription);
     provider.invoices.push({ id: invoiceId, object: 'invoice', livemode: false, customer: session.customer, parent: { subscription_details: { subscription: subId } }, status: 'paid',
@@ -461,6 +479,11 @@ async function main() {
     cases.push('initial-paid-held-capacity-retains-original-command-and-repairs-without-repayment');
     const after = await request(base); assert.equal(after.status, 200, JSON.stringify(after));
     assert.equal(after.body.paymentState, 'PAID'); assert.equal(after.body.applyState, 'APPLIED'); assert.equal(after.body.accessState, 'ACTIVE');
+    // R-A4: the first paid invoice captured the Checkout recipient (the pinned owner email) and address.
+    assert.deepEqual(after.body.recipient, { email: `${userIds[0]}@example.test`, source: 'ACCOUNT_EMAIL', bouncedAt: null, canChange: true });
+    const capturedAccount = await client.billingAccount.findUniqueOrThrow({ where: { id: initialAccount.id } });
+    assert.equal((capturedAccount.checkoutAddressJson as Record<string, unknown>).postal_code, '10110');
+    cases.push('initial-subscription-captures-checkout-recipient-and-address');
     assert.equal(after.body.usage.remaining, trialCarryoverOnly ? 1208 : 1200); assert.equal(after.body.usage.cadence, 'PAID_GRANTS');
     assert.equal(after.body.paidThrough, new Date(end * 1000).toISOString());
     assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), trialCarryoverOnly ? 2 : 1);

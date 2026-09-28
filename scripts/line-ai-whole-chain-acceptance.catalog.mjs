@@ -442,6 +442,11 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/billing/application/billing-approval.spec.ts',
       // Purchase-without-setup PR A: the one plan-manager predicate LINE and the web share (R-C11).
       'src/modules/access-control/domain/logic/plan-manager.logic.spec.ts',
+      // Purchase-without-setup PR C: recipient OTP, document resend and recipient mail/bounce (R-A7/R-A8/R-D1).
+      'src/modules/billing/domain/billing-recipient-otp.logic.spec.ts',
+      'src/modules/billing/application/billing-recipient-otp.service.spec.ts',
+      'src/modules/billing/application/billing-document-resend.spec.ts',
+      'src/modules/billing/application/billing-notifications-recipient.spec.ts',
       'src/modules/system-partner-management/domain/logic/plan-capacity.spec.ts',
       'src/modules/billing/application/billing-collection.spec.ts',
       'src/modules/billing/application/billing-free-days.spec.ts',

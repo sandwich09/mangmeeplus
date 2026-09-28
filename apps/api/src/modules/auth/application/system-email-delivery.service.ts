@@ -98,7 +98,6 @@ export class SystemEmailDeliveryService {
         WHERE a.id IN (${Prisma.join(billingIds)}) AND a.purpose = 'billing_status' AND a.provider = 'postmark'
         AND a."providerServerId" = ${scope.providerServerId} AND a.stream = ${scope.stream}
         AND o."eventType" = 'billing.status.email' AND o."aggregateType" = 'BillingInvoice' AND o."companyId" = b."companyId"
-        AND jsonb_typeof(o."payloadJson"->'data'->'recipientUserId') = 'string'
         AND b."stripeAccountId" = ${this.config.stripeAccountId} AND b.livemode = ${this.config.billingMode === 'live'}`) : [];
     const current = await this.authority(context);
     // Configuration may be changed while querying: never relabel another server's observations.

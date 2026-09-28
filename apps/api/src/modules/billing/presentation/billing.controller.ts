@@ -6,8 +6,10 @@ import { BillingCheckoutExpiryService } from '../application/billing-checkout-ex
 import { BillingBatchesService } from '../application/billing-batches.service';
 import { BillingSettlementService } from '../application/billing-settlement.service';
 import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
-import { BillingEndPackageDto, BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingTimelineExportDto, BillingEmptyDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
-import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { BillingEndPackageDto, BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingTimelineExportDto, BillingEmptyDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto, BillingRecipientPreviewDto, BillingRecipientOtpRequestDto, BillingRecipientOtpConfirmDto } from './billing.dto';
+import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
+import { extractSid } from '../../auth/presentation/auth.controller';
+import { BillingRecipientOtpService } from '../application/billing-recipient-otp.service';
 import type { Request } from 'express';
 import type { BillingCheckoutBody, BillingConfigurationInput, BillingConfigurationDraftInput, BillingPurchaseMode } from '@watchdog-bms/contracts';
 import { Public } from '../../../common/security/public.decorator';
@@ -45,6 +47,12 @@ function uuid(value: unknown): string {
   const text = textField(value);
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(text)) invalid();
   return text;
+}
+/** The recipient OTP binds its challenge to this session, like the account email OTP controller. */
+function otpCaller(req: AuthedRequest) {
+  const tokenId = extractSid(req);
+  if (!tokenId) throw new UnauthorizedException('Session is required.');
+  return { companyId: req.context.companyId, userId: req.context.userId, tokenId, requestId: req.context.requestId };
 }
 function adjustmentKind(value: string): 'refunds'|'credit-notes' {
   if(value!=='refunds'&&value!=='credit-notes')invalid();return value;
@@ -474,7 +482,8 @@ export class BillingAdminController {
 @RequirePermissions('account.session.read')
 @Controller('companies/:companyId/billing')
 export class BillingController {
-  constructor(private readonly billing: BillingService, private readonly limits: RedisRateLimitService, private readonly checkoutExpiry: BillingCheckoutExpiryService) {}
+  constructor(private readonly billing: BillingService, private readonly limits: RedisRateLimitService, private readonly checkoutExpiry: BillingCheckoutExpiryService,
+    private readonly recipientOtp: BillingRecipientOtpService) {}
 
   private async limit(req: AuthedRequest): Promise<void> {
     await this.billing.assertOwner(req.context);
@@ -483,8 +492,22 @@ export class BillingController {
   }
 
   @Get('recipient') recipient(@Req() req: AuthedRequest) { return this.billing.emailRecipient.current(req.context); }
+  // R-A8: prove a new recipient mailbox with a code, then open the review with its proof.
+  @Post('recipient/otp/request') @HttpCode(202) @Header('Cache-Control', 'no-store')
+  async recipientOtpRequest(@Req() req: AuthedRequest, @Body() body: BillingRecipientOtpRequestDto) {
+    const fields = bodyFields(body, ['email', 'requestKey']); await this.limit(req);
+    return this.recipientOtp.request({ ...otpCaller(req), email: textField(fields.email, 320), requestKey: uuid(fields.requestKey) });
+  }
+  @Post('recipient/otp/confirm') @HttpCode(200) @Header('Cache-Control', 'no-store')
+  async recipientOtpConfirm(@Req() req: AuthedRequest, @Body() body: BillingRecipientOtpConfirmDto) {
+    const fields = bodyFields(body, ['challengeId', 'code']); await this.limit(req);
+    return this.recipientOtp.confirm({ ...otpCaller(req), challengeId: uuid(fields.challengeId), code: textField(fields.code, 6) });
+  }
   @Post('recipient/preview') @HttpCode(200)
-  async recipientPreview(@Req() req: AuthedRequest, @Body() body: BillingEmptyDto) { bodyFields(body, []); await this.limit(req); return this.billing.emailRecipient.preview(req.context); }
+  async recipientPreview(@Req() req: AuthedRequest, @Body() body: BillingRecipientPreviewDto) {
+    const fields = bodyFields(body, ['recipientProofId']); await this.limit(req);
+    return this.billing.emailRecipient.preview(req.context, fields.recipientProofId === undefined ? undefined : uuid(fields.recipientProofId));
+  }
   @Get('recipient/:id') recipientOperation(@Req() req: AuthedRequest, @Param('id') id: string) { return this.billing.emailRecipient.get(req.context, uuid(id)); }
   @Post('recipient/:id/:action') @HttpCode(200)
   async recipientCommand(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string,
@@ -534,8 +557,9 @@ export class BillingController {
     // A deal quote names the offer with `dealId`; its base tier and month come from the APPROVED
     // row, so `offerKey`/`interval` are optional there and ignored by the service (S36).
     const dealId = fields.dealId === undefined ? undefined : textField(fields.dealId, 40);
+    // R-A1/RV05: `billingEmail` is optional and ignored; an older page may still send '' here.
     const input = { ...(dealId ? { dealId } : { offerKey: textField(fields.offerKey, 40), interval: textField(fields.interval, 10) }),
-      billingEmail: textField(fields.billingEmail, 320),
+      ...(typeof fields.billingEmail === 'string' && fields.billingEmail !== '' ? { billingEmail: textField(fields.billingEmail, 320) } : {}),
       capacity: fields.capacity, purchaseMode: fields.purchaseMode as BillingPurchaseMode | undefined,
       purchaseIntent: fields.purchaseIntent as 'FULL_PACKAGE' | undefined };
     await this.limit(req);
@@ -596,6 +620,12 @@ export class BillingController {
   async document(@Req() req: AuthedRequest, @Param('documentId') id: string, @Body() body: BillingDocumentDto) {
     const {kind,creditNoteId}=documentFields(body);
     await this.limit(req); return this.billing.document(req.context, id, kind,creditNoteId);
+  }
+  // R-D1: a synchronous resend under the account lease, 3 per document per day; no Idempotency-Key needed.
+  @Post('documents/:documentId/resend') @HttpCode(200) @Header('Cache-Control', 'no-store')
+  async resendDocument(@Req() req: AuthedRequest, @Param('documentId') id: string, @Body() body: BillingEmptyDto) {
+    bodyFields(body, []); await this.limit(req);
+    return this.billing.documentResend.run(req.context, textField(id, 128), this.limits);
   }
 }
 

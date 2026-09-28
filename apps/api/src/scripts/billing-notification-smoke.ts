@@ -62,7 +62,13 @@ export async function checkBillingNotifications(input: { prisma: PrismaService; 
   // These rows exercise authorization/replay after eligibility, not the scheduler's timestamp boundary.
   const queueEmail = async () => db.outboxEvent.create({ data: { companyId, aggregateType: 'BillingInvoice', aggregateId: invoice.id, availableAt:new Date(0),
     eventType: 'billing.status.email', eventKey: `synthetic-notice:${randomUUID()}`, payloadJson: { data: { recipientUserId: userId } } } });
+  // R-A7: the document recipient column, not a user.
+  const queueRecipientEmail = async () => db.outboxEvent.create({ data: { companyId, aggregateType: 'BillingInvoice', aggregateId: invoice.id, availableAt:new Date(0),
+    eventType: 'billing.status.email', eventKey: `synthetic-recipient-notice:${randomUUID()}`, payloadJson: { schemaVersion: 2, data: { recipientUserId: null } } } });
 
+  // The paid mail follows the recipient the first payment captured (the verified owner email here).
+  assert.equal(account.recipientEmail, `${userId}@example.test`);
+  assert.equal((await db.outboxEvent.findUniqueOrThrow({ where: { eventKey: `billing:notice-email:${invoice.id}:recipient` } })).status, 'PUBLISHED');
   assert.equal(parent.status, 'PUBLISHED'); assert.equal(fixture.mail.length, 1);
   assert.equal(fixture.mail[0]!.input.To, `${userId}@example.test`);
   assert.match(fixture.mail[0]!.input.TextBody, new RegExp(`/companies/${companyId}/billing`));
@@ -111,7 +117,16 @@ export async function checkBillingNotifications(input: { prisma: PrismaService; 
   await db.membershipRole.createMany({ data: membershipRoles });
   await db.user.update({ where: { id: userId }, data: { emailVerifiedAt: null } }); await queueEmail(); await run();
   assert.equal(fixture.mail.length, mailCount);
+  // R-A7: the document recipient does not depend on an owner's verified email ...
+  await queueRecipientEmail(); await run();
+  assert.equal(fixture.mail.length, mailCount + 1); assert.equal(fixture.mail.at(-1)!.input.To, `${userId}@example.test`);
   await db.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() } });
+  // ... and with no recipient stored nothing is sent and the notice goes to review.
+  await db.billingAccount.update({ where: { id: account.id }, data: { recipientEmail: null } });
+  const noRecipient = await queueRecipientEmail(); await run();
+  assert.equal(fixture.mail.length, mailCount + 1);
+  assert.equal(await db.billingIssue.count({ where: { kind: 'NOTIFICATION_RECIPIENT_CHANGED', referenceId: noRecipient.id } }), 1);
+  await db.billingAccount.update({ where: { id: account.id }, data: { recipientEmail: account.recipientEmail } });
   cases.push('billing-wrong-line-channel-owner-withdrawal-and-unverified-email-do-not-send');
 
   const lost = await queueEmail(); fixture.loseNextMail(); await run();
@@ -190,11 +205,18 @@ export async function checkBillingNotifications(input: { prisma: PrismaService; 
   await db.notificationPreference.delete({ where: { id: preference.id } });
   cases.push('billing-quiet-hours-defer-and-explicit-line-preference-suppresses');
 
-  const suppressed = await queueEmail(); fixture.suppressNextMail(); await run();
+  const suppressed = await queueRecipientEmail(); fixture.suppressNextMail(); await run();
   assert.equal((await db.emailSendAttempt.findFirstOrThrow({ where: { intentKey: `billing-notice:${suppressed.id}` } })).status, 'SUPPRESSED');
   const emailCount = fixture.mail.length; await queueEmail(); await run(); assert.equal(fixture.mail.length, emailCount);
   assert.equal(await state(), before);
   cases.push('billing-mail-suppression-keeps-paid-term-and-receipt-grants-unchanged');
+  // R-A7: the refused recipient is flagged once and the plan managers are told once.
+  const bounced = await db.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+  assert.ok(bounced.recipientBouncedAt); assert.ok(bounced.recipientBounceNotifiedAt);
+  const bounceEvents = () => db.notificationEvent.count({ where: { companyId, title: 'อีเมลรับเอกสารส่งไม่ถึง' } });
+  assert.equal(await bounceEvents(), 1); await run(); assert.equal(await bounceEvents(), 1);
+  assert.equal(await db.auditLog.count({ where: { companyId, action: 'billing.recipient.bounced' } }), 1);
+  cases.push('billing-recipient-column-drives-mail-and-bounce-flags-once');
   const protectedDelivery=await queueLine();
   await db.notificationDelivery.update({where:{id:protectedDelivery.id},data:{status:'FAILED',attemptCount:1,nextAttemptAt:null}});
   const protectedBefore=await db.notificationDelivery.findUniqueOrThrow({where:{id:protectedDelivery.id}});

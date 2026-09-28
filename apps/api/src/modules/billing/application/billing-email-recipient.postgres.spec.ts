@@ -17,12 +17,14 @@ describe('billing recipient authority, isolation and recovery on PostgreSQL', { 
     prisma = new PrismaService({ databaseUrl } as any); await prisma.onModuleInit();
   });
   after(async () => { await prisma?.onModuleDestroy(); });
-  async function fixture() {
+  async function fixture(noticeServerId?: number) {
     const id = randomUUID(), userId = randomUUID(), companyId = randomUUID(), lease = randomUUID();
     const stripeAccountId = `acct_${id}`, customerId = `cus_${id}`, email = `${id}@new.example.test`;
     await prisma.client.user.create({ data: { id: userId, displayName: 'Synthetic owner', email, emailVerifiedAt: new Date() } });
     await prisma.client.company.create({ data: { id: companyId, name: 'Synthetic recipient company' } });
-    const role = await prisma.client.role.create({ data: { companyId, scopeKey: companyId, key: 'OWNER', name: 'Owner' } });
+    // assertOwner asks for company.plan.manage since the plan-management delegation (48c4ab57).
+    const planManage = await prisma.client.permission.upsert({ where: { key: 'company.plan.manage' }, create: { key: 'company.plan.manage', description: 'company.plan.manage' }, update: {} });
+    const role = await prisma.client.role.create({ data: { companyId, scopeKey: companyId, key: 'OWNER', name: 'Owner', permissions: { create: { permissionId: planManage.id } } } });
     const membership = await prisma.client.companyMembership.create({ data: { companyId, userId, roles: { create: { roleId: role.id } } } });
     const account = await prisma.client.billingAccount.create({ data: { companyId, stripeAccountId, customerId, livemode: false,
       leaseToken: lease, leaseUntil: new Date(Date.now() + 120_000) } });
@@ -42,11 +44,18 @@ describe('billing recipient authority, isolation and recovery on PostgreSQL', { 
     } };
     // Use the production authority/account readers; only external Stripe I/O is simulated.
     const billing = Object.assign(Object.create(BillingService.prototype), { prisma, stripe, config: { stripeAccountId } }) as BillingService;
-    const service = new BillingEmailRecipient(prisma, stripe, billing);
+    const service = new BillingEmailRecipient(prisma, stripe, billing, { postmarkServerId: noticeServerId, postmarkMessageStream: 'outbound' });
     const context = { companyId, userId } as RequestContext;
     const queue = async () => { const preview = await service.preview(context); return service.command(context, preview.id, 'submit', preview.version, preview.previewHash, randomUUID()); };
     const advance = async () => service.advance(await prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } }), lease);
-    return { service, context, account, customer, role, membership, email, queue, advance,
+    // A company recipient code (R-A8) that was confirmed `ageMs` ago.
+    const proof = async (newEmail: string, input: { companyId?: string; userId?: string; status?: 'USED' | 'PENDING'; ageMs?: number } = {}) => {
+      const token = await prisma.client.emailVerificationToken.create({ data: { id: randomUUID(), userId: input.userId ?? userId, companyId: input.companyId ?? companyId,
+        newEmail, tokenHash: randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', ''), proofKind: 'BILLING_RECIPIENT', status: input.status ?? 'USED',
+        usedAt: input.status === 'PENDING' ? null : new Date(Date.now() - (input.ageMs ?? 0)), expiresAt: new Date(Date.now() + 600_000) } });
+      return token.id;
+    };
+    return { service, context, account, customer, role, membership, email, queue, advance, proof,
       writes: () => writes, mode: (value: typeof mode) => { mode = value; }, beforeGet: (fn: () => Promise<void>) => { beforeGet = fn; } };
   }
   test('explicit company review, duplicate submit and exact readback; other companies stay unchanged', async () => {
@@ -58,6 +67,13 @@ describe('billing recipient authority, isolation and recovery on PostgreSQL', { 
     assert.equal(first.id, second.id);
     await a.advance(); assert.equal(a.writes(), 1); assert.equal(a.customer.email, a.email);
     assert.equal((await a.service.get(a.context, first.id)).state, 'COMPLETED');
+    // R-A8: the column follows Stripe, the change is audited without an address, and the notice is queued.
+    const stored = await prisma.client.billingAccount.findUniqueOrThrow({ where: { id: a.account.id } });
+    assert.equal(stored.recipientEmail, a.email); assert.equal(stored.recipientSource, 'ACCOUNT_EMAIL');
+    const changed = await prisma.client.auditLog.findFirstOrThrow({ where: { action: 'billing.recipient.changed', targetId: a.account.id } });
+    assert.deepEqual(changed.metadataJson, { source: 'ACCOUNT_EMAIL', operationId: first.id, hadPrevious: true });
+    const outbox = await prisma.client.outboxEvent.findUniqueOrThrow({ where: { eventKey: `billing:recipient-changed:${first.id}` } });
+    assert.deepEqual(outbox.payloadJson, { schemaVersion: 1, data: { operationId: first.id } });
     assert.equal((await a.service.current(a.context)).busy, false); assert.equal(b.customer.email, oldB);
     await assert.rejects(a.service.get(b.context, first.id));
   });
@@ -121,5 +137,44 @@ describe('billing recipient authority, isolation and recovery on PostgreSQL', { 
     assert.equal(visible.canCancel, true); assert.equal(visible.canSubmit, false);
     await f.service.command(context, row.id, 'cancel', visible.version, visible.previewHash, '');
     assert.equal((await f.service.current(context)).busy, false); assert.equal(f.writes(), 0);
+  });
+  test('a company recipient code changes Stripe and the column, notifies the old address, and is used once (R-A8)', async () => {
+    const f = await fixture(9191301), newEmail = `${randomUUID()}@typed.example.test`, proofId = await f.proof(newEmail);
+    const preview = await f.service.preview(f.context, proofId);
+    assert.equal(preview.newEmail, newEmail); assert.equal(preview.source, 'CUSTOMER_OTP'); assert.equal(f.writes(), 0);
+    await assert.rejects(f.service.preview(f.context, proofId), (e: any) => e.getResponse().code === 'BILLING_RECIPIENT_PROOF_INVALID');
+    await f.service.command(f.context, preview.id, 'submit', preview.version, preview.previewHash, randomUUID());
+    // The operation keeps its proof after the 30-minute review window.
+    await prisma.client.emailVerificationToken.update({ where: { id: proofId }, data: { usedAt: new Date(Date.now() - 3_600_000) } });
+    await f.advance(); assert.equal(f.writes(), 1); assert.equal(f.customer.email, newEmail);
+    const stored = await prisma.client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } });
+    assert.equal(stored.recipientEmail, newEmail); assert.equal(stored.recipientSource, 'CUSTOMER_OTP'); assert.equal(stored.recipientBouncedAt, null);
+    const notice = await prisma.client.emailSendAttempt.findFirstOrThrow({ where: { intentKey: `billing-recipient-notice:${preview.id}` } });
+    assert.ok(preview.previousEmail); assert.equal(notice.recipient, preview.previousEmail.toLowerCase());
+    assert.equal(notice.status, 'READY'); assert.equal(notice.purpose, 'billing_status');
+    const outbox = await prisma.client.outboxEvent.findUniqueOrThrow({ where: { eventKey: `billing:recipient-changed:${preview.id}` } });
+    assert.deepEqual(outbox.payloadJson, { schemaVersion: 1, data: { operationId: preview.id, noticeAttemptId: notice.id } });
+    assert.doesNotMatch(JSON.stringify([outbox.payloadJson, (await prisma.client.auditLog.findFirstOrThrow({ where: { action: 'billing.recipient.changed', targetId: f.account.id } })).metadataJson]), /@/);
+    await assert.rejects(f.service.preview(f.context, proofId), (e: any) => e.getResponse().code === 'BILLING_RECIPIENT_PROOF_INVALID');
+  });
+  test('only a fresh, confirmed code of this company and user opens a review', async () => {
+    const f = await fixture(), other = await fixture(), invalid = (e: any) => e.getResponse().code === 'BILLING_RECIPIENT_PROOF_INVALID';
+    for (const proofId of [await f.proof('a@typed.example.test', { companyId: other.context.companyId }), await f.proof('b@typed.example.test', { userId: other.context.userId }),
+      await f.proof('c@typed.example.test', { status: 'PENDING' }), await f.proof('d@typed.example.test', { ageMs: 31 * 60_000 }), randomUUID()])
+      await assert.rejects(f.service.preview(f.context, proofId), invalid);
+    await prisma.client.billingAccount.update({ where: { id: f.account.id }, data: { recipientEmail: 'same@typed.example.test' } });
+    await assert.rejects(f.service.preview(f.context, await f.proof('same@typed.example.test')), (e: any) => e.getResponse().code === 'BILLING_RECIPIENT_UNCHANGED');
+    assert.equal(f.writes(), 0);
+  });
+  test('an operation proposed before the recipient column still advances on its account email proof', async () => {
+    const f = await fixture(), preview = await f.service.preview(f.context);
+    const row = await prisma.client.billingOperation.findUniqueOrThrow({ where: { id: preview.id } });
+    const { target, ...legacy } = row.proposedJson as Record<string, any>;
+    await prisma.client.billingOperation.update({ where: { id: row.id }, data: { proposedJson: { ...legacy, emailProof: target.emailProof } } });
+    assert.equal((await f.service.get(f.context, row.id)).newEmail, f.email);
+    await f.service.command(f.context, row.id, 'submit', preview.version, preview.previewHash, randomUUID());
+    await f.advance(); assert.equal(f.customer.email, f.email);
+    const stored = await prisma.client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } });
+    assert.equal(stored.recipientEmail, f.email); assert.equal(stored.recipientSource, 'ACCOUNT_EMAIL');
   });
 });

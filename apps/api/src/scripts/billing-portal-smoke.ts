@@ -67,15 +67,22 @@ export async function checkBillingPortal(input: Parameters<typeof checkBillingRe
       const changedResponse = await open(); assert.equal(changedResponse.body.code, 'BILLING_PORTAL_UNAVAILABLE', JSON.stringify({phase,...changedResponse})); assert.equal(posts, count + (phase === 'POST' ? 1 : 0));
       during = undefined; await restoreAccount();
     }
-    // A portal URL is a capability: do not disclose it after the account email proof changes.
+    // DQ2: managing the card no longer depends on the account email ...
     const emailOwner = await db.user.findUniqueOrThrow({where:{id:input.userIds[0]!}});
     let emailChanged = false;
     during = async (path, method) => { if (!emailChanged && path.includes('billing_portal') && method === 'POST') {
-      emailChanged = true; await db.user.update({where:{id:emailOwner.id},data:{emailRevision:{increment:1}}});
+      emailChanged = true; await db.user.update({where:{id:emailOwner.id},data:{emailRevision:{increment:1},emailVerifiedAt:null}});
     } };
-    try { const stale = await open(); assert.equal(stale.body.code,'BILLING_EMAIL_CHANGED',JSON.stringify(stale)); assert.equal(stale.body.url,undefined); }
-    finally { during = undefined; await db.user.update({where:{id:emailOwner.id},data:{emailRevision:emailOwner.emailRevision}}); }
-    cases.push('portal-email-proof-change-after-provider-response-withholds-capability');
+    try { const opened = await open(); assert.equal(opened.status,200,JSON.stringify(opened)); assert.ok(opened.body.url); }
+    finally { during = undefined; await db.user.update({where:{id:emailOwner.id},data:{emailRevision:emailOwner.emailRevision,emailVerifiedAt:emailOwner.emailVerifiedAt}}); }
+    // ... but a recipient change reserved meanwhile still withholds the capability.
+    let reserved = false;
+    during = async (path, method) => { if (!reserved && path.includes('billing_portal') && method === 'POST') {
+      reserved = true; await db.billingAccount.update({ where: { id: account.id }, data: { activeEmailOperationId: randomUUID(), version: { increment: 1 } } });
+    } };
+    try { const blocked = await open(); assert.equal(blocked.body.code,'BILLING_PORTAL_UNAVAILABLE',JSON.stringify(blocked)); assert.equal(blocked.body.url,undefined); }
+    finally { during = undefined; await db.billingAccount.update({ where: { id: account.id }, data: { activeEmailOperationId: null } }); await restoreAccount(); }
+    cases.push('portal-independent-of-account-email-but-blocked-by-pending-recipient-operation');
     let closed = false;
     during = async path => { if (!closed && path.includes('billing_portal')) { closed = true;
       await db.billingSettings.update({ where: { id: settings.id }, data: { gatesJson: { ...initial.gates, portal_payment_method: false }, version: { increment: 1 } } });

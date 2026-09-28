@@ -1,4 +1,4 @@
-import { Allow, ArrayMinSize, ArrayMaxSize, IsArray, IsIn, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { Allow, ArrayMinSize, ArrayMaxSize, IsArray, IsIn, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUUID, Matches, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { BILLING_PAID_TIERS } from '@watchdog-bms/contracts';
 
 // Concrete runtime DTOs for the global whitelist. Existing command parsers still own
@@ -91,7 +91,8 @@ export class BillingQuoteDto {
   /** Omitted on a sales-deal quote: `dealId` names the offer, and its base tier is the snapshot's. */
   @IsOptional() @IsString() @MinLength(1) @MaxLength(40) offerKey?: string;
   @IsOptional() @IsString() @MinLength(1) @MaxLength(10) interval?: string;
-  @IsString() @MinLength(1) @MaxLength(320) billingEmail!: string;
+  /** R-A1: optional and ignored — the quote derives its recipient. Kept so cached clients (which may send '') still pass. */
+  @IsOptional() @IsString() @MaxLength(320) billingEmail?: string;
   @Allow() capacity?: unknown;
   @IsOptional() @IsIn(['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW']) purchaseMode?: string;
   @IsOptional() @IsIn(['FULL_PACKAGE']) purchaseIntent?: string;
@@ -102,6 +103,18 @@ export class BillingCheckoutDto {
   @IsString() @MinLength(1) @MaxLength(120) consentRevision!: string;
   @IsBoolean() accepted!: boolean;
   @IsString() @MaxLength(20) channel!: string;
+}
+/** Absent `recipientProofId` = the original "use my verified account email" review. */
+export class BillingRecipientPreviewDto {
+  @IsOptional() @IsUUID() recipientProofId?: string;
+}
+export class BillingRecipientOtpRequestDto {
+  @IsString() @MaxLength(320) email!: string;
+  @IsUUID('4') requestKey!: string;
+}
+export class BillingRecipientOtpConfirmDto {
+  @IsUUID() challengeId!: string;
+  @IsString() @Matches(/^\d{6}$/) code!: string;
 }
 export class BillingPortalDto {
   @IsString() @MaxLength(120) action!: string;
