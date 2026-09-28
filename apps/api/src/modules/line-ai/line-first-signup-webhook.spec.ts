@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LineWebhookController } from '../auth/presentation/line-webhook.controller';
 import {
-  LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND,
+  LINE_FOLLOW_EVENT_TEXT, PACKAGE_CALLBACK_COMMAND, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND,
   STAFF_CONTACT_COMMAND, EMPLOYEE_DOOR_COMMAND, RESUME_AI_COMMAND, RESUME_AI_ALIASES,
   linePostbackCommandText, staffMenuCommand,
 } from './domain/logic/line-staff-menu.logic';
@@ -108,7 +108,8 @@ describe('P10-L door and status cards (§3.1/§7)', () => {
       ['เปิดร้านใหม่', 'https://liff.line.me/1234567890-abcdef/signup'],
       ['ดูแพ็กเกจและราคา', 'โปรโมชั่น'],
       ['ฉันเป็นพนักงาน', 'ฉันเป็นพนักงาน'],
-      ['มีบัญชีอยู่แล้ว เชื่อม LINE', `${WEB_BASE}/login?line=link-required&next=%2F&openExternalBrowser=1`],
+      // R-B1: `openExternalBrowser=1` is added by the reply exit, after this builder.
+      ['มีบัญชีอยู่แล้ว เชื่อม LINE', `${WEB_BASE}/login?line=link-required&next=%2F`],
       ['ติดต่อเจ้าหน้าที่', 'ติดต่อเจ้าหน้าที่'],
     ]);
     assert.match(JSON.stringify(card), /บัญชีทางการที่ยืนยันแล้ว/, 'the verified shield guards against a fake OA (§9)');
@@ -121,7 +122,8 @@ describe('P10-L door and status cards (§3.1/§7)', () => {
     const card = JSON.stringify(buildSignupDoorCard('1234567890-abcdef', WEB_BASE));
 
     assert.match(card, /มีบัญชีอยู่แล้ว เชื่อม LINE/);
-    assert.ok(card.includes(`${WEB_BASE}/login?line=link-required&next=%2F&openExternalBrowser=1`));
+    // The external browser comes from the reply exit (R-B1); the builder keeps the plain URL.
+    assert.ok(card.includes(`${WEB_BASE}/login?line=link-required&next=%2F"`));
     // Never the LIFF root: that is the dead page this door used to open.
     assert.equal(card.includes('"https://liff.line.me/1234567890-abcdef"'), false);
   });
@@ -396,13 +398,9 @@ describe('P10-L webhook doors', () => {
 
     assert.match(rendered(h), /เปิดร้านใหม่/);
     assert.equal(outcome(h), 'line_follow');
-    // The image joins the hello and the door in one reply; step 1 still points to the card below.
-    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['text', 'image', 'flex']);
-    assert.deepEqual(h.replies.flat()[1], {
-      type: 'image',
-      originalContentUrl: 'https://app.example.test/assets/line/mangmeeplus-welcome-how-to-start-1080x1350.png',
-      previewImageUrl: 'https://app.example.test/assets/line/mangmeeplus-welcome-how-to-start-1080x1350.png',
-    });
+    // R-C4: the how-to picture is withdrawn (it showed no package step); the hello and the door stay.
+    assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['text', 'flex']);
+    assert.doesNotMatch(rendered(h), /welcome-how-to-start/);
     assert.match(spoken(h), /^สวัสดีค่ะ 🙏 ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\n/);
     assert.match(spoken(h), /กด "เปิดร้านใหม่" ในการ์ดด้านล่าง/);
     // L-B follow-up (c): adding the OA is the INVITED first step of this flow. Recording it DENIED
@@ -1281,6 +1279,63 @@ describe('the original question outlives every follow-up (UAT 2026-09-06)', () =
   });
 });
 
+// G19 / RV32: the promotion card's "ให้ทีมงานติดต่อกลับ" is a callback request — the same inbox, dedupe
+// and daily floor as ติดต่อเจ้าหน้าที่, but it never pauses the assistant.
+describe('G19 package callback request', () => {
+  const linked = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const NOTE = 'ขอให้ทีมงานติดต่อกลับเรื่องแพ็กเกจ';
+
+  it('files the callback in the support inbox and keeps the assistant answering', async () => {
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      context: { companyId: 'co-now', aiPausedUntil: null },
+      lastTurn: { userMessagePreview: 'ประโยคเก่าที่ไม่เกี่ยว' },
+    });
+    await h.useCase.execute(event(PACKAGE_CALLBACK_COMMAND));
+
+    assert.equal(h.supportRequests.length, 1);
+    assert.equal(h.supportRequests[0].data.companyId, 'co-now');
+    assert.equal(h.supportRequests[0].data.requestText, NOTE, 'the operator reads what was asked, not an old sentence');
+    assert.equal(h.supportRequests[0].data.lastMessageText, NOTE);
+    assert.deepEqual(h.supportRequests[0].data.messages, { create: { direction: 'CUSTOMER', kind: 'TEXT', text: NOTE } });
+    assert.deepEqual(h.supportNotices, ['sr-1']);
+    assert.deepEqual(h.contextUpserts, [], 'a callback never pauses the assistant');
+    assert.match(spoken(h), /ทีมงานจะติดต่อกลับเรื่องแพ็กเกจ/);
+    assert.match(spoken(h), /ถามน้องมั่งมีต่อได้เลย/);
+    assert.equal(outcome(h), 'package_callback_requested');
+    assert.equal(h.audits.at(-1).metadataJson.kind, 'package_callback');
+  });
+
+  it('adds the callback to a live request without re-arming its pause', async () => {
+    const h = harness({
+      identity: linked,
+      memberships: [{ companyId: 'co-now', roles: [] }],
+      context: { companyId: 'co-now', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+      openSupportRequest: { id: 'sr-open', status: 'ANSWERED' },
+    });
+    await h.useCase.execute(event(PACKAGE_CALLBACK_COMMAND));
+
+    assert.deepEqual(h.supportRequests, [], 'no second request');
+    assert.equal(h.supportUpdates[0].data.lastMessageText, NOTE);
+    assert.equal(h.supportUpdates[0].data.status, 'OPEN', 'an answered request comes back to the queue');
+    assert.deepEqual(h.contextUpdates, [], 'extendPause: false');
+    assert.deepEqual(h.contextUpserts, []);
+    assert.match(spoken(h), /ยังอยู่ในคิว/);
+    assert.equal(outcome(h), 'support_already_open');
+  });
+
+  it('answers the daily floor warmly and writes nothing', async () => {
+    const h = harness({ identity: linked, memberships: [{ companyId: 'co-now', roles: [] }], supportSlot: false });
+    await h.useCase.execute(event(PACKAGE_CALLBACK_COMMAND));
+
+    assert.deepEqual(h.supportRequests, []);
+    assert.deepEqual(h.supportNotices, []);
+    assert.equal(outcome(h), 'support_rate_limited');
+    assert.equal(h.audits.at(-1).result, 'DENIED');
+  });
+});
+
 describe('P10-L package change from LINE (§3.7)', () => {
   const identity = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
 
@@ -1295,6 +1350,7 @@ describe('P10-L package change from LINE (§3.7)', () => {
     assert.equal(h.packageChanges.length, 0);
     assert.equal(outcome(h), 'billing_review_link');
     assert.match(rendered(h), /\/companies\/co-1\/billing\?channel=line/);
+    assert.match(rendered(h), /เปิดในเบราว์เซอร์ให้อัตโนมัติ/);
     assert.doesNotMatch(rendered(h), /ยังทำผ่าน LINE ไม่ได้|ทีมงานจะติดต่อกลับ/);
   });
 
@@ -1312,9 +1368,9 @@ describe('P10-L package change from LINE (§3.7)', () => {
     assert.equal(h.packageChanges[0].requestedTierKey, 'STARTER_249');
     assert.match(h.packageChanges[0].note, /ยังไม่ได้เลือกแพ็กเกจ/);
     assert.match(rendered(h), /รับคำขอแล้วค่ะ/);
-    // SEC-04: the shop is found by asking for an OWNER membership, not by trusting the button.
+    // SEC-04: the shop is found by asking for a plan-manager membership (R-C11), not by trusting the button.
     const where = h.membershipQueries[0].where;
-    assert.deepEqual(where.roles, { some: { role: { key: 'OWNER', status: 'ACTIVE' } } });
+    assert.deepEqual(where.roles, { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key: 'company.plan.manage' } } } } } });
     assert.equal(where.status, 'ACTIVE');
   });
 
@@ -1425,7 +1481,9 @@ describe('GW09 committed rich menu → signed webhook → deterministic reply', 
 // Owner 2026-09-21: the tile still sends "โปรโมชั่น"; what comes back now depends on who tapped it.
 describe('โปรโมชั่น card leads into the app, per audience', () => {
   const identity = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
-  const shop = (key: string, companyId = 'co-1') => [{ companyId, roles: [{ role: { key } }], company: { name: 'ร้านนิด' } }];
+  // R-C11: the button follows `company.plan.manage` on an ACTIVE role, which OWNER always holds.
+  const shop = (key: string, companyId = 'co-1', managesPlan = key === 'OWNER') => [{ companyId, roles: [{ role: { key, status: 'ACTIVE',
+    permissions: managesPlan ? [{ permission: { key: 'company.plan.manage' } }] : [] } }], company: { name: 'ร้านนิด' } }];
   const actions = (h: Harness) => (h.replies.flat()[0] as any).contents.footer.contents.map((button: any) => button.action);
   const seam = (minted: any[]) => ({
     linkFor: async (ctx: unknown, targetPath: string) => { minted.push({ ctx, targetPath }); return `${WEB_BASE}/l/handoff-1`; },
@@ -1444,6 +1502,13 @@ describe('โปรโมชั่น card leads into the app, per audience', ()
     assert.equal(outcome(h), 'staff_menu_promotion');
   });
 
+  it('gives the package button to a custom role that may manage the package (R-C11)', async () => {
+    const h = harness({ identity, memberships: shop('PLAN_MANAGER', 'co-1', true), context: { companyId: 'co-1', aiPausedUntil: null } });
+    await h.useCase.execute(event('โปรโมชั่น'));
+
+    assert.deepEqual(actions(h)[0], { type: 'uri', label: 'เลือกแพ็กเกจ', uri: `${WEB_BASE}/companies/co-1/billing?channel=line` });
+  });
+
   it('keeps the owner\'s button on the plain package page when no token can be minted', async () => {
     const h = harness({ identity, memberships: shop('OWNER'), context: { companyId: 'co-1', aiPausedUntil: null } });
     await h.useCase.execute(event('โปรโมชั่น'));
@@ -1457,7 +1522,8 @@ describe('โปรโมชั่น card leads into the app, per audience', ()
 
     assert.equal(rendered(h).includes('/companies/co-1/billing'), false, 'the package page is owner-only');
     assert.match(rendered(h), /เจ้าของร้านเป็นคนเลือกแพ็กเกจ/);
-    assert.deepEqual(actions(h).map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานช่วยเลือก', 'คุยกับทีมงาน']);
+    assert.deepEqual(actions(h).map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานติดต่อกลับ', 'คุยกับทีมงาน']);
+    assert.equal(actions(h)[1].type, 'postback');
     assert.equal(outcome(h), 'staff_menu_promotion');
   });
 

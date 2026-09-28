@@ -175,7 +175,8 @@ import {
 import { type CompanyOcrAdmissionIdentity, releaseCompanyOcrAdmission, LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE, claimReceiptQuotaNotice, receiptQuotaSnapshot, releaseReceiptQuotaNotice, RECEIPT_QUOTA_ERROR_CODE } from '../company-ocr-governance';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
-import { LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../../auth/domain/logic/line-handoff.logic';
+import { isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../../auth/domain/logic/line-handoff.logic';
+import { canManagePlan, planManagerRoleFilter } from '../../../access-control/domain/logic/plan-manager.logic';
 import {
   classifyLineAiGatewayFailure,
   classifyLineAiTerminalOutcome,
@@ -275,7 +276,6 @@ const FOLLOW_WELCOME_REPLY = 'สวัสดีค่ะ 🙏 ขอบคุ�
   + '3. ใช้งานได้ทันที ทั้งในแอปและในแชทนี้\n'
   + '\n'
   + 'อยากดูราคาก่อน กดช่อง "แพ็กเกจและราคา" ที่เมนูด้านล่างแชทได้เลยค่ะ';
-const FOLLOW_WELCOME_IMAGE_PATH = '/assets/line/mangmeeplus-welcome-how-to-start-1080x1350.png';
 /** The way out of a support pause, as every reply that offers one prints it: the tile's own words,
  *  tapped or typed (Owner 2026-09-06). Built from the command so the hint and the matcher cannot
  *  drift — and never "AI": the customer knows her as น้องมั่งมี. */
@@ -293,6 +293,12 @@ const ASSISTANT_RESUMED_REPLY = '💚 น้องมั่งมีกลับ
  *  help, and the requests they already opened are in the operator inbox either way. */
 const SUPPORT_DAILY_LIMIT_REPLY = '📮 วันนี้ยังเปิดคำขอคุยกับเจ้าหน้าที่เพิ่มไม่ได้ค่ะ '
   + 'หากยังต้องการความช่วยเหลือ โทร 098-256-5628 ได้เลยค่ะ';
+/** G19: what the inbox shows for a callback request (requestText/lastMessageText + thread line). */
+const PACKAGE_CALLBACK_NOTE = 'ขอให้ทีมงานติดต่อกลับเรื่องแพ็กเกจ';
+/** G19: no pause — the assistant keeps answering while the team calls back (RV32). */
+const PACKAGE_CALLBACK_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะติดต่อกลับเรื่องแพ็กเกจในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) '
+  + 'ระหว่างนี้ถามน้องมั่งมีต่อได้เลยนะคะ';
+const PACKAGE_CALLBACK_ALREADY_OPEN_REPLY = '📮 คำขอของคุณยังอยู่ในคิวค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
 /** Sent while a support pause is running and there is no live request to write to (§8). */
 const SUPPORT_PAUSED_REPLY = '📮 ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จค่ะ '
   + 'กรุณากด "ติดต่อเจ้าหน้าที่" อีกครั้ง หากยังไม่ได้ โทร 098-256-5628 ได้เลยค่ะ';
@@ -1009,8 +1015,13 @@ function formatSignatureTicketReply(
 
 type LineCompanyMembership = {
   companyId: string;
-  company?: { name: string; brandName?: string | null } | null;
-  roles?: Array<{ role?: { key: string; name?: string } | null }>;
+  company?: {
+    name: string;
+    brandName?: string | null;
+    status?: string;
+    planTerm?: { termStartAt: Date; termEndsAt: Date; renewCount: number; termDisabledAt?: Date | null } | null;
+  } | null;
+  roles?: Array<{ role?: { key: string; name?: string; status?: string; permissions?: Array<{ permission: { key: string } }> } | null }>;
 };
 
 export async function putLineMediaUpload(
@@ -1243,6 +1254,21 @@ function companyLabel(membership: LineCompanyMembership): string {
   return membership.company?.brandName ?? membership.company?.name ?? 'ไม่ระบุบริษัท';
 }
 
+/** R-C8: the same wording as LIFF (R-C2) for a locked shop in the picker and the context card. */
+function companyStateLabel(membership: LineCompanyMembership, now = new Date()): string | undefined {
+  const term = membership.company?.planTerm;
+  const locked = (membership.company?.status === 'DISABLED' && !!term?.termDisabledAt)
+    || (membership.company?.status === 'ACTIVE' && !!term && term.termEndsAt <= now);
+  if (!locked) return undefined;
+  return term && planTermLockReason(term) === 'no_package' ? 'ยังไม่มีแพ็กเกจ' : 'หมดอายุ';
+}
+
+/** One picker row; the lock label only on a locked shop, so an ACTIVE row keeps its exact bytes. */
+function companyPickerItem(membership: LineCompanyMembership): CompanyPickerItem {
+  const stateLabel = companyStateLabel(membership);
+  return { companyId: membership.companyId, companyName: companyLabel(membership), ...(stateLabel ? { stateLabel } : {}) };
+}
+
 function companyRoleLabels(membership: LineCompanyMembership): string[] {
   return [...new Set((membership.roles ?? [])
     .filter((item): item is { role: { key: string; name?: string } } => !!item.role)
@@ -1254,9 +1280,9 @@ function companyRoleLabels(membership: LineCompanyMembership): string[] {
 /**
  * The role KEY, never the label: `companyRoleLabels` above renders `role.name`, which a company can
  * rename to anything. `'OWNER'` is the same key the owner-only reads in this file already use
- * (`access.roles.includes('OWNER')`, and the `roles: { some: { role: { key: 'OWNER' } } }` filters),
- * and it is scoped to the ONE membership the card is about — being an owner elsewhere does not make
- * this an owner's view of this company.
+ * (`access.roles.includes('OWNER')`), and it is scoped to the ONE membership the card is about —
+ * being an owner elsewhere does not make this an owner's view of this company. Opening another
+ * shop stays an OWNER action; who may manage a PACKAGE is `canManagePlan` (R-C11), not this.
  */
 function isCompanyOwner(membership: LineCompanyMembership): boolean {
   return (membership.roles ?? []).some((item) => item.role?.key === 'OWNER');
@@ -1786,8 +1812,8 @@ export async function resolveCompanyForLineUser(
 async function lockedCompanyFor(
   prisma: PrismaService,
   userId: string,
-  /** OWNER-only for the renewal card; any active member for the neutral staff reply (C3). */
-  ownerOnly: boolean,
+  /** Plan managers only (`company.plan.manage`, R-C11) for the package card; any active member for the neutral staff reply (C3). */
+  planManagersOnly: boolean,
 ): Promise<{ companyId: string; lockReason: PlanTermLockReason } | null> {
   const now = new Date();
   const locked = await prisma.client.companyMembership.findFirst({
@@ -1800,7 +1826,7 @@ async function lockedCompanyFor(
           { status: 'ACTIVE', planTerm: { termEndsAt: { lte: now } } },
         ],
       },
-      ...(ownerOnly ? { roles: { some: { role: { key: 'OWNER' } } } } : {}),
+      ...(planManagersOnly ? planManagerRoleFilter() : {}),
     },
     select: { companyId: true, company: { select: { planTerm: {
       select: { termStartAt: true, termEndsAt: true, renewCount: true } } } } },
@@ -2318,22 +2344,25 @@ export class ProcessLineWebhookUseCase {
    *  resolver, the entitlement read, the router and the model — so a locked company costs one or
    *  two indexed membership lookups and not a single token.
    *
-   *  The OWNER is the only person who can act, so only the OWNER gets the package card. Everyone
-   *  else in the shop gets one neutral sentence with no package, date or price in it (C3, the same
-   *  rule the web banner follows), and someone with no membership at all still gets `UNLINKED_REPLY`
-   *  from the caller. */
+   *  Members whose role grants `company.plan.manage` (R-C11) are the only ones who can act, so only
+   *  they get the package card. Everyone else in the shop gets one neutral sentence with no
+   *  package, date or price in it (C3, the same rule the web banner follows), and someone with no
+   *  membership at all still gets `UNLINKED_REPLY` from the caller. */
   private async replyIfCompanyLocked(
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     userId: string,
   ): Promise<boolean> {
-    const owner = await lockedCompanyFor(this.prisma, userId, true);
-    if (owner) {
+    const manager = await lockedCompanyFor(this.prisma, userId, true);
+    if (manager) {
       if (['test', 'live'].includes(this.config.billingMode) && this.config.webBaseUrl) {
-        // The same seam `handlePackageChangeRequest` uses: the handoff binds this link to this
-        // owner, so the card is one tap into their own package page rather than a login wall.
-        event.handoff = { userId, companyId: owner.companyId };
+        // R-B2 (b): the link is minted here, before the outcome is recorded, so the card is one tap
+        // into the package page whether or not the delivery seam wraps (it does not with the replay
+        // flag on — production). `event.handoff` still binds the turn's tenant for bookkeeping.
+        event.handoff = { userId, companyId: manager.companyId };
+        const packageUrl = await this.oneTapPackageUrl(event, userId, manager.companyId, 'locked_card_packages');
         await this.deliverRequiredMessages(event, [buildPackageRequiredMessage({
-          lockReason: owner.lockReason, companyId: owner.companyId, webBaseUrl: this.config.webBaseUrl,
+          lockReason: manager.lockReason, companyId: manager.companyId, webBaseUrl: this.config.webBaseUrl,
+          ...(packageUrl ? { packageUrl } : {}),
         })]);
       } else {
         // Billing closed (or no web base): there is no package page to send anyone to, so the reply
@@ -2343,7 +2372,7 @@ export class ProcessLineWebhookUseCase {
         });
       }
       // A status, not an error code: we said no on purpose and the customer received the answer.
-      await this.updateEventLog(event.webhookEventId, 'package_required', undefined, owner.companyId);
+      await this.updateEventLog(event.webhookEventId, 'package_required', undefined, manager.companyId);
       return true;
     }
     const member = await lockedCompanyFor(this.prisma, userId, false);
@@ -2368,11 +2397,10 @@ export class ProcessLineWebhookUseCase {
     const pending = await this.findOpenLineSignup(lineUserId);
     if (!pending) {
       if (!welcome) return [this.doorCard()];
-      const imageUrl = absoluteWebLink(this.config.webBaseUrl, FOLLOW_WELCOME_IMAGE_PATH);
-      const image: LineReplyMessage | null = URL.canParse(imageUrl) && new URL(imageUrl).protocol === 'https:'
-        ? { type: 'image', originalContentUrl: imageUrl, previewImageUrl: imageUrl }
-        : null;
-      return [{ type: 'text', text: FOLLOW_WELCOME_REPLY }, ...(image ? [image] : []), this.doorCard()];
+      // R-C4 (§18.2): the how-to picture showed no "choose a package" step, and a locked shop cannot
+      // take the steps it did show. Withdrawn until a new asset under a NEW file name exists (LINE
+      // caches by URL; apps/web/public is a Release Contracts trigger — the old PNG stays untouched).
+      return [{ type: 'text', text: FOLLOW_WELCOME_REPLY }, this.doorCard()];
     }
     return [buildSignupStatusCard(pending.companyName, isBusinessHours(new Date(), {
       days: this.config.lineSignupBusinessDays,
@@ -2443,7 +2471,8 @@ export class ProcessLineWebhookUseCase {
   private async promotionCard(event: LineTextEvent): Promise<LineReplyMessage> {
     const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') return buildPromotionCard('stranger', this.newShopSignupUrl());
-    const owners = (await this.listLineCompanies(identity.userId)).filter(isCompanyOwner);
+    // R-C11: whoever may buy for the shop gets the button, owner or custom role alike.
+    const owners = (await this.listLineCompanies(identity.userId)).filter((membership) => canManagePlan(membership.roles));
     if (owners.length === 0) return buildPromotionCard('employee');
     // Which shop: the one this chat is already on, else the oldest owned. ponytail: a picker in
     // front of a card whose whole point is one tap costs more than it saves, and an owner who
@@ -2454,10 +2483,30 @@ export class ProcessLineWebhookUseCase {
     const companyId = (owners.find((row) => row.companyId === context?.companyId) ?? owners[0]!).companyId;
     if (!this.config.webBaseUrl) return buildPromotionCard('owner');
     const targetPath = `/companies/${encodeURIComponent(companyId)}/billing?channel=line`;
-    return buildPromotionCard('owner', await this.handoffLinks?.linkFor(
-      { userId: identity.userId, companyId, lineUserId: event.lineUserId, surface: 'promotion_card_packages' },
-      targetPath,
-    ) ?? new URL(targetPath, this.config.webBaseUrl).toString());
+    // Same mint as the lock card; in a group/room the button stays the plain package page (RV08).
+    return buildPromotionCard('owner', await this.oneTapPackageUrl(event, identity.userId, companyId, 'promotion_card_packages')
+      ?? new URL(targetPath, this.config.webBaseUrl).toString());
+  }
+
+  /**
+   * R-B2 (b): mint the one-tap package link IN the lane, before `recordTurnOutcome` stores the
+   * payload, so the stored bytes and the sent bytes carry the same token and LINE's retry key stays
+   * one identity (RV07). Never in a group/room: anyone there could exchange it into the owner's
+   * session (RV08) — a plain tenant URL (external-browser param added at the exit) is the answer.
+   * Absent seam or a refused mint → `undefined`, and the caller renders the plain link it always sent.
+   */
+  private async oneTapPackageUrl(
+    event: { lineUserId: string; pushTargetId?: string },
+    userId: string,
+    companyId: string,
+    surface: 'locked_card_packages' | 'package_change_reply' | 'promotion_card_packages',
+  ): Promise<string | undefined> {
+    const chatKey = event.pushTargetId ?? event.lineUserId;
+    if (!this.handoffLinks || isLineGroupChatKey(chatKey)) return undefined;
+    return await this.handoffLinks.linkFor(
+      { userId, companyId, lineUserId: chatKey, surface },
+      `/companies/${encodeURIComponent(companyId)}/billing?channel=line`,
+    ) ?? undefined;
   }
 
   /** §15.1: "ช่วงทดลอง" is only true of the trial tier; every other shop hears about its package. */
@@ -2522,49 +2571,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    // Amplification floor. Closing a request frees the dedupe above, so tap → resume → tap,
-    // repeated, was an unbounded source of rows, letters and pushes from one unauthenticated
-    // LINE account. Three genuine asks a day is more than a real customer makes; the fourth is
-    // answered warmly and writes nothing. Checked HERE, not at dispatch: a repeat tap on an
-    // already-open request costs nothing and must never be refused.
-    const created = await this.prisma.client.$transaction(async (tx) => {
-      const lockKey = `line-support:${hashMessagePreview(event.lineUserId)}`;
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
-      const raced = await tx.lineSupportRequest.findFirst({
-        where: { lineUserId: event.lineUserId, status: { in: ['OPEN', 'ANSWERED'] } },
-        orderBy: { requestedAt: 'desc' }, select: { id: true, status: true },
-      });
-      if (raced) {
-        const touched = await tx.lineSupportRequest.updateMany({
-          where: { id: raced.id, status: raced.status },
-          data: { lastMessageAt: new Date(), ...(raced.status === 'ANSWERED'
-            ? { status: 'OPEN', reopenedCount: { increment: 1 } } : {}) },
-        });
-        if (touched.count === 0) throw new ConflictException('line_support_state_changed');
-        return raced;
-      }
-      if (this.rateLimit && !await this.rateLimit.consumeLineSupportRequestSlot(event.lineUserId)) return null;
-
-      return tx.lineSupportRequest.create({
-        data: {
-          lineUserId: event.lineUserId,
-          lineUserIdHash: hashMessagePreview(event.lineUserId),
-          ...(asker?.companyId ? { companyId: asker.companyId } : {}),
-          ...(asker?.signupRequestId ? { signupRequestId: asker.signupRequestId } : {}),
-          // Both, from the same sentence: `requestText` is the question and never changes again,
-          // `lastMessageText` is where the thread has got to and is rewritten by every follow-up.
-          ...(asker?.lastMessageText
-            ? { requestText: asker.lastMessageText, lastMessageText: asker.lastMessageText }
-            : {}),
-          // สัญญา v3 ข้อ 9: the same sentence opens the chat an operator reads, so the thread starts
-          // where the question does rather than at the first follow-up.
-          ...(asker?.lastMessageText
-            ? { messages: { create: { direction: 'CUSTOMER', kind: 'TEXT', text: asker.lastMessageText } } }
-            : {}),
-        },
-        select: { id: true },
-      });
-    });
+    const created = await this.openSupportRequest(event.lineUserId, asker, asker?.lastMessageText);
     if (!created) {
       await this.deliverReply(event, SUPPORT_DAILY_LIMIT_REPLY);
       await this.audit.log({
@@ -2604,6 +2611,102 @@ export class ProcessLineWebhookUseCase {
       },
     });
     await this.updateEventLog(event.webhookEventId, 'support_requested');
+  }
+
+  /**
+   * The ONE creator of a `LineSupportRequest` row (§2.1). Returns the live row when one raced ahead,
+   * `null` when the daily amplification floor refused, else the created id. `text` is what the
+   * operator reads first (requestText/lastMessageText and the opening thread line).
+   *
+   * Amplification floor. Closing a request frees the dedupe of the callers, so tap → resume → tap,
+   * repeated, was an unbounded source of rows, letters and pushes from one unauthenticated
+   * LINE account. Three genuine asks a day is more than a real customer makes; the fourth is
+   * answered warmly and writes nothing. Checked HERE, not at dispatch: a repeat tap on an
+   * already-open request costs nothing and must never be refused.
+   */
+  private async openSupportRequest(
+    lineUserId: string,
+    asker: { companyId: string | null; signupRequestId?: string } | null,
+    text: string | undefined,
+  ): Promise<{ id: string; status?: string } | null> {
+    return this.prisma.client.$transaction(async (tx) => {
+      const lockKey = `line-support:${hashMessagePreview(lineUserId)}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+      const raced = await tx.lineSupportRequest.findFirst({
+        where: { lineUserId, status: { in: ['OPEN', 'ANSWERED'] } },
+        orderBy: { requestedAt: 'desc' }, select: { id: true, status: true },
+      });
+      if (raced) {
+        const touched = await tx.lineSupportRequest.updateMany({
+          where: { id: raced.id, status: raced.status },
+          data: { lastMessageAt: new Date(), ...(raced.status === 'ANSWERED'
+            ? { status: 'OPEN', reopenedCount: { increment: 1 } } : {}) },
+        });
+        if (touched.count === 0) throw new ConflictException('line_support_state_changed');
+        return raced;
+      }
+      if (this.rateLimit && !await this.rateLimit.consumeLineSupportRequestSlot(lineUserId)) return null;
+
+      return tx.lineSupportRequest.create({
+        data: {
+          lineUserId,
+          lineUserIdHash: hashMessagePreview(lineUserId),
+          ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+          ...(asker?.signupRequestId ? { signupRequestId: asker.signupRequestId } : {}),
+          // Both, from the same sentence: `requestText` is the question and never changes again,
+          // `lastMessageText` is where the thread has got to and is rewritten by every follow-up.
+          ...(text ? { requestText: text, lastMessageText: text } : {}),
+          // สัญญา v3 ข้อ 9: the same sentence opens the chat an operator reads, so the thread starts
+          // where the question does rather than at the first follow-up.
+          ...(text ? { messages: { create: { direction: 'CUSTOMER', kind: 'TEXT', text } } } : {}),
+        },
+        select: { id: true },
+      });
+    });
+  }
+
+  /**
+   * G19 / RV32. "ให้ทีมงานติดต่อกลับ" on the promotion card files a callback request in the same inbox
+   * as ติดต่อเจ้าหน้าที่ — same dedupe, same daily floor, same operator notice — but it NEVER pauses
+   * the assistant: the customer asked for a call, not for the bot to go quiet. Public like its twin.
+   */
+  private async handlePackageCallback(event: LineTextEvent, requestId: string): Promise<void> {
+    const asker = await this.resolveSupportAsker(event);
+    const live = await this.findLiveSupportRequest(event.lineUserId);
+    if (live) {
+      await this.recordSupportFollowUp(event.lineUserId, requestId, { text: PACKAGE_CALLBACK_NOTE }, { extendPause: false });
+      await this.deliverReply(event, PACKAGE_CALLBACK_ALREADY_OPEN_REPLY);
+      await this.audit.log({
+        action: 'signup.line.support_requested',
+        ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+        targetType: 'line_support_request', targetId: live.id, requestId, result: 'SUCCESS', riskLevel: 'LOW',
+        metadataJson: { kind: 'package_callback', alreadyOpen: true, reopened: live.status === 'ANSWERED', paused: false },
+      });
+      await this.updateEventLog(event.webhookEventId, 'support_already_open');
+      return;
+    }
+    const created = await this.openSupportRequest(event.lineUserId, asker, PACKAGE_CALLBACK_NOTE);
+    if (!created) {
+      await this.deliverReply(event, SUPPORT_DAILY_LIMIT_REPLY);
+      await this.audit.log({
+        action: 'signup.line.support_requested',
+        ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+        targetType: 'line_user', requestId, result: 'DENIED', riskLevel: 'LOW',
+        metadataJson: { kind: 'package_callback', reason: 'daily_limit', linked: Boolean(asker) },
+      });
+      await this.updateEventLog(event.webhookEventId, 'support_rate_limited');
+      return;
+    }
+    // Deliberately NO pauseAssistant here (the one difference from handleStaffContact).
+    await this.deliverReply(event, PACKAGE_CALLBACK_REPLY);
+    await this.signupNotify?.enqueueSupportRequest(created.id);
+    await this.audit.log({
+      action: 'signup.line.support_requested',
+      ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+      targetType: 'line_support_request', targetId: created.id, requestId, result: 'SUCCESS', riskLevel: 'LOW',
+      metadataJson: { kind: 'package_callback', paused: false, linked: Boolean(asker), hasPendingSignup: Boolean(asker?.signupRequestId) },
+    });
+    await this.updateEventLog(event.webhookEventId, 'package_callback_requested');
   }
 
   /**
@@ -2731,6 +2834,8 @@ export class ProcessLineWebhookUseCase {
     lineUserId: string,
     requestId: string,
     message: { text?: string; lineMessageId?: string },
+    /** `extendPause: false` (G19 callback) records the message without re-arming a running pause. */
+    options: { extendPause?: boolean } = {},
   ): Promise<SupportFollowUpOutcome> {
     try {
       const live = await this.findLiveSupportRequest(lineUserId);
@@ -2767,10 +2872,12 @@ export class ProcessLineWebhookUseCase {
       // unlink, so an upsert here rebuilt an ex-member's context pointing at the shop they left.
       // The tap's own `pauseAssistant`, which asks `resolveSupportAsker` for a live membership
       // first, stays the only thing allowed to open a pause.
-      await this.prisma.client.lineCompanyContext.updateMany({
-        where: { lineUserId, aiPausedUntil: { not: null } },
-        data: { aiPausedUntil: new Date(Date.now() + SUPPORT_ASSISTANT_PAUSE_MS) },
-      });
+      if (options.extendPause !== false) {
+        await this.prisma.client.lineCompanyContext.updateMany({
+          where: { lineUserId, aiPausedUntil: { not: null } },
+          data: { aiPausedUntil: new Date(Date.now() + SUPPORT_ASSISTANT_PAUSE_MS) },
+        });
+      }
       await this.audit.log({
         action: 'signup.line.support_follow_up',
         ...(live.companyId ? { companyId: live.companyId } : {}),
@@ -2959,7 +3066,8 @@ export class ProcessLineWebhookUseCase {
         userId,
         status: 'ACTIVE',
         company: { OR: [{ status: 'ACTIVE' }, { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } }] },
-        roles: { some: { role: { key: 'OWNER', status: 'ACTIVE' } } },
+        // R-C11: the same people the web lets buy (`company.plan.manage`), owner or custom role alike.
+        ...planManagerRoleFilter(),
       },
       orderBy: { createdAt: 'asc' },
       select: { companyId: true, company: { select: { name: true, planTerm: { select: { tierKey: true } } } } },
@@ -2984,11 +3092,13 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     if (['test', 'live'].includes(this.config.billingMode) && this.config.webBaseUrl) {
-      // Old rich-menu/message commands converge here too. The card offers a review page, never
-      // claims payment or changes rights; the existing delivery seam binds its handoff to this owner.
+      // Old rich-menu/message commands converge here too. The reply offers a review page, never
+      // claims payment or changes rights. R-B2 (b): the one-tap link is minted here, before the
+      // outcome is recorded; a refused mint or a group chat keeps the plain tenant URL.
       event.handoff = { userId, companyId: owned.companyId };
-      const url = new URL(`/companies/${encodeURIComponent(owned.companyId)}/billing?channel=line`, this.config.webBaseUrl).toString();
-      await this.deliverReply(event, `📦 ${owned.company.name}\nดูแพ็กเกจ ตรวจสอบการชำระเงิน และเปิดใบเสร็จได้ที่\n${url}\nกรุณาตรวจสอบราคาและยืนยันบนเว็บก่อนชำระเงินค่ะ`);
+      const plainUrl = new URL(`/companies/${encodeURIComponent(owned.companyId)}/billing?channel=line`, this.config.webBaseUrl).toString();
+      const url = await this.oneTapPackageUrl(event, userId, owned.companyId, 'package_change_reply') ?? plainUrl;
+      await this.deliverReply(event, `📦 ${owned.company.name}\nเลือกแพ็กเกจ ตรวจสอบการชำระเงิน และเปิดใบเสร็จได้ที่ลิงก์นี้ (เปิดในเบราว์เซอร์ให้อัตโนมัติ)\n${url}\nตรวจสอบราคาและยืนยันบนเว็บก่อนชำระเงินนะคะ`);
       await this.updateEventLog(event.webhookEventId, 'billing_review_link', undefined, owned.companyId);
       return;
     }
@@ -4927,6 +5037,11 @@ export class ProcessLineWebhookUseCase {
       await this.handleStaffContact(event, requestId);
       return;
     }
+    // G19: public like its twin above, and likewise above the pause gate; it never sets a pause.
+    if (publicCommand === 'package_callback') {
+      await this.handlePackageCallback(event, requestId);
+      return;
+    }
     // §2.4. Public for the same reason its twin is: the pause is keyed on the LINE user, not on an
     // account, so the words that lift it must reach as far as the words that set it. Handled ABOVE
     // the pause gate below, or the reply that lifts the pause would be swallowed by the pause.
@@ -5109,9 +5224,7 @@ export class ProcessLineWebhookUseCase {
     }
     if ('needsSelection' in resolved) {
       const memberships = await this.listLineCompanies(identity.userId);
-      await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
-        memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
-      )]);
+      await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(memberships.map(companyPickerItem))]);
       await this.updateEventLog(event.webhookEventId, 'needs_company_selection', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
     }
@@ -7069,8 +7182,10 @@ export class ProcessLineWebhookUseCase {
       } },
       select: {
         companyId: true,
-        company: { select: { name: true, brandName: true } },
-        roles: { select: { role: { select: { key: true, name: true } } } },
+        // R-C8: status + term, so a locked shop is labelled the way LIFF labels it (R-C2).
+        company: { select: { name: true, brandName: true, status: true, planTerm: { select: { termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } } } },
+        // R-C11: role status + permissions, so "may manage the package" is the web's predicate.
+        roles: { select: { role: { select: { key: true, name: true, status: true, permissions: { select: { permission: { select: { key: true } } } } } } } },
       },
       orderBy: { createdAt: 'asc' },
     }) as Promise<LineCompanyMembership[]>;
@@ -7112,10 +7227,7 @@ export class ProcessLineWebhookUseCase {
     currentCompanyId: string | undefined,
     page: number | undefined,
   ): Promise<CompanyPickerItem[]> {
-    const items: CompanyPickerItem[] = memberships.map((membership) => ({
-      companyId: membership.companyId,
-      companyName: companyLabel(membership),
-    }));
+    const items: CompanyPickerItem[] = memberships.map(companyPickerItem);
     if (!this.handoffLinks) return items;
     const visible = new Set(companyPickerPage(items, currentCompanyId, page).visible.map((item) => item.companyId));
     return Promise.all(items.map(async (item) => (visible.has(item.companyId)
@@ -7159,8 +7271,10 @@ export class ProcessLineWebhookUseCase {
       // entrances keep agreeing about "still open" — and while one IS open the card withholds the
       // button, because the LIFF form behind it can only answer `line_signup_already_pending`.
       const pendingSignup = await this.findOpenLineSignup(event.lineUserId);
+      const stateLabel = companyStateLabel(currentMembership);
       const messages: LineReplyMessage[] = [buildCompanyContextMessage({
         companyName: companyLabel(currentMembership),
+        ...(stateLabel ? { stateLabel } : {}),
         displayName,
         roleLabels: companyRoleLabels(currentMembership),
         isOwner: isCompanyOwner(currentMembership),
@@ -7192,10 +7306,7 @@ export class ProcessLineWebhookUseCase {
     // index or companyId that is not theirs falls through to the picker below.
     const selected = findCompanySelection(memberships, command.value);
     if (!selected) {
-      await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
-        memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
-        current?.companyId,
-      )]);
+      await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(memberships.map(companyPickerItem), current?.companyId)]);
       await this.updateEventLog(event.webhookEventId, 'company_context_selection_invalid', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY, current?.companyId);
       return;
     }
@@ -7688,9 +7799,7 @@ export class ProcessLineWebhookUseCase {
         await this.deliverReply(event, RECEIPT_LINK_REPLY);
       } else {
         const memberships = await this.listLineCompanies(identity.userId);
-        await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
-          memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
-        )]);
+        await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(memberships.map(companyPickerItem))]);
       }
       await this.updateEventLog(event.webhookEventId, !resolved ? 'unlinked' : 'needs_company_selection', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
