@@ -317,6 +317,23 @@ jobs:
           LINE_LIFF_ID: 1234567890-Synthetic
           NEXT_DIST_DIR: .next/email-otp-liff
         run: pnpm exec playwright test e2e/line-signup-contact-email.spec.ts --workers=1
+      - name: Test purchase without setup in the browser
+        if: matrix.suite == 'customer'
+        timeout-minutes: 12
+        env:
+          PGPASSWORD: watchdog_ci
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/purchase_no_setup_test
+          REDIS_URL: redis://127.0.0.1:6379
+          API_PORT: '3155'
+          WEB_PORT: '3156'
+          LINE_LIFF_ID: 1234567890-Synthetic
+          NEXT_DIST_DIR: .next/billing-no-setup
+        run: |
+          # The browser signs in as the seeded owner (authedPage), so this suite gets its own seeded database.
+          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c "CREATE DATABASE purchase_no_setup_test"
+          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
+          pnpm --filter @watchdog-bms/api exec tsx prisma/seed.ts
+          pnpm exec playwright test e2e/billing-no-setup.spec.ts --workers=1
       - name: Test shared LINE credential publication without restart
         if: matrix.suite == 'customer'
         timeout-minutes: 5
