@@ -119,6 +119,10 @@ export type LineAiSemanticSubrequestV2 = {
   requestedFilters: Record<string, string | number | boolean | null>;
   /** Exact user phrase only; it is a lookup hint, never an entity/action ID. */
   entityReference?: { kind: 'user_text'; value: string };
+  /** tuning-7b (K1): router's best-guess read tool for this clause (e.g. "expense.get_breakdown"),
+   *  advisory only — the gateway may skip its own tool-planning call when it trusts this. Never
+   *  authority: a read tool still runs the full permission/entitlement check before it executes. */
+  toolHint?: string;
   dependsOn: number[];
   evidenceRefs?: LineAiSourceRefV2[];
 };
@@ -395,6 +399,8 @@ export type LineAiPublicGeneralResponse = {
 
 const LINE_AI_V2_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
 const LINE_AI_SHA256 = /^[0-9a-f]{64}$/u;
+// tuning-7b (K1): exact "category.action" tool-name shape, e.g. "expense.get_breakdown".
+const LINE_AI_TOOL_HINT = /^[a-z_]+\.[a-z_]+$/u;
 const SEMANTIC_KINDS = ['read', 'general', 'write', 'help', 'public', 'file'] as const;
 const SEMANTIC_STATUSES = ['handled', 'denied', 'unsupported', 'needs_user'] as const;
 const TASK_SUBREQUEST_STATUSES = ['pending', ...SEMANTIC_STATUSES] as const;
@@ -477,7 +483,7 @@ export function parseLineAiSemanticSubrequests(value: unknown, messageText: stri
   const parsed: LineAiSemanticSubrequestV2[] = [];
   for (let i = 0; i < value.length; i += 1) {
     const raw = value[i];
-    if (!recordValue(raw) || !exactKeys(raw, ['index', 'kind', 'goal', 'requiredEvidence', 'requestedFilters', 'entityReference', 'dependsOn', 'evidenceRefs', 'taskRef', 'writeIntent'])
+    if (!recordValue(raw) || !exactKeys(raw, ['index', 'kind', 'goal', 'requiredEvidence', 'requestedFilters', 'entityReference', 'dependsOn', 'evidenceRefs', 'taskRef', 'writeIntent', 'toolHint'])
       || raw['index'] !== i || !SEMANTIC_KINDS.includes(raw['kind'] as typeof SEMANTIC_KINDS[number])
       || typeof raw['goal'] !== 'string' || !raw['goal'].trim() || raw['goal'].length > 800
       || !Array.isArray(raw['requiredEvidence']) || raw['requiredEvidence'].length > 8
@@ -505,6 +511,10 @@ export function parseLineAiSemanticSubrequests(value: unknown, messageText: stri
         || typeof ref['value'] !== 'string' || ref['value'].length > 160 || !messageText.includes(ref['value'])) return undefined;
       entityReference = { kind: 'user_text', value: ref['value'] };
     }
+    // tuning-7b (K1): an invalid toolHint drops ONLY the hint, never the whole subrequest — it is
+    // an advisory optimization, not evidence, so it must not fail parsing like taskRef/entityReference do.
+    const toolHint = typeof raw['toolHint'] === 'string' && raw['toolHint'].length >= 1 && raw['toolHint'].length <= 80
+      && LINE_AI_TOOL_HINT.test(raw['toolHint']) ? raw['toolHint'] : undefined;
     let evidenceRefs: LineAiSourceRefV2[] | undefined;
     if (raw['evidenceRefs'] !== undefined) {
       if (!evidence || !Array.isArray(raw['evidenceRefs']) || raw['evidenceRefs'].length > 8) return undefined;
@@ -518,7 +528,7 @@ export function parseLineAiSemanticSubrequests(value: unknown, messageText: stri
     if (evidence && !evidenceRefs?.length) return undefined;
     parsed.push({ index: i, kind: raw['kind'] as LineAiSemanticSubrequestV2['kind'], goal: raw['goal'].trim(),
       requiredEvidence: [...raw['requiredEvidence']] as string[], requestedFilters: { ...raw['requestedFilters'] } as LineAiSemanticSubrequestV2['requestedFilters'],
-      ...(entityReference ? { entityReference } : {}), ...(taskRef ? { taskRef } : {}), ...(raw['writeIntent'] ? { writeIntent: raw['writeIntent'] as LineAiSemanticSubrequestV2['writeIntent'] } : {}), dependsOn: [...raw['dependsOn']] as number[], ...(evidenceRefs ? { evidenceRefs } : {}) });
+      ...(entityReference ? { entityReference } : {}), ...(taskRef ? { taskRef } : {}), ...(raw['writeIntent'] ? { writeIntent: raw['writeIntent'] as LineAiSemanticSubrequestV2['writeIntent'] } : {}), ...(toolHint ? { toolHint } : {}), dependsOn: [...raw['dependsOn']] as number[], ...(evidenceRefs ? { evidenceRefs } : {}) });
   }
   return parsed;
 }

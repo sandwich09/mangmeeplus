@@ -293,6 +293,37 @@ describe('LINE intake router – routeIntake', () => {
     assert.equal(plan.semanticSubrequests?.[0]?.kind, 'read');
   });
 
+  // tuning-7b (K1): the router MAY name the single best read tool for a clause so the gateway can
+  // skip its own tool-planning call (~1.8s avg, up to 4s). Only an ENABLED read-category tool survives
+  // as toolHint; an unoffered/disabled/wrong-category tool is dropped silently, never fails the clause.
+  it('K1: a compact "tool" hint on a read clause becomes toolHint when the tool is offered and read-category', async () => {
+    const text = 'ค่าใช้จ่ายเดือนนี้แยกตามหมวดหมู่เป็นยังไงบ้างคะ';
+    const built = await createLineAiInputEvidence({ turnKey: 'compact-tool-hint-valid', parts: [{ partId: 'part-0',
+      eventIdHash: '2'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.92,
+      decisionV1: { subrequests: [{ kind: 'read', goal: 'ค่าใช้จ่ายเดือนนี้แยกตามหมวดหมู่', sources: [{ part: 0, whole: true }],
+        filters: {}, tool: 'expense.get_breakdown' }] },
+    })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, offeredToolNames: ['expense.get_breakdown'] }));
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.semanticSubrequests?.[0]?.toolHint, 'expense.get_breakdown');
+  });
+
+  it('K1: a "tool" hint naming a tool not offered this turn is dropped, never fails the clause', async () => {
+    const text = 'ค่าใช้จ่ายเดือนนี้แยกตามหมวดหมู่เป็นยังไงบ้างคะ';
+    const built = await createLineAiInputEvidence({ turnKey: 'compact-tool-hint-not-offered', parts: [{ partId: 'part-0',
+      eventIdHash: '3'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const plan = await new IntentRouterAgent(modelAnswer({
+      intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.92,
+      decisionV1: { subrequests: [{ kind: 'read', goal: 'ค่าใช้จ่ายเดือนนี้แยกตามหมวดหมู่', sources: [{ part: 0, whole: true }],
+        filters: {}, tool: 'expense.get_breakdown' }] },
+    })).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence, offeredToolNames: ['expense.list_recent'] }));
+    assert.equal(plan.status, 'ROUTED', 'the whole clause still routes; only the hint is dropped');
+    assert.equal(plan.semanticSubrequests?.[0]?.toolHint, undefined);
+  });
+
   it('resumes a pending task from a valid compact taskRef object', async () => {
     const text = 'ทำต่อเลย';
     const built = await createLineAiInputEvidence({ turnKey: 'compact-valid-task', parts: [{ partId: 'part-0',
@@ -346,6 +377,17 @@ describe('LINE intake router – routeIntake', () => {
       'the compact JSON skeleton spells out the object shape with an example');
     assert.match(prompt, /resumableTaskRefs/, 'the rule points the model at the ready-to-copy entries');
     assert.match(prompt, /NEW read question.*independent side question/, 'a new question is distinguished from answering the pending one');
+  });
+
+  // tuning-7b (K1): the compact JSON skeleton offers an OPTIONAL "tool" field so the model can name
+  // the single best read tool for a clause, letting the gateway skip its own tool-planner call.
+  it('shows the OPTIONAL "tool" hint field in the compact prompt, for a read clause only', () => {
+    const prompt = intakeRouterSystemPrompt({}, false, true);
+    assert.ok(prompt.includes('"tool": "exact catalog read tool name"'),
+      'the compact JSON skeleton spells out the optional tool-hint field');
+    assert.match(prompt, /"tool" is an OPTIONAL string, the single best read tool for THIS clause/);
+    assert.match(prompt, /For a read clause, "tool" MAY name the single best read tool from the offered catalog for that clause — omit it when unsure/);
+    assert.match(prompt, /why\/compare clause whose tool is expense\.get_breakdown/);
   });
 
   it('R-L1: never proposes complexity=simple for a plan that fails the shared pre-call check', async () => {

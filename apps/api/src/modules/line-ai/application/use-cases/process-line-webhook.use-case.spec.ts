@@ -846,8 +846,11 @@ it('answers a bound general question once before two pending files can intercept
     permissions: ['line.ai.query'],
     config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
       lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+    // tuning-7b (K1d): toolHint rides here too (harmless on a "general" clause — the gateway only
+    // consults it for a read clause) so this same pass-through test also proves the API's use-case
+    // forwards it unchanged, with no field-by-field reconstruction dropping it before the gateway call.
     intakeRouteFn: () => ({ status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.98,
-      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'อธิบายกำไรขั้นต้น', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] }),
+      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'อธิบายกำไรขั้นต้น', requiredEvidence: [], requestedFilters: {}, dependsOn: [], toolHint: 'expense.get_breakdown' }] }),
     aiGatewayFn: (request) => ({ requestId: request.requestId, replyText: 'กำไรขั้นต้นคือรายได้หักต้นทุนขาย', intent: 'casual_conversation',
       agent: 'general', durationMs: 1, webLinks: [], sourceLabels: [], sourceRefs: [], toolsInvoked: [], refused: false,
       semanticCoverage: [{ index: 0, status: 'handled' }] }),
@@ -874,6 +877,7 @@ it('answers a bound general question once before two pending files can intercept
   assert.equal('userMessagePreviewComplete' in context.recentTurns[0]!, false, 'legacy callers do not gain completeness implicitly');
   assert.equal(h.aiGatewayRequests.length, 1);
   assert.equal(h.aiGatewayRequests[0].conversationContext, context);
+  assert.equal(h.aiGatewayRequests[0].semanticSubrequests?.[0]?.toolHint, 'expense.get_breakdown', 'toolHint survives the routePlan -> turnRequest mapping');
   assert.equal(pendingReads, 0, 'a general question does not enumerate or consume pending private files');
   assert.match(delivered.join('\n'), /กำไรขั้นต้น/);
 });

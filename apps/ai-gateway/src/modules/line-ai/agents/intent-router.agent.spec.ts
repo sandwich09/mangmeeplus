@@ -1440,6 +1440,19 @@ describe('LINE intake router – advisor route under the trusted capability', ()
     assert.equal(P.includes('companyProfileFieldsUsed'), false, 'no company profile in Slice A');
   });
 
+  // tuning-7b (K2, T-123-a/T-129-a): run 6 showed the router writing a full advisorAnswer.answerText
+  // (445-564 output tokens, 8-10s calls) for a knowledge/definition question that the semantic-v2 path
+  // then discarded and re-composed anyway. The prompt now caps advisorAnswer to short social chat and
+  // tells the model to omit it entirely for a knowledge/definition/how-to question.
+  it('caps advisorAnswer to short social chat and omits it for a knowledge/definition/how-to question', () => {
+    assert.match(P, /"answerText": "your reply in the user's language, at most 2 short sentences"/);
+    assert.match(P, /"answerText" is short social chat ONLY/);
+    assert.match(P, /A knowledge, definition, or how-to question is NEVER short social chat/);
+    assert.match(P, /OMIT "advisorAnswer" entirely for it/);
+    assert.match(P, /never a list, numbered steps, or a tutorial/);
+    assert.equal(P.includes('1–3 short sentences'), false, 'the old, looser cap is gone');
+  });
+
   // UAT 2026-09-06 (build f2bd38ed): the draft for "คุณเป็นใคร" was a male-voiced "AI Assistant ของ
   // MangmeePlus" — the section never said who she is. The persona lines are ONE constant shared with
   // the composer prompt, appended only here, so the default prompt stays byte-identical to legacy.
