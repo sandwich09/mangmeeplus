@@ -500,3 +500,38 @@ describe('item 2: approve/reject/pay a reimbursement or confirm/void an expense 
     assert.ok(result.replyText.startsWith('บทบาทของคุณยังไม่มีสิทธิ์'), result.replyText);
   });
 });
+
+describe('item 3: a read-only role asking to record, upload, or capture (spec §8 "นอกสิทธิ์")', () => {
+  // Real AUDITOR_READONLY grant (permission-registry.ts): read/export everywhere, no expense-create.
+  const AUDITOR_READONLY_PERMISSIONS = ['expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.export', 'reimbursement.read', 'reimbursement.read_related', 'reimbursement.create'];
+
+  it('a receipt-capture request gets the read-only answer, never the how-to card (eval T-146)', async () => {
+    const req: LineAiTurnRequest = {
+      requestId: 'req-readonly', webhookEventId: 'event-readonly', messageText: 'ถ่ายรูปใบเสร็จแล้วส่งเข้าระบบให้หน่อยค่ะ', messagePreviewHash: '6'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind: 'help', goal: 'ถามวิธีบันทึกใบเสร็จ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(AUDITOR_READONLY_PERMISSIONS),
+    };
+    const result = await runSemanticTurnV2({
+      req, provider: { async generateText(): Promise<ProviderOutput> { throw new Error('a fully forced help-kind clause must never need the model'); } },
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      async invoke(): Promise<ToolResult> { throw new Error('must never call a tool for a read-only capture request'); },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'READONLY_ROLE_CANNOT_CREATE');
+    assert.ok(result.replyText.startsWith('บทบาทของคุณดูข้อมูลได้อย่างเดียวค่ะ'), result.replyText);
+  });
+
+  it('the same request is NOT blocked for a role that can create expenses', async () => {
+    const req: LineAiTurnRequest = {
+      requestId: 'req-can-create', webhookEventId: 'event-can-create', messageText: 'ถ่ายรูปใบเสร็จแล้วส่งเข้าระบบให้หน่อยค่ะ', messagePreviewHash: '7'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind: 'help', goal: 'ถามวิธีบันทึกใบเสร็จ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(['expense.receipt.line_upload']),
+      approvedKnowledge: true,
+    };
+    const result = await runSemanticTurnV2({
+      req, provider: { async generateText(): Promise<ProviderOutput> { throw new Error('a help-kind product-help lookup must never call the model'); } },
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      async invoke(): Promise<ToolResult> { throw new Error('a help item must never call a tool'); },
+    });
+    assert.notEqual(result.semanticCoverage?.[0]?.reasonCode, 'READONLY_ROLE_CANNOT_CREATE');
+  });
+});

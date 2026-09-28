@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { lineActionBoundaryReplyText, moduleFeatureEnabled, scopePolicyOverride, unsoldModuleReplyText, unsoldModuleTopicFor } from './line-ai-scope-policy.logic';
+import { lineActionBoundaryReplyText, moduleFeatureEnabled, readOnlyCaptureReplyText, scopePolicyOverride, unsoldModuleReplyText, unsoldModuleTopicFor } from './line-ai-scope-policy.logic';
 
 describe('item 1: unsold module topic classifier (spec §2/§3 row 17)', () => {
   const CASES: Array<{ name: string; text: string; featureKey: string | null }> = [
@@ -136,6 +136,31 @@ describe('item 2: LINE approve/reject/pay/confirm/void action boundary (spec §1
     // this belongs to item 4's routing guard (reimbursement.get_summary), never this override.
     assert.equal(lineActionBoundaryReplyText('ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ', [], 'th'), undefined);
     assert.equal(lineActionBoundaryReplyText('ใบเบิกอนุมัติหรือยังคะ', [], 'th'), undefined);
+  });
+});
+
+describe('item 3: a read-only role asking to record, upload, or capture (spec §8 "นอกสิทธิ์")', () => {
+  // Real AUDITOR_READONLY grant (permission-registry.ts): read/export everywhere, no expense-create.
+  const AUDITOR_READONLY_PERMISSIONS = ['expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.export', 'reimbursement.read', 'reimbursement.read_related', 'reimbursement.create'];
+
+  it('blocks a capture request for a role with no expense-create permission', () => {
+    const text = readOnlyCaptureReplyText('ถ่ายรูปใบเสร็จแล้วส่งเข้าระบบให้หน่อยค่ะ', AUDITOR_READONLY_PERMISSIONS, 'th')!;
+    assert.ok(text.startsWith('บทบาทของคุณดูข้อมูลได้อย่างเดียวค่ะ'), text);
+  });
+
+  it('does not block the same request for a role that can create expenses', () => {
+    const text = readOnlyCaptureReplyText('ถ่ายรูปใบเสร็จแล้วส่งเข้าระบบให้หน่อยค่ะ', ['expense.receipt.line_upload'], 'th');
+    assert.equal(text, undefined);
+  });
+
+  it('does not block a plain read question for the read-only role', () => {
+    assert.equal(readOnlyCaptureReplyText('ค่าใช้จ่ายเดือนนี้เท่าไหร่คะ', AUDITOR_READONLY_PERMISSIONS, 'th'), undefined);
+  });
+
+  it('a read-only role keeping its own reimbursement self-service create is unaffected (different action)', () => {
+    // AUDITOR_READONLY has reimbursement.create; asking to submit a reimbursement claim is not an
+    // expense-capture request and must not be blocked by this check.
+    assert.equal(readOnlyCaptureReplyText('ขอสร้างใบเบิกใหม่ค่ะ', AUDITOR_READONLY_PERMISSIONS, 'th'), undefined);
   });
 });
 

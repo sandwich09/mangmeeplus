@@ -10,6 +10,8 @@
  * Item 2 (spec §11 "ห้ามส่ง อนุมัติ หรือจ่ายแทนผู้ใช้เอง"): a request to approve/reject/pay a
  * reimbursement or confirm/void an expense from LINE got a generic "can't fetch this" reply
  * instead of an honest "do this on the web" or "your role can't do this" answer.
+ * Item 3 (spec §8 "นอกสิทธิ์"): a read-only role (e.g. AUDITOR_READONLY) asking to record, upload,
+ * or capture a receipt got a how-to card instead of an honest read-only answer.
  *
  * `scopePolicyOverride` is the single entry point both OrchestratorAgent (the sole fast-lane-
  * eligible subrequest) and runSemanticTurnV2 (every subrequest, so a mixed message still answers
@@ -136,19 +138,36 @@ export function lineActionBoundaryReplyText(text: string, permissions: readonly 
     : `บทบาทของคุณยังไม่มีสิทธิ์${rule.actionLabelTh}ค่ะ`;
 }
 
+// ---- Item 3: a read-only role asking to record, upload, or capture -----------------------------
+
+const CAPTURE_VERB_TH = ['ถ่ายรูป', 'ถ่ายภาพ', 'ส่งเข้าระบบ', 'บันทึกรายจ่าย', 'บันทึกค่าใช้จ่าย', 'บันทึกใบเสร็จ', 'อัปโหลด', 'อัพโหลด', 'สร้างร่าง', 'สแกนใบเสร็จ'];
+const EXPENSE_CREATE_PERMISSIONS = ['expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload'];
+
+/** Base it on the permissions the request actually carries, never the role name: AUDITOR_READONLY
+ *  keeps its own reimbursement self-service create permission, so only the EXPENSE-capture
+ *  permissions gate this — a role that has any of them is not read-only for this action. */
+export function readOnlyCaptureReplyText(text: string, permissions: readonly string[], language: ScopePolicyLanguage): string | undefined {
+  if (!includesAny(text, CAPTURE_VERB_TH)) return undefined;
+  if (EXPENSE_CREATE_PERMISSIONS.some((permission) => permissions.includes(permission))) return undefined;
+  return language === 'en'
+    ? 'Your role can only view records here — it cannot record or upload one.'
+    : 'บทบาทของคุณดูข้อมูลได้อย่างเดียวค่ะ ไม่สามารถบันทึกหรือถ่ายรูปส่งรายการได้ค่ะ';
+}
+
 // ---- Combined entry point ----------------------------------------------------------------------
 
 export type ScopePolicyOverride = {
-  reasonCode: 'LINE_ACTION_NOT_SUPPORTED' | 'PACKAGE_FEATURE_NOT_ENABLED';
+  reasonCode: 'LINE_ACTION_NOT_SUPPORTED' | 'READONLY_ROLE_CANNOT_CREATE' | 'PACKAGE_FEATURE_NOT_ENABLED';
   text: string;
 };
 
 /**
- * Checked BEFORE any tool is offered or called, per subrequest. `kind` exempts the unsold-module
- * check for 'help': a genuine product how-to question about an unsold topic still gets the honest
- * "no reviewed guide" answer from its own kind=='help' handling, not this generic package-limit
- * copy — but an approve/reject/pay/confirm/void request is intercepted regardless of kind, since
- * the eval evidence showed the model classify it inconsistently (sometimes 'general', 'write').
+ * Checked BEFORE any tool is offered or called, per subrequest. `kind` only exempts the unsold-
+ * module check (item 1): a genuine product how-to question about an unsold topic still gets the
+ * honest "no reviewed guide" answer from its own kind=='help' handling, not this generic package-
+ * limit copy — but an approve/pay/confirm/void request or a read-only capture request is
+ * intercepted regardless of kind, since the eval evidence showed the model classify both of those
+ * inconsistently (sometimes 'general', sometimes 'write', sometimes 'help').
  */
 export function scopePolicyOverride(
   text: string,
@@ -159,6 +178,8 @@ export function scopePolicyOverride(
 ): ScopePolicyOverride | undefined {
   const lineAction = lineActionBoundaryReplyText(text, permissions, language);
   if (lineAction) return { reasonCode: 'LINE_ACTION_NOT_SUPPORTED', text: lineAction };
+  const readOnly = readOnlyCaptureReplyText(text, permissions, language);
+  if (readOnly) return { reasonCode: 'READONLY_ROLE_CANNOT_CREATE', text: readOnly };
   if (kind !== 'help') {
     const topic = unsoldModuleTopicFor(text);
     if (topic && !moduleFeatureEnabled(topic.featureKey, entitledFeatureKeys)) {
