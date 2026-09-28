@@ -6,7 +6,7 @@ import { BillingCheckoutExpiryService } from '../application/billing-checkout-ex
 import { BillingBatchesService } from '../application/billing-batches.service';
 import { BillingSettlementService } from '../application/billing-settlement.service';
 import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
-import { BillingEndPackageDto, BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingTimelineExportDto, BillingEmptyDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto, BillingRecipientPreviewDto, BillingRecipientOtpRequestDto, BillingRecipientOtpConfirmDto } from './billing.dto';
+import { BillingEndPackageDto, BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingTimelineExportDto, BillingEmptyDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto, BillingRecipientPreviewDto, BillingRecipientOtpRequestDto, BillingRecipientOtpConfirmDto, BillingRecipientAdminDto, BillingDocumentResendAdminDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
 import { extractSid } from '../../auth/presentation/auth.controller';
 import { BillingRecipientOtpService } from '../application/billing-recipient-otp.service';
@@ -29,6 +29,7 @@ import { BillingRefundsService } from '../application/billing-refunds.service';
 import type { BillingRefundInput } from '@watchdog-bms/contracts';
 import { BillingNotificationsService } from '../application/billing-notifications.service';
 import { BillingProviderScansService } from '../application/billing-provider-scans.service';
+import { BillingDocumentAdminService } from '../application/billing-document-admin.service';
 
 type AuthedRequest = Request & { context: RequestContext; rawBody?: Buffer };
 function bodyFields(value: unknown, fields: string[]): Record<string, unknown> {
@@ -73,7 +74,7 @@ export class BillingCatalogController {
 @Controller('system/billing')
 export class BillingAdminController {
   constructor(private readonly admin: BillingAdminService, private readonly limits: RedisRateLimitService, private readonly operations: BillingOperationsService,
-    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService,private readonly batches:BillingBatchesService,private readonly receiptAdjustments:BillingReceiptAdjustmentsService,private readonly planAdjustments:BillingPlanAdjustmentsService) {}
+    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService,private readonly batches:BillingBatchesService,private readonly receiptAdjustments:BillingReceiptAdjustmentsService,private readonly planAdjustments:BillingPlanAdjustmentsService,private readonly documentAdmin:BillingDocumentAdminService) {}
   @Get('companies/:id/plan-adjustments') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   planAdjustmentList(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){
     const fields=bodyFields(query,['cursor']);return this.planAdjustments.list(req.context,textField(id,128),fields.cursor===undefined?undefined:uuid(fields.cursor));}
@@ -177,6 +178,43 @@ export class BillingAdminController {
     if(action==='run')return this.refunds.run(req.context,uuid(id),fields.expectedVersion as number);
     if(action!=='submit'&&action!=='approve'&&action!=='cancel')invalid();
     return this.refunds.command(req.context,uuid(id),action,fields.expectedVersion as number,textField(fields.previewHash,64),key);
+  }
+  // Purchase without setup PR E (R-E1/R-E2, DQ7): admin recipient change (reviewed, same
+  // UPDATE_BILLING_EMAIL operation the customer OTP flow creates) and document resend (synchronous).
+  @Get('companies/:id/invoices/:invoiceId/recipient-review') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async recipientAdminReview(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Query() query:unknown){
+    bodyFields(query,[]);await this.operationLimit(req);return this.documentAdmin.review(req.context,textField(companyId,128),uuid(invoiceId));
+  }
+  @Post('companies/:id/invoices/:invoiceId/recipient-preview') @HttpCode(200) @RequirePermissions('system.billing.override.manage') @Header('Cache-Control','no-store')
+  async recipientAdminPreview(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Body() body:BillingRecipientAdminDto){
+    const fields=bodyFields(body,['newEmail','reason','sourceHash','supportRequestId']);await this.operationLimit(req);
+    return this.documentAdmin.preview(req.context,textField(companyId,128),uuid(invoiceId),{newEmail:textField(fields.newEmail,254),reason:textField(fields.reason,500),
+      sourceHash:textField(fields.sourceHash,64),...(fields.supportRequestId===undefined?{}:{supportRequestId:textField(fields.supportRequestId,64)})});
+  }
+  @Get('companies/:id/invoices/:invoiceId/recipient-requests') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async recipientAdminRequests(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Query() query:unknown){
+    const fields=bodyFields(query,['cursor']);return this.documentAdmin.list(req.context,textField(companyId,128),uuid(invoiceId),fields.cursor===undefined?undefined:uuid(fields.cursor));
+  }
+  @Get('recipient-changes/:id') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  recipientAdminGet(@Req() req:AuthedRequest,@Param('id') id:string){return this.documentAdmin.get(req.context,uuid(id));}
+  @Post('recipient-changes/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async recipientAdminCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:BillingCommandDto,@Headers('idempotency-key') key:string|undefined){
+    const fields=bodyFields(body,action==='run'?['expectedVersion']:['expectedVersion','previewHash']);
+    if(!Number.isSafeInteger(fields.expectedVersion)||Number(fields.expectedVersion)<0)invalid();await this.operationLimit(req);
+    if(action==='run')return this.documentAdmin.run(req.context,uuid(id),fields.expectedVersion as number);
+    if(action!=='submit'&&action!=='approve'&&action!=='cancel')invalid();
+    return this.documentAdmin.command(req.context,uuid(id),action,fields.expectedVersion as number,textField(fields.previewHash,64),key);
+  }
+  @Post('companies/:id/invoices/:invoiceId/resend') @HttpCode(200) @RequirePermissions('system.billing.override.manage') @Header('Cache-Control','no-store')
+  async documentAdminResend(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Body() body:BillingDocumentResendAdminDto){
+    const fields=bodyFields(body,['reason']);await this.operationLimit(req);
+    return this.documentAdmin.resend(req.context,textField(companyId,128),uuid(invoiceId),textField(fields.reason,500),this.limits);
+  }
+  // R-E4 (RV27): find an invoice/checkout/operation/issue by the 8-char reference a customer reads out.
+  @Get('lookup') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  async lookup(@Req() req:AuthedRequest,@Query() query:unknown){
+    const fields=bodyFields(query,['reference']);await this.operationLimit(req);
+    return this.admin.lookup(req.context,textField(fields.reference,128));
   }
   @Get('companies/:id/invoices/:invoiceId/adjustments/:kind') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   async adjustments(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') id:string,@Param('kind') kind:string,@Query() query:unknown) {
@@ -641,14 +679,14 @@ export class StripeEventsController {
 @Public() @Controller('internal/billing')
 export class BillingInternalController {
   constructor(private readonly reconciler: BillingReconcilerService, private readonly operations: BillingOperationsService,
-    private readonly notifications: BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly configuration:BillingConfigurationService, private readonly readiness:BillingReadinessService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService) {}
+    private readonly notifications: BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly configuration:BillingConfigurationService, private readonly readiness:BillingReadinessService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService,private readonly documentAdmin:BillingDocumentAdminService) {}
   @Post('provider-scans/drain') @HttpCode(200)
   async drainProviderScans(@Headers('x-worker-token') token: string | undefined) { assertWorkerToken(token); const discovery=await this.scans.drain(),settlement=await this.settlement.drain();return {processed:discovery.processed+settlement.processed,failed:discovery.failed+settlement.failed}; }
   @Post('drain') @HttpCode(200)
   async drain(@Headers('x-worker-token') token: string | undefined) {
     assertWorkerToken(token);
-    const expiry=await this.checkoutExpiry.drain(),readiness=await this.readiness.drain(),configuration=await this.configuration.drainScheduled(),refunds=await this.refunds.drain(),provider = await this.reconciler.drain(), operations = await this.operations.drain();
-    return { processed: expiry.processed + readiness.processed + configuration.processed + refunds.processed + provider.processed + operations.processed, failed: expiry.failed + readiness.failed + configuration.failed + refunds.failed + provider.failed + operations.failed };
+    const expiry=await this.checkoutExpiry.drain(),readiness=await this.readiness.drain(),configuration=await this.configuration.drainScheduled(),refunds=await this.refunds.drain(),recipientAdmin=await this.documentAdmin.drain(),provider = await this.reconciler.drain(), operations = await this.operations.drain();
+    return { processed: expiry.processed + readiness.processed + configuration.processed + refunds.processed + recipientAdmin.processed + provider.processed + operations.processed, failed: expiry.failed + readiness.failed + configuration.failed + refunds.failed + recipientAdmin.failed + provider.failed + operations.failed };
   }
   @Post('notifications/drain') @HttpCode(200)
   drainNotifications(@Headers('x-worker-token') token: string | undefined) { assertWorkerToken(token); return this.notifications.drain(); }

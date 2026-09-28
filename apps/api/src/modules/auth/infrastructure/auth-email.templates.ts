@@ -59,6 +59,17 @@ export function renderBillingRecipientChangedEmail(companyName: string, href: st
     html: layout(title, paragraphs, 'เปิดหน้าบริษัท', href) };
 }
 
+/** PR E (spec §18.2 R-E2): an admin-driven recipient change, sent to both the old and the new
+ *  address — the old one always sees the new address masked (`ma***@domain`), so a phished old
+ *  mailbox learns nothing new about where documents now go. */
+export function renderBillingRecipientAdminNoticeEmail(companyName: string, href: string, sentToDisplay: string): RenderedEmail {
+  const title = `เปลี่ยนอีเมลรับเอกสารของ ${companyName}`;
+  const paragraphs = [
+    `ทีมงานมั่งมี Plus เปลี่ยนอีเมลรับเอกสารการชำระเงินของร้าน ${companyName} ตามคำขอ เอกสารครั้งถัดไปจะส่งไปที่ ${sentToDisplay}`,
+    'หากไม่ได้ขอเปลี่ยน กรุณาติดต่อทีมงานทันที'];
+  return { subject: title, text: `${title}\n\n${paragraphs.join('\n')}\n\n${href}`, html: layout(title, paragraphs, 'เปิดหน้าบริษัท', href) };
+}
+
 function layout(
   title: string,
   paragraphs: readonly string[],
