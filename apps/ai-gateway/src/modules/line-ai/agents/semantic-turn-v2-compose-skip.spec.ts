@@ -8,7 +8,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { LineAiTurnRequest, ToolResult } from '@watchdog-bms/contracts';
+import type { LineAiSemanticSubrequestV2, LineAiTurnRequest, ToolResult } from '@watchdog-bms/contracts';
 import type { IModelProvider, ProviderInput, ProviderOutput } from '../infrastructure/provider/provider.port';
 import { runSemanticTurnV2 } from './semantic-turn-v2';
 
@@ -213,5 +213,102 @@ describe('E3: a non-JSON but non-empty compose response is rescued for a single 
     });
     assert.ok(!result.replyText.includes('17,765'), result.replyText);
     assert.ok(!result.replyText.includes('จาก 14 รายการ'), result.replyText);
+  });
+});
+
+// H6 (tuning-7): full-path p95 is 18.3s against a 15s target. When the router has already named a
+// read tool for every clause (`toolHint`), `line.loop` (the CONTROL/planning round) is redundant —
+// skip it like this file's other model-round skips above, this time for the PLANNING call rather
+// than compose. `toolHint` is agent 7b's parallel contract addition (packages/contracts
+// LineAiSemanticSubrequestV2), not yet in this branch's type — built via a typed helper so the
+// object literal's declared return type (not the surrounding request literal) grants the extra
+// field, with no unsafe cast.
+function hintedReadItem(index: number, goal: string, toolHint: string): LineAiSemanticSubrequestV2 & { toolHint: string } {
+  return { index, kind: 'read', goal, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {}, toolHint };
+}
+
+describe('H6: a fully router-hinted read turn skips the line.loop planning round', () => {
+  it('all-hinted reads: no line.loop call, and each hinted tool executes with the input bindRequestedReadFilters produces', async () => {
+    const request: LineAiTurnRequest = {
+      requestId: 'req-h6-a', webhookEventId: 'event-h6-a', messageText: 'เดือนนี้ค่าใช้จ่ายเท่าไหร่ และแยกตามหมวดให้ดูหน่อยค่ะ',
+      messagePreviewHash: '2'.repeat(16), valueCandidates: EMPTY_CANDIDATES,
+      semanticSubrequests: [
+        hintedReadItem(0, 'ยอดเดือนนี้', 'expense.list_recent'),
+        hintedReadItem(1, 'แยกตามหมวดเดือนนี้', 'expense.get_breakdown'),
+      ],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const listResult: ToolResult = { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-28T01:00:00.000Z', sourceRefs: [SOURCE_REF], facts: [], data: { total: 3 } };
+    const breakdownResult: ToolResult = { toolName: 'expense.get_breakdown', status: 'ok', asOf: '2026-09-28T01:00:00.000Z', sourceRefs: [SOURCE_REF], facts: [], data: { totalAmount: '1000' } };
+    const { provider, calls } = recordingProvider([
+      JSON.stringify({ answers: [
+        { index: 0, status: 'handled', text: 'เดือนนี้มีค่าใช้จ่าย 3 รายการค่ะ', sourceRefIds: [SOURCE_REF.id] },
+        { index: 1, status: 'handled', text: 'รวมค่าใช้จ่าย 1000 บาทค่ะ', sourceRefIds: [SOURCE_REF.id] },
+      ] }),
+    ]);
+    const invoked: Array<{ tool: string; input: Record<string, unknown> }> = [];
+    const result = await runSemanticTurnV2({
+      req: request, provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(meta, _ctx, args): Promise<ToolResult> {
+        invoked.push({ tool: meta.name, input: args });
+        return meta.name === 'expense.list_recent' ? listResult : breakdownResult;
+      },
+    });
+    assert.deepEqual(calls.map((call) => call.usageTag), ['line.compose'], 'line.loop must never be called when every read is hinted');
+    assert.deepEqual(invoked, [{ tool: 'expense.list_recent', input: {} }, { tool: 'expense.get_breakdown', input: {} }]);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.equal(result.semanticCoverage?.[1]?.status, 'handled');
+  });
+
+  it('one unhinted read alongside a hinted one: falls back to calling the planner exactly as today', async () => {
+    const request: LineAiTurnRequest = {
+      requestId: 'req-h6-b', webhookEventId: 'event-h6-b', messageText: 'เดือนนี้ค่าใช้จ่ายเท่าไหร่ และแยกตามหมวดให้ดูหน่อยค่ะ',
+      messagePreviewHash: '3'.repeat(16), valueCandidates: EMPTY_CANDIDATES,
+      semanticSubrequests: [
+        hintedReadItem(0, 'ยอดเดือนนี้', 'expense.list_recent'),
+        // No toolHint on this second item — a single unhinted read must fall the WHOLE turn back
+        // to the planner, never a partial/mixed skip.
+        { index: 1, kind: 'read', goal: 'แยกตามหมวดเดือนนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} },
+      ],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const someResult: ToolResult = { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-28T01:00:00.000Z', sourceRefs: [SOURCE_REF], facts: [], data: { total: 3 } };
+    const { provider, calls } = recordingProvider([
+      JSON.stringify({ calls: [
+        { index: 0, toolName: 'expense.list_recent', input: {} },
+        { index: 1, toolName: 'expense.get_breakdown', input: {} },
+      ], questions: [] }),
+      JSON.stringify({ answers: [
+        { index: 0, status: 'handled', text: 'เดือนนี้มีค่าใช้จ่าย 3 รายการค่ะ', sourceRefIds: [SOURCE_REF.id] },
+        { index: 1, status: 'handled', text: 'รวมค่าใช้จ่าย 3 รายการค่ะ', sourceRefIds: [SOURCE_REF.id] },
+      ] }),
+    ]);
+    await runSemanticTurnV2({
+      req: request, provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { return someResult; },
+    });
+    assert.deepEqual(calls.map((call) => call.usageTag), ['line.loop', 'line.compose'], 'a missing hint must still call the planner');
+  });
+
+  it('a hint naming a tool that is not offered: falls back to calling the planner exactly as today', async () => {
+    const request: LineAiTurnRequest = {
+      requestId: 'req-h6-c', webhookEventId: 'event-h6-c', messageText: 'เดือนนี้ค่าใช้จ่ายเท่าไหร่คะ',
+      messagePreviewHash: '4'.repeat(16), valueCandidates: EMPTY_CANDIDATES,
+      semanticSubrequests: [hintedReadItem(0, 'ยอดเดือนนี้', 'expense.does_not_exist')],
+      userContext: baseUserContext(['expense.read']),
+    };
+    const someResult: ToolResult = { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-28T01:00:00.000Z', sourceRefs: [SOURCE_REF], facts: [], data: { total: 3 } };
+    const { provider, calls } = recordingProvider([
+      JSON.stringify({ calls: [{ index: 0, toolName: 'expense.list_recent', input: {} }], questions: [] }),
+      JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'เดือนนี้มีค่าใช้จ่าย 3 รายการค่ะ', sourceRefIds: [SOURCE_REF.id] }] }),
+    ]);
+    await runSemanticTurnV2({
+      req: request, provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { return someResult; },
+    });
+    assert.deepEqual(calls.map((call) => call.usageTag), ['line.loop', 'line.compose'], 'an unoffered hint must still call the planner');
   });
 });

@@ -33,7 +33,10 @@ export const MANGMEE_PERSONA_LINES = [
   // timeout): a long answer is slower and reads worse in a chat bubble than a short direct one.
   // tuning-6a (E2, run 5): same JSON-wrapper confusion as the Markdown line above — "keep the whole
   // reply" read as a rule about the raw output, not the text field inside it.
-  'Inside the customer-visible text you write (never the JSON wrapper around it): be brief — answer directly in the first line, and keep it to about 6 short lines unless the user asks for more detail; for a knowledge question, give the key point plus up to 4 short bullets.',
+  // tuning-7 (H5): run 6 composed answers were 450-1000 tokens, at ~16-20ms/token — the biggest
+  // lever on full-path p95 (18.3s against a 15s target). Tighter numeric caps than tuning-4's, and a
+  // list now names its own cutoff instead of silently truncating, so the customer knows more exists.
+  'Inside the customer-visible text you write (never the JSON wrapper around it): be brief — answer directly in the first line, at most about 80 Thai words in about 6 short lines unless the user asks for more detail; a list stops at 8 bullets and says how many more there are and that the full list is on the link; a knowledge or definition question gets a one-sentence answer plus up to 3 short bullets; never drop a fact, limitation, scope line, or question to make room.',
 ] as const;
 
 /** The lines above as one prompt block. */
