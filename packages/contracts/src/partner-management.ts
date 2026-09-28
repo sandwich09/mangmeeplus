@@ -146,6 +146,9 @@ export type PartnerMemberDto = {
 
 export type PartnerMembersDto = { items: PartnerMemberDto[] };
 
+export type SetPartnerOwnerNameInput = { displayName: string; expectedDisplayName: string };
+export type SetPartnerOwnerNameResult = { displayName: string };
+
 export type PartnerMemberPasswordResetDto = {
   userId: string;
   username?: string;

@@ -47,6 +47,7 @@ import { PartnerMemberPasswordResetUseCase } from '../../application/use-cases/p
 import { PartnerMemberPasswordRevealUseCase } from '../../application/use-cases/partner-member-password-reveal.use-case';
 import { PartnerMemberLineLinkTokenUseCase } from '../../application/use-cases/partner-member-line-link-token.use-case';
 import { SetPartnerMemberContactUseCase } from '../../application/use-cases/set-partner-member-contact.use-case';
+import { SetPartnerOwnerNameUseCase } from '../../application/use-cases/set-partner-owner-name.use-case';
 import {
   EndPlanTermWarmupUseCase,
   GetCompanyPlanTermUseCase,
@@ -73,6 +74,11 @@ class UpdateProfileBodyDto {
 class MemberContactBodyDto {
   @IsString() @IsOptional() @MaxLength(254) email?: string;
   @IsString() @IsOptional() @MaxLength(20) phoneNumber?: string;
+}
+
+export class OwnerNameBodyDto {
+  @IsString() @IsNotEmpty() displayName!: string;
+  @IsString() expectedDisplayName!: string;
 }
 
 class LifecycleBodyDto {
@@ -226,6 +232,7 @@ export class PartnerController {
     private readonly timeline: GetPartnerTimelineUseCase,
     private readonly lineMessage: SendPartnerLineMessageUseCase,
     private readonly aiCreditHoldsUseCase: PartnerAiCreditHoldsUseCase,
+    private readonly setOwnerName: SetPartnerOwnerNameUseCase,
   ) {}
 
   @Get()
@@ -404,6 +411,22 @@ export class PartnerController {
       memberUserId,
       email: dto.email,
       phoneNumber: dto.phoneNumber,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+    });
+  }
+
+  @Patch(':partnerCompanyId/members/:memberUserId/display-name')
+  @RequirePermissions('system.partner_member.manage')
+  @ApiOperation({ summary: 'Update a customer owner account display name' })
+  setDisplayName(
+    @Param('partnerCompanyId') companyId: string,
+    @Param('memberUserId') memberUserId: string,
+    @Body() dto: OwnerNameBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.setOwnerName.execute({
+      ...dto, companyId, memberUserId,
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,
     });
