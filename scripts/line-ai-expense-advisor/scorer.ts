@@ -13,6 +13,7 @@
  *    must_mention_any, must_not_claim, forbidden_tools).
  */
 import { resolveBusinessReadPeriod } from '../../apps/api/src/modules/line-ai/domain/logic/business-read-source.logic';
+import { todayCivilDate, DEFAULT_COMPANY_TIME_ZONE } from '../../packages/contracts/src/civil-date';
 import type { GoldCall, RequiredFactCategory, Turn, TurnTags } from './types';
 
 /** The minimal shape of a captured/oracle `ToolResult` the scorer ever reads. */
@@ -47,6 +48,34 @@ function canonicalizePeriod(input: Record<string, unknown>, now: Date): { fromDa
   if (input['toDate'] !== undefined) raw.toDate = input['toDate'];
   const resolved = resolveBusinessReadPeriod(raw, now);
   return resolved.ok ? { fromDate: resolved.period.fromDate, toDate: resolved.period.toDate } : 'invalid';
+}
+
+/** The period range the API itself actually queried — `queryApplied.period.{startDate,endDate}`,
+ * present on every "ok" ExpenseListRecentTool/ExpenseGetBreakdownTool result today. Preferred over
+ * re-deriving a range client-side (task item 3, "equivalence on the tool's resolved queryApplied
+ * period where available") — the two sides can only disagree here if the API itself queried
+ * different data, never a coincidence of which input shape (`periodKey` vs `fromDate`/`toDate`)
+ * either side happened to send. */
+function resolvedQueryPeriod(result: ToolResultLike | undefined): { startDate: string; endDate: string } | null {
+  if (!result || result.status !== 'ok') return null;
+  const data = (result.data ?? {}) as Record<string, unknown>;
+  const period = ((data['queryApplied'] as Record<string, unknown> | undefined)?.['period']) as Record<string, unknown> | undefined;
+  const startDate = period?.['startDate'], endDate = period?.['endDate'];
+  return typeof startDate === 'string' && typeof endDate === 'string' ? { startDate, endDate } : null;
+}
+
+/** Task item 3 ("period equivalence"): a `periodKey` naming the CURRENT month resolves to that
+ * month's FULL range, but there is no future-dated data — querying "the whole month" and "the
+ * month so far" return identical rows today, so a gold `periodKey: "2026-09"` and an actual
+ * `fromDate: "2026-09-01", toDate: <today>` (or vice versa) must score equal. A PAST month gets no
+ * such relaxation: both sides already resolve to the identical full range, so a genuinely
+ * truncated past-month range (missing its last few days) still correctly fails, because its
+ * `toDate` is not today's date. */
+function periodRangesEquivalent(a: { fromDate: string; toDate: string }, b: { fromDate: string; toDate: string }, today: string): boolean {
+  if (a.fromDate === b.fromDate && a.toDate === b.toDate) return true;
+  if (a.fromDate !== b.fromDate) return false;
+  const [longer, shorter] = a.toDate > b.toDate ? [a, b] : [b, a];
+  return shorter.toDate === today && longer.toDate >= today;
 }
 
 /** `limit` has a real default (20) baked into ExpenseListRecentTool; an omitted gold `limit` means
@@ -107,10 +136,19 @@ export function callMatchesGold(actual: CapturedToolCall, gold: { tool: string; 
   if (actual.tool !== gold.tool) return false;
   const goldWantsPeriod = Object.keys(gold.input).some((key) => PERIOD_KEYS.has(key));
   if (goldWantsPeriod) {
-    const goldPeriod = canonicalizePeriod(gold.input, now);
-    const actualPeriod = canonicalizePeriod(actual.input, now);
-    if (goldPeriod === 'invalid' || actualPeriod === 'invalid') return false;
-    if (goldPeriod.fromDate !== actualPeriod.fromDate || goldPeriod.toDate !== actualPeriod.toDate) return false;
+    const goldQueryPeriod = resolvedQueryPeriod(gold.result);
+    const actualQueryPeriod = resolvedQueryPeriod(actual.result);
+    if (goldQueryPeriod && actualQueryPeriod) {
+      if (goldQueryPeriod.startDate !== actualQueryPeriod.startDate || goldQueryPeriod.endDate !== actualQueryPeriod.endDate) return false;
+    } else {
+      // No captured result on (at least) one side (e.g. a bare unit test with only raw inputs):
+      // fall back to canonicalising each side's raw input, with the current-month relaxation above.
+      const goldPeriod = canonicalizePeriod(gold.input, now);
+      const actualPeriod = canonicalizePeriod(actual.input, now);
+      if (goldPeriod === 'invalid' || actualPeriod === 'invalid') return false;
+      const today = todayCivilDate(DEFAULT_COMPANY_TIME_ZONE, now);
+      if (!periodRangesEquivalent(goldPeriod, actualPeriod, today)) return false;
+    }
   }
   for (const dimension of Object.keys(DIMENSION_INPUT_KEYS) as Dimension[]) {
     if (!dimensionRequested(gold.input, dimension)) continue;

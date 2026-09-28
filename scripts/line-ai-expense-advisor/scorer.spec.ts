@@ -136,11 +136,45 @@ describe('extractExpectedFacts: a correct zero never has to be spelled out', () 
 });
 
 describe('callMatchesGold', () => {
-  it('does not confuse a full calendar month (periodKey) with "up to today" (fromDate/toDate)', () => {
+  it('treats a CURRENT-month periodKey and "up to today" as equivalent — no future-dated data exists (task item 3)', () => {
     const actual = { tool: 'expense.list_recent', input: { fromDate: '2026-09-01', toDate: '2026-09-27' } };
     const gold = { tool: 'expense.list_recent', input: { periodKey: '2026-09' } };
-    // periodKey '2026-09' resolves to the FULL month (2026-09-01..2026-09-30), which is NOT the
-    // same range as fromDate/toDate up to "today" (2026-09-27) — this must NOT match.
+    // periodKey '2026-09' resolves to the FULL month (2026-09-01..2026-09-30); NOW is 27 Sep 2026,
+    // so "the whole month" and "the month so far" return identical rows today — this DOES match.
+    assert.equal(callMatchesGold(actual, gold, NOW), true);
+  });
+
+  it('does NOT relax a PAST month: a genuinely truncated range still fails', () => {
+    const actual = { tool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-27' } };
+    const gold = { tool: 'expense.list_recent', input: { periodKey: '2026-08' } };
+    // August 2026 is already fully elapsed by NOW (27 Sep 2026) — periodKey resolves to its full
+    // range 2026-08-01..2026-08-31, and a call that stops at the 27th is missing real data, not
+    // "no future data yet". The relaxation above only ever applies to the CURRENT month.
+    assert.equal(callMatchesGold(actual, gold, NOW), false);
+  });
+
+  it('prefers the tool\'s own resolved queryApplied.period over re-deriving one client-side', () => {
+    const period = { startDate: '2026-09-01', endDate: '2026-09-27' };
+    const actual = {
+      tool: 'expense.list_recent', input: { fromDate: '2026-09-01', toDate: '2026-09-27' },
+      result: { status: 'ok', data: { queryApplied: { period } } },
+    };
+    const gold = {
+      tool: 'expense.list_recent', input: { periodKey: '2026-09' },
+      result: { status: 'ok', data: { queryApplied: { period } } },
+    };
+    assert.equal(callMatchesGold(actual, gold, NOW), true);
+  });
+
+  it('queryApplied.period mismatch fails even when the raw inputs look alike', () => {
+    const actual = {
+      tool: 'expense.list_recent', input: { periodKey: '2026-09' },
+      result: { status: 'ok', data: { queryApplied: { period: { startDate: '2026-09-01', endDate: '2026-09-27' } } } },
+    };
+    const gold = {
+      tool: 'expense.list_recent', input: { periodKey: '2026-09' },
+      result: { status: 'ok', data: { queryApplied: { period: { startDate: '2026-09-01', endDate: '2026-09-30' } } } },
+    };
     assert.equal(callMatchesGold(actual, gold, NOW), false);
   });
 

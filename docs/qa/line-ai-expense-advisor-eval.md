@@ -330,6 +330,22 @@ sample turn). `run-preflight.ts` still exercises the code path (`extractOfferedC
 captured "ok" result, counted as `choiceResultsSeen`) so it is proven not to throw ahead of that
 merge, and `scorer.spec.ts` covers the matching/tag logic with fake ambiguous results.
 
+## Period equivalence
+
+Same "judge by what the API resolved, not the raw request" principle as category/vendor/branch
+names, applied to periods (task item 3). `callMatchesGold` prefers `queryApplied.period.
+{startDate,endDate}` off BOTH sides' captured results when present — the two sides can only
+disagree there if the API itself queried different data, never a coincidence of which input shape
+(`periodKey` vs `fromDate`/`toDate`) either side happened to send.
+
+Without a result on (at least) one side, it falls back to canonicalising each side's raw input via
+the real `resolveBusinessReadPeriod`, with one relaxation: a `periodKey` naming the CURRENT month
+resolves to that month's full range, but there is no future-dated data yet, so "the whole month"
+and "the month so far" return identical rows today — a gold `periodKey: "2026-09"` and an actual
+`fromDate: "2026-09-01", toDate: "2026-09-27"` (today) score equal. A PAST month gets no such
+relaxation: both sides already resolve to the identical full range, so a genuinely truncated
+past-month call (missing its last few days) still correctly fails — its `toDate` is not today.
+
 ## Known limitations / what blocked or shaped this build
 
 - **Runtime coupling to a heavier corpus shape.** `runLineReliabilityRuntime` validates its
