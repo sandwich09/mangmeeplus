@@ -1,27 +1,21 @@
 import type {
   AdminPackageChangeDecisionBody,
   AdminPackageChangeDecisionDto,
-  AdminPackageChangeItemDto as ApiAdminPackageChangeItemDto,
+  AdminPackageChangeItemDto,
+  AdminPackageChangeQueueDto,
   AdminSignupDecisionBody,
   AdminSignupDecisionDto,
   AdminSignupQueueDto,
   AdminSignupQueueItemDto,
   AdminSignupReissueDto,
-  PlanTermLockReason,
-  PlanTermState,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
-
-// R-C6/R-C7 (purchase-without-setup): PR A owns packages/contracts/src/external-signup.ts, so these
-// two fields — which the API already answers (package-change-decision.use-case.ts `list()`) — are
-// added locally instead of on the contracts DTO itself, until PR A's own contracts change lands
-// there. Drop this local widening once `AdminPackageChangeItemDto` carries the fields upstream.
-export type AdminPackageChangeItemDto = ApiAdminPackageChangeItemDto & { planState?: PlanTermState; lockReason?: PlanTermLockReason };
-export type AdminPackageChangeQueueDto = { items: AdminPackageChangeItemDto[] };
 
 export type {
   AdminPackageChangeDecisionBody,
   AdminPackageChangeDecisionDto,
+  AdminPackageChangeItemDto,
+  AdminPackageChangeQueueDto,
   AdminSignupDecisionBody,
   AdminSignupDecisionDto,
   AdminSignupQueueDto,

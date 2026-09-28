@@ -7,9 +7,9 @@ import {
   type AdminPackageChangeDecisionBody,
   type AdminPackageChangeDecisionDto,
   type AdminPackageChangeItemDto,
+  type AdminPackageChangeQueueDto,
   type PackageChangeRequestStatus,
   type PlanTermLockReason,
-  type PlanTermState,
   type PlanTierKey,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -43,14 +43,6 @@ export const packageChangeCompanyLocked = (reason: PlanTermLockReason) => new Co
   message: reason === 'no_package' ? 'ร้านนี้ยังไม่มีแพ็กเกจ ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ'
     : 'แพ็กเกจของร้านนี้หมดอายุแล้ว ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ หรือกดต่ออายุในหน้าพาร์ทเนอร์ก่อนแล้วค่อยเปลี่ยนแพ็กเกจ' });
 
-// R-C6/R-C7 (purchase-without-setup): PR A owns packages/contracts/src/external-signup.ts, so these
-// two optional fields are added locally instead of on `AdminPackageChangeItemDto` itself. Once PR A
-// merges its own contracts changes to this file, `AdminPackageChangeItemDto` can add them directly
-// and these local types can be dropped (exported so the controller's declared return type matches
-// what this use case actually answers).
-export type AdminPackageChangeItemDtoWithLock = AdminPackageChangeItemDto & { planState?: PlanTermState; lockReason?: PlanTermLockReason };
-export type AdminPackageChangeQueueDtoWithLock = { items: AdminPackageChangeItemDtoWithLock[] };
-
 /**
  * P10-L §8, the admin half of the package-change queue.
  *
@@ -67,7 +59,7 @@ export class PackageChangeDecisionUseCase {
     @Inject(LOGGER_TOKEN) private readonly logger: AppLogger,
   ) {}
 
-  async list(status: PackageChangeRequestStatus = 'OPEN'): Promise<AdminPackageChangeQueueDtoWithLock> {
+  async list(status: PackageChangeRequestStatus = 'OPEN'): Promise<AdminPackageChangeQueueDto> {
     const rows = await this.prisma.client.packageChangeRequest.findMany({
       // Customer asks only. A sales deal is decided in the sales console by a team lead, never in
       // this queue, and the two have different states — mixing them would put DRAFT rows in front
@@ -91,7 +83,7 @@ export class PackageChangeDecisionUseCase {
     const nameByUserId = new Map(requesters.map((user) => [user.id, user.displayName]));
 
     return {
-      items: rows.map((row): AdminPackageChangeItemDtoWithLock => ({
+      items: rows.map((row): AdminPackageChangeItemDto => ({
         id: row.id,
         companyId: row.companyId,
         companyName: row.company.name,
