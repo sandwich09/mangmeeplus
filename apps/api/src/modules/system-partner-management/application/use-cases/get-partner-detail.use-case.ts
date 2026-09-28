@@ -4,6 +4,8 @@ import {
   PLATFORM_INVARIANT_FEATURE_KEYS,
   COMPANY_LEGAL_ADDRESS_KEYS,
   parentFeatureKey,
+  planTermLockReason,
+  planTermState,
   type LineContextHealth,
   type PartnerCompanyDetailDto,
   type SignupDiscoverySource,
@@ -47,6 +49,7 @@ export class GetPartnerDetailUseCase {
         activatedAt: true,
         disabledAt: true,
         archivedAt: true,
+        planTerm: { select: { tierKey: true, termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } },
         // D6 attribution. The agent's NAME comes from User; nothing from SalesAgentProfile except
         // the public sales code — no payroll PII ever reaches this console view (S10).
         referralSalesUserId: true,
@@ -87,6 +90,7 @@ export class GetPartnerDetailUseCase {
 
     if (!c) throw new NotFoundException(`Partner company "${companyId}" not found.`);
 
+    const now = new Date();
     const signup = c.signupRequests[0];
     const address = c.addressJson && typeof c.addressJson === 'object' && !Array.isArray(c.addressJson) ? c.addressJson : {};
 
@@ -182,6 +186,8 @@ export class GetPartnerDetailUseCase {
       // The command imports this exact predicate too; a stale version or missing cohort can never
       // make the screen editable while the write path still refuses it.
       entitlementNormalizationPending: !isCurrentEntitlementNormalization(c.entitlementNormalization),
+      planState: planTermState(c.planTerm, now, c.status),
+      ...(c.planTerm && c.planTerm.termEndsAt.getTime() <= now.getTime() ? { lockReason: planTermLockReason(c.planTerm) } : {}),
     };
   }
 }

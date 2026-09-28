@@ -9,6 +9,14 @@ import { SystemPackageChangeController } from '../../presentation/http/system-pa
 
 const REQ = { context: { userId: 'admin-1', requestId: 'req-1' } } as any;
 
+// Relative to test run time, not hard-coded dates: a term test must stay "running"/"locked" no
+// matter when CI happens to execute it.
+const PAST = new Date(Date.now() - 24 * 60 * 60 * 1000);
+const FUTURE = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+// Exactly what the harness's `companyPlanTerm.findUnique` fake returns for an unpaid, unlocked
+// company — shared so `planTermSourceVersion` assertions hash the same shape the use case reads.
+const DEFAULT_TERM = { billingReceiptAccountId: null as string | null, termStartAt: PAST, termEndsAt: FUTURE, renewCount: 0 };
+
 const OPEN_ROW = {
   id: 'pcr-1',
   companyId: 'co-1',
@@ -19,7 +27,7 @@ const OPEN_ROW = {
   decidedByUserId: null as string | null,
   decidedAt: null as Date | null,
   createdAt: new Date('2026-09-05T02:00:00.000Z'),
-  company: { name: 'ร้านนิด', planTerm: { tierKey: 'FREE_TRIAL_15' } },
+  company: { name: 'ร้านนิด', status: 'ACTIVE', planTerm: { tierKey: 'FREE_TRIAL_15', termStartAt: PAST, termEndsAt: FUTURE, renewCount: 0, termDisabledAt: null as Date | null } },
 };
 
 const originalFetch = globalThis.fetch;
@@ -44,6 +52,8 @@ function harness(options: {
   planTermThrows?: Error;
   ownerLineUserIds?: string[];
   token?: string | null;
+  /** R-C6 (purchase-without-setup): the company's term is at/after termEndsAt. */
+  locked?: boolean;
 } = {}) {
   let current = options.row === undefined ? { ...OPEN_ROW } : options.row;
   const planTermCalls: any[] = [];
@@ -52,7 +62,11 @@ function harness(options: {
 
   const prisma = {
     client: {
-      companyPlanTerm: {findUnique: async () => options.paid?{billingReceiptAccountId:'paid-account'}:null},
+      companyPlanTerm: {findUnique: async () => ({
+        ...DEFAULT_TERM,
+        billingReceiptAccountId: options.paid ? 'paid-account' : null,
+        termEndsAt: options.locked ? PAST : FUTURE,
+      })},
       branch:{count:async()=>1},
       packageChangeRequest: {
         findUnique: async () => (current ? { ...current } : null),
@@ -130,6 +144,18 @@ describe('GET /system/package-change-requests', () => {
     assert.equal(items[0]!.requestedTierKey, 'PRO_999');
     assert.equal(items[0]!.requestedByDisplayName, 'คุณนิด');
     assert.equal(items[0]!.note, 'ขอเพิ่มโควตาค่ะ');
+    // R-C6/R-C7: a running FREE_TRIAL_15 term reads as TRIAL, never a bare tierKey.
+    assert.equal(items[0]!.planState, 'TRIAL');
+  });
+
+  it('shows a term-locked shop as NO_PACKAGE with lockReason, not a raw tier', async () => {
+    const lockedRow = { ...OPEN_ROW, company: { name: 'ร้านล็อก', status: 'DISABLED', planTerm: {
+      tierKey: 'FREE_TRIAL_15', termStartAt: PAST, termEndsAt: PAST, renewCount: 0, termDisabledAt: PAST,
+    } } };
+    const h = harness({ rows: [lockedRow] });
+    const { items } = await h.controller.list('OPEN');
+    assert.equal(items[0]!.planState, 'NO_PACKAGE');
+    assert.equal(items[0]!.lockReason, 'no_package');
   });
 
   it('falls back to OPEN rather than trusting an unknown status from the query string', async () => {
@@ -149,7 +175,7 @@ describe('POST /system/package-change-requests/:id/decision — APPROVE', () => 
     assert.equal(result.status, 'APPROVED');
     assert.equal(h.planTermCalls.length, 1, 'exactly one tier change');
     assert.deepEqual(h.planTermCalls[0], {
-      commandId:'line-package-pcr-1',expectedVersion:planTermSourceVersion('co-1',null),reason:'อนุมัติคำขอเปลี่ยนแพ็กเกจจาก LINE',packageChangeRequestId:'pcr-1',
+      commandId:'line-package-pcr-1',expectedVersion:planTermSourceVersion('co-1',DEFAULT_TERM as any),reason:'อนุมัติคำขอเปลี่ยนแพ็กเกจจาก LINE',packageChangeRequestId:'pcr-1',
       companyId: 'co-1',
       tierKey: 'PRO_999',
       branchLimit: PLAN_TIER_PRESETS.PRO_999.branchLimit,
@@ -215,6 +241,22 @@ describe('POST /system/package-change-requests/:id/decision — APPROVE', () => 
   it('404s on a request that does not exist', async () => {
     const h = harness({ row: null });
     await assert.rejects(() => h.controller.decide('nope', { action: 'APPROVE' }, REQ), NotFoundException);
+  });
+
+  // R-C6/RV25 (purchase-without-setup): SetCompanyPlanTerm's renew path never moves the dates on
+  // approval, so approving a term-locked shop would tell the customer "เปลี่ยนแล้ว" while it stays
+  // locked at zero days. The row must not even be claimed — it stays OPEN for the operator to renew
+  // first (partner page) and try again.
+  it('refuses to approve a term-locked shop and leaves the row unclaimed', async () => {
+    const h = harness({ locked: true });
+    await assert.rejects(
+      () => h.controller.decide('pcr-1', { action: 'APPROVE' }, REQ),
+      (error: any) => error.getStatus() === 409 && error.getResponse().code === 'package_change_company_locked',
+    );
+    assert.equal(h.row().status, 'OPEN');
+    assert.equal(h.updates.length, 0);
+    assert.equal(h.planTermCalls.length, 0);
+    assert.equal(pushes.length, 0);
   });
 });
 

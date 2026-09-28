@@ -1,13 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { PLAN_TIER_PRESETS, SALES_ERROR_CODES, type SalesDealStatus, type SalesDealView, type SalesMyWorkItem, type SalesMyWorkKind, type SalesDealCadence, type SalesDealSnapshot, type SalesReportMonth, type SalesReportRow } from '@watchdog-bms/contracts';
+import { PLAN_TIER_PRESETS, planTermStateLabel, SALES_ERROR_CODES, type SalesDealStatus, type SalesDealView, type SalesMyWorkItem, type SalesMyWorkKind, type SalesDealCadence, type SalesDealSnapshot, type SalesReportMonth, type SalesReportRow } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
   agentStatusMeta, baseTierDefaults, companyReferral, dealAutoRenew, dealBadges, dealFormFromView, dealInputFromForm,
   dealOverLimit, dealPaymentNote, dealPriceState, dealTermText,
   dealWarnings, defaultSalesReportRange, emptyAgentForm, emptyDealForm, firstDealErrorField, formatBaht,
   isDealCancellable, isDealEditable, isMenuSelected, myWorkBadgeLabel, myWorkMeta,
-  normalizeSalesCodeInput, parseBahtInput, referralLabel, referralWindowOpen, SALES_DEAL_MENU_BINDINGS,
+  normalizeSalesCodeInput, parseBahtInput, referralLabel, referralWindowOpen, SALES_ACCESS_STATE_META, SALES_DEAL_MENU_BINDINGS,
   SALES_DEAL_STATUS_META, salesAgentAddress, salesCodeError, salesFlagLabel, salesReportLeads, salesReportRangeError,
   salesReportRowsOf, salesReportTotals, sortMyWork, sortSalesReportMonths,
   toggleMenuSelection, validateAgentForm, validateDealForm, type SalesDealFormValues,
@@ -102,6 +102,17 @@ describe('base tier presets fill the limits', () => {
       employeeLimit: String(PLAN_TIER_PRESETS.PRO_999.employeeLimit),
       monthlySlipLimit: String(PLAN_TIER_PRESETS.PRO_999.monthlySlipLimit),
     });
+  });
+});
+
+describe('SALES_ACCESS_STATE_META', () => {
+  // R-C7 (purchase-without-setup): one label source for the whole product — the sales console's
+  // ACTIVE row must read the same as the picker/switcher/billing badge, not its own "ใช้งานอยู่".
+  it('takes every label from the shared contracts helper', () => {
+    assert.equal(SALES_ACCESS_STATE_META.ACTIVE.label, planTermStateLabel('ACTIVE'));
+    assert.equal(SALES_ACCESS_STATE_META.NO_PACKAGE.label, 'ยังไม่มีแพ็กเกจ');
+    assert.equal(SALES_ACCESS_STATE_META.TRIAL.label, planTermStateLabel('TRIAL'));
+    assert.equal(SALES_ACCESS_STATE_META.EXPIRED.label, planTermStateLabel('EXPIRED'));
   });
 });
 

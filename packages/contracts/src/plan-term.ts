@@ -13,6 +13,54 @@ export type PlanTermDerivedState = 'ACTIVE' | 'WARNING' | 'EXPIRED';
  */
 export type PlanTermLockReason = 'trial_ended' | 'no_package';
 
+/** Row shape every reader can hand in: Prisma rows carry Date, DTOs carry ISO strings. */
+export type PlanTermStateInput = {
+  tierKey?: string | null;
+  termStartAt: Date | string;
+  termEndsAt: Date | string;
+  renewCount: number;
+  termDisabledAt?: Date | string | null;
+};
+
+/**
+ * ADMIN_HOLD = a human (or SUSPENDED/ARCHIVED) disabled the company; NO_PACKAGE/EXPIRED = the
+ * term locked it (`lockReason`); TRIAL/ACTIVE = a running term. Precedence in that order.
+ */
+export type PlanTermState = 'ADMIN_HOLD' | 'NO_PACKAGE' | 'EXPIRED' | 'TRIAL' | 'ACTIVE';
+
+const timeOf = (value: Date | string): number => (value instanceof Date ? value : new Date(value)).getTime();
+
+/** Moved from apps/api plan-term.logic.ts:74-80 unchanged in meaning (sales-deals spec R2). */
+export function planTermLockReason(
+  term: Pick<PlanTermStateInput, 'termStartAt' | 'termEndsAt' | 'renewCount'>,
+): PlanTermLockReason {
+  return timeOf(term.termEndsAt) <= timeOf(term.termStartAt) && term.renewCount === 0 ? 'no_package' : 'trial_ended';
+}
+
+/** No `companyStatus` = the sales-console reading (accessStateOf): admin holds are not visible. */
+export function planTermState(term: PlanTermStateInput | null | undefined, now: Date): Exclude<PlanTermState, 'ADMIN_HOLD'>;
+export function planTermState(term: PlanTermStateInput | null | undefined, now: Date, companyStatus: string | null | undefined): PlanTermState;
+export function planTermState(term: PlanTermStateInput | null | undefined, now: Date, companyStatus?: string | null): PlanTermState {
+  // Same rule as billing-state.ts:8 `held`: anything not ACTIVE that the term did not disable.
+  if (companyStatus && companyStatus !== 'ACTIVE' && !(companyStatus === 'DISABLED' && term?.termDisabledAt)) return 'ADMIN_HOLD';
+  if (!term) return 'ACTIVE'; // legacy/grandfathered — fail open like every limit gate
+  if (planTermLockReason(term) === 'no_package') return 'NO_PACKAGE';
+  if (timeOf(term.termEndsAt) <= now.getTime() || term.termDisabledAt) return 'EXPIRED';
+  return term.tierKey === 'FREE_TRIAL_15' ? 'TRIAL' : 'ACTIVE';
+}
+
+export const PLAN_TERM_STATE_LABEL_TH: Record<PlanTermState, string> = {
+  ADMIN_HOLD: 'พักการใช้งาน',
+  NO_PACKAGE: 'ยังไม่มีแพ็กเกจ',
+  EXPIRED: 'หมดอายุ',
+  TRIAL: 'กำลังทดลองใช้',
+  ACTIVE: 'ใช้งานได้',
+};
+
+export function planTermStateLabel(state: PlanTermState): string {
+  return PLAN_TERM_STATE_LABEL_TH[state];
+}
+
 export type CompanyPlanCapacity = { tierKey: PlanTierKey; branchLimit: number; employeeLimit: number;
   temporary?: { operationId: string; effectiveAt: string; expiresAt: string } };
 
@@ -37,6 +85,8 @@ export type CompanyPlanTermDto = {
   /** Purchased fields above remain the financial baseline. Temporary capacity is separate. */
   effectiveCapacity?: CompanyPlanCapacity;
   paidPlan?: boolean;
+  /** R2: present only while `derivedState` is EXPIRED — why the shop is locked. Derived from the row. */
+  lockReason?: PlanTermLockReason;
 };
 
 /** null = company has no term row (legacy/grandfathered — unlimited until admin sets one). */

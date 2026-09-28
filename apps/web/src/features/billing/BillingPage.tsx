@@ -9,10 +9,11 @@ import BillingCustomerFrame from './BillingCustomerFrame';
 import { BillingEmailRecipientPanel } from './BillingEmailRecipientPanel';
 import { getAccountEmailOtp, type AccountEmailOtpState } from '@/features/auth/account-email-otp.api';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BILLING_PAID_TIERS, DEFAULT_CHAT_CREDIT_SATANG, PLAN_TIER_PRESETS, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView, type BillingPurchaseMode } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, DEFAULT_CHAT_CREDIT_SATANG, PLAN_TIER_PRESETS, planTermStateLabel, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView, type BillingPurchaseMode } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
 import { PLAN_LOCK_COPY, PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE, planLockReason } from '@/features/plan-term/plan-term.logic';
-import type { PlanLockReason } from '@/features/plan-term/plan-term.api';
+import { notifyPlanTermChanged, type PlanLockReason } from '@/features/plan-term/plan-term.api';
+import { useLockedShell } from '@/features/plan-term/LockedShellScope';
 import { billingApi, type BillingHistory } from './billing.api';
 import BillingCollectionPanel from './BillingCollectionPanel';
 import BillingCapacityPicker from './BillingCapacityPicker';
@@ -287,10 +288,14 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     Date.parse(status.usage.resetsAt) < Date.parse(status.termEndsAt) ? status.usage.resetsAt : null;
   const quotaExpiry = status?.usage.expiresAt ?? status?.termEndsAt;
   const confirmed = status?.accessState === 'ACTIVE' && (returning ? returnComplete : status.paymentState === 'PAID' && status.applyState === 'APPLIED');
+  const lockedShell = useLockedShell();
+  // RV30: the moment a purchase confirms inside the locked shell, tell WorkspaceLayoutClient so it
+  // re-reads the notice and switches shells in place, instead of waiting on the next focus/reload.
+  useEffect(() => { if (confirmed && lockedShell) notifyPlanTermChanged(); }, [confirmed, lockedShell]);
   // S04/R10: a shop with nothing to run on was described by three fallbacks that added up to an
   // unlimited plan — "ยังไม่มีข้อมูลแพ็กเกจ · ใช้งานได้ถึง ยังไม่ระบุ · ใบเสร็จคงเหลือ ไม่จำกัด" — to a shop
-  // that cannot open one screen. The cast keeps the page compiling before the API ships `lockReason`.
-  const lockReason: PlanLockReason = planLockReason(status as { lockReason?: PlanLockReason } | undefined);
+  // that cannot open one screen.
+  const lockReason: PlanLockReason = planLockReason(status);
   // An active shop keeps its real numbers, whatever it was sold; a held one with a term still has a
   // package under review to describe. Only a locked shop, and a shop with no term at all, has none.
   const noPackage = !!status && status.accessState !== 'ACTIVE' && (status.accessState === 'EXPIRED' || !status.termEndsAt);
@@ -303,8 +308,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const showOverview = section === 'package' && !purchasing;
   return <BillingCustomerFrame title="แพ็กเกจและการชำระเงิน" description="ดูแพ็กเกจ จัดการการต่ออายุ และเปิดเอกสารชำระเงิน"
     actions={previewHref && <Link className="mangmee-btn mangmee-btn-secondary" href={previewHref}>พรีวิวขั้นตอน (local)</Link>}
-    backHref={status?.accessState === 'ACTIVE' ? `/companies/${encodeURIComponent(companyId)}/dashboard` : '/billing/companies'}
-    backLabel={status?.accessState === 'ACTIVE' ? 'กลับแดชบอร์ด' : 'กลับหน้าเลือกบริษัท'}>
+    backHref={status?.accessState === 'ACTIVE' ? `/companies/${encodeURIComponent(companyId)}/dashboard` : lockedShell ? `/companies/${encodeURIComponent(companyId)}/settings` : '/billing/companies'}
+    backLabel={status?.accessState === 'ACTIVE' ? 'กลับแดชบอร์ด' : lockedShell ? 'กลับหน้าตั้งค่า' : 'กลับหน้าเลือกบริษัท'}>
     <Modal open={profileMissing !== null} title="กรอกข้อมูลบริษัทก่อนซื้อแพ็กเกจ" onClose={() => setProfileMissing(null)} size="sm"
       footer={<><button className={button} onClick={() => setProfileMissing(null)}>ไว้ก่อน</button>
         <Link className="mangmee-btn mangmee-btn-primary" href={pendingPurchase.current
@@ -338,13 +343,13 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       </section>}
       <section aria-label="สถานะแพ็กเกจ" className="mangmee-card space-y-5 p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-bold">{returnFailed ? 'รายการชำระเงินนี้ไม่สำเร็จ' : status.pendingDeal ? status.pendingDeal.state === 'HELD' ? 'ชำระแล้ว ต้องตรวจสอบก่อนเริ่มดีล' : status.pendingDeal.state === 'PAID' ? 'ชำระดีลแล้ว รอเริ่มสิทธิ์' : 'ชำระแล้ว กำลังยืนยันการต่ออายุ' : confirmed ? returning ? dealReturn ? 'ใช้งานข้อเสนอพิเศษแล้ว' : 'ชำระแล้ว เปิดใช้งานแล้ว' : 'แพ็กเกจปัจจุบัน' : (returning ? returnAttempt?.paymentState === 'PAID' && returnAttempt.applyState !== 'APPLIED' : status.paymentState === 'PAID' && status.applyState !== 'APPLIED') ? 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์' : status.paymentState === 'FAILED' ? 'เรียกเก็บเงินไม่สำเร็จ' : status.attemptId ? 'กำลังตรวจสอบรายการชำระเงิน' : packageHeading}</h2>
-          <MangmeeBadge tone={status.accessState === 'ACTIVE' ? 'brand' : 'amber'}>{status.accessState === 'ACTIVE' ? 'ใช้งานได้' : status.accessState !== 'EXPIRED' ? 'อยู่ระหว่างตรวจสอบ' : lockReason === 'no_package' ? 'ยังไม่มีแพ็กเกจ' : 'ครบกำหนดใช้งาน'}</MangmeeBadge>
+          <MangmeeBadge tone={status.accessState === 'ACTIVE' ? 'brand' : 'amber'}>{status.accessState === 'HELD' ? 'อยู่ระหว่างตรวจสอบ' : planTermStateLabel(status.accessState === 'ACTIVE' ? 'ACTIVE' : lockReason === 'no_package' ? 'NO_PACKAGE' : 'EXPIRED')}</MangmeeBadge>
         </div>
         {noPackage ? <dl className="grid gap-5 rounded-xl bg-gray-50 p-4">
           <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">ยังไม่มีแพ็กเกจ</dd>
             <p className="mt-1 text-sm text-gray-600">เลือกแพ็กเกจเพื่อเริ่มใช้งาน</p>
             {/* Only when a term really ran out: a shop that never had one starts and ends today. */}
-            {lockReason === 'trial_ended' && status.termEndsAt && <p className="mt-1 text-sm text-gray-500">ครบกำหนดเมื่อ {date(status.termEndsAt)}</p>}</div>
+            {lockReason === 'trial_ended' && status.termEndsAt && <p className="mt-1 text-sm text-gray-500">หมดอายุเมื่อ {date(status.termEndsAt)}</p>}</div>
         </dl> : <dl className="grid gap-5 rounded-xl bg-gray-50 p-4 sm:grid-cols-3">
           <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.tierKey && status.tierKey in PLAN_TIER_PRESETS ? PLAN_TIER_PRESETS[status.tierKey as PlanTierKey].labelTh : status.tierKey ? 'ต้องตรวจสอบข้อมูล' : 'ยังไม่มีข้อมูลแพ็กเกจ'}</dd></div>
           <div><dt className="text-sm text-gray-500">{status.pendingPlanChange?.action === 'PREPAID_PLAN_CHANGE' ? 'แพ็กเกจปัจจุบันใช้ถึง' : 'ใช้งานได้ถึง'}</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.pendingPlanChange?.action === 'PREPAID_PLAN_CHANGE' ? date(status.pendingPlanChange.effectiveAt) : status.termEndsAt ? date(status.termEndsAt) : 'ยังไม่ระบุ'}</dd></div>

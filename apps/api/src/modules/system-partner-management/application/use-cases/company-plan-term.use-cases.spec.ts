@@ -42,6 +42,8 @@ function makePrisma(opts: {
   companyStatus?: string | null;
   actorActive?: boolean;
   activeBillingAttempt?: boolean;
+  /** R-C6: records call order across the term-row write and the (fake) lifecycle transition. */
+  sequence?: string[];
 } = {}) {
   const audits: any[] = [];
   let upsertArgs: any = null;
@@ -65,6 +67,7 @@ function makePrisma(opts: {
       },
       update: async (args: any) => {
         updateArgs = args;
+        opts.sequence?.push('term-update');
         const data = { ...args.data };
         if (data.renewCount?.increment !== undefined) {
           data.renewCount = (stored as any).renewCount + data.renewCount.increment;
@@ -83,9 +86,9 @@ function makePrisma(opts: {
   return { client, audits: () => audits, upsertArgs: () => upsertArgs, updateArgs: () => updateArgs, stored: () => stored } as any;
 }
 
-const makeLifecycle = () => {
+const makeLifecycle = (sequence?: string[]) => {
   const calls: any[] = [];
-  return { calls, execute: async (cmd: any) => { calls.push(cmd); return { id: COMPANY, status: cmd.targetStatus }; } } as any;
+  return { calls, execute: async (cmd: any) => { sequence?.push('lifecycle-execute'); calls.push(cmd); return { id: COMPANY, status: cmd.targetStatus }; } } as any;
 };
 
 describe('GetCompanyPlanTermUseCase', () => {
@@ -252,16 +255,24 @@ describe('RenewCompanyPlanTermUseCase', () => {
   });
 
   it('re-activates a company the SWEEP disabled and clears termDisabledAt', async () => {
+    const sequence: string[] = [];
+    const before = Date.now();
     const prisma = makePrisma({
       term: termRow({ termEndsAt: new Date(Date.now() - DAY_MS), termDisabledAt: new Date() }),
       companyStatus: 'DISABLED',
+      sequence,
     });
-    const lifecycle = makeLifecycle();
+    const lifecycle = makeLifecycle(sequence);
     await new RenewCompanyPlanTermUseCase(prisma, lifecycle).execute(cmd({...({}),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     assert.equal(prisma.updateArgs().data.termDisabledAt, null);
     assert.equal(lifecycle.calls.length, 1);
     assert.equal(lifecycle.calls[0].targetStatus, 'ACTIVE');
     assert.equal(lifecycle.calls[0].reason, 'term_renewed');
+    // R-C6 (purchase-without-setup §18.2): PartnerLifecycleTransitionUseCase's new term-lock guard
+    // reads the term row inside this same transaction — it must see the RENEWED end date, never the
+    // stale expired one, or a legitimate renew-and-reactivate would refuse itself.
+    assert.ok(prisma.updateArgs().data.termEndsAt.getTime() > before, 'renew must move termEndsAt into the future');
+    assert.deepEqual(sequence, ['term-update', 'lifecycle-execute'], 'the term row updates before the lifecycle transition runs');
   });
 
   it('an ADMIN-disabled company (no termDisabledAt) gets new dates but stays DISABLED', async () => {

@@ -4,6 +4,7 @@
 import {
   MENU_ENTITLEMENT_BINDINGS,
   PLAN_TIER_PRESETS,
+  planTermStateLabel,
   SALES_CODE_PATTERN,
   SALES_DEAL_OPEN_STATUSES,
   SALES_DEAL_CYCLES_MAX,
@@ -82,12 +83,12 @@ export const SALES_DEAL_STATUS_META: Record<SalesDealStatus, { label: string; to
   CANCELLED: { label: 'ยกเลิกแล้ว', tone: 'slate' },
 };
 
-export const SALES_ACCESS_STATE_META: Record<SalesCompanyAccessState, { label: string; tone: MangmeeTone }> = {
-  NO_PACKAGE: { label: 'ยังไม่มีแพ็กเกจ', tone: 'danger' },
-  TRIAL: { label: 'กำลังทดลองใช้', tone: 'amber' },
-  ACTIVE: { label: 'ใช้งานอยู่', tone: 'brand' },
-  EXPIRED: { label: 'หมดอายุ', tone: 'slate' },
-};
+// R-C7: the label comes from the one contracts helper, so this console never drifts from the
+// picker/switcher/billing wording again — only the tone (a console-only concern) stays local.
+const SALES_ACCESS_STATE_TONE: Record<SalesCompanyAccessState, MangmeeTone> = { NO_PACKAGE: 'danger', TRIAL: 'amber', ACTIVE: 'brand', EXPIRED: 'slate' };
+export const SALES_ACCESS_STATE_META: Record<SalesCompanyAccessState, { label: string; tone: MangmeeTone }> = Object.fromEntries(
+  (Object.keys(SALES_ACCESS_STATE_TONE) as SalesCompanyAccessState[]).map((state) => [state, { label: planTermStateLabel(state), tone: SALES_ACCESS_STATE_TONE[state] }]),
+) as Record<SalesCompanyAccessState, { label: string; tone: MangmeeTone }>;
 
 export const SALES_ROLE_LABELS: Record<SalesRoleKey, string> = {
   MANGMEE_SALES_LEAD: 'หัวหน้าทีมขาย',

@@ -1,7 +1,7 @@
 import { effectivePlanCapacity } from '../../system-partner-management/domain/logic/plan-capacity';
 import { billingHistoryExport } from './billing-history-export';
 import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
-import type { BillingAdjustmentKind } from '@watchdog-bms/contracts';
+import { planTermLockReason, planTermState, type BillingAdjustmentKind } from '@watchdog-bms/contracts';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { BillingSupportOutcome, BillingSupportOutcomeInput, BillingOperatorCompany, BillingOperatorCompanyDetail, BillingOperatorIssue, BillingOperatorOverview, BillingProviderEventView } from '@watchdog-bms/contracts';
 import type { BillingAccount, BillingIssue, BillingOperation, Prisma } from '../../../generated/prisma/client';
@@ -104,7 +104,8 @@ export class BillingAdminService {
       // snapshot. Read next to `renewalMode`, which still says how the shop pays.
       source: term?.billingReceiptAccountId ? (term.billingReceiptAccountId === account?.id
         ? (purchase?.id === account?.contractAttemptId && (purchase?.quoteSnapshot as { deal?: unknown } | null)?.deal ? 'DEAL' : 'STRIPE')
-        : 'OTHER_BILLING') : term?.tierKey === 'FREE_TRIAL_15' ? 'TRIAL' : term ? 'MANUAL' : 'NONE',
+        : 'OTHER_BILLING') : term && planTermLockReason(term) === 'no_package' ? 'NONE' : term?.tierKey === 'FREE_TRIAL_15' ? 'TRIAL' : term ? 'MANUAL' : 'NONE',
+      planState: planTermState(term, new Date(), company.status),
       graceEndsAt: account?.graceEndsAt?.toISOString() ?? null, cancelEffectiveAt: account?.cancelAtPeriodEnd ? account.paidThrough?.toISOString() ?? null : null,
       origin: purchase?.channel === 'web' || purchase?.channel === 'line' ? purchase.channel : null,
       branchLimit: term?.branchLimit ?? null, employeeLimit: term?.employeeLimit ?? null,

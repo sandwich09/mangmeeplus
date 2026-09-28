@@ -361,6 +361,7 @@ describe('AuthController me()', () => {
 describe('AuthController myCompanies()', () => {
   it('reports package access from active role permissions, regardless of role name', async () => {
     let query: any;
+    const T = new Date('2026-09-01T00:00:00.000Z');
     const prisma = { client: { companyMembership: { findMany: async (input: any) => {
       query = input;
       return [
@@ -370,6 +371,13 @@ describe('AuthController myCompanies()', () => {
         { companyId: 'co-staff', company: { name: 'Staff shop', status: 'ACTIVE', planTerm: null }, roles: [
           { role: { key: 'STAFF', permissions: [] } },
         ] },
+        // R-C5/R-C7 (purchase-without-setup): a term-locked shop still lists (P29 §4B) but must say
+        // WHY — `no_package` here, never a bare "expired".
+        { companyId: 'co-locked', company: { name: 'Locked shop', status: 'DISABLED', planTerm: {
+          tierKey: 'FREE_TRIAL_15', termStartAt: T, termEndsAt: T, renewCount: 0, termDisabledAt: T,
+        } }, roles: [
+          { role: { key: 'OWNER', permissions: [{ permission: { key: 'company.plan.manage' } }] } },
+        ] },
       ];
     } } } };
     const result = await AuthController.prototype.myCompanies.call(
@@ -378,8 +386,19 @@ describe('AuthController myCompanies()', () => {
     );
     assert.equal(query.select.roles.where.role.status, 'ACTIVE');
     assert.deepEqual(result.data.map((company) => [company.companyId, company.canManagePlan]), [
-      ['co-manager', true], ['co-staff', false],
+      ['co-manager', true], ['co-staff', false], ['co-locked', true],
     ]);
+    assert.deepEqual(
+      Object.keys(query.select.company.select.planTerm.select).sort(),
+      ['renewCount', 'termDisabledAt', 'termEndsAt', 'termStartAt', 'tierKey'],
+    );
+    const manager = result.data.find((company: any) => company.companyId === 'co-manager')!;
+    assert.equal(manager.planState, 'ACTIVE');
+    assert.equal('lockReason' in manager, false);
+    const locked = result.data.find((company: any) => company.companyId === 'co-locked')!;
+    assert.equal(locked.planState, 'NO_PACKAGE');
+    assert.equal(locked.lockReason, 'no_package');
+    assert.equal(locked.expired, true);
   });
 });
 
