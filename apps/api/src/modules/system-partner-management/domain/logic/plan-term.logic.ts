@@ -7,6 +7,7 @@ import {
   planTermLockReason,
   type CompanyPlanTermDto,
   type PlanTermDerivedState,
+  type PlanTermLockReason,
   type PlanTierKey,
 } from '@watchdog-bms/contracts';
 import { effectivePlanCapacity } from './plan-capacity';
@@ -142,9 +143,12 @@ export function formatThaiDateTime(value: Date): string {
   return `${THAI_DATE.format(value)} เวลา ${THAI_TIME.format(value)} น.`;
 }
 
+// Glossary (review 2026-09-29): "ต่ออายุ" is never a customer CTA, and a lock says what it limits
+// instead of "พักการใช้งาน".
 const continuationTh = (selfServeBilling: boolean, paymentHint: string): string => selfServeBilling
-  ? `ต่ออายุหรือเปลี่ยนแพ็กเกจได้เองในเว็บแอปค่ะ${paymentHint} หากต้องการความช่วยเหลือ โทร ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`
+  ? `เลือกแพ็กเกจได้เองในเว็บแอปค่ะ${paymentHint} หากต้องการความช่วยเหลือ โทร ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`
   : `หากต้องการใช้งานต่อ ติดต่อ ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`;
+const LOCK_LIMIT_TH = 'ใช้งานส่วนธุรกิจไม่ได้จนกว่าจะเลือกแพ็กเกจ';
 
 export function warningMessageTh(
   companyName: string,
@@ -157,21 +161,23 @@ export function warningMessageTh(
 }
 
 export function expiredMessageTh(companyName: string, selfServeBilling = false, paymentHint = ''): string {
-  return `แพ็กเกจของ${companyName} หมดอายุแล้ว ระบบพักการใช้งานชั่วคราว ข้อมูลทั้งหมดยังอยู่ครบ — ${continuationTh(selfServeBilling, paymentHint)}`;
+  return `แพ็กเกจของ${companyName} หมดอายุแล้ว ${LOCK_LIMIT_TH} ข้อมูลทั้งหมดยังอยู่ครบ — ${continuationTh(selfServeBilling, paymentHint)}`;
 }
 
 /**
- * The LINE answer for the OWNER of a term-expired company (spec §renew, Owner 2026-08-30: "ตอบสุภาพ
+ * The LINE answer for whoever may buy for a locked company (spec §renew, Owner 2026-08-30: "ตอบสุภาพ
  * ชวนติดต่อ แจ้งเฉพาะ OWNER"). Staff never see this — they keep the generic unavailable reply and no
  * package detail. This reply is used only when self-service billing is closed, so it points to
  * support instead of promising a checkout page. Kept beside the other plan-term copy so the
- * contact details have one home.
+ * contact details have one home. A shop that never bought is told it has no package — never that
+ * one ran out.
  */
-export function expiredLineOwnerMessageTh(): string {
+export function expiredLineOwnerMessageTh(lockReason: PlanTermLockReason = 'trial_ended'): string {
+  const noPackage = lockReason === 'no_package';
   return [
-    '🔴 แพ็กเกจของคุณหมดอายุแล้ว ระบบพักการใช้งานชั่วคราวค่ะ',
+    `${noPackage ? '📦 ร้านนี้ยังไม่มีแพ็กเกจ' : '🔴 แพ็กเกจของคุณหมดอายุแล้ว'} ${LOCK_LIMIT_TH}ค่ะ`,
     'ข้อมูลทั้งหมดยังอยู่ครบ ไม่ได้หายไปไหนนะคะ',
-    `หากต้องการใช้งานต่อ ติดต่อทีมงาน โทร ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
+    `หากต้องการ${noPackage ? 'เริ่มใช้งาน' : 'ใช้งานต่อ'} ติดต่อทีมงาน โทร ${PLAN_TERM_CONTACT_PHONE} หรืออีเมล ${PLAN_TERM_CONTACT_EMAIL}`,
     // No typed-command hint here: this reply is delivered with a real "ขอเปลี่ยนแพ็กเกจ" quick
     // reply attached, and a sentence telling someone to type what a button already offers is noise.
   ].join('\n');

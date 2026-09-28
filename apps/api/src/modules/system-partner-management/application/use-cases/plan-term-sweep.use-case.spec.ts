@@ -234,7 +234,7 @@ describe('PlanTermSweepUseCase — owner self-service route', () => {
       const world = makeWorld([{ companyId: 'co-1', companyName: 'ร้านหนึ่ง', companyStatus: 'ACTIVE', termEndsAt }], { billingMode: 'test' });
       await world.sweep.execute();
       const [owner, admin] = world.notifications.calls;
-      assert.match(owner.body, /ต่ออายุหรือเปลี่ยนแพ็กเกจได้เองในเว็บแอป/);
+      assert.match(owner.body, /เลือกแพ็กเกจได้เองในเว็บแอปค่ะ/);
       assert.doesNotMatch(owner.body, /พิมพ์.*ขอเปลี่ยนแพ็กเกจ|ทีมงานจะติดต่อกลับ/);
       assert.equal(owner.deepLinkHref, '/companies/co-1/billing');
       assert.equal(admin.deepLinkHref, '/system/partners/co-1');

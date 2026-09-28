@@ -47,15 +47,19 @@ export const SUPPORT_REQUEST_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** Owner copy (§7). No plus sign in customer text; write "และ".
  *  R1: the shop opens LOCKED, so the very first thing it is told is the one step that unlocks it.
- *  Nothing here invites a receipt photo — the assistant would only refuse it. */
-export function approvedMessageTh(companyName: string): string {
+ *  Nothing here invites a receipt photo — the assistant would only refuse it.
+ *  `withButton: false` is the plain-text push sent when no LIFF id is configured: there is no button
+ *  below it, so it must not point at one. */
+export function approvedMessageTh(companyName: string, withButton = true): string {
   return `🎉 เปิดร้าน ${companyName} ให้แล้วค่ะ ขั้นต่อไปเลือกแพ็กเกจเพื่อเริ่มใช้งาน `
-    + 'กดปุ่มด้านล่าง แล้วกดเปิดหน้าเว็บเพื่อดูแพ็กเกจและชำระเงินได้เลยนะคะ';
+    + (withButton
+      ? 'กดปุ่มด้านล่าง แล้วกดเปิดหน้าเว็บเพื่อดูแพ็กเกจและชำระเงินได้เลยนะคะ'
+      : 'เข้าเว็บแอปมั่งมีพลัสแล้วเลือกแพ็กเกจได้เลยนะคะ');
 }
 
-export function attachedMessageTh(companyName: string): string {
+export function attachedMessageTh(companyName: string, withButton = true): string {
   return `🎉 เพิ่มร้าน ${companyName} ให้บัญชีของคุณแล้วค่ะ ขั้นต่อไปเลือกแพ็กเกจให้ร้านนี้ `
-    + 'กดปุ่มด้านล่างได้เลยนะคะ สลับร้านได้ในเมนู บริษัทของฉัน';
+    + (withButton ? 'กดปุ่มด้านล่างได้เลยนะคะ' : 'ในเว็บแอปมั่งมีพลัสได้เลยนะคะ') + ' สลับร้านได้ในเมนู บริษัทของฉัน';
 }
 
 export function rejectedMessageTh(displayName: string | null, companyName: string): string {
@@ -249,11 +253,11 @@ export class LineSignupNotifyService {
         : Promise.resolve(null),
       request.signupRequestId
         ? this.prisma.client.companySignupRequest.findUnique({
-          where: { id: request.signupRequestId }, select: { companyName: true },
+          where: { id: request.signupRequestId }, select: { companyName: true, state: true },
         })
         : Promise.resolve(null),
     ]);
-    const who = supportAskerLabelTh(company?.name ?? null, signup?.companyName ?? null);
+    const who = supportAskerLabelTh(company?.name ?? null, signup?.companyName ?? null, signup?.state === 'COMPLETED');
     const base = (this.config.sesWebBaseUrl ?? '').replace(/\/+$/, '');
     // The inbox is where an operator acts, so every channel points at it — not at the partner page
     // and not at the signup queue, both of which lose the request's own state.
@@ -357,8 +361,8 @@ export class LineSignupNotifyService {
    * package page (R-C3). Two taps from the push, by design (DQ3).
    */
   private readyMessage(kind: LineSignupPushKind, companyName: string): unknown {
-    const text = kind === 'attached' ? attachedMessageTh(companyName) : approvedMessageTh(companyName);
     const liffId = this.config.lineLiffId;
+    const text = kind === 'attached' ? attachedMessageTh(companyName, !!liffId) : approvedMessageTh(companyName, !!liffId);
     if (!liffId) return { type: 'text', text };
     return {
       type: 'flex',
@@ -468,10 +472,13 @@ export function lineSupportNoticeEventKey(supportRequestId: string): string {
  * is what the UAT evidence needed, where the notice confidently named a shop the asker had left.
  *
  * Never a LINE id or a LINE display name: §3 keeps raw identifiers out of operator surfaces.
+ *
+ * `appliedShopOpened`: that application COMPLETED, so a shop exists and it is its name — never
+ * "ผู้ที่ยังไม่ได้เปิดร้าน" (review 2026-09-29; LIFF asks filed before the row carried the company).
  */
-export function supportAskerLabelTh(companyName: string | null, appliedCompanyName: string | null): string {
+export function supportAskerLabelTh(companyName: string | null, appliedCompanyName: string | null, appliedShopOpened = false): string {
   if (companyName) return companyName;
-  if (appliedCompanyName) return `ผู้ที่ยังไม่ได้เปิดร้าน (มีคำขอสมัคร: ${appliedCompanyName})`;
+  if (appliedCompanyName) return appliedShopOpened ? appliedCompanyName : `ผู้ที่ยังไม่ได้เปิดร้าน (มีคำขอสมัคร: ${appliedCompanyName})`;
   return 'ผู้ที่ยังไม่ได้เปิดร้าน';
 }
 

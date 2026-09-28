@@ -30,8 +30,8 @@ function makeHarness(opts: {
   debounceExperimentEnabled?: boolean;
   debounceExperimentSecret?: string;
   executeImpl?: (event: any) => Promise<void>;
-  receiptImpl?: (event: any, caption?: string) => Promise<{ outcome: 'done' | 'defer_text' }>;
-  receiptOutcomes?: Array<'done' | 'defer_text'>;
+  receiptImpl?: (event: any, caption?: string) => Promise<{ outcome: 'done' | 'defer_text' | 'locked' }>;
+  receiptOutcomes?: Array<'done' | 'defer_text' | 'locked'>;
   replyResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   pushResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   eventStoreUnavailable?: boolean;
@@ -647,6 +647,20 @@ describe('LineMessageBufferService – media and captions', () => {
     assert.equal(h.receipts.length, 1);
     assert.equal(h.executed.length, 1);
     assert.equal(h.executed[0].messageText, 'ยอดขายเดือนนี้เท่าไหร่');
+  });
+
+  // Review 2026-09-29: a locked shop's burst of photos drew one lock card PER photo, each after a
+  // "reading your photo" ack for a read that never happens. The first card answers the batch.
+  it('answers a locked shop\'s photo batch with one lock card, and closes the rest', async () => {
+    const h = makeHarness({ debounceMs: 20, receiptOutcomes: ['locked'] });
+    await h.service.enqueue(mediaEnv('lk1'));
+    await h.service.enqueue(mediaEnv('lk2'));
+    await h.service.enqueue(mediaEnv('lk3'));
+    await h.service.enqueue(textEnv('lk-cap', 'บันทึกบิลพวกนี้'));
+    await sleep(80);
+    assert.equal(h.receipts.length, 1, 'one turn, one card');
+    for (const id of ['lk2', 'lk3', 'lk-cap']) assert.equal(h.rows.get(id)?.status, 'batched', id);
+    assert.equal(h.executed.length, 0, 'and no text turn to draw a second card');
   });
 
   it('multiple media in one batch share the caption', async () => {

@@ -691,7 +691,10 @@ describe('promotion menu (rich menu v2 ver2)', () => {
     const employee = actions('employee');
     assert.equal(employee.filter((action: any) => action.type === 'uri' && !action.uri.includes('official.')).length, 0,
       'the package page is the owner\'s to open');
-    assert.match(JSON.stringify(buildPromotionCard('employee')), /เจ้าของร้านเป็นคนเลือกแพ็กเกจ/);
+    assert.match(JSON.stringify(buildPromotionCard('employee')), /เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจ/);
+    // Glossary 2026-09-29: no English on a customer card.
+    assert.match(JSON.stringify(buildPromotionCard('owner')), /🎁 แพ็กเกจที่เหมาะกับร้านคุณ/);
+    assert.doesNotMatch(JSON.stringify(buildPromotionCard('owner')), /Package/);
     assert.deepEqual(employee.map((action: any) => action.label),
       ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานติดต่อกลับ', 'คุยกับทีมงาน']);
     // G19: a callback request travels as a postback with no id or state in it (SEC-04).

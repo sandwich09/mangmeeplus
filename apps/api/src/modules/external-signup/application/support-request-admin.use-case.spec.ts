@@ -64,6 +64,8 @@ function harness(options: {
   pausedUntil?: Date | null;
   /** สัญญา v3: thread rows the fake returns, and the blob (if any) the content route finds. */
   messages?: any[]; blob?: any;
+  /** The applications the page's rows point at; defaults to one still under review. */
+  signups?: any[];
 } = {}) {
   let current = options.one === undefined ? row() : options.one;
   const rows = options.rows ?? (current ? [current] : []);
@@ -107,7 +109,7 @@ function harness(options: {
       },
     },
     company: { findMany: async () => [] },
-    companySignupRequest: { findMany: async () => [{
+    companySignupRequest: { findMany: async () => options.signups ?? [{
       id: 'signup-1', companyName: 'ร้านที่กำลังสมัคร', reviewResolution: 'REQUEST_INFO',
       resolutionNote: 'กรุณาส่งอีเมลใหม่',
     }] },
@@ -161,6 +163,14 @@ describe('support queue paging and privacy', () => {
     assert.equal(result.items[0]!.requestedInformation, 'กรุณาส่งอีเมลใหม่');
     assert.equal(result.items[0]!.assistantActive, undefined);
     assert.equal(JSON.stringify(result).includes('Uline-secret'), false);
+  });
+
+  // Review 2026-09-29 (item 1): a COMPLETED application IS a shop — an ask filed before the row
+  // carried its company must still read as that shop, never "ผู้ที่ยังไม่ได้เปิดร้าน".
+  it('labels an ask from a completed application by its shop', async () => {
+    const h = harness({ signups: [{ id: 'signup-1', companyName: 'ร้านนิด', state: 'COMPLETED', reviewResolution: null, resolutionNote: null }] });
+    const result = await h.useCase.list(ADMIN, { status: 'OPEN' });
+    assert.equal(result.items[0]!.askerLabel, 'ร้านนิด');
   });
 
   it('returns an explicit empty page shape', async () => {
