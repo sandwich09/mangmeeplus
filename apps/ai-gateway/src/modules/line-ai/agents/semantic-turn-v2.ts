@@ -224,6 +224,11 @@ function validInput(meta: ToolMeta, input: unknown, req: LineAiTurnRequest,
     .filter(item => !isAmbiguousDateCandidate(item)).map(item => item.isoDate));
   const periods = [...(c?.periods ?? []), ...(retainedCandidates?.periods ?? []), ...(readCandidates?.periods ?? [])].filter(item => !isAmbiguousPeriodCandidate(item));
   for (const period of periods) { dates.add(period.fromDate); dates.add(period.toDate); }
+  // tuning-3 item 1 (T-012#2, T-015#3): recentReads is the API's OWN record of what a prior tool
+  // call actually applied (spec R-M5) — strictly more trustworthy than re-extracting a date phrase
+  // from raw recent-turn text (conversationReadCandidates above), and the only source at all when
+  // that turn's own wording (a typo, or no date word) left nothing to re-extract.
+  for (const entry of req.conversationContext?.recentReads ?? []) if (entry.period) { dates.add(entry.period.fromDate); dates.add(entry.period.toDate); }
   for (const key of ['fromDate', 'toDate', 'date', 'newSince', 'newUntil']) if (canonicalInput[key] !== undefined && !dates.has(String(canonicalInput[key]))) return undefined;
   if (canonicalInput.periodKey !== undefined) {
     const rawPeriodKey = String(canonicalInput.periodKey);
@@ -282,7 +287,13 @@ function bindRequestedReadFilters(meta: ToolMeta, item: NonNullable<LineAiTurnRe
       .filter(period => !isAmbiguousPeriodCandidate(period));
     const dates = [...(req.valueCandidates?.dates ?? []), ...(retainedCandidates?.dates ?? []), ...(readCandidates?.dates ?? [])]
       .filter(date => !isAmbiguousDateCandidate(date)).map(date => date.isoDate);
+    // tuning-3 item 1 (T-009#1/#2, T-019#1): a follow-up that inherits its whole period from the
+    // last successful read (never restated in this turn's own text, sometimes not even in the
+    // typo'd prior turn's) is still grounded per spec R-M5 — recentReads is the API's own record of
+    // what a prior tool call actually applied, not a re-guess from text.
+    const recentReadPeriods = req.conversationContext?.recentReads ?? [];
     if (!periods.some(period => period.fromDate === fromDate && period.toDate === toDate)
+      && !recentReadPeriods.some(entry => entry.period?.fromDate === fromDate && entry.period?.toDate === toDate)
       && !(fromDate === toDate && dates.includes(String(fromDate)))) return undefined;
   }
   return validInput(meta, bound, req, retainedCandidates, readCandidates);
