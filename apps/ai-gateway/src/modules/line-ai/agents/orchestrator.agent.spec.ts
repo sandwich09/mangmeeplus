@@ -1429,6 +1429,20 @@ describe('run-level expense follow-up execution', () => {
     assert.doesNotMatch(result.replyText, /secret-code|uuid-secret|0\.00|0 รายการ/);
   });
 
+  it('explains an out-of-scope branch by naming only the caller\'s own branches, never the forbidden one', async () => {
+    configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', branchId: 'บางนา' } }]);
+    const req = makeReq('ค่าใช้จ่ายเดือนสิงหาคม 2569 สาขา บางนา');
+    req.userContext.permissions.push('expense.read');
+    req.valueCandidates = { amounts: [], dates: [], periods: [periods[1]!] };
+    const erp = { invoke: async (tool: any) => ({ toolName: tool.name, status: 'ok', data: {
+      branchOutOfScope: 'บางนา', availableBranches: [{ id: 'uuid-own', name: 'สาธุประดิษฐ์' }],
+    }, sourceRefs: [], asOf: new Date().toISOString() }) } as any;
+    const result = await new OrchestratorAgent(erp, makeConfig()).run(req);
+    assert.match(result.replyText, /คุณดูข้อมูลได้เฉพาะสาขา/);
+    assert.match(result.replyText, /สาธุประดิษฐ์/);
+    assert.doesNotMatch(result.replyText, /บางนา|uuid-own|0\.00|0 รายการ/);
+  });
+
   it('item 2c: asks which vendor when a name resolves to several distinct vendors', async () => {
     configureLoopProvider(text => expensePlan(text), [{ callTool: 'expense.list_recent', input: { fromDate: '2026-08-01', toDate: '2026-08-31', vendorName: 'สมใจ' } }]);
     const req = makeReq('ร้านสมใจจ่ายไปเท่าไหร่เดือนสิงหาคม 2569');

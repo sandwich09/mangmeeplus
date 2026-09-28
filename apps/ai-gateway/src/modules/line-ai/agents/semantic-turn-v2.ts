@@ -17,7 +17,8 @@ import { toolAccessOutcome } from './tool-availability';
 import { MANGMEE_PERSONA_PROMPT, sanitizeMangmeePersonaText } from './mangmee-persona';
 import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, misroutedReadTool, resolvePeriodKeyAlias } from './read-tool-input';
 import { expenseNameResolutionIssue, expenseNameResolutionReplyText, type ExpenseNameResolutionIssue,
-  expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares, type ExpensePeriodComparison } from '../domain/logic/business-read-result-semantics';
+  expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares, type ExpensePeriodComparison,
+  REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
 import { scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic';
 
 const logger = new Logger('SemanticTurnV2');
@@ -484,6 +485,15 @@ export async function runSemanticTurnV2(input: {
     const issue = good.length ? expenseNameResolutionIssue([toSpecialistOutput(good)]) : undefined;
     if (issue) nameIssues.set(item.index, issue);
   }
+  // reimbursement.list_pending_approvals forbidden outcome: like a name-resolution issue, this is a
+  // real, typed, permission-checked answer — never trust the model's free-form prose around an empty
+  // (forbidden) tool result, and never spend a compose call on it (needsComposition below).
+  const approvalDeniedIndices = new Set<number>();
+  for (const item of inventory) {
+    if (item.kind !== 'read') continue;
+    if (results.some(entry => entry.index === item.index && entry.result.status === 'forbidden'
+      && entry.result.errorCode === REIMBURSEMENT_APPROVAL_NOT_PERMITTED)) approvalDeniedIndices.add(item.index);
+  }
   // Item 3(a)/(b) (223-turn eval batch 2): "เทียบกับเดือนที่แล้ว"/"ทำไม...เยอะจัง" kept failing
   // compose because the model computed its own cross-period difference/percentage or breakdown
   // share and grounding correctly rejected a number no tool result actually contained. Compute the
@@ -545,7 +555,7 @@ export async function runSemanticTurnV2(input: {
   // turn deadline (two grouped breakdowns' worth of context, up to 2 compose attempts) for an answer
   // that, when it fails grounding, falls back to this exact same text anyway (Item 3(c) below).
   const needsComposition = inventory.some(item => item.kind !== 'help' && !forced.has(item.index) && !questions.has(item.index)
-    && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index));
+    && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index));
   for (let attempt = 0; needsComposition && attempt < 2; attempt++) {
     if (attempt) {
       const state = currentBudgetState();
@@ -585,9 +595,22 @@ export async function runSemanticTurnV2(input: {
       answer = nameIssue.kind === 'ambiguous'
         // A real clarification question: needs_user is correct here (spec item 2).
         ? { index: item.index, status: 'needs_user', text: replyText, reasonCode: 'EXPENSE_NAME_AMBIGUOUS' }
-        // Not found: a terminal answer, never a question — nothing more the customer can add.
-        : { index: item.index, status: 'handled', text: replyText, reasonCode: 'EXPENSE_NAME_UNRESOLVED',
+        // Not found, or (branch only) out of the caller's own branch scope: a terminal answer, never
+        // a question — nothing more the customer can add, and the out-of-scope reply never names the
+        // forbidden branch's own data (expenseNameResolutionReplyText already restricts it to
+        // `availableBranches`, this caller's own scoped catalog).
+        : { index: item.index, status: 'handled', text: replyText,
+          reasonCode: nameIssue.kind === 'out_of_scope' ? 'EXPENSE_BRANCH_OUT_OF_SCOPE' : 'EXPENSE_NAME_UNRESOLVED',
           sourceRefIds: good.flatMap(result => result.sourceRefs.map(sourceId)) };
+    }
+    // reimbursement.list_pending_approvals forbidden outcome: same deterministic treatment as a
+    // name-resolution issue above — a terminal, permission-scoped answer, never a question, that
+    // names the one thing this caller CAN ask about (their own claim) instead of a generic
+    // read-unavailable line (the empty `good` for this index would otherwise reach the generic
+    // deterministicReadFallback below and say "I can't fetch this data right now").
+    else if (approvalDeniedIndices.has(item.index)) {
+      answer = { index: item.index, status: 'handled', text: reimbursementApprovalNotPermittedReplyText(language === 'en'),
+        reasonCode: 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED' };
     }
     // Item 3(c): compose produced NO usable answer at all for this index (the C1(d) default above —
     // a repair-exhausted or structurally invalid compose response, not merely an ungrounded one,

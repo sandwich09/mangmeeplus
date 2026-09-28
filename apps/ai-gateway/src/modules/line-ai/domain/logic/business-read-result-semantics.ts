@@ -43,29 +43,33 @@ export function aggregateState(data: UnknownRecord | undefined): 'known' | 'empt
  * semantic-turn-v2.ts are mutually circular (orchestrator.agent.ts imports runSemanticTurnV2).
  */
 export type ExpenseNameResolutionIssue = {
-  kind: 'ambiguous' | 'not_found';
+  kind: 'ambiguous' | 'not_found' | 'out_of_scope';
   field: 'branch' | 'category' | 'vendor';
   requested: string;
   names: string[];
 };
 
-const EXPENSE_NAME_FIELDS = [
-  { field: 'branch' as const, ambiguousKey: 'branchAmbiguous', unresolvedKey: 'branchUnresolved', availableKey: 'availableBranches' },
-  { field: 'category' as const, ambiguousKey: 'categoryAmbiguous', unresolvedKey: 'categoryUnresolved', availableKey: 'availableCategories' },
-  { field: 'vendor' as const, ambiguousKey: 'vendorAmbiguous', unresolvedKey: 'vendorUnresolved', availableKey: 'availableVendors' },
+const EXPENSE_NAME_FIELDS: Array<{ field: ExpenseNameResolutionIssue['field']; ambiguousKey: string; unresolvedKey: string; outOfScopeKey?: string; availableKey: string }> = [
+  // Item (branch-out-of-scope outcome): erp-tools.use-case.ts's ExpenseListRecentTool also reports
+  // `branchOutOfScope` — a branch that exists in the company but outside this caller's OWN branch
+  // scope. Only `branch` has this third shape; category/vendor names have no scope concept.
+  { field: 'branch', ambiguousKey: 'branchAmbiguous', unresolvedKey: 'branchUnresolved', outOfScopeKey: 'branchOutOfScope', availableKey: 'availableBranches' },
+  { field: 'category', ambiguousKey: 'categoryAmbiguous', unresolvedKey: 'categoryUnresolved', availableKey: 'availableCategories' },
+  { field: 'vendor', ambiguousKey: 'vendorAmbiguous', unresolvedKey: 'vendorUnresolved', availableKey: 'availableVendors' },
 ];
 
 /** Reads ONE tool result's raw `data` (never a specialist's shaped facts, which do not carry these
- *  keys through) for a branch/category/vendor ambiguity or not-found marker. */
+ *  keys through) for a branch/category/vendor ambiguity, not-found, or (branch only) out-of-scope marker. */
 function expenseNameResolutionIssueFromData(data: UnknownRecord | undefined): ExpenseNameResolutionIssue | undefined {
   if (!data) return undefined;
-  for (const { field, ambiguousKey, unresolvedKey, availableKey } of EXPENSE_NAME_FIELDS) {
-    const ambiguous = data[ambiguousKey], unresolved = data[unresolvedKey];
-    const requested = typeof ambiguous === 'string' ? ambiguous : typeof unresolved === 'string' ? unresolved : undefined;
+  for (const { field, ambiguousKey, unresolvedKey, outOfScopeKey, availableKey } of EXPENSE_NAME_FIELDS) {
+    const ambiguous = data[ambiguousKey], unresolved = data[unresolvedKey], outOfScope = outOfScopeKey ? data[outOfScopeKey] : undefined;
+    const requested = typeof ambiguous === 'string' ? ambiguous : typeof outOfScope === 'string' ? outOfScope : typeof unresolved === 'string' ? unresolved : undefined;
     if (requested === undefined) continue;
     const available = Array.isArray(data[availableKey]) ? data[availableKey] as Array<UnknownRecord> : [];
     const names = available.map((item) => String(item['name'] ?? '').trim()).filter(Boolean).slice(0, 5);
-    return { kind: typeof ambiguous === 'string' ? 'ambiguous' : 'not_found', field, requested, names };
+    const kind = typeof ambiguous === 'string' ? 'ambiguous' : typeof outOfScope === 'string' ? 'out_of_scope' : 'not_found';
+    return { kind, field, requested, names };
   }
   return undefined;
 }
@@ -91,7 +95,8 @@ const EXPENSE_NAME_FIELD_EN: Record<ExpenseNameResolutionIssue['field'], string>
  *  matches have distinct display names — an actual chat-answerable question. Several matches
  *  sharing the EXACT same display name cannot be told apart in text at all (never print the
  *  internal id/code that could): that case, like not-found, is a terminal statement pointing at
- *  the web app, never a question, never a waiting task. */
+ *  the web app, never a question, never a waiting task. Out-of-scope (branch only) is likewise
+ *  terminal — it states the caller's OWN visible branches, never the forbidden branch's data. */
 export function expenseNameResolutionReplyText(issue: ExpenseNameResolutionIssue, english: boolean): string {
   const th = EXPENSE_NAME_FIELD_TH[issue.field], en = EXPENSE_NAME_FIELD_EN[issue.field];
   const uniqueNames = [...new Set(issue.names)];
@@ -104,9 +109,28 @@ export function expenseNameResolutionReplyText(issue: ExpenseNameResolutionIssue
       : `มีหลาย${th}ที่ใช้ชื่อเดียวกัน จึงยังระบุ${th}ที่ต้องการไม่ได้ค่ะ กรุณาเลือก${th}จากหน้าเว็บ`;
   }
   const available = uniqueNames.join(', ');
+  if (issue.kind === 'out_of_scope') {
+    return english ? `You can only view branch(es): ${available}` : `คุณดูข้อมูลได้เฉพาะสาขา ${available} ค่ะ`;
+  }
   return english
     ? `I could not identify the requested ${en}.${available ? ` Available: ${available}.` : ''} Please check and select it in the web app.`
     : `ยังระบุ${th}ที่ต้องการไม่ได้ค่ะ${available ? ` ${th}ที่มี: ${available}` : ''} กรุณาตรวจสอบและเลือก${th}จากหน้าเว็บ`;
+}
+
+// ─── reimbursement.list_pending_approvals forbidden outcome ────────────────────────────────────
+// erp-reimbursement-tools.use-case.ts (ReimbursementListPendingApprovalsTool) returns status
+// 'forbidden' with this errorCode for a caller without `reimbursement.approve` — a real, typed
+// outcome, not a bare denial, so both lanes can name the one thing this caller CAN ask about (their
+// own claim) instead of the generic "no permission" line. Shared here for the same reason as the
+// name-resolution helpers above: orchestrator.agent.ts (via prepared-simple-read-formatter.ts's
+// preparedTerminalReply) and semantic-turn-v2.ts both render it, and must say the same thing.
+export const REIMBURSEMENT_APPROVAL_NOT_PERMITTED = 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED';
+
+/** Terminal, permission-scoped answer — never a question, never a waiting task. */
+export function reimbursementApprovalNotPermittedReplyText(english: boolean): string {
+  return english
+    ? 'Your role does not have permission to view or approve other people\'s reimbursement claims. If you want to check your own claim, just ask — for example, "How is my reimbursement claim going?"'
+    : 'บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ ถ้าต้องการดูใบเบิกของตัวเอง ถามได้เลย เช่น “ใบเบิกของฉันถึงไหนแล้ว”';
 }
 
 // ─── Item 3 (223-turn eval batch 2): period comparisons and breakdown shares ───────────────────

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { aggregateState, aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText,
-  expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares } from './business-read-result-semantics';
+  expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares,
+  reimbursementApprovalNotPermittedReplyText } from './business-read-result-semantics';
 
 describe('business read result semantics', () => {
   it('uses the API-applied period instead of the requested proposal', () => {
@@ -51,6 +52,30 @@ describe('item 2: expense name resolution (ambiguous/not-found)', () => {
 
   it('finds nothing in an ordinary successful result', () => {
     assert.equal(expenseNameResolutionIssue(output({ total: 3 })), undefined);
+  });
+
+  it('reports an out-of-scope branch as a terminal statement naming only the caller\'s own branches', () => {
+    const issue = expenseNameResolutionIssue(output({ branchOutOfScope: 'บางนา', availableBranches: [{ name: 'สาธุประดิษฐ์' }] }));
+    assert.deepEqual(issue, { kind: 'out_of_scope', field: 'branch', requested: 'บางนา', names: ['สาธุประดิษฐ์'] });
+    const reply = expenseNameResolutionReplyText(issue!, false);
+    assert.match(reply, /คุณดูข้อมูลได้เฉพาะสาขา สาธุประดิษฐ์ ค่ะ/);
+    assert.doesNotMatch(reply, /บางนา/);
+  });
+
+  it('renders the out-of-scope reply in English too', () => {
+    const issue = expenseNameResolutionIssue(output({ branchOutOfScope: 'บางนา', availableBranches: [{ name: 'Head Office' }] }));
+    assert.match(expenseNameResolutionReplyText(issue!, true), /You can only view branch\(es\): Head Office/);
+  });
+});
+
+describe('reimbursement.list_pending_approvals forbidden outcome (REIMBURSEMENT_APPROVAL_NOT_PERMITTED)', () => {
+  it('names the role limit and the self-serve alternative, in Thai and English', () => {
+    const th = reimbursementApprovalNotPermittedReplyText(false);
+    assert.match(th, /บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ/);
+    assert.match(th, /ใบเบิกของฉันถึงไหนแล้ว/);
+    const en = reimbursementApprovalNotPermittedReplyText(true);
+    assert.match(en, /does not have permission/);
+    assert.match(en, /reimbursement claim/);
   });
 });
 

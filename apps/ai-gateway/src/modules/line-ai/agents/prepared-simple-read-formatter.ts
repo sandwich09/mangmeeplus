@@ -15,7 +15,7 @@
 import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS } from '@watchdog-bms/contracts';
 import type { LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
-import { aggregationIncomplete, appliedPeriod } from '../domain/logic/business-read-result-semantics';
+import { aggregationIncomplete, appliedPeriod, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
 
 export type PreparedFormatResult =
   | { kind: 'answer'; replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[] }
@@ -1016,11 +1016,15 @@ function formatReimbursementGetDetailSingleMetric(output: SpecialistOutput, ctx:
  * Authoritative deterministic terminal copy for a prepared read that did NOT reach a verified success —
  * an unavailable/error/failed source, or a success the compiled formatter could not verify. It states an
  * honest outcome with NO fabricated facts, numbers, source, or completion, and instantiates no composer /
- * router / critic / model. `PERMISSION_DENIED` (a post-plan state change) gets the forbidden line.
+ * router / critic / model. `PERMISSION_DENIED` (a post-plan state change) gets the forbidden line, except
+ * the one typed reimbursement-approval denial, which names the self-serve alternative instead.
  */
 export function preparedTerminalReply(output: SpecialistOutput, ctx: PreparedFormatContext): string {
   const english = isEnglish(ctx);
   if (output.status === 'PERMISSION_DENIED') {
+    if (output.toolCalls.some((call) => call.errorCode === REIMBURSEMENT_APPROVAL_NOT_PERMITTED)) {
+      return reimbursementApprovalNotPermittedReplyText(english);
+    }
     return english ? '🔒 You do not have permission to view this information.' : '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ';
   }
   // Spec §8 "อ่านข้อมูลไม่ได้ ฝั่งระบบ": a system-side read failure, not a question — no "try again".

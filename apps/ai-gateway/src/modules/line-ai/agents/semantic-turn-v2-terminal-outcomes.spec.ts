@@ -151,6 +151,14 @@ describe('item 2 (223-turn eval batch 2): a name-resolution result is answered d
       data: { vendorUnresolved: 'ร้านกาแฟอเมซอน', availableVendors: [{ id: 'v1', name: 'ร้านสมใจ' }, { id: 'v2', name: 'ร้านสมใจการค้า' }] } };
   }
 
+  // erp-tools.use-case.ts's ExpenseListRecentTool: a branch that exists in the company but outside
+  // this caller's own branch scope. Status stays 'ok' (a real, permission-checked answer), same as
+  // ambiguous/not-found above.
+  function branchOutOfScopeResult(): ToolResult {
+    return { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-27T18:20:29.656Z', sourceRefs: [SOURCE_REF],
+      data: { branchOutOfScope: 'บางนา', availableBranches: [{ id: 'b1', name: 'สาธุประดิษฐ์' }] } };
+  }
+
   function request(): LineAiTurnRequest {
     return {
       requestId: 'req-name-1', webhookEventId: 'event-name-1', messageText: MESSAGE_TEXT, messagePreviewHash: 'c'.repeat(16),
@@ -199,6 +207,62 @@ describe('item 2 (223-turn eval batch 2): a name-resolution result is answered d
     assert.ok(result.replyText.includes('ร้านสมใจ'));
     assert.ok(result.replyText.includes('ร้านสมใจการค้า'));
     assert.ok(!result.replyText.includes('TOOL_RESULT_NO_SOURCE'));
+  });
+
+  it('branch out of scope: a terminal answer naming only the caller\'s own branches, never needs_user', async () => {
+    const { result, calls } = await run(branchOutOfScopeResult());
+    assert.equal(calls, 1, 'only the control round runs — never a compose call around this data');
+    const coverage = result.semanticCoverage?.[0];
+    assert.equal(coverage?.status, 'handled');
+    assert.notEqual(coverage?.status, 'needs_user');
+    assert.equal(coverage?.reasonCode, 'EXPENSE_BRANCH_OUT_OF_SCOPE');
+    assert.ok(result.replyText.includes('คุณดูข้อมูลได้เฉพาะสาขา'));
+    assert.ok(result.replyText.includes('สาธุประดิษฐ์'));
+    assert.ok(!result.replyText.includes('บางนา'));
+    assert.ok(!result.replyText.includes('TOOL_RESULT_NO_SOURCE'));
+  });
+});
+
+describe('reimbursement.list_pending_approvals forbidden outcome: a terminal permission answer, never composed', () => {
+  function forbiddenResult(): ToolResult {
+    return { toolName: 'reimbursement.list_pending_approvals', status: 'forbidden', sourceRefs: [],
+      asOf: '2026-09-27T18:20:29.656Z', errorCode: 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED' };
+  }
+
+  function request(): LineAiTurnRequest {
+    const messageText = 'เบิกจ่ายรออนุมัติมีอะไรบ้าง';
+    return {
+      requestId: 'req-approval-1', webhookEventId: 'event-approval-1', messageText, messagePreviewHash: 'd'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'เบิกจ่ายที่รออนุมัติ', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+        requestedFilters: {} }],
+      // The gateway-level tool eligibility check (hasToolPermissions) also requires
+      // reimbursement.approve; this fixture exercises the ERP tool's own deeper, authoritative
+      // check (erp-reimbursement-tools.use-case.ts), which this caller's live grant can still fail —
+      // see that use case's spec for the real permission check this reply text renders.
+      userContext: baseUserContext(['reimbursement.approve']),
+    };
+  }
+
+  const CONTROL_CALL = JSON.stringify({ calls: [{ index: 0, toolName: 'reimbursement.list_pending_approvals', input: {} }] });
+
+  it('renders the role-limit reply naming the self-serve alternative, not the generic read-unavailable text (eval T-143)', async () => {
+    let calls = 0;
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> {
+      calls++; return { ok: true, text: CONTROL_CALL };
+    } };
+    const result = await runSemanticTurnV2({
+      req: request(), provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { return forbiddenResult(); },
+    });
+    assert.equal(calls, 1, 'only the control round runs — never a compose call around a forbidden result');
+    const coverage = result.semanticCoverage?.[0];
+    assert.equal(coverage?.status, 'handled');
+    assert.notEqual(coverage?.status, 'needs_user');
+    assert.equal(coverage?.reasonCode, 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED');
+    assert.ok(result.replyText.startsWith('บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ'), result.replyText);
+    assert.ok(result.replyText.includes('ใบเบิกของฉันถึงไหนแล้ว'), result.replyText);
+    assert.ok(!result.replyText.includes('ยังดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
   });
 });
 

@@ -1308,6 +1308,32 @@ describe('R-L4 F10 reimbursement.list_pending_approvals::list — เบิก�
     assert.equal(r.kind, 'answer');
     if (r.kind === 'answer') assert.match(r.replyText, /ไม่ระบุผู้ขอ/);
   });
+
+  // erp-reimbursement-tools.use-case.ts's ReimbursementListPendingApprovalsTool returns 'forbidden'
+  // with this errorCode for a caller without reimbursement.approve — preparedTerminalReply must name
+  // the self-serve alternative instead of the generic 🔒 permission line.
+  it('a caller without reimbursement.approve gets the role-limit reply, not the generic permission line', () => {
+    const denied: SpecialistOutput = {
+      agent: 'accounting', status: 'PERMISSION_DENIED', summary: 'ไม่มีสิทธิ์เข้าถึงข้อมูลบัญชี',
+      facts: [], suggestions: [], requiresHumanReview: false, toolData: [], asOf: undefined,
+      toolCalls: [{ name: 'reimbursement.list_pending_approvals', status: 'forbidden', durationMs: 1, errorCode: 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED' }],
+    };
+    assert.equal(formatPreparedSimpleRead(REIMBURSEMENT_APPROVALS, denied, TH).kind, 'unverified');
+    const th = preparedTerminalReply(denied, TH);
+    assert.match(th, /บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ/);
+    assert.match(th, /ใบเบิกของฉันถึงไหนแล้ว/);
+    assert.doesNotMatch(th, /🔒/);
+    assert.match(preparedTerminalReply(denied, EN), /does not have permission/);
+  });
+
+  it('a DIFFERENT permission denial still gets the generic 🔒 line', () => {
+    const denied: SpecialistOutput = {
+      agent: 'accounting', status: 'PERMISSION_DENIED', summary: 'ไม่มีสิทธิ์เข้าถึงข้อมูลบัญชี',
+      facts: [], suggestions: [], requiresHumanReview: false, toolData: [], asOf: undefined,
+      toolCalls: [{ name: 'reimbursement.list_pending_approvals', status: 'forbidden', durationMs: 1 }],
+    };
+    assert.match(preparedTerminalReply(denied, TH), /🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ/);
+  });
 });
 
 // ── R-L4 F11 — reimbursement.get_summary::single_metric ("ยอดเบิกจ่ายที่ยังไม่จ่าย") ────────────────
