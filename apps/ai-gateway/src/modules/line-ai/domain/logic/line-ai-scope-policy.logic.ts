@@ -7,6 +7,9 @@
  * about a module this company's package does not sell (sales, P&L, receivables, invoices, payroll,
  * banking, stock, purchasing) answered with a substituted expense or reimbursement read, or a
  * model-invented refusal with jargon/wrong reason instead of the fixed §8 copy.
+ * Item 2 (spec §11 "ห้ามส่ง อนุมัติ หรือจ่ายแทนผู้ใช้เอง"): a request to approve/reject/pay a
+ * reimbursement or confirm/void an expense from LINE got a generic "can't fetch this" reply
+ * instead of an honest "do this on the web" or "your role can't do this" answer.
  *
  * `scopePolicyOverride` is the single entry point both OrchestratorAgent (the sole fast-lane-
  * eligible subrequest) and runSemanticTurnV2 (every subrequest, so a mixed message still answers
@@ -89,10 +92,54 @@ export function unsoldModuleReplyText(topic: UnsoldModuleTopic, language: ScopeP
     : `แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่อง${topic.topicLabelTh}ค่ะ ตอนนี้น้องมั่งมีช่วยเรื่องรายจ่ายและใบเบิกได้ค่ะ เช่น ลองถามว่า "ค่าใช้จ่ายเดือนนี้เท่าไหร่" หรือ "ใบเบิกที่รออนุมัติมีกี่รายการ" ได้เลยค่ะ`;
 }
 
+// ---- Item 2: approve/reject/pay a reimbursement, or confirm/void an expense, from LINE --------
+
+type LineActionRule = { noun: readonly string[]; verb: readonly string[]; permission: string; actionLabelTh: string; page: 'reimbursements' | 'expenses' };
+
+const REIMBURSEMENT_NOUN_TH = ['ใบเบิก', 'เบิกจ่าย', 'คำขอเบิก'];
+const EXPENSE_NOUN_TH = ['ค่าใช้จ่าย', 'รายจ่าย'];
+
+// Spec §11: gateway never sends/approves/pays on the user's behalf. The final mutation always
+// happens on the web app, never over LINE — regardless of whether this actor may do it at all.
+const LINE_ACTION_RULES: readonly LineActionRule[] = [
+  { noun: REIMBURSEMENT_NOUN_TH, verb: ['อนุมัติ'], permission: 'reimbursement.approve', actionLabelTh: 'อนุมัติใบเบิก', page: 'reimbursements' },
+  { noun: REIMBURSEMENT_NOUN_TH, verb: ['ปฏิเสธ', 'ไม่อนุมัติ'], permission: 'reimbursement.reject', actionLabelTh: 'ปฏิเสธใบเบิก', page: 'reimbursements' },
+  { noun: REIMBURSEMENT_NOUN_TH, verb: ['จ่าย', 'โอนเงิน', 'ชำระเงิน'], permission: 'reimbursement.payment.record', actionLabelTh: 'จ่ายใบเบิก', page: 'reimbursements' },
+  { noun: EXPENSE_NOUN_TH, verb: ['ยืนยัน'], permission: 'expense.confirm', actionLabelTh: 'ยืนยันรายการค่าใช้จ่าย', page: 'expenses' },
+  { noun: EXPENSE_NOUN_TH, verb: ['ยกเลิก'], permission: 'expense.void', actionLabelTh: 'ยกเลิกรายการค่าใช้จ่าย', page: 'expenses' },
+];
+
+// eval T-093-b root cause for this classifier: "ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ" ("has my claim not
+// been paid yet?") contains the noun "ใบเบิก" and the verb "จ่าย" but ASKS about status, it does not
+// REQUEST the action — a status question ending in one of these markers is never a command.
+const STATUS_QUESTION_MARKERS_TH = ['ใช่ป่ะ', 'ใช่ไหม', 'ใช่มั้ย', 'หรือยัง', 'รึยัง', 'หรือเปล่า', 'รึเปล่า'];
+
+function lineActionRuleFor(text: string): LineActionRule | undefined {
+  if (includesAny(text, STATUS_QUESTION_MARKERS_TH)) return undefined;
+  return LINE_ACTION_RULES.find((rule) => includesAny(text, rule.noun) && includesAny(text, rule.verb));
+}
+
+/** Never "ดึงข้อมูลไม่ได้" — an honest reason: do it on the web when the actor may, or that their
+ *  role may not, at all. Names the page instead of a raw path/link (matches this module's own
+ *  READ_UNAVAILABLE_TEXT convention of naming the page in words, not embedding a URL). */
+export function lineActionBoundaryReplyText(text: string, permissions: readonly string[], language: ScopePolicyLanguage): string | undefined {
+  const rule = lineActionRuleFor(text);
+  if (!rule) return undefined;
+  const pageLabelTh = rule.page === 'reimbursements' ? 'ใบเบิก' : 'รายจ่าย';
+  if (permissions.includes(rule.permission)) {
+    return language === 'en'
+      ? `This action can't be completed on LINE. Please go to the ${rule.page} page on the web to do it.`
+      : `การ${rule.actionLabelTh}ทำผ่าน LINE ไม่ได้ค่ะ ไปที่หน้า${pageLabelTh}บนเว็บได้เลยค่ะ`;
+  }
+  return language === 'en'
+    ? 'Your role does not have permission to do this yet.'
+    : `บทบาทของคุณยังไม่มีสิทธิ์${rule.actionLabelTh}ค่ะ`;
+}
+
 // ---- Combined entry point ----------------------------------------------------------------------
 
 export type ScopePolicyOverride = {
-  reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED';
+  reasonCode: 'LINE_ACTION_NOT_SUPPORTED' | 'PACKAGE_FEATURE_NOT_ENABLED';
   text: string;
 };
 
@@ -100,7 +147,8 @@ export type ScopePolicyOverride = {
  * Checked BEFORE any tool is offered or called, per subrequest. `kind` exempts the unsold-module
  * check for 'help': a genuine product how-to question about an unsold topic still gets the honest
  * "no reviewed guide" answer from its own kind=='help' handling, not this generic package-limit
- * copy — but an explicit business read/write/general clause is intercepted.
+ * copy — but an approve/reject/pay/confirm/void request is intercepted regardless of kind, since
+ * the eval evidence showed the model classify it inconsistently (sometimes 'general', 'write').
  */
 export function scopePolicyOverride(
   text: string,
@@ -109,6 +157,8 @@ export function scopePolicyOverride(
   entitledFeatureKeys: readonly string[] | null | undefined,
   language: ScopePolicyLanguage,
 ): ScopePolicyOverride | undefined {
+  const lineAction = lineActionBoundaryReplyText(text, permissions, language);
+  if (lineAction) return { reasonCode: 'LINE_ACTION_NOT_SUPPORTED', text: lineAction };
   if (kind !== 'help') {
     const topic = unsoldModuleTopicFor(text);
     if (topic && !moduleFeatureEnabled(topic.featureKey, entitledFeatureKeys)) {

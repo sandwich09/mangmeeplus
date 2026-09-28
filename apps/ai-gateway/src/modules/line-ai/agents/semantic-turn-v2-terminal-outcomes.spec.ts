@@ -441,3 +441,62 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
     assert.ok(result.replyText.includes('12,345'), result.replyText);
   });
 });
+
+describe('item 2: approve/reject/pay a reimbursement or confirm/void an expense never runs on LINE (spec §11)', () => {
+  const APPROVER_PERMISSIONS = ['reimbursement.approve', 'reimbursement.reject', 'reimbursement.payment.record', 'reimbursement.read_related'];
+  const FINANCE_PERMISSIONS = ['expense.confirm', 'expense.void', 'expense.read_related'];
+
+  function forcedActionRequest(messageText: string, permissions: string[]): LineAiTurnRequest {
+    return {
+      requestId: 'req-action', webhookEventId: 'event-action', messageText, messagePreviewHash: '5'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind: 'general', goal: messageText, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(permissions),
+    };
+  }
+
+  async function runForced(messageText: string, permissions: string[]) {
+    return runSemanticTurnV2({
+      req: forcedActionRequest(messageText, permissions),
+      provider: { async generateText(): Promise<ProviderOutput> { throw new Error('a fully forced general-kind clause must never need the model'); } },
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('must never call a tool for an approve/reject/pay/confirm/void request'); },
+    });
+  }
+
+  it('approve a reimbursement claim with permission: do it on the web (eval T-144)', async () => {
+    const result = await runForced('ช่วยอนุมัติใบเบิกของสมชายให้หน่อยค่ะ', APPROVER_PERMISSIONS);
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
+    assert.ok(result.replyText.includes('LINE ไม่ได้'), result.replyText);
+    assert.ok(!result.replyText.includes('ดึงข้อมูล'), result.replyText);
+  });
+
+  it('approve a reimbursement claim WITHOUT permission: names the role limit (eval T-147)', async () => {
+    const result = await runForced('ช่วยอนุมัติใบเบิกอันนี้ให้หน่อยค่ะ', ['reimbursement.read_own']);
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
+    assert.ok(result.replyText.startsWith('บทบาทของคุณยังไม่มีสิทธิ์'), result.replyText);
+  });
+
+  it('reject a reimbursement claim', async () => {
+    const result = await runForced('ปฏิเสธใบเบิกนี้หน่อยค่ะ', APPROVER_PERMISSIONS);
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
+    assert.ok(result.replyText.includes('เว็บ'), result.replyText);
+  });
+
+  it('pay a reimbursement claim', async () => {
+    const result = await runForced('ช่วยจ่ายใบเบิกให้หน่อยค่ะ', APPROVER_PERMISSIONS);
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
+    assert.ok(result.replyText.includes('เว็บ'), result.replyText);
+  });
+
+  it('confirm an expense record', async () => {
+    const result = await runForced('ยืนยันรายการค่าใช้จ่ายนี้ให้หน่อยค่ะ', FINANCE_PERMISSIONS);
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
+    assert.ok(result.replyText.includes('เว็บ'), result.replyText);
+  });
+
+  it('void a confirmed expense record without permission', async () => {
+    const result = await runForced('ยกเลิกรายการค่าใช้จ่ายนี้หน่อยค่ะ', ['expense.read_related']);
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
+    assert.ok(result.replyText.startsWith('บทบาทของคุณยังไม่มีสิทธิ์'), result.replyText);
+  });
+});
