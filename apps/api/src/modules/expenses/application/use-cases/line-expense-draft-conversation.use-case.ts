@@ -117,6 +117,12 @@ export class LineExpenseDraftConversationUseCase {
     return routeContexts(await this.rows(ctx, chatKeyHash));
   }
 
+  /** The item a one-item draft's money belongs to, so a correction can name it; none otherwise. */
+  async soleItemRef(ctx: RequestContext, chatKeyHash: string, expenseId: string): Promise<string | undefined> {
+    const row = (await this.rows(ctx, chatKeyHash)).find((candidate) => candidate.id === expenseId);
+    return row?.state.items.length === 1 ? row.state.items[0]!.itemRef : undefined;
+  }
+
   async startFromReceipt(ctx: RequestContext, input: {
     expenseId: string;
     chatKeyHash: string;

@@ -130,6 +130,11 @@ export class LineReimbursementDraftService {
     return this.drafts.cancelCollection({ ctx: input.ctx, owner: this.owner(input.owner, input.ownerEpoch), actionId: input.actionId });
   }
 
+  /** The chat's one open draft action (COLLECTING or PREVIEW), same owner/permission checks as every other read. */
+  active(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number }) {
+    return this.drafts.active(input.ctx, this.owner(input.owner, input.ownerEpoch));
+  }
+
   get(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; actionId: string }): Promise<LineReimbursementDraftResult> {
     return this.drafts.get({ ctx: input.ctx, owner: this.owner(input.owner, input.ownerEpoch), actionId: input.actionId });
   }
