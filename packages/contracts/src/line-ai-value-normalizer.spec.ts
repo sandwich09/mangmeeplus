@@ -512,6 +512,35 @@ describe('resolvePeriodCandidates (spec §3.1)', () => {
     assert.equal(unresolvedMonthName('ค่าใช้จ่ายเดือนละ 500 บาท', []), null);
   });
 
+  // UAT 2026-09-29: "ของเดือนสิงหาละ" read no period, so the follow-up's August filter could not be grounded and
+  // the customer got "ยังดึงข้อมูลไม่ได้". Every way people type a month must resolve through this one resolver.
+  it('reads every spoken, dotted and full Thai month form a customer types, and nothing else', () => {
+    const today = '2026-09-29';
+    const key = (text: string) => extractValueCandidates(text, today).periods?.map((period) => period.monthKey);
+    const spoken = ['มกรา', 'กุมภา', 'มีนา', 'เมษา', 'พฤษภา', 'มิถุนา', 'กรกฎา', 'สิงหา', 'กันยา', 'ตุลา', 'พฤศจิกา', 'ธันวา'];
+    spoken.forEach((name, index) => {
+      const month = String(index + 1).padStart(2, '0');
+      const latest = `${index + 1 <= 9 ? '2026' : '2025'}-${month}`;
+      assert.deepEqual(key(`ของเดือน${name}ละ`), [latest], `เดือน${name}ละ`);
+      assert.deepEqual(key(`เดือน${name}จ่ายไปเท่าไหร่`), [latest], `เดือน${name}…`);
+      assert.deepEqual(key(`แล้ว${name}ล่ะ`), [latest], `แล้ว${name}ล่ะ`);
+      assert.deepEqual(key(`${name} 68`), [`2025-${month}`], `${name} 68`);
+      assert.deepEqual(key(`เดือน${name}ปี 2568`), [`2025-${month}`], `เดือน${name}ปี 2568`);
+    });
+    assert.deepEqual(key('เดือนกรกฏาค่ะ'), ['2026-07']);
+    for (const text of ['ส.ค.', 'ส.ค', 'ส. ค.', 'เดือน ส.ค 69', 'ยอด ส. ค. 2569', 'เดือนสค', 'เดือนสิงหาคม', 'สิงหาคม 2569', 'เดือน 8']) {
+      assert.deepEqual(key(text), ['2026-08'], text);
+    }
+    assert.deepEqual(key('เดือนสิงหาคม 2568'), ['2025-08']);
+    assert.deepEqual(key('เดือนสิงหาคาม 2568'), ['2025-08'], 'a typo of the full name keeps its written year');
+    for (const text of ['น้องกันยาส่งบิลมาแล้ว', 'ตุลาการสั่งให้จ่าย', 'มีนายสมชายมาเบิก', 'เดือนนี้มีค่าใช้จ่ายเท่าไหร่']) {
+      assert.ok(!(key(text) ?? []).some((monthKey) => monthKey !== '2026-09'), `no stray month in "${text}"`);
+    }
+    const followUp = 'ของเดือนสิงหาละ';
+    assert.equal(unresolvedMonthName(followUp, extractValueCandidates(followUp, today).periods ?? []), null);
+    for (const period of extractValueCandidates('แล้วสิงหาล่ะ ส.ค 69', today).periods ?? []) assert.ok('แล้วสิงหาล่ะ ส.ค 69'.includes(period.span));
+  });
+
   it('resolves all twelve numbered months and English abbreviations without a current-month fallback', () => {
     const english = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
     for (let month = 1; month <= 12; month += 1) {

@@ -1196,6 +1196,19 @@ export function activePreparedFamilies(allowlist: readonly string[]): ReadonlySe
   return new Set([...COMPILED_PREPARED_FAMILY_KEYS].filter((key) => allowed.has(key)));
 }
 
+/**
+ * The families LINE always serves (owner 2026-09-29: no capability switches). Spec R-L4 (mangmee-ai-expense-advisor
+ * spec §5): only a family with a verified formatter, a fixed fixture and a passed blind pairwise eval belongs here, so
+ * this is a deliberate subset of COMPILED_PREPARED_FAMILY_KEYS (tax/inventory/AP/CRM compile but are not approved).
+ * Nothing reads it from the environment: a stale AgentCore env once narrowed it to four families (UAT 2026-09-29).
+ */
+export const APPROVED_PREPARED_FAMILY_KEYS: ReadonlySet<string> = activePreparedFamilies([
+  'sales.get_sales_summary::single_metric', 'expense.list_recent::single_metric', 'accounting.get_summary::list',
+  'expense.get_daily_closing::single_metric', 'expense.list_recent::list', 'expense.get_breakdown::list',
+  'reimbursement.list_pending_approvals::list', 'reimbursement.get_summary::single_metric', 'expense.get_detail::single_metric',
+  'reimbursement.get_detail::single_metric',
+]);
+
 /** Format via the compiled family, or `unverified` when the family/shape has no formatter. */
 export function formatPreparedSimpleRead(familyKey: string, output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
   return (COMPILED_FORMATTERS.get(familyKey) ?? (() => ({ kind: 'unverified' as const })))(output, ctx);

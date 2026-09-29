@@ -533,11 +533,14 @@ export const aiGatewayConfigSchema = baseConfigSchema.extend({
   // M-01: the API issues at most eight single-use delegations for any one tool.
   AI_MAX_TOOL_CALLS: z.coerce.number().int().positive().max(8).default(8),
   AI_TOOL_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
-  // Item 10B: local agent orchestration
-  LINE_AI_AGENT_ORCHESTRATION_ENABLED: envBoolean.default(false),
+  // Item 10B: local agent orchestration. Owner 2026-09-29 ("no more switches; always on"): defaults ON. The
+  // gateway reads it only to pick the legacy deterministic path (maintenance serving sets it false); the
+  // AgentCore runtime never reads it. The capability keys below are no longer read by any code — the turn
+  // path is always on — and stay parseable only so existing deployment envs keep validating.
+  LINE_AI_AGENT_ORCHESTRATION_ENABLED: envBoolean.default(true),
   LINE_AI_AGENT_RUNTIME: z.enum(['strands-local', 'disabled', 'agentcore']).default('disabled'),
-  // Item 10F: native tool-use loop + coverage critic (fallback chain keeps 10B behavior when off)
-  LINE_AI_TOOLUSE_LOOP_ENABLED: envBoolean.default(false),
+  // Item 10F: native tool-use loop + coverage critic — always on in code (owner 2026-09-29); unread.
+  LINE_AI_TOOLUSE_LOOP_ENABLED: envBoolean.default(true),
   LINE_AI_COVERAGE_CRITIC_ENABLED: envBoolean.default(true),
   // Latency/autonomy Phases 3–6 (docs/plans/line-ai-latency-and-autonomy-lanes-plan.md). All DEFAULT
   // OFF / empty; off restores the current second-router + composer/critic path. Phase 3 shadow only

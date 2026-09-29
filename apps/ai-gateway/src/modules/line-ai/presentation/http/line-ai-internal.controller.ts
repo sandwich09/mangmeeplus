@@ -15,6 +15,7 @@ import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-con
 import { LineAiTurnUseCase } from '../../application/use-cases/line-ai-turn.use-case';
 import { createProvider } from '../../infrastructure/provider/provider.factory';
 import { IntentRouterAgent } from '../../agents/intent-router.agent';
+import { APPROVED_PREPARED_FAMILY_KEYS } from '../../agents/prepared-simple-read-formatter';
 import { CASUAL_CONVERSATION_SYSTEM_PROMPT } from '../../agents/response-composer.agent';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
 import {
@@ -545,10 +546,12 @@ export class LineAiInternalController {
     const hasAttachment = (body.attachments?.length ?? 0) > 0;
     const router = new IntentRouterAgent(
       createProvider(this.config, hasAttachment ? { timeoutMs: DOCUMENT_OCR_TIMEOUT_MS } : undefined),
-      this.config.lineAiDraftEditEnabled,
-      { enabled: this.config.lineAiApprovedKnowledgeEnabled },
+      // Owner 2026-09-29: draft edit, approved knowledge and the approved prepared families are always on —
+      // no environment value can switch or narrow them (a stale AgentCore env did, UAT 2026-09-29).
+      true,
+      { enabled: true },
       this.config.lineAiPublicLookupEnabled,
-      this.config.lineAiPreparedSimpleReadEnabled ? this.config.lineAiDeterministicResponseFamilies : [],
+      [...APPROVED_PREPARED_FAMILY_KEYS],
     );
     const routed = await router.routeIntake(body);
     const { receiptCandidate, ...plan } = routed;

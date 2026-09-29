@@ -619,10 +619,10 @@ describe('aiGatewayConfigSchema – item 10B new keys', () => {
     assert.equal(aiGatewayConfigSchema.safeParse({ ...base, AI_MAX_TOOL_CALLS: 9 }).success, false);
   });
 
-  it('defaults LINE_AI_AGENT_ORCHESTRATION_ENABLED to false', () => {
+  it('defaults LINE_AI_AGENT_ORCHESTRATION_ENABLED to true (owner 2026-09-29: always on)', () => {
     const result = aiGatewayConfigSchema.safeParse(base);
     assert.equal(result.success, true);
-    assert.equal(result.data?.LINE_AI_AGENT_ORCHESTRATION_ENABLED, false);
+    assert.equal(result.data?.LINE_AI_AGENT_ORCHESTRATION_ENABLED, true);
   });
 
   it('defaults the remaining Phase 3/6 shadow flags OFF; PREPARED_SIMPLE_READ_ENABLED and its R-L4 family allowlist default ON (owner policy 2026-09-27, no manual rollout)', () => {
