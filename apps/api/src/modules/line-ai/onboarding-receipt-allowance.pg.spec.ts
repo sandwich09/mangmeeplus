@@ -226,7 +226,7 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
         assert.equal(request.companyId, companyId);
         assert.equal(request.userId, userId);
         assert.equal(request.attachment.contentBase64, bytes.toString('base64'));
-        assert.equal(request.requireEvidenceV2, true);
+        assert.equal(request.requireEvidenceV2, false, 'the web read is not strict by default (option A, 2026-09-29)');
         providerCalls += 1;
         const rows = {
           seller: 'SELLER ร้านขายกระดาษ', date: `DATE ${date}`, vatMode: 'VAT MODE NO_VAT',

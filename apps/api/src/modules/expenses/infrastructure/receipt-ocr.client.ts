@@ -1,4 +1,3 @@
-import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
@@ -350,8 +349,10 @@ export class ReceiptOcrClient {
       this.logger.warn({ msg: 'receipt OCR response invalid', requestId: request.requestId, ...safeLineErrorDetails(error) });
       result = { status: 'failed', errorCode: 'OCR_JSON_PARSE_FAILED' };
     }
-    const requireEvidenceV2 = request.requireEvidenceV2 === true || (this.config.lineAiReliabilityV2Mode === 'on'
-      && isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, request.companyId));
+    // Owner decision 2026-09-29 (option A): strict evidence only on an explicit request, never from the
+    // reliability-v2 default. Real receipts fail its citation rules today, so the web reads like LINE's
+    // `requestReceiptOcr` (docs/agent-memory/web-receipt-evidence-v2-2026-09-29.md).
+    const requireEvidenceV2 = request.requireEvidenceV2 === true;
     if (requireEvidenceV2 && result.status === 'ok' && !verifyReceiptOcrEvidenceV2(result, request)) {
       result = { status: 'failed', errorCode: 'OCR_EVIDENCE_INVALID', ...(result.usage ? { usage: result.usage } : {}) };
     }
@@ -399,8 +400,7 @@ export class ReceiptOcrClient {
     const secret = this.config.aiGatewayInternalSecret!;
     const governedRequest = {
       ...request,
-      requireEvidenceV2: request.requireEvidenceV2 === true || (this.config.lineAiReliabilityV2Mode === 'on'
-        && isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, request.companyId)),
+      requireEvidenceV2: request.requireEvidenceV2 === true,
       ...(modelPolicy && { modelPolicy }), ...(hold && { budgetEnvelope: hold.envelope }),
     };
     let response: Response;

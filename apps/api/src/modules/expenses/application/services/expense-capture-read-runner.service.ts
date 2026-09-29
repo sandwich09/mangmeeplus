@@ -1,4 +1,3 @@
-import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { createHash, randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
@@ -181,14 +180,18 @@ export class ExpenseCaptureReadRunnerService {
     }
   }
 
-  /** One claimed job, start to terminal state. Never throws — every exit writes a state. */
-  async runClaimed(job: CaptureReadJobRow): Promise<void> {
+  /**
+   * One claimed job, start to terminal state. Never throws — every exit writes a state.
+   * `fieldEvidenceV2` is the explicit ask for strict field evidence; kick and drain never pass it
+   * (Owner decision 2026-09-29, option A — see the same rule in `ReceiptOcrClient`).
+   */
+  async runClaimed(job: CaptureReadJobRow, options: { fieldEvidenceV2?: boolean } = {}): Promise<void> {
     const owner = job.leaseOwner!;
     const startedAt = Date.now();
     let checkpoint = readCheckpoint(job.checkpointJson);
     let outcome: RunOutcome;
     try {
-      outcome = await this.execute(job, owner, startedAt, checkpoint, (next) => { checkpoint = next; });
+      outcome = await this.execute(job, owner, startedAt, checkpoint, (next) => { checkpoint = next; }, options.fieldEvidenceV2 === true);
     } catch (error) {
       this.logger.error({ msg: 'capture.read.unhandled', jobId: job.id, ...safeLineErrorDetails(error) });
       outcome = { status: 'FAILED', errorCode: 'CAPTURE_READ_UNHANDLED' };
@@ -205,6 +208,7 @@ export class ExpenseCaptureReadRunnerService {
     startedAt: number,
     checkpoint: CaptureCheckpoint,
     save: (next: CaptureCheckpoint) => void,
+    fieldEvidenceV2: boolean,
   ): Promise<RunOutcome> {
     if (job.attempts > EXPENSE_CAPTURE_MAX_ATTEMPTS) {
       return { status: 'FAILED', errorCode: 'attempts_exhausted' };
@@ -331,8 +335,6 @@ export class ExpenseCaptureReadRunnerService {
     // Windows run over whatever stage 1 produced, even when the read stopped early: facts from the
     // pages that WERE read are worth more to the reviewer than a job that reports only a pause.
     if (!pausedReason) {
-      const fieldEvidenceV2 = this.config.lineAiReliabilityV2Mode === 'on'
-        && isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, job.companyId);
       const savedWindows = Object.values(checkpoint.windows);
       // Old long-page checkpoints indexed windows after silently clipping page tails. Their wN
       // identities cannot be applied to the complete window plan, nor upgraded by inference.
