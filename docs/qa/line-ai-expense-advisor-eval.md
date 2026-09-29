@@ -354,6 +354,16 @@ past-month call (missing its last few days) still correctly fails — its `toDat
 
 ## Known limitations / what blocked or shaped this build
 
+- **The harness never ran AgentCore's own environment (found 2026-09-29).** `launch-gateway.mjs` runs the
+  orchestrator in-process (`strands-local`) with the gateway's env, but UAT/production run it inside the AgentCore
+  artifact, whose env the release copies forward. A stale copy there narrowed the prepared families to four and
+  left the tool loop off, and no run here could see it. The turn path no longer reads those switches, and
+  `apps/ai-gateway/src/agentcore/runtime-minimal-env.spec.ts` now boots the runtime from a minimal and a stale env.
+- **`must_answer` used to pass any non-empty reply.** The general-item fallback ("ยังตอบข้อนี้ไม่ได้") passed, so the
+  final tuning run's eight knowledge-question dead ends (and two held-out ones) scored as answers. `scorer.ts` now
+  fails a stock non-answer on a `must_answer` turn. The corpus templates months as full names or dotted
+  abbreviations only, so spoken forms such as "สิงหา" were never exercised.
+
 - **Runtime coupling to a heavier corpus shape.** `runLineReliabilityRuntime` validates its
   `manifest.corpus` as a full v2.4 `ReliabilityFixture[]` (capabilities `C01`-`C18`, financial-fact
   oracles, required/forbidden effects, delivery-batch bookkeeping) — built for a different, paired
