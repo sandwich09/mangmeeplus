@@ -94,6 +94,8 @@ export type LineReimbursementDraftSnapshotV1 = {
   requesterUserId: string;
   requesterDisplayName: string;
   branchId: string;
+  /** Display only: the branch's name for the customer-facing preview. */
+  branchName?: string;
   currency: string;
   title?: string;
   reason: string;
@@ -136,6 +138,8 @@ export type LineReimbursementDraftReceiptV1 = {
   appliedRequestUpdatedAt: string;
   currentState?: string;
   currentRequestUpdatedAt?: string;
+  /** The claim's document number once it has one (set at submit); the receipt never prints `requestId`. */
+  requestNo?: string;
 };
 
 export type LineReimbursementDraftResponseV1 =

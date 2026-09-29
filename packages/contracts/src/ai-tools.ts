@@ -488,7 +488,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     // numbers, what the AI assumed or could not verify, and what may still be changed over LINE —
     // never a period total and never a list, which stay with expense.list_recent.
     name: 'expense.explain_record',
-    description: 'Explain ONE expense record this user captured through LINE: vendor, date, document number, status, product lines, additional charges such as service charge, discount, the totals identity as real numbers, the values the reader assumed, and how to change it. Use for a "why/how is this bill made up" question about the user\'s own recent record (ทำไม, บิลเมื่อกี้, ใบเสร็จนี้). Never use it for a period total or a list.',
+    description: 'Explain ONE expense record this user captured through LINE: vendor, date, document number, status, product lines, additional charges such as service charge, discount, the totals identity as real numbers, the values the reader assumed, and how to change it. Use for a "why/how is this bill made up" question about the user\'s own recent record (ทำไม, บิลเมื่อกี้, ใบเสร็จนี้), and for whether that record was saved, what state it is in now, or seeing it again (บันทึกไปยัง, สรุปบันทึกไหม, ขอดูข้อมูลเดิม, อันเมื่อกี้เป็นยังไง) — with no input it reads the newest record of THIS chat. Never use it for a period total or a list.',
     businessSubjects: ['expense'],
     questionKinds: ['detail', 'explain'],
     category: 'read_detail',

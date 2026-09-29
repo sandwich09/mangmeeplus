@@ -107,8 +107,9 @@ export class LineConversationContextService {
       for (const key of command.delete === 'all' ? ['language', 'detail', 'presentation'] as const : command.delete ?? []) delete next[key];
       if (Buffer.byteLength(JSON.stringify(next), 'utf8') > 1024) throw new Error('LINE_PREFERENCE_TOO_LARGE');
       const expiresAt = Object.values(next).reduce((max, entry) => Math.max(max, Date.parse(entry.expiresAt)), 0);
-      await tx.aiConversation.update({ where: { id }, data: { preferenceJson: Object.keys(next).length ? next as Prisma.InputJsonValue : Prisma.DbNull, preferenceVersion: { increment: 1 }, preferenceRequestId: command.requestId, preferenceExpiresAt: expiresAt ? new Date(expiresAt) : null,
-        ...(command.delete ? { stateVersion: { increment: 1 }, taskStateJson: Prisma.DbNull, stateExpiresAt: null } : {}) } });
+      // Preference revision and expiry are separate from task state (spec §17.2): forgetting a style never drops the
+      // chat's open work (NAT11 turn 5, "ไม่ลบเอกสารธุรกิจหรือ task เดิม"); the version bump above fences old readers.
+      await tx.aiConversation.update({ where: { id }, data: { preferenceJson: Object.keys(next).length ? next as Prisma.InputJsonValue : Prisma.DbNull, preferenceVersion: { increment: 1 }, preferenceRequestId: command.requestId, preferenceExpiresAt: expiresAt ? new Date(expiresAt) : null } });
       return 'applied';
     });
   }

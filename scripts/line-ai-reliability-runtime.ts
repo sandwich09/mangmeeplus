@@ -214,7 +214,8 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
   assert.equal(manifest.versions.sourceCommit, sourceCommit, 'REPLAY_SOURCE_COMMIT_CHANGED');
   assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).trim(), '', 'REPLAY_REQUIRES_COMMITTED_SOURCE');
-  const allowedEnv = /^(?:LINE_AI_[A-Z0-9_]+|LINE_INTAKE_[A-Z0-9_]+|AI_MODEL_[A-Z0-9_]+|AI_GATEWAY_TRANSPORT|AI_GATEWAY_HOSTNAME|ATTACHMENT_STORAGE_PROVIDER)$/;
+  // The production capture/intake behaviour flags are named one by one (release 2026-09-29 carried-forward env).
+  const allowedEnv = /^(?:LINE_AI_[A-Z0-9_]+|LINE_INTAKE_[A-Z0-9_]+|AI_MODEL_[A-Z0-9_]+|AI_GATEWAY_TRANSPORT|AI_GATEWAY_HOSTNAME|ATTACHMENT_STORAGE_PROVIDER|LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED|EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED|EXPENSE_DRAFT_NUMBERING_ENABLED|RECEIPT_QUOTA_ENFORCED|LINE_FREE_AI_BUDGET_SATANG|AI_OCR_MAX_PER_COMPANY|AI_LLM_MAX_PER_COMPANY)$/;
   for (const [key, value] of Object.entries(manifest.environment)) {
     assert.ok(allowedEnv.test(key) && !/TOKEN|SECRET|URL|HOSTNAME/.test(key), 'REPLAY_UNSAFE_ENV'); process.env[key] = value;
   }

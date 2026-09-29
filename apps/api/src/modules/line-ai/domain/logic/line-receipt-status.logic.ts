@@ -32,7 +32,12 @@ const FILE_ATTEMPT_PATTERNS: readonly RegExp[] = [
 // "ขนาดนี้/ขนาดนั้น" is a plain intensifier, not a file-size reference. Only count it as a size
 // complaint when the message also names the thing that's too big.
 const BARE_SIZE_WORD = /ขนาด(?!ไฟล์)/u;
-const MEDIA_NOUN_PATTERN = /(?:ไฟล์|รูป|ภาพ|เอกสาร|pdf)/iu;
+const MEDIA_NOUN_PATTERN = /(?:ไฟล์|รูป|ภาพ|เอกสาร|pdf|file|photo|image)/iu;
+
+/** Whether the message itself names a file, photo or document. */
+export function namesLineMedia(text: string): boolean {
+  return MEDIA_NOUN_PATTERN.test(text);
+}
 
 /** A progress question is read-only. Do not turn editing, payment or tax questions into status. */
 export function receiptStatusQuestion(text: string): 'receipt' | 'contextual' | 'file_attempt' | null {

@@ -253,6 +253,11 @@ export class PrismaReimbursementRepository {
     return { name: company.registeredName ?? company.name, taxId: company.taxId, branchName: branch?.name ?? null };
   }
 
+  /** The branch's display name for a LINE draft preview; the customer never reads the branch id. */
+  async findBranchName(companyId: string, branchId: string): Promise<string | null> {
+    return (await this.prisma.client.branch.findFirst({ where: { id: branchId, companyId }, select: { name: true } }))?.name ?? null;
+  }
+
   // ---- Policy ----
 
   async findPolicy(companyId: string, branchId?: string | null): Promise<ReimbursementPolicyRecord | null> {

@@ -8,6 +8,7 @@ import { LineDraftUpdateUseCase } from '../../../expenses/application/use-cases/
 import { GetProductUseCase } from '../../../inventory/application/use-cases/list-products.use-case';
 import { GetDocumentUseCase, ListDocumentsUseCase } from '../../../accounting-documents/application/use-cases/document.use-case';
 import { GetExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
+import { parseLineExpenseDraftContinuation } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
 import { GetReimbursementDetailUseCase } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
 import { GetReimbursementAiSummaryUseCase } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
@@ -276,6 +277,10 @@ export class ExpenseExplainRecordTool implements ErpReadToolPort {
         && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status);
       const products = expense.lines.filter((line) => line.chargeKind == null);
       const chargeTotal = expense.charges.reduce((sum, charge) => sum.plus(new Decimal(charge.amount)), new Decimal(0));
+      // A LINE text-note draft keeps what the user said (e.g. "สามร้อย", then "350") in its collection
+      // until the item is complete enough to become a line; without it the record reads as 0 (NAT-12).
+      const collection = parseLineExpenseDraftContinuation(expense.sourceChannelMetadataJson?.['lineExpenseDraftContinuation']);
+      const staged = collection ? collection.items.filter((item) => !item.description || !item.quantity || (!item.unitPrice && !item.totalAmount)).slice(0, 10) : [];
       return {
         toolName: this.toolName, status: 'ok', asOf,
         data: {
@@ -308,6 +313,12 @@ export class ExpenseExplainRecordTool implements ErpReadToolPort {
             vatAmount: expense.vatAmount,
             grandTotalAmount: expense.grandTotalAmount,
           },
+          ...(staged.length ? { lineDraftItemsNotYetOnDocument: staged.map((item) => ({
+            description: item.description ?? item.sourceText, quantity: item.quantity ?? null,
+            unitPrice: item.unitPrice ?? null, totalAmount: item.totalAmount ?? null,
+          })), lineDraftStillAsks: [...new Set(collection!.unresolvedQuestions.map((question) => question.field))],
+          // The user stopped filling it in over LINE; what they said stays on the draft, not on the document.
+          ...(collection!.status === 'CANCELLED' ? { lineDraftCollectionStopped: true } : {}) } : {}),
           assumptions: explainAssumptions(expense),
           // Slice B's stored-header-vs-stored-lines check, computed by the detail mapper for every
           // record. A record whose own totals do not reconcile must SAY SO before it explains an
