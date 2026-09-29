@@ -1,6 +1,6 @@
 # Agent Memory: chat-credit-addons-implementation
 
-Status: PR A (shared billing foundation) implemented 2026-09-29 and committed on branch `claude/addons-pr-a-foundation-20260929` (worktree `/private/tmp/mangmee-addons-pr-a-20260929`, base develop `4edd4568`). Not pushed, no PR, not deployed. PR B–G not started. Develop moved to `3242f214` meanwhile (LINE-AI files only, no overlap, no migration).
+Status: PR A merged to develop (#878, `3a863b70`). PR B (receipt image ledger, shared add-on grant seam, admin grant for images) and PR C (AI credit cycles, ledger, LINE v2 SHARED funding, holds across months, cap warnings) implemented 2026-09-29 and integrated with the sales-event SD-A…E work and the LINE fixes on `claude/sales-credit-integration-20260929` for the bundled UAT release. The AI credit ledger stays dormant for every shop until PR G sets `aiCreditCutoverAt`.
 Owner: thawatchai / Claude (controller + implementer)
 Scope: add-on program PR A–G — spec `docs/specs/chat-credit-and-receipt-addons-spec-th.md`, plan `docs/plans/chat-credit-and-receipt-addons-plan-th.md`. Sales-event discounts (`docs/specs/sales-event-discounts-spec-th.md`, plan SD-A…SD-F) builds on PR A.
 
@@ -39,4 +39,67 @@ Verification (2026-09-29, worktree above):
 - W00 manifest spec 4/4, not regenerated (no hashed file changed). `sync-production-maintenance-release-pins.mjs --check`: status=current. Web typecheck 0. `git diff --check` clean.
 - PG on throwaway postgres:16 `mangmee-addons-pra-pg-20260929` (port 15532, fresh `migrate deploy` of two DBs, removed afterwards): foundation 4/4, recipient-capture 3/3, admin-tools 3/3; Extended billing PG (receipts, grace, trial-carryover, caps, issues, advance-deal, purchase-source) 58/58; settings + issue-resolution 7/7.
 
+## PR B (2026-09-29)
+
+Decisions:
+- Image cut-over = the company's receipts come from its billing account's lots (`CompanyPlanTerm.billingReceiptAccountId`, spec §11.3/§16 item 9). No separate image marker; `aiCreditCutoverAt` (PR C) is AI credit only. `LEGACY_MONTH` shops keep every old rule.
+- B1 allocator (`billing-receipt-grants.ts`): package (INITIAL/RENEWAL/REPEAT/UPGRADE/TRIAL_CARRYOVER) → team (ADMIN_ADJUSTMENT/ADD_ON_ADMIN/SALES_EVENT) → purchased (ADD_ON_PAID), FEFO inside a group; unknown kind fails closed. This changes lot order for paid shops that hold a legacy ADMIN_ADJUSTMENT gift (package first, previously FEFO across both) — spec §6/D8 asks for it. `billing-trial-carryover.pg.spec.ts` asserted the old order (`paid-uses-earliest-gift` → ADMIN_ADJUSTMENT); updated to `paid-uses-package-before-gift` → TRIAL_CARRYOVER.
+- `packageReceiptBalance` excludes only the three add-on kinds (plan text says "package kinds only"; excluding ADMIN_ADJUSTMENT would change quotes/usage of shops with legacy gifts). Package flows and `receiptQuotaSnapshot` use it, so the existing `BillingReceiptUsage` keeps its meaning; add-on balances are PR E's `quotaSummary`.
+- Ledger: `ReceiptUnitEntry` (RESERVE/CONSUME/RELEASE/REVOKE, unique `(companyId, operationKey, generation, kind)`, `operationKey = <sourceRoute>:<requestId>`). `CompanyOcrUsageEvent.receiptUnitGeneration` null = admission from before the ledger, still counted from its event: no backfill, and a rolling deploy cannot hand out a unit twice. Resume renews the event id, not the generation.
+- D4/Q4: `settleCompanyOcrAdmission(..., noReceipt)` releases a non-receipt read in a cut-over shop but keeps the event (request fence; the ops brake still counts the provider read). Technical failures still go through `releaseCompanyOcrAdmission` (deletes the event). Signature/reference/substitute/UNSUPPORTED/CLARIFY LINE images still CONSUME (charged as today) — needs a LINE-AI owner decision (PR F).
+- Seam API (for PR C, PR E, SD-F): `applyAddOnGrant(tx, { companyId, billingAccountId, productKind, sourceKind: 'ADD_ON_PAID'|'ADD_ON_ADMIN'|'SALES_EVENT', sourceKey, sourceHash (sha256 hex), units, at })` → `{ productKind, lotId, units, availableAt, expiresAt, replayed }`, plus `addOnGrantReady(db, companyId, billingAccountId, productKind)`. Takes L1 → L4 itself (re-entrant); runs in the caller's transaction; caller verifies its source and writes its own audit. No `expiresAt` input (spec §16 item 1 lists one): always `appendPackageInterval(at, 'year')`. Same key + same payload (hash excludes `at`) returns the first lot and dates; different payload throws `billing.addon_source_changed`. `CHAT_CREDIT` throws `billing.addon_consumer_not_ready` until PR C adds its branch (and `addOnGrantReady`'s).
+- B5 admin: reviewed `ADDON_ADMIN_GRANT`/`ADDON_ADMIN_REVOKE` with the receipt-adjustment permission set. Revoke is a preview type (spec §8.1 listed a `revoke` action). Revoke only team lots (ADD_ON_ADMIN, SALES_EVENT), REVOKE entry for unused units + `revokedAt`. New Thai texts: `CONTROL_ADDON_NOT_READY`, `CONTROL_COMPANY_HELD` (the latter already thrown by the legacy receipt adjustment without text).
+- B6: quota card claim key `<monthKey>` (no add-on lot, unchanged) or `<monthKey>#<latest add-on lot createdAt ms>`, computed inside claim/release, so `process-line-webhook.use-case.ts` needed no card change.
+- Migration `20260929150000_receipt_unit_entries` also replaces `BillingReceiptGrant_valid_units_period_kind` with a wider check (add-on kinds, units > 0) by the same drop/add the ADMIN_ADJUSTMENT and TRIAL_CARRYOVER migrations used; passes `assertProductionA5NoDestructiveSql`.
+- The PG spec went to the `ci.yml` Step 0 release gate (controller instruction), not `extended-tests.yml` (plan §3.1): `ci.yml` changed again → twin to main before any UAT `all` dispatch.
+
+`process-line-webhook.use-case.ts` lines touched (for the in-flight LINE media fixes): import at `:175` (+`settleCompanyOcrAdmission`), type at `:379` (+`noReceipt?`), `executeReceiptUpload` finally `:7974-7977` (new `else if` settle branch), non-receipt classification `:8587` (`admissionAttempt.noReceipt = true`).
+
+Blockers / hand-offs for PR C:
+- Add the `CHAT_CREDIT` branch to `applyAddOnGrant` and `addOnGrantReady` (AiCreditGrant lot, `aiCreditCutoverAt`), and `chat` to `BillingAddOnCredits`; the admin service already accepts `productKind: 'CHAT_CREDIT'` and refuses it through `addOnGrantReady`.
+- PR C's migration timestamp must follow `20260929150000`.
+
+Commits: `a5e197ba` = the seam alone on develop `3a863b70` (PR C / SD-F base); the next commit on the branch is the rest of PR B.
+
+Verification (2026-09-29, worktree above; machine rule from 14:1x: no JS API typecheck, no full suites, heavy lock only for PG):
+- contracts: build 0, typecheck 0, package tests 339/339, `ci.yml` contracts line 26/26.
+- api: native TypeScript 7 typecheck (coordinator's serialized script) rc=0, web rc=0; `test:boot` 0 ("Nest resolved every provider"); `check-di-metadata` ok; spec-suite-coverage 3/3; body-validation-coverage 4/4; destructive-SQL guard on the migration: pass.
+- new specs: `billing-receipt-allocator.spec.ts` 6/6, `billing-addon-admin-grants.spec.ts` 6/6, `receipt-addon-ledger.pg.spec.ts` 7/7.
+- touched specs: expense-extraction 55/55, capture runner 33/33, ai-gateway client 39/39, company-ai-usage-meter 155 pass/2 skipped, billing-financial 4/4, line-ai-combined-regression 9/9, partner-support-tools 44/44, process-line-webhook full file 383/383; W00 regenerated, manifest spec 4/4; web error specs 62/62.
+- PG on throwaway postgres:16 `mangmee-addons-prb-pg-20260929` (port 15542, fresh `migrate deploy` per DB, removed after each run): product-foundation 4/4, recipient-capture 3/3, admin-tools 3/3, billing-receipts 14/14, grace 15/15, trial-carryover 5/5, caps 10/10, issues 9/9, advance-deal 3/3, purchase-source 2/2, settings + issue-resolution 7/7, expense-capture-read 5/5, receipt-reliability 6/6, onboarding-receipt-allowance 1/1 (after `prisma/sync-permissions.ts`, as Extended Tests does). The seven Extended billing PG files in ONE tsx invocation on the loaded machine hit "Unable to start a transaction in the given time" (billing-issues too, which never touches receipts); one file at a time all pass.
+- pins `--check`: current. `git diff --check`: clean.
+- Not run, per the coordinator's machine rule: `node scripts/run-line-ai-whole-chain-acceptance.mjs`, full API and web suites (run once on the integrated branch).
+
+Next: controller review → push → PR to develop → twin to main (`ci.yml` changed). PR C and SD-F build on the seam above.
+
+PR A next (done): controller reviews the branch → push → PR to develop → twin to main (`ci.yml` changed). Then Extended Tests if wanted, and release through UAT and Production before any policy with `addOnPriceIds` is published (F-09). PR B and PR C can start from develop after merge.
 Next: controller reviews the branch → push → PR to develop → twin to main (`ci.yml` changed). Then Extended Tests if wanted, and release through UAT and Production before any policy with `addOnPriceIds` is published (F-09). PR B and PR C can start from develop after merge.
+
+## PR C — AI credit cycles, ledger, v2 SHARED funding (2026-09-29)
+
+Decisions and deviations (also in the plan's PR C note):
+- Migration `20260929160000_ai_credit_ledger`: `AiCreditGrant`, `AiCreditEntry`, `CompanyAiConfiguration.aiCreditCutoverAt/aiCreditCutoverSource`; String values with CHECKs; additive only. No company changes behaviour until PR G sets `aiCreditCutoverAt`.
+- Hold liveness comes from `AiBudgetReservation.status` (ADR 0013 "no second counter"): a RESERVE entry counts only while its reservation is RESERVED/DISPATCHED/UNRESOLVED. Cancel, sweep and operator release write no entry; settle and charge-at-bound write CONSUME on the held lots (never above the hold). Late evidence after an operator release (CANCELLED → settled-anomaly) consumes nothing: provider loss (spec §15.2). No RELEASE entries are written (kind kept in the CHECK for later).
+- Cycle anchor = `billingAnchorDay ?? start day of the continuous run of periods`, not `periodStart.getUTCDate()` (spec §5.1 formula splits a subscription month that starts on a clamped day). Upgrade invoices never start a cycle (only periods starting at/after the covered end count). Admin gift days stretch the running cycle to `paidThrough` with no new allowance (the gift records `aiQuotaAdded: 0`) — open for the Owner if gift days should carry AI credit.
+- Funding is evaluated at the turn's admission time and BEFORE `authorizeAndClaim`, so a credit refusal commits without burning the ordinal; the turn's cycle is pinned in `budgetAuthorityJson.fundingContext.cycleKey` (never in the signed grant). Image intake (`line-intake-image/2`) is never funded (C4); audit N-1 still waits for the LINE AI owner.
+- Cut-over SHARED companies skip the calendar CHAT cap (cap = TOTAL) on the rendered path; an explicit SPLIT CHAT cap still applies. `readAiBudgetReadiness` reports CHAT = TOTAL for them.
+- Credit refusals keep `reason` + `budgetScope: 'CHAT'` and add in-process `aiCredit: EXHAUSTED | INSUFFICIENT | PACKAGE_REQUIRED`; the internal controller drops it (no gateway contract change, no new `AI_BUDGET_REFUSAL_CODES`).
+- C5: operator hold list covers every month, 100 per page with `?cursor=<createdAtISO>_<id>`; the read sweeps current, previous and every month with a RESERVED/DISPATCHED row. New code `partner_ai_credit_holds_cursor_invalid` has Thai text. Web sentence now “ค้นทุกเดือนที่ยังมีรายการค้าง”; a next-page control is PR F.
+- C6: `readAiCreditSalesReadiness` (TOTAL headroom ≥ held credit + pack; held = remaining, since used credit is already in spend). Cap writers warn (never refuse): `SetPartnerAiModelResult.aiCreditWarning`, `PlatformAiBudgetDto.aiCreditWarningCompanyCount`; read-only under the locks already held.
+- C7: PR B's seam `a5e197ba` merged; `8772832c` wires its CHAT_CREDIT branch: `addOnGrantReady` = paid term on the account AND `aiCreditCutoverAt <= now`; `applyAddOnGrant` writes the lot through `applyAiCreditGrant` under the seam's L1 → L4, key `addon:<billingAccountId>:<sourceKey>` (per account like receipt lots, never colliding with `cycle:` lot keys); replay before readiness; a changed payload throws `billing.addon_source_changed`.
+- Still to do in PR B's admin service (`billing-addon-admin-grants.service.ts`, not in the seam commit) for CHAT_CREDIT: revoke (`revocableLot` reads `billingReceiptGrant` only → use `AiCreditGrant` + `revokeAiCreditGrant` with `addon-revoke:<operationId>`), `additional()`/`list()`/`lotView` (images only → add the chat balance from `readAiCreditBalance`; contracts `BillingAddOnCredits` gains it). Grant approval already works for CHAT through the seam.
+
+Verification (2026-09-29, HEAD `8772832c`; machine rule 14:20: no JS API typecheck, no full suites):
+- contracts: build 0, typecheck 0, package tests 339/339, `ci.yml` contracts line 26/26.
+- Native TypeScript 7 typecheck (`api-typecheck.sh`): API rc=0 (on `8772832c`), web rc=0.
+- `test:boot`: "Nest resolved every provider"; `check-di-metadata`: all decorated classes carry paramtypes.
+- Focused specs: API 440 (435 pass, 0 fail, 5 PG-gated skips) across cycles, reservation, holds use case, partner controller, set-partner-ai-model, set-platform-ai-budget, usage meter, AI usage, support tools, internal budget controller, spec-suite-coverage; web error specs 62/62.
+- PG on throwaway postgres:16 `mangmee-addons-prc-pg-20260929` (port 15642, fresh `migrate deploy` of every migration, removed afterwards): run 1 (lock 14:14–14:17) 51/51 = reservation 16, holds 10, funding 10, authority 15; run 2 after the seam (released 14:28) funding 11/11.
+- W00 manifest spec 4/4 (no hashed file changed, not regenerated); pins `--check` status=current; `git diff --check` clean.
+- Not run, per the coordinator's machine rule: `node scripts/run-line-ai-whole-chain-acceptance.mjs` and the full API/web suites (the coordinator runs them once on the integrated branch).
+
+Residuals for later PRs:
+- PR D: v1 lanes (CRM, draft) still use the calendar CHAT cap for cut-over companies; must fund before AI credit is sold (spec §5.3).
+- PR E: quote/status call `readAiCreditSalesReadiness` and `readAiCreditBalance` (customer projection = package/additional/total only).
+- PR F: web next-page control for holds; render `aiCreditWarning`; customer copy from the internal `aiCredit` cause.
+- PR G: set `aiCreditCutoverAt` at the next cycle boundary (D9); `signup-ops-alert.service.ts` still counts CHAT exhaustion from the calendar cap for cut-over shops.

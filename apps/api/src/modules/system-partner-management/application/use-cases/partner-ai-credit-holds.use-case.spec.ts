@@ -37,7 +37,7 @@ const hold = (over: Partial<Hold> = {}): Hold => ({
  * One fake for both halves: the read (company + sweep + list) and the actions (company + engine).
  * `sweeps` records the advisory-lock keys, which is how "it sweeps both months first" is asserted.
  */
-function fakePrisma(options: { status?: string; holds?: Hold[]; row?: Hold | null; count?: number } = {}) {
+function fakePrisma(options: { status?: string; holds?: Hold[]; row?: Hold | null; count?: number; liveMonths?: string[] } = {}) {
   const sweeps: string[] = [];
   const updates: Array<Record<string, unknown>> = [];
   const audits: Array<Record<string, unknown>> = [];
@@ -53,7 +53,11 @@ function fakePrisma(options: { status?: string; holds?: Hold[]; row?: Hold | nul
     company: { findUnique: async () => (options.status === 'MISSING' ? null : { status: options.status ?? 'ACTIVE' }) },
     aiBudgetReservation: {
       findUnique: async () => (options.row === undefined ? hold() : options.row),
-      findMany: async (args: Record<string, unknown>) => { listed.push(args); return options.holds ?? []; },
+      // The read asks twice: the months still holding a pre-terminal row (`distinct`), then the page.
+      findMany: async (args: Record<string, unknown>) => {
+        if (args['distinct']) return (options.liveMonths ?? []).map((monthKey) => ({ monthKey }));
+        listed.push(args); return options.holds ?? [];
+      },
     },
     $transaction: async (fn: (t: unknown) => Promise<unknown>) => fn(tx),
   };
@@ -75,8 +79,28 @@ describe('PartnerAiCreditHoldsUseCase.read (hold spec §4.1)', () => {
     // admission has already decided are UNRESOLVED.
     assert.deepEqual(sweeps, ['ai-budget:c1:2026-09', 'ai-budget:c1:2026-08']);
     assert.deepEqual(result.monthKeys, ['2026-09', '2026-08']);
-    assert.deepEqual((listed[0]!['where'] as { monthKey: unknown }).monthKey, { in: ['2026-09', '2026-08'] });
+    assert.equal((listed[0]!['where'] as { monthKey?: unknown }).monthKey, undefined, 'the list covers every month (add-on C11)');
     assert.ok(sweeps.every((key, index) => sweeps.indexOf(key) === index), 'one sweep per month');
+  });
+
+  it('also sweeps any older month that still holds a live row, and pages the list with a cursor (add-on C11)', async () => {
+    const holds = Array.from({ length: 101 }, (_, index) => hold({ id: `res-${index}`, monthKey: '2026-05',
+      createdAt: new Date(Date.UTC(2026, 4, 20, 0, 0, 100 - index)) }));
+    const { prisma, sweeps, listed } = fakePrisma({ liveMonths: ['2026-05', '2026-09'], holds });
+
+    const first = await new PartnerAiCreditHoldsUseCase(prisma).read({ companyId: 'c1', canManage: true, now: NOW });
+
+    assert.deepEqual(sweeps, ['ai-budget:c1:2026-09', 'ai-budget:c1:2026-08', 'ai-budget:c1:2026-05']);
+    assert.deepEqual(first.monthKeys, ['2026-09', '2026-08', '2026-05']);
+    assert.equal(first.items.length, 100);
+    assert.equal(first.nextCursor, `${holds[99]!.createdAt.toISOString()}_res-99`);
+    assert.equal(listed[0]!['take'], 101);
+
+    await new PartnerAiCreditHoldsUseCase(prisma).read({ companyId: 'c1', canManage: true, now: NOW, cursor: first.nextCursor! });
+    assert.deepEqual((listed[1]!['where'] as { AND: unknown }).AND, [{ OR: [{ createdAt: { lt: holds[99]!.createdAt } },
+      { createdAt: holds[99]!.createdAt, id: { lt: 'res-99' } }] }]);
+    await assert.rejects(new PartnerAiCreditHoldsUseCase(prisma).read({ companyId: 'c1', canManage: true, now: NOW, cursor: 'nonsense' }),
+      (error: unknown) => error instanceof UnprocessableEntityException);
   });
 
   it('maps a hold to money, ids and declared kinds — never a message', async () => {

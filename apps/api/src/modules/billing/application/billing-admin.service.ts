@@ -165,6 +165,13 @@ export class BillingAdminService {
     const stripeAccountId = this.billing.stripe.accountId, livemode = this.billing.stripe.livemode;
     const companyScope = access.platformScope ? {} : { companyId: { in: access.companyIds } };
     const opScope = access.platformScope ? { not: null } : { in: access.companyIds };
+    // Sales-event discount serial (spec §7.1, SD-E20): 8 characters with no 0/O or 1/I, matched exactly and
+    // before the fuzzy id suffixes. An unused one belongs to no shop, so only platform scope hears that.
+    if (/^[A-HJ-NP-Z2-9]{8}$/.test(clean)) {
+      const ticket = await this.prisma.client.salesEventTicket.findFirst({ where: { serial: clean, ...companyScope }, select: { id: true, companyId: true } });
+      if (ticket?.companyId) return this.lookupResult('EVENT_TICKET', ticket.id, ticket.companyId);
+      if (ticket) throw billingError('BILLING_LOOKUP_EVENT_TICKET_UNUSED', 'ส่วนลดจากงานนี้ยังไม่ได้ใช้กับร้านใด');
+    }
     // BillingInvoice/BillingAttempt only carry billingAccountId (no declared relation field to
     // navigate), so scope them by first resolving which accounts are in scope.
     const accounts = await this.prisma.client.billingAccount.findMany({ where: { ...companyScope, stripeAccountId, livemode }, select: { id: true, companyId: true } });
@@ -268,7 +275,15 @@ export class BillingAdminService {
         paymentState: r.providerStatus, applyState: r.applyStatus, periodStart: r.periodStart.toISOString(), periodEnd: r.periodEnd.toISOString(),
         createdAt: r.createdAt.toISOString(), hasDocuments: r.providerStatus === 'paid' })), nextCursor: rows.length > 25 ? rows[24]!.id : null };
     } else if (invoiceCursor) throw new ForbiddenException();
-    return { ...await this.companyView(company,account), usage: await this.billing.usage(companyId), issues: await Promise.all(issues.map(i=>this.issueView(i,this.prisma.client,company.name))), financial };
+    // SD-E20: the shop's sales-event discounts. The amount and the bill are money, so they follow `financial`.
+    const tickets = await this.prisma.client.salesEventTicket.findMany({ where: { companyId }, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }], take: 25,
+      select: { serial: true, state: true, redeemedAs: true, appliedDiscountSatang: true, invoiceId: true, usedAt: true, reservedAt: true,
+        batch: { select: { eventName: true, batchName: true } } } });
+    const eventDiscounts = tickets.map(t => ({ serial: t.serial, eventName: t.batch.eventName, batchName: t.batch.batchName,
+      redeemedAs: t.redeemedAs as 'DISCOUNT' | 'CREDIT' | null, state: t.state as 'ISSUED' | 'RESERVED' | 'USED' | 'REVOKED',
+      appliedDiscountSatang: financial ? t.appliedDiscountSatang : null, invoiceId: financial ? t.invoiceId : null,
+      usedAt: t.usedAt?.toISOString() ?? null, reservedAt: t.reservedAt?.toISOString() ?? null }));
+    return { ...await this.companyView(company,account), usage: await this.billing.usage(companyId), issues: await Promise.all(issues.map(i=>this.issueView(i,this.prisma.client,company.name))), financial, eventDiscounts };
   }
   async issues(context: RequestContext, input: { cursor?: string; companyId?: string; state?: string; queue?: 'UNASSIGNED'|'OVERDUE' }) {
     const access = await this.access(context, 'system.billing.read');

@@ -31,6 +31,7 @@ QR เดียวต่อ "ชุดส่วนลด" ออก "ส่ว�
 | SD-O7 | QR เดียวต่อชุดใช้ได้ทั้งร้านใหม่และร้านเดิม: ชุดเก็บทั้งจำนวนเงินลดบิลแรกและเครดิตที่ให้; สถานะร้านตอนใช้เป็นตัวเลือกเส้นทาง. ทางเลือก QR แยกต่อกลุ่มไม่ใช้ เพราะยุ่งยากที่บูธ | §3.1, §4.1 | — |
 | SD-O8 | ร้านที่มีดีลขายที่ยังมีผลรับเครดิตจากงานได้ เพราะไม่เปลี่ยนราคา; กติกาไม่ซ้อนของ SD-O2 ใช้กับส่วนลดราคาเท่านั้น | §4.2 | — |
 | SD-O9 | Owner: “ตามค่าเริ่มต้น” — SD-Q1, SD-Q2, SD-Q3, SD-Q5, SD-Q8 และ SD-Q9 ใช้ค่าเริ่มต้นที่เสนอใน §12 | §4.1.1, §4.1.2, §4.3, §4.4, §6.1, §10, §11 | — |
+| SD-O10 | **ไม่มี switch (2026-09-29)** — Owner: “อย่าทำ switch อีก เปิดไว้เลยเสมอ”; controller ตัดสินใช้กับงานนี้: ไม่มี gate `event_discounts` ไม่มี flag และไม่มี env. ส่วนลดหรือเครดิตเกิดได้เฉพาะเมื่อหัวหน้าทีมหรือแอดมินสร้างชุด ตัวชุดจึงเป็นตัวควบคุม — หยุดแจกด้วย "พักแจก", หยุดใช้ด้วย "ระงับการใช้", ตัดรายการด้วย "เพิกถอน" (§6.2, §6.3). แทนทุกที่ในสเปกและแผนนี้ที่พูดถึง `event_discounts` หรือ `SALES_EVENT_DISABLED`: §7.2 (ไม่เพิ่ม key ใน `BILLING_ACTIONS`), §7.3 (ไม่มีรหัส `SALES_EVENT_DISABLED`), §11 (ไม่มี gate ของงานนี้ให้เปิดร่วมหรือปิด; rollback ที่ยังมีรายการค้างใช้ "ระงับการใช้" ของชุดแทนการปิด gate), SD-E16 และ SD-E31 (ส่วนที่เป็น gate ของงานนี้), แผน §1, §3.7, §3.10, U17 | §6.2, §7.2, §7.3, §11 | — |
 
 ### 1.2 มติเทคนิคของ Controller (2026-09-29)
 
@@ -423,7 +424,7 @@ eventDiscount?: {
 - `BillingAttemptView` (`billing.service.ts:1000-1015`) เพิ่ม `eventDiscount?: { shownDiscountSatang: number; state: 'IN_PAYMENT' | 'USED' }`; รายการประวัติ (`:1042-1057`) เพิ่ม `eventDiscountSatang?` จาก ticket ที่ `invoiceId` ตรงกับแถว
 - Claim: body {idToken, qrToken (base64url 43 ตัว), requestKey (16–120)} → {ticket: {serial, eventName, discountSatang, chatCreditUnits, receiptImageUnits, expiresAt}, replay: boolean, next: 'OPEN_PACKAGE' | 'SIGN_UP'}
 - ทุก body ใหม่เป็น class DTO (global pipe `forbidNonWhitelisted`, `apps/api/src/common/pipes/validation-pipe.options.ts:7-9`; `body-validation-coverage.spec.ts`)
-- ค่าคงที่ใน contracts: `SALES_EVENT_BATCH_STATES`, `SALES_EVENT_TICKET_STATES`, `SALES_EVENT_REDEEM_PATHS` (ชื่อไม่ชน Prisma enum ตาม `packages/contracts/src/prisma-enum-parity.spec.ts`); `SALES_PERMISSION_KEYS` เพิ่ม `'sales.event.manage'` (`packages/contracts/src/sales.ts:9-10`); `BILLING_ACTIONS` เพิ่ม `'event_discounts'` (`packages/contracts/src/billing.ts:39`); แหล่งยอด `SALES_EVENT` เพิ่มในชนิดของ add-on (§5.6)
+- ค่าคงที่ใน contracts: `SALES_EVENT_BATCH_STATES`, `SALES_EVENT_TICKET_STATES`, `SALES_EVENT_REDEEM_PATHS` (ชื่อไม่ชน Prisma enum ตาม `packages/contracts/src/prisma-enum-parity.spec.ts`); `SALES_PERMISSION_KEYS` เพิ่ม `'sales.event.manage'` (`packages/contracts/src/sales.ts:9-10`); ~~`BILLING_ACTIONS` เพิ่ม `'event_discounts'`~~ ไม่มี gate (SD-O10); แหล่งยอด `SALES_EVENT` เพิ่มในชนิดของ add-on (§5.6)
 
 ### 7.3 รหัสข้อผิดพลาด (มี prefix; web map เป็นข้อความไทย)
 
@@ -434,7 +435,7 @@ eventDiscount?: {
 | `SALES_EVENT_ISSUE_FULL` | แจกครบจำนวน | ส่วนลดของงานนี้ถูกแจกครบแล้ว |
 | `SALES_EVENT_AGENT_INACTIVE` | ผู้แจกถูกถอดหรือปิดบัญชี | QR นี้ใช้ไม่ได้แล้ว ขอให้ผู้แจกสร้าง QR ใหม่ |
 | `SALES_EVENT_SELF_CLAIM` | ตัวตน LINE เป็นของสมาชิก platform tenant (ค่าเริ่มต้น SD-Q3) | บัญชีทีมขายรับส่วนลดนี้ไม่ได้ |
-| `SALES_EVENT_DISABLED` | gate `event_discounts` ปิด | ยังไม่เปิดรับส่วนลดจากงาน |
+| ~~`SALES_EVENT_DISABLED`~~ | ยกเลิก — ไม่มี gate (SD-O10) | — |
 | `SALES_EVENT_BATCH_STALE` | version ไม่ตรง | ข้อมูลชุดส่วนลดเปลี่ยนไปแล้ว กรุณาโหลดใหม่ |
 | `SALES_EVENT_DISCOUNT_TOO_HIGH` | เผยแพร่แล้วยอดต่ำกว่าขั้นต่ำ | ส่วนลดสูงเกินราคาของ {แพ็กเกจ} |
 | `SALES_EVENT_REWARD_REQUIRED` | ทั้งส่วนลดและเครดิตเป็น 0 | ใส่ส่วนลดหรือเครดิตอย่างน้อยหนึ่งอย่าง |
@@ -442,6 +443,8 @@ eventDiscount?: {
 | `SALES_EVENT_TICKET_UNAVAILABLE` | รับเครดิตด้วยรายการที่หมดอายุ ถูกเพิกถอน ใช้แล้ว หรือชุดถูกระงับ | ส่วนลดนี้ใช้ไม่ได้แล้ว |
 | `SALES_EVENT_CREDIT_NOT_ELIGIBLE` | ร้านไม่ใช่ร้านเดิมที่มีแพ็กเกจใช้งาน หรือยังรับ lot ไม่ได้ | ร้านนี้ยังรับเครดิตจากงานไม่ได้ (ข้อความตาม `credit.reason`) |
 | `SALES_EVENT_BATCH_ALREADY_USED` | ร้านนี้ใช้ส่วนลดจากชุดนี้แล้ว | ร้านนี้ใช้ส่วนลดจากงานนี้แล้ว |
+| `SALES_EVENT_BATCH_INVALID` (SD-A) | ฟอร์มชุดไม่ผ่าน (ชื่อ, เต็มบาท/เต็มเครดิต, จำนวนแจกต่ำกว่าที่แจกแล้ว, ช่วงเวลา, แพ็กเกจ, เซลล์, เหตุผลของการระงับ/ยกเลิกการระงับ) | ข้อมูลชุดส่วนลดไม่ครบหรือไม่ถูกต้อง กรุณาตรวจแต่ละช่องแล้วบันทึกอีกครั้ง |
+| `SALES_EVENT_NOT_FOUND` (SD-A) | ไม่พบชุดหรือรายการ หรือผู้เรียกไม่มีสิทธิ์เห็น/จัดการ | ไม่พบชุดส่วนลดหรือรายการส่วนลดนี้แล้ว |
 | `BILLING_QUOTE_STALE` (เดิม) | ส่วนลด ดีล หรือ gate เปลี่ยนระหว่าง quote กับ Checkout; หรือมีข้อเสนอเกิดขึ้นหลัง quote ที่ไม่มีข้อเสนอ | ส่วนลดหรือราคาเปลี่ยน กรุณาตรวจยอดอีกครั้ง |
 
 quote ไม่ error เพราะส่วนลด: ใช้ไม่ได้ก็คิดราคาเต็มและบอกเหตุผลผ่าน view. รหัสใหม่เพิ่มใน `apps/web/src/common/api/api-error-message.ts` และ `api-error-coverage.spec.ts`; ข้อความของหน้า LIFF อยู่ในหน้า LIFF เอง
@@ -490,8 +493,8 @@ quote ไม่ error เพราะส่วนลด: ใช้ไม่ไ�
 
 ## 11. Rollout, gate และ rollback
 
-- **ออกพร้อม add-on (SD-O6)**: งานนี้กับ add-on เครดิต AI และอ่านรูปอยู่ใน candidate เดียว ผ่าน UAT → READY → production รอบเดียวกัน และเปิด gate พร้อมกัน: `event_discounts` ของงานนี้กับ `addon_chat_credit`, `addon_receipt_image` ของ add-on. เส้นทางเครดิตต้องมี PR B และ PR C ของแผน add-on (กลไกเพิ่มยอด) อยู่ใน candidate
-- gate เดียวของงานนี้ `event_discounts` ใน `BILLING_ACTIONS` (เก็บใน `gatesJson`; binary เก่าไม่รู้จัก key จึงข้ามไป — `effectiveBillingGates`, `billing-policy.ts:15-17`); ตั้งผ่าน SET_ACTION_GATE แบบ reviewed เดิม; ไม่มี env ใหม่ ไม่มี key ใหม่ใน `policyJson`
+- **ออกพร้อม add-on (SD-O6)**: งานนี้กับ add-on เครดิต AI และอ่านรูปอยู่ใน candidate เดียว ผ่าน UAT → READY → production รอบเดียวกัน (~~และเปิด gate พร้อมกัน~~ — ไม่มี gate ทั้งงานนี้ SD-O10 และ add-on O-04). เส้นทางเครดิตต้องมี PR B และ PR C ของแผน add-on (กลไกเพิ่มยอด) อยู่ใน candidate
+- ~~gate เดียวของงานนี้ `event_discounts` ใน `BILLING_ACTIONS`~~ (ยกเลิกโดย SD-O10; ข้อความเดิมในข้อนี้และข้อถัดไปเป็นประวัติ) (เก็บใน `gatesJson`; binary เก่าไม่รู้จัก key จึงข้ามไป — `effectiveBillingGates`, `billing-policy.ts:15-17`); ตั้งผ่าน SET_ACTION_GATE แบบ reviewed เดิม; ไม่มี env ใหม่ ไม่มี key ใหม่ใน `policyJson`
 - ปิด gate: claim และออก QR ถูกปฏิเสธ; quote ไม่ใส่ข้อเสนอ; Checkout ของ quote ที่เลือก "ใช้" ได้ stale; ปุ่มรับเครดิตปิด. ไม่หยุด: การจองที่ยอมรับแล้ว, การใช้สิทธิ์ราคา, การปล่อยการจอง, การผูกต่ออายุ, lot เครดิตที่รับแล้ว, คืนเงิน, ประวัติ และรายงาน (reconciler ไม่อ่าน gate นี้)
 - ร้านเดิมที่ยังไม่ย้ายไปรอบเครดิตใหม่ (add-on §11) ยังรับเครดิตไม่ได้ (SD-Q9): ก่อนจัดงานแรกหลังเปิด ให้ readback จำนวนร้านที่จ่ายเงินแล้วแต่ยังไม่ย้าย
 - VAT: ใช้สูตร §5.1 ทุกแบบภาษี; แบบที่มี VAT ต้องผ่าน native proof ก่อนบริษัทจด VAT ซึ่งเป็นข้อกำหนดเดิมของ billing (SED-35) — ใส่เคสมีส่วนลดหนึ่งเคสต่อแบบ

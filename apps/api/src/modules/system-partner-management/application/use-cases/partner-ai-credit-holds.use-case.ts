@@ -34,6 +34,17 @@ export type PartnerAiCreditHoldCommand = {
 };
 
 const BUCKETS = new Set<PartnerAiBudgetBucket>(['CHAT', 'OCR']);
+/** One page of the all-months list (add-on C11). */
+export const AI_CREDIT_HOLDS_PAGE_SIZE = 100;
+
+/** `<createdAt ISO>_<id>`: the list is ordered by exactly these two, newest first. */
+function decodeCursor(value: string | undefined): { createdAt: Date; id: string } | undefined {
+  if (!value) return undefined;
+  const cut = value.indexOf('_');
+  const createdAt = new Date(value.slice(0, cut));
+  if (cut < 1 || Number.isNaN(createdAt.getTime()) || !value.slice(cut + 1)) throw new UnprocessableEntityException('partner_ai_credit_holds_cursor_invalid');
+  return { createdAt, id: value.slice(cut + 1) };
+}
 const REQUEST_KINDS = new Set<PartnerAiRequestKind>(['TEXT', 'IMAGE', 'OTHER']);
 
 function toDto(row: AiBudgetCreditHoldRow): PartnerAiCreditHoldDto {
@@ -75,24 +86,36 @@ function toDto(row: AiBudgetCreditHoldRow): PartnerAiCreditHoldDto {
 export class PartnerAiCreditHoldsUseCase {
   constructor(private readonly prisma: PrismaService) {}
 
-  async read(input: { companyId: string; canManage: boolean; now?: Date }): Promise<PartnerAiCreditHoldsDto> {
+  async read(input: { companyId: string; canManage: boolean; cursor?: string; now?: Date }): Promise<PartnerAiCreditHoldsDto> {
     const company = await this.prisma.client.company.findUnique({
       where: { id: input.companyId }, select: { status: true },
     });
     if (!company) throw new NotFoundException(`Partner company "${input.companyId}" not found.`);
 
     const now = input.now ?? new Date();
-    const monthKeys = [bangkokMonthKey(now), previousBangkokMonthKey(now)];
-    // Sequentially: PrismaPg gives an interactive transaction one connection, and these are two
-    // separate short transactions that both take the same kind of lock.
+    const before = decodeCursor(input.cursor);
+    // Add-on C11: a hold is found in whatever month it was pinned to, not only the last two. The
+    // sweep is per company-month, so every month that still has a pre-terminal row is swept too.
+    const live = await this.prisma.client.aiBudgetReservation.findMany({
+      where: { companyId: input.companyId, status: { in: ['RESERVED', 'DISPATCHED'] } },
+      distinct: ['monthKey'], select: { monthKey: true },
+    });
+    const monthKeys = [...new Set([bangkokMonthKey(now), previousBangkokMonthKey(now), ...live.map((row) => row.monthKey)])]
+      .sort().reverse();
+    // Sequentially: PrismaPg gives an interactive transaction one connection, and these are
+    // separate short transactions that all take the same kind of lock.
     for (const monthKey of monthKeys) await sweepAiBudgetCompanyMonth(this.prisma, input.companyId, monthKey, now);
 
-    const rows = await listAiBudgetCreditHolds(this.prisma, input.companyId, monthKeys);
+    const rows = await listAiBudgetCreditHolds(this.prisma, input.companyId, null,
+      { take: AI_CREDIT_HOLDS_PAGE_SIZE + 1, ...(before ? { before } : {}) });
+    const items = rows.slice(0, AI_CREDIT_HOLDS_PAGE_SIZE);
+    const last = items[items.length - 1];
     return {
       canManage: input.canManage,
       companyLocked: partnerMetadataLockError(company.status) !== null,
-      items: rows.map(toDto),
+      items: items.map(toDto),
       monthKeys,
+      nextCursor: rows.length > AI_CREDIT_HOLDS_PAGE_SIZE && last ? `${last.createdAt.toISOString()}_${last.id}` : null,
     };
   }
 

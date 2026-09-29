@@ -113,6 +113,9 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'sales.report.read',           description: 'Read sales figures across teams',             riskLevel: 'MEDIUM' },
   // Admin-wide read/write/export stays separate from a lead's own-team read (S10).
   { key: 'sales.agent_profile.manage',  description: 'Read/write sales agent tax and bank details (PII)', riskLevel: 'CRITICAL' },
+  // Sales-event discounts (sales-event-discounts spec §9). HIGH: a batch hands customers a discount
+  // or free credit without any further approval — the batch itself is the control (SD-O10).
+  { key: 'sales.event.manage',          description: 'Create, edit, pause and suspend event discount batches; revoke their discounts', riskLevel: 'HIGH' },
   // Item 05 inventory permissions
   { key: 'inventory.product.read',         description: 'Read inventory products',            riskLevel: 'LOW' },
   { key: 'inventory.product.manage',       description: 'Create/update/archive products',     riskLevel: 'MEDIUM' },
@@ -565,7 +568,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   MANGMEE_SALES_LEAD: [
     'account.session.read', 'account.password.change', 'account.identity.link',
     'sales.console.read', 'sales.company.search', 'sales.deal.create', 'sales.deal.approve',
-    'sales.team.manage', 'sales.report.read',
+    'sales.team.manage', 'sales.report.read', 'sales.event.manage',
   ],
   MANGMEE_SALES: [
     'account.session.read', 'account.password.change', 'account.identity.link',

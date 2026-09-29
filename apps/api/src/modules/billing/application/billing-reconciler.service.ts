@@ -6,7 +6,7 @@ import { sameScheduleTaxes, simpleCollection, type ScheduledChange } from './bil
 import { PRICE_RETURN_TYPE } from './billing-price-return';
 import { BadRequestException, ConflictException, Injectable, Optional, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { STRIPE_API_VERSION } from '@watchdog-bms/contracts';
+import { BILLING_EVENT_DISCOUNT_REVIEW_ISSUE, STRIPE_API_VERSION } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { Prisma, type BillingAccount, type BillingAttempt, type BillingOperation } from '../../../generated/prisma/client';
@@ -24,7 +24,7 @@ import { grantPaidPackageReceipts } from './billing-receipt-grants';
 import { grantTrialReceiptCarryover } from './billing-trial-carryover';
 import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence } from '../domain/paid-checkout-invoice';
-import { paidReceiptBalance } from './billing-receipt-grants';
+import { packageReceiptBalance } from './billing-receipt-grants';
 import { applyDealRequest, fulfillPaidPackageRequest, recordReferralAttribution, scheduleDealReturn, supersedeUnpaidDeal, supersedeUnpaidPackageRequest } from './billing-package-request';
 import { applyCapacity, attemptCapacity, capacityOptions, capacityValid } from './billing-capacity';
 import { applyBillingFeaturePlan, billingFeaturePlan } from './billing-feature-entitlements';
@@ -36,6 +36,7 @@ import { movePlanMenus, queuePlanMenuMove, retryPlanMenuMoves, type PlanMenuMove
 import { DEAL_SUBSCRIPTION_CANCEL_TYPE, queueDealSubscriptionCancel } from './billing-deal-subscription-cancel';
 import { dealSnapshotHash } from '../domain/deal-offer';
 import type { PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
+import { releaseEventDiscount, useEventDiscount } from './billing-event-discount';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
@@ -78,6 +79,7 @@ export class BillingReconcilerService {
           collectionJson: { profileSync: { ...marker, confirmed: true } } } });
       if (!changed.count) throw new Error('billing.profile_sync_changed');
       await tx.billingAccount.updateMany({ where: { id: account.id, activeAttemptId: attempt.id }, data: { activeAttemptId: null, version: { increment: 1 } } });
+      if (snapshot.eventDiscount?.choice === 'USE') await releaseEventDiscount(tx, attempt.id);
       await tx.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
         kind: 'UNKNOWN_ATTEMPT', referenceId: attempt.id, state: { not: 'RESOLVED' } }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
     });
@@ -505,6 +507,7 @@ export class BillingReconcilerService {
         if (current.activeAttemptId !== attempt.id) throw new Error('billing.one_time_source_changed');
         await tx.billingAttempt.update({ where: { id: attempt.id }, data: { status: 'EXPIRED', checkoutSessionId: session.id } });
         await tx.billingAccount.update({ where: { id: account.id }, data: { activeAttemptId: null, observedAt: new Date(), version: { increment: 1 } } });
+        if (snapshot.eventDiscount?.choice === 'USE') await releaseEventDiscount(tx, attempt.id);
       });
       return;
     }
@@ -561,6 +564,10 @@ export class BillingReconcilerService {
           periodStart: impact.serviceStartsAt, periodEnd: impact.paidThrough, providerStatus: 'paid', evidenceHash: evidence.evidenceHash } });
       await recordBillingFinancials(tx, account, row, { refundedSatang: evidence.refundedSatang, disputed: evidence.disputed });
       await recordRecipientCapture(tx, account, snapshot, capture, row.id, attempt.initiatingUserId);
+      // Sales-event spec §6.3: verified money uses the ticket before any exit, HELD included. A ticket not reserved for
+      // this attempt never blocks the apply — the customer paid what they confirmed — it opens a review instead.
+      if (snapshot.eventDiscount?.choice === 'USE' && !await useEventDiscount(tx, { attemptId: attempt.id, invoiceId: row.id, companyId: account.companyId, now: new Date() }))
+        await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode, kind: BILLING_EVENT_DISCOUNT_REVIEW_ISSUE, referenceId: row.id });
       if (row.appliedAt) { await resolveAppliedInvoiceIssues(tx, account, row.id); return; }
       const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
       const source = snapshot.oneTime ? await tx.billingInvoice.findFirst({ where: { id: snapshot.oneTime.invoiceId,
@@ -604,7 +611,7 @@ export class BillingReconcilerService {
           livemode: account.livemode, kind: 'PAID_HELD', referenceId: row.id });
         return;
       }
-      const balance = await paidReceiptBalance(tx, company.id, account.id, evidence.paidAt);
+      const balance = await packageReceiptBalance(tx, company.id, account.id, evidence.paidAt);
       if (snapshot.upgrade) {
         if (balance.remaining + snapshot.upgrade.receiptUnitsAdded > 2_147_483_647) throw new Error('billing.receipt_balance_corrupt');
       } else fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,

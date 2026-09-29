@@ -179,7 +179,7 @@ export class GetPartnerTimelineUseCase {
       receiptQuotaSnapshot(this.prisma,companyId,monthKey,now),
       this.prisma.client.companyAiConfiguration.findUnique({where:{companyId},select:{monthlyBudgetSatang:true,ocrEnabled:true,ocrMonthlyLimit:true,receiptQuotaEnforced:true,
         budgetMode:true,chatMonthlyBudgetSatang:true,ocrMonthlyBudgetSatang:true,salesDealChatCreditSatang:true,
-        salesDealChatCreditEndsAt:true,budgetConfigVersion:true,pendingBudgetPolicy:true}}),
+        salesDealChatCreditEndsAt:true,budgetConfigVersion:true,pendingBudgetPolicy:true,aiCreditCutoverAt:true}}),
       this.prisma.client.companyOcrMonthlyUsage.findUnique({where:{companyId_monthKey:{companyId,monthKey}},select:{usedCount:true}}),
       resolvePlatformAiBudget(this.prisma,this.config,true),
     ]);

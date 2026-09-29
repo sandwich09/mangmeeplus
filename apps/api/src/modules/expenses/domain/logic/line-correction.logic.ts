@@ -116,13 +116,20 @@ function currentValue(target: CorrectionTargetSnapshot, field: LineCorrectionFie
   }
 }
 
+/** "1,070.00" is how every card prints money, so the router copies it that way into `from`. */
+function withoutThousandsSeparators(value: string): string {
+  return /^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(value) ? value.replace(/,/g, '') : value;
+}
+
 /** Same value, written differently (59 vs 59.0000, 2026-06-17 vs an ISO timestamp) is still the
  *  same value — comparing raw strings would reject a correct `from` and ask a pointless question. */
 function sameValue(field: LineCorrectionField, a: string | null, b: string | null): boolean {
   if (a === null || b === null) return a === b;
   if (field === 'amount') {
-    const left = exactAmount(a);
-    return left !== undefined && left === exactAmount(b);
+    // UAT 2026-09-29: "แก้ยอดเป็น 500" on a 1,070.00 draft came back `from: "1,070.00"` and was
+    // refused as stale, so every amount of a thousand or more ended in web guidance, not a preview.
+    const left = exactAmount(withoutThousandsSeparators(a));
+    return left !== undefined && left === exactAmount(withoutThousandsSeparators(b));
   }
   if (field === 'expenseDate') return a.slice(0, 10) === b.slice(0, 10);
   return normalize(a) === normalize(b);

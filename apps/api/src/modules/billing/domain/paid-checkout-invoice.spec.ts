@@ -75,3 +75,45 @@ test('PromptPay proof is bound to a QR charge and rejects a card charge', () => 
   input.session.payment_status = 'unpaid';
   assert.throws(() => paidPackageCheckoutEvidence(input));
 });
+
+// Sales-event spec §5.2: the only change to this proof is the expected amount, and only for a consistent eventDiscount.
+function withAmount(input: Input, amount: number) {
+  input.session.amount_total = amount; input.invoice.total = amount; input.invoice.amount_paid = amount;
+  input.checkoutLines[0]!.price.unit_amount = amount; input.checkoutLines[0]!.amount_total = amount;
+  input.invoiceLines[0]!.amount = amount; input.payments[0]!.amount_paid = amount;
+  input.intent.amount_received = amount; input.charge.amount = amount;
+}
+function eventDiscounted(input: Input, discountSatang = 100000) {
+  const unitAmountSatang = input.snapshot.quote.offer.priceSatang - discountSatang;
+  input.snapshot.quote.purchaseMode = 'CARD_ONCE';
+  input.snapshot.quote.purchase = { kind: 'INITIAL' } as NonNullable<Input['snapshot']['quote']['purchase']>;
+  input.snapshot.eventDiscount = { choice: 'USE', ticketSerial: 'ABCD2345', eventName: 'งานทดสอบ', expiresAt: '2026-11-01T00:00:00.000Z',
+    discountSatang, shownDiscountSatang: discountSatang, applied: { unitAmountSatang, subtotalSatang: unitAmountSatang, taxSatang: 0, totalSatang: unitAmountSatang },
+    ticketId: 'ticket-1', ticketVersion: 1, batchId: 'batch-1', salesUserId: 'sales-1' };
+  withAmount(input, unitAmountSatang);
+  return unitAmountSatang;
+}
+test('event discount: the discounted first bill passes only with a consistent USE snapshot; tampered or absent still fails', () => {
+  const input = fixture(), amount = eventDiscounted(input);
+  const evidence = paidPackageCheckoutEvidence(input);
+  assert.equal(evidence.totalSatang, amount); assert.equal(input.snapshot.quote.totalSatang, 999000, 'the renewal contract keeps the full price');
+  const absent = fixture(); eventDiscounted(absent); delete absent.snapshot.eventDiscount;
+  assert.throws(() => paidPackageCheckoutEvidence(absent), /BILLING_CHECKOUT_INVOICE_MISMATCH|Conflict/);
+  const tampered = fixture(); eventDiscounted(tampered);
+  // Consistent Stripe objects, but the snapshot's amounts do not follow from its own discount.
+  (tampered.snapshot.eventDiscount as { applied: { totalSatang: number } }).applied.totalSatang -= 100;
+  assert.throws(() => paidPackageCheckoutEvidence(tampered));
+  const bigger = fixture(); eventDiscounted(bigger); withAmount(bigger, 999000 - 200000);
+  assert.throws(() => paidPackageCheckoutEvidence(bigger), 'Stripe charging more off than the snapshot allows is a mismatch');
+  const renewing = fixture(); eventDiscounted(renewing); renewing.snapshot.quote.purchaseMode = 'CARD_AUTO';
+  assert.throws(() => paidPackageCheckoutEvidence(renewing), 'no discount on a renewing mode today');
+  const coupon = fixture(); eventDiscounted(coupon); coupon.session.total_details.amount_discount = 100;
+  assert.throws(() => paidPackageCheckoutEvidence(coupon), 'a provider discount line stays refused');
+});
+test('event discount declined: the full price is expected, and a discounted charge is refused', () => {
+  const input = fixture();
+  input.snapshot.eventDiscount = { choice: 'DECLINE', offeredTicketId: 'ticket-1' };
+  assert.equal(paidPackageCheckoutEvidence(input).totalSatang, 999000);
+  withAmount(input, 899000);
+  assert.throws(() => paidPackageCheckoutEvidence(input));
+});

@@ -55,7 +55,7 @@ export default function BillingCompanyDirectory({ overview, loading, error, requ
       <form onSubmit={event => { event.preventDefault(); onLookup(); }} className="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div className="min-w-0 flex-1">
           <label htmlFor="billing-reference-lookup" className="mb-2 block text-sm font-medium text-gray-700">ค้นหาด้วยเลขอ้างอิง</label>
-          <input id="billing-reference-lookup" type="search" value={lookup} maxLength={128} onChange={event => onLookupChange(event.target.value)} placeholder="เลขอ้างอิง 8 ตัวจากลูกค้า หรือเลขใบแจ้งหนี้" className="mangmee-input min-h-11 w-full !text-base" />
+          <input id="billing-reference-lookup" type="search" value={lookup} maxLength={128} onChange={event => onLookupChange(event.target.value)} placeholder="เลขอ้างอิง 8 ตัวจากลูกค้า เลขใบแจ้งหนี้ หรือเลขส่วนลดจากงาน" className="mangmee-input min-h-11 w-full !text-base" />
         </div>
         <div className="flex shrink-0 gap-2">
           <button type="submit" className={`${billingControl} flex-1 sm:flex-none`}>เปิดรายการ</button>

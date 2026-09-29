@@ -55,6 +55,10 @@ const LINE_SUPPORT_MAX_PER_USER_PER_DAY = 3;
 const LINE_SIGNUP_MAX_PER_IP = 20;
 const LINE_SIGNUP_READ_MAX_PER_IP = 60;
 const LINE_LIFF_SESSION_MAX_PER_USER = 30;
+// Sales-event discounts (spec §3.3): charged per LINE account once its ID token verifies. No per-IP
+// bucket, because a whole booth shares the venue's Wi-Fi. 30 an hour is far above a person rescanning
+// one QR (the replay costs a slot too) and far below an account sweeping batches.
+const SALES_EVENT_CLAIM_MAX_PER_USER = 30;
 
 @Injectable()
 export class AuthRateLimitService {
@@ -313,6 +317,15 @@ export class AuthRateLimitService {
       'line-liff-session-user',
       lineProviderUserId,
       LINE_LIFF_SESSION_MAX_PER_USER,
+      LINE_SIGNUP_WINDOW_SECONDS,
+    );
+  }
+
+  async assertSalesEventClaimAllowed(lineProviderUserId: string): Promise<void> {
+    await this.assertWithinLimit(
+      'sales-event-claim-user',
+      lineProviderUserId,
+      SALES_EVENT_CLAIM_MAX_PER_USER,
       LINE_SIGNUP_WINDOW_SECONDS,
     );
   }

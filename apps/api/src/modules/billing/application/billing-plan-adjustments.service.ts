@@ -4,7 +4,7 @@ import type { FreeDaySource } from './billing-free-days';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { bangkokMonthKey, resolvePlatformAiBudget } from '../../line-ai/application/company-ai-usage-meter';
 import { readAiBudgetReadiness } from '../../line-ai/application/company-ai-budget-readiness';
-import { paidReceiptBalance } from './billing-receipt-grants';
+import { packageReceiptBalance } from './billing-receipt-grants';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { BILLING_PAID_TIERS, type BillingPlanAdjustmentInput, type BillingPlanAdjustmentOperation, type BillingPlanAdjustments, type BillingPlanAdjustmentUnchanged, type CompanyPlanCapacity, type PaidTier } from '@watchdog-bms/contracts';
@@ -49,7 +49,7 @@ export class BillingPlanAdjustmentsService {
     // §11.4/R-10: the SAME projection admission uses. Extending a package never adds AI money, so
     // this panel must not let the remaining TOTAL read as money available for reading documents.
     const money=await readAiBudgetReadiness(tx,{companyId:s.company.id,monthKey,row:c,totalSatang:budget});
-    return {remainingReceipts:(await paidReceiptBalance(tx,s.company.id,s.account.id)).remaining,termEndsAt:s.company.planTerm.termEndsAt.toISOString(),
+    return {remainingReceipts:(await packageReceiptBalance(tx,s.company.id,s.account.id)).remaining,termEndsAt:s.company.planTerm.termEndsAt.toISOString(),
       nextChargeAt:s.account.nextChargeAt?.toISOString()??null,ocrEnabled:c?.ocrEnabled!==false,ocrMonthlyLimit:c?.ocrMonthlyLimit??null,aiBudgetSatang:budget,aiUsedSatang:spend?.costSatang??0,
       // Under SHARED `ocr` IS `total`, so a SHARED company's panel is byte-for-byte today's.
       ...(money.total==='OK'&&money.ocr!=='OK'?{aiOcrBudgetReached:true}:{}),
