@@ -438,6 +438,14 @@ describe('scoreTags', () => {
     assert.match(result.reasons[0]!, /no_tool_violated/);
   });
 
+  // UAT 2026-09-29: "สวัสดีจ้า" got the general fallback and a non-empty stock line used to pass must_answer.
+  it('flags a stock non-answer, like the general fallback, when must_answer is required', () => {
+    const result = scoreTags({ no_tool: true, must_answer: true },
+      evidence({ deliveredText: 'ขอโทษค่ะ น้องมั่งมียังตอบข้อนี้ไม่ได้ ลองพิมพ์ถามอีกครั้งได้เลยนะคะ' }));
+    assert.equal(result.ok, false);
+    assert.ok(result.reasons.includes('must_answer_violated:stock_non_answer'));
+  });
+
   it('flags an empty reply when must_answer is required', () => {
     assert.equal(scoreTags({ must_answer: true }, evidence({ deliveredText: '' })).ok, false);
   });
