@@ -295,15 +295,17 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
    * Sales-event discounts (spec §3.3, §3.5, §7.3). What each refusal of a scan means to the person
    * holding the phone, keyed by the code the claim answers with. Nothing here names a code.
    */
-  const NEW_QR_TH = 'ขอให้ผู้แจกสร้าง QR ใหม่ แล้วสแกนอีกครั้งนะคะ';
+  // Owner 2026-09-29 (SD-O11): a QR has no clock of its own and may be printed, so no copy here says
+  // it "expired" or asks for a "new" one — only that this one does not work, and where to get one.
+  const ASK_QR_TH = 'ขอ QR ของงานนี้จากทีมขายอีกครั้ง แล้วสแกนใหม่นะคะ';
   const EVENT_DISCOUNT_GUIDANCE = {
-    SALES_EVENT_QR_EXPIRED: { tone: 'warning', text: 'QR นี้หมดอายุแล้ว', advice: NEW_QR_TH },
-    SALES_EVENT_AGENT_INACTIVE: { tone: 'warning', text: 'QR นี้ใช้ไม่ได้แล้ว', advice: NEW_QR_TH },
+    SALES_EVENT_QR_INVALID: { tone: 'warning', text: 'QR นี้ใช้ไม่ได้', advice: ASK_QR_TH },
+    SALES_EVENT_AGENT_INACTIVE: { tone: 'warning', text: 'QR นี้ใช้ไม่ได้แล้ว', advice: ASK_QR_TH },
     SALES_EVENT_CLAIM_CLOSED: { tone: 'info', text: 'งานนี้ปิดรับส่วนลดแล้ว' },
     SALES_EVENT_ISSUE_FULL: { tone: 'info', text: 'ส่วนลดของงานนี้ถูกแจกครบแล้ว' },
     SALES_EVENT_SELF_CLAIM: { tone: 'warning', text: 'บัญชีทีมขายรับส่วนลดนี้ไม่ได้' }
   };
-  const EVENT_DISCOUNT_BAD_QR = { tone: 'warning', text: 'QR นี้ใช้ไม่ได้', advice: NEW_QR_TH };
+  const EVENT_DISCOUNT_BAD_QR = { tone: 'warning', text: 'QR นี้ใช้ไม่ได้', advice: ASK_QR_TH };
   const EVENT_DISCOUNT_LINE_FAILED = { tone: 'error', text: 'เปิดจาก LINE ไม่สำเร็จ', advice: 'ปิดหน้านี้แล้วสแกน QR อีกครั้งด้วยแอป LINE นะคะ' };
   const EVENT_DISCOUNT_FAILED = { tone: 'error', text: 'รับส่วนลดไม่สำเร็จ', advice: 'แตะ ลองอีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH };
   const EVENT_DISCOUNT_OPEN_FAILED = { tone: 'error', text: 'เปิดมั่งมีไม่สำเร็จ', advice: 'แตะ เปิดมั่งมี อีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH };

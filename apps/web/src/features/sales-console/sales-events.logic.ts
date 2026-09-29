@@ -20,6 +20,7 @@ import {
 } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
 import type { MangmeeTone } from '@/common/components/mangmee';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
 
 const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -121,14 +122,19 @@ export function ticketUsableUntil(claimEndsAt: string): Date {
   return new Date(Date.parse(claimEndsAt) + SALES_EVENT_TICKET_VALID_DAYS * DAY_MS);
 }
 
-// ── QR countdown ──
+// ── the QR (owner 2026-09-29, SD-O11: printable, valid until the batch closes) ──
 
-export function qrSecondsLeft(expiresAt: string, now: Date): number {
-  return Math.max(0, Math.ceil((Date.parse(expiresAt) - now.getTime()) / 1000));
+/** The batch's claim end is the QR's: extending the batch extends every QR already printed. */
+export function qrValidUntilText(claimEndsAt: string): string {
+  return `QR นี้ใช้ได้ถึง ${formatThaiDateTime(claimEndsAt)}`;
 }
 
-export function countdownText(seconds: number): string {
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+export const SALES_EVENT_QR_PRINT_HINT = 'พิมพ์หรือเปิดบนจอให้ลูกค้าสแกนได้ · หยุดใช้ได้ทันทีด้วยพักแจก/ระงับ หรือเอาเซลล์ออกจากชุด';
+
+/** "บันทึกรูป QR": a file name people recognise, without the characters a file system refuses. */
+export function qrDownloadFileName(batch: Pick<SalesEventBatchView, 'eventName' | 'batchName'>): string {
+  const name = `QR ${batch.eventName} ${batch.batchName}`.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return `${name.slice(0, 100).trim()}.svg`;
 }
 
 // ── the batch form ──

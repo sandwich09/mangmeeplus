@@ -90,7 +90,7 @@ export class SalesEventsController {
   @Post('batches/:batchId/qr')
   @HttpCode(200)
   @RequirePermissions('sales.console.read')
-  @ApiOperation({ summary: 'A fresh 5-minute QR for an active distributor of an open batch' })
+  @ApiOperation({ summary: 'A QR for an active distributor of an open batch; it works until the batch closes (SD-O11)' })
   @ApiResponse({ status: 403, description: 'SALES_EVENT_AGENT_INACTIVE' })
   @ApiResponse({ status: 409, description: 'SALES_EVENT_CLAIM_CLOSED / SALES_EVENT_ISSUE_FULL' })
   issueQr(@Param('batchId') batchId: string, @Req() req: SalesRequest): Promise<SalesEventQr> {

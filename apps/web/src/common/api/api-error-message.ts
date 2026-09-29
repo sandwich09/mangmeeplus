@@ -805,7 +805,7 @@ const CODE_LABELS: Record<string, string> = {
   SALES_EVENT_AGENT_INACTIVE: 'คุณไม่ได้เป็นผู้แจกของชุดนี้แล้ว จึงแสดง QR ไม่ได้ กรุณาติดต่อหัวหน้าทีม',
   SALES_EVENT_TICKET_NOT_REVOCABLE: 'ส่วนลดนี้กำลังชำระหรือใช้แล้ว เพิกถอนไม่ได้',
   // LINE claim (SD-B): the scan page shows its own copy; these cover any other surface.
-  SALES_EVENT_QR_EXPIRED: 'QR นี้หมดอายุแล้ว ขอให้ผู้แจกสร้าง QR ใหม่',
+  SALES_EVENT_QR_INVALID: 'QR นี้ใช้ไม่ได้ ขอ QR ของงานนี้จากทีมขายอีกครั้ง',
   SALES_EVENT_SELF_CLAIM: 'บัญชีทีมขายรับส่วนลดนี้ไม่ได้',
 
   // ---- ข้อเสนอพิเศษ on the customer's package page (spec §19.2, Phase 3) ----

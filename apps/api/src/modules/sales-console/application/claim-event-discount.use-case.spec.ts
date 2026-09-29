@@ -152,16 +152,40 @@ describe('ClaimEventDiscountUseCase', () => {
     assert.deepEqual(h.charged, []);
   });
 
-  it('treats an unknown or expired QR as expired', async () => {
-    await assert.rejects(harness().claim(now, 'x'.repeat(43)), code('SALES_EVENT_QR_EXPIRED'));
+  it('answers an unknown QR as "ใช้ไม่ได้", never as expired (SD-O11)', async () => {
     const h = harness();
-    await assert.rejects(h.claim(new Date(now.getTime() + 60_000)), code('SALES_EVENT_QR_EXPIRED'));
+    await assert.rejects(h.claim(now, 'x'.repeat(43)), (error: any) => code('SALES_EVENT_QR_INVALID')(error)
+      && !/หมดอายุ|สร้าง QR ใหม่/.test(error.getResponse().message));
     assert.equal(h.state().tickets.length, 0);
+  });
+
+  it('keeps a printed QR working past its stored expiry and when the lead extends the window (SD-O11)', async () => {
+    const h = harness();
+    // Issued under the old five-minute rule, printed, and scanned hours later inside the window.
+    h.setState((state) => { state.qr.expiresAt = new Date(now.getTime() - 3 * 3_600_000); });
+    const later = new Date(now.getTime() + 5 * 3_600_000);
+    assert.equal((await h.claim(later)).replay, false);
+    // The window closes: the batch refuses it, as a closed batch — not as an expired QR.
+    const other = harness();
+    other.setState((state) => { state.qr.expiresAt = new Date(now.getTime() - 3 * 3_600_000); });
+    const afterEnd = new Date(other.state().batch.claimEndsAt.getTime() + 60_000);
+    await assert.rejects(other.claim(afterEnd), code('SALES_EVENT_CLAIM_CLOSED'));
+    // The lead extends the window (a new revision): the same printed QR issues, frozen at the new values.
+    other.setState((state) => {
+      state.batch.claimEndsAt = new Date(afterEnd.getTime() + 86_400_000);
+      state.batch.revision = 4;
+      state.batch.discountSatang = 15_000;
+    });
+    const result = await other.claim(afterEnd);
+    assert.equal(result.ticket.discountSatang, 15_000);
+    assert.equal(other.state().tickets[0].batchRevision, 4);
+    assert.equal(result.ticket.expiresAt, new Date(afterEnd.getTime() + 86_400_000 + 30 * 86_400_000).toISOString());
   });
 
   it('refuses a paused batch, a removed or suspended เซลล์ and a full batch, and writes nothing', async () => {
     const cases: [string, (state: any) => void][] = [
       ['SALES_EVENT_CLAIM_CLOSED', (state) => { state.batch.state = 'PAUSED'; }],
+      ['SALES_EVENT_CLAIM_CLOSED', (state) => { state.batch.state = 'SUSPENDED'; }],
       ['SALES_EVENT_CLAIM_CLOSED', (state) => { state.batch.claimEndsAt = now; }],
       ['SALES_EVENT_AGENT_INACTIVE', (state) => { state.agent = { active: false }; }],
       ['SALES_EVENT_AGENT_INACTIVE', (state) => { state.agent = null; }],

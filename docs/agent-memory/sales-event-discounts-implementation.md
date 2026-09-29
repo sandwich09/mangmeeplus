@@ -18,6 +18,13 @@ Decisions:
 - Web today (controller scope 2026-09-29): the credit inputs are NOT on the form (SD-F adds them); an edit carries stored credit through untouched, so the form requires a discount > 0 unless the batch already carries credit. Ticket serial is shown as "เลขส่วนลด" (the human reference number by design).
 - Not done in SD-A on purpose: report route (SD-E owns `GET /v1/sales/events/report` in its own controller/service); claim/LIFF (SD-B); anything in billing beyond the one export.
 
+Update 2026-09-29 (Owner, spec SD-O11 — branch `claude/sales-event-qr-window-20260929` from develop `4792c4c3`, worktree `/private/tmp/mangmee-sales-event-qr-20260929`):
+- A seller's QR is valid until the batch's claim window closes — printable / on a screen. No 5-minute TTL: `SALES_EVENT_QR_TTL_SECONDS` and `qrExpiresAt` removed; the QR row stores the claim end at issue (history only).
+- The claim (`claim-event-discount.use-case.ts`, `salesEventClaimRefusal`) judges the batch as it is at scan time: OPEN + inside the CURRENT window + seller still an active distributor with an ACTIVE profile + room under the cap. A printed QR keeps working when the window is extended; pause/suspend/removing the seller stop it at once. The ticket still freezes the batch's current revision values.
+- Unknown token → `SALES_EVENT_QR_INVALID` ("QR นี้ใช้ไม่ได้ ขอ QR ของงานนี้จากทีมขายอีกครั้ง"); `SALES_EVENT_QR_EXPIRED` renamed everywhere (contracts, web Thai text, LIFF page guidance, specs). LIFF copy no longer says "สร้าง QR ใหม่".
+- Web: no countdown; "QR นี้ใช้ได้ถึง {วันเวลาไทยของปิดรับ}", "บันทึกรูป QR" (`<a download>` on the SVG data URL, 44 px `mangmee-btn`), hint "พิมพ์หรือเปิดบนจอให้ลูกค้าสแกนได้ · หยุดใช้ได้ทันทีด้วยพักแจก/ระงับ หรือเอาเซลล์ออกจากชุด".
+- Accepted trade-off (spec SD-O11): a shared QR image lets anyone claim until the cap; mitigations = cap, one ticket per LINE account per batch, pause/suspend, remove the seller.
+
 Open questions:
 - None blocking. The add-on memory `chat-credit-addons-implementation.md` still lists "does O-04 cover `event_discounts`?" as open — answered yes by SD-O10; left for that task's owner to close.
 
@@ -42,4 +49,4 @@ Verification (2026-09-29, worktree above; per controller: full API/web suites an
 Next:
 - Controller: integrate SD-A with SD-B/SD-C/SD-D/SD-E, run full suites + whole-chain once, then push/PR develop + twin main (ci.yml parity).
 - SD-F: add the two credit inputs to `SalesEventBatchForm.tsx` (fields already in the form state) and the credit column of the ticket list.
-- UAT: plan §3.9 U2 (lead creates a batch with 2 sellers; an unassigned seller cannot open the QR; QR expires in 5 minutes) on a phone at 390 px.
+- UAT: plan §3.9 U2 (lead creates a batch with 2 sellers; an unassigned seller cannot open the QR; the QR shows "ใช้ได้ถึง {ปิดรับ}", saves as an image, keeps working after 5 minutes and after the window is extended, and stops on pause/suspend/removing the seller) on a phone at 390 px.

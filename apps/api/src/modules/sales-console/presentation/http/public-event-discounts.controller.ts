@@ -32,7 +32,7 @@ export class PublicEventDiscountsController {
   @ApiResponse({ status: 200, description: 'The ticket this LINE account holds from the batch (new or replayed)' })
   @ApiResponse({ status: 401, description: 'LINE ID token invalid, expired or for another channel' })
   @ApiResponse({ status: 403, description: 'SALES_EVENT_SELF_CLAIM: the LINE account belongs to the sales team' })
-  @ApiResponse({ status: 409, description: 'SALES_EVENT_QR_EXPIRED, SALES_EVENT_CLAIM_CLOSED, SALES_EVENT_AGENT_INACTIVE or SALES_EVENT_ISSUE_FULL' })
+  @ApiResponse({ status: 409, description: 'SALES_EVENT_QR_INVALID, SALES_EVENT_CLAIM_CLOSED, SALES_EVENT_AGENT_INACTIVE or SALES_EVENT_ISSUE_FULL' })
   claim(@Body() dto: SalesEventClaimDto, @Req() req: Request): Promise<SalesEventClaimResult> {
     return this.claimEventDiscount.execute({
       idToken: dto.idToken,

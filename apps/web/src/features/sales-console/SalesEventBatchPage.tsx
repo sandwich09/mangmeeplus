@@ -15,32 +15,28 @@ import {
   changeSalesEventBatchState, getSalesEventBatch, issueSalesEventQr, listSalesEventTickets, revokeSalesEventTicket,
 } from './sales.api';
 import {
-  actionNeedsReason, batchActions, batchRewardLines, batchScopeText, batchStatusMeta, countdownText, qrSecondsLeft,
-  SALES_EVENT_ACTION_COPY, ticketStatusMeta, ticketUsableUntil,
+  actionNeedsReason, batchActions, batchRewardLines, batchScopeText, batchStatusMeta, qrDownloadFileName, qrValidUntilText,
+  SALES_EVENT_ACTION_COPY, SALES_EVENT_QR_PRINT_HINT, ticketStatusMeta, ticketUsableUntil,
 } from './sales-events.logic';
 import SalesEventBatchForm from './SalesEventBatchForm';
 import { SalesEmpty, SalesNotice } from './SalesConsoleParts';
 
 const STALE_MESSAGE = 'ชุดนี้ถูกแก้ไขจากที่อื่นแล้ว กด "โหลดข้อมูลล่าสุด" แล้วทำรายการอีกครั้ง';
 
-/** "แสดง QR" at the booth (spec §3.2): big enough to scan from a phone, with its own countdown. */
+/**
+ * "แสดง QR" at the booth (spec §3.2). Owner 2026-09-29 (SD-O11): the QR has no clock of its own, so it
+ * can be saved, printed or put on a screen. It works until the batch closes; "พักแจก", "ระงับการใช้" or
+ * taking this เซลล์ off the batch stops every copy at once.
+ */
 function QrPanel({ batch, onFailure }: { batch: SalesEventBatchView; onFailure: (message: string) => void }) {
   const [qr, setQr] = useState<SalesEventQr | null>(null);
   const [busy, setBusy] = useState(false);
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    if (!qr) return;
-    const timer = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, [qr]);
 
-  const seconds = qr ? qrSecondsLeft(qr.expiresAt, now) : 0;
   const full = batch.issuedCount >= batch.issueCap;
   const show = async () => {
     setBusy(true);
     try {
       const next = await issueSalesEventQr(batch.id);
-      setNow(new Date());
       setQr(next);
     } catch (cause) {
       setQr(null);
@@ -53,24 +49,27 @@ function QrPanel({ batch, onFailure }: { batch: SalesEventBatchView; onFailure: 
   return (
     <MangmeeCard className="grid gap-3 p-4">
       <p className="text-[15px] font-bold text-gray-900">QR สำหรับลูกค้า</p>
-      {qr && seconds > 0 ? (
+      {qr ? (
         <>
           {/* A data: URL rendered by the API — the link inside never leaves as a query to anyone. */}
           <img src={qr.qrImageUrl} alt="QR สำหรับรับส่วนลดจากงาน" className="mx-auto aspect-square w-full max-w-72 rounded-xl border border-gray-200 bg-white p-2" />
-          <p className="text-center text-sm text-gray-700" role="timer" aria-live="off">QR นี้ใช้ได้อีก <span className="font-bold">{countdownText(seconds)}</span> นาที</p>
-          <p className="text-center text-xs text-gray-500">ให้ลูกค้าสแกนด้วยกล้องมือถือหรือ LINE สแกนได้หลายคนจนกว่า QR จะหมดเวลา</p>
+          <p className="text-center text-sm font-bold text-gray-900">{qrValidUntilText(batch.claimEndsAt)}</p>
+          <p className="text-center text-xs text-gray-500">{SALES_EVENT_QR_PRINT_HINT}</p>
+          <a href={qr.qrImageUrl} download={qrDownloadFileName(batch)} className="mangmee-btn mangmee-btn-secondary">บันทึกรูป QR</a>
         </>
       ) : (
-        <p className="text-sm text-gray-600">
-          {!batch.claimOpen ? 'ชุดนี้ยังไม่ถึงเวลาเปิดรับ ปิดรับแล้ว หรือถูกพักไว้ จึงแสดง QR ไม่ได้'
-            : full ? 'ส่วนลดของชุดนี้ถูกแจกครบจำนวนแล้ว'
-              : qr ? 'QR หมดเวลาแล้ว กดสร้าง QR ใหม่ให้ลูกค้าคนต่อไป' : 'กดแสดง QR ให้ลูกค้าสแกนรับส่วนลด QR แต่ละอันใช้ได้ 5 นาที'}
-        </p>
+        <>
+          <p className="text-sm text-gray-600">
+            {!batch.claimOpen ? 'ชุดนี้ยังไม่ถึงเวลาเปิดรับ ปิดรับแล้ว หรือถูกพักไว้ จึงแสดง QR ไม่ได้'
+              : full ? 'ส่วนลดของชุดนี้ถูกแจกครบจำนวนแล้ว'
+                : `กดแสดง QR ให้ลูกค้าสแกนรับส่วนลด · QR ใช้ได้จนปิดรับ ${formatThaiDateTime(batch.claimEndsAt)} บันทึกไว้พิมพ์หรือเปิดบนจอได้`}
+          </p>
+          <button type="button" className="mangmee-btn mangmee-btn-primary" disabled={busy || !batch.claimOpen || full} aria-busy={busy}
+            onClick={() => void show()}>
+            แสดง QR
+          </button>
+        </>
       )}
-      <button type="button" className="mangmee-btn mangmee-btn-primary" disabled={busy || !batch.claimOpen || full} aria-busy={busy}
-        onClick={() => void show()}>
-        {qr ? 'สร้าง QR ใหม่' : 'แสดง QR'}
-      </button>
     </MangmeeCard>
   );
 }
