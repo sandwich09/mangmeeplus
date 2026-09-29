@@ -36,6 +36,13 @@ Decisions:
 - The catalogue is loaded only for an actor who may create an expense draft; question-only document turns read no expense data (bridge spec invariant).
 - Eval note: `scripts/line-ai-expense-advisor/production-ai-env.json` records only `LINE_AI_*` keys, so eval runs used `LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED` = false while UAT/Production run true (release records 2026-09-07/08). The category probe sets it true.
 
+## Feature 3 2026-09-30: remembered answer preferences (NAT11)
+
+Status: PR to develop from `claude/line-ai-answer-preferences-20260930` (not merged by this agent). Real model, production env applied locally: NAT11 runs 3 and 4 on the same code — t1 "ขอไม่ยาว" stores nothing; t2 "ต่อไปตอบสั้น ๆ แบบนี้นะ จำไว้ได้มั้ย" stores detail short and says so; t3 reads the month breakdown for that answer only and leaves the preference as is; t4 lists only "• สั้น"; t5 "ลืมเรื่องตอบสั้นไปก่อน" deletes it (DB: preference cleared, task state kept). Spend 22.02 THB (4 runs + 2 probes).
+Root causes: only the exact command words reached the preference commands, so the composer answered natural requests and promised to remember while nothing was stored (run 1 reproduced it); a forget also wiped the chat's task state; NAT11 t3 "อันเมื่อกี้…ทำไมยอดเพิ่ม" was routed to `expense.explain_record` (one captured record) and answered "not found".
+Decisions: the router of a bound 1:1 chat (capability `responsePreference`) names the request; the API re-parses it and runs the same commands, only when the message asks nothing else. A preference beside a business clause stores nothing. Forget of something not stored writes nothing. Delete keeps task state (spec §17.2). Router additions sit on their own prompt lines so the feature 2 PR merges without conflict (checked with `git merge-tree`).
+Open: the stored preference reaches the composer (payload detail short; composed answer 335 vs 387 chars in a probe) but the visible effect is small — numeric grounding rejected both drafts ("3 อันดับ", "91%") and the deterministic breakdown ignores preferences. A stronger effect needs an ANSWER_PROMPT sentence; asked the coordinator first as instructed. NAT11 t3's "why it rose" needs a previous-month baseline the router cannot ground from a message with no period.
+
 ## Regression slice 2026-09-30 (develop 8cafabcc) and its fixes
 
 Slice (production env locally: draft conversation + capture flags on, local AgentCore): 25/31 pass, 38.78 THB. New vs #903 runs: NAT-05 t4 "แค่ถามนะ อย่าเพิ่งลงรายจ่าย" routed `read` with no tool (#910 rule effect); NAT-06 t3 failed QA_BUDGET_UNAVAILABLE after an intake repair. Pre-existing: NAT-09 bare "สิงหา" (t1/t4/t5), NAT-01 t5 no advice. Also: as-of line used the UTC day; two reader answers in ครับ.
