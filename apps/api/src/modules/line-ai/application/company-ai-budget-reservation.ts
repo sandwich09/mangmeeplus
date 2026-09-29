@@ -276,7 +276,8 @@ export async function sweepAiBudgetCompanyMonth(
 export type RenderedAiReservationAuthority = {
   upperBoundSatang: number;
   snapshot: AiRenderedPricingSnapshotV2 & Record<string, unknown>;
-  maxTurnSlots: number;
+  /** Absolute ordinal ceiling of the turn: its answer slots plus the one repair (`aiBudgetV2OrdinalCeiling`). */
+  maxCalls: number;
   authorizeAndClaim(tx: any): Promise<boolean>;
 };
 
@@ -294,8 +295,8 @@ export async function reserveAiBudgetStep(
   rendered?: RenderedAiReservationAuthority,
 ): Promise<AiBudgetReserveOutcome> {
   if (rendered && (input.stepKind !== 'provider-v2' || !Number.isSafeInteger(rendered.upperBoundSatang) || rendered.upperBoundSatang < 0
-    || ![2, 4].includes(rendered.maxTurnSlots))) return { ok: false, reason: 'unavailable', budgetScope: 'TOTAL', detail: 'invalid_rendered_authority' };
-  const bounds = rendered ? { ...rendered.snapshot.bounds, maxCalls: rendered.maxTurnSlots } : aiBudgetStepBounds(input.stepKind);
+    || ![2, 3, 4, 5].includes(rendered.maxCalls))) return { ok: false, reason: 'unavailable', budgetScope: 'TOTAL', detail: 'invalid_rendered_authority' };
+  const bounds = rendered ? { ...rendered.snapshot.bounds, maxCalls: rendered.maxCalls } : aiBudgetStepBounds(input.stepKind);
   // A seam whose bound nobody declared can never be reserved — the ADR 0013 §9 readiness property.
   if (!bounds) return { ok: false, reason: 'unavailable', budgetScope: 'TOTAL', detail: 'step_bound_missing' };
   if (input.ordinal < 0 || input.ordinal >= bounds.maxCalls) {

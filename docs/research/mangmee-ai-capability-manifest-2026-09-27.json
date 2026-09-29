@@ -3,13 +3,13 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "06c0bdf9f0e82b34c729e3526bf092c319bc2dab",
-  "checkoutBranch": "claude/pfv-fixes-x-20260929",
+  "sourceRevision": "105b0dc6ccdb726bb00f24dccf621a7ddba499c4",
+  "checkoutBranch": "claude/line-ai-greeting-fallback-20260929",
   "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
-      "sha256": "e2208825a1264e0f2357f73bc36bf41a54df007df79646eb7c74d71a28bbf05c"
+      "sha256": "4abee393a7a4bf482f7088e56cb11405d589712488afef193670cc6b10fec9f7"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/presentation/http/line-reliability-capabilities.controller.ts",
@@ -169,7 +169,7 @@
     },
     {
       "path": "packages/config/src/index.ts",
-      "sha256": "12555d439cd0f6deed69d5f4364ede807b0c0ea07e7052214523f26c0dcf9654"
+      "sha256": "df0c78a152946ae4f8a90a9b8a9be2771ea199df4cead47b3d539f8071dc528a"
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T01:41:42.527Z",
-  "manifestDigest": "e0509e50f1e8b42e95d82ba3293d238eebb74381015318b69a9fa786c34e80aa"
+  "generatedAt": "2026-09-29T03:49:06.924Z",
+  "manifestDigest": "7dfb25e95b575cafef35c60f82a93df002fbe06189ad46bab7ef7874b1f7ae02"
 }

@@ -60,31 +60,22 @@ export class AiGatewayConfigService {
   get aiToolTimeoutMs(): number { return this.config.AI_TOOL_TIMEOUT_MS; }
   /** Hold spec §3: SIGTERM budget for finishing guarded provider calls and flushing evidence. */
   get shutdownDrainMs(): number { return this.config.AI_GATEWAY_SHUTDOWN_DRAIN_MS; }
-  // Item 10B local agent orchestration
+  // Owner 2026-09-29: the LINE AI turn capabilities (native tool loop, coverage critic, prepared simple reads,
+  // draft edit, reimbursement drafts, approved knowledge, the approved prepared families) are always on and
+  // have no getter here, so no environment value — stale AgentCore copies included — can switch them off.
+  // Orchestration stays readable only to select the legacy deterministic path (maintenance sets it false).
   get lineAiAgentOrchestrationEnabled(): boolean { return this.config.LINE_AI_AGENT_ORCHESTRATION_ENABLED; }
   get lineAiAgentRuntime(): string { return this.config.LINE_AI_AGENT_RUNTIME; }
-  // Item 10F native tool-use loop + coverage critic
-  get lineAiTooluseLoopEnabled(): boolean { return this.config.LINE_AI_TOOLUSE_LOOP_ENABLED; }
-  get lineAiCoverageCriticEnabled(): boolean { return this.config.LINE_AI_COVERAGE_CRITIC_ENABLED; }
   // Latency/autonomy Phases 3–6 (all default off / empty).
   get lineAiFusedPlanShadowEnabled(): boolean { return this.config.LINE_AI_FUSED_PLAN_SHADOW_ENABLED; }
-  get lineAiPreparedSimpleReadEnabled(): boolean { return this.config.LINE_AI_PREPARED_SIMPLE_READ_ENABLED; }
-  /** S-4: whether the five `draft_update` preview tools exist in the catalog this turn (spec §8). */
-  get lineAiDraftEditEnabled(): boolean { return this.config.LINE_AI_DRAFT_EDIT_ENABLED; }
   get lineAiReliabilityV2Mode(): 'off' | 'shadow' | 'on' { return this.config.LINE_AI_RELIABILITY_V2_MODE; }
   get lineAiReliabilityV2CompanyIds(): string[] { return [...this.config.LINE_AI_RELIABILITY_V2_COMPANY_IDS]; }
   get lineAiDeliveryPlanV2Enabled(): boolean { return this.config.LINE_AI_DELIVERY_PLAN_V2_ENABLED; }
   get lineAiDeliveryPlanV2WriteCompanyIds(): string[] { return [...this.config.LINE_AI_DELIVERY_PLAN_V2_WRITE_COMPANY_IDS]; }
   get lineAiDeliveryPlanV2PublicChannelIds(): string[] { return [...this.config.LINE_AI_DELIVERY_PLAN_V2_PUBLIC_CHANNEL_IDS]; }
-  get lineAiReimbursementDraftWriteEnabled(): boolean { return this.config.LINE_AI_REIMBURSEMENT_DRAFT_WRITE_ENABLED; }
   get lineAiDocumentQaEnabled(): boolean { return this.config.LINE_AI_DOCUMENT_QA_ENABLED; }
-  get lineAiApprovedKnowledgeEnabled(): boolean { return this.config.LINE_AI_APPROVED_KNOWLEDGE_ENABLED; }
   get lineAiPublicLookupEnabled(): boolean { return this.config.LINE_AI_PUBLIC_LOOKUP_ENABLED; }
   get lineAiPreferencesEnabled(): boolean { return this.config.LINE_AI_PREFERENCES_ENABLED; }
-  /** Exact allow-listed deterministic response families (Phase 5). Empty = none enabled. */
-  get lineAiDeterministicResponseFamilies(): string[] {
-    return this.config.LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES.split(',').map((entry) => entry.trim()).filter(Boolean);
-  }
   // Phase 6 RESERVED / INERT flags — parsed and exposed for a stable env contract, but NOT wired to any
   // behavior yet. These getters currently have no runtime consumer; wire one before treating them as live.
   get lineAiProviderClientReuseEnabled(): boolean { return this.config.LINE_AI_PROVIDER_CLIENT_REUSE_ENABLED; }
