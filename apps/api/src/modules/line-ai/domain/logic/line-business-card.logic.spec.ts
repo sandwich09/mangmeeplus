@@ -38,6 +38,27 @@ describe('package-required card one-tap link (R-B2 (b))', () => {
   });
 });
 
+describe('package-required card names the shop (review 2026-09-29 item 2)', () => {
+  const canonicalText = (message: ReturnType<typeof buildPackageRequiredMessage>) => (message as any).canonicalText as string;
+
+  it('leads the text with the shop name when one is given', () => {
+    const text = canonicalText(buildPackageRequiredMessage({ lockReason: 'no_package', companyId: 'co-1', companyName: 'ร้านทดสอบ' }));
+    assert.match(text, /^🏪 ร้านทดสอบ\nน้องมั่งมียังตอบไม่ได้จนกว่าจะเลือกแพ็กเกจค่ะ/);
+  });
+
+  it('trims the shop name before deciding whether to show it', () => {
+    const text = canonicalText(buildPackageRequiredMessage({ lockReason: 'no_package', companyId: 'co-1', companyName: '  ร้านทดสอบ  ' }));
+    assert.match(text, /^🏪 ร้านทดสอบ\n/);
+  });
+
+  it('keeps the plain text when no shop name is given', () => {
+    for (const companyName of [undefined, '', '   ']) {
+      const text = canonicalText(buildPackageRequiredMessage({ lockReason: 'no_package', companyId: 'co-1', ...(companyName === undefined ? {} : { companyName }) }));
+      assert.equal(text, 'น้องมั่งมียังตอบไม่ได้จนกว่าจะเลือกแพ็กเกจค่ะ ข้อมูลทั้งหมดยังอยู่ครบ');
+    }
+  });
+});
+
 describe('signup door card (R-B1: the exit adds the escape)', () => {
   it('builds the link-required login URL without the in-app-browser param', () => {
     const buttons = (buildSignupDoorCard('1234567890-abcdef', 'https://app.example.test') as any).contents.footer.contents;

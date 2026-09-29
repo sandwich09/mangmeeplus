@@ -2,9 +2,10 @@ import { lineMessagingCredentialsFixture } from '../../../common/config/line-mes
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  LINE_SIGNUP_PUSH_EVENT_TYPE, LineSignupNotifyService, lineSignupPushEventKey, lineSignupPushRetryKey,
+  LINE_SIGNUP_PUSH_EVENT_TYPE, LineSignupNotifyService, lineSignupPushEventKey, lineSignupPushRetryKey, supportAskerLabelTh,
 } from './line-signup-notify.service';
 import { pushLineMessages } from '../../auth/infrastructure/system-line-push';
+import { RequestLineSignupSupportUseCase } from './request-line-signup-support.use-case';
 import { WARNING_LADDER_DAYS } from '../../system-partner-management/domain/logic/plan-term.logic';
 
 const LINE_USER = 'Uline-1';
@@ -195,6 +196,23 @@ describe('P10-L push delivery', () => {
     assert.match(sent, /"label":"เลือกแพ็กเกจ"/);
     assert.match(sent, /https:\/\/liff\.line\.me\/1234567890-abcdef\/start/);
   });
+
+  // Review 2026-09-29: with no LIFF id the push is plain text with no button under it, so it must not
+  // tell the owner to press one.
+  for (const kind of ['approved', 'attached'] as const) {
+    it(`never points at a button that is not there (${kind}, no LIFF id)`, async () => {
+      const h = harness({ request: completed(kind === 'attached' ? { attachUserId: 'user-9' } : {}) });
+      (h.service as any).config.lineLiffId = undefined;
+      await h.service.deliver('r1', kind);
+      h.restore();
+
+      const [message] = h.pushes[0].body.messages;
+      assert.equal(message.type, 'text');
+      assert.doesNotMatch(message.text, /กดปุ่ม|ด้านล่าง/);
+      assert.match(message.text, /เลือกแพ็กเกจ/);
+      assert.match(message.text, /เว็บแอปมั่งมีพลัส/, 'and says where to go instead');
+    });
+  }
 
   it('says "second shop" for an attach, and the polite refusal for a rejection', async () => {
     const attach = harness({ request: completed({ attachUserId: 'user-9' }) });
@@ -499,6 +517,21 @@ describe('support notices (line-support-request-spec-th §2.2)', () => {
     assert.match(h.adminPushes[0]!.text, /สมัครแล้วยังไม่ได้เรื่องเลยค่ะ/);
   });
 
+  // Review 2026-09-29 (item 1): a COMPLETED application IS a shop — asks filed before the row
+  // carried its company must not read "ผู้ที่ยังไม่ได้เปิดร้าน" in the mailbox or the admin push.
+  it('names a completed application by its shop, never as someone who has not opened one', async () => {
+    const h = harness({
+      supportRequest: { companyId: null, lineUserIdHash: 'aaaabbbbccccdddd', lastMessageText: null, signupRequestId: 'sr-1' },
+      request: { companyName: 'The sun coffee', state: 'COMPLETED' },
+    });
+    await h.service.deliverSupportNotice('req-1');
+    h.restore();
+    assert.equal(h.letters[0].who, 'The sun coffee');
+    assert.match(h.adminPushes[0]!.text, /^📮 ลูกค้าขอคุยกับเจ้าหน้าที่: The sun coffee\n/);
+    assert.equal(supportAskerLabelTh(null, 'The sun coffee', true), 'The sun coffee');
+    assert.equal(supportAskerLabelTh('ร้านจริง', 'The sun coffee', true), 'ร้านจริง', 'the live shop name still wins');
+  });
+
   // The UAT evidence: zero LINE-linked admins, notice PUBLISHED, nobody told, nothing said so.
   it('records what actually landed on each channel', async () => {
     const h = harness({ lineDelivered: 0 });
@@ -643,5 +676,45 @@ describe('the shared LINE push helper (G-07)', () => {
       () => pushLineMessages({ token: TOKEN, lineUserId: LINE_USER, messages: [] }),
     );
     assert.deepEqual(dead, { ok: false, error: 'line_api_unreachable' });
+  });
+});
+
+// Review 2026-09-29 (item 1): the LIFF "ติดต่อเจ้าหน้าที่" filed every ask with no company, so an ask
+// from a shop that had already opened (locked until it buys) reached the inbox as
+// "ผู้ที่ยังไม่ได้เปิดร้าน" and nobody could tell which shop to call.
+describe('LIFF "ติดต่อเจ้าหน้าที่" (RequestLineSignupSupportUseCase)', () => {
+  const run = async (signup: Record<string, unknown> | null) => {
+    const created: any[] = [];
+    const audits: any[] = [];
+    const notices: string[] = [];
+    const tx: any = {
+      $executeRaw: async () => 0,
+      lineSupportRequest: { findFirst: async () => null, create: async (args: any) => { created.push(args.data); return { id: 'sr-1' }; } },
+      companySignupRequest: { findFirst: async () => signup },
+      auditLog: { create: async (args: any) => { audits.push(args.data); return {}; } },
+    };
+    const useCase = new RequestLineSignupSupportUseCase(
+      { client: { $transaction: async (fn: (client: any) => unknown) => fn(tx) } } as any,
+      { verify: async () => ({ providerUserId: LINE_USER, channelId: 'channel-1' }) } as any,
+      { consumeLineSupportRequestSlot: async () => true } as any,
+      { enqueueSupportRequest: async (id: string) => { notices.push(id); } } as any,
+    );
+    await useCase.execute('a.b.c', 'corr-1');
+    return { created, audits, notices };
+  };
+
+  it('files the ask against the shop a COMPLETED application opened', async () => {
+    const { created, audits, notices } = await run({ id: 'signup-1', state: 'COMPLETED', companyId: 'co-1' });
+    assert.equal(created[0].companyId, 'co-1');
+    assert.equal(created[0].signupRequestId, 'signup-1');
+    assert.equal(audits[0].companyId, 'co-1');
+    assert.deepEqual(notices, ['sr-1']);
+  });
+
+  it('names no shop while the application is still travelling', async () => {
+    const { created, audits } = await run({ id: 'signup-1', state: 'PENDING_REVIEW', companyId: null });
+    assert.equal(created[0].companyId, undefined);
+    assert.equal(created[0].signupRequestId, 'signup-1');
+    assert.equal(audits[0].companyId, undefined);
   });
 });

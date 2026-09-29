@@ -147,21 +147,38 @@ describe('addressChanged', () => {
 });
 
 describe('the Stripe Checkout address offer (DQ5)', () => {
-  // Stripe has no sub-district, so that box always arrives empty and must not blank what was typed.
+  // Stripe has no sub-district, so that box always arrives empty.
   const CHECKOUT = { line1: '99/1 ถนนสุขุมวิท', line2: null, subdistrict: '', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' };
-  it('fills only the boxes Checkout filled and says nothing when the form already holds them', () => {
-    assert.deepEqual(checkoutAddressToForm(CHECKOUT), { line1: '99/1 ถนนสุขุมวิท', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' });
+  it('fills the boxes Checkout filled, clears the sub-district, and says nothing when the form already holds them', () => {
+    assert.deepEqual(checkoutAddressToForm(CHECKOUT), { line1: '99/1 ถนนสุขุมวิท', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110', subdistrict: '' });
     assert.equal(checkoutAddressText(CHECKOUT), '99/1 ถนนสุขุมวิท คลองเตย กรุงเทพมหานคร 10110');
     assert.equal(checkoutAddressDiffers(CHECKOUT, BLANK_ADDRESS), true);
     assert.equal(checkoutAddressDiffers(CHECKOUT, FULL_ADDRESS), false);
     assert.equal(checkoutAddressDiffers(CHECKOUT, { ...FULL_ADDRESS, province: 'เชียงใหม่' }), true);
+  });
+
+  // Review 2026-09-29: keeping the old ตำบล under a new district from Checkout saved an address that
+  // does not exist; the fill blanks it so the owner picks the one that belongs to the new district.
+  it('never keeps a sub-district from another address under the district Checkout brings', () => {
+    const chiangMai = { ...FULL_ADDRESS, subdistrict: 'ศรีภูมิ', district: 'เมืองเชียงใหม่', province: 'เชียงใหม่', postalCode: '50200' };
+    const filled = { ...chiangMai, ...checkoutAddressToForm(CHECKOUT) };
+    assert.equal(filled.subdistrict, '');
+    assert.equal(filled.district, 'คลองเตย');
+    assert.equal(addressChanged(filled, chiangMai), true);
+  });
+
+  it('is offered only while the saved address is incomplete, and asks for the sub-district again', () => {
+    const page = readFileSync(new URL('./CompanyProfilePage.tsx', import.meta.url), 'utf8');
+    assert.match(page, /const checkoutFill = checkoutAddress && identity\?\.readiness\.identity\?\.reasons\.includes\('company_address_incomplete'\)/);
+    assert.match(page, /checkoutFilled && !address\.subdistrict\?\.trim\(\) && \(/);
+    assert.match(page, /กรุณาเลือกตำบล\/แขวงอีกครั้ง/);
   });
 });
 
 describe('addressErrorMessages', () => {
   it('names the empty box in Thai instead of a generic reload', () => {
     assert.deepEqual(
-      addressErrorMessages({ details: ['addressJson.province is required', 'addressJson.postalCode must be 5 digits'] }),
+      addressErrorMessages({ details: { details: ['addressJson.province is required', 'addressJson.postalCode must be 5 digits'] } }),
       ['กรุณากรอก จังหวัด', 'รหัสไปรษณีย์ ต้องเป็นตัวเลข 5 หลัก'],
     );
   });
@@ -169,15 +186,25 @@ describe('addressErrorMessages', () => {
   // already filled sends them to fix the wrong thing.
   it('does not call a shape error an empty box', () => {
     assert.deepEqual(
-      addressErrorMessages({ details: ['addressJson.province must be a string', 'addressJson.floor is not an allowed field'] }),
+      addressErrorMessages({ details: { details: ['addressJson.province must be a string', 'addressJson.floor is not an allowed field'] } }),
       ['จังหวัด ค่าไม่ถูกต้อง'],
       'an unknown key has no box to name, and a wrong-typed one is not a blank one',
     );
-    assert.deepEqual(addressErrorMessages({ details: ['addressJson.district is required'] }), ['กรุณากรอก อำเภอ / เขต']);
+    assert.deepEqual(addressErrorMessages({ details: { details: ['addressJson.district is required'] } }), ['กรุณากรอก อำเภอ / เขต']);
+  });
+
+  // The shape authedApiFetch really throws for this 422: `details` is the whole response body.
+  it('reads the per-field array from the body authedApiFetch attaches as details', () => {
+    const error = Object.assign(new Error('invalid addressJson'), {
+      status: 422,
+      details: { message: 'invalid addressJson', details: ['addressJson.line1 is required', 'addressJson.postalCode must be 5 digits'], requestId: 'req-1' },
+    });
+    assert.deepEqual(addressErrorMessages(error), ['กรุณากรอก ที่อยู่ (บ้านเลขที่ ถนน)', 'รหัสไปรษณีย์ ต้องเป็นตัวเลข 5 หลัก']);
   });
 
   it('says nothing when the error is not about the address', () => {
     assert.deepEqual(addressErrorMessages({ message: 'stale' }), []);
+    assert.deepEqual(addressErrorMessages({ details: { message: 'stale', requestId: 'req-2' } }), []);
     assert.deepEqual(addressErrorMessages(null), []);
   });
 });

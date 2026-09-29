@@ -279,8 +279,11 @@ export class BillingDocumentAdminService {
       let journal = (claim.resultJson ?? {}) as Journal;
       const email = this.customerBinding(await this.billing.stripe.request('GET', `/customers/${account.customerId}`), account);
       if (journal.dispatchedAt && email === p.target.email) { await this.finishRecipient(account, claim, p, journal, lease); return; }
-      // Aged past 23h since dispatch with still no confirmed readback: needs a human, not another retry.
-      if (email !== p.previousEmail || (journal.dispatchedAt && Date.now() - Date.parse(journal.dispatchedAt) >= 23 * 3_600_000)) throw stale();
+      // Aged past 23h since dispatch with still no confirmed readback: needs a human, not another
+      // retry — own code (mirrors billing-refunds.service.ts's CONTROL_REFUND_AGED_UNKNOWN) so the
+      // catch below can BLOCK it instead of leaving it UNKNOWN for the reconciler to keep polling.
+      if (journal.dispatchedAt && Date.now() - Date.parse(journal.dispatchedAt) >= 23 * 3_600_000) throw billingError('CONTROL_RECIPIENT_AGED_UNKNOWN', 'ยังยืนยันผลกับ Stripe ไม่ได้เกิน 23 ชั่วโมง ให้ตรวจที่ Stripe ก่อนทำรายการต่อ');
+      if (email !== p.previousEmail) throw stale();
       if (!journal.dispatchedAt) {
         journal = await this.prisma.client.$transaction(async tx => {
           const { row } = await this.fence(tx, claim.id, lease);
@@ -299,9 +302,10 @@ export class BillingDocumentAdminService {
         const { row } = await this.fence(tx, claim.id, lease);
         const j = (row.resultJson ?? {}) as Journal;
         const rejected = error instanceof StripeRequestError && error.outcome === 'REJECTED';
+        const aged = (error as { getResponse?: () => { code?: string } }).getResponse?.()?.code === 'CONTROL_RECIPIENT_AGED_UNKNOWN';
         const code = error instanceof ForbiddenException ? 'CONTROL_PERMISSION_CHANGED' : rejected ? 'CONTROL_RECIPIENT_PROVIDER_REJECTED'
-          : j.dispatchedAt ? 'CONTROL_RECIPIENT_REVIEW' : 'CONTROL_PREVIEW_STALE';
-        const saved = await this.writeLeased(tx, row, lease, { state: rejected ? 'FAILED' : j.dispatchedAt ? 'UNKNOWN' : 'BLOCKED', errorCode: code,
+          : aged ? 'CONTROL_RECIPIENT_AGED_UNKNOWN' : j.dispatchedAt ? 'CONTROL_RECIPIENT_REVIEW' : 'CONTROL_PREVIEW_STALE';
+        const saved = await this.writeLeased(tx, row, lease, { state: rejected ? 'FAILED' : aged ? 'BLOCKED' : j.dispatchedAt ? 'UNKNOWN' : 'BLOCKED', errorCode: code,
           scheduledFor: new Date(Date.now() + 300_000), leaseToken: null, leaseUntil: null, version: { increment: 1 } });
         await detectBillingIssue(tx, issueIdentity(p, row.id)); await this.audit(tx, saved, 'review');
         if (rejected) await resolveBillingIssue(tx, issueIdentity(p, row.id), 'PROVIDER_REJECTED_EMAIL_UPDATE');
@@ -346,7 +350,7 @@ export class BillingDocumentAdminService {
 
   // ── Document resend (R-D1 for admins; synchronous, own lease + 10/day limiter, DQ10) ─────────
 
-  async resend(context: RequestContext, companyId: string, invoiceId: string, reason: string, limits: RedisRateLimitService): Promise<BillingDocumentResendResult> {
+  async resend(context: RequestContext, companyId: string, invoiceId: string, reason: string, limits: RedisRateLimitService, supportRequestId?: string): Promise<BillingDocumentResendResult> {
     if (typeof reason !== 'string' || !reason.trim() || reason.length > 500) throw new BadRequestException();
     const { account } = await this.access(context, companyId, MANAGE);
     await this.configuration.requireProof(context, this.prisma.client);
@@ -375,7 +379,8 @@ export class BillingDocumentAdminService {
       await tx.outboxEvent.upsert({ where: { eventKey }, update: {}, create: { companyId, eventType: RESEND_NOTICE_EVENT, aggregateType: 'BillingInvoice', aggregateId: row.id,
         eventKey, payloadJson: { schemaVersion: 2, data: { recipientUserId: null, resend: true } } } });
       await tx.auditLog.create({ data: { companyId, actorUserId: context.userId, action: 'billing.document.resent', targetType: 'BillingInvoice', targetId: row.id,
-        requestId: context.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { invoiceSent: result.invoiceSent, receiptUpdated: result.receiptUpdated, actor: 'ADMIN', attempt: consumed.count } } });
+        requestId: context.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { invoiceSent: result.invoiceSent, receiptUpdated: result.receiptUpdated, actor: 'ADMIN', attempt: consumed.count,
+          ...(supportRequestId?.trim() ? { supportRequestId: supportRequestId.trim() } : {}) } } });
     });
     return { ...result, recipientEmail: recipient, remainingToday: Math.max(0, RESEND_LIMIT_ADMIN - consumed.count) };
   }

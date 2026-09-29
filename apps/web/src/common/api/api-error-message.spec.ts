@@ -15,6 +15,9 @@ test('resend and recipient-code limits keep their own sentence and add only a sh
   assert.equal(apiErrorMessage(error('EMAIL_OTP_RATE_LIMITED', 60)), 'ขอรหัสหรือกรอกรหัสผิดบ่อยเกินไป กรุณารอก่อนลองใหม่ (ลองใหม่ได้ใน 60 วินาที)');
   assert.equal(apiErrorMessage(error('BILLING_RESEND_LIMIT', 3600)), 'วันนี้ส่งเอกสารใบนี้ซ้ำครบจำนวนที่กำหนดแล้ว ลองใหม่ได้พรุ่งนี้ หรือเปิดเอกสารจากหน้านี้ได้ทันที');
   assert.doesNotMatch(apiErrorMessage(error('BILLING_RESEND_LIMIT', 'soon')), /วินาที/);
+  // item 12: a seconds count in the "worth naming" range (1-300) must still never grow the
+  // "(ลองใหม่ได้ใน N วินาที)" suffix onto BILLING_RESEND_LIMIT — it would contradict "ลองใหม่ได้พรุ่งนี้".
+  assert.equal(apiErrorMessage(error('BILLING_RESEND_LIMIT', 60)), 'วันนี้ส่งเอกสารใบนี้ซ้ำครบจำนวนที่กำหนดแล้ว ลองใหม่ได้พรุ่งนี้ หรือเปิดเอกสารจากหน้านี้ได้ทันที');
 });
 
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);

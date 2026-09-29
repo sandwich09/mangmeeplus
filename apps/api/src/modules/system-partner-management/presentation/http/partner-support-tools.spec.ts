@@ -258,6 +258,17 @@ describe('the timeline last line: why the assistant is refusing right now', () =
     assert.equal(detail, 'แพ็กเกจหมดอายุแล้ว');
   });
 
+  // item 10: a never-purchased placeholder term also has termEndsAt<=now, but the company is
+  // still ACTIVE (the DISABLED/sweep case above is a different shop shape) — that reads as "no
+  // package", never "expired", same wording as line 165's DISABLED-sweep branch.
+  it('names a still-ACTIVE shop that never had a package as no-package, not expired', async () => {
+    const start = new Date('2026-09-01T00:00:00.000Z');
+    const detail = await refusalOf({
+      planTerm: { ...liveTerm, termStartAt: start, termEndsAt: start, renewCount: 0 },
+    });
+    assert.equal(detail, 'ยังไม่มีแพ็กเกจ ลูกค้าเลือกซื้อเองได้จากหน้าแพ็กเกจ');
+  });
+
   it('names an unlinked shop', async () => {
     assert.equal(await refusalOf({ planTerm: liveTerm, memberIdentity: null }), 'ยังไม่มีสมาชิกคนไหนผูก LINE ปัจจุบัน');
   });

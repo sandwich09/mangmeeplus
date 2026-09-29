@@ -1,9 +1,11 @@
 import { cardCollapsed, warningBucket, warningProgressPercent } from './plan-term.logic';
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { planTermStateLabel } from '@watchdog-bms/contracts';
 import {
   PLAN_LOCK_COPY,
+  claimUnlockReload,
   isLockedShellPath,
   isRenewalPath,
   planLockReason,
@@ -145,5 +147,44 @@ describe('lock reason', () => {
 
   it('points both reasons at the same next step, which is choosing and not renewing', () => {
     for (const copy of Object.values(PLAN_LOCK_COPY)) assert.match(copy.banner, /เลือกแพ็กเกจ/);
+  });
+
+  // Review 2026-09-29: staff got "เลือกแพ็กเกจเพื่อเริ่มใช้งาน" with no button under it, and the locked
+  // page told them the shop was "พักการใช้งานชั่วคราว" when it simply had no package.
+  it('tells staff who can choose the package, in the words of the lock reason', () => {
+    for (const copy of Object.values(PLAN_LOCK_COPY)) {
+      assert.match(copy.staff, /ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจ/);
+      assert.doesNotMatch(copy.staff, /พัก|ปิดใช้งาน|ต่ออายุ/);
+    }
+    assert.doesNotMatch(PLAN_LOCK_COPY.no_package.staff, /หมดอายุ/);
+    assert.match(PLAN_LOCK_COPY.trial_ended.staff, /หมดอายุแล้ว/);
+    const page = readFileSync(new URL('./CompanyTermExpiredPage.tsx', import.meta.url), 'utf8');
+    const banner = readFileSync(new URL('./PlanTermBanner.tsx', import.meta.url), 'utf8');
+    assert.doesNotMatch(page, /พักการใช้งาน/);
+    assert.match(page, /\{copy\.staff\} ข้อมูลทั้งหมดยังอยู่ครบ/);
+    assert.match(banner, /canManagePlan \? copy\.banner : copy\.staff/);
+  });
+});
+
+// Review 2026-09-29: the unlock fallback reloaded on every page load while the notice still lagged.
+describe('unlock reload fallback', () => {
+  const memory = () => {
+    const values = new Map<string, string>();
+    return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, values };
+  };
+
+  it('reloads once per attempt, and the claim survives into the next page load', () => {
+    const store = memory();
+    assert.equal(claimUnlockReload(() => store, 'attempt-1'), true);
+    assert.equal(store.values.get('unlock-reload:attempt-1'), '1');
+    // Same session storage after the reload: the second page load must not reload again.
+    assert.equal(claimUnlockReload(() => store, 'attempt-1'), false);
+    // A different purchase earns its own single reload.
+    assert.equal(claimUnlockReload(() => store, 'attempt-2'), true);
+  });
+
+  it('never reloads when storage is blocked, rather than risk a loop', () => {
+    assert.equal(claimUnlockReload(() => { throw new Error('SecurityError'); }, 'attempt-1'), false);
+    assert.equal(claimUnlockReload(() => ({ getItem: () => null, setItem: () => { throw new Error('QuotaExceededError'); } }), 'attempt-1'), false);
   });
 });

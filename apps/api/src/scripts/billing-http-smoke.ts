@@ -1,4 +1,5 @@
 import { BILLING_TEST_ADDRESS, applySyntheticCustomerFields } from './billing-profile-fixture';
+import { ROLE_GRANTS } from '../modules/auth/permission-registry';
 import { checkEmailAccess } from './email-access-smoke';
 import { checkBillingAdjustments } from './billing-adjustments-smoke';
 import { checkBillingSupportOutcomes } from './billing-support-outcomes-smoke';
@@ -303,9 +304,12 @@ async function main() {
     const repaired = await request(profilePath, 'PATCH', { expectedLegalIdentityVersion: repairProfile.body.control.legalIdentityVersion,
       changeKind: 'INITIAL_CAPTURE', addressJson: { ...BILLING_TEST_ADDRESS, line1: '99 ถนนทดสอบแก้ไข' } });
     assert.equal(repaired.status, 200, JSON.stringify(repaired));
-    await client.role.update({ where: { id: roleId }, data: { key: 'STAFF' } });
+    // Staff is a permission set, not a role key: locked-shop profile recovery is decided by
+    // permissions since 48c4ab57, so flipping Role.key alone no longer demotes anyone.
+    const nonStaff = await client.rolePermission.findMany({ where: { roleId, permission: { key: { notIn: ROLE_GRANTS.STAFF! } } } });
+    await client.rolePermission.deleteMany({ where: { roleId, permissionId: { in: nonStaff.map((row) => row.permissionId) } } });
     assert.equal((await request(profilePath)).status, 403);
-    await client.role.update({ where: { id: roleId }, data: { key: 'OWNER' } });
+    await client.rolePermission.createMany({ data: nonStaff.map((row) => ({ roleId: row.roleId, permissionId: row.permissionId })) });
     await client.company.update({ where: { id: companyId }, data: { addressJson: BILLING_TEST_ADDRESS, status: 'ACTIVE' } });
     await client.companyPlanTerm.update({ where: { companyId }, data: { termDisabledAt: null } });
     cases.push('company-profile-optional-before-quote-or-checkout-registered-name-priority-fallback-stale-quote-expired-owner-repair');
@@ -351,7 +355,7 @@ async function main() {
       assert.match(await documents.innerText(), /จะกรอกที่หน้าชำระเงิน/);
       await page.setViewportSize({ width: 390, height: 900 });
       await page.screenshot({ path: `${browser.evidenceDir}/purchase-no-setup-review-mobile.png`, fullPage: true });
-      await documents.getByRole('link', { name: 'แก้ไขข้อมูลบริษัท', exact: true }).click();
+      await documents.getByRole('link', { name: 'แก้ไขข้อมูลร้าน', exact: true }).click();
       await page.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true }).waitFor();
       for (const [label, value] of Object.entries({ 'ที่อยู่ (บ้านเลขที่ ถนน)': BILLING_TEST_ADDRESS.line1,
         'ตำบล / แขวง': BILLING_TEST_ADDRESS.subdistrict, 'อำเภอ / เขต': BILLING_TEST_ADDRESS.district,

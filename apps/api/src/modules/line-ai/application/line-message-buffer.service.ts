@@ -910,6 +910,12 @@ export class LineMessageBufferService implements OnModuleDestroy {
             suppressLoading && index === 0,
           );
       if (index === 0 && result.outcome === 'defer_text') deferText = true;
+      if (result.outcome === 'locked') {
+        // Review 2026-09-29: one lock card answers the whole batch. Each remaining photo would draw
+        // the same card again, after a "reading your photo" ack for a read that never happens.
+        await this.markBatched([...group.mediaItems.slice(index + 1), ...group.textItems].map((item) => item.webhookEventId));
+        return;
+      }
     }
     if (deferText && group.textItems.length > 0) {
       await this.dispatchTextTurn(state, group.textItems, false);

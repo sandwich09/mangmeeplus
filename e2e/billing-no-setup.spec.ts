@@ -42,17 +42,33 @@ for (const width of [1280, 390]) {
     const documents = review.getByLabel('ข้อมูลออกเอกสาร', { exact: true });
     await expect(documents.getByText('จะกรอกที่หน้าชำระเงิน', { exact: true })).toHaveCount(2);
     expect(s.log.quotes[0]).not.toHaveProperty('billingEmail');
-    await expect(documents.getByRole('link', { name: 'แก้ไขข้อมูลบริษัท' })).toHaveAttribute('href', /returnTo=billing/);
+    await expect(documents.getByRole('link', { name: 'แก้ไขข้อมูลร้าน' })).toHaveAttribute('href', /returnTo=billing/);
     await expect(documents.getByRole('button', { name: 'แก้อีเมลรับเอกสาร' })).toHaveCount(0);
     await review.getByRole('checkbox').check();
     await review.getByRole('button', { name: 'ยืนยันและไปชำระที่ Stripe', exact: true }).click();
     await page.waitForURL(/checkout\.stripe\.com/);
     await expect(page.getByRole('heading', { name: 'Stripe (จำลอง)' })).toBeVisible();
 
-    s.stage = 'paid';
+    // Review 2026-09-29: Stripe sends the owner back before the reconciler applies the payment, so the
+    // attempt stays OPEN for a few polls. Meanwhile the page waits — it never offers to end, resume or
+    // redo the payment, and the locked banner has no "เลือกแพ็กเกจ" of its own.
     await page.locator('#pay').click();
     await page.waitForURL(new RegExp(`/billing/return\\?attempt=${ATTEMPT}$`));
+    const waiting = page.getByText('กำลังรอผลการชำระเงินจาก Stripe', { exact: true });
+    await expect(waiting).toBeVisible();
+    const readsBefore = s.log.attempts;
+    await expect.poll(() => s.log.attempts - readsBefore, { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
+    await expect(waiting).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'กำลังตรวจสอบรายการชำระเงิน', exact: true })).toBeVisible();
+    for (const name of ['เลือกแพ็กเกจใหม่', 'กลับไปยังรายการเดิม', 'ยุติรายการที่ยังไม่ชำระ', 'เลือกแพ็กเกจ'])
+      await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'เลือกแพ็กเกจ', exact: true })).toHaveCount(0);
+    await expect(page.getByText('เลือกแพ็กเกจเพื่อเริ่มใช้งาน', { exact: true })).toHaveCount(0);
+    await fits(page, width);
+
+    s.stage = 'paid';
     await expect(page.getByRole('heading', { name: 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์', exact: true })).toBeVisible();
+    await expect(waiting).toHaveCount(0);
     // R-A8: said from PAID; the recipient column is written at apply, so Checkout's email stands in until then.
     const recipientLine = page.getByLabel('อีเมลรับเอกสาร', { exact: true });
     await expect(recipientLine).toContainText('อีเมลที่กรอกไว้ที่หน้าชำระเงิน');
@@ -74,12 +90,13 @@ for (const width of [1280, 390]) {
     // R-A8/R-D2: a new mailbox proven by a code, then the latest documents go there.
     await recipientLine.getByRole('button', { name: 'แก้อีเมลรับเอกสาร' }).click();
     await expect(page.getByRole('button', { name: 'การต่ออายุและชำระเงิน', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    const panel = page.getByRole('region', { name: 'ผู้รับเอกสารของบริษัท', exact: true });
+    const panel = page.getByRole('region', { name: 'ผู้รับเอกสารของร้าน', exact: true });
     await expect(panel).toBeVisible();
     await panel.getByRole('radio', { name: 'ใช้อีเมลอื่น' }).check();
     await panel.getByLabel('อีเมลรับเอกสารใหม่').fill('new@example.test');
     await panel.getByRole('button', { name: 'ขอรหัสยืนยัน', exact: true }).click();
-    await expect(panel.getByText('ส่งรหัส 6 หลักไปที่ new@example.test แล้ว')).toBeVisible();
+    await expect(panel).toContainText('รหัสยืนยัน 6 หลักสำหรับ new@example.test');
+    await expect(panel.getByRole('status').filter({ hasText: 'ระบบส่งถึงเซิร์ฟเวอร์อีเมลแล้ว' })).toBeVisible();
     const code = panel.getByLabel('รหัสยืนยัน 6 หลัก');
     await code.fill('000000');
     await panel.getByRole('button', { name: 'ยืนยันรหัส', exact: true }).click();
@@ -199,7 +216,9 @@ for (const width of [1280, 390]) {
     await installNoSetupRoutes(page, companyId, s);
     await page.goto(`/companies/${companyId}/billing/return?attempt=${ATTEMPT}`);
     await expect(page.getByRole('heading', { name: 'รายการชำระเงินนี้ไม่สำเร็จ', exact: true })).toBeVisible();
-    await expect(page.getByText('สิทธิ์แพ็กเกจเดิมยังคงเดิม')).toBeVisible();
+    // A shop that never had a package is not told its old package is unchanged.
+    await expect(page.getByText('ไม่มีการเรียกเก็บเงินจากรายการนี้')).toBeVisible();
+    await expect(page.getByText('สิทธิ์แพ็กเกจเดิม')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true })).toBeVisible();
     // G13: a FAILED answer ends the polling.
     const reads = s.log.attempts;

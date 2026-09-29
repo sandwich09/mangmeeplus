@@ -1,4 +1,4 @@
-import { PLAN_TIER_PRESETS, type PlanTierKey } from './plan-term.js';
+import { PLAN_TIER_PRESETS, planTermStateLabel, type PlanTierKey } from './plan-term.js';
 import type { BillingRecipientSource, BillingTimelineEntry } from './billing.js';
 
 const labels: Record<'mode'|'channel'|'company'|'payment'|'apply'|'access'|'subscription'|'delivery'|'event'|'issue'|'operation'|'document'|'priority'|'scope'|'tax'|'attempt'|'quote', Record<string,string>> = {
@@ -9,11 +9,17 @@ const labels: Record<'mode'|'channel'|'company'|'payment'|'apply'|'access'|'subs
   quote: { UNUSED:'ยังไม่ได้ใช้ชำระเงิน' },
   mode: { TEST:'โหมดทดสอบ · ไม่มีการรับเงินจริง', LIVE:'โหมดรับเงินจริง', DISABLED:'ยังไม่เปิดการชำระเงิน' },
   channel: { WEB:'เว็บ', LINE:'LINE', EMAIL:'อีเมล', ERP:'ระบบมั่งมี' },
+  // DISABLED here is raw Company.status, which the term sweep's own no-package lock also sets
+  // (only `planTerm.termDisabledAt` tells the two apart) — some callers (BillingConfigurationPage's
+  // sales-cohort list) have only this status, no term state, so this cannot claim "admin hold"
+  // (review 2026-09-29 item 4: left as the neutral wording; see `access.HELD` for the admin-only one).
   company: { ACTIVE:'บริษัทเปิดใช้งาน', DISABLED:'บริษัทพักใช้งาน', PENDING:'รอตรวจบริษัท' },
   payment: { PAID:'ชำระแล้ว', PENDING:'รอยืนยันการชำระ', UNKNOWN:'ยังยืนยันผลชำระไม่ได้', FAILED:'เรียกเก็บเงินไม่สำเร็จ', NONE:'ยังไม่มีรายการชำระ',
     OPEN:'รอชำระเงิน', DRAFT:'ใบแจ้งหนี้ฉบับร่าง', VOID:'ยกเลิกใบแจ้งหนี้แล้ว', UNCOLLECTIBLE:'ใบแจ้งหนี้ที่ต้องตรวจหนี้ค้าง' },
   apply: { APPLIED:'เปิดสิทธิ์แล้ว', PENDING:'รอเปิดสิทธิ์', HELD:'ต้องตรวจสอบก่อนเปิดสิทธิ์', FAILED:'เปิดสิทธิ์ไม่สำเร็จ', NONE:'ยังไม่มีรายการให้เปิดสิทธิ์' },
-  access: { ACTIVE:'ใช้งานได้', EXPIRED:'แพ็กเกจหมดอายุแล้ว', HELD:'พักใช้งานเพื่อตรวจสอบ', GRACE:'อยู่ในระยะผ่อนผัน' },
+  // HELD excludes the term sweep's own no-package lock (billing-state.ts's `held`), so it is always
+  // an admin hold — never a no-package or expired shop (review 2026-09-29 item 4).
+  access: { ACTIVE:'ใช้งานได้', EXPIRED:'แพ็กเกจหมดอายุแล้ว', HELD:'ถูกพักใช้งานโดยผู้ดูแล', GRACE:'อยู่ในระยะผ่อนผัน' },
   subscription: { ACTIVE:'สถานะสมาชิกปกติ', TRIALING:'อยู่ในช่วงทดลอง', PAST_DUE:'ต่ออายุไม่สำเร็จ', UNPAID:'มีค่าต่ออายุค้างชำระ',
     CANCELED:'หยุดต่ออายุแล้ว', INCOMPLETE:'รอชำระเพื่อเริ่มสมาชิก', INCOMPLETE_EXPIRED:'รายการเริ่มสมาชิกหมดอายุ', PAUSED:'พักสมาชิก', NONE:'ยังไม่มีสมาชิก Stripe' },
   delivery: { PENDING:'รอส่ง', READY:'พร้อมส่ง', QUEUED:'รอส่ง', PROCESSING:'กำลังส่ง', SENDING:'กำลังส่ง', SENT:'ผู้ให้บริการรับคำขอแล้ว',
@@ -25,7 +31,10 @@ const labels: Record<'mode'|'channel'|'company'|'payment'|'apply'|'access'|'subs
     WAITING_CUSTOMER:'รอลูกค้า', VERIFYING:'กำลังตรวจผล', RESOLVED:'แก้ไขแล้ว' },
   operation: { DRAFT:'ฉบับร่าง', PREVIEW:'รอยืนยัน', QUEUED:'รอระบบดำเนินการ', RUNNING:'กำลังดำเนินการ', SUCCEEDED:'ดำเนินคำสั่งแล้ว',
     UNKNOWN:'ยังยืนยันผลไม่ได้', FAILED:'ดำเนินการไม่สำเร็จ', BLOCKED:'ต้องตรวจเงื่อนไขก่อนทำต่อ', CANCELLED:'ยกเลิกคำสั่งแล้ว',
-    AWAITING_APPROVAL:'รออนุมัติ', WAITING_APPROVAL:'รออนุมัติ', APPROVED:'อนุมัติแล้ว', SCHEDULED:'รอวันเริ่มใช้', SUCCESS:'บันทึกสำเร็จ', FAILURE:'บันทึกไม่สำเร็จ', DENIED:'ไม่ผ่านสิทธิ์', MISSING:'ไม่พบคำสั่งเดิม ต้องตรวจสอบ' },
+    AWAITING_APPROVAL:'รออนุมัติ', WAITING_APPROVAL:'รออนุมัติ', APPROVED:'อนุมัติแล้ว', SCHEDULED:'รอวันเริ่มใช้', SUCCESS:'บันทึกสำเร็จ', FAILURE:'บันทึกไม่สำเร็จ', DENIED:'ไม่ผ่านสิทธิ์', MISSING:'ไม่พบคำสั่งเดิม ต้องตรวจสอบ',
+    // Customer recipient-change flow (billing-email-recipient.ts) own its state names, distinct from
+    // the admin one's SUCCEEDED/UNKNOWN pair (item 10).
+    COMPLETED:'เปลี่ยนแล้ว', RECONCILING:'กำลังตรวจผลกับ Stripe' },
   document: { PENDING:'ตรวจเอกสารเมื่อขอเปิด', AVAILABLE:'พร้อมเปิดเอกสาร', NONE:'ยังไม่มีเอกสาร' },
 };
 export function billingLabel(kind: keyof typeof labels, value: string | null | undefined): string {
@@ -76,6 +85,8 @@ const issueKinds: Record<string,string> = {
   SPECIAL_PRICE_ENDING:'ข้อเสนอพิเศษใกล้สิ้นสุด', SPECIAL_PRICE_RETURN_REVIEW:'ต้องตรวจการกลับไปราคาปกติ',
   // Phase 7: the package changed but the menu set has not followed it yet.
   PLAN_MENU_MOVE_REVIEW:'ต้องตรวจการย้ายชุดเมนูตามแพ็กเกจใหม่',
+  // Customer recipient-change flow (billing-email-recipient.ts), item 10.
+  EMAIL_RECIPIENT_REVIEW:'ต้องตรวจการเปลี่ยนอีเมลรับเอกสาร',
 };
 export const billingIssueLabel = (value:string) => Object.hasOwn(issueKinds,value)?issueKinds[value]!:'รายการที่ต้องตรวจสอบ';
 const operationKinds: Record<string,string> = {
@@ -89,13 +100,15 @@ const operationKinds: Record<string,string> = {
 };
 /** Who set the current document recipient (PR E §1.5). */
 const recipientSources: Record<string,string> = {
-  ACCOUNT_EMAIL:'อีเมลบัญชีเจ้าของร้าน', CUSTOMER_OTP:'ลูกค้ายืนยันด้วยรหัส OTP', STRIPE_CHECKOUT:'กรอกที่หน้าชำระเงิน', ADMIN:'ทีมงานเปลี่ยนให้',
+  ACCOUNT_EMAIL:'อีเมลบัญชีของผู้ซื้อ', CUSTOMER_OTP:'ลูกค้ายืนยันด้วยรหัส OTP', STRIPE_CHECKOUT:'กรอกที่หน้าชำระเงิน', ADMIN:'ทีมงานเปลี่ยนให้',
 };
 export function billingRecipientSourceLabel(value: string | null | undefined): string {
   return value ? recipientSources[value] ?? 'ต้องตรวจสอบแหล่งที่มา' : 'ยังไม่มีข้อมูล';
 }
 export function billingTimelineLabel(entry: BillingTimelineEntry): {title:string;state:string} {
-  if (entry.kind === 'PLAN_TERM') return {title:'แพ็กเกจปัจจุบัน',state:billingPlanLabel(entry.state)};
+  // item 10: a never-purchased placeholder term (billing-timeline.ts's own CASE WHEN) must not read
+  // as "ทดลองใช้ฟรี" — its leftover tierKey never was a real trial.
+  if (entry.kind === 'PLAN_TERM') return {title:'แพ็กเกจปัจจุบัน',state:entry.state==='NO_PACKAGE'?planTermStateLabel('NO_PACKAGE'):billingPlanLabel(entry.state)};
   if (entry.kind === 'INVOICE') { const [paid,applied] = entry.state.split(' / '); return {title:'ใบแจ้งหนี้',state:billingLabel('payment',paid)+' · '+billingLabel('apply',applied)}; }
   if (entry.kind === 'DELIVERY') return {title:'แจ้งเตือนทาง'+billingLabel('channel',entry.type),state:billingDeliveryLabel(entry.state,entry.type)};
   if (entry.kind === 'ISSUE') return {title:billingIssueLabel(entry.type),state:billingLabel('issue',entry.state)};

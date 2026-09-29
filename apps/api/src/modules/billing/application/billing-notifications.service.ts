@@ -11,7 +11,7 @@ import { DEFAULT_ENABLED_CHANNELS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMP
 import { isInQuietHours, resolveDeliveryOutcome } from '../../dashboard-notifications/domain/logic/notification.logic';
 import { EmailDeliveryService } from '../../auth/application/email-delivery.service';
 import { PostmarkSendError } from '../../auth/infrastructure/postmark.client';
-import { renderBillingRecipientAdminNoticeEmail, renderBillingRecipientChangedEmail, renderBillingStatusEmail } from '../../auth/infrastructure/auth-email.templates';
+import { renderBillingRecipientAdminNoticeEmail, renderBillingRecipientChangedEmail, renderBillingResendEmail, renderBillingStatusEmail } from '../../auth/infrastructure/auth-email.templates';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { planManagerRoleFilter } from '../../access-control/domain/logic/plan-manager.logic';
 import { BillingService, type BillingSnapshot } from './billing.service';
@@ -23,8 +23,10 @@ import { resolveBillingIssue } from './billing-issues';
 
 export const BILLING_NOTICE_EMAIL = 'billing.status.email';
 const APPLIED = 'billing.invoice.applied';
-/** R-A7: `recipientUserId` null = the company's document recipient (the column), not a user. */
-type NoticePayload = { data?: { recipientUserId?: unknown } };
+/** R-A7: `recipientUserId` null = the company's document recipient (the column), not a user.
+ *  `resend` (R-D1: the customer or admin resend) asks for the resend subject/body, never the
+ *  "package updated" one this same outbox event otherwise always rendered. */
+type NoticePayload = { data?: { recipientUserId?: unknown; resend?: unknown } };
 const defer = (code: string) => new PostmarkSendError('RETRY', code, 60);
 /** PR E (R-E2): the copy mailed to the OLD recipient never spells out the new address in full. */
 const maskRecipientEmail = (email: string) => { const at = email.indexOf('@');
@@ -106,6 +108,7 @@ export class BillingNotificationsService {
     if(!outbox||!invoice||!account||account.companyId!==companyId||account.stripeAccountId!==this.billing.stripe.accountId||account.livemode!==this.billing.stripe.livemode)throw new NotFoundException();
     const userId=(outbox.payloadJson as NoticePayload).data?.recipientUserId;
     if(userId!==null&&typeof userId!=='string')throw new NotFoundException();
+    const resend=Boolean((outbox.payloadJson as NoticePayload).data?.resend);
     const company=await tx.company.findUniqueOrThrow({where:{id:companyId},include:{planTerm:true}}),settings=await this.billing.settings(tx);
     const owner=typeof userId==='string'?(await this.owners(companyId,tx)).find(m=>m.userId===userId):undefined;
     const recipient=typeof userId==='string'?owner?.user.email?.trim().toLowerCase()??null:account.recipientEmail;
@@ -128,7 +131,7 @@ export class BillingNotificationsService {
     else if(attempt?.deadlineAt&&attempt.deadlineAt<=new Date())blockedReason='MAIL_PROOF_EXPIRED';
     else if(attempt?.status!=='READY'&&attempt&&(!['CONFIG','PERMANENT','RETRY'].includes(attempt.status)||attempt.generation>=5))blockedReason='MAIL_RETRY_EXHAUSTED';
     else if(attempt?.nextRecoveryAt&&attempt.nextRecoveryAt>new Date())blockedReason='MAIL_BACKOFF';
-    if(recipient)try{binding=this.emailBinding(company.name,companyId,recipient).binding;}catch{blockedReason??='MAIL_CONFIGURATION_CHANGED';}
+    if(recipient)try{binding=this.emailBinding(company.name,companyId,recipient,resend).binding;}catch{blockedReason??='MAIL_CONFIGURATION_CHANGED';}
     const recovery=(outbox.headersJson as {billingRecovery?:{operationId:string;attemptId:string;binding:string}}|null)?.billingRecovery;
     const row={id:`email:${outbox.id}`,channel:'EMAIL' as const,status:evidenceAttempt?.status??outbox.status,attemptCount:attempt?.generation??0,
       updatedAt:attempts.reduce((date,a)=>a.updatedAt>date?a.updatedAt:date,outbox.updatedAt),nextAttemptAt:attempt?.nextRecoveryAt??null,sentAt:evidenceAttempt?.submittedAt??null,
@@ -138,8 +141,8 @@ export class BillingNotificationsService {
       companyName:company.name,recipientName:owner?.user.displayName??null,invoiceNumber:invoice.providerNumber,
       mail:{outbox,attempt,attempts,evidenceAttempt,intentKey,recipient}};
   }
-  private emailBinding(companyName:string,companyId:string,recipient:string) {
-    const content=renderBillingStatusEmail(companyName,this.billingHref(companyId));
+  private emailBinding(companyName:string,companyId:string,recipient:string,resend=false) {
+    const content=resend?renderBillingResendEmail(companyName,this.billingHref(companyId)):renderBillingStatusEmail(companyName,this.billingHref(companyId));
     return {content,binding:hashBilling([this.config.postmarkServerId,this.config.postmarkMessageStream,this.config.postmarkFromAddress,this.config.postmarkFromName,recipient,'billing_status',content])};
   }
   async reconcileDelivery(companyId:string,reference:string,attemptId:string) {
@@ -292,6 +295,7 @@ export class BillingNotificationsService {
   private async sendEmail(row: OutboxEvent) {
     const { company, account } = await this.source(row), userId = (row.payloadJson as NoticePayload).data?.recipientUserId;
     if (userId !== null && typeof userId !== 'string') throw new Error('billing.notification_recipient_missing');
+    const resend = Boolean((row.payloadJson as NoticePayload).data?.resend);
     // A user id is the legacy owner fan-out (verified owner email); null is the document recipient column (R-A7).
     const resolveRecipient = async () => {
       if (typeof userId === 'string') {
@@ -306,7 +310,7 @@ export class BillingNotificationsService {
     }
     if (!this.email.isPostmark) throw new PostmarkSendError('CONFIG', 'mail_provider_unavailable');
     const recovery=(row.headersJson as {billingRecovery?:{operationId:string;attemptId:string;binding:string}}|null)?.billingRecovery;
-    const {content,binding}=this.emailBinding(company.name,company.id,recipient);
+    const {content,binding}=this.emailBinding(company.name,company.id,recipient,resend);
     if(recovery){
       try{if(!recovery.operationId)throw Error();await this.retryAuthority(recovery.operationId,company.id,`email:${row.id}`);}catch{throw new PostmarkSendError('PERMANENT','CONTROL_PERMISSION_CHANGED');}
       if(recovery.binding!==binding)throw new PostmarkSendError('PERMANENT','MAIL_BINDING_CHANGED');
@@ -318,7 +322,7 @@ export class BillingNotificationsService {
       const current=await this.source(row);
       if(recovery){
         try{await this.retryAuthority(recovery.operationId,company.id,`email:${row.id}`);}catch{throw new PostmarkSendError('PERMANENT','CONTROL_PERMISSION_CHANGED');}
-        if(recovery.binding!==this.emailBinding(current.company.name,company.id,attempt.recipient).binding)throw new PostmarkSendError('PERMANENT','MAIL_BINDING_CHANGED');
+        if(recovery.binding!==this.emailBinding(current.company.name,company.id,attempt.recipient,resend).binding)throw new PostmarkSendError('PERMANENT','MAIL_BINDING_CHANGED');
       }
       if (await resolveRecipient() !== attempt.recipient) throw new PostmarkSendError('SUPPRESSED', 'recipient_changed');
     } catch (error) {

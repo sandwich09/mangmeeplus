@@ -42,10 +42,11 @@ export function stripeCustomerSynced(customer: StripeObject, snapshot: StripeCus
 
 /**
  * PR E (R-E3/§2.6): enqueue a `CUSTOMER_PROFILE_SYNC` op, called by identity/profile writers
- * (`UpdatePartnerIdentityUseCase`, `UpdatePartnerProfileUseCase`) in the SAME transaction as their
- * own write. A plain function, not a class method: those use-cases live in
- * system-partner-management, and BillingModule already imports SystemPartnerManagementModule, so a
- * service injected the other way would cycle. No-op when billing is off or the company has no
+ * (`CompanyIdentityUseCase.patch` — the shop's own edit and the team's `UpdatePartnerIdentityUseCase`
+ * both go through it — and `UpdatePartnerProfileUseCase`) in the SAME transaction as their own write.
+ * A plain function, not a class method: those use-cases live outside billing, and BillingModule
+ * already imports SystemPartnerManagementModule, so a service injected the other way would cycle.
+ * No-op when billing is off or the company has no
  * Stripe Customer yet. Idempotent per `version` via the op's own unique idempotency key.
  */
 export async function enqueueCustomerProfileSync(tx: Prisma.TransactionClient, config: Pick<AppConfigService, 'stripeAccountId' | 'billingMode'>,

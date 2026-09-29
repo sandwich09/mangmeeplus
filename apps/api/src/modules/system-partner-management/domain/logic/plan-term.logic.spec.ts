@@ -154,7 +154,9 @@ describe('Thai copy', () => {
     assert.match(message, /\(อีก 3 วัน\)/);
     assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com/);
     const selfServe = warningMessageTh('ร้านทดสอบ', END, 3, true);
-    assert.match(selfServe, /ต่ออายุหรือเปลี่ยนแพ็กเกจได้เองในเว็บแอป/);
+    // Glossary 2026-09-29: "ต่ออายุ" is never a customer CTA; choosing a package is.
+    assert.match(selfServe, /เลือกแพ็กเกจได้เองในเว็บแอปค่ะ/);
+    assert.doesNotMatch(selfServe, /ต่ออายุ/);
     assert.match(selfServe, /หากต้องการความช่วยเหลือ โทร 098-256-5628/);
     assert.doesNotMatch(selfServe, /พิมพ์.*ขอเปลี่ยนแพ็กเกจ|ทีมงานจะติดต่อกลับ/);
     const withPaymentHint = warningMessageTh('ร้านทดสอบ', END, 3, true, ' เปิดบิลและสแกน QR ในหน้าการชำระเงินค่ะ');
@@ -166,13 +168,22 @@ describe('Thai copy', () => {
     assert.match(message, /^แพ็กเกจของร้านทดสอบ หมดอายุแล้ว/);
     assert.match(message, /ข้อมูลทั้งหมดยังอยู่ครบ/);
     assert.match(message, /ติดต่อ 098-256-5628 หรืออีเมล contact@mangmeeplus\.com/);
-    assert.match(expiredMessageTh('ร้านทดสอบ', true), /ต่ออายุหรือเปลี่ยนแพ็กเกจได้เองในเว็บแอป/);
+    assert.match(expiredMessageTh('ร้านทดสอบ', true), /เลือกแพ็กเกจได้เองในเว็บแอปค่ะ/);
+    // What is limited, never "พักการใช้งาน".
+    assert.match(message, /ใช้งานส่วนธุรกิจไม่ได้จนกว่าจะเลือกแพ็กเกจ/);
+    assert.doesNotMatch(message, /พักการใช้งาน|ต่ออายุ/);
   });
 
   it('directs the expired owner to support when billing is closed', () => {
     assert.match(expiredLineOwnerMessageTh(), /ติดต่อทีมงาน/);
     assert.doesNotMatch(expiredLineOwnerMessageTh(), /ต่ออายุได้เองที่เว็บแอป/);
     assert.match(expiredLineOwnerMessageTh(), /ข้อมูลทั้งหมดยังอยู่ครบ/);
+    assert.doesNotMatch(expiredLineOwnerMessageTh(), /พักการใช้งาน/);
+    // A shop that never bought is told it has no package, never that one ran out.
+    const noPackage = expiredLineOwnerMessageTh('no_package');
+    assert.match(noPackage, /^📦 ร้านนี้ยังไม่มีแพ็กเกจ ใช้งานส่วนธุรกิจไม่ได้จนกว่าจะเลือกแพ็กเกจค่ะ/);
+    assert.doesNotMatch(noPackage, /หมดอายุ|พักการใช้งาน/);
+    assert.match(noPackage, /หากต้องการเริ่มใช้งาน ติดต่อทีมงาน/);
   });
 
   it('limit copy states the cap and where to go', () => {

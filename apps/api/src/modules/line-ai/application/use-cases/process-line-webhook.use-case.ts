@@ -149,7 +149,7 @@ import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.s
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer, type PublicPolicyTopic } from '../../domain/logic/line-public-policy.logic';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
@@ -236,8 +236,9 @@ export type LineReceiptUploadEvent = {
 };
 
 /** `defer_text` = the intake router judged the accompanying caption to be a
- *  standalone question (spec §8); the caller should run it as a text turn. */
-export type LineMediaTurnOutcome = { outcome: 'done' | 'defer_text' };
+ *  standalone question (spec §8); the caller should run it as a text turn.
+ *  `locked` = the shop is locked and was sent the lock reply, which answers the rest of the batch. */
+export type LineMediaTurnOutcome = { outcome: 'done' | 'defer_text' | 'locked' };
 
 /** Read-only gate used by the verified employee LINE webhook before it writes
  * the recoverable buffer payload. `continue` deliberately also covers users
@@ -298,6 +299,8 @@ const PACKAGE_CALLBACK_NOTE = 'ขอให้ทีมงานติดต่�
 /** G19: no pause — the assistant keeps answering while the team calls back (RV32). */
 const PACKAGE_CALLBACK_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะติดต่อกลับเรื่องแพ็กเกจในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) '
   + 'ระหว่างนี้ถามน้องมั่งมีต่อได้เลยนะคะ';
+/** …except where no ACTIVE shop resolves: the assistant cannot answer there, so it is not offered. */
+const PACKAGE_CALLBACK_NO_ASSISTANT_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะติดต่อกลับเรื่องแพ็กเกจในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
 const PACKAGE_CALLBACK_ALREADY_OPEN_REPLY = '📮 คำขอของคุณยังอยู่ในคิวค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
 /** Sent while a support pause is running and there is no live request to write to (§8). */
 const SUPPORT_PAUSED_REPLY = '📮 ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จค่ะ '
@@ -455,7 +458,7 @@ const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบ�
 /** C3: what someone who is NOT the owner of a locked shop hears. No tier, no date, no price — the
  *  same "ask the shop owner" rule the web banner follows — but it no longer tells a connected
  *  employee to connect an account they already connected. */
-export const PACKAGE_REQUIRED_MEMBER_REPLY = 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ ให้เจ้าของร้านเลือกแพ็กเกจก่อน แล้วน้องมั่งมีจะกลับมาช่วยได้เต็มที่นะคะ';
+export const PACKAGE_REQUIRED_MEMBER_REPLY = 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน แล้วน้องมั่งมีจะกลับมาช่วยได้เต็มที่นะคะ';
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
 const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ';
 /**
@@ -1269,6 +1272,14 @@ function companyPickerItem(membership: LineCompanyMembership): CompanyPickerItem
   return { companyId: membership.companyId, companyName: companyLabel(membership), ...(stateLabel ? { stateLabel } : {}) };
 }
 
+/** Where บริษัทของฉัน's web button lands: a locked shop's plan manager goes straight to the package
+ *  page (the dashboard would only bounce to /renew); everyone else keeps the dashboard. */
+function companyWebPath(membership: LineCompanyMembership): string {
+  return companyStateLabel(membership) && canManagePlan(membership.roles)
+    ? `/companies/${membership.companyId}/billing?channel=line`
+    : `/companies/${membership.companyId}/dashboard`;
+}
+
 function companyRoleLabels(membership: LineCompanyMembership): string[] {
   return [...new Set((membership.roles ?? [])
     .filter((item): item is { role: { key: string; name?: string } } => !!item.role)
@@ -1808,34 +1819,49 @@ export async function resolveCompanyForLineUser(
  *  separates either from a disable an admin ordered by hand, which keeps the generic reply.
  *
  *  Read live on every turn and never cached, so a shop that buys a package — back to ACTIVE with a
- *  running term — stops matching on the very next message with nothing to invalidate. */
+ *  running term — stops matching on the very next message with nothing to invalidate.
+ *
+ *  WHICH shop, for someone with several: the one this chat is on, else the newest locked membership
+ *  (review 2026-09-29 — an unordered `findFirst` answered for an arbitrary shop). The lock replies and
+ *  the support request share this one rule, so the card and the ticket always name the same shop.
+ *  Whether the reader may buy (`company.plan.manage`, R-C11) is read for THAT shop only. */
 async function lockedCompanyFor(
   prisma: PrismaService,
   userId: string,
-  /** Plan managers only (`company.plan.manage`, R-C11) for the package card; any active member for the neutral staff reply (C3). */
-  planManagersOnly: boolean,
-): Promise<{ companyId: string; lockReason: PlanTermLockReason } | null> {
+  /** The chat's own id: the company it has selected is preferred when it is one of these shops. */
+  lineUserId: string,
+): Promise<{ companyId: string; lockReason: PlanTermLockReason; canManagePlan: boolean; companyName: string } | null> {
   const now = new Date();
-  const locked = await prisma.client.companyMembership.findFirst({
-    where: {
-      userId,
-      status: 'ACTIVE',
-      company: {
-        OR: [
-          { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } },
-          { status: 'ACTIVE', planTerm: { termEndsAt: { lte: now } } },
-        ],
-      },
-      ...(planManagersOnly ? planManagerRoleFilter() : {}),
+  const where = {
+    userId,
+    status: 'ACTIVE' as const,
+    company: {
+      OR: [
+        { status: 'DISABLED' as const, planTerm: { termDisabledAt: { not: null } } },
+        { status: 'ACTIVE' as const, planTerm: { termEndsAt: { lte: now } } },
+      ],
     },
-    select: { companyId: true, company: { select: { planTerm: {
-      select: { termStartAt: true, termEndsAt: true, renewCount: true } } } } },
-  });
+  };
+  const select = {
+    companyId: true,
+    company: { select: { name: true, brandName: true, planTerm: { select: { termStartAt: true, termEndsAt: true, renewCount: true } } } },
+    roles: { select: { role: { select: { status: true, permissions: { select: { permission: { select: { key: true } } } } } } } },
+  } as const;
+  const context = await prisma.client.lineCompanyContext.findUnique({ where: { lineUserId }, select: { companyId: true } });
+  const locked = (context
+    ? await prisma.client.companyMembership.findFirst({ where: { ...where, companyId: context.companyId }, select })
+    : null)
+    ?? await prisma.client.companyMembership.findFirst({ where, select, orderBy: { createdAt: 'desc' } });
   if (!locked) return null;
   const term = locked.company?.planTerm;
   // No term row cannot reach the predicate above, so this fallback is defensive only: a lock we
   // cannot explain is described as an ended term, never as "you never bought anything".
-  return { companyId: locked.companyId, lockReason: term ? planTermLockReason(term) : 'trial_ended' };
+  return {
+    companyId: locked.companyId,
+    lockReason: term ? planTermLockReason(term) : 'trial_ended',
+    canManagePlan: canManagePlan(locked.roles),
+    companyName: locked.company?.brandName ?? locked.company?.name ?? '',
+  };
 }
 
 /** ai_line_assistant entitlement gate — the partner-detail feature toggle. Companies with no
@@ -2341,44 +2367,41 @@ export class ProcessLineWebhookUseCase {
    *  cannot find your company" reply. Returns true when it has answered the turn.
    *
    *  Every caller sits on the `no company resolved` branch, which is reached before the permission
-   *  resolver, the entitlement read, the router and the model — so a locked company costs one or
-   *  two indexed membership lookups and not a single token.
+   *  resolver, the entitlement read, the router and the model — so a locked company costs a few
+   *  indexed lookups (`lockedCompanyFor`) and not a single token.
    *
-   *  Members whose role grants `company.plan.manage` (R-C11) are the only ones who can act, so only
-   *  they get the package card. Everyone else in the shop gets one neutral sentence with no
-   *  package, date or price in it (C3, the same rule the web banner follows), and someone with no
-   *  membership at all still gets `UNLINKED_REPLY` from the caller. */
+   *  Members whose role grants `company.plan.manage` (R-C11) in the shop `lockedCompanyFor` picked
+   *  are the only ones who can act, so only they get the package card. Everyone else in that shop
+   *  gets one neutral sentence with no package, date or price in it (C3, the same rule the web
+   *  banner follows), and someone with no membership at all still gets `UNLINKED_REPLY` from the
+   *  caller. */
   private async replyIfCompanyLocked(
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     userId: string,
   ): Promise<boolean> {
-    const manager = await lockedCompanyFor(this.prisma, userId, true);
-    if (manager) {
-      if (['test', 'live'].includes(this.config.billingMode) && this.config.webBaseUrl) {
-        // R-B2 (b): the link is minted here, before the outcome is recorded, so the card is one tap
-        // into the package page whether or not the delivery seam wraps (it does not with the replay
-        // flag on — production). `event.handoff` still binds the turn's tenant for bookkeeping.
-        event.handoff = { userId, companyId: manager.companyId };
-        const packageUrl = await this.oneTapPackageUrl(event, userId, manager.companyId, 'locked_card_packages');
-        await this.deliverRequiredMessages(event, [buildPackageRequiredMessage({
-          lockReason: manager.lockReason, companyId: manager.companyId, webBaseUrl: this.config.webBaseUrl,
-          ...(packageUrl ? { packageUrl } : {}),
-        })]);
-      } else {
-        // Billing closed (or no web base): there is no package page to send anyone to, so the reply
-        // stays exactly the text and quick reply it has always been.
-        await this.deliverReply(event, expiredLineOwnerMessageTh(), {
-          items: [{ type: 'action', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } }],
-        });
-      }
-      // A status, not an error code: we said no on purpose and the customer received the answer.
-      await this.updateEventLog(event.webhookEventId, 'package_required', undefined, manager.companyId);
-      return true;
+    const locked = await lockedCompanyFor(this.prisma, userId, event.lineUserId);
+    if (!locked) return false;
+    if (!locked.canManagePlan) {
+      await this.deliverReply(event, PACKAGE_REQUIRED_MEMBER_REPLY);
+    } else if (['test', 'live'].includes(this.config.billingMode) && this.config.webBaseUrl) {
+      // R-B2 (b): the link is minted here, before the outcome is recorded, so the card is one tap
+      // into the package page whether or not the delivery seam wraps (it does not with the replay
+      // flag on — production). `event.handoff` still binds the turn's tenant for bookkeeping.
+      event.handoff = { userId, companyId: locked.companyId };
+      const packageUrl = await this.oneTapPackageUrl(event, userId, locked.companyId, 'locked_card_packages');
+      await this.deliverRequiredMessages(event, [buildPackageRequiredMessage({
+        lockReason: locked.lockReason, companyId: locked.companyId, webBaseUrl: this.config.webBaseUrl,
+        companyName: locked.companyName, ...(packageUrl ? { packageUrl } : {}),
+      })]);
+    } else {
+      // Billing closed (or no web base): there is no package page to send anyone to, so the reply
+      // stays the text and quick reply it has always been — worded for the shop's own lock reason.
+      await this.deliverReply(event, expiredLineOwnerMessageTh(locked.lockReason), {
+        items: [{ type: 'action', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } }],
+      });
     }
-    const member = await lockedCompanyFor(this.prisma, userId, false);
-    if (!member) return false;
-    await this.deliverReply(event, PACKAGE_REQUIRED_MEMBER_REPLY);
-    await this.updateEventLog(event.webhookEventId, 'package_required', undefined, member.companyId);
+    // A status, not an error code: we said no on purpose and the customer received the answer.
+    await this.updateEventLog(event.webhookEventId, 'package_required', undefined, locked.companyId);
     return true;
   }
 
@@ -2707,7 +2730,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     // Deliberately NO pauseAssistant here (the one difference from handleStaffContact).
-    await this.deliverReply(event, PACKAGE_CALLBACK_REPLY);
+    await this.deliverReply(event, asker?.assistantAnswers ? PACKAGE_CALLBACK_REPLY : PACKAGE_CALLBACK_NO_ASSISTANT_REPLY);
     await this.signupNotify?.enqueueSupportRequest(created.id);
     await this.audit.log({
       action: 'signup.line.support_requested',
@@ -2722,17 +2745,14 @@ export class ProcessLineWebhookUseCase {
   /**
    * PR E (R-E5, A13): the sender's own billing reference — the latest attempt still in flight, else
    * the latest invoice, else none. Read-only; never asserts membership beyond what
-   * resolveSupportAsker/lockedCompanyFor already picked (both already scope to the sender).
+   * resolveSupportAsker already picked (it scopes to the sender, locked shops included).
    */
   private async deriveSupportBillingReference(
-    asker: { companyId: string | null; userId?: string } | null,
+    asker: { companyId: string | null } | null,
   ): Promise<{ kind: 'attempt' | 'invoice'; id: string } | undefined> {
     const stripeAccountId = this.config.stripeAccountId;
     if (!stripeAccountId || !['test', 'live'].includes(this.config.billingMode)) return undefined;
-    let companyId = asker?.companyId ?? null;
-    // A locked shop (term ended) never resolves a companyId above (resolveCompanyForLineUser
-    // filters it out) — fall back to the same lookup the locked-card handoff uses.
-    if (!companyId && asker?.userId) companyId = (await lockedCompanyFor(this.prisma, asker.userId, false))?.companyId ?? null;
+    const companyId = asker?.companyId ?? null;
     if (!companyId) return undefined;
     const account = await this.prisma.client.billingAccount.findUnique({ where: { companyId_stripeAccountId_livemode: {
       companyId, stripeAccountId, livemode: this.config.billingMode === 'live' } } });
@@ -2755,15 +2775,17 @@ export class ProcessLineWebhookUseCase {
    * company counts only while the caller is still a member of it. Its `needsSelection` answer is
    * for a chat that can ask a question; a support ticket cannot, so it falls back to the oldest
    * membership rather than filing the request against no shop at all.
+   *
+   * With no ACTIVE shop at all (review 2026-09-29), a LOCKED one is still the shop an operator has
+   * to call — the ticket used to read "ผู้ที่ยังไม่ได้เปิดร้าน" with no company. It is picked by
+   * `lockedCompanyFor`, the same rule the lock reply uses, so the ticket names the shop the chat did.
    */
   private async resolveSupportAsker(event: { lineUserId: string; messagingChannelId?: string }): Promise<{
     companyId: string | null;
     signupRequestId?: string;
     lastMessageText?: string;
-    /** PR E (R-E5): the resolved LINE-linked user, even when `companyId` is null because every
-     *  membership is locked (resolveCompanyForLineUser filters those out) — deriveSupportBillingReference
-     *  uses it to fall back to lockedCompanyFor. */
-    userId?: string;
+    /** The chat resolves to a usable shop, so the assistant can still answer it (G19 says so). */
+    assistantAnswers?: true;
   } | null> {
     const { lineUserId } = event;
     const identity = await this.resolveLineIdentity(event);
@@ -2772,16 +2794,16 @@ export class ProcessLineWebhookUseCase {
       return pending ? { companyId: null, signupRequestId: pending } : null;
     }
     const resolved = await resolveCompanyForLineUser(this.prisma, identity.userId, lineUserId);
-    const companyId = resolved && 'companyId' in resolved
-      ? resolved.companyId
-      : (await this.prisma.client.companyMembership.findFirst({
-        where: { userId: identity.userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
-        orderBy: { createdAt: 'asc' },
-        select: { companyId: true },
-      }))?.companyId ?? null;
+    let companyId = resolved && 'companyId' in resolved ? resolved.companyId : null;
+    if (!resolved) companyId = (await lockedCompanyFor(this.prisma, identity.userId, lineUserId))?.companyId ?? null;
+    companyId ??= (await this.prisma.client.companyMembership.findFirst({
+      where: { userId: identity.userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+      orderBy: { createdAt: 'asc' },
+      select: { companyId: true },
+    }))?.companyId ?? null;
     if (!companyId) {
       const pending = await this.pendingSignupFor(lineUserId);
-      return { companyId: null, userId: identity.userId, ...(pending ? { signupRequestId: pending } : {}) };
+      return { companyId: null, ...(pending ? { signupRequestId: pending } : {}) };
     }
     // §2.2.1: the one line of context an operator needs before opening the shop. `AiTurn` is the
     // only durable record of what a customer typed (the buffer is in-process and the webhook log
@@ -2792,7 +2814,7 @@ export class ProcessLineWebhookUseCase {
       select: { userMessagePreview: true },
     });
     const lastMessageText = lastTurn?.userMessagePreview?.trim().slice(0, SUPPORT_LAST_MESSAGE_MAX_LENGTH);
-    return { companyId, userId: identity.userId, ...(lastMessageText ? { lastMessageText } : {}) };
+    return { companyId, ...(resolved ? { assistantAnswers: true as const } : {}), ...(lastMessageText ? { lastMessageText } : {}) };
   }
 
   /** The application this asker is still travelling on, if any — the queue link of §2.1.1. Same
@@ -3114,7 +3136,9 @@ export class ProcessLineWebhookUseCase {
         ...planManagerRoleFilter(),
       },
       orderBy: { createdAt: 'asc' },
-      select: { companyId: true, company: { select: { name: true, planTerm: { select: { tierKey: true } } } } },
+      // Status + term too, so the picker below carries the same lock chips บริษัทของฉัน does (R-C8).
+      select: { companyId: true, company: { select: { name: true, brandName: true, status: true, planTerm: {
+        select: { tierKey: true, termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } } } } },
     });
     if (memberships.length === 0) {
       await this.deliverReply(event, PACKAGE_CHANGE_NOT_OWNER_REPLY);
@@ -3128,7 +3152,7 @@ export class ProcessLineWebhookUseCase {
       : memberships.length === 1 ? memberships[0] : undefined;
     if (!owned) {
       await this.deliverRequiredMessages(event, [
-        buildCompanyPickerMessage(memberships.map(row => ({ companyId: row.companyId, companyName: row.company.name }))),
+        buildCompanyPickerMessage(memberships.map(companyPickerItem)),
         { type: 'text', text: 'เลือกร้านที่ต้องการก่อน แล้วกด “ขอเปลี่ยนแพ็กเกจ” อีกครั้งค่ะ',
           quickReply: { items: [{ type: 'action', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } }] } },
       ]);
@@ -3142,7 +3166,7 @@ export class ProcessLineWebhookUseCase {
       event.handoff = { userId, companyId: owned.companyId };
       const plainUrl = new URL(`/companies/${encodeURIComponent(owned.companyId)}/billing?channel=line`, this.config.webBaseUrl).toString();
       const url = await this.oneTapPackageUrl(event, userId, owned.companyId, 'package_change_reply') ?? plainUrl;
-      await this.deliverReply(event, `📦 ${owned.company.name}\nเลือกแพ็กเกจ ตรวจสอบการชำระเงิน และเปิดใบเสร็จได้ที่ลิงก์นี้ (เปิดในเบราว์เซอร์ให้อัตโนมัติ)\n${url}\nตรวจสอบราคาและยืนยันบนเว็บก่อนชำระเงินนะคะ`);
+      await this.deliverRequiredMessages(event, [buildPackageReviewCard(companyLabel(owned), url)]);
       await this.updateEventLog(event.webhookEventId, 'billing_review_link', undefined, owned.companyId);
       return;
     }
@@ -5192,6 +5216,10 @@ export class ProcessLineWebhookUseCase {
     // with "open a new shop / I am staff / link an existing account" reads as though the system has
     // forgotten them — and the second door invites a duplicate signup.
     if (publicCommand === 'follow') {
+      // …but "ส่งรูปใบเสร็จ หรือถามยอดขาย" is an invitation the assistant would only refuse while the
+      // chat's shop is locked, so that customer hears the lock reply their next message would get.
+      if (!await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId)
+        && await this.replyIfCompanyLocked(event, identity.userId)) return;
       await this.deliverReply(event, WELCOME_BACK_REPLY);
       await this.updateEventLog(event.webhookEventId, 'line_follow_known');
       return;
@@ -7274,12 +7302,12 @@ export class ProcessLineWebhookUseCase {
     const items: CompanyPickerItem[] = memberships.map(companyPickerItem);
     if (!this.handoffLinks) return items;
     const visible = new Set(companyPickerPage(items, currentCompanyId, page).visible.map((item) => item.companyId));
-    return Promise.all(items.map(async (item) => (visible.has(item.companyId)
+    return Promise.all(items.map(async (item, index) => (visible.has(item.companyId)
       ? {
         ...item,
         webUrl: await this.handoffLinks!.linkFor(
           { userId, companyId: item.companyId, lineUserId: event.lineUserId, surface: LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN },
-          `/companies/${item.companyId}/dashboard`,
+          companyWebPath(memberships[index]!),
         ) ?? undefined,
       }
       : item)));
@@ -7331,7 +7359,7 @@ export class ProcessLineWebhookUseCase {
         // sharing one between the two cards would break whichever the reader tapped second.
         openWebUrl: await this.handoffLinks?.linkFor(
           { userId, companyId: currentMembership.companyId, lineUserId: event.lineUserId, surface: LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN },
-          `/companies/${currentMembership.companyId}/dashboard`,
+          companyWebPath(currentMembership),
         ) ?? undefined,
       })];
       if (memberships.length > 1) {
@@ -7838,8 +7866,9 @@ export class ProcessLineWebhookUseCase {
     if (!resolved || 'needsSelection' in resolved) {
       if (!resolved) {
         // A photo sent to a locked shop is still a message from someone inside it, and this branch
-        // is the same "no company resolved" dead end the text turn hits.
-        if (await this.replyIfCompanyLocked(event, identity.userId)) return;
+        // is the same "no company resolved" dead end the text turn hits. `locked` lets the buffer
+        // close the rest of the photo batch on this one card instead of one card per photo.
+        if (await this.replyIfCompanyLocked(event, identity.userId)) return { outcome: 'locked' };
         await this.deliverReply(event, RECEIPT_LINK_REPLY);
       } else {
         const memberships = await this.listLineCompanies(identity.userId);

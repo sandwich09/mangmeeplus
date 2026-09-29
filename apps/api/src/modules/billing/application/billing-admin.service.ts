@@ -1,6 +1,7 @@
 import { effectivePlanCapacity } from '../../system-partner-management/domain/logic/plan-capacity';
 import { billingHistoryExport } from './billing-history-export';
 import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
+import { billingRepairTypes } from './billing-reconcile-command';
 import { planTermLockReason, planTermState, type BillingAdjustmentKind } from '@watchdog-bms/contracts';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { BillingSupportOutcome, BillingSupportOutcomeInput, BillingOperatorCompany, BillingOperatorCompanyDetail, BillingOperatorIssue, BillingOperatorOverview, BillingProviderEventView, BillingReferenceLookup } from '@watchdog-bms/contracts';
@@ -135,14 +136,25 @@ export class BillingAdminService {
    *  provider id, or an invoice number. Out of scope or not found both answer with an empty 404 —
    *  the lookup itself must not confirm a reference exists outside the caller's companies. */
   private ambiguous() { return billingError('BILLING_LOOKUP_AMBIGUOUS', 'เลขอ้างอิงนี้ตรงหลายรายการ ให้ใช้เลขใบแจ้งหนี้หรือรหัสเต็ม'); }
-  private async lookupResult(kind: BillingReferenceLookup['kind'], id: string, companyId: string, opType?: string): Promise<BillingReferenceLookup> {
+  // Route table mirrors billingTimeline()'s href switch (billing-timeline.ts) and
+  // BillingIssueResolutionPanel's operationType switch: only these operation types have their
+  // own admin detail page. Anything else (SCHEDULE_PRICE_RETURN, APPLY_PLAN_MENUS,
+  // CUSTOMER_PROFILE_SYNC, CHECK_PROVIDER_CONFIGURATION, and a customer-created
+  // UPDATE_BILLING_EMAIL) falls back to the company's admin billing page.
+  private async lookupResult(kind: BillingReferenceLookup['kind'], id: string, companyId: string, opType?: string, opProposed?: unknown): Promise<BillingReferenceLookup> {
     const company = await this.prisma.client.company.findUnique({ where: { id: companyId }, select: { name: true } });
     if (!company) throw new NotFoundException();
     const href = kind === 'INVOICE' ? `/system/billing/companies/${companyId}/invoices/${id}`
       : kind === 'ATTEMPT' ? `/system/billing/companies/${companyId}/checkouts/${id}`
       : kind === 'ISSUE' ? `/system/billing/issues/${id}`
       : opType === 'REFUND' ? `/system/billing/refunds/${id}`
-        : opType === 'UPDATE_BILLING_EMAIL' ? `/system/billing/recipient-changes/${id}` : `/system/billing/operations/${id}`;
+      : opType === 'EXPIRE_CHECKOUT' ? `/system/billing/checkout-expiry/${id}`
+      : opType && ['CHANGE_COLLECTION', 'GRANT_FREE_DAYS', 'GRANT_OVERRIDE', 'REVOKE_OVERRIDE'].includes(opType) ? `/system/billing/plan-adjustments/${id}`
+      : opType && ['GRANT_RECEIPTS', 'REVOKE_RECEIPTS'].includes(opType) ? `/system/billing/receipt-adjustments/${id}`
+      : opType && ['SET_ACTION_GATE', 'PUBLISH_POLICY'].includes(opType) ? `/system/billing/configuration-changes/${id}`
+      : opType && billingRepairTypes.includes(opType) ? `/system/billing/operations/${id}`
+      : opType === 'UPDATE_BILLING_EMAIL' && (opProposed as { target?: { source?: string } } | null)?.target?.source === 'ADMIN' ? `/system/billing/recipient-changes/${id}`
+      : `/system/billing/companies/${companyId}`;
     return { kind, id, companyId, companyName: company.name, href };
   }
   async lookup(context: RequestContext, reference: string): Promise<BillingReferenceLookup> {
@@ -171,9 +183,9 @@ export class BillingAdminService {
     if (attempts.length === 1) return this.lookupResult('ATTEMPT', attempts[0]!.id, companyOfAccount.get(attempts[0]!.billingAccountId)!);
 
     const operations = await this.prisma.client.billingOperation.findMany({
-      where: { id: { endsWith: suffix }, stripeAccountId, livemode, companyId: opScope }, select: { id: true, companyId: true, type: true }, take: 2 });
+      where: { id: { endsWith: suffix }, stripeAccountId, livemode, companyId: opScope }, select: { id: true, companyId: true, type: true, proposedJson: true }, take: 2 });
     if (operations.length > 1) throw this.ambiguous();
-    if (operations.length === 1) return this.lookupResult('OPERATION', operations[0]!.id, operations[0]!.companyId!, operations[0]!.type);
+    if (operations.length === 1) return this.lookupResult('OPERATION', operations[0]!.id, operations[0]!.companyId!, operations[0]!.type, operations[0]!.proposedJson);
 
     const issues = await this.prisma.client.billingIssue.findMany({
       where: { id: { endsWith: suffix }, stripeAccountId, livemode, companyId: opScope }, select: { id: true, companyId: true }, take: 2 });

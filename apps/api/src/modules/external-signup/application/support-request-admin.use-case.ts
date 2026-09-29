@@ -236,7 +236,7 @@ export class SupportRequestAdminUseCase {
       signupIds.length
         ? this.prisma.client.companySignupRequest.findMany({
           where: { id: { in: signupIds } },
-          select: { id: true, companyName: true, reviewResolution: true, resolutionNote: true },
+          select: { id: true, companyName: true, state: true, reviewResolution: true, resolutionNote: true },
         })
         : Promise.resolve([]),
       userIds.length
@@ -250,6 +250,7 @@ export class SupportRequestAdminUseCase {
     ]);
     const companyName = new Map(companies.map((row) => [row.id, row.name]));
     const appliedName = new Map(signups.map((row) => [row.id, row.companyName]));
+    const appliedShopOpened = new Set(signups.filter((row) => row.state === 'COMPLETED').map((row) => row.id));
     const requestedInformation = new Map(signups.flatMap((row) =>
       row.reviewResolution === 'REQUEST_INFO' && row.resolutionNote
         ? [[row.id, row.resolutionNote] as const]
@@ -268,6 +269,7 @@ export class SupportRequestAdminUseCase {
         askerLabel: supportAskerLabelTh(
           (row.companyId && companyName.get(row.companyId)) || null,
           (row.signupRequestId && appliedName.get(row.signupRequestId)) || null,
+          !!row.signupRequestId && appliedShopOpened.has(row.signupRequestId),
         ),
         askerRef: row.lineUserIdHash.slice(-6),
         ...(row.companyId ? { companyId: row.companyId } : {}),

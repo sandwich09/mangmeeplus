@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ProcessLineWebhookUseCase } from '../line-ai/application/use-cases/process-line-webhook.use-case';
 
+const buttonOf = (card: any) => card.contents.footer.contents[0].action;
+
 function harness(input: { selected?: string; owned?: string[]; mode?: string; handoffLinks?: unknown; pushTargetId?: string } = {}) {
   const replies: string[] = [], cards: any[] = [], logs: any[] = [], requests: any[] = [];
   let query: any;
@@ -22,8 +24,10 @@ test('old LINE package/rich-menu command opens the selected owner billing review
   const h = harness(); await h.execute();
   assert.equal(h.requests.length, 0);
   assert.deepEqual(h.event.handoff, { userId: 'owner', companyId: 'company-a' });
-  assert.match(h.replies[0]!, /companies\/company-a\/billing\?channel=line/);
-  assert.doesNotMatch(h.replies[0]!, /ชำระแล้ว|ซื้อใบเพิ่ม|ปลดล็อกแล้ว/);
+  // Review 2026-09-29: the link is ONE "เลือกแพ็กเกจ" button, never a raw URL in the chat.
+  assert.deepEqual(h.replies, []);
+  assert.deepEqual(buttonOf(h.cards[0]), { type: 'uri', label: 'เลือกแพ็กเกจ', uri: 'https://app.example.test/companies/company-a/billing?channel=line' });
+  assert.doesNotMatch(JSON.stringify(h.cards[0]), /ชำระแล้ว|ซื้อใบเพิ่ม|ปลดล็อกแล้ว/);
   // R-C11: the web's predicate — an ACTIVE role holding `company.plan.manage` — not the OWNER key.
   assert.deepEqual(h.query().where.roles, { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key: 'company.plan.manage' } } } } } });
 });
@@ -31,20 +35,20 @@ test('R-B2 (b): the reply carries the one-tap link minted in the lane, never in 
   const minted: any[] = [];
   const handoffLinks = { linkFor: async (ctx: any, path: string) => { minted.push({ ctx, path }); return 'https://app.example.test/l/tok'; } };
   const h = harness({ handoffLinks }); await h.execute();
-  assert.match(h.replies[0]!, /https:\/\/app\.example\.test\/l\/tok\n/);
-  assert.match(h.replies[0]!, /เปิดในเบราว์เซอร์ให้อัตโนมัติ/);
+  assert.equal(buttonOf(h.cards[0]).uri, 'https://app.example.test/l/tok');
+  assert.match(JSON.stringify(h.cards[0]), /เปิดในเบราว์เซอร์ให้อัตโนมัติ/);
   assert.deepEqual(minted, [{ ctx: { userId: 'owner', companyId: 'company-a', lineUserId: 'synthetic-line', surface: 'package_change_reply' },
     path: '/companies/company-a/billing?channel=line' }]);
   const group = harness({ handoffLinks, pushTargetId: `C${'0'.repeat(32)}` }); await group.execute();
-  assert.doesNotMatch(group.replies[0]!, /\/l\//);
-  assert.match(group.replies[0]!, /companies\/company-a\/billing\?channel=line/);
+  assert.doesNotMatch(JSON.stringify(group.cards[0]), /\/l\//);
+  assert.equal(buttonOf(group.cards[0]).uri, 'https://app.example.test/companies/company-a/billing?channel=line');
   assert.equal(minted.length, 1, 'no token for a room full of people');
 });
 test('nonowner and ambiguous/stale selected company cannot get a different shop billing link', async () => {
   for (const input of [{ owned: [] }, { owned: ['a', 'b'] }, { selected: 'foreign' }]) {
     const h = harness(input); await h.execute();
     assert.equal(h.event.handoff, undefined); assert.equal(h.requests.length, 0);
-    assert.doesNotMatch(h.replies.join('\n'), /https:/);
+    assert.doesNotMatch(h.replies.join('\n') + JSON.stringify(h.cards), /https:/);
   }
 });
 test('disabled billing retains the existing manual support path', async () => {

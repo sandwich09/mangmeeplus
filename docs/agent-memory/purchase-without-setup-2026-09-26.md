@@ -1,6 +1,6 @@
 # Agent Memory: purchase-without-setup-2026-09-26
 
-Status: IMPLEMENTED 2026-09-29 — PR A–E merged to develop + main (#842/#843, #848/#849, #850/#851, #852/#853, #854/#855); NOT deployed. C+D are both on main. Remaining are release steps only (see "Next — release" at the end).
+Status: IMPLEMENTED 2026-09-29 — PR A–E merged to develop + main (#842/#843, #848/#849, #850/#851, #852/#853, #854/#855); end-to-end review fixes on `claude/pfv-integration-20260929` (see the 2026-09-29 review section); NOT deployed. Remaining are release steps only (see "Next — release" at the end).
 Owner: thawatchai / Claude (controller)
 Scope: ทำให้ร้านใหม่ซื้อแพ็กเกจได้จากการ์ดในแชตโดยไม่ตั้งค่าในแอป (Stripe เก็บอีเมล/ที่อยู่แล้วคัดลอกกลับ), สถานะ "ยังไม่มีแพ็กเกจ" เข้าได้ทุกทาง, ลิงก์จาก LINE เปิดนอกเบราว์เซอร์ LINE, แก้เอกสารด้วยตัวเอง (ส่งซ้ำ/เปลี่ยนผู้รับ/ออกใบใหม่), เครื่องมือแอดมินรองรับทุก "ติดต่อทีมงาน"
 Decisions:
@@ -145,10 +145,51 @@ Verification (this session, 2026-09-28): `pnpm --filter @watchdog-bms/contracts 
 - Verification: focused specs green throughout (see the test list above); heavy checks (pins `--check`, api/web typecheck, DI metadata guard, contracts build/typecheck/test, `api test`, `web test`, `api test:boot`, whole-chain acceptance) run once at the end under `/tmp/mangmee-heavy.lock` — see the commit history on `claude/purchase-pr-e-admin-tools-20260928` for the exact result.
 - Next: controller reviews the diff, resolves any drift against develop since `f637ffb4` (PR D was landing concurrently in a separate worktree — check whether `BillingPage.tsx`/`BillingDeliveryPanel.tsx` or `api-error-message.ts` need a merge reconciliation), pushes the branch, PR to develop + twin main, dispatches Extended Tests (PG spec + the three new/extended e2e specs) and records the run id, then the program moves to Phase 6 (integration verification and UAT/production rollout per plan §P6).
 
+## 2026-09-29 — end-to-end review fixes (branch `claude/pfv-integration-20260929`)
+- Owner directive: verify every flow end to end, including dependent modules. There must be no blocks, confusing wording or odd errors, and fields and values must be consistent. Fix what can be fixed without waiting.
+- Review: parallel read-only audits (admin/console, cross-surface consistency, docs, LINE/LIFF, web purchase journey), plus a local run of the real e2e and Postgres suites on develop 8a91bc1c, compared against the pre-program baseline 03438bde.
+  - The wording glossary was fixed by the controller:
+    - "ยังไม่มีแพ็กเกจ" / "หมดอายุ" / "ถูกพักใช้งานโดยผู้ดูแล";
+    - CTA "เลือกแพ็กเกจ", never "ต่ออายุ";
+    - "เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ";
+    - "ทีมงาน";
+    - "อีเมลรับเอกสาร" vs "อีเมลบัญชี";
+    - "เครดิต AI";
+    - one noun per message.
+- Real defects found and fixed:
+  - **Migration.** `20260929030000_email_verification_billing_recipient_proof_kind`: the PR C recipient code wrote `proofKind='BILLING_RECIPIENT'`, which `EmailVerificationToken_otp_shape` never allowed, so every insert failed on real Postgres. The plan asked the PG spec to touch the new columns, not the old CHECK.
+  - Admin lookup double-prefix redirect (404).
+  - Return-from-Stripe showed cancel and resume while the payment was still open.
+  - A null notice read unlocked the locked shell.
+  - The shop's own identity edit never synced the Stripe Customer.
+  - Company-profile field errors were read one level too shallow.
+  - Resend used the package-updated email template.
+  - `canChange`/`canResend` gaps: pending admin change, bounced recipient.
+  - Locked-shop LINE replies and support requests did not name the shop.
+  - The package-change reply reached only one plan manager.
+  - LIFF/login dead ends and English leftovers.
+  - Plus about 60 wording and consistency items.
+- Stale tests (not regressions):
+  - `billing-http-smoke.ts` flipped `Role.key` to STAFF. Recovery has been permission-based since 48c4ab57, so the smoke now removes the non-STAFF RolePermission rows. The "baseline passes" claim was wrong: the baseline failed earlier, at the quote step.
+  - `e2e/harness/roles.ts` `salesdoc` is `visibleTo: ALL` (88aef194).
+- Direct owner-session requests:
+  - `addressErrorMessages` reads `error.details.details`.
+  - `billing-advance-deal.pg.spec.ts` and `billing-purchase-source.pg.spec.ts` are registered in `extended-tests.yml` (#858/#859). The two unit specs named in the request were already in the whole-chain catalog, so `package.json` was not edited.
+- Verification on head 1dd418af, run locally under the heavy-job lock (GitHub Actions still ends in `startup_failure`); every step exit 0:
+  - pins `--check` and pins spec;
+  - contracts build, typecheck, tests (338) and the ci.yml contracts line;
+  - API typecheck, DI metadata check (1,054 files), web typecheck;
+  - API fixed-list suite;
+  - web suite 2,155/2,155;
+  - whole-chain acceptance: 4 + 5 + 363 + 317 + 4 + 224 + 1,848 + 484 = 3,249/0;
+  - API boot (every provider resolved);
+  - `git diff --check`.
+  - The re-run of the real e2e and PG suites on this head vs the baseline is recorded below when it finishes.
+
 ## Next — release (2026-09-29)
 - Extended Tests (manual dispatch; GitHub Actions has been in startup_failure since 2026-09-25): the PG specs of PR A/C/E, the smokes including `BILLING_NO_SETUP_ONLY=1`, the customer suite browser block, and e2e `billing-no-setup`, `customer-billing-ux`, `billing-preview`, `billing-advance-deal` and PR E's 3 files. Record the run ids here.
 - Release per `docs/runbooks/uat-production-v2-deployment.md`:
-  - there are 2 pending migrations (`20260928200000`, `20260928210000`), so READY takes the `APPEND_ONLY_PENDING` path;
+  - there are 3 pending migrations (`20260928200000`, `20260928210000`, `20260929030000`), so READY takes the `APPEND_ONLY_PENDING` path; the local Kamal normal lane applies them with `migrate deploy` (no destructive SQL: the third only drops and re-adds a CHECK);
   - run `backfill-billing-recipients.ts` right after `migrate deploy`;
   - deploy while no repeat purchase attempt is in flight (RV17);
   - `ci.yml` and `extended-tests.yml` on main must match develop (true at merge time).
