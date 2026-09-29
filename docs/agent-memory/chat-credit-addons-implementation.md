@@ -1,6 +1,6 @@
 # Agent Memory: chat-credit-addons-implementation
 
-Status: PR A merged to develop (#878, `3a863b70`). PR C (AI credit cycles, ledger, LINE v2 SHARED funding, holds across months, cap warnings) implemented 2026-09-29 on branch `claude/addons-pr-c-ai-credit-20260929` (worktree `/private/tmp/mangmee-addons-pr-c-20260929`, base develop `3a863b70`); not pushed. PR B built in parallel on `claude/addons-pr-b-image-ledger-20260929`; PR C's admin grant for AI credit waits for B's seam (see PR C below). PR D–G not started.
+Status: PR A merged to develop (#878, `3a863b70`). PR C (AI credit cycles, ledger, LINE v2 SHARED funding, holds across months, cap warnings) implemented 2026-09-29 on branch `claude/addons-pr-c-ai-credit-20260929` (worktree `/private/tmp/mangmee-addons-pr-c-20260929`, base develop `3a863b70`); not pushed. Commits: `4d018379` (PR C), merge of PR B's seam `a5e197ba`, `8772832c` (CHAT_CREDIT branch of the seam). PR B (full, `5b43e65a`) built in parallel on `claude/addons-pr-b-image-ledger-20260929`. PR D–G not started.
 Owner: thawatchai / Claude (controller + implementer)
 Scope: add-on program PR A–G — spec `docs/specs/chat-credit-and-receipt-addons-spec-th.md`, plan `docs/plans/chat-credit-and-receipt-addons-plan-th.md`. Sales-event discounts (`docs/specs/sales-event-discounts-spec-th.md`, plan SD-A…SD-F) builds on PR A.
 
@@ -52,12 +52,17 @@ Decisions and deviations (also in the plan's PR C note):
 - Credit refusals keep `reason` + `budgetScope: 'CHAT'` and add in-process `aiCredit: EXHAUSTED | INSUFFICIENT | PACKAGE_REQUIRED`; the internal controller drops it (no gateway contract change, no new `AI_BUDGET_REFUSAL_CODES`).
 - C5: operator hold list covers every month, 100 per page with `?cursor=<createdAtISO>_<id>`; the read sweeps current, previous and every month with a RESERVED/DISPATCHED row. New code `partner_ai_credit_holds_cursor_invalid` has Thai text. Web sentence now “ค้นทุกเดือนที่ยังมีรายการค้าง”; a next-page control is PR F.
 - C6: `readAiCreditSalesReadiness` (TOTAL headroom ≥ held credit + pack; held = remaining, since used credit is already in spend). Cap writers warn (never refuse): `SetPartnerAiModelResult.aiCreditWarning`, `PlatformAiBudgetDto.aiCreditWarningCompanyCount`; read-only under the locks already held.
-- C7 (narrow adapter): `applyAiCreditGrant` / `revokeAiCreditGrant` in `ai-credit-ledger.ts`, same input/return shape and `billing.addon_source_changed` as PR B's `applyAddOnGrant`. No competing seam file.
+- C7: PR B's seam `a5e197ba` merged; `8772832c` wires its CHAT_CREDIT branch: `addOnGrantReady` = paid term on the account AND `aiCreditCutoverAt <= now`; `applyAddOnGrant` writes the lot through `applyAiCreditGrant` under the seam's L1 → L4, key `addon:<billingAccountId>:<sourceKey>` (per account like receipt lots, never colliding with `cycle:` lot keys); replay before readiness; a changed payload throws `billing.addon_source_changed`.
+- Still to do in PR B's admin service (`billing-addon-admin-grants.service.ts`, not in the seam commit) for CHAT_CREDIT: revoke (`revocableLot` reads `billingReceiptGrant` only → use `AiCreditGrant` + `revokeAiCreditGrant` with `addon-revoke:<operationId>`), `additional()`/`list()`/`lotView` (images only → add the chat balance from `readAiCreditBalance`; contracts `BillingAddOnCredits` gains it). Grant approval already works for CHAT through the seam.
 
-Swap onto PR B's seam once merged (small change):
-- `billing-addon-grants.ts` `addOnGrantReady`: CHAT_CREDIT ready when the company's `aiCreditCutoverAt <= now` (consumer sees lots).
-- `applyAddOnGrant`: the CHAT_CREDIT branch calls `applyAiCreditGrant(tx, { ...input, sourceHash })` and returns `{ productKind: 'CHAT_CREDIT', ...result }` instead of throwing.
-- `billing-addon-admin-grants.service.ts`: revoke/`revocableLot`/`additional`/`list` read `AiCreditGrant` + `readAiCreditBalance` for CHAT_CREDIT; revoke calls `revokeAiCreditGrant` with `addon-revoke:<operationId>`; contracts `BillingAddOnCredits` gains the chat balance.
+Verification (2026-09-29, HEAD `8772832c`; machine rule 14:20: no JS API typecheck, no full suites):
+- contracts: build 0, typecheck 0, package tests 339/339, `ci.yml` contracts line 26/26.
+- Native TypeScript 7 typecheck (`api-typecheck.sh`): API rc=0 (on `8772832c`), web rc=0.
+- `test:boot`: "Nest resolved every provider"; `check-di-metadata`: all decorated classes carry paramtypes.
+- Focused specs: API 440 (435 pass, 0 fail, 5 PG-gated skips) across cycles, reservation, holds use case, partner controller, set-partner-ai-model, set-platform-ai-budget, usage meter, AI usage, support tools, internal budget controller, spec-suite-coverage; web error specs 62/62.
+- PG on throwaway postgres:16 `mangmee-addons-prc-pg-20260929` (port 15642, fresh `migrate deploy` of every migration, removed afterwards): run 1 (lock 14:14–14:17) 51/51 = reservation 16, holds 10, funding 10, authority 15; run 2 after the seam (released 14:28) funding 11/11.
+- W00 manifest spec 4/4 (no hashed file changed, not regenerated); pins `--check` status=current; `git diff --check` clean.
+- Not run, per the coordinator's machine rule: `node scripts/run-line-ai-whole-chain-acceptance.mjs` and the full API/web suites (the coordinator runs them once on the integrated branch).
 
 Residuals for later PRs:
 - PR D: v1 lanes (CRM, draft) still use the calendar CHAT cap for cut-over companies; must fund before AI credit is sold (spec §5.3).
