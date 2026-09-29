@@ -229,7 +229,9 @@ export class LineLedgerDeliveryService {
         else if (result.code === 'RATE_LIMITED') { states[index] = { ...state, status: 'READY', lastErrorCode: result.code }; if (!terminal) status = 'READY'; }
         else { states[index] = { ...state, status: 'REFUSED', lastErrorCode: result.code }; if (!terminal) status = 'REFUSED'; }
       } else { states[index] = { ...state, lastErrorCode: state.transport === 'REPLY' ? 'REPLY_ACCEPTANCE_UNKNOWN' : result.code }; }
-      const delay = result.kind === 'accepted' ? 0 : Math.min(30_000, 2_000 * 2 ** Math.max(0, state.pushAttempts - 1));
+      // A rejected reply token is not a transport fault to back off from: its push goes out now (E4).
+      const tokenFallback = result.kind === 'rejected' && result.rejection === 'TOKEN' && state.transport === 'REPLY';
+      const delay = result.kind === 'accepted' || tokenFallback ? 0 : Math.min(30_000, 2_000 * 2 ** Math.max(0, state.pushAttempts - 1));
       await tx.lineDeliveryPlan.update({ where: { id: row.id }, data: { status, batchStateJson: states as unknown as Prisma.InputJsonValue,
         ...(status === 'ACCEPTED' ? { acceptedAt: now } : {}), cancelReason: reason, nextAttemptAt: new Date(now.getTime() + delay), leaseToken: null, leaseExpiresAt: null } });
       claim.states = states;

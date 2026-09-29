@@ -52,7 +52,9 @@ const SINGLE_SHAPE_TOOLS: Readonly<Record<string, 'single_metric' | 'list'>> = {
 // needs the full agentic path to reason about a cause or produce a recommendation, however confident the
 // model's simpleRead guess looks. Checked on the RAW message text (not the model's own paraphrased
 // `goal`) so the guard holds even when the model mislabels its own intent.
-const WHY_COMPARE_ADVICE_PATTERN = /ทำไม|เพราะอะไร|สาเหตุ|อธิบาย|เทียบ|เปรียบเทียบ|ต่างกัน|ควร|แนะนำ|\bwhy\b|\bexplain\b|\bcompare\b|\bversus\b|\bvs\b/iu;
+// UAT 2026-09-29: "ร่างค่าใช้จ่ายมีอะไรบ้าง ติดปัญหาอะไรไหม" asks for a diagnosis beside the list, which
+// no compiled list formatter can give — a problem/issue question needs the same full path.
+const WHY_COMPARE_ADVICE_PATTERN = /ทำไม|เพราะอะไร|สาเหตุ|อธิบาย|เทียบ|เปรียบเทียบ|ต่างกัน|ควร|แนะนำ|ปัญหา|ผิดปกติ|ติดขัด|\bwhy\b|\bexplain\b|\bcompare\b|\bversus\b|\bvs\b|\bproblems?\b|\bissues?\b/iu;
 const TOOL_BY_NAME = new Map(LINE_TOOL_REGISTRY.map((tool) => [tool.name, tool] as const));
 const KNOWN_FILTER_KEYS = new Set(LINE_TOOL_REGISTRY.flatMap((tool) => [
   ...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? []),
