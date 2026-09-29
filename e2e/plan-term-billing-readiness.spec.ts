@@ -7,6 +7,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { PrismaPg } from '@prisma/adapter-pg';
+import type { CompanyPlanTermViewDto, RenewCompanyPlanTermBody } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../apps/api/src/generated/prisma/client';
 import { hashPassword } from '../apps/api/src/modules/auth/domain/logic/password-credential.logic';
 import { test as base, expect } from './harness/fixtures';
@@ -26,6 +27,7 @@ type Rig = {
   term: () => ReturnType<PrismaClient['companyPlanTerm']['findUniqueOrThrow']>;
   business: () => Promise<import('@playwright/test').APIResponse>;
   ownerRenew: () => Promise<import('@playwright/test').APIResponse>;
+  renewBody: (commandId: string) => Promise<RenewCompanyPlanTermBody>;
   notice: () => Promise<import('@playwright/test').APIResponse>;
   identity: (role: 'OWNER' | 'STAFF', acceptLegal?: boolean) => Promise<{ id: string; username: string; password: string; token: string }>;
   customManager: () => Promise<{ id: string; username: string; password: string; token: string }>;
@@ -86,8 +88,23 @@ const test = base.extend<{ rig: Rig }>({
       });
       await ensureBearerLegalAcceptance(request, adminToken, adminMembership.companyId);
       const renewUrl = `${urls.api}/system/partners/${companyId}/plan-term/renew`;
+      // RV31: renew is a reviewed command (commandId, expectedVersion = the admin view's sourceVersion,
+      // reason). A replay must resend the identical body: the API fingerprints expectedVersion too.
+      const renewVersions = new Map<string, string>();
+      const renewBody = async (commandId: string): Promise<RenewCompanyPlanTermBody> => {
+        let expectedVersion = renewVersions.get(commandId);
+        if (!expectedVersion) {
+          const view = await request.get(`${urls.api}/system/partners/${companyId}/plan-term`, {
+            headers: apiHeaders(adminToken, adminMembership.companyId),
+          });
+          expect(view.status(), `plan-term view: ${await view.text()}`).toBe(200);
+          expectedVersion = (await view.json() as CompanyPlanTermViewDto).sourceVersion!;
+          renewVersions.set(commandId, expectedVersion);
+        }
+        return { commandId, expectedVersion, reason: 'e2e simulated payment', days: 30 };
+      };
       await use({
-        db, companyId, otherCompanyId,
+        db, companyId, otherCompanyId, renewBody,
         term: () => db.companyPlanTerm.findUniqueOrThrow({ where: { companyId } }),
         expire: async (status = 'ACTIVE', termDisabled = false) => {
           const expiredAt = new Date(Date.now() - DAY);
@@ -106,15 +123,15 @@ const test = base.extend<{ rig: Rig }>({
           if (result === 'declined') return;
           const res = await request.post(renewUrl, {
             headers: { ...apiHeaders(adminToken, adminMembership.companyId), 'X-Request-Id': requestId },
-            data: { days: 30 },
+            data: await renewBody(requestId),
           });
           expect(res.status(), `manual-renew driver: ${await res.text()}`).toBe(200);
         },
         business: () => request.get(`${urls.api}/companies/${companyId}/branches`, {
           headers: apiHeaders(ownerToken, companyId),
         }),
-        ownerRenew: () => request.post(renewUrl, {
-          headers: apiHeaders(ownerToken, companyId), data: { days: 30 },
+        ownerRenew: async () => request.post(renewUrl, {
+          headers: apiHeaders(ownerToken, companyId), data: await renewBody(`owner-renew-${randomUUID()}`),
         }),
         notice: () => request.get(`${urls.api}/plan-term/notice`, {
           headers: apiHeaders(ownerToken, companyId),
@@ -320,7 +337,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     expect((await read(rig.otherCompanyId)).status()).toBe(403);
     expect((await read('nonexistent-billing-company')).status()).toBe(403);
     expect((await request.post(`${urls.api}/system/partners/${rig.companyId}/plan-term/renew`, {
-      headers: apiHeaders(staff.token, rig.companyId), data: { days: 30 },
+      headers: apiHeaders(staff.token, rig.companyId), data: await rig.renewBody(`staff-renew-${randomUUID()}`),
     })).status()).toBe(403);
     expect((await request.get(`${urls.api}/companies/${rig.companyId}/branches`, { headers: apiHeaders(staff.token, rig.companyId) })).status()).toBe(403);
     const ctx = await browser.newContext({ baseURL: urls.web });
@@ -328,8 +345,10 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       expect((await ctx.request.post('/api/auth/login', { data: { username: staff.username, password: staff.password } })).status()).toBe(200);
       const page = await ctx.newPage();
       await page.goto(`/companies/${rig.companyId}/renew`);
-      await expect(page.getByRole('heading', { name: 'บริษัทนี้พักการใช้งานชั่วคราว', exact: true })).toBeVisible();
-      await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toHaveCount(0);
+      // Staff share the lock title, get a body naming who can buy, and no purchase CTA (card or banner).
+      await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
+      await expect(page.getByText('แพ็กเกจของร้านหมดอายุแล้ว ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อใช้งานต่อ ข้อมูลทั้งหมดยังอยู่ครบ', { exact: true })).toBeVisible();
+      await expect(page.getByRole('link', { name: 'เลือกแพ็กเกจ', exact: true })).toHaveCount(0);
     } finally { await ctx.close(); }
     await rig.db.companyMembership.updateMany({ where: { userId: staff.id }, data: { status: 'DISABLED' } });
     expect((await read(rig.companyId)).status()).toBe(403);
@@ -352,7 +371,10 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       await authedPage.route('**/api/v1/plan-term/notice', route => route.fulfill({ status, contentType: 'application/json', body: '{}' }));
       await authedPage.goto(`/companies/${rig.companyId}/renew`);
       await expect(authedPage.getByRole('heading', { name: title, exact: true })).toBeVisible();
-      await expect(authedPage.getByRole('heading', { name: 'บริษัทนี้พักการใช้งานชั่วคราว', exact: true })).toHaveCount(0);
+      // Never a real state instead: the lock view (owner and staff share its title) or no-term.
+      for (const state of ['แพ็กเกจหมดอายุแล้ว', 'บริษัทนี้ยังใช้งานได้ตามสิทธิ์']) {
+        await expect(authedPage.getByRole('heading', { name: state, exact: true })).toHaveCount(0);
+      }
       await authedPage.unroute('**/api/v1/plan-term/notice');
       if (status !== 401) {
         await authedPage.getByRole('button', { name: 'ลองใหม่', exact: true }).click();
@@ -682,7 +704,7 @@ test.describe('BC existing admin web recovery — no Stripe or new control-suite
         const page = await context.newPage();
         const keyErrors: string[] = [];
         page.on('console', message => { if (/same key|unique.*key/i.test(message.text())) keyErrors.push(message.text()); });
-        const target = `/system/partners/${rig.companyId}?tab=billing&reference=local-proof`;
+        const target = `/system/partners/${rig.companyId}?view=package&reference=local-proof`;
         await page.goto(target);
         await expect(page).toHaveURL(/\/login\?/);
         expect(new URL(page.url()).searchParams.get('next')).toBe(target);
@@ -713,7 +735,7 @@ test.describe('BC existing admin web recovery — no Stripe or new control-suite
         if (readUnavailable) await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Temporary read failure' }) });
         else await route.continue();
       });
-      await page.goto(`/login?next=${encodeURIComponent(`/system/partners/${rig.companyId}`)}`);
+      await page.goto(`/login?next=${encodeURIComponent(`/system/partners/${rig.companyId}?view=package`)}`);
       await submitSystemLogin(page);
       const retry = page.getByRole('button', { name: 'ลองโหลดแพ็กเกจอีกครั้ง' });
       await expect(retry).toBeVisible();
@@ -749,11 +771,13 @@ test.describe('BC existing admin web recovery — no Stripe or new control-suite
       await authedPage.goto(`/companies/${rig.companyId}/renew`);
       await expect(authedPage.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
       const page = await admin.newPage();
-      await page.goto(`/login?next=${encodeURIComponent(`/system/partners/${rig.companyId}`)}`);
+      await page.goto(`/login?next=${encodeURIComponent(`/system/partners/${rig.companyId}?view=package`)}`);
       await submitSystemLogin(page);
       await page.getByRole('button', { name: 'ต่ออายุ', exact: true }).click();
-      await page.getByRole('dialog').getByRole('button', { name: 'ต่ออายุ', exact: true }).click();
-      await expect(page.getByText('ต่ออายุการใช้งานแล้ว', { exact: true })).toBeVisible();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByLabel('เหตุผลที่ต่ออายุ', { exact: true }).fill('e2e admin renew through web');
+      await dialog.getByRole('button', { name: 'ต่ออายุ', exact: true }).click();
+      await expect(page.getByText('บันทึกการปรับแพ็กเกจและวันใช้งานแล้ว', { exact: true })).toBeVisible();
       expect((await rig.term()).renewCount).toBe(1);
       expect((await rig.term()).termDisabledAt).toBeNull();
       expect((await rig.business()).status()).toBe(200);
@@ -777,7 +801,7 @@ test.describe('BC existing admin web recovery — no Stripe or new control-suite
 
   test('BC04 customer OWNER cannot enter platform admin or mutate another term', async ({ rig, authedPage }) => {
     const before = await rig.term();
-    await authedPage.goto(`/system/partners/${rig.companyId}?tab=billing`);
+    await authedPage.goto(`/system/partners/${rig.companyId}?view=package`);
     await expect(authedPage.getByRole('button', { name: 'ต่ออายุ', exact: true })).toHaveCount(0);
     await expect(authedPage.getByRole('heading', { name: /สิทธิ์|Access/i })).toBeVisible();
     expect((await rig.ownerRenew()).status()).toBe(403);
