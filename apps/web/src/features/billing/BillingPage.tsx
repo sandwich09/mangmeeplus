@@ -258,7 +258,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     try {
       const latest = await api.status();
       setData(value => value && { ...value, status: latest });
-      const discountChoice = !dealId && !purchaseIntent && eventDiscountMode(mode) && eventDiscountUsable(latest.eventDiscount) ? choice ?? eventChoice : undefined;
+      // SD-O12: every one-time package payment carries the choice — first purchase, next period, change or upgrade.
+      const discountChoice = !dealId && eventDiscountMode(mode) && eventDiscountUsable(latest.eventDiscount) ? choice ?? eventChoice : undefined;
       const result = await api.quote(offerKey, selectedInterval, billingEmail, selection, mode, dealId, purchaseIntent, discountChoice);
       if (!selection) capacityDraft.current = null;
       key.current = crypto.randomUUID(); setAccepted(false); setQuote(result); setCapacity(null);
@@ -585,7 +586,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {cadenceNotice && <div ref={cadenceNoticeRef} tabIndex={-1} role="status" className="scroll-mt-[calc(var(--app-header-h,0px)+1.5rem)] space-y-3 rounded-xl bg-amber-50 p-4">
           <p>{cadenceNotice === 'pending' ? 'มีรายการเปลี่ยนแพ็กเกจรอบถัดไป กรุณาตรวจสอบและยกเลิกรายการนั้นก่อนซื้อรายปี' : 'หากต้องการเพิ่มระดับและเปลี่ยนรอบชำระ ให้เพิ่มระดับในรอบเดิมก่อน แล้วจึงเลือกรอบชำระใหม่ ระบบจะแสดงยอดให้ตรวจสอบแยกแต่ละรายการ'}</p>
           <button className={button} onClick={() => { if (cadenceNotice === 'pending') setSection('payment'); else setInterval(status.interval!); setCadenceNotice(false); }}>{cadenceNotice === 'pending' ? 'ดูรายการเปลี่ยนแพ็กเกจ' : `เลือกแพ็กเกจ${status.interval === 'year' ? 'รายปี' : 'รายเดือน'}`}</button>
-        </div>}        {/* Sales-event spec §8: the holder's first-bill discount sits above the list, "ใช้" chosen; one-time purchases only today. */}
+        </div>}        {/* Sales-event spec §8 / SD-O12: the holder's discount sits above the list, "ใช้" chosen; one-time payments only today. */}
         {eventDiscountBlockedText(status.eventDiscount).length > 0 ? <p role="note" className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm leading-7">
           {eventDiscountBlockedText(status.eventDiscount).map(line => <span key={line} className="block break-words">{line}</span>)}</p>
         : eventDiscountUsable(status.eventDiscount) && (eventDiscountMode(chosenMode) ? <section aria-label="ส่วนลดจากงาน" className="rounded-xl border border-brand-200 bg-brand-50 p-4">
@@ -663,19 +664,21 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         </div>
         {quote.eventDiscount && <section aria-label="ส่วนลดจากงาน" className="space-y-2 rounded-xl border border-brand-200 p-4">
           {quote.eventDiscount.applied ? <><dl className="space-y-1">
-            <div className="flex justify-between gap-3"><dt>ราคาแพ็กเกจ</dt><dd className="shrink-0">{money(quote.offer.priceSatang)}</dd></div>
-            <div className="flex justify-between gap-3 font-semibold text-brand-800"><dt className="min-w-0 break-words">ส่วนลดจากงาน {quote.eventDiscount.eventName} (บิลแรก)</dt><dd className="shrink-0">−{money(quote.eventDiscount.shownDiscountSatang)}</dd></div>
-          </dl><p className="text-sm text-gray-600">ส่วนลดใช้กับบิลนี้เท่านั้น ครั้งถัดไปชำระราคาเต็ม {money(quote.totalSatang)}</p></>
+            {/* The price the discount came off: an upgrade's difference, otherwise the package price. */}
+            <div className="flex justify-between gap-3"><dt>{quote.purchase?.kind === 'UPGRADE' ? 'ส่วนต่างแพ็กเกจ' : 'ราคาแพ็กเกจ'}</dt><dd className="shrink-0">{money(quote.eventDiscount.applied.unitAmountSatang + quote.eventDiscount.shownDiscountSatang)}</dd></div>
+            <div className="flex justify-between gap-3 font-semibold text-brand-800"><dt className="min-w-0 break-words">ส่วนลดจากงาน {quote.eventDiscount.eventName}</dt><dd className="shrink-0">−{money(quote.eventDiscount.shownDiscountSatang)}</dd></div>
+          </dl><p className="text-sm text-gray-600">ส่วนลดใช้กับการจ่ายครั้งนี้เท่านั้น งานเดียวกันใช้ได้ร้านละครั้ง</p></>
           : <p>ไม่ใช้ส่วนลดจากงานครั้งนี้ · ส่วนลดยังเป็นของคุณถึง {date(quote.eventDiscount.expiresAt)}</p>}
           <button type="button" className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" disabled={busy} aria-busy={busy} onClick={() => {
             const next: EventDiscountChoice = quote.eventDiscount?.applied ? 'DECLINE' : 'USE';
             setEventChoice(next);
-            void action(async () => { await requestQuote(quote.offer.offerKey, quote.offer.interval, recipientEmail, capacityDraft.current?.initialSelection, quote.purchaseMode, undefined, undefined, next); });
+            void action(async () => { await requestQuote(quote.offer.offerKey, quote.offer.interval, recipientEmail, capacityDraft.current?.initialSelection, quote.purchaseMode, undefined,
+              quote.purchase?.kind === 'FULL_PACKAGE_UPGRADE' ? 'FULL_PACKAGE' : undefined, next); });
           }}>{quote.eventDiscount.applied ? 'ไม่ใช้ส่วนลดครั้งนี้' : 'ใช้ส่วนลด'}</button>
         </section>}
         <p>ราคาก่อนภาษี {money((quote.eventDiscount?.applied ?? quote).subtotalSatang)} · ภาษี {money((quote.eventDiscount?.applied ?? quote).taxSatang)}</p>
         {quote.purchase && ['REPEAT', 'FULL_PACKAGE_UPGRADE'].includes(quote.purchase.kind) ? <dl className={`grid gap-5 rounded-xl bg-brand-50 p-5 ${annualConversion ? 'sm:grid-cols-2 xl:grid-cols-4' : 'sm:grid-cols-3'}`}>
-          <div><dt className="text-sm text-brand-800">ชำระวันนี้</dt><dd className="mt-1 text-2xl font-bold text-brand-800">{money(quote.totalSatang)}</dd></div>
+          <div><dt className="text-sm text-brand-800">ชำระวันนี้</dt><dd className="mt-1 text-2xl font-bold text-brand-800">{money((quote.eventDiscount?.applied ?? quote).totalSatang)}</dd></div>
           <div><dt className="text-sm text-gray-600">โควตาที่เพิ่ม</dt><dd className="mt-1 text-xl font-bold">{quote.purchase.receiptUnitsAdded.toLocaleString('th-TH')} ใบ<span className="mt-1 block text-sm font-normal text-gray-600">ใช้ได้ทันทีเมื่อชำระสำเร็จ</span></dd></div>
           <div><dt className="text-sm text-gray-600">วันหมดอายุใหม่</dt><dd className="mt-1 text-xl font-bold">{date(quote.purchase.projectedPaidThrough)}<span className="mt-1 block text-sm font-normal text-gray-600">{annualConversion ? 'เพิ่ม 12 เดือนจาก' : 'ต่อจากเดิม'} {date(quote.purchase.previousPaidThrough)}</span></dd></div>
           {annualConversion && <div><dt className="text-sm text-gray-600">ต่ออายุรายปีครั้งถัดไป</dt><dd className="mt-1 text-xl font-bold">{money(quote.totalSatang)}<span className="mt-1 block text-sm font-normal text-gray-600">วันที่ {date(quote.purchase.projectedPaidThrough)}</span></dd></div>}

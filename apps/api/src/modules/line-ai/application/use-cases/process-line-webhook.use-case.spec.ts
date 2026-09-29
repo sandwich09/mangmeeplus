@@ -7904,7 +7904,7 @@ describe('LINE: ถามส่วนลด (sales-event spec §8.1, Owner UAT 2
       assert.deepEqual([h.reads[0].userId, h.reads[0].companyId, h.reads[0].authProvider], ['user-1', 'company-1', 'line']);
       const card = h.sentMessages[0];
       assert.equal(card.type, 'flex');
-      assert.match(card.contents.body.contents[1].text, /ส่วนลดจากงาน event1 · ลดบิลแรก 100 บาท · ใช้ได้ถึง 30 ต.ค. 2569/);
+      assert.match(card.contents.body.contents[1].text, /ส่วนลดจากงาน event1 · ลด 100 บาท · ใช้ได้ถึง 30 ต.ค. 2569/);
       assert.deepEqual(card.contents.footer.contents[0].action, { type: 'uri', label: 'เลือกแพ็กเกจ',
         uri: 'https://app.example.com/companies/company-1/billing?channel=line' });
       assert.equal(h.getAiGatewayCalled(), false);
@@ -7924,7 +7924,7 @@ describe('LINE: ถามส่วนลด (sales-event spec §8.1, Owner UAT 2
     assert.equal(member.replies[0], 'ส่วนลดจากงานใช้ตอนซื้อแพ็กเกจของร้าน เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจสอบถามในแชทนี้ได้เลยค่ะ');
     const paying = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'CREDIT' }) });
     await paying.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-paying', messageText: 'ส่วนลด' });
-    assert.match(paying.sentMessages[0].contents.body.contents[1].text, /ร้านนี้มีแพ็กเกจอยู่แล้ว/);
+    assert.match(paying.sentMessages[0].contents.body.contents[1].text, /ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ/);
     assert.equal(paying.sentMessages[0].contents.footer, undefined);
   });
 });

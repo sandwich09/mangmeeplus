@@ -7,10 +7,11 @@ const now = new Date('2026-10-01T03:00:00.000Z');
 const future = new Date('2026-10-31T10:00:00.000Z');
 
 describe('sales-event holder view', () => {
-  it('routes a starting shop to the first-bill discount and a paying shop to credit (spec §4.1)', () => {
+  it('routes every shop that can pay in one go to the discount, an auto-renewing shop to credit (spec §4.1, SD-O12)', () => {
     for (const source of ['NO_TERM', 'TRIAL', 'ADMIN_MANUAL', 'PAID_EXPIRED_CURRENT_MODE'] as const) assert.equal(eventDiscountPath(source), 'DISCOUNT', source);
-    assert.equal(eventDiscountPath('PAID_CURRENT_MODE'), 'CREDIT');
-    for (const source of ['PAID_OTHER_MODE', 'SOURCE_INCONSISTENT'] as const) assert.equal(eventDiscountPath(source), null, source);
+    for (const mode of ['CARD_ONCE', 'PROMPTPAY_ONCE']) assert.equal(eventDiscountPath('PAID_CURRENT_MODE', mode), 'DISCOUNT', mode);
+    for (const mode of ['CARD_AUTO', 'PROMPTPAY_RENEW', 'NONE', null]) assert.equal(eventDiscountPath('PAID_CURRENT_MODE', mode), 'CREDIT', String(mode));
+    for (const source of ['PAID_OTHER_MODE', 'SOURCE_INCONSISTENT'] as const) assert.equal(eventDiscountPath(source, 'CARD_ONCE'), null, source);
   });
 
   it('lists only tickets of the caller’s ACTIVE LINE identities, with plain states and no LINE ids', async () => {
@@ -36,25 +37,29 @@ describe('sales-event holder view', () => {
       receiptImageUnits: 10, expiresAt: now.toISOString(), state: 'EXPIRED', batchSuspended: false });
   });
 
-  it('LINE read (spec §8.1): the owner-only view, plus why a starting shop may not take the first-bill discount now', async () => {
+  it('LINE read (spec §8.1): the owner-only view, plus why this shop may not take the discount now (SD-O12: per event)', async () => {
     const lineRead = (BillingService.prototype as any).lineEventDiscount;
     const tickets = [{ serial: 'AAAA2222' }];
     const context = { userId: 'user-1', companyId: 'company-1' };
-    const self = (path: string | null, used: boolean, deal: boolean) => {
+    // `spentOnly`: every ticket the holder has is from an event this shop already took one from.
+    const self = (path: string | null, spentOnly: boolean, deal: boolean) => {
       const asked: any[] = [];
       return { asked, eventDiscount: async (ctx: any) => { asked.push(ctx); return { path, tickets }; }, prisma: { client: {
-        salesEventTicket: { findFirst: async (args: any) => { asked.push(args.where); return used ? { id: 't' } : null; } },
+        externalIdentity: { findMany: async () => [{ providerChannelId: 'ch', providerUserId: 'U1' }] },
+        salesEventTicket: { findMany: async (args: any) => { asked.push(args.where);
+          if (args.where.companyId) return spentOnly ? [{ batch: { eventName: 'งานหนึ่ง' } }] : [];
+          return spentOnly === ('in' in args.where.batch.eventName) ? [{ id: 't' }] : []; } },
         packageChangeRequest: { findFirst: async () => deal ? { id: 'd' } : null } } } };
     };
     const starting = self('DISCOUNT', false, false);
     assert.deepEqual(await lineRead.call(starting, context), { path: 'DISCOUNT', tickets, block: null });
     assert.equal(starting.asked[0], context, 'the same owner check as the package page');
-    assert.deepEqual(starting.asked[1], { companyId: 'company-1', redeemedAs: 'DISCOUNT', state: { in: ['RESERVED', 'USED'] } });
-    assert.equal((await lineRead.call(self('DISCOUNT', true, false), context)).block, 'COMPANY_ALREADY_USED');
+    assert.deepEqual(starting.asked[1], { companyId: 'company-1', state: { in: ['RESERVED', 'USED'] } }, 'events this shop took a ticket from, any way');
+    assert.equal((await lineRead.call(self('DISCOUNT', true, false), context)).block, 'EVENT_ALREADY_USED');
     assert.equal((await lineRead.call(self('DISCOUNT', false, true), context)).block, 'DEAL_ACTIVE');
     const paying = self('CREDIT', true, true);
     assert.deepEqual(await lineRead.call(paying, context), { path: 'CREDIT', tickets, block: null });
-    assert.equal(paying.asked.length, 1, 'a shop that already has a package reads no first-bill block');
+    assert.equal(paying.asked.length, 1, 'an auto-renewing shop reads no discount block');
     const denied = { eventDiscount: async () => { throw new Error('ต้องได้รับสิทธิ์จัดการแพ็กเกจบริษัท'); } };
     await assert.rejects(lineRead.call(denied, context), /สิทธิ์จัดการแพ็กเกจ/);
   });

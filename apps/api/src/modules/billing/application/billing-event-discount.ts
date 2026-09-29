@@ -1,12 +1,12 @@
-import type { BillingEventDiscountTicket, BillingEventDiscountView, BillingOffer, BillingPolicy, BillingPurchaseSource, BillingStatus } from '@watchdog-bms/contracts';
+import type { BillingEventDiscountTicket, BillingEventDiscountView, BillingOffer, BillingPolicy, BillingPurchaseMode, BillingPurchaseSource, BillingStatus } from '@watchdog-bms/contracts';
 import { Prisma } from '../../../generated/prisma/client';
 import { DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 import { salesEventTicketDisplayState } from '../../sales-console/domain/sales-event-claim.logic';
-import { pickEventDiscount, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
+import { EVENT_DISCOUNT_MODES, pickEventDiscount, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
 import { packageMenuPurchaseSource } from './billing-purchase-source';
 
 /**
- * Sales-event first-bill discount, database side (docs/specs/sales-event-discounts-spec-th.md §4.2, §4.3, §6.3, §6.4).
+ * Sales-event discount, database side (docs/specs/sales-event-discounts-spec-th.md §4.2, §4.3, §6.3, §6.4, SD-O12).
  * Every write runs inside the caller's transaction, after its company lock: Company → BillingAccount → ticket.
  */
 type Tx = Prisma.TransactionClient;
@@ -18,36 +18,56 @@ async function holders(tx: Tx, userId: string) {
   return rows.map(row => ({ holderProvider: 'LINE', holderChannelId: row.providerChannelId, holderProviderUserId: row.providerUserId }));
 }
 
-/** Spec §4.2 and SD-O5: why this shop takes no first-bill discount right now, if it cannot. */
-export async function eventDiscountBlock(tx: Tx, companyId: string, now: Date): Promise<'DEAL_ACTIVE' | 'COMPANY_ALREADY_USED' | null> {
-  if (await tx.salesEventTicket.findFirst({ where: { companyId, redeemedAs: 'DISCOUNT', state: { in: TAKEN } }, select: { id: true } })) return 'COMPANY_ALREADY_USED';
-  if (await tx.packageChangeRequest.findFirst({ where: { companyId, kind: DEAL_KIND,
-    OR: [{ status: 'APPROVED', offerExpiresAt: { gt: now } }, { status: 'PAID' }] }, select: { id: true } })) return 'DEAL_ACTIVE';
-  return null;
+/** Spec §4.2: a deal in force (approved and unexpired, or paid and waiting) takes every price discount off this shop. */
+export async function eventDiscountBlock(tx: Tx, companyId: string, now: Date): Promise<'DEAL_ACTIVE' | null> {
+  return await tx.packageChangeRequest.findFirst({ where: { companyId, kind: DEAL_KIND,
+    OR: [{ status: 'APPROVED', offerExpiresAt: { gt: now } }, { status: 'PAID' }] }, select: { id: true } }) ? 'DEAL_ACTIVE' : null;
 }
 
-/** The holder's tickets this shop could use: ISSUED, unexpired, a discount, batch not suspended, batch not yet used here (SD-Q8). */
-async function usableTickets(tx: Tx, userId: string, companyId: string, now: Date) {
+/** SD-O12 (Owner 2026-09-29): the events this shop already took a ticket from, any batch of them — one per event per shop. */
+async function usedEvents(tx: Tx, companyId: string): Promise<string[]> {
+  const rows = await tx.salesEventTicket.findMany({ where: { companyId, state: { in: TAKEN } }, select: { batch: { select: { eventName: true } } } });
+  return [...new Set(rows.map(row => row.batch.eventName))];
+}
+
+/**
+ * The holder's discount tickets — ISSUED, unexpired, a discount, batch not suspended — from events this shop has not taken
+ * a ticket from yet (SD-O12, matched on the exact stored event name). `spent` = the ones from events it already took one from.
+ */
+async function holderTickets(tx: Tx, userId: string, companyId: string, now: Date, spent = false) {
   const own = await holders(tx, userId);
   if (!own.length) return [];
+  const events = await usedEvents(tx, companyId);
+  if (spent && !events.length) return [];
   return tx.salesEventTicket.findMany({ where: { OR: own, state: 'ISSUED', expiresAt: { gt: now }, discountSatang: { gt: 0 },
-    batch: { state: { not: 'SUSPENDED' }, tickets: { none: { companyId, state: { in: TAKEN } } } } },
+    batch: { state: { not: 'SUSPENDED' }, eventName: spent ? { in: events } : { notIn: events } } },
     include: { batch: { select: { eventName: true } } }, orderBy: { id: 'asc' }, take: 50 });
 }
 
-/** The ticket and amounts a quote for this card would carry, or null (same helper as the page, SED-14). */
-export async function eventDiscountOffer(tx: Tx, input: { userId: string; companyId: string; offer: BillingOffer; tax: BillingPolicy['taxTreatment']; now: Date }) {
-  const tickets = await usableTickets(tx, input.userId, input.companyId, input.now);
+/** The ticket and amounts a quote for this card would carry, or null (same helper as the page, SED-14). `basisSatang` = an upgrade's difference. */
+export async function eventDiscountOffer(tx: Tx, input: { userId: string; companyId: string; offer: BillingOffer; tax: BillingPolicy['taxTreatment']; now: Date; basisSatang?: number }) {
+  const tickets = await holderTickets(tx, input.userId, input.companyId, input.now);
   if (!tickets.length || await eventDiscountBlock(tx, input.companyId, input.now)) return null;
-  return pickEventDiscount(tickets, input.offer, input.tax);
+  return pickEventDiscount(tickets, input.offer, input.tax, input.basisSatang);
 }
+
+/** Why the holder cannot take a discount at this shop now: a deal, or every ticket they hold is from an event this shop already used. */
+export async function eventDiscountHolderBlock(tx: Tx, input: { userId: string; companyId: string; now: Date }): Promise<'DEAL_ACTIVE' | 'EVENT_ALREADY_USED' | null> {
+  return await eventDiscountBlock(tx, input.companyId, input.now) ?? (!(await holderTickets(tx, input.userId, input.companyId, input.now)).length &&
+    (await holderTickets(tx, input.userId, input.companyId, input.now, true)).length ? 'EVENT_ALREADY_USED' : null);
+}
+
+const byBest = (a: { discountSatang: number; expiresAt: Date; id: string }, b: { discountSatang: number; expiresAt: Date; id: string }) =>
+  b.discountSatang - a.discountSatang || a.expiresAt.getTime() - b.expiresAt.getTime() || a.id.localeCompare(b.id);
 
 /** The package page's view (spec §3.4 ก, §8): the holder's best ticket and the cards it lowers, or why this shop cannot use it. */
 export async function eventDiscountView(tx: Tx, input: { userId: string; companyId: string; offers: BillingOffer[]; tax: BillingPolicy['taxTreatment']; now: Date }): Promise<BillingStatus['eventDiscount']> {
-  const tickets = await usableTickets(tx, input.userId, input.companyId, input.now);
+  let tickets = await holderTickets(tx, input.userId, input.companyId, input.now), reason: NonNullable<BillingStatus['eventDiscount']>['reason'] = null;
+  // SD-O12: nothing usable here, but a ticket from an event this shop already used → say so, naming that event.
+  if (!tickets.length) { tickets = await holderTickets(tx, input.userId, input.companyId, input.now, true); reason = 'EVENT_ALREADY_USED'; }
   if (!tickets.length) return undefined;
-  const reason = await eventDiscountBlock(tx, input.companyId, input.now);
-  const best = [...tickets].sort((a, b) => b.discountSatang - a.discountSatang || a.expiresAt.getTime() - b.expiresAt.getTime() || a.id.localeCompare(b.id))[0]!;
+  reason = await eventDiscountBlock(tx, input.companyId, input.now) ?? reason;
+  const best = [...tickets].sort(byBest)[0]!;
   return { ticketSerial: best.serial, eventName: best.batch.eventName, discountSatang: best.discountSatang, expiresAt: best.expiresAt.toISOString(), reason,
     offers: reason ? [] : input.offers.flatMap(offer => {
       const pick = pickEventDiscount(tickets, offer, input.tax);
@@ -62,17 +82,18 @@ export async function eventDiscountView(tx: Tx, input: { userId: string; company
 export async function reserveEventDiscount(tx: Tx, discount: Extract<EventDiscountSnapshot, { choice: 'USE' }>,
   input: { userId: string; companyId: string; attemptId: string; now: Date }): Promise<boolean> {
   const own = await holders(tx, input.userId);
-  const ticket = own.length ? await tx.salesEventTicket.findFirst({ where: { id: discount.ticketId, OR: own }, include: { batch: { select: { state: true } } } }) : null;
+  const ticket = own.length ? await tx.salesEventTicket.findFirst({ where: { id: discount.ticketId, OR: own }, include: { batch: { select: { state: true, eventName: true } } } }) : null;
+  // SD-O12: one ticket per event per shop, any batch of it (same batch = same event); serialized by the caller's company lock.
   if (!ticket || ticket.state !== 'ISSUED' || ticket.version !== discount.ticketVersion || ticket.expiresAt <= input.now || ticket.batch.state === 'SUSPENDED' ||
       ticket.discountSatang !== discount.discountSatang || await eventDiscountBlock(tx, input.companyId, input.now) ||
-      await tx.salesEventTicket.findFirst({ where: { batchId: ticket.batchId, companyId: input.companyId, state: { in: TAKEN } }, select: { id: true } })) return false;
+      (await usedEvents(tx, input.companyId)).includes(ticket.batch.eventName)) return false;
   try {
     const changed = await tx.salesEventTicket.updateMany({ where: { id: ticket.id, state: 'ISSUED', version: discount.ticketVersion },
       data: { state: 'RESERVED', redeemedAs: 'DISCOUNT', companyId: input.companyId, attemptId: input.attemptId,
         appliedDiscountSatang: discount.shownDiscountSatang, reservedAt: input.now, version: { increment: 1 } } });
     return changed.count === 1;
   } catch (error) {
-    // A partial unique (one discount per shop, one ticket per shop per batch) lost a race: the quote is stale.
+    // The partial unique (one ticket per shop per batch) lost a race: the quote is stale.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return false;
     throw error;
   }
@@ -95,10 +116,14 @@ export async function releaseEventDiscount(tx: Tx, attemptId: string): Promise<v
 /** Newest first; a person collects one ticket per batch, so this is many events' worth. */
 const HOLDER_TICKET_LIMIT = 50;
 
-/** Sales-event spec §4.1: a shop that starts a package gets the first-bill discount, a paying shop credit. */
-export function eventDiscountPath(source: BillingPurchaseSource): BillingEventDiscountView['path'] {
+/**
+ * Sales-event spec §4.1 / SD-O12: DISCOUNT wherever this shop can pay for a package in one go — a shop starting one, or a
+ * paid one-time shop buying its next period, a change or an upgrade. An auto-renewing shop keeps the credit path (not built).
+ */
+export function eventDiscountPath(source: BillingPurchaseSource, renewalMode?: string | null): BillingEventDiscountView['path'] {
   if (packageMenuPurchaseSource(source)) return 'DISCOUNT';
-  return source === 'PAID_CURRENT_MODE' ? 'CREDIT' : null;
+  if (source !== 'PAID_CURRENT_MODE') return null;
+  return EVENT_DISCOUNT_MODES.includes(renewalMode as BillingPurchaseMode) ? 'DISCOUNT' : 'CREDIT';
 }
 
 /**
