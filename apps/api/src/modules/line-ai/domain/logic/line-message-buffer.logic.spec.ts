@@ -7,6 +7,7 @@ import {
   fittingPrefixCount,
   joinGroupText,
   joinedTextLength,
+  lineMediaGroupAckText,
   lineWaitStages,
   lineWaitStatusText,
   nextFlushDelayMs,
@@ -15,6 +16,7 @@ import {
   LINE_AI_DEBOUNCE_COHORTS_MS,
   LINE_BUFFER_MAX_ITEMS,
   LINE_BUFFER_MAX_TEXT_CHARS,
+  LINE_FILE_RECEIVED_TEXT,
   LINE_MEDIA_RECEIVED_TEXT,
   LINE_MEDIA_SLOW_STATUS_TEXT,
   LINE_SLOW_TURN_STATUS_TEXT,
@@ -134,6 +136,19 @@ describe('waiting feedback microcopy', () => {
     assert.match(LINE_MEDIA_RECEIVED_TEXT, /ไม่เกิน 1 นาที/, 'the ack says how long a read normally takes');
   });
 
+  // UAT 2026-09-29 "ส่งรูปที่ 2 ต่อกันแล้วเงียบไป": a burst is acknowledged once, by count, on arrival.
+  it('acknowledges a media group once, keeping the single-photo and single-file sentences', () => {
+    assert.equal(lineMediaGroupAckText(['image']), LINE_MEDIA_RECEIVED_TEXT);
+    assert.equal(lineMediaGroupAckText(['file']), LINE_FILE_RECEIVED_TEXT);
+    const burst = lineMediaGroupAckText(['image', 'image']);
+    assert.match(burst, /^ได้รับรูปแล้ว 2 รูปค่ะ/);
+    assert.match(burst, /ทีละรูปตามลำดับ.*ครบทุกรูป.*คุยกับน้องต่อได้เลยค่ะ$/);
+    assert.doesNotMatch(burst, /1 นาที/, 'a queue of reads cannot keep the one-minute promise');
+    assert.match(lineMediaGroupAckText(['file', 'file', 'file']), /^ได้รับไฟล์แล้ว 3 ไฟล์ค่ะ/);
+    const mixed = lineMediaGroupAckText(['image', 'file']);
+    assert.match(mixed, /^ได้รับรูป 1 รูปและไฟล์ 1 ไฟล์แล้วค่ะ/, 'a file is never called a รูป (§17.1)');
+  });
+
   it('selects relevant copy and varies repeated generic turns deterministically', () => {
     assert.match(lineWaitStatusText('ขอดูบัญชีเดือนนี้', 'turn-1'), /ตรวจสอบ|เช็กข้อมูล/);
     assert.match(lineWaitStatusText('ช่วยเปรียบเทียบยอดขาย', 'turn-2'), /เปรียบเทียบ|ความต่าง/);
@@ -151,13 +166,14 @@ describe('waiting feedback microcopy', () => {
 describe('lineWaitStages', () => {
   const base = { messageText: 'ขอสรุปยอดขาย', seed: 'turn-1', latestAcceptedAt: 10_000, now: 10_000 };
 
-  it('media turns ack immediately and add one slow-read status before the spinner window lapses', () => {
+  it('a photo turn keeps one slow-read status before the spinner window lapses; its group already acked', () => {
     const stages = lineWaitStages({ ...base, kind: 'media', loadingEnabled: true });
     assert.deepEqual(stages, [
-      { delayMs: 0, text: LINE_MEDIA_RECEIVED_TEXT },
       { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_MEDIA_SLOW_STATUS_TEXT },
     ]);
     assert.ok(LINE_WAIT_STATUS_SLOW_DELAY_MS < 60_000, 'slow status must land before LINE loading (60 s) expires');
+    assert.deepEqual(lineWaitStages({ ...base, kind: 'media', mediaType: 'file', loadingEnabled: true }), [],
+      'a file read finishes with its own push, so its turn promises nothing more');
   });
 
   it('with the spinner on, a text turn stays bubble-free until the single slow-turn status (Owner 2026-08-27)', () => {

@@ -874,6 +874,30 @@ export async function readResponseBodyLimited(response: Pick<Response, 'body'>, 
   }
 }
 
+/** Why a LINE photo still goes through the intake router; `null` sends it straight to the receipt
+ *  reader (UAT 2026-09-29, Owner "ง + ค"). On every caption-less UAT photo that day the router only
+ *  re-transcribed the page for 15–35 s and answered EXPENSE_DOCUMENT_CAPTURE, before the reader read the
+ *  page again. The router stays wherever it decides something the reader cannot:
+ *  1. `file` — not a photo: files keep their own lanes;
+ *  2. `caption` — the sender's words need routing (a question, a correction, a document question);
+ *  3. `no_capture_permission` — without expense capture, a signature or reference route is all this
+ *     sender can use, and only the router tells those apart;
+ *  4. `substitute_work_open` — this chat has open substitute-receipt work: a requested signature, an
+ *     awaited signed scan, a check-bill's final receipt or the issue decision (`loadOpenMediaContext`).
+ *  Checked in this order, so the substitute lookup runs only for a caption-less photo it could change. */
+export async function lineIntakeRouterReason(input: {
+  messageType: 'image' | 'file';
+  caption: string;
+  canCaptureExpense: boolean;
+  substituteWorkOpen: () => Promise<boolean>;
+}): Promise<'file' | 'caption' | 'no_capture_permission' | 'substitute_work_open' | null> {
+  if (input.messageType !== 'image') return 'file';
+  if (input.caption.trim()) return 'caption';
+  if (!input.canCaptureExpense) return 'no_capture_permission';
+  if (await input.substituteWorkOpen()) return 'substitute_work_open';
+  return null;
+}
+
 type LineBusinessDocumentDecision =
   | { outcome: 'expense'; manualReview: boolean; classification: BusinessDocumentClassification | null }
   | { outcome: 'reference' | 'unsupported'; classification: BusinessDocumentClassification | null }
@@ -8283,8 +8307,25 @@ export class ProcessLineWebhookUseCase {
     // gate and the draft — in a bound (v2) conversation too. Only a `file` (PDF/document) keeps v2.4's
     // no-implicit-capture lane (063b7f2a): no caption, no capture authority, ask what the file is for.
     const v2DocumentFile = this.boundConversations.has(event) && event.messageType === 'file';
+    const routerReason = qaRoute?.route ? 'caption' : await lineIntakeRouterReason({
+      messageType: event.messageType, caption, canCaptureExpense,
+      // Read only for a sender the substitute branch below acts for (§14 keeps `expense.receipt.upload`
+      // its gate). A lookup that fails keeps the router: the reader-only lane is the one that must be safe.
+      substituteWorkOpen: async () => {
+        if (!this.substituteReceiptContinuation || !access.permissions.includes('expense.receipt.upload')) return false;
+        try {
+          return !!await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event));
+        } catch {
+          return true;
+        }
+      },
+    });
+    if (routerReason === null) this.logger.log({ msg: 'line.intake.router_skipped', webhookEventId: event.webhookEventId });
     const routePlan: GovernedLineIntakeRoutePlan = v2DocumentFile && !caption
       ? { status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0 }
+      // The reader decides alone: the ROUTED capture plan sends the photo down the same gates a router's
+      // EXPENSE_DOCUMENT_CAPTURE takes — the reader's own classification, `decideLineBusinessDocument`.
+      : routerReason === null ? { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0 }
       : qaRoute?.route ?? await this.tryRouteIntake({
       requestId,
       webhookEventId: event.webhookEventId,
@@ -8496,16 +8537,6 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    if (routePlan.ocrErrorCode === 'OCR_REQUEST_ALREADY_ADMITTED') {
-      // A crashed provider attempt may still own its lease. Keep the same durable input pending;
-      // a transient waiting message must not become an immutable terminal result or a new draft.
-      await this.prisma.client.lineWebhookEventLog.updateMany({
-        where: { webhookEventId: event.webhookEventId, status: 'received' },
-        data: { errorCode: LINE_RECEIPT_RETRY_WAIT_CODE, companyId, processedAt: new Date() },
-      });
-      return;
-    }
-
     // JPEG/PNG classification runs once, before initReceiptUpload. PDF/unsupported media produces
     // NOT_REQUESTED and therefore fails closed unless a routed expense caption supplies purpose.
     admissionAttempt.receiptRequested = true;
@@ -8520,7 +8551,18 @@ export class ProcessLineWebhookUseCase {
       routePlan.documentText,
       routePlan.onePassReceipt,
       admissionAttempt,
+      event.webhookEventId,
     );
+    if (readOcr.errorCode === 'OCR_REQUEST_ALREADY_ADMITTED') {
+      // A crashed provider attempt may still own its lease — refused at the router's admission or, for a
+      // reader-only photo, at the reader's. Keep the same durable input pending; a transient waiting
+      // message must not become an immutable terminal result or a new draft.
+      await this.prisma.client.lineWebhookEventLog.updateMany({
+        where: { webhookEventId: event.webhookEventId, status: 'received' },
+        data: { errorCode: LINE_RECEIPT_RETRY_WAIT_CODE, companyId, processedAt: new Date() },
+      });
+      return;
+    }
     const utilityReceipt = canCaptureExpense ? priorUtilityReceipt(readOcr) : null;
     const ocr: ReceiptOcrPreflight = utilityReceipt
       ? { ...readOcr, fields: utilityReceipt.fields, classification: utilityReceipt.classification }
@@ -8530,7 +8572,12 @@ export class ProcessLineWebhookUseCase {
     const expenseRoutePlan = utilityReceipt && !caption && routePlan.status === 'ROUTED'
       && routePlan.intent === 'BUSINESS_DOCUMENT_REFERENCE'
       ? { ...routePlan, intent: 'EXPENSE_DOCUMENT_CAPTURE' as const }
-      : routePlan;
+      // A reader-only photo has no router to call a check bill a reference, which is the router's rule for
+      // a bill; the reader's own classification does, so the bill still gets production's paid/unpaid question.
+      : routerReason === null && ocr.classification?.contentKind === 'DOCUMENT'
+        && ocr.classification.documentKind === 'ORDER_OR_CHECK_BILL'
+        ? { ...routePlan, intent: 'BUSINESS_DOCUMENT_REFERENCE' as const }
+        : routePlan;
 
     // P10-L §15.1 (review G-01): the shop's plan ran out of receipts. `admitCompanyOcr` is the one
     // place that decides this — for a LINE photo it decides at the intake router, whose refusal
@@ -10954,6 +11001,8 @@ ${link}`, ctx.companyId, access);
     intakeDocumentText?: string,
     onePassReceipt?: LineIntakeRoutePlan['onePassReceipt'],
     admissionAttempt?: LineReceiptAdmissionAttempt,
+    /** A reader-only photo is admitted by the reader, so a crash replay resumes there, as the router's would. */
+    retryWebhookEventId?: string,
   ): Promise<ReceiptOcrPreflight> {
     if (!media.contentBase64 || (media.mimeType !== 'image/jpeg' && media.mimeType !== 'image/png' && media.mimeType !== 'application/pdf')) {
       return { status: 'NOT_REQUESTED', fields: null, classification: null };
@@ -10988,6 +11037,7 @@ ${link}`, ctx.companyId, access);
         // media turn's model calls (busy-wait lane) — wait it out instead of failing the OCR.
       }, { ocrAlreadyAdmitted, admissionIdentity: admissionAttempt?.identity,
         onAdmitted: (identity) => { if (admissionAttempt) { admissionAttempt.identity = identity; admissionAttempt.companyId = ctx.companyId; } },
+        ...(retryWebhookEventId ? { retryWebhookEventId } : {}),
         busyWaitDeadlineMs: Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS });
       if (result.fallbackReasons?.length) {
         this.logger.warn({
