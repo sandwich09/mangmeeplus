@@ -130,6 +130,23 @@ describe('sanitizeMangmeeComposedText (batch5 A6)', () => {
     assert.equal(result, 'ค่าใช้จ่ายที่จ่ายแล้ว (สถานะ จ่ายแล้ว) ในเดือนกันยายน 2569');
   });
 
+  it('round 10 real sample (NAT04 t1): names a web page in plain Thai instead of an app path with the company id', () => {
+    const input = 'สองหมวดแรกรวมกันเกินครึ่งของเดือนนี้เลยนะคะ ดูรายละเอียดเพิ่มเติมได้ที่ /companies/w14-synthetic-company/expenses\n\n'
+      + 'ลองส่งรูปใบเสร็จมาให้มั่งมีช่วยสร้างร่างให้ได้เลยนะคะ หรือเข้าไปยื่นเองที่ /companies/w14-synthetic-company/reimbursements ได้ค่ะ';
+    const result = sanitizeMangmeeComposedText(input);
+    assert.doesNotMatch(result, /\/companies\/|w14-synthetic-company/u);
+    assert.equal(result, 'สองหมวดแรกรวมกันเกินครึ่งของเดือนนี้เลยนะคะ ดูรายละเอียดเพิ่มเติมได้ที่ หน้าค่าใช้จ่ายบนเว็บ\n\n'
+      + 'ลองส่งรูปใบเสร็จมาให้มั่งมีช่วยสร้างร่างให้ได้เลยนะคะ หรือเข้าไปยื่นเองที่ หน้าใบเบิกบนเว็บ ได้ค่ะ');
+    // A full app URL, a record path, a markdown link and any other app page get the same plain words; the full stop stays.
+    assert.equal(sanitizeMangmeeComposedText('เปิดที่ https://app.example.test/companies/c-1/expenses/cmun9ll0j?openExternalBrowser=1 ได้เลยค่ะ'),
+      'เปิดที่ หน้าค่าใช้จ่ายบนเว็บ ได้เลยค่ะ');
+    assert.equal(sanitizeMangmeeComposedText('ดู[ที่นี่](/companies/c-1/reimbursements/draft-actions/a-1)นะคะ'), 'ดูที่นี่นะคะ');
+    assert.equal(sanitizeMangmeeComposedText('ดูได้ที่ /companies/c-1/sales.'), 'ดูได้ที่ หน้าเว็บของบริษัท.');
+    // Anything that is not an app path is left alone.
+    const plain = 'ค่าส่งของ/ค่าขนส่ง 350 บาท ดูได้ที่หน้าเว็บ';
+    assert.equal(sanitizeMangmeeComposedText(plain), plain);
+  });
+
   it('leaves a vendor name like "Grab" or "PTT" completely untouched', () => {
     const input = 'จ่าย Grab และซื้อน้ำมันที่ PTT รวม 500 บาท';
     assert.equal(sanitizeMangmeeComposedText(input), input);

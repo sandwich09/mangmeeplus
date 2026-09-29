@@ -184,6 +184,10 @@ describe('reimbursement draft input completion', () => {
     const { req: twice } = await turn('ค่ารถ ค่ารถ');
     assert.equal((completeReimbursementDraftInput('reimbursement.draft.preview_create',
       { action: {}, proposal: { fields: { reason: 'ค่ารถ' } } }, [{ result: options }], twice) as Record<string, any>).proposal.fields.reason, 'ค่ารถ');
+    // Round 10 (fed4ddab): the planner copied the options `revision` into `action`; only the issued locator goes out.
+    const extra = completeReimbursementDraftInput('reimbursement.draft.preview_create', { action: { actionId: ACTION, taskId: DRAFT_TASK,
+      operation: 'CREATE', revision: 'b'.repeat(64) }, proposal: {} }, [{ result: options }], req) as Record<string, any>;
+    assert.deepEqual(extra.action, { actionId: ACTION, taskId: DRAFT_TASK, operation: 'CREATE' });
     // No get_options result in this turn: nothing is filled in.
     const bare = { action: { actionId: ACTION, taskId: CONVERSATION }, proposal: {} };
     assert.equal(completeReimbursementDraftInput('reimbursement.draft.preview_create', bare, [], req), bare);

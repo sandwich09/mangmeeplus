@@ -61,8 +61,9 @@ export function completeReimbursementDraftInput(toolName: string, input: unknown
       [key, LINE_TEXT_FIELDS.includes(key) && value !== null && value !== undefined ? userText(value, req.inputEvidence) : value])) }
     : change) : undefined;
   return { ...input,
-    action: { ...(object(input['action']) ? input['action'] : {}), taskId: issued.taskId, actionId: issued.actionId,
-      ...(issued.operation ? { operation: issued.operation } : {}) },
+    // The action is the API's own locator and nothing else: a key the planner added (round 10: the options
+    // `revision`) made the API's exact-key parser refuse the whole preview.
+    action: { taskId: issued.taskId, actionId: issued.actionId, ...(issued.operation ? { operation: issued.operation } : {}) },
     proposal: { ...proposal, schemaVersion: 1, taskId: issued.taskId, ...(issued.taskRevision !== undefined ? { taskRevision: issued.taskRevision } : {}),
       ...(issued.operation ? { operation: issued.operation } : {}), fields, ...(lineChanges ? { lineChanges } : {}) } };
 }
