@@ -12,8 +12,11 @@ export type EventDiscountSnapshot =
 
 /** Spec §4.1.1 / SD-O12 (Owner 2026-09-29): any package payment the holder makes on the package page, chosen at payment. */
 const KINDS = ['INITIAL', 'RESTART', 'REPEAT', 'SCHEDULED_CHANGE', 'FULL_PACKAGE_UPGRADE', 'UPGRADE'];
-// ponytail: one-time modes only today; CARD_AUTO and PROMPTPAY_RENEW (first bill and renewals) wait for an Owner decision on automatic renewals.
-export const EVENT_DISCOUNT_MODES: readonly BillingPurchaseMode[] = ['CARD_ONCE', 'PROMPTPAY_ONCE'];
+/** Paid in one go: every kind above. */
+export const EVENT_DISCOUNT_ONE_TIME_MODES: readonly BillingPurchaseMode[] = ['CARD_ONCE', 'PROMPTPAY_ONCE'];
+/** SD-O13 (Owner 2026-09-29): CARD_AUTO and PROMPTPAY_RENEW take it only on a first period paid now at Checkout — a first purchase or
+ *  a restart. Renewals, and purchases on a running subscription, stay full price (spec §5.2–§5.4). */
+const FIRST_PERIOD_KINDS = ['INITIAL', 'RESTART'];
 
 /** The price the discount comes off: an UPGRADE charges its prorated difference, every other kind the offer price. */
 export const eventDiscountBasis = (snapshot: { quote: Pick<BillingQuote, 'offer'>; upgrade?: { amountSatang: number } }) =>
@@ -28,10 +31,18 @@ export function eventDiscountAmounts(priceSatang: number, discountSatang: number
   return { unitAmountSatang, ...quoteTotals(unitAmountSatang, tax), shownDiscountSatang: priceSatang - unitAmountSatang };
 }
 
-/** Spec §4.1.1/§4.2: a catalog package payment paid in one go; never a deal or an automatic renewal. */
+/** Spec §4.1.1/§4.2: a catalog package payment paid now — any kind in one go, a first period in a renewing mode; never a deal. */
 export function eventDiscountPurchase(quote: Pick<BillingQuote, 'purchaseMode' | 'purchase' | 'deal'>): boolean {
-  return !quote.deal && !!quote.purchaseMode && EVENT_DISCOUNT_MODES.includes(quote.purchaseMode) && KINDS.includes(quote.purchase?.kind ?? '');
+  return !quote.deal && !!quote.purchaseMode &&
+    (EVENT_DISCOUNT_ONE_TIME_MODES.includes(quote.purchaseMode) ? KINDS : FIRST_PERIOD_KINDS).includes(quote.purchase?.kind ?? '');
 }
+
+/**
+ * SD-O13 (spec §5.3): a CARD_AUTO purchase that took the discount pays its first period in a one-time Checkout that saves the
+ * card, then binds the full-price subscription trialing to that period's end — every one-time route treats it like PROMPTPAY_RENEW.
+ */
+export const eventDiscountCardAuto = (snapshot: { quote: Pick<BillingQuote, 'purchaseMode'>; eventDiscount?: Pick<EventDiscountSnapshot, 'choice'> } | null | undefined) =>
+  snapshot?.quote.purchaseMode === 'CARD_AUTO' && snapshot.eventDiscount?.choice === 'USE';
 
 export function eventDiscountInScope(scopeJson: unknown, offer: Pick<BillingOffer, 'offerKey' | 'interval'>): boolean {
   const scope = scopeFromJson(scopeJson);

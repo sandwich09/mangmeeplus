@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { eventDiscountPath, holderEventDiscountTickets } from './billing-event-discount';
+import { billingOffer } from '@watchdog-bms/contracts';
+import { eventDiscountOffer, eventDiscountPath, eventDiscountView, holderEventDiscountTickets } from './billing-event-discount';
 import { BillingService } from './billing.service';
 
 const now = new Date('2026-10-01T03:00:00.000Z');
@@ -62,6 +63,28 @@ describe('sales-event holder view', () => {
     assert.equal(paying.asked.length, 1, 'an auto-renewing shop reads no discount block');
     const denied = { eventDiscount: async () => { throw new Error('ต้องได้รับสิทธิ์จัดการแพ็กเกจบริษัท'); } };
     await assert.rejects(lineRead.call(denied, context), /สิทธิ์จัดการแพ็กเกจ/);
+  });
+
+  it('Owner 2026-09-29: the view lists every discount usable here, best first, each with its own cards; a quote can take a chosen one', async () => {
+    const scope = { tiers: ['BASIC_499', 'PRO_999'], intervals: ['month'] };
+    const row = (id: string, serial: string, eventName: string, discountSatang: number, day: number) =>
+      ({ id, serial, discountSatang, expiresAt: new Date(Date.UTC(2026, 10, day)), scopeJson: scope, batch: { eventName } });
+    // The owner's UAT case: event2 ฿10, event3 ฿120, event4 ฿10 (event4 ends first); event3 was the only one shown before.
+    const held = [row('a', 'EVT2AAAA', 'event2', 1000, 20), row('b', 'EVT3BBBB', 'event3', 12000, 20), row('c', 'EVT4CCCC', 'event4', 1000, 10)];
+    const db = { externalIdentity: { findMany: async () => [{ providerChannelId: 'ch', providerUserId: 'U1' }] },
+      salesEventTicket: { findMany: async (args: any) => args.where.companyId ? [] : held },
+      packageChangeRequest: { findFirst: async () => null } } as any;
+    const input = { userId: 'user-1', companyId: 'company-1', tax: 'NOT_VAT_REGISTERED' as const, now };
+    const view = await eventDiscountView(db, { ...input, offers: [billingOffer('BASIC_499', 'month'), billingOffer('BASIC_499', 'year')] });
+    assert.equal(view?.ticketSerial, 'EVT3BBBB', 'the default is still the best');
+    assert.deepEqual(view?.tickets?.map(ticket => [ticket.eventName, ticket.discountSatang, ticket.offers.map(card => `${card.offerKey}:${card.interval}:${card.shownDiscountSatang}`)]), [
+      ['event3', 12000, ['BASIC_499:month:12000']], ['event4', 1000, ['BASIC_499:month:1000']], ['event2', 1000, ['BASIC_499:month:1000']]]);
+    // A chosen serial narrows the quote's pick to that ticket; one this shop cannot use gives nothing, so the quote refuses it.
+    const offer = billingOffer('BASIC_499', 'month');
+    assert.equal((await eventDiscountOffer(db, { ...input, offer }))?.ticket.serial, 'EVT3BBBB');
+    assert.equal((await eventDiscountOffer(db, { ...input, offer, serial: 'EVT2AAAA' }))?.amounts.totalSatang, 48900);
+    assert.equal(await eventDiscountOffer(db, { ...input, offer, serial: 'NOTHELD1' }), null);
+    assert.equal(await eventDiscountOffer(db, { ...input, offer: billingOffer('BASIC_499', 'year'), serial: 'EVT2AAAA' }), null, 'out of scope for this card');
   });
 
   it('reads no tickets for a login with no LINE linked', async () => {

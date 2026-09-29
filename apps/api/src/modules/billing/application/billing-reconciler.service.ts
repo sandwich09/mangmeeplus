@@ -37,6 +37,7 @@ import { DEAL_SUBSCRIPTION_CANCEL_TYPE, queueDealSubscriptionCancel } from './bi
 import { dealSnapshotHash } from '../domain/deal-offer';
 import type { PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { releaseEventDiscount, useEventDiscount } from './billing-event-discount';
+import { eventDiscountCardAuto } from '../domain/billing-event-discount.logic';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
@@ -242,7 +243,8 @@ export class BillingReconcilerService {
       // The old subscription belongs to a completed deal conversion, not to the current one-time
       // contract. Its delayed Stripe events must never reconcile it back onto this account.
       if (!account.baseSubscriptionId && hintedSubscriptionId && activeSnapshot?.subscriptionConversion?.subscriptionId === hintedSubscriptionId) return;
-      if (attempt && (activeSnapshot?.advanceDeal || ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(activeSnapshot?.quote.purchaseMode ?? ''))) {
+      if (attempt && (activeSnapshot?.advanceDeal || ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(activeSnapshot?.quote.purchaseMode ?? '') ||
+          eventDiscountCardAuto(activeSnapshot))) {
         nextReconcileAt = await this.reconcileOneTime(account, attempt, leaseToken) ?? null;
         return;
       }
@@ -314,7 +316,7 @@ export class BillingReconcilerService {
       for (const invoice of invoices.filter((i) => i.status === 'paid').sort((a, b) => a.created - b.created)) {
         // A zero trial/credit invoice is never evidence of a successful card charge.
         if (invoice.total === 0) {
-          if ((snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' || snapshot.advanceDeal) && invoice.billing_reason === 'subscription_create' &&
+          if ((snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' || snapshot.advanceDeal || eventDiscountCardAuto(snapshot)) && invoice.billing_reason === 'subscription_create' &&
               invoice.status === 'paid' && invoice.amount_paid === 0 && invoice.livemode === account.livemode &&
               stripeId(invoice.customer) === account.customerId && stripeId(invoice.parent?.subscription_details?.subscription) === subscription.id)
             continue;
@@ -423,14 +425,14 @@ export class BillingReconcilerService {
         if(subscription||session.mode!=='payment'||stripeId(session.invoice)!==invoice.id)throw new Error('billing.original_invoice_changed');
         await this.billing.repeater.importPayment(account,attempt,session,invoice,lease,recordOnly);return;
       }
-      if (['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(snapshot.quote.purchaseMode ?? '') && !subscription) {
+      if ((['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(snapshot.quote.purchaseMode ?? '') || eventDiscountCardAuto(snapshot)) && !subscription) {
         if (subscription || session.mode !== 'payment' || stripeId(session.invoice) !== invoice.id) throw new Error('billing.original_invoice_changed');
         await this.reconcileOneTime(account, attempt, lease, recordOnly, session, invoice);
         return;
       }
       if(!subscription||subscription.id!==subscriptionId||subscription.object!=='subscription'||subscription.livemode!==account.livemode||stripeId(subscription.customer)!==account.customerId||
         subscription.metadata?.billingAccountId!==account.id||
-        (snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW'
+        (snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' || eventDiscountCardAuto(snapshot)
           ? session.mode !== 'payment' || session.subscription != null || account.baseSubscriptionId !== subscription.id
           : session.mode !== 'subscription' || stripeId(session.subscription) !== subscription.id) ||
         (attempt.subscriptionId&&attempt.subscriptionId!==subscription.id))throw new Error('billing.subscription_binding');
@@ -459,7 +461,8 @@ export class BillingReconcilerService {
       // Continue only the customer's original paid pack; the existing journal fences every command.
       await this.billing.repeater.advance(account,initial,lease,this.config.sesWebBaseUrl);return;
     }
-    if (initial && ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes((initial.quoteSnapshot as unknown as BillingSnapshot).quote.purchaseMode ?? '')) {
+    if (initial && (['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes((initial.quoteSnapshot as unknown as BillingSnapshot).quote.purchaseMode ?? '') ||
+        eventDiscountCardAuto(initial.quoteSnapshot as unknown as BillingSnapshot))) {
       if (account.activeAttemptId !== initial.id) throw new Error('billing.original_attempt_changed');
       await this.reconcileOneTime(account, initial, lease);
       return;
@@ -485,7 +488,7 @@ export class BillingReconcilerService {
     const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
     const mode = snapshot.quote.purchaseMode;
     if (!(snapshot.advanceDeal ? ['CARD_AUTO', 'PROMPTPAY_RENEW'].includes(mode ?? '') :
-        ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(mode ?? '')) || !account.customerId || !snapshot.productId || snapshot.repeat)
+        (['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(mode ?? '') || eventDiscountCardAuto(snapshot))) || !account.customerId || !snapshot.productId || snapshot.repeat)
       throw new Error('billing.one_time_contract_missing');
     if ((snapshot.upgrade && !snapshot.oneTime) || (snapshot.oneTimeChange && (!snapshot.oneTime || snapshot.upgrade || mode === 'PROMPTPAY_RENEW')))
       throw new Error('billing.one_time_change_contract');
@@ -669,7 +672,8 @@ export class BillingReconcilerService {
             subscriptionId: snapshot.subscriptionConversion.subscriptionId, dealRequestId: snapshot.deal!.requestId, attemptId: attempt.id } });
       }
       await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: impact.paidThrough, baseSubscriptionId: null,
-        contractAttemptId: attempt.id, activeAttemptId: mode === 'PROMPTPAY_RENEW' ? attempt.id : null,
+        // A renewing first period keeps the slot until its subscription binds: PROMPTPAY_RENEW, and SD-O13's discounted card.
+        contractAttemptId: attempt.id, activeAttemptId: mode === 'PROMPTPAY_RENEW' || eventDiscountCardAuto(snapshot) ? attempt.id : null,
         subscriptionState: 'NONE', renewalMode: mode!,
         billingAnchorDay: snapshot.oneTime?.anchorDay ?? evidence.paidAt.getUTCDate(), nextChargeAt: null,
         cancelAtPeriodEnd: false, graceEndsAt: null, termProjectionHash: termProjectionHash(term), pendingPlanChangeId: scheduled?.id ?? null,
@@ -706,7 +710,8 @@ export class BillingReconcilerService {
     if (planMenus) await movePlanMenus(this.prisma, planMenus);
     if (cancellationOperationId) await this.billing.dealSubscriptionCancel.advance(
       await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } }), lease);
-    if (mode === 'PROMPTPAY_RENEW' && !recordOnly) await this.bindPromptPayRenewal(account, attempt, snapshot, lease, impact.paidThrough);
+    if ((mode === 'PROMPTPAY_RENEW' || eventDiscountCardAuto(snapshot)) && !recordOnly)
+      await this.bindPromptPayRenewal(account, attempt, snapshot, lease, impact.paidThrough, intent);
   }
 
   /** First cycle is paid now, but the running one-time term remains authoritative until its end. */
@@ -1099,18 +1104,32 @@ export class BillingReconcilerService {
     });
   }
 
+  /**
+   * PROMPTPAY_RENEW, and SD-O13's discounted CARD_AUTO first period (spec §5.3): that period is paid and applied, so bind the
+   * catalog-price subscription trialing until it ends. A card is the one this Checkout saved, checked the way bindAdvanceDeal does.
+   */
   private async bindPromptPayRenewal(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot,
-    lease: string, paidThrough: Date) {
+    lease: string, paidThrough: Date, intent: StripeObject) {
+    const card = snapshot.quote.purchaseMode === 'CARD_AUTO';
     const current = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
-    if (current.activeAttemptId !== attempt.id || current.renewalMode !== 'PROMPTPAY_RENEW' ||
+    if (current.activeAttemptId !== attempt.id || current.renewalMode !== (card ? 'CARD_AUTO' : 'PROMPTPAY_RENEW') ||
         current.paidThrough?.getTime() !== paidThrough.getTime() || current.baseSubscriptionId)
       throw new Error('billing.promptpay_renewal_source_changed');
-    const existing = (await this.stripe.list('/subscriptions', { customer: account.customerId, status: 'all' }))
-      .filter(sub => sub.metadata?.billingAttemptId === attempt.id && sub.metadata?.billingAccountId === account.id);
-    if (existing.length > 1) throw new Error('billing.promptpay_renewal_duplicate');
+    const paymentMethodId = card ? stripeId(intent.payment_method) : null;
+    if (card) {
+      const method = paymentMethodId ? await this.stripe.request('GET', `/payment_methods/${paymentMethodId}`) : null;
+      if (intent.setup_future_usage !== 'off_session' || !method || method.object !== 'payment_method' ||
+          method.type !== 'card' || stripeId(method.customer) !== account.customerId) throw new Error('billing.card_renewal_card_not_saved');
+    }
+    const siblings = await this.stripe.list('/subscriptions', { customer: account.customerId, status: 'all' });
+    const existing = siblings.filter(sub => sub.metadata?.billingAttemptId === attempt.id && sub.metadata?.billingAccountId === account.id);
+    // A card renews unattended, so nothing else collectible may sit beside it (bindAdvanceDeal's rule).
+    if (existing.length > 1 || (card && siblings.some(sub => !['canceled', 'incomplete_expired'].includes(sub.status) && sub.id !== existing[0]?.id)))
+      throw new Error('billing.promptpay_renewal_duplicate');
     let sub = existing[0];
     if (!sub) {
       const journal = (attempt.collectionJson ?? {}) as Record<string, unknown>;
+      // One journal key for both modes (named when only QR bound here); an attempt is one mode or the other.
       const requestedAt = typeof journal.qrSubscriptionRequestedAt === 'string' ? Date.parse(journal.qrSubscriptionRequestedAt) : null;
       if (requestedAt !== null && (!Number.isSafeInteger(requestedAt) || Date.now() - requestedAt > 23 * 3600000))
         throw new Error('billing.promptpay_renewal_request_unknown');
@@ -1123,25 +1142,39 @@ export class BillingReconcilerService {
           collectionJson: { ...journal, qrSubscriptionRequestedAt: new Date().toISOString() } as Prisma.InputJsonValue } });
       });
       sub = await this.stripe.request('POST', '/subscriptions', {
-        customer: account.customerId, collection_method: 'send_invoice', days_until_due: 7,
-        payment_settings: { payment_method_types: ['promptpay'] },
+        customer: account.customerId,
+        ...(card ? { collection_method: 'charge_automatically', default_payment_method: paymentMethodId, payment_settings: { payment_method_types: ['card'] } }
+          : { collection_method: 'send_invoice', days_until_due: 7, payment_settings: { payment_method_types: ['promptpay'] } }),
         items: [{ price: snapshot.priceId, quantity: 1, ...(snapshot.policy.taxRateId ? { tax_rates: [snapshot.policy.taxRateId] } : {}) }],
         trial_end: Math.floor(paidThrough.getTime() / 1000), billing_mode: { type: 'classic' },
-        trial_settings: { end_behavior: { missing_payment_method: 'create_invoice' } },
+        trial_settings: { end_behavior: { missing_payment_method: card ? 'cancel' : 'create_invoice' } },
         metadata: { billingAttemptId: attempt.id, billingAccountId: account.id },
-      }, `mm:${attempt.id}:promptpay-renewal`);
+      }, `mm:${attempt.id}:${card ? 'card' : 'promptpay'}-renewal`);
     }
-    if (sub.object !== 'subscription' || sub.livemode !== account.livemode || stripeId(sub.customer) !== account.customerId ||
-        sub.metadata?.billingAttemptId !== attempt.id || sub.metadata?.billingAccountId !== account.id ||
-        sub.collection_method !== 'send_invoice' || !['trialing', 'active'].includes(sub.status) ||
+    // A card trial that is not exactly this contract would charge unattended when it ends: stop it first, as bindAdvanceDeal does.
+    const stopCard = async () => { if (card && !['canceled', 'incomplete_expired'].includes(sub.status))
+      await this.stripe.request('DELETE', `/subscriptions/${sub.id}`, { invoice_now: false, prorate: false }, `mm:${attempt.id}:card-renewal-stop`); };
+    const item = sub.items?.data?.[0];
+    const ours = sub.object === 'subscription' && sub.livemode === account.livemode && stripeId(sub.customer) === account.customerId &&
+      sub.metadata?.billingAttemptId === attempt.id && sub.metadata?.billingAccountId === account.id;
+    if (!ours || sub.collection_method !== (card ? 'charge_automatically' : 'send_invoice') || !['trialing', 'active'].includes(sub.status) ||
         sub.trial_end !== Math.floor(paidThrough.getTime() / 1000) || sub.items?.data?.length !== 1 ||
-        stripeId(sub.items.data[0].price) !== snapshot.priceId || sub.payment_settings?.payment_method_types?.length !== 1 ||
-        sub.payment_settings.payment_method_types[0] !== 'promptpay')
+        stripeId(item.price) !== snapshot.priceId || sub.payment_settings?.payment_method_types?.length !== 1 ||
+        sub.payment_settings.payment_method_types[0] !== (card ? 'card' : 'promptpay') ||
+        // Spec §5.3/§5.4: the saved card, the catalog Price and nothing off — the renewal is the full price.
+        (card && (stripeId(sub.default_payment_method) !== paymentMethodId || sub.billing_mode?.type !== 'classic' || !simpleCollection(sub) ||
+          sub.items.has_more || item.quantity !== 1 || (item.discounts?.length ?? 0) || !sameScheduleTaxes(item.tax_rates, snapshot.policy.taxRateId)))) {
+      if (ours) await stopCard();
       throw new Error('billing.promptpay_renewal_subscription_binding');
+    }
     const invoices = await this.stripe.list('/invoices', { subscription: sub.id });
+    // Only the $0 trial invoice may exist before the paid period ends (a card bound late may already show its first renewal).
     if (invoices.some(i => i.livemode !== account.livemode || stripeId(i.customer) !== account.customerId ||
-        stripeId(i.parent?.subscription_details?.subscription) !== sub.id || i.total !== 0 || i.amount_paid !== 0))
+        stripeId(i.parent?.subscription_details?.subscription) !== sub.id ||
+        ((!card || i.created * 1000 < paidThrough.getTime()) && (i.total !== 0 || i.amount_paid !== 0)))) {
+      await stopCard();
       throw new Error('billing.promptpay_renewal_early_invoice');
+    }
     await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, account.companyId); await this.assertLease(tx, account.id, lease);
       const fresh = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });

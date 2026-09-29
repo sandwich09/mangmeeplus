@@ -17,7 +17,8 @@ import BillingCollectionPanel from './BillingCollectionPanel';
 import BillingCapacityPicker from './BillingCapacityPicker';
 import {BILLING_RECIPIENT_WAIT_TEXT, billingMonthlyAllowanceText, billingBackControl, billingControl, billingPrimaryControl, billingPurchaseModeLabel, billingRecipientLocked, billingSupportReference} from './billing-display';
 import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels, dealRenewalText } from './billing-deal';
-import { eventDiscountBlockedText, eventDiscountCard, eventDiscountCardText, eventDiscountHeldNotice, eventDiscountHelpText, eventDiscountMode, eventDiscountOneTimeOnlyText, eventDiscountUsable, eventDiscountUseLabel, type EventDiscountChoice } from './billing-event-discount';
+import { EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountBlockedText, eventDiscountCard, eventDiscountCardText, eventDiscountChoiceLabel, eventDiscountChoices, eventDiscountFirstBillOnly, eventDiscountHeldNotice,
+  eventDiscountHelpText, eventDiscountMode, eventDiscountNextRoundText, eventDiscountOneTimeOnlyText, eventDiscountSerial, eventDiscountUsable, type EventDiscountChoice } from './billing-event-discount';
 import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
 const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(satang / 100);
@@ -93,6 +94,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const [quote, setQuote] = useState<BillingQuote | null>(null), [accepted, setAccepted] = useState(false);
   // Sales-event spec §4.3: "ใช้" is chosen for the buyer; the choice belongs to this purchase only.
   const [eventChoice, setEventChoice] = useState<EventDiscountChoice>('USE');
+  // Owner 2026-09-29: which held discount this payment uses; null = the default, the best one for each card.
+  const [eventSerial, setEventSerial] = useState<string | null>(null);
   // Spec §8.1: the holder's tickets when this shop is not starting a package (owner-only read; refused = no line).
   const [heldDiscount, setHeldDiscount] = useState<string | null>(null);
   useEffect(() => {
@@ -258,9 +261,10 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     try {
       const latest = await api.status();
       setData(value => value && { ...value, status: latest });
-      // SD-O12: every one-time package payment carries the choice — first purchase, next period, change or upgrade.
-      const discountChoice = !dealId && eventDiscountMode(mode) && eventDiscountUsable(latest.eventDiscount) ? choice ?? eventChoice : undefined;
-      const result = await api.quote(offerKey, selectedInterval, billingEmail, selection, mode, dealId, purchaseIntent, discountChoice);
+      // SD-O12/SD-O13: every one-time package payment carries the choice, and the first bill of a package started in a renewing mode.
+      const discountChoice = !dealId && eventDiscountMode(mode, latest.purchaseSource) && eventDiscountUsable(latest.eventDiscount) ? choice ?? eventChoice : undefined;
+      const discountSerial = discountChoice === 'USE' ? eventDiscountSerial(latest.eventDiscount, eventSerial) ?? undefined : undefined;
+      const result = await api.quote(offerKey, selectedInterval, billingEmail, selection, mode, dealId, purchaseIntent, discountChoice, discountSerial);
       if (!selection) capacityDraft.current = null;
       key.current = crypto.randomUUID(); setAccepted(false); setQuote(result); setCapacity(null);
     } catch (error) {
@@ -272,6 +276,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const menusMoveLater = quote?.advanceDeal ? date(quote.advanceDeal.startsAt)
     : quote?.purchase?.kind === 'SCHEDULED_CHANGE' ? date(quote.purchase.previousPaidThrough) : null;
   const status = data?.status;
+  // The picked discount while this page still offers it; a ticket used or gone since falls back to the default.
+  const chosenEventSerial = eventDiscountSerial(status?.eventDiscount, eventSerial);
   const availableModes = status?.availablePurchaseModes ?? ['CARD_AUTO'];
   const displayedModes = status?.enabledPurchaseModes ?? availableModes;
   const modeAvailabilityKey = `${availableModes.join('|')}::${displayedModes.join('|')}`;
@@ -586,19 +592,22 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {cadenceNotice && <div ref={cadenceNoticeRef} tabIndex={-1} role="status" className="scroll-mt-[calc(var(--app-header-h,0px)+1.5rem)] space-y-3 rounded-xl bg-amber-50 p-4">
           <p>{cadenceNotice === 'pending' ? 'มีรายการเปลี่ยนแพ็กเกจรอบถัดไป กรุณาตรวจสอบและยกเลิกรายการนั้นก่อนซื้อรายปี' : 'หากต้องการเพิ่มระดับและเปลี่ยนรอบชำระ ให้เพิ่มระดับในรอบเดิมก่อน แล้วจึงเลือกรอบชำระใหม่ ระบบจะแสดงยอดให้ตรวจสอบแยกแต่ละรายการ'}</p>
           <button className={button} onClick={() => { if (cadenceNotice === 'pending') setSection('payment'); else setInterval(status.interval!); setCadenceNotice(false); }}>{cadenceNotice === 'pending' ? 'ดูรายการเปลี่ยนแพ็กเกจ' : `เลือกแพ็กเกจ${status.interval === 'year' ? 'รายปี' : 'รายเดือน'}`}</button>
-        </div>}        {/* Sales-event spec §8 / SD-O12: the holder's discount sits above the list, "ใช้" chosen; one-time payments only today. */}
+        </div>}        {/* Sales-event spec §8 / SD-O12 / SD-O13: the holder's discounts sit above the list, the best one chosen; one per payment. */}
         {eventDiscountBlockedText(status.eventDiscount).length > 0 ? <p role="note" className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm leading-7">
           {eventDiscountBlockedText(status.eventDiscount).map(line => <span key={line} className="block break-words">{line}</span>)}</p>
-        : eventDiscountUsable(status.eventDiscount) && (eventDiscountMode(chosenMode) ? <section aria-label="ส่วนลดจากงาน" className="rounded-xl border border-brand-200 bg-brand-50 p-4">
-          <fieldset className="space-y-2"><legend className="break-words font-semibold">ส่วนลดจากงาน {status.eventDiscount.eventName}</legend>
-            <label className="flex min-h-11 items-center gap-3 break-words"><input type="radio" name="eventDiscountChoice" className="shrink-0" checked={eventChoice === 'USE'}
-              onChange={() => { setEventChoice('USE'); setQuote(null); }} />{eventDiscountUseLabel(status.eventDiscount)}</label>
+        : eventDiscountUsable(status.eventDiscount) && (eventDiscountMode(chosenMode, status.purchaseSource) ? <section aria-label="ส่วนลดจากงาน" className="rounded-xl border border-brand-200 bg-brand-50 p-4">
+          <fieldset className="space-y-2"><legend className="font-semibold">ส่วนลดจากงาน</legend>
+            {/* Owner 2026-09-29: one row per held discount, the best first and chosen; the first row is the default pick. */}
+            {eventDiscountChoices(status.eventDiscount).map((ticket, index, all) => <label key={ticket.ticketSerial} className="flex min-h-11 items-center gap-3">
+              <input type="radio" name="eventDiscountChoice" className="shrink-0" checked={eventChoice === 'USE' && (chosenEventSerial ?? all[0]!.ticketSerial) === ticket.ticketSerial}
+                onChange={() => { setEventChoice('USE'); setEventSerial(index ? ticket.ticketSerial : null); setQuote(null); }} /><span className="min-w-0 break-words">{eventDiscountChoiceLabel(ticket)}</span></label>)}
             <label className="flex min-h-11 items-center gap-3"><input type="radio" name="eventDiscountChoice" className="shrink-0" checked={eventChoice === 'DECLINE'}
               onChange={() => { setEventChoice('DECLINE'); setQuote(null); }} />ไม่ใช้ครั้งนี้</label>
-            <p className="text-sm leading-6 text-gray-600">{eventDiscountHelpText(status.eventDiscount)}</p>
+            <p className="text-sm leading-6 text-gray-600">{EVENT_DISCOUNT_ONE_PER_PAYMENT}</p>
+            <p className="text-sm leading-6 text-gray-600">{eventDiscountHelpText(eventDiscountFirstBillOnly(chosenMode))}</p>
           </fieldset></section>
         : <div role="note" className="space-y-2 rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm leading-7"><p className="break-words">{eventDiscountOneTimeOnlyText(status.eventDiscount)}</p>
-          {availableModes.some(eventDiscountMode) && <button type="button" className={button} onClick={() => { setPurchaseMode(availableModes.find(eventDiscountMode)!); setQuote(null); setCapacity(null); }}>เลือกจ่ายครั้งเดียว</button>}</div>)}
+          {availableModes.some(mode => eventDiscountMode(mode)) && <button type="button" className={button} onClick={() => { setPurchaseMode(availableModes.find(mode => eventDiscountMode(mode))!); setQuote(null); setCapacity(null); }}>เลือกจ่ายครั้งเดียว</button>}</div>)}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{data.catalog.offers.filter(offer => offer.interval === interval).map(offer => {
           const monthly = data.catalog.offers.find(item => item.offerKey === offer.offerKey && item.interval === 'month');
           const saving = interval === 'year' && monthly ? monthly.priceSatang * 12 - offer.priceSatang : 0;
@@ -610,7 +619,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             BILLING_PAID_TIERS.indexOf(offer.offerKey as typeof BILLING_PAID_TIERS[number]) > currentRank;
           // Read the offer's actual snapshot so the card matches what checkout grants.
           const menus = dealMenuLabels(offer.featureKeys);
-          const eventCard = eventDiscountMode(chosenMode) && eventChoice === 'USE' ? eventDiscountCard(status.eventDiscount, offer) : null;
+          const eventCard = eventDiscountMode(chosenMode, status.purchaseSource) && eventChoice === 'USE' ? eventDiscountCard(status.eventDiscount, offer, chosenEventSerial) : null;
           return <article key={offer.offerKey} className={`mangmee-card relative flex flex-col gap-4 p-5${current ? ' !border-brand-500' : ''}`}>
           {current && <MangmeeBadge className="absolute -top-3 right-4 border">แพ็กเกจปัจจุบัน</MangmeeBadge>}
           <h3 className="font-bold">{offer.label}</h3><p className="text-xl font-bold">{money(offer.priceSatang)} / {interval === 'month' ? 'เดือน' : 'ปี'}</p>
@@ -667,7 +676,10 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             {/* The price the discount came off: an upgrade's difference, otherwise the package price. */}
             <div className="flex justify-between gap-3"><dt>{quote.purchase?.kind === 'UPGRADE' ? 'ส่วนต่างแพ็กเกจ' : 'ราคาแพ็กเกจ'}</dt><dd className="shrink-0">{money(quote.eventDiscount.applied.unitAmountSatang + quote.eventDiscount.shownDiscountSatang)}</dd></div>
             <div className="flex justify-between gap-3 font-semibold text-brand-800"><dt className="min-w-0 break-words">ส่วนลดจากงาน {quote.eventDiscount.eventName}</dt><dd className="shrink-0">−{money(quote.eventDiscount.shownDiscountSatang)}</dd></div>
-          </dl><p className="text-sm text-gray-600">ส่วนลดใช้กับการจ่ายครั้งนี้เท่านั้น งานเดียวกันใช้ได้ร้านละครั้ง</p></>
+          </dl>{/* SD-O13: a renewing mode discounts its first bill only; the next round is the full price, on the day this period ends. */}
+          {eventDiscountFirstBillOnly(quote.purchaseMode) && quote.purchase?.projectedPaidThrough &&
+            <p className="font-semibold">{eventDiscountNextRoundText(quote.purchaseMode, money(quote.totalSatang), quote.purchase.projectedPaidThrough)}</p>}
+          <p className="text-sm text-gray-600">{eventDiscountFirstBillOnly(quote.purchaseMode) ? 'ส่วนลดใช้กับบิลแรกเท่านั้น' : 'ส่วนลดใช้กับการจ่ายครั้งนี้เท่านั้น'} งานเดียวกันใช้ได้ร้านละครั้ง</p></>
           : <p>ไม่ใช้ส่วนลดจากงานครั้งนี้ · ส่วนลดยังเป็นของคุณถึง {date(quote.eventDiscount.expiresAt)}</p>}
           <button type="button" className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" disabled={busy} aria-busy={busy} onClick={() => {
             const next: EventDiscountChoice = quote.eventDiscount?.applied ? 'DECLINE' : 'USE';

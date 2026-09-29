@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { billingOffer, BILLING_DRAFT_POLICY, type BillingQuote } from '@watchdog-bms/contracts';
-import { eventDiscountAmounts, eventDiscountBasis, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, pickEventDiscount, type EventDiscountSnapshot } from './billing-event-discount.logic';
+import { eventDiscountAmounts, eventDiscountBasis, eventDiscountCardAuto, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, pickEventDiscount, type EventDiscountSnapshot } from './billing-event-discount.logic';
 
 test('spec §5.1: 499 less 100 in all three tax treatments, whole baht only, never below ฿10 or the full price', () => {
   assert.deepEqual(eventDiscountAmounts(49900, 10000, 'NOT_VAT_REGISTERED'),
@@ -18,15 +18,29 @@ test('spec §5.1: 499 less 100 in all three tax treatments, whole baht only, nev
 });
 
 const quote = (over: Partial<BillingQuote> = {}) => ({ purchaseMode: 'CARD_ONCE', purchase: { kind: 'INITIAL' }, ...over }) as BillingQuote;
-test('spec §4.1.1 / SD-O12: any package payment made in one go; never a deal or an automatic renewal', () => {
+test('spec §4.1.1 / SD-O12 / SD-O13: any package payment made in one go, the first bill of a package started in a renewing mode; never a deal', () => {
   for (const kind of ['INITIAL', 'RESTART', 'REPEAT', 'SCHEDULED_CHANGE', 'UPGRADE', 'FULL_PACKAGE_UPGRADE'])
     for (const purchaseMode of ['CARD_ONCE', 'PROMPTPAY_ONCE'] as const)
       assert.equal(eventDiscountPurchase(quote({ purchaseMode, purchase: { kind } as BillingQuote['purchase'] })), true, `${kind} ${purchaseMode}`);
   assert.equal(eventDiscountPurchase(quote({ purchase: { kind: 'ADVANCE_DEAL' } as BillingQuote['purchase'] })), false);
-  for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const)
-    for (const kind of ['INITIAL', 'REPEAT', 'UPGRADE'])
+  // SD-O13 (Owner 2026-09-29): a first purchase or a restart pays its first period now; a running subscription's purchases never.
+  for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
+    for (const kind of ['INITIAL', 'RESTART'])
+      assert.equal(eventDiscountPurchase(quote({ purchaseMode, purchase: { kind } as BillingQuote['purchase'] })), true, `${kind} ${purchaseMode}`);
+    for (const kind of ['REPEAT', 'UPGRADE', 'SCHEDULED_CHANGE', 'FULL_PACKAGE_UPGRADE', 'ADVANCE_DEAL'])
       assert.equal(eventDiscountPurchase(quote({ purchaseMode, purchase: { kind } as BillingQuote['purchase'] })), false, `${kind} ${purchaseMode}`);
+    assert.equal(eventDiscountPurchase(quote({ purchaseMode, deal: { dealId: 'd', months: 1, description: '', baseLabel: '' } })), false);
+  }
   assert.equal(eventDiscountPurchase(quote({ deal: { dealId: 'd', months: 1, description: '', baseLabel: '' } })), false);
+});
+
+test('SD-O13: only a CARD_AUTO snapshot that chose USE pays its first period once and binds its subscription afterwards', () => {
+  const card = { quote: { purchaseMode: 'CARD_AUTO' as const } };
+  assert.equal(eventDiscountCardAuto({ ...card, eventDiscount: { choice: 'USE' } }), true);
+  assert.equal(eventDiscountCardAuto({ ...card, eventDiscount: { choice: 'DECLINE' } }), false);
+  assert.equal(eventDiscountCardAuto(card), false);
+  assert.equal(eventDiscountCardAuto({ quote: { purchaseMode: 'PROMPTPAY_RENEW' }, eventDiscount: { choice: 'USE' } }), false, 'PROMPTPAY_RENEW is a payment Checkout already');
+  assert.equal(eventDiscountCardAuto(undefined), false);
 });
 
 test('spec §4.3: the card gets the ticket that takes most off it, in scope; ties go to the one expiring first, then id', () => {
@@ -68,7 +82,10 @@ test('spec §5.2: the expected first bill comes only from a consistent USE snaps
   const bigger = snapshot(); (bigger.eventDiscount as { discountSatang: number }).discountSatang = 20000;
   assert.equal(eventDiscountExpected(bigger), null, 'a discount that does not match its own amounts is refused');
   assert.equal(eventDiscountExpected({ ...snapshot(), eventDiscount: { choice: 'DECLINE', offeredTicketId: 't' } }), null);
-  assert.equal(eventDiscountExpected({ ...snapshot(), quote: quote({ offer, purchaseMode: 'CARD_AUTO' }) }), null);
+  // SD-O13: a renewing mode's first bill (INITIAL/RESTART) is discounted like a one-time payment; a running subscription's REPEAT never.
+  assert.deepEqual(eventDiscountExpected({ ...snapshot(), quote: quote({ offer, purchaseMode: 'CARD_AUTO' }) }), amounts);
+  assert.deepEqual(eventDiscountExpected({ ...snapshot(), quote: quote({ offer, purchaseMode: 'PROMPTPAY_RENEW', purchase: { kind: 'RESTART' } as BillingQuote['purchase'] }) }), amounts);
+  assert.equal(eventDiscountExpected({ ...snapshot(), quote: quote({ offer, purchaseMode: 'CARD_AUTO', purchase: { kind: 'REPEAT' } as BillingQuote['purchase'] }) }), null);
   assert.equal(eventDiscountExpected({ ...snapshot(), deal: {} }), null);
   assert.equal(eventDiscountExpected({ ...snapshot(), upgrade: { amountSatang: 20000 } }), null, 'an upgrade source on a non-upgrade quote is refused');
 });

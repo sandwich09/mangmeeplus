@@ -105,8 +105,11 @@ test('event discount: the discounted first bill passes only with a consistent US
   assert.throws(() => paidPackageCheckoutEvidence(tampered));
   const bigger = fixture(); eventDiscounted(bigger); withAmount(bigger, 999000 - 200000);
   assert.throws(() => paidPackageCheckoutEvidence(bigger), 'Stripe charging more off than the snapshot allows is a mismatch');
+  // SD-O13: a renewing mode's first bill is one discounted payment like any other; a running subscription's purchase never is.
   const renewing = fixture(); eventDiscounted(renewing); renewing.snapshot.quote.purchaseMode = 'CARD_AUTO';
-  assert.throws(() => paidPackageCheckoutEvidence(renewing), 'no discount on a renewing mode today');
+  assert.equal(paidPackageCheckoutEvidence(renewing).totalSatang, amount);
+  renewing.snapshot.quote.purchase = { kind: 'REPEAT' } as NonNullable<Input['snapshot']['quote']['purchase']>;
+  assert.throws(() => paidPackageCheckoutEvidence(renewing), 'no discount on a running subscription');
   const coupon = fixture(); eventDiscounted(coupon); coupon.session.total_details.amount_discount = 100;
   assert.throws(() => paidPackageCheckoutEvidence(coupon), 'a provider discount line stays refused');
 });
