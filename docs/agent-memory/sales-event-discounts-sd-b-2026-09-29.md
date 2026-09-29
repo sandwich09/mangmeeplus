@@ -48,5 +48,8 @@ Verification (2026-09-29 17:18, worktree above, before merging develop):
 - `check-di-metadata`: clean. `git diff --check`: clean.
 - Whole-chain acceptance: EXIT 0, 3416/3416, `line_ai_repository_acceptance_complete`.
 - Not run: the `sales-event-discounts.pg.spec` real-Postgres spec. Its only reward case (all zero) still holds.
+- After a plain merge of develop `12b28fc4` (#887, no conflicts) and a contracts rebuild:
+  - Typecheck: API rc=0, web rc=0.
+  - Focused API specs: 154/154. Web specs: 120/120.
 
 Next: Owner re-checks on UAT after the release. Check the phone gets the `?v=` script, one tap on เปิดมั่งมี, and a plan manager landing on แพ็กเกจและการชำระเงิน.
