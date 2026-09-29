@@ -14,14 +14,10 @@ import {
   BUSINESS_DOCUMENT_TRANSACTION_STATES,
   EXPENSE_CAPTURE_OBSERVATION_LIMITS,
   extractValueCandidates,
-  expenseCaptureFieldRole,
-  expenseCaptureObservationId,
   mapThaiDigits,
   todayCivilDate,
   type ExpenseCaptureComponentObservation,
   type ExpenseCaptureDocumentObservation,
-  type ExpenseCaptureExtractWindow,
-  type ExpenseCaptureFieldEvidence,
   type ExpenseCaptureItemObservation,
   type ExpenseCaptureObservations,
   type ExpenseCapturePaymentObservation,
@@ -264,7 +260,6 @@ export function parseCaptureObservationsJson(
   text: string,
   windowText: string,
   todayIso: string = todayCivilDate(),
-  sourceWindow?: ExpenseCaptureExtractWindow,
 ): ExpenseCaptureObservations | null {
   const json = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
   let raw: Record<string, unknown>;
@@ -493,150 +488,7 @@ export function parseCaptureObservationsJson(
         .slice(0, 10),
     },
   };
-  return sourceWindow?.evidenceSource ? bindCaptureEvidence(observations, raw, sourceWindow, todayIso) : observations;
-}
-
-/** v2 retains only values with a unique or explicitly selected original-page locator. */
-function bindCaptureEvidence(observations: ExpenseCaptureObservations, raw: Record<string, unknown>, window: ExpenseCaptureExtractWindow, today: string): ExpenseCaptureObservations | null {
-  const source = window.evidenceSource!;
-  if (source.version !== 2 || !source.attachmentId || !/^[0-9a-f]{64}$/.test(source.checksumSha256)
-    || window.pages.some(page => !Number.isSafeInteger(page.pageIndex) || page.pageIndex < 0 || typeof page.text !== 'string'
-      || !Number.isSafeInteger(page.sourceOffset ?? 0) || (page.sourceOffset ?? 0) < 0)
-    || new Set(window.pages.map(page => page.pageIndex)).size !== window.pages.length) return null;
-  const pageMap = new Map(window.pages.map(page => [page.pageIndex, page]));
-  let removed = 0;
-  const docPages = new Map<string, number[]>();
-  type GroundedRow = Record<string, any>;
-  const normalize = (value: string) => mapThaiDigits(value).normalize('NFKC');
-  const matches = (value: string, printed: string, kind: 'text' | 'number' | 'date' | 'currency') => {
-    if (kind === 'number') return exactPrintedNumber(value) !== undefined && exactPrintedNumber(value) === exactPrintedNumber(printed);
-    if (kind === 'date') return extractValueCandidates(printed, today, { documentContext: 'receipt' }).dates.some(date => date.isoDate === value);
-    if (kind === 'currency') return normalize(printed).toUpperCase() === value || value === 'THB' && /^(?:บาท|฿)$/.test(printed);
-    return normalize(printed) === normalize(value);
-  };
-  const locate = (row: GroundedRow, field: string, value: string, pages: number[], kind: 'text' | 'number' | 'date' | 'currency', role: string, localRow?: string): ExpenseCaptureFieldEvidence | undefined => {
-    const hint = asRecord(asRecord(row['fieldEvidence'])?.[field]);
-    const found: ExpenseCaptureFieldEvidence[] = [];
-    for (const index of pages) {
-      const page = pageMap.get(index); if (!page) continue;
-      const offset = page.sourceOffset ?? 0;
-      const add = (start: number, end: number) => {
-        const printed = page.text.slice(start, end);
-        if (!printed || !matches(value, printed, kind)) return;
-        if (localRow) {
-          let inRow = false;
-          for (let at = page.text.indexOf(localRow); at >= 0; at = page.text.indexOf(localRow, at + 1)) {
-            if (start >= at && end <= at + localRow.length) { inRow = true; break; }
-          }
-          if (!inRow) return;
-        }
-        found.push({ attachmentId: source.attachmentId, checksumSha256: source.checksumSha256, pageIndex: index,
-          localSpan: { start: start + offset, end: end + offset }, rawValue: printed, role });
-      };
-      if (hint) {
-        const span = asRecord(hint['localSpan']);
-        if (hint['pageIndex'] !== index || !span || !Number.isSafeInteger(span['start']) || !Number.isSafeInteger(span['end'])) continue;
-        const start = Number(span['start']) - offset, end = Number(span['end']) - offset;
-        if (start < 0 || end <= start || end > page.text.length || page.text.slice(start, end) !== hint['rawValue']) continue;
-        add(start, end);
-      } else {
-        const candidates = kind === 'number'
-          ? [...page.text.matchAll(/[+\-−]?[0-9๐-๙][0-9๐-๙,]*(?:\.[0-9๐-๙]+)?/g)].map(hit => ({ text: hit[0], start: hit.index! }))
-          : kind === 'date'
-            ? extractValueCandidates(page.text, today, { documentContext: 'receipt' }).dates.filter(date => date.isoDate === value)
-              .flatMap(date => occurrences(page.text, date.span))
-            : (kind === 'currency' && value === 'THB' ? ['THB', 'บาท', '฿'] : [value]).flatMap(text => occurrences(page.text, text));
-        for (const candidate of candidates) add(candidate.start, candidate.start + candidate.text.length);
-      }
-    }
-    const unique = [...new Map(found.map(hit => [`${hit.pageIndex}:${hit.localSpan.start}:${hit.localSpan.end}`, hit])).values()];
-    return unique.length === 1 ? unique[0] : undefined;
-  };
-  const bind = (row: GroundedRow, original: GroundedRow, field: string, pages: number[], kind: 'text' | 'number' | 'date' | 'currency', localRow?: string) => {
-    const path = field.split('.');
-    let parent = row;
-    for (const part of path.slice(0, -1)) { if (!parent[part] || typeof parent[part] !== 'object') return; parent = parent[part]; }
-    const key = path.at(-1)!; if (parent[key] === undefined) return;
-    const evidence = locate(original, field, String(parent[key]), pages, kind, expenseCaptureFieldRole(row, field), localRow);
-    if (!evidence) { delete parent[key]; removed++; }
-    else (row.fieldEvidence ??= {})[field] = evidence;
-  };
-  observations.documents = observations.documents.filter(document => {
-    const original = asArray(raw['documents']).map(asRecord).find(row => row?.['ref'] === document.ref);
-    if (!original || !document.pageIndexes.length || document.pageIndexes.some(page => !pageMap.has(page))) { removed++; return false; }
-    document.pageIndexes = [...new Set(document.pageIndexes)];
-    const ownText = document.pageIndexes.map(page => pageMap.get(page)!.text).join('\n');
-    const classification = parseBusinessDocumentClassification(original['classification'], ownText);
-    if (!classification) { removed++; return false; }
-    document.classification = classification;
-    docPages.set(document.ref, document.pageIndexes);
-    for (const field of ['issuer.name', 'issuer.taxId', 'issuer.branchCode', 'issuer.storefront', 'issuer.platform', 'buyer.name', 'buyer.taxId', 'documentNumber']) bind(document, original, field, document.pageIndexes, 'text');
-    bind(document, original, 'documentDate', document.pageIndexes, 'date');
-    bind(document, original, 'currency', document.pageIndexes, 'currency');
-    for (const field of ['printedPage.number', 'printedPage.of']) bind(document, original, field, document.pageIndexes, 'number');
-    if (document.printedPages) {
-      document.printedPages.forEach((_, index) => bind(document, original, `printedPages.${index}`, document.pageIndexes, 'number'));
-      const retained = document.printedPages.map((value, index) => ({ value, evidence: document.fieldEvidence?.[`printedPages.${index}`] })).filter(({ value }) => Number.isSafeInteger(value));
-      for (const key of Object.keys(document.fieldEvidence ?? {})) if (key.startsWith('printedPages.')) delete document.fieldEvidence![key];
-      document.printedPages = retained.map(({ value, evidence }, index) => {
-        if (evidence) (document.fieldEvidence ??= {})[`printedPages.${index}`] = { ...evidence, role: expenseCaptureFieldRole(document, `printedPages.${index}`) };
-        return value;
-      });
-    }
-    return true;
-  });
-  if (!observations.documents.length) return null;
-  const fields = {
-    items: { text: ['description', 'unit', 'taxMarker'], number: ['quantity', 'packSize', 'unitPrice', 'amount', 'listPrice'], date: [], currency: [] },
-    components: { text: ['label'], number: ['amount'], date: [], currency: ['currency'] },
-    totals: { text: [], number: ['amount'], date: [], currency: [] },
-    payments: { text: ['method', 'reference'], number: ['amount'], date: ['occurredAt'], currency: [] },
-    refunds: { text: ['destination'], number: ['amount'], date: [], currency: [] },
-  } as const;
-  for (const [collection, groups] of Object.entries(fields)) {
-    const retained: GroundedRow[] = [];
-    for (const row of (observations as any)[collection] as GroundedRow[]) {
-      const pages = docPages.get(row.documentRef);
-      const original = asArray(raw[collection]).map(asRecord).find(item => item?.['documentRef'] === row.documentRef
-        && item?.['evidenceSpan'] === row.evidenceSpan && (!row.id || item?.['id'] === row.id));
-      // A row on another document/page cannot lend its numbers or labels to this document.
-      if (!pages || !original || !pages.some(page => pageMap.get(page)!.text.includes(row.evidenceSpan))) { removed++; continue; }
-      for (const [kind, names] of Object.entries(groups)) for (const field of names) bind(row, original, field, pages, kind as 'text' | 'number' | 'date' | 'currency', row.evidenceSpan);
-      if (collection === 'totals' && row.amount === undefined || collection === 'items' && !row.description || collection === 'components' && !row.label) { removed++; continue; }
-      retained.push(row);
-    }
-    (observations as any)[collection] = retained;
-  }
-  const itemIds = new Map<string, string | null>();
-  for (const item of observations.items) {
-    const key = `${item.documentRef}|${item.id}`, id = expenseCaptureObservationId('item', item)!;
-    itemIds.set(key, itemIds.has(key) && itemIds.get(key) !== id ? null : id);
-    item.id = id;
-  }
-  for (const row of [...observations.items, ...observations.components]) {
-    const field = 'event' in row ? 'linkedItemId' : 'parentId';
-    const original = (row as GroundedRow)[field];
-    if (original !== undefined) {
-      const target = itemIds.get(`${row.documentRef}|${original}`);
-      if (target && target !== row.id) (row as GroundedRow)[field] = target;
-      else { delete (row as GroundedRow)[field]; removed++; }
-    }
-    if ('role' in row) row.id = expenseCaptureObservationId('component', row)!;
-  }
-  observations.fieldEvidenceVersion = 2;
-  observations.completeness.pagesCovered = observations.completeness.pagesCovered.filter(page => pageMap.has(page));
-  if (removed) {
-    observations.completeness.unreadableRows += removed;
-    observations.completeness.notes = [`rejected_page_or_field_evidence:${removed}`, ...observations.completeness.notes].slice(0, 10);
-  }
   return observations;
-}
-
-function occurrences(text: string, value: string): Array<{ text: string; start: number }> {
-  if (!value) return [];
-  const matches: Array<{ text: string; start: number }> = [];
-  for (let start = text.indexOf(value); start >= 0; start = text.indexOf(value, start + 1)) matches.push({ text: value, start });
-  return matches;
 }
 
 const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);

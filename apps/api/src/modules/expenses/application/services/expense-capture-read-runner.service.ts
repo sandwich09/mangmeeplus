@@ -180,18 +180,14 @@ export class ExpenseCaptureReadRunnerService {
     }
   }
 
-  /**
-   * One claimed job, start to terminal state. Never throws — every exit writes a state.
-   * `fieldEvidenceV2` is the explicit ask for strict field evidence; kick and drain never pass it
-   * (Owner decision 2026-09-29, option A — see the same rule in `ReceiptOcrClient`).
-   */
-  async runClaimed(job: CaptureReadJobRow, options: { fieldEvidenceV2?: boolean } = {}): Promise<void> {
+  /** One claimed job, start to terminal state. Never throws — every exit writes a state. */
+  async runClaimed(job: CaptureReadJobRow): Promise<void> {
     const owner = job.leaseOwner!;
     const startedAt = Date.now();
     let checkpoint = readCheckpoint(job.checkpointJson);
     let outcome: RunOutcome;
     try {
-      outcome = await this.execute(job, owner, startedAt, checkpoint, (next) => { checkpoint = next; }, options.fieldEvidenceV2 === true);
+      outcome = await this.execute(job, owner, startedAt, checkpoint, (next) => { checkpoint = next; });
     } catch (error) {
       this.logger.error({ msg: 'capture.read.unhandled', jobId: job.id, ...safeLineErrorDetails(error) });
       outcome = { status: 'FAILED', errorCode: 'CAPTURE_READ_UNHANDLED' };
@@ -208,7 +204,6 @@ export class ExpenseCaptureReadRunnerService {
     startedAt: number,
     checkpoint: CaptureCheckpoint,
     save: (next: CaptureCheckpoint) => void,
-    fieldEvidenceV2: boolean,
   ): Promise<RunOutcome> {
     if (job.attempts > EXPENSE_CAPTURE_MAX_ATTEMPTS) {
       return { status: 'FAILED', errorCode: 'attempts_exhausted' };
@@ -338,8 +333,7 @@ export class ExpenseCaptureReadRunnerService {
       const savedWindows = Object.values(checkpoint.windows);
       // Old long-page checkpoints indexed windows after silently clipping page tails. Their wN
       // identities cannot be applied to the complete window plan, nor upgraded by inference.
-      if (savedWindows.length && (checkpoint.windowPlanVersion !== 2 && Object.values(checkpoint.pages).some(page => (page.text?.length ?? 0) > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars)
-        || fieldEvidenceV2 && savedWindows.some(window => window.fieldEvidenceVersion !== 2))) {
+      if (savedWindows.length && checkpoint.windowPlanVersion !== 2 && Object.values(checkpoint.pages).some(page => (page.text?.length ?? 0) > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars)) {
         return { status: 'FAILED', errorCode: 'CAPTURE_WINDOW_EVIDENCE_VERSION_CHANGED' };
       }
       checkpoint = { ...checkpoint, windowPlanVersion: 2 };
@@ -359,7 +353,6 @@ export class ExpenseCaptureReadRunnerService {
           jobId: job.id,
           windowId: window.id,
           window: {
-            ...(fieldEvidenceV2 ? { evidenceSource: { version: 2 as const, attachmentId: attachment.id, checksumSha256: checksum } } : {}),
             fileLabel: job.fileId ?? job.expenseId ?? job.id,
             pageIndexes: window.pageIndexes,
             pages: window.pages,
@@ -372,9 +365,6 @@ export class ExpenseCaptureReadRunnerService {
           manifest = markWindow(manifest, window.id, 'failed');
           await this.persist(job, owner, { checkpoint, manifest, calls });
           continue;
-        }
-        if (fieldEvidenceV2 && result.observations.fieldEvidenceVersion !== 2) {
-          return { status: 'FAILED', errorCode: 'CAPTURE_FIELD_EVIDENCE_UNSUPPORTED' };
         }
         checkpoint = { ...checkpoint, windows: { ...checkpoint.windows, [window.id]: result.observations } };
         if (result.modelLineage) lineage.push(result.modelLineage);

@@ -82,9 +82,9 @@ function observations(over: Partial<ExpenseCaptureObservations> = {}): ExpenseCa
 const assemble = (windows: ExpenseCaptureObservations[], pageCount = 1) =>
   assembleCaptureObservations(windows.map((value, index) => ({ id: `w${index + 1}`, observations: value })), { pageCount });
 
-it('v2 split-page source ids retain both rows and deduplicate only the same source row', () => {
-  const head = observations({ fieldEvidenceVersion: 2, items: [item({ id: 'item:p0:s10:e20', amount: '10.00' })] });
-  const tail = observations({ fieldEvidenceVersion: 2, items: [item({ id: 'item:p0:s14000:e14010', amount: '20.00' })], totals: [total('document_total', '30.00')] });
+it('split-page source ids retain both rows and deduplicate only the same source row', () => {
+  const head = observations({ items: [item({ id: 'item:p0:s10:e20', amount: '10.00' })] });
+  const tail = observations({ items: [item({ id: 'item:p0:s14000:e14010', amount: '20.00' })], totals: [total('document_total', '30.00')] });
   const result = assemble([head, tail, structuredClone(head)]);
   assert.equal(result.items.length, 2); assert.equal(result.reconciliation[0]!.status, 'reconciled');
 });
