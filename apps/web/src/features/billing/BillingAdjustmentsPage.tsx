@@ -3,7 +3,7 @@ import Link from 'next/link';
 import BillingCustomerFrame from './BillingCustomerFrame';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
-import { billingControl, billingField, billingLabel, billingLink } from './billing-display';
+import { billingControl, billingField, billingLabel, billingLink, billingSupportReference } from './billing-display';
 import { useEffect, useRef, useState } from 'react';
 import type { BillingAdjustmentKind, BillingAdjustments, BillingDocumentResendResult, BillingEndPackageReview, BillingRecipientAdminReview } from '@watchdog-bms/contracts';
 import { billingRecipientSourceLabel } from '@watchdog-bms/contracts';
@@ -109,7 +109,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
       <section aria-label="เอกสารจาก Stripe" className="mangmee-card space-y-4 p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">{data.invoiceNumber??'เอกสารของรายการนี้'}</h2><button className="min-h-11 px-2 text-sm text-gray-600 underline" disabled={loading||opening} onClick={()=>setReload(n=>n+1)}>อัปเดตข้อมูล</button></div>
         {data.canOpenDocuments?<div className="divide-y divide-gray-100">{([['receipt','ใบเสร็จรับเงิน','หลักฐานรับชำระเงินจากลูกค้า'],['invoice','ใบแจ้งหนี้','รายละเอียดราคาและยอดเรียกเก็บ'],['pdf','ไฟล์ PDF ใบแจ้งหนี้','สำหรับดาวน์โหลดและเก็บเอกสาร']] as const).map(([documentKind,title,description])=><div key={documentKind} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><h3 className="font-medium">{title}</h3><p className="mt-1 text-gray-600">{description}</p></div><button className={button} disabled={opening} onClick={()=>void open(documentKind)}>เปิด{title}</button></div>)}
-          {!admin&&data.documentActions?.canResend&&<div className="flex flex-wrap items-center justify-between gap-3 py-4"><div className="min-w-0"><h3 className="font-medium">ส่งเอกสารไปอีเมลอีกครั้ง</h3><p className="mt-1 break-all text-gray-600">ส่งใบแจ้งหนี้และใบเสร็จของรายการนี้ไปที่ {data.recipientEmail??'อีเมลรับเอกสารของบริษัท'}</p>
+          {!admin&&data.documentActions?.canResend&&<div className="flex flex-wrap items-center justify-between gap-3 py-4"><div className="min-w-0"><h3 className="font-medium">ส่งเอกสารไปอีเมลอีกครั้ง</h3><p className="mt-1 break-all text-gray-600">ส่งเอกสารของรายการนี้ไปที่ {data.recipientEmail??'อีเมลรับเอกสารของบริษัท'}</p>
             <a className={billingLink} href={`/companies/${encodeURIComponent(companyId)}/billing#billing-recipient`}>แก้อีเมลรับเอกสาร</a></div>
             <button className={button} disabled={resend.busy||opening} aria-busy={resend.busy} onClick={()=>void resendDocument()}>ส่งเอกสารไปอีเมลอีกครั้ง</button></div>}</div>:<p className="text-gray-600">บัญชีนี้ดูสถานะได้ แต่ไม่มีสิทธิ์เปิดเอกสาร</p>}
         {resend.result&&<p role="status" className="break-all rounded-xl bg-green-50 p-3">{billingResendText(resend.result)}</p>}
@@ -141,7 +141,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
         {endMessage&&<p role="status" className="mt-3">{endMessage}</p>}</details>}
       {admin&&(recipientReview||recipientReviewError)&&<details className="rounded-xl border border-gray-200 bg-white p-5 sm:p-6" open><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เอกสารและผู้รับเอกสาร</summary>
         {recipientReview?<div className="space-y-3 py-3">
-          <p className="text-gray-600">อีเมลผู้รับเอกสารปัจจุบัน: {recipientReview.currentEmail??'ยังไม่มี'} · ที่มา: {billingRecipientSourceLabel(recipientReview.currentSource)}</p>
+          <p className="text-gray-600">อีเมลรับเอกสารปัจจุบัน: {recipientReview.currentEmail??'ยังไม่มี'} · ที่มา: {billingRecipientSourceLabel(recipientReview.currentSource)}</p>
           {recipientReview.bouncedAt&&<p className="text-red-700">อีเมลนี้ตีกลับเมื่อ {time(recipientReview.bouncedAt)}</p>}
           {!resendOpen?<button className={button} onClick={()=>setResendOpen(true)}>ส่งเอกสารซ้ำ</button>:<form className="space-y-3" onSubmit={e=>{e.preventDefault();void adminResend();}}>
             <label className="block">เหตุผลภายใน (ลูกค้าไม่เห็น)<textarea className={billingField} required maxLength={500} value={resendReason} disabled={resendBusy} onChange={e=>setResendReason(e.target.value)}/></label>
@@ -156,7 +156,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
         </div>:<p role="alert" className="py-3 text-red-700">ยังโหลดข้อมูลส่วนนี้ไม่ได้ <button type="button" className="min-h-11 underline" onClick={()=>setReload(n=>n+1)}>ลองอีกครั้ง</button></p>}
       </details>}
     </>}
-    <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงสำหรับตรวจสอบ</summary><p className="break-all">รหัสรายการ ใช้ค้นประวัติในระบบ: {invoiceId}</p></details>
+    <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงสำหรับตรวจสอบ</summary><p className="break-all">รหัสรายการ ใช้ค้นประวัติในระบบ: {billingSupportReference(invoiceId)}</p></details>
   </>;
   return admin ? <main className="mx-auto max-w-4xl space-y-5 break-words p-4 text-base sm:p-8">{content}</main>
     : <BillingCustomerFrame title="เอกสารการชำระเงิน" description="เปิดเอกสารจาก Stripe ของรายการชำระเงินนี้" backHref={back} backLabel="กลับไปประวัติการชำระเงิน" onBack={preview?.back} showBackInWorkspace>{content}</BillingCustomerFrame>;
