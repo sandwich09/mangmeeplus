@@ -8,11 +8,11 @@ import { PostmarkSendError } from '../../auth/infrastructure/postmark.client';
 type Row = Record<string, any>;
 
 /** Purchase without setup (R-A7/R-A8): mail follows the recipient column, and bounces flag it once. */
-function fixture(options: { recipientEmail?: string | null; changeRow?: Row } = {}) {
+function fixture(options: { recipientEmail?: string | null; changeRow?: Row; companyName?: string } = {}) {
   const account: Row = { id: 'account-1', companyId: 'company-1', stripeAccountId: 'acct_1', livemode: false, version: 3,
     recipientEmail: options.recipientEmail === undefined ? 'docs@example.test' : options.recipientEmail, recipientBouncedAt: null, recipientBounceNotifiedAt: null };
   const invoice = { id: 'invoice-1', billingAccountId: 'account-1', appliedAt: new Date(), applyStatus: 'APPLIED', contractSnapshot: null, providerNumber: 'INV-1' };
-  const company = { id: 'company-1', name: 'ร้านทดสอบ', status: 'ACTIVE', planTerm: null };
+  const company = { id: 'company-1', name: options.companyName ?? 'ร้านทดสอบ', status: 'ACTIVE', planTerm: null };
   const members = [{ id: 'm-1', userId: 'user-1', user: { email: 'owner@example.test', emailVerifiedAt: new Date(), displayName: 'Owner' } }];
   const upserts: Row[] = [], events: Row[] = [], sent: Row[] = [], prepared: Row[] = [], attemptUpdates: Row[] = [], audits: Row[] = [], issues: unknown[][] = [];
   const notice = { id: 'notice-1', intentKey: 'billing-recipient-notice:op-1', purpose: 'billing_status', status: 'READY', dispatchStartedAt: null,
@@ -84,6 +84,21 @@ describe('billing mail to the document recipient (R-A7)', () => {
     assert.equal(f.sent.length, 1); assert.equal(f.sent[0]!.attempt.recipient, 'docs@example.test');
   });
 
+  // R-D1: the resend command queues this same event with `resend: true` (billing-document-resend.ts).
+  // It must read as a resend, never as though the package itself changed.
+  it('renders the resend copy, not the package-updated one, when the outbox event says resend', async () => {
+    const f = fixture();
+    await (f.service as any).sendEmail(f.noticeRow({ recipientUserId: null, resend: true }));
+    assert.equal(f.sent.length, 1);
+    assert.equal(f.sent[0]!.content.subject, 'ส่งเอกสารการชำระเงินอีกครั้ง');
+    assert.match(f.sent[0]!.content.text, /ร้านทดสอบ/);
+    assert.doesNotMatch(f.sent[0]!.content.text, /อัปเดตแพ็กเกจ/);
+    // A plain (non-resend) notice keeps today's subject and template unchanged.
+    const g = fixture();
+    await (g.service as any).sendEmail(g.noticeRow({ recipientUserId: null }));
+    assert.equal(g.sent[0]!.content.subject, 'อัปเดตแพ็กเกจมั่งมี');
+  });
+
   it('rejects a malformed recipient and never sends to a recipient that changed before dispatch', async () => {
     const f = fixture();
     await assert.rejects((f.service as any).sendEmail(f.noticeRow({ recipientUserId: 7 })), /notification_recipient_missing/);
@@ -105,6 +120,17 @@ describe('recipient change notice and bounce flag (R-A7/R-A8)', () => {
     assert.match(f.sent[0]!.content.text, /ร้านทดสอบ/); assert.doesNotMatch(f.sent[0]!.content.text + f.sent[0]!.content.html, /new@example\.test/);
     const event = f.events.find(e => e.periodKey === 'recipient-changed:op-1');
     assert.equal(event?.title, 'เปลี่ยนอีเมลรับเอกสารแล้ว'); assert.equal(event?.triggerKey, 'billing.package_updated'); assert.deepEqual(event?.recipientUserIds, ['user-1']);
+  });
+
+  // A shop literally named starting with "บริษัท" must not read "บริษัท บริษัท…" in the old-recipient notice.
+  it('never doubles บริษัท when the company name already starts with it', async () => {
+    const changeRow = { id: 'change-1', companyId: 'company-1', aggregateType: 'BillingAccount', aggregateId: 'account-1', eventType: BILLING_RECIPIENT_CHANGED,
+      claimToken: 'claim', payloadJson: { schemaVersion: 1, data: { operationId: 'op-1', noticeAttemptId: 'notice-1' } } };
+    const f = fixture({ recipientEmail: 'new@example.test', changeRow, companyName: 'บริษัท ทดสอบ จำกัด' });
+    await f.service.drain();
+    assert.equal(f.sent.length, 1);
+    assert.doesNotMatch(f.sent[0]!.content.text, /บริษัท\s*บริษัท/);
+    assert.match(f.sent[0]!.content.text, /ของ บริษัท ทดสอบ จำกัด/);
   });
 
   it('flags a suppressed recipient once, notifies once, and ignores a bounce of an address no longer in use', async () => {

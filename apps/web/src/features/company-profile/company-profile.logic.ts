@@ -129,7 +129,9 @@ const ADDRESS_LABELS: Record<string, string> = {
  * server's per-field strings into the Thai names of the boxes on screen.
  */
 export function addressErrorMessages(error: unknown): string[] {
-  const details = (error as { details?: unknown } | null | undefined)?.details;
+  // authedApiFetch keeps the WHOLE response body as `error.details` (`{ message, details, requestId }`),
+  // so the API's per-field array sits one level deeper — as PartnerDetailPage reads `details.details`.
+  const details = (error as { details?: { details?: unknown } } | null | undefined)?.details?.details;
   if (!Array.isArray(details)) return [];
   const messages: string[] = [];
   for (const entry of details) {
@@ -149,22 +151,27 @@ export function addressErrorMessages(error: unknown): string[] {
 
 const CHECKOUT_ADDRESS_KEYS = ['line1', 'line2', 'subdistrict', 'district', 'province', 'postalCode'] as const;
 
-/**
- * DQ5: the address typed at Stripe Checkout, offered to the shop form — its filled boxes only, so a
- * box Stripe cannot fill (it has no sub-district) never blanks what the owner already typed. Filling
- * the form saves nothing; the owner still reviews it and presses save.
- */
-export function checkoutAddressToForm(address: CompanyLegalAddress): Partial<CompanyLegalAddress> {
+/** The boxes Stripe Checkout actually filled; a box it left empty is not part of what it offers. */
+function checkoutAddressFilled(address: CompanyLegalAddress): Partial<CompanyLegalAddress> {
   return Object.fromEntries(CHECKOUT_ADDRESS_KEYS.map((key) => [key, (address[key] ?? '').trim()]).filter(([, value]) => value));
 }
 
-export function checkoutAddressText(address: CompanyLegalAddress): string {
-  return Object.values(checkoutAddressToForm(address)).join(' ');
+/**
+ * DQ5: the address typed at Stripe Checkout, offered to the shop form. Stripe has no sub-district, so
+ * the fill clears ตำบล/แขวง instead of keeping one that belongs to another address — the owner picks it
+ * again under the new district. Filling the form saves nothing; the owner still reviews and saves.
+ */
+export function checkoutAddressToForm(address: CompanyLegalAddress): Partial<CompanyLegalAddress> {
+  return { ...checkoutAddressFilled(address), subdistrict: '' };
 }
 
-/** Whether the offer would change anything in the form at all. */
+export function checkoutAddressText(address: CompanyLegalAddress): string {
+  return Object.values(checkoutAddressFilled(address)).join(' ');
+}
+
+/** Whether the offer would change anything in the form at all (the cleared sub-district aside). */
 export function checkoutAddressDiffers(address: CompanyLegalAddress, form: Record<string, string | null | undefined>): boolean {
-  return Object.entries(checkoutAddressToForm(address)).some(([key, value]) => (form[key] ?? '').trim() !== value);
+  return Object.entries(checkoutAddressFilled(address)).some(([key, value]) => (form[key] ?? '').trim() !== value);
 }
 
 /** Every required box left blank — the state a shop that has never filled in an address is in. */

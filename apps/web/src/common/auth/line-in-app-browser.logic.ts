@@ -12,6 +12,17 @@ export function isLineInAppBrowser(userAgent: string): boolean {
   return / Line\//i.test(userAgent);
 }
 
+/**
+ * Why a login-wall arrival came from a LINE message, if it did (R-B5): `channel-line` is our LINE
+ * surfaces' own marker; `line-link` is the `openExternalBrowser=1` R-B1 adds to every web link LINE
+ * sends (the proxy keeps it inside `next`). Shared by the login page and the LINE login start route.
+ */
+export function lineLinkReason(path: string | null | undefined): 'channel-line' | 'line-link' | null {
+  const query = /\?[^#]*/.exec(path ?? '')?.[0] ?? '';
+  if (/[?&]channel=line(?:&|$)/.test(query)) return 'channel-line';
+  return /[?&]openExternalBrowser=1(?:&|$)/.test(query) ? 'line-link' : null;
+}
+
 export function withLineExternalBrowser(url: string, userAgent: string): string {
   if (!isLineInAppBrowser(userAgent)) return url;
   return url + (url.includes('?') ? '&' : '?') + 'openExternalBrowser=1';

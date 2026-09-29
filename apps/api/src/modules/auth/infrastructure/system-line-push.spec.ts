@@ -28,6 +28,20 @@ describe('pushLineMessages exit (R-B1)', () => {
       assert.deepEqual(messages, snapshot);
     } finally { globalThis.fetch = originalFetch; }
   });
+
+  it('sends the messages as written when the caller opts out (a shop talking to its own customers)', async () => {
+    const originalFetch = globalThis.fetch;
+    const bodies: string[] = [];
+    try {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        bodies.push(String(init?.body));
+        return new Response('', { status: 200 });
+      }) as typeof fetch;
+      const messages = [{ type: 'text', text: 'ดูโปรที่ https://shop.example.com/promo' }];
+      assert.deepEqual(await pushLineMessages({ token: 't', lineUserId: 'U1', messages, externalBrowser: false }), { ok: true });
+      assert.deepEqual(JSON.parse(bodies[0]!).messages, messages);
+    } finally { globalThis.fetch = originalFetch; }
+  });
 });
 
 describe('temporary password flex card', () => {

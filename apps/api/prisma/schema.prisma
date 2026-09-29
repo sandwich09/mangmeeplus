@@ -4232,8 +4232,11 @@ enum LineSupportRequestStatus {
 /// `LineCompanyContext`), how many admins were actually reached, and whether anyone answered.
 model LineSupportRequest {
   id                 String                   @id @default(cuid())
-  /// Null when the asker holds no ACTIVE membership in an ACTIVE company — the unlinked prospect
-  /// who is exactly the person most likely to need a human.
+  /// Null only when the asker has no company at all: no ACTIVE membership anywhere, no LOCKED one
+  /// either, and no signup travelling — the unlinked prospect who is exactly the person most likely
+  /// to need a human. A LOCKED shop (no package, or disabled) still fills this in with that shop's
+  /// id (review 2026-09-29, `resolveSupportAsker`/`lockedCompanyFor`): the ticket must name the shop
+  /// an operator has to call, not read as though nobody had ever opened one.
   companyId          String?
   /// Raw, like `LineCompanyContext.lineUserId`: clearing that row's pause from /system needs the
   /// real id. The web contract never returns it — §3 PDPA — only `lineUserIdHash`.

@@ -552,7 +552,9 @@ test('billing directory opens the matching invoice from an 8-character reference
 
     await lookup.fill(suffix);
     await directory.getByRole('button', { name: 'เปิดรายการ', exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`/system/billing/companies/${companyId}/invoices/${invoiceId}$`));
+    // Anchored to the exact pathname (not a `$`-only regex): a doubled `/system/billing` prefix
+    // still ends with this suffix, so only an exact match catches that regression.
+    await page.waitForURL(url => url.pathname === `/system/billing/companies/${companyId}/invoices/${invoiceId}`);
     await expectNoClientError(page);
   } finally {
     if (invoiceId) await client.billingInvoice.deleteMany({ where: { id: invoiceId } });

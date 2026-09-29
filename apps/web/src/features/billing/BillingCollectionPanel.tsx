@@ -24,7 +24,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
   useEffect(() => {
     if (!id) return;
     let active = true;
-    void api.collection(id).then(value => { if (active) setOperation(value); }).catch(() => { if (active) setError('โหลดคำขอไม่ได้ ตรวจสอบสิทธิ์เจ้าของบริษัทแล้วลองใหม่'); });
+    void api.collection(id).then(value => { if (active) setOperation(value); }).catch(() => { if (active) setError('โหลดคำขอไม่ได้ ตรวจสอบสิทธิ์จัดการแพ็กเกจแล้วลองใหม่'); });
     return () => { active = false; };
   }, [api, id, reload]);
   useEffect(() => {
@@ -120,7 +120,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
         <p className="font-semibold">สิทธิ์เมนูตั้งแต่ {new Date(operation.effectiveAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
         {operation.featureImpact.removed.length > 0 && <><p>เมนูต่อไปนี้จะหยุดใช้ตั้งแต่วันนั้น โดยข้อมูลเดิมยังเก็บไว้:</p><ul className="list-disc space-y-1 break-words pl-6">{operation.featureImpact.removed.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
         {operation.featureImpact.added.length > 0 && <><p>เมนูที่จะเปิดใช้เพิ่มตั้งแต่วันนั้น:</p><ul className="list-disc space-y-1 break-words pl-6">{operation.featureImpact.added.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
-        {operation.featureImpact.preservedAdmin > 0 && <p>สิทธิ์พิเศษที่ผู้ดูแลกำหนดให้เฉพาะบริษัทยังคงอยู่</p>}
+        {operation.featureImpact.preservedAdmin > 0 && <p>สิทธิ์พิเศษที่ผู้ดูแลกำหนดให้เฉพาะร้านนี้ยังคงอยู่</p>}
       </div>}
       {operation.capacity && <div><p>คงสาขา: {operation.capacity.retainedBranches.join(', ')} · พักสาขา: {operation.capacity.suspendedBranches.join(', ') || 'ไม่มี'}</p><p>คงผู้ใช้: {operation.capacity.retainedMembers.join(', ')} · พักผู้ใช้: {operation.capacity.suspendedMembers.join(', ') || 'ไม่มี'}</p><p>ข้อมูลและประวัติยังอยู่ หากรายชื่อเปลี่ยนจะให้ตรวจเลือกอีกครั้ง</p></div>}
       <p>{operation.action.startsWith('ADMIN_') ? 'รายการนี้ปรับเฉพาะการเก็บเงิน ไม่เพิ่มวันใช้งานหรือโควตา และไม่เรียกเก็บบิลร่างย้อนหลัง' : operation.action==='EXTEND_TERM' ? operation.state === 'SUCCEEDED' ? 'เพิ่มวันใช้งานแล้ว รายการนี้ไม่มีค่าใช้จ่ายและไม่เพิ่มโควตา' : 'ผู้ดูแลกำลังดำเนินการแถมวัน ไม่เพิ่มโควตาหรือเรียกเก็บเงินจากรายการนี้ ตรวจสถานะล่าสุดเพื่อดูวันที่ยืนยันแล้ว' : prepaidChange ? operation.state === 'BLOCKED' ? 'ชำระแพ็กเกจใหม่แล้ว กรุณาเลือกสาขาและผู้ใช้ล่าสุดเพื่อเริ่มสิทธิ์จากรายการเดิม โดยไม่ต้องชำระซ้ำ' : 'ชำระแพ็กเกจใหม่แล้ว สิทธิ์เดิมคงอยู่จนถึงวันเริ่มแพ็กเกจรอบถัดไป' : changingPlan ? 'แพ็กเกจใหม่จะเริ่มเมื่อชำระรอบถัดไปสำเร็จ สิทธิ์เดิมที่ซื้อไว้ไม่ลดลงในวันนี้' : 'วันและจำนวนใบเสร็จที่ซื้อไว้คงเดิม การเปลี่ยนการต่ออายุไม่เพิ่มโควตาหรือคืนเงิน'}</p>

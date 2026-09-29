@@ -127,7 +127,7 @@ export async function checkBillingPortal(input: Parameters<typeof checkBillingRe
       await page.reload({ waitUntil: 'domcontentloaded' }); await region.waitFor();
       assert.ok((await region.innerText()).includes('รอบใหม่'), 'show the next monthly quota only within current service rights');
       await restoreTerm(); await page.reload({ waitUntil: 'domcontentloaded' }); await openPayment();
-      unavailable = true; await button.click(); await page.getByRole('alert').filter({ hasText: 'ยังยืนยันผลรายการไม่ได้' }).waitFor();
+      unavailable = true; await button.click(); await page.getByRole('alert').filter({ hasText: /ระบบขัดข้องชั่วคราว|บริการที่จำเป็นยังไม่พร้อมใช้งาน/ }).waitFor();
       assert.equal(page.url(), billingUrl); unavailable = false;
       await page.route('https://billing.stripe.com/**', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<meta charset="utf-8"><main><h1>Stripe จำลอง</h1><a href="${browser.origin}${returnPath}">กลับมั่งมี</a></main>` }));
       await button.click(); await page.getByRole('heading', { name: 'Stripe จำลอง' }).waitFor();

@@ -119,6 +119,9 @@ export class LineMessagingAdapter {
       retryKey,
       url: `${LINE_API_BASE}/message/push`,
       timeoutMs: REQUEST_TIMEOUT_MS,
+      // Campaigns, staff replies and reminders are the shop's words to its own customers: their
+      // links are not our app, so R-B1's open-outside-LINE rewrite does not touch them.
+      externalBrowser: false,
     });
   }
 

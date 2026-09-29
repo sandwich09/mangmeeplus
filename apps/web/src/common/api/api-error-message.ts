@@ -12,6 +12,9 @@ const CODE_LABELS: Record<string, string> = {
   EMAIL_SIGNUP_CHANGED: 'ข้อมูลบัญชีเปลี่ยนแล้ว กรุณาเข้าสู่ระบบอีกครั้ง',
   EMAIL_SIGNUP_INPUT_INVALID: 'กรุณาตรวจชื่อร้าน ชื่อผู้ติดต่อ และเบอร์มือถืออีกครั้ง',
   EMAIL_LOGIN_NOT_ALLOWED: 'บัญชีผู้ดูแลระบบต้องใช้วิธีเข้าสู่ระบบเดิม',
+  // setEmailLogin's own READY check (account-email-otp.service.ts) — surfaced now that the
+  // coverage spec also discovers emailError(...) calls (item 14).
+  EMAIL_VERIFICATION_REQUIRED: 'กรุณายืนยันอีเมลของบัญชีให้เรียบร้อยก่อน จึงจะเปิดใช้การเข้าสู่ระบบด้วยอีเมลได้',
   external_signup_disabled: 'ขณะนี้ยังไม่เปิดรับสมัครใหม่ กรุณาติดต่อทีมงาน',
 
   BILLING_RECIPIENT_UPDATE_REQUIRED: 'กรุณาตรวจและยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้ด้านบน แล้วตรวจสรุปการชำระเงินใหม่',
@@ -21,8 +24,8 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_EMAIL_UPDATE_PENDING: 'มีคำขอเปลี่ยนอีเมลรับเอกสารค้างอยู่ กรุณายืนยันหรือยกเลิกคำขอในแท็บการต่ออายุและชำระเงินก่อนเริ่มรายการใหม่',
   // Purchase without setup (pr-c §2.4, wording pr-d §2.3 ค): document recipient and resend.
   BILLING_RESEND_LIMIT: 'วันนี้ส่งเอกสารใบนี้ซ้ำครบจำนวนที่กำหนดแล้ว ลองใหม่ได้พรุ่งนี้ หรือเปิดเอกสารจากหน้านี้ได้ทันที',
-  BILLING_RESEND_UNAVAILABLE: 'ยังส่งเอกสารนี้ซ้ำไม่ได้ในตอนนี้ กรุณาลองใหม่ภายหลัง หรือเปิดเอกสารจากปุ่มด้านบนแทน',
-  BILLING_RECIPIENT_UNAVAILABLE: 'ตั้งอีเมลรับเอกสารได้หลังชำระเงินครั้งแรก',
+  BILLING_RESEND_UNAVAILABLE: 'ยังส่งเอกสารใบนี้ซ้ำไม่ได้ ตรวจว่าตั้งอีเมลรับเอกสารแล้ว และรายการชำระเสร็จแล้ว',
+  BILLING_RECIPIENT_UNAVAILABLE: 'ตั้งอีเมลรับเอกสารได้ตั้งแต่เริ่มซื้อแพ็กเกจ ไม่ต้องรอชำระเงินเสร็จ',
   BILLING_RECIPIENT_UNCHANGED: 'อีเมลนี้เป็นอีเมลรับเอกสารปัจจุบันอยู่แล้ว ไม่ต้องเปลี่ยน',
   BILLING_RECIPIENT_PROOF_INVALID: 'การยืนยันอีเมลนี้หมดอายุหรือถูกใช้แล้ว กรุณาขอรหัสยืนยันใหม่',
   BILLING_RECIPIENT_BOUNCED: 'อีเมลรับเอกสารปัจจุบันส่งไม่ถึง กรุณาแก้อีเมลรับเอกสารก่อน แล้วจึงส่งเอกสารซ้ำ',
@@ -134,7 +137,8 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_EXISTING_SUBSCRIPTION: 'มีรายการชำระเงินเดิมที่ยังไม่จบ กรุณาตรวจสถานะรายการเดิมก่อนเริ่มรายการใหม่',
   BILLING_IDEMPOTENCY_CONFLICT: 'รายการนี้ถูกส่งซ้ำด้วยข้อมูลที่ต่างจากเดิม กรุณาโหลดหน้าใหม่แล้วเริ่มรายการอีกครั้ง',
   BILLING_IDEMPOTENCY_REQUIRED: 'ส่งรายการไม่ครบ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
-  BILLING_MAPPING_MISMATCH: 'ข้อมูลบิลต่ออายุไม่ตรงกับ Stripe กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
+  // Not renewal-only any more: a first purchase can throw this too (item 11, 2026-09-29 review).
+  BILLING_MAPPING_MISMATCH: 'ข้อมูลการชำระเงินของร้านไม่ตรงกับ Stripe กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
   BILLING_MODE_CHANGE_PENDING: 'เปลี่ยนวิธีชำระเงินได้เมื่อแพ็กเกจปัจจุบันสิ้นสุด ตอนนี้เลือกวิธีชำระแบบเดิม หรือรอให้ครบกำหนดก่อน',
   BILLING_OFFER_UNAVAILABLE: 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน กรุณาเลือกแพ็กเกจอื่น',
   BILLING_PACKAGE_STATE_INVALID: 'ข้อมูลแพ็กเกจเดิมของบริษัทต้องให้ทีมงานตรวจก่อน กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
@@ -154,11 +158,11 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_RESTART_REVIEW: 'ต้องตรวจสมาชิกหรือยอดค้างเดิมก่อนเริ่มแพ็กเกจใหม่ กรุณาติดต่อทีมงานพร้อมเลขบริษัท',
   BILLING_DOCUMENT_PENDING: 'Stripe กำลังเตรียมเอกสาร กรุณาลองเปิดอีกครั้ง',
   BILLING_PORTAL_UNAVAILABLE: 'ยังเปิดหน้าแก้บัตรไม่ได้ กรุณาโหลดสถานะล่าสุดแล้วลองอีกครั้ง',
-  BILLING_PORTAL_CONFIG_MISMATCH: 'ทีมงานต้องตรวจการตั้งค่าหน้าแก้บัตรก่อน กรุณาติดต่อทีมมั่งมี',
-  BILLING_COMPANY_HELD: 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมมั่งมี',
-  BILLING_SOURCE_REVIEW_REQUIRED: 'ข้อมูลการชำระเงินเดิมของบริษัทนี้ยังไม่ตรงกัน กรุณาติดต่อทีมมั่งมีก่อนเริ่มรายการใหม่',
-  BILLING_ENTITLEMENT_REVIEW_REQUIRED: 'ข้อมูลสิทธิ์เมนูเดิมยังไม่พร้อม กรุณาติดต่อทีมมั่งมีก่อนชำระเงิน',
-  BILLING_REFUND_PENDING: 'กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ กรุณาโหลดสถานะล่าสุดหรือติดต่อทีมมั่งมี',
+  BILLING_PORTAL_CONFIG_MISMATCH: 'ทีมงานต้องตรวจการตั้งค่าหน้าแก้บัตรก่อน กรุณาติดต่อทีมงาน',
+  BILLING_COMPANY_HELD: 'ร้านนี้ถูกพักใช้งานโดยผู้ดูแล กรุณาติดต่อทีมงาน',
+  BILLING_SOURCE_REVIEW_REQUIRED: 'ข้อมูลการชำระเงินเดิมของบริษัทนี้ยังไม่ตรงกัน กรุณาติดต่อทีมงานก่อนเริ่มรายการใหม่',
+  BILLING_ENTITLEMENT_REVIEW_REQUIRED: 'ข้อมูลสิทธิ์เมนูเดิมยังไม่พร้อม กรุณาติดต่อทีมงานก่อนชำระเงิน',
+  BILLING_REFUND_PENDING: 'กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ กรุณาโหลดสถานะล่าสุดหรือติดต่อทีมงาน',
   BILLING_NOT_READY: 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน',
   // Operator copy (pr-d §2.3 จ): System Admin screens read these through apiErrorMessage.
   CONTROL_ASSIGNEE_REVIEW: 'ผู้รับงานหรือผู้สำรองไม่มีสิทธิ์ดูแลบริษัทนี้แล้ว กรุณาเลือกใหม่หรือคืนเคสเข้าคิว',
@@ -175,6 +179,8 @@ const CODE_LABELS: Record<string, string> = {
   CONTROL_OPERATION_IN_PROGRESS: 'มีคำสั่งเดิมที่ยังตรวจไม่จบ เปิดประวัติคำสั่งของบริษัทเพื่อดำเนินการต่อ',
   CONTROL_POLICY_NOT_SUPPORTED: 'นโยบายปัจจุบันให้เริ่มและชำระทันที รายการนี้จึงทำไม่ได้',
   CONTROL_PROVIDER_DISABLED: 'ยังไม่ได้ตั้งค่าบัญชีผู้ให้บริการ ติดต่อผู้ดูแลการเชื่อมต่อ',
+  // Mirrors CONTROL_REFUND_AGED_UNKNOWN below, same 23h-unconfirmed rule for a recipient-email change.
+  CONTROL_RECIPIENT_AGED_UNKNOWN: 'ยังยืนยันผลกับ Stripe ไม่ได้เกิน 23 ชั่วโมง ให้ตรวจที่ Stripe ก่อนทำรายการต่อ',
   CONTROL_REFUNDS_CLOSED: 'ยังไม่เปิดรับคำขอคืนเงิน ติดต่อผู้ดูแลการตั้งค่า',
   CONTROL_REFUND_AGED_UNKNOWN: 'ยังยืนยันรายการเดิมไม่ได้ ให้เจ้าหน้าที่ตรวจ Stripe ก่อนดำเนินการต่อ',
   CONTROL_REFUND_CONFIG_REQUIRED: 'กำหนดวงเงินคืนเงินและขออนุมัตินโยบายก่อนเปิดการคืนเงิน',
@@ -672,7 +678,7 @@ const CODE_LABELS: Record<string, string> = {
   line_messaging_channel_not_configured: 'ยังไม่ได้ตั้งค่าช่องทาง LINE ของระบบ จึงส่งข้อความไม่ได้',
   package_change_request_not_found: 'ไม่พบคำขอเปลี่ยนแพ็กเกจนี้ อาจถูกดำเนินการไปแล้ว กรุณาโหลดหน้าใหม่',
   package_change_company_locked: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ หากต้องการเปลี่ยนให้เอง กดต่ออายุในหน้าพาร์ทเนอร์ก่อน',
-  partner_activation_term_locked: 'ร้านนี้ถูกพักเพราะยังไม่มีแพ็กเกจหรือแพ็กเกจหมดอายุ เปิดใช้งานจากที่นี่ไม่ได้ ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ หรือกดต่ออายุในหมวดแพ็กเกจ',
+  partner_activation_term_locked: 'ร้านนี้ยังไม่มีแพ็กเกจหรือแพ็กเกจหมดอายุ จึงเปิดใช้งานจากที่นี่ไม่ได้ ลูกค้าซื้อเองได้จากหน้าแพ็กเกจ หรือกดต่ออายุในหมวดแพ็กเกจ',
   line_identity_changed: 'การเชื่อมต่อ LINE เปลี่ยนแล้ว กรุณาโหลดข้อมูลล่าสุดแล้วลองอีกครั้ง',
   line_identity_review_required: 'การเชื่อมต่อ LINE เดิมต้องให้ผู้ดูแลตรวจสอบ กรุณาติดต่อผู้ดูแลเพื่อออก QR เชื่อม LINE ใหม่',
   line_link_retry: 'ยังเชื่อม LINE ไม่สำเร็จ กรุณาลองสแกน QR เดิมอีกครั้ง หากหมดอายุให้ผู้ดูแลออก QR ใหม่',
@@ -1012,6 +1018,11 @@ const MESSAGE_LABELS: Record<string, string> = {
   'Invalid quiet hours format': 'ช่วงเวลางดแจ้งเตือนไม่ถูกต้อง กรุณาเลือกเวลาเริ่มและเวลาสิ้นสุดใหม่',
   'legalIdentityVersion is stale; reload and retry': 'ข้อมูลผู้เสียภาษีถูกแก้ไขแล้ว กรุณาโหลดข้อมูลล่าสุดก่อนบันทึกอีกครั้ง',
   'taxId must be 13 digits': 'เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก',
+  // Legal-identity PATCH validation (company-identity.use-case.ts), hit from both the shop's own
+  // settings page and the admin partner console (item 7, 2026-09-29 review).
+  'registeredName must be 1-255 characters': 'ชื่อจดทะเบียนต้องมีความยาว 1–255 ตัวอักษร',
+  'invalid addressJson': 'ที่อยู่ตามทะเบียนไม่ถูกต้องหรือกรอกไม่ครบ กรุณาตรวจที่อยู่ ตำบล/แขวง อำเภอ/เขต จังหวัด และรหัสไปรษณีย์ 5 หลัก',
+  'at least one identity field must be supplied': 'กรุณาระบุอย่างน้อยหนึ่งช่อง: เลขผู้เสียภาษี ชื่อจดทะเบียน หรือที่อยู่ตามทะเบียน',
   'Exactly one employee role is required.': 'กรุณาเลือกบทบาทพนักงานหนึ่งบทบาท',
   'Draft employee status can only be changed by completing the employee wizard.': 'พนักงานรายนี้ยังเป็นฉบับร่าง กรุณาทำขั้นตอนเพิ่มพนักงานให้ครบก่อนเปลี่ยนสถานะ',
   'Source draft cannot be read safely.': 'อ่านข้อมูลร่างต้นทางไม่ครบ กรุณาโหลดรายการใหม่ก่อนดำเนินการต่อ',
@@ -1225,6 +1236,9 @@ const MESSAGE_PATTERNS: ReadonlyArray<[RegExp, (m: RegExpMatchArray) => string]>
     (m) => `งวดบัญชี ${m[1]} ปิดอยู่ ต้องเปิดงวดก่อนจึงจะยกเลิกเอกสารได้`],
   [/^(\S+)\/(\S+) is locked; use an adjustment or amended filing workflow\.$/,
     (m) => `งวดภาษี ${m[1]} ${m[2]} ถูกล็อกแล้ว ให้ใช้การปรับปรุงหรือยื่นแบบเพิ่มเติมแทน`],
+  // partner-lock.logic.ts: DISABLED/ARCHIVED companies freeze profile/features/AI model (item 7).
+  [/^Company is (DISABLED|ARCHIVED): profile, features, and AI model are read-only\. Only lifecycle transitions are allowed\.$/,
+    (m) => `บริษัทนี้อยู่ในสถานะ${m[1] === 'DISABLED' ? 'ปิดใช้งาน' : 'เก็บถาวร'} แก้ไขข้อมูลบริษัท สิทธิ์การใช้งาน และรุ่น AI ไม่ได้ ทำได้เฉพาะเปลี่ยนสถานะบริษัทเท่านั้น`],
 ];
 
 /** Generic last resort, so an unmapped failure still reads as Thai. */
@@ -1351,8 +1365,9 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
       return `แพ็กเกจปัจจุบันรองรับ ${capacity.limit} สาขา และใช้งานครบแล้ว หากต้องการเพิ่มสาขา กรุณาเปลี่ยนแพ็กเกจ`;
     }
   }
-  // A short, bounded wait is worth naming; a long one (a resend limit resets tomorrow) is not.
-  if (code === 'BILLING_RATE_LIMIT' || code === 'BILLING_RESEND_LIMIT' || code === 'EMAIL_OTP_RATE_LIMITED') {
+  // A short, bounded wait is worth naming; a long one (a resend limit resets tomorrow) is not —
+  // BILLING_RESEND_LIMIT's own text already says "ลองใหม่ได้พรุ่งนี้", so it never takes this branch.
+  if (code === 'BILLING_RATE_LIMIT' || code === 'EMAIL_OTP_RATE_LIMITED') {
     const seconds = details?.retryAfterSeconds ?? error?.retryAfterSeconds;
     if (typeof seconds === 'number' && Number.isInteger(seconds) && seconds >= 1 && seconds <= 300) {
       return code === 'BILLING_RATE_LIMIT' ? `ทำรายการถี่เกินไป กรุณารอ ${seconds} วินาที แล้วลองรายการเดิมอีกครั้ง`

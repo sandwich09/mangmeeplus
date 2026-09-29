@@ -520,6 +520,8 @@ export type SystemUserMembershipDto = {
   companyId: string;
   companyName: string;
   companyStatus: PartnerCompanyStatus;
+  /** R-C6/R-C7: the term's own state, so a term-locked shop never reads as "ปิดใช้งาน". */
+  companyPlanState?: PlanTermState;
   membershipStatus: PartnerMembershipStatus;
   roleKeys: string[];
 };

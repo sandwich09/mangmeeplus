@@ -50,6 +50,17 @@ it('rewrites text and nested Flex uri actions without mutating input, and keeps 
   assert.equal(withLineExternalBrowserLinks(unchanged), unchanged);
 });
 
+it('puts the escape on the link, not on the punctuation or Thai text typed right after it', () => {
+  assert.equal(withLineExternalBrowserText('ดูที่ https://app/companies/c/billing.'), 'ดูที่ https://app/companies/c/billing?openExternalBrowser=1.');
+  assert.equal(withLineExternalBrowserText('https://app/a, https://app/b”'), 'https://app/a?openExternalBrowser=1, https://app/b?openExternalBrowser=1”');
+  assert.equal(withLineExternalBrowserText('(https://app/x)'), '(https://app/x?openExternalBrowser=1)');
+  assert.equal(withLineExternalBrowserText('เปิด https://app/companies/c/billingได้เลยค่ะ'), 'เปิด https://app/companies/c/billing?openExternalBrowser=1ได้เลยค่ะ');
+  assert.equal(withLineExternalBrowserText('https://app/x?a=1.'), 'https://app/x?a=1&openExternalBrowser=1.');
+  // Only a TRAILING run is trimmed; a LIFF link keeps its trailer and gets no escape at all.
+  assert.equal(withLineExternalBrowserText('https://liff.line.me/1-a/start.'), 'https://liff.line.me/1-a/start.');
+  assert.equal(withLineExternalBrowserText('https://.'), 'https://.');
+});
+
 it('never cuts a link: over-length text and uri stay as they were', () => {
   // 4,994 characters fit LINE's 5,000; with the escape they would not.
   const longText = `${'ก'.repeat(4980)} https://app/x`;

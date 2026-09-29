@@ -1,5 +1,5 @@
 import type {MouseEvent} from 'react';
-import type {BillingReceiptUsage, BillingApprovalMode, BillingPurchaseMode} from '@watchdog-bms/contracts';
+import type {BillingReceiptUsage, BillingApprovalMode, BillingPurchaseMode, BillingStatus} from '@watchdog-bms/contracts';
 export { billingLabel, billingPlanLabel, billingOfferLabel, billingPermissionLabel, billingEventLabel, billingDeliveryLabel, billingIssueLabel, billingTimelineLabel } from '@watchdog-bms/contracts';
 
 export const billingControl = 'inline-flex min-h-11 items-center justify-center rounded-xl border border-gray-300 px-4 py-2 text-base font-semibold bg-white text-gray-700 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700 disabled:cursor-not-allowed disabled:opacity-50';
@@ -37,6 +37,18 @@ export function billingSupportReference(value: string | null | undefined): strin
   const tail = clean.slice(-8);
   return `${tail.slice(0, 4)}-${tail.slice(4)}`;
 }
+
+/**
+ * F04/R-A8: the one gate for every "แก้อีเมลรับเอกสาร" on the package page — the return page's and the
+ * recipient panel's — so one never opens while the other refuses. The status's own `canChange` (a
+ * Customer exists, no purchase and no recipient change in flight); an API without it falls back to
+ * "a purchase that has not applied yet".
+ */
+export function billingRecipientLocked(status: Pick<BillingStatus, 'recipient' | 'attemptId' | 'applyState' | 'paymentState'>): boolean {
+  return status.recipient ? !status.recipient.canChange
+    : Boolean(status.attemptId && status.applyState !== 'APPLIED' && status.paymentState !== 'FAILED');
+}
+export const BILLING_RECIPIENT_WAIT_TEXT = 'แก้อีเมลรับเอกสารได้เมื่อรายการชำระเงินปัจจุบันเปิดสิทธิ์เสร็จ';
 
 /** One wording for both pickers on the package page: the catalog's and the deal card's (R10/S39). */
 export function billingPurchaseModeLabel(mode: BillingPurchaseMode): string {

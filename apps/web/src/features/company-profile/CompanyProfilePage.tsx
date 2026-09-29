@@ -107,6 +107,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   const [billingReturnHref, setBillingReturnHref] = useState<string | null>(null);
   useEffect(() => { setBillingReturnHref(billingProfileReturnHref(companyId, window.location.search)); }, [companyId]);
   const [checkoutAddress, setCheckoutAddress] = useState<CompanyLegalAddress | null>(null);
+  const [checkoutFilled, setCheckoutFilled] = useState(false);
 
   // L1: the dashboard card caches its answer for 10 minutes, so without this the item the owner
   // just completed keeps reading as missing on the next dashboard visit.
@@ -187,7 +188,10 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   // DQ5: the address typed at Stripe Checkout, offered — never written — to this form. The billing
   // status needs company.plan.manage; without it (or on any failure) the offer simply does not show.
   const canManagePlan = permissions.includes('company.plan.manage');
-  const checkoutFill = checkoutAddress ? checkoutAddressToForm(checkoutAddress) : null;
+  // Offered only while the SAVED address is incomplete (the server's own readiness reason): a shop with
+  // a full address has nothing to fill, and one click would swap its sub-district for a blank.
+  const checkoutFill = checkoutAddress && identity?.readiness.identity?.reasons.includes('company_address_incomplete')
+    ? checkoutAddressToForm(checkoutAddress) : null;
   useEffect(() => {
     if (!canEditShop || !canManagePlan) return;
     let active = true;
@@ -437,9 +441,12 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm sm:col-span-2">
                   <p>มีที่อยู่ที่กรอกไว้ตอนชำระเงิน: <span className="break-words">{checkoutAddressText(checkoutAddress)}</span></p>
                   <button type="button" className={`${ACTION_BUTTON} mangmee-btn-secondary mt-2`} disabled={shopSaving}
-                    onClick={() => setAddress((current) => ({ ...current, ...checkoutFill }))}>ใช้ที่อยู่จากการชำระเงิน</button>
+                    onClick={() => { setAddress((current) => ({ ...current, ...checkoutFill })); setCheckoutFilled(true); }}>ใช้ที่อยู่จากการชำระเงิน</button>
                   <p className="mt-1 text-gray-600">เติมลงฟอร์มให้ตรวจก่อน ยังไม่บันทึกจนกว่าจะกดบันทึกข้อมูลร้าน</p>
                 </div>
+              )}
+              {checkoutFilled && !address.subdistrict?.trim() && (
+                <p role="status" className="text-sm text-amber-800 sm:col-span-2">หน้าชำระเงินไม่มีช่องตำบล/แขวง กรุณาเลือกตำบล/แขวงอีกครั้งก่อนบันทึก</p>
               )}
             </div>
           </div>

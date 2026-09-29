@@ -40,6 +40,8 @@ export async function pushLineMessages(input: {
   retryKey?: string;
   url?: string;
   timeoutMs?: number;
+  /** R-B1 is for OUR app's links. `false` = a shop talking to its own customers (CRM), sent as written. */
+  externalBrowser?: boolean;
 }): Promise<LinePushOutcome> {
   try {
     const res = await fetch(input.url ?? LINE_PUSH_URL, {
@@ -50,7 +52,10 @@ export async function pushLineMessages(input: {
         ...(input.retryKey ? { 'X-Line-Retry-Key': input.retryKey } : {}),
       },
       // R-B1: exit-side rewrite; `input.retryKey` was computed by the caller from its own payload.
-      body: JSON.stringify({ to: input.lineUserId, messages: withLineExternalBrowserLinks(input.messages) }),
+      body: JSON.stringify({
+        to: input.lineUserId,
+        messages: input.externalBrowser === false ? input.messages : withLineExternalBrowserLinks(input.messages),
+      }),
       signal: AbortSignal.timeout(input.timeoutMs ?? LINE_PUSH_TIMEOUT_MS),
     });
     if (res.ok || (res.status === 409 && Boolean(res.headers.get('x-line-accepted-request-id')))) {

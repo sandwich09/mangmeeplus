@@ -52,7 +52,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
     if(!value.trim())return;setLookupError('');
     try{
       const result=await get<{href:string}>(`/lookup?reference=${encodeURIComponent(value.trim())}`);
-      router.push(`/system/billing${result.href}`);
+      router.push(result.href);
     }catch(e){
       const status=(e as {status?:number}).status,code=apiErrorCode(e);
       setLookupError(status===404?'ไม่พบรายการจากเลขอ้างอิงนี้ หรืออยู่นอกบริษัทที่คุณดูแล':code==='BILLING_LOOKUP_TOO_SHORT'?'เลขอ้างอิงต้องมีอย่างน้อย 8 ตัวอักษร':code==='BILLING_LOOKUP_AMBIGUOUS'?'เลขอ้างอิงนี้ตรงหลายรายการ ให้ใช้เลขใบแจ้งหนี้หรือรหัสเต็ม':apiErrorMessage(e));

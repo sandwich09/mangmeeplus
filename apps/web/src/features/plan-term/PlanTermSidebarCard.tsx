@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { formatThaiDate } from '@/common/i18n/thai-date';
+import { billingApi } from '@/features/billing/billing.api';
 import { fetchPlanTermNotice, type PlanTermNotice } from './plan-term.api';
 import {
   PLAN_TERM_CONTACT_EMAIL,
@@ -27,10 +28,18 @@ export function PlanTermSidebarCard({ companyId }: { companyId: string }) {
 
   useEffect(() => {
     let active = true;
-    void fetchPlanTermNotice(companyId).then((result) => {
+    void fetchPlanTermNotice(companyId).then(async (result) => {
+      // A card that renews by itself is not running out: inviting it to buy days before the automatic
+      // charge would sell it a second package. Read only inside the warning window, only for someone
+      // the card is for (the same package permission the billing read needs); a failed read shows the card.
+      const renewsByCard = result && planTermView(result) === 'warning-banner'
+        ? await billingApi(companyId).status().then(
+          (status) => status.renewalMode === 'CARD_AUTO' && status.subscriptionState === 'active' && !status.cancelAtPeriodEnd,
+          () => false)
+        : false;
       if (!active) return;
-      setLoaded({ companyId, notice: result });
-      if (result && planTermView(result) === 'warning-banner') {
+      setLoaded({ companyId, notice: renewsByCard ? null : result });
+      if (result && !renewsByCard && planTermView(result) === 'warning-banner') {
         try {
           setCollapsed(cardCollapsed(window.localStorage.getItem(storageKey(companyId)), warningBucket(result.daysLeft)));
         } catch {
@@ -65,7 +74,7 @@ export function PlanTermSidebarCard({ companyId }: { companyId: string }) {
         type="button"
         onClick={toggle}
         data-plan-term="warning-collapsed"
-        className="mt-4 flex w-full items-center gap-2 rounded-xl border border-warning-100 bg-warning-50 px-3 py-2 text-left text-[13px] font-bold text-warning-700"
+        className="mt-4 flex min-h-11 w-full items-center gap-2 rounded-xl border border-warning-100 bg-warning-50 px-3 py-2 text-left text-[13px] font-bold text-warning-700"
         aria-expanded={false}
       >
         <span aria-hidden>⏳</span>
@@ -92,19 +101,19 @@ export function PlanTermSidebarCard({ companyId }: { companyId: string }) {
       </div>
       <a
         href={`/companies/${encodeURIComponent(companyId)}/billing`}
-        className="mt-2.5 block rounded-lg bg-brand-700 px-2 py-2 text-center text-[12.5px] font-bold text-white"
+        className="mt-2.5 flex min-h-11 items-center justify-center rounded-lg bg-brand-700 px-2 py-2 text-center text-[12.5px] font-bold text-white"
       >
         ไปหน้าแพ็กเกจ
       </a>
       <a
         href={`tel:${PLAN_TERM_RENEW_PHONE.replace(/-/g, '')}`}
-        className="mt-1.5 block rounded-lg border border-warning-200 bg-white px-2 py-2 text-center text-[12.5px] font-bold text-warning-700"
+        className="mt-1.5 flex min-h-11 items-center justify-center rounded-lg border border-warning-200 bg-white px-2 py-2 text-center text-[12.5px] font-bold text-warning-700"
       >
         ติดต่อ {PLAN_TERM_RENEW_PHONE}
       </a>
       <a
         href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}
-        className="mt-1.5 block text-center text-[12px] text-warning-700 underline"
+        className="mt-1.5 flex min-h-11 items-center justify-center text-center text-[12px] text-warning-700 underline"
       >
         อีเมล {PLAN_TERM_CONTACT_EMAIL}
       </a>

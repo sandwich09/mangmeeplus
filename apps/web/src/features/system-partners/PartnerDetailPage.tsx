@@ -2629,8 +2629,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                 {termState !== 'NO_PACKAGE' && <span className="text-sm font-medium text-gray-900">{PLAN_TIER_PRESETS[term.tierKey].labelTh}</span>}
               </div>
 
-              <p className="text-sm text-gray-700">{planTermLimitsText(term)}</p>
-              <p className="text-base text-gray-600">{term.paidPlan ? 'จำนวนใบเสร็จที่ใช้ได้จริง ดูจากหน้าการชำระเงินของบริษัท' : 'จำนวนใบเสร็จเป็นโควตาต่อเดือน การอ่านยังขึ้นกับการตั้งค่า AI ของร้าน'}</p>
+              {termState !== 'NO_PACKAGE' && <><p className="text-sm text-gray-700">{planTermLimitsText(term)}</p>
+              <p className="text-base text-gray-600">{term.paidPlan ? 'จำนวนใบเสร็จที่ใช้ได้จริง ดูจากหน้าการชำระเงินของบริษัท' : 'จำนวนใบเสร็จเป็นโควตาต่อเดือน การอ่านยังขึ้นกับการตั้งค่า AI ของร้าน'}</p></>}
               {term.effectiveCapacity?.temporary&&<p className="rounded-lg border border-emerald-300 p-3 text-base">สิทธิ์ชั่วคราว: {PLAN_TIER_PRESETS[term.effectiveCapacity.tierKey].labelTh} · {term.effectiveCapacity.branchLimit} สาขา · {term.effectiveCapacity.employeeLimit} ผู้ใช้ ถึง {formatThaiDateTime(term.effectiveCapacity.temporary.expiresAt)}</p>}
 
               {warmupActive && (
@@ -2948,9 +2948,11 @@ function ShopMessageSection({ companyId, supportRequestId, supportAskerRef, show
 
 const COMPANY_VIEWS = [{key:'overview',label:'ภาพรวม'}, {key:'members',label:'สมาชิก'}, {key:'package',label:'แพ็กเกจและฟีเจอร์'}, {key:'ai',label:'AI และโควตา'}, {key:'contact',label:'ติดต่อและประวัติ'}] as const;
 
-export default function PartnerDetailPage({ companyId, canManageMembers = false, supportRequestId, supportAskerRef }: {
+export default function PartnerDetailPage({ companyId, canManageMembers = false, canEditIdentity = false, supportRequestId, supportAskerRef }: {
   companyId: string;
   canManageMembers?: boolean;
+  /** F19: the API's PATCH …/identity gates on this; hide the button rather than let it 403. */
+  canEditIdentity?: boolean;
   /** From `?support=`/`?asker=` on the support inbox's "เปิดหน้าร้าน" link — see the route file. */
   supportRequestId?: string;
   supportAskerRef?: string;
@@ -3255,7 +3257,9 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
     <main className="mx-auto max-w-7xl space-y-6 break-words p-4 text-base sm:p-6 lg:p-8">
       {lifecycleAction&&<LifecycleConfirmModal action={lifecycleAction} loading={lifecycleLoading} onConfirm={handleLifecycleConfirm} onCancel={()=>setLifecycleAction(null)}/>}
       <BackLink href="/system/partners" label="กลับรายชื่อบริษัท"/>
-      <header className="space-y-3"><div className="flex flex-wrap items-center gap-3"><h1 className="text-2xl font-semibold text-gray-900">{detail.name}</h1><StatusBadge status={currentStatus}/>{lockedState && <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">{planTermStateLabel(lockedState)}</span>}</div>{detail.brandName&&<p className="text-gray-600">ชื่อร้าน / แบรนด์: {detail.brandName}</p>}<p className="text-gray-600">เลือกเรื่องที่ต้องการดูแล ข้อมูลทั่วไปอยู่ในภาพรวม</p></header>
+      {/* R-C6/R-C7 (PartnerListPage.tsx's rowLabel rule): a term-locked shop reads by WHY it is
+          locked, never the admin "ปิดใช้งาน" badge — so the status badge hides while the lock chip shows. */}
+      <header className="space-y-3"><div className="flex flex-wrap items-center gap-3"><h1 className="text-2xl font-semibold text-gray-900">{detail.name}</h1>{lockedState ? <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">{planTermStateLabel(lockedState)}</span> : <StatusBadge status={currentStatus}/>}</div>{detail.brandName&&<p className="text-gray-600">ชื่อร้าน / แบรนด์: {detail.brandName}</p>}<p className="text-gray-600">เลือกเรื่องที่ต้องการดูแล ข้อมูลทั่วไปอยู่ในภาพรวม</p></header>
       <nav aria-label="หมวดข้อมูลบริษัท" className="flex flex-wrap gap-x-5 border-b border-gray-200">{COMPANY_VIEWS.map(item=><Link key={item.key} href={viewUrl(item.key)} scroll={false} aria-current={view===item.key?'page':undefined} className={`inline-flex min-h-14 items-center border-b-2 px-1 font-semibold ${view===item.key?'border-brand-700 text-brand-800':'border-transparent text-gray-600 hover:text-gray-900'}`} onClick={event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();window.history.pushState(null,'',viewUrl(item.key));}}>{item.label}</Link>)}</nav>
       {fieldsLocked&&<p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">บริษัทนี้{lockedState ? (lockedState === 'NO_PACKAGE' ? 'ยังไม่มีแพ็กเกจ' : 'แพ็กเกจหมดอายุ') : STATUS_LABEL[currentStatus]} {termLocked ? 'แก้ข้อมูลบริษัทและข้อมูลติดต่อได้ ส่วนฟีเจอร์และ AI อ่านได้อย่างเดียว' : 'ข้อมูลบริษัท ฟีเจอร์ และ AI จึงอ่านได้อย่างเดียว'} {lockedState ? 'ลูกค้าซื้อแพ็กเกจเองได้จากหน้าแพ็กเกจ หรือต่ออายุได้ในหมวดแพ็กเกจ' : 'เปลี่ยนสถานะได้ในหมวดภาพรวม'}</p>}
       {opened('overview')&&<section hidden={view!=='overview'} aria-label="ภาพรวมบริษัท" className="space-y-5">
@@ -3281,7 +3285,7 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
           </div>
           <div className="flex flex-wrap gap-3 border-t border-gray-100 pt-4">
             <button type="button" className={btnSecondary} disabled={profileLocked} onClick={startEdit}>แก้ไขข้อมูลบริษัท</button>
-            <button type="button" className={btnSecondary} disabled={profileLocked} onClick={()=>void startIdentityEdit()}>แก้ไขข้อมูลจดทะเบียน</button>
+            {canEditIdentity && <button type="button" className={btnSecondary} disabled={profileLocked} onClick={()=>void startIdentityEdit()}>แก้ไขข้อมูลจดทะเบียน</button>}
             <Link className="inline-flex min-h-11 items-center px-2 text-brand-800 underline underline-offset-4" href={`/system/billing/companies/${encodeURIComponent(companyId)}`}>ดูการชำระเงินของบริษัท</Link>
           </div>
         </SectionCard>

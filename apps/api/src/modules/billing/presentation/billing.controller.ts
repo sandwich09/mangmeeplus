@@ -207,8 +207,9 @@ export class BillingAdminController {
   }
   @Post('companies/:id/invoices/:invoiceId/resend') @HttpCode(200) @RequirePermissions('system.billing.override.manage') @Header('Cache-Control','no-store')
   async documentAdminResend(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Body() body:BillingDocumentResendAdminDto){
-    const fields=bodyFields(body,['reason']);await this.operationLimit(req);
-    return this.documentAdmin.resend(req.context,textField(companyId,128),uuid(invoiceId),textField(fields.reason,500),this.limits);
+    const fields=bodyFields(body,['reason','supportRequestId']);await this.operationLimit(req);
+    return this.documentAdmin.resend(req.context,textField(companyId,128),uuid(invoiceId),textField(fields.reason,500),this.limits,
+      fields.supportRequestId===undefined?undefined:textField(fields.supportRequestId,64));
   }
   // R-E4 (RV27): find an invoice/checkout/operation/issue by the 8-char reference a customer reads out.
   @Get('lookup') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
