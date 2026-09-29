@@ -1,6 +1,6 @@
 import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity, type PlanTermLockReason, type PlanTermState } from './plan-term.js';
 import { TIER_FEATURE_PRESETS } from './menu-entitlements.js';
-import type { SalesDealBaseTier, SalesDealCadence } from './sales.js';
+import type { SalesDealBaseTier, SalesDealCadence, SalesEventTicketDisplayState } from './sales.js';
 import type { BillingCompanyProfile } from './billing-company-profile.js';
 import type { CompanyLegalAddress } from './company-tax-identity.js';
 
@@ -479,6 +479,21 @@ export type BillingRecipientOtpChallenge = { challengeId: string; email: string;
 export type BillingRecipientOtpProof = { recipientProofId: string; email: string; expiresAt: string };
 /** `receiptUpdated` false = Stripe did not resend the receipt because its email did not change. */
 export type BillingDocumentResendResult = { invoiceSent: boolean; receiptUpdated: boolean; recipientEmail: string; remainingToday: number };
+
+/** `GET /v1/companies/:companyId/billing/event-discount` (sales-event spec §7.1). The caller's own
+ *  ส่วนลดจากงาน — the tickets held by the LINE account linked to their login — and which way this
+ *  shop could use one (`path`, spec §4.1). SD-C adds the per-card `discount` offers and SD-F the
+ *  `credit` block; both are additive. A plan manager never sees another person's tickets. */
+export type BillingEventDiscountTicket = {
+  serial: string; eventName: string; discountSatang: number; chatCreditUnits: number; receiptImageUnits: number;
+  expiresAt: string; state: SalesEventTicketDisplayState;
+  /** The batch was suspended by the sales team: an unused ticket cannot be used until it is lifted. */
+  batchSuspended: boolean;
+};
+export type BillingEventDiscountView = {
+  path: 'DISCOUNT' | 'CREDIT' | null;
+  tickets: BillingEventDiscountTicket[];
+};
 
 /** PR E admin tools (spec §18.2 R-E1/R-E2/R-E4). An admin recipient change is the same `UPDATE_BILLING_EMAIL`
  *  operation the customer OTP flow uses (`source: 'ADMIN'`), reviewed like a refund and reusing its

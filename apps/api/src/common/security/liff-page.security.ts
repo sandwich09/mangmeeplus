@@ -127,6 +127,31 @@ export const LIFF_CLIENT_NOTICE_HTML = `<section id="client-notice" data-client-
   <p><a class="btn" href="">ลองใหม่ / Try again</a> <a class="btn" href="mailto:contact@mangmeeplus.com">ติดต่อเจ้าหน้าที่ / Contact support</a></p>
 </section>`;
 
+/**
+ * Sales-event discounts (spec §3.3, §3.5, §8): the page a booth QR opens. The body is static; the
+ * script fills the ticket in with textContent after the claim answers, so nothing about the batch or
+ * the person is rendered by the server. The last paragraph is the §3.5 sentence for shop staff.
+ */
+export const LIFF_EVENT_DISCOUNT_PAGE = {
+  title: 'ส่วนลดจากงาน',
+  style: '#ticket-rewards{margin:8px 0;padding-left:20px}#ticket-rewards li{margin:4px 0}#ticket-view p.note{color:var(--muted);font-size:14px}#companies button{display:block;width:100%;margin-top:8px}',
+  content: `      <h1 id="ticket-title">ส่วนลดจากงาน</h1>
+      <p id="status" class="notice notice-info">กำลังรับส่วนลดให้ค่ะ…</p>
+      <section id="ticket-view" hidden>
+        <p id="ticket-event"></p>
+        <ul id="ticket-rewards"></ul>
+        <p id="ticket-expiry"></p>
+        <p><button id="open-mangmee" type="button" hidden>เปิดมั่งมี</button></p>
+        <div id="companies" hidden></div>
+        <p><button id="open-web" type="button" hidden>เปิดหน้าเว็บ</button></p>
+        <p><a id="go-signup" class="btn" href="/v1/auth/line/link-page/signup" hidden>เปิดร้านใหม่</a></p>
+        <p id="signup-hint" class="note" hidden>ถ้ามีบัญชีมั่งมีอยู่แล้ว ให้เข้าสู่ระบบด้วย LINE นี้ก่อน</p>
+        <p class="note">ส่วนลดนี้เป็นของบัญชี LINE นี้ ใช้ได้เมื่อคุณเป็นเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจของร้าน ถ้าจะใช้กับร้านที่คุณทำงานอยู่ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจสแกนรับเอง</p>
+      </section>
+      <p><button id="link" type="button" hidden>ลองอีกครั้ง</button></p>
+      <pre id="detail"></pre>`,
+} as const;
+
 // Static same-origin code: untrusted query values stay runtime data and never enter an executable HTML parser context.
 export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
 (function () {
@@ -265,6 +290,26 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const STATUS_READ_GUIDANCE = { tone: 'warning', text: 'ยังโหลดสถานะคำขอไม่สำเร็จ', advice: 'แตะ ลองอีกครั้ง ด้านล่างเพื่อโหลดใหม่ค่ะ' };
   const SUPPORT_NETWORK_GUIDANCE = { tone: 'warning', text: 'ยังส่งข้อความหาเจ้าหน้าที่ไม่ได้', advice: SUPPORT_TH };
   const BUSY_LABEL_TH = 'กำลังส่ง…';
+
+  /**
+   * Sales-event discounts (spec §3.3, §3.5, §7.3). What each refusal of a scan means to the person
+   * holding the phone, keyed by the code the claim answers with. Nothing here names a code.
+   */
+  const NEW_QR_TH = 'ขอให้ผู้แจกสร้าง QR ใหม่ แล้วสแกนอีกครั้งนะคะ';
+  const EVENT_DISCOUNT_GUIDANCE = {
+    SALES_EVENT_QR_EXPIRED: { tone: 'warning', text: 'QR นี้หมดอายุแล้ว', advice: NEW_QR_TH },
+    SALES_EVENT_AGENT_INACTIVE: { tone: 'warning', text: 'QR นี้ใช้ไม่ได้แล้ว', advice: NEW_QR_TH },
+    SALES_EVENT_CLAIM_CLOSED: { tone: 'info', text: 'งานนี้ปิดรับส่วนลดแล้ว' },
+    SALES_EVENT_ISSUE_FULL: { tone: 'info', text: 'ส่วนลดของงานนี้ถูกแจกครบแล้ว' },
+    SALES_EVENT_SELF_CLAIM: { tone: 'warning', text: 'บัญชีทีมขายรับส่วนลดนี้ไม่ได้' }
+  };
+  const EVENT_DISCOUNT_BAD_QR = { tone: 'warning', text: 'QR นี้ใช้ไม่ได้', advice: NEW_QR_TH };
+  const EVENT_DISCOUNT_LINE_FAILED = { tone: 'error', text: 'เปิดจาก LINE ไม่สำเร็จ', advice: 'ปิดหน้านี้แล้วสแกน QR อีกครั้งด้วยแอป LINE นะคะ' };
+  const EVENT_DISCOUNT_FAILED = { tone: 'error', text: 'รับส่วนลดไม่สำเร็จ', advice: 'แตะ ลองอีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH };
+  const EVENT_DISCOUNT_OPEN_FAILED = { tone: 'error', text: 'เปิดมั่งมีไม่สำเร็จ', advice: 'แตะ เปิดมั่งมี อีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH };
+  /** One key per page load: a retry of the same scan is the same claim. */
+  const eventDiscountRequestKey = mode === 'event-discount' ? newSubmissionId() : '';
+  let eventDiscountShown = false;
 
   function compareVersion(actual, minimum) {
     const length = Math.max(actual.length, minimum.length);
@@ -1031,6 +1076,96 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     setStatus('รับเรื่องขอความช่วยเหลือแล้วค่ะ ทีมงานจะตอบกลับในแชทนี้ตามเวลาทำการ ' + SUPPORT_TH, '', 'success');
   }
 
+  function eventDiscountGuidance(status, text) {
+    const body = refusalBody(text);
+    const known = EVENT_DISCOUNT_GUIDANCE[typeof body.code === 'string' ? body.code : ''];
+    if (known) return known;
+    if (status === 401) return EVENT_DISCOUNT_LINE_FAILED;
+    if (status === 429) return { tone: 'warning', text: 'สแกนบ่อยเกินไป', advice: 'รอสักครู่แล้วแตะ ลองอีกครั้ง นะคะ' };
+    return EVENT_DISCOUNT_FAILED;
+  }
+
+  function thaiNumber(value) {
+    return Number(value).toLocaleString('th-TH', { maximumFractionDigits: 2 });
+  }
+
+  /** Spec §3.3: only the rewards this batch gives. AI credit arrives in 0.01-credit units. */
+  function eventDiscountRewardLines(ticket) {
+    const lines = [];
+    if (ticket.discountSatang > 0) lines.push('ร้านใหม่: ลด ' + thaiNumber(ticket.discountSatang / 100) + ' บาทจากบิลแรกเมื่อซื้อแพ็กเกจ');
+    const credit = [];
+    if (ticket.chatCreditUnits > 0) credit.push('เครดิต AI ' + thaiNumber(ticket.chatCreditUnits / 100) + ' เครดิต');
+    if (ticket.receiptImageUnits > 0) credit.push('จำนวนอ่านรูปใบเสร็จ ' + thaiNumber(ticket.receiptImageUnits) + ' รูป');
+    if (credit.length > 0) lines.push('ร้านที่มีแพ็กเกจอยู่แล้ว: รับ' + credit.join(' และ'));
+    return lines;
+  }
+
+  function renderEventDiscount(result) {
+    const ticket = result && result.ticket;
+    if (!ticket || typeof ticket.eventName !== 'string') throw refusal(EVENT_DISCOUNT_FAILED);
+    setStatus('');
+    // textContent only: the event name is typed by the sales team.
+    document.getElementById('ticket-title').textContent = 'รับส่วนลดแล้ว';
+    document.getElementById('ticket-event').textContent = 'งาน ' + ticket.eventName;
+    const rewardsEl = document.getElementById('ticket-rewards');
+    rewardsEl.textContent = '';
+    const lines = eventDiscountRewardLines(ticket);
+    for (let index = 0; index < lines.length; index += 1) {
+      const item = document.createElement('li');
+      item.textContent = lines[index];
+      rewardsEl.appendChild(item);
+    }
+    const until = new Date(ticket.expiresAt).toLocaleString('th-TH', {
+      timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+    document.getElementById('ticket-expiry').textContent = 'ใช้ได้ถึง ' + until;
+    const hasAccount = result.next === 'OPEN_PACKAGE';
+    document.getElementById('open-mangmee').hidden = !hasAccount;
+    document.getElementById('go-signup').hidden = hasAccount;
+    document.getElementById('signup-hint').hidden = hasAccount;
+    document.getElementById('ticket-view').hidden = false;
+    eventDiscountShown = true;
+    if (actionBtn) actionBtn.hidden = true;
+  }
+
+  /** Spec §3.3 steps 2–4. The QR token is read from this page's own query and posted, never logged. */
+  async function claimEventDiscount() {
+    const qrToken = query.get('t') || '';
+    if (!/^[A-Za-z0-9_-]{43}$/.test(qrToken)) throw refusal(EVENT_DISCOUNT_BAD_QR);
+    let idToken = '';
+    try {
+      if (!await initLiff()) return;
+      idToken = currentIdToken();
+    } catch {
+      throw refusal(EVENT_DISCOUNT_LINE_FAILED);
+    }
+    if (!idToken) return;
+    setStatus('กำลังรับส่วนลดให้ค่ะ…', '', 'info');
+    let res;
+    let text = '';
+    try {
+      res = await fetch(apiBase + '/public/event-discounts/claim', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ idToken, qrToken, requestKey: eventDiscountRequestKey })
+      });
+      text = await res.text();
+    } catch {
+      throw refusal(EVENT_DISCOUNT_FAILED);
+    }
+    if (!res.ok) throw refusal(eventDiscountGuidance(res.status, text));
+    let result = null;
+    try { result = JSON.parse(text); } catch { throw refusal(EVENT_DISCOUNT_FAILED); }
+    renderEventDiscount(result);
+  }
+
+  /** "เปิดมั่งมี": the start page's own handoff; the button steps aside once the link is ready. */
+  async function openMangmee() {
+    await startSession('');
+    const openMangmeeEl = document.getElementById('open-mangmee');
+    if (preparedHandoffUrl && openMangmeeEl) openMangmeeEl.hidden = true;
+  }
+
   function validReferralCode(value) {
     return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : '';
   }
@@ -1097,7 +1232,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   }
 
   /** Where a customer gets a new link: signup mode has no "ลองอีกครั้ง" button on screen. */
-  const NEW_LINK_TH = mode === 'signup' ? 'แตะ ตรวจสอบสถานะอีกครั้ง เพื่อรับลิงก์ใหม่ค่ะ' : 'ให้กดลองอีกครั้งเพื่อเปิดลิงก์ใหม่ค่ะ';
+  const NEW_LINK_TH = mode === 'signup' ? 'แตะ ตรวจสอบสถานะอีกครั้ง เพื่อรับลิงก์ใหม่ค่ะ'
+    : mode === 'event-discount' ? 'แตะ เปิดมั่งมี อีกครั้งเพื่อรับลิงก์ใหม่ค่ะ' : 'ให้กดลองอีกครั้งเพื่อเปิดลิงก์ใหม่ค่ะ';
 
   if (openWebBtn) openWebBtn.addEventListener('click', function (event) {
     event.preventDefault();
@@ -1106,6 +1242,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     preparedHandoffUrl = '';
     openWebBtn.hidden = true;
     if (mode === 'signup') showStatusRetry();
+    const openMangmeeEl = mode === 'event-discount' ? document.getElementById('open-mangmee') : null;
+    if (openMangmeeEl) openMangmeeEl.hidden = false;
     try {
       if (liff.isInClient()) liff.openWindow({ url, external: true });
       else location.assign(url);
@@ -1168,6 +1306,9 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       } else if (mode === 'employee') {
         const detail = errorDetail(error);
         setStatus(FAIL_TITLE_TH.employee, /^(การเชื่อมต่อเดิม|ยังทำรายการ|QR นี้)/.test(detail) ? detail : 'กรุณาแตะเชื่อม LINE เพื่อลอง QR เดิมอีกครั้ง หากหมดอายุหรือใช้บัญชี LINE ไม่ตรง ให้ผู้ดูแลออก QR ใหม่', 'error');
+      } else if (mode === 'event-discount') {
+        // Every claim failure arrives as guidance above, so this is the "เปิดมั่งมี" step.
+        setGuidance(EVENT_DISCOUNT_OPEN_FAILED);
       } else {
         // A customer reads #detail too: a server string with no Thai in it (a code, an English
         // message) becomes the one plain sentence instead.
@@ -1178,6 +1319,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
         button.textContent = label;
         button.disabled = false;
       }
+      // The scan page's retry re-runs the claim; it is offered only while no ticket is on screen.
+      if (mode === 'event-discount' && actionBtn && !eventDiscountShown) actionBtn.hidden = false;
     } finally {
       if (button && (mode === 'start' || button.id === 'start-existing')) button.disabled = false;
     }
@@ -1194,6 +1337,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       else if (mode === 'customer') await registerCustomer();
       else if (mode === 'start') await startSession('');
       else if (mode === 'signup') await (signupReady ? submitSignup() : openSignup());
+      else if (mode === 'event-discount') await claimEventDiscount();
       else throw new Error('Invalid LIFF page mode.');
     });
   }
@@ -1236,6 +1380,10 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       actionBtn.textContent = 'ส่งคำขอให้ทีมงานตรวจสอบ';
       setStatus('ทีมงานจะตรวจสอบคำขอใหม่ก่อนเปิดร้านให้ค่ะ', '', 'info');
     }
+  });
+  const openMangmeeBtn = document.getElementById('open-mangmee');
+  if (openMangmeeBtn) openMangmeeBtn.addEventListener('click', function () {
+    void runWith(openMangmee, openMangmeeBtn, 'กำลังเปิด…');
   });
   const startExistingBtn = document.getElementById('start-existing');
   if (startExistingBtn) startExistingBtn.addEventListener('click', function () {

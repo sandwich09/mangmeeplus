@@ -728,6 +728,15 @@ describe('billing recovery boundaries', () => {
       assert.equal(await guard.canActivate(makeContext({path:'/v1/companies/c1/package-change-requests',method,authHeader:'Bearer token'})),true);
       assert.equal(recovery,true);
     }
+    // Sales-event spec §7.4: a shop with no package or an expired one reads its ส่วนลดจากงาน. GET only,
+    // that exact path: its neighbours and every other method stay held.
+    assert.equal(await guard.canActivate(makeContext({ path: '/v1/companies/c1/billing/event-discount', authHeader: 'Bearer token' })), true);
+    assert.equal(recovery, true);
+    for (const [method, path] of [['POST', '/v1/companies/c1/billing/event-discount'], ['GET', '/v1/companies/c1/billing/event-discount/x'],
+      ['GET', '/v1/companies/c1/billing/event-discounts'], ['POST', '/v1/companies/c1/billing/event-discount/credit']])
+      assert.equal(isBillingRecoveryRoute(method!, path!), false, `${method} ${path}`);
+    await assert.rejects(guard.canActivate(makeContext({ path: '/v1/companies/c1/billing/event-discount', method: 'POST', authHeader: 'Bearer token' })),
+      (e: any) => e.getResponse().code === 'company_term_expired');
     await assert.rejects(guard.canActivate(makeContext({ path: '/v1/companies/c1/expenses', authHeader: 'Bearer token' })), (e: any) => e.getResponse().code === 'company_term_expired');
     assert.equal(recovery, false);
     const legalRequired = { isRequired: async () => true } as any;

@@ -560,6 +560,9 @@ export class BillingController {
   }
 
   @Get() status(@Req() req: AuthedRequest) { return this.billing.status(req.context); }
+  // Sales-event spec §7.1: allowlisted for a locked shop (auth.guard isBillingRecoveryRoute).
+  @Get('event-discount') @Header('Cache-Control', 'no-store')
+  eventDiscount(@Req() req: AuthedRequest) { return this.billing.eventDiscount(req.context); }
   @Get('collection/:id')
   async collectionGet(@Req() req: AuthedRequest, @Param('id') id: string) {
     return this.billing.withPlanMenuImpact(req.context.companyId, await this.billing.collection.get(req.context, uuid(id)));

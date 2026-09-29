@@ -271,6 +271,18 @@ export const SALES_EVENT_REASON_ACTIONS: readonly SalesEventBatchAction[] = ['SU
 /** What the console and the customer read about one ticket; `EXPIRED` is derived from time. */
 export type SalesEventTicketDisplayState = 'AVAILABLE' | 'IN_PAYMENT' | 'USED' | 'EXPIRED' | 'REVOKED';
 
+/** `POST /v1/public/event-discounts/claim` (spec §3.3, §7.2). The LIFF ID token is the only identity input. */
+export type SalesEventClaimBody = { idToken: string; qrToken: string; requestKey: string };
+/** What the scan page shows: only what the batch gives, never the LINE identity. `replay`: this LINE
+ *  account already held a ticket from the batch, and this is that ticket. `next` picks the page's one
+ *  button: an account linked to this LINE opens มั่งมี, anyone else opens a new shop. */
+export type SalesEventClaimResult = {
+  ticket: { serial: string; eventName: string; discountSatang: number; chatCreditUnits: number;
+    receiptImageUnits: number; expiresAt: string };
+  replay: boolean;
+  next: 'OPEN_PACKAGE' | 'SIGN_UP';
+};
+
 export const SALES_EVENT_NAME_MAX = 120;
 export const SALES_EVENT_REASON_MAX = 500;
 /** One QR press lives this long, cut short by the batch's claim end. */
