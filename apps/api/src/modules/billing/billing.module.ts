@@ -32,6 +32,7 @@ import { BillingAdminController, BillingCatalogController, BillingController, Bi
     { provide: STRIPE_FETCH, useFactory: () => globalThis.fetch.bind(globalThis) }],
   // D-P5-3: the sales console approves the deal; the per-company Stripe Price is a billing write,
   // so its one writer lives here and is lent out rather than reimplemented next door.
-  exports: [SalesDealPriceService],
+  // BillingService: the sales-event console checks a batch's discount against `catalog()` prices.
+  exports: [SalesDealPriceService, BillingService],
 })
 export class BillingModule {}

@@ -33,6 +33,8 @@ const REPORTS_HREF = '/sales/reports';
 const SECTIONS = [
   { href: '/sales/deals', label: 'ดีล', group: 'งานขาย' },
   { href: '/sales/companies', label: 'ร้านค้า', group: 'งานขาย' },
+  // Every sales role: a เซลล์ shows the QR here, a หัวหน้าทีม sets the batches up.
+  { href: '/sales/events', label: 'ส่วนลดจากงาน', group: 'งานขาย' },
   { href: MY_WORK_HREF, label: 'งานของฉัน', group: 'งานขาย' },
   { href: REPORTS_HREF, label: 'รายงาน', group: 'งานขาย' },
   { href: '/sales/team', label: 'ทีม', group: 'จัดการทีม' },

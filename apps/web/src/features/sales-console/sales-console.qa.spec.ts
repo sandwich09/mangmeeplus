@@ -13,6 +13,7 @@ import { join } from 'node:path';
 
 const PAGES = [
   'SalesCompaniesPage.tsx', 'SalesConsoleParts.tsx', 'SalesDealFormPage.tsx', 'SalesDealsPage.tsx',
+  'SalesEventBatchForm.tsx', 'SalesEventBatchPage.tsx', 'SalesEventsPage.tsx',
   'SalesMyWorkPage.tsx', 'SalesMyProfilePage.tsx', 'SalesProfileEditor.tsx', 'SalesReportsPage.tsx', 'SalesTeamPage.tsx',
 ];
 

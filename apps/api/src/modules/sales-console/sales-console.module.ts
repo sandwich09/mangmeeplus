@@ -9,10 +9,12 @@ import { SystemPartnerManagementModule } from '../system-partner-management/syst
 import { SalesAgentsService } from './application/sales-agents.service';
 import { SalesCompanySearchService } from './application/sales-company-search.service';
 import { SalesDealsService } from './application/sales-deals.service';
+import { SalesEventsService } from './application/sales-events.service';
 import { SalesReferralService } from './application/sales-referral.service';
 import { SalesReportsService } from './application/sales-reports.service';
 import { SalesRenewalService } from './application/sales-renewal.service';
 import { SalesController } from './presentation/http/sales.controller';
+import { SalesEventsController } from './presentation/http/sales-events.controller';
 import { SalesInternalController } from './presentation/http/sales-internal.controller';
 import { SystemSalesAgentsController, SystemSalesAttributionController, SystemSalesReferralController } from './presentation/http/system-sales-agents.controller';
 
@@ -30,13 +32,14 @@ import { SystemSalesAgentsController, SystemSalesAttributionController, SystemSa
   imports: [LoggerModule, AuditModule, BillingModule, DashboardNotificationsModule, DataModelCoreModule, EmployeeAccessModule, SystemPartnerManagementModule],
   controllers: [
     SalesController,
+    SalesEventsController,
     SystemSalesAgentsController,
     SystemSalesAttributionController,
     SystemSalesReferralController,
     SalesInternalController,
   ],
   providers: [SalesAgentsService, SalesCompanySearchService, SalesDealsService, SalesReferralService,
-    SalesReportsService, SalesRenewalService],
+    SalesReportsService, SalesRenewalService, SalesEventsService],
   exports: [SalesReferralService, SalesDealsService],
 })
 export class SalesConsoleModule {}

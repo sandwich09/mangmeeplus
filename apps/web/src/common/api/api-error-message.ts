@@ -787,6 +787,21 @@ const CODE_LABELS: Record<string, string> = {
   SALES_DEAL_PRICE_PENDING: 'ระบบกำลังเตรียมราคาของข้อเสนอนี้ กรุณารอสักครู่แล้วลองอีกครั้ง',
   SALES_DEAL_END_INVALID: 'จบดีลนี้ไม่ได้แล้ว กรุณาโหลดข้อมูลล่าสุดเพื่อดูสถานะและวันสิ้นสุดของดีล',
 
+  // ส่วนลดจากงาน, console side (sales-event-discounts spec §7.3). A หัวหน้าทีม setting up a batch or a
+  // เซลล์ at the booth reads these, so each names the next move. Never "ตั๋ว", never a code.
+  SALES_EVENT_BATCH_INVALID: 'ข้อมูลชุดส่วนลดไม่ครบหรือไม่ถูกต้อง กรุณาตรวจแต่ละช่องแล้วบันทึกอีกครั้ง',
+  SALES_EVENT_REWARD_REQUIRED: 'ใส่ส่วนลดหรือเครดิตอย่างน้อยหนึ่งอย่าง',
+  SALES_EVENT_DISCOUNT_TOO_HIGH: 'ส่วนลดสูงเกินราคาของบางแพ็กเกจที่เลือก ลดจำนวนส่วนลด หรือเอาแพ็กเกจนั้นออกจากแพ็กเกจที่ลดได้',
+  SALES_EVENT_BATCH_STALE: 'ข้อมูลชุดส่วนลดเปลี่ยนไปแล้ว กรุณาโหลดใหม่',
+  SALES_EVENT_NOT_FOUND: 'ไม่พบชุดส่วนลดหรือรายการส่วนลดนี้แล้ว กรุณากลับไปที่รายการส่วนลดจากงาน',
+  SALES_EVENT_CLAIM_CLOSED: 'ชุดนี้ยังไม่ถึงเวลาเปิดรับ ปิดรับแล้ว หรือถูกพักไว้ จึงแสดง QR ไม่ได้',
+  SALES_EVENT_ISSUE_FULL: 'ส่วนลดของชุดนี้ถูกแจกครบจำนวนแล้ว ถ้าต้องการแจกเพิ่ม ให้หัวหน้าทีมเพิ่มจำนวนแจกสูงสุด',
+  SALES_EVENT_AGENT_INACTIVE: 'คุณไม่ได้เป็นผู้แจกของชุดนี้แล้ว จึงแสดง QR ไม่ได้ กรุณาติดต่อหัวหน้าทีม',
+  SALES_EVENT_TICKET_NOT_REVOCABLE: 'ส่วนลดนี้กำลังชำระหรือใช้แล้ว เพิกถอนไม่ได้',
+  // LINE claim (SD-B): the scan page shows its own copy; these cover any other surface.
+  SALES_EVENT_QR_EXPIRED: 'QR นี้หมดอายุแล้ว ขอให้ผู้แจกสร้าง QR ใหม่',
+  SALES_EVENT_SELF_CLAIM: 'บัญชีทีมขายรับส่วนลดนี้ไม่ได้',
+
   // ---- ข้อเสนอพิเศษ on the customer's package page (spec §19.2, Phase 3) ----
   // The shop owner reads these, so each one says what happens next, never why the rule refused.
   BILLING_DEAL_EXPIRED: 'ข้อเสนอพิเศษนี้หมดอายุแล้ว กรุณาติดต่อทีมขายเพื่อขอข้อเสนอใหม่ คุณยังเลือกแพ็กเกจปกติได้',

@@ -417,6 +417,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     command: '../../node_modules/.bin/tsx',
     args: ['--test',
       'src/common/security/liff-start-handoff.spec.ts',
+      // Sales-event discounts, LINE claim (SD-B): the QR token, ticket serial/expiry and refusal order.
+      'src/modules/sales-console/domain/sales-event-claim.logic.spec.ts',
       // Web/LINE signup shares the durable mail consumer; preserve its provider boundary too.
       'src/modules/auth/infrastructure/postmark.client.spec.ts',
       'src/modules/auth/infrastructure/postmark-configuration.spec.ts',
@@ -427,6 +429,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       // Phase 4 counting formula, anti-gaming flags, renewal windows and digest text.
       'src/modules/sales-console/domain/sales-attribution.logic.spec.ts',
       'src/modules/sales-console/domain/sales-renewal.logic.spec.ts',
+      // Sales-event discounts, console (SD-A): batch form, state machine, QR life, ฿10 first-bill floor.
+      'src/modules/sales-console/domain/sales-event.logic.spec.ts',
       // Phase 3 deal offer / snapshot / purchase-mode rules (same reason as above).
       'src/modules/billing/domain/deal-offer.spec.ts',
       'src/modules/billing/application/billing-deal-chat-credit.spec.ts',
