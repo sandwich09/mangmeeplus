@@ -64,6 +64,18 @@ describe('LINE correction guards', () => {
     assert.match(backward.status === 'guidance' ? backward.reason : '', /stale_from:documentNumber/);
   });
 
+  it('UAT 2026-09-29: a "from" copied off the card with its thousands separator is the current value', () => {
+    // "แก้ยอดเป็น 500" on a 1,070.00 draft: the router copies "1,070.00" from the card it was shown.
+    // Rejecting it as stale sent every amount of a thousand or more to web guidance, never a preview.
+    const outcome = evaluateCorrectionHints({ amount: { to: '500', from: '1,070.00' } },
+      { ...target, grandTotalAmount: '1070.0000' }, evidence('แก้ยอดเป็น 500'), LINE_CORRECTION_FIELDS);
+    assert.equal(outcome.status, 'applicable');
+    assert.deepEqual(outcome.status === 'applicable' ? outcome.fields.amount : null, { from: '1070.0000', to: '500' });
+    const stale = evaluateCorrectionHints({ amount: { to: '500', from: '1,170.00' } },
+      { ...target, grandTotalAmount: '1070.0000' }, evidence('แก้ยอดเป็น 500'), LINE_CORRECTION_FIELDS);
+    assert.match(stale.status === 'guidance' ? stale.reason : '', /stale_from:amount/, 'a different number is still stale');
+  });
+
   it('asks when two readings compete and the message never says which is being replaced', () => {
     const outcome = evaluateCorrectionHints(
       { amount: { to: '590' } },

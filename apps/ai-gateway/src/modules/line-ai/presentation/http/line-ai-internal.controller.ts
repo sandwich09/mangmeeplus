@@ -1685,8 +1685,12 @@ function isCombinedUtilitySheet(documentText: string): boolean {
       && !/(?:ไม่ใช่\s*ใบ(?:เสร็จ|สรุปรับเงิน)|not\s+(?:a\s+)?receipt)/iu.test(line));
 }
 
+/** A water or electricity statement. UAT 2026-09-29: the bare words "water" and "ไฟฟ้า" also sit on
+ *  ordinary receipts — "Rynn Still water" on a restaurant bill, "เครื่องใช้ไฟฟ้า" on an appliance receipt,
+ *  "ค่าน้ำมัน" for fuel — and turned a clear abbreviated tax invoice into a 0-field "more than one
+ *  document" reply. Only the names a utility statement prints are utility words. */
 function isUtilityText(documentText: string): boolean {
-  return /(?:ประปา|ค่าน้ำ|ไฟฟ้า|ค่าไฟ|water(?:works)?|electric(?:ity)?)/iu.test(documentText);
+  return /(?:ประปา|ค่าน้ำ(?!มัน|ยา|แข็ง|ดื่ม|เปล่า|แร่|ผลไม้|ปั่น|หวาน|อัดลม)|ค่าไฟ|การไฟฟ้า|ไฟฟ้า(?:นครหลวง|ส่วนภูมิภาค)|waterworks|water\s+(?:supply|bill|authority|usage|meter)|electricity|electric\s+(?:bill|power|authority)|\bkwh\b)/iu.test(documentText);
 }
 
 /** Read-only utility parts. Exact OCR spans are required before any amounts reach a LINE reply. */
