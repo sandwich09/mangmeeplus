@@ -47,6 +47,8 @@ export type CompanyAiBudgetPolicyRow = {
   salesDealChatCreditEndsAt?: Date | null;
   budgetConfigVersion?: number | null;
   pendingBudgetPolicy?: unknown;
+  /** Add-on spec §11: set (and reached) = AI credit lots replace the SHARED calendar CHAT cap. */
+  aiCreditCutoverAt?: Date | null;
 };
 
 export type ResolvedAiBudgetPolicy = {
@@ -177,6 +179,22 @@ export function resolveAiBudgetPolicy(input: {
     return { ...base, mode: 'SPLIT', invalidReason: 'SPLIT_EXCEEDS_TOTAL' };
   }
   return { ...base, mode: 'SPLIT', chatCapSatang: effective.chat, ocrCapSatang: effective.ocr };
+}
+
+/**
+ * The AI credit a cut-over company gets per package cycle (add-on spec §5.1, Q5): what THIS resolver
+ * gives it as CHAT credit at the cycle start — the sales deal's credit while it lasts, an explicit
+ * TOTAL override, a SPLIT CHAT cap, or the default 80 — with where it came from. A deal that ends
+ * mid-cycle keeps the snapshot to the end of that cycle, because the lot is written once.
+ */
+export function aiCreditCycleAllowance(input: {
+  row: CompanyAiBudgetPolicyRow | null | undefined; totalSatang: number; override: boolean; monthKey: string; at: Date;
+}): { units: number; source: 'DEFAULT' | 'SALES_DEAL' | 'TOTAL_OVERRIDE' | 'SPLIT_CHAT_CAP' } {
+  const policy = resolveAiBudgetPolicy(input);
+  const dealLive = input.row?.salesDealChatCreditSatang != null
+    && (!input.row.salesDealChatCreditEndsAt || input.row.salesDealChatCreditEndsAt > input.at);
+  return { units: policy.chatCapSatang ?? 0,
+    source: policy.mode === 'SPLIT' ? 'SPLIT_CHAT_CAP' : input.override ? 'TOTAL_OVERRIDE' : dealLive ? 'SALES_DEAL' : 'DEFAULT' };
 }
 
 /** The wire shape of a resolved policy — one place, so the writer and the admin read agree. */

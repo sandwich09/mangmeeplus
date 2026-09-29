@@ -19,6 +19,7 @@ import {
   type CompanyAiBudgetPolicyRow,
 } from '../../../line-ai/application/company-ai-budget-policy';
 import { readAiBudgetMonthSnapshot } from '../../../line-ai/application/company-ai-budget-reservation';
+import { readAiCreditSalesReadiness } from '../../../line-ai/application/company-ai-budget-readiness';
 import { partnerMetadataLockError } from '../../domain/logic/partner-lock.logic';
 import { lockPlanTermCompany } from '../lock-plan-term-company';
 
@@ -47,6 +48,12 @@ export type SetPartnerAiModelResult = {
   updatedAt: string | null;
   /** The effective CHAT/OCR policy after this write — including the revision the next edit needs. */
   budgetPolicy: PartnerAiBudgetPolicyDto;
+  /**
+   * Add-on spec §5.3 (plan C6): the saved total leaves less room this month than the AI credit the
+   * shop holds, so part of that credit cannot be used until the cap is raised or the month turns.
+   * A warning, never a refusal. Absent when the shop is not cut over or nothing is short.
+   */
+  aiCreditWarning?: { headroomSatang: number; commercialUnits: number } | null;
 };
 
 /** What the write does to the stored policy; `null` = the policy is untouched. */
@@ -367,6 +374,14 @@ export class SetPartnerAiModelUseCase {
         select: { companyId: true, modelId: true, monthlyBudgetSatang: true, updatedAt: true, ...POLICY_SELECT },
       });
 
+      // Plan C6: read-only under the locks this write already holds (no lock added or reordered).
+      const creditRow = needsTotal ? await tx.companyAiConfiguration.findUnique({ where: { companyId: cmd.companyId } }) : null;
+      const credit = creditRow?.aiCreditCutoverAt
+        ? await readAiCreditSalesReadiness(tx, { companyId: cmd.companyId, monthKey, at: now, row: creditRow, totalSatang, packUnits: 0 })
+        : null;
+      const aiCreditWarning = credit?.reason === 'TOTAL_HEADROOM'
+        ? { headroomSatang: credit.headroomSatang, commercialUnits: credit.commercialUnits } : null;
+
       // CRITICAL, not HIGH: this row now also carries the spend cap (spec §7.7).
       // A cleared override is recorded as a transition to inherited (null).
       await this.writeAudit(tx, cmd, reason, {
@@ -378,7 +393,7 @@ export class SetPartnerAiModelUseCase {
         ...this.auditPolicyFields(result, 'to'),
       });
 
-      return { ...result, row: result as CompanyAiBudgetPolicyRow, materialised };
+      return { ...result, row: result as CompanyAiBudgetPolicyRow, materialised, aiCreditWarning };
     });
 
     if (setsBudget || setsPolicy || saved.materialised) invalidateCompanyAiBudgetConfiguration();
@@ -395,6 +410,7 @@ export class SetPartnerAiModelUseCase {
       monthlyBudgetSatang: saved.monthlyBudgetSatang,
       updatedAt: saved.updatedAt?.toISOString() ?? null,
       budgetPolicy: toPartnerAiBudgetPolicyDto(policy, this.config.aiBudgetSplitActivationEnabled === true),
+      ...('aiCreditWarning' in saved && saved.aiCreditWarning ? { aiCreditWarning: saved.aiCreditWarning } : {}),
     };
   }
 

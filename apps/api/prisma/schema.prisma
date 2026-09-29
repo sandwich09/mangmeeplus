@@ -424,6 +424,7 @@ model Company {
   aiMonthlyUsage                    CompanyAiMonthlyUsage[]
   aiMonthlyBucketUsage              CompanyAiMonthlyBucketUsage[]
   aiBudgetReservations              AiBudgetReservation[]
+  aiCreditGrants                    AiCreditGrant[]
   ocrUsageEvents                    CompanyOcrUsageEvent[]
   billingReceiptGrants              BillingReceiptGrant[]
   ocrMonthlyUsage                   CompanyOcrMonthlyUsage[]
@@ -4088,6 +4089,11 @@ model CompanyAiConfiguration {
   // that starts in a FUTURE Bangkok month. It never replaces the active columns until its month
   // arrives — the resolver compares month keys, so no cron is involved.
   pendingBudgetPolicy        Json?
+  /// Add-on spec §11: from this instant the company's AI credit runs on paid package cycles and lots
+  /// (`AiCreditGrant`) instead of the calendar-month CHAT cap. Null = legacy. Written by the cutover
+  /// tool (plan PR G) only; `aiCreditCutoverSource` says which cohort rule moved it.
+  aiCreditCutoverAt          DateTime?
+  aiCreditCutoverSource      String?
   updatedBySystemAdminUserId String?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
@@ -4249,6 +4255,58 @@ model AiBudgetReservation {
 
   @@index([companyId, monthKey, status])
   @@index([companyId, monthKey, bucket, status])
+}
+
+/// One AI credit lot (add-on spec §5.1–§5.2, §6.1, §8.2). `units` counts 0.01 credit = 1 satang of
+/// CHAT cost. A package cycle is an INCLUDED_CYCLE lot; added credit is ADD_ON_PAID / ADD_ON_ADMIN /
+/// SALES_EVENT. Not a wallet: the balance is always `units + SUM(entries)` with a hold counting only
+/// while its `AiBudgetReservation` is live, so there is no second counter to drift.
+model AiCreditGrant {
+  id               String    @id @default(cuid())
+  companyId        String
+  billingAccountId String?
+  /// INCLUDED_CYCLE | ADD_ON_PAID | ADD_ON_ADMIN | SALES_EVENT (String, not a Prisma enum).
+  sourceKind       String
+  /// Idempotency of the source: `cycle:<cycleKey>`, or the seam's key for an added lot.
+  sourceKey        String    @unique
+  sourceHash       String
+  units            Int
+  availableAt      DateTime
+  expiresAt        DateTime
+  /// INCLUDED_CYCLE only: `<billingAccountId>:<cycleStart ISO UTC>` and PAID | RENEWAL_PENDING | CLOSED.
+  cycleKey         String?
+  cycleState       String?
+  /// INCLUDED_CYCLE only: where the allowance came from (DEFAULT | SALES_DEAL | TOTAL_OVERRIDE | SPLIT_CHAT_CAP).
+  allowanceSource  String?
+  invoiceId        String?
+  operationId      String?
+  revokedAt        DateTime?
+  closedAt         DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  company          Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  entries          AiCreditEntry[]
+
+  @@index([companyId, sourceKind, expiresAt])
+}
+
+/// Append-only AI credit ledger (add-on spec §8.2). `units` is the signed change to the lot's
+/// available balance: RESERVE −hold (counts only while its reservation is live), CONSUME −used,
+/// CORRECTION ±, FREEZE −, UNFREEZE +, REVOKE −. `reservationId` is a soft reference to
+/// `AiBudgetReservation.id` (no FK: money history never cascades from a hold row).
+model AiCreditEntry {
+  id            String        @id @default(cuid())
+  companyId     String
+  grantId       String
+  kind          String
+  units         Int
+  reservationId String?
+  operationKey  String        @unique
+  createdAt     DateTime      @default(now())
+  grant         AiCreditGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId, kind])
+  @@index([reservationId])
 }
 
 // One row per OCR action admitted immediately before a provider call. The unique request fence

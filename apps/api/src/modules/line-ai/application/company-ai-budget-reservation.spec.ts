@@ -30,6 +30,8 @@ import {
   reserveAiBudgetStep,
   settleAiBudgetStep,
 } from './company-ai-budget-reservation';
+import { aiCreditLotOrder, consumeAiCreditHold, planAiCreditAllocation, type AiCreditLot } from './ai-credit-ledger';
+import { aiCreditCycleAllowance } from './company-ai-budget-policy';
 
 const decide = (over: Partial<Parameters<typeof decideAiBudgetStep>[0]> = {}) => decideAiBudgetStep({
   bucket: 'CHAT', boundSatang: 100, totalSatang: 10_000, capSatang: 3_000,
@@ -779,5 +781,62 @@ describe('listAiBudgetCreditHolds and the shortened invocation key', () => {
   it('shortens a malformed key instead of throwing', () => {
     assert.equal(shortenInvocationKey('nonsense'), 'nonsense');
     assert.equal(shortenInvocationKey('x'.repeat(50)).length, 24);
+  });
+});
+
+describe('AI credit funding order and use (add-on spec §5.2–§5.3, plan PR C3)', () => {
+  const lot = (id: string, sourceKind: string, expires: string, available: number, added = '2026-09-01T00:00:00Z'): AiCreditLot =>
+    ({ id, sourceKind, availableAt: new Date(added), expiresAt: new Date(expires), available });
+
+  it('spends package credit, then team-given credit, then purchased credit, earliest expiry first inside a group', () => {
+    const lots = [
+      lot('paid-late', 'ADD_ON_PAID', '2027-09-01T00:00:00Z', 5000),
+      lot('paid-soon', 'ADD_ON_PAID', '2027-03-01T00:00:00Z', 500),
+      lot('gift', 'ADD_ON_ADMIN', '2027-12-01T00:00:00Z', 300),
+      lot('event', 'SALES_EVENT', '2027-06-01T00:00:00Z', 200),
+      lot('cycle', 'INCLUDED_CYCLE', '2026-10-15T00:00:00Z', 125),
+    ];
+    // Spec example: 1.25 left from the package, a 2.00 call takes 1.25 + 0.75 from added credit.
+    assert.deepEqual(planAiCreditAllocation(lots, 200), [{ grantId: 'cycle', units: 125 }, { grantId: 'event', units: 75 }]);
+    assert.deepEqual(planAiCreditAllocation(lots, 1200)!.map(part => part.grantId), ['cycle', 'event', 'gift', 'paid-soon', 'paid-late']);
+    assert.equal(planAiCreditAllocation(lots, 6126), null, 'never more than the lots hold');
+    assert.deepEqual(planAiCreditAllocation([lot('empty', 'INCLUDED_CYCLE', '2026-10-15T00:00:00Z', 0)], 1), null);
+  });
+
+  it('breaks ties by the time credit was added, then by id, so the order is stable', () => {
+    const a = lot('b-id', 'ADD_ON_PAID', '2027-01-01T00:00:00Z', 1, '2026-01-01T00:00:00Z');
+    const b = lot('a-id', 'ADD_ON_PAID', '2027-01-01T00:00:00Z', 1, '2026-02-01T00:00:00Z');
+    const c = lot('c-id', 'ADD_ON_PAID', '2027-01-01T00:00:00Z', 1, '2026-02-01T00:00:00Z');
+    assert.deepEqual([c, b, a].sort(aiCreditLotOrder).map(item => item.id), ['b-id', 'a-id', 'c-id']);
+  });
+
+  it('turns a hold into use on the lots it held, in spend order, never above the hold', async () => {
+    const written: Array<Record<string, unknown>> = [];
+    const hold = (grantId: string, sourceKind: string, units: number) => ({ grantId, units: -units,
+      grant: { id: grantId, sourceKind, availableAt: new Date('2026-09-01T00:00:00Z'), expiresAt: new Date('2027-09-01T00:00:00Z') } });
+    const tx = { aiCreditEntry: {
+      findMany: async () => [hold('paid', 'ADD_ON_PAID', 75), hold('cycle', 'INCLUDED_CYCLE', 125)],
+      createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => { written.push(...data); return { count: data.length }; },
+    } };
+    await consumeAiCreditHold(tx, { companyId: 'c1', reservationId: 'r1', costSatang: 150 });
+    assert.deepEqual(written.map(row => [row['grantId'], row['kind'], row['units'], row['operationKey']]), [
+      ['cycle', 'CONSUME', -125, 'consume:r1:cycle'], ['paid', 'CONSUME', -25, 'consume:r1:paid']]);
+    written.length = 0;
+    await consumeAiCreditHold(tx, { companyId: 'c1', reservationId: 'r1', costSatang: 999 });
+    assert.equal(written.reduce((sum, row) => sum + (row['units'] as number), 0), -200, 'an actual above the bound is not charged to the customer');
+  });
+
+  it('snapshots the per-cycle allowance from the one resolver, with where it came from (Q5)', () => {
+    const at = new Date('2026-10-01T00:00:00Z');
+    const base = { totalSatang: 200_000, override: false, monthKey: '2026-10', at };
+    assert.deepEqual(aiCreditCycleAllowance({ ...base, row: {} }), { units: 8_000, source: 'DEFAULT' });
+    assert.deepEqual(aiCreditCycleAllowance({ ...base, row: { salesDealChatCreditSatang: 20_000, salesDealChatCreditEndsAt: new Date('2026-12-01T00:00:00Z') } }),
+      { units: 20_000, source: 'SALES_DEAL' });
+    assert.deepEqual(aiCreditCycleAllowance({ ...base, row: { salesDealChatCreditSatang: 20_000, salesDealChatCreditEndsAt: new Date('2026-09-15T00:00:00Z') } }),
+      { units: 8_000, source: 'DEFAULT' }, 'a deal that ended before the cycle start gives the default');
+    assert.deepEqual(aiCreditCycleAllowance({ ...base, override: true, totalSatang: 50_000, row: { monthlyBudgetSatang: 50_000 } }),
+      { units: 50_000, source: 'TOTAL_OVERRIDE' });
+    assert.deepEqual(aiCreditCycleAllowance({ ...base, row: { budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30_000, ocrMonthlyBudgetSatang: 10_000 } }),
+      { units: 30_000, source: 'SPLIT_CHAT_CAP' });
   });
 });
