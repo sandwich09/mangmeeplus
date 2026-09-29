@@ -15,7 +15,7 @@ import { PartnerLifecycleTransitionUseCase } from '../../system-partner-manageme
 import { StripeClient, stripeId, verifyStripeSignature, type StripeObject } from '../infrastructure/stripe.client';
 import { hashBilling } from '../domain/billing-policy';
 import { paidInvoiceEvidence, termProjectionHash, type PaidInvoiceEvidence } from '../domain/paid-invoice';
-import { BillingService, type BillingSnapshot } from './billing.service';
+import { BillingService, snapshotProductKind, type BillingSnapshot } from './billing.service';
 import { stripeCustomerSyncPayload, stripeCustomerSynced } from './billing-company-profile';
 import { readRecipientCapture, recordRecipientCapture, type RecipientCapture } from './billing-recipient-capture';
 import { restartFits, restartSource } from './billing-restart';
@@ -234,6 +234,9 @@ export class BillingReconcilerService {
         return;
       }
       const activeSnapshot = attempt?.quoteSnapshot as BillingSnapshot | undefined;
+      // Add-on foundation (plan PR A, A5): the package slot never holds an add-on, and an add-on must never
+      // reach reconcileOneTime (spec §9.2). Add-on attempts get their own slot and step in plan PR E.
+      if (activeSnapshot && snapshotProductKind(activeSnapshot) !== 'PACKAGE') throw new Error('billing.addon_reconcile_unsupported');
       // The old subscription belongs to a completed deal conversion, not to the current one-time
       // contract. Its delayed Stripe events must never reconcile it back onto this account.
       if (!account.baseSubscriptionId && hintedSubscriptionId && activeSnapshot?.subscriptionConversion?.subscriptionId === hintedSubscriptionId) return;
@@ -399,6 +402,8 @@ export class BillingReconcilerService {
       const attemptId=subscription?.metadata?.billingAttemptId??invoice.metadata?.billingAttemptId;
       const attempt=typeof attemptId==='string'?await this.prisma.client.billingAttempt.findFirst({where:{id:attemptId,billingAccountId:account.id}}):null;
       const snapshot=attempt?.quoteSnapshot as unknown as BillingSnapshot|undefined;
+      // Plan PR A (A5): an add-on invoice is not imported through package apply; plan PR E adds its own branch.
+      if(snapshot&&snapshotProductKind(snapshot)!=='PACKAGE')throw new Error('billing.addon_reconcile_unsupported');
       if(!attempt?.checkoutSessionId||!snapshot||attempt.consentRevision!==snapshot.quote.consentRevision||!Number.isFinite(attempt.consentAt.getTime())||attempt.consentAt>new Date()||
         snapshot.quote.companyId!==account.companyId||attempt.policyRevisionId!==snapshot.quote.policyRevision||Math.floor(attempt.consentAt.getTime()/1000)>invoice.created)throw new Error('billing.original_consent_missing');
       const session=await this.stripe.request('GET',`/checkout/sessions/${attempt.checkoutSessionId}`);
@@ -443,6 +448,8 @@ export class BillingReconcilerService {
     if(source.applyStatus==='APPLIED'&&source.appliedAt)return;
     if(!account.customerId)throw new Error('billing.customer_unknown');
     const initial=source.sourceAttemptId?await this.prisma.client.billingAttempt.findFirst({where:{id:source.sourceAttemptId,billingAccountId:account.id}}):null;
+    // Plan PR A (A5): a held add-on invoice is retried from its own attempt in plan PR E, never through the package slot.
+    if(initial&&snapshotProductKind(initial.quoteSnapshot as unknown as BillingSnapshot)!=='PACKAGE')throw new Error('billing.addon_reconcile_unsupported');
     if(initial&&(initial.quoteSnapshot as unknown as BillingSnapshot).repeat){
       if(account.activeAttemptId!==initial.id||!initial.checkoutSessionId)throw new Error('billing.original_attempt_changed');
       const session=await this.stripe.request('GET',`/checkout/sessions/${initial.checkoutSessionId}`);

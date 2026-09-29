@@ -12,7 +12,7 @@ import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from '
 import type { BillingAdjustmentKind } from '@watchdog-bms/contracts';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, BILLING_PAID_TIERS, TIER_FEATURE_PRESETS, billingOffer, type BillingCatalog, type BillingPolicy, type BillingQuote,
+import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, BILLING_PAID_TIERS, TIER_FEATURE_PRESETS, billingOffer, billingProductKind, type BillingProductKind, type BillingCatalog, type BillingPolicy, type BillingQuote,
   type BillingCheckoutBody, type BillingCheckoutResult, type BillingStatus, type BillingAction, type BillingInvoiceItem, type BillingAttemptView,
   type BillingPurchaseMode, type BillingOffer } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -55,7 +55,17 @@ import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.lo
  *  the shop back on the tier's default menus, AI credit and limits (Q1) even though it is a RENEWAL. */
 export type DealReturnSource = { dealRequestId: string; returnAt: string; creditScope?: 'CHAT' | 'TOTAL' };
 /** `emailProof` is read from snapshots written before purchase-without-setup only; new quotes carry none. */
-export type BillingSnapshot = { trialCarryover?: TrialCarryoverSource; emailProof?: EmailProof; quote: BillingQuote; deal?: DealSource; dealReturn?: DealReturnSource; subscriptionConversion?: { subscriptionId: string; paidThrough: string }; advanceDeal?: { invoiceId: string; contractAttemptId: string; paidThrough: string; firstCycleEndsAt: string; anchorDay: number }; priceId: string; productId?: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; featurePlan?: BillingFeaturePlan; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; oneTime?: { invoiceId: string; paidThrough: string; anchorDay: number; offerKey: string; interval: string }; oneTimeChange?: { effectiveAt: string; currentOffer: BillingOffer }; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
+export type BillingSnapshot = { productKind?: BillingProductKind; trialCarryover?: TrialCarryoverSource; emailProof?: EmailProof; quote: BillingQuote; deal?: DealSource; dealReturn?: DealReturnSource; subscriptionConversion?: { subscriptionId: string; paidThrough: string }; advanceDeal?: { invoiceId: string; contractAttemptId: string; paidThrough: string; firstCycleEndsAt: string; anchorDay: number }; priceId: string; productId?: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; featurePlan?: BillingFeaturePlan; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; oneTime?: { invoiceId: string; paidThrough: string; anchorDay: number; offerKey: string; interval: string }; oneTimeChange?: { effectiveAt: string; currentOffer: BillingOffer }; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
+/** Add-on foundation (plan PR A, A5): absent = PACKAGE, the only kind before add-ons; an unknown kind is never guessed. */
+export function snapshotProductKind(snapshot: Pick<BillingSnapshot, 'productKind'>): BillingProductKind {
+  const kind = billingProductKind(snapshot.productKind);
+  if (!kind) throw new Error('billing.product_kind_unknown');
+  return kind;
+}
+/** Add-on foundation (plan PR A, A4): the one "latest package invoice" read. An add-on invoice ends at its
+ *  paidAt, so without the PACKAGE filter it would pass for the newest package period. */
+export const latestPackageInvoice = (db: Prisma.TransactionClient, where: Prisma.BillingInvoiceWhereInput) =>
+  db.billingInvoice.findFirst({ where: { ...where, productKind: 'PACKAGE' }, orderBy: [{ periodEnd: 'desc' }, { createdAt: 'desc' }] });
 const oneTimeMode = (mode: BillingPurchaseMode | undefined) => mode === 'CARD_ONCE' || mode === 'PROMPTPAY_ONCE';
 /**
  * D-P5-4 — is this pinned quote an AUTO-RENEWING deal? The quote refuses every other pairing, so
@@ -804,7 +814,7 @@ export class BillingService {
       : oneTimeMode(account.renewalMode as BillingPurchaseMode) && account.contractAttemptId && account.paidThrough
         ? await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id,
           sourceAttemptId: account.contractAttemptId, periodEnd: account.paidThrough } })
-      : await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id }, orderBy: [{ periodEnd: 'desc' }, { createdAt: 'desc' }] }) : null;
+      : await latestPackageInvoice(this.prisma.client, { billingAccountId: account.id }) : null;
     const advanceInvoice = advance && account ? await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id,
       sourceAttemptId: attempt!.id, providerStatus: 'paid' } }) : null;
     const advanceOperation = advanceInvoice && account ? await this.prisma.client.billingOperation.findUnique({ where: {

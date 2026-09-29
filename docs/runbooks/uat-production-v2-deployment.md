@@ -250,6 +250,14 @@ Legal release ปัจจุบันใช้ internal append-only id `v3` เ
 Owner override ไม่เปลี่ยนสถานะ legal manifest และไม่ใช่หลักฐานจากทนาย. Passport/READY expiry,
 runtime, IAM, migration, health และ recovery gates ยังบังคับเหมือนเดิมทุกข้อ.
 
+### Binary ขั้นต่ำต่อ schema ของ billing policy (add-on F-09)
+
+`parseBillingPolicy` ปฏิเสธ key ที่ไม่รู้จัก และ policy ที่ parse ไม่ผ่านทำให้ระบบถือว่าไม่มี policy จึงปิดการซื้อแพ็กเกจของทุกร้านทันที. ดังนั้นเผยแพร่ policy ที่มี key ใหม่ได้เฉพาะเมื่อ binary ที่อ่าน key นั้นขึ้นครบทั้ง UAT และ Production แล้ว และหลังเผยแพร่ ห้าม rollback ไป binary ที่ต่ำกว่าขั้นต่ำ เว้นแต่เผยแพร่ policy ที่ถอด key นั้นออกก่อน
+
+| key ใน policy | binary ขั้นต่ำ | หมายเหตุ |
+| --- | --- | --- |
+| `addOnPriceIds` | image ที่มี migration `20260929120000_billing_product_foundation` (add-on PR A) | ไม่มี gate ของ add-on (มติ Owner 2026-09-29): การผูก Price ของ offer คือการเปิดขาย offer นั้นเมื่อสินค้าพร้อม |
+
 ## 2. Proof ก่อนใช้ GitHub Actions
 
 1. Merge เฉพาะ exact reviewed head ที่ required CI ผ่านครบ. ห้ามลด branch protection หรือข้าม check.

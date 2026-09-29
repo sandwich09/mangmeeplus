@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { BILLING_ACTIONS, BILLING_PAID_TIERS, billingOffer, type BillingAction, type BillingPolicy, type BillingOffer, type BillingQuote, type PaidTier, type BillingInterval } from '@watchdog-bms/contracts';
+import { BILLING_ACTIONS, BILLING_ADDON_OFFER_KEYS, BILLING_PAID_TIERS, billingOffer, type BillingAction, type BillingPolicy, type BillingOffer, type BillingQuote, type PaidTier, type BillingInterval } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 import { stripeId, type StripeObject } from '../infrastructure/stripe.client';
 
@@ -27,7 +27,7 @@ export function paidVariant(tier: unknown, interval: unknown, policy?:BillingPol
 }
 
 export function parseBillingPolicy(value: unknown): BillingPolicy {
-  assertKeys(value, ['schemaVersion', 'paidStart', 'taxTreatment', 'graceDays', 'cancellation', 'planChanges', 'debtRecovery', 'refundPolicy', 'priceIds', 'zeroPriceIds', 'taxRateId', 'portalConfigurationId', 'consentRevision', 'issuer', 'salesCompanyIds', 'supportSlaMinutes', 'refundLimitSatang', 'offerTerms']);
+  assertKeys(value, ['schemaVersion', 'paidStart', 'taxTreatment', 'graceDays', 'cancellation', 'planChanges', 'debtRecovery', 'refundPolicy', 'priceIds', 'zeroPriceIds', 'addOnPriceIds', 'taxRateId', 'portalConfigurationId', 'consentRevision', 'issuer', 'salesCompanyIds', 'supportSlaMinutes', 'refundLimitSatang', 'offerTerms']);
   const p = value as unknown as BillingPolicy;
   if (p.schemaVersion !== 1 || ![null, 'IMMEDIATE', 'AFTER_TRIAL'].includes(p.paidStart) ||
       ![null, 'INCLUSIVE_VAT_7', 'EXCLUSIVE_VAT_7', 'NOT_VAT_REGISTERED'].includes(p.taxTreatment) ||
@@ -60,6 +60,13 @@ export function parseBillingPolicy(value: unknown): BillingPolicy {
     const ids = Object.values(p.zeroPriceIds);
     if (ids.some(id => typeof id !== 'string' || !/^price_[a-zA-Z0-9]+$/.test(id) || Object.values(p.priceIds).includes(id)) ||
         new Set(ids).size !== ids.length) throw new BadRequestException('Invalid prepaid price mapping');
+  }
+  if (p.addOnPriceIds !== undefined) {
+    // Add-on foundation (spec §8.4): six known offers, each Price distinct from every package and prepaid Price.
+    assertKeys(p.addOnPriceIds, BILLING_ADDON_OFFER_KEYS);
+    const ids = Object.values(p.addOnPriceIds), all = [...Object.values(p.priceIds), ...Object.values(p.zeroPriceIds ?? {}), ...ids];
+    if (ids.some(id => typeof id !== 'string' || !/^price_[a-zA-Z0-9]+$/.test(id)) || new Set(all).size !== all.length)
+      throw new BadRequestException('Invalid add-on price mapping');
   }
   if (p.taxTreatment === 'NOT_VAT_REGISTERED' && p.taxRateId !== null) throw new BadRequestException('VAT OFF must not attach a tax rate');
   if (p.issuer !== undefined) {

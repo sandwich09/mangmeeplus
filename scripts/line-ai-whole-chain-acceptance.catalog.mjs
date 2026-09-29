@@ -453,6 +453,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/billing/application/billing-document-admin.service.spec.ts',
       'src/modules/billing/application/billing-admin-lookup.spec.ts',
       'src/modules/system-partner-management/application/use-cases/update-partner-identity.use-case.spec.ts',
+      // Chat credit and receipt image add-ons PR A: the policy parser reads old and new policies (spec §8.4, A37).
+      'src/modules/billing/domain/billing-policy-addon.spec.ts',
       'src/modules/system-partner-management/domain/logic/plan-capacity.spec.ts',
       'src/modules/billing/application/billing-collection.spec.ts',
       'src/modules/billing/application/billing-free-days.spec.ts',

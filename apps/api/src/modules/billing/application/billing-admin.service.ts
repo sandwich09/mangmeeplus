@@ -8,7 +8,7 @@ import type { BillingSupportOutcome, BillingSupportOutcomeInput, BillingOperator
 import type { BillingAccount, BillingIssue, BillingOperation, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
-import { BillingService } from './billing.service';
+import { BillingService, latestPackageInvoice } from './billing.service';
 import { billingError, hashBilling } from '../domain/billing-policy';
 import { billingState } from '../domain/billing-state';
 import { billingTimeline } from './billing-timeline';
@@ -89,7 +89,7 @@ export class BillingAdminService {
       ...(search ? { OR: [{ id: { contains: search } }, { name: { contains: search, mode: 'insensitive' } }] } : {}) };
   }
   private async companyView(company: Prisma.CompanyGetPayload<{ include: { planTerm: true } }>, account: BillingAccount | null): Promise<BillingOperatorCompany> {
-    const invoice = account ? await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id }, orderBy: [{ periodEnd: 'desc' }, { createdAt: 'desc' }] }) : null;
+    const invoice = account ? await latestPackageInvoice(this.prisma.client, { billingAccountId: account.id }) : null;
     const activeAttempt = account?.activeAttemptId ? await this.prisma.client.billingAttempt.findFirst({ where: { id: account.activeAttemptId, billingAccountId: account.id } }) : null;
     const purchaseId=invoice?.sourceAttemptId??account?.contractAttemptId;
     const purchase = activeAttempt ?? (purchaseId ? await this.prisma.client.billingAttempt.findFirst({ where: { id: purchaseId, billingAccountId: account!.id } }) : null);
