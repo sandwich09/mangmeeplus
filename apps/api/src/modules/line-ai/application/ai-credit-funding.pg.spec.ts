@@ -20,6 +20,7 @@ import { applyAiCreditGrant, readAiCreditBalance, revokeAiCreditGrant } from './
 import { aiCreditCycleAllowance } from './company-ai-budget-policy';
 import { bangkokMonthKey, previousBangkokMonthKey } from './company-ai-usage-meter';
 import { PartnerAiCreditHoldsUseCase } from '../../system-partner-management/application/use-cases/partner-ai-credit-holds.use-case';
+import { applyAddOnGrant } from '../../billing/application/billing-addon-grants';
 
 const url = process.env.AI_BUDGET_RESERVATION_TEST_DATABASE_URL;
 const model = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
@@ -255,6 +256,23 @@ describe('AI credit funding of LINE v2 CHAT holds on PostgreSQL', { skip: !url }
     assert.equal(await settle(held.reservation.invocationKey), 'settled');
     const refused = await reserve(companyId, 'v2');
     assert.equal(refused.ok, false, 'what the hold left over stays withdrawn');
+  });
+
+  it('grants AI credit through the shared add-on seam once the company is cut over, replaying the same source (C7, §16)', async () => {
+    const { companyId, accountId } = await fixture('seam', { allowance: 0 });
+    const input = { companyId, billingAccountId: accountId, productKind: 'CHAT_CREDIT' as const, sourceKind: 'ADD_ON_ADMIN' as const,
+      sourceKey: `addon-admin:${companyId}`, sourceHash: 'a'.repeat(64), units: 5_000, at: now };
+    const first = await client.$transaction(tx => applyAddOnGrant(tx, input));
+    assert.deepEqual([first.productKind, first.units, first.replayed], ['CHAT_CREDIT', 5_000, false]);
+    assert.equal(first.expiresAt.toISOString(), appendPackageInterval(now, 'year').toISOString(), '12 months, never chosen by the caller');
+    const again = await client.$transaction(tx => applyAddOnGrant(tx, input));
+    assert.deepEqual([again.lotId, again.replayed], [first.lotId, true]);
+    await assert.rejects(client.$transaction(tx => applyAddOnGrant(tx, { ...input, units: 6_000 })), /billing\.addon_source_changed/);
+    const funded = await reserve(companyId, 'seam-1'); assert.ok(funded.ok);
+    assert.deepEqual((await entries(companyId, funded.reservation.id)).map(row => row.grantId), [first.lotId], 'the lot funds calls like any added credit');
+    const { companyId: legacy, accountId: legacyAccount } = await fixture('seam-legacy', { cutOver: false });
+    await assert.rejects(client.$transaction(tx => applyAddOnGrant(tx, { ...input, companyId: legacy, billingAccountId: legacyAccount,
+      sourceKey: `addon-admin:${legacy}` })), /billing\.addon_consumer_not_ready/, 'no lot a legacy shop cannot use');
   });
 
   it('finds a hold older than two months and sweeps its month before listing (C11)', async () => {

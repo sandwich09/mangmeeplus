@@ -177,14 +177,10 @@ export async function consumeAiCreditHold(tx: any, input: { companyId: string; r
 }
 
 /**
- * Chat credit side of the shared add-on grant seam (spec §16 item 1; plan PR B4/C7).
- *
- * NARROW LOCAL ADAPTER until PR B merges: PR B owns `billing/application/billing-addon-grants.ts`, whose
- * `applyAddOnGrant(tx, { productKind, ... })` validates the input, takes L1 → L4, checks the account and
- * today throws `billing.addon_consumer_not_ready` for CHAT_CREDIT. The swap is: that branch calls this
- * with the seam's own input (minus `productKind`, with its computed `sourceHash`) and returns this result
- * plus `productKind: 'CHAT_CREDIT'`. Same key + same payload returns the first lot (§16 item 6); a
- * different payload under the key throws like the seam. Expiry is 12 months from `at` (D1/D8, C03).
+ * Chat credit side of the shared add-on grant seam (spec §16 item 1; plan PR B4/C7). Call the seam
+ * (`billing-addon-grants.ts` `applyAddOnGrant`), not this: the seam validates, takes L1 → L4, checks the
+ * account and readiness, then delegates its CHAT_CREDIT branch here. Same key + same payload returns the
+ * first lot (§16 item 6); a different payload under the key throws. Expiry is 12 months from `at` (D1/D8, C03).
  */
 export type AiCreditGrantInput = {
   companyId: string; billingAccountId: string | null;

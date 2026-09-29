@@ -3,6 +3,7 @@ import type { Prisma } from '../../../generated/prisma/client';
 import { hashBilling } from '../domain/billing-policy';
 import { appendPackageInterval } from '../domain/billing-package';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
+import { applyAiCreditGrant } from '../../line-ai/application/ai-credit-ledger';
 
 /** Where an add-on lot came from (spec §6.1): a verified payment, an approved team grant, a sales-event credit. */
 export type AddOnGrantSourceKind = 'ADD_ON_PAID' | 'ADD_ON_ADMIN' | 'SALES_EVENT';
@@ -30,13 +31,15 @@ export type AddOnGrant = { productKind: BillingAddOnProductKind; lotId: string; 
 /**
  * Whether the company's consumer can see a lot of this product today (spec §8.4, §15.3, §16 item 9). A lot
  * nobody can read is never sold or given. RECEIPT_IMAGE: receipts already come from the billing account's
- * lots. CHAT_CREDIT has no lot consumer until plan PR C.
+ * lots. CHAT_CREDIT: admission funds from AI credit lots once the company is cut over (plan PR C, spec §11).
  */
-export async function addOnGrantReady(db: Pick<Prisma.TransactionClient, 'companyPlanTerm'>, companyId: string,
+export async function addOnGrantReady(db: Pick<Prisma.TransactionClient, 'companyPlanTerm' | 'companyAiConfiguration'>, companyId: string,
   billingAccountId: string, productKind: BillingAddOnProductKind): Promise<boolean> {
-  if (productKind !== 'RECEIPT_IMAGE') return false;
   const term = await db.companyPlanTerm.findUnique({ where: { companyId }, select: { billingReceiptAccountId: true } });
-  return term?.billingReceiptAccountId === billingAccountId;
+  if (term?.billingReceiptAccountId !== billingAccountId) return false;
+  if (productKind === 'RECEIPT_IMAGE') return true;
+  const config = await db.companyAiConfiguration.findUnique({ where: { companyId }, select: { aiCreditCutoverAt: true } });
+  return !!config?.aiCreditCutoverAt && config.aiCreditCutoverAt <= new Date();
 }
 
 /**
@@ -60,9 +63,16 @@ export async function applyAddOnGrant(tx: Prisma.TransactionClient, input: AddOn
   await lockPlanTermCompany(tx, input.companyId);
   const account = await tx.billingAccount.findUnique({ where: { id: input.billingAccountId }, select: { companyId: true } });
   if (account?.companyId !== input.companyId) throw new Error('billing.addon_account_mismatch');
-  // ponytail: one product today; plan PR C adds the AI credit lot (`AiCreditGrant`) as the other branch here.
-  if (input.productKind !== 'RECEIPT_IMAGE') throw new Error('billing.addon_consumer_not_ready');
   const sourceHash = hashBilling([input.sourceHash, input.companyId, input.billingAccountId, input.productKind, input.sourceKind, input.sourceKey, input.units]);
+  if (input.productKind === 'CHAT_CREDIT') {
+    // Plan PR C: the AI credit lot. The key is per billing account, like a receipt lot, and never collides
+    // with a cycle lot (`cycle:…`). A replay returns the first lot even if readiness changed since.
+    const sourceKey = `addon:${input.billingAccountId}:${input.sourceKey}`;
+    const replay = await tx.aiCreditGrant.findUnique({ where: { sourceKey }, select: { id: true } });
+    if (!replay && !await addOnGrantReady(tx, input.companyId, input.billingAccountId, input.productKind)) throw new Error('billing.addon_consumer_not_ready');
+    return { productKind: 'CHAT_CREDIT', ...await applyAiCreditGrant(tx, { companyId: input.companyId, billingAccountId: input.billingAccountId,
+      sourceKind: input.sourceKind, sourceKey, sourceHash, units: input.units, at: input.at }) };
+  }
   const existing = await tx.billingReceiptGrant.findUnique({ where: {
     billingAccountId_sourceKey: { billingAccountId: input.billingAccountId, sourceKey: input.sourceKey } } });
   if (existing) {
