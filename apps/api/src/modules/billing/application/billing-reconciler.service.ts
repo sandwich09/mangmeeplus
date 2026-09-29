@@ -6,7 +6,7 @@ import { sameScheduleTaxes, simpleCollection, type ScheduledChange } from './bil
 import { PRICE_RETURN_TYPE } from './billing-price-return';
 import { BadRequestException, ConflictException, Injectable, Optional, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { STRIPE_API_VERSION } from '@watchdog-bms/contracts';
+import { BILLING_EVENT_DISCOUNT_REVIEW_ISSUE, STRIPE_API_VERSION } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { Prisma, type BillingAccount, type BillingAttempt, type BillingOperation } from '../../../generated/prisma/client';
@@ -567,7 +567,7 @@ export class BillingReconcilerService {
       // Sales-event spec §6.3: verified money uses the ticket before any exit, HELD included. A ticket not reserved for
       // this attempt never blocks the apply — the customer paid what they confirmed — it opens a review instead.
       if (snapshot.eventDiscount?.choice === 'USE' && !await useEventDiscount(tx, { attemptId: attempt.id, invoiceId: row.id, companyId: account.companyId, now: new Date() }))
-        await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode, kind: 'EVENT_DISCOUNT_REVIEW', referenceId: attempt.id });
+        await detectBillingIssue(tx, { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode, kind: BILLING_EVENT_DISCOUNT_REVIEW_ISSUE, referenceId: row.id });
       if (row.appliedAt) { await resolveAppliedInvoiceIssues(tx, account, row.id); return; }
       const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
       const source = snapshot.oneTime ? await tx.billingInvoice.findFirst({ where: { id: snapshot.oneTime.invoiceId,

@@ -17,6 +17,7 @@ import BillingCollectionPanel from './BillingCollectionPanel';
 import BillingCapacityPicker from './BillingCapacityPicker';
 import {BILLING_RECIPIENT_WAIT_TEXT, billingMonthlyAllowanceText, billingBackControl, billingControl, billingPrimaryControl, billingPurchaseModeLabel, billingRecipientLocked, billingSupportReference} from './billing-display';
 import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels, dealRenewalText } from './billing-deal';
+import { eventDiscountBlockedText, eventDiscountCard, eventDiscountCardText, eventDiscountHelpText, eventDiscountMode, eventDiscountOneTimeOnlyText, eventDiscountUsable, eventDiscountUseLabel, type EventDiscountChoice } from './billing-event-discount';
 import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
 const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(satang / 100);
@@ -90,6 +91,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   // The deal card carries its own choice: its modes are the deal's (S39), not the catalog's.
   const [dealMode, setDealMode] = useState<BillingPurchaseMode | null>(null);
   const [quote, setQuote] = useState<BillingQuote | null>(null), [accepted, setAccepted] = useState(false);
+  // Sales-event spec §4.3: "ใช้" is chosen for the buyer; the choice belongs to this purchase only.
+  const [eventChoice, setEventChoice] = useState<EventDiscountChoice>('USE');
   const [capacity, setCapacity] = useState<{ options: BillingCapacityOptions; billingEmail: string; scheduledAt?: string; repair?: { attemptId: string; attemptVersion: number }; key: string; initialSelection?: BillingCapacitySelection } | null>(null);
   const capacityDraft = useRef<(NonNullable<typeof capacity> & { collectionId?: string }) | null>(null);  const [capacityNotice, setCapacityNotice] = useState('');
   const [timedOut, setTimedOut] = useState(false);
@@ -219,7 +222,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     catch (e) { if (current === generation.current) { if ([401, 403].includes(errorStatus(e) ?? 0)) setData(null); setError(errorText(e)); setErrorCode(apiErrorCode(e)); } }
     finally { if (current === generation.current) { running.current = false; setBusy(false); } }
   }
-  async function requestQuote(offerKey: string, selectedInterval: string, billingEmail: string, selection?: BillingCapacitySelection, requestedMode?: BillingPurchaseMode, dealId?: string, purchaseIntent?: 'FULL_PACKAGE') {
+  async function requestQuote(offerKey: string, selectedInterval: string, billingEmail: string, selection?: BillingCapacitySelection, requestedMode?: BillingPurchaseMode, dealId?: string, purchaseIntent?: 'FULL_PACKAGE', choice?: EventDiscountChoice) {
     // A deal is paid with one of ITS modes: falling back to the catalog's choice here would send
     // CARD_AUTO on a deal quote, which the API refuses.
     const mode = requestedMode ?? (dealId ? chosenDealMode ?? chosenMode : chosenMode);
@@ -248,7 +251,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     try {
       const latest = await api.status();
       setData(value => value && { ...value, status: latest });
-      const result = await api.quote(offerKey, selectedInterval, billingEmail, selection, mode, dealId, purchaseIntent);
+      const discountChoice = !dealId && !purchaseIntent && eventDiscountMode(mode) && eventDiscountUsable(latest.eventDiscount) ? choice ?? eventChoice : undefined;
+      const result = await api.quote(offerKey, selectedInterval, billingEmail, selection, mode, dealId, purchaseIntent, discountChoice);
       if (!selection) capacityDraft.current = null;
       key.current = crypto.randomUUID(); setAccepted(false); setQuote(result); setCapacity(null);
     } catch (error) {
@@ -313,7 +317,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const requoteSame = () => action(async () => {
     if (!quote) return;
     await requestQuote(quote.offer.offerKey, quote.offer.interval, recipientEmail, capacityDraft.current?.initialSelection, quote.purchaseMode, dealQuote?.dealId,
-      quote.purchase?.kind === 'FULL_PACKAGE_UPGRADE' ? 'FULL_PACKAGE' : undefined);
+      quote.purchase?.kind === 'FULL_PACKAGE_UPGRADE' ? 'FULL_PACKAGE' : undefined, quote.eventDiscount?.choice);
   });
   // R-A5: Checkout refuses a quote whose document recipient changed since it was priced
   // (assertRecipientUnchanged: a recipient on file that differs from the one the quote pinned), so a
@@ -415,6 +419,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           <div><dt className="text-sm text-gray-500">{status.pendingPlanChange?.action === 'PREPAID_PLAN_CHANGE' ? 'แพ็กเกจปัจจุบันใช้ถึง' : 'ใช้งานได้ถึง'}</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.pendingPlanChange?.action === 'PREPAID_PLAN_CHANGE' ? date(status.pendingPlanChange.effectiveAt) : status.termEndsAt ? date(status.termEndsAt) : 'ยังไม่ระบุ'}</dd></div>
           <div><dt className="text-sm text-gray-500">ใบเสร็จคงเหลือ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{status.purchaseSource === 'NO_TERM' && status.usage.remaining === null ? 'ยังไม่ได้กำหนดโควตาแพ็กเกจ' : status.usage.remaining ?? 'ไม่จำกัด'} {status.usage.remaining !== null && 'ใบ'}</dd>{(quotaReset || (quotaExpiry && date(quotaExpiry) !== date(status.termEndsAt))) && <p className="mt-1 text-sm text-gray-500">{quotaReset ? `เริ่มรอบใหม่ ${date(quotaReset)}` : `ใบที่หมดอายุก่อนใช้ได้ถึง ${date(quotaExpiry)}`}</p>}</div>
         </dl>}
+        {returning && returnAttempt?.eventDiscount && <p role="status" className="rounded-xl bg-brand-50 p-3">{returnAttempt.eventDiscount.state === 'USED' ? 'ใช้ส่วนลดจากงานแล้ว' : 'ส่วนลดจะถูกใช้เมื่อยืนยันการชำระ'} · −{money(returnAttempt.eventDiscount.shownDiscountSatang)}</p>}
         {/* R-A8/F04: who gets the documents is said from PAID; changing it opens once the payment applied.
             The recipient is written at apply, so until then Checkout's own address stands in. */}
         {returning && returnAttempt?.paymentState === 'PAID' && <div className="space-y-2 rounded-xl bg-gray-50 p-4" aria-label="อีเมลรับเอกสาร">
@@ -572,7 +577,20 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {cadenceNotice && <div ref={cadenceNoticeRef} tabIndex={-1} role="status" className="scroll-mt-[calc(var(--app-header-h,0px)+1.5rem)] space-y-3 rounded-xl bg-amber-50 p-4">
           <p>{cadenceNotice === 'pending' ? 'มีรายการเปลี่ยนแพ็กเกจรอบถัดไป กรุณาตรวจสอบและยกเลิกรายการนั้นก่อนซื้อรายปี' : 'หากต้องการเพิ่มระดับและเปลี่ยนรอบชำระ ให้เพิ่มระดับในรอบเดิมก่อน แล้วจึงเลือกรอบชำระใหม่ ระบบจะแสดงยอดให้ตรวจสอบแยกแต่ละรายการ'}</p>
           <button className={button} onClick={() => { if (cadenceNotice === 'pending') setSection('payment'); else setInterval(status.interval!); setCadenceNotice(false); }}>{cadenceNotice === 'pending' ? 'ดูรายการเปลี่ยนแพ็กเกจ' : `เลือกแพ็กเกจ${status.interval === 'year' ? 'รายปี' : 'รายเดือน'}`}</button>
-        </div>}        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{data.catalog.offers.filter(offer => offer.interval === interval).map(offer => {
+        </div>}        {/* Sales-event spec §8: the holder's first-bill discount sits above the list, "ใช้" chosen; one-time purchases only today. */}
+        {eventDiscountBlockedText(status.eventDiscount).length > 0 ? <p role="note" className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm leading-7">
+          {eventDiscountBlockedText(status.eventDiscount).map(line => <span key={line} className="block break-words">{line}</span>)}</p>
+        : eventDiscountUsable(status.eventDiscount) && (eventDiscountMode(chosenMode) ? <section aria-label="ส่วนลดจากงาน" className="rounded-xl border border-brand-200 bg-brand-50 p-4">
+          <fieldset className="space-y-2"><legend className="break-words font-semibold">ส่วนลดจากงาน {status.eventDiscount.eventName}</legend>
+            <label className="flex min-h-11 items-center gap-3 break-words"><input type="radio" name="eventDiscountChoice" className="shrink-0" checked={eventChoice === 'USE'}
+              onChange={() => { setEventChoice('USE'); setQuote(null); }} />{eventDiscountUseLabel(status.eventDiscount)}</label>
+            <label className="flex min-h-11 items-center gap-3"><input type="radio" name="eventDiscountChoice" className="shrink-0" checked={eventChoice === 'DECLINE'}
+              onChange={() => { setEventChoice('DECLINE'); setQuote(null); }} />ไม่ใช้ครั้งนี้</label>
+            <p className="text-sm leading-6 text-gray-600">{eventDiscountHelpText(status.eventDiscount)}</p>
+          </fieldset></section>
+        : <div role="note" className="space-y-2 rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm leading-7"><p className="break-words">{eventDiscountOneTimeOnlyText(status.eventDiscount)}</p>
+          {availableModes.some(eventDiscountMode) && <button type="button" className={button} onClick={() => { setPurchaseMode(availableModes.find(eventDiscountMode)!); setQuote(null); setCapacity(null); }}>เลือกจ่ายครั้งเดียว</button>}</div>)}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{data.catalog.offers.filter(offer => offer.interval === interval).map(offer => {
           const monthly = data.catalog.offers.find(item => item.offerKey === offer.offerKey && item.interval === 'month');
           const saving = interval === 'year' && monthly ? monthly.priceSatang * 12 - offer.priceSatang : 0;
           const current = status.accessState === 'ACTIVE' && status.tierKey === offer.offerKey && status.interval === offer.interval;
@@ -583,9 +601,11 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             BILLING_PAID_TIERS.indexOf(offer.offerKey as typeof BILLING_PAID_TIERS[number]) > currentRank;
           // Read the offer's actual snapshot so the card matches what checkout grants.
           const menus = dealMenuLabels(offer.featureKeys);
+          const eventCard = eventDiscountMode(chosenMode) && eventChoice === 'USE' ? eventDiscountCard(status.eventDiscount, offer) : null;
           return <article key={offer.offerKey} className={`mangmee-card relative flex flex-col gap-4 p-5${current ? ' !border-brand-500' : ''}`}>
           {current && <MangmeeBadge className="absolute -top-3 right-4 border">แพ็กเกจปัจจุบัน</MangmeeBadge>}
           <h3 className="font-bold">{offer.label}</h3><p className="text-xl font-bold">{money(offer.priceSatang)} / {interval === 'month' ? 'เดือน' : 'ปี'}</p>
+          {eventCard && <p className="break-words text-sm font-semibold text-brand-700">{eventDiscountCardText(eventCard.eventName, eventCard.shownDiscountSatang)}</p>}
           {interval === 'year' && <p className="text-sm text-gray-600">เฉลี่ยเดือนละ {money(Math.round(offer.priceSatang / 12))}</p>}
           {data.catalog.taxTreatment === 'EXCLUSIVE_VAT_7' && <p className="text-sm text-gray-600">ราคายังไม่รวม VAT 7%</p>}
           <p className="text-sm text-brand-700">{interval === 'year' ? `ใช้งาน 12 เดือน${saving > 0 ? ` · ประหยัด ${money(saving)}` : ''}` : 'ชำระรายเดือน'}</p><p>{offer.branchLimit} สาขา · {offer.employeeLimit} ผู้ใช้</p>
@@ -632,13 +652,26 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             })}>แก้ไขข้อมูลร้าน</Link>}
             {status.recipient?.email && <button type="button" className="inline-flex min-h-11 items-center text-brand-700 underline" onClick={openRecipientEditor}>แก้อีเมลรับเอกสาร</button>}
           </div>
-        </div><p>ราคาก่อนภาษี {money(quote.subtotalSatang)} · ภาษี {money(quote.taxSatang)}</p>
+        </div>
+        {quote.eventDiscount && <section aria-label="ส่วนลดจากงาน" className="space-y-2 rounded-xl border border-brand-200 p-4">
+          {quote.eventDiscount.applied ? <><dl className="space-y-1">
+            <div className="flex justify-between gap-3"><dt>ราคาแพ็กเกจ</dt><dd className="shrink-0">{money(quote.offer.priceSatang)}</dd></div>
+            <div className="flex justify-between gap-3 font-semibold text-brand-800"><dt className="min-w-0 break-words">ส่วนลดจากงาน {quote.eventDiscount.eventName} (บิลแรก)</dt><dd className="shrink-0">−{money(quote.eventDiscount.shownDiscountSatang)}</dd></div>
+          </dl><p className="text-sm text-gray-600">ส่วนลดใช้กับบิลนี้เท่านั้น ครั้งถัดไปชำระราคาเต็ม {money(quote.totalSatang)}</p></>
+          : <p>ไม่ใช้ส่วนลดจากงานครั้งนี้ · ส่วนลดยังเป็นของคุณถึง {date(quote.eventDiscount.expiresAt)}</p>}
+          <button type="button" className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" disabled={busy} onClick={() => {
+            const next: EventDiscountChoice = quote.eventDiscount?.applied ? 'DECLINE' : 'USE';
+            setEventChoice(next);
+            void action(async () => { await requestQuote(quote.offer.offerKey, quote.offer.interval, recipientEmail, capacityDraft.current?.initialSelection, quote.purchaseMode, undefined, undefined, next); });
+          }}>{quote.eventDiscount.applied ? 'ไม่ใช้ส่วนลดครั้งนี้' : 'ใช้ส่วนลด'}</button>
+        </section>}
+        <p>ราคาก่อนภาษี {money((quote.eventDiscount?.applied ?? quote).subtotalSatang)} · ภาษี {money((quote.eventDiscount?.applied ?? quote).taxSatang)}</p>
         {quote.purchase && ['REPEAT', 'FULL_PACKAGE_UPGRADE'].includes(quote.purchase.kind) ? <dl className={`grid gap-5 rounded-xl bg-brand-50 p-5 ${annualConversion ? 'sm:grid-cols-2 xl:grid-cols-4' : 'sm:grid-cols-3'}`}>
           <div><dt className="text-sm text-brand-800">ชำระวันนี้</dt><dd className="mt-1 text-2xl font-bold text-brand-800">{money(quote.totalSatang)}</dd></div>
           <div><dt className="text-sm text-gray-600">โควตาที่เพิ่ม</dt><dd className="mt-1 text-xl font-bold">{quote.purchase.receiptUnitsAdded.toLocaleString('th-TH')} ใบ<span className="mt-1 block text-sm font-normal text-gray-600">ใช้ได้ทันทีเมื่อชำระสำเร็จ</span></dd></div>
           <div><dt className="text-sm text-gray-600">วันหมดอายุใหม่</dt><dd className="mt-1 text-xl font-bold">{date(quote.purchase.projectedPaidThrough)}<span className="mt-1 block text-sm font-normal text-gray-600">{annualConversion ? 'เพิ่ม 12 เดือนจาก' : 'ต่อจากเดิม'} {date(quote.purchase.previousPaidThrough)}</span></dd></div>
           {annualConversion && <div><dt className="text-sm text-gray-600">ต่ออายุรายปีครั้งถัดไป</dt><dd className="mt-1 text-xl font-bold">{money(quote.totalSatang)}<span className="mt-1 block text-sm font-normal text-gray-600">วันที่ {date(quote.purchase.projectedPaidThrough)}</span></dd></div>}
-        </dl> : <p className="rounded-xl bg-brand-50 p-5 text-2xl font-bold text-brand-800">ชำระวันนี้ {money(quote.totalSatang)}</p>}
+        </dl> : <p className="rounded-xl bg-brand-50 p-5 text-2xl font-bold text-brand-800">ชำระวันนี้ {money((quote.eventDiscount?.applied ?? quote).totalSatang)}</p>}
         <p>{quote.taxTreatment === 'NOT_VAT_REGISTERED' ? 'บริษัทผู้ให้บริการยังไม่ได้จด VAT จึงไม่มีการเรียกเก็บ VAT' : quote.taxTreatment === 'INCLUSIVE_VAT_7' ? 'ราคารวม VAT 7% แล้ว' : 'ราคาเพิ่ม VAT 7%'}</p>
         {quote.purchase?.kind === 'UPGRADE' ? <div className="space-y-2"><p>ชำระส่วนต่างและเริ่ม {quote.offer.label} เมื่อยืนยันการชำระสำเร็จ วันหมดอายุคงเดิม {date(quote.purchase.projectedPaidThrough)} เพิ่ม {quote.purchase.receiptUnitsAdded} ใบ รวมคงเหลือประมาณ {quote.purchase.projectedRemainingReceipts} ใบ</p><p>{quote.purchaseMode === 'CARD_AUTO' ? 'ยอดต่ออายุรอบถัดไป' : 'ราคาเต็มเมื่อซื้อรอบใหม่'} {money(quote.upgrade!.nextRenewalTotalSatang)}</p>{(quote.purchaseMode === 'CARD_ONCE' || quote.purchaseMode === 'PROMPTPAY_ONCE') && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => action(async () => { await requestQuote(quote.offer.offerKey, quote.offer.interval, recipientEmail, undefined, quote.purchaseMode, undefined, 'FULL_PACKAGE'); })}>ดูทางเลือกซื้อ {quote.offer.label} เต็มแพ็ก {money(quote.upgrade!.nextRenewalTotalSatang)}</button>}<details className="text-sm text-gray-500"><summary className="min-h-11 cursor-pointer py-2">รายละเอียดส่วนต่าง</summary><p>คำนวณส่วนต่าง ณ {date(quote.upgrade!.prorationAt)} · จำนวนคงเหลือเปลี่ยนตามการใช้งานระหว่างชำระ</p><ul className="space-y-1">{quote.upgrade!.segments.map((segment,index)=><li key={index}>{date(segment.start)} ถึง {date(segment.end)}: {money(segment.amountSatang)} · เพิ่ม {segment.receiptUnitsAdded} ใบ</li>)}</ul></details></div> : quote.purchase?.kind === 'FULL_PACKAGE_UPGRADE' ? <div className="space-y-2"><p>ซื้อ {quote.offer.label} เต็มแพ็กเพิ่มจากแพ็กเดิม จ่ายราคาเต็ม {money(quote.totalSatang)} ไม่หักค่าแพ็กเดิม เริ่มสิทธิ์แพ็กใหม่และเพิ่มโควตาเต็ม {quote.purchase.receiptUnitsAdded.toLocaleString('th-TH')} ใบทันทีหลังชำระสำเร็จ</p><p>รวมคงเหลือประมาณ {quote.purchase.projectedRemainingReceipts.toLocaleString('th-TH')} ใบ (รวมยอดเดิมที่ยังใช้ได้) · วันหมดอายุใหม่ {date(quote.purchase.projectedPaidThrough)} · ยอดจริงขึ้นกับการใช้งานระหว่างชำระ</p><button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => action(async () => { await requestQuote(quote.offer.offerKey, quote.offer.interval, recipientEmail, undefined, quote.purchaseMode); })}>กลับไปดูราคาอัปเกรดจ่ายส่วนต่าง</button></div> : quote.purchase?.kind === 'SCHEDULED_CHANGE' ? <div className="space-y-2"><p>ชำระแพ็กเกจเต็มล่วงหน้า สิทธิ์เดิมยังใช้ได้ถึง {date(quote.purchase.previousPaidThrough)} จากนั้นเริ่ม {quote.offer.label} และรับโควตา {quote.purchase.receiptUnitsAdded.toLocaleString('th-TH')} ใบ</p><p>แพ็กเกจรอบใหม่ใช้ได้ถึง {date(quote.purchase.projectedPaidThrough)} ไม่มีการตัดเงินงวดถัดไป</p></div> : quote.purchase?.kind === 'REPEAT' ? <p className="text-sm text-gray-600">หลังซื้อคงเหลือประมาณ {quote.purchase.projectedRemainingReceipts.toLocaleString('th-TH')} ใบ รวมโควตาเดิมที่ยังไม่หมดอายุ · ยอดจริงขึ้นกับการใช้งานระหว่างชำระ</p> : quote.purchase?.kind === 'RESTART' ? <p>เริ่มแพ็กเกจใหม่เมื่อชำระสำเร็จ รับ {quote.offer.receiptAllowance} ใบ วันและโควตาที่หมดอายุไปแล้วไม่ทบ ประวัติชำระเงินเดิมยังดูได้</p> : <div className="space-y-2">
           {quote.purchase?.trialCarryover && <dl className="space-y-2 rounded-xl bg-gray-50 p-4 text-sm">
