@@ -58,6 +58,16 @@ test('G3/G6 durable delivery PostgreSQL leases, immutable replay, cancellation a
       await service.finishPlanBatch(third!, 2, { kind: 'accepted', code: 'API_ACCEPTED' }, later);
       assert.equal((await client.lineDeliveryPlan.findUniqueOrThrow({ where: { id: plan.planId } })).status, 'ACCEPTED');
     });
+    await t.test('a refused reply token frees the same batch for an immediate push (E4, UAT 2026-09-29)', async () => {
+      const { plan, fence } = await fixture(1);
+      await service.savePlan(fence, plan, new Date(now.getTime() + 86400000), now);
+      const first = (await service.claimPlan(plan.planId, fence, now))!;
+      assert.equal((await service.beginPlanBatch(first, 'REPLY', now))?.index, 0);
+      assert.equal(await service.finishPlanBatch(first, 0, { kind: 'rejected', code: 'REPLY_TOKEN_REJECTED', rejection: 'TOKEN' }, now), true);
+      const push = await service.claimPlan(plan.planId, fence, now);
+      assert.ok(push, 'claimable at once — a spent reply token is not a transport fault to back off from');
+      assert.equal((await service.beginPlanBatch(push!, 'PUSH', now))?.index, 0);
+    });
     await t.test('UNKNOWN reply never becomes a push; cancel is terminal even when in-flight request accepts', async () => {
       const { plan, fence } = await fixture(6);
       await service.savePlan(fence, plan, new Date(now.getTime() + 86400000), now);

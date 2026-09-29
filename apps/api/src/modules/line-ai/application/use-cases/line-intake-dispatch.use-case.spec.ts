@@ -1,5 +1,6 @@
 import { evaluateEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
+import { deliveryHash } from '../../domain/logic/line-delivery-plan.logic';
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { admitCompanyOcr } from '../company-ocr-governance';
 import { describe, it } from 'node:test';
@@ -9,7 +10,7 @@ import { resolveTransactionBranchId } from '../../../data-model-core/application
 import { chatKeyHashOf, lineClarificationContentHash, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting, isUtilityBillSaveRequest } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { receiptStatusQuestion, receiptProgressLabel } from '../../domain/logic/line-receipt-status.logic';
-import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
+import { createLineAiInputEvidence, type BusinessDocumentClassification, type LineIntakeRoutePlan } from '@watchdog-bms/contracts';
 import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 
@@ -2933,6 +2934,66 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
     assert.doesNotMatch(sentText(h), ID_OR_COMMAND);
   });
 
+  // UAT 2026-09-29 (main c4513ddd): the second of two photos sent back to back was drafted 62 s after it was
+  // accepted, and its delivery plan failed validation in 13 ms — the draft existed, the customer never heard.
+  it('two photos back to back: both drafts are announced, the late one by push when its reply token is spent', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true,
+      routePlans: [RECEIPT_ROUTE, RECEIPT_ROUTE], prisma });
+    const flow = h.useCase as any;
+    flow.config.lineAiTerminalOutcomeReplayEnabled = true;
+    const acceptedAt: Record<string, Date> = { [MEDIA_EVENT.webhookEventId]: new Date(Date.now() - 10_000),
+      [SECOND_PHOTO.webhookEventId]: new Date(Date.now() - 62_000) };
+    const plans = new Map<string, any>();
+    const delivered: Array<{ eventId: string; transport: string; text: string }> = [];
+    prisma.client.lineTurnOutcome = { findUnique: async () => null, updateMany: async () => ({ count: 1 }) };
+    prisma.client.lineWebhookEventLog.findUnique = async (args: any) => {
+      const createdAt = acceptedAt[args.where.webhookEventId];
+      return createdAt && { status: 'received', processedAt: null, createdAt,
+        budgetAuthorityJson: { grant: { finalDeadlineAtMs: createdAt.getTime() + 40_000 } } };
+    };
+    prisma.client.lineDeliveryPlan = { findUnique: async (args: any) => plans.get(args.where.id) };
+    flow.webhookPlanAuthorization = async (_event: unknown, expiresAt: string) => ({ v: 2, kind: 'PRIVATE', issuedAt: new Date().toISOString(), expiresAt,
+      actor: { userId: 'user-1', companyId: 'company-1', membershipId: 'mem-1', requestId: 'request', accessFingerprint: 'fingerprint', channelId: 'ch-1',
+        channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation-1', ownerEpoch: 0 },
+      proofs: [] });
+    flow.verifyWebhookPlan = async () => true;
+    const eventOf = new Map<string, string>();
+    flow.deliveryPlans = {
+      savePlan: async (owner: any, plan: any, _retention: unknown, _now: unknown, webhookEventId: string) => {
+        plans.set(plan.planId, { id: plan.planId, status: 'READY', planJson: plan, planHash: deliveryHash(plan), outcomeId: owner.id });
+        eventOf.set(plan.planId, webhookEventId); return { id: plan.planId };
+      },
+      claimPlan: async (id: string) => ({ row: plans.get(id), plan: plans.get(id).planJson, token: 'lease', fence: {},
+        states: plans.get(id).states ?? plans.get(id).planJson.batches.map(() => ({ status: 'READY', variant: 'primary', replyAttempted: false, pushAttempts: 0 })) }),
+      beginPlanBatch: async (claim: any) => ({ index: claim.states.findIndex((state: any) => state.status !== 'ACCEPTED'), timeoutMs: 5_000 }),
+      finishPlanBatch: async (claim: any, index: number, result: any) => {
+        claim.states[index] = { ...claim.states[index], status: result.kind === 'accepted' ? 'ACCEPTED' : 'READY', replyAttempted: true };
+        plans.get(claim.row.id).states = claim.states; return true;
+      },
+    };
+    flow.lineReply.sendFrozenV2 = async (input: any) => {
+      const eventId = [...eventOf].find(([planId]) => plans.get(planId)?.planJson.batches.some((batch: any) =>
+        batch.primary.pushRetryKey === input.pushRetryKey))![1];
+      // The late photo's reply token has lapsed by the time its draft is ready; LINE refuses it.
+      if (input.transport === 'REPLY' && eventId === SECOND_PHOTO.webhookEventId) return { kind: 'rejected', code: 'REPLY_TOKEN_REJECTED', rejection: 'TOKEN' };
+      delivered.push({ eventId, transport: input.transport, text: replyAssertionText(input.messages[0]) });
+      return { kind: 'accepted', code: 'API_ACCEPTED' };
+    };
+
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    await h.useCase.executeReceiptUpload(SECOND_PHOTO);
+
+    assert.equal(h.ocrRequests.length, 2, 'both photos were read');
+    assert.deepEqual(delivered.map(item => [item.eventId, item.transport]),
+      [[MEDIA_EVENT.webhookEventId, 'REPLY'], [SECOND_PHOTO.webhookEventId, 'PUSH']], 'each draft is announced once');
+    assert.ok(delivered.every(item => /120/u.test(item.text)), 'with its receipt summary');
+    for (const eventId of [MEDIA_EVENT.webhookEventId, SECOND_PHOTO.webhookEventId]) {
+      const last = updates.filter((update: any) => update.where?.webhookEventId === eventId).at(-1);
+      assert.equal(last?.data?.status, 'completed', `${eventId} ends delivered`);
+    }
+  });
+
   it('two unclear photos: files are named by order and time, buttons send their own words, and a tap picks the right one', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true,
@@ -2959,6 +3020,162 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
     assert.equal(pendingMediaRows.find((row) => row.lineMessageId === 'msg-media-1').askedQuestionJson.selectedForContinuation, false);
     assert.equal(await flow.handlePendingMediaControl({ ...pick, webhookEventId: 'evt-chat', messageText: 'ขอบคุณค่ะ' }), false,
       'ordinary chat is never a control');
+  });
+});
+
+// UAT 2026-09-29 (main c4513ddd, owner: "ของเดิมดีอยู่แล้ว"): in a bound chat the v2 route ran BEFORE the
+// deterministic handlers production a2b926c6 runs first. "1" answering the photo question became a general
+// question, "ใบเสร็จค่ะ" a document-reading job, a check bill's "1" a dead end, and a draft or correction reply
+// reached the router without the open work production gave it. These run the production continuations bound.
+describe('LINE intake dispatch – a bound (v2) chat answers open work in production order', () => {
+  const CAPTURE = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.review', 'expense.update', 'line.ai.query'];
+  const GRANT = { turnKey: 'bound-open-work' };
+  const ACTIVE_DRAFT = { expenseId: 'expense-draft-1', label: 'ร่าง 1', status: 'PAUSED' as const,
+    questions: [{ id: 'D-ADDRESS', prompt: 'อ่านที่อยู่ร้านจากใบไม่ได้ พิมพ์ที่อยู่ตามใบได้เลย หรือพิมพ์ ข้าม' }] };
+
+  /** A text turn in a BOUND chat with the v2 seams a real one has: accepted input evidence, a grant, a task store. */
+  async function boundText(h: Harness, messageText: string, webhookEventId: string, tasks: any[] = []): Promise<any> {
+    const flow = h.useCase as any;
+    const saved: any[] = [];
+    flow.prisma.client.lineLedgerDelivery ??= { findMany: async () => [], findFirst: async () => null, findUnique: async () => null };
+    flow.contextV2 = {
+      admit: async () => ({ id: 'line-v2:conversation-1', lifecycleEpoch: 0 }),
+      projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 0, expiresAtMs: Date.now() + 60_000, tasks }),
+      save: async (_owner: unknown, _version: number, _epoch: number, state: unknown) => { saved.push(state); return true; },
+    };
+    flow.prepareTextGrantV2 = async (accepted: object) => { flow.budgetGrantsV2.set(accepted, GRANT); return GRANT; };
+    flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+    flow.aiGateway.narrowLineReliabilityGrant = async () => GRANT;
+    const event: any = { ...TEXT_EVENT, webhookEventId, messageText };
+    event.inputEvidence = (await createLineAiInputEvidence({ turnKey: webhookEventId, parts: [{ partId: 'part-0',
+      eventIdHash: 'c'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] }))!.inputEvidence;
+    await h.useCase.execute(event);
+    return { event, saved };
+  }
+
+  for (const answer of ['1', 'ใบเสร็จค่ะ']) {
+    it(`"${answer}" answering the photo question drafts the stored photo before any route (RECEIPT-05)`, async () => {
+      const { prisma, pendingMediaRows } = makePrisma();
+      seedPendingRow(pendingMediaRows);
+      const h = makeHarness({ permissions: CAPTURE, boundV2: true, prisma });
+      await boundText(h, answer, `evt-bound-answer-${answer.length}`);
+      assert.equal(h.routeRequests.length, 0, 'a deterministic answer never reaches the router');
+      assert.equal(h.createExpenseCalls.length, 1, 'the stored photo becomes the draft, as production does');
+      assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+      assert.doesNotMatch(h.replies.join('\n'), /ยังไม่แน่ใจ|ระบบตอบช้า|อ่านไฟล์/u);
+    });
+  }
+
+  it('"1" on a parked check bill takes the paid-without-receipt lane before any route', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { askedQuestionJson: { kind: 'CHECK_BILL_ACTION', chatKeyHash: chatKeyHashOf(TEXT_EVENT),
+      ocrFields: { grandTotalAmount: '853.00', vendorName: 'Grand Lobby Bar' } } });
+    const h = makeHarness({ permissions: CAPTURE, boundV2: true, prisma, substituteResult: {
+      handled: true, status: 'BLOCKED', workflowId: 'workflow-1', expenseId: 'expense-clarified-1', acceptedFields: [], blockers: [],
+      pendingQuestion: 'ค่าใช้จ่ายนี้ใช้ทำอะไรคะ?', replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน' } });
+    await boundText(h, '1', 'evt-bound-check-bill');
+    assert.equal(h.routeRequests.length, 0);
+    assert.equal(h.createExpenseCalls.length, 1, 'the check bill becomes one draft');
+    assert.equal(h.checkBillStarts.length, 1, 'and its continuation starts, as production');
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+  });
+
+  it('a draft control answers the paused draft before any route', async () => {
+    const executed: string[] = [];
+    const h = makeHarness({ permissions: CAPTURE, boundV2: true, expenseDraftConversation: {
+      routeContexts: async () => [ACTIVE_DRAFT],
+      execute: async (_ctx: any, input: any) => { executed.push(input.messageText);
+        return { handled: true, status: 'UPDATED', expenseId: 'expense-draft-1', replyTexts: ['🧾 ร่างล่าสุด'], acceptedFields: [] }; },
+    } });
+    await boundText(h, 'ทำต่อ', 'evt-bound-draft-control');
+    assert.equal(h.routeRequests.length, 0);
+    assert.deepEqual(executed, ['ทำต่อ']);
+  });
+
+  it('a free-text draft answer reaches the router WITH the open draft, and the draft takes the answer', async () => {
+    const executed: any[] = [];
+    const h = makeHarness({ permissions: CAPTURE, boundV2: true, expenseDraftConversation: {
+      routeContexts: async () => [ACTIVE_DRAFT],
+      execute: async (_ctx: any, input: any) => { executed.push(input);
+        return { handled: true, status: 'UPDATED', expenseId: 'expense-draft-1', replyTexts: ['🧾 บันทึกที่อยู่ร้านแล้ว'], acceptedFields: ['D-ADDRESS'] }; },
+    }, routePlan: { status: 'ROUTED', intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.9,
+      semanticSubrequests: [{ index: 0, kind: 'write', writeIntent: 'EXPENSE_DRAFT_CONTINUATION', goal: 'ตอบที่อยู่ร้านของร่าง',
+        requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] } as any });
+    await boundText(h, '99 ถนนสุขุมวิท กรุงเทพ', 'evt-bound-draft-answer');
+    assert.equal(h.routeRequests.length, 1);
+    assert.deepEqual(h.routeRequests[0].activeExpenseDrafts, [ACTIVE_DRAFT], 'production gave its router the open draft');
+    assert.equal(executed.length, 1, 'the draft takes the answer');
+    assert.equal(executed[0].messageText, '99 ถนนสุขุมวิท กรุงเทพ');
+    assert.match(h.replies.join('\n'), /บันทึกที่อยู่ร้านแล้ว/u);
+  });
+
+  it('a correction reaches the router with the captures it may correct', async () => {
+    const h = makeHarness({ permissions: CAPTURE, boundV2: true,
+      recentCaptures: [{ id: 'expense-7', expenseDate: new Date('2026-09-29'), grandTotalAmount: '120.0000', sourceDocumentType: 'RECEIPT', createdAt: new Date() }],
+      routePlan: { status: 'ROUTED', intent: 'EXPENSE_CAPTURE_CORRECTION', language: 'th', confidence: 0.9,
+        semanticSubrequests: [{ index: 0, kind: 'write', writeIntent: 'EXPENSE_CAPTURE_CORRECTION', goal: 'แก้ยอดเป็น 500',
+          requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] } as any });
+    await boundText(h, 'แก้ยอดเป็น 500', 'evt-bound-correction');
+    assert.equal(h.routeRequests.length, 1);
+    assert.deepEqual(h.routeRequests[0].recentCapturedExpenses?.map((row: any) => row.id), ['expense-7'],
+      'production gave its router the recent capture to correct');
+    assert.ok(h.routeRequests[0].substituteContext, 'and the substitute state');
+    assert.equal(h.correctionCalls.length, 1, 'the correction lane runs on that route');
+  });
+
+  it('task choices send their own words, never a task id, and the words pick the same waiting clause', async () => {
+    const h = makeHarness({ permissions: CAPTURE, boundV2: true });
+    const flow = h.useCase as any;
+    const owner = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line', channelKind: 'USER',
+      messagingChannelId: 'ch-1', chatKeyHash: chatKeyHashOf(TEXT_EVENT) };
+    const waitingTask = { taskId: 'task-7f3a9c', revision: 3, kind: 'write', state: 'waiting_user', userGoal: 'สองรายการ',
+      subrequests: [
+        { index: 0, kind: 'write', goal: 'บันทึกค่ากาแฟ', status: 'handled' },
+        { index: 1, kind: 'write', goal: 'บันทึกค่าแท็กซี่', status: 'needs_user' },
+      ],
+      sourceRevisionLocators: [
+        { sourceType: 'LINE_ACCEPTED_TASK_0_0', sourceId: 'ledger-source-1', revision: 'digest-1' },
+        { sourceType: 'LINE_ACCEPTED_TASK_1_2', sourceId: 'ledger-source-1', revision: 'digest-1' },
+      ] };
+    flow.contextV2 = { projection: async () => ({ version: 2, stateVersion: 4, lifecycleEpoch: 0, expiresAtMs: Date.now() + 60_000, tasks: [waitingTask] }) };
+    const bind = (event: object) => flow.boundConversations.set(event, { owner, id: 'line-v2:conversation-1', epoch: 0 });
+
+    // What the customer is offered: the button's words, no id and no slash command.
+    const offered = { ...TEXT_EVENT, webhookEventId: 'evt-offer' };
+    bind(offered); flow.semanticTaskMappings.set(offered, []);
+    const [choices] = await flow.remainingTaskChoiceMessages(offered);
+    const items = choices.quickReply.items;
+    assert.equal(items.length, 1);
+    assert.equal(items[0].action.text, items[0].action.label, 'a tap sends exactly the words on the button');
+    assert.doesNotMatch(JSON.stringify(choices), /task-7f3a9c|\/task/u);
+
+    // Tapping it maps the words back to that clause's retained source.
+    const sourceReads: string[] = [];
+    flow.prisma.client.lineLedgerDelivery = { findUnique: async (args: any) => { sourceReads.push(args.where.id); return null; } };
+    for (const words of [items[0].action.text, 'ทำข้อ 3 ก่อน']) {
+      const tap = { ...TEXT_EVENT, webhookEventId: `evt-tap-${sourceReads.length}`, messageText: words };
+      bind(tap);
+      assert.equal(await flow.prepareRetainedTaskSelection(tap), true, `"${words}" is a task choice`);
+    }
+    assert.deepEqual(sourceReads, ['ledger-source-1', 'ledger-source-1'], 'both wordings reached the waiting clause, not another');
+
+    // Nothing waiting: the same words are ordinary chat for the normal route.
+    flow.contextV2 = { projection: async () => ({ version: 2, stateVersion: 4, lifecycleEpoch: 0, expiresAtMs: Date.now() + 60_000, tasks: [] }) };
+    const idle = { ...TEXT_EVENT, webhookEventId: 'evt-idle', messageText: 'ทำรายการ 1 ต่อ' };
+    bind(idle);
+    assert.equal(await flow.prepareRetainedTaskSelection(idle), false);
+  });
+
+  it('an unrelated question beside a pending photo still goes to the model, and the photo keeps waiting', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows);
+    const h = makeHarness({ permissions: CAPTURE, boundV2: true, prisma, routePlan: { status: 'ROUTED', intent: 'UNSUPPORTED',
+      language: 'th', confidence: 0.9, semanticSubrequests: [{ index: 0, kind: 'general', goal: 'อธิบายกำไรขั้นต้น',
+        requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] } as any });
+    await boundText(h, 'กำไรขั้นต้นคืออะไร', 'evt-bound-side-question');
+    assert.equal(h.routeRequests.length, 1, 'the question is routed');
+    assert.equal(h.createExpenseCalls.length, 0);
+    assert.equal(pendingMediaRows[0].status, 'PENDING', 'the photo still waits for its own answer');
   });
 });
 
