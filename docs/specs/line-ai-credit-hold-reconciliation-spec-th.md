@@ -1,6 +1,6 @@
 # Spec: LINE AI — การเคลียร์เครดิตที่กันไว้ค้าง (unresolved holds และ breach)
 
-> มติ customer display 2026-09-29: [add-on spec §17](chat-credit-and-receipt-addons-spec-th.md) ไม่แสดงยอดกันไว้ให้ลูกค้า และรวม admin+paid เป็นยอดเพิ่มเติม. การจอง/กู้รายการและ operator view ในเอกสารนี้ยังต้องทำงานตามเดิม; ห้ามคืนยอดที่จองเพียงเพื่อซ่อนตัวเลขหรือใช้ customer projectionแทนข้อมูลที่ operatorต้องตรวจ
+> ส่วนเพิ่มจาก [สเปก add-on](chat-credit-and-receipt-addons-spec-th.md) 2026-09-29: หน้าลูกค้าไม่แสดงยอดกันไว้ และรวมยอดทีมงาน+ยอดซื้อเป็น “ยอดเพิ่มเติม” (§17). การจอง/กู้รายการและมุมมอง operator ในเอกสารนี้ยังทำงานตามเดิม; ห้ามคืนยอดที่จองเพียงเพื่อซ่อนตัวเลข หรือใช้ projection ของลูกค้าแทนข้อมูลที่ operator ต้องตรวจ. สำหรับร้านที่ย้ายแล้ว hold ของ LINE v2 ใน SHARED จะผูก funding ของเครดิต AI (แพ็กเกจ → ทีมงาน → ซื้อ, add-on §5.3/T-04): operator release และ charge-at-bound ต้องแปลง entry ของ lot เดิมภายใต้ lock เดือนเดิม, หลักฐานที่มาช้าไม่หยิบ lot ใหม่ และรายการต้องค้น hold ที่ UNRESOLVED ได้เกินสองเดือน (วันนี้ `partner-ai-credit-holds.use-case.ts:84-90` อ่านแค่เดือนปัจจุบันกับเดือนก่อน) — งานใน PR C ของแผน add-on
 
 ## 1. สถานะและขอบเขต
 

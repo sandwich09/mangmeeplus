@@ -1,6 +1,6 @@
 # แผนงาน: LINE AI wave 2 — "เครดิต AI", ข้อความอ่านเอกสาร และคำตอบ deterministic
 
-> Follow-up 2026-09-29: Customer add-on wording/fields ใช้ [spec §17](../specs/chat-credit-and-receipt-addons-spec-th.md) และ [plan §13](chat-credit-and-receipt-addons-plan-th.md). เพิ่ม safe customer projection, commercial-vs-operational cause และ queued LINE template compatibility. หลักฐาน H1 เดิมเป็นของพฤติกรรมเดิม ไม่ใช้รับรอง D10/E28–E42 ใหม่; operator hold warnings/recovery และ deterministic scopeคงเดิม
+> Follow-up 2026-09-29: คำและ field ของ add-on ใช้ [สเปก add-on §17](../specs/chat-credit-and-receipt-addons-spec-th.md) ซึ่งยึด W-01 (“เครดิต AI” เป็นชื่อเดียวที่ลูกค้าเห็น; คอนโซลใช้ “เพดานเครดิต AI ต่อเดือน” กับเพดานรายเดือน) และงานอยู่ใน [แผน add-on PR F และ §9](chat-credit-and-receipt-addons-plan-th.md): projection ของลูกค้าที่ปลอดภัย, สาเหตุเชิงพาณิชย์กับเพดานของระบบ และความเข้ากันได้ของ template ข้อความ LINE ที่ค้างในคิว. หลักฐาน H1 เดิมเป็นของพฤติกรรมเดิม ไม่ใช้รับรอง D10 หรือ AO-E28–AO-E42; คำเตือน/การกู้ hold ของ operator และขอบเขต deterministic คงเดิม
 
 - Spec: [line-ai-credit-wording-and-deterministic-reads-spec-th.md](../specs/line-ai-credit-wording-and-deterministic-reads-spec-th.md)
 - Task memory: `docs/agent-memory/line-ai-credit-wording-wave2-2026-09-18.md`

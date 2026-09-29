@@ -1,124 +1,345 @@
-# Plan: ส่วนลดจากเซลล์ — UI ตามธีมเดิมและหนึ่งรายการต่อบิล
+# Plan: ส่วนลดจากงานขาย — ลดบิลแรกจาก QR ในงาน
 
-ปรับล่าสุด 2026-09-29 · **เอกสารและ dependency audit เสร็จ; UI ใหม่/production implementation ยังไม่เริ่ม**
+ปรับล่าสุด 2026-09-29 · **แบบพร้อมลงมือหลัง prerequisite §1; ยังไม่เริ่ม implement และยังไม่มีสิทธิ์ deploy**
 
-[Spec](../specs/sales-event-discounts-spec-th.md) · [Audit / findings](../research/sales-event-discounts-e2e-impact-audit-2026-09-29-th.md) · [Memory](../agent-memory/sales-event-discounts-2026-09-28.md)
+[Spec](../specs/sales-event-discounts-spec-th.md) · [Audit และผลตรวจซ้ำบน develop](../research/sales-event-discounts-e2e-impact-audit-2026-09-29-th.md) · [แบบของงานข้ามทุก PR](purchase-without-setup/xx-cross-cutting.md) · [Runbook deploy](../runbooks/uat-production-v2-deployment.md) · [Runbook cloud](../runbooks/cloud-environment-operations.md). Memory ของงานนี้ยังไม่มีใน repo (ลิงก์ของ DRAFT v1 ไม่มีไฟล์).
 
-## Product และขอบเขต
+ฐานที่ตรวจ: develop `8a91bc1c` และ `origin/develop` `69fba9d3`. ทุก `file:line` ตรวจกับไฟล์จริงแล้ว; ตอนลงมือให้ตรวจ anchor ซ้ำบน develop ล่าสุดก่อนแก้ (แบบ xx-cross-cutting §2.1). รหัส SD-O/SD-T/SD-Q/SD-E อยู่ในสเปก
 
-หัวหน้าสร้างงาน/ชุดส่วนลด → เซลล์แจก QR → ลูกค้าเข้าสู่ร้านผ่าน login/signup เดิม → รับส่วนลดที่ Billing → สะสมได้ → เลือกหนึ่งรายการลดการซื้อปัจจุบันหรือบิลรายเดือน/รายปีถัดไป → verified paid ใช้สิทธิ์ครั้งเดียว → activation/report/refund แยกตามเดิม. ไม่ referral/rewards ไม่ย้าย SalesAttribution เดิม.
+## 0. ส่งมอบอะไร และไม่ทำอะไร
 
-มติ UI ล่าสุดแทนเดโมก่อนหน้า:
-- Section “ส่วนลด” มาก่อนแพ็กเกจ; โครงแถวและแท็บตามภาพ reference แต่ทุก control ใช้ธีม Mangmee เดิม.
-- ปุ่ม “เลือก” → “ใช้ส่วนลด”; รายการอื่น disabled. กดรายการเดิมซ้ำยกเลิกสำเร็จก่อนเลือกใหม่. ไม่ direct replace ไม่มีกด “ใช้ส่วนลด” ซ้ำเพื่อยืนยันชำระ.
-- 1–3 รายการแสดงเต็ม; 4 ขึ้นไปเลื่อนรายการภายในเพื่อดูทั้งหมด. แท็บ “ส่วนลดที่มี N / ประวัติส่วนลด”; count และ selection ไม่ขึ้นกับหน้าที่โหลด.
-- คำบน UI ทั้งหัวหน้า/เซลล์/ลูกค้าเป็นส่วนลด; technical ticket IDs/model names คงได้. ไม่ใช้ native dropdown หรือสร้าง theme ใหม่.
-- Receive ไม่ apply/charge. One active selection ต่อ company/account/mode และหนึ่งสิทธิ์ต่อหนึ่งบิล; ไม่มี FIFO/stacking. ไม่มี expiry หลังรับ. วันปิดรับไม่ทำให้รายปีหมดสิทธิ์ก่อนบิลถัดไป.
-- สมัครเดิมคงทุก field/action; ไม่มี signup-ticket binding/การกัน cap ก่อนเข้าร้าน. VAT/floor คำนวณส่วนกลาง ไม่เพิ่ม input ให้ Sales/ลูกค้า.
+ส่งมอบ: ชุดส่วนลดและการมอบหมายในคอนโซลทีมขาย, QR 5 นาที, รับส่วนลดผ่าน LINE (LIFF), ลดบิลแรกของการซื้อที่เริ่มแพ็กเกจใหม่ใน 4 โหมด โดยไม่มี coupon, การจอง/ใช้/ปล่อยสิทธิ์ที่ผูกกับ attempt ของแพ็กเกจ, บรรทัดราคาบนหน้า billing, รายงานทีมขาย, การค้นหาของแอดมิน
 
-รอบนี้ทำ docs/audit เท่านั้น. ไม่มี production code/schema/provider mutation/เงินจริง/deploy/package.json หรือแก้ prototype. ต้องอัปเดตเดโมเดิมก่อนใช้รับรอง UI ใหม่นี้; 53 walkthroughs/63 assertions เดิมไม่ใช่ผลของมติใหม่.
+ไม่ทำ: ลดรอบต่ออายุ, แก้ guard ของการต่ออายุหรือ grace, coupon/promotion code, ส่วนลดกับดีลหรือ add-on, แท็บใหม่บนหน้า billing, แจ้งเตือน LINE/อีเมล (SD-Q5), แก้ `package.json`, env ใหม่, key ใหม่ใน `policyJson`, AI tool
 
-## Architecture และสิ่งที่ต้องยึด
+รอบเอกสารนี้แก้เฉพาะ spec, plan และ audit. ไม่มีโค้ด ไม่มี schema ไม่เรียก provider ไม่ deploy
 
-1. ใช้ Billing quote/consent/attempt/account locks/operation/outbox/reconciler/issues/refund เดิม. Claim เป็น transaction แยกจาก select/clear และ Checkout.
-2. Mutation เป็น desired state: select ID หรือ clear expected ID + version + idempotency. ไม่ใช้ toggle endpoint; server ปฏิเสธ select คนละรายการเมื่อมี active selection.
-3. Quote pin selectionVersion ทั้งกรณี null/มีส่วนลด; Checkout revalidate version/target/terms ใน accepted transaction เดียว. UI ล้าง consent และทิ้ง response เก่าทุกครั้งที่ยอด/selection เปลี่ยน.
-4. Clear ที่ ARMED ต้องรอ provider detach proof ก่อน unlock. UNKNOWN/accepted/RESERVED ห้ามเลือกใหม่/ปล่อยสิทธิ์จาก timeout. ชน invoice cutoff ให้แสดง source ที่ชนะจริง.
-5. ราคา base contract/ดีล/สิทธิ์แพ็กคงเดิม. ส่วนลดเป็น evidence เฉพาะ invoice; cycle ถัดไปเต็มจนเลือกใหม่. Selection/read models ไม่เป็น authority ของยอดเงิน.
-6. ใช้ provider floor ที่พิสูจน์ตาม mode/method/currency และ constraints Billing เดิม. Repo ไม่มี post-discount business minimum; ไม่ยกค่า demo เป็น policy ใหม่. Add-on ไม่อยู่ใน scope; ไม่ให้คูปองระดับ customer รั่วไปบิลอื่น.
-7. Customer active membership + company.plan.manage. Sales platform tenant + active assignment/own queue. เพิ่ม permission sales.event.manage อย่าง explicit ใน contracts/registry/grants/audit tests; ไม่ถือว่ามีอยู่แล้ว.
-8. Schema additive; หนึ่ง active selection ต่อ account, หนึ่ง active/consumed redemption ต่อสิทธิ์, invoice/attempt uniqueness, version/locks และ immutable paid evidence. Provider IO อยู่นอก DB transaction.
-9. Rollout gate แยก claim/select/provider arm; gate OFF ยังอ่าน history และ reconcile accepted/refund ได้. ไม่มี destructive rollback ของ paid evidence.
+## 1. ลำดับงานและ prerequisite (SD-T2)
 
-## ขั้นงานและเกณฑ์จบ
+```
+P1 งานแก้ purchase flow ที่กำลังทำ ─> P2 ฐาน billing ร่วม (foundation) ─┬─> ฟีเจอร์ add-on (ตามแผน add-on)
+                                                                    └─> SD-A ─> SD-B ─> SD-C ─> SD-D ─> SD-E ─> native proof + UAT ─> Production
+P3 คำตอบ Owner SD-Q1–SD-Q6 (หรือยอมรับค่าเริ่มต้น) ─────────────────────────> ต้องมีก่อนเริ่ม SD-C
+```
 
-| ขั้น / สถานะ | งานและ dependency | เกณฑ์จบ |
+| ID | Prerequisite | ทำไมส่วนลดต้องรอ |
 |---|---|---|
-| D0 DONE | มติ UI/copy/3-row/toggle/theme + ปรับ spec ทั้ง flow | E19–E24 และข้อ supersede ชัดเจน ไม่มี copy/ตำแหน่ง/replace rule เก่าค้าง |
-| D1 DONE | Source audit ตลอด frontend/contracts/auth/data/provider/financial/dependent modules | Audit findings A01–A22 มี source, impact, closure, acceptance และผล local regression |
-| D2 TODO: demo | ใช้ canonical fragment เดิม ปรับแถว/copy/3-row/select-clear; เก็บข้อมูลที่บันทึกไว้ | UI ใหม่ผ่าน E19–E24; migration เก็บ issued/payment/assignment แต่เลิก direct replace; ไม่อ้างผล test เก่า |
-| 0 TODO: contract readiness | Source/permission grants/provider floor/feature gate matrix; source of truth อยู่ใน spec | Advertised scope ทุก combination มี owner/config/readiness จริง; ไม่มีค่าขั้นต่ำสมมติ |
-| 1 TODO: native proof | Checkout + next monthly/annual invoice + clear/detach + card/QR/deal/advance + VAT ทั้ง3 | Pin API/account/mode/cycle/evidence; pending/dunning/finalization race; next invoice full; collection hold ได้จริง |
-| 2 TODO: data/API | Batch/assignment/claim/selection/target/redemption + runtime DTO + cursor/read model | PG race cap/selection/cutoff, company/mode isolation, idempotency/recovery; E04/E05/E12/E17/E20–E23 |
-| 3 TODO: head/Sales/entry | ชื่องาน/ชุด text, assignmentหลายคน, dates, QR, safe login/signup/LINE return | Registry/grants/tenant/audit; stale QR/removed agent/cap/group; signupหน้าตาเดิม ไม่มี issue ก่อนมีร้าน |
-| 4 TODO: customer/theme | Section ก่อน package/quote/renewal, rows3/scroll, select-clear, themed fields | No native select; consent/stale quote/cache/profile/capacity/permissions; responsive/accessibility E15/E19–E24 |
-| 5 TODO: Billing integration | Discount evidence ใน quote/Checkout/recurring/schedule/collection/price-return/reconcile | E01–E10/E14/E16/E22/E23; legacy strict; ไม่ erase target/ลดซ้ำ/เก็บเต็มราคาเงียบ ๆ |
-| 6 TODO: financial dependents | Paid consume/activation/receipts/AI quota/history/docs/notification/refund/settlement/event reports | E08/E11/E13/E25/E26; actual net money แยก package entitlements และ legacy attribution |
-| 7 TODO: acceptance/recovery | HTTP+PG+native+browser+LINE+ops recovery matrix; code/docs/evidence review | E01–E27 มี evidence หรือ explicit blocker. ห้ามแทนด้วย simulation |
+| P1 | งานแก้ purchase flow ที่กำลังทำ: สถานะหลังกลับจาก Stripe, ปลดล็อก WorkspaceLayout, แผงผู้รับเอกสาร, label, ลิงก์ค้นหาแอดมิน, sync ข้อมูลร้านไป Stripe, คำศัพท์ | แก้ `BillingPage.tsx`, หน้า return และข้อความชุดเดียวกับที่ SD-D แก้; ข้อความของสเปกนี้ใช้คำศัพท์ชุดนั้น |
+| P2 | Foundation ตามสเปก add-on (T-02, T-07): `BillingAttempt.productKind` และ `BillingInvoice.productKind` (`String @default("PACKAGE")`), ช่องจอง `BillingAccount.activeAddOnAttemptId` แยกจาก `activeAttemptId`, reader ของแพ็กเกจกรอง PACKAGE | การจองส่วนลดผูกกับ attempt ของแพ็กเกจใน `activeAttemptId` เท่านั้น; ถ้า checkout ของ add-on ใช้ช่องเดียวกัน quote แพ็กเกจจะถูกบล็อก (`billing.service.ts:345`) และสถานะ "กำลังชำระ" จะผิด (SED-16); validator ของ add-on ต้องปฏิเสธ `eventDiscount` |
+| P3 | คำตอบ Owner SD-Q1–SD-Q6 หรือยอมรับค่าเริ่มต้นในสเปก §12 | กติกาวันหมดอายุ, RESTART, เครดิตยอดขาย และหนึ่งรายการต่อร้าน กำหนดโค้ดของ SD-C |
 
-ขั้น 2–6 ทำภายใต้ admission ปิด. Native provider proof ที่ไม่ผ่านถือเป็น blocker ของ combination นั้น ไม่เปิดรับสิทธิ์พร้อมคำสัญญาที่ระบบยังให้ไม่ได้. D2 เป็นงาน prototype ต่อไป ไม่ได้ทำในรอบ docs นี้.
+การทำงานคู่กับ add-on: SD-A และ SD-B ไม่แตะไฟล์ billing จึงพัฒนาคู่ขนานกับ add-on ได้ แต่ merge หลัง P2. SD-C และ SD-D แตะไฟล์ร่วมกับ add-on — ทีละ PR ต่อไฟล์ PR ที่ merge ทีหลัง rebase แล้วรันเทสต์ของไฟล์นั้นใหม่:
 
-## UI implementation contract
-
-ใช้โครง BillingPage/BillingCustomerFrame/MangmeePage. แยก feature-local component/logic/API/dictionary ตาม [frontend guideline](../guidelines/web-frontend-code-style.md) โดย reuse shared components; ไม่สร้าง common abstraction ใหม่ก่อนมีผู้ใช้จริงสองแห่ง.
-
-Placement:
-- Package: ส่วนลด → current package หรือ catalog/deal/capacity/quote ตามขั้นเดิม.
-- Renewal: ส่วนลดชุดเดียวกัน → next-bill/collection controls เดิม.
-- Payment history: ประวัติการเงินเดิม; ประวัติส่วนลดอยู่แท็บย่อยภายใน section ส่วนลด ไม่ซ้ำกับรายการ invoice.
-- อย่าวาง section เฉพาะ showOverview; choosing/quote/profile detour ต้องไม่ทำให้ selection หาย.
-
-Rows และ state:
-- ชื่อ/จำนวนลด/เงื่อนไขซ้าย ปุ่มขวาใน card เดียว ใช้เส้นแบ่ง. ไม่สร้าง ticket-shaped cards/oversized discount blocks.
-- 0 empty, 1/2/3 แถวพอดี, 4+ scroll ไม่ตัดข้อมูล. 20/100 ใช้ cursor ไม่โหลดทั้งหมดโดยสมมติ limit=3.
-- Selection summary/record มาจาก server แยกจาก list page. เลือกรายการที่4/นอกหน้าปัจจุบันยัง disable ทั้ง collection; tab switch/refresh/back คงผล.
-- Native button aria-pressed; same button toggles clear, pendingทุกแถว disabled, errorคงselectionล่าสุด. คำว่า “ใช้ส่วนลด” เป็นสถานะเลือกอยู่ ไม่เป็นหลักฐานจ่ายสำเร็จ.
-- Long Thai names, zoom, keyboard focus/offscreen row, scrolling on touch; viewportสูงตาม3แถวจริงและไม่ตัดปุ่ม.
-- หัวหน้าตั้งชื่องาน/ชุดเป็น text; assignment 10–20+ ค้นหา/ทีม/หลายหน้า/selection IDs/cancel/apply ตามเดิม. ไม่มีปุ่มเพิ่มชุดอีกชุดในฟอร์มปกติ ไม่มีวันหมดอายุหลังรับ ไม่มีช่องขั้นต่ำหลัง VAT.
-
-Theme/dropdown:
-- Reuse MangmeeCard/Button/Input tokens, ThemedSelect/SelectField/PopoverPanel, ThemedDate, Modal, CoverLoader.
-- ใน scope ตรวจ head audience/scope/team picker, Sales batch/filter, BillingCapacityPicker, BillingAdjustments และ preview/demo controls; ไม่เปลี่ยน payment-mode radio หรือ cadence button เดิมเป็น dropdown โดยไม่จำเป็น.
-- แก้ shared ThemedSelect open→disabled guard อย่างเล็กที่สุดก่อนเพิ่มผู้ใช้งานใหม่; test ต้องเปิดจริงแล้ว disable ไม่ใช่ SSR อย่างเดียว.
-- Controlled option ถูกลบ/disabled ไม่แสดงตัวแรกเป็น selection ปลอม. Portal ไม่ถูก 3-row scroller/modal clip; closed menu ไม่กิน keyboard focus.
-- ไม่แก้ทั่วแอปแบบเหมา; shared fix ต้องมี focused regression และตรวจ caller ที่เกี่ยวข้อง. Production UI ใช้ theme เดิมแม้ reference/เดโมเก่าจะมี native select.
-
-## Dependency map และงานที่เชื่อม
-
-| กลุ่ม | จุดต่อจริง | งาน/สิ่งที่ต้องคง |
+| ไฟล์ร่วม | ส่วนลดแก้ | add-on แก้ |
 |---|---|---|
-| Theme | common/components/mangmee, field/ThemedSelect, PopoverPanel, ThemedDate, CoverLoader, app/globals.css | Use tokens/portal/focus/disabled; feature CSS ไม่ hardcode theme ใหม่ |
-| Customer | BillingPage, BillingCustomerFrame, billing.api, billing-profile-navigation, BillingCapacityPicker | Placement/current quote/version/consent; membership/email/profile/capacity ไม่ bypass |
-| Contracts/DTO | packages/contracts/src/billing.ts, sales.ts; billing.dto/controller | List/claim/select/clear/quote snapshot/reason schemas; no client-priced input |
-| Auth/Sales | permission-registry, sales-context/controller, sales-agents/deals/reports services | Event manage grant ใหม่, active assignment, tenant/team scope, signed QR; ไม่ใช้ SalesAttribution เป็น event ledger |
-| Signup/LINE | external-signup pages/use cases + existing auth/LINE safe return | Carry intent only; no form/claim/provisioning policy changes; token expired/claim closed revalidate |
-| DB/concurrency | apps/api/prisma/schema.prisma; BillingAccount/Quote/Attempt/Invoice/Operation/Outbox/AuditLog | Additive tables/indexes/versions/locks; no backfill selection จากราคา/ประวัติ |
-| Pricing | billing-policy/service, provider readiness/configuration, BillingSnapshot | Compute discount before VAT, floor proof, pin base+discounted totals; accepted immutable |
-| Checkout/paid | paid-checkout-invoice, paid-invoice, Stripe client, reconciler | Expected discount evidence only; unknown/extra coupon rejected, zero/bootstrap not consume |
-| Recurring/changes | billing-repeat, schedule, collection, price-return, restart, upgrade, sales-deal-price | Coupon detach/re-arm scoped cycle; no clearing or duplication by schedule/cadence/price return |
-| Activation/usage | reconciler, receipt-grants, trial-carryover, feature-entitlements, capacity, applyDealRequest | Full package units/menu/capacity/period/AI-credit unchanged; financial total distinct |
-| Financial output | invoice-details, financial/refunds/refund-source, settlement-source, history-export, notifications | Actual paid/tax/refund amounts; issued credit note source; no full-price refund |
-| Adjacent planned add-ons | chat-credit-and-receipt-addons spec/contracts when implemented | ADD_ON excluded; no shared customer coupon/balance leakage; no selection retarget |
-| Ops | billing-operations/reconciler/provider-scans/issues/readiness, deployment runbooks | Durable retry/recovery; feature flag doesn't stop accepted reconciliation/history |
+| `apps/api/src/modules/billing/application/billing.service.ts` | quote/checkout/attempt/history (§2 SD-C) | สาขา ADD_ON ของ quote/checkout, status |
+| `apps/api/src/modules/billing/application/billing-reconciler.service.ts` | route, ใช้/ปล่อยสิทธิ์, ผูก CARD_AUTO | apply ของ add-on แยก |
+| `apps/api/src/modules/billing/domain/paid-checkout-invoice.ts` | ยอดที่คาดหวัง `:22-23` เท่านั้น | validator ของ add-on แยก |
+| `packages/contracts/src/billing.ts` | ฟิลด์ใหม่ + `BILLING_ACTIONS` | ชนิด quote/offer ของ add-on |
+| `apps/api/src/modules/auth/presentation/auth.guard.ts` (pin) | `/event-discount` ใน GET | route ของ add-on |
+| `apps/web/src/features/billing/BillingPage.tsx` | บรรทัดการ์ดและขั้นตรวจยอด | แท็บ "เครดิต AI และอ่านรูป" |
 
-Audit A01–A22 ให้ source links และผลกระทบรายจุด. Legacy SalesAttribution/Company.referralSalesUserId อาจถูกเรียกตาม flow เดิมอยู่แล้ว; งานนี้ไม่เพิ่ม referral หรือเปลี่ยนสูตร/ความหมายเดิม. Event report ใช้ redemption→actual invoice แยก; labels บอกยอดรับจริงเทียบราคาป้ายให้ชัดเจน.
+## 2. PR briefs
 
-## Verification และ acceptance matrix
+ทุก PR: worktree ใหม่จาก `origin/develop` ล่าสุด → PR ไป develop → twin PR ไป main (admin-merge ตามมติ Owner); stage เฉพาะ path ที่แก้; ไม่แตะ `package.json`
 
-| กลุ่ม | กรณีบังคับ | หลักฐานที่ต้องเก็บ |
+### SD-A — ข้อมูลและคอนโซลทีมขาย (ชุด, มอบหมาย, QR, รายการ, เพิกถอน, สิทธิ์)
+
+| ไฟล์ | งาน |
+|---|---|
+| `apps/api/prisma/schema.prisma` + `apps/api/prisma/migrations/<ts>_sales_event_discounts/migration.sql` | 4 model ตามสเปก §6.1 (String state, ไม่มี enum) + index + partial unique `(companyId) WHERE state IN ('RESERVED','USED')` ด้วย SQL ดิบ (แบบ `20260705010000_item15a_idempotency_and_channel_uniqueness`) |
+| `packages/contracts/src/sales.ts` | `SALES_PERMISSION_KEYS` เพิ่ม `'sales.event.manage'` (`:9-10`); `SALES_EVENT_BATCH_STATES`, `SALES_EVENT_TICKET_STATES`; ชนิด `SalesEventBatchInput`, `SalesEventBatchView`, `SalesEventQr`, `SalesEventTicketView` |
+| `apps/api/src/modules/auth/permission-registry.ts` | entry ใหม่ใกล้ `:108-115`; grant ของ `MANGMEE_SALES_LEAD` (`:565`); SYSTEM_ADMIN ได้จาก `...SALES_PERMISSION_KEYS` (`:555`) |
+| `apps/api/src/modules/sales-console/domain/sales-event.logic.ts` | ตรวจฟอร์ม, จำนวนเต็มบาท, ช่วงเวลา, state machine (สเปก §6.2), อายุ QR, serial, ตรวจขั้นต่ำต่อ scope (ราคาจาก policy ปัจจุบัน) |
+| `apps/api/src/modules/sales-console/application/sales-events.service.ts` | สร้าง/แก้/สั่ง state, ค้นหาเซลล์ (หัวหน้า: ทีมตัวเอง; admin: ทั้งหมด; take 50 + cursor), ออก QR (hash token, `qrSvgDataUrl`), รายการส่วนลด, เพิกถอน; audit ทุกคำสั่ง; ประกาศ constructor เอง (DI check) |
+| `apps/api/src/modules/sales-console/presentation/http/sales-events.controller.ts` + `sales-events.dto.ts` | route `/v1/sales/events/*` (สเปก §7.1) ทุก handler เรียก `assertPlatformTenant` (`sales-context.ts:37`) + `@RequirePermissions` |
+| `apps/api/src/modules/sales-console/sales-console.module.ts` | ลงทะเบียน controller/provider (imports เดิม `:30` มี BillingModule แล้ว) |
+| `apps/api/src/modules/audit/domain/models/audit-action.ts` | action `sales.event.*` (ห้ามแตะบรรทัดที่ถูก pin แบบ literal: `PLATFORM_ACCESS_STATE_UPDATE`) |
+| `apps/web/app/sales/events/page.tsx`, `apps/web/app/sales/events/[batchId]/page.tsx` | route หน้าเว็บ |
+| `apps/web/src/features/sales-console/SalesEventsPage.tsx`, `SalesEventBatchForm.tsx`, `SalesEventBatchPage.tsx`, `sales-events.logic.ts`, `sales.api.ts` | ฟอร์ม (checkbox เซลล์ + ค้นหา server, `datetime-local` + `+07:00`), รายการ, หน้าชุด, ปุ่ม QR พร้อมนับถอยหลัง |
+| `apps/web/src/common/components/app-shell/SalesHeader.tsx` | เมนู "ส่วนลดจากงาน" ในกลุ่มงานขาย (ข้าง `:27-28`) |
+
+เทสต์และที่ลงทะเบียน:
+- `apps/api/src/modules/sales-console/domain/sales-event.logic.spec.ts` → whole-chain catalog suite `api-behavior` (`scripts/line-ai-whole-chain-acceptance.catalog.mjs:413`, ข้างรายการ sales `:424-427`)
+- `apps/api/src/modules/sales-console/sales-event-discounts.pg.spec.ts` → `ci.yml` job Migrations and Boot ต่อจาก `:778` ด้วย `SALES_EVENT_TEST_DATABASE_URL="$DATABASE_URL"`; skip เมื่อ env ว่างแบบ `sales-console.pg.spec.ts`; เขียนและอ่านทุกคอลัมน์ใหม่
+- ปรับ `apps/api/src/modules/auth/permission-registry.spec.ts:268-288` (หัวหน้ามี, เซลล์ไม่มี, SYSTEM_ADMIN มี, ร้านไม่มี)
+- web: `sales-events.logic.spec.ts` (glob ของ web รันเอง)
+
+เสร็จเมื่อ: SD-E01, SD-E02 และส่วนสิทธิ์ของ SD-E15 ผ่านที่ระดับ HTTP/PG; `migration:review` อ่านได้; `test:boot` ผ่าน. ประมาณ 3–4 วันทำงาน (API 1.5–2, เว็บ 1.5–2)
+
+### SD-B — รับส่วนลดผ่าน LINE (หน้า LIFF, claim API, gate)
+
+| ไฟล์ | งาน |
+|---|---|
+| `packages/contracts/src/billing.ts` | `BILLING_ACTIONS` เพิ่ม `'event_discounts'` (`:39`); ตรวจว่าหน้าตั้ง gate ของแอดมินแสดง key ใหม่ |
+| `apps/api/src/modules/sales-console/application/claim-event-discount.use-case.ts` | ตรวจ ID token (`LineIdTokenService`), rate limit ต่อ LINE user, หา QR ด้วย hash, ตรวจชุด/ช่วง/ผู้แจก/gate, ปฏิเสธตัวตนที่เป็นสมาชิก platform tenant (SD-Q3), transaction claim (lock batch, replay, cap, insert, audit); คืน `next` จาก `ExternalIdentity` |
+| `apps/api/src/modules/sales-console/presentation/http/public-event-discounts.controller.ts` + DTO | `@Public() @Controller('public/event-discounts')` `@Post('claim')` (แบบ `public-line-signup.controller.ts:83-94`) |
+| `apps/api/src/modules/sales-console/sales-console.module.ts` | import `AuthModule` (export `LineIdTokenService`, `AuthRateLimitService` ไว้แล้วที่ `auth.module.ts:178`); ไม่แตะ `auth.module.ts` ที่ถูก pin |
+| `apps/api/src/modules/auth/application/auth-rate-limit.service.ts` | bucket ของ claim ต่อ LINE user |
+| `apps/api/src/modules/auth/presentation/auth.controller.ts` | `@Public() @Get('line/link-page/event-discount')` ข้าง `:520-526`; render ด้วย `liffPageHtml` ไม่ inject อะไรใหม่ |
+| `apps/api/src/common/security/liff-page.security.ts` | mode `event-discount` ใน `LIFF_PAGE_SCRIPT` (`:131`): อ่าน `t`, ขอ ID token, POST claim, แสดงผลตามสเปก §3.3/§3.5, ปุ่ม "เปิดมั่งมี" ผ่าน `POST /v1/auth/line/liff/session` เดิม หรือ "เปิดร้านใหม่" |
+
+เทสต์และที่ลงทะเบียน:
+- `apps/api/src/modules/sales-console/application/claim-event-discount.use-case.spec.ts` → catalog
+- `apps/api/src/common/security/liff-event-discount-page.spec.ts` (HTML, CSP, ข้อความ, ไม่มีคำว่า "ตั๋ว") → catalog; `liff-page-contrast.spec.ts` เดิมต้องผ่าน
+- เพิ่มกรณีใน `sales-event-discounts.pg.spec.ts`: cap=1 สองคนพร้อมกัน, replay, ตัวตน platform tenant, gate ปิด, ผู้แจกถูกถอด
+
+เสร็จเมื่อ: SD-E03 และส่วน claim ของ SD-E16. ประมาณ 1.5–2 วัน
+
+### SD-C — เชื่อม billing (quote, Checkout, หลักฐาน, CARD_AUTO, reconcile, allowlist, แอดมิน)
+
+| ไฟล์และตำแหน่ง | งาน |
+|---|---|
+| `packages/contracts/src/billing.ts` | `BillingQuote.eventDiscount` (`:121-148`), `BillingEventDiscountView`, `BillingAttemptView.eventDiscount`, `eventDiscountSatang` ในรายการประวัติ, lookup kind `EVENT_TICKET` (สเปก §7.2) |
+| `apps/api/src/modules/billing/domain/billing-event-discount.logic.ts` | pure: ราคาต่อแบบภาษี (สเปก §5.1), ขั้นต่ำ 1000 สตางค์ (ค่าคงที่ร่วมกับ `billing-policy.ts:46`), เลือกรายการ (§4.3), ตัดสินสิทธิ์ (§4.1–§4.2) |
+| `apps/api/src/modules/billing/application/billing-event-discount.ts` | DB: หารายการของผู้ใช้ผ่าน `ExternalIdentity` (LINE, ACTIVE), view ต่อร้าน, จอง, ใช้, ปล่อย; ตรวจดีล (`status 'APPROVED'` + `offerExpiresAt > now` แบบ `billing.service.ts:880-881`, หรือ `'PAID'`) |
+| `billing.service.ts:58` | `BillingSnapshot.eventDiscount?` |
+| `billing.service.ts:66-67` | `paymentCheckoutSnapshot` จริงเมื่อ `eventDiscount` (CARD_AUTO เป็น one-time) |
+| `billing.service.ts` quote หลัง `:492` ก่อน `:520` | ใส่ `quote.eventDiscount`/`snapshot.eventDiscount`; `quote.totalSatang` คงราคาเต็ม |
+| `billing.service.ts` checkout ใน transaction `:530-618` | ตรวจซ้ำ (gate, ดีล, ร้านเคยใช้, หมดอายุ, ชุด SUSPENDED, ตัวตนยังเป็นของผู้ใช้, รายการที่ดีที่สุดตรงกับที่ pin รวมกรณี quote ราคาเต็มที่ตอนนี้มีรายการใช้ได้) → stale; จองหลังสร้าง attempt และตั้ง `activeAttemptId` `:612-616` |
+| `billing.service.ts:733-734`, `:738` | `setup_future_usage` สำหรับ CARD_AUTO ที่มีส่วนลด; `unit_amount = eventDiscount.unitAmountSatang` |
+| `billing.service.ts:761-768` | ปล่อยการจองเมื่อ attempt FAILED |
+| `billing.service.ts:815-818` | `cardAdvanceTrial` ครอบ `eventDiscount` (portal cancel ระหว่างงวดแรก) |
+| `billing.service.ts:991-1006`, `:1033-1047` + method ใหม่ `eventDiscount(context)` | attempt view, ประวัติ (จาก ticket.invoiceId), view ของ route ใหม่ |
+| `apps/api/src/modules/billing/presentation/billing.controller.ts` (`@Controller('companies/:companyId/billing')` `:521`) | `@Get('event-discount')` |
+| `apps/api/src/modules/billing/domain/paid-checkout-invoice.ts:22-23` | ยอดที่คาดหวังจาก `snapshot.eventDiscount`; การตรวจ discount `:30,35,41,49` ไม่แตะ |
+| `billing-reconciler.service.ts:240`, `:419`, `:453`, `:478-479` | route attempt CARD_AUTO ที่มี `eventDiscount` เข้า `reconcileOneTime` (ปกติ, นำเข้า, retry) |
+| `billing-reconciler.service.ts:311-319` | ข้ามบิล $0 `subscription_create` ของ trial เมื่อ contract มี `eventDiscount` |
+| `billing-reconciler.service.ts:494-504` | ปล่อยการจองเมื่อ session หมดอายุ |
+| `billing-reconciler.service.ts:547-557` | ใช้สิทธิ์หลัง upsert invoice ก่อน `:557` และก่อน HELD `:592-599`; ไม่ตรง → issue `EVENT_DISCOUNT_REVIEW` |
+| `billing-reconciler.service.ts:658`, `:695`, `:1088-1144` | คง `activeAttemptId` จนผูก; ขยาย `bindPromptPayRenewal` ให้รับบัตรด้วยส่วนตรวจจาก `bindAdvanceDeal` `:793-800,823-832,834-851` |
+| `apps/api/src/modules/billing/application/billing-collection.ts:83,203` | predicate trial ครอบ `eventDiscount` |
+| `apps/api/src/modules/billing/application/billing-purchase-source.ts:14-17` | ข้อยกเว้นช่วงรอผูกครอบ CARD_AUTO |
+| `apps/api/src/modules/auth/presentation/auth.guard.ts:102` | `/event-discount` ในกลุ่ม GET; sync pins (§3.2) |
+| `apps/api/src/modules/billing/application/billing-admin.service.ts` (`lookup` `:148`, helper `:138`) + หน้าร้านของแอดมิน | ค้นเลขส่วนลด; แสดงรายการส่วนลดของร้าน |
+| `apps/web/src/features/billing-admin/BillingIssueResolutionPanel.tsx:70` | แสดง `EVENT_DISCOUNT_REVIEW` แบบ issue ที่อ้าง invoice; ปิดด้วยมือหลังตรวจ |
+
+เทสต์และที่ลงทะเบียน:
+- `apps/api/src/modules/billing/domain/billing-event-discount.logic.spec.ts` → catalog (ตัวอย่าง 499/100 ทั้งสามแบบภาษี, ขั้นต่ำ, เต็มบาท, ลำดับเลือก)
+- `apps/api/src/modules/billing/billing-event-discount.pg.spec.ts` (ใหม่) → `ci.yml` Migrations and Boot ต่อจาก `:782` ด้วย `BILLING_EVENT_DISCOUNT_TEST_DATABASE_URL="$DATABASE_URL"`: quote→จอง→จ่าย→USED; ปล่อยเมื่อ FAILED/หมดอายุ; UNKNOWN คง; USED ก่อน HELD; RETRY_APPLY/IMPORT_INVOICE ตรวจซ้ำได้; ดีลกัน; หนึ่งรายการต่อร้านเมื่อแข่งกัน; CARD_AUTO one-time + ผูก trial ด้วย Stripe fixture (แบบ `billing-advance-deal.pg.spec.ts:16-67`) และบิลรอบสองราคาเต็มผ่าน `paidInvoiceEvidence`; grace ของรอบแรกหลัง trial เริ่มตามเดิม
+- ขยาย spec เดิม: `paid-checkout-invoice.spec.ts` (catalog; ยอดลดผ่าน, บรรทัดส่วนลดยังถูกปฏิเสธ), `billing-collection.spec.ts` (catalog), `billing-admin-lookup.spec.ts` (catalog), `billing-purchase-source.pg.spec.ts` (`extended-tests.yml:286`), `auth.guard.spec.ts` (ชื่ออยู่ใน `apps/api/package.json` เดิม — แก้เนื้อหาเท่านั้น: GET `/v1/companies/:id/billing/event-discount` ผ่านเมื่อร้านล็อก; path ข้างเคียงและ POST ไม่ผ่าน)
+- smoke: `apps/api/src/scripts/billing-event-discount-smoke.ts` + selector `BILLING_EVENT_DISCOUNT_ONLY=1` ใน `apps/api/src/scripts/billing-http-smoke.ts` (บล็อกใหม่ข้าง `:210`) + บรรทัดใน `extended-tests.yml` ต่อจาก `:292`
+- ต้องผ่านโดยไม่แก้ (หลักฐานว่า renewal guard ไม่ถูกแตะ): `billing-schedule.spec.ts`, `billing-price-return.spec.ts`, `paid-invoice-promptpay.spec.ts`, `billing-refund-source.spec.ts`, `billing-grace.pg.spec.ts`, `billing-advance-deal.pg.spec.ts`
+
+เสร็จเมื่อ: SD-E04–SD-E14, SD-E16, SD-E19, SD-E20 มีหลักฐาน HTTP/PG. ประมาณ 4–6 วัน (ส่วนที่เสี่ยงที่สุดคือ CARD_AUTO และเส้นทางกู้รายการ)
+
+### SD-D — หน้าลูกค้า
+
+| ไฟล์ | งาน |
+|---|---|
+| `apps/web/src/features/billing/BillingPage.tsx` | บรรทัดบนการ์ด (`:502-531`); ข้อความเหนือรายการแพ็กเกจ (ข้างการ์ดดีล `:459-486`); ขั้นตรวจยอด (`:561-569`): บรรทัดส่วนลด, "ชำระวันนี้" จาก `eventDiscount.totalSatang`, "รอบถัดไปชำระราคาเต็ม"; `:566` ไม่แก้ |
+| หน้า return และส่วนประวัติของ billing | ข้อความสเปก §3.6 และแถวประวัติ |
+| `apps/web/src/features/billing/billing.api.ts` | `getEventDiscount(companyId)` |
+| `apps/web/src/features/billing/billing-event-discount.logic.ts` | เลือกข้อความตาม `reason`, จัดรูปจำนวนเงิน (feature-local) |
+| `apps/web/src/common/api/api-error-message.ts` | ข้อความรหัส `SALES_EVENT_*` (คอนโซลทีมขาย) |
+
+เทสต์: web specs (`billing-event-discount.logic.spec.ts`, spec ของ BillingPage — glob รันเอง); ขยาย `api-error-coverage.spec.ts`; e2e `e2e/sales-event-discount.spec.ts` (หัวหน้าสร้างชุด → QR → claim ผ่าน fixture LINE → ร้านล็อกซื้อ CARD_ONCE → ประวัติ; 390 px ด้วย `setViewportSize` แบบ `e2e/billing-admin-directory.spec.ts:74`) → step ใหม่ใน `extended-tests.yml` ต่อจาก step no-setup (`:336`) ใช้ DB `sales_event_discount_test`, พอร์ต 3161/3162, `NEXT_DIST_DIR: .next/sales-event-discount` (ตรวจว่าไม่ชน 3153–3156)
+
+เสร็จเมื่อ: SD-E17 และส่วน UI ของ SD-E15. ประมาณ 2–3 วัน
+
+### SD-E — รายงานและหน้าจอแอดมิน
+
+| ไฟล์ | งาน |
+|---|---|
+| `sales-events.service.ts` + controller | `GET /v1/sales/events/report` ตามสเปก §10 ใช้กติกา `visibleAgents` (`sales-reports.service.ts:75`) |
+| `apps/web/src/features/sales-console/SalesEventsPage.tsx` | ส่วนรายงานต่องาน/ชุด/เซลล์ |
+| หน้าร้านใน `/system/billing/companies/:id` (web billing-admin) | ตารางส่วนลดของร้าน (serial, ชุด, สถานะ, บิล) |
+
+เทสต์: เพิ่มกรณีรายงานใน `sales-event-discounts.pg.spec.ts` (ใช้แล้ว, หมดอายุ, คืนเงิน, นับบิลละครั้ง); web spec. เสร็จเมื่อ SD-E18, SD-E20. ประมาณ 1–2 วัน
+
+### ประมาณการรวม
+
+| ส่วน | วันทำงาน |
+|---|---:|
+| SD-A | 3–4 |
+| SD-B | 1.5–2 |
+| SD-C | 4–6 |
+| SD-D | 2–3 |
+| SD-E | 1–2 |
+| native proof + UAT + production | 2–3 |
+| **รวม** | **13.5–20** |
+
+ไม่รวม P1/P2, เวลารอรีวิว/CI, การรอคิวไฟล์ร่วมกับ add-on และ release window. เส้นทางวิกฤตคือ P2 → SD-C → UAT test clock ของ CARD_AUTO
+
+## 3. งานข้ามทุก PR (แบบ xx-cross-cutting)
+
+### 3.1 ลงทะเบียนเทสต์ (ห้ามแตะ `package.json`)
+
+`apps/api/src/spec-suite-coverage.spec.ts:43-75` ทำให้ CI แดงเมื่อ `*.spec.ts` ของ API ไม่ถูกเอ่ยชื่อใน `apps/api/package.json`, catalog, `ci.yml` หรือ `extended-tests.yml` (ยกเว้น `*.pg.spec.ts` ที่ไม่รันเองเลย จึงต้องมีบรรทัดของตัวเอง). ห้ามใส่ชื่อไฟล์ที่ยังไม่มี
+
+| ไฟล์ | PR | ลงทะเบียนที่ |
 |---|---|---|
-| UI/theme E19/E20/E24 | 0/1/2/3/4/20/100, ชื่อยาว, 3แถว, เลือกแถว4, scroll+portal, Thai/English, mobile/zoom | Browser screenshot/DOM bounds, keyboard interaction, no native dropdown/theme drift |
-| Select/clear E21–E23 | A selected→B disabled→A clear→B select; disabled direct API; double-click/lost reply/two tabs; selected offpage | Unit/state model + HTTP/PG + browser, fresh server version, same key same result |
-| Purchase E01/E02/E04/E22 | Before package/after quote, full quote before select, discounted quote before clear, profile/email/capacity detours, out-of-order replies | Quote+consent+attempt snapshots และ no-charge evidence ใน rejected case |
-| Renewal E03/E07/E10/E14/E23 | Monthly/annual next year, current purchase retarget, cutoff, retry/dunning/void, cancel/cadence/deal price return | Native invoice/coupon/cycle evidence; no second discount; verified detach/re-arm/collection hold |
-| Distribution E03/E05/E12/E15/E17 | Empty creation,20agents, assignment remove, cap1 race, duplicate QR, signup closes late, foreign company | HTTP/PG/backend UI, immutable source/agent, signup unchanged |
-| Financial E06/E08/E11/E13/E25/E26 | Paid-held/late paid/zero bootstrap/advance/full+partial refund/dispute/history/report/notification/settlement | Actual amount/base/tax/source/usage, idempotent apply, no over-refund/quota loss |
-| Safety/recovery E09/E16/E18/E27 | Incompatible add-on/upgrade, gate OFF, revoke/suspend, permission revoked, rollback pending/unknown | Recovery journal/history preserved, no silent full-price collection, legacy guards |
+| `sales-console/domain/sales-event.logic.spec.ts` | SD-A | catalog `api-behavior` (`:413`) |
+| `sales-console/sales-event-discounts.pg.spec.ts` | SD-A (ขยายใน SD-B, SD-E) | `ci.yml` ต่อจาก `:778` |
+| `sales-console/application/claim-event-discount.use-case.spec.ts` | SD-B | catalog |
+| `common/security/liff-event-discount-page.spec.ts` | SD-B | catalog |
+| `billing/domain/billing-event-discount.logic.spec.ts` | SD-C | catalog |
+| `billing/billing-event-discount.pg.spec.ts` | SD-C | `ci.yml` ต่อจาก `:782` |
+| `scripts/billing-event-discount-smoke.ts` | SD-C | selector `BILLING_EVENT_DISCOUNT_ONLY` + `extended-tests.yml` ต่อจาก `:292` |
+| `e2e/sales-event-discount.spec.ts` | SD-D | step ใหม่ใน `extended-tests.yml` ต่อจาก `:336` |
+| contracts spec (ถ้ามี) | — | `ci.yml:543` เท่านั้น (`packages/contracts/package.json` เป็นรายการตายตัว) |
 
-มีอย่างน้อย 4 real payment modes (CARD_AUTO/CARD_ONCE/PROMPTPAY_ONCE/PROMPTPAY_RENEW) × month/year × supported source × VAT3 ที่เกี่ยวข้อง; ทำ explicit capability matrix ไม่สรุปจาก demo ที่รวม card/QR สองค่า. ใช้ pairwise ได้เฉพาะ visual combinations; financial/native source combinations ที่ advertise ต้องมี proof ครบ.
+Spec ที่ขยายเนื้อหาอยู่ในที่เดิมแล้ว: `paid-checkout-invoice.spec.ts`, `billing-collection.spec.ts`, `billing-admin-lookup.spec.ts`, `liff-start-handoff.spec.ts` (catalog); `auth.guard.spec.ts`, `permission-registry.spec.ts` (`apps/api/package.json` เดิม ไม่แก้รายการ); `billing-purchase-source.pg.spec.ts` (`extended-tests.yml:286`)
 
-## ผลตรวจรอบเอกสารนี้
+หลักฐาน PG/smoke/e2e ที่ไม่อยู่ใน release gate มาจาก Extended Tests (workflow_dispatch) บน branch ของ PR — บันทึก run id ใน memory ของงาน
 
-- Source audit: พบช่องว่าง A01–A22; ข้อกำหนดปิดช่องว่างอยู่ใน spec และขั้นงานข้างบน. ไม่อ้างว่าโค้ด feature ถูกแก้แล้ว.
-- Local web regression 4/4 ผ่าน: ThemedSelect SSR, Mangmee interactive theme, profile-return2. Test SSR ยังไม่พิสูจน์ open→disabled.
-- Local Billing regression 17/17 ผ่าน: paid Checkout/PromptPay, refund source, schedule, price return. เป็น baseline code เดิม ไม่ใช่ส่วนลด E2E ใหม่.
-- ตรวจ links/acceptance mapping/obsolete wording/source paths หลังแก้เอกสาร; ผลบันทึกใน audit.
-- ไม่รัน DB/native Stripe/live auth/LINE/new UI browser/UAT/Production; ไม่มี implementation ของ flow ใหม่ให้รัน.
+### 3.2 Pins
 
-## Recovery และ handoff
+`auth.guard.ts` ถูก pin (`infra/security/validate-production-maintenance-release.sh:25` `expected_auth_guard`, ตรวจที่ `:106`). PR SD-C ต้องทำในตัวเอง:
 
-Claim close/pause หยุด issuance. Suspend ต้องตรวจทั้ง selected QUEUED/ARMED และ pending provider operations: ไม่ถือว่าหยุดแค่ UI แล้วปลอดภัย; detach/collection hold ตาม native proof ก่อนบิลที่สัญญา. Accepted/reconcile/paid apply/refund/history เดินต่อ. Clear ไม่ได้จากผลไม่แน่นอน; operator ต้องอ่าน source จริง ไม่ออกสิทธิ์ใหม่ชดเชยเอง.
+```bash
+node infra/security/sync-production-maintenance-release-pins.mjs          # เขียน expected_* ใน validator และ EXPECTED_MAINTENANCE_RELEASE_VALIDATOR_SHA256 ใน .github/workflows/deploy-production.yml:421
+node infra/security/sync-production-maintenance-release-pins.mjs --check  # ต้อง exit 0
+bash infra/security/validate-production-maintenance-release.spec.sh
+bash infra/security/sync-production-maintenance-release-pins.spec.sh
+git add infra/security/validate-production-maintenance-release.sh .github/workflows/deploy-production.yml
+```
 
-Schema rollback ไม่ลบ selection/redemption/financial evidence. Deployment/retry ทุกครั้งต้องอ่าน [cloud runbook](../runbooks/cloud-environment-operations.md) และ [deployment protocol](../runbooks/uat-production-v2-deployment.md) ตาม scope; บันทึก run IDs/signed result/customer OPEN. รอบนี้ไม่มี authorization ให้ deploy.
+CI ตรวจที่ `ci.yml:322-323`, `:401` และ `:604`. ถ้า add-on แก้ allowlist ก่อนหรือหลัง PR ที่ merge ทีหลังต้อง sync ใหม่. ไฟล์ pin ที่งานนี้ **ห้ามแตะ**: `auth.module.ts` (SD-B import AuthModule ฝั่ง sales-console แทน), `email-access.service.ts`, `refresh-session.use-case.ts`, login/session-gate/layout ของเว็บ, `packages/config/src/index.ts` (ไม่มี env ใหม่), บรรทัด literal ใน `audit-action.ts` และ `schema.prisma`
 
-งานถัดไปที่ review ได้คือ D2 demo ตามแพตเทิร์นใหม่ หรือขั้น 0–1 เมื่อสั่งทำ production; ทั้งสองยัง pending. ปรับเดโม path เดิมและ preserve saved progress ตาม memory ไม่ reset งานผู้ใช้.
+### 3.3 ความตรงกันของ workflow กับ main
+
+SD-A, SD-C และ SD-D แก้ `ci.yml` หรือ `extended-tests.yml`. ก่อน dispatch UAT `all` ต้องให้สองไฟล์บน main ตรงกับ candidate byte ต่อ byte (`deploy-uat.yml` เทียบ blob ของ `ci.yml`): merge develop → twin PR ไป main → ตรวจ `git rev-parse <candidate>:.github/workflows/ci.yml` เทียบ `git rev-parse origin/main:.github/workflows/ci.yml` (และ `extended-tests.yml`). ระหว่าง READY → Production ห้ามแตะ main
+
+### 3.4 Migrations
+
+- หนึ่ง migration ใน SD-A: `apps/api/prisma/migrations/<ts>_sales_event_discounts/migration.sql`. `<ts>` ต้องมากกว่าตัวล่าสุดบน develop ตอนลงมือ — ณ 2026-09-29 ต้องหลัง `20260929030000` (ตัวล่าสุดที่ controller แจ้ง; `origin/develop` `69fba9d3` ยังมีล่าสุด `20260928210000_line_support_request_reference`) และหลัง migration ของ foundation
+- additive เท่านั้น: `CREATE TABLE`, `CREATE INDEX`, `CREATE UNIQUE INDEX … WHERE` (ไม่ใช้ `CONCURRENTLY` เพราะ migration อยู่ใน transaction); ห้าม `DROP/TRUNCATE/DELETE` (`apps/api/prisma/verify-applied-migration-catalog.ts` ปฏิเสธ)
+- ไม่มี Prisma enum; ค่าคงที่ใน contracts ตั้งชื่อไม่ชน enum (`prisma-enum-parity.spec.ts`)
+- CI: `prisma:validate` → `migration:review` → fresh `migrate deploy` → PG specs → `test:boot` (`ci.yml:785`); PG spec ต้องเขียนและอ่านทุกคอลัมน์ใหม่เพราะไม่มีอะไรเทียบ migration กับ schema
+- production: migration ค้าง → READY ต้องเดินเส้นทาง `APPEND_ONLY_PENDING` ตาม runbook
+
+### 3.5 Contracts, DI, boot และ Release Contracts
+
+- build `@watchdog-bms/contracts` ก่อน typecheck และเทสต์; web อ่าน contracts จาก `dist` จึงต้อง build ก่อน typecheck ของ web; API typecheck ใช้ script ของ package (มี heap flag) และอ่าน exit code จริง
+- class `@Injectable()` ใหม่ทุกตัวประกาศ constructor เอง (`apps/api/scripts/check-di-metadata.mjs`, `ci.yml:468-470`); provider ใหม่อยู่ใน `providers` ของ module; `test:boot` จับ import วน
+- ทุก body ใหม่เป็น class DTO (`body-validation-coverage.spec.ts`)
+- งานนี้แตะ `infra/` (pins) และ `.github/` จึงเปิด job Release Contracts ตามปกติ; ห้ามเพิ่มอะไรใน `packages/contracts/src/line-ai.ts`
+
+### 3.6 W00 manifest
+
+`apps/api/src/modules/line-ai/line-ai-capability-manifest.ts` hash ไฟล์ชุดหนึ่ง รวม `packages/config/src/index.ts`, `packages/contracts/src/{ai-tools,feature-entitlements,line-ai,menu-entitlements}.ts`, `apps/api/src/modules/auth/presentation/line-webhook.controller.ts` และ `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts`. แผนนี้ไม่แตะไฟล์เหล่านั้น (ไม่มี env ใหม่ ไม่มีข้อความ LINE ไม่มี AI tool) จึงไม่ต้อง regenerate. ถ้า PR ใดต้องแตะ ให้ regenerate และรีวิว manifest ใน PR เดียวกัน (`line-ai-capability-manifest.spec.ts`)
+
+### 3.7 Readbacks ก่อน UAT (และซ้ำก่อน production)
+
+| รายการ | วิธีอ่าน | ค่าที่ต้องเป็น |
+|---|---|---|
+| gate `event_discounts` | `GET /v1/system/billing/settings` → gates | UAT: เปิดระหว่างทดสอบ; production: ปิดจนถึงขั้น §3.10 |
+| `salesCompanyIds` | policy ที่ ACTIVE | `null` ทั้ง UAT และ production |
+| taxTreatment | policy ที่ ACTIVE | UAT = production (`NOT_VAT_REGISTERED`) |
+| `LINE_LIFF_ID` และ endpoint ของ LIFF app | task env ตาม runbook cloud; LINE Developers console | ตั้งค่าแล้ว; endpoint = `…/v1/auth/line/link-page` |
+| `LINE_WEB_HANDOFF_ENABLED` | task env | `true` (ปุ่ม "เปิดมั่งมี" ใช้ handoff) |
+| webhook ของ Stripe | Stripe dashboard ของแต่ละ environment | ไม่ต้องเพิ่ม event ใหม่ — ยืนยันว่าไม่มีใครเพิ่ม `invoice.created` โดยคิดว่าจำเป็น |
+| permission ใหม่ | หลัง release task ที่รัน `prisma/sync-permissions.ts` (`run-release-task.sh:684`) | role หัวหน้ามี `sales.event.manage` |
+| pins | `node infra/security/sync-production-maintenance-release-pins.mjs --check` | exit 0 |
+| workflow parity | `git rev-parse` ตาม §3.3 | ตรงกับ main |
+| เงื่อนไข rollback | query รายการ RESERVED และบัญชี CARD_AUTO ที่รอผูก (สเปก §11) | รู้ค่าก่อนทุก deploy/rollback |
+
+### 3.8 Native proof
+
+ตามตารางสเปก §14 — แต่ละข้อต้องมีผลใน UAT (test mode) ก่อนเปิด gate บน production. CARD_AUTO ใช้ Stripe test clock เลื่อนถึงสิ้นงวดแรก. ไม่สร้าง provider object นอกขั้นตอน UAT ที่รีวิวแล้ว
+
+### 3.9 UAT checklist (Stripe test mode; ทำตาม runbook; บันทึก UAT, READY และ Production run ID)
+
+| # | ขั้น | ผ่านเมื่อ |
+|---|---|---|
+| U1 | readbacks §3.7 | ครบทุกข้อ |
+| U2 | หัวหน้าสร้างชุด 2 เซลล์; เซลล์ที่ไม่ได้รับมอบหมายเปิด QR ไม่ได้; QR หมดใน 5 นาที | ตรงสเปก §3.1–§3.2 |
+| U3 | คนแรกสแกนด้วย LINE จริง (iPhone และ Android) → รับได้; สแกนซ้ำได้รายการเดิม; บัญชีทีมขายสแกนถูกปฏิเสธ; พนักงานร้านเห็นข้อความ §3.5 | ตรง §3.3/§3.5 |
+| U4 | ผู้รับที่ยังไม่มีบัญชี → "เปิดร้านใหม่" ผ่าน LIFF → ร้าน "ยังไม่มีแพ็กเกจ" → บรรทัดส่วนลดบนการ์ด → CARD_ONCE รายเดือน → จ่าย → apply → ปลดล็อกในที่ | ส่วนลด USED; ประวัติแสดงยอดจริง; ใบเสร็จ Stripe แสดงราคาสุทธิไม่มีบรรทัดส่วนลด |
+| U5 | PROMPTPAY_ONCE และ PROMPTPAY_RENEW ที่มีส่วนลด | บิล QR แรกลด; บิล QR รอบถัดไปราคาเต็ม |
+| U6 | CARD_AUTO ที่มีส่วนลด + test clock | จ่ายงวดแรกลด; subscription `trialing` ราคาเต็ม; "หยุดต่ออายุ" ระหว่างงวดแรกได้ (อีกร้าน); บิลรอบสองราคาเต็ม apply เป็น RENEWAL; บัตรปฏิเสธหลัง trial → grace เริ่ม |
+| U7 | ร้านหมดอายุ (RESTART) ใช้ได้; ร้านที่แพ็กยังใช้งาน (REPEAT/อัปเกรด) ไม่มีบรรทัด; add-on ไม่ลด และ checkout add-on ที่ค้างไม่บล็อกการซื้อแพ็กเกจที่มีส่วนลด | ตรง §4.1 |
+| U8 | ร้านที่มีดีล APPROVED | ไม่มีบรรทัด + ข้อความ "มีดีลพิเศษอยู่แล้ว"; อนุมัติดีลระหว่าง quote กับ Checkout → stale |
+| U9 | หนึ่งรายการต่อร้าน: ผู้ถือคนที่สองของร้านเดิมหลัง USED ไม่มีบรรทัด; ผู้ถือคนเดียวสองร้านพร้อมกัน → ร้านที่สอง stale | ตรง §4.3 |
+| U10 | กดกลับจาก Stripe, ปุ่มยกเลิก, session หมดอายุ | รายการกลับเป็นใช้ได้; UNKNOWN คงการจอง |
+| U11 | คืนเงินบางส่วนและทั้งหมดของบิลที่ลด; CARD_AUTO: หยุดต่ออายุแล้วยุติแพ็กระหว่างงวดแรก | ยอดคืนถูก; รายการยัง USED; รายงานหักคืน |
+| U12 | แอดมิน: ค้นเลขส่วนลด; ใบที่ถูกถือไว้ → RETRY_APPLY หรือ IMPORT_INVOICE apply ได้ | ตรง SD-E11/SD-E20 |
+| U13 | ปิด gate | claim ถูกปฏิเสธ; quote ไม่ลด; รายการที่จองแล้วเดินต่อ; ซ้อมเงื่อนไข rollback §11 |
+| U14 | Extended Tests run id (PG, smoke, e2e) | บันทึกใน memory |
+
+### 3.10 Production acceptance (ภายในประมาณ 5 นาทีหลัง website-ready)
+
+1. Readbacks §3.7 ซ้ำ (gate ยังปิด)
+2. Owner เปิด gate ผ่าน SET_ACTION_GATE ที่รีวิวแล้ว; หัวหน้าสร้างชุดเล็ก (จำนวนแจก 1) ให้ร้านทดสอบภายในที่ "ยังไม่มีแพ็กเกจ"
+3. สแกนรับด้วย LINE จริง → ซื้อ STARTER รายเดือนราคาจริงที่มีส่วนลด → apply → ตรวจใบเสร็จ ประวัติ และรายงานงาน
+4. คืนเงินในแอปตามขั้นตอนเดิม → รายการยัง USED และรายงานหักคืน
+5. Owner ตัดสินใจว่าจะคง gate เปิดหรือปิด; บันทึกตาม runbook (UAT/READY/Production run ID, signed result, customer `OPEN`) — ไม่เรียกว่า live จนกว่าทั้งสองผ่าน
+
+### 3.11 แก้เอกสารอื่น (ทำใน PR ที่เกี่ยว ไม่ได้ทำในรอบนี้)
+
+| ไฟล์:บรรทัด | แก้เป็น | PR |
+|---|---|---|
+| `docs/specs/mangmee-sales-deals-and-locked-signup-spec-th.md:30` (§4) | กติกาเดิมคงไว้; เพิ่มอ้างอิงว่า "ส่วนลดจากงานไม่ใช้กับดีลและไม่มี coupon (sales-event-discounts SD-O1/SD-O2, 2026-09-29)" | SD-C |
+| `docs/plans/mangmee-sales-deals-and-locked-signup-plan-th.md:19,83` | กติกา "ห้ามแตะ `paid-checkout-invoice.ts`" เพิ่มข้อยกเว้นเฉพาะยอดที่คาดหวังของส่วนลดจากงาน `:22-23` | SD-C |
+| สเปกและแผน add-on | layout ไม่มี section/แท็บของส่วนลด (T-08 ตรงแล้ว); validator ของ add-on ปฏิเสธ `eventDiscount`; รายการไฟล์ร่วมตาราง §1 | ประสานกับเจ้าของ add-on |
+| `docs/runbooks/uat-production-v2-deployment.md` (หรือ runbook billing) | readbacks §3.7 และเงื่อนไข rollback สเปก §11 | SD-C |
+| `docs/plans/mangmee-master-plan-index-th.md` | แถวของงานนี้และสถานะ | ทุก PR |
+| `docs/agent-memory/sales-event-discounts-<date>.md` | สร้าง memory (Status/Verification/Next + run ID) แทนลิงก์ที่เสีย | PR แรก |
+| `docs/specs/mangmee-owned-billing-integration-spec-th.md:76` (B01/B08) | ไม่ต้องแก้ — ไม่มี invoice ที่มี coupon | — |
+
+### 3.12 Release และ rollback
+
+- ลำดับปล่อย: SD-A และ SD-B ปล่อยก่อนได้โดย gate ปิด; SD-C และ SD-D ต้องอยู่ release เดียวกัน; SD-E ปล่อยหลังได้
+- ก่อน dispatch UAT: readbacks §3.7, workflow parity §3.3, ไม่มี run ของ flow เดียวกันค้าง (runbook)
+- Rollback ตามสเปก §11: migration additive; ต้องไม่มีรายการ RESERVED และไม่มีบัญชี CARD_AUTO ที่รอผูก; ไม่เช่นนั้นปิด gate รอหรือ forward-fix; บันทึกผลที่ binary เก่าทำให้ "หยุดต่ออายุ" ระหว่างงวดแรกใช้ไม่ได้ชั่วคราว
+
+## 4. ผลรีวิว R2 → การปิด
+
+รีวิว `R2-sales-event-discounts-report.md` (41 ข้อ) เทียบกับมติ 2026-09-29:
+
+| ID | ระดับ | ผล | ปิดอย่างไร / อยู่ที่ |
+|---|---|---|---|
+| SED-01 | BLOCK | ไม่เกิดแล้ว | SD-O1: ไม่มีส่วนลดบน subscription จึงไม่มี arming; guard ไม่แตะ (สเปก §5.4); predicate trial ของ CARD_AUTO งวดแรกเป็นงานใน SD-C ไม่ใช่ guard ของ discount |
+| SED-02 | BLOCK | ไม่เกิดแล้ว | รอบต่ออายุราคาเต็ม; `snapshot.quote` เป็นราคาเต็ม ส่วนลดแยกใน `eventDiscount` จึง `enforceGrace` ไม่แตะ (§5.4); UAT U6 |
+| SED-03 | BLOCK | ปิด | SD-T1: `/event-discount` ใน allowlist + pins + `auth.guard.spec.ts` (SD-C, §3.2) |
+| SED-04 | BLOCK | ไม่เกิดแล้ว | SD-O2: ไม่ซ้อนดีล; `billing-package-request.ts` ไม่เปลี่ยน; เงื่อนไขและข้อความสเปก §4.2 |
+| SED-05 | HIGH | ปิด | ยอดที่คาดหวังอยู่ใน snapshot ของ attempt ทุกทางตรวจซ้ำจึงได้ผลเดียวกัน (สเปก §5.2); `paid-invoice.ts` ไม่แตะ; smoke เดิมไม่แก้ + smoke ใหม่ |
+| SED-06 | HIGH | ปิด | audit มีส่วน "ตรวจซ้ำบน develop 8a91bc1c"; anchor ในสเปก/แผนตรวจใหม่ทั้งหมด; ผล PASS เดิมระบุว่าเป็นของ 4a5817b4 |
+| SED-07 | HIGH | ปิด | SD-O1: ไม่มี coupon ทุกโหมด; `unit_amount` ทั้งสี่โหมด (CARD_AUTO ผ่านงวดแรกแบบ one-time); ไม่ต้องแก้ sales-deals §4 หรือ owned-billing B01/B08 |
+| SED-08 | HIGH | ปิด | SD-O3: ผูกผู้ถือตอนสแกน ใช้ได้หลังสมัคร; ตัดตัวเลือกกลุ่มลูกค้า |
+| SED-09 | HIGH | ปิด | gate ใน `BILLING_ACTIONS`, ขั้นต่ำเป็นค่าคงที่ในโค้ด, ไม่มี key ใน `policyJson`; validator ไม่ขึ้นกับ gate; เงื่อนไข rollback (สเปก §11) |
+| SED-10 | HIGH | ไม่เกิดแล้ว | ไม่มี selection/target; quote pin `ticketId` + `ticketVersion`; ไม่ใช้ชื่อ `purchaseIntent` |
+| SED-11 | HIGH | ปิด | §3 ของแผนนี้ |
+| SED-12 | HIGH | ปิด | V1 ไม่มีข้อความ LINE หรือการแจ้งเตือนใหม่; การ์ดโปรโมชั่นและนโยบายสาธารณะคงราคาปกติ; SD-Q5 |
+| SED-13 | HIGH | ปิด | SD-T2 ลำดับ §1 และตารางไฟล์ร่วม |
+| SED-14 | MEDIUM | ปิด | scope = tiers + intervals; purchase kind ตายตัว (SCHEDULED_CHANGE ใช้ไม่ได้ตามค่าเริ่มต้น SD-Q2); ขั้นต่ำตรวจตอนเผยแพร่และ quote; helper เดียวกับ quote |
+| SED-15 | MEDIUM | ไม่เกิดแล้ว | ไม่มี selection ก่อนมี BillingAccount; จองใน transaction ที่สร้าง account (`billing.service.ts:611`); ไม่แตะ `BillingAccount.version` |
+| SED-16 | MEDIUM | ปิด | ผูกกับ attempt ของแพ็กเกจหลัง foundation (P2); ไม่มีแท็บ; validator ของ add-on แยก |
+| SED-17 | MEDIUM | ปิด | QR ไป LIFF ที่ไม่ผูกร้าน; เฉพาะผู้มีสิทธิ์จัดการแพ็กเกจที่เป็นผู้ถือ; พนักงานเห็นคำแนะนำบน LIFF (สเปก §3.5) |
+| SED-18 | MEDIUM | ปิด | checkbox + ค้นหา server ในฟีเจอร์; `datetime-local` + `+07:00`; ตัดข้ออ้างว่ามีของกลางให้ใช้ซ้ำ |
+| SED-19 | MEDIUM | ปิด | ตารางสิทธิ์สเปก §9; key ใหม่ใน contracts/registry/grant/spec; sync permissions ใน release task |
+| SED-20 | MEDIUM | ปิด (แคบลง) | ไม่มี provider arming จึงไม่ต้องมีคำสั่ง arm/detach; การปล่อยตาม lifecycle ของ attempt เดิม; ค้นเลขส่วนลด, ตารางบนหน้าร้าน, issue `EVENT_DISCOUNT_REVIEW` |
+| SED-21 | MEDIUM | ปิด | บรรทัดการ์ดคำนวณโดย server; `quote.totalSatang` ราคาเต็มทำให้ `BillingPage.tsx:566` ถูก; รอบต่ออายุไม่ลดจึงไม่มียอดขัดกัน |
+| SED-22 | MEDIUM | ไม่เกิดแล้ว | ไม่มีส่วนลดรอบต่ออายุ |
+| SED-23 | MEDIUM | ไม่เกิดแล้ว | การจองอยู่แค่ช่วง Checkout ไม่ผูกบิลต่ออายุ |
+| SED-24 | MEDIUM | ไม่เกิดแล้ว | ไม่มี coupon; บิล $0 ของ trial ข้ามตามแบบเดิม (สเปก §5.3 ข้อ 4) |
+| SED-25 | MEDIUM | ปิด | บรรทัดแสดงว่าราคาบนการ์ดลดลงเท่าไร; ไม่มี "ก่อน VAT"; เอกสาร Stripe ไม่มีชื่องานหรือบรรทัดส่วนลด |
+| SED-26 | MEDIUM | ปิด | ข้อความ gate อีเมล/ที่อยู่ที่ถูกถอดไปแล้วถูกลบ; ลิงก์ purchase-without-setup; §3.11 |
+| SED-27 | MEDIUM | ไม่เกิดแล้ว | ไม่มีการย้ายส่วนลดจากรอบต่ออายุมาการซื้อ |
+| SED-28 | MEDIUM | ไม่เกิดแล้ว | ไม่ต้องรับ `invoice.created`; readback ยืนยัน |
+| SED-29 | MEDIUM | ปิด | ทดสอบจริงเฉพาะ NOT_VAT (production วันนี้); แบบ VAT ด้วย unit test + native proof ก่อนจด VAT (สเปก §11, §14) |
+| SED-30 | MEDIUM | ปิด | สเปก §7.1–§7.3 |
+| SED-31 | LOW | ปิด | ตาราง state ต่อชั้น (สเปก §6.2–§6.3); ฟิลด์ `…Satang`; รหัสมี prefix; ไม่มี `MINIMUM_NOT_MET` |
+| SED-32 | LOW | ปิด | prefix `SD-` ทุกชุด |
+| SED-33 | LOW | ปิด | ลิงก์ LIFF แบบ `buildLineLinkPackage`; เก็บ hash; request log ไม่บันทึก query; claim ต้องมี LINE token ที่ตรวจแล้ว |
+| SED-34 | LOW | ปิด | SD-O3: หมดอายุ = ปิดรับ + 30 วัน (SD-Q1); รายงานภาระคงค้าง |
+| SED-35 | LOW | คงเดิม (มีก่อนแล้ว) | ดีลไม่ลด จึงไม่รับช่วงปัญหานี้; ต้องแก้ก่อนจด VAT ตามงาน billing เดิม |
+| SED-36 | LOW | ไม่เกิดแล้ว | ไม่มีบรรทัดส่วนลดบนใบ; การคืนเงินแบบ EXCLUSIVE ที่ปิดไว้อยู่แล้วเป็นเรื่องเดิม |
+| SED-37 | LOW | ปิด | state machine ของชุด (สเปก §6.2); แสดง "ปิดรับ {วันเวลา}"; แปลงเวลา `+07:00` |
+| SED-38 | LOW | ไม่อยู่ในขอบเขต | ไม่มี dropdown ของลูกค้า; ถ้าฟอร์มหัวหน้าใช้ ThemedSelect แล้วเจอกรณีเปิดแล้วถูกปิดใช้ ให้แยกงาน |
+| SED-39 | LOW | ปิด | ส่วนลดเต็มบาทเท่านั้น |
+| SED-40 | LOW | ไม่เกิดแล้ว | ไม่มีปุ่ม toggle; ข้อความหน้า return สเปก §3.6 |
+| SED-41 | LOW | ปิด | ปล่อยที่ `billing.service.ts:761-768` และ `billing-reconciler.service.ts:494-504`; UNKNOWN คง; USED ก่อน `:557` และ HELD `:592-599`; สูตร `evidenceHash` เดิมใช้ยอดที่ลดแล้วคงที่ต่อ attempt |
+
+## 5. สถานะ
+
+| ขั้น | สถานะ |
+|---|---|
+| D0 มติ UI เดิม (section/toggle/3 แถว) | ถูกแทนที่ด้วยมติ 2026-09-29 (สเปก §1.3) |
+| D1 audit บน 4a5817b4 | เป็นประวัติ; ตรวจซ้ำบน develop แล้วใน audit |
+| D2 ปรับเดโม | ยกเลิก — เดโมไม่อยู่ใน repo และแบบใหม่ไม่มีหน้าจอสะสม/เลือก |
+| รอบเอกสาร 2026-09-29 | spec, plan, audit ปรับตามมติและรีวิว R2 |
+| SD-A … SD-E | ยังไม่เริ่ม; รอ P1, P2 และคำตอบหรือค่าเริ่มต้นของ SD-Q1–SD-Q6 |
+
+ไม่ได้รันเทสต์ในรอบนี้: checkout ที่ใช้ตรวจ (`/private/tmp/mangmee-pfv-review`) ไม่มี dependency ติดตั้ง. ตอนลงมือให้รันเทสต์ที่ระบุใน §2 บน worktree ของ develop ล่าสุด

@@ -2,7 +2,9 @@
 
 วันที่ 2026-09-29 · **Source/design audit; ยังไม่มี implementation ของส่วนลดใหม่ใน production**
 
-[Spec](../specs/sales-event-discounts-spec-th.md) · [Plan](../plans/sales-event-discounts-plan-th.md) · [Memory](../agent-memory/sales-event-discounts-2026-09-28.md)
+> **สถานะเอกสาร (ปรับ 2026-09-29):** ส่วน "ขอบเขตและข้อสรุป" ถึง "ข้อจำกัดและ next state" ข้างล่างเป็น **ประวัติ** ของ audit ที่ตรวจบน `4a5817b4` ซึ่งไม่ใช่บรรพบุรุษของ develop (merge-base `69bdc327` ลงวันที่ 2026-09-22; develop `8a91bc1c` นำหน้า merge-base 504 commits) จึงเก็บไว้ตามเดิม ไม่แก้เนื้อหา ยกเว้นเปลี่ยนลิงก์สองจุดที่ชี้ไฟล์ที่ไม่มีใน repo เป็นข้อความธรรมดา. สถานะปัจจุบันอยู่ที่ส่วน [ตรวจซ้ำบน develop 8a91bc1c (2026-09-29)](#ตรวจซ้ำบน-develop-8a91bc1c-2026-09-29) ท้ายเอกสาร. แบบที่ใช้ต่อคือ [spec DRAFT v2](../specs/sales-event-discounts-spec-th.md) ซึ่งเปลี่ยนตามมติ Owner 2026-09-29 (ลดบิลแรกเท่านั้น, ไม่ซ้อนดีล, ผู้ถือคือคนสแกน QR) — หลายข้อข้างล่างจึงไม่เกิดแล้ว. รหัส A01–A22 ของเอกสารนี้ = SD-A01–SD-A22 ในชุดเอกสารส่วนลด (ไม่ใช่ A01–A32 ของสเปก add-on)
+
+[Spec](../specs/sales-event-discounts-spec-th.md) · [Plan](../plans/sales-event-discounts-plan-th.md) · Memory (ไฟล์ `docs/agent-memory/sales-event-discounts-2026-09-28.md` ยังไม่มีใน repo)
 
 ## ขอบเขตและข้อสรุป
 
@@ -66,9 +68,57 @@ Repo pin STRIPE_API_VERSION ที่ packages/contracts/src/billing.ts:6 = 2026
    pnpm --filter @watchdog-bms/web exec tsx --test src/common/components/field/ThemedSelect.spec.ts src/common/components/mangmee/mangmee-interactive-theme.spec.ts src/features/billing/billing-profile-navigation.spec.ts
 3. Billing focused tests **17/17 PASS**, exit0:
    pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/domain/paid-checkout-invoice.spec.ts src/modules/billing/domain/paid-invoice-promptpay.spec.ts src/modules/billing/application/billing-refund-source.spec.ts src/modules/billing/application/billing-schedule.spec.ts src/modules/billing/application/billing-price-return.spec.ts
-4. ตรวจdoc links/source paths/E01–E27/findings A01–A22/ข้อความขัดกัน/whitespace. รายละเอียดสรุปเก็บใน [audit verification](../evidence/sales-ticket-demo-2026-09-28/spec-audit-2026-09-29.json).
+4. ตรวจdoc links/source paths/E01–E27/findings A01–A22/ข้อความขัดกัน/whitespace. รายละเอียดสรุปเก็บใน audit verification (ไฟล์ `docs/evidence/sales-ticket-demo-2026-09-28/spec-audit-2026-09-29.json` ไม่อยู่ใน repo).
 5. **ไม่ได้รัน**: browser reproductionของA04/A05, UIใหม่/real API+DB/concurrency/auth/Stripe/LINE/UAT/Production. เดโมและscreenshotsก่อนหน้ายังเก็บไว้ไม่ได้แก้หรืออ้างผ่านมติใหม่.
 
 ## ข้อจำกัดและ next state
 
 Design closure: ข้อกำหนด/เหตุผล/แผนทดสอบทุกfindingถูกผูกในspec+planแล้ว. Implementation closure: **ยังpendingทั้งหมดที่ต้องแก้โค้ด**. Local baseline testsช่วยยืนยันseamsเดิม แต่ไม่พิสูจน์รองรับdiscount. ก่อนเริ่มfeatureต้องnative-proof/migrate/permission/gatesตามplan; ไม่มีdeploymentauthorizationจากงานreviewนี้.
+
+## ตรวจซ้ำบน develop 8a91bc1c (2026-09-29)
+
+### ฐานและวิธีตรวจ
+
+- โค้ด: develop `8a91bc1c` (checkout แบบ detached ที่สะอาด) และ `origin/develop` `69fba9d3` ซึ่งต่างจาก `8a91bc1c` เฉพาะ `.github/workflows/extended-tests.yml:286` (ลงทะเบียน `billing-advance-deal.pg.spec.ts` และ `billing-purchase-source.pg.spec.ts`)
+- ยืนยันด้วย git ว่า `4a5817b4` ไม่เป็นบรรพบุรุษของ `8a91bc1c`; merge-base = `69bdc327` (2026-09-22); develop นำหน้า merge-base 504 commits (รวม purchase-without-setup PR A–E ทั้งชุด) — ตรงกับรีวิว R2 (SED-06)
+- คำตัดสินรายข้อมาจากรีวิว R2 §2 และตรวจตำแหน่ง `file:line` ใหม่ด้วยตนเองทุกข้อที่อ้างในตาราง; คอลัมน์ขวาสุดคือผลหลังมติ Owner 2026-09-29 (สเปก §1)
+- ไม่ได้รันเทสต์: checkout ที่ใช้ตรวจไม่มี dependency ติดตั้ง และรอบนี้เป็นงานเอกสาร
+
+### คำตัดสินรายข้อ
+
+| ID | เดิมอ้างว่า | ผลบน 8a91bc1c | ตำแหน่งปัจจุบัน | หลังมติ 2026-09-29 |
+|---|---|---|---|---|
+| SD-A01 | overview แยกจาก purchasing; เดโมวาง overview ก่อน | ยืนยัน (บรรทัดเลื่อน); ส่วนเดโมตรวจไม่ได้ | `BillingPage.tsx:315-316`, `:337` (เดิมอ้าง 303/401) | ไม่เกิดแล้ว — ไม่มี section ส่วนลด; บรรทัดส่วนลดอยู่บนการ์ด `:502-531` |
+| SD-A02 | เดโมใช้การ์ดต่อรายการ ไม่มี viewport/ประวัติ | ตรวจไม่ได้ (เดโมไม่อยู่ใน repo) | — | ไม่เกิดแล้ว — ไม่มีรายการ แท็บ หรือกล่อง 3 แถว |
+| SD-A03 | เดโม `useTicket` เขียนทับรายการเดิม | ตรวจไม่ได้ (เดโม) | — | ไม่เกิดแล้ว — ไม่มี select/replace |
+| SD-A04 | ThemedSelect ไม่กันการเลือกเมื่อ disabled ขณะเปิด | ยืนยัน (ไฟล์ไม่เปลี่ยน) | `ThemedSelect.tsx:79-84` (`select`), `:135-136` (summary), `:171` | นอกขอบเขต — ลูกค้าไม่ใช้ dropdown; ฟอร์มหัวหน้าใช้ checkbox และ `datetime-local`; ถ้าต้องแก้เป็นงานแยก (SED-38) |
+| SD-A05 | ค่าที่หาไม่เจอแสดงเป็นตัวเลือกแรก | ยืนยันพร้อมรายละเอียด: label ตกไป `options[0]` แต่ hidden input ยังเป็นค่าเดิมและไม่ยิง `onChange` | `ThemedSelect.tsx:74`, `:111-112` | นอกขอบเขตเหมือน SD-A04 |
+| SD-A06 | เดโมใช้ native select; หน้า preview ใช้ native | ยืนยันส่วนโค้ด; หน้า preview เป็นเครื่องมือ local | `BillingPreviewPage.tsx:51` (ลิงก์จาก `BillingPage.tsx:324`); `BillingCapacityPicker.tsx:73` และ `BillingAdjustmentsPage.tsx:122` ใช้ ThemedSelect | ไม่เกี่ยวแล้ว |
+| SD-A07 | contracts/DTO ไม่มีฟิลด์ส่วนลด | ยืนยัน (บรรทัดเลื่อน) | `packages/contracts/src/billing.ts:121-148` (BillingQuote), `:153` (BillingStatus); `billing.dto.ts:90-100`; `billing.controller.ts:591-592` | ปิดในเอกสาร — field dictionary สเปก §7.2 (route ใหม่ + ฟิลด์ optional; DTO ของ quote ไม่เปลี่ยน) |
+| SD-A08 | ไม่มีคำสั่ง select/clear และ model | ยืนยัน | `schema.prisma` กลุ่ม Billing ไม่มี model ส่วนลด | ปิดในเอกสาร — ไม่มี select/clear; 4 ตารางสเปก §6.1 (String state, ไม่มี enum) |
+| SD-A09 | snapshot/Checkout ไม่มี fence ของ selection | ยืนยัน (บรรทัดเลื่อน) | `billing.service.ts:479` (totals), `:520` (snapshot), `:530-618` (transaction จอง), `:555` (consent); เดิมอ้าง 462/503/509–540 | ปิดในเอกสาร — quote pin `eventDiscount` (ticketId+version หรือไม่มี); Checkout ตรวจซ้ำและจองในธุรกรรมเดียว (สเปก §4.3, §6.3) |
+| SD-A10 | การซื้อปัจจุบันกับรอบต่ออายุแชร์ account; clear ที่ ARMED ต้องมี detach proof | ยืนยันในภาพรวม | `billing-repeat.ts`, `billing-collection.ts`, reconciler | ไม่เกิดแล้ว — ไม่มี ARMED หรือส่วนลดรอบต่ออายุ (SD-O1) |
+| SD-A11 | validator ปฏิเสธส่วนลดทุกชนิด | ยืนยันตรงทุกบรรทัด | `paid-checkout-invoice.ts:30,35,41,49` (ยอดที่คาดหวัง `:22-23`, `:43`, `:48`); `paid-invoice.ts:26,28,36-38` | ปิดในเอกสาร — แก้เฉพาะยอดที่คาดหวัง `:22-23`; การตรวจส่วนลดคงเดิม; `paid-invoice.ts` ไม่แตะ |
+| SD-A12 | schedule/repeat/price-return สมมติว่าไม่มีส่วนลด | ยืนยันแต่ไม่ครบ | `billing-schedule.ts:14,19,63`; `billing-repeat.ts:100,120-122,131,334,337,348` (เดิมอ้าง 333); `billing-price-return.ts:65,104`; ที่ขาด: `billing-collection.ts:28-31,122,210,221`, `billing-free-days.ts:44,78,88`, `enforceGrace` `billing-reconciler.service.ts:1196,1203` | ไม่เกิดแล้ว — ไม่มีส่วนลดบน subscription; guard ทั้งหมดไม่แตะ (สเปก §5.4) |
+| SD-A13 | `quoteTotals` ไม่มีส่วนลด; ไม่มีขั้นต่ำหลังลด | ยืนยัน (ไฟล์ไม่เปลี่ยน) | `billing-policy.ts:29-48` (ขั้นต่ำ `offerTerms` `:46`), `:125-129` | ปิดในเอกสาร — สูตรสเปก §5.1; ขั้นต่ำ 1000 สตางค์เป็นค่าคงที่ร่วม ไม่อยู่ใน `policyJson` |
+| SD-A14 | refund-source ปฏิเสธ credit note ที่มีส่วนลด | ยืนยัน | `billing-refund-source.ts:89,98` (เดิมอ้าง 99); `billing-invoice-details.ts:20` | ไม่เกิดแล้ว — ใบไม่มีบรรทัดส่วนลด (`unit_amount`) การคืนเงินเดิมใช้ได้ |
+| SD-A15 | reconciler ส่งโควตา/ราคาของ offer ไป grant, ดีล และ attribution | ยืนยัน (บรรทัดเลื่อน); สิทธิ์แพ็กถูกต้อง, attribution ของดีลใช้ราคาป้าย | one-time `billing-reconciler.service.ts:607-632,668-676`; advance `:1006-1007`; subscription `:1338-1361,1384-1395` (เดิมอ้าง 605–660/1345–1380) | สิทธิ์แพ็กจาก offer ถูกต้อง; ยอดของดีลไม่เกิดปัญหาแล้วเพราะดีลไม่ลด (SD-O2) |
+| SD-A16 | SalesAttribution หนึ่งแถวต่อร้าน; รายงานใช้แถวนี้ | ยืนยัน (ไฟล์ไม่เปลี่ยน) | `sales-attribution.write.ts:35-50`; `sales-reports.service.ts:51-66` | attribution คงเดิม; รายงานงานแยกและไม่รวมยอดเซลล์ (SD-Q3) |
+| SD-A17 | BillingPage มี detour อีเมล/โปรไฟล์/capacity | ล้าสมัยบางส่วน — gate อีเมลและโปรไฟล์ถูกถอดโดย purchase-without-setup | `billing.service.ts:316-327` (R-A1); `BillingPage.tsx:199-234` (เหลือ capacity/cadence), `:338-340` (โน้ตที่ไม่บล็อก), `:554-558` (ลิงก์โปรไฟล์ที่ไม่บังคับ), `:66-82` (resume) | เขียนใหม่ — การซื้อที่มีส่วนลดใช้ detour เดิม; server คำนวณส่วนลดใหม่ทุก quote; URL ไม่พกส่วนลด |
+| SD-A18 | หน้า signup ไม่มีทางเข้าส่วนลด; ยังไม่มี QR claim | ยืนยัน | `apps/web/src/features/external-signup/SignupPage.tsx`, `SignupStatusPage.tsx`, `SignupWelcomePage.tsx` | claim เป็นหน้า LIFF แยก ทำได้ทั้งก่อนหรือหลังสมัคร; ฟอร์มสมัครไม่แก้; ปัญหากลุ่มลูกค้าไม่เกิดแล้ว (SD-O3) |
+| SD-A19 | `assertOwner` ใช้ plan.manage; ทีมขายตรวจ platform tenant; ไม่มี `sales.event.manage` | ยืนยันเกือบทั้งหมด; `sales.report.read` เป็นของหัวหน้า/admin และการมองข้ามทีมตัดสินจาก role | `billing.service.ts:118-138`; `sales-context.ts:37-48`; `permission-registry.ts:108-115,565-573`; `packages/contracts/src/sales.ts:9-10` | ปิดในเอกสาร — ตารางสิทธิ์สเปก §9 |
+| SD-A20 | สเปก add-on ห้ามส่วนลดและแยก ADD_ON | ยืนยัน; สเปก add-on ฉบับปรับ 2026-09-29 บันทึกเป็นมติ O-03 (บรรทัดที่อ้างเดิมเลื่อนแล้ว) | สเปก add-on มติ O-03 | SD-T3; validator ของ add-on ปฏิเสธ `eventDiscount`; foundation แยกช่องจอง |
+| SD-A21 | operations/notifications/financial/settlement อยู่ปลายน้ำของหลักฐาน | ยืนยันในภาพรวม | `billing-operations.service.ts:18` (RETRY_APPLY/IMPORT_INVOICE); `billing-notifications.service.ts:265` (ไม่มีตัวเลข, S41); `billing-financial.ts:9-13`; `billing-timeline.ts:23`; `billing-admin.service.ts:254` | reader แสดงยอดจริงอยู่แล้ว; ไม่มีการแจ้งเตือนใหม่; เพิ่มการค้นหาของแอดมินและ issue `EVENT_DISCOUNT_REVIEW` |
+| SD-A22 | เอกสารเดิม/เดโมขัดกัน; ต้องมี matrix 4 โหมด × VAT | ตรวจได้เฉพาะเอกสาร | — | ไม่ต้องแก้ sales-deals §4 หรือ owned-billing B01/B08 (ไม่มี coupon); ลิงก์ purchase-without-setup; matrix = 4 โหมดบน NOT_VAT + unit test ของ VAT + native proof ก่อนจด VAT |
+
+สรุป: ยืนยัน 13 ข้อ (SD-A04, A07, A08, A09, A10, A11, A13, A14, A15, A16, A18, A20, A21), ยืนยันแต่ไม่ครบ 1 (A12), ยืนยันพร้อมรายละเอียด 2 (A05, A19), ล้าสมัยบางส่วน 1 (A17), ตรวจได้บางส่วน 3 (A01, A06, A22), ตรวจไม่ได้ 2 (A02, A03). หลังมติ: ไม่เกิดแล้ว 7 ข้อ (A01, A02, A03, A06, A10, A12, A14), นอกขอบเขต 2 (A04, A05), ปิดในเอกสาร 13 (A07, A08, A09, A11, A13, A15, A16, A17, A18, A19, A20, A21, A22)
+
+### ผลตรวจเดิมที่ใช้ไม่ได้แล้ว
+
+- "Web 4/4 PASS" และ "Billing 17/17 PASS" ข้างบนรันบน `4a5817b4` พร้อม local changes จึงไม่เป็นหลักฐานของ develop. spec web ทั้งสาม (ThemedSelect, ธีม, profile-navigation) ไม่เกี่ยวกับแบบใหม่แล้ว
+- รอบนี้ไม่ได้รันซ้ำ. ตอนลงมือให้รันบน worktree ของ develop ล่าสุด: ห้า spec billing เดิม (`paid-checkout-invoice.spec.ts`, `paid-invoice-promptpay.spec.ts`, `billing-refund-source.spec.ts`, `billing-schedule.spec.ts`, `billing-price-return.spec.ts`) เป็น baseline ก่อนแก้ และรายการใน plan §2 SD-C หลังแก้
+- ส่วน "Provider facts" ข้างบนเกี่ยวกับ coupon ซึ่งไม่ใช้แล้ว (SD-O1). พฤติกรรม Stripe ที่แบบใหม่พึ่งอยู่ในสเปก §14 พร้อมการตรวจบน UAT ทีละข้อ. เลขบรรทัดของ `STRIPE_API_VERSION` ปัจจุบันคือ `packages/contracts/src/billing.ts:7`
+
+### ข้อที่รีวิว R2 พบเพิ่มนอก A01–A22
+
+41 finding (SED-01…SED-41) และวิธีปิดอยู่ใน [plan §4](../plans/sales-event-discounts-plan-th.md#4-ผลรีวิว-r2--การปิด). ข้อที่ audit เดิมไม่มีเลยและเป็นตัวกำหนดแบบใหม่: allowlist ของ auth guard สำหรับร้านที่ล็อก (SED-03), attribution ของดีลเมื่อซ้อนส่วนลด (SED-04, ไม่เกิดแล้ว), grace ของรอบต่ออายุที่ลด (SED-02, ไม่เกิดแล้ว), ความหมายของกลุ่มลูกค้าใหม่ (SED-08) และงานข้าม PR (SED-11)

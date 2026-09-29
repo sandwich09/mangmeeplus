@@ -1,235 +1,465 @@
-# Spec: ส่วนลดจากเซลล์ — สะสมและเลือกใช้หนึ่งรายการต่อบิล
+# Spec: ส่วนลดจากงานขาย — รับจาก QR ในงาน ลดบิลแรกของการซื้อแพ็กเกจ
 
-ปรับล่าสุด 2026-09-29 · **DRAFT — มติล่าสุดอยู่ในเอกสาร; เดโมเดิมยังไม่ตรงแพตเทิร์นใหม่นี้**
-[Plan](../plans/sales-event-discounts-plan-th.md) · [Memory](../agent-memory/sales-event-discounts-2026-09-28.md)
+ปรับล่าสุด 2026-09-29 · **DRAFT v2 — ใช้มติ Owner และมติเทคนิค 2026-09-29 แล้ว; คำถามค้าง §12 มีค่าเริ่มต้น ต้องได้คำตอบหรือยอมรับค่าเริ่มต้นก่อนเริ่ม PR SD-C**
 
-[E2E impact / bug / gap และ dependency audit](../research/sales-event-discounts-e2e-impact-audit-2026-09-29-th.md) เป็นรายการช่องว่างที่ต้องปิดก่อน implementation acceptance. ภาพ ChatGPT เป็น reference ของโครงรายการ/แท็บเท่านั้น ไม่ยกสี ฟอนต์ หรือกติกาวันหมดอายุมาด้วย.
+- ฐานโค้ดที่ตรวจ: develop `8a91bc1c` และ `origin/develop` `69fba9d3` (ต่างจาก `8a91bc1c` เฉพาะ `.github/workflows/extended-tests.yml:286`). ทุก `file:line` ในเอกสารนี้อ้างฐานนี้ และตรวจกับไฟล์จริงแล้ว
+- เอกสารคู่กัน: [Plan](../plans/sales-event-discounts-plan-th.md) · [Audit และผลตรวจซ้ำบน develop](../research/sales-event-discounts-e2e-impact-audit-2026-09-29-th.md). Memory ของงานนี้ยังไม่มีใน repo (ลิงก์ `../agent-memory/sales-event-discounts-2026-09-28.md` ของ DRAFT v1 ไม่มีไฟล์)
+- เกี่ยวข้อง: [Sales deals](mangmee-sales-deals-and-locked-signup-spec-th.md) (§4 "ไม่มี coupon บน subscription" ใช้ต่อ) · [ซื้อแพ็กเกจได้ทันทีหลังสมัคร](mangmee-purchase-without-setup-spec-th.md) (R-A1, R-A6, R-B1, R-C1, R-C2, D-PF-5, D-PF-10/R-C11) · [Add-on เครดิต AI และอ่านรูป](chat-credit-and-receipt-addons-spec-th.md) (เจ้าของ layout หน้า billing และฐาน billing ร่วม: มติ T-02, T-07, T-08)
+- รหัสของเอกสารชุดนี้ขึ้นต้น `SD-`: SD-O มติ Owner, SD-T มติเทคนิค, SD-Q คำถามค้าง, SD-E เกณฑ์รับงาน, SD-A ผลตรวจ — กันชนกับรหัส A/E/O/T ของสเปก add-on
 
-## 1. มติล่าสุดและขอบเขต
+## 0. สรุป
 
-หัวหน้าเซลล์สร้างชุด → เซลล์แจก QR → ลูกค้า **รับส่วนลดเก็บสะสม** → **เลือกใช้หนึ่งรายการ** → ระบบลดรายการที่กำลังซื้อหรือบิลต่ออายุถัดไปให้อัตโนมัติ. มติล่าสุดเรื่องรับหลายรายการแทนที่คำสั่งก่อนหน้าที่รับแล้ว apply ทันที: การรับไม่เลือกใช้ให้ ไม่ตัดเงิน และไม่กินสิทธิ์หนึ่งบิล. ไม่มี FIFO อัตโนมัติ ไม่มีการรวมส่วนลดหลายรายการ.
+หัวหน้าทีมขายตั้ง "ชุดส่วนลด" ของงาน → เซลล์ที่ได้รับมอบหมายเปิด QR อายุไม่เกิน 5 นาที → คนที่สแกนผ่าน LINE ได้ส่วนลดหนึ่งรายการ ผูกกับบัญชี LINE ของคนนั้น → เมื่อคนนั้นเป็นเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ และซื้อแพ็กเกจที่เริ่มแพ็กเกจใหม่ของร้าน (ซื้อครั้งแรก หรือซื้อใหม่หลังหมดอายุ) ก่อนส่วนลดหมดอายุ ระบบลด **บิลแรกเท่านั้น**; รอบต่ออายุเก็บราคาเต็ม → ใช้สิทธิ์สำเร็จเมื่อยืนยันรับเงินจริง
 
-| สถานการณ์เมื่อเลือกใช้ | ผลที่ลูกค้าเห็น | ใช้สิทธิ์สำเร็จเมื่อ |
+- ไม่มี coupon ใน Stripe ทุกโหมด: ลดด้วย `price_data.unit_amount` ที่ server คำนวณ (§5)
+- ไม่มีแท็บหรือ section ใหม่บนหน้า billing: เป็นบรรทัดราคาบนการ์ดแพ็กเกจและในขั้นตรวจยอด (§8)
+- ไม่ซ้อนกับดีลขาย; หนึ่งร้านใช้ได้หนึ่งรายการ; add-on ไม่ลด (§4)
+
+## 1. มติ
+
+### 1.1 มติ Owner (2026-09-29)
+
+| ID | มติ | ผลต่อแบบ | finding ที่ปิด |
+|---|---|---|---|
+| SD-O1 | ลด **บิลแรกเท่านั้น**; รอบต่ออายุไม่ลดเลย; ไม่มี Stripe coupon บน subscription; กติกา sales-deals §4 "ไม่มี coupon บน subscription" คงเดิม | กลไกต่อโหมด §5.2; CARD_AUTO = จ่ายงวดแรกครั้งเดียวแล้วผูก subscription ราคาเต็มที่เริ่มเก็บเมื่อสิ้นงวดแรก §5.3; guard ของการต่ออายุและ grace ไม่แตะ §5.4 | SED-01, SED-02 (ไม่เกิดแล้ว), SED-07 |
+| SD-O2 | ไม่ซ้อนกับดีลขาย: ร้านที่มีดีลที่อนุมัติแล้วหรือกำลังใช้ ได้ราคาดีลอย่างเดียว; โค้ด attribution ของดีล (`billing-package-request.ts`) ไม่เปลี่ยน | เงื่อนไขตรวจและข้อความ "มีดีลพิเศษอยู่แล้ว" §4.2 | SED-04 (ไม่เกิดแล้ว) |
+| SD-O3 | กลุ่ม "สมัครใหม่ผ่านงาน" = ผู้ถือส่วนลด — Owner: "ตั๋วก็จะออกแค่คนที่ได้ qr คนที่มาจากช่องทางปกติ จะไม่ได้". QR 5 นาทีมีหน้าที่ **ออก** ส่วนลดเท่านั้น; ส่วนลดผูกกับคนที่สแกน (ตัวตน LINE); ใช้ได้หลังสมัครและเปิดร้าน กับบิลแรกที่เข้าเงื่อนไขของร้านนั้น จนกว่าจะหมดอายุ | ไม่ต้องจัดกลุ่มการสมัคร (ตัดตัวเลือก "กลุ่มลูกค้า"); วันหมดอายุ §4.4; หนึ่งรายการต่อร้าน §4.3; วิธีใช้ §3.4; สิ่งที่พนักงานในร้านเห็น §3.5 | SED-08, SED-34 |
+
+### 1.2 มติเทคนิคของ Controller (2026-09-29)
+
+| ID | มติ | อยู่ที่ |
 |---|---|---|
-| กำลังเลือกแพ็ก/ดูยอด ยังไม่เริ่มชำระ | ยอดรายการนี้ลดทันที → ยืนยันชำระตามปกติ | ยืนยันรับเงินจริงของรายการนี้ |
-| มี subscription รายเดือน ไม่มีการซื้อใหม่ | “จะลดบิลวันที่ …” ของรอบรายเดือนถัดไป | ยืนยันรับเงินจริงของบิลรอบนั้น |
-| มี subscription รายปี ไม่มีการซื้อใหม่ | “จะลดบิลวันที่ …” ของรอบรายปีถัดไป | ยืนยันรับเงินจริงของบิลรอบนั้น |
-| ยังไม่เลือกแพ็ก/ไม่มี subscription | ส่วนลดรอการซื้อครั้งถัดไปที่รองรับ | จ่ายการซื้อเต็มแพ็กครั้งแรก |
-| สมัครใหม่ รอเปิดร้าน | ใช้หน้าสมัครและสถานะเดิม; เข้าร้านได้แล้วจึงรับส่วนลดในหน้าแพ็กเกจ | กดรับที่หน้าแพ็กเกจ แล้วเลือกใช้และจ่ายสำเร็จ |
-| มีรายการ accepted/processing/UNKNOWN | รับสะสมได้ แต่เปลี่ยนส่วนลดในรายการที่เริ่มแล้วไม่ได้; รอผลก่อนเลือกใช้กับรายการใหม่ | ไม่แก้ยอด invoice ย้อนหลัง |
+| SD-T1 | ร้านที่ล็อกหรือยังไม่มีแพ็กเกจต้องเรียก route ของส่วนลดได้: เพิ่ม route ใน allowlist `isBillingRecoveryRoute` (`apps/api/src/modules/auth/presentation/auth.guard.ts:98-104`) และ sync pins ใน PR เดียวกัน (`auth.guard.ts` ถูก pin ที่ `infra/security/validate-production-maintenance-release.sh:25,106`) | §7.4, plan SD-C |
+| SD-T2 | ลำดับงาน: (1) งานแก้ purchase flow ที่กำลังทำ → (2) ฐาน billing ร่วม (foundation): attempt และ invoice รู้ชนิดสินค้า (`productKind`) และมีช่องจอง active attempt แยกสำหรับ checkout ที่ไม่ใช่แพ็กเกจ ตามที่สเปก add-on นิยาม (T-02, T-07) → (3) ฟีเจอร์ add-on; ส่วนลดจากงานทำหลัง foundation | plan §1 |
+| SD-T3 | add-on ไม่ลดเด็ดขาด (สเปก add-on O-03 ตรงกัน) | §4.1 |
+| SD-T4 | หน้า billing ไม่เพิ่มแท็บ; ส่วนลดเป็นบรรทัดราคาบนการ์ดแพ็กเกจที่ใช้ได้และในขั้นตรวจยอด/ยืนยัน เช่น "ส่วนลดจากงาน {ชื่องาน} −{จำนวน} บาท (บิลแรก)"; การรับส่วนลดทำผ่าน QR และ LINE; รายการแท็บของหน้าเป็นของสเปก add-on §7.1 (T-08) | §8 |
+| SD-T5 | สุขอนามัยการ implement: migration เรียงหลังตัวล่าสุดบน develop ตอนลงมือ (ตอนนี้ `20260929030000`) additive เท่านั้น ไม่มี Prisma enum; ลงทะเบียนเทสต์ผ่าน whole-chain catalog, `ci.yml` หรือ `extended-tests.yml` ไม่ใช่ `package.json`; regenerate W00 manifest เมื่อไฟล์ที่ถูก hash เปลี่ยน; `ci.yml` และ `extended-tests.yml` บน main ต้องตรงกับ develop byte ต่อ byte; ยึดแบบ `docs/plans/purchase-without-setup/xx-cross-cutting.md` | plan §3 |
+| SD-T6 | ภาษาไทยเรียบ ไม่มีรหัสระบบในข้อความลูกค้า; ใช้คำ "ยังไม่มีแพ็กเกจ", "หมดอายุ", "เลือกแพ็กเกจ", "เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ", "ทีมงาน", "อีเมลรับเอกสาร"; เงินของ AI เรียก "เครดิต AI" เท่านั้น | §8 |
 
-หนึ่งสิทธิ์ส่วนลดใช้ได้กับหนึ่งบิล และหนึ่งบิลใช้ได้ไม่เกินหนึ่งรายการ. ต่อบริษัท/Billing account มี selection ที่ยังทำงานได้ไม่เกินหนึ่งรายการ แม้เป้าหมายต่างรอบกัน. ปุ่มก่อนเลือกเป็น **“เลือก”**; กดสำเร็จแล้วเป็น **“ใช้ส่วนลด”** พร้อมสถานะ selected และปุ่มรายการอื่น disabled. กดปุ่ม “ใช้ส่วนลด” ของรายการเดิมซ้ำเพื่อยกเลิก; เมื่อยกเลิกสำเร็จจึงเลือกรายการใหม่ได้. ไม่สลับทับรายการเดิมโดยตรง ไม่มีกดครั้งที่สองเพื่อเริ่มจ่าย. ปุ่มนี้เป็น toggle ของการเลือก; การชำระเงินจริงยังผ่าน consent/Checkout เดิม. รายการที่ไม่ได้เลือกไม่ถูกใช้ ไม่ FIFO; บิลหลังใช้แล้วกลับราคาเต็มจนมีการเลือกใหม่.
+### 1.3 ส่วนของ DRAFT v1 ที่ยกเลิก
 
-ไม่เปลี่ยนวันตัดรอบ ระยะเวลาแพ็ก วิธีชำระ หรือสร้าง subscription จากการรับ/เลือกส่วนลด. รายปีลดบิลต่ออายุปีถัดไป ไม่หารรายเดือน/คืนบิลที่จ่ายแล้ว. วันปิดรับใช้กับ issuance เท่านั้น: รับทันแล้วเก็บไว้/เลือกให้บิลปีหน้าได้. แบบใหม่นี้ไม่มี fixed/received/ready expiry, hard stop หรือการขยายอายุหลังรับ.
+ส่วนต่อไปนี้ของ DRAFT v1 (นำเข้าใน a3cc6f39) ไม่ใช้แล้ว และห้ามใช้เป็นเกณฑ์รับงาน:
+- สะสมหลายรายการแล้วกด "เลือก"/"ใช้ส่วนลด" แบบ toggle, selection ต่อ account, `selectionVersion`, คำสั่ง select/clear และรหัส `SELECTION_*` → ระบบใช้ส่วนลดกับบิลแรกที่เข้าเงื่อนไขอัตโนมัติ (§4.3)
+- section "ส่วนลด" ก่อนแพ็กเกจ, แท็บ "ส่วนลดที่มี N / ประวัติส่วนลด", กล่องเลื่อน 3 แถว และ dropdown ของลูกค้า → บรรทัดราคา (§8)
+- target แบบ NEXT_RENEWAL/PURCHASE_INTENT/FIRST_PURCHASE, สถานะ QUEUED/ARMED, detach proof, ลดบิลต่ออายุรายเดือน/รายปี, coupon หรือ invoice discount และข้อยกเว้นกฎ no-coupon → ไม่มี (SD-O1)
+- ตัวเลือกกลุ่มลูกค้า "ทั้งหมด / สมัครใหม่ผ่านงาน / บริษัทเดิม" → ผู้ถือคือคนที่สแกน (SD-O3)
+- "ไม่มีวันหมดอายุหลังรับ" → มีวันหมดอายุ (§4.4)
+- ส่วนลดสำหรับดีล (อนุมัติแล้ว/ล่วงหน้า/ต่ออายุอัตโนมัติ) และการให้เครดิตยอดขายตามเซลล์ผู้แจกแทน attribution เดิม → ไม่ซ้อนดีล (SD-O2); ยอดขายของเซลล์คงตามเดิม (§10, SD-Q3)
+- เดโมและหลักฐาน 53 walkthroughs/63 assertions (`docs/evidence/sales-ticket-demo-2026-09-28/` ไม่มีใน repo) → เป็นประวัติ ใช้รับรองแบบนี้ไม่ได้
 
-ขอบเขตครั้งนี้ปรับ spec+plan และตรวจโค้ด/ผลกระทบตลอด flow; ไม่แก้ production app หรือเดโมในรอบนี้. ไม่มี customer referral/rewards; attribution เดิมคงเดิม. ตัวเลขในเดโมเดิมไม่ใช่ราคาที่อนุมัติขายแล้ว. คำที่แสดงต่อผู้ใช้ทุกบทบาทใช้ “ส่วนลด / ชุดส่วนลด / รับส่วนลด” ไม่ใช้คำว่า “ตั๋ว”; ชื่อ technical เช่น SalesDiscountTicket และเส้นทางไฟล์เดิมคงไว้ได้ ไม่ต้อง rename schema เพียงเพื่อ copy.
+## 2. คำศัพท์และขอบเขต
 
-## 2. Journey และสิทธิ์
+| คำ | ความหมาย |
+|---|---|
+| งาน | ชื่องาน (ข้อความ) ใช้จัดกลุ่มรายงาน ไม่มี record ของตัวเอง |
+| ชุดส่วนลด | ค่าที่หัวหน้าตั้ง: ชื่องาน, ชื่อชุด, จำนวนเงินลด, จำนวนแจกสูงสุด, ช่วงเปิดรับ, แพ็กเกจ/รอบที่ใช้ได้, เซลล์ผู้แจก (model `SalesEventBatch`) |
+| ส่วนลดจากงาน | สิทธิ์หนึ่งรายการที่ออกให้คนสแกน QR (model `SalesEventTicket`); บน UI ทุกบทบาทเรียก "ส่วนลด" หรือ "ส่วนลดจากงาน" ไม่ใช้คำว่า "ตั๋ว"; ชื่อ technical ใช้ ticket ได้ |
+| ผู้ถือ | ตัวตน LINE ที่สแกน (provider LINE + channel id + LINE user id แบบเดียวกับ `ExternalIdentity`, `apps/api/prisma/schema.prisma:833-847`); ใช้ได้เมื่อบัญชีมั่งมีที่ผูก LINE นี้เป็นผู้มีสิทธิ์จัดการแพ็กเกจของร้าน |
+| บิลแรก | บิลเดียวของการซื้อแบบจ่ายครั้งเดียว หรือบิลงวดแรกของการซื้อแบบต่ออายุ ในการซื้อที่ **เริ่มแพ็กเกจใหม่** ของร้าน (§4.1) |
 
-1. หัวหน้า Sales/SYSTEM_ADMIN เริ่มงานว่าง กรอกชื่องาน/ชุดเป็น text เลือกเซลล์ ตั้งเงิน/จำนวน/กลุ่ม/สินค้า/ช่วงรับ แล้ว “ยืนยันและเปิดแจกส่วนลด”. ไม่มี input ขั้นต่ำหลัง VAT หรือปุ่มเพิ่มชุดอีกชุดในฟอร์ม.
-2. Sales ที่ได้รับมอบหมายเปิด QR ไปหน้าแพ็กเกจของร้าน พร้อมบริบทสิทธิ์จากเซลล์. หากยังไม่ login/ยังไม่มีร้าน ใช้หน้าสมัครและขั้นตอนเปิดร้านเดิมทั้งหมด; ไม่เพิ่มฟอร์ม/ช่อง/ปุ่มรับส่วนลดในหน้าสมัคร.
-3. หน้า “แพ็กเกจและการชำระเงิน” วาง section **“ส่วนลด” ก่อนเนื้อหาแพ็กเกจ**. มีรายการที่รับได้จาก QR และรายการที่รับเก็บไว้แล้ว. กด “รับส่วนลด” เพิ่มเข้า collection ในหน้าเดิม; ไม่เลือกใช้/เปลี่ยนยอดให้เอง. Replay คืนรายการเดิม; รับเพิ่มต้อง explicit intent.
-4. กด “เลือก” ได้ก่อนเลือกแพ็กหรือขณะดู quote/subscription. Server บันทึก selection แล้วแสดงปุ่ม “ใช้ส่วนลด”; ปิดปุ่มรายการอื่นทั้งหมด. แสดงบิล/วันที่/ราคาเต็ม/ส่วนลด/VAT/ยอดใหม่. กดรายการเดิมซ้ำจึงยกเลิกก่อนเปลี่ยนรายการ; ดูรายละเอียดหรือรับเพิ่มยังทำได้.
-5. ซื้อทันทีใช้ consent/Checkout เดิม. Monthly/annual เรียกเก็บตามรอบเดิมโดยลดบิลที่เลือกอัตโนมัติ ไม่ต้องกลับมากดซ้ำ. QR ลดบิลให้แต่ลูกค้ายังต้องจ่ายตามปกติ.
-6. Verified paid → USED; activation แยก. Sales/head ดูเก็บไว้/เลือกไว้/กำลังจ่าย/ใช้แล้วและเงินจริง/คืนแยก.
+ในขอบเขต: ตั้งชุด, มอบหมายเซลล์, QR, รับผ่าน LINE (LIFF), ลดบิลแรกใน 4 โหมดชำระเงิน, ถือเงิน/กู้รายการ/คืนเงิน, รายงานทีมขาย, การค้นหาของแอดมิน
 
-Customer ต้อง active membership + company.plan.manage ผ่าน Billing assertOwner เดิม. Agent ผ่าน platform tenant guard + active assignment + own ticket scope; head ใช้ sales.event.manage, report ข้าม agent ใช้ sales.report.read. เพิ่ม registry/grants ตามรูปแบบเดิม ไม่ hard-code OWNER. การรับและการเลือกใช้ต้อง revalidate company/source/terms/revision; claim acknowledgment แยก use acknowledgment/target intent; browser ส่งยอด/agentId ไม่ใช่ authority.
+นอกขอบเขต: ลดรอบต่ออายุ; ลด add-on/ส่วนต่างอัปเกรด/หนี้/ดีล; coupon หรือ promotion code สาธารณะ; customer balance; การแจ้งเตือน LINE/อีเมลเรื่องส่วนลด (SD-Q5); การ์ดโปรโมชั่น LINE (`apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:313`) และข้อความนโยบายสาธารณะ (`line-public-policy.logic.ts:8`) ที่ยังแสดงราคาปกติ; เว็บการตลาด; AI tool (AI Gateway ไม่เขียนเงินหรือส่วนลด)
 
-BillingPage.tsx และ billing-profile-navigation.ts เป็นจุดต่อ frontend เดิม. ทั้งรับ/สะสม/เลือกใช้ส่วนลดอยู่ในหน้าแพ็กเกจของบริษัทเดียวกันกับการซื้อและต่ออายุ. Header ใช้บริบทบริษัทปัจจุบัน ไม่ถามชื่อบริษัทที่จะสมัครซ้ำ. เลือกใช้/เปลี่ยน/เอาส่วนลดออกก่อน Checkout → invalidate quote เก่า/consent ใหม่; refresh/กลับจาก billing profile/เปลี่ยนอุปกรณ์คง server selection. Company switch ไม่ย้ายส่วนลดหรือรายการชำระข้ามบริษัท.
+## 3. Journey
 
-ยึด BillingPage/BillingCustomerFrame/MangmeePage จริง: คงหัวข้อ/คำอธิบาย, แท็บ “แพ็กเกจ / การต่ออายุและชำระเงิน / ประวัติ”, การ์ดแพ็กเกจปัจจุบันและช่องทางช่วยเหลือ. ในแท็บแพ็กเกจ วาง section ส่วนลดก่อนทั้งการ์ดแพ็กเกจปัจจุบัน, catalog/deal และขั้นยืนยันซื้อ; ต้องอยู่นอกเงื่อนไข showOverview เพื่อไม่หายตอน choosing/quote/capacity. แท็บต่ออายุวาง section เดียวกันก่อนบิลถัดไปและอ่าน selection ชุดเดียวกัน; แท็บประวัติชำระเงินคงเดิม ไม่สร้าง selection อีกชุด. ซื้อใหม่ยังผ่านเลือกแพ็ก→capacity/profile/email checks→quote/consent เดิม. ไม่แสดงฟอร์มเลือกบริษัทหรือสมัครซ้ำในเนื้อหา Billing.
+### 3.1 หัวหน้าตั้งชุดส่วนลด
 
-หน้าสมัคร/ข้อมูลที่กรอก/ปุ่มส่งคำขอ/หน้ารออนุมัติคงเดิม. ก่อนมีบริษัทและ active membership ไม่สร้าง ticket ไม่กัน quota ไม่ทำ signup-ticket binding. เมื่อเข้าร้านได้แล้วจึงกลับ Billing ด้วย safe return context และตรวจสิทธิ์/QR/window/assignment ปัจจุบันก่อนกดรับ. Context ที่พกมาคือความตั้งใจดูส่วนลด ไม่ใช่สิทธิ์ที่ได้รับแล้ว. หาก QR หมดอายุต้องสแกนใหม่; ถ้าพร้อมหลังปิดรับ ให้แสดงรับไม่ได้ตามเงื่อนไข ไม่ออกย้อนหลังจากวันที่สมัคร. Demo จำลองผลจบ signup ในเครื่องมือภายนอกหน้าลูกค้า ไม่วาดฟอร์มสมัครใหม่ทับของเดิม.
+หน้าใหม่ `/sales/events` ในคอนโซลทีมขาย ฟอร์มหนึ่งฟอร์มต่อหนึ่งชุด:
+- ชื่องาน และชื่อชุด: ข้อความ 1–120 ตัวหลัง trim
+- ส่วนลด (บาท): จำนวนเต็มบาท ≥ 1 เก็บเป็นสตางค์ (×100). จำนวนเต็มบาททำให้ VAT แบบแยกไม่มีเศษ .5 สตางค์ (SED-39)
+- จำนวนแจกสูงสุด ≥ 1: นับตลอดอายุชุด ไม่คืนเมื่อเพิกถอนหรือคืนเงิน
+- เปิดรับ / ปิดรับ: วันเวลาไทย กรอกด้วย `datetime-local` แล้วแปลง `${value}+07:00` แบบเดียวกับ `apps/web/src/features/billing-admin/BillingReceiptAdjustmentsPage.tsx:47,80`; server เก็บ UTC เป็นช่วง `[เปิดรับ, ปิดรับ)`; หน้าจอแสดง "ปิดรับ {วันที่ เวลา}"; ไม่ใช้ `ThemedDate` เพราะรองรับแค่ `'date' | 'month'` (`apps/web/src/common/components/field/ThemedDate.tsx:31`)
+- แพ็กเกจที่ใช้ได้: checkbox ของ tier ที่ขาย และของรอบรายเดือน/รายปี; ค่าเริ่มต้นเลือกทั้งหมด
+- เซลล์ผู้แจก: รายการ checkbox ในฟีเจอร์ พร้อมช่องค้นหาชื่อที่ถาม server และแบ่งหน้า; หัวหน้าเห็นเฉพาะทีมตัวเองตามกติกาเดิมของ `apps/api/src/modules/sales-console/application/sales-agents.service.ts:78-86`, SYSTEM_ADMIN เห็นทุกคน; ต้องเลือกอย่างน้อยหนึ่งคน (ไม่อ้างว่ามี multi-select กลางให้ใช้ซ้ำ — SED-18)
+- ปุ่ม "ยืนยันและเปิดแจกส่วนลด": สร้างแล้วเปิดทันที ไม่มีร่างใน server. แก้ไขใช้ "บันทึกการเปลี่ยนแปลง" (revision ใหม่ มีผลกับส่วนลดที่ออกหลังจากนั้น)
 
-คิว Sales ไม่เปิด hosted Checkout URL/เอกสารการเงิน/PII; ลิงก์ไป Billing ต้องตรวจสิทธิ์ลูกค้าใหม่. QR ไม่พิสูจน์การอยู่หน้างาน. AI Gateway ไม่เขียนเงิน/ส่วนลดตรงฐานข้อมูล.
+Server ปฏิเสธการเผยแพร่ถ้าส่วนลดทำให้ยอดของแพ็กเกจหรือรอบใดใน scope ต่ำกว่าขั้นต่ำ (§4.5) และบอกชื่อแพ็กเกจที่ติด
 
-### 2.1 UI/UX ของส่วนลดและธีม
+### 3.2 เซลล์เปิด QR
 
-- โครงตาม reference: หัวข้อ “ส่วนลด” + ข้อความ “เลือกใช้ได้ 1 รายการต่อบิล”, กล่องเดียวในธีม Mangmee มีแท็บ **“ส่วนลดที่มี N” / “ประวัติส่วนลด”**, ภายในเป็นแถวคั่นเส้น ชื่อ/ยอด/เงื่อนไขสั้นด้านซ้าย ปุ่มด้านขวา. ไม่มีภาพตั๋ว เส้นประ คูปองตกแต่ง หรือการ์ดใหญ่แยกต่อรายการ.
-- N คือจำนวนสิทธิ์ที่รับแล้วและยังไม่ consumed/revoked ไม่ใช่จำนวนที่โหลดหรือเห็น 3 แถว. Pending/temporarily ineligible ยังอยู่และอธิบายเหตุผล; จึงใช้ “ส่วนลดที่มี” ไม่อ้างว่าทั้งหมดกดใช้ได้ทันที. ประวัติส่วนลดแสดง USED/REVOKED พร้อมวัน/บิล/เหตุผลตามสิทธิ์; ต่างจากประวัติชำระเงินเดิม.
-- QR offer ที่ยังไม่รับแสดงแถว “รับส่วนลด” ภายใน section เดียวกัน ไม่รวมใน N. รับแล้วแถวนั้นเปลี่ยนเป็นสิทธิ์ในรายการ ไม่แสดงข้อเสนอเดิมซ้ำอีกกล่อง; ถ้า cap อนุญาตรับเพิ่มจึงแสดง “รับเพิ่ม” พร้อมจำนวน. การเปิดหน้าไม่ออกสิทธิ์หรือเลือกเอง.
-- แถวแสดงชื่อที่หัวหน้าตั้ง, “ลด … บาทก่อน VAT”, scope/target date เมื่อเกี่ยวข้อง. “รับได้ถึง …” ใช้เฉพาะข้อเสนอที่ยังไม่รับ; ไม่มี “หมดอายุ” บนสิทธิ์ที่รับแล้ว. วันที่ใช้เวลาไทยและปีเต็มโดยเฉพาะรายปี.
-- มี 1–3 รายการแสดงทั้งหมดตามความสูงเนื้อหา. มากกว่า 3 ให้ viewport รายการเห็นไม่เกิน 3 แถวเต็มและเลื่อนแนวตั้งดูที่เหลือ; title/แท็บ/count/สถานะ selection อยู่นอกส่วนเลื่อน. ห้ามใช้ slice(0,3) แล้วทิ้งรายการที่เหลือหรือ clip แถวที่สาม. ความสูงปรับตามแถวจริง/viewport/font zoom; หน้า Billing หลักยังเลื่อนตามปกติ ไม่มี horizontal scroll. ใช้กติกานี้กับทั้งสองแท็บ.
-- ลำดับ claimedAt ใหม่ก่อน + ID เป็น tie-breaker; เปลี่ยน selection ไม่กระโดดสลับแถว. Cursor ต้องเสถียร. Server ส่ง selected record แยกจากหน้ารายการเสมอเพื่อ lock รายการอื่นแม้ selected ยังโหลดไม่ถึง. แสดงสถานะที่เลือกและลิงก์ “ดูรายการที่เลือก” เลื่อนไปแถวนั้นโดยไม่เปลี่ยน selection. โหลดหน้าถัดไปด้วย scroll/pagination เดิม; ล้มเหลวเก็บรายการเดิมและมี retry.
-- ใช้ MangmeeCard/mangmee-card, mangmee-btn, mangmee-input, spacing/radius/shadow/font/brand tokens เดิม. “เลือก” เป็น secondary; “ใช้ส่วนลด” เป็น selected brand treatment เดิม + aria-pressed=true. ไม่คัดลอก palette/typography ของ ChatGPT หรือสร้างสีเขียวชุดใหม่. ไทย/อังกฤษอยู่ใน dictionary เดิม (Select / Apply discount).
-- Dropdown ทั้ง head/Sales/customer/หน้าเกี่ยวข้องใช้ ThemedSelect หรือ SelectField + PopoverPanel เดิม; ไม่ใช้ native select/custom dropdown ใหม่. ชื่องาน/ชุดเป็น text; การเลือกส่วนลดใช้ปุ่มในแถว. Assignment หลายคนใช้ตัวเลือกหลายรายการเดิม ไม่ใช้ ThemedSelect แบบ single value แทน. วันที่ใช้ ThemedDate/field เดิม.
-- Dropdown ต้องตรวจ closed/open/selected/disabled/loading/error/empty/ชื่อไทยยาว/search/keyboard/Escape/outside-click/portal ใน modal และ scroll container. ถ้า disable ขณะเปิด ต้องปิดเมนูและป้องกัน option mutation; current value ถูกลบ/หมดสิทธิ์ต้องแสดง unavailable/placeholder ไม่แสดง option แรกแทนโดยไม่ได้เลือก. Pending ใช้ scoped CoverLoader ตาม guideline.
-- ปุ่มอย่างน้อย 44px บนจอสัมผัส; label/aria-describedby บอก “กดอีกครั้งเพื่อยกเลิกการเลือก”. Enter/Space ทำเหมือนคลิก; focus และ aria-live ประกาศผลหลัง server ยืนยัน. กล่อง scroll เข้าถึงด้วย keyboard/touch และเลื่อนแถวที่ focus เข้ามาโดยไม่ trap หน้า. ทดสอบ 320/390/768/1280px, zoom 200%, ชื่อยาวและจำนวนมาก.
+เซลล์ที่ยังได้รับมอบหมายในชุดที่เปิดรับ กด "แสดง QR" → server ออก token ใหม่ (สุ่ม 32 byte เก็บเฉพาะ hash) อายุ `min(ตอนนี้ + 5 นาที, ปิดรับ)` และคืนภาพ QR ที่ render ใน server ด้วย `qrSvgDataUrl` (`apps/api/src/modules/employee-access/domain/logic/employee-access.logic.ts:176-187`) ของลิงก์ `https://liff.line.me/{LINE_LIFF_ID}/event-discount?t=<token>` — แบบเดียวกับลิงก์ผูก LINE ของพนักงาน `buildLineLinkPackage` (`:154-173`). หมดเวลาแล้วกดสร้างใหม่. QR หนึ่งอันสแกนได้หลายคนภายในอายุของมัน. QR ไม่ได้พิสูจน์ว่าผู้สแกนอยู่ที่งาน
 
-### 2.2 ปุ่มและ state เดียวกันทุกหน้าจอ
+### 3.3 ลูกค้าสแกนรับผ่าน LINE
 
-| State | ปุ่มรายการนั้น | รายการอื่น / ผลเมื่อกด |
+1. LINE เปิด LIFF app เดิม; `https://liff.line.me/<id>/event-discount` จะไปที่ path ย่อยของ endpoint ที่ลงทะเบียนไว้ `…/v1/auth/line/link-page/event-discount` แบบเดียวกับหน้าสมัคร `line/link-page/signup` (`apps/api/src/modules/auth/presentation/auth.controller.ts:520-526`). หน้าเป็น HTML ที่ API render ด้วย `liffPageHtml` + `LIFF_PAGE_CSP` + `LIFF_PAGE_SCRIPT` (`apps/api/src/common/security/liff-page.security.ts:7,89,131`) โดยเพิ่ม mode `event-discount`
+2. หน้าเรียก `liff.getIDToken()` แล้วส่ง `POST /v1/public/event-discounts/claim` {idToken, qrToken, requestKey}. Server ตรวจ ID token ด้วย `LineIdTokenService` (AuthModule export ไว้แล้ว, `auth.module.ts:176-178`) และจำกัดความถี่ต่อ LINE user
+3. ผ่าน → ออกส่วนลดหนึ่งรายการผูกกับตัวตน LINE นั้น (ยังไม่ผูกร้าน). สแกนชุดเดิมซ้ำได้รายการเดิม
+4. หน้าแสดง "รับส่วนลดแล้ว", ชื่องาน, จำนวนเงินลด, "ใช้ได้ถึง {วันที่ เวลา}" และขั้นต่อไป:
+   - มีบัญชีมั่งมีที่ผูก LINE นี้แล้ว → ปุ่ม "เปิดมั่งมี" ใช้ `POST /v1/auth/line/liff/session` เดิม (`auth.controller.ts:675`; `exchange-liff-session.use-case.ts:58-100`) เพื่อ handoff เข้าเว็บ; ร้านที่ล็อก ("ยังไม่มีแพ็กเกจ"/"หมดอายุ") พาผู้มีสิทธิ์จัดการแพ็กเกจลงหน้าแพ็กเกจเลย (purchase-without-setup R-C3, `exchange-liff-session.use-case.ts:140-145`); ร้านที่ยังทดลองใช้ลงหน้าแรกของร้าน แล้วเปิดเมนู "แพ็กเกจและการชำระเงิน" เอง
+   - ยังไม่มี → ปุ่ม "เปิดร้านใหม่" ไป LIFF signup เดิม (ไม่แก้ฟอร์มสมัคร) และบรรทัดรอง "ถ้ามีบัญชีมั่งมีอยู่แล้ว ให้เข้าสู่ระบบด้วย LINE นี้ก่อนเลือกแพ็กเกจ"
+
+การรับส่วนลดไม่ส่งข้อความแชต LINE ใด ๆ (หน้า LIFF เป็นหน้าเว็บของเรา); token ไม่เข้า log ของ API เพราะ request log บันทึกแค่ path ไม่รวม query (`apps/api/src/common/middleware/request-logger.middleware.ts:20-27,50`) และ API เก็บแค่ hash
+
+### 3.4 สิ่งที่ผู้มีสิทธิ์จัดการแพ็กเกจต้องทำเพื่อใช้ส่วนลด
+
+ต้องครบสามข้อ:
+1. เป็นคนที่สแกนรับเอง
+2. เข้าเว็บด้วยบัญชีที่ผูก LINE เดียวกัน
+3. เป็นสมาชิก ACTIVE ที่มีสิทธิ์ `company.plan.manage` ของร้าน — predicate เดิมของการซื้อ (`assertOwner`, `apps/api/src/modules/billing/application/billing.service.ts:118-138` → `canManagePlan`)
+
+แล้วเปิด "แพ็กเกจและการชำระเงิน" ของร้าน:
+- การ์ดแพ็กเกจที่ใช้ได้มีบรรทัด "ส่วนลดจากงาน {ชื่องาน} −{จำนวน} บาท (บิลแรก)"
+- เลือกแพ็กเกจและวิธีชำระ → ขั้นตรวจยอดแสดงราคาแพ็กเกจ, ส่วนลด, ภาษี (ถ้ามี), "ชำระวันนี้" และสำหรับแบบต่ออายุ "รอบถัดไปชำระราคาเต็ม {ราคา}"
+- ยืนยันเงื่อนไข → ชำระที่ Stripe → ใช้สิทธิ์สำเร็จเมื่อระบบยืนยันรับเงินจริง
+
+ไม่ต้องกดรับหรือเลือกส่วนลดบนเว็บ. ร้านที่ "ยังไม่มีแพ็กเกจ" หรือ "หมดอายุ" เข้าหน้านี้ได้ใน locked shell เดิม (`apps/web/src/features/plan-term/plan-term.logic.ts:40-44`); route อ่านส่วนลดใหม่ต้องเข้า allowlist ของ API (§7.4). ผู้มีสิทธิ์จัดการแพ็กเกจคนอื่นของร้านเดียวกันไม่เห็นส่วนลดของคุณ เพราะส่วนลดเป็นของผู้ถือ
+
+### 3.5 สิ่งที่พนักงานในร้าน (ไม่มีสิทธิ์จัดการแพ็กเกจ) เห็น
+
+- หน้าแพ็กเกจเปิดไม่ได้อยู่แล้ว: เมนูซ่อนลิงก์ (`apps/web/src/features/web-core-workspace/web-core-workspace.logic.ts:343-350,376-381`) และ API ตอบ 403 → ไม่มีข้อมูลส่วนลดในร้าน
+- หน้า LIFF หลังสแกนเป็นที่เดียวที่เห็นส่วนลด และบอกว่า: "ส่วนลดนี้เป็นของบัญชี LINE นี้ ใช้ได้เมื่อคุณเป็นเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจของร้านที่ซื้อ ถ้าจะใช้กับร้านที่คุณทำงานอยู่ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจสแกนรับเอง"
+- ส่วนลดโอนให้คนอื่นไม่ได้. ถ้าพนักงานคนนั้นเปิดร้านของตัวเองภายหลัง ใช้กับร้านนั้นได้ตามกติกาปกติ
+
+### 3.6 หลังชำระ
+
+- หน้า return (`/companies/:id/billing/return`, อ่าน `GET …/billing/attempts/:id`, `billing.service.ts:991-1006`): ระหว่างรอผล "ส่วนลดจะถูกใช้เมื่อยืนยันการชำระ"; เมื่อ apply แล้ว "ใช้ส่วนลดจากงานแล้ว"
+- ประวัติ: แถวของบิลนั้นแสดง "ส่วนลดจากงาน −{จำนวน} บาท"; ยอดของแถวเป็นยอดรับจริง (ประวัติอ่าน `BillingInvoice.totalSatang` อยู่แล้ว, `billing.service.ts:1033-1047`)
+- เอกสาร Stripe (ใบแจ้งหนี้/ใบเสร็จ) แสดงราคาสุทธิหลังลดเป็นราคาต่อหน่วย ไม่มีบรรทัดส่วนลด ไม่มีชื่องานหรือชื่อชุด (SED-25)
+- คืนเงินหรือข้อพิพาท: คืนไม่เกินยอดที่รับจริง; ส่วนลดคงสถานะใช้แล้ว ไม่คืนสิทธิ์และไม่คืนจำนวนแจก
+
+## 4. กติกาสิทธิ์
+
+### 4.1 บิลแรก — การซื้อที่ใช้ส่วนลดได้
+
+ใช้ได้เฉพาะ quote แพ็กเกจจาก catalog ที่ "เริ่มแพ็กเกจใหม่" = `packageMenuPurchaseSource(purchaseSource)` (`apps/api/src/modules/billing/application/billing-purchase-source.ts:39-40`: NO_TERM, TRIAL, ADMIN_MANUAL, PAID_EXPIRED_CURRENT_MODE) ซึ่งตรงกับ `quote.purchase.kind` (`billing.service.ts:492`):
+
+| `purchase.kind` | ใช้ส่วนลด | เหตุผล |
 |---|---|---|
-| AVAILABLE ไม่มี selection | “เลือก” enabled เมื่อ eligible | เลือกหนึ่งรายการ; ระหว่าง request ปิด mutation ทุกแถว |
-| SELECTED/QUEUED/ARMED | “ใช้ส่วนลด” selected | รายการอื่นยังคำว่า “เลือก” แต่ disabled; กดรายการเดิมเพื่อ clear |
-| SELECTING / CLEARING / UNKNOWN operation | คง label ล่าสุด + loader | ทุกปุ่มเปลี่ยน selection disabled; retry/re-read operation เดิม ไม่ toggle ใหม่ |
-| Selected แต่สินค้า/ราคาไม่รองรับ | “ใช้ส่วนลด” selected + reason | ไม่ลด/ไม่ชำระเงียบ ๆ; ยกเลิกได้ถ้าไม่มี accepted/financial reservation |
-| RESERVED / accepted / processing | label ล่าสุด + “กำลังตรวจรายการชำระเงิน” | clear/select disabled จนผลชัดเจน; ยังรับสะสมได้ตามสิทธิ์ |
-| ไม่มีสิทธิ์จัดการ/ถูก suspend | read-only พร้อมเหตุผล | ไม่ optimistic mutation; recovery ที่ยอมรับแล้วดำเนินต่อ |
-| CONSUMED / REVOKED | “ใช้แล้ว” / “ยกเลิกสิทธิ์แล้ว” ในประวัติ | ไม่แสดงปุ่มเลือก; consumed ปลด selection แบบ atomic |
+| INITIAL (ยังไม่มีแพ็กเกจ, ทดลองจบ, แพ็กที่แอดมินให้) | ได้ | บิลแรกของร้าน |
+| RESTART (แพ็กที่จ่ายแล้วหมดอายุ ซื้อใหม่) | ได้ — ค่าเริ่มต้น SD-Q2 | บิลแรกของแพ็กเกจใหม่ ไม่ใช่การต่ออายุ |
+| REPEAT, SCHEDULED_CHANGE (ซื้อต่อหรือเปลี่ยนรอบถัดไปขณะแพ็กยังใช้งาน) | ไม่ได้ — ค่าเริ่มต้น SD-Q2 | เทียบเท่าการต่ออายุ |
+| UPGRADE, FULL_PACKAGE_UPGRADE | ไม่ได้ | ร้านมีแพ็กที่ใช้งานอยู่; ส่วนต่างไม่ลด |
+| ADVANCE_DEAL และ quote ที่มี `dealId` | ไม่ได้ | ดีล (SD-O2) |
+| รอบต่ออายุทุกชนิด (CARD_AUTO, PROMPTPAY_RENEW) | ไม่ได้ | SD-O1 |
+| ADD_ON | ไม่ได้ | SD-T3; validator ของ add-on ปฏิเสธส่วนลดทุกชนิด (สเปก add-on O-03) |
 
-การกดรายการอื่นขณะที่มี selection ห้ามทำ replace แม้ยิง API ตรง. ยกเลิกหลัง ARMED ต้องยืนยัน detach จาก provider ก่อนปลด lock/ให้เลือกใหม่. ถ้า invoice แข่งจน accepted แล้ว clear ต้องถูกปฏิเสธและแสดง source เดิม; ห้าม UI คืนยอดเต็มหรือแสดง “ยกเลิกแล้ว” ก่อนผลแน่นอน. “ใช้ส่วนลด” ไม่ได้แปลว่า CONSUMED; ใช้สิทธิ์สำเร็จเมื่อ verified paid เท่านั้น.
+### 4.2 ไม่ซ้อนกับดีล
 
-### เลือกเซลล์ผู้แจกเมื่อมีหลายคน
+ไม่ใช้ส่วนลดเมื่อข้อใดข้อหนึ่งจริง — ตรวจตอน quote และซ้ำใน transaction จองของ Checkout:
+1. quote มี `dealId` (ดีลคิดราคาจาก snapshot ของตัวเอง, `billing.service.ts:296-297`)
+2. ร้านมี `PackageChangeRequest` kind `SALES_DEAL` ที่ `status = 'APPROVED'` และ `offerExpiresAt > now` (predicate เดียวกับการ์ดดีลบนหน้าแพ็กเกจ, `billing.service.ts:880-881`) หรือ `status = 'PAID'` (ดีลจ่ายล่วงหน้ารอเริ่ม)
+3. ดีลที่กำลังใช้งาน (แพ็กปัจจุบันมาจากดีลและยังไม่หมด) ถูกตัดโดย §4.1 อยู่แล้ว เพราะ source เป็น PAID_CURRENT_MODE
 
-Assignment อยู่ต่อชุดส่วนลด อ้าง stable salesUserId; งานใช้รวมรายงาน ไม่ให้สิทธิ์ทุกชุดโดยอัตโนมัติ. ฟอร์มย่อแสดงจำนวนที่เลือก ชื่อไม่เกิน 3 คน และปุ่มดูรายชื่อที่เหลือ/แก้ไข. เปิดตัวเลือกแล้วค้นหาชื่อหรือรหัส กรองทีม ดูเฉพาะคนที่เลือก และแบ่งหน้าได้; demo มี 24 คน 4 ทีม หน้าละ 6 คนเพื่อทดลอง 10–20 คนขึ้นไป. ช่องเลือกไม่จำกัดอยู่สองชื่อและไม่ต้องเลื่อนรายชื่อทั้งหมดในฟอร์ม.
+ดีล DRAFT/PENDING_APPROVAL (ลูกค้ายังไม่เห็น) ไม่กัน. ถ้าดีลถูกอนุมัติหลัง quote → Checkout ตอบ `BILLING_QUOTE_STALE` และ quote ใหม่ไม่มีส่วนลด; ถ้าอนุมัติหลังจองแล้ว บิลที่จ่ายได้ส่วนลดตามที่ลูกค้ายืนยันไว้ และดีลที่ยังไม่จ่ายถูกปิดโดย `supersedeUnpaidDeal` เดิม (`billing-package-request.ts:177`)
 
-การเลือกสะสมด้วย ID ข้ามหน้า/คำค้น/ทีม. “เลือกผลค้นหาทั้งหมด N คน” เลือกเฉพาะ active ที่ตรงตัวกรองในทุกหน้า; แสดงจำนวนก่อนกด ไม่รวม inactive และไม่ให้สิทธิ์สมาชิกใหม่ของทีมในอนาคตอัตโนมัติ. ดูคนที่เลือกเพื่อลบรายคนหรือล้างทั้งหมดได้. “ใช้รายชื่อ N คน” บันทึกลงร่าง; ยกเลิกไม่แก้ร่าง. เผยแพร่จึงมีผลกับสิทธิ์แจกจริง ต้องมีอย่างน้อยหนึ่งคนและทุก ID ต้องยัง active/อยู่ในขอบเขตหัวหน้า. Server ตรวจสิทธิ์ทั้งหมดแบบ atomic พร้อม revision/audit actor และ IDs ที่เพิ่ม/ลบ; stale assignment revision ให้ refresh/review ไม่เขียนทับเงียบ ๆ.
+ข้อความเมื่อผู้ถือมีส่วนลดแต่ร้านมีดีล (แสดงเหนือรายการแพ็กเกจปกติ ไม่แสดงบนการ์ดดีล):
+> ร้านนี้มีดีลพิเศษอยู่แล้ว จึงใช้ส่วนลดจากงานร่วมกันไม่ได้
+> ส่วนลดยังเป็นของคุณจนถึง {วันที่}
 
-บัญชีปิดใช้งานแสดงเหตุผลและเลือกใหม่ไม่ได้. ตอนโหลด/ค้นหาให้แสดงกำลังโหลด; ผิดพลาดมี retry โดยคง selection, ไม่พบแสดง empty state, ไม่มีสิทธิ์จัดการให้ read-only. ใช้รายชื่อ Sales/ทีมและ permissions เดิมพร้อม server search/pagination; bulk selection resolve เป็นชุด IDs ที่แน่นอนภายใต้ scope เดียวกันก่อนยืนยัน ไม่ตีความแค่ checkbox ของหน้าปัจจุบันเป็นรายชื่อทั้งหมด. Demo ใช้รายการในหน่วยความจำ จึงไม่อ้างว่าได้ตรวจ API loading/error/auth จริง.
+`billing-package-request.ts` (`applyDealRequest :66-110`, `recordReferralAttribution :139-152`, `mirrorAttributionRefund :159-167`) ไม่เปลี่ยน
 
-ถอดเซลล์แล้วเผยแพร่หยุดสร้าง QR และรับส่วนลดใหม่ผ่าน QR เก่าของคนนั้นทันที. ส่วนลดที่ออกแล้วคงใช้ได้ตามเงื่อนไขและคงเครดิตคนเดิม; หัวหน้าติดตามต่อได้. หน้าจริงใช้ผู้เข้าสู่ระบบเป็นผู้แจก; ตัวเลือกสลับเซลล์ใน demo มีไว้ทดลองบทบาทเท่านั้น.
+### 4.3 หนึ่งรายการต่อร้าน ต่อบิล และต่อคนต่อชุด
 
-## 3. ตั้งชุดส่วนลดและช่วงรับ
+- ต่อร้าน: ร้านหนึ่งมีส่วนลดจากงานที่จองหรือใช้แล้ว (RESERVED/USED) ได้ไม่เกินหนึ่งรายการตลอดอายุร้าน (ค่าเริ่มต้น SD-Q4). บังคับด้วย partial unique index ใน migration (แบบที่มีแล้วใน `20260705010000_item15a_idempotency_and_channel_uniqueness`, `20260916090000_email_passwordless_access`)
+- ต่อบิล: หนึ่งบิลใช้ได้หนึ่งรายการ (`attemptId` และ `invoiceId` unique บน ticket)
+- ต่อคนต่อชุด: หนึ่งรายการ (unique (batch, ตัวตน LINE)); คนหนึ่งถือหลายรายการจากหลายชุดได้
+- ผู้ถือมีหลายรายการที่ใช้กับการ์ดเดียวกันได้: server เลือกรายการที่ลดมากที่สุด เท่ากันเลือกที่หมดอายุก่อน แล้วตาม id; ไม่มีปุ่มเลือกเอง
+- ผู้ถือดูแลหลายร้าน: รายการถูกใช้กับร้านแรกที่ Checkout ถูกยอมรับ; ร้านที่เปิด Checkout พร้อมกันได้ `BILLING_QUOTE_STALE` แล้ว quote ใหม่ราคาเต็ม
+- ไม่มีปุ่ม "ไม่ใช้ส่วนลดครั้งนี้" (ค่าเริ่มต้น SD-Q6)
+- quote ราคาเต็มที่ออกตอนผู้ถือยังไม่มีส่วนลด แต่ตอน Checkout มีรายการที่ใช้ได้แล้ว → `BILLING_QUOTE_STALE` เพื่อไม่ให้เสียสิทธิ์บิลแรกไปเงียบ ๆ
 
-| ค่า | กติกา |
+### 4.4 วันหมดอายุ
+
+`expiresAt = ปิดรับของชุด (ตาม revision ตอนออก) + 30 วัน` — **ค่าเริ่มต้น รอ Owner ยืนยัน (SD-Q1)**. ตรึงบนรายการตอนออก ไม่เลื่อนเมื่อแก้ชุด. การใช้ตัดสินตอนจองใน Checkout แบบเดียวกับหน้าต่างของดีล S46 (`billing.service.ts:550-553`): จองก่อนหมดอายุแล้วจ่ายเสร็จหลังหมดอายุ ยังใช้ได้. "หมดอายุ" อ่านจากเวลา (`state = ISSUED` และ `expiresAt <= now`) ไม่ต้องมี sweep. แสดงบน LIFF และการ์ด: "ใช้ได้ถึง {วันที่ เวลา}"; หมดแล้ว: "ส่วนลดจากงานหมดอายุแล้ว"
+
+### 4.5 ขอบเขตชุดและยอดขั้นต่ำ
+
+- `scope = { tiers: PaidTier[], intervals: ['month' และ/หรือ 'year'] }` ตรึงบนรายการตอนออก; purchase kind และโหมดชำระไม่เป็น scope (ตายตัวตาม §4.1 และ gate)
+- ขั้นต่ำหลังลด: `unitAmountSatang ≥ 1000` (฿10) — ค่าเดียวกับขั้นต่ำราคาใน `offerTerms` (`apps/api/src/modules/billing/domain/billing-policy.ts:46`) เป็นค่าคงที่ในโค้ด ไม่เก็บใน `policyJson` (parser เข้มงวด `:29-30`, SED-09). ขั้นต่ำการเรียกเก็บ THB ของ Stripe ยังไม่พิสูจน์ (§14)
+- ตรวจตอนเผยแพร่ (ทุก tier/รอบใน scope ด้วยราคาปัจจุบัน) และตอน quote (ราคาอาจเปลี่ยน); ไม่ผ่าน = การ์ดนั้นไม่มีบรรทัดส่วนลด และรายการยังอยู่
+- ตัวเลือกของการ์ดคำนวณด้วย helper เดียวกับ quote จึงไม่ขัดกัน (SED-14)
+
+### 4.6 สิทธิ์ของลูกค้า
+
+ใช้ predicate เดียวกับการซื้อ (`assertOwner` → `canManagePlan`); ไม่ hard-code OWNER; ไม่มี permission ใหม่ฝั่งร้าน. ร้านที่ถูกพักโดยผู้ดูแล (`BILLING_COMPANY_HELD`) ซื้อไม่ได้อยู่แล้ว
+
+## 5. ราคาและกลไกชำระเงิน
+
+### 5.1 สูตร
+
+`D` = ส่วนลดของรายการ (สตางค์, เต็มบาท), `P` = `offer.priceSatang` (ฐานเดียวกับ `quoteTotals`, `billing-policy.ts:125-129`)
+- NOT_VAT_REGISTERED และ EXCLUSIVE_VAT_7: `unitAmountSatang = P − D`
+- INCLUSIVE_VAT_7: `S = quoteTotals(P).subtotalSatang − D`; `unitAmountSatang = S + round(0.07 × S)`
+- ยอดบิลแรก = `quoteTotals(unitAmountSatang, taxTreatment)`
+- ยอดในบรรทัด "−{จำนวน}" = `P − unitAmountSatang` (ฐานเดียวกับราคาที่การ์ดแสดง)
+
+ตัวอย่าง 499 บาท ลด 100 บาท:
+
+| ภาษี | unit_amount | ก่อนภาษี | ภาษี | ชำระวันนี้ | บรรทัดส่วนลด |
+|---|---:|---:|---:|---:|---:|
+| NOT_VAT_REGISTERED (production วันนี้) | 399.00 | 399.00 | 0.00 | 399.00 | −100.00 |
+| EXCLUSIVE_VAT_7 (การ์ดแสดงราคายังไม่รวม VAT) | 399.00 | 399.00 | 27.93 | 426.93 | −100.00 |
+| INCLUSIVE_VAT_7 (การ์ดแสดงราคารวม VAT) | 392.01 | 366.36 | 25.65 | 392.01 | −106.99 |
+
+INCLUSIVE: `quoteTotals(39201)` ได้ subtotal 36636 และ tax 2565 ตรงกับสูตร; รายงาน R2 §8 ข้อ 3 พิสูจน์ว่า round(T×7/107) = round(0.07S) ทุก S เมื่อ T = S + round(0.07S) — ต้องพิสูจน์กับ Stripe จริงก่อนจด VAT (§14). EXCLUSIVE: ส่วนลดเต็มบาทกับราคาเต็มบาททำให้ไม่มีเศษ .5 สตางค์. ห้ามลดเกินราคาหรือต่ำกว่าขั้นต่ำ ห้ามลดบางส่วน ไม่ใช้ customer balance บรรทัดติดลบ หรือ promotion code. ข้อความลูกค้าไม่ใช้คำ "ก่อน VAT"
+
+สิทธิ์แพ็กไม่ขึ้นกับเงิน: ใบเสร็จ วัน ผู้ใช้ สาขา และเครดิต AI มาจาก offer (`billing-reconciler.service.ts:607-632`) จึงเท่ากับราคาเต็ม
+
+### 5.2 กลไกต่อโหมด (ไม่มี coupon)
+
+ทุกโหมดที่มีส่วนลดใช้ Checkout `mode: 'payment'` ที่คิด `price_data.unit_amount` จาก server:
+
+| โหมด | วันนี้ | เมื่อมีส่วนลด |
+|---|---|---|
+| CARD_ONCE | one-time `price_data` (`billing.service.ts:730-742`) | `unit_amount = eventDiscount.unitAmountSatang` แทน `snapshot.upgrade?.amountSatang ?? snapshot.quote.offer.priceSatang` ที่ `:738` |
+| PROMPTPAY_ONCE | เหมือน CARD_ONCE (`payment_method_types: ['promptpay']`) | เหมือน CARD_ONCE |
+| PROMPTPAY_RENEW | งวดแรก one-time `price_data` → apply ทันที → `bindPromptPayRenewal` (`billing-reconciler.service.ts:695`, `:1088-1144`) ผูก subscription `send_invoice` ราคา catalog แบบ trial ถึงสิ้นงวดแรก | ลดเฉพาะ `unit_amount` งวดแรก; subscription และบิล QR รอบถัดไปราคาเต็มเหมือนเดิม |
+| CARD_AUTO | Checkout `mode: 'subscription'` ด้วย Price id (`billing.service.ts:743-749`) | งวดแรกเป็นการจ่ายครั้งเดียวพร้อมเก็บบัตร แล้วผูก subscription ราคาเต็มที่เริ่มเก็บเมื่อสิ้นงวดแรก (§5.3) |
+
+หลักฐานการชำระ: `paidPackageCheckoutEvidence` เปลี่ยนเฉพาะยอดที่คาดหวัง (`apps/api/src/modules/billing/domain/paid-checkout-invoice.ts:22-23`) ให้ใช้ total, tax และ unit amount จาก `snapshot.eventDiscount` เมื่อมี. การตรวจว่า "ไม่มีส่วนลดใด ๆ" คงเดิมทุกข้อ (`:30` amount_discount, `:35` total_discount_amounts, `:41` item amount_discount, `:49` line discount_amounts) — coupon หรือส่วนลดที่ไม่คาดยังถือเป็นหลักฐานไม่ตรง. `paid-invoice.ts` (หลักฐานของ subscription) ไม่แตะ. ยอดที่คาดหวังอยู่ใน snapshot ของ attempt ซึ่ง immutable ทุกเส้นทางตรวจซ้ำจึงได้ผลเดียวกัน: reconcile ปกติ (`billing-reconciler.service.ts:515`), นำเข้าใบที่ค้นพบ (`importDiscoveredInvoice`, `:378`, ทาง one-time `:419-423`) และ retry ของแอดมิน (`reconcileOriginalInvoice`, `:441`, ทาง one-time `:453-457`) — ไม่ต้องมี resolver แยก (SED-05)
+
+### 5.3 CARD_AUTO: จ่ายงวดแรกครั้งเดียว แล้วผูกการต่ออายุราคาเต็ม
+
+แพตเทิร์น advance deal ใช้ได้ในเชิงกลไก แต่เรียกฟังก์ชันเดิมตรง ๆ ไม่ได้:
+- **ส่วนที่ใช้ได้**: advance deal พิสูจน์ในโค้ดแล้วว่า Checkout `mode: 'payment'` + `payment_intent_data.setup_future_usage: 'off_session'` เก็บบัตรไว้ตัดรอบต่อไป (`billing.service.ts:733-734`; `billing-advance-deal.pg.spec.ts:138,140`) แล้วผูก subscription `charge_automatically` + `default_payment_method` + `trial_end` = สิ้นงวดที่จ่ายแล้ว + `trial_settings.end_behavior.missing_payment_method: 'cancel'` (`billing-reconciler.service.ts:797,823-832`), ตรวจ binding รวม `simpleCollection` (`:834-851`) และห้ามมีบิลไม่เป็นศูนย์ก่อนสิ้นงวด (`:853-860`); replay ไม่สร้าง subscription ซ้ำ (`billing-advance-deal.pg.spec.ts:217`) และหลักฐานที่ถูกถือไว้หยุด trial ก่อนเก็บเงิน (`:221`)
+- **ส่วนที่ใช้ตรงไม่ได้**: `reconcileAdvanceDeal` (`billing-reconciler.service.ts:699-787`) ต้องมี `snapshot.advanceDeal`, แถวดีล และแพ็กจ่ายครั้งเดียวที่ยังใช้งาน (`renewalMode` เป็น CARD_ONCE/PROMPTPAY_ONCE, invoice เดิม APPLIED) และเปิดสิทธิ์ตอนแพ็กเดิมหมด (`activateAdvanceDeal`, `:930`); ส่วนลดจากงานเป็นบิลแรกที่เริ่มสิทธิ์ทันที
+- **เส้นทางที่ใกล้ที่สุด** คือ PROMPTPAY_RENEW งวดแรก: `reconcileOneTime` apply ทันที คง `activeAttemptId` จนผูกเสร็จ (`:658`) แล้ว `bindPromptPayRenewal` สร้าง subscription trial ถึง `paidThrough` ที่ราคา catalog และเขียน `BillingSubscriptionContract` ที่ `effectiveAt = paidThrough` (`:1137`)
+
+สิ่งที่ต้องทำ (ไฟล์และเทสต์อยู่ใน plan SD-C):
+1. quote CARD_AUTO ที่มี `eventDiscount` ทำให้ `paymentCheckoutSnapshot` เป็นจริง (`billing.service.ts:66-67`) → Checkout แบบ payment, `payment_method_types: ['card']`, `setup_future_usage: 'off_session'` (ขยายเงื่อนไข `:733-734` จาก `advanceDeal` เป็น `advanceDeal || eventDiscount`)
+2. reconciler ส่ง attempt นี้เข้า `reconcileOneTime` (`:240`; ตรวจโหมด `:478-479`; นำเข้า `:419`; retry `:453`) แล้ว apply งวดแรกทันทีด้วยเส้นทางเดิม (term, ใบเสร็จ, เมนู, trial carryover, ผู้รับเอกสาร, referral) ตั้ง `renewalMode = 'CARD_AUTO'` และคง `activeAttemptId` จนผูกเสร็จ (ขยาย `:658` จาก PROMPTPAY_RENEW)
+3. ผูกต่ออายุ: ขยาย `bindPromptPayRenewal` (`:1088-1144`) ให้รับโหมดบัตร โดยยกส่วนตรวจบัตรจาก `bindAdvanceDeal` (`:793-800` บัตรถูกเก็บและเป็นของ customer, `:823-832` พารามิเตอร์ของบัตร, `:834-851` ตรวจ binding) → subscription `trialing` ถึง `paidThrough` ราคา = Price ของ catalog (`snapshot.priceId`) ไม่มี discount; จุดเรียก `:695` ขยายเป็น PROMPTPAY_RENEW หรือ CARD_AUTO ที่มี `eventDiscount`
+4. บิล $0 `subscription_create` ของ trial ข้ามแบบเดียวกับ PROMPTPAY_RENEW/advance deal (เพิ่ม `snapshot.eventDiscount` ที่ `:311-319`)
+5. ระหว่างงวดแรก (subscription `trialing`) ลูกค้า "หยุดต่ออายุ" ได้: ขยาย predicate trial ของ advance deal ที่ `billing-collection.ts:83,203` และ `billing.service.ts:815-818`
+6. `billingPurchaseSource` ต้องไม่ตอบ `SOURCE_INCONSISTENT` ระหว่างรอผูก: ขยายข้อยกเว้นช่วงผูกของ PROMPTPAY_RENEW (`billing-purchase-source.ts:14-17`) ให้ครอบ CARD_AUTO
+
+ผลรอบต่อไป: Stripe ออกบิล `subscription_cycle` ราคาเต็มเมื่อ trial จบ → ตรวจด้วย `paidInvoiceEvidence` กับ contract snapshot ที่ `quote.totalSatang` เป็นราคาเต็ม (§5.4) → เหมือน CARD_AUTO ปกติทุกอย่าง
+
+ข้อจำกัดเดียวกับ advance deal: ระหว่างงวดแรก REPEAT/อัปเกรด (ต้อง `sub.status = 'active'`, `billing-repeat.ts:99`), วันฟรีของแอดมิน (ต้องมีบิล subscription ที่จ่ายเงินจริงและ `active`, `billing-free-days.ts:34-45`) และ `plan_changes` (ต้อง `subscriptionState = 'active'`) ยังไม่เปิด — เปิดเองหลังจ่ายรอบแรกราคาเต็ม. ยุติแพ็กต้องหยุดต่ออายุก่อน (`BILLING_END_PACKAGE_AUTO_RENEW`, `billing-end-package.ts:32-33`) ซึ่งข้อ 5 ทำให้ทำได้ระหว่างงวดแรก
+
+ผูกไม่สำเร็จ: ลูกค้าคงสิทธิ์งวดที่จ่ายแล้ว; reconciler ลองใหม่และใช้ issue เดิมของการ reconcile ที่ล้ม; ห้ามเปิด Checkout ซ้อนระหว่างนั้น (`activeAttemptId` ยังถืออยู่)
+
+### 5.4 สิ่งที่ไม่เปลี่ยน เพราะไม่มีการลดรอบต่ออายุ
+
+`snapshot.quote.subtotalSatang/taxSatang/totalSatang` เป็นราคาเต็มเสมอ และส่วนลดอยู่แยกใน `snapshot.eventDiscount` — contract ที่รอบต่ออายุใช้ตรวจ (`BillingSubscriptionContract.snapshotJson`) จึงเป็นราคาเต็มโดยไม่ต้องแก้อะไร. ต่อไปนี้ **ไม่แตะ**:
+- guard ที่ปฏิเสธหรือล้าง discount บน subscription: `simpleCollection` และ schedule ที่เขียน `discounts: ''` (`billing-schedule.ts:14-20,57-67`); collection ของลูกค้า (`billing-collection.ts:26-32,118-122,206-210,221` — ต่างจากข้อ 5.3-5 ที่แก้เฉพาะ predicate ของ trial ไม่เกี่ยวกับ discount); REPEAT (`billing-repeat.ts:100,120-131,334,337,345-348`); คืนราคาดีล (`billing-price-return.ts:59-68,101-105`); วันฟรี (`billing-free-days.ts:43-48,75-89`)
+- หลักฐานของการต่ออายุ `paid-invoice.ts:26,28,36-38` และ grace `enforceGrace` (`billing-reconciler.service.ts:1169-1260`: ยอดต้องเท่ากับ contract `:1196`, ไม่มีบรรทัดส่วนลด `:1203`)
+- proration และ preview ของอัปเกรด (`billing-upgrade.ts:73,86-100`) และรายการ event ของ Stripe (`BILLING_STRIPE_EVENTS`, `billing-reconciler.service.ts:40-43`) — ไม่ต้องเพิ่ม `invoice.created`
+- `billing-refund-source.ts` (ใบไม่มีบรรทัดส่วนลด จึงผ่านกติกาเดิม `:89`, `:98`)
+
+### 5.5 เอกสาร ประวัติ และการคืนเงิน
+
+ดู §3.6. ประวัติและหน้าแอดมินระบุว่าใบไหนได้ส่วนลดจาก `SalesEventTicket.invoiceId` เท่านั้น — ห้ามอ่านจาก `contractSnapshot.eventDiscount` ของ invoice เพราะบิลต่ออายุของ CARD_AUTO/PROMPTPAY_RENEW เก็บ contract snapshot เดียวกันกับบิลแรก (`applyInvoice`, `billing-reconciler.service.ts:1279-1287`). คืนเงินในแอปใช้ยอดจริง (`billing-refund-source.ts:52`). REFERRAL attribution (ถ้ามี) บันทึกยอดจริง `invoice.totalSatang` (`billing-package-request.ts:144-151`) และหักคืนตามยอดจริง (`:159-167`)
+
+## 6. State, data และ concurrency
+
+### 6.1 ตาราง (additive, state เป็น String, ไม่มี Prisma enum)
+
+| Model | ฟิลด์หลัก | constraint |
+|---|---|---|
+| `SalesEventBatch` | id, eventName, batchName, discountSatang, issueCap, issuedCount, claimStartsAt, claimEndsAt, scopeJson, state (OPEN/PAUSED/SUSPENDED), revision, version, createdByUserId, createdAt, updatedAt | index (state, claimEndsAt) |
+| `SalesEventBatchAgent` | batchId, salesUserId, active, addedByUserId, addedAt, removedAt | PK (batchId, salesUserId); index (salesUserId, active) |
+| `SalesEventQrToken` | id, tokenHash, batchId, salesUserId, batchRevision, expiresAt, createdAt | tokenHash unique; index (batchId, expiresAt) |
+| `SalesEventTicket` | id, serial, batchId, batchRevision, salesUserId, holderProvider ('LINE'), holderChannelId, holderProviderUserId, discountSatang, scopeJson, expiresAt, state (ISSUED/RESERVED/USED/REVOKED), companyId?, attemptId?, invoiceId?, appliedDiscountSatang?, claimRequestKey, reservedAt?, usedAt?, revokedAt?, revokedByUserId?, revokeReason?, version, createdAt, updatedAt | serial unique (8 ตัว อักษร/ตัวเลขที่ไม่สับสน); unique (batchId, holderChannelId, holderProviderUserId); attemptId unique; invoiceId unique; index (holderChannelId, holderProviderUserId, state); index (companyId, state); **partial unique (companyId) WHERE state IN ('RESERVED','USED')** ด้วย SQL ดิบใน migration |
+
+ตัวตน LINE เก็บแบบ `ExternalIdentity` เพื่อจับคู่เท่านั้น ไม่ส่งออก API ใด. `BillingInvoice`, `BillingAttempt`, `BillingAccount` ไม่เพิ่มคอลัมน์ — ส่วนลดอยู่ใน `quoteSnapshot.eventDiscount` ของ attempt (immutable) และความเชื่อมโยงอยู่บน ticket
+
+### 6.2 State ของชุด
+
+| state | รับส่วนลด/ออก QR | ใช้ใน quote และการจอง | เปลี่ยนไปเป็น | ผู้สั่ง |
+|---|---|---|---|---|
+| OPEN | ได้ ในช่วง `[เปิดรับ, ปิดรับ)` | ได้ | PAUSED ("พักแจก"), SUSPENDED ("ระงับการใช้") | `sales.event.manage` |
+| PAUSED | ไม่ได้ | ได้ | OPEN ("เปิดแจกต่อ"), SUSPENDED | `sales.event.manage` |
+| SUSPENDED | ไม่ได้ | ไม่ได้ (รายการที่จองแล้วเดินต่อ; รายการที่ใช้แล้วคงเดิม) | PAUSED ("ยกเลิกการระงับ") | `sales.event.manage` + เหตุผลบังคับ |
+
+"ปิดรับแล้ว" เป็นผลของเวลา ไม่ใช่ state. แก้ชุด = `revision + 1` พร้อม version fence (`SALES_EVENT_BATCH_STALE`); จำนวนแจกสูงสุดเพิ่มได้ ลดไม่ต่ำกว่า `issuedCount`; ขยายช่วงรับได้; รายการที่ออกแล้วตรึงจำนวนเงิน, scope, วันหมดอายุ และเซลล์. ถอดเซลล์ = QR ของคนนั้นใช้ไม่ได้ทันที; รายการที่ออกแล้วยังนับให้คนเดิม. ทุกคำสั่งเขียน audit (actor, ค่าเดิม/ใหม่, เหตุผล)
+
+### 6.3 State ของส่วนลด
+
+| state | ความหมาย | เข้าเมื่อ |
+|---|---|---|
+| ISSUED | ออกแล้ว ผูกตัวตน LINE ยังไม่ผูกร้าน | claim สำเร็จ หรือปล่อยการจอง |
+| RESERVED | ผูกร้านและ attempt ของ Checkout ที่ยอมรับแล้ว | transaction จองของ Checkout (`billing.service.ts:530-618`) หลังสร้าง attempt และตั้ง `activeAttemptId` (`:612-616`) |
+| USED | ยืนยันรับเงินจริงแล้ว (ถาวร) | ใน `reconcileOneTime` หลัง upsert invoice และบันทึกการเงิน (`billing-reconciler.service.ts:547-556`) **ก่อน** ทางออก `row.appliedAt` (`:557`) และทางออก HELD (`:592-599`) — ถือเงินไว้ตรวจก็ถือว่าใช้สิทธิ์แล้ว |
+| REVOKED | หัวหน้าเพิกถอนพร้อมเหตุผล (เฉพาะ ISSUED) | คำสั่งเพิกถอน |
+| (หมดอายุ) | ISSUED และ `expiresAt <= now` — อ่านจากเวลา | — |
+
+ปล่อยการจอง (RESERVED → ISSUED ล้าง `companyId`, `attemptId`, `appliedDiscountSatang`) ใน transaction เดียวกับที่ attempt จบโดยไม่มีเงิน:
+- Checkout ล้มก่อนเรียกผู้ให้บริการ หรือถูกปฏิเสธ: `billing.service.ts:761-768`
+- session หมดอายุโดยไม่มี invoice: `billing-reconciler.service.ts:494-504` — ปุ่มยกเลิกของลูกค้า (`billing-checkout-expiry.service.ts:56-85`) และการยุติของแอดมิน (`:148-180`) วิ่งเข้าจุดนี้หลัง expire session
+
+attempt ที่เป็น UNKNOWN (`billing.service.ts:769-771`) คงการจองไว้จนรายการเดิมจบ. ใช้สิทธิ์แล้วพบว่ารายการไม่ได้ RESERVED ให้ attempt นี้ → เปิด issue `EVENT_DISCOUNT_REVIEW` (`BillingIssue.kind` เป็น String, `schema.prisma:9985`) แต่ไม่ขวาง apply เพราะลูกค้าจ่ายตามยอดที่ยืนยันแล้ว. คืนเงินหรือข้อพิพาทไม่เปลี่ยน state
+
+### 6.4 Lock, idempotency และการแข่ง
+
+- Claim: lock แถว batch `FOR UPDATE` → หา replay ตาม (batch, ตัวตน) → ตรวจ cap → insert ticket + `issuedCount + 1` + audit ใน transaction เดียว; `requestKey` เดิมได้ผลเดิม; ไม่แตะ Company
+- จอง: `lockPlanTermCompany` (`billing.service.ts:531`) → account → `UPDATE … WHERE id = ? AND state = 'ISSUED' AND version = ?` (0 แถว = stale). สองคนจองให้ร้านเดียวกันพร้อมกันถูก serialize ด้วย lock ร้านและ partial unique; คนเดียวจองสองร้านชนกันที่แถว ticket
+- ใช้สิทธิ์และปล่อย: อยู่ใน transaction เดิมของ reconciler/checkout ต่อจาก lock ร้านและ lease (`assertLease`, `billing-reconciler.service.ts:1162-1167`); ลำดับ Company → BillingAccount → ticket; claim ไม่ถือ lock ร้าน จึงไม่ย้อนลำดับ; advisory lock ของ apply (`:537`) มาก่อนเสมอ
+- งานกับผู้ให้บริการอยู่นอก transaction ตามเดิม; ส่วนลดไม่มี provider object ของตัวเอง
+
+## 7. Contracts และ API
+
+### 7.1 Routes
+
+| Route | ผู้เรียกและ guard | ทำอะไร |
+|---|---|---|
+| `POST /v1/sales/events/batches` | `sales.event.manage` + platform tenant (`assertPlatformTenant`, `sales-context.ts:37`) | สร้างและเปิดชุด |
+| `GET /v1/sales/events/batches?cursor=` | `sales.console.read` | หัวหน้า: ชุดของตัวเองและทีม; SYSTEM_ADMIN: ทั้งหมด; เซลล์: ชุดที่ได้รับมอบหมาย |
+| `GET /v1/sales/events/batches/:batchId` | `sales.console.read` + scope เดียวกัน | รายละเอียดและตัวเลขสรุป |
+| `PATCH /v1/sales/events/batches/:batchId` | `sales.event.manage` | แก้ไข (expectedVersion) |
+| `POST /v1/sales/events/batches/:batchId/state` | `sales.event.manage` | {action: PAUSE/RESUME/SUSPEND/LIFT, expectedVersion, reason} |
+| `GET /v1/sales/events/agents?q=&cursor=` | `sales.event.manage` | ค้นหาเซลล์สำหรับมอบหมาย (หัวหน้า: ทีมตัวเอง; admin: ทั้งหมด; take 50) |
+| `POST /v1/sales/events/batches/:batchId/qr` | `sales.console.read` + เป็นผู้แจกที่ active | ออก QR {qrImageUrl, expiresAt} |
+| `GET /v1/sales/events/batches/:batchId/tickets?cursor=` | `sales.console.read` | เซลล์: รายการที่ตัวเองแจก; หัวหน้า/admin: ทั้งชุด; ไม่มีตัวตน LINE หรือเอกสารการเงิน |
+| `POST /v1/sales/events/tickets/:ticketId/revoke` | `sales.event.manage` | {reason, expectedVersion}; เฉพาะ ISSUED |
+| `GET /v1/sales/events/report?from=&to=&salesUserId=` | `sales.report.read` + กติกา `visibleAgents` (`sales-reports.service.ts:75`) | §10 |
+| `GET /v1/auth/line/link-page/event-discount` | public (หน้า LIFF) | HTML |
+| `POST /v1/public/event-discounts/claim` | public; LINE ID token ใน body | รับส่วนลด |
+| `GET /v1/companies/:companyId/billing/event-discount` | ลูกค้า (`assertOwner`) — **เพิ่มใน allowlist** | ส่วนลดของผู้ใช้สำหรับร้านนี้ และผลต่อการ์ด |
+| `POST …/billing/quote`, `POST …/billing/checkout` (เดิม) | เดิม (อยู่ใน allowlist แล้ว, `auth.guard.ts:103`) | body ไม่เปลี่ยน; response เพิ่มฟิลด์ |
+| `GET /v1/system/billing/lookup?reference=` (เดิม, `billing.controller.ts:214-217`) | `system.billing.read` | รับเลขส่วนลด (serial) ด้วย |
+
+### 7.2 Field dictionary
+
+`BillingQuote` (`packages/contracts/src/billing.ts:121-148`) เพิ่มฟิลด์ optional:
+
+```ts
+eventDiscount?: {
+  ticketSerial: string; eventName: string;
+  discountSatang: number;       // ค่าของรายการ (D)
+  shownDiscountSatang: number;  // P − unitAmountSatang
+  unitAmountSatang: number;
+  subtotalSatang: number; taxSatang: number;
+  totalSatang: number;          // ชำระวันนี้
+  expiresAt: string;
+};
+```
+
+- `quote.totalSatang` ยังเป็นราคาเต็ม (= ยอดรอบต่อไป). "ชำระวันนี้" = `quote.eventDiscount?.totalSatang ?? quote.totalSatang`. บรรทัด "ต่ออายุรายปีครั้งถัดไป" (`apps/web/src/features/billing/BillingPage.tsx:566`) ที่พิมพ์ `quote.totalSatang` จึงถูกต้องโดยไม่ต้องแก้ (SED-21)
+- `BillingSnapshot` (`billing.service.ts:58`) เพิ่ม `eventDiscount?` = ข้างบน + `ticketId`, `ticketVersion`, `batchId`, `salesUserId`
+- `BillingEventDiscountView` (route ใหม่):
+
+```ts
+{
+  ticket: { serial: string; eventName: string; discountSatang: number; expiresAt: string;
+            state: 'AVAILABLE' | 'IN_PAYMENT' | 'USED' | 'EXPIRED' | 'REVOKED' } | null;
+  reason: null | 'DEAL_ACTIVE' | 'NOT_FIRST_BILL' | 'COMPANY_ALREADY_USED' | 'EXPIRED' | 'SUSPENDED' | 'CLOSED';
+  offers: { offerKey: string; interval: 'month' | 'year'; eligible: boolean;
+            shownDiscountSatang: number | null; reason: null | 'OUT_OF_SCOPE' | 'BELOW_MINIMUM' }[];
+}
+```
+
+- `BillingAttemptView` (`billing.service.ts:991-1006`) เพิ่ม `eventDiscount?: { shownDiscountSatang: number; state: 'IN_PAYMENT' | 'USED' }`
+- รายการประวัติ (`:1033-1047`) เพิ่ม `eventDiscountSatang?` จาก ticket ที่ `invoiceId` ตรงกับแถว
+- Claim: body {idToken, qrToken (base64url 43 ตัว), requestKey (16–120)} → {ticket: {serial, eventName, discountSatang, expiresAt}, replay: boolean, next: 'OPEN_PACKAGE' | 'SIGN_UP'}
+- ทุก body ใหม่เป็น class DTO (global pipe `forbidNonWhitelisted`, `apps/api/src/common/pipes/validation-pipe.options.ts:7-9`; `body-validation-coverage.spec.ts`). `BillingQuoteDto` และ whitelist ของ quote (`billing.dto.ts:90-100`, `billing.controller.ts:591-592`) ไม่เปลี่ยน — ไม่ใช้ชื่อ `purchaseIntent` (เป็นของ add-on และ FULL_PACKAGE, SED-10)
+- ค่าคงที่ใน contracts: `SALES_EVENT_BATCH_STATES`, `SALES_EVENT_TICKET_STATES` (ชื่อไม่ชน Prisma enum ตาม `packages/contracts/src/prisma-enum-parity.spec.ts`); `SALES_PERMISSION_KEYS` เพิ่ม `'sales.event.manage'` (`packages/contracts/src/sales.ts:9-10`); `BILLING_ACTIONS` เพิ่ม `'event_discounts'` (`packages/contracts/src/billing.ts:39`)
+
+### 7.3 รหัสข้อผิดพลาด (มี prefix; web map เป็นข้อความไทย)
+
+| รหัส | เมื่อ | ข้อความ |
+|---|---|---|
+| `SALES_EVENT_QR_EXPIRED` | token หมดอายุหรือไม่พบ | QR นี้หมดอายุแล้ว ขอให้ผู้แจกสร้าง QR ใหม่ |
+| `SALES_EVENT_CLAIM_CLOSED` | ชุดไม่ OPEN หรืออยู่นอกช่วงรับ | งานนี้ปิดรับส่วนลดแล้ว |
+| `SALES_EVENT_ISSUE_FULL` | แจกครบจำนวน | ส่วนลดของงานนี้ถูกแจกครบแล้ว |
+| `SALES_EVENT_AGENT_INACTIVE` | ผู้แจกถูกถอดหรือปิดบัญชี | QR นี้ใช้ไม่ได้แล้ว ขอให้ผู้แจกสร้าง QR ใหม่ |
+| `SALES_EVENT_SELF_CLAIM` | ตัวตน LINE เป็นของสมาชิก platform tenant (ค่าเริ่มต้น SD-Q3) | บัญชีทีมขายรับส่วนลดนี้ไม่ได้ |
+| `SALES_EVENT_DISABLED` | gate `event_discounts` ปิด | ยังไม่เปิดรับส่วนลดจากงาน |
+| `SALES_EVENT_BATCH_STALE` | version ไม่ตรง | ข้อมูลชุดส่วนลดเปลี่ยนไปแล้ว กรุณาโหลดใหม่ |
+| `SALES_EVENT_DISCOUNT_TOO_HIGH` | เผยแพร่แล้วยอดต่ำกว่าขั้นต่ำ | ส่วนลดสูงเกินราคาของ {แพ็กเกจ} |
+| `SALES_EVENT_TICKET_NOT_REVOCABLE` | ไม่ใช่ ISSUED | ส่วนลดนี้กำลังชำระหรือใช้แล้ว เพิกถอนไม่ได้ |
+| `BILLING_QUOTE_STALE` (เดิม) | ส่วนลด ดีล หรือ gate เปลี่ยนระหว่าง quote กับ Checkout | ส่วนลดหรือราคาเปลี่ยน กรุณาตรวจยอดอีกครั้ง |
+
+quote ไม่ error เพราะส่วนลด: ใช้ไม่ได้ก็คิดราคาเต็มและบอกเหตุผลผ่าน view. รหัสใหม่เพิ่มใน `apps/web/src/common/api/api-error-message.ts` และ `api-error-coverage.spec.ts`; ข้อความของหน้า LIFF อยู่ในหน้า LIFF เอง
+
+### 7.4 Allowlist ของ auth guard และ pins
+
+ร้านที่ล็อกเรียก route ที่ไม่อยู่ใน `isBillingRecoveryRoute` ไม่ได้ (`company_term_expired`, `auth.guard.ts:295-306`; เว็บเด้งไป `/renew`, `apps/web/src/common/api/authed-fetch.ts:107`). เพิ่ม `/event-discount` ในกลุ่ม GET ของ regex (`auth.guard.ts:102`) เท่านั้น:
+- quote และ checkout อยู่ใน allowlist แล้ว (`:103`)
+- claim เป็น public จึงไม่ผ่าน term hold (`:169-171`)
+- route ของทีมขายอยู่ใน platform tenant
+
+`auth.guard.ts` ถูก pin → ต้อง sync pins ใน PR เดียวกัน พร้อมเคส allow/deny ใน `auth.guard.spec.ts`. สเปก add-on ก็แก้ allowlist นี้: PR ที่ merge ทีหลัง rebase แล้ว sync pins ใหม่. เว็บไม่ต้องแก้ locked shell (`isBillingCustomerRecoveryPath`, `packages/contracts/src/billing.ts:224`)
+
+## 8. UI และข้อความ
+
+| ที่ | สิ่งที่แสดง |
 |---|---|
-| ชื่องาน/ชื่อชุดส่วนลด | text 1–120 ตัวอักษรหลัง trim; ชื่อชุดไม่ใช่ dropdown |
-| ส่วนลดก่อน VAT | จำนวนสตางค์บวกคงที่; ระบบคำนวณ VAT/ยอดจ่าย |
-| จำนวนออกสูงสุด | lifetime issued; ไม่คืนจาก revoke/refund |
-| ต่อบริษัทต่อชุด | cap การออกสะสม; สะสมหลายรายการได้แต่หนึ่งรายการต่อบิล |
-| เซลล์ผู้แจก | stable IDs ตาม assignment; รองรับค้นหา/ทีม/หลายหน้า |
-| กลุ่มลูกค้า | ทั้งหมด / สมัครใหม่ผ่านงาน / บริษัทเดิม |
-| สินค้าที่ใช้ได้ | catalog/approved deal ที่ provider proof ผ่าน รวม renewal ของสินค้าที่รองรับ |
-| เปิดรับ / ปิดรับส่วนลด | หัวหน้ากรอกวันเวลาเอง; server [start,end), เก็บ UTC แสดงเวลาไทย |
+| การ์ดแพ็กเกจที่ใช้ได้ (`BillingPage.tsx:502-531`) | ใต้ราคา: "ส่วนลดจากงาน {ชื่องาน} −{จำนวน} บาท (บิลแรก)"; การ์ดที่ใช้ไม่ได้ไม่มีบรรทัด |
+| เหนือรายการแพ็กเกจ เมื่อมีส่วนลดแต่ใช้กับร้านนี้ไม่ได้ | ดีล: ข้อความ §4.2 · ไม่ใช่บิลแรก: "ส่วนลดจากงานใช้ได้กับบิลแรกเมื่อเลือกแพ็กเกจใหม่ ไม่ใช้กับการต่ออายุ" · ร้านเคยใช้แล้ว: "ร้านนี้ใช้ส่วนลดจากงานไปแล้ว (ใช้ได้ร้านละครั้ง)" · หมดอายุ: "ส่วนลดจากงานหมดอายุแล้ว" · ระงับหรือยังไม่เปิด: "ส่วนลดจากงานใช้ไม่ได้ในตอนนี้ ติดต่อทีมงานได้" |
+| ขั้นตรวจยอดและยืนยัน (`BillingPage.tsx:561-569`) | "ราคาแพ็กเกจ {P}" · "ส่วนลดจากงาน {ชื่องาน} (บิลแรก) −{จำนวน}" · ภาษีตามเดิม · "ชำระวันนี้ {ยอด}" · แบบต่ออายุ: "รอบถัดไปชำระราคาเต็ม {quote.totalSatang}" |
+| หน้า return | "ส่วนลดจะถูกใช้เมื่อยืนยันการชำระ" → "ใช้ส่วนลดจากงานแล้ว" |
+| ประวัติ | "ส่วนลดจากงาน −{จำนวน} บาท" ใต้แถวบิลนั้น |
+| หน้า LIFF | §3.3 และ §3.5 |
+| คอนโซลทีมขาย `/sales/events` | ฟอร์ม §3.1; รายการชุด (สถานะ, ปิดรับ, แจกแล้ว/ใช้แล้ว/คงเหลือ); หน้าชุด (ปุ่ม "แสดง QR" สำหรับผู้แจก; "พักแจก"/"เปิดแจกต่อ"/"ระงับการใช้"/"ยกเลิกการระงับ"; รายการส่วนลดพร้อม "เพิกถอน") |
 
-ไม่มี “ลูกค้าใช้ส่วนลดได้ถึงเมื่อไร” หรือจำนวนวันหลังรับแล้ว. แสดงว่า “รับภายในเวลานี้ แล้วเก็บไว้เลือกใช้ลดบิลหนึ่งบิลได้ แม้เลยวันปิดรับ”. ชื่อ/ค่าร่างเดิมคงไว้เมื่ออัปเดต demo แต่ expiry เก่าไม่ใช้ตัดสิทธิ์ในแบบใหม่.
+ไม่มีแท็บหรือ section ใหม่ (SD-T4); รายการแท็บเป็นของสเปก add-on §7.1. ข้อความลูกค้าไม่มีรหัสระบบ ไม่มีคำว่า "ตั๋ว" หรือ "ก่อน VAT". ออกแบบที่ 390 px ก่อน; ชื่องานยาวตัดบรรทัดได้โดยไม่ล้นการ์ด. ข้อความอยู่ใน dictionary ของฟีเจอร์ (ไทย/อังกฤษ)
 
-ปุ่มครั้งแรก “ยืนยันและเปิดแจกส่วนลด”; แก้ใช้ “บันทึกการเปลี่ยนแปลง”. Revision ใหม่ใช้กับสิทธิ์ที่ออกใหม่; รายการที่รับแล้วตรึงส่วนลด/source scope/agent. Cap เพิ่มได้ ลดไม่ต่ำกว่า issued. ต่อช่วงรับได้เพื่อรับใหม่ ไม่ทำให้ USED กลับใช้ได้. “พักแจก” หยุดรับใหม่อย่างเดียว; “ระงับใช้” หยุดการผูกกับ invoice ใหม่แต่คงสิทธิ์/งานติดตามที่ accepted แล้ว. QUEUED/ARMED ที่ยังไม่ accepted ต้องผ่าน detach/collection hold ที่พิสูจน์แล้ว; ไม่ถือว่าปิดปุ่มแล้วหยุด provider ได้.
+## 9. สิทธิ์ทีมขาย
 
-เพิกถอนเฉพาะสิทธิ์ที่ยังไม่ RESERVED/CONSUMED พร้อมสิทธิ์เหตุผล/audit/customer notice; ไม่มีการคืน cap. หาก ARMED ต้องยืนยันถอนจาก provider ก่อนบันทึก REVOKED และปลด selection; ถ้า cutoff ชนะหรือผล UNKNOWN ให้คง lock/ตรวจรายการเดิม. การระงับ/เพิกถอนต้องแสดงเหตุผลและผลต่อบิลที่เคยเลือกไว้ให้ลด ห้ามเรียกเก็บราคาเต็มเงียบ ๆ โดยหน้าเดิมยังสัญญาส่วนลด.
+| การกระทำ | SYSTEM_ADMIN | MANGMEE_SALES_LEAD | MANGMEE_SALES | key |
+|---|---|---|---|---|
+| สร้าง แก้ พัก ระงับชุด และเพิกถอนส่วนลด | ทุกชุด | ชุดของตัวเอง; มอบหมายได้เฉพาะทีมตัวเอง | ไม่ได้ | `sales.event.manage` (ใหม่) |
+| ดูชุดและรายการส่วนลด | ทั้งหมด | ชุดของตัวเองและทีม | ชุดที่ได้รับมอบหมาย เฉพาะรายการที่ตัวเองแจก | `sales.console.read` |
+| แสดง QR | เฉพาะผู้ที่ได้รับมอบหมายในชุด | เฉพาะผู้ที่ได้รับมอบหมายในชุด | เฉพาะผู้ที่ได้รับมอบหมายในชุด | `sales.console.read` + assignment ที่ active |
+| รายงาน | ทั้งหมด | ทุกทีม ตาม `visibleAgents` | ไม่ได้ | `sales.report.read` |
 
-## 4. Claim, binding และ target ของส่วนลด
+เพิ่ม key ใน contracts (`sales.ts:9-10`), registry (`apps/api/src/modules/auth/permission-registry.ts:108-115`) และ grant ของหัวหน้า (`:565`); SYSTEM_ADMIN ได้เองจาก `...SALES_PERMISSION_KEYS` (`:555`); ปรับ `permission-registry.spec.ts:268-288`. ฐานข้อมูลได้ key ใหม่จาก `prisma/sync-permissions.ts` ใน release task (`infra/prod-ecs-express/run-release-task.sh:684`). ร้านค้าไม่ได้สิทธิ์ใหม่. คิวทีมขายไม่เปิดลิงก์ Checkout เอกสารการเงิน หรือตัวตน LINE
 
-QR signed/opaque จำกัดอายุไม่เกิน 5 นาทีและไม่เลย claim close; ตรวจ active assignment ซ้ำตอน claim. เปลี่ยน terms หลัง scan ให้ preview revision ใหม่. DB clock เป็นตัวตัดสิน ไม่ใช้เวลาสแกน/นาฬิกา browser. รับหลังปิดไม่ได้ แต่ recovery ของคำขอที่ commit แล้วคืนรายการเดิม.
+## 10. รายงานและ settlement
 
-Claim + cap + ticket + audit เป็น atomic local transaction. Select สร้าง selection/target เมื่อไม่มี active selection; Clear ระบุรายการเดิมกับ expected selectionVersion. Double-tab stale selection ให้ refresh ไม่เขียนทับหรือ replace เงียบ ๆ. คำสั่งต้องส่ง desired state (select ID / clear expected ID) ไม่เป็น server-side toggle: retry key เดิมต้องคืนผลเดิม ไม่กดย้ำจนกลายเป็นยกเลิก. ในชุดเดียวกัน scan ซ้ำคืนรายการเดิม; รับเพิ่มต้อง explicit intent/key ใหม่และไม่เลือกให้อัตโนมัติ. เซลล์คนแรกของบริษัทในชุดตรึง attribution.
+รายงานต่อ งาน → ชุด → เซลล์: แจกแล้ว, ใช้แล้ว, กำลังชำระ, หมดอายุ, เพิกถอน, คงค้างที่ยังใช้ได้ (จำนวนและมูลค่า = ภาระที่ยังเปิด), มูลค่าส่วนลดที่ให้ (Σ `appliedDiscountSatang` ของ USED), ยอดรับจริงของบิลที่ใช้ (Σ `BillingInvoice.paidSatang`), คืนแล้ว (Σ `refundedSatang`) และสุทธิ. นับบิลละครั้ง (`invoiceId` unique). ไม่รวมในยอดขายของเซลล์ (`SalesAttribution`, `sales-reports.service.ts:51-66`) — ยอดขายยังนับตามดีลและรหัสแนะนำ (ค่าเริ่มต้น SD-Q3). ไม่แสดงตัวตน LINE หรือเลขเอกสาร; แสดงชื่อร้านเมื่อใช้แล้ว (ทีมขายค้นชื่อร้านได้อยู่แล้ว). Settlement ไม่เปลี่ยน: จับคู่จาก balance transaction จริง (`billing-settlement-source.ts`); ส่วนลดสะท้อนเป็นยอดรับที่ต่ำลง ไม่มีรายการส่วนลดแยกใน Stripe
 
-Claim ผูก companyId ที่มีอยู่แล้วภายใต้ Company→batch lock; ตรวจ membership/per-company limit/audience จากข้อมูลสมัครเดิม. Signup/provisioning/dedup ทำตามระบบเดิม ไม่มี ticket mutation ใน use case สมัคร. ไม่ย้ายส่วนลดข้ามบริษัท; binding ซ้ำ/คำขอซ้ำใช้ request key และ constraint เดิม.
+## 11. Rollout, gate และ rollback
 
-ส่วนลดที่ไม่ได้เลือกต้องไม่มี provider operation/coupon. เมื่อ USED ให้ปลด selection ที่ consume แล้ว; รายการอื่นคง AVAILABLE จนลูกค้าเลือกใช้ใหม่.
+- gate เดียว `event_discounts` ใน `BILLING_ACTIONS` (เก็บใน `gatesJson`; binary เก่าไม่รู้จัก key จึงข้ามไป — `effectiveBillingGates`, `billing-policy.ts:15-17`); ตั้งผ่าน SET_ACTION_GATE แบบ reviewed เดิม; ไม่มี env ใหม่ ไม่มี key ใหม่ใน `policyJson`
+- ปิด gate: claim และออก QR ถูกปฏิเสธ; quote ไม่ใส่ส่วนลด; Checkout ของ quote ที่มีส่วนลดได้ stale. ไม่หยุด: การจองที่ยอมรับแล้ว, การใช้สิทธิ์, การปล่อยการจอง, การผูกต่ออายุ, คืนเงิน, ประวัติ และรายงาน (reconciler ไม่อ่าน gate นี้)
+- VAT: ใช้สูตร §5.1 ทุกแบบภาษี; แบบที่มี VAT ต้องผ่าน native proof ก่อนบริษัทจด VAT ซึ่งเป็นข้อกำหนดเดิมของ billing (SED-35) — ใส่เคสมีส่วนลดหนึ่งเคสต่อแบบ
+- Rollback: migration additive (binary เก่าไม่อ่านตารางใหม่). ก่อน rollback ต้องอ่านแล้วได้ศูนย์ทั้งสองข้อ: รายการ RESERVED และบัญชี CARD_AUTO ที่ `activeAttemptId` ชี้ attempt ที่มี `eventDiscount` (รอผูก). ไม่เป็นศูนย์ → ปิด gate รอจนหมด หรือ forward-fix. หลัง rollback subscription งวดแรกที่ `trialing` ของส่วนลดจะกด "หยุดต่ออายุ" ไม่ได้จน deploy ใหม่ (binary เก่าไม่มี predicate ข้อ 5.3-5) — บันทึกใน runbook
+- ปล่อยพร้อมกัน: SD-C กับ SD-D ต้องอยู่ release เดียวกัน (ขั้นยืนยันต้องแสดงยอดจริง); SD-A และ SD-B ปล่อยก่อนได้โดย gate ปิด
 
-Target resolution ตอนเลือกใช้ ตามลำดับ:
-- มี quote ที่กำลังซื้อและยังไม่มี accepted payment → quote ปัจจุบันมีสิทธิ์ก่อน scheduled renewal; ผูก purchase intent เดิม คำนวณใหม่ แล้วให้ยืนยันยอด.
-- ไม่มี purchase intent แต่มี active subscription → target รอบ recurring ถัดไปที่ยังผูกส่วนลดได้; เก็บ subscription ID/cycle/expected date.
-- ยังไม่มีทั้งสอง → รอ first eligible full-package payment ของบริษัท.
-- accepted/processing/UNKNOWN/finalized invoice ที่แก้ไม่ได้ → ไม่เปลี่ยน amount/body/key เดิม. รับสะสมได้ แต่ยังเลือก/เปลี่ยนใช้ไม่ได้จนผลเดิมชัดเจน. แสดง “รายการนี้เริ่มชำระแล้ว เก็บส่วนลดไว้เลือกใช้หลังทราบผล”. ถ้าพิสูจน์ terminal no-payment และเก็บต่อไม่ได้ จึงเลือกส่วนลดและสร้าง discounted quote ใหม่ได้.
-- Claim ไม่เรียกเก็บเงินและยังไม่มี target. Select/use เก็บ selection + QUEUED intent แบบ durable; outbox/BillingOperation เดิมผูก native provider แล้วจึงแสดง ARMED. ระหว่างรอแสดง “กำลังผูกส่วนลด”; error มี retry/issue ไม่อ้างว่า apply สำเร็จแล้ว.
+## 12. คำถามค้างถึง Owner
 
-ยกเลิกต่ออายุแล้วไม่มีบิล → คงส่วนลดและแสดง “รอการซื้อครั้งถัดไป”; ไม่เริ่ม/คืน subscription เอง. เปลี่ยน cadence/แพ็กก่อน invoice → resolve target/ราคาใหม่ แจ้งวัน/ยอดประมาณการใหม่; ห้ามยึด date เดิมหรือใช้สอง subscription. มีหนี้เก่าไม่ลดหนี้ย้อนหลัง; ผ่าน debt gates เดิมก่อน target ใหม่. ยังไม่เลือกสินค้าหรือ target ไม่รองรับให้บอกเหตุผล คง ticket และไม่สัญญายอดแน่นอน.
+ใช้ค่าเริ่มต้นถ้าไม่มีคำตอบก่อนเริ่ม SD-C:
 
-ยอดที่แสดงล่วงหน้าของ renewal เป็น **ประมาณการ** ตามราคา/VAT ปัจจุบัน; final bill ใช้ราคา/ภาษี/consent ของ Billing ตอนออก invoice. ถ้าลดไม่ได้เพราะ floor/extra coupon/unsupported/hold ต้อง NEEDS_ATTENTION และแจ้ง customer/operator ก่อนออกบิล ไม่ silently consume หรือข้ามส่วนลด. ใช้ retry/dunning/collection hold ที่พิสูจน์แล้ว; หาก provider หยุด finalization/collection อย่างปลอดภัยไม่ได้ ให้ปิด combination นั้นก่อน rollout. การซื้อราคาเต็มแทนทำได้เมื่อผู้ใช้เห็นยอดใหม่และยืนยัน โดยส่วนลดยังคงรอใช้.
+| ID | คำถาม | ค่าเริ่มต้นที่เสนอ |
+|---|---|---|
+| SD-Q1 | วันหมดอายุ = ปิดรับ + 30 วัน? | ใช่; ค่าคงที่ 30 วัน ไม่ให้ตั้งต่อชุด |
+| SD-Q2 | ร้านที่เคยจ่ายแล้วหมดอายุแล้วซื้อใหม่ (RESTART) นับเป็นบิลแรกไหม; ซื้อต่อก่อนหมด (REPEAT หรือเปลี่ยนแพ็กรอบถัดไป) นับเป็นการต่ออายุไหม | RESTART ใช้ได้; REPEAT และ SCHEDULED_CHANGE ใช้ไม่ได้ |
+| SD-Q3 | ใครได้เครดิตยอดขาย เมื่อร้านสมัครด้วยรหัสของเซลล์ A แต่ใช้ส่วนลดจากเซลล์ B; เซลล์รับส่วนลดของตัวเองได้ไหม | ยอดขายยังตาม SalesAttribution เดิม (ดีล/รหัสแนะนำ); รายงานงานเป็นตัวเลขแยก ไม่รวมในยอดเซลล์; บัญชีใน platform tenant รับส่วนลดไม่ได้ |
+| SD-Q4 | "หนึ่งรายการต่อร้าน" คือตลอดอายุร้านไหม | ใช่ ร้านที่เคยใช้แล้วใช้อีกไม่ได้ แม้หมดอายุแล้วซื้อใหม่ |
+| SD-Q5 | ต้องแจ้งเตือนผู้ถือทาง LINE เช่น ใกล้หมดอายุหรือถูกเพิกถอนไหม | ไม่ทำใน V1; ถ้าทำภายหลัง ข้อความแชตห้ามมีตัวเลขหรือวันที่ (กติกาเดิม `sales-deal.logic.ts:198-204`) |
+| SD-Q6 | ต้องมีปุ่ม "ไม่ใช้ส่วนลดครั้งนี้" เพื่อเก็บไว้ใช้กับร้านอื่นไหม | ไม่มี; ใช้กับร้านแรกที่ซื้ออัตโนมัติ |
 
-## 5. State, data และ concurrency
-
-| Record | ข้อมูลหลัก |
-|---|---|
-| SalesEvent / Batch / Assignment | event/name/revision/terms/claim window/lifetime cap/issue state/suspension/active sales IDs/audit |
-| SalesDiscountTicket | serial/request key unique; immutable company/agent/amount/scope; claimedAt; claimAcknowledgment; ไม่มี post-claim expiresAt |
-| Ticket target | ticket/company/account + PURCHASE_INTENT/NEXT_RENEWAL/FIRST_PURCHASE; subscription/cycle/expectedAt; QUEUED/ARMED/NEEDS_ATTENTION; version/reason |
-| Redemption | ticket/attempt/invoice/provider account/mode/coupon; immutable totals/policy/tax/evidence; acceptedAt/paidAt; RESERVED/CONSUMED/RELEASED |
-
-Customer status derive: USED เมื่อ verified paid; IN_PAYMENT เมื่อ RESERVED; REVOKED/VOID; WAITING_READY; NEEDS_ATTENTION; QUEUED/ARMED (“รอหักบิลอัตโนมัติ” หรือ “ส่วนลดพร้อมใช้กับรายการนี้”). Claim-window end ไม่เปลี่ยนสถานะของรายการที่รับแล้ว. เพิ่ม AVAILABLE (“เก็บไว้แล้ว”) เมื่อไม่มี target; มี target จึง QUEUED/ARMED. ห้าม preview ส่วนลดที่ยังไม่เลือกเป็นส่วนลดที่ผูกกับบิลแล้ว. ไม่ consume ตอน claim/coupon creation/invoice finalization.
-
-Partial unique หนึ่ง active redemption/consumed ต่อ ticket และหนึ่งสิทธิ์ต่อ invoice/attempt; selection เดียวต่อ company + Billing account + provider mode ไม่ใช่หนึ่งรายการต่อ cycle ที่เปิดค้างได้หลายรายการ. Target เดียวต่อ active selection. หลัง provider ARMED ต้อง clear→พิสูจน์ detach สำเร็จ→selection ว่าง แล้วจึงรับ select ใหม่; CLEARING ยังถือ lock เดิม. Binding company/account/subscription/source ตรวจทุก boundary. Select/clear กับ invoice-create/acceptance แข่งกันต้อง serialize ด้วย lock/version เดียว: ถ้า accepted ก่อนให้ปฏิเสธ clear/change พร้อม source เดิม. ไม่ตัดสินด้วย webhook arrival order.
-
-Snapshot ของ quote ต้องมี selectionVersion แม้ไม่มีส่วนลด (null selection) และ eventDiscount evidence เมื่อมี: ticket/revision/discountBeforeTax/baseSubtotal/baseTax/baseTotal/discountedSubtotal/tax/total/target/account/mode. Quote request ระบุ observed selectionVersion; stale ตอบ conflict. Checkout ตรวจ version/target/terms ปัจจุบันใน transaction เดียวกับ accepted fence และ reservation. Quote ยอดเต็มที่สร้างก่อน select หรือ quote ลดที่สร้างก่อน clear ใช้ชำระไม่ได้. Out-of-order quote responses ต้องถูกทิ้ง; ทุก successful select/clear/offer/tax/source change reset consent. Lost response ดึง operation/selection เดิมกลับก่อนเปิดปุ่ม.
-
-จาก NEXT_RENEWAL ไป current purchase ต้องทำ explicit purchase-intent resolution ภายใต้ selection เดิม: ยืนยันถอนจากรอบเดิมก่อนผูก quote ใหม่ ไม่ติดสองบิล. Back/profile detour/reload ไม่ถือเป็น clear หรือย้าย target เอง; stale/abandoned purchase intent ต้อง resolve/cancel อย่างมี version และแจ้งผลต่อรอบเดิม. เปลี่ยนบริษัทล้าง client cache/request แล้วโหลดบริษัทใหม่; ห้ามส่ง selection ที่เพิ่งโหลดอีกบริษัทเข้ารอบเดิม.
-
-Lock order: Company → Billing account/attempt lease → Batch (หลายชุดเรียง ID) → Ticket/target/redemption. ไม่มีการ issue ส่วนลดก่อนมีบริษัท; management ที่ถือ batch ห้ามขอ Company ย้อนทาง. ใช้ DB row locks/constraints ไม่ใช้ in-memory mutex; provider IO อยู่นอก transaction ผ่าน operation/outbox/idempotency/recovery เดิม.
-
-Issued lifetime ไม่คืนจาก payment fail/revoke/void/refund. Terminal no-payment ปล่อยรายการเดิมพร้อม reschedule ไม่ออกรายการใหม่. UNKNOWN ไม่ปล่อยจาก timeout/UI cancel/session expiry อย่างเดียว. Retry invoice/payment เดิมยัง discount เดิม ไม่ขโมยสิทธิ์ไปอีก invoice.
-
-## 6. Eligibility และการคำนวณ
-
-| Purchase source | บิลที่ลดได้ในแบบใหม่ |
-|---|---|
-| INITIAL/RESTART/REPEAT/FULL_PACKAGE_UPGRADE เดือน/ปี | การซื้อเต็มแพ็กที่ยังไม่ accepted |
-| Approved deal/CARD_AUTO/ADVANCE_DEAL | บิลเก็บเงินจริง ไม่เปลี่ยน snapshot ดีล/วันเริ่ม |
-| Automatic monthly/annual RENEWAL | บิลถัดไปหนึ่งบิลของสินค้าที่อยู่ใน scope |
-| PromptPay renewal | ลดบิลให้ก่อนสร้าง QR; ลูกค้ายังเป็นผู้จ่าย |
-| เปลี่ยนแพ็ก/cadence แบบยังไม่เก็บเงิน | ไม่ consume; resolve บิลใหม่เมื่อถึงรอบ |
-| Upgrade ส่วนต่าง/หนี้เก่า/refund/repair/ADD_ON | ไม่รองรับส่วนลด; คงสิทธิ์รอซื้อที่รองรับ ไม่ย้าย selection ไปบิล add-on |
-
-ใช้ source classification/permission/company hold/debt/capacity/mode readiness เดิม. Publish รับได้เฉพาะ supported combinations; renewal ห้ามเลือก scope “catalog” แล้วไปลดดีลที่ไม่เข้าเงื่อนไข.
-
-quoteTotals เดิมหา baseSubtotal/baseTax/baseTotal; discountedSubtotal = baseSubtotal - ticket.discountBeforeTaxSatang แล้วคิด VAT ที่ pin. ส่วนลดไม่ลดเดือน/ผู้ใช้/ใบเสร็จ/AI budget/สิทธิ์แพ็ก. ตัวอย่างส่วนลด 100 บาท:
-
-| ราคาต้นฉบับ 499 บาท | ฐานก่อนลด | ฐานหลังลด | VAT หลังลด | จ่ายจริง |
-|---|---:|---:|---:|---:|
-| NOT_VAT_REGISTERED | 499.00 | 399.00 | 0.00 | 399.00 |
-| EXCLUSIVE_VAT_7 | 499.00 | 399.00 | 27.93 | 426.93 |
-| INCLUSIVE_VAT_7 | 466.36 | 366.36 | 25.65 | 392.01 |
-
-ปัดครึ่งขึ้นที่สตางค์. Inclusive provider amount_off = baseTotal - targetTotal (106.99 ในตัวอย่าง) ไม่ส่ง 100 แล้วอ้างลดฐาน 100. พิสูจน์ subtotal/tax/total ทุกสตางค์; ไม่ตรงปิด combination ไม่ปัดชดเชย. final ต้อง >= verified provider floor สำหรับ account/mode/payment method/currency และ >0 รวมข้อบังคับ Billing ส่วนกลางที่มีอยู่จริง. ไม่มี minimum ของ ticket/batch และไม่เปิดช่องให้ Sales/ลูกค้ากรอก. Repo ปัจจุบันยังไม่มี central minimum ของยอดหลังลด; offerTerms ตรวจราคาสินค้าก่อนภาษี ไม่ใช่ floor ของยอดชำระหลังลด. จึงต้องเพิ่ม shared readiness/validator ของ provider floor และใช้ snapshot ตอน quote/dispatch; ไม่ถือค่าตัวอย่าง 100 บาทใน demo เป็นนโยบายจริง. ถ้า provider floor ยังพิสูจน์ไม่ได้ให้ combination นั้นไม่พร้อม. ลดเกินฐาน/ต่ำกว่า floor ปฏิเสธ ไม่ลดบางส่วน/บิลศูนย์. การเพิ่ม business minimum อื่นเป็นนโยบาย Billing แยก ไม่แอบเพิ่มในงานนี้.
-
-Ticket terms ตรึงที่ออก แต่ offer/policy/permission ตรวจปัจจุบันตอน quote/dispatch; เปลี่ยนก่อน dispatch ทำ quote stale ต้อง consent ใหม่. หลัง accepted ใช้ snapshot. ใช้ส่วนลดไม่ได้ให้ reason และเลือกซื้อราคาเต็มชัดเจน ห้ามเปลี่ยนยอดเงียบ ๆ.
-
-VAT ใช้การตั้งค่า Billing ปัจจุบันตอน quote ไม่ตรึงจากวันแจกส่วนลด. ตัวอย่างยังไม่คิด VAT: 499 ลดฐาน 100 = 399; ภายหลังตั้งให้บวก 7% จะคำนวณ quote ใหม่เป็น 426.93 อัตโนมัติ แม้เป็นส่วนลดที่แจกไว้ก่อน. ก่อน acceptedAt ต้องให้ลูกค้ายืนยันยอดใหม่เมื่อ tax/policy เปลี่ยน; หลัง acceptedAt เก็บ quote/tax/policy evidence เดิม ไม่แก้ยอดของ attempt หรือ invoice ย้อนหลัง. หน้า customer แสดง VAT ที่ระบบคำนวณ ไม่ให้เลือกรูปแบบ VAT เอง.
-
-## 7. Provider, paid, renewal และ refund
-
-ราคาใน BillingSubscriptionContract/approved deal คงราคาเต็ม. Discount เป็น invoice-specific overlay ที่ผูก ticket/cycle อย่างชัดเจน; **renewal ไม่ได้ต้องเต็มราคาทุกครั้งอีกแล้ว**. รอบที่มี authorized target ลดได้หนึ่ง invoice; รอบถัดไปไม่มี residual discount เว้นแต่ลูกค้าเลือกรายการอื่นใหม่. ไม่ spread event fields ลง contract หรือปล่อย coupon ติดถาวร.
-
-ใช้ native once-only coupon/invoice discount ที่พิสูจน์ตรง API version repo. ผู้ซื้อก่อน Checkout ใช้ operation เฉพาะ attempt; recurring ใช้ operation ที่ผูก subscription/cycle และตรวจ actual invoice identity ตอน invoice creation/finalization. ห้ามใส่ coupon ซ้ำใน subscription + invoice จนลดสองครั้ง; provider invoice ID unique. ไม่ fallback customer balance/negative lines/public promotion code.
-
-Stripe once อาจถือว่า coupon ใช้แล้วเมื่อ invoice finalized และหายจาก subscription discount list แต่ระบบธุรกิจต้องรอ verified paid ก่อน USED. Invoice unpaid/dunning ผูก reservation เดิมจน paid หรือพิสูจน์ว่าเก็บต่อไม่ได้; release/rearm ต้องไม่สร้างสิทธิ์สอง invoice. ข้ามรอบ/response หาย/repeated webhook ใช้ journal เดิม ไม่แจกใหม่.
-
-ตรวจ invoice/session/line/PI/charge: account/mode/currency/source/subscription/cycle/ticket/coupon/amount/subtotal/tax/total ตรง expected evidence ทุกสตางค์. Wrong/foreign/extra discount → financial issue/PAID_HELD; ห้ามเปิดแพ็ก/ชวนจ่ายซ้ำ. Legacy ไม่มี eventDiscount ยังคง strict checks เดิม. ต้องแก้ validator ที่ currently reject discounts ใน reconciler/repeat/collection/price-return/refund-source อย่างแคบ ไม่ปิด validation ทั้งชุด.
-
-Verified paid + invoice source + CONSUMED atomic/idempotent; activation เป็นอีก boundary. Advance รอวันเริ่ม; apply fail เป็นจ่ายแล้วพักตรวจ ไม่คืนสิทธิ์ ไม่ข้าม company/security hold. Invoice ศูนย์/bootstrap ไม่ consume.
-
-Refund/dispute คง USED และ issued. คืนตามยอดรับจริงหลังลด/tax/credit-note/cumulative limits; ไม่คืนราคาเต็มหรือส่วนลดเป็นเงิน. Refund-before-paid callback อ่าน actual source และ consume หากเคยเก็บเงินจริง. Advance full refund ก่อนเริ่มใช้ cancellation protection เดิม. ชดเชยเป็นสิทธิ์ใหม่ผ่าน authorization/cap ปกติ.
-
-## 8. Contracts, UI และรายงาน
-
-ต่อ Sales/Billing handlers เดิมและ runtime DTO whitelist. Claim ส่ง QR/company/observed revision/idempotency; select ส่ง ticketId + expectedSelectionVersion + purchaseIntentId ถ้ามี; clear ส่ง expectedTicketId + expectedSelectionVersion. Select คนละ ID ขณะยังเลือกอยู่ตอบ SELECTION_ALREADY_ACTIVE; client ปิดปุ่มไม่ใช่ security boundary. คำสั่ง use/clear ใช้ idempotency/recovery แยกจาก Checkout; ไม่รับยอด/agent/target cycle ที่ browser อ้างเป็น authority. Quote/renewal resolution อ่าน server selection; Checkout ยังรับ quote/consent ตามเดิมแต่ตรวจ selection snapshot ด้วย.
-
-List contract ระบุ items/status/reason/canSelect/canClear/cursor/hasMore/totalCount และ selected record + selectionVersion + operation state แยกจาก page. History เป็นคนละ query/filter ของ redemption/revocation และไม่ทำ USED กลับ AVAILABLE. Target/date/estimated totals/financial status/activation status แยก; cache key ต้อง company+account+mode+tab/cursor. Claim context ใน login/signup/LINE เป็น opaque safe-return intent ไม่ใช่สิทธิ์และไม่บรรทุก secret ใน URL/log. Profile return อ่าน server selection ใหม่ ไม่เพิ่มส่วนลดผ่าน query string.
-
-ข้อความหลัก: “ส่วนลด”, “รับส่วนลด”, “เลือก”, “ใช้ส่วนลด”, “กดอีกครั้งเพื่อยกเลิกการเลือก”, “เลือกส่วนลดอื่นได้เมื่อยกเลิกรายการที่เลือกอยู่”, “จะลดบิลวันที่ …”, “กำลังผูกส่วนลด”, “กำลังยกเลิกการเลือก”, “กำลังตรวจรายการเดิม”, “ใช้แล้ว”. ไม่มีปุ่มสลับทับ/เก็บแยกจาก toggle; สีอย่างเดียวไม่บอกสถานะ. ข้อความถูกใช้ตรงกันบนหน้า quote/renewal/error/ประวัติ/notification/รายงานและเอกสารที่เกี่ยวข้อง.
-
-UI ต้องมี loading/empty/forbidden/closed/network/retry/pending/attention; error ไม่ทำให้สูญเสีย binding. Reason codes: CLAIM_NOT_OPEN, ISSUANCE_FULL, COMPANY_LIMIT, WAITING_READY, TARGET_PENDING, TARGET_INCOMPATIBLE, MINIMUM_NOT_MET, PROVIDER_NOT_READY, IN_PAYMENT, ALREADY_USED, REVOKED, REDEMPTION_SUSPENDED, SELECTION_ALREADY_ACTIVE, SELECTION_STALE, SELECTION_CLEAR_PENDING. Scope/role denied ไม่เผยข้อมูลอีกบริษัท.
-
-Report event→batch→ticket→target→redemption→verified invoice. แยก issued/queued/armed/in-payment/used/activated/revoked; คิว renewal เดือน/ปีแสดง expected date ไม่ถือเป็นรายได้ก่อน paid. เงินเต็ม/discount ก่อน VAT/VAT/collected/refunded/disputed/net; net=collected-succeeded refunds ไม่หัก dispute ซ้ำ. Unique invoice/attempt กันนับซ้ำ. Sales credit ใช้ ticket.salesUserId ไม่เขียน Company.referralSalesUserId/SalesAttribution ทับ.
-
-## 9. Acceptance
+## 13. เกณฑ์รับงาน
 
 | ID | กรณีและผลที่ต้องได้ |
 |---|---|
-| E01 | เริ่มว่าง→หัวหน้าสร้าง→Sales QR→เข้าหน้าแพ็กเกจ→claim→เลือกหนึ่งรายการ→ยอดซื้อทันทีลด→paid/apply/report; เลือกแล้วไม่ต้องกดใช้ซ้ำก่อนบิลที่ผูกไว้ |
-| E02 | VAT ทั้งสาม/floor พอดี-ขาด/ลดเกินฐาน; ไม่ยอดลบ ไม่ override ส่วนกลาง; accepted totals immutable |
-| E03 | Claim open/close ที่ตั้งเอง; รับก่อนปิดเก็บรอหนึ่งปีได้; signup ยังไม่ issue; เปิดร้านหลังปิดรับถูกปฏิเสธ |
-| E04 | Claim vs accepted/finalized invoice race; current quote ลดได้, accepted เดิมคงยอดและรับสะสมได้อย่างเดียวจนทราบผลก่อนเลือกใช้กับรายการใหม่; suspend boundary |
-| E05 | cap=1 ต่างบริษัท/duplicate/retry/สมัครเดิมแล้วรับที่ Billing; สะสมหลายรายการ/clear สำเร็จก่อน select ใหม่/ไม่รวมส่วนลด/หลังใช้ไม่หยิบรายการอื่นเอง |
-| E06 | Lost response/processing/UNKNOWN/reordered callbacks; ไม่เก็บ/consume/grant ซ้ำ |
-| E07 | Existing monthly และ annual: claim→เลือกใช้→next bill ลด→retry invoice เดิม→paid→รอบต่อไปเต็ม; cancel/cadence change ไม่สูญสิทธิ์ |
-| E08 | Approved/advance/card/QR; paid แยก activation; bootstrap ไม่ consume |
-| E09 | Source scope/audience/ส่วนต่าง/หนี้/extra coupon/renewal incompatible; attention ก่อนเรียกเก็บ คงส่วนลด |
-| E10 | Failed payment/dunning/void terminal: reservation เดิมหรือ release/rearm ตามหลักฐาน; ไม่หมดอายุหลังงาน |
-| E11 | Refund/dispute/refund-before-paid/advance cancel: คืนเงินจริง ส่วนลด USED/cap คง |
-| E12 | หลายเซลล์/บริษัท/20 assigned/removed agent; attribution เดิมและ company isolation |
-| E13 | รายงานยอดรอเดือน/ปีแยกเงินจริง/activation/refund; invoice ซ้ำไม่เพิ่มยอด |
-| E14 | Expected renewal discount vs foreign/wrong account/tax/source/evidence; legacy strict; next full invoice มี proof |
-| E15 | Customer/head/agent auth + desktop/mobile/LINE/profile-return/network/loading/state restoration |
-| E16 | Gate OFF/company hold/permission/suspend: หยุดใหม่ แต่ recovery/refund/history ต่อได้ |
-| E17 | Revision/เพิ่ม cap/แก้วันรับ; issued terms เดิม; ห้าม cap ต่ำกว่า issued |
-| E18 | Revoke ก่อน reserve/audit/notice; pending/used แก้ไม่ได้; ไม่มี post-claim expiry/extension |
-| E19 | Section ส่วนลดก่อน current package/catalog/quote และก่อน next bill; header/แท็บ/signup/theme เดิม; ไม่มีคำว่าตั๋วใน UI ใหม่ |
-| E20 | 0/1/2/3/4/20/100 รายการ: สูงสุด3แถวเต็ม ที่เหลือ scroll, countครบ, ใช้รายการที่4ได้, selectedอยู่นอกpageยังlockรายการอื่น, historyแยก |
-| E21 | “เลือก”→“ใช้ส่วนลด”; รายการอื่น disabled; กดซ้ำ clear สำเร็จก่อนเลือกใหม่; keyboard/touch/reload/สองแท็บเหมือนกัน; direct replace API ถูกปฏิเสธ |
-| E22 | Select/clear double click + response lost ใช้ desired-state/idempotency; out-of-order requests/quotes ไม่พลิกกลับ; consent reset; old full/discount quote ใช้ไม่ได้ |
-| E23 | Clear ARMED→detach proof→unlock; clear vs invoice cutoff/provider unknown ไม่แสดง success หรือชวนจ่ายใหม่ก่อนแน่ใจ; current purchase/next renewal ไม่แย่งสิทธิ์ |
-| E24 | Dropdown ตาม theme ทุกบทบาท: search/long labels/open→disabled/stale value/portal/keyboard/mobile/200% zoom; reuse shared controls และ scoped loader |
-| E25 | ADD_ON/ส่วนต่าง/repair ไม่ consume หรือย้าย selection; quota/AI credit/feature/period เท่าเดิมเมื่อจ่ายเต็มแพ็กโดยมีส่วนลด |
-| E26 | History/receipt/credit-note/notification/report/settlement แสดงยอดรับจริงและภาษีหลังลด; ไม่คิดรายได้จาก selection/ราคาป้าย; ไม่เปลี่ยน legacy attribution |
-| E27 | Migration/Gate OFF/revoke/suspend/disarm/rollback คง paid evidence และ recovery; legacyไม่มีdiscountยังstrict; pendingไม่คืนสิทธิ์จากtimeout |
+| SD-E01 | หัวหน้าสร้างชุด: ตรวจฟิลด์, จำนวนเต็มบาท, ช่วง `[เปิด, ปิด)` แบบเวลาไทย, ขั้นต่ำต่อทุก tier/รอบใน scope; หัวหน้ามอบหมายได้เฉพาะทีมตัวเอง; audit ครบ |
+| SD-E02 | QR: เฉพาะผู้แจกที่ active; อายุ `min(5 นาที, ปิดรับ)`; ชุด PAUSED/SUSPENDED หรือนอกช่วงถูกปฏิเสธ; ถอดเซลล์แล้ว QR เดิมใช้ไม่ได้ |
+| SD-E03 | Claim: LINE token ที่ตรวจแล้ว; ผูกตัวตน LINE; สแกนซ้ำได้รายการเดิม; cap=1 สองคนสแกนพร้อมกันได้หนึ่งรายการ; บัญชี platform tenant ถูกปฏิเสธ; token ไม่อยู่ใน log |
+| SD-E04 | รับก่อนมีบัญชี → สมัครผ่าน LIFF → ร้าน "ยังไม่มีแพ็กเกจ" เห็นบรรทัดส่วนลด (route อยู่ใน allowlist) → CARD_ONCE รายเดือนลดแล้ว → จ่าย → apply → ร้านปลดล็อกในที่ → ส่วนลด USED |
+| SD-E05 | สี่โหมด: CARD_ONCE และ PROMPTPAY_ONCE ลด `unit_amount`; PROMPTPAY_RENEW บิล QR แรกลด บิลถัดไปราคาเต็ม; CARD_AUTO จ่ายงวดแรกครั้งเดียว + subscription `trialing` ราคาเต็มถึงสิ้นงวด → รอบสองราคาเต็ม apply เป็น RENEWAL; "หยุดต่ออายุ" ระหว่างงวดแรกได้ |
+| SD-E06 | RESTART ใช้ได้; REPEAT, SCHEDULED_CHANGE, UPGRADE, FULL_PACKAGE_UPGRADE, ADVANCE_DEAL และ ADD_ON ใช้ไม่ได้ (ไม่มีบรรทัด ไม่ลด ไม่จอง) |
+| SD-E07 | ดีล: ดีล APPROVED ที่ยังไม่หมดอายุหรือ PAID → ไม่มีบรรทัดและแสดงข้อความ §4.2; quote ดีลไม่ลด; ดีลอนุมัติระหว่าง quote กับ Checkout → stale |
+| SD-E08 | หนึ่งรายการต่อร้าน: หลัง RESERVED/USED รายการของผู้ถือคนอื่นหรือชุดอื่นไม่ถูกใช้กับร้านนี้; สองคนจองให้ร้านเดียวกันพร้อมกันได้หนึ่ง; คนเดียวสองร้านพร้อมกัน ร้านที่สองได้ stale |
+| SD-E09 | หมดอายุ: รายการหมดอายุไม่ถูกใช้; จองก่อนหมดอายุแล้วจ่ายหลังหมดอายุ → USED; หน้าจอแสดง "ใช้ได้ถึง" |
+| SD-E10 | Checkout: ล้มหรือถูกปฏิเสธ → ปล่อย; session หมดอายุ, ลูกค้ากดยกเลิก, แอดมินยุติ → ปล่อย; UNKNOWN → คงการจองจนรายการเดิมจบ |
+| SD-E11 | ถือเงินไว้ตรวจ: USED เกิดก่อนทางออก HELD; RETRY_APPLY และ IMPORT_INVOICE ตรวจด้วย snapshot ของ attempt ได้ผลเดิม; รายการไม่ตรง → issue `EVENT_DISCOUNT_REVIEW` โดยไม่ขวาง apply |
+| SD-E12 | คืนเงินบางส่วนและทั้งหมด/ข้อพิพาท: คืนไม่เกินยอดจริง; ส่วนลดคง USED; REFERRAL (ถ้ามี) บันทึกยอดจริงและหักคืนจนสุทธิเป็นศูนย์; รายงานงานหักคืน; CARD_AUTO งวดแรก: หยุดต่ออายุแล้วยุติแพ็กได้ |
+| SD-E13 | รอบต่ออายุไม่เปลี่ยน: ตรวจด้วย contract snapshot ราคาเต็ม; จ่ายรอบแรกหลัง trial ไม่ผ่าน → grace เริ่มตามเดิม; เทสต์เดิมของ collection, schedule, repeat, price-return, free-days, grace และ paid-invoice ผ่านโดยไม่แก้ |
+| SD-E14 | ราคา: ตัวอย่าง 499/100 ทั้งสามแบบภาษี; เต็มบาทเท่านั้น; ขั้นต่ำ ฿10; ผลต่อการ์ดตรงกับ quote และ Checkout |
+| SD-E15 | สิทธิ์: พนักงานในร้านไม่เห็นหน้าแพ็กเกจและหน้า LIFF บอกวิธีที่ถูก; ผู้มีสิทธิ์จัดการแพ็กเกจคนอื่นไม่เห็นส่วนลดของผู้ถือ; ตาราง §9 ทดสอบผ่าน HTTP; ร้านอื่นมองไม่เห็นหรือใช้ไม่ได้ |
+| SD-E16 | Gate ปิด: claim ถูกปฏิเสธ; quote ไม่ลด; quote ที่มีส่วนลดได้ stale ที่ Checkout; การจอง การใช้สิทธิ์ reconcile คืนเงิน และประวัติเดินต่อ |
+| SD-E17 | UI: บรรทัดการ์ด, ขั้นตรวจยอด, "รอบถัดไปชำระราคาเต็ม", หน้า return, ประวัติ ที่ 390 px; ไม่มีแท็บใหม่; ไม่มีคำว่า "ตั๋ว" |
+| SD-E18 | รายงาน: ตัวเลขทุกคอลัมน์ §10 ถูกต้อง; ไม่มีตัวตน LINE; กติกา `visibleAgents` |
+| SD-E19 | Rollback: migration additive; ตรวจเงื่อนไข §11 ได้จากคำสั่งอ่าน |
+| SD-E20 | แอดมิน: ค้นด้วยเลขส่วนลดเจอร้านและบิล; หน้าร้านในระบบแอดมินแสดงรายการส่วนลด |
 
-## 10. ความพร้อมและแหล่งอ้างอิง
+## 14. พฤติกรรมของ Stripe ที่ต้องพิสูจน์จริง
 
-Demo เป็น state simulation ไม่มี API/DB/เงินจริง. เดโมก่อนมตินี้วางส่วนลดใต้แพ็ก, แสดงการ์ด/คำเก่า, สลับรายการโดยตรงและยังไม่มี viewport3แถว จึงไม่ผ่าน E19–E24. ผล 53 walkthroughs/63 assertions เป็นหลักฐานเวอร์ชันก่อนหน้า ไม่ใช่การรับรองมติใหม่นี้. [Evidence เดิม](../evidence/sales-ticket-demo-2026-09-28/README.md) เก็บเป็นประวัติ. Production acceptance E01–E27 ยัง pending; audit ระบุผล local regression แยกจากการตรวจ E2E ใหม่.
+API version `2026-08-26.dahlia` (`packages/contracts/src/billing.ts:7`). เอกสาร provider ไม่แทนการพิสูจน์ในบัญชีจริง; แต่ละข้อต้องมีการตรวจบน UAT (test mode):
 
-ใช้ [Sales deals](mangmee-sales-deals-and-locked-signup-spec-th.md), [Billing](mangmee-billing-subscription-spec-th.md), [company purchase](mangmee-existing-company-self-purchase-spec-th.md), [advance deal](../agent-memory/sales-deal-advance-purchase-2026-09-23.md). กฎ no-coupon ของ flow เดิมยังใช้ต่อ: spec นี้กำหนดข้อยกเว้นเฉพาะ authorized eventDiscount ที่ผ่าน native proof และ gate ตาม plan เท่านั้น ไม่อนุญาต coupon ทั่วไปหรือยกเลิก guard เดิม. อัปเดต integration docs พร้อม implementation/evidence เมื่อเปิดข้อยกเว้นจริง.
+| พฤติกรรมที่แบบนี้พึ่ง | การตรวจบน UAT |
+|---|---|
+| Checkout `mode: 'payment'` + `price_data.unit_amount` ที่ไม่ใช่ราคาในรายการ ออก session, invoice และบรรทัดที่ยอดและภาษีตรง `quoteTotals(unitAmount)` ทุกสตางค์ | ซื้อ CARD_ONCE และ PROMPTPAY_ONCE ที่มีส่วนลด แล้ว reconcile ผ่าน `paidPackageCheckoutEvidence` |
+| ขั้นต่ำการเรียกเก็บ THB ของ Stripe ไม่เกิน ฿10 | quote ที่ยอดหลังลดเท่ากับ ฿10 ชำระสำเร็จ |
+| `setup_future_usage: 'off_session'` บน one-time Checkout เก็บบัตรไว้กับ customer และ subscription ที่มี `trial_end` ซึ่งสร้างภายหลังตัดบัตรนั้นได้เมื่อ trial จบ (ใช้ใน advance deal แล้ว แต่ยังไม่มีหลักฐาน UAT ของเส้นทางบิลแรก) | CARD_AUTO ที่มีส่วนลด + Stripe test clock เลื่อนถึงสิ้นงวด → บิลรอบสองราคาเต็มจ่ายสำเร็จและ apply เป็น RENEWAL |
+| subscription ที่มี trial ออกบิล $0 `subscription_create` ตอนสร้าง และบิลเมื่อ trial จบเป็น `subscription_cycle` | ดูใน test clock เดียวกัน |
+| บัตรถูกปฏิเสธเมื่อจบงวดแรก → subscription `past_due` → grace เริ่มตามเดิม | test card ที่ปฏิเสธหลัง trial |
+| "หยุดต่ออายุ" บน subscription ที่ `trialing` ทำงานและไม่ออกบิล | กดจากหน้าแพ็กเกจระหว่างงวดแรก |
+| ภาษีแบบรวม/แยก VAT บนยอดที่ลดแล้วตรงกับสูตร (ไม่มี tie เมื่อเต็มบาท) | ก่อนจด VAT เท่านั้น: ช่วงทดสอบ policy บน UAT หรือบัญชีทดสอบแยก |
+| ใบเสร็จและใบแจ้งหนี้แสดงราคาสุทธิ ไม่มีบรรทัดส่วนลด | เปิดเอกสารจริงจาก UAT |
 
-ตรวจ official docs ซ้ำ 2026-09-29: [Stripe coupons](https://docs.stripe.com/billing/subscriptions/coupons), [invoice transitions](https://docs.stripe.com/invoicing/integration/workflow-transitions), [invoice update](https://docs.stripe.com/api/invoices/update), [credit-note lines](https://docs.stripe.com/api/credit_notes/lines). อ้างอิงภาษีที่อ่าน 2026-09-28: [tax discounts](https://docs.stripe.com/tax/tax-rates#discounts), [credit notes](https://docs.stripe.com/invoicing/dashboard/credit-notes#credit-balances-and-discounts). เอกสาร provider ไม่แทน native proof บน API version repo (ที่ตรวจ 2026-08-26.dahlia).
+ลิงก์เอกสาร Stripe เรื่อง coupon และ invoice transitions ใน DRAFT v1 ไม่เกี่ยวแล้ว เพราะไม่ใช้ coupon

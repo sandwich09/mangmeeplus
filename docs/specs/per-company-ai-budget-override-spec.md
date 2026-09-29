@@ -1,6 +1,6 @@
 # Per-Company AI Budget Override Spec
 
-2026-09-29 add-on scope: [CHAT/image add-on spec §18](chat-credit-and-receipt-addons-spec-th.md) defines customer balances and admin gifts separately from these operational ceilings. This writer is not a credit-grant API. Preserve existing config semantics and guards; after the specified cohort migration, use the shared commercial projection for customer balances and distinguish legacy allowance provenance from operational limits. This note does not implement or activate the new flow.
+2026-09-29 add-on scope: the [AI credit and receipt-image add-on spec](chat-credit-and-receipt-addons-spec-th.md) (§16, §18) defines customer balances and admin grants separately from these operational ceilings. This writer is not a credit-grant API; adding credit is the separate reviewed "เพิ่มยอดให้ลูกค้า" operation. Preserve existing config semantics and guards. Today an explicit override in SHARED mode also acts as the company's CHAT allowance (`company-ai-budget-policy.ts:149-151`); how that value maps at a company's cut-over is an open Owner question (Q5, default: keep the resolved value as the included allowance per cycle, record its provenance, keep this ceiling as the safety cap). In the console this ceiling is labelled "เพดานเครดิต AI ต่อเดือน" (decision T-06), and writers must warn before lowering it below the commercial balance a company holds (add-on spec §5.3). This note does not implement or activate the new flow.
 
 ## 1. Status
 
