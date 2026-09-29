@@ -104,8 +104,10 @@ export function validateSalesEventBatch(
   const discountSatang = wholeUnits(input.discountSatang, 100, 'ส่วนลด');
   const rewardChatCreditUnits = wholeUnits(input.rewardChatCreditUnits, SALES_EVENT_CHAT_CREDIT_UNIT_SCALE, 'เครดิต AI');
   const rewardReceiptImageUnits = wholeUnits(input.rewardReceiptImageUnits, 1, 'จำนวนอ่านรูปใบเสร็จ');
-  if (discountSatang + rewardChatCreditUnits + rewardReceiptImageUnits === 0) {
-    throw new SalesEventRuleError('SALES_EVENT_REWARD_REQUIRED', 'ใส่ส่วนลดหรือเครดิตอย่างน้อยหนึ่งอย่าง');
+  // Owner 2026-09-29: credit for shops that already pay is withdrawn for now ("ถอยก่อน"), so every
+  // batch gives a discount. The credit columns and stored values stay as they are.
+  if (discountSatang === 0) {
+    throw new SalesEventRuleError('SALES_EVENT_REWARD_REQUIRED', 'ใส่ส่วนลดมากกว่า 0 บาท');
   }
   const issueCap = input.issueCap;
   if (typeof issueCap !== 'number' || !Number.isSafeInteger(issueCap) || issueCap < 1 || issueCap > INT4_MAX) {

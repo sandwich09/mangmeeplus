@@ -24,3 +24,32 @@ Verification (2026-09-29 14:25, worktree above):
 - Pins `--check`, both pin shell specs, check-di-metadata and `git diff --check`: clean.
 - Not run by rule (coordinator 2026-09-29): the full API/web suites, test:boot and the whole-chain run. The coordinator runs them once on the integrated branch.
 Next: SD-C fills `discount` (offers, reason) in the view and reserves and uses the ticket. SD-D adds the billing-page UI. SD-F adds `credit`.
+
+## Follow-up 2026-09-29: Owner UAT findings on the claim page
+
+Branch: `claude/event-discount-claim-page-20260929`, worktree `/private/tmp/mangmee-sd-liff-20260929`, base develop `9499acb4`. PR opened against develop; not merged.
+
+Decisions:
+- Stale script. The origin already sent `no-cache` on `/v1/auth/line/link-page.js`. The UAT probe on 2026-09-29 showed Cloudflare edge-caches the `.js` (`MISS` then `EXPIRED`) and rewrites `no-cache` to `max-age=14400` for the browser. A long `public, max-age=31536000, immutable` (from `/_next/static`) and a `private, no-store` (from a 404 `.js`) pass through unchanged. The fix: pages reference `?v=<sha256(LIFF_PAGE_SCRIPT)[:12]>`, computed at load. The route answers `immutable` only for the matching `v` and `PRIVATE_NO_STORE` for anything else. The CSP is unchanged: a same-origin URL with a query is still `'self'`. The script is the only same-origin LIFF asset; the LINE SDK is LINE's. No release pin covers the touched files.
+- One tap. After a claim with `next: OPEN_PACKAGE`, `prepareMangmee('', true)` calls `startSession` with no gesture. `#open-mangmee` is the single button: a fresh link (under 10 min; the server TTL is 15) opens inside the tap. Otherwise the tap prepares and the next tap opens, the old path. `#open-web` is gone from the event page. On the event page, `startSession` skips the second `liff.init` and the "กำลังเปิดหน้าเว็บ" status, so the ticket does not jump. With several shops, the list shows immediately; a shop tap prepares and "เปิดมั่งมี" opens (2 taps). One handoff cannot land on the web's shop chooser, because a token is bound to one company (`isSafeHandoffPath`).
+- Landing. `POST /auth/line/liff/session` takes `landing: 'package'` (`@IsIn`, a name not a path). The use case lands any shop's plan manager (`canManagePlan`) on `/companies/{id}/billing?channel=line` and returns `packagePage: true`. Non-managers keep the overview; locked shops keep R-C3.
+- Wording. The LIFF shows "ส่วนลด {X} บาท ใช้ตอนจ่ายค่าแพ็กเกจ" with the note "เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง", and no credit line even when the ticket carries credit. The console `batchRewardLines` shows the discount only; the form never had credit inputs on develop. The server and the web form require a discount > 0: `SALES_EVENT_REWARD_REQUIRED` "ใส่ส่วนลดมากกว่า 0 บาท". Credit columns and stored values are untouched, and edits carry them through.
+
+Residuals: the start and signup pages also auto-prepare links with no staleness check (out of scope). The batch page still counts "ใช้เป็นเครดิต" (a redemption count, always 0 until SD-F).
+
+Verification (2026-09-29 17:18, worktree above, before merging develop):
+- Native typecheck (`api-typecheck.sh … both`): API rc=0, web rc=0.
+- Focused API specs:
+  - LIFF event page: 18/18.
+  - Start-handoff, contrast, `line-liff-signup` (including the landing tests) and `sales-event.logic`: 112/112.
+  - `presentation/auth.controller.spec`: 20/20.
+  - W00 manifest: 4/4, no drift.
+- Web: `sales-events.logic`, `sales-console.logic` and `sales-console.qa`: 120/120.
+- `check-di-metadata`: clean. `git diff --check`: clean.
+- Whole-chain acceptance: EXIT 0, 3416/3416, `line_ai_repository_acceptance_complete`.
+- Not run: the `sales-event-discounts.pg.spec` real-Postgres spec. Its only reward case (all zero) still holds.
+- After a plain merge of develop `12b28fc4` (#887, no conflicts) and a contracts rebuild:
+  - Typecheck: API rc=0, web rc=0.
+  - Focused API specs: 154/154. Web specs: 120/120.
+
+Next: Owner re-checks on UAT after the release. Check the phone gets the `?v=` script, one tap on เปิดมั่งมี, and a plan manager landing on แพ็กเกจและการชำระเงิน.

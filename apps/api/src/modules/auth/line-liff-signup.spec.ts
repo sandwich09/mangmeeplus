@@ -234,6 +234,10 @@ describe('POST /v1/auth/line/liff/session (the surface)', () => {
 
     await controller.lineLiffSession({ idToken: 'a.b.c', companyId: 'co-2' } as any);
     assert.deepEqual(calls[1], { idToken: 'a.b.c', companyId: 'co-2' });
+
+    // Sales-event page (spec §3.3): a landing NAME passes through; the use case builds the path.
+    await controller.lineLiffSession({ idToken: 'a.b.c', landing: 'package' } as any);
+    assert.deepEqual(calls[2], { idToken: 'a.b.c', landing: 'package' });
   });
 
   it('is reachable with no session, at the path spec §4 names', () => {
@@ -1506,6 +1510,45 @@ describe('ExchangeLiffSessionUseCase', () => {
     await useCase.execute({ idToken: 'a.b.c' });
 
     assert.equal(minted[0].targetPath, '/companies/co-1/billing?channel=line');
+  });
+
+  // Sales-event page (spec §3.3, Owner 2026-09-29): the discount is used on the package page, so the
+  // page asks to land there — honoured for a plan manager of any shop, never for anyone else.
+  it('lands an ACTIVE shop\'s plan manager on the package page when the event page asks', async () => {
+    const { useCase, minted } = makeUseCase({
+      identity: activeIdentity,
+      memberships: [{ ...membership('co-1'), roles: [planManageRole] }],
+    });
+
+    const result = await useCase.execute({ idToken: 'a.b.c', landing: 'package' });
+
+    assert.equal(minted[0].targetPath, '/companies/co-1/billing?channel=line');
+    assert.deepEqual(result, { handoffUrl: `${WEB_BASE}/l/RAWTOKEN`, packagePage: true });
+  });
+
+  it('keeps a non-manager on the shop overview even when the event page asks for the package page', async () => {
+    const { useCase, minted } = makeUseCase({
+      identity: activeIdentity,
+      memberships: [{ ...membership('co-1'), roles: [{ role: { permissions: [{ permission: { key: 'company.expenses.manage' } }] } }] }],
+    });
+
+    const result = await useCase.execute({ idToken: 'a.b.c', landing: 'package' });
+
+    assert.equal(minted[0].targetPath, '/companies/co-1/dashboard');
+    assert.deepEqual(result, { handoffUrl: `${WEB_BASE}/l/RAWTOKEN` });
+  });
+
+  it('applies the package landing to the shop picked from the list, inside that shop only', async () => {
+    const { useCase, minted } = makeUseCase({
+      identity: activeIdentity,
+      memberships: [{ ...membership('co-1'), roles: [planManageRole] }, { ...membership('co-2'), roles: [planManageRole] }],
+      context: null,
+    });
+
+    await useCase.execute({ idToken: 'a.b.c', companyId: 'co-2', landing: 'package' });
+
+    assert.equal(minted[0].companyId, 'co-2');
+    assert.equal(minted[0].targetPath, '/companies/co-2/billing?channel=line');
   });
 
   it('needsSelection names lockReason/canManagePlan only for the locked row, leaving an ACTIVE row byte-identical', async () => {
