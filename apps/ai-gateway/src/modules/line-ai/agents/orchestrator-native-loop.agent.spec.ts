@@ -248,13 +248,17 @@ describe('OrchestratorAgent – native tool-use loop (item 10F)', () => {
     assert.ok(result.coverage?.every((c) => c.verdict === 'covered'), 'final coverage reflects the resumed facts');
   });
 
-  it('flag off never touches the native wire (byte-equivalent 10B path)', async () => {
+  // Owner 2026-09-29 ("no more switches; always on"): a stale LINE_AI_TOOLUSE_LOOP_ENABLED/COVERAGE_CRITIC
+  // value — like the one AgentCore carried on UAT — can no longer drop the turn to the 10B path.
+  it('a stale tool-loop or critic switch never turns the native loop or its critic off', async () => {
     const nativeBodies: any[] = [];
-    installNativeFetch({ plan: inventoryPlan(['inventory.list_low_stock']), nativeBodies, jsonLoopChoices: [{ callTool: 'inventory.list_low_stock' }, { done: true }] });
-    const orchestrator = new OrchestratorAgent(trackingErpTools([]), makeConfig({ lineAiTooluseLoopEnabled: false }));
+    installNativeFetch({ plan: inventoryPlan(['inventory.list_low_stock']), nativeBodies,
+      nativeTurns: [{ toolCalls: [{ name: 'inventory__list_low_stock' }] }, { text: 'done' }], criticAnswers: [COVERED] });
+    const orchestrator = new OrchestratorAgent(trackingErpTools([]),
+      makeConfig({ lineAiTooluseLoopEnabled: false, lineAiCoverageCriticEnabled: false }));
     const result = await orchestrator.run(makeReq('ของใกล้หมด'));
-    assert.equal(nativeBodies.length, 0, 'no tool-wire request when the flag is off');
-    assert.equal(result.coverage, undefined);
+    assert.ok(nativeBodies.length > 0, 'the native tool wire is used whatever the stale switch says');
+    assert.ok(result.coverage, 'the coverage critic still judged the turn');
   });
 
   it('falls back to the JSON loop when the provider fails before any facts', async () => {

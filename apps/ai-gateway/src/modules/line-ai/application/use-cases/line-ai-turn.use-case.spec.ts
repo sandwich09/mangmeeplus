@@ -121,7 +121,8 @@ describe('LineAiTurnUseCase – feature flag routing', () => {
     assert.equal(await capability({ lineAiDraftEditEnabled: true, lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' }), false,
       'deterministic mode has no S-4 tool catalog');
     assert.equal(await capability({ lineAiDraftEditEnabled: true, lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'strands-local' }), true);
-    assert.equal(await capability({ lineAiDraftEditEnabled: false, lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'strands-local' }), false);
+    // Owner 2026-09-29: draft edit is always on — a stale `false` no longer hides the S-4 catalog.
+    assert.equal(await capability({ lineAiDraftEditEnabled: false, lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'strands-local' }), true);
     assert.equal(await capability({ lineAiDraftEditEnabled: true, lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'agentcore' }), true);
     assert.equal(remoteCalls, 1, 'only the separately served AgentCore mode is probed');
   });
