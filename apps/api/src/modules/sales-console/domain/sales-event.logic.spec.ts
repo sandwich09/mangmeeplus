@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { SalesEventBatchInput } from '@watchdog-bms/contracts';
 import {
   batchActionReason, batchClaimOpen, eventDiscountUnitAmountSatang, firstOfferBelowMinimum, nextBatchState,
-  qrExpiresAt, SALES_EVENT_MIN_UNIT_AMOUNT_SATANG, SalesEventRuleError, scopeFromJson, ticketCounts,
+  SALES_EVENT_MIN_UNIT_AMOUNT_SATANG, SalesEventRuleError, scopeFromJson, ticketCounts,
   validateSalesEventBatch,
 } from './sales-event.logic';
 
@@ -121,7 +121,7 @@ describe('batch state machine (spec §6.2)', () => {
   });
 });
 
-describe('QR life and the claim window (spec §3.2, SD-E02)', () => {
+describe('the claim window a QR works in (spec §3.2, SD-E02, SD-O11)', () => {
   const batch = { state: 'OPEN', claimStartsAt: new Date('2026-10-01T02:00:00.000Z'), claimEndsAt: new Date('2026-10-01T10:00:00.000Z') };
 
   it('is open only while OPEN inside [start, end)', () => {
@@ -131,11 +131,6 @@ describe('QR life and the claim window (spec §3.2, SD-E02)', () => {
     assert.equal(batchClaimOpen(batch, batch.claimEndsAt), false);
     assert.equal(batchClaimOpen({ ...batch, state: 'PAUSED' }, new Date('2026-10-01T05:00:00.000Z')), false);
     assert.equal(batchClaimOpen({ ...batch, state: 'SUSPENDED' }, new Date('2026-10-01T05:00:00.000Z')), false);
-  });
-
-  it('lives five minutes, cut short by the claim end', () => {
-    assert.equal(qrExpiresAt(new Date('2026-10-01T05:00:00.000Z'), batch.claimEndsAt).toISOString(), '2026-10-01T05:05:00.000Z');
-    assert.equal(qrExpiresAt(new Date('2026-10-01T09:58:00.000Z'), batch.claimEndsAt).toISOString(), '2026-10-01T10:00:00.000Z');
   });
 });
 

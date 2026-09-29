@@ -5,9 +5,11 @@ import { join } from 'node:path';
 import { SALES_ERROR_CODES, type SalesEventBatchView } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
-  actionNeedsReason, bangkokInputValue, batchActions, batchRewardLines, batchScopeText, batchStatusMeta, countdownText,
+  actionNeedsReason, bangkokInputValue, batchActions, batchRewardLines, batchScopeText, batchStatusMeta,
   discountTooHighMessage, emptyEventBatchForm, eventBatchFormFromView, eventBatchInputFromForm, firstEventBatchErrorField,
-  isoFromBangkokInput, qrSecondsLeft, ticketStatusMeta, ticketUsableUntil, toggleValue, validateEventBatchForm,
+  isoFromBangkokInput, qrDownloadFileName, qrValidUntilText, SALES_EVENT_QR_PNG_QUIET_ZONE, SALES_EVENT_QR_PNG_SIZE,
+  SALES_EVENT_QR_PRINT_HINT, ticketStatusMeta, ticketUsableUntil,
+  toggleValue, validateEventBatchForm,
   type SalesEventBatchFormValues,
 } from './sales-events.logic';
 
@@ -135,12 +137,28 @@ describe('words on screen (spec §8)', () => {
     assert.equal(ticketStatusMeta({ state: 'REVOKED', redeemedAs: null }).label, 'เพิกถอนแล้ว');
   });
 
-  it('dates a ticket to the claim end plus 30 days and counts the QR down', () => {
+  it('dates a ticket to the claim end plus 30 days', () => {
     assert.equal(ticketUsableUntil('2026-10-03T11:00:00.000Z').toISOString(), '2026-11-02T11:00:00.000Z');
-    assert.equal(qrSecondsLeft('2026-10-01T02:05:00.000Z', NOW), 300);
-    assert.equal(qrSecondsLeft('2026-10-01T01:59:00.000Z', NOW), 0);
-    assert.equal(countdownText(300), '5:00');
-    assert.equal(countdownText(9), '0:09');
+  });
+
+  it('dates the QR to the batch claim end in Thai time, with no countdown (owner 2026-09-29, SD-O11)', () => {
+    // 11:00Z is 18:00 in Bangkok; the Buddhist-era year is how every console date reads.
+    assert.equal(qrValidUntilText('2026-10-03T11:00:00.000Z'), 'QR นี้ใช้ได้ถึง 3 ต.ค. 2569 18:00 น.');
+    assert.match(SALES_EVENT_QR_PRINT_HINT, /พิมพ์หรือเปิดบนจอ/);
+    assert.match(SALES_EVENT_QR_PRINT_HINT, /พักแจก\/ระงับ/);
+    assert.match(SALES_EVENT_QR_PRINT_HINT, /เอาเซลล์ออกจากชุด/);
+  });
+
+  it('names the saved QR after the event and batch, without characters a file system refuses', () => {
+    const batch = { eventName: 'งานแฟร์ 10/2569', batchName: 'บูธ "A": หน้าเวที' };
+    assert.equal(qrDownloadFileName(batch, 'png'), 'QR งานแฟร์ 10 2569 บูธ A หน้าเวที.png');
+    assert.equal(qrDownloadFileName(batch, 'svg'), 'QR งานแฟร์ 10 2569 บูธ A หน้าเวที.svg');
+    assert.ok(qrDownloadFileName({ eventName: 'ก'.repeat(120), batchName: 'x' }, 'png').length <= 104);
+  });
+
+  it('saves the QR as a PNG of at least 1024 px with a white quiet zone around it', () => {
+    assert.ok(SALES_EVENT_QR_PNG_SIZE >= 1024);
+    assert.ok(SALES_EVENT_QR_PNG_QUIET_ZONE > 0 && SALES_EVENT_QR_PNG_QUIET_ZONE * 10 < SALES_EVENT_QR_PNG_SIZE);
   });
 
   it('names the package a too-large discount trips on, and leaves other errors to the shared map', () => {
@@ -171,6 +189,21 @@ describe('console screens (source guards)', () => {
       assert.doesNotMatch(source(file), /(?<![=$])\{(?:batch|ticket|agent)\.(?:id|userId|version|revision|salesUserId|createdByUserId)\}/, file);
       assert.doesNotMatch(source(file), /(?<![=$])\{(?:action|decision)\}/, file);
     }
+  });
+
+  it('offers the QR as a printable image valid until the batch closes, not a countdown (SD-O11)', () => {
+    const page = source('SalesEventBatchPage.tsx');
+    assert.doesNotMatch(page, /role="timer"|countdown|qrSecondsLeft|5 นาที/);
+    // PNG first (phones keep it in Photos and share it in LINE), the SVG only when the canvas fails.
+    assert.match(page, /canvas\.toBlob\(resolve, 'image\/png'\)/);
+    assert.match(page, /context\.fillStyle = 'white'/);
+    assert.match(page, /URL\.createObjectURL\(blob\)/);
+    assert.match(page, /URL\.revokeObjectURL\(created\)/);
+    assert.match(page, /href=\{pngUrl \?\? qr\.qrImageUrl\} download=\{qrDownloadFileName\(batch, pngUrl \? 'png' : 'svg'\)\}/);
+    assert.match(page, /\.catch\(\(\) => \{ if \(!cancelled\) setPngUrl\(null\); \}\)/);
+    assert.match(page, /บันทึกรูป QR/);
+    assert.match(page, /qrValidUntilText\(batch\.claimEndsAt\)/);
+    assert.match(page, /SALES_EVENT_QR_PRINT_HINT/);
   });
 
   it('shows the QR only to an active distributor, and manage commands only when the API says so', () => {

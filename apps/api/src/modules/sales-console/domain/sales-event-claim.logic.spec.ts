@@ -61,14 +61,19 @@ describe('sales-event ticket', () => {
 
 describe('sales-event claim refusal', () => {
   const refusal = (overrides: Partial<Parameters<typeof salesEventClaimRefusal>[0]>) =>
-    salesEventClaimRefusal({ now, qrExpiresAt: later, batch: openBatch, distributorActive: true, ...overrides });
+    salesEventClaimRefusal({ now, batch: openBatch, distributorActive: true, ...overrides });
 
   it('issues from an open batch inside its window with room left', () => {
     assert.equal(refusal({}), null);
   });
 
-  it('refuses an expired QR first', () => {
-    assert.equal(refusal({ qrExpiresAt: now, batch: { ...openBatch, state: 'PAUSED' } }), 'SALES_EVENT_QR_EXPIRED');
+  it('judges the batch as it is at scan time, never the age of the QR (owner 2026-09-29, SD-O11)', () => {
+    // A QR printed at the start of the day still works at the end of it: nothing here reads its age.
+    assert.equal(refusal({ now: new Date(openBatch.claimEndsAt.getTime() - 1) }), null);
+    assert.equal(refusal({ now: openBatch.claimEndsAt }), 'SALES_EVENT_CLAIM_CLOSED');
+    // The lead extends the window: the same printed QR works again.
+    const extended = { ...openBatch, claimEndsAt: new Date(openBatch.claimEndsAt.getTime() + 86_400_000) };
+    assert.equal(refusal({ now: openBatch.claimEndsAt, batch: extended }), null);
   });
 
   it('refuses a paused or suspended batch and a claim outside [start, end)', () => {

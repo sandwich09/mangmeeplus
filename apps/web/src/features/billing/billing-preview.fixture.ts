@@ -99,6 +99,7 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
   };
   const api: ReturnType<typeof billingApi> = {
     status: async () => ({ ...status }), catalog: async () => catalog(),
+    eventDiscount: async () => ({ path: null, tickets: [] }),
     history: async () => ({ items: paid ? [{ id: 'preview-invoice', number: 'PREVIEW-0001', currency: 'THB', amountSatang: currentOffer.priceSatang,
       refundedSatang: 0, disputed: false, financialObservedAt: date(), paymentState: 'PAID', applyState: status.applyState,
       periodStart: date(), periodEnd: paidThrough, createdAt: date(), hasDocuments: true, documentActions: { canResend: applied } }] : [], nextCursor: null }),

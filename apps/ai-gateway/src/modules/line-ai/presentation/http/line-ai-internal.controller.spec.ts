@@ -1707,7 +1707,8 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
 /**
  * UAT 2026-08-27: intake carrying a photo was still timed on the chat/tool budget, so real
  * receipts died at the 15-second line (two fuel bills aborted at 15,011ms / 15,006ms; a milk-tea
- * bill scraped through at 15,003ms). These cases pin BOTH directions of the fix.
+ * bill scraped through at 15,003ms). UAT 2026-09-29: a text-only route plan died on the same line
+ * (aborted at 15,002ms while Bedrock took 21.9s on a cold cache). These cases pin each budget from both sides.
  */
 describe('intake route timeout budget', () => {
   const bedrockConfig = {
@@ -1762,7 +1763,7 @@ describe('intake route timeout budget', () => {
     }
   });
 
-  it('a text-only intake keeps the chat budget, so ordinary chat latency is untouched', async (t) => {
+  it('a text-only intake outlives the 15s chat budget and is bounded by its own 25s budget', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const restore = hangUntilAborted();
     try {
@@ -1771,14 +1772,19 @@ describe('intake route timeout budget', () => {
       const pending = controller.lineIntakeRoute('secret', { ...baseBody, messageText: 'ยอดขายวันนี้' } as any)
         .then((plan) => { settled = true; return plan; });
 
-      t.mock.timers.tick(14_900);
+      t.mock.timers.tick(15_100);
+      await settle();
+      assert.equal(settled, false, 'the old 15s chat budget must no longer abort a text intake');
+
+      t.mock.timers.tick(9_800);
       await settle();
       assert.equal(settled, false);
 
       t.mock.timers.tick(200);
       await settle();
       const plan = await pending;
-      assert.equal(plan.status, 'UNAVAILABLE', 'text intake still aborts at the 15s chat budget');
+      assert.equal(plan.status, 'UNAVAILABLE', 'text intake still aborts at its 25s budget');
+      assert.equal(plan.errorCode, 'PROVIDER_TIMEOUT');
     } finally {
       restore();
       t.mock.timers.reset();

@@ -20,6 +20,9 @@ The owner started both UAT hosts at about 09:24 Bangkok; they had been stopped s
 | UAT | `20260929T040700Z-6f8f3bd2` | `a2d11e89` (LINE AI fix #865–#868) | ACCEPTED_LINE_DEFERRED 11:15 | 515.3 |
 | UAT | `20260929T044840Z-9356f353` | `c4513ddd` (photo fix #872/#873, partner retry #870) | ACCEPTED_LINE_DEFERRED 11:55 | — |
 | Production | `20260929T045818Z-2a6d7b34` | `c4513ddd`, promoted from `9356f353` with no rebuild | ACCEPTED_LINE_DEFERRED 12:07, serving `live`, `OPEN`, 10/10 checks, 4 SSM sessions closed | 547.9 |
+| UAT | `20260929T074435Z-d5922ed9` (prepared by `02543f19`, 222 s) | `a8ab3bfe` (#880/#881: sales-event SD-A–E, add-on PR B/C, LINE fixes) | ACCEPTED_LINE_DEFERRED about 15:06, website ready 14:48 (239 s), 2 SSM sessions closed. **Browser acceptance was an owner waiver**: the owner said "การตรวจรับ UAT อันนี้ถือว่าฉันเข้าไปเช็คแล้ว ไม่ต้องเข้าเอง". The checks were recorded as owner-attested, and `owner-waiver-observation.txt` in the run dir lists what Claude did and did not observe. It is not authority for production. | 1232.0 |
+
+**Owner waiver on a UAT browser acceptance (2026-09-29, op `d5922ed9`).** The controller has no waiver path, and a failed acceptance after mutation leaves `FAILED_RECONCILIATION_REQUIRED` plus `active.json`, which blocks the next deploy. So when the owner explicitly waives the admin login for a UAT run, record their words and the observed facts in an evidence file, and state in `observer` that the checks are owner-attested and were not observed. Production promotion still requires the owner's own 10-check browser acceptance.
 
 These releases applied 12 pending migrations (`20260926120000` … `20260929030000`) with `migrate deploy`; none contained destructive SQL. Production was previously `a2b926c6`.
 
