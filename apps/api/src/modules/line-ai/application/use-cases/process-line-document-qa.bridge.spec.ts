@@ -274,7 +274,7 @@ async function pdfEntryFixture(route: any, v2 = true) {
     recordShadowTurn: async () => undefined, refuseWhenLaunchRouteClosed: async () => false, bindConversation: async () => undefined,
     timeStage: async (_id: string, _stage: string, run: () => Promise<unknown>) => run(),
     downloadLineMedia: async () => ({ ok: true, media }), lineMediaRejectionReason: async () => null,
-    expenseRepo: { findByLineMessageId: async () => null, findExpenseIdsByAttachmentChecksum: async () => [] },
+    expenseRepo: { findByLineMessageId: async () => null, findExpenseIdsByAttachmentChecksum: async () => [], listCategories: async () => [] },
     initReceiptUpload: { execute: async () => { expenseInitializations++; return { expenseId: 'unexpected-expense' }; } },
     completeReceiptUpload: { execute: async () => { throw new Error('Unexpected expense completion'); } },
     captureLine: {}, captureLineFile: async () => { f.trace.push('expense-capture'); await f.flow.initReceiptUpload.execute(); },

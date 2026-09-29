@@ -128,6 +128,29 @@ describe('LINE expense draft conversation logic', () => {
     ]);
   });
 
+  it('files a text note under its named category and leaves the photo path its own rule (Owner 2026-09-29)', () => {
+    const build = (applyCategoryHints?: true) => buildInitialLineExpenseDraftContinuation({
+      workflowId: 'wf-category', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',
+      targetRevision: '2026-09-29T00:00:00.000Z', provisionalExpenseDate: '2026-09-29', categories,
+      messageText: 'ซื้อปากกากับกระดาษ 150 และเมาส์ 1 อัน 390', now: '2026-09-29T01:00:00.000Z',
+      // The note-level category covers the items that name none; it never replaces an item's own.
+      hints: { confidence: 0.82, expenseCategoryId: 'cat-office', items: [
+        { sourceText: 'ปากกา', description: 'ปากกา', confidence: 0.7 },
+        { sourceText: 'กระดาษ 150', description: 'กระดาษ', totalAmount: '150', confidence: 0.7 },
+        { sourceText: 'เมาส์ 1 อัน 390', description: 'เมาส์', quantity: '1', totalAmount: '390', expenseCategoryId: 'cat-computer' },
+      ] },
+      ...(applyCategoryHints ? { applyCategoryHints } : {}),
+    });
+    const text = build(true);
+    assert.deepEqual(text.items.map((item) => item.expenseCategoryId), ['cat-office', 'cat-office', 'cat-computer']);
+    assert.equal(text.provenance['I01-CATEGORY']?.source, 'LINE_AI_SOURCE_GROUNDED');
+    assert.equal(text.unresolvedQuestions.some((question) => question.id.endsWith('-CATEGORY')), false);
+    const photo = build();
+    assert.deepEqual(photo.items.map((item) => item.expenseCategoryId), [undefined, undefined, undefined]);
+    assert.deepEqual(photo.items.map((item) => item.suggestedCategoryId), ['cat-office', 'cat-office', 'cat-computer']);
+    assert.ok(photo.unresolvedQuestions.some((question) => question.id === 'I01-CATEGORY'));
+  });
+
   it('does not borrow another item number as evidence for an incomplete item', () => {
     const state = buildInitialLineExpenseDraftContinuation({
       workflowId: 'wf-cross-item', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',

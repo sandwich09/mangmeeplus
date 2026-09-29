@@ -46,6 +46,7 @@ import {
   CompleteReceiptUploadUseCase,
 } from '../../../expenses/application/use-cases/expense-upload.use-case';
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
+import { aiSelectableExpenseCategories } from '../../../expenses/application/services/expense-category-bootstrap.service';
 import { LINE_RECENT_CAPTURE_WINDOW_MS, listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/line-receipt-status.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
@@ -2325,8 +2326,11 @@ export class ProcessLineWebhookUseCase {
         && (input.attachment.mimeType === 'image/png' || input.attachment.mimeType === 'image/jpeg');
       const budgetGrantV2 = input.event ? await this.prepareTextGrantV2(input.event, input.requestId, hasImageContent) : undefined;
       const reliabilityContext = input.event ? await this.reliabilityContext(input.event) : {};
-      const activeCategories = !budgetGrantV2 && this.expenseRepo
-        ? (await this.expenseRepo.listCategories(input.companyId)).map((c) => ({ id: c.id, name: c.name }))
+      // Bound private turns get the catalogue too: without it the capture hint below can never name a
+      // category, and every LINE draft was saved uncategorised (UAT 2026-09-29, "ค่าส่งของ 300 บาท").
+      // Only an actor who may create an expense draft needs it; question-only turns read no expense data.
+      const activeCategories = this.expenseRepo && RECEIPT_CAPTURE_PERMISSIONS.some((permission) => input.permissions.includes(permission))
+        ? aiSelectableExpenseCategories(await this.expenseRepo.listCategories(input.companyId)).map((c) => ({ id: c.id, name: c.name }))
         : [];
       const offeredToolNames = lineIntakeOfferedToolNames({
         permissions: input.permissions,
@@ -11090,7 +11094,7 @@ ${link}`, ctx.companyId, access);
     }
     try {
       const activeCategories = this.expenseRepo
-        ? (await this.expenseRepo.listCategories(ctx.companyId)).map((category) => ({ id: category.id, name: category.name }))
+        ? aiSelectableExpenseCategories(await this.expenseRepo.listCategories(ctx.companyId)).map((category) => ({ id: category.id, name: category.name }))
         : [];
       const result = await this.aiGateway.requestReceiptOcr({
         requestId: ctx.requestId,
