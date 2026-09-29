@@ -4,7 +4,7 @@ import type { BillingDocumentResendResult, BillingEmailRecipient, BillingEmailRe
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { getAccountEmailOtp, type AccountEmailOtpState } from '@/features/auth/account-email-otp.api';
 import { billingApi } from './billing.api';
-import { billingSupportReference } from './billing-display';
+import { BILLING_RECIPIENT_WAIT_TEXT, billingRecipientLocked, billingSupportReference } from './billing-display';
 import { billingResendText } from './billing-error-text';
 
 const button = 'mangmee-btn mangmee-btn-secondary min-h-11';
@@ -13,7 +13,7 @@ const field = 'mangmee-input mt-2 block min-h-11 w-full min-w-0';
 const IN_FLIGHT = ['QUEUED', 'RUNNING', 'RECONCILING'];
 type Step = 'idle' | 'choose' | 'code_sent' | 'previewed' | 'op_pending' | 'done';
 const opText = (state: string) => state === 'BLOCKED' ? 'ข้อมูลเปลี่ยนหรือยังดำเนินการไม่ได้ กรุณายกเลิกคำขอแล้วตรวจใหม่'
-  : state === 'RECONCILING' ? 'กำลังตรวจผลกับผู้ให้บริการ หากยังไม่สำเร็จ ติดต่อทีมมั่งมีพร้อมเลขอ้างอิงด้านล่าง'
+  : state === 'RECONCILING' ? 'กำลังตรวจผลกับผู้ให้บริการ หากยังไม่สำเร็จ ติดต่อทีมงานพร้อมเลขอ้างอิงด้านล่าง'
     : state === 'CANCELLED' ? 'ยกเลิกคำขอแล้ว' : state === 'FAILED' ? 'ดำเนินการไม่สำเร็จ กรุณาตรวจข้อมูลแล้วเริ่มคำขอใหม่' : 'กำลังดำเนินการ';
 
 /** R-A8/R-D2: change who receives the company's billing documents — the verified account email, or any
@@ -116,24 +116,27 @@ export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, o
   const clear = () => { setStep('idle'); setChallenge(null); setProof(null); setCode(''); setNewEmail(''); setResent(null); setError(''); setErrorCode(null); setOperation(null); };
 
   if (!current?.hasCustomer && !error) return null;
-  // F04: the recipient op refuses while a purchase is in flight; the status says so (`canChange`).
-  const blockedByPurchase = status.recipient ? !status.recipient.canChange && !current?.busy
-    : Boolean(status.attemptId && status.applyState !== 'APPLIED' && status.paymentState !== 'FAILED');
+  // F04: the recipient op refuses while a purchase is in flight; the status says so (`canChange`) — the
+  // same gate the return page's own "แก้อีเมลรับเอกสาร" uses (`billingRecipientLocked`).
+  const blockedByPurchase = billingRecipientLocked(status) && !current?.busy;
+  // PR E: a change the team started holds the account without an operation of this customer's own.
+  const adminChangeInFlight = Boolean(current?.busy && !current.operation);
   const canEdit = Boolean(current?.hasCustomer) && !current?.busy && !blockedByPurchase;
   const view = !canEdit && (step === 'choose' || step === 'code_sent') ? 'idle' : step;
   const accountOption = account?.emailRequirement === 'READY' && account.email && account.email !== current?.email ? account.email : null;
   const retrySeconds = Math.max(0, Math.ceil((Math.max(rateLimitUntil, challenge ? Date.parse(challenge.retryAt) : 0) - now) / 1000));
   const accountHref = status.accessState === 'ACTIVE' ? `/companies/${encodeURIComponent(companyId)}/settings/profile#account`
     : `/account/email?company=${encodeURIComponent(companyId)}`;
-  return <section aria-label="ผู้รับเอกสารของบริษัท" className="mangmee-card space-y-4 p-5 sm:p-6">
-    <h2 className="text-base font-semibold">อีเมลรับเอกสารของบริษัท</h2>
+  return <section aria-label="ผู้รับเอกสารของร้าน" className="mangmee-card space-y-4 p-5 sm:p-6">
+    <h2 className="text-base font-semibold">อีเมลรับเอกสารของร้าน</h2>
     {error && <div role="alert" className="space-y-1 rounded-xl bg-red-50 p-3"><p className="break-words">{error}</p>
       {errorCode === 'BILLING_EMAIL_VERIFICATION_REQUIRED' && <a className="inline-flex min-h-11 items-center text-brand-700 underline" href={accountHref}>ไปที่บัญชีของฉัน</a>}</div>}
     {/* Documents, notices and bounce tracking all read the stored column, not the live Stripe value. */}
     {current && <p className="break-all">ผู้รับปัจจุบัน: <strong>{current.stored?.email ?? current.email ?? 'ยังไม่ระบุ'}</strong></p>}
     {view === 'idle' && <div className="space-y-2">
       <button className={button} disabled={!canEdit} onClick={open}>แก้อีเมลรับเอกสาร</button>
-      {current?.hasCustomer && blockedByPurchase && <p className="text-sm text-gray-600">แก้อีเมลรับเอกสารได้เมื่อรายการชำระเงินปัจจุบันเปิดสิทธิ์เสร็จ</p>}
+      {current?.hasCustomer && blockedByPurchase && <p className="text-sm text-gray-600">{BILLING_RECIPIENT_WAIT_TEXT}</p>}
+      {adminChangeInFlight && <p className="text-sm text-gray-600">ทีมงานกำลังเปลี่ยนอีเมลรับเอกสารให้ แก้ได้อีกครั้งเมื่อรายการนั้นเสร็จ</p>}
     </div>}
     {view === 'choose' && <div className="space-y-3">
       <fieldset className="space-y-1"><legend className="font-semibold">เลือกวิธีตั้งอีเมลรับเอกสาร</legend>
@@ -142,7 +145,7 @@ export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, o
         <label className="flex min-h-11 items-center gap-3"><input type="radio" name={`${id}-recipient`} checked={choice === 'other' || !accountOption} disabled={busy} onChange={() => setChoice('other')} />ใช้อีเมลอื่น</label>
       </fieldset>
       {choice === 'account' && accountOption ? <div className="flex flex-wrap gap-3">
-        <button className={primary} disabled={busy} aria-busy={busy} onClick={() => void chooseAccountEmail()}>ใช้เมลที่ยืนยันแล้วสำหรับเอกสารในอนาคต</button>
+        <button className={primary} disabled={busy} aria-busy={busy} onClick={() => void chooseAccountEmail()}>ใช้อีเมลที่ยืนยันแล้วสำหรับเอกสารในอนาคต</button>
         <button className={button} disabled={busy} onClick={clear}>ยกเลิก</button>
       </div> : <form className="space-y-3" onSubmit={event => { event.preventDefault(); void requestCode(newEmail); }}>
         <label className="block">อีเมลรับเอกสารใหม่<input className={field} type="email" inputMode="email" autoComplete="email" required maxLength={254}
@@ -165,7 +168,7 @@ export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, o
       </div>
     </form>}
     {(view === 'previewed' || view === 'op_pending') && operation && <div className="space-y-3 rounded-xl bg-gray-50 p-3">
-      <p className="break-all">จาก {operation.previousEmail ?? 'ยังไม่ระบุ'} เป็น <strong>{operation.newEmail}</strong>{view === 'previewed' && ' · มีผลกับเอกสารใหม่ของบริษัทนี้'}</p>
+      <p className="break-all">จาก {operation.previousEmail ?? 'ยังไม่ระบุ'} เป็น <strong>{operation.newEmail}</strong>{view === 'previewed' && ' · มีผลกับเอกสารใหม่ของร้านนี้'}</p>
       {view === 'op_pending' && <p role="status">{opText(operation.state)}</p>}
       {view === 'op_pending' && operation.state === 'RECONCILING' && <details className="text-sm text-gray-500"><summary className="min-h-11 cursor-pointer py-2">เลขอ้างอิงสำหรับแจ้งทีมงาน</summary><p className="break-all">{billingSupportReference(operation.id)}</p></details>}
       <div className="flex flex-wrap gap-3">

@@ -72,6 +72,23 @@ export const PLAN_LOCK_COPY: Record<PlanLockReason, { banner: string; title: str
 /** The single next step for both reasons: there is nothing to renew any more, only to choose. */
 export const PLAN_LOCK_CTA = 'เลือกแพ็กเกจ';
 
+/**
+ * RV30 fallback: the package page reloads a shell that is still locked after a purchase applied.
+ * Once per attempt ACROSS page loads (`unlock-reload:<attemptId>` in sessionStorage), so a notice
+ * that keeps lagging cannot reload the page forever. Storage that throws or is missing answers
+ * false: no reload beats a reload loop, and the shell's own focus/visibility re-reads still unlock it.
+ */
+export function claimUnlockReload(storage: () => Pick<Storage, 'getItem' | 'setItem'>, attemptId: string): boolean {
+  try {
+    const store = storage(), key = `unlock-reload:${attemptId}`;
+    if (store.getItem(key)) return false;
+    store.setItem(key, '1');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---- Sidebar card (Owner 2026-08-31: the warning lives in the sidebar, user-collapsible) ----
 
 export type WarningBucket = '7' | '3' | '1';

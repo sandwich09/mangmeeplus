@@ -116,7 +116,7 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
     await page.getByLabel('ฉันตรวจสอบข้อมูลและยืนยันเงื่อนไข', { exact: false }).check();
     const checkout = page.getByRole('button', { name: 'ยืนยันและไปชำระที่ Stripe', exact: true });
     await checkout.click();
-    await expect(page.getByRole('alert').filter({ hasText: 'ยังยืนยันผลรายการไม่ได้' })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'บริการที่จำเป็นยังไม่พร้อมใช้งาน' })).toBeVisible();
     await expect(checkout).toBeEnabled();
     await checkout.click();
 

@@ -87,6 +87,9 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
     let active = true;
     void fetchPlanTermNotice(companyId).then((result) => {
       if (!active) return;
+      // A failed re-read (null) while locked keeps the shell locked: an outage is not an unlock.
+      // The first read still fails open (lockedRef starts false), as the note further down says.
+      if (result === null && lockedRef.current) return;
       // RV30: leaving EXPIRED means the server layout's session/permissions are stale too
       // (billing-reconciler.service apply) — refresh them; the shell below switches by itself.
       const unlocked = result !== null && lockedRef.current && result.derivedState !== 'EXPIRED'; // result null = endpoint ล่ม ไม่ใช่ปลดล็อก

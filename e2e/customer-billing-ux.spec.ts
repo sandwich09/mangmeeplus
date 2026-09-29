@@ -76,7 +76,7 @@ test('BILLING-UX recipient panel offers the verified account email only when it 
   // RV05: buying never waits on the account email, so the package page does not read it.
   expect(accountReads).toBe(0);
   await page.getByRole('button', { name: 'การต่ออายุและชำระเงิน', exact: true }).click();
-  const recipient = page.getByRole('region', { name: 'ผู้รับเอกสารของบริษัท', exact: true });
+  const recipient = page.getByRole('region', { name: 'ผู้รับเอกสารของร้าน', exact: true });
   await expect(recipient).toContainText('accounts@example.com');
   await recipient.getByRole('button', { name: 'แก้อีเมลรับเอกสาร', exact: true }).click();
   const accountOption = recipient.getByRole('radio', { name: /ใช้อีเมลบัญชีที่ยืนยันแล้ว/ });
@@ -120,7 +120,8 @@ test('BILLING-UX payment recheck tells the truth and documents return to history
   expect(refreshes).toBe(1);
   fail = true;
   await check.click();
-  await expect(page.getByRole('alert').filter({ hasText: 'ยังยืนยันผลรายการไม่ได้' })).toBeVisible();
+  // A 503 is an outage to retry, not an unconfirmed result to report with a reference.
+  await expect(page.getByRole('alert').filter({ hasText: 'บริการที่จำเป็นยังไม่พร้อมใช้งาน' })).toBeVisible();
   await expect(page.locator('aside')).toHaveCount(1);
 
   const invoiceId = '00000000-0000-4000-8000-000000000001';

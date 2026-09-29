@@ -101,9 +101,9 @@ export function dealMenuLabels(featureKeys: readonly string[] | null | undefined
   ];
 }
 
-/** v4 = chat credits; old approved deals retain their TOTAL-budget wording. */
+/** v4 = chat credits, read after "เครดิต AI" (the one name for AI money); old approved deals retain their TOTAL-budget wording. */
 export function dealAiCreditText(satang: number | null | undefined, scope: 'CHAT' | 'TOTAL' = 'TOTAL'): string {
-  if (scope === 'CHAT') return `${((satang ?? DEFAULT_CHAT_CREDIT_SATANG) / 100).toLocaleString('th-TH')} credit / เดือน`;
+  if (scope === 'CHAT') return `${((satang ?? DEFAULT_CHAT_CREDIT_SATANG) / 100).toLocaleString('th-TH')} เครดิต/เดือน`;
   if (satang === null || satang === undefined) return 'ใช้เพดาน AI รวมของระบบ';
   if (satang <= 0) return 'ปิดการใช้งาน AI';
   return `${(satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท / เดือน`;

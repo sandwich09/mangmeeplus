@@ -123,7 +123,7 @@ export async function checkBillingSalesCohort(input: Parameters<typeof checkBill
     }
     if (browser) {
       const page = browser.page; await page.goto(`${browser.origin}/companies/${input.companyId}/billing?channel=line`, { waitUntil: 'domcontentloaded' });
-      await page.getByRole('status').filter({ hasText: 'บริษัทนี้ยังซื้อหรือเปลี่ยนแพ็กเกจผ่านเว็บไม่ได้' }).waitFor();
+      await page.getByRole('status').filter({ hasText: 'ร้านนี้ยังซื้อหรือเปลี่ยนแพ็กเกจผ่านเว็บไม่ได้' }).waitFor();
       assert.equal(await page.getByRole('region', { name: 'เลือกแพ็กเกจ', exact: true }).count(), 0);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await page.getByRole('button', { name: 'ประวัติ', exact: true }).click();
