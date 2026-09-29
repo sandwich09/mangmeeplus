@@ -796,7 +796,7 @@ const CODE_LABELS: Record<string, string> = {
   // ส่วนลดจากงาน, console side (sales-event-discounts spec §7.3). A หัวหน้าทีม setting up a batch or a
   // เซลล์ at the booth reads these, so each names the next move. Never "ตั๋ว", never a code.
   SALES_EVENT_BATCH_INVALID: 'ข้อมูลชุดส่วนลดไม่ครบหรือไม่ถูกต้อง กรุณาตรวจแต่ละช่องแล้วบันทึกอีกครั้ง',
-  SALES_EVENT_REWARD_REQUIRED: 'ใส่ส่วนลดหรือเครดิตอย่างน้อยหนึ่งอย่าง',
+  SALES_EVENT_REWARD_REQUIRED: 'ใส่ส่วนลดมากกว่า 0 บาท',
   SALES_EVENT_DISCOUNT_TOO_HIGH: 'ส่วนลดสูงเกินราคาของบางแพ็กเกจที่เลือก ลดจำนวนส่วนลด หรือเอาแพ็กเกจนั้นออกจากแพ็กเกจที่ลดได้',
   SALES_EVENT_BATCH_STALE: 'ข้อมูลชุดส่วนลดเปลี่ยนไปแล้ว กรุณาโหลดใหม่',
   SALES_EVENT_NOT_FOUND: 'ไม่พบชุดส่วนลดหรือรายการส่วนลดนี้แล้ว กรุณากลับไปที่รายการส่วนลดจากงาน',

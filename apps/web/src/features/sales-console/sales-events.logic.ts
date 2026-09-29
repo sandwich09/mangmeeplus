@@ -5,7 +5,6 @@ import {
   billingOfferLabel,
   billingPlanLabel,
   SALES_DEAL_BASE_TIERS,
-  SALES_EVENT_CHAT_CREDIT_UNIT_SCALE,
   SALES_EVENT_NAME_MAX,
   SALES_EVENT_REASON_ACTIONS,
   SALES_EVENT_TICKET_VALID_DAYS,
@@ -97,18 +96,12 @@ export function ticketStatusMeta(ticket: Pick<SalesEventTicketView, 'state' | 'r
 const wholeBaht = (satang: number) => (satang / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 });
 const count = (value: number) => value.toLocaleString('th-TH');
 
-/** What the batch gives, in the LIFF page's own words (spec §3.3); only the parts above zero. */
-export function batchRewardLines(
-  batch: Pick<SalesEventBatchView, 'discountSatang' | 'rewardChatCreditUnits' | 'rewardReceiptImageUnits'>,
-): string[] {
-  const lines: string[] = [];
-  if (batch.discountSatang > 0) lines.push(`ลด ${wholeBaht(batch.discountSatang)} บาท ตอนจ่ายค่าแพ็กเกจ เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง`);
-  const credit = [
-    batch.rewardChatCreditUnits > 0 ? `เครดิต AI ${count(batch.rewardChatCreditUnits / SALES_EVENT_CHAT_CREDIT_UNIT_SCALE)} เครดิต` : null,
-    batch.rewardReceiptImageUnits > 0 ? `จำนวนอ่านรูปใบเสร็จ ${count(batch.rewardReceiptImageUnits)} รูป` : null,
-  ].filter((part): part is string => Boolean(part));
-  if (credit.length > 0) lines.push(`ร้านที่มีแพ็กเกจอยู่แล้ว: รับ${credit.join(' และ')}`);
-  return lines;
+/**
+ * What the batch gives, in the LIFF page's own words (spec §3.3). The discount only: credit for shops
+ * that already pay is withdrawn for now (Owner 2026-09-29), so no screen previews it.
+ */
+export function batchRewardLines(batch: Pick<SalesEventBatchView, 'discountSatang'>): string[] {
+  return batch.discountSatang > 0 ? [`ส่วนลด ${wholeBaht(batch.discountSatang)} บาท ใช้ตอนจ่ายค่าแพ็กเกจ`] : [];
 }
 
 export function batchScopeText(scope: SalesEventScope): string {
@@ -149,15 +142,15 @@ export function qrDownloadFileName(batch: Pick<SalesEventBatchView, 'eventName' 
 
 export type SalesEventBatchFormValues = {
   eventName: string; batchName: string;
-  /** Whole baht; '0' = no first-bill discount. */
+  /** Whole baht, above 0 (every batch gives a discount). */
   discountBaht: string;
   issueCap: string;
   /** `datetime-local` values in Thai time. */
   claimStartsAt: string; claimEndsAt: string;
   tiers: SalesDealBaseTier[]; intervals: SalesDealCadence[];
   agentUserIds: string[];
-  // The credit for shops that already pay has no input yet (SD-F adds it); an edit carries the
-  // stored values through untouched so saving never zeroes them.
+  // Credit for shops that already pay is withdrawn for now (Owner 2026-09-29), so it has no input;
+  // an edit carries the stored values through untouched so saving never zeroes them.
   rewardChatCreditUnits: number; rewardReceiptImageUnits: number;
 };
 export type SalesEventBatchFormErrors = Partial<Record<keyof SalesEventBatchFormValues, string>>;
@@ -202,9 +195,7 @@ export function validateEventBatchForm(
   }
   const discount = wholeNumber(values.discountBaht);
   if (discount === null) errors.discountBaht = 'กรอกส่วนลดเป็นจำนวนเต็มบาท เช่น 100';
-  else if (discount === 0 && values.rewardChatCreditUnits === 0 && values.rewardReceiptImageUnits === 0) {
-    errors.discountBaht = 'ใส่ส่วนลดมากกว่า 0 บาท';
-  }
+  else if (discount === 0) errors.discountBaht = 'ใส่ส่วนลดมากกว่า 0 บาท';
   const cap = wholeNumber(values.issueCap);
   if (cap === null || cap < 1) errors.issueCap = 'กรอกจำนวนแจกสูงสุดเป็นจำนวนเต็มตั้งแต่ 1';
   else if (options.issuedCount !== undefined && cap < options.issuedCount) {
