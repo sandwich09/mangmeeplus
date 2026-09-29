@@ -35,6 +35,9 @@ function world(opts: { caps?: string[]; receiptAccountId?: string | null; status
       update: async ({ where, data }: any) => { const row = ops.find((item) => item.id === where.id); Object.assign(row, { ...data, version: row.version + 1 }); return row; },
     },
     billingAccount: { findUnique: async ({ where }: any) => (where.id === accountId ? { companyId } : null) },
+    // Add-on PR C: no shop here is cut over to AI credit, and no AI credit lot exists yet.
+    companyAiConfiguration: { findUnique: async () => null },
+    aiCreditGrant: { findUnique: async () => null },
     companyPlanTerm: { findUnique: async () => ({ billingReceiptAccountId: receiptAccountId }),
       update: async (args: unknown) => { termWrites.push(args); }, updateMany: async (args: unknown) => { termWrites.push(args); return { count: 1 }; } },
     billingReceiptGrant: {
@@ -107,7 +110,7 @@ describe('add-on grant seam and team grant (add-on plan PR B)', () => {
     assert.equal((await approve(open, preview.id)).state, 'SUCCEEDED');
   });
 
-  it('refuses a shop whose receipts are not lots yet, and AI credit until its ledger exists', async () => {
+  it('refuses a shop whose receipts are not lots yet, and AI credit until the shop is cut over to it', async () => {
     const legacy = world({ receiptAccountId: null });
     const credits = await legacy.service.list(ctx, legacy.companyId);
     assert.deepEqual([credits.blockedReason, credits.canCreate, credits.images.packageRemaining], ['CONTROL_ADDON_NOT_READY', false, null]);
