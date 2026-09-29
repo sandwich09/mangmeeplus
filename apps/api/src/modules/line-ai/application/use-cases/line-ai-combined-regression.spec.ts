@@ -588,16 +588,17 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
     assert.equal(h.applied.length, 1, 'the read fields were applied to that draft');
     assert.ok(h.tenant.expenseUpdates.length >= 1, 'and the draft row itself was written');
 
-    // (3) three metered invocations: the image intake plus the receipt read and extract
-    assert.deepEqual(h.calls.map((call) => call.path), ['/internal/ai/line-intake-route', '/internal/ai/receipt-ocr']);
-    assert.equal(h.usage().length, 3);
-    assert.equal(h.bucket('OCR'), 3 * COST_PER_CALL, 'the OCR bucket moved by what the chain cost');
+    // (3) two metered invocations: the receipt read and extract. A caption-less photo is not routed
+    // (UAT 2026-09-29), so there is no image intake call to pay for.
+    assert.deepEqual(h.calls.map((call) => call.path), ['/internal/ai/receipt-ocr']);
+    assert.equal(h.usage().length, 2);
+    assert.equal(h.bucket('OCR'), 2 * COST_PER_CALL, 'the OCR bucket moved by what the chain cost');
     assert.equal(h.bucket('CHAT'), 100, 'the CHAT aggregate is untouched by a document read');
-    assert.equal(h.money.monthUsage.costSatang, 100 + 3 * COST_PER_CALL);
+    assert.equal(h.money.monthUsage.costSatang, 100 + 2 * COST_PER_CALL);
 
     // (4) every hold settled; nothing live is left behind
     const holds = h.holds();
-    assert.deepEqual(holds.map((hold) => hold.stepKind).sort(), ['line-intake-image', 'receipt-ocr', 'receipt-ocr']);
+    assert.deepEqual(holds.map((hold) => hold.stepKind).sort(), ['receipt-ocr', 'receipt-ocr']);
     assert.deepEqual([...new Set(holds.map((hold) => hold.status))], ['SETTLED']);
     assert.deepEqual([...new Set(holds.map((hold) => hold.bucket))], ['OCR']);
     // The chain's second call won its own invocation through the real `budget-step` seam.
@@ -710,15 +711,12 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
   });
 
   it('5. a receipt chain refused mid-way keeps the call that ran and never claims an expense', async () => {
-    // OCR cap 80: the image intake (63) fits, the receipt read at ordinal 0 (64) fits after it
-    // settled at 10 satang, and the extract at ordinal 1 needs 20 + 64 > 80 — insufficient, not
-    // exceeded, because money is LEFT. The TOTAL stays wide open, so the scope must be OCR.
+    // OCR cap 70: a caption-less photo goes straight to the reader (UAT 2026-09-29). The read at
+    // ordinal 0 (64) fits and settles at 10 satang, and the extract at ordinal 1 needs 10 + 64 > 70 —
+    // insufficient, not exceeded, because money is LEFT. The TOTAL stays wide open, so the scope must be OCR.
     const h = makeHarness({
-      policy: { total: 100_000, chat: 5_000, ocr: 80 },
-      intake: async (body, chain) => ({
-        ...ROUTED_CAPTURE, documentText: 'ใบเสร็จ ร้านกาแฟ รวม 120.00',
-        ...(await chain.run(body.budgetEnvelope, 1, 'line.intake-route')),
-      }),
+      policy: { total: 100_000, chat: 5_000, ocr: 70 },
+      intake: () => { throw new Error('a caption-less photo never reaches the intake router'); },
       turn: () => ({ ...TURN_ANSWER }),
       receipt: async (body, chain) => {
         const outcome = await chain.run(body.budgetEnvelope, 2, 'ocr.receipt.image-read');
@@ -746,15 +744,14 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
     assert.equal(h.attachmentCompletions.length, 1);
     assert.equal(h.applied.length, 0);
 
-    // (3) two invocations ran and BOTH are billed: the intake read and the receipt read
-    assert.equal(h.usage().length, 2);
-    assert.equal(h.bucket('OCR'), 2 * COST_PER_CALL);
+    // (3) the one invocation that ran is billed: the receipt read
+    assert.equal(h.usage().length, 1);
+    assert.equal(h.bucket('OCR'), COST_PER_CALL);
     assert.equal(h.bucket('CHAT'), 0);
 
     // (4) the read's hold is settled and there is NO child hold for the refused extract
     const holds = h.holds();
-    assert.deepEqual(holds.map((hold) => `${hold.stepKind}#${ordinalOf(hold)}`).sort(),
-      ['line-intake-image#0', 'receipt-ocr#0']);
+    assert.deepEqual(holds.map((hold) => `${hold.stepKind}#${ordinalOf(hold)}`).sort(), ['receipt-ocr#0']);
     assert.deepEqual([...new Set(holds.map((hold) => hold.status))], ['SETTLED']);
 
     // The OCR READ COUNT: E1b/ADR §13b keep count refunds structurally separate from money, and
@@ -848,10 +845,7 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
   it('7. a redelivered image and a retry after a lost response buy exactly one expense', async () => {
     const h = makeHarness({
       policy: { total: 100_000, chat: 5_000, ocr: 5_000 },
-      intake: async (body, chain) => ({
-        ...ROUTED_CAPTURE, documentText: 'ใบเสร็จ ร้านกาแฟ รวม 120.00',
-        ...(await chain.run(body.budgetEnvelope, 1, 'line.intake-route')),
-      }),
+      intake: () => { throw new Error('a caption-less photo never reaches the intake router'); },
       turn: () => ({ ...TURN_ANSWER }),
       receipt: async (body, chain) => ({
         status: 'ok', classification: receiptClassification('120.00'),
@@ -902,11 +896,11 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
     assert.equal(h.tenant.pendingMedia.length, 0);
 
     assert.equal(replayed, 'duplicate', 'the second arrival of the same evidence is a duplicate'); // (3)
-    assert.equal(h.usage().length, 3, 'one usage row per invocation, never two for one');
-    assert.equal(h.bucket('OCR'), 3 * COST_PER_CALL, 'the aggregate moved exactly once per call');
+    assert.equal(h.usage().length, 2, 'one usage row per invocation (read + extract), never two for one');
+    assert.equal(h.bucket('OCR'), 2 * COST_PER_CALL, 'the aggregate moved exactly once per call');
 
     const holds = h.holds();                                                   // (4)
-    assert.equal(holds.length, 3);
+    assert.equal(holds.length, 2);
     assert.deepEqual([...new Set(holds.map((hold) => hold.status))], ['SETTLED']);
     assert.equal(h.ocr.readEvents.length, 1, 'one document read, counted once');
 

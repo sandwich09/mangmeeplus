@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Prisma } from '../../../generated/prisma/client';
 import { LineMessageBufferService } from './line-message-buffer.service';
 import type { LineBufferEnvelope } from './line-message-buffer.service';
-import { LINE_BUFFER_ORPHAN_REPROCESS_MS, debounceCohortMs } from '../domain/logic/line-message-buffer.logic';
+import { LINE_BUFFER_ORPHAN_REPROCESS_MS, LINE_MEDIA_RECEIVED_TEXT, debounceCohortMs, lineMediaGroupAckText } from '../domain/logic/line-message-buffer.logic';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Real macrotask boundary (setImmediate is never mocked here) — flushes the async dispatch chain that
@@ -596,6 +596,90 @@ describe('LineMessageBufferService – media and captions', () => {
     releaseFirst();
     await sleep(30);
     assert.deepEqual(h.receipts.map(({ event }) => event.webhookEventId), ['receipt-1', 'receipt-2']);
+  });
+
+  // UAT 2026-09-29 "ส่งรูปที่ 2 ต่อกันแล้วเงียบไป": the second photo of a burst was acknowledged only
+  // when its own read began, after the first photo had been answered.
+  it('acknowledges a two-photo burst once, on arrival, and answers both in order', async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const timeline: string[] = [];
+    let loadingAtFirstAnswer = -1;
+    let loadingAtSecondRead = -1;
+    const h = makeHarness({
+      debounceMs: 20,
+      loadingEnabled: true,
+      receiptImpl: async (event) => {
+        timeline.push(`read:${event.webhookEventId}`);
+        if (event.webhookEventId === 'burst-1') await firstGate;
+        else loadingAtSecondRead = h.loadingCalls.length;
+        await event.beforeReply?.();
+        timeline.push(`answer:${event.webhookEventId}`);
+        if (event.webhookEventId === 'burst-1') loadingAtFirstAnswer = h.loadingCalls.length;
+        return { outcome: 'done' };
+      },
+    });
+
+    await h.service.enqueue(mediaEnv('burst-1'));
+    await h.service.enqueue(mediaEnv('burst-2'));
+    await sleep(60);
+    assert.deepEqual(h.pushes.map((push) => push.text), [lineMediaGroupAckText(['image', 'image'])], 'one acknowledgement for the burst');
+    assert.match(h.pushes[0]!.text, /^ได้รับรูปแล้ว 2 รูปค่ะ/);
+    assert.deepEqual(timeline, ['read:burst-1'], 'both photos are acknowledged while the first is still being read');
+    assert.equal(h.service.holds('burst-2'), true, 'the queued photo is still in memory, so the orphan sweep must leave it alone');
+
+    releaseFirst();
+    await sleep(40);
+    assert.deepEqual(timeline, ['read:burst-1', 'answer:burst-1', 'read:burst-2', 'answer:burst-2']);
+    assert.equal(h.pushes.length, 1, 'no per-photo acknowledgement follows');
+    assert.ok(loadingAtSecondRead > loadingAtFirstAnswer, 'the typing indicator comes back for the second read');
+    assert.equal(h.service.holds('burst-1') || h.service.holds('burst-2'), false, 'answered photos are released');
+  });
+
+  it('acknowledges a photo at once even when an earlier photo is still being read', async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const h = makeHarness({
+      debounceMs: 0,
+      receiptImpl: async (event) => {
+        if (event.webhookEventId === 'later-1') await firstGate;
+        await event.beforeReply?.();
+        return { outcome: 'done' };
+      },
+    });
+
+    await h.service.enqueue(mediaEnv('later-1'));
+    await sleep(20);
+    await h.service.enqueue(mediaEnv('later-2'));
+    await sleep(20);
+    assert.equal(h.receipts.length, 1, 'the second read still waits for the first');
+    assert.deepEqual(h.pushes.map((push) => push.text), [LINE_MEDIA_RECEIVED_TEXT, LINE_MEDIA_RECEIVED_TEXT],
+      'but its acknowledgement does not');
+
+    releaseFirst();
+    await sleep(30);
+    assert.deepEqual(h.receipts.map(({ event }) => event.webhookEventId), ['later-1', 'later-2']);
+    assert.equal(h.pushes.length, 2);
+  });
+
+  it('answers a failed photo on its own and still reads the rest of the burst', async () => {
+    const h = makeHarness({
+      debounceMs: 20,
+      receiptImpl: async (event) => {
+        if (event.webhookEventId === 'fail-1') throw new Error('unexpected read failure');
+        await event.beforeReply?.();
+        return { outcome: 'done' };
+      },
+    });
+
+    await h.service.enqueue(mediaEnv('fail-1'));
+    await h.service.enqueue(mediaEnv('fail-2'));
+    await sleep(80);
+    assert.deepEqual(h.receipts.map(({ event }) => event.webhookEventId), ['fail-1', 'fail-2'], 'the second photo is still read');
+    assert.deepEqual(h.replyTokens, ['rt-fail-1'], 'the fallback answers only the photo that failed');
+    assert.match(h.replies[0] ?? '', /ระบบตอบกลับไม่ได้ชั่วคราว/);
+    assert.equal(h.rows.get('fail-1')?.status, 'unavailable_delivered');
+    assert.equal(h.rows.get('fail-2')?.status, 'received', 'the second photo stays with its own turn');
   });
 
   it('keeps captioned media on the ordered main lane', async () => {
