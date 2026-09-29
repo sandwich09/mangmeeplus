@@ -30,11 +30,48 @@ it('answers an admitted private general/help turn without private ERP prefetch o
       return { replyText: 'อากาศกระเจิงแสงสีน้ำเงิน', webLinks: [], sourceLabels: [], toolsInvoked: [], sourceRefs: [], refused: false, semanticCoverage: [{ index: 0, status: 'handled' }] };
     } },
     ledger: { appendTurn: async ({ acceptedRequest }: any) => { calls.push('durable'); assert.equal(acceptedRequest.request.budgetGrantV2, grant); return 'ledger'; }, ack: async () => calls.push('ack') },
-    persistTurn: async () => { calls.push('persist'); }, updateEventLog: async () => undefined,
+    persistTurn: async () => { calls.push('persist'); return 'turn'; }, updateEventLog: async () => undefined,
+    prisma: { client: { aiTurn: { update: async ({ where, data }: any) => { calls.push(`${where.id}:${data.status}`); return {}; } } } },
     deliverMessages: async (_event: any, messages: any[]) => { calls.push('accepted'); assert.match(messages[0].text, /อากาศ/); return 'ok'; },
   });
   await flow.deliverPureGeneralV2(event, 'request', route, { permissions: ['line.ai.query'], roles: [], scopes: {} }, [], undefined, conversationContext);
-  assert.deepEqual(calls, ['durable', 'answer', 'persist', 'accepted', 'ack']);
+  assert.deepEqual(calls, ['durable', 'answer', 'persist', 'accepted', 'turn:COMPLETED', 'ack']);
+});
+
+// UAT 2026-09-29: nine general-lane answers reached the customer (plan ACCEPTED, webhook completed) while
+// their AiTurn rows stayed PROCESSING. The next turn's conversation context reads only COMPLETED/REFUSED
+// rows, so a follow-up to a general answer lost that answer.
+for (const scenario of [
+  { name: 'a delivered answer', refused: false, delivery: 'ok', status: 'COMPLETED', errorCode: undefined },
+  { name: 'a delivered refusal', refused: true, delivery: 'ok', status: 'REFUSED', errorCode: undefined },
+  { name: 'an answer LINE did not accept', refused: false, delivery: 'failed_other', status: 'ERROR', errorCode: 'LINE_DELIVERY_FAILED_OTHER' },
+]) it(`finishes the AiTurn row of ${scenario.name} as ${scenario.status}, never leaving it PROCESSING`, async () => {
+  const event: any = { webhookEventId: 'evt-row', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'ส่วนลดคืออะไร', inputEvidence: { joinedSha256: 'digest' } };
+  const owner = { companyId: 'company', userId: 'user', membershipId: 'member', chatKeyHash: 'chat' };
+  const grant = { turnKey: 'turn' }, rows: any[] = [], statuses: string[] = [], acks: string[] = [];
+  const route = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', semanticSubrequests: [{ index: 0, kind: 'general', goal: 'discount', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  Object.assign(flow, {
+    boundConversations: new WeakMap([[event, { owner, id: 'conversation', epoch: 3 }]]), budgetGrantsV2: new WeakMap([[event, grant]]),
+    deliveryAccess: new WeakMap([[event, { fingerprint: 'fp', membershipId: 'member' }]]), semanticDelivery: new WeakMap(), deliverySources: new WeakMap(),
+    config: { webBaseUrl: '', lineAiApprovedKnowledgeEnabled: false, lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: [],
+      lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: [] },
+    reliabilityContext: async () => ({}),
+    aiGateway: { narrowLineReliabilityGrant: async () => grant, requestLineTurn: async () => ({ replyText: 'ส่วนลดคือยอดที่ลดจากราคาขาย', webLinks: [],
+      sourceLabels: [], toolsInvoked: [], sourceRefs: [], intent: 'unknown', agent: 'general', refused: scenario.refused, durationMs: 6683,
+      semanticCoverage: [{ index: 0, status: 'handled' }] }) },
+    ledger: { appendTurn: async () => 'ledger', ack: async () => { acks.push('ack'); } },
+    // The real persistTurn writes the row; only its storage is faked.
+    contextV2: { createTurn: async (_owner: unknown, _epoch: number, data: any) => { rows.push({ id: 'turn-row', ...data }); return rows[0]; } },
+    prisma: { client: { aiTurn: { update: async ({ where, data }: any) => Object.assign(rows.find(row => row.id === where.id), data) } } },
+    updateEventLog: async (_id: string, status: string) => { statuses.push(status); },
+    deliverMessages: async () => scenario.delivery,
+  });
+  await flow.deliverPureGeneralV2(event, 'request', route, { permissions: ['line.ai.query'], roles: [], scopes: {} }, [], undefined);
+  assert.equal(rows.length, 1); assert.equal(rows[0].agent, 'general');
+  assert.equal(rows[0].status, scenario.status); assert.equal(rows[0].errorCode, scenario.errorCode);
+  assert.deepEqual(statuses, scenario.delivery === 'ok' ? ['response_ready', 'completed'] : ['response_ready']);
+  assert.deepEqual(acks, scenario.delivery === 'ok' ? ['ack'] : [], 'an undelivered answer keeps its ledger entry for retry');
 });
 
 for (const scenario of [

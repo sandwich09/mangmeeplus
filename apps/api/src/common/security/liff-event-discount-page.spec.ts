@@ -125,7 +125,8 @@ describe('sales-event LIFF page', () => {
   });
 
   for (const [code, expected] of [
-    ['SALES_EVENT_QR_EXPIRED', /QR นี้หมดอายุแล้ว\nขอให้ผู้แจกสร้าง QR ใหม่/],
+    // SD-O11: a QR has no clock of its own, so an unknown one is "ใช้ไม่ได้", never "หมดอายุ".
+    ['SALES_EVENT_QR_INVALID', /QR นี้ใช้ไม่ได้\nขอ QR ของงานนี้จากทีมขายอีกครั้ง/],
     ['SALES_EVENT_AGENT_INACTIVE', /QR นี้ใช้ไม่ได้แล้ว/],
     ['SALES_EVENT_CLAIM_CLOSED', /งานนี้ปิดรับส่วนลดแล้ว/],
     ['SALES_EVENT_ISSUE_FULL', /ส่วนลดของงานนี้ถูกแจกครบแล้ว/],

@@ -44,6 +44,12 @@ export const DOCUMENT_QA_MEDIA_ROUTE = '/v1/internal/ai/line-document-qa';
 // 60s wrapper could ever contain. The caller now derives its ceiling from this same constant, so
 // the wrapper is guaranteed to outlast the chain instead of racing it.
 const DOCUMENT_OCR_TIMEOUT_MS = AI_DOCUMENT_OCR_TIMEOUT_MS;
+// UAT 2026-09-29: text-only intake still ran on the chat/tool budget (AI_TOOL_TIMEOUT_MS, 15s on UAT).
+// A plain question's route plan was aborted at 15,002ms while Bedrock took 21.9s on a cold prompt
+// cache, so the customer read "ระบบตอบช้ากว่าปกติ" for an answer seven seconds away. This call is really
+// bounded by the turn grant's work deadline (admission + 37s, applied to every v2 provider call) and
+// the API waits 30s for this route; 25s fits inside that wait and the grant deadline stays the hard stop.
+const LINE_TEXT_INTAKE_TIMEOUT_MS = 25_000;
 /** A forwarded intake read must look like a page, not a caption; and must fit the same budget a
  *  fresh read would produce. Outside this band the route reads the image itself. */
 const MIN_FORWARDED_DOCUMENT_TEXT_CHARS = 24;
@@ -541,11 +547,11 @@ export class LineAiInternalController {
     // budget (AI_TOOL_TIMEOUT_MS, 15s on UAT). Real receipts landed at 15.00s either side of that
     // line: a milk-tea bill scraped through at 15,003ms while two fuel bills were aborted at
     // 15,011ms and 15,006ms and came back as "what is this picture?". Attachments now get the same
-    // document budget every other reader in this file uses; text-only intake keeps the chat budget
-    // so ordinary chat latency is untouched.
+    // document budget every other reader in this file uses; text-only intake has its own budget
+    // (LINE_TEXT_INTAKE_TIMEOUT_MS, UAT 2026-09-29).
     const hasAttachment = (body.attachments?.length ?? 0) > 0;
     const router = new IntentRouterAgent(
-      createProvider(this.config, hasAttachment ? { timeoutMs: DOCUMENT_OCR_TIMEOUT_MS } : undefined),
+      createProvider(this.config, { timeoutMs: hasAttachment ? DOCUMENT_OCR_TIMEOUT_MS : LINE_TEXT_INTAKE_TIMEOUT_MS }),
       // Owner 2026-09-29: draft edit, approved knowledge and the approved prepared families are always on —
       // no environment value can switch or narrow them (a stale AgentCore env did, UAT 2026-09-29).
       true,

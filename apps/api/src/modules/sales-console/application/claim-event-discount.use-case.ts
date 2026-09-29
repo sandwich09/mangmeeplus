@@ -21,11 +21,14 @@ export type ClaimEventDiscountCommand = {
   requestId: string;
 };
 
-/** Spec §7.3 wording. The LIFF page shows its own copy for each code; this is the API's message. */
-const REFUSAL_TH: Record<SalesEventClaimRefusal, string> = {
-  SALES_EVENT_QR_EXPIRED: 'QR นี้หมดอายุแล้ว ขอให้ผู้แจกสร้าง QR ใหม่',
+/**
+ * Spec §7.3 wording. The LIFF page shows its own copy for each code; this is the API's message.
+ * No "หมดอายุ" and no "สร้าง QR ใหม่": a QR has no clock of its own (SD-O11) and may be a printed one.
+ */
+const REFUSAL_TH: Record<SalesEventClaimRefusal | 'SALES_EVENT_QR_INVALID', string> = {
+  SALES_EVENT_QR_INVALID: 'QR นี้ใช้ไม่ได้ ขอ QR ของงานนี้จากทีมขายอีกครั้ง',
   SALES_EVENT_CLAIM_CLOSED: 'งานนี้ปิดรับส่วนลดแล้ว',
-  SALES_EVENT_AGENT_INACTIVE: 'QR นี้ใช้ไม่ได้แล้ว ขอให้ผู้แจกสร้าง QR ใหม่',
+  SALES_EVENT_AGENT_INACTIVE: 'QR นี้ใช้ไม่ได้แล้ว ขอ QR ของงานนี้จากทีมขายอีกครั้ง',
   SALES_EVENT_ISSUE_FULL: 'ส่วนลดของงานนี้ถูกแจกครบแล้ว',
 };
 
@@ -68,15 +71,16 @@ export class ClaimEventDiscountUseCase {
 
     const qr = await this.prisma.client.salesEventQrToken.findUnique({
       where: { tokenHash: hashSalesEventQrToken(cmd.qrToken) },
-      select: { batchId: true, salesUserId: true, expiresAt: true },
+      select: { batchId: true, salesUserId: true },
     });
-    if (!qr) throw salesError('SALES_EVENT_QR_EXPIRED', REFUSAL_TH.SALES_EVENT_QR_EXPIRED);
+    // The token's own `expiresAt` is history (SD-O11): the batch decides below, as it is right now.
+    if (!qr) throw salesError('SALES_EVENT_QR_INVALID', REFUSAL_TH.SALES_EVENT_QR_INVALID);
     const holder = { batchId: qr.batchId, holderChannelId: verified.channelId, holderProviderUserId: verified.providerUserId };
 
     const { ticket, replay } = await this.prisma.client.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "SalesEventBatch" WHERE "id" = ${qr.batchId} FOR UPDATE`;
       // Replay before any refusal, under the lock: scanning again, or retrying an answer that was
-      // lost after the QR ran out, returns the ticket already held (spec §3.3 step 3). The lock also
+      // lost after the batch closed, returns the ticket already held (spec §3.3 step 3). The lock also
       // makes a second concurrent scan by the same person land here instead of on the unique index.
       const held = await tx.salesEventTicket.findUnique({
         where: { batchId_holderChannelId_holderProviderUserId: holder }, select: TICKET_SELECT,
@@ -90,7 +94,7 @@ export class ClaimEventDiscountUseCase {
       const profile = distributor?.active
         ? await tx.salesAgentProfile.findUnique({ where: { userId: qr.salesUserId }, select: { status: true } })
         : null;
-      const refusal = salesEventClaimRefusal({ now, qrExpiresAt: qr.expiresAt, batch, distributorActive: profile?.status === 'ACTIVE' });
+      const refusal = salesEventClaimRefusal({ now, batch, distributorActive: profile?.status === 'ACTIVE' });
       if (refusal) throw salesError(refusal, REFUSAL_TH[refusal]);
 
       // ponytail: a serial collision (32^8 space) fails this claim with a 500; the page's retry draws a new one.
