@@ -267,8 +267,9 @@ describe('permission-registry', () => {
 
   it('separates the sales lead from the sales agent exactly where the spec does', () => {
     const lead = ROLE_GRANTS['MANGMEE_SALES_LEAD'] ?? [], agent = ROLE_GRANTS['MANGMEE_SALES'] ?? [];
-    // R5: an agent can never approve — not their own deal and not anyone else's.
-    for (const key of ['sales.deal.approve', 'sales.team.manage', 'sales.report.read']) {
+    // R5: an agent can never approve — not their own deal and not anyone else's. Sales-event §9: nor
+    // create, pause, suspend or revoke an event discount; they only show the QR they were given.
+    for (const key of ['sales.deal.approve', 'sales.team.manage', 'sales.report.read', 'sales.event.manage']) {
       assert.ok(lead.includes(key), `lead missing ${key}`);
       assert.equal(agent.includes(key), false, `agent must not hold ${key}`);
     }

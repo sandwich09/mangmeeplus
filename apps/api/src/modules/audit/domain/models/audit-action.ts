@@ -88,6 +88,12 @@ export const AuditAction = {
   ACCESS_ROLE_TEMPLATE_APPLY: 'access.role_template.apply',
   ACCESS_ROLE_TEMPLATE_CREATE: 'access.role_template.create',
   ACCESS_ROLE_TEMPLATE_UPDATE: 'access.role_template.update',
+  // Sales-event discounts (sales-event-discounts spec §6.2): every console command on a batch or ticket.
+  SALES_EVENT_BATCH_CREATE: 'sales.event.batch_created',
+  SALES_EVENT_BATCH_UPDATE: 'sales.event.batch_updated',
+  SALES_EVENT_BATCH_STATE_CHANGE: 'sales.event.batch_state_changed',
+  SALES_EVENT_QR_ISSUE: 'sales.event.qr_issued',
+  SALES_EVENT_TICKET_REVOKE: 'sales.event.ticket_revoked',
 } as const;
 
 export type AuditActionValue = (typeof AuditAction)[keyof typeof AuditAction];

@@ -612,15 +612,16 @@ export class PartnerController {
   @Get(':partnerCompanyId/ai-credit-holds')
   @RequirePermissions('system.partner_dashboard.read')
   @ApiOperation({
-    summary: 'List UNRESOLVED AI credit holds and unacknowledged breaches for the current and '
-      + 'previous Bangkok month, after running the same lazy sweep admission runs',
+    summary: 'List UNRESOLVED AI credit holds and unacknowledged breaches of every month, one page at a '
+      + 'time, after running the same lazy sweep admission runs',
   })
   @ApiResponse({ status: 200 })
   @ApiResponse({ status: 404 })
-  aiCreditHolds(@Param('partnerCompanyId') companyId: string, @Req() req: AuthedRequest) {
+  aiCreditHolds(@Param('partnerCompanyId') companyId: string, @Req() req: AuthedRequest, @Query('cursor') cursor?: string) {
     return this.aiCreditHoldsUseCase.read({
       companyId,
       canManage: req.context.permissions.includes('system.partner_ai_model.manage'),
+      ...(typeof cursor === 'string' && cursor ? { cursor } : {}),
     });
   }
 

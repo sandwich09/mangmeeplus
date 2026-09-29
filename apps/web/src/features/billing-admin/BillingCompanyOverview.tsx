@@ -61,6 +61,18 @@ export default function BillingCompanyOverview({ company: c, overview, loading, 
         {c.effectiveCapacity?.temporary && <p className="rounded-lg bg-brand-50 p-4 text-brand-900">สิทธิ์ชั่วคราว: {billingPlanLabel(c.effectiveCapacity.tierKey)} · {c.effectiveCapacity.branchLimit} สาขา · {c.effectiveCapacity.employeeLimit} ผู้ใช้ ถึง {formatThaiDateTime(c.effectiveCapacity.temporary.expiresAt)}</p>}
         <p className="text-sm text-gray-500">ตรวจข้อมูลการชำระเงินล่าสุด: {formatThaiDateTime(c.observedAt, 'ยังไม่เคยตรวจ')}</p>
       </section>
+      {/* SD-E20: sales-event discounts this shop held or used. The serial is shown because it is the
+          number the shop and the เซลล์ quote; the bill link needs the money permission. */}
+      {!!c.eventDiscounts?.length && <section id="event-discounts" aria-label="ส่วนลดจากงานของบริษัท" className="rounded-xl border border-gray-200 bg-white p-4 sm:p-6">
+        <h2 className="text-lg font-semibold text-gray-900">ส่วนลดจากงาน</h2>
+        <p className="mt-2 text-gray-600">ส่วนลดที่ร้านนี้กำลังใช้หรือใช้แล้ว ค้นด้วยเลขส่วนลดได้จากช่องค้นหาด้วยเลขอ้างอิง</p>
+        <div className="mt-4 divide-y divide-gray-100">{c.eventDiscounts.map(d => <article key={d.serial} className="flex flex-wrap items-center justify-between gap-4 py-4"><div className="min-w-0">
+          <h3 className="break-words font-semibold text-gray-900">{d.eventName} · ชุด {d.batchName}</h3>
+          <p className="mt-1 text-sm text-gray-600">เลขส่วนลด {d.serial} · {d.redeemedAs === 'CREDIT' ? 'รับเป็นเครดิต' : 'ลดบิลแรก'} · {d.state === 'RESERVED' ? 'กำลังชำระ' : d.state === 'USED' ? 'ใช้แล้ว' : d.state === 'REVOKED' ? 'เพิกถอนแล้ว' : 'ยังไม่ได้ใช้'}</p>
+          {d.appliedDiscountSatang !== null && <p className="mt-1 text-sm text-gray-600">ส่วนลด {money(d.appliedDiscountSatang)}</p>}
+          {(d.usedAt ?? d.reservedAt) && <p className="mt-1 text-sm text-gray-600">{d.usedAt ? `ใช้เมื่อ ${formatThaiDateTime(d.usedAt)}` : `เริ่มชำระเมื่อ ${formatThaiDateTime(d.reservedAt)}`}</p>}
+        </div>{d.invoiceId && <Link onClick={leaving} className={billingControl} href={`${base}/invoices/${encodeURIComponent(d.invoiceId)}`}>ดูบิลที่ใช้ส่วนลด</Link>}</article>)}</div>
+      </section>}
     </div>
     <section hidden={view !== 'payments'} aria-label="รายการชำระเงินของบริษัท" className="space-y-4 rounded-xl border border-gray-200 bg-white p-4 sm:p-6">
       <h2 className="text-lg font-semibold text-gray-900">รายการชำระเงิน</h2><p className="text-gray-600">เลือกเอกสารเมื่อต้องตรวจยอดชำระ การคืนเงิน หรือเอกสารปรับยอด</p>

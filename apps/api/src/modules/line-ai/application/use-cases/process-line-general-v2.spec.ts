@@ -264,3 +264,17 @@ it('a deterministic receipt reply is delivered as its card with the link on a bu
   assert.match(JSON.stringify((primary as any).contents.footer), /ตรวจสอบและยืนยันในเว็บแอป/u, 'the link is the labelled button');
   assert.equal(fallback?.type, 'text', 'the plain text stays the fallback');
 });
+
+it('a text answer finished after its foreground deadline is delivered, never dropped as PLAN_INVALID_LIFETIME', async () => {
+  const capture: { saved?: DeliveryPlanV2 } = {};
+  const flow = mediaResultFlow(new Date(Date.now() - 75_000), capture);
+  const lateText: any = { webhookEventId: 'late-text', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'สรุปค่าใช้จ่ายเดือนนี้ให้หน่อย' };
+  assert.equal(await flow.sendMessagesV2(lateText, [{ type: 'text', text: 'ค่าใช้จ่ายเดือนนี้รวม 4,325.50 บาทค่ะ' }]), 'ok');
+  assert.ok(capture.saved && parseLineDeliveryPlan(capture.saved), 'the plan validates');
+  assert.equal(capture.saved!.firstDispatchDeadlineAt, capture.saved!.expiresAt);
+  // An answer still inside its foreground deadline keeps that deadline.
+  const onTime: { saved?: DeliveryPlanV2 } = {};
+  const created = new Date();
+  await mediaResultFlow(created, onTime).sendMessagesV2({ ...lateText, webhookEventId: 'on-time-text' }, [{ type: 'text', text: 'ทันเวลา' }]);
+  assert.equal(onTime.saved!.firstDispatchDeadlineAt, new Date(created.getTime() + 40_000).toISOString());
+});

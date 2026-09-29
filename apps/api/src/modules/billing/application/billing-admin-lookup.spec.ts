@@ -11,7 +11,7 @@ const PLATFORM_MEMBER = {
 const CONTEXT = { userId: 'admin-1', membershipId: 'mem-1', companyId: 'sys-co', requestId: 'req-1',
   authSubject: 'admin-1', authProvider: 'system', scopes: {}, roles: [], permissions: ['system.billing.read'] } as any;
 
-function makeService(rows: { invoices?: any[]; attempts?: any[]; operations?: any[]; issues?: any[]; companyName?: string; accounts?: any[] } = {}) {
+function makeService(rows: { invoices?: any[]; attempts?: any[]; operations?: any[]; issues?: any[]; companyName?: string; accounts?: any[]; ticket?: any; ticketWheres?: any[] } = {}) {
   const prisma = {
     client: {
       companyMembership: { findFirst: async () => PLATFORM_MEMBER },
@@ -25,6 +25,7 @@ function makeService(rows: { invoices?: any[]; attempts?: any[]; operations?: an
       billingAttempt: { findMany: async () => rows.attempts ?? [] },
       billingOperation: { findMany: async () => rows.operations ?? [] },
       billingIssue: { findMany: async () => rows.issues ?? [] },
+      salesEventTicket: { findFirst: async (args: any) => { rows.ticketWheres?.push(args.where); return rows.ticket ?? null; } },
       company: { findUnique: async () => (rows.companyName === null ? null : { name: rows.companyName ?? 'ร้านทดสอบ' }) },
     },
   } as any;
@@ -114,6 +115,37 @@ describe('BillingAdminService.lookup — R-E4/RV27', () => {
       assert.equal((err as any).getResponse().code, 'BILLING_LOOKUP_AMBIGUOUS');
       return true;
     });
+  });
+
+  it('finds the shop that used a sales-event discount by its serial, typed any way (SD-E20)', async () => {
+    const ticketWheres: any[] = [];
+    const service = makeService({ ticket: { id: 'tkt-1', companyId: 'co-5' }, ticketWheres });
+    const result = await service.lookup(CONTEXT, ' abcd-efgh ');
+    assert.deepEqual(ticketWheres, [{ serial: 'ABCDEFGH' }]);
+    assert.equal(result.kind, 'EVENT_TICKET');
+    assert.equal(result.companyId, 'co-5');
+    assert.equal(result.href, '/system/billing/companies/co-5');
+  });
+
+  it('says a serial no shop has used yet belongs to no shop, instead of a bare not-found', async () => {
+    const service = makeService({ ticket: { id: 'tkt-2', companyId: null } });
+    await assert.rejects(() => service.lookup(CONTEXT, 'ABCDEFGH'), (err: unknown) => {
+      assert.ok(err instanceof ConflictException);
+      assert.equal((err as any).getResponse().code, 'BILLING_LOOKUP_EVENT_TICKET_UNUSED');
+      return true;
+    });
+  });
+
+  it('falls through to the id suffixes when a serial-shaped reference is no discount', async () => {
+    const service = makeService({ attempts: [{ id: 'att-9', billingAccountId: 'acct-2' }] });
+    const result = await service.lookup(CONTEXT, 'ABCDEFGH');
+    assert.equal(result.kind, 'ATTEMPT');
+  });
+
+  it('never asks for a discount when the reference cannot be a serial (0, 1, O or I)', async () => {
+    const ticketWheres: any[] = [];
+    await assert.rejects(() => makeService({ ticketWheres }).lookup(CONTEXT, 'ABCD1234'), NotFoundException);
+    assert.deepEqual(ticketWheres, []);
   });
 
   it('answers an empty 404 when nothing matches at all', async () => {

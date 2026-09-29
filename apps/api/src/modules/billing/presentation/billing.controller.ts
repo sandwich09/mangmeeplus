@@ -2,11 +2,13 @@ import { BillingPlanAdjustmentsService } from '../application/billing-plan-adjus
 import type { BillingPlanAdjustmentInput } from '@watchdog-bms/contracts';
 import { BillingReceiptAdjustmentsService } from '../application/billing-receipt-adjustments.service';
 import type { BillingReceiptAdjustmentInput } from '@watchdog-bms/contracts';
+import { BillingAddOnAdminGrantsService } from '../application/billing-addon-admin-grants.service';
+import type { BillingAddOnGrantInput } from '@watchdog-bms/contracts';
 import { BillingCheckoutExpiryService } from '../application/billing-checkout-expiry.service';
 import { BillingBatchesService } from '../application/billing-batches.service';
 import { BillingSettlementService } from '../application/billing-settlement.service';
 import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
-import { BillingEndPackageDto, BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingTimelineExportDto, BillingEmptyDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto, BillingRecipientPreviewDto, BillingRecipientOtpRequestDto, BillingRecipientOtpConfirmDto, BillingRecipientAdminDto, BillingDocumentResendAdminDto } from './billing.dto';
+import { BillingAddOnGrantDto, BillingEndPackageDto, BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingTimelineExportDto, BillingEmptyDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto, BillingRecipientPreviewDto, BillingRecipientOtpRequestDto, BillingRecipientOtpConfirmDto, BillingRecipientAdminDto, BillingDocumentResendAdminDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
 import { extractSid } from '../../auth/presentation/auth.controller';
 import { BillingRecipientOtpService } from '../application/billing-recipient-otp.service';
@@ -74,7 +76,7 @@ export class BillingCatalogController {
 @Controller('system/billing')
 export class BillingAdminController {
   constructor(private readonly admin: BillingAdminService, private readonly limits: RedisRateLimitService, private readonly operations: BillingOperationsService,
-    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService,private readonly batches:BillingBatchesService,private readonly receiptAdjustments:BillingReceiptAdjustmentsService,private readonly planAdjustments:BillingPlanAdjustmentsService,private readonly documentAdmin:BillingDocumentAdminService) {}
+    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService,private readonly batches:BillingBatchesService,private readonly receiptAdjustments:BillingReceiptAdjustmentsService,private readonly planAdjustments:BillingPlanAdjustmentsService,private readonly documentAdmin:BillingDocumentAdminService,private readonly addOnGrants:BillingAddOnAdminGrantsService) {}
   @Get('companies/:id/plan-adjustments') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   planAdjustmentList(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){
     const fields=bodyFields(query,['cursor']);return this.planAdjustments.list(req.context,textField(id,128),fields.cursor===undefined?undefined:uuid(fields.cursor));}
@@ -101,6 +103,21 @@ export class BillingAdminController {
     if(action!=='submit'&&action!=='approve'&&action!=='cancel')invalid();const fields=bodyFields(body,['expectedVersion','previewHash']);
     if(!Number.isSafeInteger(fields.expectedVersion)||(fields.expectedVersion as number)<0)invalid();await this.operationLimit(req);
     return this.receiptAdjustments.command(req.context,uuid(id),action,fields.expectedVersion as number,textField(fields.previewHash,64),key);}
+  // Add-on plan PR B (spec §8.1, §16): the operator's add-on balance and the reviewed team grant/revoke,
+  // with the receipt adjustment's permission set (F-21).
+  @Get('companies/:id/credits') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  addOnCredits(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){
+    const fields=bodyFields(query,['cursor']);return this.addOnGrants.list(req.context,textField(id,128),fields.cursor===undefined?undefined:uuid(fields.cursor));}
+  @Post('companies/:id/credit-grants/preview') @HttpCode(200) @RequirePermissions('system.billing.override.manage') @Header('Cache-Control','no-store')
+  async addOnGrantPreview(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:BillingAddOnGrantDto){
+    await this.operationLimit(req);return this.addOnGrants.preview(req.context,textField(id,128),body as BillingAddOnGrantInput);}
+  @Get('credit-grants/:id') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  addOnGrantGet(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.addOnGrants.get(req.context,uuid(id));}
+  @Post('credit-grants/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async addOnGrantCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:BillingCommandDto,@Headers('idempotency-key') key?:string){
+    if(action!=='submit'&&action!=='approve'&&action!=='cancel')invalid();const fields=bodyFields(body,['expectedVersion','previewHash']);
+    if(!Number.isSafeInteger(fields.expectedVersion)||(fields.expectedVersion as number)<0)invalid();await this.operationLimit(req);
+    return this.addOnGrants.command(req.context,uuid(id),action,fields.expectedVersion as number,textField(fields.previewHash,64),key);}
   @Get('batches') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
   batchList(@Req() req:AuthedRequest,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.batches.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));}
   @Post('batches/preview') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run') @Header('Cache-Control','no-store')
@@ -560,6 +577,9 @@ export class BillingController {
   }
 
   @Get() status(@Req() req: AuthedRequest) { return this.billing.status(req.context); }
+  // Sales-event spec §7.1: allowlisted for a locked shop (auth.guard isBillingRecoveryRoute).
+  @Get('event-discount') @Header('Cache-Control', 'no-store')
+  eventDiscount(@Req() req: AuthedRequest) { return this.billing.eventDiscount(req.context); }
   @Get('collection/:id')
   async collectionGet(@Req() req: AuthedRequest, @Param('id') id: string) {
     return this.billing.withPlanMenuImpact(req.context.companyId, await this.billing.collection.get(req.context, uuid(id)));
@@ -590,9 +610,10 @@ export class BillingController {
   }
   @Post('quote') @HttpCode(200)
   async quote(@Req() req: AuthedRequest, @Body() body: BillingQuoteDto) {
-    const fields = bodyFields(body, ['offerKey', 'interval', 'billingEmail', 'capacity', 'purchaseMode', 'purchaseIntent', 'dealId']);
+    const fields = bodyFields(body, ['offerKey', 'interval', 'billingEmail', 'capacity', 'purchaseMode', 'purchaseIntent', 'dealId', 'eventDiscountChoice']);
     if (fields.purchaseMode !== undefined && !['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(String(fields.purchaseMode))) invalid();
     if (fields.purchaseIntent !== undefined && fields.purchaseIntent !== 'FULL_PACKAGE') invalid();
+    if (fields.eventDiscountChoice !== undefined && fields.eventDiscountChoice !== 'USE' && fields.eventDiscountChoice !== 'DECLINE') invalid();
     // A deal quote names the offer with `dealId`; its base tier and month come from the APPROVED
     // row, so `offerKey`/`interval` are optional there and ignored by the service (S36).
     const dealId = fields.dealId === undefined ? undefined : textField(fields.dealId, 40);
@@ -600,7 +621,7 @@ export class BillingController {
     const input = { ...(dealId ? { dealId } : { offerKey: textField(fields.offerKey, 40), interval: textField(fields.interval, 10) }),
       ...(typeof fields.billingEmail === 'string' && fields.billingEmail !== '' ? { billingEmail: textField(fields.billingEmail, 320) } : {}),
       capacity: fields.capacity, purchaseMode: fields.purchaseMode as BillingPurchaseMode | undefined,
-      purchaseIntent: fields.purchaseIntent as 'FULL_PACKAGE' | undefined };
+      purchaseIntent: fields.purchaseIntent as 'FULL_PACKAGE' | undefined, eventDiscountChoice: fields.eventDiscountChoice as 'USE' | 'DECLINE' | undefined };
     await this.limit(req);
     return this.billing.quote(req.context, input);
   }

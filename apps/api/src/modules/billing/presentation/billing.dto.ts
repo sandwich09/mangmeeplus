@@ -97,6 +97,8 @@ export class BillingQuoteDto {
   @IsOptional() @IsIn(['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW']) purchaseMode?: string;
   @IsOptional() @IsIn(['FULL_PACKAGE']) purchaseIntent?: string;
   @IsOptional() @IsString() @MinLength(1) @MaxLength(40) dealId?: string;
+  /** Sales-event spec §7.2: the buyer's choice for a first-bill discount; omitted with an offer = USE. */
+  @IsOptional() @IsIn(['USE', 'DECLINE']) eventDiscountChoice?: string;
 }
 export class BillingCheckoutDto {
   @IsUUID() quoteId!: string;
@@ -149,6 +151,13 @@ export class BillingReceiptAdjustmentDto extends BillingEventPreviewDto {
   @IsIn(['GRANT_RECEIPTS','REVOKE_RECEIPTS']) type!: string;
   @IsOptional() @IsInt() @Min(1) units?: number;
   @IsOptional() @IsISO8601({strict:true,strictSeparator:true}) expiresAt?: string;
+  @IsOptional() @IsUUID() grantId?: string;
+}
+/** Add-on plan PR B: no expiry field — a team grant lasts 12 months from its approval (D8, C03). */
+export class BillingAddOnGrantDto extends BillingEventPreviewDto {
+  @IsIn(['ADDON_ADMIN_GRANT','ADDON_ADMIN_REVOKE']) type!: string;
+  @IsIn(['CHAT_CREDIT','RECEIPT_IMAGE']) productKind!: string;
+  @IsOptional() @IsInt() @Min(1) units?: number;
   @IsOptional() @IsUUID() grantId?: string;
 }
 export class BillingRefundDto extends BillingEventPreviewDto {

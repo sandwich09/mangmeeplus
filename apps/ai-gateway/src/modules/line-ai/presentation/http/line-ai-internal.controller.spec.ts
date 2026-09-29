@@ -1563,6 +1563,41 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     }
   });
 
+  it('UAT 2026-09-29: a tax receipt that sells water, fuel or appliances stays one readable expense', async () => {
+    // Synthetic stand-ins for the owner's receipt (real photos stay out of the repo). "Still water",
+    // "Tax Invoice (ABB)" and the ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ header used to read as a combined water
+    // bill: every field was dropped and the customer was told the photo held more than one document.
+    // ค่าน้ำมัน (fuel) and เครื่องใช้ไฟฟ้า (appliances) hit the same utility words.
+    const pages = [
+      ['SAMPLE HOMEMADE CO.,LTD.', 'ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ', 'Tax Invoice (ABB):TEST-0001',
+        '1 G9.เนื้อผัดกระเทียม 380.00', '1 R1.Still water 60.00', 'ยอดรวม: 440.00', 'ค่าบริการ 10%: 44.00', 'ยอดสุทธิ: 484.00',
+        'CC-Other(VISA)-0000: 484.00', 'VAT INCLUDED'],
+      ['ร้านตัวอย่างการค้า', 'ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ', 'TAX INVOICE (ABB) NO. TEST-0002',
+        'ค่าน้ำมันรถส่งของ 300.00', 'ปลั๊กพ่วง (เครื่องใช้ไฟฟ้า) 184.00', 'รวมทั้งสิ้น 484.00', 'VAT INCLUDED'],
+    ];
+    for (const lines of pages) {
+      const page = lines.join('\n');
+      const restoreFetch = stubTyphoon(page);
+      const bedrock = stubBedrock({ firstReadText: page, firstTotal: '484.00', firstRequiresClarification: false });
+      try {
+        const controller = new LineAiInternalController(
+          { aiGatewayInternalSecret: 'secret', aiToolTimeoutMs: 1000,
+            modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model' } as any,
+          { execute: async () => { throw new Error('should not execute'); } } as any,
+        );
+        const result = await controller.receiptOcr('secret', request);
+        assert.equal(result.status, 'ok', lines[0]);
+        assert.equal(result.classification?.contentKind, 'DOCUMENT', lines[0]);
+        assert.equal(result.fields?.grandTotalAmount, '484.00', lines[0]);
+        assert.equal(result.fallbackReasons, undefined, 'no utility-parts detour');
+        assert.deepEqual(bedrock.calls, ['read', 'extract'], lines[0]);
+      } finally {
+        bedrock.restore();
+        restoreFetch();
+      }
+    }
+  });
+
   it('recovers MWA parts when extraction selected only the current invoice', async () => {
     const page = 'การประปานครหลวง ใบแจ้งค่าน้ำประปา\nงวด 09/69\nรวม 110.05\nใบเสร็จรับเงิน/ใบกำกับภาษี\nงวด 08/69\nรวม 82.28';
     const parts = [

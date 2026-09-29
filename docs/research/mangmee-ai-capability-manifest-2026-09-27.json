@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "5963edac9dd66db3b7b6fbead9bc4bdb0c5b1233",
-  "checkoutBranch": "claude/line-bound-continuations-20260929",
+  "sourceRevision": "8b535ae6f1bd013f1c1b978d89d469eb0c7e24a5",
+  "checkoutBranch": "claude/sales-credit-integration-20260929",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "412b5ddbe4467aaf36af0f893b1d6475e244a5b494510d1b0b316f4bd0d89fe2"
+      "sha256": "cffa3a06913c9c6e9a4d2d917e676dbde6e9b04b52ff2c22e6e124749851a698"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T05:31:36.522Z",
-  "manifestDigest": "112ecc8979b1cc921edad914eb6700f0fb7bd32254b1f7d6a8f4eb22670b3c99"
+  "generatedAt": "2026-09-29T07:29:24.724Z",
+  "manifestDigest": "20796c31824760ea089293c53c52e0e9c824a52bf9d2e0621cd210f517ebf859"
 }

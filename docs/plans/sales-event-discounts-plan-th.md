@@ -31,7 +31,7 @@ P3 คำตอบ Owner SD-Q1, Q2, Q3, Q5, Q8, Q9 ─────> เสร็
 | P3 | **เสร็จ 2026-09-29**: Owner รับค่าเริ่มต้นของ SD-Q1, SD-Q2, SD-Q3, SD-Q5, SD-Q8, SD-Q9 ในสเปก §12 (SD-O9) | วันหมดอายุ, RESTART, เครดิตยอดขาย, ครั้งต่อชุด และร้านที่ยังไม่ย้าย กำหนดโค้ดของ SD-C และ SD-F |
 | P4 | PR B และ PR C ของแผน add-on merge แล้ว: grant seam `applyAddOnGrant` ใน `apps/api/src/modules/billing/application/billing-addon-grants.ts` ทั้งฝั่งรูป (B4) และเครดิต AI (C7) พร้อมแหล่ง `SALES_EVENT` | SD-F เรียก seam นี้ ไม่สร้าง ledger เอง |
 
-**Release ร่วม (SD-O6)**: ทุก PR ของงานนี้ (SD-A…SD-F) กับ add-on PR A–G อยู่ใน candidate เดียวกัน ผ่าน UAT → READY → Production รอบเดียว และเปิด gate `event_discounts`, `addon_chat_credit`, `addon_receipt_image` ในขั้นเดียวกัน. PR ใดที่ merge ก่อนต้องให้ gate ปิดไว้
+**Release ร่วม (SD-O6)**: ทุก PR ของงานนี้ (SD-A…SD-F) กับ add-on PR A–G อยู่ใน candidate เดียวกัน ผ่าน UAT → READY → Production รอบเดียว. **ไม่มี gate (สเปก SD-O10, 2026-09-29)**: ไม่มี `event_discounts` (และ add-on ไม่มี `addon_*` ตาม O-04) — ส่วนลดเกิดได้เฉพาะเมื่อหัวหน้าทีมหรือแอดมินสร้างชุด จึงควบคุมด้วยชุดเอง (พักแจก/ระงับการใช้/เพิกถอน). ข้อความเรื่อง gate ใน §3.7, §3.10 และ U17 ข้างล่างเป็นประวัติ
 
 การทำงานคู่กับ add-on: SD-A และ SD-B ไม่แตะไฟล์ billing จึงพัฒนาคู่ขนานกับ add-on ได้ แต่ merge หลัง P2. SD-C, SD-D และ SD-F แตะไฟล์ร่วมกับ add-on — ทีละ PR ต่อไฟล์ PR ที่ merge ทีหลัง rebase แล้วรันเทสต์ของไฟล์นั้นใหม่:
 
@@ -74,12 +74,21 @@ P3 คำตอบ Owner SD-Q1, Q2, Q3, Q5, Q8, Q9 ─────> เสร็
 
 เสร็จเมื่อ: SD-E01, SD-E02 และส่วนสิทธิ์ของ SD-E15 ผ่านที่ระดับ HTTP/PG; `migration:review` อ่านได้; `test:boot` ผ่าน. ประมาณ 3–4 วันทำงาน
 
+**สถานะ SD-A (2026-09-29): implement แล้วบน branch `claude/sales-event-sd-a-20260929` (ยังไม่ push/merge/deploy)** — รายละเอียดและหลักฐานใน [memory](../agent-memory/sales-event-discounts-implementation.md). ต่างจากตารางข้างบน:
+- migration ชื่อ `20260929180000_sales_event_discounts` (add-on PR B ใช้ `20260929150000_receipt_unit_entries` ไปแล้ว); เพิ่ม CHECK ของ state/จำนวน/ช่วงเวลา/จำนวนแจก และความสอดคล้องของ state กับ `redeemedAs`/`companyId`/`attemptId` ของ ticket (สเปก §6.3) นอกจาก partial unique สองตัว
+- ไม่มี gate (SD-O10) — ไม่แตะ `BILLING_ACTIONS`
+- ขั้นต่ำ ฿10 ตอนเผยแพร่อ่านราคาจาก `BillingService.catalog()` จึงเพิ่ม `BillingService` ใน `exports` ของ `billing.module.ts` (บรรทัดเดียว); สูตรราคา §5.1 อยู่ที่ `eventDiscountUnitAmountSatang` + `SALES_EVENT_MIN_UNIT_AMOUNT_SATANG` ใน `sales-event.logic.ts` — SD-C import ตัวนี้ ห้ามเขียนซ้ำ
+- token/hash/ลิงก์ของ QR, serial และวันหมดอายุของ ticket อยู่ใน `sales-console/domain/sales-event-claim.logic.ts` ของ SD-B (ใช้ร่วมกัน ไม่มีสำเนา)
+- รหัสเพิ่มนอกตารางสเปก: `SALES_EVENT_BATCH_INVALID`, `SALES_EVENT_NOT_FOUND` (เพิ่มในสเปก §7.3 แล้ว); เลือกเซลล์นอกทีมใช้ `SALES_AGENT_NOT_FOUND` เดิม
+- ช่องเครดิต AI/จำนวนอ่านรูปของฟอร์มยังไม่แสดง (SD-F เพิ่ม); การแก้ชุดส่งค่าที่เก็บไว้กลับไปเหมือนเดิม
+- claim (SD-B) ต้องไม่เพิ่ม `SalesEventBatch.version` — version เป็นรั้วของคอนโซล; PATCH กันจำนวนแจกต่ำกว่าที่แจกแล้วด้วย `issuedCount <= issueCap` ใน WHERE
+
 ### SD-B — รับส่วนลดผ่าน LINE (หน้า LIFF, claim API, gate)
 
 | ไฟล์ | งาน |
 |---|---|
-| `packages/contracts/src/billing.ts` | `BILLING_ACTIONS` เพิ่ม `'event_discounts'` (`:39`); ตรวจว่าหน้าตั้ง gate ของแอดมินแสดง key ใหม่ |
-| `apps/api/src/modules/sales-console/application/claim-event-discount.use-case.ts` | ตรวจ ID token (`LineIdTokenService`), rate limit ต่อ LINE user, หา QR ด้วย hash, ตรวจชุด/ช่วง/ผู้แจก/gate, ปฏิเสธตัวตนที่เป็นสมาชิก platform tenant (SD-Q3), transaction claim (lock batch, replay, cap, insert พร้อมตรึงส่วนลดและเครดิต, audit); คืน `next` จาก `ExternalIdentity` |
+| ~~`packages/contracts/src/billing.ts`~~ | ~~`BILLING_ACTIONS` เพิ่ม `'event_discounts'`~~ — **ยกเลิก (SD-O10, 2026-09-29): ไม่มี gate; claim ไม่ตรวจ gate และไม่มีรหัส `SALES_EVENT_DISABLED`** |
+| `apps/api/src/modules/sales-console/application/claim-event-discount.use-case.ts` | ตรวจ ID token (`LineIdTokenService`), rate limit ต่อ LINE user, หา QR ด้วย hash, ตรวจชุด/ช่วง/ผู้แจก (ไม่มี gate — SD-O10), ปฏิเสธตัวตนที่เป็นสมาชิก platform tenant (SD-Q3), transaction claim (lock batch, replay, cap, insert พร้อมตรึงส่วนลดและเครดิต, audit); คืน `next` จาก `ExternalIdentity` |
 | `apps/api/src/modules/sales-console/presentation/http/public-event-discounts.controller.ts` + DTO | `@Public() @Controller('public/event-discounts')` `@Post('claim')` (แบบ `public-line-signup.controller.ts:83-94`) |
 | `apps/api/src/modules/sales-console/sales-console.module.ts` | import `AuthModule` (export `LineIdTokenService`, `AuthRateLimitService` ไว้แล้วที่ `auth.module.ts:178`); ไม่แตะ `auth.module.ts` ที่ถูก pin |
 | `apps/api/src/modules/auth/application/auth-rate-limit.service.ts` | bucket ของ claim ต่อ LINE user |
@@ -89,7 +98,7 @@ P3 คำตอบ Owner SD-Q1, Q2, Q3, Q5, Q8, Q9 ─────> เสร็
 เทสต์และที่ลงทะเบียน:
 - `apps/api/src/modules/sales-console/application/claim-event-discount.use-case.spec.ts` → catalog
 - `apps/api/src/common/security/liff-event-discount-page.spec.ts` (HTML, CSP, ข้อความของชุดส่วนลดอย่างเดียว/เครดิตอย่างเดียว/ทั้งคู่, ไม่มีคำว่า "ตั๋ว") → catalog; `liff-page-contrast.spec.ts` เดิมต้องผ่าน
-- เพิ่มกรณีใน `sales-event-discounts.pg.spec.ts`: cap=1 สองคนพร้อมกัน, replay, ตัวตน platform tenant, gate ปิด, ผู้แจกถูกถอด
+- เพิ่มกรณีใน `sales-event-discounts.pg.spec.ts`: cap=1 สองคนพร้อมกัน, replay, ตัวตน platform tenant, ~~gate ปิด~~ (ไม่มี gate — แทนด้วยชุดที่พักแจก/ระงับ), ผู้แจกถูกถอด
 
 เสร็จเมื่อ: SD-E03 และส่วน claim ของ SD-E16. ประมาณ 1.5–2 วัน
 
@@ -144,6 +153,10 @@ P3 คำตอบ Owner SD-Q1, Q2, Q3, Q5, Q8, Q9 ─────> เสร็
 เทสต์: web specs (`billing-event-discount.logic.spec.ts`, spec ของ BillingPage — glob รันเอง; ครอบค่าเริ่มต้น "ใช้", เปลี่ยนเป็น "ไม่ใช้", การ์ดไม่มีบรรทัดเมื่อไม่ใช้); ขยาย `api-error-coverage.spec.ts`; e2e `e2e/sales-event-discount.spec.ts` (หัวหน้าสร้างชุด → QR → claim ผ่าน fixture LINE → ร้านล็อกเห็น "ใช้" ถูกเลือกไว้ → ซื้อ CARD_ONCE ลดแล้ว → ประวัติ; อีกรอบเลือก "ไม่ใช้" จ่ายราคาเต็มแล้วใช้กับอีกร้าน; 390 px ด้วย `setViewportSize` แบบ `e2e/billing-admin-directory.spec.ts:74`) → step ใหม่ใน `extended-tests.yml` ต่อจาก step no-setup (`:336`) ใช้ DB `sales_event_discount_test`, พอร์ต 3161/3162, `NEXT_DIST_DIR: .next/sales-event-discount` (ตรวจว่าไม่ชน 3153–3156)
 
 เสร็จเมื่อ: SD-E17, SD-E21–SD-E23 ที่หน้าเว็บ และส่วน UI ของ SD-E15. ประมาณ 2.5–3.5 วัน
+
+**สถานะ SD-C + SD-D แบบ MVP (2026-09-29, branch `claude/sales-event-sd-cd-20260929`)** — ทำแล้วเฉพาะการซื้อจ่ายครั้งเดียว (CARD_ONCE, PROMPTPAY_ONCE) ที่เป็น INITIAL/RESTART: quote รับ `eventDiscountChoice` (ไม่ส่งแต่มีข้อเสนอ = USE) และเก็บ `snapshot.eventDiscount`; `quote.totalSatang` คงราคาเต็ม; Checkout จองรายการหลังสร้าง attempt (version fence, partial unique), stale เมื่อ quote ไม่มีข้อเสนอแต่ตอน Checkout มี, ไม่ stale เมื่อเลือกไม่ใช้; `price_data.unit_amount` เป็นยอดลดแล้ว; reconcile ใช้สิทธิ์ก่อนทางออก HELD และเปิด `EVENT_DISCOUNT_REVIEW` (อ้าง invoice) เมื่อรายการไม่ได้จองให้ attempt นี้; ปล่อยการจองเมื่อ Checkout ล้ม/ถูกปฏิเสธ, session หมดอายุ (รวมปุ่มยกเลิกและการยุติของแอดมิน) และ profile sync ล้ม; `paid-checkout-invoice.ts` รับยอดลดเฉพาะ snapshot ที่คำนวณตรงตามสูตร §5.1 (ใช้สูตรร่วม `eventDiscountUnitAmountSatang` ของ SD-A). หน้าแพ็กเกจอ่านข้อเสนอจาก `BillingStatus.eventDiscount` (route สถานะอยู่ใน allowlist อยู่แล้ว จึงไม่แตะ `auth.guard.ts`/pins); ไม่มี gate ตามมติ Owner (ชุดส่วนลดคือตัวควบคุม)
+
+**TODO ต่อจาก MVP**: CARD_AUTO และ PROMPTPAY_RENEW ด้วยกลไก subscription `trialing` ตามสเปก §5.3 ข้อ 1–6 (`paymentCheckoutSnapshot`, `setup_future_usage`, route ของ reconciler และ `reconcileOriginalInvoice`/`importDiscoveredInvoice`, ข้ามบิล $0, predicate trial ใน `billing-collection.ts`/`billing.service.ts`, `billingPurchaseSource`) แล้วขยาย `EVENT_DISCOUNT_MODES` ทั้งฝั่ง API และเว็บ — วันนี้ quote สองโหมดนี้ไม่มีข้อเสนอ และหน้าเว็บบอกว่าส่วนลดใช้กับการจ่ายครั้งเดียว; ที่ยังไม่ทำ: `eventDiscountSatang` ในประวัติ, ข้อความหมดอายุ/ระงับบนหน้าแพ็กเกจ, smoke HTTP, e2e 390 px, และหลักฐาน PG ระดับ reconcile (paid → USED, RETRY_APPLY, IMPORT_INVOICE)
 
 ### SD-F — เครดิตสำหรับร้านเดิม (ใหม่, SD-O6)
 
@@ -378,6 +391,7 @@ SD-A, SD-C, SD-D และ SD-F แก้ `ci.yml` หรือ `extended-tests.
 | D2 ปรับเดโม | ยกเลิก — เดโมไม่อยู่ใน repo และแบบใหม่ไม่มีหน้าจอสะสม/เลือก |
 | รอบเอกสาร 2026-09-29 (v2) | spec, plan, audit ปรับตามมติและรีวิว R2 (merge #862) |
 | รอบเอกสาร 2026-09-29 (v3) | ตัวเลือกใช้/ไม่ใช้ (SD-O4), หนึ่งครั้งต่อร้าน (SD-O5), เครดิตร้านเดิม (SD-O6), QR เดียว (SD-O7), ดีลรับเครดิตได้ (SD-O8), release ร่วม; anchor ตรวจใหม่บน `105b0dc6`; สเปก/แผน add-on เพิ่ม `SALES_EVENT` และ release ร่วม |
-| SD-A … SD-F | ยังไม่เริ่ม; รอ P1, P2, P4 (P3 เสร็จ 2026-09-29: Owner รับค่าเริ่มต้นของ SD-Q ที่เหลือ) |
+| SD-A | **implement แล้ว 2026-09-29** บน branch `claude/sales-event-sd-a-20260929` (ยังไม่ push/merge/deploy); ดู memory `docs/agent-memory/sales-event-discounts-implementation.md` |
+| SD-B … SD-F | กำลังทำคู่ขนานบนฐานข้อมูลของ SD-A (2026-09-29); P2 เสร็จ (#878), P4 รอ add-on PR B/C (P3 เสร็จ 2026-09-29: Owner รับค่าเริ่มต้นของ SD-Q ที่เหลือ) |
 
 ไม่ได้รันเทสต์ในรอบนี้ (งานเอกสาร). ตอนลงมือให้รันเทสต์ที่ระบุใน §2 บน worktree ของ develop ล่าสุด

@@ -26,7 +26,8 @@ import type { AppConfigService } from '../../../common/config/app-config.service
 import type { PrismaService } from '../../../common/database/prisma.service';
 import { SECURITY_EVENT, emitSecurityEvent } from '../../../common/logger/security-event';
 import { buildPricingSnapshot, computeCostSatang, priceAiStepUpperBound, computePinnedAiCostV2, type AiRenderedPricingSnapshotV2 } from './ai-model-pricing';
-import { resolveAiBudgetPolicy, type CompanyAiBudgetPolicyRow } from './company-ai-budget-policy';
+import { aiCreditCycleAllowance, resolveAiBudgetPolicy, type CompanyAiBudgetPolicyRow } from './company-ai-budget-policy';
+import { consumeAiCreditHold, planAiCreditFunding, writeAiCreditHold, type AiCreditFunding, type AiCreditRefusalCause } from './ai-credit-ledger';
 import { isMeterableEntry, normalizeUsageBasis, type AiBudgetBucket, type AiRequestKind } from './company-ai-usage-meter';
 
 const logger = new Logger('CompanyAiBudgetReservation');
@@ -97,11 +98,16 @@ export type ReservedAiBudgetStep = {
   envelope: AiBudgetEnvelope;
 };
 
+/**
+ * `aiCredit` (add-on spec §5.3, plan PR C3): set only when a cut-over company's AI credit, not a
+ * money cap, refused the call. In-process only — the gateway still gets the existing code and
+ * `budgetScope: 'CHAT'`, so no refusal code is added (F-15); the API composes the customer text.
+ */
 export type AiBudgetReserveOutcome =
   | { ok: true; reservation: ReservedAiBudgetStep }
-  | { ok: false; reason: 'exceeded'; budgetScope: AiBudgetScope; spendSatang: number; capSatang: number; override: boolean }
-  | { ok: false; reason: 'insufficient'; budgetScope: AiBudgetScope; spendSatang: number; reservedSatang: number; capSatang: number }
-  | { ok: false; reason: 'unavailable'; budgetScope: AiBudgetScope; detail: string }
+  | { ok: false; reason: 'exceeded'; budgetScope: AiBudgetScope; spendSatang: number; capSatang: number; override: boolean; aiCredit?: AiCreditRefusalCause }
+  | { ok: false; reason: 'insufficient'; budgetScope: AiBudgetScope; spendSatang: number; reservedSatang: number; capSatang: number; aiCredit?: AiCreditRefusalCause }
+  | { ok: false; reason: 'unavailable'; budgetScope: AiBudgetScope; detail: string; aiCredit?: AiCreditRefusalCause }
   /** R-03: this invocation is already owned. NEVER a second execution of the provider. */
   | { ok: false; reason: 'already_claimed'; status: string; reservationId: string };
 
@@ -147,9 +153,9 @@ async function resolveBudgetUnderLock(
     select: {
       monthlyBudgetSatang: true, budgetMode: true, chatMonthlyBudgetSatang: true,
       ocrMonthlyBudgetSatang: true, budgetConfigVersion: true, pendingBudgetPolicy: true,
-      salesDealChatCreditSatang: true, salesDealChatCreditEndsAt: true,
+      salesDealChatCreditSatang: true, salesDealChatCreditEndsAt: true, aiCreditCutoverAt: true,
     },
-  })) as ({ monthlyBudgetSatang: number | null } & CompanyAiBudgetPolicyRow) | null;
+  })) as ({ monthlyBudgetSatang: number | null; aiCreditCutoverAt?: Date | null } & CompanyAiBudgetPolicyRow) | null;
   const override = row?.monthlyBudgetSatang != null;
   let platform: { monthlyBudgetSatang: number } | null = null;
   if (!override) {
@@ -159,7 +165,18 @@ async function resolveBudgetUnderLock(
     });
   }
   const totalSatang = override ? row!.monthlyBudgetSatang! : platform?.monthlyBudgetSatang ?? config.aiMonthlyBudgetSatang;
-  return { totalSatang, override, policy: resolveAiBudgetPolicy({ row, totalSatang, override, monthKey }) };
+  return { totalSatang, override, row, cutoverAt: row?.aiCreditCutoverAt ?? null,
+    policy: resolveAiBudgetPolicy({ row, totalSatang, override, monthKey }) };
+}
+
+/** A funded call the lots could not cover. Credit refusals carry no money figures: nothing reads them. */
+function aiCreditRefusal(funded: Extract<AiCreditFunding, { ok: false }>): AiBudgetReserveOutcome {
+  if (funded.cause === 'PACKAGE_REQUIRED') {
+    return { ok: false, reason: 'unavailable', budgetScope: 'CHAT', detail: 'ai_credit_package_required', aiCredit: funded.cause };
+  }
+  return funded.cause === 'EXHAUSTED'
+    ? { ok: false, reason: 'exceeded', budgetScope: 'CHAT', spendSatang: 0, capSatang: 0, override: false, aiCredit: funded.cause }
+    : { ok: false, reason: 'insufficient', budgetScope: 'CHAT', spendSatang: 0, reservedSatang: 0, capSatang: funded.availableUnits, aiCredit: funded.cause };
 }
 
 /** Sums the live holds of a company-month, and of one bucket inside it, under the held lock. */
@@ -278,7 +295,14 @@ export type RenderedAiReservationAuthority = {
   snapshot: AiRenderedPricingSnapshotV2 & Record<string, unknown>;
   /** Absolute ordinal ceiling of the turn: its answer slots plus the one repair (`aiBudgetV2OrdinalCeiling`). */
   maxCalls: number;
-  authorizeAndClaim(tx: any): Promise<boolean>;
+  /** Add-on spec §5.4 / plan C4: `false` for an image intake, which never spends AI credit. */
+  fundsAiCredit?: boolean;
+  /** The turn's admission instant: a cut-over company's cycle and lots are judged as of then. */
+  fundingAsOf?: Date;
+  /** The cycle this turn's first funded call pinned, so the whole turn stays on it (A36). */
+  pinnedCycleKey?: string;
+  /** `funding` is present only for a funded call; the issuer pins its cycle in `budgetAuthorityJson`. */
+  authorizeAndClaim(tx: any, funding?: { cycleKey: string }): Promise<boolean>;
 };
 
 /**
@@ -320,7 +344,8 @@ export async function reserveAiBudgetStep(
       // lock is shared with the admin writer, so a cap change and an admission can never pass each
       // other reading different policy states.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${input.companyId}`}))`;
-      const { policy } = await resolveBudgetUnderLock(tx, config, input.companyId, input.monthKey);
+      const budget = await resolveBudgetUnderLock(tx, config, input.companyId, input.monthKey);
+      const { policy } = budget;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai-budget:${input.companyId}:${input.monthKey}`}))`;
 
       // R-03: the execution fence comes first inside the money lock. A redelivered webhook must
@@ -336,7 +361,11 @@ export async function reserveAiBudgetStep(
       if (policy.mode !== 'SPLIT' && !rendered) {
         return { ok: false as const, reason: 'unavailable' as const, budgetScope: 'TOTAL' as AiBudgetScope, detail: 'policy_not_split' };
       }
-      const capSatang = input.bucket === 'CHAT' ? policy.chatCapSatang
+      // Add-on spec §5.3/§18.3: once a company is cut over, its AI credit lots replace the SHARED
+      // calendar CHAT cap on the rendered LINE path. TOTAL, and an explicit SPLIT CHAT cap, still apply.
+      const fundingAsOf = rendered?.fundingAsOf ?? now;
+      const cutOver = !!rendered && input.bucket === 'CHAT' && budget.cutoverAt !== null && budget.cutoverAt <= fundingAsOf;
+      const capSatang = input.bucket === 'CHAT' ? (cutOver && policy.mode === 'SHARED' ? policy.totalSatang : policy.chatCapSatang)
         : policy.mode === 'SHARED' && rendered ? policy.totalSatang : policy.ocrCapSatang;
       if (capSatang === null) {
         return { ok: false as const, reason: 'unavailable' as const, budgetScope: input.bucket as AiBudgetScope, detail: 'bucket_cap_missing' };
@@ -365,7 +394,20 @@ export async function reserveAiBudgetStep(
       });
       if (!decision.ok) return decision;
 
-      if (rendered && !await rendered.authorizeAndClaim(tx)) {
+      // Funding is decided BEFORE the ordinal claim: a refusal returns (commits) without burning the
+      // turn's ordinal. Still under `partner-ocr-config` (L1), so two months or two turns can never
+      // spend the same lot twice (spec §8.3).
+      let funding: Extract<AiCreditFunding, { ok: true }> | undefined;
+      if (cutOver && rendered!.fundsAiCredit !== false) {
+        const funded = await planAiCreditFunding(tx, {
+          companyId: input.companyId, units: bound, asOf: fundingAsOf, now, pinnedCycleKey: rendered!.pinnedCycleKey,
+          allowance: (cycle) => aiCreditCycleAllowance({ row: budget.row, totalSatang: budget.totalSatang, override: budget.override,
+            monthKey: input.monthKey, at: cycle.start }),
+        });
+        if (!funded.ok) return aiCreditRefusal(funded);
+        funding = funded;
+      }
+      if (rendered && !await rendered.authorizeAndClaim(tx, funding && { cycleKey: funding.cycleKey })) {
         return { ok: false as const, reason: 'unavailable' as const, budgetScope: 'TOTAL' as AiBudgetScope, detail: 'authority_stale' };
       }
       const created = await tx.aiBudgetReservation.create({
@@ -373,12 +415,15 @@ export async function reserveAiBudgetStep(
           companyId: input.companyId, monthKey: input.monthKey, bucket: input.bucket,
           policyRevision: policy.revision, sourceRoute: input.sourceRoute, stepKind: input.stepKind,
           attemptKey: input.attemptKey, invocationKey, upperBoundSatang: bound,
-          pricingSnapshot: { ...priced.snapshot, thbPerUsdSource: input.thbPerUsdSource },
+          pricingSnapshot: { ...priced.snapshot, thbPerUsdSource: input.thbPerUsdSource,
+            // The marker settlement reads: only a funded hold has AI credit entries to turn into use.
+            ...(funding ? { aiCredit: { cycleKey: funding.cycleKey } } : {}) },
           requestKind: input.requestKind ?? null, status: rendered ? 'DISPATCHED' : 'RESERVED', ownerToken,
           ...(rendered ? { dispatchedAt: now } : {}),
         },
         select: { id: true },
       });
+      if (funding) await writeAiCreditHold(tx, { companyId: input.companyId, reservationId: created.id, allocations: funding.allocations });
       return {
         ok: true as const,
         reservation: {
@@ -891,6 +936,12 @@ export async function settleAiBudgetStep(
             ...(operator ? { operator: { action: 'charge_at_bound', userId: operator.decision.actorUserId, reason: operator.decision.reason } } : {}) },
         },
       });
+      // Add-on spec §5.3: a funded hold becomes use on the lots it held (charge-at-bound included).
+      // After an operator released it (CANCELLED) that credit may already fund other work, so the
+      // late cost is the provider's, never a second debit (spec §15.2).
+      if ((reservation.pricingSnapshot as { aiCredit?: unknown } | null)?.aiCredit && reservation.status !== 'CANCELLED') {
+        await consumeAiCreditHold(tx, { companyId: reservation.companyId, reservationId: reservation.id, costSatang });
+      }
       // In the SAME transaction as the money: an operator's money decision may never commit
       // without its audit (and therefore history) row.
       if (operator) {
@@ -1035,13 +1086,18 @@ export type AiBudgetCreditHoldRow = {
 export async function listAiBudgetCreditHolds(
   prisma: PrismaService,
   companyId: string,
-  monthKeys: string[],
+  /** `null` = every month (add-on spec §18.4 item 7, C11): a hold older than two months, or one
+   *  funded by AI credit lots, must still be found and closed from its source. */
+  monthKeys: string[] | null,
+  page: { take?: number; before?: { createdAt: Date; id: string } } = {},
 ): Promise<AiBudgetCreditHoldRow[]> {
   const rows = await prisma.client.aiBudgetReservation.findMany({
     where: {
       companyId,
-      monthKey: { in: monthKeys },
+      ...(monthKeys ? { monthKey: { in: monthKeys } } : {}),
       OR: [{ status: 'UNRESOLVED' }, { ...UNACKNOWLEDGED_BREACH }],
+      ...(page.before ? { AND: [{ OR: [{ createdAt: { lt: page.before.createdAt } },
+        { createdAt: page.before.createdAt, id: { lt: page.before.id } }] }] } : {}),
     },
     select: {
       id: true, status: true, stepKind: true, bucket: true, sourceRoute: true, requestKind: true,
@@ -1049,9 +1105,8 @@ export async function listAiBudgetCreditHolds(
       dispatchedAt: true, invocationKey: true, breach: true, breachAcknowledgedAt: true,
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    // A company-month holds tens of rows at worst (one per invocation), and only the stranded ones
-    // land here. The cap is a guard against a pathological month, not a pagination design.
-    take: 200,
+    // Only stranded rows land here. Across all months the caller pages by (createdAt, id).
+    take: page.take ?? 200,
   });
   return rows.map((row) => ({
     id: row.id,

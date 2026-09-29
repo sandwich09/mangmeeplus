@@ -424,6 +424,7 @@ model Company {
   aiMonthlyUsage                    CompanyAiMonthlyUsage[]
   aiMonthlyBucketUsage              CompanyAiMonthlyBucketUsage[]
   aiBudgetReservations              AiBudgetReservation[]
+  aiCreditGrants                    AiCreditGrant[]
   ocrUsageEvents                    CompanyOcrUsageEvent[]
   billingReceiptGrants              BillingReceiptGrant[]
   ocrMonthlyUsage                   CompanyOcrMonthlyUsage[]
@@ -3857,6 +3858,123 @@ model SalesAttribution {
   @@index([flaggedAt])
 }
 
+/// Sales-event discounts (docs/specs/sales-event-discounts-spec-th.md §6.1). A sales lead sets up a
+/// batch; each assigned เซลล์ shows a 5-minute QR at the booth; whoever scans it through LINE gets one
+/// ticket bound to that LINE identity. States are Strings (no Prisma enum, SD-T5) and every rule the
+/// database can hold is a CHECK or a partial unique index in the migration SQL — Prisma cannot model
+/// either, so do NOT let a future `prisma migrate diff` drop them. No switch: the batch itself is the
+/// control (Owner 2026-09-29, spec SD-O10).
+model SalesEventBatch {
+  id                      String                 @id @default(cuid())
+  /// "งาน": plain text that groups the report; there is no event record of its own.
+  eventName               String
+  batchName               String
+  /// First-bill discount in satang, whole baht only. 0 = this batch gives no price discount.
+  discountSatang          Int
+  /// Credit for shops that already pay: AI credit in 0.01-credit units (add-on unitScale 100) and
+  /// receipt images. Stored now, redeemed by SD-F. At least one of the three rewards is > 0 (CHECK).
+  rewardChatCreditUnits   Int                    @default(0)
+  rewardReceiptImageUnits Int                    @default(0)
+  /// Counted over the batch's whole life: revoking, refunding or never using a ticket gives nothing back.
+  issueCap                Int
+  issuedCount             Int                    @default(0)
+  /// Claim window [claimStartsAt, claimEndsAt), UTC. "ปิดรับแล้ว" is this window, not a state.
+  claimStartsAt           DateTime
+  claimEndsAt             DateTime
+  /// { tiers: PaidTier[], intervals: ('month'|'year')[] } — which package cards the discount applies to.
+  scopeJson               Json
+  /// 'OPEN' | 'PAUSED' | 'SUSPENDED' (spec §6.2).
+  state                   String                 @default("OPEN")
+  /// +1 on every edit; a ticket freezes the revision it was issued under.
+  revision                Int                    @default(1)
+  /// Optimistic fence for every console command -> SALES_EVENT_BATCH_STALE. Claims never bump it.
+  version                 Int                    @default(1)
+  createdByUserId         String
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  agents                  SalesEventBatchAgent[]
+  qrTokens                SalesEventQrToken[]
+  tickets                 SalesEventTicket[]
+
+  @@index([state, claimEndsAt])
+}
+
+/// Who may show this batch's QR. Removing a เซลล์ keeps the row (`active = false`) so the tickets they
+/// already handed out still count for them, and their QR stops working at once.
+model SalesEventBatchAgent {
+  batchId       String
+  salesUserId   String
+  active        Boolean         @default(true)
+  addedByUserId String
+  addedAt       DateTime        @default(now())
+  removedAt     DateTime?
+  batch         SalesEventBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@id([batchId, salesUserId])
+  @@index([salesUserId, active])
+}
+
+/// One "แสดง QR" press. Only the SHA-256 of the 32-byte token is stored; the token itself lives in
+/// the QR image and nowhere else. Valid until min(created + 5 minutes, claimEndsAt).
+model SalesEventQrToken {
+  id            String          @id @default(cuid())
+  tokenHash     String          @unique
+  batchId       String
+  salesUserId   String
+  batchRevision Int
+  expiresAt     DateTime
+  createdAt     DateTime        @default(now())
+  batch         SalesEventBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, expiresAt])
+}
+
+/// "ส่วนลดจากงาน" — one per LINE identity per batch. Amounts, rewards, scope, expiry and the เซลล์ are
+/// frozen at issue. Used once and one way only: `redeemedAs` DISCOUNT (first bill) or CREDIT.
+/// The LINE identity is kept for matching only and never leaves the API.
+/// Partial uniques in the migration SQL (Prisma cannot express them):
+///   "SalesEventTicket_company_discount_key" ("companyId") WHERE state IN ('RESERVED','USED') AND "redeemedAs" = 'DISCOUNT'
+///   "SalesEventTicket_batch_company_key" ("batchId", "companyId") WHERE state IN ('RESERVED','USED')
+model SalesEventTicket {
+  id                      String          @id @default(cuid())
+  /// 8 characters from an alphabet with no 0/O or 1/I — the number people quote.
+  serial                  String          @unique
+  batchId                 String
+  batchRevision           Int
+  salesUserId             String
+  holderProvider          String          @default("LINE")
+  holderChannelId         String
+  holderProviderUserId    String
+  discountSatang          Int
+  rewardChatCreditUnits   Int
+  rewardReceiptImageUnits Int
+  scopeJson               Json
+  expiresAt               DateTime
+  /// 'ISSUED' | 'RESERVED' | 'USED' | 'REVOKED' (spec §6.3). Expired = ISSUED and expiresAt <= now.
+  state                   String          @default("ISSUED")
+  /// 'DISCOUNT' | 'CREDIT', null until the ticket starts being used.
+  redeemedAs              String?
+  companyId               String?
+  attemptId               String?         @unique
+  invoiceId               String?         @unique
+  appliedDiscountSatang   Int?
+  claimRequestKey         String
+  redeemRequestKey        String?
+  reservedAt              DateTime?
+  usedAt                  DateTime?
+  revokedAt               DateTime?
+  revokedByUserId         String?
+  revokeReason            String?
+  version                 Int             @default(1)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  batch                   SalesEventBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, holderChannelId, holderProviderUserId])
+  @@index([holderChannelId, holderProviderUserId, state])
+  @@index([companyId, state])
+}
+
 model AccountClaimToken {
   id              String               @id @default(cuid())
   signupRequestId String
@@ -3971,6 +4089,11 @@ model CompanyAiConfiguration {
   // that starts in a FUTURE Bangkok month. It never replaces the active columns until its month
   // arrives — the resolver compares month keys, so no cron is involved.
   pendingBudgetPolicy        Json?
+  /// Add-on spec §11: from this instant the company's AI credit runs on paid package cycles and lots
+  /// (`AiCreditGrant`) instead of the calendar-month CHAT cap. Null = legacy. Written by the cutover
+  /// tool (plan PR G) only; `aiCreditCutoverSource` says which cohort rule moved it.
+  aiCreditCutoverAt          DateTime?
+  aiCreditCutoverSource      String?
   updatedBySystemAdminUserId String?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
@@ -4134,6 +4257,58 @@ model AiBudgetReservation {
   @@index([companyId, monthKey, bucket, status])
 }
 
+/// One AI credit lot (add-on spec §5.1–§5.2, §6.1, §8.2). `units` counts 0.01 credit = 1 satang of
+/// CHAT cost. A package cycle is an INCLUDED_CYCLE lot; added credit is ADD_ON_PAID / ADD_ON_ADMIN /
+/// SALES_EVENT. Not a wallet: the balance is always `units + SUM(entries)` with a hold counting only
+/// while its `AiBudgetReservation` is live, so there is no second counter to drift.
+model AiCreditGrant {
+  id               String    @id @default(cuid())
+  companyId        String
+  billingAccountId String?
+  /// INCLUDED_CYCLE | ADD_ON_PAID | ADD_ON_ADMIN | SALES_EVENT (String, not a Prisma enum).
+  sourceKind       String
+  /// Idempotency of the source: `cycle:<cycleKey>`, or the seam's key for an added lot.
+  sourceKey        String    @unique
+  sourceHash       String
+  units            Int
+  availableAt      DateTime
+  expiresAt        DateTime
+  /// INCLUDED_CYCLE only: `<billingAccountId>:<cycleStart ISO UTC>` and PAID | RENEWAL_PENDING | CLOSED.
+  cycleKey         String?
+  cycleState       String?
+  /// INCLUDED_CYCLE only: where the allowance came from (DEFAULT | SALES_DEAL | TOTAL_OVERRIDE | SPLIT_CHAT_CAP).
+  allowanceSource  String?
+  invoiceId        String?
+  operationId      String?
+  revokedAt        DateTime?
+  closedAt         DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  company          Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  entries          AiCreditEntry[]
+
+  @@index([companyId, sourceKind, expiresAt])
+}
+
+/// Append-only AI credit ledger (add-on spec §8.2). `units` is the signed change to the lot's
+/// available balance: RESERVE −hold (counts only while its reservation is live), CONSUME −used,
+/// CORRECTION ±, FREEZE −, UNFREEZE +, REVOKE −. `reservationId` is a soft reference to
+/// `AiBudgetReservation.id` (no FK: money history never cascades from a hold row).
+model AiCreditEntry {
+  id            String        @id @default(cuid())
+  companyId     String
+  grantId       String
+  kind          String
+  units         Int
+  reservationId String?
+  operationKey  String        @unique
+  createdAt     DateTime      @default(now())
+  grant         AiCreditGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId, kind])
+  @@index([reservationId])
+}
+
 // One row per OCR action admitted immediately before a provider call. The unique request fence
 // makes a transport retry with the same request id unable to consume quota or call the provider twice.
 model CompanyOcrUsageEvent {
@@ -4144,6 +4319,9 @@ model CompanyOcrUsageEvent {
   requestId   String
   billingReceiptGrantId String?
   billingReceiptGrant BillingReceiptGrant? @relation(fields: [billingReceiptGrantId, companyId], references: [id, companyId], onDelete: Restrict)
+  /// Add-on plan PR B: the `ReceiptUnitEntry.generation` this admission reserved. Null = no lot, or an
+  /// admission from before the ledger, which still counts as used exactly as it always did.
+  receiptUnitGeneration Int?
   createdAt   DateTime @default(now())
   company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -9868,10 +10046,31 @@ model BillingReceiptGrant {
   company           Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   billingAccount    BillingAccount? @relation(fields: [billingAccountId, companyId], references: [id, companyId], onDelete: Restrict)
   admissions        CompanyOcrUsageEvent[]
+  unitEntries       ReceiptUnitEntry[]
 
   @@unique([id, companyId])
   @@unique([billingAccountId, sourceKey])
   @@index([companyId, billingAccountId, expiresAt])
+}
+
+/// Receipt image ledger (add-on spec §8.2, §15.3; plan PR B). Append-only: an admission RESERVEs one unit
+/// of a lot, a usable result CONSUMEs it, a read with no usable result RELEASEs it, and an operator REVOKE
+/// takes a lot's unused units. `operationKey` is the admission fence (`<sourceRoute>:<requestId>`), stable
+/// when resume renews the event id; `generation` counts re-admissions of that operation after a release.
+/// kind: RESERVE | CONSUME | RELEASE | REVOKE (String, no Prisma enum).
+model ReceiptUnitEntry {
+  id           String   @id @default(uuid())
+  companyId    String
+  grantId      String
+  operationKey String
+  generation   Int
+  kind         String
+  units        Int
+  createdAt    DateTime @default(now())
+  grant        BillingReceiptGrant @relation(fields: [grantId, companyId], references: [id, companyId], onDelete: Cascade)
+
+  @@unique([companyId, operationKey, generation, kind])
+  @@index([grantId, kind])
 }
 
 /// Immutable customer consent for recurring collection from a service boundary.

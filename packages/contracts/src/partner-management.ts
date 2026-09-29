@@ -305,10 +305,12 @@ export type PartnerAiCreditHoldsDto = {
   canManage: boolean;
   /** The company is DISABLED/ARCHIVED, so nothing on this card may be written. */
   companyLocked: boolean;
-  /** Current and previous Bangkok month, newest hold first. */
+  /** Every month, newest hold first, one page at a time (add-on C11: older holds stay findable). */
   items: PartnerAiCreditHoldDto[];
-  /** The two months the list covers, for the "nothing outside these" sentence. */
+  /** The months this read swept: the current, the previous and any month still holding a live row. */
   monthKeys: string[];
+  /** Pass back as `?cursor=` for the next page; null on the last page. */
+  nextCursor?: string | null;
 };
 
 /** What `POST …/ai-credit-holds/:id/<action>` answers. */
@@ -494,6 +496,9 @@ export type PlatformAiBudgetDto = {
   ceilingSatang: number;
   source: { monthlyBudgetSatang: 'db' | 'env'; ceilingSatang: 'db' | 'env' };
   envDefaults: { monthlyBudgetSatang: number; ceilingSatang: number };
+  /** Write only (add-on spec §5.3, plan C6): companies on AI credit that inherit this default and now
+   *  hold more credit than this month's room under it. A warning; the save went through. */
+  aiCreditWarningCompanyCount?: number;
 };
 
 /** Both fields are required on write: the pair is validated together (ceiling ≥ default). */

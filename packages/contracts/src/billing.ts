@@ -1,6 +1,6 @@
 import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity, type PlanTermLockReason, type PlanTermState } from './plan-term.js';
 import { TIER_FEATURE_PRESETS } from './menu-entitlements.js';
-import type { SalesDealBaseTier, SalesDealCadence } from './sales.js';
+import type { SalesDealBaseTier, SalesDealCadence, SalesEventTicketDisplayState } from './sales.js';
 import type { BillingCompanyProfile } from './billing-company-profile.js';
 import type { CompanyLegalAddress } from './company-tax-identity.js';
 
@@ -177,6 +177,19 @@ export type BillingQuote = {
     segments: { start: string; end: string; amountSatang: number; receiptUnitsAdded: number }[] };
   capacity?: BillingCapacityImpact;
   pendingPlanChange?: { operationId: string; oldEffectiveAt: string; newEffectiveAt: string; offer: BillingOffer; totalSatang: number; capacity: BillingCapacityImpact };
+  /** Sales-event first-bill discount (sales-event spec §7.2), present only when the buyer's LINE identity holds a
+   *  ticket this purchase can use. `totalSatang` above stays the full price; "ชำระวันนี้" is `applied.totalSatang`
+   *  when the buyer chose USE. DECLINE keeps the offer so the confirm step can switch back. */
+  eventDiscount?: BillingQuoteEventDiscount;
+};
+export type BillingEventDiscountChoice = 'USE' | 'DECLINE';
+export type BillingQuoteEventDiscount = {
+  choice: BillingEventDiscountChoice; ticketSerial: string; eventName: string; expiresAt: string;
+  /** The ticket's own whole-baht discount (D). */
+  discountSatang: number;
+  /** Full price − discounted unit price: the "−{จำนวน}" line on the card and the confirm step. */
+  shownDiscountSatang: number;
+  applied?: { unitAmountSatang: number; subtotalSatang: number; taxSatang: number; totalSatang: number };
 };
 /** Spec §8.1: `productKind` tells it apart from `BillingQuote`; it carries `addOn` instead of `offer`. One-time only. */
 export type BillingAddOnQuote = {
@@ -246,6 +259,12 @@ export type BillingStatus = {
   /** Add-on balances and the add-on Checkout in flight (spec §8.1, §17.3). Declared by the foundation;
    *  no server fills it yet. Plan managers only. */
   addOns?: BillingAddOnSummary;
+  /** Sales-event first-bill discount this plan manager holds for this shop (sales-event spec §3.4 ก, §8), computed
+   *  with the same helper as the quote. Absent = no usable ticket or not a first purchase. `offers` lists the
+   *  package cards it lowers; empty when `reason` says why this shop cannot use it. One-time purchases only today. */
+  eventDiscount?: { ticketSerial: string; eventName: string; discountSatang: number; expiresAt: string;
+    reason: null | 'DEAL_ACTIVE' | 'COMPANY_ALREADY_USED';
+    offers: { offerKey: string; interval: BillingInterval; eventName: string; shownDiscountSatang: number }[] };
 };
 /** Spec §17.3: one server snapshot for both products; the client never adds numbers itself. Integer units per `unitScale`. */
 export type BillingAddOnBalance = { productKind: BillingAddOnProductKind; unitScale: 100 | 1;
@@ -273,6 +292,8 @@ export type BillingAttemptView = {
   /** Present when this Checkout paid a sales deal, so the return page can name what was bought. */
   deal?: { dealId: string; baseLabel: string; months: number };
   advanceDeal?: { startsAt: string; firstCycleEndsAt: string; nextChargeAt: string };
+  /** Sales-event discount on this Checkout: used once the payment is confirmed (sales-event spec §3.6). */
+  eventDiscount?: { shownDiscountSatang: number; state: 'IN_PAYMENT' | 'USED' };
 };
 export type BillingInvoiceItem = { id: string; number: string | null; currency: 'THB'; amountSatang: number;
   refundedSatang: number; disputed: boolean; financialObservedAt: string | null;
@@ -300,7 +321,7 @@ export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED';
    *  removed so an older client that still reads it keeps compiling against this contract. */
   trial?: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
 
-export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_FREE_DAYS' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS' | 'SCHEDULE_PRICE_RETURN' | 'APPLY_PLAN_MENUS' | 'UPDATE_BILLING_EMAIL' | 'CUSTOMER_PROFILE_SYNC';
+export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_FREE_DAYS' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS' | 'SCHEDULE_PRICE_RETURN' | 'APPLY_PLAN_MENUS' | 'UPDATE_BILLING_EMAIL' | 'CUSTOMER_PROFILE_SYNC' | 'ADDON_ADMIN_GRANT' | 'ADDON_ADMIN_REVOKE';
 export type BillingOperationState = 'DRAFT' | 'PREVIEW' | 'AWAITING_APPROVAL' | 'SCHEDULED' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'UNKNOWN' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
 export type BillingScope = { kind: 'COMPANY'; companyId: string; mode: BillingMode } | { kind: 'PLATFORM'; mode: BillingMode };
 export type BillingConfigurationCheckItem = { kind:'POLICY'|'ACCOUNT'|'PRICE'|'PREPAID_PRICE'|'PORTAL'|'TAX'; offerKey?:BillingOfferKey;
@@ -347,6 +368,9 @@ export type BillingOperatorCompany = {
   graceEndsAt: string | null; cancelEffectiveAt: string | null; origin: 'web' | 'line' | null;
   branchLimit: number | null; employeeLimit: number | null; pendingPlanChangeId: string | null; collectionOperationId: string | null;
 };
+/** Sales-event discounts §6.3: the reconciler raised it because a bill was paid at the discounted amount
+ *  but no ticket was RESERVED for that attempt. Apply is not blocked; an operator checks and closes it. */
+export const BILLING_EVENT_DISCOUNT_REVIEW_ISSUE = 'EVENT_DISCOUNT_REVIEW';
 export type BillingOperatorIssue = { id: string; companyId: string | null; companyName?:string|null; kind: string; reference: string;
   operationType?:string|null;
   relatedInvoiceId?:string|null; relatedRefundOperationId?:string|null; resolvedAt?:string|null;
@@ -368,7 +392,15 @@ export type BillingBatchView={id:string;version:number;previewHash:string;state:
 export type BillingBatchList={items:BillingBatchView[];nextCursor:string|null};
 export type BillingBatchExport={csv:string;sha256:string;rowCount:number;exportedAt:string;fileName:string};
 export type BillingOperatorCompanyDetail = BillingOperatorCompany & { usage: BillingReceiptUsage;
-  issues: BillingOperatorIssue[]; financial: { invoices: BillingInvoiceItem[]; nextCursor: string | null } | null };
+  issues: BillingOperatorIssue[]; financial: { invoices: BillingInvoiceItem[]; nextCursor: string | null } | null;
+  /** Sales-event discounts this shop reserved or used (spec SD-E20), newest first, at most 25. Optional
+   *  only so a contracts-first merge keeps older API builds compiling; the API always sends it. */
+  eventDiscounts?: BillingCompanyEventDiscount[] };
+/** `appliedDiscountSatang` and `invoiceId` are null without `system.billing.financial.read`. The lot of a
+ *  credit use arrives with SD-F. The serial is shown: it is the number the shop and the เซลล์ quote. */
+export type BillingCompanyEventDiscount = { serial: string; eventName: string; batchName: string;
+  redeemedAs: 'DISCOUNT' | 'CREDIT' | null; state: 'ISSUED' | 'RESERVED' | 'USED' | 'REVOKED';
+  appliedDiscountSatang: number | null; invoiceId: string | null; usedAt: string | null; reservedAt: string | null };
 export type BillingTimelineEntry = { reference: string; kind: string; type: string; state: string; recordedAt: string; occurredAt: string | null;
   updatedAt: string | null; observedAt: string | null; origin: string | null; amountSatang: number | null; href: string | null };
 export type BillingHistoryExport = {fileName:string;csv:string;rowCount:number;exportedAt:string;nextCursor:string|null;financialIncluded:boolean;auditIncluded:boolean;sha256:string};
@@ -443,6 +475,31 @@ export type BillingReceiptAdjustments = {companyId:string;companyName:string;sou
   monthlyAllowance?: BillingReceiptUsage['monthlyAllowance'];
   remaining:number|null;canCreate:boolean;blockedReason:string|null;readWarnings:BillingReceiptReadWarning[];items:BillingReceiptAdjustmentOperation[];nextCursor:string|null};
 
+/**
+ * Add-on plan PR B (spec §8.1, §16): the operator's add-on balance and the reviewed team grant/revoke,
+ * both products through one seam (receipt images now, AI credit in PR C). A grant has no expiry field:
+ * it is 12 months from the committed approval (D8, C03). Revoke takes a team lot's unused units, never a
+ * paid one (that leaves by refund) and never money.
+ */
+export type BillingAddOnGrantInput = { type: 'ADDON_ADMIN_GRANT' | 'ADDON_ADMIN_REVOKE'; productKind: BillingAddOnProductKind;
+  /** Grant only: integer units of the product — whole images for RECEIPT_IMAGE. */
+  units?: number;
+  /** Revoke only: the team lot. */
+  grantId?: string; sourceHash: string; reason: string };
+/** Operator view only (spec §17.1): the customer never sees a lot, a hold or a source. */
+export type BillingAddOnAdminLot = { id: string; productKind: BillingAddOnProductKind; source: 'ADD_ON_PAID' | 'ADD_ON_ADMIN' | 'SALES_EVENT';
+  units: number; reserved: number; consumed: number; revoked: number; remaining: number; availableAt: string; expiresAt: string;
+  revokedAt: string | null; state: 'ACTIVE' | 'PENDING' | 'EXPIRED' | 'REVOKED'; canRevoke: boolean };
+export type BillingAddOnGrantOperation = BillingOperationView & { type: 'ADDON_ADMIN_GRANT' | 'ADDON_ADMIN_REVOKE'; companyName: string;
+  previewHash: string; productKind: BillingAddOnProductKind; units: number;
+  /** Before approval: what 12 months from now would be. After: the lot's real expiry. */
+  grantExpiresAt: string; lot: BillingAddOnAdminLot | null; requesterName: string | null; approverName: string | null;
+  allowedActions: ('submit' | 'approve' | 'cancel')[] };
+export type BillingAddOnCredits = { companyId: string; companyName: string; sourceHash: string; canCreate: boolean; blockedReason: string | null;
+  /** `packageRemaining` is null for a shop whose receipts are not lots yet (it cannot hold add-on units). */
+  images: { packageRemaining: number | null; additionalRemaining: number; lots: BillingAddOnAdminLot[] };
+  items: BillingAddOnGrantOperation[]; nextCursor: string | null };
+
 /** `aiOcrBudgetReached` is additive and SPLIT-only (spec §11.4): the total money shown below is not
  *  gone, but the share allocated to reading documents is — so "เครดิต AI … ใช้แล้ว …" alone would
  *  read as though the remainder were available for receipts. Absent under SHARED, as it is today.
@@ -480,6 +537,21 @@ export type BillingRecipientOtpProof = { recipientProofId: string; email: string
 /** `receiptUpdated` false = Stripe did not resend the receipt because its email did not change. */
 export type BillingDocumentResendResult = { invoiceSent: boolean; receiptUpdated: boolean; recipientEmail: string; remainingToday: number };
 
+/** `GET /v1/companies/:companyId/billing/event-discount` (sales-event spec §7.1). The caller's own
+ *  ส่วนลดจากงาน — the tickets held by the LINE account linked to their login — and which way this
+ *  shop could use one (`path`, spec §4.1). SD-C adds the per-card `discount` offers and SD-F the
+ *  `credit` block; both are additive. A plan manager never sees another person's tickets. */
+export type BillingEventDiscountTicket = {
+  serial: string; eventName: string; discountSatang: number; chatCreditUnits: number; receiptImageUnits: number;
+  expiresAt: string; state: SalesEventTicketDisplayState;
+  /** The batch was suspended by the sales team: an unused ticket cannot be used until it is lifted. */
+  batchSuspended: boolean;
+};
+export type BillingEventDiscountView = {
+  path: 'DISCOUNT' | 'CREDIT' | null;
+  tickets: BillingEventDiscountTicket[];
+};
+
 /** PR E admin tools (spec §18.2 R-E1/R-E2/R-E4). An admin recipient change is the same `UPDATE_BILLING_EMAIL`
  *  operation the customer OTP flow uses (`source: 'ADMIN'`), reviewed like a refund and reusing its
  *  `billing.recipient.changed` notification mechanism — see billing-email-recipient.ts. */
@@ -492,4 +564,5 @@ export type BillingRecipientAdminOperation = BillingOperationView & { type: 'UPD
   allowedActions: ('submit' | 'approve' | 'cancel' | 'run')[]; dispatchedAt: string | null; reviewCaseId: string | null; notifiedAt: string | null };
 /** Admin document resend needs an internal reason; the result shape is `BillingDocumentResendResult` above. */
 export type BillingDocumentAdminResendInput = { reason: string };
-export type BillingReferenceLookup = { kind: 'INVOICE' | 'ATTEMPT' | 'OPERATION' | 'ISSUE'; id: string; companyId: string; companyName: string; href: string };
+/** `EVENT_TICKET`: the 8-character serial of a sales-event discount the shop used (sales-event spec §7.1). */
+export type BillingReferenceLookup = { kind: 'INVOICE' | 'ATTEMPT' | 'OPERATION' | 'ISSUE' | 'EVENT_TICKET'; id: string; companyId: string; companyName: string; href: string };
