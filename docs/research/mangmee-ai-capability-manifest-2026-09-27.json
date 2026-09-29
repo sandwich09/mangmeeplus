@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "4792c4c31e980fce6653c1a2d4ed685ed48abe64",
-  "checkoutBranch": "claude/line-discount-answer-20260929",
+  "sourceRevision": "4d37c76d31edfb69ebc73b3101261db9d1072308",
+  "checkoutBranch": "claude/uat-round2-20260929",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "55dd62ce50ef10c12fcb7e2d9159543a9624c0f9a8bd56e255180f523e73ed73"
+      "sha256": "2dcb8b104c76b4c8975bf55e3cbb587f57842f705ada5933f6e206115f47f9c7"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T08:12:49.039Z",
-  "manifestDigest": "85336d1199b7ca892690cdfbb32b2f7f4dee3be9746de98afc9c07d0182029dd"
+  "generatedAt": "2026-09-29T08:29:31.714Z",
+  "manifestDigest": "c3bf4cc6af13fe1f9f4d27f84aedc7624feefdb54c48bb80b5f636f93bcc0f6b"
 }

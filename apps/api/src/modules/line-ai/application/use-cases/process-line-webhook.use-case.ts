@@ -3802,10 +3802,14 @@ export class ProcessLineWebhookUseCase {
     }
     this.semanticDelivery.set(event, response.semanticCoverage);
     this.deliverySources.set(event, { requestId, ids: [] });
-    await this.persistTurn(bound.owner.userId, bound.owner.companyId, event.webhookEventId, request.messagePreviewHash,
+    const turnId = await this.persistTurn(bound.owner.userId, bound.owner.companyId, event.webhookEventId, request.messagePreviewHash,
       event.messageText.slice(0, PREVIEW_MAX_CHARS), response, event);
     await this.updateEventLog(event.webhookEventId, 'response_ready', undefined, bound.owner.companyId);
     const delivered = await this.deliverMessages(event, [{ type: 'text', text: formatLineReply(response, this.config.webBaseUrl) }]);
+    // Same terminal row states as the business-answer path; only COMPLETED/REFUSED rows feed the next turn's context.
+    await this.prisma.client.aiTurn.update({ where: { id: turnId }, data: delivered === 'ok'
+      ? { status: response.refused ? 'REFUSED' : 'COMPLETED', errorCode: response.errorCode }
+      : { status: 'ERROR', errorCode: `LINE_DELIVERY_${delivered.toUpperCase()}` } });
     if (delivered !== 'ok') return;
     if (resumes) await this.settleSemanticTask(event, response.semanticCoverage);
     if (ledgerId) await this.ledger?.ack({ key: ledgerKey(bound.owner.companyId, mediaChatKey(event)), id: ledgerId,
