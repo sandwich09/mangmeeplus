@@ -20,7 +20,6 @@ import {
   BUSINESS_DOCUMENT_DIRECTIONS,
   BUSINESS_DOCUMENT_EVIDENCE_ROLES,
   BUSINESS_DOCUMENT_TRANSACTION_STATES,
-  verifyExpenseCaptureFieldEvidenceV2,
   type ExpenseCaptureExtractRequest,
   type ExpenseCaptureReadRequest,
 } from '@watchdog-bms/contracts';
@@ -132,70 +131,10 @@ const observationsJson = (over: Record<string, unknown> = {}) => JSON.stringify(
   ...over,
 });
 
-describe('v2 original-page and field evidence', () => {
-  const source = { version: 2 as const, attachmentId: 'attachment-original', checksumSha256: 'a'.repeat(64) };
-  const window = (pages = [{ pageIndex: 0, text: WINDOW_TEXT }]) => ({ evidenceSource: source, fileLabel: 'file-1', pageIndexes: pages.map(page => page.pageIndex), pages });
+describe('capture read pages', () => {
   it('never shifts page three into page two when the transcription skipped a section', () => {
     assert.deepEqual(parseCaptureReadPages('=== PAGE 1 ===\nA\n=== PAGE 3 ===\nC', [7, 8, 9], false).map(page => ({ page: page.pageIndex, text: page.text })), [{ page: 7, text: 'A' }]);
     assert.deepEqual(parseCaptureReadPages('=== PAGE 2 ===\nB\n=== PAGE 1 ===\nA', [0, 1], false), []);
-  });
-  it('binds issuer, row quantity and total to exact original bytes/page spans', () => {
-    const result = parseCaptureObservationsJson(observationsJson(), WINDOW_TEXT, '2026-09-27', window())!;
-    assert.equal(result.fieldEvidenceVersion, 2);
-    assert.equal(verifyExpenseCaptureFieldEvidenceV2(result, window(), '2026-09-27'), true);
-    for (const evidence of [result.documents[0]!.fieldEvidence!['issuer.name']!, result.items[0]!.fieldEvidence!['quantity']!, result.totals[0]!.fieldEvidence!['amount']!]) {
-      assert.equal(evidence.attachmentId, source.attachmentId); assert.equal(evidence.checksumSha256, source.checksumSha256);
-      assert.equal(evidence.pageIndex, 0); assert.equal(WINDOW_TEXT.slice(evidence.localSpan.start, evidence.localSpan.end), evidence.rawValue);
-    }
-    const tampered = structuredClone(result); tampered.totals[0]!.fieldEvidence!['amount']!.checksumSha256 = 'b'.repeat(64);
-    assert.equal(verifyExpenseCaptureFieldEvidenceV2(tampered, window(), '2026-09-27'), false);
-    const changedRole = structuredClone(result); changedRole.totals[0]!.kind = 'reported_paid';
-    assert.equal(verifyExpenseCaptureFieldEvidenceV2(changedRole, window(), '2026-09-27'), false);
-  });
-  it('drops a valid amount/date/issuer printed only on another document page', () => {
-    const other = 'OTHER SHOP\n2026-09-12\nTOTAL 999.00';
-    const raw = JSON.parse(observationsJson());
-    raw.documents[0].issuer.name = 'OTHER SHOP'; raw.documents[0].documentDate = '2026-09-12';
-    raw.totals = [{ documentRef: 'd1', kind: 'document_total', amount: '999.00', evidenceSpan: 'TOTAL 999.00' }];
-    const result = parseCaptureObservationsJson(JSON.stringify(raw), `${WINDOW_TEXT}\n${other}`, '2026-09-27', window([{ pageIndex: 0, text: WINDOW_TEXT }, { pageIndex: 1, text: other }]))!;
-    assert.equal(result.documents[0]!.issuer.name, undefined); assert.equal(result.documents[0]!.documentDate, undefined);
-    assert.deepEqual(result.totals, []); assert.ok(result.completeness.unreadableRows > 0);
-  });
-  it('requires a locator for repeated total spans and cannot relocate it to an unselected page', () => {
-    const raw = JSON.parse(observationsJson()); raw.documents[0].pageIndexes = [0, 1];
-    const pages = [{ pageIndex: 0, text: WINDOW_TEXT }, { pageIndex: 1, text: WINDOW_TEXT }];
-    const merged = `${WINDOW_TEXT}\n${WINDOW_TEXT}`;
-    assert.deepEqual(parseCaptureObservationsJson(JSON.stringify(raw), merged, '2026-09-27', window(pages))!.totals, []);
-    const start = WINDOW_TEXT.lastIndexOf('59.00');
-    raw.totals[0].fieldEvidence = { amount: { pageIndex: 1, localSpan: { start, end: start + 5 }, rawValue: '59.00' } };
-    assert.equal(parseCaptureObservationsJson(JSON.stringify(raw), merged, '2026-09-27', window(pages))!.totals[0]!.fieldEvidence!['amount']!.pageIndex, 1);
-    raw.totals[0].fieldEvidence.amount.pageIndex = 5;
-    assert.deepEqual(parseCaptureObservationsJson(JSON.stringify(raw), merged, '2026-09-27', window(pages))!.totals, []);
-  });
-  it('preserves source offsets after a long page splits and refuses invented document page ownership', () => {
-    const request = window(); request.pages[0] = { ...request.pages[0]!, sourceOffset: 14000 } as any;
-    const result = parseCaptureObservationsJson(observationsJson(), WINDOW_TEXT, '2026-09-27', request)!;
-    assert.equal(verifyExpenseCaptureFieldEvidenceV2(result, request, '2026-09-27'), true);
-    assert.equal(result.totals[0]!.fieldEvidence!['amount']!.localSpan.start, 14000 + WINDOW_TEXT.lastIndexOf('59.00'));
-    const raw = JSON.parse(observationsJson()); raw.documents[0].pageIndexes = [5];
-    assert.equal(parseCaptureObservationsJson(JSON.stringify(raw), WINDOW_TEXT, '2026-09-27', request), null);
-  });
-  it('anchors row ids across split windows and remaps only unambiguous same-document cancellation links', () => {
-    const first = parseCaptureObservationsJson(observationsJson(), WINDOW_TEXT, '2026-09-27', window())!;
-    const laterWindow = window(); laterWindow.pages[0] = { ...laterWindow.pages[0]!, sourceOffset: 14000 } as any;
-    const later = parseCaptureObservationsJson(observationsJson(), WINDOW_TEXT, '2026-09-27', laterWindow)!;
-    assert.notEqual(first.items[0]!.id, later.items[0]!.id, 'same model row id on different original spans cannot collapse');
-    assert.equal(first.items[0]!.id, parseCaptureObservationsJson(observationsJson(), WINDOW_TEXT, '2026-09-27', window())!.items[0]!.id);
-    const raw = JSON.parse(observationsJson()), text = `${WINDOW_TEXT}\nยกเลิก 10.00`;
-    raw.items.push({ id: 'void-1', documentRef: 'd1', description: 'ยกเลิก', amount: '10.00', event: 'void', linkedItemId: raw.items[0].id, evidenceSpan: 'ยกเลิก 10.00' });
-    raw.components[0].parentId = raw.items[0].id;
-    const linked = parseCaptureObservationsJson(JSON.stringify(raw), text, '2026-09-27', window([{ pageIndex: 0, text }]))!;
-    assert.equal(linked.items[1]!.linkedItemId, linked.items[0]!.id);
-    assert.equal(linked.components[0]!.parentId, linked.items[0]!.id);
-    assert.equal(verifyExpenseCaptureFieldEvidenceV2(linked, window([{ pageIndex: 0, text }]), '2026-09-27'), true);
-    raw.items[1].linkedItemId = 'unknown-prior-window-row';
-    const unknown = parseCaptureObservationsJson(JSON.stringify(raw), text, '2026-09-27', window([{ pageIndex: 0, text }]))!;
-    assert.equal(unknown.items[1]!.linkedItemId, undefined); assert.ok(unknown.completeness.unreadableRows > 0);
   });
 });
 

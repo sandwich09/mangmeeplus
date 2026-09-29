@@ -1,8 +1,8 @@
 # Agent Memory: web receipt reads and strict evidence v2 (2026-09-29)
 
-Status: option A implemented (web reads like LINE). The Owner then decided to delete strict receipt evidence
-entirely ("ลบทิ้งเลย"); that removal is a separate follow-up PR. Option B (make strict mode pass real receipts)
-is closed.
+Status: option A is PR #896 (open; web reads like LINE). The Owner then decided to delete strict receipt
+evidence entirely ("ลบทิ้งเลย"); the follow-up PR on branch claude/remove-receipt-strict-evidence-20260929 removes it
+end to end. Option B (make strict mode pass real receipts) is closed.
 Owner: Claude (diagnosis and fix) for the 2026-09-29 coordinator session.
 Scope: web receipt photo read (`ReceiptOcrClient`) and the PDF/file read job (`ExpenseCaptureReadRunnerService`).
 
@@ -46,4 +46,31 @@ Verification (option A, branch claude/web-receipt-evidence-fix-20260929):
 - Real web-path probe through the fixed `ReceiptOcrClient` (UAT defaults): Tamphun ok, 21 fields, total
   1712.54, VAT 112.04; IBERRY ok, 21 fields, total 1,529.00, VAT 100.03; 2 model calls each, about 30 s.
 
-Next: follow-up PR removes the strict receipt evidence path end to end.
+Removal (follow-up PR, branch claude/remove-receipt-strict-evidence-20260929):
+- Gateway receipt OCR: `requireEvidenceV2` handling, the page-marker option of `bedrockOcrPrompt` (the normal prompt
+  stays byte-identical), `RECEIPT_OCR_EVIDENCE_V2_PROMPT`, the strict branches of `parseReceiptOcrJson`, and the
+  helpers `compileReceiptEvidenceV2`, `evidenceRawSpan`, `receiptRoleMatches` (label lists), `receiptEvidencePages`,
+  `receiptEvidenceRole`, `receiptEvidencePaths`, `canonicalReceiptDecimal`, `receiptNumberSign`,
+  `normalizedReceiptText`, `receiptRateTimes100`, `occurrenceCount`.
+- Gateway capture: `bindCaptureEvidence`, `occurrences`, the `sourceWindow` argument of `parseCaptureObservationsJson`.
+- Contracts: `ReceiptOcrRequest.requireEvidenceV2`, `ReceiptOcrResponse.receiptEvidence`, `ReceiptOcrEvidenceRole`,
+  `ReceiptOcrFieldEvidenceV2`, `ReceiptOcrEvidenceV2`, `ExpenseCaptureExtractWindow.evidenceSource`,
+  `ExpenseCaptureObservations.fieldEvidenceVersion`, `verifyExpenseCaptureFieldEvidenceV2`, `expenseCaptureObservationId`.
+- API: `verifyReceiptOcrEvidenceV2` and its helpers, the `OCR_EVIDENCE_INVALID` check, the runner's `fieldEvidenceV2`
+  option and `CAPTURE_FIELD_EVIDENCE_UNSUPPORTED` refusal, the capture client's `CAPTURE_FIELD_EVIDENCE_INVALID` /
+  `_UNSUPPORTED` check, and the assembly's `fieldEvidenceVersion` flag.
+- Kept on purpose: `CAPTURE_WINDOW_EVIDENCE_VERSION_CHANGED` (still guards old long-page checkpoints); row-level
+  `fieldEvidence`, `ExpenseCaptureFieldEvidence` and `expenseCaptureFieldRole` (normal assembly code, now dormant);
+  the capture extract prompt line that invites optional `fieldEvidence` (unchanged so LINE file prompts stay
+  identical; the normal parser drops it). Other reliability-v2 features (LINE input evidence, document QA,
+  `LINE_AI_RELIABILITY_V2_MODE`) do not use the removed symbols.
+- Dated notes added to the core capability spec §6, the implementation index, the reliability implementation
+  memory and the 2026-09-27 regression rerun log. W00 regenerated (it hashes `line-ai.ts` and those two docs).
+
+Removal verification: API and web typecheck rc=0; gateway typecheck rc=0 and AgentCore build rc=0; gateway
+focused specs 144/144; API focused specs 134/134; onboarding PG spec 1/1 on fresh Postgres 18.3; W00 4/4 after
+regeneration; whole-chain acceptance exit 0 (3,410 pass, 0 fail). Real web-path probe on the final code: Tamphun ok,
+21 fields, total 1,712.54, VAT 112.04; IBERRY ok, 22 fields, total 1,529.00, VAT 100.03; 2 model calls each.
+
+Next: none for this task. Possible follow-up: drop the capture prompt's optional `fieldEvidence` request and the
+dormant row-level locator code, with a real-model check of the LINE file lane.
