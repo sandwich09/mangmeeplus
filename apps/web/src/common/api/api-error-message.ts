@@ -63,7 +63,6 @@ const CODE_LABELS: Record<string, string> = {
   // Split CHAT/OCR budget policy (remediation spec §12.4). System-Admin surface only
   // (`system.partner_ai_model.manage`), so each line names the field to change rather than
   // restating the rule; the refused amounts travel as separate response fields, never in the text.
-  partner_ai_budget_split_not_enabled: 'ระบบยังไม่เปิดให้แยกเพดานแชตกับอ่านเอกสาร ให้ใช้เครดิตรวมก้อนเดียวไปก่อน',
   partner_ai_budget_policy_invalid: 'ตรวจโหมดงบ เพดานแชต เพดานอ่านเอกสาร และเดือนที่เริ่มใช้ให้ถูกต้อง เพดานต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป',
   partner_ai_budget_split_caps_required: 'โหมดแยกเพดานต้องกรอกทั้งเพดานแชตและเพดานอ่านเอกสาร ใส่ 0 หากต้องการปิดส่วนนั้น',
   partner_ai_budget_effective_month_invalid: 'เลือกเดือนที่เริ่มใช้เป็นเดือนนี้หรือเดือนถัดไปเท่านั้น',

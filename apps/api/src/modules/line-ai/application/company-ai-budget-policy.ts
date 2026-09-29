@@ -198,10 +198,7 @@ export function aiCreditCycleAllowance(input: {
 }
 
 /** The wire shape of a resolved policy — one place, so the writer and the admin read agree. */
-export function toPartnerAiBudgetPolicyDto(
-  policy: ResolvedAiBudgetPolicy,
-  splitActivationEnabled: boolean,
-): PartnerAiBudgetPolicyDto {
+export function toPartnerAiBudgetPolicyDto(policy: ResolvedAiBudgetPolicy): PartnerAiBudgetPolicyDto {
   return {
     mode: policy.mode,
     chatCapSatang: policy.chatCapSatang,
@@ -210,6 +207,5 @@ export function toPartnerAiBudgetPolicyDto(
     revision: policy.revision,
     pending: policy.pending,
     ...(policy.invalidReason ? { invalidReason: policy.invalidReason } : {}),
-    splitActivationEnabled,
   };
 }

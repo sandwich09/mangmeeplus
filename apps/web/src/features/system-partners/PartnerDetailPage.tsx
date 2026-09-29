@@ -86,7 +86,6 @@ import {
   AI_BUDGET_BUCKET_LABELS,
   AI_BUDGET_MODE_LABELS,
   AI_BUDGET_RESERVED_NOTE,
-  AI_BUDGET_SPLIT_DISABLED_NOTE,
   AI_BUDGET_STALE_MESSAGE,
   AI_CREDIT_HOLD_ACTION_LABELS,
   AI_CREDIT_HOLD_EMPTY_NOTE,
@@ -1597,7 +1596,6 @@ function AiBudgetPolicyPanel({
   const pendingText = aiBudgetPendingText(policy.pending, formatThaiMonth);
   const months = aiBudgetMonthOptions(monthKey);
   const changed = aiBudgetDraftChanged(draft, policy, monthKey);
-  const splitBlocked = policy.splitActivationEnabled === false;
 
   return (
     <section className="space-y-4 border-t-2 border-gray-100 pt-5" aria-labelledby="ai-budget-policy-title">
@@ -1674,18 +1672,12 @@ function AiBudgetPolicyPanel({
         </p>
       ) : (
         <>
-          {splitBlocked && (
-            <p data-testid="ai-budget-split-disabled" className="rounded-xl border border-gray-300 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-700">
-              {AI_BUDGET_SPLIT_DISABLED_NOTE}
-            </p>
-          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-mode">โหมดเครดิต AI
               <select id="ai-budget-mode" className={`${inputClass} mt-1 min-h-12 text-base`} value={draft.mode}
                 disabled={saving || busy} onChange={(e) => onDraft({ ...draft, mode: e.target.value as AiBudgetDraft['mode'] })}>
                 <option value="SHARED">{AI_BUDGET_MODE_LABELS.SHARED}</option>
-                {/* ADR 0013 §9: SPLIT is offered but not savable until the server flag is on. */}
-                <option value="SPLIT" disabled={splitBlocked}>{AI_BUDGET_MODE_LABELS.SPLIT}</option>
+                <option value="SPLIT">{AI_BUDGET_MODE_LABELS.SPLIT}</option>
               </select>
             </label>
             <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-month">เดือนที่เริ่มใช้

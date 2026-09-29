@@ -51,7 +51,6 @@ describe('AI credit hold reconciliation on PostgreSQL', { skip: !databaseUrl }, 
     aiMonthlyBudgetSatang: 1_000_000,
     aiMonthlyBudgetSatangCeiling: 10_000_000,
     approvedAiModelIds: [HAIKU],
-    aiBudgetSplitActivationEnabled: true,
     receiptQuotaEnforced: false,
     isProduction: false,
   } as unknown as AppConfigService;
