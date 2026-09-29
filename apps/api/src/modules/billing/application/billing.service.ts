@@ -53,6 +53,7 @@ import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.lo
 import type { BillingEventDiscountView } from '@watchdog-bms/contracts';
 import { eventDiscountBasis, eventDiscountCardAuto, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
 import { eventDiscountHolderBlock, eventDiscountOffer, eventDiscountPath, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
+import { paymentCheckoutMode, paymentCheckoutSnapshot } from '../domain/billing-checkout-mode';
 
 /** D-P5-6: the future contract a `SCHEDULE_PRICE_RETURN` writes. The invoice that applies it puts
  *  the shop back on the tier's default menus, AI credit and limits (Q1) even though it is a RENEWAL. */
@@ -78,9 +79,6 @@ const oneTimeMode = (mode: BillingPurchaseMode | undefined) => mode === 'CARD_ON
  * Price into `snapshot.priceId`, while a one-time deal pinned the catalog Price.
  */
 const autoRenewDealSnapshot = (snapshot: BillingSnapshot) => !!snapshot.deal && !oneTimeMode(snapshot.quote.purchaseMode);
-const paymentCheckoutMode = (mode: BillingPurchaseMode | undefined) => oneTimeMode(mode) || mode === 'PROMPTPAY_RENEW';
-// SD-O13: a discounted CARD_AUTO first period is paid once too, then binds its full-price subscription (spec §5.3).
-const paymentCheckoutSnapshot = (snapshot: BillingSnapshot) => paymentCheckoutMode(snapshot.quote.purchaseMode) || !!snapshot.advanceDeal || eventDiscountCardAuto(snapshot);
 const gateForMode = (mode: BillingPurchaseMode): BillingAction => mode === 'CARD_ONCE' ? 'card_once' : mode === 'PROMPTPAY_ONCE' ? 'promptpay_once' : mode === 'PROMPTPAY_RENEW' ? 'promptpay_renew' : 'new_sales';
 function assertPurchaseMode(mode: unknown): asserts mode is BillingPurchaseMode {
   if (!['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(String(mode)))
