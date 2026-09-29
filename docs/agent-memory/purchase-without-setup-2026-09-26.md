@@ -1,6 +1,6 @@
 # Agent Memory: purchase-without-setup-2026-09-26
 
-Status: IMPLEMENTED 2026-09-29 — PR A–E merged to develop + main (#842/#843, #848/#849, #850/#851, #852/#853, #854/#855); end-to-end review fixes on `claude/pfv-integration-20260929` (see the 2026-09-29 review section); NOT deployed. Remaining are release steps only (see "Next — release" at the end).
+Status: RELEASED to production 2026-09-29 12:07 Bangkok. Production op 20260929T045818Z-2a6d7b34 = main c4513ddd, promoted from signed UAT op 20260929T044840Z-9356f353. PR A–E (#842–#855) and the end-to-end review fixes (#860/#861) are live, plus the LINE AI and photo fixes found on UAT that day (#865–#873). Open LINE follow-ups are listed in the 2026-09-29 release section.
 Owner: thawatchai / Claude (controller)
 Scope: ทำให้ร้านใหม่ซื้อแพ็กเกจได้จากการ์ดในแชตโดยไม่ตั้งค่าในแอป (Stripe เก็บอีเมล/ที่อยู่แล้วคัดลอกกลับ), สถานะ "ยังไม่มีแพ็กเกจ" เข้าได้ทุกทาง, ลิงก์จาก LINE เปิดนอกเบราว์เซอร์ LINE, แก้เอกสารด้วยตัวเอง (ส่งซ้ำ/เปลี่ยนผู้รับ/ออกใบใหม่), เครื่องมือแอดมินรองรับทุก "ติดต่อทีมงาน"
 Decisions:
@@ -185,6 +185,26 @@ Verification (this session, 2026-09-28): `pnpm --filter @watchdog-bms/contracts 
   - API boot (every provider resolved);
   - `git diff --check`.
   - The re-run of the real e2e and PG suites on this head vs the baseline is recorded below when it finishes.
+
+## 2026-09-29 — release: UAT → production (done)
+- **Readbacks:** the Kamal config and env capture showed BILLING_MODE test on UAT and live on production, and LINE_WEB_HANDOFF and TERMINAL_OUTCOME_REPLAY on.
+- **Recipient backfill:** skipped on purpose. `BillingEmailRecipient.current()` lazily copies the Stripe Customer email into `BillingAccount.recipientEmail` the first time the package page opens, and skipping avoided a production bastion session.
+- **UAT journeys:** on a real Android phone, the owner ran a LINE signup and package selection on UAT and reported "เลือกแพ็กเกจ ผ่านแล้ว". No iPhone run was reported, so AC10 is covered on Android only.
+- **Operations:** the table is in `docs/runbooks/cloud-environment-operations.md`, section "Release 2026-09-29". UAT ran three times: a521e2c8 → a2d11e89 → c4513ddd. Production ran c4513ddd.
+- **Found on UAT and fixed before production:**
+  - LINE AI dead ends, for three reasons:
+    - the AgentCore env was stale: families narrowed and the tool loop off (#865);
+    - a router repair spent the answer slot (#865);
+    - Thai short month names were not read (#865/#867).
+  - Caption-less photos in bound chats clarified instead of drafting, and replies showed file ids (#872).
+  - The partner package retry button was dead after a failed read (#870).
+- **Still open at release (owner accepted: "ที่เหลือค่อยแก้ตามขึ้นไป"):**
+  1. Bound-chat text continuations run after the v2 router: the photo-question "1", check-bill "1", draft-question answers and corrections.
+  2. A second photo while the first is in flight: the draft is created but the result delivery fails, and the event is logged as delivered.
+  3. "ร่างค่าใช้จ่ายมีอะไรบ้าง" dead-ends on the prepared lane.
+  4. `/task choose` quick replies show ids.
+  5. Draft replies show the raw web URL.
+- **e2e:** BILLING-ADVANCE-DEAL :118 fails in isolation with a click-actionability timeout; the root cause is unconfirmed (dev-server suspected). billing-preview :470 is dev-only (`NODE_ENV=development` and `APP_ENV=local`) and cannot occur on UAT or production.
 
 ## Next — release (2026-09-29)
 - Extended Tests (manual dispatch; GitHub Actions has been in startup_failure since 2026-09-25): the PG specs of PR A/C/E, the smokes including `BILLING_NO_SETUP_ONLY=1`, the customer suite browser block, and e2e `billing-no-setup`, `customer-billing-ux`, `billing-preview`, `billing-advance-deal` and PR E's 3 files. Record the run ids here.
