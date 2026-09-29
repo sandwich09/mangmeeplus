@@ -7,6 +7,8 @@ import { PrismaClient } from '../../../generated/prisma/client';
 import { buildDealSnapshot } from '../../sales-console/domain/sales-deal.logic';
 import { termProjectionHash } from '../domain/paid-invoice';
 import { appendPackageInterval } from '../domain/billing-package';
+import { hashBilling } from '../domain/billing-policy';
+import { invoiceFindingSource } from './billing-invoice-finding';
 import { BillingReconcilerService } from './billing-reconciler.service';
 import { BillingService, type BillingSnapshot } from './billing.service';
 
@@ -17,6 +19,7 @@ function fixtureStripe(run: string, stripeAccountId: string, billingAccountId: s
   const compact = run.replaceAll('-', '');
   const subscriptions = new Map<string, any>();
   const calls: { method: string; path: string; params?: any; key?: string }[] = [];
+  const paid: Record<string, any> = {}; // Set by `pay`: the paid one-time Checkout of the advance attempt.
   let sessionPayload: any;
   const stripe = {
     enabled: true, accountId: stripeAccountId, livemode: false,
@@ -57,11 +60,15 @@ function fixtureStripe(run: string, stripeAccountId: string, billingAccountId: s
         if (method === 'DELETE') { subscription.status = 'canceled'; return subscription; }
         return subscription;
       }
+      if (method === 'GET' && path === `/checkout/sessions/${paid.session?.id}`) return paid.session;
+      if (method === 'GET' && path === `/invoices/${paid.invoice?.id}`) return paid.invoice;
+      if (method === 'GET' && path === `/payment_intents/${paid.intent?.id}`) return paid.intent;
       throw new Error(`unmocked Stripe request ${method} ${path}`);
     },
     list: async (path: string) => path === '/subscriptions' ? [...subscriptions.values()] :
-      path === '/invoices' ? [] : (() => { throw new Error(`unmocked Stripe list ${path}`); })(),
-    captured: () => ({ calls, sessionPayload, subscriptions }),
+      path === '/invoices' ? [] : path === '/invoice_payments' ? paid.payments : path.endsWith('/line_items') ? paid.checkoutLines :
+      path.endsWith('/lines') ? paid.invoiceLines : (() => { throw new Error(`unmocked Stripe list ${path}`); })(),
+    captured: () => ({ calls, sessionPayload, subscriptions, paid }),
   };
   return stripe;
 }
@@ -158,6 +165,43 @@ async function reconcile(f: Awaited<ReturnType<typeof createFixture>>, attempt: 
   const account = await f.client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } });
   return (f.reconciler as any).reconcileAdvanceDeal(account, attempt, attempt.quoteSnapshot as BillingSnapshot,
     evidence(f, attempt, refunded), paymentIntent(f, purchaseMode), f.lease) as Promise<void>;
+}
+
+/** Stripe's paid card Checkout for the attempt: the objects `paidPackageCheckoutEvidence` checks (billing-event-discount-renewal.pg.spec.ts). */
+function pay(f: Awaited<ReturnType<typeof createFixture>>, attempt: any) {
+  const { quote, productId } = attempt.quoteSnapshot as BillingSnapshot, n = f.compact, created = Math.floor(Date.now() / 1000);
+  const total = quote.totalSatang, tax = quote.taxSatang, price = quote.offer.priceSatang, meta = { billingAttemptId: attempt.id, billingAccountId: f.account.id };
+  const charge = { id: `ch_advance${n}`, livemode: false, status: 'succeeded', paid: true, captured: true, currency: 'thb', amount: total, customer: f.customerId,
+    payment_intent: `pi_advance${n}`, payment_method_details: { type: 'card' }, amount_refunded: 0, disputed: false, balance_transaction: null };
+  return Object.assign((f.stripe as any).captured().paid, {
+    intent: { ...paymentIntent(f, 'CARD_AUTO'), livemode: false, status: 'succeeded', currency: 'thb', amount_received: total, customer: f.customerId, latest_charge: charge },
+    payments: [{ object: 'invoice_payment', livemode: false, status: 'paid', invoice: `in_advance${n}`, amount_paid: total, currency: 'thb',
+      payment: { type: 'payment_intent', payment_intent: `pi_advance${n}` } }],
+    checkoutLines: [{ quantity: 1, currency: 'thb', amount_total: total, amount_tax: tax, amount_discount: 0, price: { id: `price_inline${n}`, product: productId,
+      type: 'one_time', active: false, recurring: null, livemode: false, currency: 'thb', unit_amount: price } }],
+    invoiceLines: [{ parent: { type: 'invoice_item_details', invoice_item_details: { invoice_item: `ii_advance${n}`, subscription: null, proration: false } },
+      pricing: { price_details: { price: `price_inline${n}`, product: productId } }, amount: price, currency: 'thb', livemode: false, quantity: 1 }],
+    session: { id: attempt.checkoutSessionId, object: 'checkout.session', livemode: false, mode: 'payment', status: 'complete', payment_status: 'paid',
+      subscription: null, customer: f.customerId, client_reference_id: attempt.id, metadata: meta, invoice: `in_advance${n}`, payment_intent: `pi_advance${n}`,
+      invoice_creation: { enabled: true }, currency: 'thb', amount_total: total, total_details: { amount_tax: tax, amount_discount: 0, amount_shipping: 0 }, created: created - 60 },
+    invoice: { id: `in_advance${n}`, object: 'invoice', livemode: false, customer: f.customerId, metadata: meta, status: 'paid', billing_reason: 'manual',
+      collection_method: 'send_invoice', parent: null, currency: 'thb', total, amount_paid: total, amount_remaining: 0, starting_balance: 0,
+      total_taxes: tax ? [{ amount: tax }] : [], created, status_transitions: { paid_at: created }, number: null },
+  });
+}
+
+/** A provider scan that found this paid invoice with no local row: what the operator's IMPORT_INVOICE imports. */
+async function discovered(f: Awaited<ReturnType<typeof createFixture>>, invoice: any) {
+  const base = { companyId: f.companyId, stripeAccountId: f.stripeAccountId, livemode: false, state: 'SUCCEEDED', sourceVersion: 0,
+    reason: 'synthetic_scan', initiatorUserId: f.userId, expiresAt: new Date(Date.now() + MS_DAY) };
+  const scan = await f.client.billingOperation.create({ data: { ...base, type: 'SCAN_PROVIDER_INVOICES', requestHash: `scan-${f.compact}`,
+    proposedJson: { accountId: f.account.id, customerId: f.customerId } } });
+  const observation = { accountId: f.account.id, customerId: f.customerId, providerInvoiceId: invoice.id, created: invoice.created,
+    status: 'paid', currency: 'thb', total: invoice.total, paid: invoice.amount_paid, classification: 'LOCAL_MISSING' };
+  const finding = await f.client.billingOperation.create({ data: { ...base, type: 'OBSERVE_PROVIDER_INVOICE', referenceId: scan.id,
+    proposedJson: observation, requestHash: hashBilling([scan.id, observation]) } });
+  const account = await f.client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } });
+  return { id: finding.id, sourceHash: (await invoiceFindingSource(f.client as any, account, finding.id)).sourceHash };
 }
 
 async function clean(client: PrismaClient, companyId: string, userIds: string[], accountId: string) {
@@ -308,6 +352,71 @@ test('advance deal keeps its payment pending without binding a Stripe trial beyo
       const status = await BillingService.prototype.status.call(f.service, { companyId: f.companyId, userId: f.userId } as any);
       assert.equal(status.pendingDeal?.state, 'PENDING_BINDING');
       assert.equal(status.renewalMode, 'CARD_ONCE');
+    } finally {
+      await clean(client, f.companyId, [f.userId, f.salesUserId], f.account.id);
+      await client.$disconnect();
+    }
+  });
+
+test('a discovered card advance-deal invoice imports through the one-time Checkout route and waits for review',
+  { skip: !databaseUrl }, async () => {
+    const url = new URL(databaseUrl!);
+    assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
+    assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci', '/watchdog_preview_20260923'].includes(url.pathname));
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    const f = await createFixture(client, { currentMode: 'CARD_ONCE', paidThrough: new Date(Date.now() + 3 * MS_DAY) });
+    try {
+      const { attempt } = await quoteAndCheckout(f, 'CARD_AUTO');
+      const paid = pay(f, attempt), finding = await discovered(f, paid.invoice);
+      const before = await client.billingAccount.update({ where: { id: f.account.id }, data: { leaseToken: null, leaseUntil: null } });
+      // A card advance deal's invoice has no subscription: it must not fall through to the subscription binding.
+      await f.reconciler.importDiscoveredInvoice(f.account.id, finding.id, finding.sourceHash, async () => {});
+      const invoice = await client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: attempt.id } });
+      assert.deepEqual([invoice.providerInvoiceId, invoice.subscriptionId, invoice.providerStatus, invoice.applyStatus, invoice.paidSatang, invoice.totalSatang],
+        [paid.invoice.id, null, 'paid', 'HELD', paid.invoice.total, paid.invoice.total]);
+      assert.ok(invoice.evidenceHash);
+      assert.equal(await client.billingIssue.count({ where: { companyId: f.companyId, kind: 'PAID_HELD', referenceId: invoice.id } }), 1);
+      const after = await client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } });
+      assert.deepEqual([after.renewalMode, after.contractAttemptId, after.paidThrough?.toISOString(), after.baseSubscriptionId],
+        [before.renewalMode, before.contractAttemptId, before.paidThrough?.toISOString(), null], 'an import records the payment and changes no rights');
+      assert.equal(await client.billingOperation.count({ where: { companyId: f.companyId, type: 'CUSTOMER_ADVANCE_RENEWING_DEAL' } }), 0);
+      assert.equal((f.stripe as any).captured().calls.filter((call: any) => call.method === 'POST' && call.path === '/subscriptions').length, 0);
+    } finally {
+      await clean(client, f.companyId, [f.userId, f.salesUserId], f.account.id);
+      await client.$disconnect();
+    }
+  });
+
+test('a held card advance-deal invoice retries through the one-time Checkout route, never the subscription path',
+  { skip: !databaseUrl }, async () => {
+    const url = new URL(databaseUrl!);
+    assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
+    assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci', '/watchdog_preview_20260923'].includes(url.pathname));
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    const f = await createFixture(client, { currentMode: 'CARD_ONCE', paidThrough: new Date(Date.now() + 3 * MS_DAY) });
+    try {
+      const { attempt } = await quoteAndCheckout(f, 'CARD_AUTO');
+      pay(f, attempt);
+      // The normal paid path (active attempt) holds the payment while the old term's source has drifted.
+      const source = await client.billingAccount.update({ where: { id: f.account.id }, data: { leaseToken: null, leaseUntil: null, termProjectionHash: 'old-source-drift' } });
+      await f.reconciler.reconcileAccount(f.account.id);
+      const held = await client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: attempt.id } });
+      assert.equal(held.applyStatus, 'HELD');
+      await client.billingAccount.update({ where: { id: f.account.id }, data: { termProjectionHash: termProjectionHash(f.term) } });
+      const { calls } = (f.stripe as any).captured(), from = calls.length;
+      // The operator's RETRY_APPLY of that held invoice.
+      await f.reconciler.reconcileAccount(f.account.id, undefined, undefined, held.id);
+      const retry = calls.slice(from).map((call: any) => `${call.method} ${call.path}`);
+      assert.ok(retry.includes(`GET /checkout/sessions/${attempt.checkoutSessionId}`), 'the retry re-verifies the paid Checkout');
+      assert.ok(!retry.some((call: string) => call.includes('/subscriptions')), 'never the subscription path, and a held payment binds no renewal');
+      assert.equal((await client.billingOperation.findUniqueOrThrow({ where: { stripeAccountId_livemode_idempotencyKey: {
+        stripeAccountId: f.stripeAccountId, livemode: false, idempotencyKey: `advance-deal:${attempt.id}` } } })).type, 'CUSTOMER_ADVANCE_RENEWING_DEAL');
+      const invoice = await client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: attempt.id } });
+      assert.deepEqual([invoice.id, invoice.applyStatus, invoice.evidenceHash], [held.id, 'HELD', held.evidenceHash]);
+      const current = await client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } });
+      assert.deepEqual([current.renewalMode, current.contractAttemptId, current.paidThrough?.toISOString(), current.baseSubscriptionId, current.activeAttemptId],
+        ['CARD_ONCE', f.oldAttemptId, source.paidThrough?.toISOString(), null, attempt.id], 'the old one-time term stays authoritative');
+      assert.equal((await client.companyPlanTerm.findUniqueOrThrow({ where: { companyId: f.companyId } })).termEndsAt.toISOString(), f.term.termEndsAt.toISOString());
     } finally {
       await clean(client, f.companyId, [f.userId, f.salesUserId], f.account.id);
       await client.$disconnect();

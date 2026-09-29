@@ -38,6 +38,7 @@ import { dealSnapshotHash } from '../domain/deal-offer';
 import type { PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { releaseEventDiscount, useEventDiscount } from './billing-event-discount';
 import { eventDiscountCardAuto } from '../domain/billing-event-discount.logic';
+import { paymentCheckoutSnapshot } from '../domain/billing-checkout-mode';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
@@ -425,7 +426,7 @@ export class BillingReconcilerService {
         if(subscription||session.mode!=='payment'||stripeId(session.invoice)!==invoice.id)throw new Error('billing.original_invoice_changed');
         await this.billing.repeater.importPayment(account,attempt,session,invoice,lease,recordOnly);return;
       }
-      if ((['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(snapshot.quote.purchaseMode ?? '') || eventDiscountCardAuto(snapshot)) && !subscription) {
+      if (paymentCheckoutSnapshot(snapshot) && !subscription) {
         if (subscription || session.mode !== 'payment' || stripeId(session.invoice) !== invoice.id) throw new Error('billing.original_invoice_changed');
         await this.reconcileOneTime(account, attempt, lease, recordOnly, session, invoice);
         return;
@@ -461,8 +462,7 @@ export class BillingReconcilerService {
       // Continue only the customer's original paid pack; the existing journal fences every command.
       await this.billing.repeater.advance(account,initial,lease,this.config.sesWebBaseUrl);return;
     }
-    if (initial && (['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes((initial.quoteSnapshot as unknown as BillingSnapshot).quote.purchaseMode ?? '') ||
-        eventDiscountCardAuto(initial.quoteSnapshot as unknown as BillingSnapshot))) {
+    if (initial && paymentCheckoutSnapshot(initial.quoteSnapshot as unknown as BillingSnapshot)) {
       if (account.activeAttemptId !== initial.id) throw new Error('billing.original_attempt_changed');
       await this.reconcileOneTime(account, initial, lease);
       return;
