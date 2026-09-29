@@ -10,6 +10,33 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Release 2026-09-29 — UAT and Production Kamal (current)
+
+The owner started both UAT hosts at about 09:24 Bangkok; they had been stopped since 2026-09-26. Every release below used the local Kamal path from a clean `main` controller worktree, with `--uat-browser-acceptance` or `--production-browser-acceptance`. In each case the owner typed the credentials themselves in the Claude built-in browser. The controller then verified `/auth/me` identity and permissions, the platform-access page, public `OPEN`, logout, and the 401 after logout. GitHub workflow IDs are `NOT_DISPATCHED`.
+
+| Env | Operation | Source (main) | Result | Seconds |
+|---|---|---|---|---|
+| UAT | `20260929T024943Z-22bb5a1e` | `a521e2c8` (purchase-without-setup + review fixes) | ACCEPTED_LINE_DEFERRED 10:01 | 680.8 |
+| UAT | `20260929T040700Z-6f8f3bd2` | `a2d11e89` (LINE AI fix #865–#868) | ACCEPTED_LINE_DEFERRED 11:15 | 515.3 |
+| UAT | `20260929T044840Z-9356f353` | `c4513ddd` (photo fix #872/#873, partner retry #870) | ACCEPTED_LINE_DEFERRED 11:55 | — |
+| Production | `20260929T045818Z-2a6d7b34` | `c4513ddd`, promoted from `9356f353` with no rebuild | ACCEPTED_LINE_DEFERRED 12:07, serving `live`, `OPEN`, 10/10 checks, 4 SSM sessions closed | 547.9 |
+
+These releases applied 12 pending migrations (`20260926120000` … `20260929030000`) with `migrate deploy`; none contained destructive SQL. Production was previously `a2b926c6`.
+
+**AgentCore env is copied forward.** `infra/kamal/release.py` `agentcore()` builds the runtime env as `{**deployed env, **identity keys}`. Any `LINE_AI_*` value set when the runtime was created stays in AgentCore forever, and a key that was never set falls back to its code default. On 2026-09-29 this left AgentCore on a stale four-family prepared-read list, with the tool-use loop off, on both UAT and production. The AI turn path now reads no capability switches (#865). Do not rely on changing AgentCore env through a release.
+
+**UAT API host disk.** The prepare capacity check requires 2 × (api-web + tools image) + 2 GiB free on the Docker filesystem. On 2026-09-29 the API host `i-0eb581c5ac3b3d7ba` had 3.5 GB free (38 GB disk, 91% used). The cause was 20 retained `releases:*-tools` images from earlier releases.
+
+Remediation, read-only first:
+1. Open an SSM port-forward and run strict-host-key SSH with the enrolled key and the latest run's `known_hosts`.
+2. Run `docker system df` and `docker images`.
+3. `docker rmi` the old `-tools` tags, keeping the current and previous release (api-web images of retained Kamal containers stay), plus unused `kamal-proxy:v0.8.0`.
+4. `docker image prune -f`.
+
+Free space went to 28 GB. The prepare that failed there (`20260929T035053Z-e4a71e64`, FAILED before any mutation) was followed by a clean prepare. Always terminate the SSM sessions afterwards. A script that starts port-forwards in a `$(…)` subshell loses their PIDs and session ids for cleanup, so keep them in the parent shell.
+
+---
+
 ## Read-only timing/inventory checkpoint — 2026-09-26
 
 This live read supersedes the September25 running-host snapshot for UAT: API
