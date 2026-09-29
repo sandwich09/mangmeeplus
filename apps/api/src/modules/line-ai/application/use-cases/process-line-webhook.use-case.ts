@@ -3,7 +3,7 @@ import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSema
 import { PDFDocument } from 'pdf-lib';
 import { LineDocumentQaError, LineDocumentQaService, type LineDocumentQaJobRow, type LineDocumentQaOwner } from '../line-document-qa.service';
 import { LineDocumentQaWorker } from '../line-document-qa.worker';
-import { parseLineDocumentQaResult } from '@watchdog-bms/contracts';
+import { parseLineDocumentQaQuestions, parseLineDocumentQaResult } from '@watchdog-bms/contracts';
 import { LineReimbursementDraftService } from '../line-reimbursement-draft.service';
 import type { LineReimbursementDraftResult } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
 import { LineReimbursementDraftAdapterService } from '../line-reimbursement-draft-adapter.service';
@@ -46,6 +46,7 @@ import {
   CompleteReceiptUploadUseCase,
 } from '../../../expenses/application/use-cases/expense-upload.use-case';
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
+import { aiSelectableExpenseCategories } from '../../../expenses/application/services/expense-category-bootstrap.service';
 import { LINE_RECENT_CAPTURE_WINDOW_MS, listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/line-receipt-status.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
@@ -753,6 +754,12 @@ function pendingMediaOrderLabel(row: { mimeType?: string | null; createdAt?: Dat
   return withTime && row.createdAt instanceof Date
     ? `${label} (ส่งเมื่อ ${new Intl.DateTimeFormat('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }).format(row.createdAt)} น.)`
     : label;
+}
+/** A pending file clause is named by the customer's own words, never the router's internal goal (NAT06 2026-09-29:
+ *  "Replace the previously sent file…" reached the chat in English). */
+function documentQaAskedWords(job: { questionsJson?: unknown; questionText: string }): (item: { index: number; goal: string }) => string {
+  const questions = job.questionsJson == null ? undefined : parseLineDocumentQaQuestions(job.questionsJson, job.questionText);
+  return item => questions?.find(question => question.subrequestIndex === item.index)?.question ?? item.goal;
 }
 /** Stands in for the request when a picture arrives with no caption — the file IS the ask. */
 const MEDIA_PENDING_REQUEST_TEXT = 'ไฟล์ที่ผู้ใช้ส่งมาโดยยังไม่ได้ระบุคำถาม';
@@ -2319,8 +2326,11 @@ export class ProcessLineWebhookUseCase {
         && (input.attachment.mimeType === 'image/png' || input.attachment.mimeType === 'image/jpeg');
       const budgetGrantV2 = input.event ? await this.prepareTextGrantV2(input.event, input.requestId, hasImageContent) : undefined;
       const reliabilityContext = input.event ? await this.reliabilityContext(input.event) : {};
-      const activeCategories = !budgetGrantV2 && this.expenseRepo
-        ? (await this.expenseRepo.listCategories(input.companyId)).map((c) => ({ id: c.id, name: c.name }))
+      // Bound private turns get the catalogue too: without it the capture hint below can never name a
+      // category, and every LINE draft was saved uncategorised (UAT 2026-09-29, "ค่าส่งของ 300 บาท").
+      // Only an actor who may create an expense draft needs it; question-only turns read no expense data.
+      const activeCategories = this.expenseRepo && RECEIPT_CAPTURE_PERMISSIONS.some((permission) => input.permissions.includes(permission))
+        ? aiSelectableExpenseCategories(await this.expenseRepo.listCategories(input.companyId)).map((c) => ({ id: c.id, name: c.name }))
         : [];
       const offeredToolNames = lineIntakeOfferedToolNames({
         permissions: input.permissions,
@@ -5776,6 +5786,7 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'provider_unavailable', semanticRoutePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
       if (await this.resumeDocumentQuestionV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
+      if (await this.draftCurrentDocumentV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
       if (semanticRoutePlan.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
         await this.deliverPureGeneralV2(event, requestId, semanticRoutePlan, resolvedAccess, entitledFeatureKeys, candidates, conversationContext); return;
       }
@@ -9663,9 +9674,16 @@ ${link}`, ctx.companyId, access);
     // Owner 2026-09-29: a file is picked by order or time ("รูปแรก", "ไฟล์ที่ 2", "รูปล่าสุด"), never by a code.
     const ordered = [...candidates].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
     const byOrder = pendingMediaByOrderWords(event.messageText, ordered);
+    // NAT06 (2026-09-29): the file this chat is about is the newest one the user asked about, with every
+    // file read beside it. "ส่งผิด เอาไฟล์นี้แทน" then "หน้าสองเขียนว่าไง" means the new file, and a question
+    // naming another file ("เทียบกับไฟล์แรก") reads that one beside it. A newest file never asked about
+    // leaves no current file, so several files still ask which one.
+    const newest = ordered.at(-1);
+    const current = newest?.readJobId ? ordered.filter(row => row.readJobId === newest.readJobId) : [];
     const selected = requestedIds.size ? candidates.filter(row => requestedIds.has(row.attachmentId))
-      : byOrder ? [byOrder]
-      : selectedIds.length ? candidates.filter(row => selectedIds.includes(row.attachmentId)) : candidates.length === 1 ? candidates : [];
+      : byOrder ? [byOrder, ...current.filter(row => row !== byOrder)].slice(0, 5)
+      : selectedIds.length ? candidates.filter(row => selectedIds.includes(row.attachmentId))
+      : current.length ? current : candidates.length === 1 ? candidates : [];
     if (!selected.length || selected.length > 5 || requestedIds.size && selected.length !== requestedIds.size
       || !requestedIds.size && !byOrder && selectedIds.length > 0 && selected.length !== selectedIds.length) {
       await this.deliverReply(event, `มีไฟล์ก่อนหน้าหลายไฟล์ค่ะ กรุณาบอกว่าหมายถึงไฟล์ไหน เช่น "${pendingMediaOrderLabel(ordered[0]!, 0)}" ไม่ได้เลือกไฟล์ล่าสุดแทนให้\n${ordered.map((row, i) => pendingMediaOrderLabel(row, i, true)).join('\n')}`);
@@ -9725,6 +9743,45 @@ ${link}`, ctx.companyId, access);
     return true;
   }
 
+  /** NAT05 (2026-09-29): "ทำร่างค่าอาหารจากใบนี้" right after reading a file names no amount of its own, so its
+   *  only source is the file this chat is about. It becomes an ordinary LINE draft of those stored bytes, read by
+   *  the durable job the file lane queues and announced by the same result push — not a text note that asks for
+   *  an amount, and never the read-only reader. Redelivery finds the draft the file already made. */
+  private async draftCurrentDocumentV2(event: LineTextEvent, requestId: string, route: GovernedLineIntakeRoutePlan,
+    access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>): Promise<boolean> {
+    const bound = this.boundConversations.get(event), items = route.semanticSubrequests ?? [];
+    const writes = items.filter(item => item.kind === 'write');
+    if (!bound || !this.expenseRepo || !this.captureLine || writes.length !== 1 || writes[0]!.writeIntent !== 'EXPENSE_DOCUMENT_CAPTURE'
+      || items.some(item => !['write', 'general', 'help'].includes(item.kind))
+      || !['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'].some(permission => access.permissions.includes(permission))
+      || (await this.textValueCandidates(event, event.messageText))?.amounts.length) return false;
+    const { companyId, userId } = bound.owner;
+    const rows = await this.prisma.client.lineIntakePendingMedia.findMany({ where: { companyId, userId, ...this.pendingMediaBinding(event),
+      readJobId: { not: null }, status: { in: ['PENDING', 'RESOLVED_RECEIPT'] }, expiresAt: { gt: new Date() },
+      createdAt: { gt: new Date(Date.now() - 15 * 60_000) } }, orderBy: { createdAt: 'desc' }, take: 6 });
+    const current = rows.filter(row => row.readJobId === rows[0]?.readJobId);
+    if (current.length !== 1) return false;
+    const file = current[0]!;
+    const attachment = await this.prisma.client.attachmentObject.findFirst({ where: { id: file.attachmentId, companyId, uploadedByUserId: userId, status: 'ACTIVE' },
+      select: { checksumSha256: true } });
+    if (!attachment) return false;
+    const chatKeyHash = chatKeyHashOf(event);
+    const expenseId = (await this.expenseRepo.findByLineMessageId(companyId, file.lineMessageId))?.id
+      ?? (await this.createReceiptDraftFromPendingMedia(requestId, userId, companyId, event.webhookEventId, file, access.scopes, chatKeyHash, access.membershipId,
+        // The result push finds its chat from these, exactly as for a draft the file lane made.
+        { lineMessageId: file.lineMessageId, lineEventId: event.webhookEventId, pushTargetId: event.pushTargetId ?? event.lineUserId,
+          ownerBinding: { conversationId: bound.id, membershipId: bound.owner.membershipId, channelId: bound.owner.messagingChannelId, ownerEpoch: bound.epoch } })).expenseId;
+    const saved = await this.expenseRepo.findById(companyId, expenseId);
+    await this.captureLine.queueExpenseRead({ companyId, expenseId, attachmentId: file.attachmentId, attachmentChecksum: attachment.checksumSha256 ?? null,
+      expectedSourceUpdatedAt: saved?.updatedAt ?? null });
+    const reply = 'กำลังอ่านไฟล์นี้เพื่อทำร่างค่าใช้จ่ายให้ตรวจค่ะ อ่านเสร็จจะส่งร่างในแชตนี้ ยังไม่ได้ยืนยันรายการหรือจ่ายเงิน';
+    await this.deliverCompletedReply(event, reply, companyId, access);
+    await this.persistIntakeTurn({ event, userId, companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: event.messageText, replyText: reply, intent: 'EVIDENCE_CAPTURE' });
+    await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+    return true;
+  }
+
   private async deliverDocumentQaResult(event: LineReceiptUploadEvent | LineTextEvent, jobId: string, owner: LineDocumentQaOwner): Promise<boolean> {
     const inventory = await this.restoreDocumentQaTask(event, jobId);
     const job = await this.documentQa.getForDelivery(jobId, owner);
@@ -9734,16 +9791,20 @@ ${link}`, ctx.companyId, access);
         || terminal.companyId !== owner.companyId || terminal.userId !== owner.userId || terminal.ownerMembershipId !== owner.membershipId
         || terminal.ownerEpoch !== owner.ownerEpoch || terminal.messagingChannelId !== owner.messagingChannelId || terminal.chatKeyHash !== owner.chatKeyHash) return false;
       const text = terminal.status === 'CANCELED' ? 'ยกเลิกงานอ่านไฟล์นี้แล้ว ยังไม่ได้สร้างรายการให้'
-        : terminal.status === 'EXPIRED' ? 'งานอ่านไฟล์นี้หมดเวลาแล้ว กรุณาส่งคำถามใหม่พร้อมไฟล์ ยังไม่ได้สร้างรายการให้'
-          : 'ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ กรุณาส่งไฟล์ที่ชัดเจนหรือเลือกหน้าใหม่ ยังไม่ได้สร้างรายการให้';
-      const coverage = inventory.map(item => ({ index: item.index, status: 'needs_user' as const, reasonCode: 'QA_NOT_COMPLETED', question: item.goal }));
+        : terminal.status === 'EXPIRED' ? 'งานอ่านไฟล์นี้หมดเวลาแล้ว ไฟล์ยังเก็บไว้ พิมพ์ถามอีกครั้งได้เลยค่ะ ยังไม่ได้สร้างรายการให้'
+          : 'ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ ไฟล์ยังเก็บไว้ พิมพ์ถามอีกครั้ง ส่งไฟล์ที่ชัดกว่า หรือเลือกหน้าใหม่ได้ค่ะ ยังไม่ได้สร้างรายการให้';
+      const said = documentQaAskedWords(terminal);
+      const coverage = inventory.map(item => ({ index: item.index, status: 'needs_user' as const, reasonCode: 'QA_NOT_COMPLETED', question: said(item) }));
       if (coverage.length) this.semanticDelivery.set(event, coverage);
       const remaining = inventory.filter(item => item.kind !== 'file');
-      const notice = remaining.length ? `\n\nส่วนที่ยังไม่ได้ตอบ: ${remaining.map(item => item.goal).join(' / ')} กรุณาเลือกถามต่อได้ค่ะ` : '';
+      const notice = remaining.length ? `\n\nส่วนที่ยังไม่ได้ตอบ: ${remaining.map(said).join(' / ')} กรุณาเลือกถามต่อได้ค่ะ` : '';
       if (await this.deliverMessages(event, [{ type: 'text', text: text + notice }]) !== 'ok') return false;
       if (coverage.length) await this.settleSemanticTask(event as LineTextEvent, coverage);
+      // A failed or timed-out read keeps the file, so asking again or a new page reads it again; only a
+      // cancel lets it go.
       await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { readJobId: jobId, companyId: owner.companyId, userId: owner.userId,
-        messagingChannelId: owner.messagingChannelId, chatKeyHash: owner.chatKeyHash, lifecycleEpoch: owner.ownerEpoch }, data: { status: 'EXPIRED', revision: { increment: 1 } } });
+        messagingChannelId: owner.messagingChannelId, chatKeyHash: owner.chatKeyHash, lifecycleEpoch: owner.ownerEpoch },
+        data: { status: terminal.status === 'CANCELED' ? 'EXPIRED' : 'RESOLVED_RECEIPT', revision: { increment: 1 } } });
       await this.updateEventLog(event.webhookEventId, 'document_qa_failed', terminal.errorCode ?? undefined, owner.companyId); return true;
     }
     const result = parseLineDocumentQaResult(job.resultJson); if (!result) return false;
@@ -9753,16 +9814,19 @@ ${link}`, ctx.companyId, access);
     const readOrder = [...new Set(result.coverage.requested.map(page => page.attachmentId))];
     const fileOrdinal = (attachmentId: string) => readOrder.includes(attachmentId) ? ` ลำดับที่ ${readOrder.indexOf(attachmentId) + 1}` : '';
     const failed = result.coverage.failed.map(page => `ยังอ่านเอกสารแนบ${fileOrdinal(page.attachmentId)} หน้า ${page.page} ไม่สำเร็จ`).join('\n');
+    const said = documentQaAskedWords(job);
     const coverage = inventory.map(item => {
       const answer = result.questionCoverage?.find(answer => answer.subrequestIndex === item.index);
       return item.kind === 'file' && answer?.status === 'answered'
         ? { index: item.index, status: 'handled' as const }
-        : { index: item.index, status: 'needs_user' as const, reasonCode: item.kind === 'file' ? 'QA_QUESTION_INCOMPLETE' : 'QA_SEPARATE_CLAUSE_PENDING', question: item.goal };
+        : { index: item.index, status: 'needs_user' as const, reasonCode: item.kind === 'file' ? 'QA_QUESTION_INCOMPLETE' : 'QA_SEPARATE_CLAUSE_PENDING', question: said(item) };
     });
     if (coverage.length) this.semanticDelivery.set(event, coverage);
     const remaining = inventory.filter(item => coverage.find(entry => entry.index === item.index)?.status === 'needs_user');
-    const notice = remaining.length ? `\n\nยังตอบได้ไม่ครบทุกส่วน ส่วนที่ยังรอ: ${remaining.map(item => item.goal).join(' / ')} กรุณาเลือกถามต่อได้ค่ะ` : '';
-    const text = `${result.answer}\n\nแหล่งคำตอบ: ${result.answerPageRefs.map(ref => `เอกสารแนบ${fileOrdinal(ref.attachmentId)} หน้า ${ref.page}`).join(', ')}\nอ่าน ${result.coverage.read.length}/${result.coverage.requested.length} หน้า${failed ? `\nหน้าที่ยังอ่านไม่ได้\n${failed}` : ''}${notice}`;
+    const notice = remaining.length ? `\n\nยังตอบได้ไม่ครบทุกส่วน ส่วนที่ยังรอ: ${remaining.map(said).join(' / ')} กรุณาเลือกถามต่อได้ค่ะ` : '';
+    // A reader that still names a file by its id is rewritten to the file's order (Owner 2026-09-29: no ids reach the customer).
+    const answer = readOrder.reduce((value, attachmentId, index) => value.replaceAll(attachmentId, `ไฟล์ที่ ${index + 1}`), result.answer);
+    const text = `${answer}\n\nแหล่งคำตอบ: ${result.answerPageRefs.map(ref => `เอกสารแนบ${fileOrdinal(ref.attachmentId)} หน้า ${ref.page}`).join(', ')}\nอ่าน ${result.coverage.read.length}/${result.coverage.requested.length} หน้า${failed ? `\nหน้าที่ยังอ่านไม่ได้\n${failed}` : ''}${notice}`;
     const delivery = await this.deliverMessages(event, [{ type: 'text', text }]);
     if (delivery !== 'ok') return false;
     if (coverage.length) await this.settleSemanticTask(event as LineTextEvent, coverage);
@@ -9780,6 +9844,11 @@ ${link}`, ctx.companyId, access);
       try {
         const target = row.askedQuestionJson as { webhookEventId?: string; lineUserId?: string };
         if (!target.webhookEventId || !target.lineUserId || !row.messagingChannelId || !row.membershipId || !row.chatKeyHash) continue;
+        // The turn that admitted this read answers it until its foreground window closes. Delivering here as
+        // well raced that turn for the same event, and the loser parked an answered event as delivery_pending
+        // (NAT06 2026-09-29), so recovery waits for the window to pass.
+        const job = await this.documentQa.getById(row.readJobId!).catch(() => null);
+        if (!job || job.foregroundDeadlineAt.getTime() > Date.now()) continue;
         const owner: LineConversationOwner = { companyId: row.companyId, userId: row.userId, membershipId: row.membershipId,
           channel: 'line', channelKind: 'USER', messagingChannelId: row.messagingChannelId, chatKeyHash: row.chatKeyHash };
         const current = await this.contextV2.load(owner);
@@ -10854,6 +10923,7 @@ ${link}`, ctx.companyId, access);
     scopes: { branchIds?: string[] },
     chatKeyHash: string,
     membershipId?: string,
+    lineCapture?: Record<string, unknown>,
   ): Promise<{ expenseId: string; hasDuplicate: boolean }> {
     const expense = await this.expenseRepo!.createExpense({
       companyId,
@@ -10874,7 +10944,7 @@ ${link}`, ctx.companyId, access);
       whtAmount: '0', grandTotalAmount: '0', netPayableAmount: '0', outstandingAmount: '0',
       // Chat provenance for correction targeting — the pending-media path creates drafts too,
       // so omitting it here would make clarified receipts uncorrectable.
-      ...(chatKeyHash ? { sourceChannelMetadataJson: { channel: 'LINE', kind: 'pending_media', chatKeyHash } } : {}),
+      ...(chatKeyHash ? { sourceChannelMetadataJson: { channel: 'LINE', kind: 'pending_media', chatKeyHash, ...lineCapture } } : {}),
     });
     const hasDuplicate = await this.completeReceiptDraft(expense.id, pending, companyId, userId, scopes, chatKeyHash);
     await this.audit.log({
@@ -11024,7 +11094,7 @@ ${link}`, ctx.companyId, access);
     }
     try {
       const activeCategories = this.expenseRepo
-        ? (await this.expenseRepo.listCategories(ctx.companyId)).map((category) => ({ id: category.id, name: category.name }))
+        ? aiSelectableExpenseCategories(await this.expenseRepo.listCategories(ctx.companyId)).map((category) => ({ id: category.id, name: category.name }))
         : [];
       const result = await this.aiGateway.requestReceiptOcr({
         requestId: ctx.requestId,

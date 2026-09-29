@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "04dd456104655d290e8f4a3cefaa657647dd78c9",
-  "checkoutBranch": "claude/line-photo-ack-and-direct-read-20260929",
+  "sourceRevision": "9c96de9ccd39b7a4656573ce8005e7c6589c365c",
+  "checkoutBranch": "claude/line-expense-category-pick-20260929",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -29,7 +29,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-document-qa.worker.ts",
-      "sha256": "f0ab005ac14b13ce9578d6a8a8ba548cf58b82c1744afb66dbd43e15da274892"
+      "sha256": "bfaa14bcfeb2007275de5e07a29ec32b35724e7aa03c98e6c910d520a2cd35e0"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "47396411a56152447e87d75b55d8727321184355403ba2fb55a9fbbda3d3b1d6"
+      "sha256": "38af20fbfb63abc4eafef0c799cef518352bc00a27ef76c65cf8efb0ba2948d3"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -165,7 +165,7 @@
     },
     {
       "path": "docs/specs/mangmee-ai-core-capability-contract-2026-09-27.md",
-      "sha256": "6227f4acdebf57c3bf0c27ab1f2c61e911eaa1e758e0c3f664871d2810539bd5"
+      "sha256": "39b331e40064aa6ceb85acee454ac946b755a5182af7e354aa3b17f28d0855f6"
     },
     {
       "path": "packages/config/src/index.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T12:58:35.380Z",
-  "manifestDigest": "7459eea442a057b4042c18b386dc1137cd1a50bd37563a3e0266b94b6ad6f60c"
+  "generatedAt": "2026-09-29T16:26:56.215Z",
+  "manifestDigest": "9bbbcdab6a36e2ceaa0a21b338a6e9d52277bd4ebfa83f1ef57535b3e9666aa1"
 }

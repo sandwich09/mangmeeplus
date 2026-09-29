@@ -75,7 +75,9 @@ function firstBalancedObject(text: string, escapeStrayQuotes: boolean): string |
       out += ch;
       continue;
     }
-    out += ch;
+    // NAT06 (2026-09-29): a Thai-keyboard model once separated two array elements with a fullwidth comma
+    // "，" — outside a string that is always the ASCII separator it meant.
+    out += ch === '，' ? ',' : ch === '：' ? ':' : ch;
     if (ch === '"') inString = true;
     else if (ch === '{' || ch === '[') depth++;
     else if (ch === '}' || ch === ']') { depth--; if (depth === 0) return out; }
