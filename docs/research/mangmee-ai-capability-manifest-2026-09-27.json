@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "04dd456104655d290e8f4a3cefaa657647dd78c9",
-  "checkoutBranch": "claude/line-photo-ack-and-direct-read-20260929",
-  "checkoutDirty": true,
+  "sourceRevision": "c57a2301d8e47e37bfe6cbc299dda956090d18f4",
+  "checkoutBranch": "claude/line-ai-document-qa-fix-20260929",
+  "checkoutDirty": false,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -29,7 +29,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-document-qa.worker.ts",
-      "sha256": "f0ab005ac14b13ce9578d6a8a8ba548cf58b82c1744afb66dbd43e15da274892"
+      "sha256": "bfaa14bcfeb2007275de5e07a29ec32b35724e7aa03c98e6c910d520a2cd35e0"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "47396411a56152447e87d75b55d8727321184355403ba2fb55a9fbbda3d3b1d6"
+      "sha256": "e41475b7c71f42c08b8dddbc7e62cfdf4a3e43fa97f3961f7267fbcb80d982b8"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -165,7 +165,7 @@
     },
     {
       "path": "docs/specs/mangmee-ai-core-capability-contract-2026-09-27.md",
-      "sha256": "6227f4acdebf57c3bf0c27ab1f2c61e911eaa1e758e0c3f664871d2810539bd5"
+      "sha256": "39b331e40064aa6ceb85acee454ac946b755a5182af7e354aa3b17f28d0855f6"
     },
     {
       "path": "packages/config/src/index.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T12:58:35.380Z",
-  "manifestDigest": "7459eea442a057b4042c18b386dc1137cd1a50bd37563a3e0266b94b6ad6f60c"
+  "generatedAt": "2026-09-29T14:24:14.829Z",
+  "manifestDigest": "ea01e53f72c35150acb3e2f9375970b58ed77d93c0cf8782324262f584d5a2a5"
 }

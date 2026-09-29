@@ -60,4 +60,8 @@ describe('extractJson', () => {
     const parsed = JSON.parse(extractJson(raw)) as { advisorAnswer?: { answerText?: string } };
     assert.match(parsed.advisorAnswer?.answerText ?? '', /ใบรับรองการหัก ณ ที่จ่าย/);
   });
+  it('NAT06 real sample: a fullwidth comma between array elements is the separator it meant', () => {
+    const raw = '{"pages":[{"page":1,"evidence":[]}，{"page":2,"text":"หน้า ๒，ยังอ่านได้"}]}';
+    assert.deepEqual(JSON.parse(extractJson(raw)), { pages: [{ page: 1, evidence: [] }, { page: 2, text: 'หน้า ๒，ยังอ่านได้' }] });
+  });
 });
