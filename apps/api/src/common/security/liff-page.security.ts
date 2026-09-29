@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { PRIVATE_NO_STORE } from '../middleware/api-cache-control.middleware';
+
 export const LINE_ID_TOKEN_MAX_LENGTH = 4096;
 export const LINE_ID_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 export const LINE_CHANNEL_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -115,7 +118,7 @@ ${input.content}
     </div>
   </main>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script src="/v1/auth/line/link-page.js"></script>
+  <script src="${LIFF_PAGE_SCRIPT_URL}"></script>
 </body>
 </html>`;
 }
@@ -140,10 +143,10 @@ export const LIFF_EVENT_DISCOUNT_PAGE = {
       <section id="ticket-view" hidden>
         <p id="ticket-event"></p>
         <ul id="ticket-rewards"></ul>
+        <p id="ticket-note" class="note" hidden></p>
         <p id="ticket-expiry"></p>
         <p><button id="open-mangmee" type="button" hidden>เปิดมั่งมี</button></p>
         <div id="companies" hidden></div>
-        <p><button id="open-web" type="button" hidden>เปิดหน้าเว็บ</button></p>
         <p><a id="go-signup" class="btn" href="/v1/auth/line/link-page/signup" hidden>เปิดร้านใหม่</a></p>
         <p id="signup-hint" class="note" hidden>ถ้ามีบัญชีมั่งมีอยู่แล้ว ให้เข้าสู่ระบบด้วย LINE นี้ก่อน</p>
         <p class="note">ส่วนลดนี้เป็นของบัญชี LINE นี้ ใช้ได้เมื่อคุณเป็นเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจของร้าน ถ้าจะใช้กับร้านที่คุณทำงานอยู่ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจสแกนรับเอง</p>
@@ -309,6 +312,14 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const EVENT_DISCOUNT_LINE_FAILED = { tone: 'error', text: 'เปิดจาก LINE ไม่สำเร็จ', advice: 'ปิดหน้านี้แล้วสแกน QR อีกครั้งด้วยแอป LINE นะคะ' };
   const EVENT_DISCOUNT_FAILED = { tone: 'error', text: 'รับส่วนลดไม่สำเร็จ', advice: 'แตะ ลองอีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH };
   const EVENT_DISCOUNT_OPEN_FAILED = { tone: 'error', text: 'เปิดมั่งมีไม่สำเร็จ', advice: 'แตะ เปิดมั่งมี อีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH };
+  /** Owner 2026-09-29: event-neutral words, under the discount line only. */
+  const EVENT_DISCOUNT_NOTE_TH = 'เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง';
+  /** Shown only when a tap had to prepare the link, because that tap opened nothing. */
+  const EVENT_READY_TH = 'พร้อมแล้วค่ะ แตะ เปิดมั่งมี เพื่อเข้าร้าน';
+  /** A prepared link older than this is re-prepared, not opened: the server mints it for 15 minutes.
+   *  ponytail: a fixed margin; return the token's expiry from the session if it ever must be exact. */
+  const EVENT_HANDOFF_FRESH_MS = 10 * 60 * 1000;
+  let preparedAt = 0;
   /** One key per page load: a retry of the same scan is the same claim. */
   const eventDiscountRequestKey = mode === 'event-discount' ? newSubmissionId() : '';
   let eventDiscountShown = false;
@@ -1091,15 +1102,12 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     return Number(value).toLocaleString('th-TH', { maximumFractionDigits: 2 });
   }
 
-  /** Spec §3.3: only the rewards this batch gives. AI credit arrives in 0.01-credit units. */
+  /**
+   * Spec §3.3, Owner 2026-09-29: the discount only, in words that fit any event — credit for shops
+   * that already pay is withdrawn for now, so the page promises none, even on a ticket that has some.
+   */
   function eventDiscountRewardLines(ticket) {
-    const lines = [];
-    if (ticket.discountSatang > 0) lines.push('ลด ' + thaiNumber(ticket.discountSatang / 100) + ' บาท ตอนจ่ายค่าแพ็กเกจ เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง');
-    const credit = [];
-    if (ticket.chatCreditUnits > 0) credit.push('เครดิต AI ' + thaiNumber(ticket.chatCreditUnits / 100) + ' เครดิต');
-    if (ticket.receiptImageUnits > 0) credit.push('จำนวนอ่านรูปใบเสร็จ ' + thaiNumber(ticket.receiptImageUnits) + ' รูป');
-    if (credit.length > 0) lines.push('ร้านที่มีแพ็กเกจอยู่แล้ว: รับ' + credit.join(' และ'));
-    return lines;
+    return ticket.discountSatang > 0 ? ['ส่วนลด ' + thaiNumber(ticket.discountSatang / 100) + ' บาท ใช้ตอนจ่ายค่าแพ็กเกจ'] : [];
   }
 
   function renderEventDiscount(result) {
@@ -1117,6 +1125,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       item.textContent = lines[index];
       rewardsEl.appendChild(item);
     }
+    setMessage(document.getElementById('ticket-note'), lines.length > 0 ? EVENT_DISCOUNT_NOTE_TH : '');
     const until = new Date(ticket.expiresAt).toLocaleString('th-TH', {
       timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
     });
@@ -1159,13 +1168,26 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     let result = null;
     try { result = JSON.parse(text); } catch { throw refusal(EVENT_DISCOUNT_FAILED); }
     renderEventDiscount(result);
+    // One tap (Owner 2026-09-29): preparing the handoff needs no gesture — only opening it does.
+    if (result.next === 'OPEN_PACKAGE') void prepareMangmee('', true);
   }
 
-  /** "เปิดมั่งมี": the start page's own handoff; the button steps aside once the link is ready. */
-  async function openMangmee() {
-    await startSession('');
-    const openMangmeeEl = document.getElementById('open-mangmee');
-    if (preparedHandoffUrl && openMangmeeEl) openMangmeeEl.hidden = true;
+  /**
+   * "เปิดมั่งมี" is the event page's one button. Right after the claim this prepares the start page's
+   * own handoff with no tap, so the button's first tap opens it. When no fresh link is ready — this
+   * failed, the link went stale, or a shop was just picked — a tap prepares it here and the next tap
+   * opens it, the two-tap path this page always had.
+   */
+  function prepareMangmee(companyId, auto) {
+    const button = document.getElementById('open-mangmee');
+    if (!button) return Promise.resolve();
+    button.hidden = false;
+    return runWith(async function () {
+      await startSession(companyId);
+      // Several shops and no chat context: the list is the next tap, not this button.
+      if (!document.getElementById('companies').hidden) button.hidden = true;
+      if (auto && preparedHandoffUrl) setStatus('');
+    }, button, 'กำลังเปิด…');
   }
 
   function validReferralCode(value) {
@@ -1181,14 +1203,18 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       const element = document.getElementById(id);
       if (element) element.hidden = true;
     }
-    if (!await initLiff()) return;
+    // The event page gets here only after its claim started LIFF; starting it again, or saying
+    // "กำลังเปิดหน้าเว็บ" before any tap, would only push the ticket down under a status box.
+    const eventPage = mode === 'event-discount';
+    if (!eventPage && !await initLiff()) return;
     const idToken = currentIdToken();
     if (!idToken) return;
-    setStatus('กำลังเปิดหน้าเว็บ...', '', 'info');
+    if (!eventPage) setStatus('กำลังเปิดหน้าเว็บ...', '', 'info');
     const res = await fetch(apiBase + '/auth/line/liff/session', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ idToken, ...(companyId ? { companyId } : {}) })
+      // The event page is there to use the discount: the server lands a plan manager on the package page.
+      body: JSON.stringify({ idToken, ...(companyId ? { companyId } : {}), ...(eventPage ? { landing: 'package' } : {}) })
     });
     const text = await res.text();
     if (res.status === 403 || res.status === 503) throw new Error(UNAVAILABLE_TH);
@@ -1210,8 +1236,14 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     }
     const handoffUrl = typeof session.handoffUrl === 'string' ? session.handoffUrl : '';
     if (!handoffUrl) throw new Error(UNAVAILABLE_TH);
-    if (!openWebBtn) throw new Error(UNAVAILABLE_TH);
+    if (!eventPage && !openWebBtn) throw new Error(UNAVAILABLE_TH);
     preparedHandoffUrl = handoffUrl;
+    preparedAt = Date.now();
+    // "เปิดมั่งมี" opens it (prepareMangmee); the event page has no second button.
+    if (eventPage) {
+      setStatus(EVENT_READY_TH, '', 'info');
+      return;
+    }
     // R-C3: the server lands a locked shop's plan manager on the package page; the button says so.
     const labels = opts || (session.packagePage === true ? PACKAGE_START : null);
     openWebBtn.textContent = (labels && labels.buttonLabel) || 'เปิดหน้าเว็บ';
@@ -1239,13 +1271,15 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
 
   if (openWebBtn) openWebBtn.addEventListener('click', function (event) {
     event.preventDefault();
-    if (!preparedHandoffUrl) return;
+    if (preparedHandoffUrl) openPreparedHandoff();
+  });
+
+  /** Opens the prepared single-use link, once, inside the tap that called this (GW02). */
+  function openPreparedHandoff() {
     const url = preparedHandoffUrl;
     preparedHandoffUrl = '';
-    openWebBtn.hidden = true;
+    if (openWebBtn) openWebBtn.hidden = true;
     if (mode === 'signup') showStatusRetry();
-    const openMangmeeEl = mode === 'event-discount' ? document.getElementById('open-mangmee') : null;
-    if (openMangmeeEl) openMangmeeEl.hidden = false;
     try {
       if (liff.isInClient()) liff.openWindow({ url, external: true });
       else location.assign(url);
@@ -1253,7 +1287,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     } catch {
       setStatus('ยังเปิดหน้าเว็บไม่ได้ค่ะ ' + NEW_LINK_TH, '', 'warning');
     }
-  });
+  }
 
   function renderCompanyChoices(companies) {
     const listEl = document.getElementById('companies');
@@ -1267,7 +1301,9 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       button.textContent = company.name + (company.lockReason ? ' · ' + lockLabel(company) : '');
       button.addEventListener('click', function () {
         listEl.hidden = true;
-        void runWith(function () { return startSession(company.id); });
+        // Event page: the shop tap prepares on "เปิดมั่งมี", whose next tap opens it.
+        if (mode === 'event-discount') void prepareMangmee(company.id, false);
+        else void runWith(function () { return startSession(company.id); });
       });
       listEl.appendChild(button);
     }
@@ -1385,7 +1421,9 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   });
   const openMangmeeBtn = document.getElementById('open-mangmee');
   if (openMangmeeBtn) openMangmeeBtn.addEventListener('click', function () {
-    void runWith(openMangmee, openMangmeeBtn, 'กำลังเปิด…');
+    // A fresh link opens inside this very tap; a stale or missing one is prepared on it instead.
+    if (preparedHandoffUrl && Date.now() - preparedAt < EVENT_HANDOFF_FRESH_MS) openPreparedHandoff();
+    else void prepareMangmee('', false);
   });
   const startExistingBtn = document.getElementById('start-existing');
   if (startExistingBtn) startExistingBtn.addEventListener('click', function () {
@@ -1430,3 +1468,22 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   if (mode !== 'customer') void run();
 })();
 `;
+
+/**
+ * The script's content version, taken once at load, and the only URL a page names it by: a deploy
+ * that changes the script changes the URL, so a phone can never pair a fresh page with an old script.
+ * UAT 2026-09-29: the bare URL answered `no-cache`, which Cloudflare rewrites on a `.js` into its own
+ * 4-hour browser TTL (`max-age=14400`), so LINE's browser kept the morning's script after a deploy.
+ */
+export const LIFF_PAGE_SCRIPT_VERSION = createHash('sha256').update(LIFF_PAGE_SCRIPT).digest('hex').slice(0, 12);
+export const LIFF_PAGE_SCRIPT_URL = `/v1/auth/line/link-page.js?v=${LIFF_PAGE_SCRIPT_VERSION}`;
+
+/**
+ * The versioned URL pins its bytes, so it may be kept for a year — and a max-age above Cloudflare's
+ * 4-hour browser TTL is the value Cloudflare passes through unchanged (it replaces anything lower,
+ * `no-cache` included). Any other `v` (a page from before a deploy, or none) gets today's bytes
+ * uncached, so nothing stale is ever stored under a version it does not match.
+ */
+export function liffPageScriptCacheControl(version: unknown): string {
+  return version === LIFF_PAGE_SCRIPT_VERSION ? 'public, max-age=31536000, immutable' : PRIVATE_NO_STORE;
+}

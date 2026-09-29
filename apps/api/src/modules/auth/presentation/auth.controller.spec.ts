@@ -420,8 +420,9 @@ describe('AuthController LIFF page security (H-08)', () => {
   it('serves static same-origin client code and a CSP without inline script permission', async () => {
     const controller = makeController();
     assertOnlyExternalScripts(await controller.lineLinkPage(request('/v1/auth/line/link-page')));
-    assert.match(controller.lineLinkPageScript(), /url\.origin === location\.origin/);
-    assert.match(controller.lineLinkPageScript(), /removeQueryParam\('token'\)/);
+    const script = controller.lineLinkPageScript(undefined, { setHeader: () => undefined } as any);
+    assert.match(script, /url\.origin === location\.origin/);
+    assert.match(script, /removeQueryParam\('token'\)/);
 
     for (const method of [AuthController.prototype.lineLinkPage, AuthController.prototype.employeeLineLinkPage]) {
       const headers = responseHeaders(method);

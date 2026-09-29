@@ -610,7 +610,7 @@ export class BillingController {
   }
   @Post('quote') @HttpCode(200)
   async quote(@Req() req: AuthedRequest, @Body() body: BillingQuoteDto) {
-    const fields = bodyFields(body, ['offerKey', 'interval', 'billingEmail', 'capacity', 'purchaseMode', 'purchaseIntent', 'dealId', 'eventDiscountChoice']);
+    const fields = bodyFields(body, ['offerKey', 'interval', 'billingEmail', 'capacity', 'purchaseMode', 'purchaseIntent', 'dealId', 'eventDiscountChoice', 'eventDiscountTicketSerial']);
     if (fields.purchaseMode !== undefined && !['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(String(fields.purchaseMode))) invalid();
     if (fields.purchaseIntent !== undefined && fields.purchaseIntent !== 'FULL_PACKAGE') invalid();
     if (fields.eventDiscountChoice !== undefined && fields.eventDiscountChoice !== 'USE' && fields.eventDiscountChoice !== 'DECLINE') invalid();
@@ -621,7 +621,8 @@ export class BillingController {
     const input = { ...(dealId ? { dealId } : { offerKey: textField(fields.offerKey, 40), interval: textField(fields.interval, 10) }),
       ...(typeof fields.billingEmail === 'string' && fields.billingEmail !== '' ? { billingEmail: textField(fields.billingEmail, 320) } : {}),
       capacity: fields.capacity, purchaseMode: fields.purchaseMode as BillingPurchaseMode | undefined,
-      purchaseIntent: fields.purchaseIntent as 'FULL_PACKAGE' | undefined, eventDiscountChoice: fields.eventDiscountChoice as 'USE' | 'DECLINE' | undefined };
+      purchaseIntent: fields.purchaseIntent as 'FULL_PACKAGE' | undefined, eventDiscountChoice: fields.eventDiscountChoice as 'USE' | 'DECLINE' | undefined,
+      ...(fields.eventDiscountTicketSerial === undefined ? {} : { eventDiscountTicketSerial: textField(fields.eventDiscountTicketSerial, 40) }) };
     await this.limit(req);
     return this.billing.quote(req.context, input);
   }

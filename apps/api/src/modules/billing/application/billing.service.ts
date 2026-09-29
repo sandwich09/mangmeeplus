@@ -51,7 +51,7 @@ import { planMenuImpact } from './billing-plan-menus';
 import { assertDealOfferUnchanged, assertDealSnapshot, dealOffer, dealPurchaseModes, dealSnapshot, dealSnapshotHash, type DealSource } from '../domain/deal-offer';
 import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 import type { BillingEventDiscountView } from '@watchdog-bms/contracts';
-import { eventDiscountBasis, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
+import { eventDiscountBasis, eventDiscountCardAuto, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
 import { eventDiscountHolderBlock, eventDiscountOffer, eventDiscountPath, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
 
 /** D-P5-6: the future contract a `SCHEDULE_PRICE_RETURN` writes. The invoice that applies it puts
@@ -79,7 +79,8 @@ const oneTimeMode = (mode: BillingPurchaseMode | undefined) => mode === 'CARD_ON
  */
 const autoRenewDealSnapshot = (snapshot: BillingSnapshot) => !!snapshot.deal && !oneTimeMode(snapshot.quote.purchaseMode);
 const paymentCheckoutMode = (mode: BillingPurchaseMode | undefined) => oneTimeMode(mode) || mode === 'PROMPTPAY_RENEW';
-const paymentCheckoutSnapshot = (snapshot: BillingSnapshot) => paymentCheckoutMode(snapshot.quote.purchaseMode) || !!snapshot.advanceDeal;
+// SD-O13: a discounted CARD_AUTO first period is paid once too, then binds its full-price subscription (spec §5.3).
+const paymentCheckoutSnapshot = (snapshot: BillingSnapshot) => paymentCheckoutMode(snapshot.quote.purchaseMode) || !!snapshot.advanceDeal || eventDiscountCardAuto(snapshot);
 const gateForMode = (mode: BillingPurchaseMode): BillingAction => mode === 'CARD_ONCE' ? 'card_once' : mode === 'PROMPTPAY_ONCE' ? 'promptpay_once' : mode === 'PROMPTPAY_RENEW' ? 'promptpay_renew' : 'new_sales';
 function assertPurchaseMode(mode: unknown): asserts mode is BillingPurchaseMode {
   if (!['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(String(mode)))
@@ -179,8 +180,9 @@ export class BillingService {
 
   async purchaseSource(company: { planTerm: Parameters<typeof billingPurchaseSource>[0] }, account: BillingAccount | null,
     tx: Prisma.TransactionClient = this.prisma.client): Promise<BillingPurchaseSource> {
+    // CARD_AUTO without a subscription = SD-O13's paid first period still binding, the same window as PROMPTPAY_RENEW.
     const attemptBound = !!account?.contractAttemptId && (!account.baseSubscriptionId &&
-      ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(account.renewalMode));
+      ['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW', 'CARD_AUTO'].includes(account.renewalMode));
     const paid = account ? await tx.billingInvoice.findFirst({ where: { billingAccountId: account.id, providerStatus: 'paid',
       ...(attemptBound ? { sourceAttemptId: account.contractAttemptId!, applyStatus: 'APPLIED', appliedAt: { not: null },
         // A refund-ended package (billing-end-package.ts) cut paidThrough below its refunded invoice's period.
@@ -321,7 +323,8 @@ export class BillingService {
     });
   }
 
-  async quote(context: RequestContext, body: { offerKey?: string; interval?: string; billingEmail?: string; capacity?: unknown; purchaseMode?: BillingPurchaseMode; purchaseIntent?: 'FULL_PACKAGE'; dealId?: string; eventDiscountChoice?: 'USE' | 'DECLINE' }): Promise<BillingQuote> {
+  async quote(context: RequestContext, body: { offerKey?: string; interval?: string; billingEmail?: string; capacity?: unknown; purchaseMode?: BillingPurchaseMode; purchaseIntent?: 'FULL_PACKAGE'; dealId?: string;
+    eventDiscountChoice?: 'USE' | 'DECLINE'; eventDiscountTicketSerial?: string }): Promise<BillingQuote> {
     await this.assertOwner(context);
     const purchaseMode = body.purchaseMode ?? 'CARD_AUTO';
     assertPurchaseMode(purchaseMode);
@@ -550,10 +553,13 @@ export class BillingService {
     // Sales-event spec §4.3: the best usable ticket for this card; the buyer's choice defaults to USE. The quote's own totals
     // stay the undiscounted charge (the renewal contract); this payment's amounts live in `eventDiscount` (SD-O12: any kind).
     let eventDiscount: EventDiscountSnapshot | undefined;
+    const choice = body.eventDiscountChoice ?? 'USE', serial = choice === 'USE' ? body.eventDiscountTicketSerial : undefined;
+    // Owner 2026-09-29: the buyer may pick which held discount this payment uses; none picked = the best for this card.
     const eventPick = eventDiscountPurchase(quote) ? await eventDiscountOffer(this.prisma.client, { userId: context.userId, companyId: company.id,
-      offer: quote.offer, tax: state.policy.taxTreatment, now: new Date(), basisSatang: eventDiscountBasis({ quote, upgrade }) }) : null;
+      offer: quote.offer, tax: state.policy.taxTreatment, now: new Date(), basisSatang: eventDiscountBasis({ quote, upgrade }), serial }) : null;
+    if (serial && !eventPick) throw billingError('SALES_EVENT_TICKET_UNAVAILABLE', 'ส่วนลดที่เลือกใช้กับการจ่ายนี้ไม่ได้ กรุณาเลือกส่วนลดอื่นหรือไม่ใช้ครั้งนี้');
     if (eventPick) {
-      const { shownDiscountSatang, ...applied } = eventPick.amounts, choice = body.eventDiscountChoice ?? 'USE';
+      const { shownDiscountSatang, ...applied } = eventPick.amounts;
       quote.eventDiscount = { choice, ticketSerial: eventPick.ticket.serial, eventName: eventPick.ticket.batch.eventName,
         expiresAt: eventPick.ticket.expiresAt.toISOString(), discountSatang: eventPick.ticket.discountSatang, shownDiscountSatang, ...(choice === 'USE' ? { applied } : {}) };
       eventDiscount = choice === 'USE' ? { ...quote.eventDiscount, choice, applied, ticketId: eventPick.ticket.id, ticketVersion: eventPick.ticket.version,
@@ -785,7 +791,7 @@ export class BillingService {
       const session = await this.stripe.request('POST', '/checkout/sessions', once ? {
         mode: 'payment', customer: customerId, client_reference_id: attempt.id,
         payment_method_types: [snapshot.quote.purchaseMode?.startsWith('PROMPTPAY') ? 'promptpay' : 'card'],
-        metadata, payment_intent_data: { metadata, ...(snapshot.advanceDeal && snapshot.quote.purchaseMode === 'CARD_AUTO'
+        metadata, payment_intent_data: { metadata, ...((snapshot.advanceDeal || snapshot.eventDiscount?.choice === 'USE') && snapshot.quote.purchaseMode === 'CARD_AUTO'
           ? { setup_future_usage: 'off_session' } : {}) },
         invoice_creation: { enabled: true, invoice_data: { metadata,
           ...(snapshot.policy.taxTreatment !== 'NOT_VAT_REGISTERED' && snapshot.policy.issuer ? { account_tax_ids: [snapshot.policy.issuer.stripeTaxId] } : {}) } },
@@ -873,7 +879,9 @@ export class BillingService {
     const cardAdvanceContract = account?.subscriptionState === 'trialing' && renewalMode === 'CARD_AUTO' && account.contractAttemptId
       ? await this.prisma.client.billingSubscriptionContract.findFirst({ where: { billingAccountId: account.id,
         sourceAttemptId: account.contractAttemptId }, select: { snapshotJson: true } }) : null;
-    const cardAdvanceTrial = !!(cardAdvanceContract?.snapshotJson as unknown as BillingSnapshot | undefined)?.advanceDeal;
+    // A card subscription trialing through a period already paid once: an advance deal, or SD-O13's discounted first period.
+    const trialContract = cardAdvanceContract?.snapshotJson as unknown as BillingSnapshot | undefined;
+    const cardAdvanceTrial = !!trialContract?.advanceDeal || eventDiscountCardAuto(trialContract);
     const eligible = companyCanBuy(settings?.policy ?? null, company.id);
     const purchaseReady = featureReady && purchaseSource !== 'PAID_OTHER_MODE' && purchaseSource !== 'SOURCE_INCONSISTENT';
     let policyReady = false;

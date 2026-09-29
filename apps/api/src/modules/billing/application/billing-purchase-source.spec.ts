@@ -39,6 +39,12 @@ test('purchase source separates unbilled legacy rows from verified paid and inco
   const promptPayBinding = { ...oneTime, renewalMode: 'PROMPTPAY_RENEW', activeAttemptId: oneTime.contractAttemptId };
   assert.equal(billingPurchaseSource(paid, promptPayBinding, true, now), 'PAID_CURRENT_MODE');
   assert.equal(billingPurchaseSource(paid, { ...promptPayBinding, activeAttemptId: null }, true, now), 'SOURCE_INCONSISTENT');
+  // SD-O13: a discounted CARD_AUTO first period is paid and applied before its subscription binds — the same window.
+  const cardBinding = { ...promptPayBinding, renewalMode: 'CARD_AUTO' };
+  assert.equal(billingPurchaseSource(paid, cardBinding, true, now), 'PAID_CURRENT_MODE');
+  assert.equal(billingPurchaseSource(paid, cardBinding, false, now), 'SOURCE_INCONSISTENT');
+  assert.equal(billingPurchaseSource(paid, { ...cardBinding, activeAttemptId: null }, true, now), 'SOURCE_INCONSISTENT');
+  assert.equal(billingPurchaseSource(paid, { ...cardBinding, activeAttemptId: 'another_attempt' }, true, now), 'SOURCE_INCONSISTENT');
   assert.equal(billingPurchaseSource(null, { ...empty, contractAttemptId: 'orphan' }, false, now), 'SOURCE_INCONSISTENT');
   assert.equal(billingPurchaseSource(paid, { ...account, renewalMode: 'CARD_ONCE' }, true, now), 'SOURCE_INCONSISTENT');
 });

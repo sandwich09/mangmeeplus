@@ -49,12 +49,17 @@ describe('batch form (spec §3.1, SD-E01)', () => {
     assert.equal(code(() => validateSalesEventBatch(input({ discountSatang: 2_147_483_700 }), NOW)), 'SALES_EVENT_BATCH_INVALID');
   });
 
-  it('needs at least one reward above zero, and any one alone is enough', () => {
+  // Owner 2026-09-29: credit for shops that already pay is withdrawn for now, so a batch needs a discount.
+  it('needs a discount above zero, says so in plain Thai, and no longer takes credit alone', () => {
     const none = { discountSatang: 0, rewardChatCreditUnits: 0, rewardReceiptImageUnits: 0 };
     assert.equal(code(() => validateSalesEventBatch(input(none), NOW)), 'SALES_EVENT_REWARD_REQUIRED');
+    assert.equal(code(() => validateSalesEventBatch(input({ ...none, rewardChatCreditUnits: 100 }), NOW)), 'SALES_EVENT_REWARD_REQUIRED');
+    assert.equal(code(() => validateSalesEventBatch(input({ ...none, rewardReceiptImageUnits: 1 }), NOW)), 'SALES_EVENT_REWARD_REQUIRED');
+    assert.throws(() => validateSalesEventBatch(input(none), NOW), { message: 'ใส่ส่วนลดมากกว่า 0 บาท' });
     assert.equal(code(() => validateSalesEventBatch(input({ ...none, discountSatang: 5000 }), NOW)), 'no-error');
-    assert.equal(code(() => validateSalesEventBatch(input({ ...none, rewardChatCreditUnits: 100 }), NOW)), 'no-error');
-    assert.equal(code(() => validateSalesEventBatch(input({ ...none, rewardReceiptImageUnits: 1 }), NOW)), 'no-error');
+    // The credit columns stay: a value already stored rides along with a discount, untouched.
+    const kept = validateSalesEventBatch(input({ discountSatang: 5000, rewardChatCreditUnits: 5000, rewardReceiptImageUnits: 20 }), NOW);
+    assert.deepEqual([kept.rewardChatCreditUnits, kept.rewardReceiptImageUnits], [5000, 20]);
   });
 
   it('refuses empty or over-long names and a cap below one', () => {
@@ -84,10 +89,10 @@ describe('batch form (spec §3.1, SD-E01)', () => {
     assert.equal(code(() => validateSalesEventBatch({ ...edit, claimEndsAt: '2026-09-30T12:00:00.000Z' }, NOW, current)), 'SALES_EVENT_BATCH_INVALID');
   });
 
-  it('needs a package and a cycle when there is a price discount, and none when there is not', () => {
+  it('needs a package and a cycle for the discount', () => {
     const empty = { tiers: [], intervals: [] };
     assert.equal(code(() => validateSalesEventBatch(input({ scope: empty }), NOW)), 'SALES_EVENT_BATCH_INVALID');
-    assert.equal(code(() => validateSalesEventBatch(input({ scope: empty, discountSatang: 0 }), NOW)), 'no-error');
+    assert.equal(code(() => validateSalesEventBatch(input({ scope: { tiers: ['STARTER_249'], intervals: [] } }), NOW)), 'SALES_EVENT_BATCH_INVALID');
     assert.equal(code(() => validateSalesEventBatch(input({ scope: { tiers: ['FREE_TRIAL_15' as never], intervals: ['month'] } }), NOW)),
       'SALES_EVENT_BATCH_INVALID');
   });

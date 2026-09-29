@@ -15,14 +15,16 @@ import {
   Optional,
   Patch,
   Post,
+  Query,
   Req,
+  Res,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiBody, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { Equals, IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator';
+import { Equals, IsBoolean, IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { randomUUID } from 'node:crypto';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { Public } from '../../../common/security/public.decorator';
 import { trustedClientIp } from '../../../common/security/trusted-client-ip';
 import {
@@ -32,6 +34,7 @@ import {
   LIFF_PAGE_CSP,
   LIFF_PAGE_SCRIPT,
   liffPageHtml,
+  liffPageScriptCacheControl,
   LIFF_EVENT_DISCOUNT_PAGE,
   LINE_CHANNEL_ID_PATTERN,
   LINE_ID_TOKEN_MAX_LENGTH,
@@ -136,6 +139,8 @@ export class LineLinkDto {
 class LiffSessionDto {
   @IsString() @IsNotEmpty() @MaxLength(LINE_ID_TOKEN_MAX_LENGTH) @Matches(LINE_ID_TOKEN_PATTERN) idToken!: string;
   @IsString() @IsOptional() @MaxLength(128) @Matches(COMPANY_ID_PATTERN) companyId?: string;
+  /** Sales-event page (spec §3.3): a name from this list, never a path — the server builds the path. */
+  @IsOptional() @IsIn(['package']) landing?: 'package';
 }
 
 class RefreshDto {
@@ -501,10 +506,10 @@ export class AuthController {
   @Public()
   @Get('line/link-page.js')
   @Header('Content-Type', 'application/javascript; charset=utf-8')
-  @Header('Cache-Control', 'no-cache')
   @Header('X-Content-Type-Options', 'nosniff')
   @ApiOperation({ summary: 'Static same-origin LIFF account-link client' })
-  lineLinkPageScript(): string {
+  lineLinkPageScript(@Query('v') version: unknown, @Res({ passthrough: true }) res: Response): string {
+    res.setHeader('Cache-Control', liffPageScriptCacheControl(version));
     return LIFF_PAGE_SCRIPT;
   }
 
@@ -707,6 +712,7 @@ export class AuthController {
     return this.exchangeLiffSession.execute({
       idToken: dto.idToken,
       ...(dto.companyId ? { companyId: dto.companyId } : {}),
+      ...(dto.landing ? { landing: dto.landing } : {}),
     });
   }
 

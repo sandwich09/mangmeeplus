@@ -66,11 +66,13 @@ describe('batch form', () => {
     assert.equal(input.rewardChatCreditUnits, 0);
   });
 
-  it('takes whole baht only and needs a discount while the credit inputs are not on the form', () => {
+  it('takes whole baht only and always needs a discount above zero, as the server does', () => {
     assert.ok(validateEventBatchForm(form({ discountBaht: '99.50' }), { now: NOW }).discountBaht);
-    assert.ok(validateEventBatchForm(form({ discountBaht: '0' }), { now: NOW }).discountBaht);
-    // A batch that already carries credit (set up before, or by SD-F) may drop its discount to zero.
-    assert.equal(validateEventBatchForm(form({ discountBaht: '0', rewardReceiptImageUnits: 20 }), { now: NOW }).discountBaht, undefined);
+    assert.equal(validateEventBatchForm(form({ discountBaht: '0' }), { now: NOW }).discountBaht, 'ใส่ส่วนลดมากกว่า 0 บาท');
+    // Owner 2026-09-29: credit is withdrawn for now, so credit a batch already carries no longer
+    // stands in for the discount.
+    assert.equal(validateEventBatchForm(form({ discountBaht: '0', rewardChatCreditUnits: 5000, rewardReceiptImageUnits: 20 }), { now: NOW }).discountBaht,
+      'ใส่ส่วนลดมากกว่า 0 บาท');
   });
 
   it('keeps names, cap, window, scope and sellers honest, and points at the first bad box', () => {
@@ -118,12 +120,10 @@ describe('words on screen (spec §8)', () => {
     assert.equal(actionNeedsReason('PAUSE'), false);
   });
 
-  it('says what the batch gives in the LIFF page wording, only the parts above zero', () => {
-    assert.deepEqual(batchRewardLines(view()), [
-      'ลด 100 บาท ตอนจ่ายค่าแพ็กเกจ เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง',
-      'ร้านที่มีแพ็กเกจอยู่แล้ว: รับเครดิต AI 50 เครดิต และจำนวนอ่านรูปใบเสร็จ 20 รูป',
-    ]);
-    assert.deepEqual(batchRewardLines(view({ rewardChatCreditUnits: 0, rewardReceiptImageUnits: 0 })), ['ลด 100 บาท ตอนจ่ายค่าแพ็กเกจ เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง']);
+  it('says what the batch gives in the LIFF page wording: the discount only, never the withdrawn credit', () => {
+    // The fixture batch still carries credit; no screen previews it (Owner 2026-09-29).
+    assert.deepEqual(batchRewardLines(view()), ['ส่วนลด 100 บาท ใช้ตอนจ่ายค่าแพ็กเกจ']);
+    assert.deepEqual(batchRewardLines(view({ discountSatang: 0 })), []);
     assert.equal(batchScopeText(view().scope), 'ทุกแพ็กเกจ · รายเดือนและรายปี');
     assert.equal(batchScopeText({ tiers: ['PRO_999'], intervals: ['year'] }), 'มืออาชีพ (PRO) · รายปี');
   });
@@ -178,6 +178,12 @@ describe('words on screen (spec §8)', () => {
 
 describe('console screens (source guards)', () => {
   const source = (file: string) => readFileSync(join(__dirname, file), 'utf8');
+
+  it('has no credit input or credit preview while credit is withdrawn (Owner 2026-09-29)', () => {
+    for (const file of ['SalesEventBatchPage.tsx', 'SalesEventBatchForm.tsx', 'sales-events.logic.ts']) {
+      assert.doesNotMatch(source(file), /เครดิต AI|อ่านรูปใบเสร็จ|ร้านที่มีแพ็กเกจอยู่แล้ว|name="rewardChatCreditUnits"|name="rewardReceiptImageUnits"/, file);
+    }
+  });
 
   it('never says ตั๋ว and never shows a raw state key', () => {
     for (const file of ['SalesEventsPage.tsx', 'SalesEventBatchPage.tsx', 'SalesEventBatchForm.tsx', 'sales-events.logic.ts']) {
