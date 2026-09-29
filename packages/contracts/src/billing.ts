@@ -263,10 +263,15 @@ export type BillingStatus = {
    *  with the same helper as the quote. Absent = no ticket, or this shop cannot pay for a package in one go now.
    *  `offers` lists the package cards it lowers; empty when `reason` says why this shop cannot use it
    *  (EVENT_ALREADY_USED: every ticket held is from an event this shop already used — one per event per shop,
-   *  `eventName` names it). One-time purchases only today. */
+   *  `eventName` names it). Any mode of a first purchase or restart (a renewing mode takes it on its first bill
+   *  only, SD-O13); a one-time payment of any kind. The top-level ticket and `offers` are the default: the best
+   *  ticket for each card. `tickets` lists every discount this shop can use now, best first, each with the cards it
+   *  lowers, so the buyer picks which one this payment uses (Owner 2026-09-29); empty when `reason` is set. */
   eventDiscount?: { ticketSerial: string; eventName: string; discountSatang: number; expiresAt: string;
     reason: null | 'DEAL_ACTIVE' | 'EVENT_ALREADY_USED';
-    offers: { offerKey: string; interval: BillingInterval; eventName: string; shownDiscountSatang: number }[] };
+    offers: { offerKey: string; interval: BillingInterval; eventName: string; shownDiscountSatang: number }[];
+    tickets?: { ticketSerial: string; eventName: string; discountSatang: number; expiresAt: string;
+      offers: { offerKey: string; interval: BillingInterval; shownDiscountSatang: number }[] }[] };
 };
 /** Spec §17.3: one server snapshot for both products; the client never adds numbers itself. Integer units per `unitScale`. */
 export type BillingAddOnBalance = { productKind: BillingAddOnProductKind; unitScale: 100 | 1;

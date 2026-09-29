@@ -11,7 +11,8 @@ export function billingPurchaseSource(term: CompanyPlanTerm | null, account: Sou
     account?.paidThrough || (account && account.renewalMode !== 'NONE') || hasPaidInvoice);
   if (paidShape) {
     const oneTime = account?.renewalMode === 'CARD_ONCE' || account?.renewalMode === 'PROMPTPAY_ONCE';
-    const promptPayBinding = account?.renewalMode === 'PROMPTPAY_RENEW' && !account.baseSubscriptionId &&
+    // A renewing first period paid and applied, its subscription not bound yet: PROMPTPAY_RENEW, and SD-O13's discounted CARD_AUTO.
+    const promptPayBinding = (account?.renewalMode === 'PROMPTPAY_RENEW' || account?.renewalMode === 'CARD_AUTO') && !account.baseSubscriptionId &&
       account.activeAttemptId === account.contractAttemptId;
     const paidContract = oneTime ? !account?.baseSubscriptionId && !!account?.contractAttemptId && hasPaidInvoice
       : promptPayBinding ? !!account?.contractAttemptId && hasPaidInvoice

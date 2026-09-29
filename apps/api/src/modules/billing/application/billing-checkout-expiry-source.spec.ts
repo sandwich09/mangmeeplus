@@ -34,4 +34,10 @@ test('a sales-event discounted Checkout is still the original session: its own d
   // A snapshot whose discount does not add up proves nothing: back to the quote's own total, so the discounted session is refused.
   const tampered={...attempt,quoteSnapshot:{...snapshot,eventDiscount:{...snapshot.eventDiscount,discountSatang:20000}}} as unknown as BillingAttempt;
   assert.throws(()=>checkoutExpirySession(account,tampered,{...paying,amount_total:39900}));
+  // SD-O13: a discounted CARD_AUTO first period is a one-time payment session; without the discount it stays a subscription session.
+  const card={...attempt,quoteSnapshot:{...snapshot,quote:{...snapshot.quote,purchaseMode:'CARD_AUTO',purchase:{kind:'INITIAL'}}}} as unknown as BillingAttempt;
+  assert.equal(checkoutExpirySession(account,card,{...paying,amount_total:39900}).canExpire,true);
+  assert.throws(()=>checkoutExpirySession(account,card,{...session,amount_total:39900}));
+  const declined={...attempt,quoteSnapshot:{...(card.quoteSnapshot as object),eventDiscount:{choice:'DECLINE',offeredTicketId:'t'}}} as unknown as BillingAttempt;
+  assert.equal(checkoutExpirySession(account,declined,{...session,amount_total:49900}).canExpire,true);
 });
