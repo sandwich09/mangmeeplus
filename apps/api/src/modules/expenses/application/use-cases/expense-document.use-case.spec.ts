@@ -1,7 +1,8 @@
 import { buildInitialLineExpenseDraftContinuation } from '../../domain/logic/line-expense-draft-conversation.logic';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { CaptureLineExpenseNoteUseCase, CreateExpenseCategoryUseCase, UpdateExpenseCategoryUseCase, ListAllExpenseCategoriesUseCase, LineTextExpenseCaptureIncompleteError } from './expense-document.use-case';
+import { CaptureLineExpenseNoteUseCase, CreateExpenseCategoryUseCase, UpdateExpenseCategoryUseCase, ListAllExpenseCategoriesUseCase, LineTextExpenseCaptureIncompleteError, lineDraftIdempotencyKey } from './expense-document.use-case';
+import { PAYMENT_IDEMPOTENCY_KEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
 import sharp from 'sharp';
 import { CreateSignatureAssetUseCase, ArchiveSignatureAssetUseCase, FillSignatureUseCase, ListSignatureAssetsUseCase, GetSignatureImageUseCase, InitSignatureUploadUseCase } from './signature-asset.use-case';
 import { normalizeSignatureImage, SIGNATURE_MAX_BYTES } from '../../domain/logic/signature-image.logic';
@@ -40,6 +41,20 @@ describe('CaptureLineExpenseNoteUseCase', () => {
       updatedAt: new Date('2026-08-18T00:00:00.000Z'),
     }),
   } as any;
+
+  it('hands the draft create a key its own validator accepts, for LINE ids and 64-hex task ids alike (NAT12 2026-09-29)', async () => {
+    const keys: string[] = [];
+    const recording = { execute: async (c: any, input: any) => { keys.push(input.idempotencyKey); return createDraft.execute(c, input); } } as any;
+    const { repo } = makeRepo();
+    await new CaptureLineExpenseNoteUseCase(repo, recording, audit, outbox).execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      messageText: 'ค่าส่งของ 300 บาท', captureHints: { description: 'ค่าส่งของ', amount: '300' },
+      lineMessageId: '586153923437625359', lineEventId: '01JAQ7W8Z3M9K2T4B6D8F0H2J4' });
+    for (const key of [...keys, lineDraftIdempotencyKey('a'.repeat(64)), lineDraftIdempotencyKey('replay-3d22c4088d3be6636a5c-0')]) {
+      assert.match(key, PAYMENT_IDEMPOTENCY_KEY_PATTERN);
+    }
+    assert.equal(keys[0], 'line-draft-01JAQ7W8Z3M9K2T4B6D8F0H2J4');
+    assert.notEqual(lineDraftIdempotencyKey('a'.repeat(64)), lineDraftIdempotencyKey('b'.repeat(64)));
+  });
 
   it('preserves the proven single-turn capture while the rollout flag is off', async () => {
     const { repo, updates } = makeRepo();
