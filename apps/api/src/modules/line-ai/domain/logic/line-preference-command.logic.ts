@@ -1,5 +1,7 @@
+import type { LineAiResponsePreferenceCommand } from '@watchdog-bms/contracts';
 import type { LinePreferenceValues } from '../../application/line-conversation-context.service';
-export type LinePreferenceCommand = { kind: 'list' } | { kind: 'set'; values: LinePreferenceValues } | { kind: 'delete'; keys: Array<keyof LinePreferenceValues> | 'all' };
+/** One shape for the exact command words below and for a router-named request (NAT11 2026-09-30). */
+export type LinePreferenceCommand = LineAiResponsePreferenceCommand;
 export const LINE_PREFERENCE_NOTICE = 'จำเฉพาะรูปแบบคำตอบในแชตส่วนตัวของคุณกับบริษัทนี้นาน 90 วัน อ่านค่าได้ด้วย “จำอะไรไว้บ้าง” และลบได้ด้วย “ลืมรูปแบบคำตอบทั้งหมด” ไม่เก็บข้อมูลการเงินหรือข้อมูลส่วนตัวอื่นเป็นความจำ';
 /** Explicit whole commands only. A one-turn style request never authorizes durable storage. */
 export function parseLinePreferenceCommand(raw: string): LinePreferenceCommand | null {
@@ -19,7 +21,19 @@ export function parseLinePreferenceCommand(raw: string): LinePreferenceCommand |
   };
   return values[remember] ? { kind: 'set', values: values[remember]! } : null;
 }
+const PREFERENCE_LABELS: Record<string, string> = { th: 'ภาษาไทย', en: 'ภาษาอังกฤษ', short: 'สั้น', normal: 'ปกติ', detailed: 'ละเอียด', prose: 'ย่อหน้า', bullets: 'หัวข้อ', table: 'ตาราง', steps: 'ขั้นตอน' };
 export function formatLinePreferences(values: LinePreferenceValues): string {
-  const labels: Record<string, string> = { th: 'ภาษาไทย', en: 'ภาษาอังกฤษ', short: 'สั้น', normal: 'ปกติ', detailed: 'ละเอียด', prose: 'ย่อหน้า', bullets: 'หัวข้อ', table: 'ตาราง', steps: 'ขั้นตอน' };
-  return Object.keys(values).length ? ['รูปแบบคำตอบที่จำไว้:', ...Object.values(values).map(value => `• ${labels[value]}`)].join('\n') : 'ยังไม่มีรูปแบบคำตอบที่จำไว้ค่ะ';
+  return Object.keys(values).length ? ['รูปแบบคำตอบที่จำไว้:', ...Object.values(values).map(value => `• ${PREFERENCE_LABELS[value]}`)].join('\n') : 'ยังไม่มีรูปแบบคำตอบที่จำไว้ค่ะ';
 }
+/** The stored result in words (NAT11: say what was remembered or forgotten, never only "done"). */
+export function linePreferenceChangedText(command: Exclude<LinePreferenceCommand, { kind: 'list' }>, before: LinePreferenceValues): string {
+  if (command.kind === 'set') return `จำไว้แล้วค่ะ ต่อไปจะตอบแบบ${Object.values(command.values).map(value => PREFERENCE_LABELS[value!]).join(' · ')}\n${LINE_PREFERENCE_NOTICE}`;
+  if (command.keys === 'all') return 'ลืมรูปแบบคำตอบที่จำไว้ทั้งหมดแล้วค่ะ ต่อไปจะตอบตามปกติ';
+  const forgotten = command.keys.flatMap(key => before[key] ? [PREFERENCE_LABELS[before[key]!]] : []);
+  return `ลืมเรื่องตอบแบบ${forgotten.join(' · ')}แล้วค่ะ ต่อไปจะตอบตามปกติ`;
+}
+/** A forget request for something that is not stored: nothing is written. */
+export function linePreferenceForgetsNothing(command: LinePreferenceCommand, current: LinePreferenceValues): boolean {
+  return command.kind === 'delete' && (command.keys === 'all' ? !Object.keys(current).length : !command.keys.some(key => current[key] !== undefined));
+}
+export const LINE_PREFERENCE_NOTHING_TO_FORGET = 'ไม่พบรูปแบบคำตอบนี้ที่จำไว้ค่ะ จึงไม่ได้ลบอะไร';

@@ -418,6 +418,39 @@ export function parseLineAiResponsePreferences(value: unknown): LineAiResponsePr
   return { language: value['language'], detail: value['detail'] as LineAiResponsePreferences['detail'], presentation: value['presentation'] as LineAiResponsePreferences['presentation'] };
 }
 
+/** An explicit request about how to answer THIS user from now on (core contract §9): store one or more allowlisted
+ *  values, list what is stored, or forget some or all of it. Same shape as the API's exact-command parser. */
+export type LineAiResponsePreferenceCommand =
+  | { kind: 'list' }
+  | { kind: 'set'; values: Partial<LineAiResponsePreferences> }
+  | { kind: 'delete'; keys: Array<keyof LineAiResponsePreferences> | 'all' };
+
+const RESPONSE_PREFERENCE_CHOICES: { [K in keyof LineAiResponsePreferences]: readonly LineAiResponsePreferences[K][] } = {
+  language: ['th', 'en'], detail: ['short', 'normal', 'detailed'], presentation: ['prose', 'bullets', 'table', 'steps'],
+};
+
+/** Receiver-boundary validator for a router-proposed preference command: exact keys and allowlisted values only. */
+export function parseLineAiResponsePreferenceCommand(value: unknown): LineAiResponsePreferenceCommand | undefined {
+  if (!recordValue(value)) return undefined;
+  if (value['kind'] === 'list') return Object.keys(value).length === 1 ? { kind: 'list' } : undefined;
+  if (value['kind'] === 'set') {
+    const values = value['values'];
+    if (Object.keys(value).length !== 2 || !recordValue(values) || !Object.keys(values).length
+      || !Object.entries(values).every(([key, item]) => Object.hasOwn(RESPONSE_PREFERENCE_CHOICES, key)
+        && (RESPONSE_PREFERENCE_CHOICES[key as keyof LineAiResponsePreferences] as readonly unknown[]).includes(item))) return undefined;
+    return { kind: 'set', values: { ...values } as Partial<LineAiResponsePreferences> };
+  }
+  if (value['kind'] === 'delete') {
+    const keys = value['keys'];
+    if (Object.keys(value).length !== 2) return undefined;
+    if (keys === 'all') return { kind: 'delete', keys: 'all' };
+    if (!Array.isArray(keys) || !keys.length || keys.length > 3 || new Set(keys).size !== keys.length
+      || !keys.every(key => typeof key === 'string' && Object.hasOwn(RESPONSE_PREFERENCE_CHOICES, key))) return undefined;
+    return { kind: 'delete', keys: [...keys] as Array<keyof LineAiResponsePreferences> };
+  }
+  return undefined;
+}
+
 /** Rebuild bounded API-owned task state. No transcript or authoritative financial totals fit this shape. */
 export function parseLineAiTaskProjection(value: unknown): LineAiTaskProjectionV2 | undefined {
   if (!recordValue(value) || !exactKeys(value, ['version', 'stateVersion', 'lifecycleEpoch', 'expiresAtMs', 'tasks'])
@@ -1258,6 +1291,8 @@ export type LineIntakeRouterCapabilities = {
   reimbursementSemantic?: boolean;
   advisor?: boolean;
   approvedKnowledge?: boolean;
+  /** A bound private chat whose answer preferences can be stored (core contract §9). */
+  responsePreference?: boolean;
 };
 
 /** Receiver-boundary validator for the TRUSTED capability flags (same role as {@link asIntakeRouteIntent}).
@@ -1279,6 +1314,7 @@ export function asIntakeRouterCapabilities(value: unknown): LineIntakeRouterCapa
   // envelope. Off ⇒ byte-exact legacy prompt/payload, exactly like the three flags above.
   if (Object.hasOwn(raw, 'advisor') && raw.advisor === true) caps.advisor = true;
   if (Object.hasOwn(raw, 'approvedKnowledge') && raw.approvedKnowledge === true) caps.approvedKnowledge = true;
+  if (Object.hasOwn(raw, 'responsePreference') && raw.responsePreference === true) caps.responsePreference = true;
   return caps;
 }
 
@@ -1799,6 +1835,10 @@ export type LineIntakeRoutePlan = {
   advisorContext?: LineIntakeAdvisorContext;
   /** Exact approved-help ids selected from the server-offered allowlist, at most five. */
   selectedKnowledgeCardIds?: string[];
+  /** Present only under the trusted `responsePreference` capability, when the user explicitly asked to remember,
+   *  see or forget how answers are given to them. Model advice: the API re-parses it with
+   *  `parseLineAiResponsePreferenceCommand` and runs it through the owner-bound preference commands. */
+  responsePreference?: LineAiResponsePreferenceCommand;
   /** V2 semantic inventory. Every user clause remains independently represented. */
   semanticSubrequests?: LineAiSemanticSubrequestV2[];
 };
