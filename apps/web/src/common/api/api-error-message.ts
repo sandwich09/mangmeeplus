@@ -35,6 +35,8 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_RECIPIENT_INVALID: 'รูปแบบอีเมลไม่ถูกต้อง',
   BILLING_LOOKUP_TOO_SHORT: 'เลขอ้างอิงต้องมีอย่างน้อย 8 ตัวอักษร',
   BILLING_LOOKUP_AMBIGUOUS: 'เลขอ้างอิงนี้ตรงหลายรายการ ให้ใช้เลขใบแจ้งหนี้หรือรหัสเต็ม',
+  // A sales-event discount serial that no shop has used yet (sales-event spec SD-E20).
+  BILLING_LOOKUP_EVENT_TICKET_UNUSED: 'ส่วนลดจากงานนี้ยังไม่ได้ใช้กับร้านใด จึงยังไม่มีร้านให้เปิดดู',
   EMAIL_OTP_REQUIRED: 'กรุณาโหลดหน้านี้ใหม่เพื่อยืนยันอีเมลด้วยรหัส OTP',
   EMAIL_REAUTH_REQUIRED: 'กรุณากรอกรหัสผ่านปัจจุบัน หรือยืนยันตัวตนผ่าน LINE อีกครั้ง',
   EMAIL_DELIVERY_UNAVAILABLE: 'ยังส่งรหัสไม่ได้ กรุณาลองใหม่ภายหลัง หรือติดต่อทีมงาน 098-256-5628',
