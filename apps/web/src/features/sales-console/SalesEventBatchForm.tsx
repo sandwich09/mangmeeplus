@@ -130,14 +130,14 @@ export default function SalesEventBatchForm({
       <MangmeeCard className="grid gap-4 p-4">
         <p className="text-[15px] font-bold text-gray-900">{batch ? 'แก้ไขชุดส่วนลด' : 'สร้างชุดส่วนลดใหม่'}</p>
         <TextField label="ชื่องาน" name="eventName" maxLength={SALES_EVENT_NAME_MAX} value={values.eventName}
-          hint="ใช้จัดกลุ่มรายงาน เช่น งานแฟร์ร้านค้า ตุลาคม" error={errors.eventName}
+          hint="ชุดที่ชื่องานเดียวกันนับเป็นงานเดียว ร้านหนึ่งใช้ส่วนลดได้ครั้งเดียวต่องาน · ใช้จัดกลุ่มรายงานด้วย เช่น งานแฟร์ร้านค้า ตุลาคม" error={errors.eventName}
           onChange={(event) => set('eventName', event.target.value)} />
         <TextField label="ชื่อชุด" name="batchName" maxLength={SALES_EVENT_NAME_MAX} value={values.batchName}
           hint="แยกชุดในงานเดียวกัน เช่น บูธหน้าเวที" error={errors.batchName}
           onChange={(event) => set('batchName', event.target.value)} />
         <div className="grid gap-4 sm:grid-cols-2">
-          <TextField label="ส่วนลดบิลแรก (บาท)" name="discountBaht" inputMode="numeric" value={values.discountBaht}
-            hint="จำนวนเต็มบาท ลดเฉพาะบิลแรกของร้านที่ซื้อแพ็กเกจใหม่ รอบต่ออายุชำระราคาเต็ม" error={errors.discountBaht}
+          <TextField label="ส่วนลด (บาท)" name="discountBaht" inputMode="numeric" value={values.discountBaht}
+            hint="จำนวนเต็มบาท ลดตอนร้านจ่ายค่าแพ็กเกจ ผู้ซื้อเลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง" error={errors.discountBaht}
             onChange={(event) => set('discountBaht', event.target.value)} />
           <TextField label="จำนวนแจกสูงสุด" name="issueCap" inputMode="numeric" value={values.issueCap}
             hint={batch ? `แจกไปแล้ว ${batch.issuedCount.toLocaleString('th-TH')} รายการ · ลดไม่ได้ต่ำกว่านี้` : 'นับตลอดอายุชุด ส่วนลดที่เพิกถอนหรือไม่ได้ใช้ไม่คืนจำนวน'}

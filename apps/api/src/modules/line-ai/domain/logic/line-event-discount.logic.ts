@@ -6,7 +6,7 @@ import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
  * ส่วนลดจากงาน, answered by code in the deterministic lane: every amount, date and state below comes
  * from the permission-checked billing read, never from a model.
  */
-export type LineEventDiscountFacts = BillingEventDiscountView & { block: 'DEAL_ACTIVE' | 'COMPANY_ALREADY_USED' | null };
+export type LineEventDiscountFacts = BillingEventDiscountView & { block: 'DEAL_ACTIVE' | 'EVENT_ALREADY_USED' | null };
 
 const PRE = '(?:ก็|แล้ว)?(?:ตอนนี้)?(?:ฉัน|ผม|เรา|หนู|ร้าน(?:นี้|ฉัน|ผม|เรา|ของ(?:ฉัน|ผม|เรา))?)?(?:ยัง)?';
 const NOUN = '(?:ส่วนลด|โค้ดส่วนลด|คูปอง(?:ส่วนลด)?|ตั๋วส่วนลด|บัตรส่วนลด)';
@@ -32,7 +32,7 @@ const baht = (satang: number) => (satang / 100).toLocaleString('th-TH', { minimu
 const usable = (ticket: BillingEventDiscountTicket) => ticket.state === 'AVAILABLE' && !ticket.batchSuspended;
 
 function ticketLine(ticket: BillingEventDiscountTicket): string {
-  const head = `• ส่วนลดจากงาน ${ticket.eventName} · ลดบิลแรก ${baht(ticket.discountSatang)} บาท`;
+  const head = `• ส่วนลดจากงาน ${ticket.eventName} · ลด ${baht(ticket.discountSatang)} บาท`;
   if (usable(ticket)) return `${head} · ใช้ได้ถึง ${day(ticket.expiresAt)}`;
   if (ticket.state === 'EXPIRED') return `${head} · หมดอายุแล้ว (ใช้ได้ถึง ${day(ticket.expiresAt)})`;
   if (ticket.state === 'USED') return `${head} · ใช้ไปแล้ว`;
@@ -43,24 +43,25 @@ function ticketLine(ticket: BillingEventDiscountTicket): string {
 
 const HOW_TO_GET = 'รับส่วนลดได้โดยสแกน QR จากพนักงานขายของมั่งมีในงานอีเวนต์ค่ะ';
 
-/** `canUse` = this shop may take the first-bill discount now, so the card carries the package button. */
+/** `canUse` = this shop may take the discount at its next package payment, so the card carries the package button. */
 export function lineEventDiscountAnswer(facts: LineEventDiscountFacts): { text: string; canUse: boolean } {
-  // A reward-only ticket (credit, SD-F) is not a first-bill discount and is not built yet.
+  // A reward-only ticket (credit, SD-F) is not a price discount and is not built yet.
   const tickets = facts.tickets.filter((ticket) => ticket.discountSatang > 0).slice(0, 5);
   if (!tickets.length) return { text: `ตอนนี้ยังไม่มีส่วนลดจากงานค่ะ\n${HOW_TO_GET}`, canUse: false };
   const lines = tickets.map(ticketLine);
   if (!tickets.some(usable)) return { text: ['ตอนนี้ไม่มีส่วนลดจากงานที่ใช้ได้ค่ะ', ...lines, HOW_TO_GET].join('\n'), canUse: false };
   if (facts.path === 'DISCOUNT' && !facts.block) {
     return { text: ['คุณมีส่วนลดจากงานค่ะ', ...lines,
-      'ใช้ได้ตอนซื้อแพ็กเกจแบบจ่ายครั้งเดียวด้วยบัตรหรือ PromptPay ระบบจะลดให้ในบิลแรกของร้านค่ะ'].join('\n'), canUse: true };
+      'ลดตอนจ่ายค่าแพ็กเกจแบบจ่ายครั้งเดียวด้วยบัตรหรือ PromptPay เลือกใช้หรือไม่ใช้ได้ตอนจ่าย งานเดียวกันใช้ได้ร้านละครั้งค่ะ'].join('\n'), canUse: true };
   }
-  const why = facts.block === 'COMPANY_ALREADY_USED' ? 'ร้านนี้ใช้ส่วนลดบิลแรกจากงานไปแล้ว (ใช้ได้ร้านละครั้ง) ค่ะ'
+  // SD-O12: EVENT_ALREADY_USED = every ticket still usable is from an event this shop already used, so name those events.
+  const spent = [...new Set(tickets.filter(usable).map((ticket) => ticket.eventName))].join(', ');
+  const why = facts.block === 'EVENT_ALREADY_USED' ? `ร้านนี้ใช้ส่วนลดจากงาน ${spent} ไปแล้ว (งานเดียวกันใช้ได้ร้านละครั้ง) ค่ะ`
     : facts.block === 'DEAL_ACTIVE' ? 'ร้านนี้มีดีลพิเศษอยู่แล้ว จึงใช้ส่วนลดจากงานกับราคาดีลไม่ได้ค่ะ'
-    : 'ร้านนี้มีแพ็กเกจอยู่แล้ว จึงใช้ส่วนลดบิลแรกกับร้านนี้ไม่ได้ค่ะ';
-  return { text: ['คุณมีส่วนลดจากงานค่ะ', ...lines, why,
-    'ส่วนลดบิลแรกใช้กับร้านที่เริ่มแพ็กเกจใหม่ เช่น เปิดร้านใหม่ค่ะ',
-    // Owner 2026-09-29: the reward for a shop that already pays is SD-F, not built — never a date.
-    ...(facts.path === 'DISCOUNT' ? [] : ['สิทธิ์สำหรับร้านที่มีแพ็กเกจอยู่แล้วจะเปิดให้ใช้เร็วๆ นี้ค่ะ'])].join('\n'), canUse: false };
+    // Owner 2026-09-29: automatic renewals are a pending decision — say it plainly, never promise a date.
+    : facts.path === 'CREDIT' ? 'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้ค่ะ'
+    : 'ข้อมูลการชำระเงินเดิมของร้านนี้ต้องให้ทีมงานตรวจก่อน จึงยังใช้ส่วนลดจากงานไม่ได้ค่ะ';
+  return { text: ['คุณมีส่วนลดจากงานค่ะ', ...lines, why].join('\n'), canUse: false };
 }
 
 /** Someone who cannot choose the shop's package (the read is owner/plan-manager only). */

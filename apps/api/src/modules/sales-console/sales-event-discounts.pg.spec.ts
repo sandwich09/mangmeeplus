@@ -226,26 +226,26 @@ describe('sales-event discounts on real PostgreSQL', { skip: !databaseUrl }, () 
     }
   });
 
-  it('allows one first-bill discount per shop and one ticket per shop per batch (partial uniques)', async () => {
+  it('allows one ticket per shop per batch (partial unique); another batch is the checkout\'s per-event call (SD-O12)', async () => {
     const h = await harness();
     try {
       const one = await h.service.create(h.lead, h.batchInput());
       const two = await h.service.create(h.lead, h.batchInput({ batchName: 'บูธ B' }));
       const shop = `${h.tag}-shop-c`, other = `${h.tag}-shop-d`;
       await h.ticket(one.id, { state: 'USED', redeemedAs: 'DISCOUNT', companyId: shop, attemptId: `${h.tag}-a1`, invoiceId: `${h.tag}-i1` });
-      // SD-O5: a second discount for the same shop, from ANY batch, collides — reserved or used.
-      assert.equal(await failure(() => h.ticket(two.id, { state: 'RESERVED', redeemedAs: 'DISCOUNT', companyId: shop, attemptId: `${h.tag}-a2` })),
-        'unique:companyId');
-      const reserved = await h.ticket(two.id, { state: 'RESERVED', redeemedAs: 'DISCOUNT', companyId: other, attemptId: `${h.tag}-a3` });
-      // Credit never takes the discount slot: the same shop may take credit from another batch.
-      await h.ticket(two.id, { state: 'USED', redeemedAs: 'CREDIT', companyId: shop });
-      // SD-Q8: one ticket per shop per batch, whichever way — batch one already has the shop's discount.
+      // SD-O12 (Owner 2026-09-29) dropped SD-O5's lifetime index: a discount from another batch at the same shop is not refused
+      // by the database. One ticket per shop per EVENT is decided in the checkout transaction, after the company lock.
+      assert.equal(await failure(() => h.ticket(two.id, { state: 'RESERVED', redeemedAs: 'DISCOUNT', companyId: shop, attemptId: `${h.tag}-a2` })), 'no-error');
+      // SD-Q8: one ticket per shop per batch, whichever way — batch one already has the shop's discount, batch two its reservation.
       assert.equal(await failure(() => h.ticket(one.id, { state: 'USED', redeemedAs: 'CREDIT', companyId: shop })), 'unique:batchId,companyId');
-      // Releasing a reservation frees both slots again.
+      assert.equal(await failure(() => h.ticket(two.id, { state: 'RESERVED', redeemedAs: 'DISCOUNT', companyId: shop, attemptId: `${h.tag}-a3` })),
+        'unique:batchId,companyId');
+      const reserved = await h.ticket(two.id, { state: 'RESERVED', redeemedAs: 'DISCOUNT', companyId: other, attemptId: `${h.tag}-a4` });
+      // Releasing a reservation frees its slot again.
       await h.client.salesEventTicket.update({
         where: { id: reserved.id }, data: { state: 'ISSUED', redeemedAs: null, companyId: null, attemptId: null },
       });
-      await h.ticket(two.id, { state: 'RESERVED', redeemedAs: 'DISCOUNT', companyId: other, attemptId: `${h.tag}-a4` });
+      await h.ticket(two.id, { state: 'RESERVED', redeemedAs: 'DISCOUNT', companyId: other, attemptId: `${h.tag}-a5` });
     } finally {
       await h.teardown();
     }

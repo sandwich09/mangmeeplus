@@ -1094,7 +1094,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   /** Spec §3.3: only the rewards this batch gives. AI credit arrives in 0.01-credit units. */
   function eventDiscountRewardLines(ticket) {
     const lines = [];
-    if (ticket.discountSatang > 0) lines.push('ร้านใหม่: ลด ' + thaiNumber(ticket.discountSatang / 100) + ' บาทจากบิลแรกเมื่อซื้อแพ็กเกจ');
+    if (ticket.discountSatang > 0) lines.push('ลด ' + thaiNumber(ticket.discountSatang / 100) + ' บาท ตอนจ่ายค่าแพ็กเกจ เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง');
     const credit = [];
     if (ticket.chatCreditUnits > 0) credit.push('เครดิต AI ' + thaiNumber(ticket.chatCreditUnits / 100) + ' เครดิต');
     if (ticket.receiptImageUnits > 0) credit.push('จำนวนอ่านรูปใบเสร็จ ' + thaiNumber(ticket.receiptImageUnits) + ' รูป');

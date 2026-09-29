@@ -1,5 +1,6 @@
 import type {BillingAccount,BillingAttempt} from '../../../generated/prisma/client';
 import {billingError,configurationHash} from '../domain/billing-policy';
+import {eventDiscountExpected} from '../domain/billing-event-discount.logic';
 import {stripeId,type StripeClient,type StripeObject} from '../infrastructure/stripe.client';
 import type {BillingSnapshot} from './billing.service';
 const invalid=()=>billingError('CONTROL_CHECKOUT_SOURCE_CHANGED','ข้อมูลหน้าชำระเดิมเปลี่ยนหรือยังไม่ครบ กรุณาตรวจรายการเดิมอีกครั้ง');
@@ -10,7 +11,8 @@ export function checkoutExpiryBinding(account:BillingAccount,attempt:BillingAtte
   return configurationHash([account.id,account.companyId,account.stripeAccountId,account.livemode,account.customerId,account.activeAttemptId,
     attempt.id,attempt.billingAccountId,attempt.checkoutSessionId,attempt.quoteId,attempt.quoteSnapshot,attempt.policyRevisionId,attempt.consentRevision,attempt.consentAt]);
 }
-/** Original identity and accepted quote, never today's price or a caller-supplied provider ID. */
+/** Original identity and accepted quote, never today's price or a caller-supplied provider ID. A sales-event USE
+ *  snapshot charged its own discounted total (spec §5.2), so that is the amount the original session carries. */
 export function checkoutExpirySession(account:BillingAccount,attempt:BillingAttempt,session:StripeObject){
   const snapshot=attempt.quoteSnapshot as unknown as BillingSnapshot,quote=snapshot?.quote;
   if(!attempt.checkoutSessionId||!/^cs_[A-Za-z0-9_]{1,220}$/.test(attempt.checkoutSessionId)||!account.customerId||attempt.billingAccountId!==account.id||
@@ -18,7 +20,7 @@ export function checkoutExpirySession(account:BillingAccount,attempt:BillingAtte
     quote.consentRevision!==attempt.consentRevision||!integer(quote.totalSatang)||quote.totalSatang<1||
     !session||session.object!=='checkout.session'||session.id!==attempt.checkoutSessionId||session.livemode!==account.livemode||
     session.mode!==(snapshot.repeat||['CARD_ONCE','PROMPTPAY_ONCE','PROMPTPAY_RENEW'].includes(quote.purchaseMode??'')?'payment':'subscription')||stripeId(session.customer)!==account.customerId||session.client_reference_id!==attempt.id||
-    session.metadata?.billingAccountId!==account.id||session.metadata?.billingAttemptId!==attempt.id||session.currency!=='thb'||session.amount_total!==quote.totalSatang||
+    session.metadata?.billingAccountId!==account.id||session.metadata?.billingAttemptId!==attempt.id||session.currency!=='thb'||session.amount_total!==(eventDiscountExpected(snapshot)?.totalSatang??quote.totalSatang)||
     !['open','expired','complete'].includes(session.status)||!['paid','unpaid','no_payment_required'].includes(session.payment_status)||
     !instant(session.created)||!instant(session.expires_at)||session.created>=session.expires_at||session.recovered_from!=null||session.after_expiration?.recovery?.enabled===true)throw invalid();
   return {sessionId:attempt.checkoutSessionId,sourceHash:checkoutExpiryBinding(account,attempt),

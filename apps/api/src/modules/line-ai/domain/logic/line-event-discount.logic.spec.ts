@@ -8,7 +8,7 @@ const ticket = (over: Partial<BillingEventDiscountTicket> = {}): BillingEventDis
   // 30 Oct 2026 23:59 Bangkok.
   expiresAt: '2026-10-30T16:59:59.000Z', state: 'AVAILABLE', batchSuspended: false, ...over });
 const facts = (over: Partial<LineEventDiscountFacts> = {}): LineEventDiscountFacts => ({ path: 'DISCOUNT', block: null, tickets: [ticket()], ...over });
-const LINE = '• ส่วนลดจากงาน event1 · ลดบิลแรก 100 บาท · ใช้ได้ถึง 30 ต.ค. 2569';
+const LINE = '• ส่วนลดจากงาน event1 · ลด 100 บาท · ใช้ได้ถึง 30 ต.ค. 2569';
 const MACHINE = /MHFVR743|[A-Z]{3,}_[A-Z]|AVAILABLE|DISCOUNT|CREDIT|https?:|ครับ|\bSD-/u;
 
 describe('LINE: ถามส่วนลด routing (sales-event spec §8.1)', () => {
@@ -25,26 +25,28 @@ describe('LINE: ถามส่วนลด routing (sales-event spec §8.1)', (
 });
 
 describe('LINE: ถามส่วนลด answer', () => {
-  it('a usable ticket and a starting shop: each ticket with its computed baht and Thai date, how it applies, and the package button', () => {
+  it('a usable ticket and a shop that can pay in one go: each ticket with its computed baht and Thai date, how it applies, and the package button', () => {
     const answer = lineEventDiscountAnswer(facts());
     assert.equal(answer.canUse, true);
     assert.equal(answer.text, ['คุณมีส่วนลดจากงานค่ะ', LINE,
-      'ใช้ได้ตอนซื้อแพ็กเกจแบบจ่ายครั้งเดียวด้วยบัตรหรือ PromptPay ระบบจะลดให้ในบิลแรกของร้านค่ะ'].join('\n'));
+      'ลดตอนจ่ายค่าแพ็กเกจแบบจ่ายครั้งเดียวด้วยบัตรหรือ PromptPay เลือกใช้หรือไม่ใช้ได้ตอนจ่าย งานเดียวกันใช้ได้ร้านละครั้งค่ะ'].join('\n'));
     const card = buildEventDiscountCard(facts(), 'https://app.example.test/l/tok') as any;
     assert.deepEqual(card.contents.footer.contents[0].action, { type: 'uri', label: 'เลือกแพ็กเกจ', uri: 'https://app.example.test/l/tok' });
     assert.equal(card.canonicalText, answer.text);
-    assert.equal(lineEventDiscountAnswer(facts({ tickets: [ticket({ discountSatang: 10_699 })] })).text.includes('ลดบิลแรก 106.99 บาท'), true);
+    assert.equal(lineEventDiscountAnswer(facts({ tickets: [ticket({ discountSatang: 10_699 })] })).text.includes('ลด 106.99 บาท'), true);
   });
 
-  it('a usable ticket but the shop already has a package: says so, first bill is for a new shop, the reward opens soon with no date', () => {
-    for (const path of ['CREDIT', null] as const) {
-      const answer = lineEventDiscountAnswer(facts({ path }));
-      assert.equal(answer.canUse, false);
-      assert.equal(answer.text, ['คุณมีส่วนลดจากงานค่ะ', LINE, 'ร้านนี้มีแพ็กเกจอยู่แล้ว จึงใช้ส่วนลดบิลแรกกับร้านนี้ไม่ได้ค่ะ',
-        'ส่วนลดบิลแรกใช้กับร้านที่เริ่มแพ็กเกจใหม่ เช่น เปิดร้านใหม่ค่ะ', 'สิทธิ์สำหรับร้านที่มีแพ็กเกจอยู่แล้วจะเปิดให้ใช้เร็วๆ นี้ค่ะ'].join('\n'));
+  it('a usable ticket the shop cannot take now: auto-renewal, a payment record under review, an event already used here, a deal — no date promised', () => {
+    const auto = lineEventDiscountAnswer(facts({ path: 'CREDIT' }));
+    assert.deepEqual(auto, { canUse: false, text: ['คุณมีส่วนลดจากงานค่ะ', LINE,
+      'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้ค่ะ'].join('\n') });
+    assert.match(lineEventDiscountAnswer(facts({ path: null })).text, /ต้องให้ทีมงานตรวจก่อน จึงยังใช้ส่วนลดจากงานไม่ได้ค่ะ$/u);
+    for (const path of ['CREDIT', null] as const)
       assert.equal((buildEventDiscountCard(facts({ path }), 'https://app.example.test/l/tok') as any).contents.footer, undefined);
-    }
-    assert.match(lineEventDiscountAnswer(facts({ block: 'COMPANY_ALREADY_USED' })).text, /ร้านนี้ใช้ส่วนลดบิลแรกจากงานไปแล้ว \(ใช้ได้ร้านละครั้ง\) ค่ะ/);
+    // SD-O12: one ticket per event per shop; the answer names the event(s) of the tickets still held.
+    const used = lineEventDiscountAnswer(facts({ block: 'EVENT_ALREADY_USED', tickets: [ticket(), ticket({ eventName: 'event1', serial: 'X' }), ticket({ state: 'USED', eventName: 'งานเก่า' })] }));
+    assert.equal(used.canUse, false);
+    assert.match(used.text, /ร้านนี้ใช้ส่วนลดจากงาน event1 ไปแล้ว \(งานเดียวกันใช้ได้ร้านละครั้ง\) ค่ะ$/u);
     assert.match(lineEventDiscountAnswer(facts({ block: 'DEAL_ACTIVE' })).text, /ร้านนี้มีดีลพิเศษอยู่แล้ว/);
     assert.equal(lineEventDiscountAnswer(facts({ block: 'DEAL_ACTIVE' })).canUse, false);
   });
@@ -54,10 +56,10 @@ describe('LINE: ถามส่วนลด answer', () => {
       ticket({ eventName: 'งานสาม', state: 'IN_PAYMENT' }), ticket({ eventName: 'งานสี่', batchSuspended: true })] }));
     assert.equal(answer.canUse, false);
     assert.equal(answer.text, ['ตอนนี้ไม่มีส่วนลดจากงานที่ใช้ได้ค่ะ',
-      '• ส่วนลดจากงาน event1 · ลดบิลแรก 100 บาท · ใช้ไปแล้ว',
-      '• ส่วนลดจากงาน งานสอง · ลดบิลแรก 100 บาท · หมดอายุแล้ว (ใช้ได้ถึง 30 ต.ค. 2569)',
-      '• ส่วนลดจากงาน งานสาม · ลดบิลแรก 100 บาท · อยู่ระหว่างชำระเงิน',
-      '• ส่วนลดจากงาน งานสี่ · ลดบิลแรก 100 บาท · งดใช้ชั่วคราว',
+      '• ส่วนลดจากงาน event1 · ลด 100 บาท · ใช้ไปแล้ว',
+      '• ส่วนลดจากงาน งานสอง · ลด 100 บาท · หมดอายุแล้ว (ใช้ได้ถึง 30 ต.ค. 2569)',
+      '• ส่วนลดจากงาน งานสาม · ลด 100 บาท · อยู่ระหว่างชำระเงิน',
+      '• ส่วนลดจากงาน งานสี่ · ลด 100 บาท · งดใช้ชั่วคราว',
       'รับส่วนลดได้โดยสแกน QR จากพนักงานขายของมั่งมีในงานอีเวนต์ค่ะ'].join('\n'));
   });
 
@@ -68,7 +70,7 @@ describe('LINE: ถามส่วนลด answer', () => {
   });
 
   it('speaks as น้องมั่งมี with no machine tokens in any answer', () => {
-    const all = [facts(), facts({ path: 'CREDIT' }), facts({ block: 'COMPANY_ALREADY_USED' }), facts({ tickets: [] }),
+    const all = [facts(), facts({ path: 'CREDIT' }), facts({ path: null }), facts({ block: 'EVENT_ALREADY_USED' }), facts({ tickets: [] }),
       facts({ tickets: [ticket({ state: 'REVOKED' })] })].map((item) => lineEventDiscountAnswer(item).text);
     for (const text of [...all, EVENT_DISCOUNT_MEMBER_REPLY]) { assert.doesNotMatch(text, MACHINE); assert.match(text, /ค่ะ$/u); }
   });

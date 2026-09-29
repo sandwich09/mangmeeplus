@@ -51,8 +51,8 @@ import { planMenuImpact } from './billing-plan-menus';
 import { assertDealOfferUnchanged, assertDealSnapshot, dealOffer, dealPurchaseModes, dealSnapshot, dealSnapshotHash, type DealSource } from '../domain/deal-offer';
 import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 import type { BillingEventDiscountView } from '@watchdog-bms/contracts';
-import { eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
-import { eventDiscountBlock, eventDiscountOffer, eventDiscountPath, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
+import { eventDiscountBasis, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
+import { eventDiscountHolderBlock, eventDiscountOffer, eventDiscountPath, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
 
 /** D-P5-6: the future contract a `SCHEDULE_PRICE_RETURN` writes. The invoice that applies it puts
  *  the shop back on the tier's default menus, AI credit and limits (Q1) even though it is a RENEWAL. */
@@ -224,15 +224,16 @@ export class BillingService {
   async eventDiscount(context: RequestContext): Promise<BillingEventDiscountView> {
     await this.assertOwner(context);
     const company = await this.prisma.client.company.findUnique({ where: { id: context.companyId }, select: { planTerm: true } });
-    const source = await this.purchaseSource({ planTerm: company?.planTerm ?? null }, await this.account(context.companyId));
-    return { path: eventDiscountPath(source), tickets: await holderEventDiscountTickets(this.prisma.client, context.userId, new Date()) };
+    const account = await this.account(context.companyId);
+    const source = await this.purchaseSource({ planTerm: company?.planTerm ?? null }, account);
+    return { path: eventDiscountPath(source, account?.renewalMode), tickets: await holderEventDiscountTickets(this.prisma.client, context.userId, new Date()) };
   }
 
-  /** LINE "ฉันมีส่วนลดไหม" (sales-event spec §8.1): the same owner-only read, plus why a starting shop may not take the
-   *  first-bill discount now (one per shop, not with a deal) — the package page's own `eventDiscountBlock`. */
-  async lineEventDiscount(context: RequestContext): Promise<BillingEventDiscountView & { block: 'DEAL_ACTIVE' | 'COMPANY_ALREADY_USED' | null }> {
+  /** LINE "ฉันมีส่วนลดไหม" (sales-event spec §8.1): the same owner-only read, plus why this shop may not take the discount
+   *  now (a deal, or only tickets from events it already used — SD-O12) — the package page's own rules. */
+  async lineEventDiscount(context: RequestContext): Promise<BillingEventDiscountView & { block: 'DEAL_ACTIVE' | 'EVENT_ALREADY_USED' | null }> {
     const view = await this.eventDiscount(context);
-    return { ...view, block: view.path === 'DISCOUNT' ? await eventDiscountBlock(this.prisma.client, context.companyId, new Date()) : null };
+    return { ...view, block: view.path === 'DISCOUNT' ? await eventDiscountHolderBlock(this.prisma.client, { userId: context.userId, companyId: context.companyId, now: new Date() }) : null };
   }
 
   async capacity(context: RequestContext, offerKey: string, interval: string) {
@@ -546,11 +547,11 @@ export class BillingService {
       quote.purchase.trialCarryover = { receiptUnits: trialCarryover.units, expiresAt: quote.purchase.projectedPaidThrough };
       quote.purchase.projectedRemainingReceipts += trialCarryover.units;
     }
-    // Sales-event spec §4.3: the best usable ticket for this card; the buyer's choice defaults to USE. The quote's
-    // own totals stay the full price (the renewal contract); the first bill's amounts live in `eventDiscount`.
+    // Sales-event spec §4.3: the best usable ticket for this card; the buyer's choice defaults to USE. The quote's own totals
+    // stay the undiscounted charge (the renewal contract); this payment's amounts live in `eventDiscount` (SD-O12: any kind).
     let eventDiscount: EventDiscountSnapshot | undefined;
     const eventPick = eventDiscountPurchase(quote) ? await eventDiscountOffer(this.prisma.client, { userId: context.userId, companyId: company.id,
-      offer: quote.offer, tax: state.policy.taxTreatment, now: new Date() }) : null;
+      offer: quote.offer, tax: state.policy.taxTreatment, now: new Date(), basisSatang: eventDiscountBasis({ quote, upgrade }) }) : null;
     if (eventPick) {
       const { shownDiscountSatang, ...applied } = eventPick.amounts, choice = body.eventDiscountChoice ?? 'USE';
       quote.eventDiscount = { choice, ticketSerial: eventPick.ticket.serial, eventName: eventPick.ticket.batch.eventName,
@@ -655,7 +656,8 @@ export class BillingService {
         throw billingError('BILLING_QUOTE_STALE', 'ประวัติแพ็กเกจเปลี่ยน กรุณาตรวจส่วนต่างใหม่');
       // Sales-event spec §4.3: DECLINE never goes stale for the discount; no offer at quote goes stale once one exists.
       const eventRule = eventDiscountCheckoutRule(snapshot.eventDiscount, !snapshot.eventDiscount && eventDiscountPurchase(snapshot.quote) &&
-        !!await eventDiscountOffer(tx, { userId: context.userId, companyId: context.companyId, offer: snapshot.quote.offer, tax: snapshot.policy.taxTreatment, now: new Date() }));
+        !!await eventDiscountOffer(tx, { userId: context.userId, companyId: context.companyId, offer: snapshot.quote.offer, tax: snapshot.policy.taxTreatment, now: new Date(),
+          basisSatang: eventDiscountBasis(snapshot) }));
       if (eventRule === 'STALE') throw billingError('BILLING_QUOTE_STALE', 'มีส่วนลดจากงานที่ใช้ได้ กรุณาเลือกแล้วตรวจยอดอีกครั้ง');
       if (!account) account = await tx.billingAccount.create({ data: { companyId: context.companyId, stripeAccountId: this.stripe.accountId, livemode: this.stripe.livemode } });
       const attempt = await tx.billingAttempt.create({ data: { billingAccountId: account.id, initiatingUserId: context.userId, quoteId: quote.id,
@@ -961,8 +963,8 @@ export class BillingService {
           creditScope: offer.version === 4 ? 'CHAT' : 'TOTAL', description: offer.description };
       } catch { deal = undefined; }
     }
-    // Sales-event spec §8: the discount box and card lines, only where buying now starts a package.
-    const eventDiscount = settings?.policy && packageMenuPurchaseSource(purchaseSource) && finalActions.includes('new_sales')
+    // Sales-event spec §8 / SD-O12: the discount box and card lines wherever this shop can pay for a package in one go now.
+    const eventDiscount = settings?.policy && eventDiscountPath(purchaseSource, renewalMode) === 'DISCOUNT' && finalActions.includes('new_sales')
       ? await eventDiscountView(this.prisma.client, { userId: context.userId, companyId: company.id, tax: settings.policy.taxTreatment, now: new Date(),
         offers: BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval => billingOffer(tier, interval, settings.policy))) }) : undefined;
     return { companyId: company.id, companyName: company.name, billingProfile: companyBillingProfile(company), mode: this.stripe.enabled ? (this.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED',

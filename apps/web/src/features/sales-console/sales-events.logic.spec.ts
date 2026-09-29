@@ -120,10 +120,10 @@ describe('words on screen (spec §8)', () => {
 
   it('says what the batch gives in the LIFF page wording, only the parts above zero', () => {
     assert.deepEqual(batchRewardLines(view()), [
-      'ร้านใหม่: ลด 100 บาทจากบิลแรกเมื่อซื้อแพ็กเกจ',
+      'ลด 100 บาท ตอนจ่ายค่าแพ็กเกจ เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง',
       'ร้านที่มีแพ็กเกจอยู่แล้ว: รับเครดิต AI 50 เครดิต และจำนวนอ่านรูปใบเสร็จ 20 รูป',
     ]);
-    assert.deepEqual(batchRewardLines(view({ rewardChatCreditUnits: 0, rewardReceiptImageUnits: 0 })), ['ร้านใหม่: ลด 100 บาทจากบิลแรกเมื่อซื้อแพ็กเกจ']);
+    assert.deepEqual(batchRewardLines(view({ rewardChatCreditUnits: 0, rewardReceiptImageUnits: 0 })), ['ลด 100 บาท ตอนจ่ายค่าแพ็กเกจ เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง']);
     assert.equal(batchScopeText(view().scope), 'ทุกแพ็กเกจ · รายเดือนและรายปี');
     assert.equal(batchScopeText({ tiers: ['PRO_999'], intervals: ['year'] }), 'มืออาชีพ (PRO) · รายปี');
   });
