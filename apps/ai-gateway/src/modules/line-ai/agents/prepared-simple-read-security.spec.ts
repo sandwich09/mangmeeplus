@@ -255,7 +255,9 @@ describe('v2 prepared simple-read preserves the two-call grant and semantic cove
     });
   }
 
-  for (const fault of ['extra_clause', 'dependency', 'conflicting_filter', 'entity_reference', 'missing_plan', 'disabled_family', 'flag_off', 'unbacked_date'] as const) {
+  // Owner 2026-09-29: `disabled_family`/`flag_off` are no longer faults — the served families and the lane are
+  // always on (see the stale-config cases below); the remaining faults still refuse before any dispatch.
+  for (const fault of ['extra_clause', 'dependency', 'conflicting_filter', 'entity_reference', 'missing_plan', 'unbacked_date'] as const) {
     it(`refuses ${fault} before any tool or extra model dispatch`, async () => {
       const { client, calls } = makeErp();
       const req = await v2Req();
@@ -266,10 +268,7 @@ describe('v2 prepared simple-read preserves the two-call grant and semantic cove
       if (fault === 'entity_reference') item.entityReference = { kind: 'user_text', value: 'ใบที่สอง' };
       if (fault === 'missing_plan') req.preparedPlan = undefined;
       if (fault === 'unbacked_date') req.valueCandidates = undefined;
-      const result = await new OrchestratorAgent(client, makeConfig({
-        ...(fault === 'disabled_family' ? { lineAiDeterministicResponseFamilies: [] } : {}),
-        ...(fault === 'flag_off' ? { lineAiPreparedSimpleReadEnabled: false } : {}),
-      })).run(req);
+      const result = await new OrchestratorAgent(client, makeConfig()).run(req);
       assert.deepEqual(calls, []); assert.equal(fetchCalls, 0);
       assert.equal(result.semanticCoverage?.length, req.semanticSubrequests!.length);
       assert.ok(result.semanticCoverage?.every(coverage => coverage.status === 'unsupported'));
@@ -423,27 +422,17 @@ describe('prepared simple-read lane — eligible deterministic answer (no model,
     assert.deepEqual(calls, ['sales.get_sales_summary']);
   });
 
-  it('default off: the lane never runs — the model wire is used (router) and no prepared call is made', async () => {
-    const { client, calls } = makeErp();
-    const orchestrator = new OrchestratorAgent(client, makeConfig({ lineAiPreparedSimpleReadEnabled: false }));
-    const logs = withLogSink(orchestrator);
-    await orchestrator.run(baseReq());
-    assert.equal(calls.length, 0, 'fallback route is UNROUTABLE → zero tools');
-    assert.ok(fetchCalls > 0, 'the router model wire was attempted (lane skipped)');
-    // Counter sanity: the same prototype counters that must read 0 on the lane DO increment on the full
-    // path, so the zero-assertions above are real observations rather than a dead instrument.
-    assert.ok(spy.route > 0 && spy.compose > 0, 'router + composer ran on the full fallback path');
-    assert.ok(!logs.some((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read')), 'lane untouched when off');
-  });
-
-  it('fixed formatter registry rejects an arbitrary env family string (env can only narrow the compiled set)', async () => {
-    for (const families of [[], ['evil::family', 'sales.get_sales_summary::list']]) {
+  // Owner 2026-09-29 ("no more switches; always on"): the UAT AgentCore env carried a stale four-family list;
+  // no config value — flag off, an empty list, or junk — may keep an approved family off the lane any more.
+  it('a stale config (lane off, empty or junk family list) still serves an approved family on the lane', async () => {
+    for (const stale of [{ lineAiPreparedSimpleReadEnabled: false }, { lineAiDeterministicResponseFamilies: [] },
+      { lineAiDeterministicResponseFamilies: ['evil::family', 'sales.get_sales_summary::list'] }]) {
       const { client, calls } = makeErp();
-      const orchestrator = new OrchestratorAgent(client, makeConfig({ lineAiDeterministicResponseFamilies: families }));
+      const orchestrator = new OrchestratorAgent(client, makeConfig(stale));
       const logs = withLogSink(orchestrator);
       await orchestrator.run(baseReq());
-      assert.equal(calls.length, 0, 'no compiled family enabled → zero prepared calls');
-      assert.equal(fallbackReason(logs), 'formatter_family_not_allowed');
+      assert.deepEqual(calls, ['sales.get_sales_summary'], JSON.stringify(stale));
+      assert.ok(logs.some((e) => e.msg === 'line.ai.prepared_simple_read.served'), JSON.stringify(stale));
     }
   });
 });

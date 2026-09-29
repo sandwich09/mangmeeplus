@@ -357,7 +357,7 @@ describe('OrchestratorAgent', () => {
   // S-4 / M6, through the REAL path: the API's DTO caps `groundingText` and a longer value would
   // 400 every ERP tool call of that turn, so the SENDER truncates. Re-deriving the slice inside a
   // test proves nothing about `run()`; this drives the orchestrator and reads what it emitted.
-  it('bounds the grounding text it forwards, and sends none while the draft lane is off', async () => {
+  it('bounds the grounding text it forwards, and forwards it whatever a stale draft-lane switch says', async () => {
     const seen: Array<Record<string, unknown>> = [];
     const erpTools = {
       invoke: async (_tool: any, ctx: any) => {
@@ -377,12 +377,12 @@ describe('OrchestratorAgent', () => {
     );
     assert.ok(long.length > 1000, 'the fixture has to exceed the cap for this to mean anything');
 
-    // Flag off: the field is absent entirely, so an off deployment's wire is byte-identical.
+    // Owner 2026-09-29: draft edit is always on, so a stale `false` no longer strips the grounding text.
     seen.length = 0;
-    const withoutLane = new OrchestratorAgent(erpTools, makeConfig({ lineAiDraftEditEnabled: false }));
-    await withoutLane.run(makeReq(long));
+    const staleSwitch = new OrchestratorAgent(erpTools, makeConfig({ lineAiDraftEditEnabled: false }));
+    await staleSwitch.run(makeReq(long));
     assert.ok(seen.length > 0);
-    assert.equal(seen[0]!['groundingText'], undefined);
+    assert.equal((seen[0]!['groundingText'] as string).length, 1000);
   });
 
   it('inventory query only invokes inventory-allowlisted tools', async () => {
@@ -891,13 +891,15 @@ describe('OrchestratorAgent', () => {
 });
 
 describe('OrchestratorAgent – prepared-plan lanes (latency/autonomy Phases 3–4, default off)', () => {
-  it('Phase 4 default off: a forwarded prepared plan is ignored; the router runs and no prepared-lane log is emitted', async () => {
+  // Owner 2026-09-29: the prepared lane is always on — no config value keeps a forwarded plan out of its gate.
+  it('Phase 4 always on: a forwarded prepared plan always reaches the lane gate, with no switch to turn it off', async () => {
     const logs: any[] = [];
-    const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig());
+    const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiPreparedSimpleReadEnabled: false }));
     (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: (e: any) => logs.push(e) };
     await orchestrator.run({ ...makeReq('ดูสต็อกสินค้าใกล้หมด'), intakeIntent: 'BUSINESS_READ_QUESTION', preparedPlan: preparedInventoryPlan() });
-    assert.ok(!logs.some((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read')), 'prepared lane untouched when flag off');
-    assert.ok(!logs.some((e) => e.msg === 'line.ai.fused_plan.shadow'), 'no shadow when flag off');
+    const fallback = logs.find((e) => e.msg === 'line.ai.prepared_simple_read.fallback');
+    assert.equal(fallback?.reason, 'formatter_family_not_allowed', 'the gate ran; inventory is compiled but not an approved family');
+    assert.ok(!logs.some((e) => e.msg === 'line.ai.fused_plan.shadow'), 'no shadow when the shadow telemetry is off');
   });
 
   it('Phase 4 on with empty family allowlist: eligibility fails on the formatter family and falls back to the router', async () => {
@@ -937,20 +939,6 @@ describe('prepared simple-read lane telemetry', () => {
   }
   const laneLogs = (logs: any[]) => logs.filter((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read'));
 
-  it('logs served with the family it answered from', async () => {
-    const orchestrator = new OrchestratorAgent(makeOkErpTools(), laneConfig(['inventory.list_low_stock::list']));
-    const logs = sink(orchestrator);
-    await orchestrator.run({
-      ...makeReq('สินค้าอะไรใกล้หมดบ้าง'),
-      preparedPlan: { ...preparedInventoryPlan(), answerShape: 'list' } as LineAiPreparedPlan,
-      intakeIntent: 'BUSINESS_READ_QUESTION',
-      actorDelegations: { 'inventory.list_low_stock': ['test-delegation'] },
-    });
-    assert.deepEqual(laneLogs(logs).map((e) => [e.msg, e.tool, e.answerShape]),
-      [['line.ai.prepared_simple_read.served', 'inventory.list_low_stock', 'list']]);
-    assert.equal(laneLogs(logs)[0]?.requestId, 'req-test');
-  });
-
   it('logs the eligibility reason when the lane defers before any call', async () => {
     const orchestrator = new OrchestratorAgent(makeOkErpTools(), laneConfig([]));
     const logs = sink(orchestrator);
@@ -976,11 +964,8 @@ describe('prepared simple-read lane telemetry', () => {
     assert.equal(laneLogs(logs)[0]?.periodSource, 'default');
   });
 
-  it('says nothing about the lane for a turn that is not a business read, or when the lane is off', async () => {
-    const off = new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiPreparedSimpleReadEnabled: false }));
-    const offLogs = sink(off);
-    await off.run({ ...makeReq('สินค้าอะไรใกล้หมดบ้าง'), preparedPlan: preparedInventoryPlan(), intakeIntent: 'BUSINESS_READ_QUESTION' });
-    assert.deepEqual(laneLogs(offLogs), []);
+  // Owner 2026-09-29: there is no "lane off" any more (always on); a non-business turn still logs nothing.
+  it('says nothing about the lane for a turn that is not a business read', async () => {
     const other = new OrchestratorAgent(makeOkErpTools(), laneConfig(['inventory.list_low_stock::list']));
     const otherLogs = sink(other);
     await other.run({ ...makeReq('สวัสดีค่ะ'), intakeIntent: 'ADVISOR_CONVERSATION' } as LineAiTurnRequest);
@@ -1160,14 +1145,6 @@ describe('OrchestratorAgent period resolution', () => {
       message: 'ปิดยอดเมื่อวานเป็นยังไง', tool: 'expense.get_daily_closing',
       input: (p) => ({ date: p.fromDate }), expect: /^เมื่อวาน \(/,
     },
-    {
-      message: 'VAT เดือนที่แล้วต้องยื่นเท่าไหร่', tool: 'tax.get_vat_summary',
-      input: (p) => ({ periodKey: p.monthKey! }), expect: /\nช่วง: เดือนที่แล้ว \(/,
-    },
-    {
-      message: 'ลูกค้าใหม่เดือนที่แล้วกี่ราย', tool: 'crm.get_customer_summary',
-      input: (p) => ({ newSince: p.fromDate, newUntil: p.toDate }), expect: /\nช่วง: เดือนที่แล้ว \(/,
-    },
   ];
 
   for (const testCase of LANE_CASES) {
@@ -1180,8 +1157,9 @@ describe('OrchestratorAgent period resolution', () => {
       const result = await orchestrator.run(periodRequest(testCase.message, testCase.tool, proposed));
 
       assert.deepEqual(seen, [{ tool: testCase.tool, input: proposed }], 'the tool must receive exactly the resolved period');
-      assert.deepEqual(laneLogs(logs).map((e) => [e.msg, e.periodSource]),
-        [['line.ai.prepared_simple_read.served', 'relative']]);
+      // The served line names the family it answered from (wave 2 H2 telemetry).
+      assert.deepEqual(laneLogs(logs).map((e) => [e.msg, e.periodSource, e.tool, e.answerShape]),
+        [['line.ai.prepared_simple_read.served', 'relative', testCase.tool, 'single_metric']]);
       assert.match(result.replyText, testCase.expect);
     });
   }
@@ -1211,15 +1189,17 @@ describe('OrchestratorAgent period resolution', () => {
     assert.deepEqual(invented.seen.map((call) => call.input), [{}], 'the fallback path must not read the invented window');
   });
 
-  it('refuses a period key that is not a candidate month or the current one', async () => {
+  // Owner 2026-09-29: the served families are the approved code constant; an env/config list can neither
+  // narrow it nor widen it to a compiled-but-unapproved family such as VAT (spec R-L4 blind-eval gate).
+  it('never serves a compiled-but-unapproved family, whatever the configured list says', async () => {
     const message = 'VAT เดือนที่แล้วต้องยื่นเท่าไหร่';
     const resolved = period(message);
     const recorded = recordingErpTools(resolved.fromDate, resolved.toDate);
     const lane = new OrchestratorAgent(recorded.client, laneConfig(['tax.get_vat_summary::single_metric']));
     const logs = sink(lane);
-    await lane.run(periodRequest(message, 'tax.get_vat_summary', { periodKey: '2019-01' }));
+    await lane.run(periodRequest(message, 'tax.get_vat_summary', { periodKey: resolved.monthKey! }));
     assert.deepEqual(laneLogs(logs).map((e) => [e.msg, e.reason]),
-      [['line.ai.prepared_simple_read.fallback', 'input_sanitizer_changed']]);
+      [['line.ai.prepared_simple_read.fallback', 'formatter_family_not_allowed']]);
   });
 
   it('hands the tool the same input on the model loop as on the prepared lane, for the same message', async () => {
@@ -1809,8 +1789,10 @@ describe('approved knowledge orchestration', () => {
     assert.equal(result.webLinks[0]?.path, '/companies/company-1/user-guide/expenses#overview');
     assert.deepEqual(result.outputs.flatMap((entry) => entry.toolCalls), []);
   }));
-  it('requires both the trusted API admission bit and Gateway flag, and rechecks current rights', async () => withReviewedPack(async () => {
-    for (const variant of ['api-off', 'gateway-off', 'permission-revoked', 'feature-off']) {
+  // Owner 2026-09-29: the Gateway switch is gone (always on); only the API's trusted admission bit and the
+  // caller's current rights decide, so a stale `lineAiApprovedKnowledgeEnabled: false` changes nothing.
+  it('requires the trusted API admission bit and rechecks current rights, whatever a stale Gateway switch says', async () => withReviewedPack(async () => {
+    for (const variant of ['api-off', 'permission-revoked', 'feature-off']) {
       helpProvider(); const req = knowledgeRequest();
       if (variant === 'api-off') req.approvedKnowledge = false;
       if (variant === 'permission-revoked') req.userContext.permissions = [];
