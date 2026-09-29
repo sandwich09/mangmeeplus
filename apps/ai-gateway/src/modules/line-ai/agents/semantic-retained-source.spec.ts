@@ -48,7 +48,7 @@ function request(source: Awaited<ReturnType<typeof fixture>>): LineAiTurnRequest
   };
 }
 
-async function run(candidateId: string) {
+async function run(candidateId: string, draftResult?: Record<string, unknown>) {
   const source = await fixture(), prompts: ProviderInput[] = [], invoked: string[] = [];
   const controls = [
     JSON.stringify({ calls: [{ index: 0, toolName: 'reimbursement.draft.get_options', input: { operation: 'CREATE', subrequestIndex: 0 } }], questions: [] }),
@@ -61,14 +61,16 @@ async function run(candidateId: string) {
     prompts.push(input);
     return { ok: true, text: controls.shift() ?? '{"answers":[{"index":0,"status":"needs_user","text":"ตรวจสอบแล้ว","sourceRefIds":[]}]}' };
   } };
-  await runWithUsageContext({ companyId: 'company', budget: { status: 'active-v2', grant: { maxTurnSlots: 5 } as never,
+  const result = await runWithUsageContext({ companyId: 'company', budget: { status: 'active-v2', grant: { maxTurnSlots: 5 } as never,
     inputDigest: source.current.inputEvidence.joinedSha256, sourceRoute: 'test', calls: 0, repairCount: 0 } }, () =>
     runSemanticTurnV2({ req: request(source), provider, draftEditEnabled: false, reimbursementDraftEnabled: true,
       publicLookupEnabled: false, approvedKnowledgeEnabled: false,
-      async invoke(meta): Promise<ToolResult> { invoked.push(meta.name); return { toolName: meta.name, status: 'ok',
-        sourceRefs: [], asOf: '2026-09-27T00:00:00.000Z',
-        data: meta.name.endsWith('get_options') ? { actionLocator: { taskId: TASK, actionId: 'action-1' } } : {} }; } }));
-  return { source, prompts, invoked };
+      async invoke(meta): Promise<ToolResult> { invoked.push(meta.name); const draft = meta.name.endsWith('preview_create') && draftResult;
+        return { toolName: meta.name, status: 'ok',
+        sourceRefs: draft ? [{ label: 'ร่างใบเบิก', module: 'reimbursements', entityType: 'reimbursement_draft_action', entityId: 'action-1', permissionChecked: true }] : [],
+        asOf: '2026-09-27T00:00:00.000Z',
+        data: meta.name.endsWith('get_options') ? { actionLocator: { taskId: TASK, actionId: 'action-1' } } : draft ? { reimbursementDraft: draftResult } : {} }; } }));
+  return { source, prompts, invoked, result };
 }
 
 describe('semantic turn retained task source', () => {
@@ -86,5 +88,15 @@ describe('semantic turn retained task source', () => {
 
     const rejected = await run((await fixture()).siblingId);
     assert.deepEqual(rejected.invoked, ['reimbursement.draft.get_options']);
+  });
+
+  // NAT-04 (2026-09-29): get_options, preview_create and then compose ran past the 20 s runtime deadline,
+  // though a draft write's answer is the fixed draft text plus the API's own card whatever compose says.
+  it('answers a reimbursement draft write from its tool result without a compose call', async () => {
+    const done = await run((await fixture()).selectedId, { status: 'preview' });
+    assert.deepEqual(done.prompts.map(prompt => prompt.usageTag), ['line.loop', 'line.loop']);
+    assert.equal(done.result.semanticCoverage?.[0]?.status, 'needs_user');
+    assert.equal(done.result.semanticCoverage?.[0]?.reasonCode, 'CONFIRMATION_REQUIRED');
+    assert.match(done.result.replyText, /ยังไม่ได้บันทึกหรือยื่นใบเบิก/u);
   });
 });

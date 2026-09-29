@@ -144,6 +144,48 @@ it('a no-save review restates the pending claim with its shop and writes nothing
   assert.match(cancel.sent[0]!, /ยกเลิกร่างใบเบิกนี้แล้ว/u);
 });
 
+it('a typed cancel closes the one open text-note draft conversation and says the draft stays recorded (NAT-12)', async () => {
+  const f = pendingFixture('edit'); f.flow.draftUpdate.pendingPreview = async () => null;
+  const executed: any[] = [];
+  f.flow.expenseDraftConversation = {
+    routeContexts: async () => [{ expenseId: 'expense-9', label: 'ค่าส่งของ', status: 'OPEN', questions: [] }],
+    execute: async (_ctx: any, input: any) => { executed.push(input); return { handled: true, status: 'CANCELLED', expenseId: 'expense-9',
+      replyTexts: ['🧾 เก็บร่างค่าใช้จ่ายแล้วค่ะ\n\nยกเลิกการสนทนาร่างนี้แล้ว หลักฐานและร่างเดิมไม่ได้ถูกลบ'], acceptedFields: [] }; },
+  };
+  assert.equal(await f.flow.handlePendingWorkControl(f.event, f.ctx), true);
+  assert.equal(executed[0].messageText, 'ยกเลิก');
+  assert.equal(executed[0].captureHints.targetExpenseId, 'expense-9');
+  assert.match(f.sent[0]!, /ยกเลิกการสนทนาร่างนี้แล้ว/u); assert.match(f.sent[0]!, /ร่างนี้ยังบันทึกไว้/u);
+  assert.match(f.sent[0]!, /expenses\/expense-9/u);
+  assert.deepEqual(f.logs, ['pending_work_cancelled']);
+  // A draft that is merely paused is not the pending work the words cancel.
+  const paused = pendingFixture('edit'); paused.flow.draftUpdate.pendingPreview = async () => null;
+  paused.flow.expenseDraftConversation = { routeContexts: async () => [{ expenseId: 'expense-9', label: 'x', status: 'PAUSED', questions: [] }],
+    execute: async () => { throw new Error('must not run'); } };
+  assert.equal(await paused.flow.handlePendingWorkControl(paused.event, paused.ctx), false);
+});
+
+it('a correction of the one open text-note draft is answered through that draft, never a new record (NAT-12)', async () => {
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const executed: any[] = [];
+  flow.expenseDraftConversation = {
+    routeContexts: async () => [{ expenseId: 'expense-9', label: 'ค่าส่งของ', status: 'OPEN', questions: [] }],
+    soleItemRef: async () => 'I01',
+    execute: async (_ctx: any, input: any) => { executed.push(input); return { handled: true, status: 'UPDATED', expenseId: 'expense-9',
+      replyTexts: ['บันทึกแล้ว: ค่าส่งของ ยอดรวม 350 บาท'], acceptedFields: ['I01-PRICE'] }; },
+  };
+  const event = { webhookEventId: 'evt', lineUserId: 'line-user', messagingChannelId: 'oa', messageText: 'อันเมื่อกี้ไม่ใช่ 300 เป็น 350 นะ' };
+  const result = await flow.correctOpenExpenseDraft(event, { companyId: 'company', userId: 'user' },
+    { amount: { from: '300', to: '350' } }, event.messageText, [{ id: 'expense-9', label: 'ค่าส่งของ' }]);
+  assert.equal(result?.status, 'UPDATED');
+  assert.deepEqual(executed[0].captureHints, { targetExpenseId: 'expense-9',
+    items: [{ itemRef: 'I01', totalAmount: '350', sourceText: event.messageText }] });
+  // Another record named by the router, or a draft this chat did not capture, keeps the correction lane.
+  assert.equal(await flow.correctOpenExpenseDraft(event, {}, { targetExpenseId: 'other', amount: { to: '350' } }, event.messageText,
+    [{ id: 'expense-9', label: 'x' }, { id: 'other', label: 'y' }]), null);
+  assert.equal(await flow.correctOpenExpenseDraft(event, {}, { amount: { to: '350' } }, event.messageText, [{ id: 'other', label: 'y' }]), null);
+});
+
 it('with nothing pending, or two pending things, the words stay an ordinary turn', async () => {
   const none = pendingFixture('edit'); none.flow.draftUpdate.pendingPreview = async () => null;
   assert.equal(await none.flow.handlePendingWorkControl(none.event, none.ctx), false);

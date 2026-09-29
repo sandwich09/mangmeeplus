@@ -47,6 +47,24 @@ function makeRepo(rows: any[] = [{ id: 'exp-bhc', expenseDate: null, grandTotalA
 const getExpense = (record: unknown = BHC) => ({ execute: async () => record }) as any;
 
 describe('expense.explain_record', () => {
+  // NAT-12 (2026-09-29): a text-note draft keeps "สามร้อย", then "350", in its collection until the item has a
+  // quantity; the record read as 0 and every answer quoting the user's amount failed grounding.
+  it('shows a text-note draft\'s items that are not on the document yet, and what it still asks', async () => {
+    const note = { ...BHC, id: 'exp-note', status: 'DRAFT', lines: [], charges: [], subtotalAmount: '0', taxableAmount: '0', vatAmount: '0', grandTotalAmount: '0',
+      sourceChannelMetadataJson: { lineExpenseDraftContinuation: {
+        schemaVersion: 1, workflowId: 'wf', kind: 'EXPENSE_DRAFT_COLLECTION', companyId: 'c1', userId: 'u1', expenseId: 'exp-note',
+        chatKeyHash: 'chat-a', status: 'OPEN', version: 2, targetRevision: '2026-09-29T00:00:00.000Z',
+        header: { provisionalExpenseDate: '2026-09-29' }, provenance: {}, lastActivityAt: '2026-09-29T00:00:00.000Z',
+        items: [{ itemRef: 'I01', sourceText: 'ค่าส่งของ', description: 'ค่าส่งของ', totalAmount: '350' }],
+        unresolvedQuestions: [{ id: 'I01-QTY', scope: 'ITEM', itemRef: 'I01', field: 'quantity', prompt: 'จำนวน?' }],
+      } } };
+    const { repo } = makeRepo([{ id: 'exp-note', expenseDate: null, grandTotalAmount: null, vendorDocumentNumber: null, sourceDocumentType: 'EXPENSE_NOTE_TEXT', createdAt: new Date() }]);
+    const data = (await new ExpenseExplainRecordTool(getExpense(note), repo).execute(ctx as any, {})).data as any;
+    assert.deepEqual(data.lineDraftItemsNotYetOnDocument, [{ description: 'ค่าส่งของ', quantity: null, unitPrice: null, totalAmount: '350' }]);
+    assert.deepEqual(data.lineDraftStillAsks, ['quantity']);
+    assert.equal((await new ExpenseExplainRecordTool(getExpense(), makeRepo().repo).execute(ctx as any, {})).data?.['lineDraftItemsNotYetOnDocument' as never], undefined);
+  });
+
   it('explains the newest record of THIS chat with the totals identity as real numbers', async () => {
     const { repo, queries } = makeRepo();
     const result = await new ExpenseExplainRecordTool(getExpense(), repo).execute(ctx as any, {});
