@@ -131,10 +131,18 @@ export function qrValidUntilText(claimEndsAt: string): string {
 
 export const SALES_EVENT_QR_PRINT_HINT = 'พิมพ์หรือเปิดบนจอให้ลูกค้าสแกนได้ · หยุดใช้ได้ทันทีด้วยพักแจก/ระงับ หรือเอาเซลล์ออกจากชุด';
 
+/**
+ * "บันทึกรูป QR" saves a PNG: phones keep it in Photos and share it in LINE, which an SVG does not do.
+ * The SVG is the fallback only when the browser cannot draw it onto a canvas. 1024 px with a white
+ * quiet zone on top of the QR's own margin prints sharply at poster size and scans off any screen.
+ */
+export const SALES_EVENT_QR_PNG_SIZE = 1024;
+export const SALES_EVENT_QR_PNG_QUIET_ZONE = 32;
+
 /** "บันทึกรูป QR": a file name people recognise, without the characters a file system refuses. */
-export function qrDownloadFileName(batch: Pick<SalesEventBatchView, 'eventName' | 'batchName'>): string {
+export function qrDownloadFileName(batch: Pick<SalesEventBatchView, 'eventName' | 'batchName'>, extension: 'png' | 'svg'): string {
   const name = `QR ${batch.eventName} ${batch.batchName}`.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return `${name.slice(0, 100).trim()}.svg`;
+  return `${name.slice(0, 100).trim()}.${extension}`;
 }
 
 // ── the batch form ──
