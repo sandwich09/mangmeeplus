@@ -9,11 +9,17 @@ const labels: Record<'mode'|'channel'|'company'|'payment'|'apply'|'access'|'subs
   quote: { UNUSED:'ยังไม่ได้ใช้ชำระเงิน' },
   mode: { TEST:'โหมดทดสอบ · ไม่มีการรับเงินจริง', LIVE:'โหมดรับเงินจริง', DISABLED:'ยังไม่เปิดการชำระเงิน' },
   channel: { WEB:'เว็บ', LINE:'LINE', EMAIL:'อีเมล', ERP:'ระบบมั่งมี' },
+  // DISABLED here is raw Company.status, which the term sweep's own no-package lock also sets
+  // (only `planTerm.termDisabledAt` tells the two apart) — some callers (BillingConfigurationPage's
+  // sales-cohort list) have only this status, no term state, so this cannot claim "admin hold"
+  // (review 2026-09-29 item 4: left as the neutral wording; see `access.HELD` for the admin-only one).
   company: { ACTIVE:'บริษัทเปิดใช้งาน', DISABLED:'บริษัทพักใช้งาน', PENDING:'รอตรวจบริษัท' },
   payment: { PAID:'ชำระแล้ว', PENDING:'รอยืนยันการชำระ', UNKNOWN:'ยังยืนยันผลชำระไม่ได้', FAILED:'เรียกเก็บเงินไม่สำเร็จ', NONE:'ยังไม่มีรายการชำระ',
     OPEN:'รอชำระเงิน', DRAFT:'ใบแจ้งหนี้ฉบับร่าง', VOID:'ยกเลิกใบแจ้งหนี้แล้ว', UNCOLLECTIBLE:'ใบแจ้งหนี้ที่ต้องตรวจหนี้ค้าง' },
   apply: { APPLIED:'เปิดสิทธิ์แล้ว', PENDING:'รอเปิดสิทธิ์', HELD:'ต้องตรวจสอบก่อนเปิดสิทธิ์', FAILED:'เปิดสิทธิ์ไม่สำเร็จ', NONE:'ยังไม่มีรายการให้เปิดสิทธิ์' },
-  access: { ACTIVE:'ใช้งานได้', EXPIRED:'แพ็กเกจหมดอายุแล้ว', HELD:'พักใช้งานเพื่อตรวจสอบ', GRACE:'อยู่ในระยะผ่อนผัน' },
+  // HELD excludes the term sweep's own no-package lock (billing-state.ts's `held`), so it is always
+  // an admin hold — never a no-package or expired shop (review 2026-09-29 item 4).
+  access: { ACTIVE:'ใช้งานได้', EXPIRED:'แพ็กเกจหมดอายุแล้ว', HELD:'ถูกพักใช้งานโดยผู้ดูแล', GRACE:'อยู่ในระยะผ่อนผัน' },
   subscription: { ACTIVE:'สถานะสมาชิกปกติ', TRIALING:'อยู่ในช่วงทดลอง', PAST_DUE:'ต่ออายุไม่สำเร็จ', UNPAID:'มีค่าต่ออายุค้างชำระ',
     CANCELED:'หยุดต่ออายุแล้ว', INCOMPLETE:'รอชำระเพื่อเริ่มสมาชิก', INCOMPLETE_EXPIRED:'รายการเริ่มสมาชิกหมดอายุ', PAUSED:'พักสมาชิก', NONE:'ยังไม่มีสมาชิก Stripe' },
   delivery: { PENDING:'รอส่ง', READY:'พร้อมส่ง', QUEUED:'รอส่ง', PROCESSING:'กำลังส่ง', SENDING:'กำลังส่ง', SENT:'ผู้ให้บริการรับคำขอแล้ว',
