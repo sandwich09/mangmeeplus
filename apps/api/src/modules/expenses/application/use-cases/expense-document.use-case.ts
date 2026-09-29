@@ -31,9 +31,6 @@ function hasPerm(ctx: RequestContext, perm: string): boolean {
   return ctx.permissions.includes(perm);
 }
 
-/** Typed incomplete result (spec §8.2). The three field lists are BOUNDED ENUM members only — never raw
- *  conversation, values or PII — so the dispatcher can ask for exactly what is missing and never re-ask
- *  for a field the gate already accepted. Defaults keep every legacy `new ...()` call site valid. */
 /** NAT12 (2026-09-29): `line-draft:<event>` never matched the draft key rule `[A-Za-z0-9_-]{8,64}`, so every
  *  LINE text expense note since 3d7379ef failed as "Invalid draft idempotency key" and the chat got the generic
  *  temporary-error reply. A LINE event/message id is used as is; anything else (a 64-hex task operation id) is
@@ -42,6 +39,9 @@ export function lineDraftIdempotencyKey(sourceId: string): string {
   return `line-draft-${/^[A-Za-z0-9_-]{1,53}$/u.test(sourceId) ? sourceId : createHash('sha256').update(sourceId).digest('hex').slice(0, 53)}`;
 }
 
+/** Typed incomplete result (spec §8.2). The three field lists are BOUNDED ENUM members only — never raw
+ *  conversation, values or PII — so the dispatcher can ask for exactly what is missing and never re-ask
+ *  for a field the gate already accepted. Defaults keep every legacy `new ...()` call site valid. */
 export class LineTextExpenseCaptureIncompleteError extends BadRequestException {
   constructor(
     readonly acceptedFields: LineIntakeClarificationField[] = [],
