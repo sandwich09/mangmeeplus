@@ -31,10 +31,12 @@ Artifacts:
 
 Verification (2026-09-29, worktree above; per controller: full API/web suites and whole-chain run once by the controller on the integrated branch):
 - contracts build 0, typecheck 0; `prisma validate` ok; `prisma generate` ok; migration passes `assertProductionA5NoDestructiveSql`.
-- API typecheck 0; `check-di-metadata` on sales-console + billing: all constructors carry metadata.
-- API focused: `sales-event.logic.spec.ts` 16/16; `permission-registry.spec.ts` 43/43; `spec-suite-coverage.spec.ts` 3/3.
+- API + web typecheck 0 with the controller's native TS script (`api-typecheck.sh <worktree> both`: API 28 s, web 4 s); `check-di-metadata` on sales-console + billing: all constructors carry metadata; `test:boot` 0 ("Nest resolved every provider"); `migration:review` (`migrate diff --from-empty`) renders the four tables.
+- API focused: `sales-event.logic.spec.ts` 16/16; `permission-registry.spec.ts` 43/43; with SD-B's `sales-event-claim.logic.spec.ts`, `spec-suite-coverage`, `body-validation-coverage` and `injectable-di-token`: 78/78; W00 `line-ai-capability-manifest.spec.ts` 4/4.
 - Web: typecheck 0; focused `sales-events.logic.spec.ts` + `sales-console.qa.spec.ts` + `sales-console.logic.spec.ts` + `api-error-message.spec.ts` + `no-raw-api-error-display.spec.ts` 164/164.
-- PG (throwaway postgres:16 `mangmee-sd-a-pg-20260929`, fresh `migrate deploy`, removed afterwards): see the final report / next update of this file.
+- PG (throwaway postgres:16 `mangmee-sd-a-pg-20260929` on 127.0.0.1:15541, DB `sales_event_sd_a_ci`, fresh `migrate deploy` of every migration incl. `20260929180000_sales_event_discounts`, run under the heavy lock, container removed): `sales-event-discounts.pg.spec.ts` 13/13 (3 guard + 10 PG); existing `sales-console.pg.spec.ts` 16/16.
+- 390 px: checked in code, not in a browser (no local stack on the loaded machine): every button is `mangmee-btn` (min-height 44 px, enforced by `sales-console.qa.spec.ts`), checkboxes are `SwitchField` (44 px tap area below `sm`), inputs `h-11`, rows `min-h-12`, single column below `sm`, `break-words` on names, QR capped at 288 px, no fixed widths. Owner check on a real phone = UAT U2.
+- Not run by instruction: full API/web suites and whole-chain (the controller runs them once on the integrated branch).
 - Pins `--check`: current (no pinned file touched). W00 not regenerated (no hashed file touched).
 
 Next:
