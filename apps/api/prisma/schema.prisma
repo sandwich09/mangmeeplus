@@ -3857,6 +3857,123 @@ model SalesAttribution {
   @@index([flaggedAt])
 }
 
+/// Sales-event discounts (docs/specs/sales-event-discounts-spec-th.md §6.1). A sales lead sets up a
+/// batch; each assigned เซลล์ shows a 5-minute QR at the booth; whoever scans it through LINE gets one
+/// ticket bound to that LINE identity. States are Strings (no Prisma enum, SD-T5) and every rule the
+/// database can hold is a CHECK or a partial unique index in the migration SQL — Prisma cannot model
+/// either, so do NOT let a future `prisma migrate diff` drop them. No switch: the batch itself is the
+/// control (Owner 2026-09-29, spec SD-O10).
+model SalesEventBatch {
+  id                      String                 @id @default(cuid())
+  /// "งาน": plain text that groups the report; there is no event record of its own.
+  eventName               String
+  batchName               String
+  /// First-bill discount in satang, whole baht only. 0 = this batch gives no price discount.
+  discountSatang          Int
+  /// Credit for shops that already pay: AI credit in 0.01-credit units (add-on unitScale 100) and
+  /// receipt images. Stored now, redeemed by SD-F. At least one of the three rewards is > 0 (CHECK).
+  rewardChatCreditUnits   Int                    @default(0)
+  rewardReceiptImageUnits Int                    @default(0)
+  /// Counted over the batch's whole life: revoking, refunding or never using a ticket gives nothing back.
+  issueCap                Int
+  issuedCount             Int                    @default(0)
+  /// Claim window [claimStartsAt, claimEndsAt), UTC. "ปิดรับแล้ว" is this window, not a state.
+  claimStartsAt           DateTime
+  claimEndsAt             DateTime
+  /// { tiers: PaidTier[], intervals: ('month'|'year')[] } — which package cards the discount applies to.
+  scopeJson               Json
+  /// 'OPEN' | 'PAUSED' | 'SUSPENDED' (spec §6.2).
+  state                   String                 @default("OPEN")
+  /// +1 on every edit; a ticket freezes the revision it was issued under.
+  revision                Int                    @default(1)
+  /// Optimistic fence for every console command -> SALES_EVENT_BATCH_STALE. Claims never bump it.
+  version                 Int                    @default(1)
+  createdByUserId         String
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  agents                  SalesEventBatchAgent[]
+  qrTokens                SalesEventQrToken[]
+  tickets                 SalesEventTicket[]
+
+  @@index([state, claimEndsAt])
+}
+
+/// Who may show this batch's QR. Removing a เซลล์ keeps the row (`active = false`) so the tickets they
+/// already handed out still count for them, and their QR stops working at once.
+model SalesEventBatchAgent {
+  batchId       String
+  salesUserId   String
+  active        Boolean         @default(true)
+  addedByUserId String
+  addedAt       DateTime        @default(now())
+  removedAt     DateTime?
+  batch         SalesEventBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@id([batchId, salesUserId])
+  @@index([salesUserId, active])
+}
+
+/// One "แสดง QR" press. Only the SHA-256 of the 32-byte token is stored; the token itself lives in
+/// the QR image and nowhere else. Valid until min(created + 5 minutes, claimEndsAt).
+model SalesEventQrToken {
+  id            String          @id @default(cuid())
+  tokenHash     String          @unique
+  batchId       String
+  salesUserId   String
+  batchRevision Int
+  expiresAt     DateTime
+  createdAt     DateTime        @default(now())
+  batch         SalesEventBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, expiresAt])
+}
+
+/// "ส่วนลดจากงาน" — one per LINE identity per batch. Amounts, rewards, scope, expiry and the เซลล์ are
+/// frozen at issue. Used once and one way only: `redeemedAs` DISCOUNT (first bill) or CREDIT.
+/// The LINE identity is kept for matching only and never leaves the API.
+/// Partial uniques in the migration SQL (Prisma cannot express them):
+///   "SalesEventTicket_company_discount_key" ("companyId") WHERE state IN ('RESERVED','USED') AND "redeemedAs" = 'DISCOUNT'
+///   "SalesEventTicket_batch_company_key" ("batchId", "companyId") WHERE state IN ('RESERVED','USED')
+model SalesEventTicket {
+  id                      String          @id @default(cuid())
+  /// 8 characters from an alphabet with no 0/O or 1/I — the number people quote.
+  serial                  String          @unique
+  batchId                 String
+  batchRevision           Int
+  salesUserId             String
+  holderProvider          String          @default("LINE")
+  holderChannelId         String
+  holderProviderUserId    String
+  discountSatang          Int
+  rewardChatCreditUnits   Int
+  rewardReceiptImageUnits Int
+  scopeJson               Json
+  expiresAt               DateTime
+  /// 'ISSUED' | 'RESERVED' | 'USED' | 'REVOKED' (spec §6.3). Expired = ISSUED and expiresAt <= now.
+  state                   String          @default("ISSUED")
+  /// 'DISCOUNT' | 'CREDIT', null until the ticket starts being used.
+  redeemedAs              String?
+  companyId               String?
+  attemptId               String?         @unique
+  invoiceId               String?         @unique
+  appliedDiscountSatang   Int?
+  claimRequestKey         String
+  redeemRequestKey        String?
+  reservedAt              DateTime?
+  usedAt                  DateTime?
+  revokedAt               DateTime?
+  revokedByUserId         String?
+  revokeReason            String?
+  version                 Int             @default(1)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  batch                   SalesEventBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, holderChannelId, holderProviderUserId])
+  @@index([holderChannelId, holderProviderUserId, state])
+  @@index([companyId, state])
+}
+
 model AccountClaimToken {
   id              String               @id @default(cuid())
   signupRequestId String

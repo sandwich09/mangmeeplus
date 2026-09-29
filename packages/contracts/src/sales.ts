@@ -7,7 +7,10 @@ import type { PlanTierKey } from './plan-term.js';
 export const SALES_ROLE_KEYS = ['MANGMEE_SALES_LEAD', 'MANGMEE_SALES'] as const;
 export type SalesRoleKey = typeof SALES_ROLE_KEYS[number];
 export const SALES_PERMISSION_KEYS = ['sales.console.read', 'sales.company.search', 'sales.deal.create', 'sales.deal.approve',
-  'sales.team.manage', 'sales.report.read', 'sales.agent_profile.manage'] as const;
+  'sales.team.manage', 'sales.report.read', 'sales.agent_profile.manage',
+  // Sales-event discounts (docs/specs/sales-event-discounts-spec-th.md §9): set up, pause, suspend and
+  // edit a batch and revoke its tickets. SYSTEM_ADMIN and MANGMEE_SALES_LEAD only.
+  'sales.event.manage'] as const;
 export type SalesPermissionKey = typeof SALES_PERMISSION_KEYS[number];
 
 export const SALES_DEAL_STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PAID', 'APPLIED', 'EXPIRED', 'REJECTED', 'CANCELLED'] as const;
@@ -238,5 +241,109 @@ export const SALES_ERROR_CODES = ['SALES_DEAL_STATE_CONFLICT', 'SALES_DEAL_SELF_
   // Phase 4
   'SALES_REPORT_RANGE_INVALID', 'SALES_FLAG_REVIEW_INVALID',
   // Phase 5 (D-P5-3 / D-P5-6)
-  'SALES_DEAL_PRICE_PENDING', 'SALES_DEAL_END_INVALID'] as const;
+  'SALES_DEAL_PRICE_PENDING', 'SALES_DEAL_END_INVALID',
+  // Sales-event discounts, console (spec §7.3). SD-B/SD-C/SD-F add the claim and redemption codes.
+  'SALES_EVENT_BATCH_INVALID', 'SALES_EVENT_REWARD_REQUIRED', 'SALES_EVENT_DISCOUNT_TOO_HIGH', 'SALES_EVENT_BATCH_STALE',
+  'SALES_EVENT_NOT_FOUND', 'SALES_EVENT_CLAIM_CLOSED', 'SALES_EVENT_ISSUE_FULL', 'SALES_EVENT_AGENT_INACTIVE',
+  'SALES_EVENT_TICKET_NOT_REVOCABLE'] as const;
 export type SalesErrorCode = typeof SALES_ERROR_CODES[number];
+
+// ── Sales-event discounts (docs/specs/sales-event-discounts-spec-th.md §6, §7.1, §9) ──────────────
+// A batch ("ชุดส่วนลด") issues one ticket ("ส่วนลดจากงาน") per LINE identity that scans its QR. The UI
+// never says "ตั๋ว". No switch: a discount exists only when a lead or admin creates a batch (SD-O10).
+
+/** Spec §6.2. "ปิดรับแล้ว" is the claim window, never a state. */
+export const SALES_EVENT_BATCH_STATES = ['OPEN', 'PAUSED', 'SUSPENDED'] as const;
+export type SalesEventBatchState = typeof SALES_EVENT_BATCH_STATES[number];
+/** Spec §6.3. Expired is read from time: ISSUED and `expiresAt <= now`. */
+export const SALES_EVENT_TICKET_STATES = ['ISSUED', 'RESERVED', 'USED', 'REVOKED'] as const;
+export type SalesEventTicketState = typeof SALES_EVENT_TICKET_STATES[number];
+/** How a ticket was used, once: the first-bill discount of a new shop, or credit into a paying shop. */
+export const SALES_EVENT_REDEEM_PATHS = ['DISCOUNT', 'CREDIT'] as const;
+export type SalesEventRedeemPath = typeof SALES_EVENT_REDEEM_PATHS[number];
+/** PAUSE: OPEN→PAUSED, RESUME: PAUSED→OPEN, SUSPEND: OPEN|PAUSED→SUSPENDED, LIFT: SUSPENDED→PAUSED. */
+export const SALES_EVENT_BATCH_ACTIONS = ['PAUSE', 'RESUME', 'SUSPEND', 'LIFT'] as const;
+export type SalesEventBatchAction = typeof SALES_EVENT_BATCH_ACTIONS[number];
+/** SUSPEND stops tickets already handed out, and LIFT restores them: both are audited with a reason. */
+export const SALES_EVENT_REASON_ACTIONS: readonly SalesEventBatchAction[] = ['SUSPEND', 'LIFT'];
+/** What the console and the customer read about one ticket; `EXPIRED` is derived from time. */
+export type SalesEventTicketDisplayState = 'AVAILABLE' | 'IN_PAYMENT' | 'USED' | 'EXPIRED' | 'REVOKED';
+
+export const SALES_EVENT_NAME_MAX = 120;
+export const SALES_EVENT_REASON_MAX = 500;
+/** One QR press lives this long, cut short by the batch's claim end. */
+export const SALES_EVENT_QR_TTL_SECONDS = 300;
+/** A ticket can be used until the batch's claim end (at the revision it was issued) plus this (SD-Q1). */
+export const SALES_EVENT_TICKET_VALID_DAYS = 30;
+/** AI credit is stored in 0.01-credit units, the add-on `unitScale` of CHAT_CREDIT. */
+export const SALES_EVENT_CHAT_CREDIT_UNIT_SCALE = 100;
+/** Page size of every list in the console (batches, tickets, the เซลล์ search). */
+export const SALES_EVENT_PAGE_SIZE = 50;
+
+/** Which package cards the first-bill discount applies to (spec §4.5). Credit has no scope. */
+export type SalesEventScope = { tiers: SalesDealBaseTier[]; intervals: SalesDealCadence[] };
+
+/** `POST /v1/sales/events/batches`. Amounts are satang / 0.01-credit units; times are ISO instants. */
+export type SalesEventBatchInput = {
+  eventName: string; batchName: string;
+  /** Whole baht (a multiple of 100), ≥ 0. */
+  discountSatang: number;
+  /** Whole AI credits (a multiple of 100), ≥ 0. */
+  rewardChatCreditUnits: number;
+  rewardReceiptImageUnits: number;
+  issueCap: number;
+  /** [claimStartsAt, claimEndsAt), entered as Thai time and sent as UTC instants. */
+  claimStartsAt: string; claimEndsAt: string;
+  scope: SalesEventScope;
+  /** The เซลล์ who may show the QR: a lead picks from their own team, SYSTEM_ADMIN from everyone. */
+  agentUserIds: string[];
+};
+/** `PATCH /v1/sales/events/batches/:batchId` — a new revision, fenced by the version the form read. */
+export type SalesEventBatchUpdate = SalesEventBatchInput & { expectedVersion: number };
+/** `POST /v1/sales/events/batches/:batchId/state`. `reason` is required for SUSPEND and LIFT. */
+export type SalesEventBatchStateBody = { action: SalesEventBatchAction; expectedVersion: number; reason?: string };
+/** `POST /v1/sales/events/tickets/:ticketId/revoke` — ISSUED tickets only. */
+export type SalesEventTicketRevokeBody = { reason: string; expectedVersion: number };
+
+export type SalesEventAgentOption = { userId: string; displayName: string; salesCode: string };
+export type SalesEventAgentSearch = { items: SalesEventAgentOption[]; nextCursor: string | null };
+
+/** Counted over the tickets the caller may see: a เซลล์ counts only what they handed out. */
+export type SalesEventTicketCounts = {
+  issued: number; available: number; inPayment: number; usedAsDiscount: number; usedAsCredit: number;
+  expired: number; revoked: number;
+};
+
+export type SalesEventBatchView = {
+  id: string; eventName: string; batchName: string;
+  discountSatang: number; rewardChatCreditUnits: number; rewardReceiptImageUnits: number;
+  issueCap: number; issuedCount: number;
+  claimStartsAt: string; claimEndsAt: string;
+  scope: SalesEventScope;
+  state: SalesEventBatchState;
+  /** OPEN and inside the claim window right now — the only time a QR can be shown. */
+  claimOpen: boolean;
+  revision: number; version: number;
+  createdByUserId: string; createdByDisplayName: string;
+  agents: { userId: string; displayName: string; active: boolean }[];
+  /** The caller is an active distributor of this batch. */
+  isDistributor: boolean;
+  /** The caller may edit it, change its state and revoke its tickets. */
+  canManage: boolean;
+  counts: SalesEventTicketCounts;
+  createdAt: string; updatedAt: string;
+};
+export type SalesEventBatchList = { items: SalesEventBatchView[]; nextCursor: string | null };
+
+/** `POST /v1/sales/events/batches/:batchId/qr`. The image is rendered by the API; no URL leaves it. */
+export type SalesEventQr = { qrImageUrl: string; expiresAt: string };
+
+/** No LINE identity and no financial document, ever (spec §7.1). */
+export type SalesEventTicketView = {
+  id: string; serial: string; state: SalesEventTicketDisplayState; redeemedAs: SalesEventRedeemPath | null;
+  salesUserId: string; salesDisplayName: string;
+  discountSatang: number; rewardChatCreditUnits: number; rewardReceiptImageUnits: number;
+  expiresAt: string; issuedAt: string; usedAt: string | null; revokedAt: string | null; revokeReason: string | null;
+  version: number;
+};
+export type SalesEventTicketList = { items: SalesEventTicketView[]; nextCursor: string | null };
