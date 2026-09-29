@@ -14,17 +14,17 @@ const databaseUrl = process.env.BILLING_EVENT_DISCOUNT_TEST_DATABASE_URL;
 
 /**
  * Sales-event spec §4.2, §4.3, §6.3, §6.4 against real Postgres: the holder match, the choice of ticket, the version fence,
- * one discount per shop for its lifetime (partial unique), use on paid, release with every link cleared (CHECK), and the
- * deal, suspended-batch and expiry exclusions.
+ * one ticket per shop per event across batches (SD-O12) with the per-batch partial unique behind it, use on paid, release
+ * with every link cleared (CHECK), and the deal, suspended-batch and expiry exclusions.
  */
-test('first-bill discount: offer, reserve, use and release keep one discount per shop and one way per ticket', { skip: !databaseUrl }, async () => {
+test('event discount: offer, reserve, use and release keep one ticket per shop per event and one way per ticket', { skip: !databaseUrl }, async () => {
   assert.ok(['localhost', '127.0.0.1'].includes(new URL(databaseUrl!).hostname));
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
   const run = randomUUID().slice(0, 8), now = new Date(), later = new Date(now.getTime() + 30 * 86_400_000);
   const shopA = `sd-shop-a-${run}`, shopB = `sd-shop-b-${run}`, holder = `sd-holder-${run}`, stranger = `sd-stranger-${run}`;
   const tax = 'NOT_VAT_REGISTERED' as const, basic = billingOffer('BASIC_499', 'month'), offers = [basic, billingOffer('BASIC_499', 'year'), billingOffer('PRO_999', 'month')];
   const address = { line1: '99 ถนนทดสอบ', subdistrict: 'คลองเตย', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' };
-  const batch = (name: string, discountSatang: number) => client.salesEventBatch.create({ data: { eventName: `งาน ${name} ${run}`, batchName: name,
+  const batch = (name: string, discountSatang: number, eventName = `งาน ${name} ${run}`) => client.salesEventBatch.create({ data: { eventName, batchName: name,
     discountSatang, issueCap: 10, issuedCount: 1, claimStartsAt: new Date(now.getTime() - 3_600_000), claimEndsAt: new Date(now.getTime() + 3_600_000),
     scopeJson: { tiers: ['BASIC_499', 'PRO_999'], intervals: ['month'] }, createdByUserId: `lead-${run}` } });
   const ticket = (batchId: string, serial: string, discountSatang: number, lineUser = `U${run}`) => client.salesEventTicket.create({ data: {
@@ -40,8 +40,10 @@ test('first-bill discount: offer, reserve, use and release keep one discount per
     for (const id of [holder, stranger]) await client.user.create({ data: { id, displayName: id, email: `${id}@example.test` } });
     await client.externalIdentity.create({ data: { userId: holder, provider: 'LINE', providerChannelId: `ch-${run}`, providerUserId: `U${run}` } });
     const first = await batch('first', 10000), second = await batch('second', 5000);
-    batchIds.push(first.id, second.id);
-    let big = await ticket(first.id, 'BIG', 10000), small = await ticket(second.id, 'SML', 5000);
+    // SD-O12: another batch of the SAME event (the exact stored name) — one event, two batches.
+    const sibling = await batch('sibling', 8000, first.eventName);
+    batchIds.push(first.id, second.id, sibling.id);
+    let big = await ticket(first.id, 'BIG', 10000), small = await ticket(second.id, 'SML', 5000), twin = await ticket(sibling.id, 'TWN', 8000);
 
     // Offer: only the holder's own LINE identity, only cards in scope, the ticket that takes most off.
     const offer = await eventDiscountOffer(client, { userId: holder, companyId: shopA, offer: basic, tax, now });
@@ -60,13 +62,24 @@ test('first-bill discount: offer, reserve, use and release keep one discount per
     assert.equal(await reserveEventDiscount(client, use(big), { userId: holder, companyId: shopB, attemptId: `attempt-b-${run}`, now }), false);
     assert.equal(await reserveEventDiscount(client, use(big), { userId: stranger, companyId: shopB, attemptId: `attempt-b-${run}`, now }), false);
 
-    // One discount per shop: the holder's other ticket is not offered to shop A, cannot be reserved there, and the
-    // partial unique index refuses a direct write even if the application check were skipped.
+    // SD-O12: one ticket per shop per EVENT, any batch of it. The bigger twin from another batch of the same event is
+    // neither offered to nor reservable at shop A; the ticket from another event is, so two events at one shop both
+    // succeed (the lifetime unique index is gone, or this reservation would lose to it). Shop B may still use the twin.
+    assert.equal((await eventDiscountOffer(client, { userId: holder, companyId: shopA, offer: basic, tax, now }))?.ticket.id, small.id, 'the same event is skipped');
+    assert.equal(await reserveEventDiscount(client, use(twin), { userId: holder, companyId: shopA, attemptId: `attempt-twin-${run}`, now }), false);
+    assert.equal((await eventDiscountOffer(client, { userId: holder, companyId: shopB, offer: basic, tax, now }))?.ticket.id, twin.id, 'shop B still may use the twin');
+    assert.equal(await reserveEventDiscount(client, use(small), { userId: holder, companyId: shopA, attemptId: `attempt-a2-${run}`, now }), true, 'a new event at the same shop');
+    // Both events taken at shop A: the only ticket left is from a used event, so the page names that event and offers nothing.
+    const spent = await eventDiscountView(client, { userId: holder, companyId: shopA, offers, tax, now });
+    assert.deepEqual([spent?.reason, spent?.eventName, spent?.ticketSerial, spent?.offers], ['EVENT_ALREADY_USED', first.eventName, twin.serial, []]);
     assert.equal(await eventDiscountOffer(client, { userId: holder, companyId: shopA, offer: basic, tax, now }), null);
-    assert.equal((await eventDiscountView(client, { userId: holder, companyId: shopA, offers, tax, now }))?.reason, 'COMPANY_ALREADY_USED');
-    assert.equal(await reserveEventDiscount(client, use(small), { userId: holder, companyId: shopA, attemptId: `attempt-a2-${run}`, now }), false);
-    await assert.rejects(client.salesEventTicket.update({ where: { id: small.id }, data: { state: 'RESERVED', redeemedAs: 'DISCOUNT', companyId: shopA, attemptId: `attempt-raw-${run}` } }));
-    assert.equal((await eventDiscountOffer(client, { userId: holder, companyId: shopB, offer: basic, tax, now }))?.ticket.id, small.id, 'shop B still may use the other one');
+    // The per-batch partial unique still refuses a second ticket of one batch at one shop, past any application check.
+    const other = await ticket(first.id, 'OTH', 10000, `V${run}`);
+    await assert.rejects(client.salesEventTicket.update({ where: { id: other.id }, data: { state: 'RESERVED', redeemedAs: 'DISCOUNT', companyId: shopA, attemptId: `attempt-raw-${run}` } }));
+    await releaseEventDiscount(client, `attempt-a2-${run}`);
+    // The twin leaves the rest of this test (expired), so the shops below see only big and small.
+    twin = await client.salesEventTicket.update({ where: { id: twin.id }, data: { expiresAt: new Date(now.getTime() - 1000) } });
+    assert.equal(twin.state, 'ISSUED');
 
     // Release: back to ISSUED with every link cleared (the state CHECK would refuse anything else), offered again.
     await releaseEventDiscount(client, `attempt-a-${run}`);
@@ -158,6 +171,7 @@ test('first-bill discount through quote and Checkout: choice, reservation, stale
   const checkout = (companyId: string, quoteId: string, consentRevision: string) => BillingService.prototype.checkout.call(service, { companyId, userId: owner, requestId: run } as any,
     { quoteId, consentRevision, accepted: true, channel: 'web' }, `sd-idem-${run}-${++keys}`);
   let batchId = '', ticketId = '';
+  const extraBatchIds: string[] = [];
   try {
     await client.user.create({ data: { id: owner, displayName: 'Synthetic holder', email: `${owner}@example.test`, emailVerifiedAt: new Date() } });
     await client.externalIdentity.create({ data: { userId: owner, provider: 'LINE', providerChannelId: `ch-${run}`, providerUserId: `U${run}` } });
@@ -250,11 +264,31 @@ test('first-bill discount through quote and Checkout: choice, reservation, stale
     assert.deepEqual([after.activeAttemptId, after.renewalMode, after.contractAttemptId], [null, 'CARD_ONCE', attempt.id]);
     assert.equal((await client.companyPlanTerm.findUniqueOrThrow({ where: { companyId: shops[1]! } })).tierKey, 'BASIC_499', 'rights come from the offer, not the money');
     assert.equal(await client.billingIssue.count({ where: { companyId: shops[1]!, kind: 'EVENT_DISCOUNT_REVIEW' } }), 0);
+
+    // SD-O12: the same shop now buys its next period in one go (REPEAT). A ticket from a NEW event is offered and reserved;
+    // a bigger one from another batch of the event this shop already used is not.
+    const batchWindow = { issueCap: 5, issuedCount: 1, claimStartsAt: new Date(Date.now() - 3_600_000), claimEndsAt: new Date(Date.now() + 3_600_000),
+      scopeJson: { tiers: ['BASIC_499'], intervals: ['month'] }, createdByUserId: `lead-${run}` };
+    const sameEvent = await client.salesEventBatch.create({ data: { ...batchWindow, eventName: batch.eventName, batchName: 'booth-2', discountSatang: 20000 } });
+    const newEvent = await client.salesEventBatch.create({ data: { ...batchWindow, eventName: `งานใหม่ ${run}`, batchName: 'booth', discountSatang: 5000 } });
+    extraBatchIds.push(sameEvent.id, newEvent.id);
+    for (const [row, serial] of [[sameEvent, 'S'], [newEvent, 'N']] as const) await client.salesEventTicket.create({ data: { serial: `${serial}${run}`, batchId: row.id,
+      batchRevision: 1, salesUserId: `seller-${run}`, holderChannelId: `ch-${run}`, holderProviderUserId: `U${run}`, discountSatang: row.discountSatang,
+      rewardChatCreditUnits: 0, rewardReceiptImageUnits: 0, scopeJson: batchWindow.scopeJson, expiresAt: new Date(Date.now() + 30 * 86_400_000), claimRequestKey: `claim-${serial}-${run}` } });
+    const next = await quote(shops[1]!);
+    assert.equal(next.purchase?.kind, 'REPEAT'); assert.equal(next.totalSatang, 49900);
+    assert.deepEqual([next.eventDiscount?.choice, next.eventDiscount?.eventName, next.eventDiscount?.applied?.totalSatang], ['USE', newEvent.eventName, 44900]);
+    const repeatOpened = await checkout(shops[1]!, next.quoteId, next.consentRevision);
+    assert.equal(repeatOpened.state, 'OPEN'); assert.equal(sessions.at(-1)!.line_items[0].price_data.unit_amount, 44900);
+    const repeatTicket = await client.salesEventTicket.findUniqueOrThrow({ where: { serial: `N${run}` } });
+    assert.deepEqual([repeatTicket.state, repeatTicket.companyId, repeatTicket.attemptId], ['RESERVED', shops[1], repeatOpened.attemptId]);
+    assert.equal((await client.salesEventTicket.findUniqueOrThrow({ where: { serial: `S${run}` } })).state, 'ISSUED', 'the used event stays untouched');
   } finally {
     const accounts = (await client.billingAccount.findMany({ where: { companyId: { in: shops } }, select: { id: true } })).map(row => row.id);
     const cleanup: (() => Promise<unknown>)[] = [
       () => client.billingAccount.updateMany({ where: { companyId: { in: shops } }, data: { activeAttemptId: null, contractAttemptId: null } }),
-      ...(batchId ? [() => client.salesEventTicket.deleteMany({ where: { batchId } }), () => client.salesEventBatch.deleteMany({ where: { id: batchId } })] : []),
+      ...(batchId ? [() => client.salesEventTicket.deleteMany({ where: { batchId: { in: [batchId, ...extraBatchIds] } } }),
+        () => client.salesEventBatch.deleteMany({ where: { id: { in: [batchId, ...extraBatchIds] } } })] : []),
       ...['outboxEvent', 'auditLog', 'billingIssue', 'entitlementCommand', 'entitlementTransition', 'runoffSnapshot', 'companyFeatureEntitlement',
         'companyEntitlementNormalization', 'companyEntitlementSet', 'salesAttribution', 'billingOperation', 'billingReceiptGrant', 'billingQuote']
         .map(model => () => (client as any)[model].deleteMany({ where: { companyId: { in: shops } } })),

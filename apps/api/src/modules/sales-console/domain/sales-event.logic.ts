@@ -101,7 +101,7 @@ export function validateSalesEventBatch(
   const eventName = name(input.eventName, 'ชื่องาน');
   const batchName = name(input.batchName, 'ชื่อชุด');
   // Whole baht (SED-39: no half-satang VAT) and whole AI credits; receipt images are whole already.
-  const discountSatang = wholeUnits(input.discountSatang, 100, 'ส่วนลดบิลแรก');
+  const discountSatang = wholeUnits(input.discountSatang, 100, 'ส่วนลด');
   const rewardChatCreditUnits = wholeUnits(input.rewardChatCreditUnits, SALES_EVENT_CHAT_CREDIT_UNIT_SCALE, 'เครดิต AI');
   const rewardReceiptImageUnits = wholeUnits(input.rewardReceiptImageUnits, 1, 'จำนวนอ่านรูปใบเสร็จ');
   if (discountSatang + rewardChatCreditUnits + rewardReceiptImageUnits === 0) {

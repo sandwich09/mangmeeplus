@@ -83,7 +83,7 @@ describe('sales-event LIFF page', () => {
     assert.equal(h.elements['ticket-title'].textContent, 'รับส่วนลดแล้ว');
     assert.equal(h.elements['ticket-event'].textContent, 'งาน งานแฟร์ SME');
     assert.deepEqual(h.rewards(), [
-      'ร้านใหม่: ลด 100 บาทจากบิลแรกเมื่อซื้อแพ็กเกจ',
+      'ลด 100 บาท ตอนจ่ายค่าแพ็กเกจ เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง',
       'ร้านที่มีแพ็กเกจอยู่แล้ว: รับเครดิต AI 50 เครดิต และจำนวนอ่านรูปใบเสร็จ 20 รูป',
     ]);
     assert.match(h.elements['ticket-expiry'].textContent, /^ใช้ได้ถึง /);
@@ -98,7 +98,7 @@ describe('sales-event LIFF page', () => {
   it('shows only what the batch gives', async () => {
     const discountOnly = page({ claim: ticket({ discountSatang: 50_000 }) });
     await settle();
-    assert.deepEqual(discountOnly.rewards(), ['ร้านใหม่: ลด 500 บาทจากบิลแรกเมื่อซื้อแพ็กเกจ']);
+    assert.deepEqual(discountOnly.rewards(), ['ลด 500 บาท ตอนจ่ายค่าแพ็กเกจ เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง']);
     const creditOnly = page({ claim: ticket({ chatCreditUnits: 10_000 }) });
     await settle();
     assert.deepEqual(creditOnly.rewards(), ['ร้านที่มีแพ็กเกจอยู่แล้ว: รับเครดิต AI 100 เครดิต']);

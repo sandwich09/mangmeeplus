@@ -1,9 +1,9 @@
 import type { BillingEventDiscountView, BillingOffer, BillingPurchaseMode, BillingStatus } from '@watchdog-bms/contracts';
 
-/** Sales-event first-bill discount on the package page (sales-event spec §3.4 ก, §8). Plain Thai; never "ตั๋ว". */
+/** Sales-event discount on the package page (sales-event spec §3.4 ก, §8, SD-O12). Plain Thai; never "ตั๋ว". */
 export type EventDiscountChoice = 'USE' | 'DECLINE';
 type View = NonNullable<BillingStatus['eventDiscount']>;
-// ponytail: one-time purchases only today; renewing modes follow with their own first-bill binding (plan SD-C).
+// ponytail: one-time payments only today; automatic renewals wait for an Owner decision (SD-O12).
 const ONE_TIME: readonly BillingPurchaseMode[] = ['CARD_ONCE', 'PROMPTPAY_ONCE'];
 
 export const eventDiscountMode = (mode: BillingPurchaseMode) => ONE_TIME.includes(mode);
@@ -17,24 +17,27 @@ export const eventDiscountBaht = (satang: number) =>
 const day = (value: string) => new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' });
 
 export const eventDiscountCardText = (eventName: string, shownDiscountSatang: number) =>
-  `ส่วนลดจากงาน ${eventName} −${eventDiscountBaht(shownDiscountSatang)} บาท (บิลแรก)`;
-export const eventDiscountUseLabel = (view: View) => `ใช้ส่วนลด −${eventDiscountBaht(Math.max(...view.offers.map(item => item.shownDiscountSatang)))} บาทกับการซื้อครั้งนี้`;
-export const eventDiscountHelpText = (view: View) => `ใช้กับบิลที่ซื้อตอนนี้เท่านั้น รอบต่ออายุชำระราคาเต็ม · ถ้าไม่ใช้ ส่วนลดยังอยู่ถึง ${day(view.expiresAt)}`;
+  `ส่วนลดจากงาน ${eventName} −${eventDiscountBaht(shownDiscountSatang)} บาท`;
+export const eventDiscountUseLabel = (view: View) => `ใช้ส่วนลด −${eventDiscountBaht(Math.max(...view.offers.map(item => item.shownDiscountSatang)))} บาทกับการจ่ายครั้งนี้`;
+export const eventDiscountHelpText = (view: View) => `ลดเฉพาะการจ่ายครั้งนี้ งานเดียวกันใช้ได้ร้านละครั้ง · ถ้าไม่ใช้ ส่วนลดยังอยู่ถึง ${day(view.expiresAt)}`;
 /** Recurring modes: no choice today, just where the discount does apply. */
 export const eventDiscountOneTimeOnlyText = (view: View) => `มีส่วนลดจากงาน ${view.eventName} ใช้ได้เมื่อจ่ายครั้งเดียวด้วยบัตรหรือ PromptPay`;
 /** Spec §4.2/§8: why this shop cannot use the holder's discount. */
 export function eventDiscountBlockedText(view: View | undefined): string[] {
   if (view?.reason === 'DEAL_ACTIVE') return ['ร้านนี้มีดีลพิเศษอยู่แล้ว จึงใช้ส่วนลดจากงานกับราคาดีลไม่ได้', `ส่วนลดยังเป็นของคุณจนถึง ${day(view.expiresAt)}`];
-  if (view?.reason === 'COMPANY_ALREADY_USED') return ['ร้านนี้ใช้ส่วนลดราคาจากงานไปแล้ว (ใช้ได้ร้านละครั้ง)'];
+  if (view?.reason === 'EVENT_ALREADY_USED') return [`ร้านนี้ใช้ส่วนลดจากงาน ${view.eventName} ไปแล้ว (งานเดียวกันใช้ได้ร้านละครั้ง)`];
   return [];
 }
 /**
- * Sales-event spec §8.1 (Owner UAT 2026-09-29): the holder has a usable ticket but this shop is not starting a
- * package, so the discount box never shows. One plain line says the discount exists and where it applies.
+ * Sales-event spec §8.1 (Owner UAT 2026-09-29, SD-O12): the holder has a usable ticket but this shop cannot pay for a
+ * package in one go (automatic renewal, or payment records under review), so the discount box never shows. One plain
+ * line says the discount exists and why it does not apply here; never a date for when it will.
  */
 export function eventDiscountHeldNotice(view: BillingEventDiscountView | null | undefined): string | null {
   if (!view || view.path === 'DISCOUNT') return null;
   const best = view.tickets.filter(ticket => ticket.state === 'AVAILABLE' && !ticket.batchSuspended && ticket.discountSatang > 0)
     .sort((a, b) => b.discountSatang - a.discountSatang || Date.parse(a.expiresAt) - Date.parse(b.expiresAt))[0];
-  return best ? `คุณมีส่วนลดจากงาน ${best.eventName} ลดบิลแรก ${eventDiscountBaht(best.discountSatang)} บาท (ใช้ได้ถึง ${day(best.expiresAt)}) ใช้ได้กับร้านที่เริ่มแพ็กเกจใหม่` : null;
+  if (!best) return null;
+  const held = `คุณมีส่วนลดจากงาน ${best.eventName} ลด ${eventDiscountBaht(best.discountSatang)} บาท ตอนจ่ายค่าแพ็กเกจ (ใช้ได้ถึง ${day(best.expiresAt)})`;
+  return view.path === 'CREDIT' ? `${held} · ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้` : held;
 }

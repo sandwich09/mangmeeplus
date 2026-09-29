@@ -102,7 +102,7 @@ export function batchRewardLines(
   batch: Pick<SalesEventBatchView, 'discountSatang' | 'rewardChatCreditUnits' | 'rewardReceiptImageUnits'>,
 ): string[] {
   const lines: string[] = [];
-  if (batch.discountSatang > 0) lines.push(`ร้านใหม่: ลด ${wholeBaht(batch.discountSatang)} บาทจากบิลแรกเมื่อซื้อแพ็กเกจ`);
+  if (batch.discountSatang > 0) lines.push(`ลด ${wholeBaht(batch.discountSatang)} บาท ตอนจ่ายค่าแพ็กเกจ เลือกใช้หรือไม่ใช้ได้ตอนจ่าย · งานเดียวกันใช้ได้ร้านละครั้ง`);
   const credit = [
     batch.rewardChatCreditUnits > 0 ? `เครดิต AI ${count(batch.rewardChatCreditUnits / SALES_EVENT_CHAT_CREDIT_UNIT_SCALE)} เครดิต` : null,
     batch.rewardReceiptImageUnits > 0 ? `จำนวนอ่านรูปใบเสร็จ ${count(batch.rewardReceiptImageUnits)} รูป` : null,
@@ -203,7 +203,7 @@ export function validateEventBatchForm(
   const discount = wholeNumber(values.discountBaht);
   if (discount === null) errors.discountBaht = 'กรอกส่วนลดเป็นจำนวนเต็มบาท เช่น 100';
   else if (discount === 0 && values.rewardChatCreditUnits === 0 && values.rewardReceiptImageUnits === 0) {
-    errors.discountBaht = 'ใส่ส่วนลดบิลแรกมากกว่า 0 บาท';
+    errors.discountBaht = 'ใส่ส่วนลดมากกว่า 0 บาท';
   }
   const cap = wholeNumber(values.issueCap);
   if (cap === null || cap < 1) errors.issueCap = 'กรอกจำนวนแจกสูงสุดเป็นจำนวนเต็มตั้งแต่ 1';
