@@ -3,14 +3,14 @@ import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSema
 import { PDFDocument } from 'pdf-lib';
 import { LineDocumentQaError, LineDocumentQaService, type LineDocumentQaJobRow, type LineDocumentQaOwner } from '../line-document-qa.service';
 import { LineDocumentQaWorker } from '../line-document-qa.worker';
-import { parseLineDocumentQaQuestions, parseLineDocumentQaResult } from '@watchdog-bms/contracts';
+import { parseLineAiResponsePreferenceCommand, parseLineDocumentQaQuestions, parseLineDocumentQaResult } from '@watchdog-bms/contracts';
 import { LineReimbursementDraftService } from '../line-reimbursement-draft.service';
 import type { LineReimbursementDraftResult } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
 import { LineReimbursementDraftAdapterService } from '../line-reimbursement-draft-adapter.service';
 import { buildReimbursementDraftMessages, buildReimbursementOptionsMessages } from '../../domain/logic/line-reimbursement-draft-card.logic';
 import { DrainLineLedgerUseCase } from './drain-line-ledger.use-case';
 import { LineCaptureResultNotifierUseCase } from './line-capture-result-notifier.use-case';
-import { parseLinePreferenceCommand, formatLinePreferences, LINE_PREFERENCE_NOTICE } from '../../domain/logic/line-preference-command.logic';
+import { parseLinePreferenceCommand, formatLinePreferences, linePreferenceChangedText, linePreferenceForgetsNothing, LINE_PREFERENCE_NOTHING_TO_FORGET, LINE_PREFERENCE_NOTICE, type LinePreferenceCommand } from '../../domain/logic/line-preference-command.logic';
 import { createLineAiInputEvidence, verifyLineAiInputEvidence, type AiBudgetGrantV2, type AiBudgetProfileIdV2 } from '@watchdog-bms/contracts';
 import { LineLedgerDeliveryService } from '../line-ledger-delivery.service';
 import { buildLineDeliveryPlan, deliveryHash, lineDeliveryPlanId, parseLineDeliveryPlan, parseDeliveryBatchStates, type DeliveryAuthorizationV2, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
@@ -2364,6 +2364,8 @@ export class ProcessLineWebhookUseCase {
         // gates the substitute semantic instructions.
         capabilities: {
           approvedKnowledge: !!input.event && this.boundConversations.has(input.event) && this.config.lineAiApprovedKnowledgeEnabled,
+          // Only a bound private chat stores answer preferences (core contract §9), exactly like the command words.
+          responsePreference: !!input.event && this.boundConversations.has(input.event) && this.config.lineAiPreferencesEnabled,
           fusedPlan: this.config.lineAiFusedPlanShadowEnabled || this.config.lineAiPreparedSimpleReadEnabled,
           // Bound v2 uses semantic substitute routing; legacy shadow/off remain inert.
           substituteSemantic: (!!input.event && this.boundConversations.has(input.event))
@@ -3718,26 +3720,33 @@ export class ProcessLineWebhookUseCase {
 
   private async handlePreferenceCommand(event: LineTextEvent, requestId: string): Promise<boolean> {
     const command = parseLinePreferenceCommand(event.messageText); if (!command) return false;
+    await this.applyPreferenceCommand(event, requestId, command); return true;
+  }
+
+  /** Runs one explicit preference request — the exact command words, or one the router named (NAT11 2026-09-30) —
+   *  through the owner-bound commands. The reply states only what storage confirmed. */
+  private async applyPreferenceCommand(event: LineTextEvent, requestId: string, command: LinePreferenceCommand): Promise<void> {
     const bound = this.boundConversations.get(event);
     if (!bound || !this.config.lineAiPreferencesEnabled) {
       await this.deliverReply(event, 'การจำรูปแบบคำตอบยังไม่เปิดใช้ในแชตนี้ค่ะ คุณยังระบุรูปแบบที่ต้องการสำหรับคำตอบครั้งนี้ได้');
-      await this.updateEventLog(event.webhookEventId, 'preference_unavailable'); return true;
+      await this.updateEventLog(event.webhookEventId, 'preference_unavailable'); return;
     }
     let reply: string, status = 'preference_completed';
     try {
       const current = await this.contextV2.listPreferences(bound.owner);
       if (!current || current.epoch !== bound.epoch) throw new Error('STALE_PREFERENCE_OWNER');
       if (command.kind === 'list') reply = formatLinePreferences(current.values) + '\n' + LINE_PREFERENCE_NOTICE;
+      else if (linePreferenceForgetsNothing(command, current.values)) reply = LINE_PREFERENCE_NOTHING_TO_FORGET;
       else {
         const applied = await this.contextV2.changePreferences(bound.owner, { requestId: event.webhookEventId, expectedVersion: current.version, epoch: bound.epoch,
           ...(command.kind === 'set' ? { set: command.values } : { delete: command.keys }) });
         if (applied !== 'applied') throw new Error('STALE_PREFERENCE_VERSION');
         await this.audit.log({ companyId: bound.owner.companyId, actorUserId: bound.owner.userId, action: 'ai.line.preference.changed', targetType: 'AiConversation', targetId: bound.id,
           requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { operation: command.kind, fields: command.kind === 'set' ? Object.keys(command.values) : command.keys } });
-        reply = command.kind === 'set' ? 'จำรูปแบบคำตอบให้แล้วค่ะ\n' + LINE_PREFERENCE_NOTICE : 'ลบรูปแบบคำตอบที่ระบุแล้วค่ะ';
+        reply = linePreferenceChangedText(command, current.values);
       }
     } catch { reply = 'ตอนนี้ตรวจสอบหรือบันทึกความจำไม่ได้ค่ะ ยังยืนยันไม่ได้ว่าระบบจำหรือลบให้แล้ว'; status = 'preference_unavailable'; }
-    await this.deliverReply(event, reply); await this.updateEventLog(event.webhookEventId, status, undefined, bound.owner.companyId); return true;
+    await this.deliverReply(event, reply); await this.updateEventLog(event.webhookEventId, status, undefined, bound.owner.companyId);
   }
 
   private async textEvidenceV2(event: LineTextEvent) {
@@ -6405,6 +6414,13 @@ export class ProcessLineWebhookUseCase {
       }
       // Domain grounding sees the selected immutable clause. The current intake input/grant stay on the selection event.
       normalizedText = retainedTask.sourceText;
+    }
+    // NAT11 (2026-09-30): "ต่อไปตอบสั้น ๆ แบบนี้นะ จำไว้ได้มั้ย" / "ตอนนี้จำอะไรเกี่ยวกับวิธีตอบฉันอยู่บ้าง" / "ลืมเรื่องตอบสั้นไปก่อน"
+    // reach the same owner-bound commands as the exact command words once the router names them. A message that
+    // also asks for business work keeps its normal turn; nothing is stored from it.
+    const preference = routePlan.status === 'ROUTED' && !retainedTask ? parseLineAiResponsePreferenceCommand(routePlan.responsePreference) : undefined;
+    if (preference && this.boundConversations.has(event) && (routePlan.semanticSubrequests ?? []).every(item => ['general', 'help'].includes(item.kind))) {
+      await this.applyPreferenceCommand(event, requestId, preference); return;
     }
     const typedWrites = routePlan.semanticSubrequests?.filter(item => item.kind === 'write');
     const multipleExistingBusinessWrites = (typedWrites?.length ?? 0) > 1 && typedWrites!.every(item => item.writeIntent
