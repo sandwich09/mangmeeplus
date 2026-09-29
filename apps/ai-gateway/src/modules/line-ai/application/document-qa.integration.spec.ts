@@ -72,8 +72,18 @@ test('transplanted question/rendered bytes, missing coverage and invented eviden
   assert.equal((await execute(bytes, [output()])).vendor.length, 0);
   const absent = output(); absent.coverage.read = [];
   assert.equal((await execute(await request(), [absent])).result.status, 'failed');
+  // NAT06 2026-09-29: a claim the page does not hold is dropped, and never replaces the checked answer.
   const invented = output(); invented.pages[0]!.facts[0]!.text = '1200';
-  assert.equal((await execute(await request(), [invented])).result.status, 'failed');
+  const kept = await execute(await request(), [invented]);
+  assert.equal(kept.result.status, 'ok'); assert.equal(kept.vendor.length, 1);
+  assert.deepEqual(kept.result.status === 'ok' && kept.result.result.pages[0]!.facts, []);
+});
+
+test('a verbatim claim with a miscounted span is located by its text, costing no repair (NAT06 2026-09-29)', async () => {
+  const shifted = output(); shifted.pages[0]!.facts[0]!.localSpan = { start: 2, end: 6 };
+  const actual = await execute(await request(1), [shifted]);
+  assert.equal(actual.result.status, 'ok'); assert.equal(actual.vendor.length, 1);
+  assert.deepEqual(actual.result.status === 'ok' && actual.result.result.pages[0]!.facts[0]!.localSpan, { start: 6, end: 10 });
 });
 
 test('same reader call must cover every offered file clause; missing coverage cannot spend a third call', async () => {
@@ -84,4 +94,11 @@ test('same reader call must cover every offered file clause; missing coverage ca
   const actual = await execute(await request(1, questions), [answer]);
   assert.equal(actual.result.status, 'ok'); assert.equal(actual.vendor.length, 1);
   assert.ok(JSON.stringify(actual.vendor[0]).includes('subrequestIndex'));
+});
+
+test('a reader answer quoting a printed label with bare quote marks still parses (NAT06 2026-09-29)', async () => {
+  const raw = '```json\n' + JSON.stringify(output()).replace('"answer":"ยอดรวม1177จากหน้า2"', '"answer":"ยอดรวม "TOTAL 1177" จากหน้า2"') + '\n```';
+  const actual = await execute(await request(1), [raw]);
+  assert.equal(actual.result.status, 'ok'); assert.equal(actual.vendor.length, 1);
+  assert.equal(actual.result.status === 'ok' && actual.result.result.answer, 'ยอดรวม "TOTAL 1177" จากหน้า2');
 });

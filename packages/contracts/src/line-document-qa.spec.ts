@@ -70,3 +70,36 @@ test('QA file clauses keep exact original indices and each requires independent 
   assert.equal(parseLineDocumentQaResult({ ...base, questionCoverage: [{ ...base.questionCoverage[0], answerPageRefs: [] }] }), undefined);
   assert.equal(parseLineDocumentQaResult({ ...base, questionCoverage: [base.questionCoverage[0], base.questionCoverage[0]] }), undefined);
 });
+
+test('a verbatim claim with miscounted offsets keeps the answer; unlocatable claims are dropped (NAT06 2026-09-29)', () => {
+  // The real reader output: every text verbatim, spans shifted by the multi-unit dash before them.
+  const visibleText = 'SYNTHETIC TEST DATA ONLY — NOT A VALID TAX DOCUMENT\n\nSynthetic Catering Receipt\n\nReference: NAT-PARTIAL-001\nTOTAL      1,580.00 THB';
+  const claim = (text: string, start: number) => ({ attachmentId: 'att-1', page: 1, text, role: 'field', localSpan: { start, end: start + text.length } });
+  const parsed = parseLineDocumentQaResult({
+    version: 1, readerVersion: LINE_DOCUMENT_QA_READER_VERSION, answer: 'ยอดรวม 1,580.00 บาท', answerPageRefs: [{ attachmentId: 'att-1', page: 1 }],
+    pages: [{ attachmentId: 'att-1', page: 1, visibleText,
+      facts: [claim('Synthetic Catering Receipt', 57), claim('Reference: NAT-PARTIAL-001', 85), claim('TOTAL 1,580.00 THB', 0), claim('invented line', 3)],
+      evidence: [{ attachmentId: 'att-1', page: 1, role: 'visible_text', text: 'NOT A VALID TAX DOCUMENT' }] }],
+    coverage: { requested: [{ attachmentId: 'att-1', page: 1 }], read: [{ attachmentId: 'att-1', page: 1 }], failed: [] },
+    questionCoverage: [{ subrequestIndex: 0, status: 'answered', answer: 'ยอดรวม 1,580.00 บาท', answerPageRefs: [{ attachmentId: 'att-1', page: 1 }] }],
+  });
+  assert.ok(parsed);
+  assert.equal(parsed.answer, 'ยอดรวม 1,580.00 บาท');
+  const facts = parsed.pages[0]!.facts;
+  assert.deepEqual(facts.map(fact => fact.text), ['Synthetic Catering Receipt', 'Reference: NAT-PARTIAL-001', 'TOTAL 1,580.00 THB']);
+  for (const fact of facts.filter(item => item.localSpan)) assert.equal(visibleText.slice(fact.localSpan!.start, fact.localSpan!.end), fact.text);
+  assert.equal(facts[2]!.localSpan, undefined, 'whitespace-normalised match keeps the claim without claiming an exact span');
+  assert.equal(parsed.pages[0]!.evidence[0]!.localSpan?.start, visibleText.indexOf('NOT A VALID TAX DOCUMENT'));
+  assert.deepEqual(parseLineDocumentQaResult(parsed), parsed, 'a stored result re-parses to itself');
+});
+
+test('per-question answers carry their own sources when the top-level answer is left empty (NAT05 2026-09-29)', () => {
+  const ref = { attachmentId: 'att-1', page: 1 };
+  const parsed = parseLineDocumentQaResult({ version: 1, readerVersion: LINE_DOCUMENT_QA_READER_VERSION, answer: '', answerPageRefs: [], pages: [page],
+    coverage: { requested: [ref], read: [ref], failed: [] },
+    questionCoverage: [{ subrequestIndex: 0, status: 'answered', answer: 'ยอดรวม 1,177 บาท', answerPageRefs: [ref] }] });
+  assert.equal(parsed?.answer, 'ยอดรวม 1,177 บาท');
+  assert.deepEqual(parsed?.answerPageRefs, [ref]);
+  assert.equal(parseLineDocumentQaResult({ version: 1, readerVersion: LINE_DOCUMENT_QA_READER_VERSION, answer: 'x', answerPageRefs: [], pages: [page],
+    coverage: { requested: [ref], read: [ref], failed: [] } }), undefined, 'without per-question sources a read answer still names its pages');
+});
