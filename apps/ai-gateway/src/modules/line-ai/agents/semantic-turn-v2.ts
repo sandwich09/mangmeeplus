@@ -52,9 +52,9 @@ const SCOPE_LINE_TEXT: Record<'th' | 'en', string> = {
   th: 'ขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ',
   en: 'Scope: only records related to you',
 };
-// Owner 2026-09-29: the words assumedYearNote adds, in either language — a composed answer that already says so
-// gets nothing appended.
-const ASSUMED_YEAR_ALREADY_STATED = /ไม่ได้ระบุปี|ยังไม่ถึง|no year given|hasn't started/iu;
+// Owner 2026-09-29: a composed answer that already says the year was assumed, or that a named year / this year's
+// month has not come yet, gets nothing appended — narrow on purpose, since "ยอดยังไม่ถึงงบ" is not that.
+const ASSUMED_YEAR_ALREADY_STATED = /ไม่ได้ระบุปี|ปีนี้ยังไม่ถึง|\d{4}\s*ยังไม่ถึง|no year given|hasn't started/iu;
 
 // C4/Spec §8 row "นอกแพ็กเกจ": an explicit write clause whose writeIntent the tool catalog does not
 // support at all (e.g. "ออกใบแจ้งหนี้" — invoicing) — never a tool call, never a question implying

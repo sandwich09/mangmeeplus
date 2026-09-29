@@ -714,6 +714,8 @@ describe('semantic turn v2: a bare month that fell back to last year says so (ow
       `${COMPOSED}\nช่วง: 1–31 ต.ค. 2568 (ไม่ได้ระบุปี จึงดูตุลาคมที่ผ่านมาล่าสุด)\nตุลาคมปีนี้ยังไม่ถึงค่ะ`);
     const stated = await turn('ดูรายจ่าย ให้หน่อย เดือน ตุลา', answerEnvelope(`${COMPOSED} ส่วนตุลาคม 2569 ยังไม่ถึงค่ะ`));
     assert.equal(stated.replyText, `${COMPOSED} ส่วนตุลาคม 2569 ยังไม่ถึงค่ะ`);
+    const unrelated = await turn('ดูรายจ่าย ให้หน่อย เดือน ตุลา', answerEnvelope(`${COMPOSED} ยังไม่ถึงงบที่ตั้งไว้ค่ะ`));
+    assert.match(unrelated.replyText, /\nช่วง: 1–31 ต\.ค\. 2568 \(ไม่ได้ระบุปี/);
   });
 
   it('leaves an answer about a written year alone', async () => {
