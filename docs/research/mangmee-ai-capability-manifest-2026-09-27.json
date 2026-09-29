@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "2093a8e8a488907a787458e1b23772d3dda38379",
-  "checkoutBranch": "claude/line-ai-answer-preferences-20260930",
+  "sourceRevision": "b79069c9ceb0de717b68c11a5831ec87cb1bfdd5",
+  "checkoutBranch": "claude/web-reimbursement-draft-plain-thai-20260930",
   "checkoutDirty": false,
   "sourceHashes": [
     {
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/web/src/features/reimbursements/ReimbursementDraftActionPage.tsx",
-      "sha256": "79c1da19156a4041ec3cc3cbb420f96fa63d704eb0bb4b5f872ba0d96cb76be0"
+      "sha256": "ddc5cbee2cdd6cf6481e9dd6b6e3387f92daf4926111a8f67a234775eff6a00e"
     },
     {
       "path": "apps/web/src/features/reports/ReportsWorkspacePage.tsx",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T19:04:29.803Z",
-  "manifestDigest": "285683466a9df20b9c12fa4bcad389b96e5a9b1999b00e3677ae36b7bac970ca"
+  "generatedAt": "2026-09-29T19:36:57.326Z",
+  "manifestDigest": "1c50deb9612ef9842fa7d4d6096e2c8fb5a75e76a765f18643078bdbeee7cafc"
 }
