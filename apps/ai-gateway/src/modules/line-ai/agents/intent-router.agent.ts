@@ -382,7 +382,7 @@ export function intakeRouterSystemPrompt(caps: IntakeRouterCapabilities = {}, ha
   // so every non-compact caller, including the byte-exact LINE_INTAKE_ROUTER_SYSTEM_PROMPT legacy alias,
   // is completely untouched.
   const jsonFormatInstruction = compactTextDecision
-    ? 'Return only ONE line of minified JSON (no code fences, no extra whitespace or line breaks) with this shape:'
+    ? 'Return only ONE line of minified JSON (no code fences, no extra whitespace or line breaks) with this shape — never any analysis or explanation before or after it; the first character of your reply is {:'
     : 'Return only compact JSON with this shape:';
   const reasonField = compactTextDecision ? '' : '\n  "reason": "one short sentence",';
   const compactSimpleReadEnabled = !!caps.fusedPlan && preparedFamilies.size > 0;

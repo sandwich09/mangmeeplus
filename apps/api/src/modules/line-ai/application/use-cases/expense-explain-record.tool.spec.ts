@@ -62,6 +62,12 @@ describe('expense.explain_record', () => {
     const data = (await new ExpenseExplainRecordTool(getExpense(note), repo).execute(ctx as any, {})).data as any;
     assert.deepEqual(data.lineDraftItemsNotYetOnDocument, [{ description: 'ค่าส่งของ', quantity: null, unitPrice: null, totalAmount: '350' }]);
     assert.deepEqual(data.lineDraftStillAsks, ['quantity']);
+    assert.equal(data.lineDraftCollectionStopped, undefined);
+    // After "เดี๋ยว ๆ ยกเลิกก่อน" the collection stops, but what the user said is still what the draft holds.
+    note.sourceChannelMetadataJson.lineExpenseDraftContinuation.status = 'CANCELLED';
+    const stopped = (await new ExpenseExplainRecordTool(getExpense(note), repo).execute(ctx as any, {})).data as any;
+    assert.equal(stopped.lineDraftItemsNotYetOnDocument[0].totalAmount, '350');
+    assert.equal(stopped.lineDraftCollectionStopped, true);
     assert.equal((await new ExpenseExplainRecordTool(getExpense(), makeRepo().repo).execute(ctx as any, {})).data?.['lineDraftItemsNotYetOnDocument' as never], undefined);
   });
 
