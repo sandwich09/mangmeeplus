@@ -118,6 +118,7 @@ Exit: ไม่มีเส้นทางเริ่มจ่ายใหม�
 
 ### P5 — UX integration
 
+- [x] 2026-09-29: แยก shared account editor เป็น email → identity → OTP พร้อมถัดไป/ย้อนกลับ, เก็บ draft เมื่อกลับจาก LINE และ cancel challenge ก่อนย้อนกลับแก้อีเมล; หลักฐานและข้อจำกัดใน [task memory](../agent-memory/account-email-stepper-2026-09-29.md)
 - [x] Shared OTP panel/page ใน account และ billing ที่ใช้ API/state machine เดียวกัน ไม่มี form หลายชุดที่กติกาไม่ตรง
 - [x] Missing/unverified/pending/verified/expired/rate-limit/delivery-unknown/loading/error/permission states มี Thai copy/next step
 - [ ] เก็บ selection/context แบบ allowlist; session expire/LINE→external browser/mail app/multi-tab กลับบริษัทและตัวเลือกเดิมได้หลัง reauth
