@@ -50,6 +50,8 @@ export type LineReimbursementDraftSnapshot = {
   requesterUserId: string;
   requesterDisplayName: string;
   branchId: string;
+  /** Display only (Owner rule 2026-09-27/29): the LINE card names the branch, never its id. */
+  branchName?: string;
   currency: string;
   title?: string;
   reason: string;
@@ -247,8 +249,9 @@ export class LineReimbursementDraftUseCase {
         : opened.previewRevision;
       const previewRevision = Number.isSafeInteger(lastPreviewRevision) && lastPreviewRevision >= 0 ? lastPreviewRevision + 1 : opened.previewRevision + 1;
       const expiresAt = new Date(now.getTime() + PREVIEW_TTL_MS);
-      const after = this.snapshot(opened.id, preparedCommand, prepared.afterLines, prepared.signatureImpact);
-      const before = 'before' in prepared && prepared.before ? this.snapshot(opened.id, prepared.before.command, prepared.before.lines, 'NONE') : undefined;
+      const branchName = await this.repo.findBranchName(input.ctx.companyId, preparedCommand.branchId);
+      const after = this.snapshot(opened.id, preparedCommand, prepared.afterLines, prepared.signatureImpact, branchName);
+      const before = 'before' in prepared && prepared.before ? this.snapshot(opened.id, prepared.before.command, prepared.before.lines, 'NONE', branchName) : undefined;
       const confirmationDigest = digest({ schemaVersion: 1, actionId: opened.id, previewRevision, owner: input.owner,
         command: preparedCommand, sourceProof, expectedRequestUpdatedAt: preparedCommand.expectedRequestUpdatedAt ?? null, after });
       const preview: LineReimbursementDraftPreview = {
@@ -476,13 +479,17 @@ export class LineReimbursementDraftUseCase {
             title: command.title ?? '', reason: command.reason,
             missingReceiptReason: command.missingReceiptReason ?? null, lines,
           });
-      return isDeepStrictEqual(prepared.command, command);
+      // The stored command is the JSON form preview() saved; compare like with like. A line with no receipt file
+      // prepares `attachmentSnapshot: undefined`, a key the stored JSON never has (NAT04 2026-09-30: every preview
+      // of a bill claimed by reference read as changed the moment it was shown).
+      return isDeepStrictEqual(jsonClone(prepared.command), command);
     } catch { return false; }
   }
 
-  private snapshot(actionId: string, command: ReimbursementDraftPreparedCommand, lines: ReimbursementLineWriteData[], signatureImpact: 'NONE' | 'INVALIDATED'): LineReimbursementDraftSnapshot {
+  private snapshot(actionId: string, command: ReimbursementDraftPreparedCommand, lines: ReimbursementLineWriteData[], signatureImpact: 'NONE' | 'INVALIDATED',
+    branchName: string | null): LineReimbursementDraftSnapshot {
     return { requesterUserId: command.requesterUserId, requesterDisplayName: command.requesterDisplayNameSnapshot,
-      branchId: command.branchId, currency: command.currency, ...(command.title ? { title: command.title } : {}), reason: command.reason,
+      branchId: command.branchId, ...(branchName ? { branchName } : {}), currency: command.currency, ...(command.title ? { title: command.title } : {}), reason: command.reason,
       ...(command.missingReceiptReason ? { missingReceiptReason: command.missingReceiptReason } : {}),
       lines: lines.map((line) => ({ lineRef: digest([actionId, command.requestId ?? 'new', line.lineNo]), lineNo: line.lineNo,
         incurredDate: line.incurredDate.toISOString().slice(0, 10), description: line.description, ...(line.purpose ? { purpose: line.purpose } : {}),
@@ -575,7 +582,8 @@ export class LineReimbursementDraftUseCase {
   private appliedResult(action: ReimbursementDraftActionRecord, request: ReimbursementRequestRecord): LineReimbursementDraftResult {
     const receipt = action.resultJson && typeof action.resultJson === 'object' && !Array.isArray(action.resultJson)
       ? action.resultJson as Record<string, unknown> : {};
-    return { status: 'applied', receipt: { ...receipt, currentState: request.status, currentRequestUpdatedAt: request.updatedAt.toISOString() } };
+    return { status: 'applied', receipt: { ...receipt, currentState: request.status, currentRequestUpdatedAt: request.updatedAt.toISOString(),
+      ...(request.requestNo ? { requestNo: request.requestNo } : {}) } };
   }
 
   private validationResult(error: unknown, actionId: string, actionRevision = 0, applying = false): LineReimbursementDraftResult {

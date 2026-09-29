@@ -5979,6 +5979,14 @@ describe('LINE capture answers and §17.5 status questions', () => {
     assert.equal(h.ocrRequests.length, 0, 'a status question never costs a read');
   });
 
+  it('§17.5: a bare "บันทึกไปยัง" in a chat that sent no file goes to the record lanes, not the no-file reply (NAT-12)', async () => {
+    const { prisma } = makePrisma();
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], prisma } as any);
+    await h.useCase.execute({ ...answer('เมื่อกี้เน็ตหลุด สรุปบันทึกไปยัง'), webhookEventId: 'evt-status-note' });
+    assert.doesNotMatch(h.replies.at(-1) ?? '', /ยังไม่พบไฟล์ที่จะอ่าน/);
+    assert.ok(h.routeRequests.length >= 1, 'the semantic route decides what "it" is');
+  });
+
   it('§17.5: an oversize rejection is explained with its real size and the real limit', async () => {
     const { prisma } = makePrisma();
     const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], realMediaDownload: true, prisma } as any);

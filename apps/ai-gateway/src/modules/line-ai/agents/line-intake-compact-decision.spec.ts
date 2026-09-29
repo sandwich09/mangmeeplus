@@ -149,6 +149,18 @@ describe('compact LINE intake decision', () => {
     assert.equal(parse('file', JSON.parse('{"__proto__":null}') as Record<string, unknown>), undefined);
   });
 
+  it('drops a stray filter on a claim write clause instead of failing the decision (NAT-04 2026-09-29)', async () => {
+    const text = 'บิลร้านเครื่องเขียนที่ส่งไว้สองใบอะ';
+    const created = await fixture(text);
+    const parsed = parseLineIntakeCompactDecision({
+      raw: { subrequests: [{ kind: 'write', goal: text, sources: [{ part: 0, whole: true }], writeIntent: 'REIMBURSEMENT_REQUEST_START',
+        filters: { expenseIds: ['NAT-STATIONERY-1', 'NAT-STATIONERY-2'] } }] },
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+    });
+    assert.deepEqual(parsed?.semanticSubrequests[0]?.requestedFilters, {});
+    assert.equal(parsed?.semanticSubrequests[0]?.writeIntent, 'REIMBURSEMENT_REQUEST_START');
+  });
+
   it('rejects prototype keys instead of silently dropping a constraint', async () => {
     const text = 'ดูค่าใช้จ่ายเดือนนี้';
     const created = await fixture(text);
