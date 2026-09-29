@@ -43,7 +43,7 @@ Verification (2026-09-29, worktree above):
 
 Decisions:
 - Image cut-over = the company's receipts come from its billing account's lots (`CompanyPlanTerm.billingReceiptAccountId`, spec §11.3/§16 item 9). No separate image marker; `aiCreditCutoverAt` (PR C) is AI credit only. `LEGACY_MONTH` shops keep every old rule.
-- B1 allocator (`billing-receipt-grants.ts`): package (INITIAL/RENEWAL/REPEAT/UPGRADE/TRIAL_CARRYOVER) → team (ADMIN_ADJUSTMENT/ADD_ON_ADMIN/SALES_EVENT) → purchased (ADD_ON_PAID), FEFO inside a group; unknown kind fails closed. This changes lot order for paid shops that hold a legacy ADMIN_ADJUSTMENT gift (package first, previously FEFO across both) — spec §6/D8 asks for it.
+- B1 allocator (`billing-receipt-grants.ts`): package (INITIAL/RENEWAL/REPEAT/UPGRADE/TRIAL_CARRYOVER) → team (ADMIN_ADJUSTMENT/ADD_ON_ADMIN/SALES_EVENT) → purchased (ADD_ON_PAID), FEFO inside a group; unknown kind fails closed. This changes lot order for paid shops that hold a legacy ADMIN_ADJUSTMENT gift (package first, previously FEFO across both) — spec §6/D8 asks for it. `billing-trial-carryover.pg.spec.ts` asserted the old order (`paid-uses-earliest-gift` → ADMIN_ADJUSTMENT); updated to `paid-uses-package-before-gift` → TRIAL_CARRYOVER.
 - `packageReceiptBalance` excludes only the three add-on kinds (plan text says "package kinds only"; excluding ADMIN_ADJUSTMENT would change quotes/usage of shops with legacy gifts). Package flows and `receiptQuotaSnapshot` use it, so the existing `BillingReceiptUsage` keeps its meaning; add-on balances are PR E's `quotaSummary`.
 - Ledger: `ReceiptUnitEntry` (RESERVE/CONSUME/RELEASE/REVOKE, unique `(companyId, operationKey, generation, kind)`, `operationKey = <sourceRoute>:<requestId>`). `CompanyOcrUsageEvent.receiptUnitGeneration` null = admission from before the ledger, still counted from its event: no backfill, and a rolling deploy cannot hand out a unit twice. Resume renews the event id, not the generation.
 - D4/Q4: `settleCompanyOcrAdmission(..., noReceipt)` releases a non-receipt read in a cut-over shop but keeps the event (request fence; the ops brake still counts the provider read). Technical failures still go through `releaseCompanyOcrAdmission` (deletes the event). Signature/reference/substitute/UNSUPPORTED/CLARIFY LINE images still CONSUME (charged as today) — needs a LINE-AI owner decision (PR F).
@@ -59,6 +59,17 @@ Blockers / hand-offs for PR C:
 - Add the `CHAT_CREDIT` branch to `applyAddOnGrant` and `addOnGrantReady` (AiCreditGrant lot, `aiCreditCutoverAt`), and `chat` to `BillingAddOnCredits`; the admin service already accepts `productKind: 'CHAT_CREDIT'` and refuses it through `addOnGrantReady`.
 - PR C's migration timestamp must follow `20260929150000`.
 
-Next: see the verification block below; then controller review → push → PR to develop → twin to main (`ci.yml`). PR C and SD-F build on the seam above.
+Commits: `a5e197ba` = the seam alone on develop `3a863b70` (PR C / SD-F base); the next commit on the branch is the rest of PR B.
+
+Verification (2026-09-29, worktree above; machine rule from 14:1x: no JS API typecheck, no full suites, heavy lock only for PG):
+- contracts: build 0, typecheck 0, package tests 339/339, `ci.yml` contracts line 26/26.
+- api: native TypeScript 7 typecheck (coordinator's serialized script) rc=0, web rc=0; `test:boot` 0 ("Nest resolved every provider"); `check-di-metadata` ok; spec-suite-coverage 3/3; body-validation-coverage 4/4; destructive-SQL guard on the migration: pass.
+- new specs: `billing-receipt-allocator.spec.ts` 6/6, `billing-addon-admin-grants.spec.ts` 6/6, `receipt-addon-ledger.pg.spec.ts` 7/7.
+- touched specs: expense-extraction 55/55, capture runner 33/33, ai-gateway client 39/39, company-ai-usage-meter 155 pass/2 skipped, billing-financial 4/4, line-ai-combined-regression 9/9, partner-support-tools 44/44, process-line-webhook full file 383/383; W00 regenerated, manifest spec 4/4; web error specs 62/62.
+- PG on throwaway postgres:16 `mangmee-addons-prb-pg-20260929` (port 15542, fresh `migrate deploy` per DB, removed after each run): product-foundation 4/4, recipient-capture 3/3, admin-tools 3/3, billing-receipts 14/14, grace 15/15, trial-carryover 5/5, caps 10/10, issues 9/9, advance-deal 3/3, purchase-source 2/2, settings + issue-resolution 7/7, expense-capture-read 5/5, receipt-reliability 6/6, onboarding-receipt-allowance 1/1 (after `prisma/sync-permissions.ts`, as Extended Tests does). The seven Extended billing PG files in ONE tsx invocation on the loaded machine hit "Unable to start a transaction in the given time" (billing-issues too, which never touches receipts); one file at a time all pass.
+- pins `--check`: current. `git diff --check`: clean.
+- Not run, per the coordinator's machine rule: `node scripts/run-line-ai-whole-chain-acceptance.mjs`, full API and web suites (run once on the integrated branch).
+
+Next: controller review → push → PR to develop → twin to main (`ci.yml` changed). PR C and SD-F build on the seam above.
 
 PR A next (done): controller reviews the branch → push → PR to develop → twin to main (`ci.yml` changed). Then Extended Tests if wanted, and release through UAT and Production before any policy with `addOnPriceIds` is published (F-09). PR B and PR C can start from develop after merge.
