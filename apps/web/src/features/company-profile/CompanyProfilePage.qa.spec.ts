@@ -46,7 +46,7 @@ const LINE_ONLY_ACCOUNT = {
   lineLinked: true, phoneNumber: null, hasPassword: false, username: null, emailDeliveryEnabled: true,
 };
 
-function renderEmail(account: Partial<AccountEmailOtpState> = {}): string {
+function renderEmail(account: Partial<AccountEmailOtpState> = {}, step = 'email'): string {
   const state: AccountEmailOtpState = { email: null, emailVerified: false, emailRevision: 0,
     emailRequirement: 'MISSING', hasPassword: false, lineLinked: true, serverNow: new Date().toISOString(), challenge: null, ...account };
   const realUseState = reactRuntime.useState;
@@ -54,6 +54,7 @@ function renderEmail(account: Partial<AccountEmailOtpState> = {}): string {
   Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
     const pair = (realUseState as (value: unknown) => [unknown, (value: unknown) => void])(initial);
     if (initial === null && !injected) { injected = true; return [state, pair[1]]; }
+    if (initial === 'email') return [step, pair[1]];
     return pair;
   });
   try { return renderToStaticMarkup(React.createElement(AccountEmailOtpPanel)); }
@@ -168,7 +169,7 @@ describe('the account section asks for what a login actually needs', () => {
   it('sends an account that already has a password to change-password instead', () => {
     const html = renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, hasPassword: true } });
     assert.match(html, /href="\/change-password"/);
-    assert.match(renderEmail({ hasPassword: true }), /รหัสผ่านปัจจุบัน/, 'email proof offers the existing password');
+    assert.match(renderEmail({ hasPassword: true }, 'identity'), /รหัสผ่านปัจจุบัน/, 'email proof offers the existing password in step 2');
     assert.doesNotMatch(html, /พิมพ์รหัสผ่านอีกครั้ง/, 'the first-password form is gone');
   });
 
@@ -219,7 +220,7 @@ describe('handlers that no static render reaches', () => {
 
   it('omits the current password for an account that has none', () => {
     assert.doesNotMatch(renderEmail(), /รหัสผ่านปัจจุบัน/);
-    assert.match(renderEmail(), /ยืนยันตัวตนผ่าน LINE/);
+    assert.match(renderEmail({}, 'identity'), /ยืนยันตัวตนผ่าน LINE/);
   });
 
   it('delegates email changes to authenticated OTP and has no direct or link writer', () => {
@@ -288,7 +289,7 @@ describe('the shared OTP block matches current account and delivery facts', () =
     assert.match(html, /new@example\.com/);
     assert.match(html, /กำลังรอยืนยันอีเมลใหม่/);
     assert.match(html, /ขอรหัสใหม่/);
-    assert.match(html, /ยกเลิกคำขอ \/ แก้อีเมล/);
+    assert.match(html, /ย้อนกลับ/);
     assert.match(html, /type="text"[^>]*inputMode="numeric"[^>]*autoComplete="one-time-code"/);
     assert.doesNotMatch(html, /ส่งลิงก์|ลิงก์มีอายุ/);
   });
@@ -296,8 +297,12 @@ describe('the shared OTP block matches current account and delivery facts', () =
   it('lets a LINE account request OTP without a password and never offers direct saving', () => {
     const html = renderEmail();
     assert.match(html, /อีเมลที่ต้องการยืนยัน/);
-    assert.match(html, /ขอรหัสยืนยัน/);
-    assert.match(html, /ยืนยันตัวตนผ่าน LINE/);
+    assert.match(html, /ถัดไป/);
+    assert.doesNotMatch(html, /ยืนยันตัวตนผ่าน LINE/);
+    const identity = renderEmail({}, 'identity');
+    assert.match(identity, /ถัดไป · ขอรหัสยืนยัน/);
+    assert.match(identity, /ยืนยันตัวตนผ่าน LINE/);
+    assert.doesNotMatch(identity, /type="email"|รหัสผ่านปัจจุบัน/);
     assert.doesNotMatch(html, /บันทึกอีเมลบัญชี|ส่งลิงก์|รหัสผ่านปัจจุบัน/);
     assert.equal(html.match(/type="email"/g)?.length, 1);
   });
@@ -306,7 +311,7 @@ describe('the shared OTP block matches current account and delivery facts', () =
     const html = renderEmail({ email: 'owner@example.com', emailRequirement: 'UNVERIFIED' });
     assert.match(html, /owner@example\.com/);
     assert.match(html, /ยังไม่ยืนยัน/);
-    assert.match(html, /ขอรหัสยืนยัน/);
+    assert.match(html, /ถัดไป/);
     assert.doesNotMatch(html, /บันทึกอีเมลบัญชี|ส่งลิงก์/);
   });
 

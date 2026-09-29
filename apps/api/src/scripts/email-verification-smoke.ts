@@ -68,10 +68,11 @@ export async function checkEmailVerification(input: { app: INestApplication; pri
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${browser.origin}/companies/${member.companyId}/settings/profile#account`, { waitUntil: 'domcontentloaded' });
     const panel = page.locator('section').filter({ has: page.getByRole('heading', { name: /^(อีเมลบัญชีของฉัน|ยืนยันอีเมลก่อนชำระเงิน)$/ }) }).last();
-    await panel.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true }).fill(`verify-${tag}-first@example.test`);
+    await panel.getByRole('textbox', { name: 'อีเมลที่ต้องการยืนยัน', exact: true }).fill(`verify-${tag}-first@example.test`);
+    await panel.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await panel.getByLabel(/^รหัสผ่านปัจจุบัน/).fill(password);
     const sent = page.waitForResponse(r => r.url().endsWith('/auth/account/email/otp/request') && r.request().method() === 'POST');
-    await panel.getByRole('button', { name: 'ขอรหัสยืนยัน', exact: true }).click(); assert.equal((await sent).status(), 202);
+    await panel.getByRole('button', { name: 'ถัดไป · ขอรหัสยืนยัน', exact: true }).click(); assert.equal((await sent).status(), 202);
     assert.equal((await db.user.findUniqueOrThrow({ where: { id: user.id } })).email, null);
     const pending = (await request(base)).body; assert.equal(pending.emailRequirement, 'CHANGE_PENDING');
     // R-A6: an unverified account email no longer blocks a quote; Checkout will ask for the address.
