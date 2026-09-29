@@ -1,6 +1,6 @@
 /**
  * Sales-event discounts, console side (docs/specs/sales-event-discounts-spec-th.md §3.1, §3.2, §6.2,
- * §7.1, §9): batches, who may hand them out, the 5-minute QR, the ticket list and revocation.
+ * §7.1, §9): batches, who may hand them out, their QR, the ticket list and revocation.
  *
  * Scope follows the role, like the rest of the console: SYSTEM_ADMIN sees and manages everything; a
  * หัวหน้าทีม sees the batches they created plus those their team hands out, and manages only their
@@ -40,7 +40,7 @@ import {
   salesEventTicketDisplayState,
 } from '../domain/sales-event-claim.logic';
 import {
-  batchActionReason, batchClaimOpen, firstOfferBelowMinimum, nextBatchState, qrExpiresAt, scopeFromJson,
+  batchActionReason, batchClaimOpen, firstOfferBelowMinimum, nextBatchState, scopeFromJson,
   SalesEventRuleError, ticketCounts, validateSalesEventBatch, type SalesEventBatchValues,
 } from '../domain/sales-event.logic';
 import {
@@ -282,8 +282,11 @@ export class SalesEventsService {
   }
 
   /**
-   * "แสดง QR" (spec §3.2): a fresh token each press, valid min(5 minutes, claim end). Only an active
-   * distributor of a batch that is open right now gets one. The raw token exists only in the image.
+   * "แสดง QR" (spec §3.2): a fresh token each press. Only an active distributor of a batch that is
+   * open right now gets one. The raw token exists only in the image. Owner 2026-09-29 (SD-O11): the QR
+   * has no clock of its own — it may be printed or put on a screen, and it keeps working while the
+   * batch is OPEN inside its claim window and this เซลล์ stays an active distributor. The stored
+   * `expiresAt` records the claim end at issue; the claim judges the batch as it is at scan time.
    */
   async issueQr(ctx: RequestContext, batchId: string, apiBaseUrl: string): Promise<SalesEventQr> {
     const now = new Date();
@@ -305,7 +308,7 @@ export class SalesEventsService {
     if (batch.issuedCount >= batch.issueCap) throw salesError('SALES_EVENT_ISSUE_FULL', 'ส่วนลดของชุดนี้ถูกแจกครบแล้ว');
 
     const { rawToken, tokenHash } = newSalesEventQrToken();
-    const expiresAt = qrExpiresAt(now, batch.claimEndsAt);
+    const expiresAt = batch.claimEndsAt;
     await this.prisma.client.$transaction(async (tx) => {
       const row = await tx.salesEventQrToken.create({
         data: { tokenHash, batchId, salesUserId: ctx.userId, batchRevision: batch.revision, expiresAt },

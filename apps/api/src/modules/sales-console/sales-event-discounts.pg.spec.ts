@@ -317,23 +317,19 @@ describe('sales-event discounts on real PostgreSQL', { skip: !databaseUrl }, () 
     }
   });
 
-  it('SD-E02: a QR only for an active distributor of an open batch, for 5 minutes or until the claim end', async () => {
+  it('SD-E02: a QR only for an active distributor of an open batch, valid until the batch closes (SD-O11)', async () => {
     const h = await harness();
     try {
       const batch = await h.service.create(h.lead, h.batchInput());
-      const before = Date.now();
       const qr = await h.service.issueQr(h.agentA1, batch.id, 'https://api.example.test/v1');
       assert.match(qr.qrImageUrl, /^data:image\/svg\+xml;base64,/);
-      const life = Date.parse(qr.expiresAt) - before;
-      assert.ok(life > 4.9 * MINUTE && life <= 5 * MINUTE + 5_000, `lives about five minutes, got ${life} ms`);
+      // Owner 2026-09-29: no five-minute clock — printable, valid until the claim end.
+      assert.equal(qr.expiresAt, batch.claimEndsAt);
       const stored = await h.client.salesEventQrToken.findMany({ where: { batchId: batch.id } });
       assert.equal(stored.length, 1);
+      assert.equal(stored[0]!.expiresAt.toISOString(), batch.claimEndsAt);
       assert.equal(JSON.stringify(h.audited).includes(stored[0]!.tokenHash), false, 'the hash is not copied into the audit row');
       assert.equal(hashSalesEventQrToken('x').length, 64);
-
-      const closing = await h.service.create(h.lead, h.batchInput({ claimEndsAt: new Date(Date.now() + 2 * MINUTE).toISOString() }));
-      const short = await h.service.issueQr(h.agentA1, closing.id, 'https://api.example.test/v1');
-      assert.equal(short.expiresAt, closing.claimEndsAt, 'cut short by the claim end');
 
       assert.equal(await reason(() => h.service.issueQr(h.agentA2, batch.id, 'x')), 'SALES_EVENT_AGENT_INACTIVE');
       assert.equal(await reason(() => h.service.issueQr(h.lead, batch.id, 'x')), 'SALES_EVENT_AGENT_INACTIVE');

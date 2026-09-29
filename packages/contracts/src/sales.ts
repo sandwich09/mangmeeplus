@@ -270,7 +270,8 @@ export const SALES_ERROR_CODES = ['SALES_DEAL_STATE_CONFLICT', 'SALES_DEAL_SELF_
   'SALES_EVENT_NOT_FOUND', 'SALES_EVENT_CLAIM_CLOSED', 'SALES_EVENT_ISSUE_FULL', 'SALES_EVENT_AGENT_INACTIVE',
   'SALES_EVENT_TICKET_NOT_REVOCABLE',
   // Sales-event discounts, LINE claim (spec §7.3, SD-B). The LIFF page carries its own copy too.
-  'SALES_EVENT_QR_EXPIRED', 'SALES_EVENT_SELF_CLAIM'] as const;
+  // SALES_EVENT_QR_INVALID: no QR with this token exists. A QR never expires on its own (SD-O11).
+  'SALES_EVENT_QR_INVALID', 'SALES_EVENT_SELF_CLAIM'] as const;
 export type SalesErrorCode = typeof SALES_ERROR_CODES[number];
 
 // ── Sales-event discounts (docs/specs/sales-event-discounts-spec-th.md §6, §7.1, §9) ──────────────
@@ -308,8 +309,6 @@ export type SalesEventClaimResult = {
 
 export const SALES_EVENT_NAME_MAX = 120;
 export const SALES_EVENT_REASON_MAX = 500;
-/** One QR press lives this long, cut short by the batch's claim end. */
-export const SALES_EVENT_QR_TTL_SECONDS = 300;
 /** A ticket can be used until the batch's claim end (at the revision it was issued) plus this (SD-Q1). */
 export const SALES_EVENT_TICKET_VALID_DAYS = 30;
 /** AI credit is stored in 0.01-credit units, the add-on `unitScale` of CHAT_CREDIT. */
@@ -372,7 +371,12 @@ export type SalesEventBatchView = {
 };
 export type SalesEventBatchList = { items: SalesEventBatchView[]; nextCursor: string | null };
 
-/** `POST /v1/sales/events/batches/:batchId/qr`. The image is rendered by the API; no URL leaves it. */
+/**
+ * `POST /v1/sales/events/batches/:batchId/qr`. The image is rendered by the API; no URL leaves it.
+ * Owner 2026-09-29 (SD-O11): a QR has no clock of its own, so it can be printed or put on a screen.
+ * It works while its batch is OPEN inside the claim window and its เซลล์ is still an active
+ * distributor — `expiresAt` is the claim end when it was issued; extending the batch extends it.
+ */
 export type SalesEventQr = { qrImageUrl: string; expiresAt: string };
 
 /** No LINE identity and no financial document, ever (spec §7.1). */

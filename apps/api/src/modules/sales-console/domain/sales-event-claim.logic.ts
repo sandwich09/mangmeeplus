@@ -55,7 +55,6 @@ export function salesEventTicketExpiresAt(claimEndsAt: Date): Date {
 }
 
 export type SalesEventClaimRefusal =
-  | 'SALES_EVENT_QR_EXPIRED'
   | 'SALES_EVENT_CLAIM_CLOSED'
   | 'SALES_EVENT_AGENT_INACTIVE'
   | 'SALES_EVENT_ISSUE_FULL';
@@ -64,16 +63,18 @@ export type SalesEventClaimRefusal =
  * Why a NEW ticket cannot be issued from this QR right now, or null. A person who already holds a
  * ticket from the batch never reaches this: the claim answers with that ticket first (spec §3.3).
  * Read under the batch row lock, so the cap check cannot race another scan.
+ *
+ * Owner 2026-09-29 (SD-O11): a QR has no clock of its own — it may be printed or shown on a screen.
+ * Everything is judged by the batch AS IT IS NOW: a lead who extends the window extends every QR
+ * already printed, and "พักแจก", "ระงับการใช้" or taking the เซลล์ off the batch stops them at once.
  */
 export function salesEventClaimRefusal(input: {
   now: Date;
-  qrExpiresAt: Date;
   batch: { state: string; claimStartsAt: Date; claimEndsAt: Date; issueCap: number; issuedCount: number };
   /** The เซลล์ is still an active distributor of the batch and their account is usable. */
   distributorActive: boolean;
 }): SalesEventClaimRefusal | null {
   const { now, batch } = input;
-  if (input.qrExpiresAt <= now) return 'SALES_EVENT_QR_EXPIRED';
   if (batch.state !== 'OPEN' || now < batch.claimStartsAt || now >= batch.claimEndsAt) return 'SALES_EVENT_CLAIM_CLOSED';
   if (!input.distributorActive) return 'SALES_EVENT_AGENT_INACTIVE';
   if (batch.issuedCount >= batch.issueCap) return 'SALES_EVENT_ISSUE_FULL';
