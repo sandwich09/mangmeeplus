@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { REQUEST_STATUS_LABELS } from './reimbursements.model';
+import { categoryText, money } from './reimbursements.logic';
 import {
   cancelReimbursementDraftAction,
   confirmReimbursementDraftAction,
@@ -37,18 +38,12 @@ const stateText: Record<string, string> = {
 };
 
 /* Owner rule 2026-09-27/29: plain Thai, no id, enum key, code, field path, ISO date or revision on screen,
- * and the same words as the LINE card (apps/api/.../line-reimbursement-draft-card.logic.ts). */
-const satang = new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-/** "1,234.50 บาท", like formatMoney, but the decimal string is formatted as is (no float) and rounds half up like the API. */
-function money(value: unknown, currency: unknown) {
-  if (typeof value !== 'string' || !/^\d+(?:\.\d{1,4})?$/.test(value)) return 'ยังตรวจสอบจำนวนเงินไม่ได้';
-  return `${satang.format(value as `${number}`)} ${!currency || currency === 'THB' ? 'บาท' : String(currency)}`;
-}
+ * and the same words as the LINE card (apps/api/.../line-reimbursement-draft-card.logic.ts); `money` and
+ * `categoryText` are shared with the other claim pages (reimbursements.logic). */
 const receiptText: Record<string, string> = {
   REQUIRED: 'ยังขาดใบเสร็จบางรายการ', ATTACHED: 'มีหลักฐานครบทุกรายการแล้ว',
   MISSING_WITH_REASON: 'บางรายการไม่มีใบเสร็จ และระบุเหตุผลไว้แล้ว', WAIVED_BY_POLICY: 'นโยบายบริษัทไม่บังคับแนบใบเสร็จ',
 };
-const categoryText = (line: { categoryLabel?: string }) => line.categoryLabel?.trim() || 'ยังไม่ได้เลือกหมวด';
 /** A claimed bill as the customer knows it (document number · shop · date), never its record id. */
 function sourceText(source: any): string {
   return [source?.certificate?.documentNumber ?? source?.seller?.documentNumber, source?.seller?.name,
@@ -84,7 +79,7 @@ function Snapshot({ value, label }: { value: any; label: string }) {
           <thead><tr className="border-b text-gray-500"><th className="py-2 pr-3">#</th><th className="py-2 pr-3">รายการ</th><th className="py-2 pr-3">วันที่</th><th className="py-2 text-right">จำนวน</th></tr></thead>
           <tbody>{(value.lines ?? []).map((line: any) => (
             <tr className="border-b last:border-0" key={line.lineRef}>
-              <td className="py-3 pr-3">{line.lineNo}</td><td className="py-3 pr-3">{line.description}<div className="text-xs text-gray-500">{[categoryText(line), line.attachmentId ? 'มีไฟล์แนบ' : 'ยังไม่มีไฟล์แนบ',
+              <td className="py-3 pr-3">{line.lineNo}</td><td className="py-3 pr-3">{line.description}<div className="text-xs text-gray-500">{[categoryText(line.categoryLabel), line.attachmentId ? 'มีไฟล์แนบ' : 'ยังไม่มีไฟล์แนบ',
                 line.linkedExpenseId ? `บิลต้นทาง: ${sourceText(line.sourceExpenseSnapshot)}` : ''].filter(Boolean).join(' · ')}</div></td>
               <td className="whitespace-nowrap py-3 pr-3 tabular-nums">{formatThaiDate(line.incurredDate)}</td><td className="whitespace-nowrap py-3 text-right tabular-nums">{money(line.amount, value.currency)}</td>
             </tr>

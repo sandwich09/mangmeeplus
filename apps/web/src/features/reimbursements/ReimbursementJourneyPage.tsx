@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedSteps, type ThemedStepState } from '@/common/components/steps/ThemedSteps';
 import { EmptyState, ErrorState, ForbiddenState, LoadingState } from '@/common/components/state';
 import { useConfirm } from '@/common/components/modal';
@@ -19,7 +20,7 @@ import {
 } from './reimbursements.api';
 import { currentDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
-  activeJourneyStep, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, errorText, formatMoney, isMissingSavedSignatureError,
+  activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, errorText, isMissingSavedSignatureError,
   isStaleApprovalError, type JourneyAction, type JourneyStepState,
 } from './reimbursements.logic';
 import {
@@ -304,7 +305,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           {(detail.internalNotes ?? []).map((note: any) => (
             <li key={note.id} className="rounded-lg border border-gray-200 p-3 text-sm">
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="text-xs text-gray-500">{note.authorName} · {new Date(note.createdAt).toLocaleString('th-TH')}</div>
+                <div className="text-xs text-gray-500">{note.authorName} · {formatThaiDateTime(note.createdAt)}</div>
                 {(note.authorUserId === userId || roles.includes('OWNER')) && (
                   <div className="flex gap-2">
                     <button type="button" className="text-brand-700 hover:underline" aria-label={`แก้ไขโน้ตของ ${note.authorName}`} disabled={noteBusy} aria-busy={noteBusy}
@@ -315,7 +316,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
                 )}
               </div>
               <p className="mt-2 whitespace-pre-wrap break-words text-gray-800">{note.body}</p>
-              {note.updatedAt !== note.createdAt && <p className="mt-1 text-xs text-gray-400">แก้ไขแล้ว {new Date(note.updatedAt).toLocaleString('th-TH')}</p>}
+              {note.updatedAt !== note.createdAt && <p className="mt-1 text-xs text-gray-400">แก้ไขแล้ว {formatThaiDateTime(note.updatedAt)}</p>}
             </li>
           ))}
         </ul>
@@ -437,20 +438,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       {staleReview && <StaleApprovalDialog
         requestNo={staleReview.detail.requestNo ?? staleReview.before.requestNo}
         diff={diffApprovalFields(
-          {
-            reason: staleReview.before.reason,
-            amount: formatMoney(staleReview.before.amount),
-            currency: staleReview.before.currency,
-            categoryLabel: staleReview.before.categoryLabelSnapshot ?? staleReview.before.categoryKey,
-            lineCount: (staleReview.before.lines ?? []).length,
-          },
-          {
-            reason: staleReview.detail.reason,
-            amount: formatMoney(staleReview.detail.amount),
-            currency: staleReview.detail.currency,
-            categoryLabel: staleReview.detail.categoryLabelSnapshot ?? staleReview.detail.categoryKey,
-            lineCount: (staleReview.detail.lines ?? []).length,
-          },
+          approvalComparable(staleReview.before, (staleReview.before.lines ?? []).length),
+          approvalComparable(staleReview.detail, (staleReview.detail.lines ?? []).length),
         )}
         lines={staleReview.detail.lines ?? []}
         currency={staleReview.detail.currency}

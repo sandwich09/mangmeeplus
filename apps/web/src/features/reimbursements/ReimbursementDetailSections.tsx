@@ -29,13 +29,13 @@ import {
   canUploadSignedCopy, canVoidRecordedPayment, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
 } from './reimbursements.model';
-import { buildClaimTimeline, errorText, formatMoney, paperSignedLine, sumLineAmounts, validatePaymentForm, type ApprovalFieldDiff } from './reimbursements.logic';
+import { buildClaimTimeline, categoryText, errorText, formatMoney, paperSignedLine, sumLineAmounts, validatePaymentForm, type ApprovalFieldDiff } from './reimbursements.logic';
 
 export function StatusBadge({ status }: { status: string }) {
-  return <MangmeeBadge tone={REQUEST_STATUS_TONES[status] ?? 'slate'}>{REQUEST_STATUS_LABELS[status] ?? status}</MangmeeBadge>;
+  return <MangmeeBadge tone={REQUEST_STATUS_TONES[status] ?? 'slate'}>{REQUEST_STATUS_LABELS[status] ?? '—'}</MangmeeBadge>;
 }
 export function PaymentBadge({ status }: { status: string }) {
-  return <MangmeeBadge tone={PAYMENT_STATUS_TONES[status] ?? 'slate'}>{PAYMENT_STATUS_LABELS[status] ?? status}</MangmeeBadge>;
+  return <MangmeeBadge tone={PAYMENT_STATUS_TONES[status] ?? 'slate'}>{PAYMENT_STATUS_LABELS[status] ?? '—'}</MangmeeBadge>;
 }
 
 /**
@@ -182,7 +182,7 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
             </thead>
             <tbody>
               {diff.map(row => (
-                <tr key={row.key} className={row.changed ? 'bg-warning-50' : 'text-gray-500'}>
+                <tr key={row.key} className={cx(row.changed ? 'bg-warning-50' : 'text-gray-500', row.key === 'amount' && 'whitespace-nowrap')}>
                   <td>{row.label}</td>
                   <td className={row.changed ? 'text-gray-400 line-through' : 'text-gray-500'}>{row.before}</td>
                   <td className={row.changed ? 'font-bold text-gray-900' : 'text-gray-500'}>
@@ -214,7 +214,7 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
                     <td className="text-gray-500">{line.lineNo}</td>
                     <td>{dateShort(line.incurredDate)}</td>
                     <td>{line.description}</td>
-                    <td className="text-gray-500">{line.categoryLabelSnapshot ?? line.categoryKey}</td>
+                    <td className="text-gray-500">{categoryText(line.categoryLabelSnapshot)}</td>
                     <td className="text-right tabular-nums">{formatMoney(line.amount, currency)}</td>
                   </tr>
                 ))}
@@ -557,14 +557,14 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
       <MangmeeCard className="p-4">
         <h4 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h4>
         <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
-          <Row k="หมวดหมู่" v={detail.categoryLabelSnapshot ?? detail.categoryKey} />
+          <Row k="หมวดหมู่" v={categoryText(detail.categoryLabelSnapshot)} />
           <Row k="สถานะ" v={<StatusBadge status={detail.status} />} />
-          <Row k="ตรวจสอบการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus] ?? detail.financeReviewStatus} />
+          <Row k="ตรวจสอบการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus]} />
           {detail.financeReviewedByName && <Row k="ผู้ตรวจการเงิน" v={detail.financeReviewedByName} />}
           <Row k="การจ่าย" v={<PaymentBadge status={detail.paymentStatus} />} />
-          <Row k="ใบเสร็จ" v={RECEIPT_REQUIREMENT_LABELS[detail.receiptRequirementStatus] ?? detail.receiptRequirementStatus} />
+          <Row k="ใบเสร็จ" v={RECEIPT_REQUIREMENT_LABELS[detail.receiptRequirementStatus]} />
           <Row k="เหตุผลที่ไม่มีใบเสร็จ" v={detail.missingReceiptReason} />
-          <Row k="ตรวจรายการซ้ำ" v={DUPLICATE_STATUS_LABELS[detail.duplicateStatus] ?? detail.duplicateStatus} />
+          <Row k="ตรวจรายการซ้ำ" v={DUPLICATE_STATUS_LABELS[detail.duplicateStatus]} />
         </dl>
       </MangmeeCard>
 
@@ -585,7 +585,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                   <td>{dateShort(l.incurredDate)}</td>
                   <td>{l.description}{l.sourceExpenseSnapshot && <ReimbursementSourceFacts source={l.sourceExpenseSnapshot} />}</td>
                   <td className="text-gray-500">{l.purpose ?? '—'}</td>
-                  <td className="text-gray-500">{l.categoryLabelSnapshot ?? l.categoryKey}</td>
+                  <td className="text-gray-500">{categoryText(l.categoryLabelSnapshot)}</td>
                   <td className="text-right tabular-nums">{formatMoney(l.amount)}</td>
                   <td className="text-xs">
                     {l.sourceExpenseSnapshot ? l.sourceExpenseSnapshot.attachments.map((file: { id: string; fileName: string }) => (
@@ -715,7 +715,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold text-gray-700">ขั้นที่ {s.sequenceNo}</span>
                   <MangmeeBadge tone={s.status === 'APPROVED' ? 'brand' : s.status === 'REJECTED' ? 'danger' : 'slate'}>
-                    {APPROVAL_STEP_STATUS_LABELS[s.status] ?? s.status}
+                    {APPROVAL_STEP_STATUS_LABELS[s.status] ?? '—'}
                   </MangmeeBadge>
                 </div>
                 <div className="mt-1">{s.decidedByName ? `โดย ${s.decidedByName}` : s.approverName ? `ผู้อนุมัติ: ${s.approverName}` : '—'}</div>
@@ -736,7 +736,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                   <span className="font-mono font-semibold text-gray-700">{p.paymentNo}</span>
                   <span className="font-semibold tabular-nums text-gray-900">{formatMoney(p.paidAmount, p.currency)}</span>
                 </div>
-                <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? p.paymentMethod} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : PAYMENT_STATUS_LABELS[p.status] ?? 'สถานะการจ่าย'}</div>
+                <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? '—'} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : PAYMENT_STATUS_LABELS[p.status] ?? 'สถานะการจ่าย'}</div>
                 {p.paidByName && <div className="mt-1 text-gray-500">จ่ายโดย {p.paidByName}</div>}
                 {p.status === 'VOIDED' && p.voidReason && <div className="mt-1 text-error-700">เหตุผลที่ยกเลิก: {p.voidReason}</div>}
                 {canVoidRecordedPayment(p, permissions) && (
