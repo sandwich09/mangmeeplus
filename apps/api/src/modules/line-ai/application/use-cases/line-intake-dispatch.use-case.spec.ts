@@ -111,11 +111,18 @@ function makePrisma(opts: {
           const { companyId, lineMessageId } = args.where.companyId_lineMessageId;
           return pendingMediaRows.find((r) => r.companyId === companyId && r.lineMessageId === lineMessageId) ?? null;
         },
-        create: async (args: any) => { const row = { id: `pm-${pendingMediaRows.length + 1}`, ...args.data }; pendingMediaRows.push(row); return row; },
+        create: async (args: any) => { const row = { id: `pm-${pendingMediaRows.length + 1}`, revision: 0,
+          createdAt: new Date(Date.now() + pendingMediaRows.length), ...args.data }; pendingMediaRows.push(row); return row; },
+        findMany: async (args: any) => {
+          const w = args.where;
+          return pendingMediaRows.filter((r) => r.companyId === w.companyId && r.userId === w.userId
+            && (!w.status || r.status === w.status) && (!w.expiresAt || r.expiresAt > w.expiresAt.gt))
+            .sort((a, b) => a.createdAt - b.createdAt).slice(0, args.take ?? 50);
+        },
         update: async (args: any) => { const row = pendingMediaRows.find((r) => r.id === args.where.id); if (row) Object.assign(row, args.data); return row; },
         updateMany: async (args: any) => {
           const rows = pendingMediaRows.filter((r) => r.id === args.where.id && (!args.where.status || r.status === args.where.status));
-          rows.forEach((row) => Object.assign(row, args.data));
+          rows.forEach((row) => Object.assign(row, { ...args.data, ...(args.data?.revision?.increment ? { revision: (row.revision ?? 0) + args.data.revision.increment } : {}) }));
           return { count: rows.length };
         },
       },
@@ -222,6 +229,10 @@ function makeHarness(opts: {
   lineAiAdvisorMode?: 'off' | 'social' | 'knowledge' | 'company';
   /** Stored CompanyFeatureEntitlement rows; absent = no rows = legacy fail-open (`null`). */
   entitlementRows?: Array<{ featureKey: string; enabled: boolean }>;
+  /** A bound (v2) private conversation, as the UAT/production config defaults bind every private chat. */
+  boundV2?: boolean;
+  /** One route plan per intake call, in order (overrides `routePlan`). */
+  routePlans?: LineIntakeRoutePlan[];
 }): Harness {
   const replies: string[] = [];
   const captured: any[] = [];
@@ -422,6 +433,8 @@ function makeHarness(opts: {
       // No `?? 'off'` on purpose: leaving it undefined models a config double / older deployment that
       // never heard of the flag, which must still resolve to the legacy advisor-off capability.
       lineAiAdvisorMode: opts.lineAiAdvisorMode,
+      ...(opts.boundV2 ? { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: [], lineAiDeliveryPlanV2Enabled: true,
+        lineAiDeliveryPlanV2WriteCompanyIds: [] } : {}),
     } as any,
     { resolveAccess: async () => ({ membershipId: 'mem-1', roles: ['STAFF'], permissions: opts.permissions, scopes: opts.scopes ?? {} }) } as any,
     { log: async () => undefined } as any,
@@ -445,7 +458,7 @@ function makeHarness(opts: {
           options?.onAdmitted?.(admitted);
         }
         if (opts.routeThrows) throw new Error('gateway down');
-        return opts.routePlan ?? { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'PROVIDER_DISABLED' };
+        return opts.routePlans?.shift() ?? opts.routePlan ?? { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'PROVIDER_DISABLED' };
       },
     } as any,
     {
@@ -544,7 +557,8 @@ function makeHarness(opts: {
       }
       : undefined) as any,
     // createUploadIntent (RECEIPT-05 byte persist)
-    { execute: async (_ctx: any, cmd: any) => { createUploadIntentCalls.push(cmd); return { attachmentId: 'pending-att-1', uploadUrl: '/u', uploadMethod: 'PUT', expiresAt: new Date() }; } } as any,
+    // A distinct id per intent (as production), the first one keeping the name older tests assert on.
+    { execute: async (_ctx: any, cmd: any) => { createUploadIntentCalls.push(cmd); return { attachmentId: `pending-att-${createUploadIntentCalls.length}`, uploadUrl: '/u', uploadMethod: 'PUT', expiresAt: new Date() }; } } as any,
     // completeAttachmentUpload
     { execute: async (_ctx: any, cmd: any) => { completeAttachmentCalls.push(cmd); return { id: 'pending-att-1' }; } } as any,
     // correctExpense
@@ -715,6 +729,7 @@ function makeHarness(opts: {
     } as any,
   );
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
+  if (opts.boundV2) (useCase as any).contextV2 = { admit: async () => ({ id: 'line-v2:conversation-1', lifecycleEpoch: 0 }) };
   // Historical unit scenarios seed an original question at harness construction. Actual two-turn
   // tests carry the producer's exact sourceContext and must never mint a replacement on read.
   const waitingFixture = (opts.openWaiting ?? []).map(item => ({ ...item, entry: { ...item.entry } }));
@@ -2865,6 +2880,85 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.receiptContinuationCalls[0].expenseId, 'expense-1');
     assert.ok(h.receiptContinuationCalls[0].chatKeyHash && !h.receiptContinuationCalls[0].chatKeyHash.includes('line-user-secret'));
     assert.ok(h.receiptContinuationCalls[0].deliveredOutcomeId && !h.receiptContinuationCalls[0].deliveredOutcomeId.includes('evt-media'));
+  });
+});
+
+// UAT 2026-09-29 (main a2d11e89, owner: "ของเดิมถ่ายรูป หรือ ส่งรูป ก็อ่านได้และสร้างให้ทันที" and "รหัสไฟล์อะไรออกมา
+// ไม่รู้ งง"): every private chat is BOUND on UAT/production (reliability v2 defaults), and a bound caption-less
+// photo was answered "what is this?" with no router, no OCR and no draft. Every media test above runs UNBOUND,
+// which is how the shortcut shipped unnoticed; these run the same photos through a bound conversation.
+describe('LINE intake dispatch – a photo in a bound (v2) conversation reads like production', () => {
+  const ID_OR_COMMAND = /\/media|\/qa|pending-att|capture-att|\batt-\d|\bpm-\d/u;
+  const sentText = (h: Harness) => JSON.stringify(h.sentMessages);
+  const RECEIPT_ROUTE = { status: 'ROUTED' as const, intent: 'EXPENSE_DOCUMENT_CAPTURE' as const, language: 'th', confidence: 0.95 };
+  const UNCLEAR_ROUTE = { status: 'ROUTED' as const, intent: 'CLARIFY' as const, language: 'th', confidence: 0.4 };
+  const SECOND_PHOTO = { ...MEDIA_EVENT, webhookEventId: 'evt-media-2', lineMessageId: 'msg-media-2', replyToken: 'reply-3' };
+
+  it('a caption-less receipt photo goes router → OCR → draft, and asks nothing', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true, routePlan: RECEIPT_ROUTE, prisma });
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    assert.equal((h.useCase as any).boundConversations.has, WeakMap.prototype.has, 'sanity: the use case keeps its bound map');
+    assert.equal(h.routeRequests.length, 1, 'the router reads the photo (the old bound shortcut skipped it)');
+    assert.ok(h.routeRequests[0].attachments?.[0]?.contentBase64, 'the router sees the picture itself');
+    assert.equal(h.ocrRequests.length, 1);
+    assert.equal(h.initCalls.length, 1, 'the draft is created immediately');
+    assert.equal(h.completeCalls.length, 1);
+    assert.match(h.replies[0] ?? '', /ร้านทดสอบ|120/u);
+    assert.doesNotMatch(h.replies.join('\n'), /รูปนี้เป็นอะไรคะ|ต้องการให้อ่านไฟล์นี้/u);
+    assert.ok(!updates.some((u: any) => u.data?.status === 'clarification_required'));
+  });
+
+  it('an ambiguous photo asks the ONE numbered question, parks the bytes, and shows no id', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true, routePlan: UNCLEAR_ROUTE, prisma });
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    assert.equal(h.routeRequests.length, 1);
+    assert.equal(h.initCalls.length, 0, 'no draft from an unclear picture');
+    assert.equal(pendingMediaRows.length, 1, 'the bytes stay pending for the answer');
+    assert.equal(h.replies.length, 1);
+    assert.doesNotMatch(sentText(h), ID_OR_COMMAND);
+  });
+
+  it('a receipt sent after an unclear photo is read and drafted; only the unclear one keeps its question', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true,
+      routePlans: [UNCLEAR_ROUTE, RECEIPT_ROUTE], prisma });
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    await h.useCase.executeReceiptUpload(SECOND_PHOTO);
+    assert.equal(h.routeRequests.length, 2, 'both photos were read');
+    assert.equal(h.ocrRequests.length, 1, 'the receipt was OCR-read');
+    assert.equal(h.initCalls.length, 1, 'and drafted');
+    assert.equal(pendingMediaRows.filter((row) => row.status === 'PENDING').length, 1, 'only the unclear photo waits');
+    assert.doesNotMatch(sentText(h), ID_OR_COMMAND);
+  });
+
+  it('two unclear photos: files are named by order and time, buttons send their own words, and a tap picks the right one', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true,
+      routePlans: [UNCLEAR_ROUTE, UNCLEAR_ROUTE], prisma });
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    await h.useCase.executeReceiptUpload(SECOND_PHOTO);
+    assert.equal(pendingMediaRows.length, 2, 'the second photo is kept, not dropped');
+    const wire = sentText(h);
+    assert.doesNotMatch(wire, ID_OR_COMMAND, 'no attachment id or slash command anywhere on the wire');
+    assert.match(wire, /รูปที่ 1/u); assert.match(wire, /รูปที่ 2/u);
+    const items = h.sentMessages.flat().flatMap((message: any) => message?.quickReply?.items ?? []);
+    assert.ok(items.length > 0, 'the choice is offered as buttons');
+    for (const item of items) {
+      assert.equal(item.action.type, 'message');
+      assert.equal(item.action.text, item.action.label, 'a tap sends exactly the words on the button');
+    }
+    const pick = { ...TEXT_EVENT, webhookEventId: 'evt-pick', messageText: 'เลือกรูปที่ 2' };
+    const flow = h.useCase as any;
+    flow.boundConversations.set(pick, { owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line',
+      channelKind: 'USER', messagingChannelId: 'ch-1', chatKeyHash: chatKeyHashOf(pick) }, id: 'line-v2:conversation-1', epoch: 0 });
+    assert.equal(await flow.handlePendingMediaControl(pick), true);
+    const second = pendingMediaRows.find((row) => row.lineMessageId === 'msg-media-2');
+    assert.equal(second.askedQuestionJson.selectedForContinuation, true, '"เลือกรูปที่ 2" selects the second photo');
+    assert.equal(pendingMediaRows.find((row) => row.lineMessageId === 'msg-media-1').askedQuestionJson.selectedForContinuation, false);
+    assert.equal(await flow.handlePendingMediaControl({ ...pick, webhookEventId: 'evt-chat', messageText: 'ขอบคุณค่ะ' }), false,
+      'ordinary chat is never a control');
   });
 });
 

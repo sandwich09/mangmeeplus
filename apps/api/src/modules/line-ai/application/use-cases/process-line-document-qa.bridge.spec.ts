@@ -181,6 +181,66 @@ it('cancels the exact owned job without provider calls, and keeps ready results 
   }
 });
 
+// Owner 2026-09-29 ("รหัสไฟล์อะไรออกมาไม่รู้ งง"): no attachment id, job id or reader code reaches the customer.
+describe('document reading speaks in file order, never ids (UAT 2026-09-29)', () => {
+  const ATTACHMENT = 'cmg1a2b3c4d5e6f7g8h9i0j1k';
+  it('names answer sources and unread pages by their order in the read', async () => {
+    const f = fixture();
+    Object.assign(f.result, { answerPageRefs: [{ attachmentId: ATTACHMENT, page: 1 }],
+      pages: [{ attachmentId: ATTACHMENT, page: 1, visibleText: 'ข้อความต้นทาง', facts: [], evidence: [] }],
+      coverage: { requested: [{ attachmentId: ATTACHMENT, page: 1 }, { attachmentId: ATTACHMENT, page: 2 }],
+        read: [{ attachmentId: ATTACHMENT, page: 1 }], failed: [{ attachmentId: ATTACHMENT, page: 2, code: 'QA_PAGE_UNREADABLE' }] } });
+    assert.equal(await f.flow.deliverDocumentQaResult(f.event, 'job', { ...f.owner, ownerEpoch: 3 }), true);
+    assert.match(f.delivered[0]!, /แหล่งคำตอบ: เอกสารแนบ ลำดับที่ 1 หน้า 1/u);
+    assert.match(f.delivered[0]!, /ยังอ่านเอกสารแนบ ลำดับที่ 1 หน้า 2 ไม่สำเร็จ/u);
+    assert.doesNotMatch(f.delivered[0]!, new RegExp(`${ATTACHMENT}|QA_PAGE_UNREADABLE`, 'u'));
+  });
+
+  it('offers cancel as its own words and cancels this chat\'s pending read from them', async () => {
+    const f = fixture(), sent: any[] = [];
+    f.flow.deliverRequiredMessages = async (_event: any, messages: any[]) => { sent.push(...messages); };
+    await f.flow.deliverDocumentQaProgress(f.event, 'job-secret-id', 'กำลังอ่านไฟล์');
+    const action = sent[0].quickReply.items[0].action;
+    assert.equal(action.type, 'message'); assert.equal(action.text, action.label);
+    assert.doesNotMatch(JSON.stringify(sent), /job-secret-id|\/qa/u);
+    const event = Object.assign(f.event, { messageText: action.text });
+    f.flow.prisma.client.lineIntakePendingMedia.findFirst = async ({ where }: any) => {
+      assert.equal(where.status, 'PENDING'); return { readJobId: 'job' };
+    };
+    f.flow.prisma.client.lineIntakePendingMedia.findMany = async () => [];
+    f.flow.documentQa.getById = async (id: string) => ({ id, ...f.owner, ownerMembershipId: 'member', ownerEpoch: 3, status: 'READING' });
+    f.flow.documentQa.cancel = async (id: string) => { f.trace.push(`cancel-${id}`); return true; };
+    assert.equal(await f.flow.handleDocumentQaControl(event), true);
+    assert.deepEqual(f.trace, ['cancel-job', 'pending-update']);
+    f.flow.prisma.client.lineIntakePendingMedia.findFirst = async () => null;
+    assert.equal(await f.flow.handleDocumentQaControl(event), false, 'with no read running the words are ordinary chat');
+  });
+
+  it('picks a previous file by its order in the question, and asks by order — never for a code — when it cannot', async () => {
+    const f = fixture();
+    const rows = [1, 2].map((n) => ({ id: `pending-${n}`, attachmentId: `${ATTACHMENT}${n}`, status: 'PENDING', readJobId: null, revision: 1,
+      mimeType: 'image/png', askedQuestionJson: { pageCount: 1 }, createdAt: new Date(Date.UTC(2026, 8, 29, 4, 10 + n)) }));
+    f.flow.prisma.client.lineIntakePendingMedia.findMany = async () => [...rows].reverse();
+    f.flow.prisma.client.lineIntakePendingMedia.updateMany = async () => ({ count: 1 });
+    const admitted: any[] = [];
+    f.flow.documentQa.admit = async (input: any) => { admitted.push(input); return { jobId: 'job', foregroundDeadlineAt: new Date(Date.now() + 10_000).toISOString() }; };
+    const route = { semanticSubrequests: [{ index: 0, kind: 'file', goal: 'อ่านไฟล์', requestedFilters: {} }] };
+    const ask = (messageText: string) => {
+      const event = Object.assign({ ...f.event }, { messageText, inputEvidence: { joinedSha256: 'digest' } });
+      f.flow.budgetGrantsV2.set(event, { turnKey: `turn-${messageText}` });
+      f.flow.boundConversations.set(event, f.flow.boundConversations.get(f.event));
+      f.flow.deliveryAccess.set(event, f.flow.deliveryAccess.get(f.event));
+      return f.flow.resumeDocumentQuestionV2(event, 'request', route, f.access);
+    };
+    assert.equal(await ask('อ่านรูปที่ 2 ให้หน่อย'), true);
+    assert.deepEqual(admitted[0].attachments.map((item: any) => item.attachmentId), [`${ATTACHMENT}2`], '"รูปที่ 2" is the second photo sent');
+    assert.equal(await ask('อ่านไฟล์ให้หน่อย'), true);
+    const reply = f.delivered.at(-1)!;
+    assert.match(reply, /รูปที่ 1/u); assert.match(reply, /รูปที่ 2/u);
+    assert.doesNotMatch(reply, new RegExp(`${ATTACHMENT}|รหัสไฟล์`, 'u'));
+  });
+});
+
 it('keeps non-file clauses pending and closes only explicitly answered file clauses after accepted delivery', async () => {
   const f = fixture();
   const inventory = [{ index: 0, kind: 'file', goal: 'read total' }, { index: 1, kind: 'general', goal: 'why sky blue' }];
