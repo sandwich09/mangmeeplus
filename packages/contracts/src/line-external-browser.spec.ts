@@ -14,7 +14,7 @@ it('adds the escape once, before the fragment, and leaves LINE-internal and non-
   const once = withLineExternalBrowserParam('https://app/companies/c/billing');
   assert.equal(withLineExternalBrowserParam(once), once);
   assert.equal(withLineExternalBrowserParam('http://localhost:3000/companies/c'), 'http://localhost:3000/companies/c?openExternalBrowser=1');
-  for (const kept of ['https://liff.line.me/123-abc/signup', 'https://line.me/R/ti/p/@x', 'https://official.mangmeeplus.com/', 'tel:0982565628', 'not a url']) {
+  for (const kept of ['https://liff.line.me/123-abc/signup', 'https://line.me/R/ti/p/@x', 'https://lin.ee/UU9pbOI', 'https://official.mangmeeplus.com/', 'tel:0982565628', 'not a url']) {
     assert.equal(withLineExternalBrowserParam(kept), kept);
   }
 });

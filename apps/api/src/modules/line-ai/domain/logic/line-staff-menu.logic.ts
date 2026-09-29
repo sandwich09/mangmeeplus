@@ -429,10 +429,8 @@ export function buildContactCard(): LineReplyMessage {
         { type: 'button', style: 'secondary', action: { type: 'clipboard', label: 'คัดลอกอีเมล', clipboardText: 'contact@mangmeeplus.com' } },
         { type: 'button', style: 'secondary', action: { type: 'uri', label: 'โทร 098-256-5628', uri: 'tel:0982565628' } },
         { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://official.mangmeeplus.com/' } },
-        // P10-L §7. The rich menu's contact tile sends "ติดต่อเรา", which lands here — so without
-        // this button the keyword that actually reaches a person was typing-only, and nobody could
-        // discover it. Chat, not a phone call, is the channel these customers already live in.
-        { type: 'button', style: 'secondary', action: { type: 'message', label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND } },
+        // Owner 2026-09-29: add the staff OA and chat there; typed support commands keep their route.
+        { type: 'button', style: 'secondary', action: { type: 'uri', label: STAFF_CONTACT_COMMAND, uri: 'https://lin.ee/UU9pbOI' } },
       ] },
     },
   };
