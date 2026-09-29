@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { buildReimbursementDraftMessages, buildReimbursementOptionsMessages, formatClaimMoney, reimbursementPreviewText } from './line-reimbursement-draft-card.logic';
 import { parseLineReimbursementDraftControl } from '../../application/line-reimbursement-draft.service';
 import type { LineReimbursementDraftPreview, LineReimbursementDraftResult, LineReimbursementDraftSnapshot } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
+import { computeReceiptRequirement } from '../../../reimbursements/domain/logic/reimbursement.logic';
 
 // Ids shaped like the real ones (cuid / uuid / sha-256), so a leak into visible text cannot hide.
 const ids = { branch: 'cmg7x2k9p0001branchq8w3e5', attachment: 'cmg7x2k9p0002attachr4t6y8', expense: 'cmg7x2k9p0003expenseu1i3o',
@@ -28,6 +29,14 @@ const update: LineReimbursementDraftPreview = { ...preview, operation: 'UPDATE',
     { fieldPath: 'receiptRequirementStatus', before: 'ATTACHED', after: 'REQUIRED' },
     { fieldPath: 'lines', before: before.lines, after: after.lines }, { fieldPath: 'claimSignatures', before: 'PRESENT', after: 'INVALIDATED' }] };
 
+// A line's three evidence situations: nothing yet, its own file, a bill claimed by reference (no file of its own).
+const noFile = after.lines[0]!, ownFile = { ...noFile, lineNo: 2, attachmentId: ids.attachment }, byBill = { ...after.lines[1]!, lineNo: 3, attachmentId: undefined };
+/** The preview as the use case builds it: the claim's evidence status and warning come from the lines. */
+const withLines = (lines: LineReimbursementDraftSnapshot['lines']): LineReimbursementDraftPreview => {
+  const status = computeReceiptRequirement({ requireReceipt: true, allowMissingReceiptWithReason: false, lines }).status;
+  return { ...preview, after: { ...after, lines, receiptRequirementStatus: status }, warnings: status === 'REQUIRED' ? ['missing_receipt'] : [] };
+};
+
 const text = (messages: ReturnType<typeof buildReimbursementDraftMessages>) => messages.map(message => (message as { text?: string }).text ?? '').join('\n');
 const draft = (result: LineReimbursementDraftResult) => text(buildReimbursementDraftMessages(result, 'https://web.test', 'company'));
 
@@ -52,13 +61,28 @@ describe('LINE reimbursement preview speaks plain Thai (Owner rule 2026-09-27/29
     assert.deepEqual(changes, [
       'เหตุผล: พบลูกค้า → เดินทางพบลูกค้า', 'ยอดรวม: 300.00 → 1,614.50 บาท', 'หมวดของใบเบิก: เดินทาง → หลายหมวด (2 รายการ)',
       'สถานะหลักฐาน: มีหลักฐานครบทุกรายการแล้ว → ยังขาดใบเสร็จบางรายการ',
-      'หมวด รายการที่ 1: เดินทาง → ยังไม่ได้เลือกหมวด', 'ยอดเงิน รายการที่ 1: 300.00 → 1,234.50 บาท', 'ไฟล์แนบ รายการที่ 1: มีไฟล์แนบ → ยังไม่มีไฟล์แนบ',
+      'หมวด รายการที่ 1: เดินทาง → ยังไม่ได้เลือกหมวด', 'ยอดเงิน รายการที่ 1: 300.00 → 1,234.50 บาท', 'หลักฐาน รายการที่ 1: มีไฟล์แนบ → ยังไม่มีไฟล์แนบ',
       'รายละเอียด รายการที่ 2: ค่าทางด่วน → ปากกาและแฟ้ม', 'วันที่จ่าย รายการที่ 2: 27 ก.ย. 2569 → 26 ก.ย. 2569', 'หมวด รายการที่ 2: ยังไม่ได้เลือกหมวด → วัสดุอุปกรณ์',
-      'ยอดเงิน รายการที่ 2: 70.00 → 380.00 บาท', 'ไฟล์แนบ รายการที่ 2: ยังไม่มีไฟล์แนบ → มีไฟล์แนบ',
+      'ยอดเงิน รายการที่ 2: 70.00 → 380.00 บาท', 'หลักฐาน รายการที่ 2: ยังไม่มีไฟล์แนบ → มีไฟล์แนบ',
       'บิลต้นทาง รายการที่ 2: - → INV-0042 · ร้านเครื่องเขียนสมใจ · 26 ก.ย. 2569']);
     // The signature change is said once, by its own sentence, not as a diff row or a warning code.
     assert.equal(lines.filter(line => /ลายเซ็น/u.test(line)).length, 1);
     assert.ok(lines.includes('ลายเซ็นเดิมจะใช้ไม่ได้หลังแก้ไข ต้องลงนามใหม่ในเว็บ'));
+  });
+
+  it('says where each line\'s evidence comes from, and a line the claim counts as evidenced never reads "no file" (2026-09-30)', () => {
+    const all = reimbursementPreviewText(withLines([noFile, ownFile, byBill])).split('\n');
+    assert.deepEqual(all.filter(line => line.startsWith('หลักฐาน:')), ['หลักฐาน: ยังไม่มีไฟล์แนบ', 'หลักฐาน: มีไฟล์แนบ',
+      'หลักฐาน: ใช้ใบเสร็จจากบิลต้นทาง | บิลต้นทาง: INV-0042 · ร้านเครื่องเขียนสมใจ · 26 ก.ย. 2569']);
+    assert.ok(all.includes('สถานะหลักฐาน: ยังขาดใบเสร็จบางรายการ'));
+    // The real-model run: a bill claimed by reference is the claim's whole evidence, and its line says so.
+    for (const lines of [[byBill], [ownFile, byBill]]) {
+      const shown = reimbursementPreviewText(withLines(lines));
+      assert.match(shown, /\nสถานะหลักฐาน: มีหลักฐานครบทุกรายการแล้ว\n/u);
+      assert.doesNotMatch(shown, /ยังไม่มีไฟล์แนบ|ข้อควรตรวจ/u);
+    }
+    assert.match(reimbursementPreviewText({ ...update, before: { ...after, lines: [byBill] }, after: { ...after, lines: [{ ...noFile, lineNo: 3 }] },
+      diff: [{ fieldPath: 'lines' }], warnings: [] }), /\nหลักฐาน รายการที่ 3: ใช้ใบเสร็จจากบิลต้นทาง → ยังไม่มีไฟล์แนบ\n/u);
   });
 
   it('names added and removed lines, and a swapped file without its id', () => {
@@ -148,7 +172,7 @@ const MACHINE_TOKENS: Array<[string, RegExp]> = [
 describe('no customer-visible reimbursement text carries a machine token (Owner rule 2026-09-27/29)', () => {
   it('holds for every preview, receipt, status, refusal and option message', () => {
     const results: LineReimbursementDraftResult[] = [
-      { status: 'preview', preview }, { status: 'preview', preview: update },
+      { status: 'preview', preview }, { status: 'preview', preview: update }, { status: 'preview', preview: withLines([noFile, ownFile, byBill]) },
       { status: 'preview', preview: { ...preview, warnings: ['a_warning_added_later'], after: { ...after, receiptRequirementStatus: 'A_STATUS_ADDED_LATER' } } },
       { status: 'preview', preview: { ...update, diff: [...update.diff, { fieldPath: 'aFieldAddedLater', before: { x: 1 }, after: { x: 2 } }] } },
       { status: 'applied', receipt: { schemaVersion: 1, actionId: ids.action, requestId: ids.request, committedState: 'DRAFT', amount: '1614.5000', currency: 'THB',

@@ -49,6 +49,8 @@ function sourceText(source: any): string {
   return [source?.certificate?.documentNumber ?? source?.seller?.documentNumber, source?.seller?.name,
     source?.expenseDate ? formatThaiDate(source.expenseDate) : undefined].filter(Boolean).join(' · ') || 'บิลที่เลือกไว้';
 }
+/** The card's per-line evidence words, by the same test as the claim's evidence status: a bill claimed by reference brings its own receipt. */
+const evidenceText = (line: any) => line.attachmentId ? 'มีไฟล์แนบ' : line.linkedExpenseId ? 'ใช้ใบเสร็จจากบิลต้นทาง' : 'ยังไม่มีไฟล์แนบ';
 
 const fieldLabels: Record<string, string> = {
   request: 'สร้างร่างใบเบิก', title: 'ชื่อรายการ', reason: 'เหตุผล', missingReceiptReason: 'เหตุผลที่ไม่มีใบเสร็จ',
@@ -79,7 +81,7 @@ function Snapshot({ value, label }: { value: any; label: string }) {
           <thead><tr className="border-b text-gray-500"><th className="py-2 pr-3">#</th><th className="py-2 pr-3">รายการ</th><th className="py-2 pr-3">วันที่</th><th className="py-2 text-right">จำนวน</th></tr></thead>
           <tbody>{(value.lines ?? []).map((line: any) => (
             <tr className="border-b last:border-0" key={line.lineRef}>
-              <td className="py-3 pr-3">{line.lineNo}</td><td className="py-3 pr-3">{line.description}<div className="text-xs text-gray-500">{[categoryText(line.categoryLabel), line.attachmentId ? 'มีไฟล์แนบ' : 'ยังไม่มีไฟล์แนบ',
+              <td className="py-3 pr-3">{line.lineNo}</td><td className="py-3 pr-3">{line.description}<div className="text-xs text-gray-500">{[categoryText(line.categoryLabel), evidenceText(line),
                 line.linkedExpenseId ? `บิลต้นทาง: ${sourceText(line.sourceExpenseSnapshot)}` : ''].filter(Boolean).join(' · ')}</div></td>
               <td className="whitespace-nowrap py-3 pr-3 tabular-nums">{formatThaiDate(line.incurredDate)}</td><td className="whitespace-nowrap py-3 text-right tabular-nums">{money(line.amount, value.currency)}</td>
             </tr>
