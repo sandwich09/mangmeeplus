@@ -300,7 +300,7 @@ export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED';
    *  removed so an older client that still reads it keeps compiling against this contract. */
   trial?: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
 
-export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_FREE_DAYS' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS' | 'SCHEDULE_PRICE_RETURN' | 'APPLY_PLAN_MENUS' | 'UPDATE_BILLING_EMAIL' | 'CUSTOMER_PROFILE_SYNC';
+export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_FREE_DAYS' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS' | 'SCHEDULE_PRICE_RETURN' | 'APPLY_PLAN_MENUS' | 'UPDATE_BILLING_EMAIL' | 'CUSTOMER_PROFILE_SYNC' | 'ADDON_ADMIN_GRANT' | 'ADDON_ADMIN_REVOKE';
 export type BillingOperationState = 'DRAFT' | 'PREVIEW' | 'AWAITING_APPROVAL' | 'SCHEDULED' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'UNKNOWN' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
 export type BillingScope = { kind: 'COMPANY'; companyId: string; mode: BillingMode } | { kind: 'PLATFORM'; mode: BillingMode };
 export type BillingConfigurationCheckItem = { kind:'POLICY'|'ACCOUNT'|'PRICE'|'PREPAID_PRICE'|'PORTAL'|'TAX'; offerKey?:BillingOfferKey;
@@ -453,6 +453,31 @@ export type BillingReceiptAdjustmentOperation = BillingOperationView & {companyN
 export type BillingReceiptAdjustments = {companyId:string;companyName:string;sourceHash:string;paidThrough:string|null;maxGrantExpiresAt:string|null;
   monthlyAllowance?: BillingReceiptUsage['monthlyAllowance'];
   remaining:number|null;canCreate:boolean;blockedReason:string|null;readWarnings:BillingReceiptReadWarning[];items:BillingReceiptAdjustmentOperation[];nextCursor:string|null};
+
+/**
+ * Add-on plan PR B (spec §8.1, §16): the operator's add-on balance and the reviewed team grant/revoke,
+ * both products through one seam (receipt images now, AI credit in PR C). A grant has no expiry field:
+ * it is 12 months from the committed approval (D8, C03). Revoke takes a team lot's unused units, never a
+ * paid one (that leaves by refund) and never money.
+ */
+export type BillingAddOnGrantInput = { type: 'ADDON_ADMIN_GRANT' | 'ADDON_ADMIN_REVOKE'; productKind: BillingAddOnProductKind;
+  /** Grant only: integer units of the product — whole images for RECEIPT_IMAGE. */
+  units?: number;
+  /** Revoke only: the team lot. */
+  grantId?: string; sourceHash: string; reason: string };
+/** Operator view only (spec §17.1): the customer never sees a lot, a hold or a source. */
+export type BillingAddOnAdminLot = { id: string; productKind: BillingAddOnProductKind; source: 'ADD_ON_PAID' | 'ADD_ON_ADMIN' | 'SALES_EVENT';
+  units: number; reserved: number; consumed: number; revoked: number; remaining: number; availableAt: string; expiresAt: string;
+  revokedAt: string | null; state: 'ACTIVE' | 'PENDING' | 'EXPIRED' | 'REVOKED'; canRevoke: boolean };
+export type BillingAddOnGrantOperation = BillingOperationView & { type: 'ADDON_ADMIN_GRANT' | 'ADDON_ADMIN_REVOKE'; companyName: string;
+  previewHash: string; productKind: BillingAddOnProductKind; units: number;
+  /** Before approval: what 12 months from now would be. After: the lot's real expiry. */
+  grantExpiresAt: string; lot: BillingAddOnAdminLot | null; requesterName: string | null; approverName: string | null;
+  allowedActions: ('submit' | 'approve' | 'cancel')[] };
+export type BillingAddOnCredits = { companyId: string; companyName: string; sourceHash: string; canCreate: boolean; blockedReason: string | null;
+  /** `packageRemaining` is null for a shop whose receipts are not lots yet (it cannot hold add-on units). */
+  images: { packageRemaining: number | null; additionalRemaining: number; lots: BillingAddOnAdminLot[] };
+  items: BillingAddOnGrantOperation[]; nextCursor: string | null };
 
 /** `aiOcrBudgetReached` is additive and SPLIT-only (spec §11.4): the total money shown below is not
  *  gone, but the share allocated to reading documents is — so "เครดิต AI … ใช้แล้ว …" alone would

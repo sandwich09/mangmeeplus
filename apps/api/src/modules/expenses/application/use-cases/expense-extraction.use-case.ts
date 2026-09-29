@@ -14,7 +14,7 @@ import { observeCustomerJourney } from '../../../../common/observability/custome
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
 import { safeLineErrorDetails } from '../../../line-ai/infrastructure/line-reply.adapter';
-import { type CompanyOcrAdmissionIdentity, releaseCompanyOcrAdmission, receiptQuotaSnapshot, RECEIPT_QUOTA_ERROR_CODE } from '../../../line-ai/application/company-ocr-governance';
+import { type CompanyOcrAdmissionIdentity, releaseCompanyOcrAdmission, receiptQuotaSnapshot, RECEIPT_QUOTA_ERROR_CODE, settleCompanyOcrAdmission } from '../../../line-ai/application/company-ocr-governance';
 import { displayReceiptQuotaLimit, receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 
 const SUPPORTED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf']);
@@ -120,6 +120,7 @@ export class RequestReceiptExtractionUseCase {
 
     let admission: CompanyOcrAdmissionIdentity | undefined;
     let usablePersisted = false;
+    let noReceipt = false;
     try {
       const object = await this.storage.getObject({
         bucket: attachment.bucket,
@@ -207,6 +208,7 @@ export class RequestReceiptExtractionUseCase {
         });
         if (!nonReceipt) return this.finish(ctx, expenseId, 'failed', attachment.id, response.modelLineage, 'OCR_UNUSABLE_RESULT');
         usablePersisted = true;
+        noReceipt = true;
         await this.auditOutcome(ctx, expenseId, 'not_expense_document', attachment.id, 0, response.classification, response.modelLineage);
         return {
           status: 'not_expense_document',
@@ -297,6 +299,10 @@ export class RequestReceiptExtractionUseCase {
       if (admission && !usablePersisted) await releaseCompanyOcrAdmission(this.prisma, {
         companyId: ctx.companyId, sourceRoute: 'receipt-ocr-web', requestId: ctx.requestId,
         eventId: admission.eventId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
+      });
+      // Add-on plan PR B: the persisted result settles the reserved unit; D4/Q4 decides a non-receipt.
+      if (admission && usablePersisted) await settleCompanyOcrAdmission(this.prisma, {
+        companyId: ctx.companyId, sourceRoute: 'receipt-ocr-web', requestId: ctx.requestId, eventId: admission.eventId, noReceipt,
       });
     }
   }

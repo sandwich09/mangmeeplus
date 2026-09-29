@@ -23,7 +23,7 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-mo
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
-import { admitCompanyOcr, companyOcrErrorCode, releaseCompanyOcrAdmission, type CompanyOcrSourceRoute } from '../../../line-ai/application/company-ocr-governance';
+import { admitCompanyOcr, companyOcrErrorCode, isSinglePageReceiptImage, releaseCompanyOcrAdmission, settleCompanyOcrAdmission, type CompanyOcrSourceRoute } from '../../../line-ai/application/company-ocr-governance';
 import { safeLineErrorDetails } from '../../../line-ai/infrastructure/line-reply.adapter';
 import { assembleCaptureObservations, planWindows, priorDocuments } from '../../domain/logic/expense-capture-assembly.logic';
 import { isExpenseExtractionEligible } from '../../domain/logic/expense-document.logic';
@@ -245,7 +245,7 @@ export class ExpenseCaptureReadRunnerService {
       await this.capture.setFilePageCount(this.capture.client, { companyId: job.companyId, fileId: job.fileId, pageCount: plan.pageCount });
     }
 
-    const admitted = await this.admitOcrRead(job, checkpoint);
+    const admitted = await this.admitOcrRead(job, checkpoint, isSinglePageReceiptImage(attachment.mimeType));
     if (!admitted.ok) return { status: 'PAUSED', pausedReason: 'ai_credit', errorCode: admitted.errorCode };
     if (admitted.eventId && checkpoint.ocrEventId !== admitted.eventId) {
       checkpoint = { ...checkpoint, ocrEventId: admitted.eventId };
@@ -450,12 +450,15 @@ export class ExpenseCaptureReadRunnerService {
   private async admitOcrRead(
     job: CaptureReadJobRow,
     checkpoint: CaptureCheckpoint,
+    singlePageImage: boolean,
   ): Promise<{ ok: true; eventId?: string } | { ok: false; errorCode: string }> {
     const admission = await admitCompanyOcr(this.prisma, {
       companyId: job.companyId,
       sourceRoute: captureSourceRoute(job),
       requestId: job.ocrAdmissionRequestId,
       enforceReceiptQuota: this.config.receiptQuotaEnforced,
+      // A PDF, whatever its page count, never draws an add-on lot (D4).
+      singlePageImage,
     });
     if (admission.allowed) return { ok: true, eventId: admission.eventId };
     if (admission.reason === 'duplicate') return { ok: true, ...(checkpoint.ocrEventId ? { eventId: checkpoint.ocrEventId } : {}) };
@@ -618,6 +621,13 @@ export class ExpenseCaptureReadRunnerService {
         companyId: job.companyId, sourceRoute: captureSourceRoute(job),
         requestId: job.ocrAdmissionRequestId, eventId: checkpoint.ocrEventId,
         reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
+      });
+    }
+    // Add-on plan PR B: facts on the job are the durable usable result — the reserved unit is used.
+    if (usable && checkpoint.ocrEventId) {
+      await settleCompanyOcrAdmission(this.prisma, {
+        companyId: job.companyId, sourceRoute: captureSourceRoute(job),
+        requestId: job.ocrAdmissionRequestId, eventId: checkpoint.ocrEventId,
       });
     }
     const written = await this.capture.updateJobFenced({

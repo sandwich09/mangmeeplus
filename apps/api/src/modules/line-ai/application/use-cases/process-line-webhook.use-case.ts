@@ -172,7 +172,7 @@ import {
   receiptQuotaExceededShortTextTh,
   receiptQuotaExceededTextTh,
 } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
-import { type CompanyOcrAdmissionIdentity, releaseCompanyOcrAdmission, LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE, claimReceiptQuotaNotice, receiptQuotaSnapshot, releaseReceiptQuotaNotice, RECEIPT_QUOTA_ERROR_CODE } from '../company-ocr-governance';
+import { type CompanyOcrAdmissionIdentity, releaseCompanyOcrAdmission, LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE, claimReceiptQuotaNotice, receiptQuotaSnapshot, releaseReceiptQuotaNotice, RECEIPT_QUOTA_ERROR_CODE, settleCompanyOcrAdmission } from '../company-ocr-governance';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
 import { isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../../auth/domain/logic/line-handoff.logic';
@@ -376,7 +376,7 @@ const SAVED_LINE_RECEIPT = Symbol('saved-line-receipt');
 const SUPPORT_MEDIA_DOWNLOAD = Symbol('support-media-download');
 type SupportMediaDownloadCarrier = LineReceiptUploadEvent & { [SUPPORT_MEDIA_DOWNLOAD]?: LineMediaDownloadResult };
 type SavedLineReceipt = { expenseId: string; companyId: string; uploaded: boolean };
-type LineReceiptAdmissionAttempt = { identity?: CompanyOcrAdmissionIdentity; companyId?: string; receiptRequested: boolean; usablePersisted: boolean };
+type LineReceiptAdmissionAttempt = { identity?: CompanyOcrAdmissionIdentity; companyId?: string; receiptRequested: boolean; usablePersisted: boolean; noReceipt?: boolean };
 
 export const mediaProcessingFailedReply = (messageType: 'image' | 'file'): string => messageType === 'file'
   ? '📄 ขออภัยค่ะ ระบบประมวลผลไฟล์นี้ไม่สำเร็จ รบกวนส่งไฟล์เดิมอีกครั้งนะคะ ถ้าไฟล์นี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ'
@@ -7971,6 +7971,10 @@ export class ProcessLineWebhookUseCase {
           companyId: admissionAttempt.companyId, sourceRoute: 'receipt-ocr-line', requestId: event.lineMessageId,
           eventId: admissionAttempt.identity.eventId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
         });
+      } else if (admissionAttempt.identity && admissionAttempt.companyId) {
+        // Add-on plan PR B: every other admitted image is settled — used, or not charged when the read found no receipt (D4/Q4).
+        await settleCompanyOcrAdmission(this.prisma, { companyId: admissionAttempt.companyId, sourceRoute: 'receipt-ocr-line',
+          requestId: event.lineMessageId, eventId: admissionAttempt.identity.eventId, noReceipt: admissionAttempt.noReceipt === true });
       }
     }
   }
@@ -8580,6 +8584,7 @@ export class ProcessLineWebhookUseCase {
     const decision = decideLineBusinessDocument(expenseRoutePlan, ocr, caption.length > 0);
     if (ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && isSuccessfulNonReceiptClassification(ocr.classification)) {
       admissionAttempt.receiptRequested = false;
+      admissionAttempt.noReceipt = true;
     }
     // Every LINE OCR attempt is recorded here, before the outcome branches. A failed read routes to
     // `clarify` and returns below without ever creating an expense, so auditing further down (as this

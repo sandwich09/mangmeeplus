@@ -6,7 +6,7 @@ import { safeLineErrorDetails } from '../infrastructure/line-reply.adapter';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import { effectiveMonthlySlipLimit } from '../../system-partner-management/domain/logic/receipt-quota.logic';
 import { bangkokMonthKey } from './company-ai-usage-meter';
-import { paidReceiptBalance } from '../../billing/application/billing-receipt-grants';
+import { packageReceiptBalance, paidReceiptBalance, RECEIPT_ADDON_KINDS } from '../../billing/application/billing-receipt-grants';
 
 // Outlast one 55s media route plus the full receipt provider chain and upload bookkeeping.
 export const LINE_RECEIPT_RETRY_LEASE_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS + 105_000;
@@ -73,6 +73,12 @@ export function companyOcrErrorCode(decision: Exclude<CompanyOcrAdmission, { all
 /** The one code both lanes translate into the customer-facing "your plan ran out" answer. */
 export const RECEIPT_QUOTA_ERROR_CODE: CompanyOcrErrorCode = 'RECEIPT_QUOTA_EXCEEDED';
 
+/** Add-on D4: one JPEG/PNG page is the only file an add-on lot pays for; a PDF never is, whatever its length. */
+export const isSinglePageReceiptImage = (mimeType: string | undefined): boolean => mimeType === 'image/jpeg' || mimeType === 'image/png';
+
+/** The ledger's logical operation: the admission fence itself, which resume never changes. */
+const receiptUnitOperationKey = (sourceRoute: CompanyOcrSourceRoute, requestId: string) => `${sourceRoute}:${requestId}`;
+
 /**
  * What the reply needs to name a number: how many document reads this company/month has, and the
  * ceiling its plan allows. Read from the SAME qualifying events admission counts, so the trial's
@@ -93,12 +99,13 @@ export async function receiptQuotaSnapshot(
     }),
   ]);
   if (term?.billingReceiptAccountId) {
-    const balance = await paidReceiptBalance(prisma.client, companyId, term.billingReceiptAccountId, now);
+    // The existing usage contract keeps its meaning (add-on spec §17.3): add-on lots are a separate balance.
+    const balance = await packageReceiptBalance(prisma.client, companyId, term.billingReceiptAccountId, now);
     return { usedCount: balance.used, planLimit: balance.limit, tierKey: currentCapacityOverride(term)?.tierKey ?? term.tierKey,
       cadence: 'PAID_GRANTS', expiresAt: balance.expiresAt?.toISOString() ?? null };
   }
   const baseLimit = effectiveMonthlySlipLimit(term, now);
-  const gift = term ? await paidReceiptBalance(prisma.client, companyId, null, now) : null;
+  const gift = term ? await packageReceiptBalance(prisma.client, companyId, null, now) : null;
   return {
     usedCount: gift?.limit ? (baseLimit === null ? usedCount : Math.min(usedCount, baseLimit)) + gift.used : usedCount,
     planLimit: baseLimit === null ? null : baseLimit + (gift?.limit ?? 0),
@@ -148,13 +155,26 @@ export async function releaseReceiptQuotaNotice(
   monthKey: string,
 ): Promise<void> {
   try {
+    const key = await receiptQuotaNoticeKey(prisma, companyId, monthKey);
     await prisma.client.companyPlanTerm.updateMany({
-      where: { companyId, quotaNoticeSentMonthKey: monthKey },
+      where: { companyId, quotaNoticeSentMonthKey: key },
       data: { quotaNoticeSentMonthKey: null },
     });
   } catch (error) {
     logger.warn({ msg: 'receipt.quota.notice_release_failed', companyId, monthKey, ...safeLineErrorDetails(error) });
   }
+}
+
+/**
+ * Add-on plan PR B (spec §6, F-19): the card is once per month AND balance generation. New add-on units
+ * start a generation — the latest add-on lot — so a shop that runs out again after buying or being
+ * given more hears the card again, without writing `CompanyPlanTerm` (quotes fence on its `updatedAt`).
+ * A shop with no add-on lot keeps the bare month key it has always had.
+ */
+async function receiptQuotaNoticeKey(prisma: PrismaService, companyId: string, monthKey: string): Promise<string> {
+  const latest = await prisma.client.billingReceiptGrant.findFirst({ where: { companyId, kind: { in: [...RECEIPT_ADDON_KINDS] } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { createdAt: true } });
+  return latest ? `${monthKey}#${latest.createdAt.getTime()}` : monthKey;
 }
 
 export async function claimReceiptQuotaNotice(
@@ -163,12 +183,13 @@ export async function claimReceiptQuotaNotice(
   monthKey: string,
 ): Promise<boolean> {
   try {
+    const key = await receiptQuotaNoticeKey(prisma, companyId, monthKey);
     const { count } = await prisma.client.companyPlanTerm.updateMany({
       where: {
         companyId,
-        OR: [{ quotaNoticeSentMonthKey: null }, { quotaNoticeSentMonthKey: { not: monthKey } }],
+        OR: [{ quotaNoticeSentMonthKey: null }, { quotaNoticeSentMonthKey: { not: key } }],
       },
-      data: { quotaNoticeSentMonthKey: monthKey },
+      data: { quotaNoticeSentMonthKey: key },
     });
     return count === 1;
   } catch (error) {
@@ -195,6 +216,9 @@ export async function admitCompanyOcr(
     enforceReceiptQuota?: boolean;
     /** Server-owned orphan event only; a duplicate admission alone never authorizes another read. */
     retryWebhookEventId?: string;
+    /** Add-on D4: the server's own reading of the stored file — one JPEG/PNG page. Only such a read may
+     *  draw an add-on lot; absent means it may not. See `isSinglePageReceiptImage`. */
+    singlePageImage?: boolean;
   },
 ): Promise<CompanyOcrAdmission> {
   const monthKey = input.monthKey ?? bangkokMonthKey();
@@ -295,7 +319,7 @@ export async function admitCompanyOcr(
           const company = await tx.company.findUnique({ where: { id: input.companyId }, select: { status: true } });
           const now = new Date();
           if (company?.status !== 'ACTIVE' || term.termDisabledAt || term.termEndsAt <= now) return { allowed: false, reason: 'plan_inactive' } as const;
-          const balance = await paidReceiptBalance(tx, input.companyId, term.billingReceiptAccountId, now);
+          const balance = await paidReceiptBalance(tx, input.companyId, term.billingReceiptAccountId, now, input.singlePageImage === true);
           if (!balance.nextGrantId) return { allowed: false, reason: 'plan_exceeded', usedCount: balance.used, monthlyLimit: balance.limit, tierKey: currentCapacityOverride(term)?.tierKey ?? term.tierKey } as const;
           billingReceiptGrantId = balance.nextGrantId;
         } else {
@@ -323,16 +347,24 @@ export async function admitCompanyOcr(
         }
       }
 
+      // Add-on plan PR B: a lot's unit is RESERVED in the ledger under the stable operation key. A new
+      // generation per admission of the same operation keeps a late release of an earlier one (already
+      // released, so this row did not exist) apart from this reservation.
+      const operationKey = receiptUnitOperationKey(input.sourceRoute, input.requestId);
+      const generation = billingReceiptGrantId ? ((await tx.receiptUnitEntry.aggregate({
+        where: { companyId: input.companyId, operationKey, kind: 'RESERVE' }, _max: { generation: true } }))._max.generation ?? 0) + 1 : undefined;
       const event = await tx.companyOcrUsageEvent.create({
         data: {
           companyId: input.companyId,
           monthKey,
           sourceRoute: input.sourceRoute,
           requestId: input.requestId,
-          ...(billingReceiptGrantId ? { billingReceiptGrantId } : {}),
+          ...(billingReceiptGrantId ? { billingReceiptGrantId, receiptUnitGeneration: generation } : {}),
         },
         select: { id: true },
       });
+      if (billingReceiptGrantId) await tx.receiptUnitEntry.create({ data: { companyId: input.companyId, grantId: billingReceiptGrantId,
+        operationKey, generation: generation!, kind: 'RESERVE', units: 1 } });
       const aggregate = await tx.companyOcrMonthlyUsage.upsert({
         where: { companyId_monthKey: { companyId: input.companyId, monthKey } },
         create: { companyId: input.companyId, monthKey, usedCount: 1 },
@@ -446,10 +478,17 @@ export async function releaseCompanyOcrAdmission(
               requestId: input.requestId,
             },
           },
-          select: { id: true, monthKey: true },
+          select: { id: true, monthKey: true, billingReceiptGrantId: true, receiptUnitGeneration: true },
         });
         if (!event) return true;
         if (event.id !== input.eventId) return true;
+        if (event.billingReceiptGrantId && event.receiptUnitGeneration !== null) {
+          // Add-on plan PR B: the ledger keeps the release after the event row is gone. An outcome that
+          // is already written — a usable result, or a read that found no receipt — is final.
+          const unit = { companyId: input.companyId, operationKey: receiptUnitOperationKey(input.sourceRoute, input.requestId), generation: event.receiptUnitGeneration };
+          if (await tx.receiptUnitEntry.findFirst({ where: { ...unit, kind: { in: ['CONSUME', 'RELEASE'] } }, select: { id: true } })) return true;
+          await tx.receiptUnitEntry.create({ data: { ...unit, grantId: event.billingReceiptGrantId, kind: 'RELEASE', units: 1 } });
+        }
 
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ocr-quota:${input.companyId}:${event.monthKey}`}))`;
         const aggregate = await tx.companyOcrMonthlyUsage.updateMany({
@@ -486,4 +525,44 @@ export async function releaseCompanyOcrAdmission(
     ...safeLineErrorDetails(lastError),
   });
   return false;
+}
+
+/**
+ * Add-on plan PR B (spec §6, D4/Q4): the outcome of an admitted read that is NOT a system failure — that
+ * one still goes through `releaseCompanyOcrAdmission`. A usable result, NEEDS_REVIEW with data included,
+ * CONSUMEs the reserved unit. A read that found no receipt RELEASEs it for a shop whose receipts come from
+ * lots (`billingReceiptAccountId`); a legacy shop keeps today's rule that every admitted read counts. The
+ * event stays either way: it is still the request fence, and the ops brake still counts a provider read.
+ * Fenced on the event id like the release, idempotent, and never throws: the ledger outcome must not turn
+ * a delivered answer into a failure.
+ */
+export async function settleCompanyOcrAdmission(
+  prisma: PrismaService,
+  input: { companyId: string; sourceRoute: CompanyOcrSourceRoute; requestId: string; eventId: string; noReceipt?: boolean },
+): Promise<boolean> {
+  try {
+    return await prisma.client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${input.companyId}`}))`;
+      const event = await tx.companyOcrUsageEvent.findUnique({
+        where: { companyId_sourceRoute_requestId: { companyId: input.companyId, sourceRoute: input.sourceRoute, requestId: input.requestId } },
+        select: { id: true, monthKey: true, billingReceiptGrantId: true, receiptUnitGeneration: true },
+      });
+      // Released already, a replacement attempt, no lot, or an admission from before the ledger.
+      if (!event || event.id !== input.eventId || !event.billingReceiptGrantId || event.receiptUnitGeneration === null) return true;
+      const unit = { companyId: input.companyId, operationKey: receiptUnitOperationKey(input.sourceRoute, input.requestId), generation: event.receiptUnitGeneration };
+      if (await tx.receiptUnitEntry.findFirst({ where: { ...unit, kind: { in: ['CONSUME', 'RELEASE'] } }, select: { id: true } })) return true;
+      const release = input.noReceipt === true && Boolean((await tx.companyPlanTerm.findUnique({
+        where: { companyId: input.companyId }, select: { billingReceiptAccountId: true } }))?.billingReceiptAccountId);
+      await tx.receiptUnitEntry.create({ data: { ...unit, grantId: event.billingReceiptGrantId, kind: release ? 'RELEASE' : 'CONSUME', units: 1 } });
+      if (release) await tx.auditLog.create({ data: { companyId: input.companyId, actorType: 'SYSTEM', actorRefId: 'receipt-ocr-admission',
+        action: 'receipt.ocr.admission.not_charged', targetType: 'company_ocr_usage_event', targetId: event.id,
+        requestId: `ocr-not-charged-${event.id}`, result: 'SUCCESS', riskLevel: 'LOW',
+        metadataJson: { sourceRoute: input.sourceRoute, operationId: input.requestId, monthKey: event.monthKey, reason: 'NO_RECEIPT_FOUND' } } });
+      return true;
+    });
+  } catch (error) {
+    logger.warn({ msg: 'ocr.quota.settle_unavailable', companyId: input.companyId, sourceRoute: input.sourceRoute,
+      requestId: input.requestId, eventId: input.eventId, ...safeLineErrorDetails(error) });
+    return false;
+  }
 }

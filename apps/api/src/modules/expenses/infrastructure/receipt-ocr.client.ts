@@ -17,6 +17,7 @@ import {
   companyOcrErrorCode,
   isOcrPreProviderRefusal,
   isOcrRetryableProviderFailure,
+  isSinglePageReceiptImage,
   releaseCompanyOcrAdmission,
 } from '../../line-ai/application/company-ocr-governance';
 
@@ -332,6 +333,8 @@ export class ReceiptOcrClient {
       monthKey: budgetMonthKey,
       // P10-L §15.1: the plan slip ceiling is always measured here; this flag decides whether it refuses.
       enforceReceiptQuota: this.config.receiptQuotaEnforced,
+      // The stored attachment's own type; only a one-page image may draw an add-on lot (D4).
+      singlePageImage: isSinglePageReceiptImage(request.attachment?.mimeType),
     });
     if (!admission.allowed) {
       // The money hold was taken BEFORE this count/switch/plan gate (ADR 0013 §5). The gate refusing

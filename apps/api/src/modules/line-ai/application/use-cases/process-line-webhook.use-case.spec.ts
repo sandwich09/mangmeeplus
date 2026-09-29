@@ -439,6 +439,8 @@ function makePrisma(opts: {
 	} = {}) {
 	  const { identityUserId = 'user-1', identityStatus = 'ACTIVE', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter, termExpiredMemberships = [], planTerm = null, receiptsUsed = 0, openLineSignup = null } = opts;
   let quotaNoticeSentMonthKey = planTerm?.quotaNoticeSentMonthKey ?? null;
+  // Add-on plan PR B: the newest add-on lot is the quota card's balance generation. None by default.
+  let latestAddOnLotAt: Date | null = null;
   const endedAt = new Date(Date.now() - 60_000);
   const termExpiredRows = termExpiredMemberships.map((row) => ({
     roles: [{ role: { key: 'OWNER', status: 'ACTIVE', permissions: [{ permission: { key: 'company.plan.manage' } }] } }] as Array<{ role: { key: string; status?: string; permissions?: Array<{ permission: { key: string } }> } }>,
@@ -596,7 +598,7 @@ function makePrisma(opts: {
         update: async (args: unknown) => args,
       },
       // P10-L §15.1 — what `receiptQuotaSnapshot` and the once-a-month notice claim read.
-      billingReceiptGrant: { findMany: async () => [] },
+      billingReceiptGrant: { findMany: async () => [], findFirst: async () => latestAddOnLotAt && { createdAt: latestAddOnLotAt } },
       companyOcrUsageEvent: { count: async () => receiptsUsed },
       companyPlanTerm: {
         findUnique: async () => planTerm && { warmupUntil: null, warmupSlipLimit: null, ...planTerm },
@@ -612,6 +614,7 @@ function makePrisma(opts: {
     prisma, createdLogs, updates, upserts, aiTurns, aiTurnUpdates, toolInvocations, markerWrites,
     branchFindManyCalls, identityQueries, turnOutcomeWrites, turnOutcomeUpdates, outcomeStore,
     quotaNoticeSentMonthKey: () => quotaNoticeSentMonthKey,
+    addOnLotCreated: (at: Date) => { latestAddOnLotAt = at; },
   };
 }
 
@@ -4278,6 +4281,26 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.equal(sentMessages[0].type, 'flex', 'the first wall hit is the card');
       assert.equal(sentMessages[1].type, 'text', 'the second is not another sales card');
       assert.match(sentMessages[1].text, /ขอเปลี่ยนแพ็กเกจ/);
+    });
+
+    // Add-on plan PR B / AO-E70 (spec §6, F-19): the claim is per month AND balance generation. Units
+    // bought or given mid-month start a generation, so running out again earns the card with its buttons
+    // again — and adding them wrote nothing to CompanyPlanTerm for this to notice.
+    it('sends the card again after new add-on units start a new generation in the same month', async () => {
+      const state = makePrisma({ planTerm: { tierKey: 'STARTER_249', monthlySlipLimit: 30 }, receiptsUsed: 30 });
+      const { useCase, sentMessages } = captureUseCase(state.prisma, { intakeRouteFn: () => QUOTA_DENIED_ROUTE });
+
+      await sendReceipt(useCase, 'gen-a');
+      await sendReceipt(useCase, 'gen-b');
+      assert.deepEqual(sentMessages.map((message: any) => message.type), ['flex', 'text'], 'one card for the first generation');
+      assert.equal(state.quotaNoticeSentMonthKey(), bangkokMonthKey(), 'no add-on lot: the bare month key, as before');
+
+      const lotAt = new Date('2026-09-29T05:00:00.000Z');
+      state.addOnLotCreated(lotAt);
+      await sendReceipt(useCase, 'gen-c');
+      await sendReceipt(useCase, 'gen-d');
+      assert.deepEqual(sentMessages.map((message: any) => message.type), ['flex', 'text', 'flex', 'text'], 'the new generation gets its card once');
+      assert.equal(state.quotaNoticeSentMonthKey(), `${bangkokMonthKey()}#${lotAt.getTime()}`);
     });
 
     it('names the full trial allowance despite a legacy warmup-ten window', async () => {

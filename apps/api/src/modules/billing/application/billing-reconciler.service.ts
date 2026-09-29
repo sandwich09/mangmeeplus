@@ -24,7 +24,7 @@ import { grantPaidPackageReceipts } from './billing-receipt-grants';
 import { grantTrialReceiptCarryover } from './billing-trial-carryover';
 import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence } from '../domain/paid-checkout-invoice';
-import { paidReceiptBalance } from './billing-receipt-grants';
+import { packageReceiptBalance } from './billing-receipt-grants';
 import { applyDealRequest, fulfillPaidPackageRequest, recordReferralAttribution, scheduleDealReturn, supersedeUnpaidDeal, supersedeUnpaidPackageRequest } from './billing-package-request';
 import { applyCapacity, attemptCapacity, capacityOptions, capacityValid } from './billing-capacity';
 import { applyBillingFeaturePlan, billingFeaturePlan } from './billing-feature-entitlements';
@@ -604,7 +604,7 @@ export class BillingReconcilerService {
           livemode: account.livemode, kind: 'PAID_HELD', referenceId: row.id });
         return;
       }
-      const balance = await paidReceiptBalance(tx, company.id, account.id, evidence.paidAt);
+      const balance = await packageReceiptBalance(tx, company.id, account.id, evidence.paidAt);
       if (snapshot.upgrade) {
         if (balance.remaining + snapshot.upgrade.receiptUnitsAdded > 2_147_483_647) throw new Error('billing.receipt_balance_corrupt');
       } else fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,

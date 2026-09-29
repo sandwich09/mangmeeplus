@@ -464,6 +464,9 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/system-partner-management/application/use-cases/update-partner-identity.use-case.spec.ts',
       // Chat credit and receipt image add-ons PR A: the policy parser reads old and new policies (spec §8.4, A37).
       'src/modules/billing/domain/billing-policy-addon.spec.ts',
+      // Add-ons PR B: the receipt allocator (package → team → purchased, D4/D8) and the shared grant seam + team grant (§16).
+      'src/modules/billing/application/billing-receipt-allocator.spec.ts',
+      'src/modules/billing/application/billing-addon-admin-grants.spec.ts',
       'src/modules/system-partner-management/domain/logic/plan-capacity.spec.ts',
       'src/modules/billing/application/billing-collection.spec.ts',
       'src/modules/billing/application/billing-free-days.spec.ts',
