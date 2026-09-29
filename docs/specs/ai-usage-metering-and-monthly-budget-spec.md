@@ -1,5 +1,7 @@
 # AI Usage Metering & Monthly Budget Spec (Admin-Only)
 
+2026-09-29 commercial extension: the [AI credit and receipt-image add-on spec](chat-credit-and-receipt-addons-spec-th.md) (§5, §18) separates grants/funding from cost evidence and operational caps. The Bangkok `monthKey` stays the cost and cap month; for companies cut over to the add-on rules, included AI credit follows the package's paid periods instead of the calendar month, and in the console the monthly budget is labelled "เพดานเครดิต AI ต่อเดือน" (decision T-06). Admin-only costs/holds and their guards stay internal; the customer balance reads commercial units from the canonical projection, not `monthly budget - spent`. The SHARED leased admission of v1 CHAT lanes must become a durable reservation with funding for cut-over companies before AI credit is sold (add-on plan PR D). All callers, corrections and operator recovery must participate in the source mapping before rollout; no activation is implied by this note.
+
 2026-09-17 design extension: the owner requested separate CHAT/OCR caps, accurate refusal/receipt UX, intake cost reduction and usage visibility in the [combined NOGROUP remediation spec](line-ai-ledger-lifecycle-remediation-spec-th.md). Its §11–12 defines additive reporting and opt-in SPLIT reservation semantics; the bounded-overshoot policy below describes legacy SHARED behavior. The extension is specified, not implemented or activated. Admin-only access, Bangkok month, actual metering and OCR/package gates remain authoritative.
 
 ## 1. Status
