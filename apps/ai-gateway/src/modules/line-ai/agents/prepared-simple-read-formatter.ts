@@ -53,7 +53,9 @@ function groupThousands(value: string): string {
 
 function asOfLine(asOf: string | undefined, english: boolean, thaiLabel?: string): string {
   if (!asOf) return '';
-  const day = asOf.slice(0, 10);
+  // The Bangkok civil day, not the instant's UTC date: between 00:00 and 07:00 the UTC slice said
+  // yesterday (regression slice 2026-09-30, "ข้อมูล ณ 29 ก.ย." at 00:20 on the 30th).
+  const day = asOfInZone(asOf, 'Asia/Bangkok')?.day ?? asOf.slice(0, 10);
   // C6 (batch 5c): always a Thai/English calendar date, never the bare ISO string — "ข้อมูล ณ 28 ก.ย.
   // 2569" / "Data as of 28 Sep 2026", always with the year. `thaiLabel` (expense-summary's own
   // full-month override, e.g. "28 กันยายน 2569") still wins when the caller supplies one.

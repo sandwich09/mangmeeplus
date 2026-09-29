@@ -60,6 +60,12 @@ const KNOWN_FILTER_KEYS = new Set(LINE_TOOL_REGISTRY.flatMap((tool) => [
   ...(tool.requiredInputFields ?? []), ...(tool.optionalInputFields ?? []),
 ]));
 const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+// A file clause's filters grant nothing: the document bridge reads only its page and an attachment id the
+// user typed. A stray key there ({"attachmentId":…}, {"taskRef":null}) used to reject the whole decision,
+// the repair spent the reader's dispatch, and a document question after a repaired intake no longer fits its
+// two-dispatch envelope (regression slice 2026-09-30, NAT-05 t2 and NAT-06 t3) — so on a file clause the
+// page and attachment id are kept and anything else is dropped.
+const FILE_CLAUSE_FILTER_KEYS: ReadonlySet<string> = new Set(['attachmentId', 'page']);
 // ponytail: bounded to the two shapes worth naming in a repair prompt today — the observed real-world
 // failure (a malformed taskRef) versus everything else. Split further if a repair loop needs to target
 // another specific defect.
@@ -132,14 +138,19 @@ function sourceRefs(raw: unknown, evidence: LineAiInputEvidenceV2): LineAiSemant
   return refs;
 }
 
-function boundedFilters(value: unknown): Record<string, string | number | boolean | null> | undefined {
+function boundedFilters(value: unknown, fileClause = false): Record<string, string | number | boolean | null> | undefined {
   if (!plainObject(value) || Object.keys(value).length > 16) return undefined;
   const filters = Object.create(null) as Record<string, string | number | boolean | null>;
   for (const [key, item] of Object.entries(value)) {
-    if (!key || key.length > 80 || RESERVED_KEYS.has(key) || !KNOWN_FILTER_KEYS.has(key)
-      || !(item === null || typeof item === 'boolean'
+    if (!key || key.length > 80 || RESERVED_KEYS.has(key)) return undefined;
+    const scalar = item === null || typeof item === 'boolean'
       || typeof item === 'number' && Number.isFinite(item)
-      || typeof item === 'string' && item.length <= 200)) return undefined;
+      || typeof item === 'string' && item.length <= 200;
+    if (fileClause) {
+      if (FILE_CLAUSE_FILTER_KEYS.has(key) && scalar) filters[key] = item as string | number | boolean | null;
+      continue;
+    }
+    if (!KNOWN_FILTER_KEYS.has(key) || !scalar) return undefined;
     filters[key] = item as string | number | boolean | null;
   }
   return filters;
@@ -394,7 +405,7 @@ export function parseLineIntakeCompactDecision(input: {
       || !SEMANTIC_KINDS.has(item['kind'] as LineAiSemanticSubrequestV2['kind'])
       || typeof item['goal'] !== 'string' || !item['goal'].trim() || item['goal'].length > 800) return reject('decision_shape_invalid');
     const refs = sourceRefs(item['sources'], inputEvidence);
-    const filters = boundedFilters(item['filters']);
+    const filters = boundedFilters(item['filters'], item['kind'] === 'file');
     if (!refs || !filters) return reject('decision_shape_invalid');
     const requiredEvidence = item['requiredEvidence'] === undefined ? [] : item['requiredEvidence'];
     const dependsOn = item['dependsOn'] === undefined ? [] : item['dependsOn'];

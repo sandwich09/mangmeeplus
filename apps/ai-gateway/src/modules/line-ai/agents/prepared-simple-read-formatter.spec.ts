@@ -66,6 +66,13 @@ describe('prepared-simple-read compiled formatter registry', () => {
     }
   });
 
+  it('dates "ข้อมูล ณ" by the Bangkok day, not the UTC day, just after midnight (regression slice 2026-09-30)', () => {
+    const output = { ...salesOutput({ totalSales: '5,000' }), asOf: '2026-09-29T17:22:00.000Z' };
+    const r = formatPreparedSimpleRead(SALES, output, { language: 'th', locale: 'th-TH' });
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.match(r.replyText, /ข้อมูล ณ 30 ก\.ย\. 2569/);
+  });
+
   it('states the REQUESTED single date from the validated proposed input (Thai)', () => {
     const r = formatPreparedSimpleRead(SALES, salesOutput({ totalSales: '5,000', period: { fromDate: '2026-07-01', toDate: '2026-07-31' } }),
       { language: 'th', locale: 'th-TH', proposedInput: { fromDate: '2026-07-15', toDate: '2026-07-15' } });
