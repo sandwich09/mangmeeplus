@@ -659,7 +659,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             <div className="flex justify-between gap-3 font-semibold text-brand-800"><dt className="min-w-0 break-words">ส่วนลดจากงาน {quote.eventDiscount.eventName} (บิลแรก)</dt><dd className="shrink-0">−{money(quote.eventDiscount.shownDiscountSatang)}</dd></div>
           </dl><p className="text-sm text-gray-600">ส่วนลดใช้กับบิลนี้เท่านั้น ครั้งถัดไปชำระราคาเต็ม {money(quote.totalSatang)}</p></>
           : <p>ไม่ใช้ส่วนลดจากงานครั้งนี้ · ส่วนลดยังเป็นของคุณถึง {date(quote.eventDiscount.expiresAt)}</p>}
-          <button type="button" className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" disabled={busy} onClick={() => {
+          <button type="button" className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" disabled={busy} aria-busy={busy} onClick={() => {
             const next: EventDiscountChoice = quote.eventDiscount?.applied ? 'DECLINE' : 'USE';
             setEventChoice(next);
             void action(async () => { await requestQuote(quote.offer.offerKey, quote.offer.interval, recipientEmail, capacityDraft.current?.initialSelection, quote.purchaseMode, undefined, undefined, next); });
