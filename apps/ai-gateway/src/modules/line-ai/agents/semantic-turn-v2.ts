@@ -920,8 +920,12 @@ export async function runSemanticTurnV2(input: {
   // before compose ever runs; asking the model to re-derive the same numbers only risks the 30s
   // turn deadline (two grouped breakdowns' worth of context, up to 2 compose attempts) for an answer
   // that, when it fails grounding, falls back to this exact same text anyway (Item 3(c) below).
+  // A reimbursement draft write is answered by the fixed draft text below and the API's own card,
+  // whatever compose says — asking the model for it only cost the turn its 20 s deadline (NAT-04).
+  const draftWrites = new Set(inventory.filter(item => item.kind === 'write' && results.some(entry => entry.index === item.index
+    && entry.result.status === 'ok' && object(entry.result.data) && object(entry.result.data.reimbursementDraft))).map(item => item.index));
   const needsComposition = inventory.some(item => item.kind !== 'help' && !forced.has(item.index) && !questions.has(item.index)
-    && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index));
+    && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index) && !draftWrites.has(item.index));
   for (let attempt = 0; needsComposition && attempt < 2; attempt++) {
     if (attempt) {
       const state = currentBudgetState();
@@ -975,12 +979,14 @@ export async function runSemanticTurnV2(input: {
     // C1(d): the composer never produced a usable answer for this subrequest after every retry —
     // a compose failure, not a customer question, so it must not linger as `needs_user`.
     const composed = answers.find(answer => answer.index === item.index);
-    let answer = composed ?? { index: item.index, status: 'unsupported' as const, text: READ_UNAVAILABLE_TEXT[language], reasonCode: 'SEMANTIC_ANSWER_UNAVAILABLE' };
+    const assigned = results.filter(entry => entry.index === item.index).map(entry => entry.result);
+    const good = assigned.filter(result => result.status === 'ok');
+    let answer = composed ?? (draftWrites.has(item.index)
+      ? { index: item.index, status: 'handled' as const, text: '', sourceRefIds: good.flatMap(result => result.sourceRefs.map(sourceId)) }
+      : { index: item.index, status: 'unsupported' as const, text: READ_UNAVAILABLE_TEXT[language], reasonCode: 'SEMANTIC_ANSWER_UNAVAILABLE' });
     // A6: flips to false the instant `answer` is replaced by deterministic/reviewed text below —
     // sanitizeMangmeeComposedText must never touch a quoted user string or a tool-derived data value.
     let modelComposed = !!composed;
-    const assigned = results.filter(entry => entry.index === item.index).map(entry => entry.result);
-    const good = assigned.filter(result => result.status === 'ok');
     // Item 2 (223-turn eval batch 2, T-011#2/T-062#0/T-008#3): expense.list_recent/get_breakdown's
     // {vendorAmbiguous|categoryAmbiguous, available…}/{vendorUnresolved|categoryUnresolved, …} is a
     // real, permission-checked answer — never trust the model's free-form prose around it (the eval

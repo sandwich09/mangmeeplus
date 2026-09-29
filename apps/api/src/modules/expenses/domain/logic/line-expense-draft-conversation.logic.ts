@@ -145,7 +145,11 @@ function groundedNumber(text: string, value: string | undefined, positive = fals
   const parsed = decimal(value, positive);
   if (!parsed) return undefined;
   const wanted = new Decimal(parsed);
-  return numericValues(text).some((candidate) => candidate.eq(wanted)) ? parsed : undefined;
+  // A spoken amount ("สามร้อยบาท", NAT-12) is the same evidence as its digits.
+  const spoken = () => extractValueCandidates(text).amounts.some((amount) => {
+    try { return new Decimal(amount.value).eq(wanted); } catch { return false; }
+  });
+  return numericValues(text).some((candidate) => candidate.eq(wanted)) || spoken() ? parsed : undefined;
 }
 
 function groundedText(text: string, value: unknown): string | undefined {

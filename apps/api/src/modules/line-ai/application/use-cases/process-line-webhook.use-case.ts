@@ -3633,10 +3633,22 @@ export class ProcessLineWebhookUseCase {
     const chatKeyHash = chatKeyHashOf(event);
     const edit = await this.draftUpdate?.pendingPreview(ctx, chatKeyHash).catch(() => null) ?? null;
     const action = await this.reimbursementDrafts?.active({ ctx, owner: bound.owner, ownerEpoch: bound.epoch }).catch(() => null) ?? null;
+    // An expense draft still collecting answers in this chat is pending work too (NAT-12: "เดี๋ยว ๆ
+    // ยกเลิกก่อน" after a text-note draft must not be answered "nothing was saved").
+    const openDrafts = reply === 'cancel' && this.expenseDraftConversation
+      ? (await this.expenseDraftConversation.routeContexts(ctx, chatKeyHash).catch(() => [])).filter(draft => draft.status === 'OPEN')
+      : [];
     // Nothing pending is an ordinary turn; two pending things are the router's to ask about.
-    if (!!edit === !!action) return false;
+    if ([edit, action, ...openDrafts].filter(Boolean).length !== 1) return false;
     let text: string;
-    if (edit) {
+    if (openDrafts.length) {
+      const result = await this.expenseDraftConversation!.execute(ctx, { messageText: 'ยกเลิก', chatKeyHash,
+        webhookEventId: event.webhookEventId, captureHints: { targetExpenseId: openDrafts[0]!.expenseId } });
+      if (!result.handled || result.status !== 'CANCELLED') return false;
+      await this.closeWaitingWriteTask(bound);
+      text = [...result.replyTexts, 'ร่างนี้ยังบันทึกไว้ (ยังไม่ยืนยัน ยังไม่จ่าย) ถ้าไม่ใช้แล้วลบได้ในเว็บค่ะ',
+        absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${openDrafts[0]!.expenseId}`)].join('\n');
+    } else if (edit) {
       const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${edit.expenseId}`);
       if (reply === 'review') text = `${draftUpdateCanonicalDiff(edit)}\n\nยังไม่ได้แก้รายการค่ะ กดยืนยันในบัตรเมื่อพร้อม หรือพิมพ์ยกเลิกได้เลย`;
       else if (await this.draftUpdate!.cancel(ctx, chatKeyHash, edit.previewId) === 'cancelled') {
@@ -4258,6 +4270,24 @@ export class ProcessLineWebhookUseCase {
 
   /** A legacy write lane's outcome for its bound task (NAT12 2026-09-29): a created draft stayed "pending" in the
    *  task projection, so the next answer told the customer nothing had been recorded. */
+  /** A correction of this chat's one open text-note draft, applied through the draft's own answer path. */
+  private async correctOpenExpenseDraft(event: LineTextEvent, ctx: RequestContext, hints: LineIntakeRoutePlan['correctionHints'],
+    messageText: string, candidates: LineIntakeCorrectionCandidate[]) {
+    if (!hints || !this.expenseDraftConversation || !(hints.amount || hints.expenseDate || hints.vendorName)) return null;
+    const chatKeyHash = chatKeyHashOf(event);
+    const open = (await this.expenseDraftConversation.routeContexts(ctx, chatKeyHash)).filter(draft => draft.status === 'OPEN');
+    const draft = open.length === 1 && candidates.some(candidate => candidate.id === open[0]!.expenseId) ? open[0]! : undefined;
+    if (!draft || (hints.targetExpenseId && hints.targetExpenseId !== draft.expenseId)) return null;
+    const itemRef = hints.amount ? await this.expenseDraftConversation.soleItemRef(ctx, chatKeyHash, draft.expenseId) : undefined;
+    if (hints.amount && !itemRef) return null;
+    const result = await this.expenseDraftConversation.execute(ctx, { messageText, chatKeyHash, webhookEventId: event.webhookEventId,
+      captureHints: { targetExpenseId: draft.expenseId,
+        ...(hints.expenseDate ? { expenseDate: hints.expenseDate.to } : {}),
+        ...(hints.vendorName ? { vendorName: hints.vendorName.to } : {}),
+        ...(hints.amount ? { items: [{ itemRef, totalAmount: hints.amount.to, sourceText: messageText }] } : {}) } });
+    return result.handled && result.acceptedFields.length > 0 ? result : null;
+  }
+
   private async settleWriteLane(event: LineTextEvent, status: 'handled' | 'needs_user', question?: string): Promise<void> {
     const mappings = this.semanticTaskMappings.get(event);
     if (!mappings?.length || this.mixedBusinessQuestions?.get(event)) return;
@@ -7086,6 +7116,21 @@ export class ProcessLineWebhookUseCase {
       // is the own-record marker, and the detector additionally refuses a message that names
       // somebody else's document. `amount` is handled below because it arrives as a router HINT
       // rather than as words this function can read.
+      // NAT-12: a text-note draft still collecting answers keeps its staged amount in that collection,
+      // not on a line, so correcting it is an answer to the draft itself.
+      const draftAnswer = expenseDraftConversationEnabled
+        ? await this.correctOpenExpenseDraft(event, expenseDraftCtx, routePlan.correctionHints, normalizedText, correctionCandidates)
+        : null;
+      if (draftAnswer) {
+        this.rememberContinuationDeliverySource(event, expenseDraftCtx, draftAnswer);
+        await this.deliverCompletedReplies(event, this.withDraftWebLink(draftAnswer.replyTexts, companyId, draftAnswer.expenseId), companyId, resolvedAccess, undefined, true);
+        await this.settleWriteLane(event, 'needs_user', draftAnswer.replyTexts.join('\n'));
+        await this.ackConsumed(correctionPlan, 'correction_apply');
+        await this.persistIntakeTurn({ event, userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: draftAnswer.replyTexts.join('\n'), intent: 'CORRECTION' });
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
       const hints = routePlan.correctionHints;
       const hintedFields = (['expenseDate', 'amount', 'vendorName', 'documentNumber', 'note'] as const)
         .filter((field) => hints?.[field] !== undefined);
