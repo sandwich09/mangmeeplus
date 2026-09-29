@@ -25,4 +25,15 @@ Verification (feature 1):
 - Specs: contracts `line-document-qa.spec.ts` 7/7; gateway `document-qa.integration.spec.ts` 6/6, `extract-json.spec.ts` 11/11, router specs pass; API `process-line-document-qa.bridge.spec.ts` 33/33; W00 manifest regenerated and verified.
 - API/web typecheck and gateway typecheck pass. Whole-chain acceptance: see the PR body.
 
+## Priority fix 2026-09-29: LINE expense category (before features 2 and 3)
+
+Status: PR to develop from `claude/line-expense-category-pick-20260929` (not merged by this agent). Real model on a 12-category starter shop with the draft conversation on: text runs 12/12, 11/12 (the one miss a Bedrock timeout, no decision), 12/12 on merged develop; photos 3/3. Spend 41.27 THB.
+Root cause (evidence): bound private v2 turns built the intake request with `activeCategories: []` (`tryRouteIntake` skipped the catalogue whenever a v2 budget grant existed, since reliability v2.4 on 2026-09-27). A recorded real router payload for "ทำร่างค่าส่งของวันนี้สามร้อยบาทให้หน่อย" shows `"activeCategories":[]`, and the model rightly omitted `captureHints.expenseCategoryId` ("id chosen ONLY from activeCategories"). The same empty list reached image intake, so one-pass receipts (which skip the OCR reader) never got a category either. Second gap: with the draft conversation on (UAT/Production), even a valid hint became only `suggestedCategoryId` and the draft asked the user to confirm it.
+Decisions:
+- Bound turns get the catalogue again (id + name). The template catch-all (`expense.miscellaneous`) is left out of every LINE AI category choice (router and receipt reader), so a vague note is left for a person to file.
+- A text note's category is applied (item, line, and document when every item shares it) whenever the router names an active one, as the single-turn text path always did; a note-level category covers items that name none. First design gated on capture confidence 0.85 and failed "ซื้อปากกากับกระดาษ 150" (category right, capture 0.82 because the items were ambiguous), so the gate was dropped. Photo drafts keep the reader's 0.85 auto-fill rule.
+- No switch, no new contract field. Spec notes: `line-ai-text-intake-latency-quality-spec-2026-09-27.md` §6.1 and `line-ai-expense-draft-conversation-spec.md` §13.
+- The catalogue is loaded only for an actor who may create an expense draft; question-only document turns read no expense data (bridge spec invariant).
+- Eval note: `scripts/line-ai-expense-advisor/production-ai-env.json` records only `LINE_AI_*` keys, so eval runs used `LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED` = false while UAT/Production run true (release records 2026-09-07/08). The category probe sets it true.
+
 Next: feature 2 (NAT04 fixture first, then draft → edit → cancel → status), then feature 3 (NAT11), then the regression slice.

@@ -110,13 +110,12 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
       draftConversationEnabled: true,
       messageText: 'ค่ากาแฟ 65 บาท',
-      captureHints: { sourceDocumentType: 'EXPENSE_NOTE_TEXT', description: 'ค่ากาแฟ', amount: '65', expenseCategoryId: 'cat-meals', confidence: 0.9 },
+      captureHints: { sourceDocumentType: 'EXPENSE_NOTE_TEXT', description: 'ค่ากาแฟ', amount: '65', confidence: 0.9 },
       lineMessageId: 'msg-1',
       lineEventId: 'evt-1',
     });
     assert.equal(result.insertedAmount, null, 'amount stays staged until quantity is known');
-    assert.equal(result.categoryId, null, 'AI category is a suggestion until the user accepts it');
-    assert.equal(result.categoryName, 'ค่าอาหาร');
+    assert.equal(result.categoryId, null, 'no category is invented when the router names none');
     assert.match(result.replyTexts.join('\n'), /จำนวนและหน่วย/u);
     assert.match(result.replyTexts.join('\n'), /หมวดค่าใช้จ่าย/u);
     const update = updates.at(-1);
@@ -131,6 +130,33 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     );
     // Bounded provenance only – no raw full message dump.
     assert.equal(update.sourceChannelMetadataJson.messagePreview, 'ค่ากาแฟ 65 บาท');
+  });
+
+  it('files a text note under the category the router named, and keeps differing item categories off the document (Owner 2026-09-29)', async () => {
+    const creates: any[] = [];
+    const { repo, updates } = makeRepo();
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, { execute: async (c: any, input: any) => { creates.push(input); return createDraft.execute(c, input); } } as any, audit, outbox);
+    const single = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      draftConversationEnabled: true, messageText: 'ค่ากาแฟ 65 บาท',
+      captureHints: { sourceDocumentType: 'EXPENSE_NOTE_TEXT', description: 'ค่ากาแฟ', amount: '65', expenseCategoryId: 'cat-meals', confidence: 0.8 },
+      lineMessageId: 'msg-category', lineEventId: 'evt-category',
+    });
+    assert.equal(creates[0].expenseCategoryId, 'cat-meals');
+    assert.equal(single.categoryName, 'ค่าอาหาร');
+    assert.equal(updates.at(-1).sourceChannelMetadataJson.lineExpenseDraftContinuation.items[0].expenseCategoryId, 'cat-meals');
+    assert.equal(updates.at(-1).aiVerificationSummaryJson.missingFields.includes('expenseCategoryId'), false);
+    assert.doesNotMatch(single.replyTexts.join('\n'), /หมวดค่าใช้จ่าย/u);
+
+    await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      draftConversationEnabled: true, messageText: 'ค่ากาแฟ 2 แก้ว 130 บาท กับค่าแท็กซี่ 1 เที่ยว 90 บาท',
+      captureHints: { confidence: 0.95, items: [
+        { sourceText: 'ค่ากาแฟ 2 แก้ว 130 บาท', description: 'ค่ากาแฟ', quantity: '2', totalAmount: '130', expenseCategoryId: 'cat-meals' },
+        { sourceText: 'ค่าแท็กซี่ 1 เที่ยว 90 บาท', description: 'ค่าแท็กซี่', quantity: '1', totalAmount: '90', expenseCategoryId: 'cat-travel' },
+      ] },
+      lineMessageId: 'msg-two-categories', lineEventId: 'evt-two-categories',
+    });
+    assert.equal(creates[1].expenseCategoryId, undefined);
+    assert.deepEqual(creates[1].lines.map((line: any) => line.expenseCategoryId), ['cat-meals', 'cat-travel']);
   });
 
   it('stores the chat hash so a later correction can only target this chat, never the raw id', async () => {
