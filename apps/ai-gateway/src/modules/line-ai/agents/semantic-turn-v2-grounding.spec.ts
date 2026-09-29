@@ -682,3 +682,49 @@ describe('semantic turn v2: A3 (batch5) the code-computed pending-approvals tota
     assert.ok(!result.replyText.includes('9,999.00'), result.replyText);
   });
 });
+
+// Owner 2026-09-29 (production "ดูรายจ่าย ให้หน่อย เดือน ตุลา" on 29 Sep): a composed read answer about a bare month the
+// resolver moved to last year ends with the same period line the fast lane prints; the deterministic fallback carries it too.
+describe('semantic turn v2: a bare month that fell back to last year says so (owner 2026-09-29)', () => {
+  function monthResult(fromDate: string, toDate: string): ToolResult {
+    return { toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-29T16:08:00.000Z', sourceRefs: [SOURCE_REF],
+      queryApplied: { timezone: 'Asia/Bangkok', period: { startDate: fromDate, endDate: toDate, timezone: 'Asia/Bangkok', defaulted: false },
+        dateBasis: 'expense_incurred_date', statusBasis: 'exclude_rejected_voided', dataset: 'operational_expense_records' },
+      data: { total: 0, period: { fromDate, toDate, defaultedToCurrentMonth: false }, items: [],
+        summary: { countedItems: 0, cancelledCount: 0, totalAmount: '0', pendingAmount: '0', draftAmount: '0', confirmedAmount: '0' } } };
+  }
+  async function turn(text: string, composed: string, families?: ReadonlySet<string>) {
+    const valueCandidates = extractValueCandidates(text, '2026-09-29');
+    const { fromDate, toDate } = valueCandidates.periods![0]!;
+    const queue = [JSON.stringify({ calls: [{ index: 0, toolName: 'expense.list_recent', input: { fromDate, toDate } }] }), composed];
+    const provider: IModelProvider = { async generateText(): Promise<ProviderOutput> { return { ok: true, text: queue.shift() ?? '{}' }; } };
+    return runSemanticTurnV2({
+      req: { ...request(), messageText: text, valueCandidates, semanticSubrequests: [{ index: 0, kind: 'read', goal: 'รายจ่ายเดือนที่ถาม',
+        requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: { fromDate, toDate } }] },
+      provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      enabledDeterministicFamilies: families,
+      async invoke(): Promise<ToolResult> { return monthResult(fromDate, toDate); },
+    });
+  }
+  const COMPOSED = 'เดือนตุลาคม 2568 ยังไม่มีรายจ่ายที่บันทึกไว้ค่ะ รวม 0 บาท';
+
+  it('appends the period line to a grounded composed answer, unless the answer already says so', async () => {
+    const result = await turn('ดูรายจ่าย ให้หน่อย เดือน ตุลา', answerEnvelope(COMPOSED));
+    assert.equal(result.replyText,
+      `${COMPOSED}\nช่วง: 1–31 ต.ค. 2568 (ไม่ได้ระบุปี จึงดูตุลาคมที่ผ่านมาล่าสุด)\nตุลาคมปีนี้ยังไม่ถึงค่ะ`);
+    const stated = await turn('ดูรายจ่าย ให้หน่อย เดือน ตุลา', answerEnvelope(`${COMPOSED} ส่วนตุลาคม 2569 ยังไม่ถึงค่ะ`));
+    assert.equal(stated.replyText, `${COMPOSED} ส่วนตุลาคม 2569 ยังไม่ถึงค่ะ`);
+  });
+
+  it('leaves an answer about a written year alone', async () => {
+    assert.equal((await turn('ดูรายจ่าย เดือนตุลาคม 2568', answerEnvelope(COMPOSED))).replyText, COMPOSED);
+  });
+
+  it('carries the note into the deterministic fallback when the composed answer is not grounded', async () => {
+    const result = await turn('ดูรายจ่าย ให้หน่อย เดือน ตุลา', answerEnvelope('เดือนตุลาคมมีรายจ่ายประมาณ 3,500 บาทค่ะ'),
+      new Set(['expense.list_recent::single_metric']));
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
+    assert.match(result.replyText,
+      /\nช่วง: 1 ตุลาคม 2568 – 31 ตุลาคม 2568 \(ไม่ได้ระบุปี จึงดูตุลาคมที่ผ่านมาล่าสุด\)\nตุลาคมปีนี้ยังไม่ถึงค่ะ\n/);
+  });
+});

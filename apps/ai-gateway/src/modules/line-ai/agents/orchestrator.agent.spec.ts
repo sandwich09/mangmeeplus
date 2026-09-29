@@ -1164,6 +1164,31 @@ describe('OrchestratorAgent period resolution', () => {
     });
   }
 
+  // Owner 2026-09-29 (production 23:08, "ดูรายจ่าย ให้หน่อย เดือน ตุลา" → an empty ต.ค. 2568 with no word why):
+  // both served expense answers say the year was assumed and that this year's October has not started.
+  it('says a bare month that fell back to last year was assumed, on the list and the summary answer', async () => {
+    const message = 'ดูรายจ่าย ให้หน่อย เดือน ตุลา';
+    const valueCandidates = extractValueCandidates(message, '2026-09-29');
+    const october = valueCandidates.periods?.[0];
+    assert.ok(october);
+    const input = { fromDate: october.fromDate, toDate: october.toDate };
+    const client = { invoke: async (tool: any) => ({
+      toolName: tool.name, status: 'ok', asOf: '2026-09-29T16:08:00.000Z',
+      data: { total: 0, items: [], summary: { totalAmount: '0.00', countedItems: 0, cancelledCount: 0 },
+        period: { ...input, defaultedToCurrentMonth: false } },
+      sourceRefs: [{ label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, webPath: '/e' }],
+    }) } as any;
+    for (const answerShape of ['list', 'single_metric'] as const) {
+      const req = periodRequest(message, 'expense.list_recent', input);
+      const preparedPlan = parseLineAiPreparedPlan({ ...req.preparedPlan, answerShape });
+      assert.ok(preparedPlan);
+      const result = await new OrchestratorAgent(client, laneConfig([`expense.list_recent::${answerShape}`]))
+        .run({ ...req, valueCandidates, preparedPlan });
+      assert.match(result.replyText,
+        /\nช่วง: 1–31 ต\.ค\. 2568 \(ไม่ได้ระบุปี จึงดูตุลาคมที่ผ่านมาล่าสุด\)\nตุลาคมปีนี้ยังไม่ถึงค่ะ\nข้อมูล ณ /, answerShape);
+    }
+  });
+
   it('does not serve a two-month expense request from a one-call prepared plan', async () => {
     const message = 'สรุปค่าใช้จ่ายเดือนกรกฏาคม และ สิงหาคม';
     const [july, august] = extractValueCandidates(message, '2026-09-25').periods ?? [];
