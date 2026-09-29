@@ -31,6 +31,14 @@ function hasPerm(ctx: RequestContext, perm: string): boolean {
   return ctx.permissions.includes(perm);
 }
 
+/** NAT12 (2026-09-29): `line-draft:<event>` never matched the draft key rule `[A-Za-z0-9_-]{8,64}`, so every
+ *  LINE text expense note since 3d7379ef failed as "Invalid draft idempotency key" and the chat got the generic
+ *  temporary-error reply. A LINE event/message id is used as is; anything else (a 64-hex task operation id) is
+ *  hashed to fit. */
+export function lineDraftIdempotencyKey(sourceId: string): string {
+  return `line-draft-${/^[A-Za-z0-9_-]{1,53}$/u.test(sourceId) ? sourceId : createHash('sha256').update(sourceId).digest('hex').slice(0, 53)}`;
+}
+
 /** Typed incomplete result (spec §8.2). The three field lists are BOUNDED ENUM members only — never raw
  *  conversation, values or PII — so the dispatcher can ask for exactly what is missing and never re-ask
  *  for a field the gate already accepted. Defaults keep every legacy `new ...()` call site valid. */
@@ -194,7 +202,7 @@ export class CaptureLineExpenseNoteUseCase {
 
     const expense = await this.createDraft.execute(ctx, {
       captureSource: 'LINE_UPLOAD',
-      idempotencyKey: `line-draft:${cmd.lineEventId ?? cmd.lineMessageId}`,
+      idempotencyKey: lineDraftIdempotencyKey(cmd.lineEventId ?? cmd.lineMessageId),
       // The LINE branch default the dispatcher resolved (Owner 2026-08-27). Absent — no caller, or
       // a company where the rule found nothing to pick — leaves the create resolver's own rule in
       // charge exactly as before.
