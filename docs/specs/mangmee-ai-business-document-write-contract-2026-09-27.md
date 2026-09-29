@@ -162,6 +162,8 @@ Owner rule: ข้อความถึงลูกค้าและ UI ใช�
 
 Postback data (`action`, `actionId`, `previewRevision`, `confirmationDigest`) ไม่ใช่ข้อความที่ลูกค้าอ่านจึงคงเดิม และลิงก์เว็บของ preview ใหญ่คงเดิม. ตัวเลือกบิล/รายการในใบเบิกใช้รูปแบบยอดเงินเดียวกัน. Unit test ของการ์ดตรวจว่าไม่มี cuid/uuid/hash, `DRAFT`, code ตัวพิมพ์ใหญ่, field path, snake/camelCase key, ทศนิยม ≥3 ตำแหน่ง หรือ JSON ในข้อความที่มองเห็นทุกแบบ.
 
+หน้าเว็บ preview (`apps/web/src/features/reimbursements/ReimbursementDraftActionPage.tsx`) ใช้คำชุดเดียวกับการ์ดสำหรับ สาขา, สถานะ, หลักฐานต่อรายการ, บิลต้นทาง, receiptRequirementStatus, หมวด, ยอดเงิน, วันที่ และ warning `missing_receipt`; ข้อความหัวหน้าเป็น “ระบบจะบันทึกเป็นร่างเท่านั้น …”. ยอดเงินจัดรูปจากสตริงทศนิยมโดยตรง (ไม่ผ่าน float) ปัดครึ่งขึ้นที่สตางค์. หน้าบันทึกแล้วบอกเลขที่ใบเบิก (`requestNo`) เมื่อมี ส่วน `requestId` อยู่ในลิงก์ “เปิดใบเบิก” เท่านั้น. หน้าเว็บไม่แสดง `previewRevision` (“รุ่น N”) แต่ยังส่ง `{previewRevision,confirmationDigest}` ไปกับ confirm/cancel เหมือนเดิม. หน้าเว็บแสดงข้อมูลก่อน/หลังแก้ไขเป็นสองการ์ด รายการ “สิ่งที่จะเปลี่ยน” จึงบอกเพียงชื่อช่อง. `ReimbursementDraftActionPage.qa.spec.ts` ตรวจทุก state ของหน้าด้วยรูปแบบ machine token ชุดเดียวกับการ์ด บวกวันที่ ISO และคำว่า “รุ่น”.
+
 ## 6. Action storage, idempotency และ transaction
 
 เพิ่ม Prisma model **`ReimbursementDraftAction`** ใน `apps/api/prisma/schema.prisma` สำหรับใบเบิกเท่านั้น; no generic event-sourced workflow. PG เป็น source of truth; Redisใช้ rate-limit/cacheได้แต่ไม่มีสิทธิ์ตัดสินว่า createสำเร็จหรือไม่.
