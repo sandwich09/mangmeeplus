@@ -166,6 +166,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // therefore renders on every step: an invalid draft (ถัดไป disabled by validation) must
   // stay rejectable without faking data first.
   const goToStep = async (key: ExpenseReviewStepKey) => {
+    if (aiReading || stepSaving) return;
     if (step === 'evidence' && key === 'review' && evidenceStepBlocker) return;
     // An issued substitute certificate locks material fields server-side
     // (409 substitute_evidence_locks_expense); saving on navigate would fail
@@ -282,6 +283,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     setError(err(cause, locale));
   };
 
+  useEffect(() => {
+    extractionRunIdRef.current += 1;
+    extractionAttemptRef.current = null;
+    extractionRequestRunningRef.current = false;
+    setExtractionLoading(false);
+  }, [companyId, expenseId]);
+
   // Appendix §3: a PDF is read by a durable job, so the page follows the job instead of waiting on a
   // request. Polling starts only for a record that HAS a file, stops the moment the job is terminal,
   // and never asks for another read.
@@ -289,8 +297,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     setReadState(null);
     if (!detail?.primaryAttachmentId) return;
     let cancelled = false;
+    const runId = extractionRunIdRef.current;
     void getExpenseReadStatus(companyId, expenseId)
-      .then((result) => { if (!cancelled) setReadState(result.files[0] ?? null); })
+      .then((result) => { if (!cancelled && runId === extractionRunIdRef.current) setReadState(result.files[0] ?? null); })
       .catch(() => undefined);
     return () => { cancelled = true; };
   }, [companyId, expenseId, detail?.primaryAttachmentId]);
@@ -299,28 +308,29 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   useEffect(() => {
     if (!readRunning) return;
     let cancelled = false;
+    let polling = false;
     const timer = window.setInterval(() => {
+      if (polling) return;
+      polling = true;
       void getExpenseReadStatus(companyId, expenseId)
-        .then((result) => {
+        .then(async (result) => {
           if (cancelled) return;
           const file = result.files[0] ?? null;
+          // Keep the form locked until the applied full/partial result is on screen. If refreshing
+          // fails, leave the running state intact so the next poll retries the read, never the OCR.
+          if ((file?.status === 'DONE' || file?.status === 'PARTIAL') && file.applied !== false) {
+            const refreshed = await getExpense(companyId, expenseId);
+            if (cancelled) return;
+            setDetail(refreshed);
+          }
           setReadState(file);
-          // Reload only when the read really landed on this record: `applied === false` is a DONE
-          // whose facts were stored but deliberately not written (multi-document, stale fence), and
-          // re-reading the draft then shows the same fields with a spinner that never explains why.
-          if (file?.status === 'DONE' && file.applied !== false) void load();
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => { polling = false; });
     }, 3_000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [companyId, expenseId, load, readRunning]);
+  }, [companyId, expenseId, detail?.primaryAttachmentId, readRunning]);
 
-  useEffect(() => {
-    extractionRunIdRef.current += 1;
-    extractionAttemptRef.current = null;
-    extractionRequestRunningRef.current = false;
-    setExtractionLoading(false);
-  }, [companyId, expenseId]);
   useEffect(() => {
     setNotice(null);
     try {
@@ -692,6 +702,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         resume: previous !== null,
       });
       if (runId !== extractionRunIdRef.current) return;
+      // The same attachment can start a durable job. Start polling even if the detail refresh fails.
+      if (outcome.result.readJobId && attachmentId) {
+        setReadState({
+          fileId: null, attachmentId, status: outcome.result.readStatus ?? 'QUEUED',
+          pagesRead: 0, pageCount: null, pausedReason: null, lastErrorCode: null,
+        });
+      }
       setNotice(extractionNotice(outcome.result, locale));
       if (outcome.recoveredDetail) setDetail(outcome.recoveredDetail);
       else {
@@ -865,7 +882,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // Owner 2026-09-01: while the AI read is in flight (a fresh read or the replace-file re-read),
   // the on-screen values are about to be overwritten — editing them or pressing ถัดไป races the
   // result. One flag covers both lanes and drives the field cover AND the footer buttons.
-  const aiReading = extractionLoading || receiptUploading;
+  const aiReading = extractionLoading || receiptUploading || readRunning;
   const evidenceError = expenseEvidenceConfirmationError(detail);
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
   const substituteAction = expenseSubstituteReceiptAction(companyId, detail.id, detail.aiVerificationSummaryJson, detail.substituteReceiptEvidence);
@@ -988,31 +1005,24 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     </div>
   );
 
-  // Status actions relocated from the old panel: enable/disable conditions, permission gates,
-  // tooltips and doAction flows are unchanged — only the placement moved to the modal footer.
-  // Guided mode shows each step's action plus back/next; terminal actions live on the final review step.
+  // Guided review exposes cancellation on every step, then deletion for a cancelled record.
+  // Existing permission checks and financial-void actions still apply.
   const modalFooter = hasFooterActions ? (
-    <div className="flex w-full flex-wrap items-center gap-2">
-      {((guided && caps.canReject) || (approverOnlyActions && caps.canReject) || (canCancelFinancialExpense && caps.canVoid) || canDelete) && <details className="relative shrink-0" onClick={event => { if ((event.target as HTMLElement).closest('button')) event.currentTarget.open = false; }} onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
+    <fieldset disabled={aiReading} inert={aiReading} className="flex min-w-0 w-full flex-wrap items-center gap-2">
+      {/* Invalid drafts remain cancellable on every step, directly from the action bar. */}
+      {(guided || approverOnlyActions) && caps.canReject && (
+        <button type="button" className={dangerClass} onClick={openReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t(showReject && actionLoading ? 'expenses.rejecting' : 'expenses.reject', locale)}</button>
+      )}
+      {/* Cancellation preserves the record; deletion is offered only once that state is confirmed. */}
+      {detail.status === 'REJECTED' && canDelete && <button type="button" className={dangerClass} onClick={() => { setShowDelete(true); setShowReject(false); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading || deleting} aria-busy={deleting}>{t('expenses.delete', locale)}</button>}
+      {canCancelFinancialExpense && caps.canVoid && <details className="relative shrink-0" onClick={event => { if ((event.target as HTMLElement).closest('button')) event.currentTarget.open = false; }} onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
         <summary className={cx(ghostClass, 'min-h-11 cursor-pointer list-none')}>เพิ่มเติม</summary>
         <div className="absolute bottom-full left-0 z-20 mb-2 flex min-w-48 flex-col gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
-        {/* Every step, not just review: the stepper is display-only, so a draft whose
-            validation errors disable ถัดไป must still be rejectable without faking data. */}
-        {guided && caps.canReject && (
-          <button className={dangerClass} onClick={openReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.reject', locale)}</button>
-        )}
-        {/* Pure approver (expense.confirm/reject without review/update): READY_FOR_CONFIRMATION actions outside guided mode. */}
-        {approverOnlyActions && (
-          <>
-            {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.reject', locale)}</button>}
-          </>
-        )}
         {canCancelFinancialExpense && (
           <>
             {caps.canVoid && <button className={dangerClass} onClick={() => { setReason(''); setError(null); setShowVoid(true); setShowReject(false); setDuplicateResolution(null); }} disabled={actionLoading}>{t('expenses.void_document', locale)}</button>}
           </>
         )}
-        {canDelete && <button className={dangerClass} onClick={() => { setShowDelete(true); setShowReject(false); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading || deleting}>{t('expenses.delete', locale)}</button>}
       </div></details>}
       <div className={cx('ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2') }>
         {canEditLinkedSubstitute && (
@@ -1200,10 +1210,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           </div>
         )}
       </div>
-    </div>
+    </fieldset>
   ) : null;
   const checkBillSecondaryActions = checkBillBlocked && (caps.canReject || canDelete) ? (
-    <div className="px-4 pb-4">
+    <div className="px-4 pb-4" inert={aiReading}>
       <details className="rounded-xl border border-gray-200 bg-white p-3">
         <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-gray-700">
           {t('expenses.check_bill_more_actions', locale)}
@@ -1647,7 +1657,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         className="hidden"
         type="file"
         accept={ATTACHMENT_UPLOAD_ACCEPT}
-        disabled={receiptUploading || receiptRemoving}
+        disabled={aiReading || receiptRemoving}
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = '';
@@ -1665,7 +1675,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         className="hidden"
         type="file"
         accept={ATTACHMENT_UPLOAD_ACCEPT}
-        disabled={receiptUploading || receiptRemoving}
+        disabled={aiReading || receiptRemoving}
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = '';
@@ -1677,7 +1687,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const removeReceiptControl = (attachment: ExpenseDetail['attachments'][number] | undefined) =>
     attachment && isRemovableFilePurpose(attachment.purpose) && canMutateDraft
       && ['DRAFT', 'NEEDS_REVIEW'].includes(detail.status) && detail.paymentStatus === 'UNPAID' ? (
-        <button type="button" className={cx(ghostClass, 'text-error-700')} disabled={receiptRemoving || receiptUploading || extractionLoading || actionLoading || stepSaving} aria-busy={Boolean(extractionLoading || actionLoading || stepSaving)}
+        <button type="button" className={cx(ghostClass, 'text-error-700')} disabled={receiptRemoving || aiReading || actionLoading || stepSaving} aria-busy={Boolean(aiReading || actionLoading || stepSaving)}
           aria-label={`${locale === 'th' ? 'ลบไฟล์' : 'Remove file'} ${attachment.originalFileName}`} title={locale === 'th' ? 'ลบไฟล์' : 'Remove file'}
           onClick={() => void removeExpenseFile(attachment)}>
           {ICON.trash}
@@ -1691,7 +1701,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         className="hidden"
         type="file"
         accept={ATTACHMENT_UPLOAD_ACCEPT}
-        disabled={receiptUploading || receiptRemoving}
+        disabled={aiReading || receiptRemoving}
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = '';
@@ -1870,7 +1880,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 </div>
               )}
 
-              <div className={cx('space-y-4 p-4', checkBillBlocked && 'order-1')}>
+              <div className={cx('relative p-4', checkBillBlocked && 'order-1')} data-testid="expense-review-form">
+                {/* Keep the form mounted while toggling the cover; inert also locks custom selectors. */}
+                <fieldset disabled={aiReading} inert={aiReading} aria-busy={aiReading} className="min-w-0 space-y-4">
                 {sourceOnlyDraft ? (
                   <>
                     {noticesBlock}
@@ -1889,8 +1901,6 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 ) : guided ? (
                   <>
                     <div className={cx('space-y-4', step === 'data' ? undefined : 'hidden')}>
-                      <CoverLoader active={aiReading} scope="section" label={t('expenses.ai_reading', locale)}>
-                        <fieldset disabled={aiReading} className="min-w-0">
                         <div className="space-y-4">
                           {noticesBlock}
                           {aiPrefillBanner}
@@ -1903,8 +1913,6 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                             </button>
                           )}
                         </div>
-                      </fieldset>
-                      </CoverLoader>
 
                       {vendorCard}
                       {moneyCard}
@@ -1934,6 +1942,15 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                     </div>
                     {paymentCard}
                   </>
+                )}
+                </fieldset>
+                {aiReading && (
+                  <div className="absolute inset-0 z-10 bg-white/80">
+                    {/* A long receipt form must not put its only spinner below the viewport. */}
+                    <div className="sticky h-40 [&>div]:bg-transparent" style={{ top: `${VIEWER_TOP_REM}rem` }}>
+                      <CoverLoader active scope="section" label={t('expenses.ai_reading', locale)} />
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -2024,7 +2041,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 setShowReject(false); setReason('');
               }, t('expenses.reject_success', locale));
             }} disabled={actionLoading || !reason.trim()} aria-busy={Boolean(actionLoading)}>
-              {t('expenses.confirm', locale)}
+              {t(actionLoading ? 'expenses.rejecting' : 'expenses.confirm', locale)}
             </button>
           </>
         )}
@@ -2038,6 +2055,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
               className={cx(inputClass, 'mt-1 min-h-28 resize-y')}
               rows={4}
               required
+              disabled={actionLoading}
               value={reason}
               onChange={(event) => setReason(sanitizeReasonInput(event.target.value))}
               maxLength={REASON_MAX_LENGTH}
