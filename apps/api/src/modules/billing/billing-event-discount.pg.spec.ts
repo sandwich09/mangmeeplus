@@ -212,8 +212,8 @@ test('first-bill discount through quote and Checkout: choice, reservation, stale
     assert.deepEqual([released.state, released.companyId, released.attemptId, released.redeemedAs], ['ISSUED', null, null, null]);
 
     // The real one: reserved for this attempt and shop, Stripe asked for the discounted unit amount.
-    const paid = await quote(shops[1]!);
-    const opened = await checkout(shops[1]!, paid.quoteId, paid.consentRevision);
+    const payable = await quote(shops[1]!);
+    const opened = await checkout(shops[1]!, payable.quoteId, payable.consentRevision);
     assert.equal(opened.state, 'OPEN'); assert.equal(sessions.at(-1)!.line_items[0].price_data.unit_amount, 39900);
     const reserved = await ticket();
     assert.deepEqual([reserved.state, reserved.redeemedAs, reserved.companyId, reserved.attemptId, reserved.appliedDiscountSatang],
