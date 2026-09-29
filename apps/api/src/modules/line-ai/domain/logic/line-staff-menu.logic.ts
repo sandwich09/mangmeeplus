@@ -318,10 +318,10 @@ export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', 
     contents: {
       type: 'bubble', size: 'mega',
       body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
-        { type: 'text', text: '🎁 Package ที่เหมาะกับร้านคุณ', weight: 'bold', size: 'md', color: '#101828', wrap: true },
+        { type: 'text', text: '🎁 แพ็กเกจที่เหมาะกับร้านคุณ', weight: 'bold', size: 'md', color: '#101828', wrap: true },
         { type: 'text', text: 'รายเดือน 249 / 499 / 999 บาท และแพ็กเกจธุรกิจ 1,999 บาท ที่เพิ่มเอกสารภาษี ภ.ง.ด.53 และ 50 ทวิ เลือกและชำระในแอปได้เองค่ะ', size: 'sm', color: '#475467', wrap: true },
         ...(audience === 'employee'
-          ? [{ type: 'text', text: 'เจ้าของร้านเป็นคนเลือกแพ็กเกจให้ร้านนะคะ', size: 'sm', color: '#667085', wrap: true }]
+          ? [{ type: 'text', text: 'เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจให้ร้านนะคะ', size: 'sm', color: '#667085', wrap: true }]
           : []),
       ] },
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
@@ -333,6 +333,31 @@ export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', 
         // G19: a callback request that files a support row without pausing the assistant (RV32).
         ...(stranger ? [] : [{ type: 'button', style: 'secondary', action: { type: 'postback', label: PACKAGE_CALLBACK_COMMAND, data: PACKAGE_CALLBACK_POSTBACK, displayText: PACKAGE_CALLBACK_COMMAND } }]),
         { type: 'button', style: 'secondary', action: { type: 'message', label: 'คุยกับทีมงาน', text: 'ติดต่อเรา' } },
+      ] },
+    },
+  };
+}
+
+/**
+ * The "ขอเปลี่ยนแพ็กเกจ" answer for whoever may buy (review 2026-09-29): its link as ONE button, never
+ * a raw URL in the chat. `url` is the lane's one-tap `/l/<token>` or the plain package page; the
+ * reply exit adds the external-browser escape to the button as to any other link.
+ */
+export function buildPackageReviewCard(shopName: string, url: string): LineReplyMessage {
+  const title = `📦 ${boundedLabel(shopName, 'ร้านของคุณ')}`;
+  const note = 'เลือกแพ็กเกจ ตรวจสอบการชำระเงิน และเปิดใบเสร็จได้ที่หน้าแพ็กเกจ (เปิดในเบราว์เซอร์ให้อัตโนมัติ) '
+    + 'ตรวจสอบราคาและยืนยันบนเว็บก่อนชำระเงินนะคะ';
+  return {
+    type: 'flex',
+    altText: `${title} ${note}`.slice(0, 400),
+    contents: {
+      type: 'bubble', size: 'kilo',
+      body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
+        { type: 'text', text: title, weight: 'bold', size: 'md', color: '#101828', wrap: true },
+        { type: 'text', text: note, size: 'sm', color: '#475467', wrap: true },
+      ] },
+      footer: { type: 'box', layout: 'vertical', contents: [
+        { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เลือกแพ็กเกจ', uri: url } },
       ] },
     },
   };
@@ -429,7 +454,8 @@ function companyBubble(company: CompanyPickerItem, selectionNumber: number, curr
         { type: 'text', text: `🏢 บริษัท ${selectionNumber}`, size: 'sm', color: '#667085' },
         { type: 'text', text: boundedLabel(company.companyName, 'ไม่ระบุบริษัท'), weight: 'bold', size: 'lg', color: '#101828', wrap: true },
         ...(company.stateLabel ? [{ type: 'text', text: `🔒 ${company.stateLabel}`, size: 'sm', color: '#B42318' }] : []),
-        ...(current ? [{ type: 'text', text: '✓ ใช้งานอยู่', size: 'sm', color: '#16A34A', weight: 'bold' }] : []),
+        // "ใช้งานอยู่" beside a lock chip contradicts it; the chat is merely on this shop.
+        ...(current ? [{ type: 'text', text: company.stateLabel ? '✓ เลือกอยู่' : '✓ ใช้งานอยู่', size: 'sm', color: '#16A34A', weight: 'bold' }] : []),
         ...(!current ? [{ type: 'text', text: `ตอบ ${selectionNumber} หรือกดปุ่มด้านล่าง`, size: 'sm', color: '#667085', wrap: true }] : []),
         // Only where a switch actually happens. On the ✓ ใช้งานอยู่ bubble the chat is already on
         // this company, so promising "ระบบจะสลับบริษัทในไลน์ให้ด้วย" describes a change that will

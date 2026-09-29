@@ -28,12 +28,14 @@ export function PlanTermBanner({ companyId, notice }: { companyId: string; notic
   if (notice?.derivedState !== 'EXPIRED') return null;
 
   const copy = PLAN_LOCK_COPY[planLockReason(notice)];
+  const canManagePlan = notice.canManagePlan ?? notice.isOwner;
 
   return (
     <div role="status" className="border-b border-warning-100 bg-warning-50 px-4 py-3 sm:px-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-[14px] font-bold leading-6 text-warning-700">{copy.banner}</p>
-        {(notice.canManagePlan ?? notice.isOwner) && (
+        {/* Someone with no button under the hint is told who can act instead (review 2026-09-29). */}
+        <p className="text-[14px] font-bold leading-6 text-warning-700">{canManagePlan ? copy.banner : copy.staff}</p>
+        {canManagePlan && (
           <Link className="mangmee-btn mangmee-btn-primary w-full sm:w-auto" href={`/companies/${companyId}/billing`}>
             {PLAN_LOCK_CTA}
           </Link>

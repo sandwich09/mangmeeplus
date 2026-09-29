@@ -577,7 +577,7 @@ export class AuthController {
         <label for="contact-email">อีเมลติดต่อร้าน (ไม่บังคับ)</label>
         <input id="contact-email" type="email" inputmode="email" maxlength="254" autocomplete="email" autocapitalize="none" aria-describedby="contact-email-help" />
         <p id="contact-email-error" class="field-error" hidden></p>
-        <p id="contact-email-help" class="fine">เพิ่มภายหลังได้ อีเมลรับเอกสารกรอกได้ที่หน้าชำระเงิน ใช้งานผ่าน LINE ได้ทันที</p>
+        <p id="contact-email-help" class="fine">เพิ่มภายหลังได้ อีเมลรับเอกสารกรอกได้ที่หน้าชำระเงิน</p>
         <fieldset id="discovery-source" class="discovery" tabindex="-1" aria-describedby="discovery-source-help discovery-source-error">
           <legend>รู้จักเราทางไหน</legend>
           <p id="discovery-source-help" class="fine">เลือก 1 ช่องทาง (ไม่บังคับ)</p>

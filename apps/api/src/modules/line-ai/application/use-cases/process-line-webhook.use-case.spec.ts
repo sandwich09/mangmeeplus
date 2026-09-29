@@ -530,23 +530,20 @@ function makePrisma(opts: {
       },
       companyMembership: {
         findMany: async () => membershipRows,
-        // P29/J1 lock probe, reached only when no company resolved. Honours both halves of the
-        // real predicate: the company must match one of the two LOCKED shapes, and the role filter
-        // must match — a staff-only locked company answers null to the plan-manager probe (R-C11),
-        // exactly as Postgres would, which is what sends it on to the member reply.
+        // P29/J1 lock probe, reached only when no company resolved. Honours the real predicate: the
+        // company must match one of the two LOCKED shapes — an ACTIVE-but-expired shop matches only
+        // the second and a DISABLED one only the first, so dropping either half has to make a test
+        // red. The chat's own company is asked for by `where.companyId`; otherwise `orderBy
+        // createdAt desc` means the newest, which in these fixtures is the LAST row. Roles come back
+        // so `canManagePlan` (R-C11) is read for the one shop picked.
         findFirst: async (args: any) => {
           const where = args?.where ?? {};
           const shapes = where.company?.OR;
           if (!Array.isArray(shapes)) return null;
-          const wantsManager = Boolean(where.roles?.some?.role?.permissions);
-          const row = termExpiredRows.find((candidate) => !wantsManager || candidate.roles.some((assigned: any) =>
-            (assigned.role.status ?? 'ACTIVE') === 'ACTIVE'
-            && (assigned.role.permissions ?? []).some((rp: any) => rp.permission.key === 'company.plan.manage')));
-          if (!row) return null;
-          // An ACTIVE-but-expired shop matches only the second shape, and a DISABLED one only the
-          // first, so dropping either half of the predicate has to make a test red.
-          if (!shapes.some((shape: any) => shape.status === (row.activeExpired ? 'ACTIVE' : 'DISABLED'))) return null;
-          return { companyId: row.companyId, company: { planTerm: row.term } };
+          const rows = termExpiredRows.filter((candidate) => (!where.companyId || candidate.companyId === where.companyId)
+            && shapes.some((shape: any) => shape.status === (candidate.activeExpired ? 'ACTIVE' : 'DISABLED')));
+          const row = args?.orderBy?.createdAt === 'desc' ? rows.at(-1) : rows[0];
+          return row ? { companyId: row.companyId, company: { planTerm: row.term }, roles: row.roles } : null;
         },
         // LINE default-branch lookup (Owner 2026-08-27): no assigned branch in this harness.
         findUnique: async () => null,
@@ -2830,8 +2827,10 @@ describe('ProcessLineWebhookUseCase', () => {
         receiptOcrFn: () => { ocrCalls += 1; return {}; },
       });
 
-      await useCase.executeReceiptUpload({ ...BASE_EVENT, lineMessageId: 'locked-image', messageType: 'image' });
+      const result = await useCase.executeReceiptUpload({ ...BASE_EVENT, lineMessageId: 'locked-image', messageType: 'image' });
 
+      // The buffer closes the rest of the photo batch on this one card (review 2026-09-29).
+      assert.deepEqual(result, { outcome: 'locked' });
       assert.equal(sentMessages[0].type, 'flex');
       assert.equal(sentMessages[0].contents.header.contents[0].text, 'ยังไม่มีแพ็กเกจ');
       assert.equal(ocrCalls, 0, 'a locked shop never costs a document read');
@@ -2851,8 +2850,53 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.match(replies[0] ?? '', /แพ็กเกจของคุณหมดอายุแล้ว/);
       assert.match(replies[0] ?? '', /ข้อมูลทั้งหมดยังอยู่ครบ/);
       assert.match(replies[0] ?? '', /098-256-5628/);
+      assert.doesNotMatch(replies[0] ?? '', /พักการใช้งาน/, 'say what is limited, never "พักการใช้งาน"');
       assert.equal(getAiGatewayCalled(), false);
       assert.equal((updates.at(-1) as any).data.status, 'package_required');
+    });
+
+    it('never tells a shop that never bought that its package ran out, even with billing closed', async () => {
+      const { prisma } = makePrisma({ memberships: [], termExpiredMemberships: [{ companyId: 'company-1', term: NO_PACKAGE }] });
+      const { useCase, replies } = makeUseCase(prisma);
+
+      await useCase.execute({ ...BASE_EVENT });
+
+      assert.match(replies[0] ?? '', /ร้านนี้ยังไม่มีแพ็กเกจ/);
+      assert.match(replies[0] ?? '', /ใช้งานส่วนธุรกิจไม่ได้จนกว่าจะเลือกแพ็กเกจ/);
+      assert.doesNotMatch(replies[0] ?? '', /หมดอายุ|พักการใช้งาน/);
+    });
+
+    // Review 2026-09-29 (item 4): an unordered probe answered for an arbitrary shop. The chat's own
+    // shop comes first; with none selected, the newest locked membership.
+    it('answers for the locked shop this chat is on, else for the newest one', async () => {
+      const twoLocked = [{ companyId: 'co-old', term: NO_PACKAGE }, { companyId: 'co-new' }];
+      const onContext = makePrisma({ memberships: [], termExpiredMemberships: twoLocked, lineCompanyContext: { companyId: 'co-old' } });
+      const a = makeUseCase(onContext.prisma, { config: { billingMode: 'test' } });
+      await a.useCase.execute({ ...BASE_EVENT });
+      assert.equal(a.sentMessages[0].contents.footer.contents[0].action.uri, 'https://app.example.com/companies/co-old/billing?channel=line');
+      assert.equal(a.sentMessages[0].contents.header.contents[0].text, 'ยังไม่ได้สมัครแพ็กเกจ', 'and in that shop\'s own words');
+
+      const noContext = makePrisma({ memberships: [], termExpiredMemberships: twoLocked });
+      const b = makeUseCase(noContext.prisma, { config: { billingMode: 'test' } });
+      await b.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-newest' });
+      assert.equal(b.sentMessages[0].contents.footer.contents[0].action.uri, 'https://app.example.com/companies/co-new/billing?channel=line');
+      assert.equal((noContext.updates.at(-1) as any).data.companyId, 'co-new');
+    });
+
+    it('decides who may buy for THAT shop, not for any shop the reader happens to manage', async () => {
+      // Staff in the chat's shop, owner of another locked one: the reply is about the chat's shop.
+      const { prisma } = makePrisma({
+        memberships: [],
+        termExpiredMemberships: [{ companyId: 'co-staff', roles: [{ role: { key: 'SALES' } }], term: NO_PACKAGE }, { companyId: 'co-owned', term: NO_PACKAGE }],
+        lineCompanyContext: { companyId: 'co-staff' },
+      });
+      const { useCase, replies, sentMessages } = makeUseCase(prisma, { config: { billingMode: 'test' } });
+
+      await useCase.execute({ ...BASE_EVENT });
+
+      assert.equal(sentMessages[0].type, 'text');
+      assert.match(replies[0] ?? '', /ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน/);
+      assert.doesNotMatch(JSON.stringify(sentMessages), /co-owned/);
     });
 
     it('answers a non-owner member with the neutral package sentence, not the connect prompt', async () => {
@@ -2864,7 +2908,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
       await useCase.execute({ ...BASE_EVENT });
 
-      assert.match(replies[0] ?? '', /ให้เจ้าของร้านเลือกแพ็กเกจก่อน/);
+      assert.match(replies[0] ?? '', /ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน/);
       assert.doesNotMatch(replies[0] ?? '', /เชื่อมต่อบัญชี/, 'never ask a linked employee to link again');
       // Same privacy rule as the web banner: staff see no package, date, price or contact detail.
       assert.doesNotMatch(replies[0] ?? '', /098-256-5628|company-1|billing/);
@@ -3048,6 +3092,9 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(JSON.stringify(contextCard), /🔒 ยังไม่มีแพ็กเกจ/);
     const bubble = (name: string) => JSON.stringify((picker as any).contents.contents.find((item: any) => JSON.stringify(item).includes(name)));
     assert.match(bubble('ร้านใหม่'), /🔒 ยังไม่มีแพ็กเกจ/);
+    // "ใช้งานอยู่" beside a lock chip contradicts it: the chat is only ON that shop.
+    assert.match(bubble('ร้านใหม่'), /✓ เลือกอยู่/);
+    assert.doesNotMatch(bubble('ร้านใหม่'), /ใช้งานอยู่/);
     assert.match(bubble('ร้านเดิม'), /🔒 หมดอายุ/);
     assert.doesNotMatch(bubble('ร้านเปิดอยู่'), /🔒/);
   });
@@ -3120,6 +3167,32 @@ describe('ProcessLineWebhookUseCase', () => {
       // so there is nothing for it to rewrite (proved in line-handoff-link.service.spec.ts).
       assert.equal(wraps.length, 1);
       assert.equal(calls.length, 3, 'two bubbles plus the context card, and not one more');
+    });
+
+    // Review 2026-09-29 (item 7): a locked shop's dashboard only bounces to /renew, so the button of
+    // whoever may buy for it goes straight to the package page; staff and usable shops keep the dashboard.
+    it('sends a locked shop\'s plan manager to the package page, and everyone else to the dashboard', async () => {
+      const at = new Date(Date.now() - 60_000);
+      const lockedTerm = { termStartAt: at, termEndsAt: at, renewCount: 0, termDisabledAt: at };
+      const { prisma } = makePrisma({
+        memberships: [
+          { companyId: 'co-open', company: { name: 'ร้านเปิดอยู่', status: 'ACTIVE' } },
+          { companyId: 'co-locked', company: { name: 'ร้านใหม่', status: 'DISABLED', planTerm: lockedTerm } },
+          { companyId: 'co-locked-staff', company: { name: 'ร้านที่เป็นพนักงาน', status: 'DISABLED', planTerm: lockedTerm },
+            roles: [{ role: { key: 'STAFF', name: 'พนักงาน', status: 'ACTIVE', permissions: [] } }] },
+        ],
+        lineCompanyContext: { companyId: 'co-locked' },
+      });
+      const { calls, handoffLinks } = fakeLinks();
+      const { useCase } = makeUseCase(prisma, { permissions: ['line.ai.query'], handoffLinks });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-picker-locked', messageText: '/companies' });
+
+      const pathsOf = (companyId: string) => calls.filter((call) => call.companyId === companyId).map((call) => call.targetPath);
+      assert.deepEqual(pathsOf('co-locked'), ['/companies/co-locked/billing?channel=line', '/companies/co-locked/billing?channel=line'],
+        'the context card and its picker bubble alike');
+      assert.deepEqual(pathsOf('co-open'), ['/companies/co-open/dashboard']);
+      assert.deepEqual(pathsOf('co-locked-staff'), ['/companies/co-locked-staff/dashboard']);
     });
 
     it('renders the picker exactly as before when the handoff feature is off', async () => {

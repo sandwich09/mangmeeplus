@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { PlanTermLockReason } from '@watchdog-bms/contracts';
+import { isBillingCustomerRecoveryPath, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { requiredWebAppBase } from '../../../../common/http/public-api-base';
@@ -23,7 +23,8 @@ export const LIFF_START_TARGET_PATH = 'dashboard';
 export type LiffSessionBlockedReason = 'suspended' | 'expired' | 'no_membership';
 
 export type ExchangeLiffSessionResult =
-  | { handoffUrl: string }
+  /** `packagePage`: the link lands on the package page (R-C3), so the LIFF button says "เลือกแพ็กเกจ". */
+  | { handoffUrl: string; packagePage?: true }
   /** No linked identity exists — the page may offer signup. A revoked identity is refused. */
   | { needsSignup: true }
   | { needsSelection: true; companies: Array<{ id: string; name: string; lockReason?: PlanTermLockReason; canManagePlan?: boolean }> }
@@ -98,7 +99,10 @@ export class ExchangeLiffSessionUseCase {
         riskLevel: 'MEDIUM',
         metadataJson: { targetPath, companyChosenByUser: cmd.companyId !== undefined },
       });
-      return { handoffUrl: lineHandoffUrl(webBaseUrl, rawToken) };
+      return {
+        handoffUrl: lineHandoffUrl(webBaseUrl, rawToken),
+        ...(isBillingCustomerRecoveryPath(targetPath, decision.companyId) ? { packagePage: true as const } : {}),
+      };
     }
     return decision;
   }

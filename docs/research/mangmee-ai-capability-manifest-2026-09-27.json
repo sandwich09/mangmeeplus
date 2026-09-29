@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "f637ffb454868894fc592e1ed6a804b5bbaa847c",
-  "checkoutBranch": "claude/purchase-pr-e-admin-tools-20260928",
+  "sourceRevision": "8a91bc1ce08fcdc8287259f5630a1ddd3e977514",
+  "checkoutBranch": "claude/pfv-fixes-l-20260929",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "18b1d7ad4aa6b97e5a738d550f0abf6f0d18df72b2662659918c95d115b3bbe4"
+      "sha256": "59e4ea2f255ff9fe7136f97921fe5af0d240d62dc83320b7e7b982c1336df3b3"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-28T16:23:25.788Z",
-  "manifestDigest": "597c71225b257d5858dcd2bd8a2409d85ed49d828231fa1d190f1d90318cc8ff"
+  "generatedAt": "2026-09-28T18:56:27.123Z",
+  "manifestDigest": "63b974f786f42b2bee73e6c53edbbc526d40e2a5945b3b0afa74508c48bb7ae9"
 }

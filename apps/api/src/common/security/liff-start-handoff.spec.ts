@@ -61,6 +61,28 @@ describe('GW02 actual LIFF script, provider boundary simulated', () => {
     assert.equal(h.elements.link.disabled, false);
   });
 
+  // Review 2026-09-29 (i): the post-signup push opens this page. When the server lands the session on
+  // the package page, the button says "เลือกแพ็กเกจ" instead of a bare "เปิดหน้าเว็บ".
+  it('labels the button for the package page when the session lands there', async () => {
+    const h = start();
+    h.setReply({ handoffUrl: 'https://app.example.test/l/test-token', packagePage: true });
+    await settle();
+    assert.equal(h.elements['open-web'].hidden, false);
+    assert.equal(h.elements['open-web'].textContent, 'เลือกแพ็กเกจ');
+    assert.match(h.elements.status.textContent, /เลือกแพ็กเกจ/);
+
+    const plain = start(); await settle();
+    assert.equal(plain.elements['open-web'].textContent, 'เปิดหน้าเว็บ', 'any other landing keeps its own label');
+  });
+
+  // (e): #detail is read by the customer too — a raw English error becomes the one plain sentence.
+  it('never shows a raw English error in #detail', async () => {
+    const h = start(); await settle(); h.fail(); h.click('link'); await settle();
+    assert.equal(h.elements.status.textContent, 'เปิดหน้าเว็บไม่สำเร็จ');
+    assert.match(h.elements.detail.textContent, /^ตอนนี้ระบบยังเปิดให้สมัครทางนี้ไม่ได้ค่ะ/);
+    assert.doesNotMatch(h.elements.detail.textContent, /offline/);
+  });
+
   // R-C2/R-C3 (§18.2 purchase-without-setup): the picker names a locked shop's state; the server
   // (not this label) decides whether tapping it lands on billing or renew.
   it('labels a locked shop in the picker, leaves an unlocked one plain', async () => {

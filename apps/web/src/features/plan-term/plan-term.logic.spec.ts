@@ -1,5 +1,6 @@
 import { cardCollapsed, warningBucket, warningProgressPercent } from './plan-term.logic';
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { planTermStateLabel } from '@watchdog-bms/contracts';
 import {
@@ -145,5 +146,21 @@ describe('lock reason', () => {
 
   it('points both reasons at the same next step, which is choosing and not renewing', () => {
     for (const copy of Object.values(PLAN_LOCK_COPY)) assert.match(copy.banner, /เลือกแพ็กเกจ/);
+  });
+
+  // Review 2026-09-29: staff got "เลือกแพ็กเกจเพื่อเริ่มใช้งาน" with no button under it, and the locked
+  // page told them the shop was "พักการใช้งานชั่วคราว" when it simply had no package.
+  it('tells staff who can choose the package, in the words of the lock reason', () => {
+    for (const copy of Object.values(PLAN_LOCK_COPY)) {
+      assert.match(copy.staff, /ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจ/);
+      assert.doesNotMatch(copy.staff, /พัก|ปิดใช้งาน|ต่ออายุ/);
+    }
+    assert.doesNotMatch(PLAN_LOCK_COPY.no_package.staff, /หมดอายุ/);
+    assert.match(PLAN_LOCK_COPY.trial_ended.staff, /หมดอายุแล้ว/);
+    const page = readFileSync(new URL('./CompanyTermExpiredPage.tsx', import.meta.url), 'utf8');
+    const banner = readFileSync(new URL('./PlanTermBanner.tsx', import.meta.url), 'utf8');
+    assert.doesNotMatch(page, /พักการใช้งาน/);
+    assert.match(page, /\{copy\.staff\} ข้อมูลทั้งหมดยังอยู่ครบ/);
+    assert.match(banner, /canManagePlan \? copy\.banner : copy\.staff/);
   });
 });

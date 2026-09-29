@@ -201,6 +201,8 @@ function harness(options: {
   ownerMemberships?: any[];
   /** ACTIVE memberships in ACTIVE companies — what `resolveCompanyForLineUser` reads (§2.1.1). */
   memberships?: Array<{ companyId: string; roles: unknown[]; company?: { name: string } }>;
+  /** Memberships in LOCKED shops — what `lockedCompanyFor` reads (its `company.OR`), newest LAST. */
+  lockedMemberships?: Array<{ companyId: string; roles?: unknown[]; term?: { termStartAt: Date; termEndsAt: Date; renewCount: number } }>;
   context?: { companyId: string; aiPausedUntil: Date | null } | null;
   contextUpdateCount?: number;
   /** A live `LineSupportRequest` for this LINE user, if one is already in the queue (§2.2.4).
@@ -292,6 +294,13 @@ function harness(options: {
         // that only returns a row cannot tell whether the guard was asked for.
         findFirst: async (args: any) => {
           membershipQueries.push(args);
+          // The locked-shop probe (`company.OR`): the chat's own shop when it asks for one by id,
+          // else the newest (`orderBy createdAt desc` = the LAST fixture row).
+          if (Array.isArray(args?.where?.company?.OR)) {
+            const rows = (options.lockedMemberships ?? []).filter((row) => !args.where.companyId || row.companyId === args.where.companyId);
+            const row = args.orderBy?.createdAt === 'desc' ? rows.at(-1) : rows[0];
+            return row ? { companyId: row.companyId, company: { planTerm: row.term ?? null }, roles: row.roles ?? [] } : null;
+          }
           // Two shapes, two questions: the package-change owner check asks for a ROLE; the
           // profile-guard and support-asker lookups ask only "any shop this person is still in".
           if (args?.where?.roles) return options.ownerMembership ?? null;
@@ -460,6 +469,22 @@ describe('P10-L webhook doors', () => {
     // keeps the short line and nothing else — one message, no greeting, no card.
     assert.equal(h.replies.flat().length, 1);
     assert.equal(spoken(h).includes('ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อน'), false);
+  });
+
+  // Review 2026-09-29 (item 6): "ส่งรูปใบเสร็จ หรือถามยอดขาย" invites exactly what a locked shop's
+  // assistant would refuse, so a known account with no usable shop hears the lock reply instead.
+  it('answers a re-follow from a locked shop with the lock reply, not the welcome back', async () => {
+    const at = new Date(Date.now() - 60_000);
+    const h = harness({
+      identity: { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } },
+      lockedMemberships: [{ companyId: 'co-locked', term: { termStartAt: at, termEndsAt: at, renewCount: 0 },
+        roles: [{ role: { key: 'OWNER', status: 'ACTIVE', permissions: [{ permission: { key: 'company.plan.manage' } }] } }] }],
+    });
+    await h.useCase.execute(event(LINE_FOLLOW_EVENT_TEXT));
+
+    assert.doesNotMatch(spoken(h), /ยินดีต้อนรับกลับมา|ส่งรูปใบเสร็จ/);
+    assert.match(spoken(h), /ร้านนี้ยังไม่มีแพ็กเกจ/);
+    assert.equal(outcome(h), 'package_required');
   });
 
   // L-19. A LINE user id only means anything WITHIN one messaging channel. An absent Prisma filter
@@ -659,16 +684,58 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
     assert.equal(outcome(h), 'support_rate_limited');
   });
 
-  // M7 (reviewer probe): a membership in a company the plan-term sweep DISABLED is not a shop this
-  // person can be helped in, so the request carries no company — and nothing may pause an
-  // assistant that has no company to run for.
-  it('files a DISABLED-company member as having no shop, and creates no context row', async () => {
+  // M7 (reviewer probe), narrowed by review 2026-09-29: someone in NO shop at all files with no
+  // company — and nothing may pause an assistant that has no company to run for.
+  it('files an asker with no shop at all as having no shop, and creates no context row', async () => {
     const h = harness({ identity: linked, memberships: [], context: null, pendingSignup: null });
     await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
 
     assert.equal(h.supportRequests[0].data.companyId, undefined);
     assert.deepEqual(h.contextUpserts, [], 'no company, no pause, no row invented for one');
     assert.deepEqual(h.supportNotices, ['sr-1'], 'they still reach a human');
+  });
+
+  // Review 2026-09-29 (item 1, reversing M7's other half): a LOCKED shop — no package yet, or the
+  // sweep disabled it — is still the shop an operator has to call. The ticket used to say
+  // "ผู้ที่ยังไม่ได้เปิดร้าน" with no company, so nobody could tell whom to phone.
+  describe('a locked shop is still the shop the request names', () => {
+    const at = new Date(Date.now() - 60_000);
+    const locked = (companyId: string) => ({ companyId, term: { termStartAt: at, termEndsAt: at, renewCount: 0 },
+      roles: [{ role: { key: 'OWNER', status: 'ACTIVE', permissions: [{ permission: { key: 'company.plan.manage' } }] } }] });
+
+    it('files the lock card\'s "ติดต่อเจ้าหน้าที่" against the locked shop, and hands the thread to a human', async () => {
+      const h = harness({ identity: linked, memberships: [], context: null, lockedMemberships: [locked('co-locked')] });
+      await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+      assert.equal(h.supportRequests[0].data.companyId, 'co-locked');
+      assert.equal(h.audits.at(-1).companyId, 'co-locked');
+      // The next message goes onto the request instead of drawing the lock card again.
+      assert.equal(h.contextUpserts[0].create.companyId, 'co-locked');
+      assert.deepEqual(h.supportNotices, ['sr-1']);
+    });
+
+    it('files a locked no-package owner\'s G19 callback against their shop, without offering the assistant', async () => {
+      const h = harness({ identity: linked, memberships: [], context: null, lockedMemberships: [locked('co-locked')] });
+      await h.useCase.execute(event(PACKAGE_CALLBACK_COMMAND));
+
+      assert.equal(h.supportRequests[0].data.companyId, 'co-locked');
+      assert.match(spoken(h), /ทีมงานจะติดต่อกลับเรื่องแพ็กเกจ/);
+      // Item 5: the assistant cannot answer a locked shop, so the reply does not invite a question.
+      assert.doesNotMatch(spoken(h), /ถามน้องมั่งมี/);
+      assert.deepEqual(h.contextUpserts, [], 'a callback still pauses nothing');
+    });
+
+    it('names the locked shop this chat is on, even beside an ACTIVE one', async () => {
+      const h = harness({
+        identity: linked,
+        memberships: [{ companyId: 'co-a', roles: [] }],
+        context: { companyId: 'co-b', aiPausedUntil: null },
+        lockedMemberships: [locked('co-b'), locked('co-c')],
+      });
+      await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
+
+      assert.equal(h.supportRequests[0].data.companyId, 'co-b', 'the chat\'s own shop, not the ACTIVE A nor the newest locked C');
+    });
   });
 
   it('holds the assistant back while the pause runs, and lets go once it expires', async () => {
@@ -1444,6 +1511,17 @@ describe('GW05 package request stays with the selected company', () => {
     assert.equal(h.packageChanges.length, 0); assert.equal(outcome(h), 'needs_company_selection');
     assert.match(rendered(h), /Shop a/); assert.match(rendered(h), /Shop b/);
   });
+  // Review 2026-09-29: the picker here names a locked shop the way บริษัทของฉัน does (R-C8).
+  it('marks a locked shop in the picker with the same lock chip as บริษัทของฉัน', async () => {
+    const at = new Date(Date.now() - 60_000);
+    const locked = { companyId: 'co-b', company: { name: 'Shop b', status: 'DISABLED',
+      planTerm: { tierKey: 'STARTER_249', termStartAt: at, termEndsAt: at, renewCount: 0, termDisabledAt: at } } };
+    const h = harness({ identity, ownerMemberships: [rows[0], locked], context: null });
+    await h.useCase.execute(event(PACKAGE_CHANGE_COMMAND));
+    assert.equal(outcome(h), 'needs_company_selection');
+    assert.match(rendered(h), /🔒 ยังไม่มีแพ็กเกจ/);
+    assert.equal((rendered(h).match(/🔒/g) ?? []).length, 1, 'only the locked shop carries a chip');
+  });
   it('does not fall back to sole A when the selected membership was revoked', async () => {
     const h = harness({ identity, ownerMemberships: rows.slice(0, 1), context: { companyId: 'revoked', aiPausedUntil: null } });
     await h.useCase.execute(event(PACKAGE_CHANGE_COMMAND));
@@ -1521,7 +1599,7 @@ describe('โปรโมชั่น card leads into the app, per audience', ()
     await h.useCase.execute(event('โปรโมชั่น'));
 
     assert.equal(rendered(h).includes('/companies/co-1/billing'), false, 'the package page is owner-only');
-    assert.match(rendered(h), /เจ้าของร้านเป็นคนเลือกแพ็กเกจ/);
+    assert.match(rendered(h), /เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจ/);
     assert.deepEqual(actions(h).map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานติดต่อกลับ', 'คุยกับทีมงาน']);
     assert.equal(actions(h)[1].type, 'postback');
     assert.equal(outcome(h), 'staff_menu_promotion');
