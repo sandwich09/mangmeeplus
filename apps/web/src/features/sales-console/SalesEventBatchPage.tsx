@@ -16,12 +16,36 @@ import {
 } from './sales.api';
 import {
   actionNeedsReason, batchActions, batchRewardLines, batchScopeText, batchStatusMeta, qrDownloadFileName, qrValidUntilText,
-  SALES_EVENT_ACTION_COPY, SALES_EVENT_QR_PRINT_HINT, ticketStatusMeta, ticketUsableUntil,
+  SALES_EVENT_ACTION_COPY, SALES_EVENT_QR_PNG_QUIET_ZONE, SALES_EVENT_QR_PNG_SIZE, SALES_EVENT_QR_PRINT_HINT, ticketStatusMeta,
+  ticketUsableUntil,
 } from './sales-events.logic';
 import SalesEventBatchForm from './SalesEventBatchForm';
 import { SalesEmpty, SalesNotice } from './SalesConsoleParts';
 
 const STALE_MESSAGE = 'ชุดนี้ถูกแก้ไขจากที่อื่นแล้ว กด "โหลดข้อมูลล่าสุด" แล้วทำรายการอีกครั้ง';
+
+/**
+ * The API's SVG QR as a PNG object URL: drawn onto a white canvas with a quiet zone, then `toBlob`.
+ * Throws when the browser cannot (no canvas, or a canvas it refuses to export); the caller falls back
+ * to saving the SVG itself.
+ */
+async function qrPngObjectUrl(svgDataUrl: string): Promise<string> {
+  const image = new Image();
+  image.src = svgDataUrl;
+  await image.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = SALES_EVENT_QR_PNG_SIZE;
+  canvas.height = SALES_EVENT_QR_PNG_SIZE;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('canvas unavailable');
+  context.fillStyle = 'white';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const side = SALES_EVENT_QR_PNG_SIZE - 2 * SALES_EVENT_QR_PNG_QUIET_ZONE;
+  context.drawImage(image, SALES_EVENT_QR_PNG_QUIET_ZONE, SALES_EVENT_QR_PNG_QUIET_ZONE, side, side);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('png export failed');
+  return URL.createObjectURL(blob);
+}
 
 /**
  * "แสดง QR" at the booth (spec §3.2). Owner 2026-09-29 (SD-O11): the QR has no clock of its own, so it
@@ -31,6 +55,19 @@ const STALE_MESSAGE = 'ชุดนี้ถูกแก้ไขจากที
 function QrPanel({ batch, onFailure }: { batch: SalesEventBatchView; onFailure: (message: string) => void }) {
   const [qr, setQr] = useState<SalesEventQr | null>(null);
   const [busy, setBusy] = useState(false);
+  // undefined while converting, null when the browser cannot (the SVG is saved instead), else the PNG.
+  const [pngUrl, setPngUrl] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!qr) return;
+    let cancelled = false;
+    let created: string | null = null;
+    setPngUrl(undefined);
+    qrPngObjectUrl(qr.qrImageUrl)
+      .then((url) => { if (cancelled) URL.revokeObjectURL(url); else { created = url; setPngUrl(url); } })
+      .catch(() => { if (!cancelled) setPngUrl(null); });
+    // Revoked once this QR is done with: replaced by a new one, or the page closed.
+    return () => { cancelled = true; if (created) URL.revokeObjectURL(created); };
+  }, [qr]);
 
   const full = batch.issuedCount >= batch.issueCap;
   const show = async () => {
@@ -55,7 +92,10 @@ function QrPanel({ batch, onFailure }: { batch: SalesEventBatchView; onFailure: 
           <img src={qr.qrImageUrl} alt="QR สำหรับรับส่วนลดจากงาน" className="mx-auto aspect-square w-full max-w-72 rounded-xl border border-gray-200 bg-white p-2" />
           <p className="text-center text-sm font-bold text-gray-900">{qrValidUntilText(batch.claimEndsAt)}</p>
           <p className="text-center text-xs text-gray-500">{SALES_EVENT_QR_PRINT_HINT}</p>
-          <a href={qr.qrImageUrl} download={qrDownloadFileName(batch)} className="mangmee-btn mangmee-btn-secondary">บันทึกรูป QR</a>
+          {pngUrl === undefined
+            ? <p className="text-center text-xs text-gray-500" role="status">กำลังเตรียมรูป QR…</p>
+            : <a href={pngUrl ?? qr.qrImageUrl} download={qrDownloadFileName(batch, pngUrl ? 'png' : 'svg')}
+              className="mangmee-btn mangmee-btn-secondary">บันทึกรูป QR</a>}
         </>
       ) : (
         <>

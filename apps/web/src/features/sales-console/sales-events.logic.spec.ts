@@ -7,7 +7,8 @@ import { translateApiError } from '@/common/api/api-error-message';
 import {
   actionNeedsReason, bangkokInputValue, batchActions, batchRewardLines, batchScopeText, batchStatusMeta,
   discountTooHighMessage, emptyEventBatchForm, eventBatchFormFromView, eventBatchInputFromForm, firstEventBatchErrorField,
-  isoFromBangkokInput, qrDownloadFileName, qrValidUntilText, SALES_EVENT_QR_PRINT_HINT, ticketStatusMeta, ticketUsableUntil,
+  isoFromBangkokInput, qrDownloadFileName, qrValidUntilText, SALES_EVENT_QR_PNG_QUIET_ZONE, SALES_EVENT_QR_PNG_SIZE,
+  SALES_EVENT_QR_PRINT_HINT, ticketStatusMeta, ticketUsableUntil,
   toggleValue, validateEventBatchForm,
   type SalesEventBatchFormValues,
 } from './sales-events.logic';
@@ -149,8 +150,15 @@ describe('words on screen (spec §8)', () => {
   });
 
   it('names the saved QR after the event and batch, without characters a file system refuses', () => {
-    assert.equal(qrDownloadFileName({ eventName: 'งานแฟร์ 10/2569', batchName: 'บูธ "A": หน้าเวที' }), 'QR งานแฟร์ 10 2569 บูธ A หน้าเวที.svg');
-    assert.ok(qrDownloadFileName({ eventName: 'ก'.repeat(120), batchName: 'x' }).length <= 104);
+    const batch = { eventName: 'งานแฟร์ 10/2569', batchName: 'บูธ "A": หน้าเวที' };
+    assert.equal(qrDownloadFileName(batch, 'png'), 'QR งานแฟร์ 10 2569 บูธ A หน้าเวที.png');
+    assert.equal(qrDownloadFileName(batch, 'svg'), 'QR งานแฟร์ 10 2569 บูธ A หน้าเวที.svg');
+    assert.ok(qrDownloadFileName({ eventName: 'ก'.repeat(120), batchName: 'x' }, 'png').length <= 104);
+  });
+
+  it('saves the QR as a PNG of at least 1024 px with a white quiet zone around it', () => {
+    assert.ok(SALES_EVENT_QR_PNG_SIZE >= 1024);
+    assert.ok(SALES_EVENT_QR_PNG_QUIET_ZONE > 0 && SALES_EVENT_QR_PNG_QUIET_ZONE * 10 < SALES_EVENT_QR_PNG_SIZE);
   });
 
   it('names the package a too-large discount trips on, and leaves other errors to the shared map', () => {
@@ -186,7 +194,13 @@ describe('console screens (source guards)', () => {
   it('offers the QR as a printable image valid until the batch closes, not a countdown (SD-O11)', () => {
     const page = source('SalesEventBatchPage.tsx');
     assert.doesNotMatch(page, /role="timer"|countdown|qrSecondsLeft|5 นาที/);
-    assert.match(page, /download=\{qrDownloadFileName\(batch\)\}/);
+    // PNG first (phones keep it in Photos and share it in LINE), the SVG only when the canvas fails.
+    assert.match(page, /canvas\.toBlob\(resolve, 'image\/png'\)/);
+    assert.match(page, /context\.fillStyle = 'white'/);
+    assert.match(page, /URL\.createObjectURL\(blob\)/);
+    assert.match(page, /URL\.revokeObjectURL\(created\)/);
+    assert.match(page, /href=\{pngUrl \?\? qr\.qrImageUrl\} download=\{qrDownloadFileName\(batch, pngUrl \? 'png' : 'svg'\)\}/);
+    assert.match(page, /\.catch\(\(\) => \{ if \(!cancelled\) setPngUrl\(null\); \}\)/);
     assert.match(page, /บันทึกรูป QR/);
     assert.match(page, /qrValidUntilText\(batch\.claimEndsAt\)/);
     assert.match(page, /SALES_EVENT_QR_PRINT_HINT/);
