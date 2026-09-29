@@ -25,11 +25,17 @@ describe('LINE: ถามส่วนลด routing (sales-event spec §8.1)', (
 });
 
 describe('LINE: ถามส่วนลด answer', () => {
-  it('a usable ticket and a shop that can pay in one go: each ticket with its computed baht and Thai date, how it applies, and the package button', () => {
+  it('a usable ticket and a shop that can pay for a package: each ticket with its computed baht and Thai date, how it applies, and the package button', () => {
     const answer = lineEventDiscountAnswer(facts());
     assert.equal(answer.canUse, true);
+    // SD-O13 (Owner 2026-09-29): choosing automatic card renewal discounts only the first bill.
     assert.equal(answer.text, ['คุณมีส่วนลดจากงานค่ะ', LINE,
-      'ลดตอนจ่ายค่าแพ็กเกจแบบจ่ายครั้งเดียวด้วยบัตรหรือ PromptPay เลือกใช้หรือไม่ใช้ได้ตอนจ่าย งานเดียวกันใช้ได้ร้านละครั้งค่ะ'].join('\n'));
+      'ลดตอนจ่ายค่าแพ็กเกจด้วยบัตรหรือ PromptPay เลือกใช้หรือไม่ใช้ได้ตอนจ่าย งานเดียวกันใช้ได้ร้านละครั้ง',
+      'ถ้าเลือกตัดบัตรอัตโนมัติหรือสแกนบิล QR ทุกงวด ลดเฉพาะบิลแรก รอบต่อไปคิดราคาเต็มค่ะ'].join('\n'));
+    // Owner 2026-09-29: several held discounts — the buyer picks one per payment.
+    const several = lineEventDiscountAnswer(facts({ tickets: [ticket(), ticket({ eventName: 'event3', serial: 'Y', discountSatang: 12_000 })] }));
+    assert.match(several.text, /เลือกได้ตอนจ่ายว่าจะใช้ส่วนลดไหน \(ครั้งละ 1 ส่วนลด\) หรือไม่ใช้ งานเดียวกันใช้ได้ร้านละครั้ง\n/u);
+    assert.match(several.text, /• ส่วนลดจากงาน event3 · ลด 120 บาท/u);
     const card = buildEventDiscountCard(facts(), 'https://app.example.test/l/tok') as any;
     assert.deepEqual(card.contents.footer.contents[0].action, { type: 'uri', label: 'เลือกแพ็กเกจ', uri: 'https://app.example.test/l/tok' });
     assert.equal(card.canonicalText, answer.text);

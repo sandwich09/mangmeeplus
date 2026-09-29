@@ -34,6 +34,11 @@ export type ExchangeLiffSessionCommand = {
   idToken: string;
   /** Echoed back from the picker on the second call. Validated against live memberships, never trusted. */
   companyId?: string;
+  /**
+   * `package`: the sales-event page (spec §3.3), whose point is using the discount — a plan manager
+   * lands on the package page. A name, never a path: the path is built here and checked at mint.
+   */
+  landing?: 'package';
 };
 
 /**
@@ -79,7 +84,7 @@ export class ExchangeLiffSessionUseCase {
     if (!identity) return { needsSignup: true };
     if (identity.status !== 'ACTIVE' || identity.user.status !== 'ACTIVE') return { reason: 'suspended' };
 
-    const decision = await this.resolveCompany(identity.userId, verified.providerUserId, cmd.companyId);
+    const decision = await this.resolveCompany(identity.userId, verified.providerUserId, cmd.companyId, cmd.landing === 'package');
     if ('companyId' in decision) {
       const targetPath = decision.targetPath;
       const { rawToken } = await this.mint.execute({
@@ -116,6 +121,7 @@ export class ExchangeLiffSessionUseCase {
     userId: string,
     lineUserId: string,
     requestedCompanyId: string | undefined,
+    packageLanding = false,
   ): Promise<{ companyId: string; targetPath: string } | Exclude<ExchangeLiffSessionResult, { handoffUrl: string }>> {
     const memberships = await this.prisma.client.companyMembership.findMany({
       where: { userId, status: 'ACTIVE', OR: [
@@ -141,9 +147,10 @@ export class ExchangeLiffSessionUseCase {
     } : {};
 
     const destination = (membership: typeof memberships[number]) => {
-      // R-C3: a locked shop lands its plan manager on the package page directly (Q5); everyone else
-      // keeps the locked shell's /renew, which `resolveLineHandoffTarget` still enforces below.
-      const wanted = isLocked(membership) && canManagePlan(membership.roles)
+      // R-C3: a locked shop lands its plan manager on the package page directly (Q5), and so does any
+      // shop's plan manager when the sales-event page asks; everyone else keeps /renew or the
+      // overview, which `resolveLineHandoffTarget` still enforces below.
+      const wanted = (isLocked(membership) || packageLanding) && canManagePlan(membership.roles)
         ? `/companies/${membership.companyId}/billing?channel=line`
         : `/companies/${membership.companyId}/${LIFF_START_TARGET_PATH}`;
       const targetPath = resolveLineHandoffTarget(membership.companyId, wanted, membership.company, now);
