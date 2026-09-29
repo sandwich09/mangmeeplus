@@ -422,6 +422,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/sales-console/application/claim-event-discount.use-case.spec.ts',
       'src/common/security/liff-event-discount-page.spec.ts',
       'src/modules/billing/application/billing-event-discount.spec.ts',
+      // LINE "ฉันมีส่วนลดไหม" (sales-event spec §8.1): the routing words and every answer case.
+      'src/modules/line-ai/domain/logic/line-event-discount.logic.spec.ts',
       // Web/LINE signup shares the durable mail consumer; preserve its provider boundary too.
       'src/modules/auth/infrastructure/postmark.client.spec.ts',
       'src/modules/auth/infrastructure/postmark-configuration.spec.ts',

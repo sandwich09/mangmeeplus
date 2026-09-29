@@ -1,6 +1,7 @@
 /**
  * Pure rules of sales-event discount batches: the batch form, the claim window, the batch state
- * machine, how long one QR lives, and the first-bill minimum price. No Prisma, no Nest.
+ * machine and the first-bill minimum price. No Prisma, no Nest. A QR has no clock of its own
+ * (SD-O11): it works while `batchClaimOpen` holds and its เซลล์ is an active distributor.
  *
  * Spec: docs/specs/sales-event-discounts-spec-th.md §3.1, §3.2, §4.5, §5.1, §6.2, §6.3.
  * The QR token itself (hash, link, pattern) and the ticket serial/expiry belong to the claim side:
@@ -10,7 +11,6 @@ import {
   SALES_DEAL_BASE_TIERS,
   SALES_EVENT_CHAT_CREDIT_UNIT_SCALE,
   SALES_EVENT_NAME_MAX,
-  SALES_EVENT_QR_TTL_SECONDS,
   SALES_EVENT_REASON_ACTIONS,
   SALES_EVENT_REASON_MAX,
   type BillingTaxTreatment,
@@ -159,11 +159,6 @@ export function batchActionReason(action: SalesEventBatchAction, raw: unknown): 
 /** A QR can be shown, and a ticket claimed, only while the batch is OPEN inside [start, end). */
 export function batchClaimOpen(batch: { state: string; claimStartsAt: Date; claimEndsAt: Date }, now: Date): boolean {
   return batch.state === 'OPEN' && batch.claimStartsAt.getTime() <= now.getTime() && now.getTime() < batch.claimEndsAt.getTime();
-}
-
-/** One QR lives min(now + 5 minutes, claim end) — spec §3.2. */
-export function qrExpiresAt(now: Date, claimEndsAt: Date): Date {
-  return new Date(Math.min(now.getTime() + SALES_EVENT_QR_TTL_SECONDS * 1000, claimEndsAt.getTime()));
 }
 
 /**

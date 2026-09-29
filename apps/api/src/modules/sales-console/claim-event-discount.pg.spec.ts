@@ -5,6 +5,7 @@
  *    person scanning twice at once gets one ticket back twice.
  * 2. The migration's CHECKs accept the row a claim writes (ISSUED, nothing redeemed, amounts copied).
  * 3. The platform-tenant refusal and a removed เซลล์, end to end through the real tables.
+ * 4. A printed QR (owner 2026-09-29, SD-O11): the batch as it is at scan time decides, not the QR's age.
  *
  * Run with a disposable database that has every migration applied:
  *   SALES_EVENT_CLAIM_TEST_DATABASE_URL='postgresql://…@127.0.0.1:5432/watchdog_step0_ci' \
@@ -109,6 +110,45 @@ describe('sales-event claim against PostgreSQL', { skip: !databaseUrl && 'set SA
       assert.equal(first.ticket.serial, second.ticket.serial);
       assert.deepEqual([first.replay, second.replay].sort(), [false, true]);
       assert.equal((await h.client.salesEventBatch.findUniqueOrThrow({ where: { id: h.batch.id } })).issuedCount, 1);
+    } finally { await h.teardown(); }
+  });
+
+  it('keeps a printed QR working until the batch closes, again when the window is extended, and stops it on pause or suspend', async () => {
+    const h = await harness(5);
+    try {
+      const batchWhere = { id: h.batch.id };
+      // Printed long ago: its stored expiry passed hours ago, the batch is still open.
+      await h.client.salesEventQrToken.updateMany({ where: { batchId: h.batch.id }, data: { expiresAt: new Date(Date.now() - 3 * 3_600_000) } });
+      assert.equal(await code(h.claim(`${h.tag}-a`)), 'ok');
+
+      // The window closes: refused as a closed batch.
+      await h.client.salesEventBatch.update({ where: batchWhere, data: { claimEndsAt: new Date(Date.now() - 60_000) } });
+      assert.equal(await code(h.claim(`${h.tag}-b`)), 'SALES_EVENT_CLAIM_CLOSED');
+
+      // The lead extends it (a new revision with a bigger discount): the same printed QR issues again,
+      // and the ticket freezes the batch's CURRENT values.
+      const newEnd = new Date(Date.now() + 2 * 3_600_000);
+      await h.client.salesEventBatch.update({ where: batchWhere,
+        data: { claimEndsAt: newEnd, revision: { increment: 1 }, version: { increment: 1 }, discountSatang: 15_000 } });
+      const extended = await h.claim(`${h.tag}-b`);
+      assert.equal(extended.ticket.discountSatang, 15_000);
+      assert.equal(extended.ticket.expiresAt, new Date(newEnd.getTime() + 30 * 86_400_000).toISOString());
+      const ticket = await h.client.salesEventTicket.findFirstOrThrow({ where: { batchId: h.batch.id, holderProviderUserId: `${h.tag}-b` } });
+      assert.equal(ticket.batchRevision, h.batch.revision + 1);
+
+      // "พักแจก" and "ระงับการใช้" stop the printed QR at once.
+      await h.client.salesEventBatch.update({ where: batchWhere, data: { state: 'PAUSED' } });
+      assert.equal(await code(h.claim(`${h.tag}-c`)), 'SALES_EVENT_CLAIM_CLOSED');
+      await h.client.salesEventBatch.update({ where: batchWhere, data: { state: 'SUSPENDED' } });
+      assert.equal(await code(h.claim(`${h.tag}-c`)), 'SALES_EVENT_CLAIM_CLOSED');
+      assert.equal(await h.client.salesEventTicket.count({ where: { batchId: h.batch.id } }), 2);
+
+      // A token that was never issued is "ใช้ไม่ได้", never "expired".
+      const { rawToken } = newSalesEventQrToken();
+      assert.equal(await code(new ClaimEventDiscountUseCase({ client: h.client } as never,
+        { verify: async () => ({ providerUserId: `${h.tag}-d`, channelId: CHANNEL }) } as never,
+        { assertSalesEventClaimAllowed: async () => {} } as never)
+        .execute({ idToken: 'x', qrToken: rawToken, requestKey: `${h.tag}-unknown`, requestId: `${h.tag}-req` })), 'SALES_EVENT_QR_INVALID');
     } finally { await h.teardown(); }
   });
 

@@ -52,7 +52,7 @@ import { assertDealOfferUnchanged, assertDealSnapshot, dealOffer, dealPurchaseMo
 import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 import type { BillingEventDiscountView } from '@watchdog-bms/contracts';
 import { eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
-import { eventDiscountOffer, eventDiscountPath, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
+import { eventDiscountBlock, eventDiscountOffer, eventDiscountPath, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
 
 /** D-P5-6: the future contract a `SCHEDULE_PRICE_RETURN` writes. The invoice that applies it puts
  *  the shop back on the tier's default menus, AI credit and limits (Q1) even though it is a RENEWAL. */
@@ -226,6 +226,13 @@ export class BillingService {
     const company = await this.prisma.client.company.findUnique({ where: { id: context.companyId }, select: { planTerm: true } });
     const source = await this.purchaseSource({ planTerm: company?.planTerm ?? null }, await this.account(context.companyId));
     return { path: eventDiscountPath(source), tickets: await holderEventDiscountTickets(this.prisma.client, context.userId, new Date()) };
+  }
+
+  /** LINE "ฉันมีส่วนลดไหม" (sales-event spec §8.1): the same owner-only read, plus why a starting shop may not take the
+   *  first-bill discount now (one per shop, not with a deal) — the package page's own `eventDiscountBlock`. */
+  async lineEventDiscount(context: RequestContext): Promise<BillingEventDiscountView & { block: 'DEAL_ACTIVE' | 'COMPANY_ALREADY_USED' | null }> {
+    const view = await this.eventDiscount(context);
+    return { ...view, block: view.path === 'DISCOUNT' ? await eventDiscountBlock(this.prisma.client, context.companyId, new Date()) : null };
   }
 
   async capacity(context: RequestContext, offerKey: string, interval: string) {

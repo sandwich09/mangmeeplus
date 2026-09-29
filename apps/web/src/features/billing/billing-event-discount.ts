@@ -1,4 +1,4 @@
-import type { BillingOffer, BillingPurchaseMode, BillingStatus } from '@watchdog-bms/contracts';
+import type { BillingEventDiscountView, BillingOffer, BillingPurchaseMode, BillingStatus } from '@watchdog-bms/contracts';
 
 /** Sales-event first-bill discount on the package page (sales-event spec §3.4 ก, §8). Plain Thai; never "ตั๋ว". */
 export type EventDiscountChoice = 'USE' | 'DECLINE';
@@ -27,4 +27,14 @@ export function eventDiscountBlockedText(view: View | undefined): string[] {
   if (view?.reason === 'DEAL_ACTIVE') return ['ร้านนี้มีดีลพิเศษอยู่แล้ว จึงใช้ส่วนลดจากงานกับราคาดีลไม่ได้', `ส่วนลดยังเป็นของคุณจนถึง ${day(view.expiresAt)}`];
   if (view?.reason === 'COMPANY_ALREADY_USED') return ['ร้านนี้ใช้ส่วนลดราคาจากงานไปแล้ว (ใช้ได้ร้านละครั้ง)'];
   return [];
+}
+/**
+ * Sales-event spec §8.1 (Owner UAT 2026-09-29): the holder has a usable ticket but this shop is not starting a
+ * package, so the discount box never shows. One plain line says the discount exists and where it applies.
+ */
+export function eventDiscountHeldNotice(view: BillingEventDiscountView | null | undefined): string | null {
+  if (!view || view.path === 'DISCOUNT') return null;
+  const best = view.tickets.filter(ticket => ticket.state === 'AVAILABLE' && !ticket.batchSuspended && ticket.discountSatang > 0)
+    .sort((a, b) => b.discountSatang - a.discountSatang || Date.parse(a.expiresAt) - Date.parse(b.expiresAt))[0];
+  return best ? `คุณมีส่วนลดจากงาน ${best.eventName} ลดบิลแรก ${eventDiscountBaht(best.discountSatang)} บาท (ใช้ได้ถึง ${day(best.expiresAt)}) ใช้ได้กับร้านที่เริ่มแพ็กเกจใหม่` : null;
 }

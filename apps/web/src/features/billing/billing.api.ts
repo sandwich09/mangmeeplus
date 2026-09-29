@@ -1,7 +1,7 @@
 'use client';
 import type { BillingEmailRecipient, BillingEmailRecipientOperation, BillingCatalog, BillingQuote, BillingStatus, BillingCheckoutBody, BillingCheckoutResult, BillingInvoiceItem, BillingAttemptView, BillingCollectionAction, BillingCollectionOperation, BillingPurchaseMode, BillingRecipientOtpChallenge, BillingRecipientOtpProof, BillingDocumentResendResult } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
-import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
+import type { BillingCapacityOptions, BillingCapacitySelection, BillingEventDiscountView } from '@watchdog-bms/contracts';
 
 export type BillingHistory = { items: BillingInvoiceItem[]; nextCursor: string | null };
 export function billingApi(companyId: string) {
@@ -20,6 +20,8 @@ export function billingApi(companyId: string) {
       { expectedVersion: operation.version, previewHash: operation.previewHash, accepted: true }, `billing-recipient-${operation.id}`),
     recipientCancel: (operation: BillingEmailRecipientOperation) => post<BillingEmailRecipientOperation>(`/recipient/${operation.id}/cancel`, { expectedVersion: operation.version }),
     status: () => get<BillingStatus>(base), catalog: () => get<BillingCatalog>('/billing/catalog'),
+    // Sales-event spec §7.1 (SD-B): the signed-in holder's own ส่วนลดจากงาน and which way this shop could use one. Owner-only.
+    eventDiscount: () => get<BillingEventDiscountView>(`${base}/event-discount`),
     attempt: (attemptId: string) => get<BillingAttemptView>(`${base}/attempts/${encodeURIComponent(attemptId)}`),
     history: (cursor?: string) => get<BillingHistory>(`${base}/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
     // `dealId` still sends the deal's base tier and 'month' — the API prices the offer from the
