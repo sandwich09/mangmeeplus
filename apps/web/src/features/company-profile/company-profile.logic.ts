@@ -129,7 +129,9 @@ const ADDRESS_LABELS: Record<string, string> = {
  * server's per-field strings into the Thai names of the boxes on screen.
  */
 export function addressErrorMessages(error: unknown): string[] {
-  const details = (error as { details?: unknown } | null | undefined)?.details;
+  // authedApiFetch keeps the WHOLE response body as `error.details` (`{ message, details, requestId }`),
+  // so the API's per-field array sits one level deeper — as PartnerDetailPage reads `details.details`.
+  const details = (error as { details?: { details?: unknown } } | null | undefined)?.details?.details;
   if (!Array.isArray(details)) return [];
   const messages: string[] = [];
   for (const entry of details) {

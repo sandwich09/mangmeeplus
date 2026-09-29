@@ -161,7 +161,7 @@ describe('the Stripe Checkout address offer (DQ5)', () => {
 describe('addressErrorMessages', () => {
   it('names the empty box in Thai instead of a generic reload', () => {
     assert.deepEqual(
-      addressErrorMessages({ details: ['addressJson.province is required', 'addressJson.postalCode must be 5 digits'] }),
+      addressErrorMessages({ details: { details: ['addressJson.province is required', 'addressJson.postalCode must be 5 digits'] } }),
       ['กรุณากรอก จังหวัด', 'รหัสไปรษณีย์ ต้องเป็นตัวเลข 5 หลัก'],
     );
   });
@@ -169,15 +169,25 @@ describe('addressErrorMessages', () => {
   // already filled sends them to fix the wrong thing.
   it('does not call a shape error an empty box', () => {
     assert.deepEqual(
-      addressErrorMessages({ details: ['addressJson.province must be a string', 'addressJson.floor is not an allowed field'] }),
+      addressErrorMessages({ details: { details: ['addressJson.province must be a string', 'addressJson.floor is not an allowed field'] } }),
       ['จังหวัด ค่าไม่ถูกต้อง'],
       'an unknown key has no box to name, and a wrong-typed one is not a blank one',
     );
-    assert.deepEqual(addressErrorMessages({ details: ['addressJson.district is required'] }), ['กรุณากรอก อำเภอ / เขต']);
+    assert.deepEqual(addressErrorMessages({ details: { details: ['addressJson.district is required'] } }), ['กรุณากรอก อำเภอ / เขต']);
+  });
+
+  // The shape authedApiFetch really throws for this 422: `details` is the whole response body.
+  it('reads the per-field array from the body authedApiFetch attaches as details', () => {
+    const error = Object.assign(new Error('invalid addressJson'), {
+      status: 422,
+      details: { message: 'invalid addressJson', details: ['addressJson.line1 is required', 'addressJson.postalCode must be 5 digits'], requestId: 'req-1' },
+    });
+    assert.deepEqual(addressErrorMessages(error), ['กรุณากรอก ที่อยู่ (บ้านเลขที่ ถนน)', 'รหัสไปรษณีย์ ต้องเป็นตัวเลข 5 หลัก']);
   });
 
   it('says nothing when the error is not about the address', () => {
     assert.deepEqual(addressErrorMessages({ message: 'stale' }), []);
+    assert.deepEqual(addressErrorMessages({ details: { message: 'stale', requestId: 'req-2' } }), []);
     assert.deepEqual(addressErrorMessages(null), []);
   });
 });
