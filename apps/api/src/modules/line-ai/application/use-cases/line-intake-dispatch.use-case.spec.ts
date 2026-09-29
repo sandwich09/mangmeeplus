@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { resolveTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
-import { chatKeyHashOf, lineClarificationContentHash, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting, isUtilityBillSaveRequest } from './process-line-webhook.use-case';
+import { chatKeyHashOf, lineClarificationContentHash, lineIntakeRouterReason, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting, isUtilityBillSaveRequest } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { receiptStatusQuestion, receiptProgressLabel } from '../../domain/logic/line-receipt-status.logic';
 import { createLineAiInputEvidence, type BusinessDocumentClassification, type LineIntakeRoutePlan } from '@watchdog-bms/contracts';
@@ -148,6 +148,8 @@ type Harness = {
   /** Every LineAiTurnRequest sent to the gateway, so trusted outer provenance can be asserted. */
   turnRequests: any[];
   ocrRequests: any[];
+  /** The options each receipt read was requested with (admission, retry owner). */
+  ocrOptions: any[];
   uploads: any[];
   initCalls: any[];
   completeCalls: any[];
@@ -195,6 +197,8 @@ function makeHarness(opts: {
   /** Appendix §25: the document lane persists through `InitReceiptUploadUseCase`. */
   initReceiptUploadThrows?: Error;
   receiptOcrResult?: any;
+  /** One reader result per read, in order (overrides `receiptOcrResult`). */
+  receiptOcrResults?: any[];
   governReceiptAdmission?: boolean;
   receiptApplyError?: Error;
   receiptApplyOutcome?: any;
@@ -242,6 +246,7 @@ function makeHarness(opts: {
   const routeRequests: any[] = [];
   const turnRequests: any[] = [];
   const ocrRequests: any[] = [];
+  const ocrOptions: any[] = [];
   const uploads: any[] = [];
   const initCalls: any[] = [];
   const completeCalls: any[] = [];
@@ -447,9 +452,16 @@ function makeHarness(opts: {
           intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
         };
       },
-      requestReceiptOcr: async (req: any) => {
+      requestReceiptOcr: async (req: any, options?: any) => {
         ocrRequests.push(req);
-        return opts.receiptOcrResult ?? validReceiptOcr();
+        ocrOptions.push(options);
+        // A photo read without the router is admitted by the reader itself, as the real client does.
+        if (opts.governReceiptAdmission && !options?.ocrAlreadyAdmitted) {
+          const admitted = await admitCompanyOcr(prisma, { companyId: req.companyId, sourceRoute: 'receipt-ocr-line', requestId: req.attachment.id, enforceReceiptQuota: true });
+          assert.ok(admitted.allowed, 'test receipt must reach its actual provisional admission');
+          options?.onAdmitted?.(admitted);
+        }
+        return opts.receiptOcrResults?.shift() ?? opts.receiptOcrResult ?? validReceiptOcr();
       },
       requestLineIntakeRoute: async (req: any, options?: any) => {
         routeRequests.push(req);
@@ -762,7 +774,7 @@ function makeHarness(opts: {
     uploads.push({ intent, media });
     if (opts.uploadThrows) throw new Error('storage PUT failed');
   };
-  return { useCase, captureState, replies, captured, signatureCreated, routeRequests, turnRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, checkBillStarts, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated, sentMessages, ledgerAcks, warnings };
+  return { useCase, captureState, replies, captured, signatureCreated, routeRequests, turnRequests, ocrRequests, ocrOptions, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, checkBillStarts, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated, sentMessages, ledgerAcks, warnings };
 }
 
 const TEXT_EVENT = {
@@ -2238,12 +2250,18 @@ describe('LINE intake dispatch – media path', () => {
     assert.deepEqual(Buffer.from(captured.init?.body as Uint8Array), Buffer.from('receipt'));
   });
 
-  it('signature-like image is saved as a usable personal signature, not an expense draft', async () => {
+  // UAT 2026-09-29 (Owner "ง + ค"): a caption-less photo skips the router — except where only the
+  // router can tell a signature from a receipt: here, a signature the open substitute work asked for.
+  it('with a signature request open, a signature-like image keeps the router and is saved as a usable personal signature, not an expense draft', async () => {
     const h = makeHarness({
-      permissions: ['expense.signature.self_manage', 'expense.receipt.line_upload'],
+      permissions: ['expense.signature.self_manage', 'expense.receipt.line_upload', 'expense.receipt.upload'],
+      substituteMediaContext: { expenseId: 'expense-1', awaitingScans: [], signatureRequested: true },
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },
     });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    assert.equal(h.routeRequests.length, 1, 'an open signature request keeps the router');
+    assert.ok(h.routeRequests[0].attachments?.[0]?.contentBase64, 'which sees the picture itself');
+    assert.equal(h.ocrRequests.length, 0, 'and no receipt read follows a signature');
     assert.equal(h.uploads.length, 1);
     assert.equal(h.signatureCreated.length, 1);
     assert.equal(h.signatureCreated[0].submittedFromChannel, 'LINE');
@@ -2259,7 +2277,9 @@ describe('LINE intake dispatch – media path', () => {
 
   it('signature route without any personal-signature or signing permission is refused', async () => {
     const h = makeHarness({
-      permissions: ['expense.receipt.line_upload'],
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload'],
+      // Open substitute work keeps the router for a caption-less photo; it is the router that calls this a signature.
+      substituteMediaContext: { expenseId: 'expense-1', awaitingScans: [] },
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },
     });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
@@ -2387,8 +2407,8 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.initCalls.length, 1);
     assert.equal(h.uploads.length, 1);
     assert.equal(h.completeCalls.length, 1);
-    assert.equal(h.routeRequests.length, 1, 'redelivery reuses the capture before provider admission');
-    assert.equal(h.ocrRequests.length, 1);
+    assert.equal(h.routeRequests.length, 0, 'a caption-less photo goes straight to the reader');
+    assert.equal(h.ocrRequests.length, 1, 'redelivery reuses the capture before any provider call');
     assert.match(h.replies[1] ?? '', /expense-1/);
     assert.doesNotMatch(h.replies[1] ?? '', /ยังไม่ยืนยันรายการ|ส่งรูป.*ใหม่/);
   });
@@ -2487,7 +2507,9 @@ describe('LINE intake dispatch – media path', () => {
   it('ambiguous media routes to CLARIFY and creates no draft or ticket', async () => {
     const { prisma, recordUpdates } = makePrisma();
     const h = makeHarness({
-      permissions: ['expense.receipt.line_upload', 'expense.signature.manage'],
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.signature.manage'],
+      // Receipt or requested signature? Only the kept router is asked, and it cannot tell.
+      substituteMediaContext: { expenseId: 'expense-1', awaitingScans: [], signatureRequested: true },
       routePlan: { status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0.5 },
       prisma,
     });
@@ -2814,7 +2836,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.doesNotMatch(h.replies[0] ?? '', /เลขที่เอกสาร/);
   });
 
-  it('router and OCR unavailable persist clarification and never create an expense draft', async () => {
+  it('a router outage never reaches a caption-less photo: a failed read keeps it for the web form (§17.6), with no question', async () => {
     const { prisma, recordUpdates, pendingMediaRows } = makePrisma();
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
@@ -2823,11 +2845,12 @@ describe('LINE intake dispatch – media path', () => {
       prisma,
     });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
-    assert.equal(h.initCalls.length, 0);
-    assert.equal(h.completeCalls.length, 0);
-    assert.equal(recordUpdates.length, 0);
-    assert.equal(pendingMediaRows.length, 1);
-    assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
+    assert.equal(h.routeRequests.length, 0, 'the router is never asked');
+    assert.equal(h.ocrRequests.length, 1);
+    assert.equal(recordUpdates.length, 0, 'nothing read, nothing recorded');
+    assert.equal(pendingMediaRows.length, 0, 'no numbered question for a failed read');
+    assert.equal(h.initCalls.length, 1, 'the picture is kept as a draft to finish on the web');
+    assert.match(h.replies[0] ?? '', /อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว/);
   });
 
   it('router unavailable with a caption still clarifies even when OCR sees a receipt', async () => {
@@ -2848,7 +2871,9 @@ describe('LINE intake dispatch – media path', () => {
       routePlan: { status: 'ROUTED', intent: 'MUTATION_REQUEST_REFUSAL', language: 'th', confidence: 0.97 },
       prisma,
     });
-    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    // The request is in the caption — a captioned photo keeps the router.
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'อนุมัติจ่ายบิลนี้ให้หน่อย');
+    assert.equal(h.routeRequests.length, 1);
     assert.match(h.replies[0] ?? '', /ไม่สามารถทำรายการอนุมัติ/);
     assert.equal(turnCreates[0].data.intent, 'MUTATION_REQUEST');
     assert.equal(turnCreates[0].data.refused, true);
@@ -2892,17 +2917,23 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
   const ID_OR_COMMAND = /\/media|\/qa|pending-att|capture-att|\batt-\d|\bpm-\d/u;
   const sentText = (h: Harness) => JSON.stringify(h.sentMessages);
   const RECEIPT_ROUTE = { status: 'ROUTED' as const, intent: 'EXPENSE_DOCUMENT_CAPTURE' as const, language: 'th', confidence: 0.95 };
-  const UNCLEAR_ROUTE = { status: 'ROUTED' as const, intent: 'CLARIFY' as const, language: 'th', confidence: 0.4 };
+  // The reader's own "not one clear receipt" outcome: it parks the bytes behind the numbered question.
+  const UNCLEAR_READ = validReceiptOcr({ classification: businessClassification({ contentKind: 'MULTI_DOCUMENT' }) });
   const SECOND_PHOTO = { ...MEDIA_EVENT, webhookEventId: 'evt-media-2', lineMessageId: 'msg-media-2', replyToken: 'reply-3' };
 
-  it('a caption-less receipt photo goes router → OCR → draft, and asks nothing', async () => {
+  // UAT 2026-09-29 (Owner "ง + ค"): the router spent 15–35 s re-reading every caption-less photo only to say
+  // "receipt"; the reader now reads it straight away and decides with its own classification.
+  it('a caption-less receipt photo skips the router: the reader reads it once and the draft is created at once', async () => {
     const { prisma, updates } = makePrisma();
     const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true, routePlan: RECEIPT_ROUTE, prisma });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
     assert.equal((h.useCase as any).boundConversations.has, WeakMap.prototype.has, 'sanity: the use case keeps its bound map');
-    assert.equal(h.routeRequests.length, 1, 'the router reads the photo (the old bound shortcut skipped it)');
-    assert.ok(h.routeRequests[0].attachments?.[0]?.contentBase64, 'the router sees the picture itself');
+    assert.equal(h.routeRequests.length, 0, 'no router call for a caption-less photo');
     assert.equal(h.ocrRequests.length, 1);
+    assert.ok(h.ocrRequests[0].attachment?.contentBase64, 'the reader sees the picture itself');
+    assert.equal(h.ocrRequests[0].documentText, undefined, 'and reads it itself — there is no router transcription to reuse');
+    assert.equal(h.ocrOptions[0]?.ocrAlreadyAdmitted, false, 'the reader admits the photo: still exactly one receipt-image count');
+    assert.equal(h.ocrOptions[0]?.retryWebhookEventId, MEDIA_EVENT.webhookEventId, 'so a crash replay can resume at the reader');
     assert.equal(h.initCalls.length, 1, 'the draft is created immediately');
     assert.equal(h.completeCalls.length, 1);
     assert.match(h.replies[0] ?? '', /ร้านทดสอบ|120/u);
@@ -2912,9 +2943,9 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
 
   it('an ambiguous photo asks the ONE numbered question, parks the bytes, and shows no id', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
-    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true, routePlan: UNCLEAR_ROUTE, prisma });
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true, receiptOcrResult: UNCLEAR_READ, prisma });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
-    assert.equal(h.routeRequests.length, 1);
+    assert.equal(h.routeRequests.length, 0, 'the reader decides it is unclear');
     assert.equal(h.initCalls.length, 0, 'no draft from an unclear picture');
     assert.equal(pendingMediaRows.length, 1, 'the bytes stay pending for the answer');
     assert.equal(h.replies.length, 1);
@@ -2924,11 +2955,11 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
   it('a receipt sent after an unclear photo is read and drafted; only the unclear one keeps its question', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true,
-      routePlans: [UNCLEAR_ROUTE, RECEIPT_ROUTE], prisma });
+      receiptOcrResults: [UNCLEAR_READ, validReceiptOcr()], prisma });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
     await h.useCase.executeReceiptUpload(SECOND_PHOTO);
-    assert.equal(h.routeRequests.length, 2, 'both photos were read');
-    assert.equal(h.ocrRequests.length, 1, 'the receipt was OCR-read');
+    assert.equal(h.routeRequests.length, 0, 'neither photo waits for the router');
+    assert.equal(h.ocrRequests.length, 2, 'both photos were read');
     assert.equal(h.initCalls.length, 1, 'and drafted');
     assert.equal(pendingMediaRows.filter((row) => row.status === 'PENDING').length, 1, 'only the unclear photo waits');
     assert.doesNotMatch(sentText(h), ID_OR_COMMAND);
@@ -3026,6 +3057,15 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
     assert.match(h.replies.join('\n'), /ยังไม่พบยอดเงินรวม/u);
   });
 
+  it('a captioned photo keeps the router, which reads the words with the picture', async () => {
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true, routePlan: RECEIPT_ROUTE });
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'ค่าอาหารลูกค้า');
+    assert.equal(h.routeRequests.length, 1);
+    assert.equal(h.routeRequests[0].messageText, 'ค่าอาหารลูกค้า');
+    assert.ok(h.routeRequests[0].attachments?.[0]?.contentBase64, 'the router sees the picture too');
+    assert.equal(h.ocrRequests.length, 1);
+  });
+
   it("the photo's draft reply is production's card: the link on a button, never raw text with ids", async () => {
     const { prisma } = makePrisma();
     const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true, routePlan: RECEIPT_ROUTE, prisma });
@@ -3039,7 +3079,7 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
   it('two unclear photos: files are named by order and time, buttons send their own words, and a tap picks the right one', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true,
-      routePlans: [UNCLEAR_ROUTE, UNCLEAR_ROUTE], prisma });
+      receiptOcrResults: [UNCLEAR_READ, UNCLEAR_READ], prisma });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
     await h.useCase.executeReceiptUpload(SECOND_PHOTO);
     assert.equal(pendingMediaRows.length, 2, 'the second photo is kept, not dropped');
@@ -3325,14 +3365,39 @@ describe('LINE intake dispatch – buffered caption (message buffering spec §8)
     assert.match(h.replies[0] ?? '', /ระบบรองรับ/);
   });
 
-  it('BUSINESS_READ_QUESTION without caption keeps the media-unsupported reply', async () => {
+  it('BUSINESS_READ_QUESTION without caption keeps the media-unsupported reply (a sender who cannot capture keeps the router)', async () => {
     const h = makeHarness({
-      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      permissions: ['expense.signature.self_manage', 'line.ai.query'],
       routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
     });
     const result = await h.useCase.executeReceiptUpload(MEDIA_EVENT);
     assert.equal(result.outcome, 'done');
     assert.match(h.replies[0] ?? '', /ระบบรองรับ/);
+  });
+});
+
+describe('lineIntakeRouterReason — when a photo still goes through the intake router (UAT 2026-09-29)', () => {
+  const photo = { messageType: 'image' as const, caption: '', canCaptureExpense: true };
+  const open = (value: boolean) => { const calls: number[] = []; return { calls, lookup: async () => { calls.push(1); return value; } }; };
+
+  it('skips the router only for a caption-less photo from someone who can capture, with no substitute work open', async () => {
+    const none = open(false);
+    assert.equal(await lineIntakeRouterReason({ ...photo, substituteWorkOpen: none.lookup }), null);
+    assert.equal(none.calls.length, 1);
+  });
+
+  it('keeps it for a file, a caption, a sender who cannot capture, and open substitute work — in that order', async () => {
+    const unused = open(true);
+    assert.equal(await lineIntakeRouterReason({ ...photo, messageType: 'file', substituteWorkOpen: unused.lookup }), 'file');
+    assert.equal(await lineIntakeRouterReason({ ...photo, caption: 'ค่าอาหาร', substituteWorkOpen: unused.lookup }), 'caption');
+    assert.equal(await lineIntakeRouterReason({ ...photo, canCaptureExpense: false, substituteWorkOpen: unused.lookup }), 'no_capture_permission');
+    assert.equal(unused.calls.length, 0, 'the substitute lookup runs only when it could change the answer');
+    const signature = open(true);
+    assert.equal(await lineIntakeRouterReason({ ...photo, substituteWorkOpen: signature.lookup }), 'substitute_work_open');
+  });
+
+  it('treats a whitespace caption as no caption', async () => {
+    assert.equal(await lineIntakeRouterReason({ ...photo, caption: ' \n ', substituteWorkOpen: async () => false }), null);
   });
 });
 

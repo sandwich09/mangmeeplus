@@ -163,6 +163,9 @@ export class RecoverOrphanLineEventsUseCase {
     const replayBefore = new Date(now - ORPHAN_REPLAY_MAX_AGE_MS);
     for (const row of rows) {
       if (row.deliveryOwnerId?.startsWith('ledger:')) { result.skipped += 1; continue; }
+      // Still queued or mid-turn in this process (a photo behind a slow read passes the 2-minute mark):
+      // replaying it would acknowledge and read it a second time (UAT 2026-09-29).
+      if (this.buffer.holds(row.webhookEventId)) { result.skipped += 1; continue; }
       const envelope = parseBufferEnvelope(row.payloadJson);
       if (!envelope) {
         await this.park(row, 'orphan_unreadable', 'ORPHAN_PAYLOAD_UNREADABLE');

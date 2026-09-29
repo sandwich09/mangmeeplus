@@ -23,7 +23,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { AuditService } from '../../audit/application/audit.service';
 import { LineReplyAdapter, type LineDeliveryResult } from '../infrastructure/line-reply.adapter';
 import { ProcessLineWebhookUseCase } from './use-cases/process-line-webhook.use-case';
-import type { LineTextEvent, LineReceiptUploadEvent } from './use-cases/process-line-webhook.use-case';
+import type { LineTextEvent, LineReceiptUploadEvent, LineMediaTurnOutcome } from './use-cases/process-line-webhook.use-case';
 import { buildLegalAcceptanceRequiredMessage } from '../domain/logic/line-business-card.logic';
 import { hashMessagePreview, parseLineCompanyCommand } from '../domain/logic/line-ai-classifier.logic';
 import { staffMenuCommand } from '../domain/logic/line-staff-menu.logic';
@@ -33,6 +33,7 @@ import {
   debounceCohortMs,
   fittingPrefixCount,
   joinGroupText,
+  lineMediaGroupAckText,
   lineWaitStages,
   nextFlushDelayMs,
   segmentBatch,
@@ -143,6 +144,9 @@ type ChatState = {
 export class LineMessageBufferService implements OnModuleDestroy {
   private readonly logger = new Logger(LineMessageBufferService.name);
   private readonly chats = new Map<string, ChatState>();
+  /** Every event this process still holds in memory: debouncing, queued behind another turn, or mid-turn.
+   *  ponytail: in-process like the rest of this buffer; another instance cannot see it (spec §12). */
+  private readonly held = new Set<string>();
   private seq = 0;
 
   constructor(
@@ -152,6 +156,16 @@ export class LineMessageBufferService implements OnModuleDestroy {
     private readonly lineReply: LineReplyAdapter,
     private readonly processWebhook: ProcessLineWebhookUseCase,
   ) {}
+
+  /** The orphan sweep asks before replaying: a photo queued behind a slow read is not an orphan, and a
+   *  second copy of it would be acknowledged — and read — twice (UAT 2026-09-29). */
+  holds(webhookEventId: string): boolean {
+    return this.held.has(webhookEventId);
+  }
+
+  private release(items: ReadonlyArray<{ webhookEventId: string }>): void {
+    for (const item of items) this.held.delete(item.webhookEventId);
+  }
 
   private timingFor(state: ChatState): LineBufferFlushTiming {
     return {
@@ -257,6 +271,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     } catch (error) {
       // The event row exists but the payload never reached memory. Mark it
       // immediately reclaimable before returning non-2xx to LINE.
+      this.held.delete(envelope.item.webhookEventId);
       await this.prisma.client.lineWebhookEventLog.updateMany({
         where: { webhookEventId: envelope.item.webhookEventId, status: 'received' },
         // LINE gets a non-2xx and redelivers the payload, so the stored copy is dead weight.
@@ -444,6 +459,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       acceptedAt,
       ...(incoming.kind === 'media' && companyId ? { companyIdAtAcceptance: companyId } : {}),
     } as LineBufferItem;
+    this.held.add(item.webhookEventId);
 
     // Deterministic boundary (spec §10): if the open buffer's scheduled flush already lies strictly
     // before this bubble's accepted time, the quiet window elapsed and the open buffer is its own
@@ -619,6 +635,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
   /** Reaching this needs ~40+ bubbles during one in-flight turn — flood, not
    *  normal use. Drop the newest, tell the user once, keep the audit trail. */
   private handleOverflow(state: ChatState, dropped: LineBufferItem[], inputTooLarge = false): void {
+    this.release(dropped);
     const droppedIds = dropped.map((item) => item.webhookEventId);
     void Promise.all(droppedIds.map(async (webhookEventId) => {
       const updated = await this.prisma.client.lineWebhookEventLog.updateMany({
@@ -698,33 +715,42 @@ export class LineMessageBufferService implements OnModuleDestroy {
   ): Promise<void> {
     const items = sortBatchItems(batchItems);
     const groups = segmentBatch(items);
-    // Consume THIS batch's own accept-loading exactly once, before ANY of its groups run — so the
-    // request (and its loading_accepted) is ordered strictly before every final this batch delivers,
-    // and a later batch's loading can never be consumed here.
-    const loading = meta?.loading ?? null;
-    const acceptLoadingShown = loading ? await this.consumeBatchLoading(loading) : false;
-    // Skip the duplicate processing-start loading for the first content turn ONLY when the accept
-    // request was shown AND its spinner is still up. If it was fired while a prior batch was
-    // processing, that batch's final reply has since dismissed the spinner, so re-show it instead.
-    let suppressContentLoading = acceptLoadingShown && !loading?.firedDuringProcessing;
-    for (const group of groups) {
-      const suppressLoading = suppressContentLoading && group.kind !== 'command';
-      if (group.kind !== 'command') suppressContentLoading = false;
-      if (group.kind === 'media' && group.textItems.length === 0) {
-        this.queueMediaGroup(key, state, group, suppressLoading, meta);
-        continue;
+    // Media handed to its own lane is released by that lane; everything else once this batch is done.
+    const laned = new Set<string>();
+    try {
+      // Consume THIS batch's own accept-loading exactly once, before ANY of its groups run — so the
+      // request (and its loading_accepted) is ordered strictly before every final this batch delivers,
+      // and a later batch's loading can never be consumed here.
+      const loading = meta?.loading ?? null;
+      const acceptLoadingShown = loading ? await this.consumeBatchLoading(loading) : false;
+      // Skip the duplicate processing-start loading for the first content turn ONLY when the accept
+      // request was shown AND its spinner is still up. If it was fired while a prior batch was
+      // processing, that batch's final reply has since dismissed the spinner, so re-show it instead.
+      let suppressContentLoading = acceptLoadingShown && !loading?.firedDuringProcessing;
+      for (const group of groups) {
+        const suppressLoading = suppressContentLoading && group.kind !== 'command';
+        if (group.kind !== 'command') suppressContentLoading = false;
+        if (group.kind === 'media' && group.textItems.length === 0) {
+          for (const media of group.mediaItems) laned.add(media.webhookEventId);
+          this.queueMediaGroup(key, state, group, suppressLoading, meta);
+          continue;
+        }
+        try {
+          await this.dispatchGroup(state, group, suppressLoading);
+        } catch (err) {
+          this.logger.error({ msg: 'LINE buffer group dispatch failed', error: (err as Error).message });
+          await this.deliverDispatchFailure(state, group);
+        }
+        this.emitApiTrace(state, group, meta, dequeuedAtMs);
       }
-      try {
-        await this.dispatchGroup(state, group, suppressLoading);
-      } catch (err) {
-        this.logger.error({ msg: 'LINE buffer group dispatch failed', error: (err as Error).message });
-        await this.deliverDispatchFailure(state, group);
-      }
-      this.emitApiTrace(state, group, meta, dequeuedAtMs);
+    } finally {
+      this.release(items.filter((item) => !laned.has(item.webhookEventId)));
     }
   }
 
-  /** Media-only OCR has its own serial lane, so a slow document never freezes normal chat. */
+  /** Media-only OCR has its own serial lane, so a slow document never freezes normal chat. The group is
+   *  acknowledged NOW, not when the lane reaches it: a burst's second photo used to wait silently behind
+   *  the first one's read (UAT 2026-09-29 "ส่งรูปที่ 2 ต่อกันแล้วเงียบไป"). */
   private queueMediaGroup(
     key: string,
     state: ChatState,
@@ -732,6 +758,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     suppressLoading: boolean,
     meta: ChatState['pendingMeta'],
   ): void {
+    const acknowledged = this.acknowledgeMediaGroup(state, group, suppressLoading);
     const previous = state.mediaDrain ?? Promise.resolve();
     let tracked: Promise<void>;
     tracked = previous.catch((err) => {
@@ -739,7 +766,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     }).then(async () => {
       const dequeuedAt = Date.now();
       try {
-        await this.dispatchGroup(state, group, suppressLoading);
+        await this.dispatchGroup(state, group, suppressLoading, acknowledged);
       } catch (err) {
         this.logger.error({ msg: 'LINE media lane dispatch failed', error: (err as Error).message });
         await this.deliverDispatchFailure(state, group);
@@ -749,12 +776,32 @@ export class LineMessageBufferService implements OnModuleDestroy {
       // A fallback-delivery failure must not reject the lane and skip later receipts.
       this.logger.error({ msg: 'LINE media lane recovery failed', error: (err as Error).message });
     }).finally(() => {
+      this.release(group.mediaItems);
       if (state.mediaDrain === tracked) {
         state.mediaDrain = null;
         this.maybeCleanup(key, state);
       }
     });
     state.mediaDrain = tracked;
+  }
+
+  /** One arrival acknowledgement per media group (`lineMediaGroupAckText`), resolving to its settle
+   *  function: every photo's reply settles it first, so no answer can overtake it. A paused assistant
+   *  means support owns the chat, so nothing is acknowledged, as before. Feedback never fails a turn. */
+  private async acknowledgeMediaGroup(
+    state: ChatState,
+    group: Extract<LineBatchGroup, { kind: 'media' }>,
+    suppressLoading: boolean,
+  ): Promise<() => Promise<void>> {
+    try {
+      if (group.mediaItems.some((item) => item.assistantPausedAtAcceptance)
+        || await this.processWebhook.assistantPaused(state.lineUserId)) return async () => {};
+      return await this.startWaitFeedback(state, [{
+        delayMs: 0, text: lineMediaGroupAckText(group.mediaItems.map((item) => item.messageType)),
+      }], suppressLoading);
+    } catch {
+      return async () => {};
+    }
   }
 
   /** Await a batch's accept-loading before its first final, once, and emit loading_accepted on success.
@@ -871,8 +918,14 @@ export class LineMessageBufferService implements OnModuleDestroy {
   }
 
   /** `suppressLoading` is true only for the batch's first content turn when the batch's accept-loading
-   *  was already shown — it then skips the duplicate processing-start loading. */
-  private async dispatchGroup(state: ChatState, group: LineBatchGroup, suppressLoading: boolean): Promise<void> {
+   *  was already shown — it then skips the duplicate processing-start loading. `acknowledged` is a media
+   *  group's arrival acknowledgement when its lane already sent it. */
+  private async dispatchGroup(
+    state: ChatState,
+    group: LineBatchGroup,
+    suppressLoading: boolean,
+    acknowledged?: Promise<() => Promise<void>>,
+  ): Promise<void> {
     if (group.kind === 'command') {
       await this.processWebhook.execute(await this.toTextEvent(state, [group.item]));
       return;
@@ -888,34 +941,53 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // first media turn), remaining media run caption-less and the text gets its
     // own turn afterwards, so the question is still answered (spec §8).
     const caption = joinGroupText(group.textItems);
+    // ONE acknowledgement for the whole group: sent on arrival by the media lane, or here for a captioned
+    // group on the ordered main lane. Each photo's reply settles it first, so it always lands first.
+    const acknowledgement = acknowledged ?? this.acknowledgeMediaGroup(state, group, suppressLoading);
+    const settleAcknowledgement = async () => { await (await acknowledgement)(); };
     let deferText = false;
-    for (let index = 0; index < group.mediaItems.length; index++) {
-      const media = group.mediaItems[index];
-      const assistantPaused = !!media.assistantPausedAtAcceptance
-        || await this.processWebhook.assistantPaused(state.lineUserId);
-      const event = this.toMediaEvent(state, media, assistantPaused);
-      const result = assistantPaused
-        ? await this.processWebhook.executeReceiptUpload(event, deferText ? '' : caption)
-        : await this.withWaitFeedback(
-            state,
-            lineWaitStages({
-              kind: 'media', mediaType: media.messageType, messageText: caption, seed: media.webhookEventId,
-              loadingEnabled: this.config.lineAiLoadingAnimationEnabled,
-              latestAcceptedAt: media.acceptedAt, now: Date.now(),
-            }),
-            (beforeReply) => this.processWebhook.executeReceiptUpload(
-              { ...event, beforeReply }, deferText ? '' : caption,
-            ),
-            // Only the very first media turn can reuse the batch's accept-loading; later turns re-show it.
-            suppressLoading && index === 0,
-          );
-      if (index === 0 && result.outcome === 'defer_text') deferText = true;
-      if (result.outcome === 'locked') {
-        // Review 2026-09-29: one lock card answers the whole batch. Each remaining photo would draw
-        // the same card again, after a "reading your photo" ack for a read that never happens.
-        await this.markBatched([...group.mediaItems.slice(index + 1), ...group.textItems].map((item) => item.webhookEventId));
-        return;
+    try {
+      for (let index = 0; index < group.mediaItems.length; index++) {
+        const media = group.mediaItems[index];
+        let result: LineMediaTurnOutcome;
+        try {
+          const assistantPaused = !!media.assistantPausedAtAcceptance
+            || await this.processWebhook.assistantPaused(state.lineUserId);
+          const event = this.toMediaEvent(state, media, assistantPaused);
+          result = assistantPaused
+            ? await this.processWebhook.executeReceiptUpload(event, deferText ? '' : caption)
+            : await this.withWaitFeedback(
+                state,
+                lineWaitStages({
+                  kind: 'media', mediaType: media.messageType, messageText: caption, seed: media.webhookEventId,
+                  loadingEnabled: this.config.lineAiLoadingAnimationEnabled,
+                  latestAcceptedAt: media.acceptedAt, now: Date.now(),
+                }),
+                (beforeReply) => this.processWebhook.executeReceiptUpload(
+                  { ...event, beforeReply: async () => { await settleAcknowledgement(); await beforeReply(); } },
+                  deferText ? '' : caption,
+                ),
+                // The acknowledgement, or the previous photo's answer, dismissed the spinner: every read
+                // shows it again, so the typing indicator runs until the group's last answer.
+                false,
+              );
+        } catch (err) {
+          // One photo's failure is answered on its own; the rest of the burst is still read (UAT 2026-09-29).
+          this.logger.error({ msg: 'LINE media item dispatch failed', error: (err as Error).message });
+          await settleAcknowledgement();
+          await this.deliverDispatchFailure(state, { kind: 'media', mediaItems: [media], textItems: [] });
+          continue;
+        }
+        if (index === 0 && result.outcome === 'defer_text') deferText = true;
+        if (result.outcome === 'locked') {
+          // Review 2026-09-29: one lock card answers the whole batch. Each remaining photo would draw
+          // the same card again, after a "reading your photo" ack for a read that never happens.
+          await this.markBatched([...group.mediaItems.slice(index + 1), ...group.textItems].map((item) => item.webhookEventId));
+          return;
+        }
       }
+    } finally {
+      await settleAcknowledgement();
     }
     if (deferText && group.textItems.length > 0) {
       await this.dispatchTextTurn(state, group.textItems, false);
@@ -1078,8 +1150,8 @@ export class LineMessageBufferService implements OnModuleDestroy {
       }
     };
 
-    // The stage list is the whole waiting story for this turn (lineWaitStages): the media ack at
-    // delay 0, then at most one delayed status per stage. Final delivery cancels what has not fired.
+    // The stage list is the whole waiting story for this turn (lineWaitStages, or a media group's arrival
+    // ack at delay 0), then at most one delayed status per stage. Final delivery cancels what has not fired.
     for (const stage of stages) {
       if (stage.delayMs === 0) {
         statusDeliveries.push(deliverStatus(stage.text));
