@@ -565,8 +565,12 @@ export function buildPackageRequiredMessage(input: {
   /** R-B2 (b): the `<web>/l/<token>` the lane minted before recording; must be on the web origin
    *  under `/l/`, otherwise the plain tenant link is used. */
   packageUrl?: string;
+  /** The locked shop's own name (brand name preferred), so a reader with several shops knows which
+   *  one this card is about. Absent falls back to the plain, shop-less text. */
+  companyName?: string;
 }): LineReplyMessage {
-  const text = 'น้องมั่งมียังตอบไม่ได้จนกว่าจะเลือกแพ็กเกจค่ะ ข้อมูลทั้งหมดยังอยู่ครบ';
+  const shop = input.companyName?.trim();
+  const text = `${shop ? `🏪 ${shop}\n` : ''}น้องมั่งมียังตอบไม่ได้จนกว่าจะเลือกแพ็กเกจค่ะ ข้อมูลทั้งหมดยังอยู่ครบ`;
   const link = oneTapPackageLink(input.webBaseUrl, input.packageUrl) ?? safeTenantLink(input.webBaseUrl, input.companyId,
     `/companies/${encodeURIComponent(input.companyId)}/billing?channel=line`);
   return {

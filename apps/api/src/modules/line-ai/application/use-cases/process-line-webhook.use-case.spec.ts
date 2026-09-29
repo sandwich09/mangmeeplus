@@ -423,6 +423,9 @@ function makePrisma(opts: {
 	    term?: { termStartAt: Date; termEndsAt: Date; renewCount: number };
 	    /** true = the company is still ACTIVE and only its term has ended. */
 	    activeExpired?: boolean;
+	    /** Review 2026-09-29 (item 2): the shop name the lock card now leads with. Absent = the
+	     *  card's plain, shop-less text, same as every pre-existing test in this file. */
+	    company?: { name: string; brandName?: string | null };
 	  }>;
 	  /** P10-L §15.1: the plan the slip ceiling comes from. Absent = grandfathered unlimited, which is
 	   *  what every pre-existing test in this file is, so none of them change behaviour. */
@@ -543,7 +546,7 @@ function makePrisma(opts: {
           const rows = termExpiredRows.filter((candidate) => (!where.companyId || candidate.companyId === where.companyId)
             && shapes.some((shape: any) => shape.status === (candidate.activeExpired ? 'ACTIVE' : 'DISABLED')));
           const row = args?.orderBy?.createdAt === 'desc' ? rows.at(-1) : rows[0];
-          return row ? { companyId: row.companyId, company: { planTerm: row.term }, roles: row.roles } : null;
+          return row ? { companyId: row.companyId, company: { name: row.company?.name, brandName: row.company?.brandName ?? null, planTerm: row.term }, roles: row.roles } : null;
         },
         // LINE default-branch lookup (Owner 2026-08-27): no assigned branch in this harness.
         findUnique: async () => null,
@@ -2798,6 +2801,32 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.equal(row.errorCode, null, 'a deliberate refusal, not an error');
     });
 
+    // Review 2026-09-29 (item 2): a reader with several shops could not tell which one the lock
+    // card was about. The brand name leads when set, else the legal name.
+    it('leads the lock card with the shop\'s brand name', async () => {
+      const { prisma } = makePrisma({
+        memberships: [],
+        termExpiredMemberships: [{ companyId: 'company-1', term: NO_PACKAGE, company: { name: 'บริษัท ทดสอบ จำกัด', brandName: 'ร้านทดสอบ' } }],
+      });
+      const { useCase, sentMessages } = makeUseCase(prisma, { config: { billingMode: 'test' } });
+
+      await useCase.execute({ ...BASE_EVENT });
+
+      assert.match(sentMessages[0].canonicalText, /^🏪 ร้านทดสอบ\n/);
+    });
+
+    it('falls back to the legal name when the shop has no brand name', async () => {
+      const { prisma } = makePrisma({
+        memberships: [],
+        termExpiredMemberships: [{ companyId: 'company-1', term: NO_PACKAGE, company: { name: 'บริษัท ทดสอบ จำกัด' } }],
+      });
+      const { useCase, sentMessages } = makeUseCase(prisma, { config: { billingMode: 'test' } });
+
+      await useCase.execute({ ...BASE_EVENT });
+
+      assert.match(sentMessages[0].canonicalText, /^🏪 บริษัท ทดสอบ จำกัด\n/);
+    });
+
     it('answers the OWNER of a shop whose term ended BEFORE the sweep ran, with the same card', async () => {
       // The ≤5-minute window: the company is still ACTIVE, only its term has ended. Without this
       // the shop got full assistant turns it had not paid for until the sweep caught up.
@@ -2874,7 +2903,7 @@ describe('ProcessLineWebhookUseCase', () => {
       const a = makeUseCase(onContext.prisma, { config: { billingMode: 'test' } });
       await a.useCase.execute({ ...BASE_EVENT });
       assert.equal(a.sentMessages[0].contents.footer.contents[0].action.uri, 'https://app.example.com/companies/co-old/billing?channel=line');
-      assert.equal(a.sentMessages[0].contents.header.contents[0].text, 'ยังไม่ได้สมัครแพ็กเกจ', 'and in that shop\'s own words');
+      assert.equal(a.sentMessages[0].contents.header.contents[0].text, 'ยังไม่มีแพ็กเกจ', 'and in that shop\'s own words');
 
       const noContext = makePrisma({ memberships: [], termExpiredMemberships: twoLocked });
       const b = makeUseCase(noContext.prisma, { config: { billingMode: 'test' } });

@@ -47,7 +47,7 @@ test('admin opens the resend tool and completes a recipient change through to qu
     await page.setViewportSize({ width: 1512, height: 900 });
     await login(page);
     await page.goto(`/system/billing/companies/${companyId}/invoices/${invoiceId}`);
-    await expect(page.getByText('อีเมลผู้รับเอกสารปัจจุบัน: ยังไม่มี')).toBeVisible();
+    await expect(page.getByText('อีเมลรับเอกสารปัจจุบัน: ยังไม่มี')).toBeVisible();
 
     // Resend: open the form, prove the reason/password fields gate the submit button, then close
     // without submitting (submitting would call Stripe for real).
