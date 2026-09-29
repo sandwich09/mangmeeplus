@@ -729,6 +729,29 @@ const SUBSTITUTE_TARGET_PENDING_TEXT = 'ทำใบรับรองแทน�
 const SUBSTITUTE_TARGET_PENDING_QUESTION = 'ค่าใช้จ่ายที่จะทำใบรับรองแทนใบเสร็จรับเงินให้คือรายการไหน ยอดเท่าไรคะ? เช่น “ค่าวินมอไซค์ 50 บาท”';
 /** RECEIPT-05: how long a pending media-clarify row waits for the customer's answer. */
 const PENDING_MEDIA_TTL_MINUTES = 30;
+/** The words on the pending-file buttons, which are also what the customer's tap sends (no ids, ever). */
+const MEDIA_REPLACE_COMMAND = 'ไฟล์ใหม่แทนเดิม';
+const MEDIA_SUPPLEMENT_COMMAND = 'เก็บทั้งสองไฟล์';
+const MEDIA_SELECT_COMMAND_PATTERN = /^เลือก(?:รูป|ไฟล์)ที่ ?([1-6])$/u;
+const DOCUMENT_QA_CANCEL_COMMAND = 'ยกเลิกอ่านไฟล์';
+
+const THAI_ORDINAL_WORDS: Readonly<Record<string, number>> = { หนึ่ง: 1, สอง: 2, สาม: 3, สี่: 4, ห้า: 5, หก: 6 };
+
+/** "รูปแรก" / "ไฟล์ที่ 2" / "ภาพที่สอง" / "อันล่าสุด" → that file in arrival order; any other text → undefined. */
+function pendingMediaByOrderWords<T>(text: string, ordered: readonly T[]): T | undefined {
+  const match = /(?:รูป|ภาพ|ไฟล์|อัน)(?:(แรก|ล่าสุด|สุดท้าย)|ที่\s*([1-6]|หนึ่ง|สอง|สาม|สี่|ห้า|หก)(?![0-9]))/u.exec(text);
+  if (!match || !ordered.length) return undefined;
+  const index = match[1] === 'แรก' ? 0 : match[1] ? ordered.length - 1 : (Number(match[2]) || THAI_ORDINAL_WORDS[match[2]!]!) - 1;
+  return ordered[index];
+}
+
+/** "รูปที่ 2" / "ไฟล์ที่ 1", optionally with its arrival time — how a pending file is named to the customer. */
+function pendingMediaOrderLabel(row: { mimeType?: string | null; createdAt?: Date }, index: number, withTime = false): string {
+  const label = `${row.mimeType?.startsWith('image/') ? 'รูป' : 'ไฟล์'}ที่ ${index + 1}`;
+  return withTime && row.createdAt instanceof Date
+    ? `${label} (ส่งเมื่อ ${new Intl.DateTimeFormat('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }).format(row.createdAt)} น.)`
+    : label;
+}
 /** Stands in for the request when a picture arrives with no caption — the file IS the ask. */
 const MEDIA_PENDING_REQUEST_TEXT = 'ไฟล์ที่ผู้ใช้ส่งมาโดยยังไม่ได้ระบุคำถาม';
 const PENDING_MEDIA_RESOLUTION = Symbol('pendingMediaResolution');
@@ -3518,9 +3541,16 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async handleDocumentQaControl(event: LineTextEvent): Promise<boolean> {
-    const match = /^\/qa cancel ([A-Za-z0-9_-]{1,128})$/u.exec(event.messageText.trim());
-    const bound = this.boundConversations.get(event); if (!match || !bound) return false;
-    const owner = { ...bound.owner, ownerEpoch: bound.epoch }, job = await this.documentQa.getById(match[1]!).catch(() => null);
+    const text = event.messageText.trim();
+    const match = /^\/qa cancel ([A-Za-z0-9_-]{1,128})$/u.exec(text);
+    const bound = this.boundConversations.get(event); if ((!match && text !== DOCUMENT_QA_CANCEL_COMMAND) || !bound) return false;
+    // The button words name no job: take this chat's latest read that is still pending. None means the
+    // words were ordinary chat, so the turn continues normally.
+    const jobId = match ? match[1]! : (await this.prisma.client.lineIntakePendingMedia.findFirst({ where: { companyId: bound.owner.companyId,
+      userId: bound.owner.userId, status: 'PENDING', readJobId: { not: null }, ...this.pendingMediaBinding(event) },
+      orderBy: { createdAt: 'desc' }, select: { readJobId: true } }))?.readJobId;
+    if (!jobId) return false;
+    const owner = { ...bound.owner, ownerEpoch: bound.epoch }, job = await this.documentQa.getById(jobId).catch(() => null);
     if (!job || job.companyId !== owner.companyId || job.userId !== owner.userId || job.ownerMembershipId !== owner.membershipId
       || job.ownerEpoch !== owner.ownerEpoch || job.messagingChannelId !== owner.messagingChannelId || job.chatKeyHash !== owner.chatKeyHash) {
       await this.deliverReply(event, 'ไม่พบงานอ่านไฟล์นี้ในแชตปัจจุบันค่ะ'); return true;
@@ -3553,31 +3583,43 @@ export class ProcessLineWebhookUseCase {
 
   private async deliverDocumentQaProgress(event: LineTextEvent | LineReceiptUploadEvent, jobId: string, text: string): Promise<void> {
     this.intermediateDeliveries.add(event);
+    // The tap sends the button's own words; `handleDocumentQaControl` finds this chat's running read.
     await this.deliverRequiredMessages(event, [{ type: 'text', text, quickReply: { items: [{ type: 'action',
-      action: { type: 'message', label: 'ยกเลิกอ่านไฟล์', text: `/qa cancel ${jobId}` } }] } }]);
+      action: { type: 'message', label: DOCUMENT_QA_CANCEL_COMMAND, text: DOCUMENT_QA_CANCEL_COMMAND } }] } }]);
   }
 
-  private pendingMediaSelectionMessage(rows: Array<{ attachmentId: string; lineMessageId: string }>): LineReplyMessage {
+  /** Owner 2026-09-29 ("รหัสไฟล์อะไรออกมาไม่รู้ งง"): the customer reads and sends no ids. Files are named by
+   *  order and time, and every button sends the words on it; `handlePendingMediaControl` maps those words
+   *  back to the pending rows in this same order (createdAt ascending), so the ids stay server-side. */
+  private pendingMediaSelectionMessage(rows: Array<{ attachmentId: string; mimeType?: string | null; createdAt?: Date }>): LineReplyMessage {
     const choices = rows.slice(0, 6), a = choices[0], b = choices[1];
-    return { type: 'text', text: `เก็บไฟล์แต่ละไฟล์แยกกันแล้วค่ะ กรุณาเลือกไฟล์ที่จะทำต่อ หรือระบุว่าไฟล์ใหม่แทนหรือเพิ่มเติมไฟล์เดิม ยังไม่ได้อ่านหรือสร้างรายการจากไฟล์ที่ไม่ได้เลือก\n${choices.map((row, i) => `ไฟล์ ${i + 1}: ${row.attachmentId}`).join('\n')}`,
+    const button = (text: string) => ({ type: 'action' as const, action: { type: 'message' as const, label: text, text } });
+    return { type: 'text', text: `เก็บไฟล์แต่ละไฟล์แยกกันแล้วค่ะ กรุณาเลือกไฟล์ที่จะทำต่อ หรือระบุว่าไฟล์ใหม่แทนหรือเพิ่มเติมไฟล์เดิม ยังไม่ได้อ่านหรือสร้างรายการจากไฟล์ที่ไม่ได้เลือก\n${choices.map((row, i) => pendingMediaOrderLabel(row, i, true)).join('\n')}`,
       quickReply: { items: [
-        ...choices.map((row, i) => ({ type: 'action' as const, action: { type: 'message' as const, label: `เลือกไฟล์ ${i + 1}`, text: `/media select ${row.attachmentId}` } })),
-        ...(a && b ? [{ type: 'action' as const, action: { type: 'message' as const, label: 'ไฟล์ใหม่แทนเดิม', text: `/media replace ${a.attachmentId} ${b.attachmentId}` } },
-          { type: 'action' as const, action: { type: 'message' as const, label: 'เก็บทั้งสองไฟล์', text: `/media supplement ${a.attachmentId} ${b.attachmentId}` } }] : []),
+        ...choices.map((row, i) => button(`เลือก${pendingMediaOrderLabel(row, i)}`)),
+        ...(a && b ? [button(MEDIA_REPLACE_COMMAND), button(MEDIA_SUPPLEMENT_COMMAND)] : []),
       ] } };
   }
 
   /** Exact server-rendered controls change only pending attachment selection, never financial records. */
   private async handlePendingMediaControl(event: LineTextEvent): Promise<boolean> {
-    const match = /^\/media (select|replace|supplement) ([A-Za-z0-9_-]{1,128})(?: ([A-Za-z0-9_-]{1,128}))?$/u.exec(event.messageText.trim());
-    const bound = this.boundConversations.get(event); if (!match || !bound) return false;
-    const operation = match[1]!, firstId = match[2]!, secondId = match[3];
-    if (operation === 'select' ? secondId !== undefined : !secondId || secondId === firstId) {
-      await this.deliverReply(event, 'คำสั่งเลือกไฟล์ไม่ครบค่ะ กรุณาเลือกจากปุ่มของไฟล์ปัจจุบัน'); return true;
-    }
+    const text = event.messageText.trim();
+    // Legacy `/media …` quick replies may still sit in a chat; the button words are the current form.
+    const legacy = /^\/media (select|replace|supplement) ([A-Za-z0-9_-]{1,128})(?: ([A-Za-z0-9_-]{1,128}))?$/u.exec(text);
+    const ordinal = MEDIA_SELECT_COMMAND_PATTERN.exec(text);
+    const pair = text === MEDIA_REPLACE_COMMAND ? 'replace' : text === MEDIA_SUPPLEMENT_COMMAND ? 'supplement' : undefined;
+    const bound = this.boundConversations.get(event); if ((!legacy && !ordinal && !pair) || !bound) return false;
     const where = { companyId: bound.owner.companyId, userId: bound.owner.userId, status: 'PENDING' as const,
       expiresAt: { gt: new Date() }, ...this.pendingMediaBinding(event) };
     const rows = await this.prisma.client.lineIntakePendingMedia.findMany({ where, orderBy: { createdAt: 'asc' }, take: 6 });
+    // Button words with nothing pending are ordinary chat, never a control.
+    if (!legacy && !rows.length) return false;
+    const operation = legacy ? legacy[1]! : ordinal ? 'select' : pair!;
+    const firstId = legacy ? legacy[2]! : ordinal ? rows[Number(ordinal[1]) - 1]?.attachmentId ?? '' : rows[0]?.attachmentId ?? '';
+    const secondId = legacy ? legacy[3] : pair ? rows[1]?.attachmentId ?? '' : undefined;
+    if (operation === 'select' ? secondId !== undefined : !secondId || secondId === firstId) {
+      await this.deliverReply(event, 'คำสั่งเลือกไฟล์ไม่ครบค่ะ กรุณาเลือกจากปุ่มของไฟล์ปัจจุบัน'); return true;
+    }
     const a = rows.find(row => row.attachmentId === firstId), b = secondId ? rows.find(row => row.attachmentId === secondId) : undefined;
     if (!a || secondId && !b || rows.some(row => row.readJobId)) {
       await this.deliverReply(event, 'ไฟล์ที่เลือกเปลี่ยนหรือเริ่มอ่านแล้วค่ะ กรุณาส่งคำถามใหม่พร้อมไฟล์ ยังไม่ได้เปลี่ยนไฟล์ของงานเดิม'); return true;
@@ -8074,7 +8116,12 @@ export class ProcessLineWebhookUseCase {
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && Boolean(this.expenseDraftConversation);
     const captionCandidates = computeValueCandidates(normalizeLineText(caption));
-    const routePlan: GovernedLineIntakeRoutePlan = this.boundConversations.has(event) && !caption
+    // UAT 2026-09-29 (owner: "ของเดิมถ่ายรูป หรือ ส่งรูป ก็อ่านได้และสร้างให้ทันที"): a PHOTO is read exactly
+    // as production a2b926c6 reads it — the router sees the picture, then OCR, the deterministic expense
+    // gate and the draft — in a bound (v2) conversation too. Only a `file` (PDF/document) keeps v2.4's
+    // no-implicit-capture lane (063b7f2a): no caption, no capture authority, ask what the file is for.
+    const v2DocumentFile = this.boundConversations.has(event) && event.messageType === 'file';
+    const routePlan: GovernedLineIntakeRoutePlan = v2DocumentFile && !caption
       ? { status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0 }
       : qaRoute?.route ?? await this.tryRouteIntake({
       requestId,
@@ -8148,12 +8195,13 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    // v2 media is not financial authority. An empty/ambiguous/read-only caption must keep its
-    // bytes pending, even when the sender has expense permission and the file is a PDF.
+    // A v2 FILE is not financial authority: an empty/ambiguous/read-only caption keeps its bytes pending,
+    // even when the sender has expense permission. A photo takes production's gates below instead — only
+    // an EXPENSE_DOCUMENT_CAPTURE route whose OCR passes the deterministic expense gate becomes a draft.
     const v2CaptureAuthorized = !!caption && routePlan.status === 'ROUTED'
       && routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE'
       && routePlan.semanticSubrequests?.some(item => item.kind === 'write' && item.writeIntent === 'EXPENSE_DOCUMENT_CAPTURE');
-    const v2NeedsCaptureClarification = this.boundConversations.has(event) && !v2CaptureAuthorized
+    const v2NeedsCaptureClarification = v2DocumentFile && !v2CaptureAuthorized
       && routePlan.intent !== 'MUTATION_REQUEST_REFUSAL';
     if (v2NeedsCaptureClarification || (routePlan.status === 'ROUTED' && routePlan.intent === 'CLARIFY')) {
       const clarifyReply = routePlan.clarifyQuestion ?? (v2NeedsCaptureClarification
@@ -9395,10 +9443,15 @@ ${link}`, ctx.companyId, access);
       typeof item.requestedFilters.attachmentId === 'string' && event.messageText.includes(item.requestedFilters.attachmentId) ? [item.requestedFilters.attachmentId] : []));
     const chosen = candidates.filter(row => (row.askedQuestionJson as { selectedForContinuation?: boolean } | null)?.selectedForContinuation === true);
     const selectedIds = chosen.length === 1 ? (chosen[0]!.askedQuestionJson as { selectedAttachmentIds?: string[] }).selectedAttachmentIds ?? [] : [];
+    // Owner 2026-09-29: a file is picked by order or time ("รูปแรก", "ไฟล์ที่ 2", "รูปล่าสุด"), never by a code.
+    const ordered = [...candidates].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    const byOrder = pendingMediaByOrderWords(event.messageText, ordered);
     const selected = requestedIds.size ? candidates.filter(row => requestedIds.has(row.attachmentId))
+      : byOrder ? [byOrder]
       : selectedIds.length ? candidates.filter(row => selectedIds.includes(row.attachmentId)) : candidates.length === 1 ? candidates : [];
-    if (!selected.length || selected.length > 5 || requestedIds.size && selected.length !== requestedIds.size || !requestedIds.size && selectedIds.length > 0 && selected.length !== selectedIds.length) {
-      await this.deliverReply(event, `มีไฟล์ก่อนหน้าหลายไฟล์ค่ะ กรุณาระบุรหัสไฟล์ที่ต้องการอ่าน ไม่ได้เลือกไฟล์ล่าสุดแทนให้\n${candidates.map(row => row.attachmentId).join('\n')}`);
+    if (!selected.length || selected.length > 5 || requestedIds.size && selected.length !== requestedIds.size
+      || !requestedIds.size && !byOrder && selectedIds.length > 0 && selected.length !== selectedIds.length) {
+      await this.deliverReply(event, `มีไฟล์ก่อนหน้าหลายไฟล์ค่ะ กรุณาบอกว่าหมายถึงไฟล์ไหน เช่น "${pendingMediaOrderLabel(ordered[0]!, 0)}" ไม่ได้เลือกไฟล์ล่าสุดแทนให้\n${ordered.map((row, i) => pendingMediaOrderLabel(row, i, true)).join('\n')}`);
       await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, bound.owner.companyId); return true;
     }
     const values = await this.textValueCandidates(event, event.messageText);
@@ -9417,7 +9470,7 @@ ${link}`, ctx.companyId, access);
         && (!item.requestedFilters.attachmentId || item.requestedFilters.attachmentId === row.attachmentId))?.requestedFilters.page;
       if (requestedPage !== undefined && (!Number.isSafeInteger(requestedPage) || Number(requestedPage) < 1 || Number(requestedPage) > 20
         || !values?.amounts.some(candidate => candidate.value === String(requestedPage)))) {
-        await this.deliverReply(event, `เลขหน้าที่ขอสำหรับไฟล์ ${row.attachmentId} ไม่ถูกต้อง กรุณาระบุหน้า 1 ถึง 20 ค่ะ`); return true;
+        await this.deliverReply(event, `เลขหน้าที่ขอสำหรับ${pendingMediaOrderLabel(row, ordered.indexOf(row))} ไม่ถูกต้อง กรุณาระบุหน้า 1 ถึง 20 ค่ะ`); return true;
       }
       attachments.push({ attachmentId: row.attachmentId, requestedPages: requestedPage === undefined ? source.requestedPages : [Number(requestedPage)] });
     }
@@ -9478,7 +9531,11 @@ ${link}`, ctx.companyId, access);
     }
     const result = parseLineDocumentQaResult(job.resultJson); if (!result) return false;
     this.documentQaDelivery.set(event, job);
-    const failed = result.coverage.failed.map(page => `ไฟล์ ${page.attachmentId} หน้า ${page.page}: ${page.code}`).join('\n');
+    // Owner 2026-09-29: files by their order in this read, never an attachment id or a reader code. The
+    // failed-page wording is the one sendMessagesV2 matches, so the delivery plan never repeats it.
+    const readOrder = [...new Set(result.coverage.requested.map(page => page.attachmentId))];
+    const fileOrdinal = (attachmentId: string) => readOrder.includes(attachmentId) ? ` ลำดับที่ ${readOrder.indexOf(attachmentId) + 1}` : '';
+    const failed = result.coverage.failed.map(page => `ยังอ่านเอกสารแนบ${fileOrdinal(page.attachmentId)} หน้า ${page.page} ไม่สำเร็จ`).join('\n');
     const coverage = inventory.map(item => {
       const answer = result.questionCoverage?.find(answer => answer.subrequestIndex === item.index);
       return item.kind === 'file' && answer?.status === 'answered'
@@ -9488,7 +9545,7 @@ ${link}`, ctx.companyId, access);
     if (coverage.length) this.semanticDelivery.set(event, coverage);
     const remaining = inventory.filter(item => coverage.find(entry => entry.index === item.index)?.status === 'needs_user');
     const notice = remaining.length ? `\n\nยังตอบได้ไม่ครบทุกส่วน ส่วนที่ยังรอ: ${remaining.map(item => item.goal).join(' / ')} กรุณาเลือกถามต่อได้ค่ะ` : '';
-    const text = `${result.answer}\n\nแหล่งคำตอบ: ${result.answerPageRefs.map(ref => `ไฟล์ ${ref.attachmentId} หน้า ${ref.page}`).join(', ')}\nอ่าน ${result.coverage.read.length}/${result.coverage.requested.length} หน้า${failed ? `\nหน้าที่ยังอ่านไม่ได้\n${failed}` : ''}${notice}`;
+    const text = `${result.answer}\n\nแหล่งคำตอบ: ${result.answerPageRefs.map(ref => `เอกสารแนบ${fileOrdinal(ref.attachmentId)} หน้า ${ref.page}`).join(', ')}\nอ่าน ${result.coverage.read.length}/${result.coverage.requested.length} หน้า${failed ? `\nหน้าที่ยังอ่านไม่ได้\n${failed}` : ''}${notice}`;
     const delivery = await this.deliverMessages(event, [{ type: 'text', text }]);
     if (delivery !== 'ok') return false;
     if (coverage.length) await this.settleSemanticTask(event as LineTextEvent, coverage);
@@ -9578,7 +9635,10 @@ ${link}`, ctx.companyId, access);
       attachmentId: intent.attachmentId, checksumSha256: media.checksumSha256, byteSize: media.byteSize,
     });
     const pending = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key });
-    if (open && pending && this.boundConversations.has(event)) this.pendingMediaNotices.set(event, this.pendingMediaSelectionMessage([open, pending]));
+    // Rendered from the SAME ordered query `handlePendingMediaControl` resolves the tapped words against.
+    if (open && pending && this.boundConversations.has(event)) this.pendingMediaNotices.set(event, this.pendingMediaSelectionMessage(
+      await this.prisma.client.lineIntakePendingMedia.findMany({ where: { companyId, userId, status: 'PENDING', expiresAt: { gt: new Date() }, ...binding },
+        orderBy: { createdAt: 'asc' }, take: 6 })));
     return { created: true, ...(pending ? { pending } : {}) };
   }
 
