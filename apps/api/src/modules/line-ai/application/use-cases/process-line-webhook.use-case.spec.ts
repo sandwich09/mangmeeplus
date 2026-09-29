@@ -1,6 +1,7 @@
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
+import { ForbiddenException } from '@nestjs/common';
 import assert from 'node:assert/strict';
 import { canAdvertiseReceiptCapture, createLineAiInputEvidence, LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
 import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, lineIntakeOfferedToolNames, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages, validLineAiReadMemoryEntries } from './process-line-webhook.use-case';
@@ -7876,4 +7877,54 @@ it('receipt card shows nonzero accepted taxes without publishing contradictory O
   assert.match(both, /VAT – 70.00 บาท/);
   assert.match(both, /WHT – 30.00 บาท/);
   assert.doesNotMatch(both, /ยอดจ่ายสุทธิ/);
+});
+
+describe('LINE: ถามส่วนลด (sales-event spec §8.1, Owner UAT 2026-09-29)', () => {
+  const view = { path: 'DISCOUNT' as const, block: null, tickets: [{ serial: 'MHFVR743', eventName: 'event1', discountSatang: 10_000, chatCreditUnits: 0,
+    receiptImageUnits: 0, expiresAt: '2026-10-30T16:59:59.000Z', state: 'AVAILABLE' as const, batchSuspended: false }] };
+  function discountLane(billing: { lineEventDiscount: (context: any) => Promise<any> }) {
+    const { prisma } = makePrisma();
+    const reads: any[] = [];
+    const h = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.receipt.line_upload', 'expense.update'], roles: ['OWNER'],
+      // A receipt draft is open in this chat: none of its lanes, nor the router or a model, may take the question.
+      expenseDraftConversation: new Proxy({}, { get: () => () => assert.fail('the draft lane must not see a มั่งมี discount question') }),
+      intakeRouteFn: () => assert.fail('a มั่งมี discount question is not routed'),
+      aiGatewayFn: () => assert.fail('a มั่งมี discount question is not a model turn'),
+    });
+    (h.useCase as any).billing = { lineEventDiscount: async (context: any) => { reads.push(context); return billing.lineEventDiscount(context); } };
+    return { ...h, reads, prisma };
+  }
+
+  for (const text of ['ส่วนลด', 'ส่วนลดค่ามั่งมี', 'ก็ส่วนลดค่ามั่งมีไง', 'ฉันมีส่วนลดไหม']) {
+    it(`"${text}" right after a receipt draft gets the ส่วนลดจากงาน card from the owner-only billing read`, async () => {
+      const h = discountLane({ lineEventDiscount: async () => view });
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-discount-${text}`, messageText: text });
+      assert.equal(h.reads.length, 1);
+      assert.deepEqual([h.reads[0].userId, h.reads[0].companyId, h.reads[0].authProvider], ['user-1', 'company-1', 'line']);
+      const card = h.sentMessages[0];
+      assert.equal(card.type, 'flex');
+      assert.match(card.contents.body.contents[1].text, /ส่วนลดจากงาน event1 · ลดบิลแรก 100 บาท · ใช้ได้ถึง 30 ต.ค. 2569/);
+      assert.deepEqual(card.contents.footer.contents[0].action, { type: 'uri', label: 'เลือกแพ็กเกจ',
+        uri: 'https://app.example.com/companies/company-1/billing?channel=line' });
+      assert.equal(h.getAiGatewayCalled(), false);
+    });
+  }
+
+  it('"ส่วนลดในบิลนี้" stays with the receipt flow: no billing read, no discount card', async () => {
+    const h = discountLane({ lineEventDiscount: async () => assert.fail('a bill discount is not a มั่งมี discount') });
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-on-bill', messageText: 'ส่วนลดในบิลนี้' }).catch(() => undefined);
+    assert.equal(h.reads.length, 0);
+    assert.doesNotMatch(JSON.stringify(h.sentMessages), /ส่วนลดจากงาน/);
+  });
+
+  it('someone who cannot choose the package is told who asks; the package button needs a shop that can use it now', async () => {
+    const member = discountLane({ lineEventDiscount: async () => { throw new ForbiddenException('ต้องได้รับสิทธิ์จัดการแพ็กเกจบริษัท'); } });
+    await member.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-member', messageText: 'ส่วนลดค่ามั่งมี' });
+    assert.equal(member.replies[0], 'ส่วนลดจากงานใช้ตอนซื้อแพ็กเกจของร้าน เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจสอบถามในแชทนี้ได้เลยค่ะ');
+    const paying = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'CREDIT' }) });
+    await paying.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-paying', messageText: 'ส่วนลด' });
+    assert.match(paying.sentMessages[0].contents.body.contents[1].text, /ร้านนี้มีแพ็กเกจอยู่แล้ว/);
+    assert.equal(paying.sentMessages[0].contents.footer, undefined);
+  });
 });

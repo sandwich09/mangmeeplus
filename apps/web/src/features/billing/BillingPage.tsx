@@ -17,7 +17,7 @@ import BillingCollectionPanel from './BillingCollectionPanel';
 import BillingCapacityPicker from './BillingCapacityPicker';
 import {BILLING_RECIPIENT_WAIT_TEXT, billingMonthlyAllowanceText, billingBackControl, billingControl, billingPrimaryControl, billingPurchaseModeLabel, billingRecipientLocked, billingSupportReference} from './billing-display';
 import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels, dealRenewalText } from './billing-deal';
-import { eventDiscountBlockedText, eventDiscountCard, eventDiscountCardText, eventDiscountHelpText, eventDiscountMode, eventDiscountOneTimeOnlyText, eventDiscountUsable, eventDiscountUseLabel, type EventDiscountChoice } from './billing-event-discount';
+import { eventDiscountBlockedText, eventDiscountCard, eventDiscountCardText, eventDiscountHeldNotice, eventDiscountHelpText, eventDiscountMode, eventDiscountOneTimeOnlyText, eventDiscountUsable, eventDiscountUseLabel, type EventDiscountChoice } from './billing-event-discount';
 import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
 const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(satang / 100);
@@ -93,6 +93,13 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const [quote, setQuote] = useState<BillingQuote | null>(null), [accepted, setAccepted] = useState(false);
   // Sales-event spec §4.3: "ใช้" is chosen for the buyer; the choice belongs to this purchase only.
   const [eventChoice, setEventChoice] = useState<EventDiscountChoice>('USE');
+  // Spec §8.1: the holder's tickets when this shop is not starting a package (owner-only read; refused = no line).
+  const [heldDiscount, setHeldDiscount] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.eventDiscount().then(view => { if (live) setHeldDiscount(eventDiscountHeldNotice(view)); }, () => { if (live) setHeldDiscount(null); });
+    return () => { live = false; };
+  }, [api, reload]);
   const [capacity, setCapacity] = useState<{ options: BillingCapacityOptions; billingEmail: string; scheduledAt?: string; repair?: { attemptId: string; attemptVersion: number }; key: string; initialSelection?: BillingCapacitySelection } | null>(null);
   const capacityDraft = useRef<(NonNullable<typeof capacity> & { collectionId?: string }) | null>(null);  const [capacityNotice, setCapacityNotice] = useState('');
   const [timedOut, setTimedOut] = useState(false);
@@ -396,6 +403,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           onClick={() => setSection(value)} className={`min-h-12 flex-1 border-b-2 px-2 py-3 text-sm font-semibold sm:flex-none sm:px-5 sm:text-base ${section === value ? 'border-brand-600 text-brand-700' : 'border-transparent text-gray-600 hover:text-brand-700'}`}>{label}</button>)}
       </nav>
       {showOverview && <>
+      {heldDiscount && <p role="note" className="break-words rounded-xl border border-brand-200 bg-brand-50 p-4 text-sm leading-7">{heldDiscount}</p>}
       {status.allowedActions.includes('new_sales') && !!status.billingProfile?.missingFields.length && <p role="note" className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm leading-7 text-gray-700">
         เอกสารจะออกในชื่อ <strong className="break-words">{status.billingProfile.name || status.companyName}</strong> · ที่อยู่กรอกได้ที่หน้าชำระเงิน{canOpenProfile && <> หรือ <Link className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" href={`/companies/${encodeURIComponent(companyId)}/settings/profile#shop`}>เติมล่วงหน้าที่ข้อมูลร้าน</Link></>}
       </p>}

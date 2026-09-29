@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "8b535ae6f1bd013f1c1b978d89d469eb0c7e24a5",
-  "checkoutBranch": "claude/sales-credit-integration-20260929",
+  "sourceRevision": "4792c4c31e980fce6653c1a2d4ed685ed48abe64",
+  "checkoutBranch": "claude/line-discount-answer-20260929",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "cffa3a06913c9c6e9a4d2d917e676dbde6e9b04b52ff2c22e6e124749851a698"
+      "sha256": "55dd62ce50ef10c12fcb7e2d9159543a9624c0f9a8bd56e255180f523e73ed73"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -121,7 +121,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
-      "sha256": "8a2af85b12b74e5b9653b4084947fbc471039b5bb47eea17d4dd181a55b68328"
+      "sha256": "0d3d4b30ca842eb1a8d9b1e7dd2714c230650d9923469ad06624ac3f49a593d1"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-ai-budget.controller.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T07:29:24.724Z",
-  "manifestDigest": "20796c31824760ea089293c53c52e0e9c824a52bf9d2e0621cd210f517ebf859"
+  "generatedAt": "2026-09-29T08:12:49.039Z",
+  "manifestDigest": "85336d1199b7ca892690cdfbb32b2f7f4dee3be9746de98afc9c07d0182029dd"
 }
