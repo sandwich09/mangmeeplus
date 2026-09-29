@@ -205,6 +205,11 @@ export type ScopePolicyOverride = {
  * limit copy — but an approve/pay/confirm/void request or a read-only capture request is
  * intercepted regardless of kind, since the eval evidence showed the model classify both of those
  * inconsistently (sometimes 'general', sometimes 'write', sometimes 'help').
+ * Owner 2026-09-29 ("ต้องคุยได้ เป็นความรู้ทั่วไป"): a package limits THIS company's records, never a
+ * topic, so a 'general' clause ("รายได้เท่าไหร่ต้องจด VAT", "กำไรขั้นต้นคืออะไร", "เงินเดือนหัก
+ * ประกันสังคมกี่เปอร์เซ็นต์") is exempt too — the composer answers it from general knowledge. The
+ * intake router files a question about the company's own figures in an unsold module as 'read' (an
+ * issuing request as 'write'), which this check still blocks.
  */
 export function scopePolicyOverride(
   text: string,
@@ -217,7 +222,7 @@ export function scopePolicyOverride(
   if (lineAction) return { reasonCode: 'LINE_ACTION_NOT_SUPPORTED', text: lineAction };
   const readOnly = readOnlyCaptureReplyText(text, permissions, language);
   if (readOnly) return { reasonCode: 'READONLY_ROLE_CANNOT_CREATE', text: readOnly };
-  if (kind !== 'help') {
+  if (kind !== 'help' && kind !== 'general') {
     const topic = unsoldModuleTopicFor(text);
     if (topic && !moduleFeatureEnabled(topic.featureKey, entitledFeatureKeys)) {
       return { reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED', text: unsoldModuleReplyText(topic, language) };
