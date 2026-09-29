@@ -114,6 +114,15 @@ export const TH_SME_EXPENSE_CATEGORIES_V1: readonly ExpenseCategoryTemplateRow[]
   },
 ];
 
+/**
+ * The categories an AI reader may pick from. The catch-all's own tax note above says a person must
+ * choose it, so it is never offered: "ซื้อของ 500" stays uncategorised and the draft asks, instead
+ * of the model filing it under เบ็ดเตล็ด (Owner 2026-09-29). A person can still pick it anywhere.
+ */
+export function aiSelectableExpenseCategories<T extends { accountHintKey: string }>(categories: readonly T[]): T[] {
+  return categories.filter((category) => category.accountHintKey !== 'expense.miscellaneous');
+}
+
 export type ExpenseCategoryBootstrapSummary = {
   templateKey: string;
   categoryCount: number;

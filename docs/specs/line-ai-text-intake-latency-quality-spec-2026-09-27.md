@@ -143,7 +143,10 @@ The pre-intake snapshot contains only the bounded read-only state needed to clas
 - `taskProjection` with owner-bound lifecycle epoch and task revisions;
 - `responsePreferences` when already enabled;
 - deterministic value/date/period candidates from accepted evidence;
-- bounded current pending-task/file metadata already present in owner/revisioned state.
+- bounded current pending-task/file metadata already present in owner/revisioned state;
+- for an actor who may create an expense draft (`expense.receipt.line_upload`, `expense.receipt.upload` or `expense.create`), the company's active expense-category catalogue (id and name only), because the capture-hint contract may name a category only from `activeCategories` in this one call; a question-only actor gets none and no expense read happens. The template catch-all (`expense.miscellaneous`, ค่าใช้จ่ายเบ็ดเตล็ด) is left out: its own template note says a person chooses it, so the AI never files a vague note there.
+
+Amendment 2026-09-29 (UAT): the v2 implementation had dropped the catalogue from bound private turns, so every LINE text note and one-pass receipt was saved uncategorised; this bullet restores it. The catalogue is company configuration, not a transaction row, and group/room lanes keep their existing zero-private-prefetch rule.
 
 Private ERP correction candidates, active expense records and other source-specific enrichment load only after the semantic route requires that source and only through their existing permission/scope checks. A general question must not prefetch those records. Where a write/correction needs source-specific selection that was not in the pre-intake snapshot, the existing domain path resolves it from current state or asks; it must not guess or make a second intake call.
 
