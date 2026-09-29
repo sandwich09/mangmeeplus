@@ -309,7 +309,7 @@ export class AiGatewayClient {
 
   async requestReceiptOcr(
     request: ReceiptOcrRequest,
-    options: { ocrAlreadyAdmitted?: boolean; admissionIdentity?: CompanyOcrAdmissionIdentity; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void; busyWaitDeadlineMs?: number } = {},
+    options: { ocrAlreadyAdmitted?: boolean; admissionIdentity?: CompanyOcrAdmissionIdentity; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void; busyWaitDeadlineMs?: number; retryWebhookEventId?: string } = {},
   ): Promise<ReceiptOcrResponse> {
     const companyId = request.companyId;
     await this.assertRateLimit('ocr', companyId);
@@ -346,7 +346,7 @@ export class AiGatewayClient {
   private async requestReceiptOcrAdmitted(
     request: ReceiptOcrRequest,
     budgetMonthKey?: string,
-    options: { ocrAlreadyAdmitted?: boolean; admissionIdentity?: CompanyOcrAdmissionIdentity; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void } = {},
+    options: { ocrAlreadyAdmitted?: boolean; admissionIdentity?: CompanyOcrAdmissionIdentity; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void; retryWebhookEventId?: string } = {},
     hold?: ReservedAiBudgetStep,
   ): Promise<ReceiptOcrResponse> {
     let identity = options.admissionIdentity;
@@ -357,6 +357,8 @@ export class AiGatewayClient {
         // LINE can redeliver one media message under a new webhook/request id. The attachment id is
         // the provider input identity, so it is the durable request fence and never burns quota twice.
         requestId: request.attachment.id,
+        // A LINE photo read without the intake router is admitted here, so its crash replay resumes here.
+        ...(options.retryWebhookEventId ? { retryWebhookEventId: options.retryWebhookEventId } : {}),
         monthKey: budgetMonthKey,
         enforceReceiptQuota: this.config.receiptQuotaEnforced,
         singlePageImage: isSinglePageReceiptImage(request.attachment.mimeType),

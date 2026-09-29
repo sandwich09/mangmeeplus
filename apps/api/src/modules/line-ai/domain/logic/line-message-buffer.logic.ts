@@ -120,15 +120,31 @@ export function lineWaitStatusText(messageText: string, turnSeed = messageText):
 export type LineWaitStage = { delayMs: number; text: string };
 
 /**
+ * The ONE arrival acknowledgement for a media group (UAT 2026-09-29 "ส่งรูปที่ 2 ต่อกันแล้วเงียบไป": each
+ * photo used to be acknowledged only when its own read started, so the second photo of a burst sat
+ * unanswered until the first was done). One photo or one file keeps its sentence; a burst names its
+ * count and promises every answer in order — without the one-minute figure a queue of reads cannot keep.
+ */
+export function lineMediaGroupAckText(mediaTypes: ReadonlyArray<'image' | 'file'>): string {
+  const photos = mediaTypes.filter((type) => type === 'image').length;
+  const files = mediaTypes.length - photos;
+  if (mediaTypes.length <= 1) return files ? LINE_FILE_RECEIVED_TEXT : LINE_MEDIA_RECEIVED_TEXT;
+  if (!files) return `ได้รับรูปแล้ว ${photos} รูปค่ะ 🧾 น้องจะอ่านให้ทีละรูปตามลำดับ แล้วสรุปให้ครบทุกรูปนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ`;
+  if (!photos) return `ได้รับไฟล์แล้ว ${files} ไฟล์ค่ะ 📄 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้ครบทุกไฟล์นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ`;
+  return `ได้รับรูป ${photos} รูปและไฟล์ ${files} ไฟล์แล้วค่ะ 🧾 น้องจะอ่านให้ทีละรายการ แล้วสรุปให้ครบทุกรายการในแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ`;
+}
+
+/**
  * Waiting ladder for one dispatched turn (latency spec §10). With the spinner on, quick text turns
  * stay bubble-free (Owner 2026-08-27 "ลดข้อความซ้อน") and only a genuinely slow turn gets ONE status
  * before the 60 s loading window lapses; with the spinner off, the topic status at 5 s is the only
- * early "working" signal and the slow status still follows. Media turns acknowledge immediately in
- * both modes. Text delays anchor to the last bubble's durable acceptance, not processing start.
+ * early "working" signal and the slow status still follows. A media GROUP acknowledges once, on arrival
+ * (`lineMediaGroupAckText`), so its turns keep only the slow-read nudge. Text delays anchor to the last
+ * bubble's durable acceptance, not processing start.
  */
 export function lineWaitStages(input: {
   kind: 'text' | 'media';
-  /** What the customer actually sent, so the ack says ไฟล์ for a file and รูป for a photo. */
+  /** A file's read is async and finishes with its own push, so a file turn has no slow nudge. */
   mediaType?: 'image' | 'file';
   messageText: string;
   seed: string;
@@ -137,14 +153,9 @@ export function lineWaitStages(input: {
   now: number;
 }): LineWaitStage[] {
   if (input.kind === 'media') {
-    // A file's read is async and finishes with its own push, so the slow-turn nudge — written for a
-    // photo the customer is watching for — would be a second promise nobody is waiting on.
-    return input.mediaType === 'file'
-      ? [{ delayMs: 0, text: LINE_FILE_RECEIVED_TEXT }]
-      : [
-        { delayMs: 0, text: LINE_MEDIA_RECEIVED_TEXT },
-        { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_MEDIA_SLOW_STATUS_TEXT },
-      ];
+    // The slow-turn nudge is written for a photo the customer is watching for; for a file it would be
+    // a second promise nobody is waiting on.
+    return input.mediaType === 'file' ? [] : [{ delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_MEDIA_SLOW_STATUS_TEXT }];
   }
   const anchored = (delayMs: number) => Math.max(0, input.latestAcceptedAt + delayMs - input.now);
   const slowStage = { delayMs: anchored(LINE_WAIT_STATUS_SLOW_DELAY_MS), text: LINE_SLOW_TURN_STATUS_TEXT };

@@ -368,7 +368,7 @@ describe('expense capture foundation on PostgreSQL', { skip: !databaseUrl }, () 
     const sweep = new RecoverOrphanLineEventsUseCase(
       prisma, { aiDataRetentionDays: 90, expenseCaptureRetentionDays: 90, lineAiTerminalOutcomeReplayEnabled: false } as never,
       { log: async (entry: Record<string, unknown>) => { audits.push(entry); } } as never,
-      { enqueue: async () => {} } as never, { sendPush: async () => 'ok' } as never,
+      { enqueue: async () => {}, holds: () => false } as never, { sendPush: async () => 'ok' } as never,
     );
     (sweep as unknown as Record<string, unknown>).attachments = new PrismaAttachmentRepository(prisma);
     (sweep as unknown as Record<string, unknown>).capture = capture;

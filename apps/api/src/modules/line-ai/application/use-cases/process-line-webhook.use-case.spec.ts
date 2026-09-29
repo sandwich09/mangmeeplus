@@ -963,9 +963,11 @@ describe('AP22 live actor delivery fence', () => {
       };
       const h = makeUseCase(prisma, {
         permissions: ['line.ai.query', 'expense.receipt.line_upload', 'expense.read_own'],
-        intakeRouteFn: () => {
-          if (lane === 'media') { revoke(); return { status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 1 }; }
-          return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 };
+        intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 }),
+        // A caption-less photo's model work is the receipt reader (UAT 2026-09-29: no router call).
+        receiptOcrFn: () => {
+          revoke();
+          return { status: 'ok', classification: receiptClassification('120.00'), fields: { grandTotalAmount: '120.00', vendorName: 'ร้านทดสอบ' } };
         },
         aiGatewayFn: () => {
           revoke();
@@ -982,7 +984,7 @@ describe('AP22 live actor delivery fence', () => {
           byteSize: JPEG_BYTES.byteLength, checksumSha256: 'synthetic-fence-image', bytes: JPEG_BYTES, contentBase64: JPEG_BYTES.toString('base64') }) });
         await h.useCase.executeReceiptUpload({ ...BASE_EVENT, webhookEventId: `fence-${lane}-${change}`, lineMessageId: `image-${change}`, messageType: 'image' });
       }
-      assert.equal(h.intakeRequests.length, 1);
+      assert.equal(h.intakeRequests.length, lane === 'text' ? 1 : 0);
       assert.equal(h.aiGatewayRequests.length, lane === 'text' ? 1 : 0);
       assert.match(h.replies.join('\n'), /สิทธิ์หรือร้านที่เลือกเปลี่ยน/);
       assert.doesNotMatch(JSON.stringify(h.sentMessages), /987654|companies\/|handoff/);
@@ -3991,10 +3993,8 @@ describe('ProcessLineWebhookUseCase', () => {
     };
     const { useCase, replies, sentMessages } = makeUseCase(prisma, {
       permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create'],
-      intakeRouteFn: () => ({
-        status: 'ROUTED', intent: 'BUSINESS_DOCUMENT_REFERENCE', language: 'th', confidence: 0.98,
-        documentClassification: checkBillClassification,
-      }),
+      // UAT 2026-09-29: a caption-less bill skips the router; the reader alone calls it a check bill.
+      intakeRouteFn: () => assert.fail('a caption-less check bill is read without the intake router'),
       receiptOcrFn: () => ({
         status: 'ok', classification: checkBillClassification,
         fields: { grandTotalAmount: '2883.65', vendorName: 'Grand Lobby Bar' },
@@ -4003,7 +4003,7 @@ describe('ProcessLineWebhookUseCase', () => {
       completeReceiptUpload: { execute: async () => undefined },
       createUploadIntent: { execute: async () => ({ attachmentId: 'att-check', uploadUrl: 'https://upload', uploadMethod: 'PUT' }) },
       completeAttachmentUpload: { execute: async () => undefined },
-      substituteReceiptContinuation: {},
+      substituteReceiptContinuation: { loadOpenMediaContext: async () => undefined },
     });
     (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
       fileName: 'check-bill.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
@@ -4170,7 +4170,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(receiptIntents, 1, 'the expense capture the router asked for must still happen');
   });
 
-  it('uses a gateway-validated one-pass receipt without calling or reserving the receipt OCR step', async () => {
+  it('uses a gateway-validated one-pass receipt without calling or reserving the receipt OCR step (a captioned photo keeps the router)', async () => {
     const { prisma } = makePrisma();
     let receiptOcrCalls = 0;
     let receiptIntents = 0;
@@ -4198,7 +4198,7 @@ describe('ProcessLineWebhookUseCase', () => {
     await useCase.executeReceiptUpload({
       webhookEventId: 'evt-one-pass', lineUserId: 'line-user-secret', replyToken: 'reply-one-pass',
       lineMessageId: 'line-msg-one-pass', messageType: 'image', messagingChannelId: 'msg-channel-1',
-    });
+    }, 'ค่ากาแฟ');
 
     assert.equal(receiptOcrCalls, 0, 'no second gateway step means no second money reservation or provider call');
     assert.equal(receiptIntents, 1, 'the validated fields still enter the existing reviewed receipt workflow');
@@ -4216,6 +4216,8 @@ describe('ProcessLineWebhookUseCase', () => {
       status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
       errorCode: 'ROUTER_UNREACHABLE', ocrAdmission: 'denied', ocrErrorCode: 'RECEIPT_QUOTA_EXCEEDED',
     } as const;
+    /** The same refusal where a caption-less photo is admitted — at the reader (UAT 2026-09-29). */
+    const QUOTA_DENIED_READ = { status: 'failed', errorCode: 'RECEIPT_QUOTA_EXCEEDED' } as const;
 
     const captureUseCase = (prisma: any, over: Record<string, unknown> = {}) => {
       const made = makeUseCase(prisma, {
@@ -4233,24 +4235,28 @@ describe('ProcessLineWebhookUseCase', () => {
       (made.useCase as any).uploadLineMedia = async () => undefined;
       return made;
     };
-    const sendReceipt = (useCase: any, id: string) => useCase.executeReceiptUpload({
+    const sendReceipt = (useCase: any, id: string, caption?: string) => useCase.executeReceiptUpload({
       webhookEventId: `evt-${id}`, lineUserId: 'line-user-secret', replyToken: `reply-${id}`,
       lineMessageId: `line-msg-${id}`, messageType: 'image', messagingChannelId: 'msg-channel-1',
-    });
+    }, caption);
 
-    it('answers the refused receipt with the §7 card, and never reads or captures it', async () => {
+    // A caption-less photo is admitted by the reader; a captioned one still by the router. Same card.
+    for (const lane of ['reader', 'router'] as const) it(`answers the refused receipt with the §7 card, and never reads or captures it (${lane} admission)`, async () => {
       const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
       let ocrCalls = 0;
       let intents = 0;
       const { useCase, sentMessages } = captureUseCase(state.prisma, {
         intakeRouteFn: () => QUOTA_DENIED_ROUTE,
-        receiptOcrFn: () => { ocrCalls += 1; return { status: 'ok', classification: receiptClassification('1.00'), fields: {} }; },
+        receiptOcrFn: () => {
+          ocrCalls += 1;
+          return lane === 'reader' ? QUOTA_DENIED_READ : { status: 'ok', classification: receiptClassification('1.00'), fields: {} };
+        },
         initReceiptUpload: { execute: async () => { intents += 1; return { expenseId: 'exp-1', attachmentId: 'att-1' }; } },
       });
 
-      await sendReceipt(useCase, 'quota-16');
+      await sendReceipt(useCase, 'quota-16', lane === 'router' ? 'บันทึกค่าใช้จ่าย' : undefined);
 
-      assert.equal(ocrCalls, 0, 'the admission already refused: no second provider call');
+      assert.equal(ocrCalls, lane === 'reader' ? 1 : 0, 'one admission, refused: nothing is read after it');
       assert.equal(intents, 0, 'and no expense record for a receipt nobody read');
       const card = sentMessages[0];
       assert.equal(card.type, 'flex');
@@ -4264,7 +4270,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
     it('does not fall through to the generic "อ่านรูปนี้ไม่สำเร็จ" clarify', async () => {
       const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
-      const { useCase, replies } = captureUseCase(state.prisma, { intakeRouteFn: () => QUOTA_DENIED_ROUTE });
+      const { useCase, replies } = captureUseCase(state.prisma, { receiptOcrFn: () => QUOTA_DENIED_READ });
 
       await sendReceipt(useCase, 'quota-clarify');
 
@@ -4273,7 +4279,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
     it('sends the card ONCE per month; the next over-quota receipt gets one line (spec §3.7)', async () => {
       const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
-      const { useCase, sentMessages } = captureUseCase(state.prisma, { intakeRouteFn: () => QUOTA_DENIED_ROUTE });
+      const { useCase, sentMessages } = captureUseCase(state.prisma, { receiptOcrFn: () => QUOTA_DENIED_READ });
 
       await sendReceipt(useCase, 'quota-a');
       await sendReceipt(useCase, 'quota-b');
@@ -4289,7 +4295,7 @@ describe('ProcessLineWebhookUseCase', () => {
     // again — and adding them wrote nothing to CompanyPlanTerm for this to notice.
     it('sends the card again after new add-on units start a new generation in the same month', async () => {
       const state = makePrisma({ planTerm: { tierKey: 'STARTER_249', monthlySlipLimit: 30 }, receiptsUsed: 30 });
-      const { useCase, sentMessages } = captureUseCase(state.prisma, { intakeRouteFn: () => QUOTA_DENIED_ROUTE });
+      const { useCase, sentMessages } = captureUseCase(state.prisma, { receiptOcrFn: () => QUOTA_DENIED_READ });
 
       await sendReceipt(useCase, 'gen-a');
       await sendReceipt(useCase, 'gen-b');
@@ -4309,7 +4315,7 @@ describe('ProcessLineWebhookUseCase', () => {
         planTerm: { ...FREE_TRIAL, warmupUntil: new Date(Date.now() + 86_400_000), warmupSlipLimit: 10 },
         receiptsUsed: 15,
       });
-      const { useCase, sentMessages } = captureUseCase(state.prisma, { intakeRouteFn: () => QUOTA_DENIED_ROUTE });
+      const { useCase, sentMessages } = captureUseCase(state.prisma, { receiptOcrFn: () => QUOTA_DENIED_READ });
 
       await sendReceipt(useCase, 'warmup-16');
 
@@ -4319,7 +4325,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
     it('never tells a PAYING tier it is on a trial', async () => {
       const state = makePrisma({ planTerm: { tierKey: 'STARTER_249', monthlySlipLimit: 30 }, receiptsUsed: 30 });
-      const { useCase, sentMessages } = captureUseCase(state.prisma, { intakeRouteFn: () => QUOTA_DENIED_ROUTE });
+      const { useCase, sentMessages } = captureUseCase(state.prisma, { receiptOcrFn: () => QUOTA_DENIED_READ });
 
       await sendReceipt(useCase, 'starter-31');
 
@@ -4336,7 +4342,7 @@ describe('ProcessLineWebhookUseCase', () => {
       // Reply token expired AND the push fallback is throttled — the only shape where the card
       // truly never lands, since a failed reply alone still reaches the shop by push.
       const { useCase } = captureUseCase(state.prisma, {
-        intakeRouteFn: () => QUOTA_DENIED_ROUTE,
+        receiptOcrFn: () => QUOTA_DENIED_READ,
         sendReplyFn: async (_token: string, messages: any[]) => {
           if (turn === 0) return 'failed_token';
           delivered.push(messages[0]);
@@ -4708,10 +4714,11 @@ describe('ProcessLineWebhookUseCase', () => {
     }) });
     (useCase as any).ensurePendingMedia = async () => ({ created: true, pending: null });
 
+    // A captioned photo keeps the router, whose admission is the one that refuses here.
     await useCase.executeReceiptUpload({
       webhookEventId: 'evt-ocr-off', lineUserId: 'line-user-secret', replyToken: 'reply-ocr-off',
       lineMessageId: 'line-msg-ocr-off', messageType: 'image', messagingChannelId: 'msg-channel-1',
-    });
+    }, 'บันทึกค่าใช้จ่าย');
 
     assert.equal(receiptOcrCalls, 0);
     assert.match(replies.join('\n'), /บริษัทปิดการอ่านเอกสารด้วย AI/);
@@ -5233,7 +5240,8 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     const h = makeUseCase(prisma, {
       permissions: opts.permissions ?? CAPTURE_PERMISSIONS,
       intakeRouteFn: opts.intakeRouteFn ?? (() => { throw budgetError(code, 'TOTAL'); }),
-      receiptOcrFn: () => { ocrCalls += 1; if (opts.receiptOcrThrows) throw budgetError(code, 'TOTAL'); return { status: 'ok' }; },
+      // A caption-less photo's first (and only gated) AI call is the reader (UAT 2026-09-29).
+      receiptOcrFn: () => { ocrCalls += 1; if (opts.receiptOcrThrows ?? true) throw budgetError(code, 'TOTAL'); return { status: 'ok' }; },
       initReceiptUpload: { execute: async () => { expenseDrafts += 1; return { expenseId: 'exp-x', attachmentId: 'att-x' }; } },
       completeReceiptUpload: { execute: async () => undefined },
       createUploadIntent: { execute: async () => ({ attachmentId: 'att-budget', uploadUrl: 'https://upload', uploadMethod: 'PUT' }) },
@@ -5320,7 +5328,8 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
       lineMessageId: 'line-msg-budget', messageType: 'image', messagingChannelId: 'msg-channel-1',
     });
 
-    assert.equal(h.getOcrCalls(), 0, 'B-02: a refused intake must not buy a second OCR admission');
+    assert.equal(h.intakeRequests.length, 0, 'a caption-less photo is not routed');
+    assert.equal(h.getOcrCalls(), 1, 'B-02: the one gated read is refused, and nothing is bought after it');
     assert.equal(h.getExpenseDrafts(), 0, 'no expense is created from a refused read');
     assert.equal(h.pendingRows.length, 1, 'the bytes are parked so the numbered question can be answered');
     const rendered = h.replies.join('\n');
@@ -5362,7 +5371,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     const rendered = h.replies.join('\n');
     assert.match(rendered, /ยังเก็บรูปนี้ไว้ไม่สำเร็จ/);
     assert.equal(rendered.includes('รับรูปไว้แล้ว'), false, 'never confirm retention from webhook receipt alone');
-    assert.equal(h.getOcrCalls(), 0);
+    assert.equal(h.getOcrCalls(), 1, 'only the one refused read');
     assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
   });
 
@@ -5377,7 +5386,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     });
 
     assert.deepEqual(h.replies, [], 'a redelivery must not answer the same question twice');
-    assert.equal(h.getOcrCalls(), 0);
+    assert.equal(h.getOcrCalls(), 1, 'only the one refused read');
     assert.equal((updates.at(-1) as any).data.status, 'duplicate_media_pending');
     assert.equal((updates.at(-1) as any).data.errorCode, 'AI_MONTHLY_BUDGET_EXCEEDED');
   });
@@ -5430,7 +5439,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     });
 
     assert.equal(h.pendingRows.length, 0, 'these bytes really were not stored');
-    assert.equal(h.getOcrCalls(), 0);
+    assert.equal(h.getOcrCalls(), 1, 'only the one refused read');
     assert.equal(h.getExpenseDrafts(), 0);
     const rendered = h.replies.join('\n');
     assert.equal(h.replies.length, 1, 'one honest answer, not silence');
@@ -7659,7 +7668,8 @@ describe('receipt reliability: saved facts, notification and provider-input cont
       useCase.permissionResolver.resolveAccess = async (...input: any[]) => ({ ...await resolve(...input), permissions: [] });
       return result;
     };
-    await useCase.executeReceiptUpload(h.event());
+    // Only a captioned photo still reaches the router (UAT 2026-09-29).
+    await useCase.executeReceiptUpload(h.event(), phase === 'route' ? 'ค่าอาหาร' : undefined);
     assert.equal(h.counts().initialized, 0); assert.equal(h.counts().applied, 0);
     assert.equal(h.counts().ocrReads, phase === 'route' ? 0 : 1);
     assert.match(JSON.stringify(h.sends), /สิทธิ์หรือร้านที่เลือกเปลี่ยน/);
@@ -7727,7 +7737,7 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     await h.useCase.executeReceiptUpload(h.event());
     h.allowSend();
     await h.useCase.executeReceiptUpload(h.event('redelivery-event'));
-    assert.deepEqual(h.counts(), { downloads: 1, uploads: 1, initialized: 1, completed: 1, applied: 1, routed: 1, ocrReads: 1, draftStarts: 0 });
+    assert.deepEqual(h.counts(), { downloads: 1, uploads: 1, initialized: 1, completed: 1, applied: 1, routed: 0, ocrReads: 1, draftStarts: 0 });
     assert.match(JSON.stringify(h.sends[1]), /saved-expense/);
     assert.equal(h.eventStore.get('redelivery-event').status, 'completed');
   });
@@ -7737,7 +7747,7 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     await h.useCase.executeReceiptUpload(h.event());
     await h.useCase.executeReceiptUpload(h.event('new-image-event', 'new-message-id'));
     assert.equal(h.counts().downloads, 2, 'new media identity must verify its bytes');
-    assert.equal(h.counts().routed, 1);
+    assert.equal(h.counts().routed, 0, 'a caption-less photo is read without the router');
     assert.equal(h.counts().ocrReads, 1);
     assert.equal(h.counts().initialized, 1);
     assert.match(JSON.stringify(h.sends[1]), /รูปนี้ตรงกับบิลที่เก็บไว้แล้ว/);

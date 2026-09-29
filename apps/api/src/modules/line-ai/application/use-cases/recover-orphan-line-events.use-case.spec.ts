@@ -52,6 +52,8 @@ function makeHarness(rows: Row[], opts: {
   sourceCurrent?: boolean;
   verifyThrows?: boolean;
   duringVerify?: (store: Map<string, Row>) => void;
+  /** Events the buffer still holds in memory (queued behind another read, or mid-turn). */
+  held?: string[];
 } = {}) {
   const store = new Map(rows.map((row) => [row.id, { ...row }]));
   const outcomeStore = new Map((opts.outcomes ?? []).map((outcome) => [outcome.webhookEventId, { ...outcome, authorizationJson: outcome.authorizationJson === undefined ? { synthetic: 'original-read-proof' } : outcome.authorizationJson }]));
@@ -156,6 +158,7 @@ function makeHarness(rows: Row[], opts: {
       if (opts.enqueueThrows) throw new Error('buffer unavailable');
       enqueued.push(envelope);
     },
+    holds: (webhookEventId: string) => opts.held?.includes(webhookEventId) ?? false,
   } as any;
   const lineReply = {
     sendPush: async (to: string, messages: any[], operationId?: string) => {
@@ -317,6 +320,17 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.equal(store.get('e1')?.status, 'received');
     assert.equal(store.get('e1')?.errorCode, 'RETRYABLE_ORPHAN_REPLAY');
     assert.equal(store.get('e1')?.processedAt, null);
+  });
+
+  // UAT 2026-09-29: a photo queued behind a slow read passes the 2-minute mark while still in memory.
+  // Replaying it would acknowledge ("ได้รับรูปแล้ว") and read the same photo a second time.
+  it('leaves a row the buffer still holds alone, however old it is', async () => {
+    const h = makeHarness([rowAt('queued-photo', LINE_BUFFER_ORPHAN_REPROCESS_MS + 60_000)], { held: ['queued-photo'] });
+    const result = await h.useCase.execute();
+    assert.equal(result.replayed, 0);
+    assert.equal(result.skipped, 1);
+    assert.equal(h.enqueued.length, 0, 'no second copy enters the buffer');
+    assert.equal(h.store.get('queued-photo')?.errorCode ?? null, null, 'the held row is not re-stamped for replay');
   });
 
   it('leaves an in-flight row alone', async () => {

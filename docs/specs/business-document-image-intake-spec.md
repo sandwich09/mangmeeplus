@@ -268,6 +268,7 @@ No expense record should exist before the decision accepts an expense family, ex
 
 - Router and OCR disagreement downgrades to clarification unless the deterministic gate can safely accept the weaker expense type.
 - Router-unavailable uncaptioned media may continue only when OCR returns an expense classification that passes the deterministic expense gate. Captioned media, missing OCR, failed OCR, or rejected classifications still clarify.
+- Reader-only photos (UAT 2026-09-29, Owner “ง + ค”): a caption-less LINE photo goes straight to the receipt reader — no intake router call — and the reader's own classification decides through the same deterministic gate (`decideLineBusinessDocument`); a check bill is still answered as a reference, with its paid/unpaid question. The router still runs for (1) files, (2) captioned photos, (3) senders without expense capture permission, and (4) chats with open substitute-receipt work (a requested signature, an awaited signed scan, a check-bill's final receipt, the issue decision) — `lineIntakeRouterReason`. The reader admits the photo itself, so the receipt-image count stays one per photo, and a failed read of a reader-only photo follows capture appendix §17.6 (kept for the web form, nothing read into it).
 - Provider unavailable must not classify arbitrary uncaptioned images as expenses.
 - Redelivery remains idempotent by company and LINE message id.
 - Non-business images should not be retained beyond an existing pending-media TTL unless the user explicitly chooses a business purpose.

@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "fd714bde15eff65d1a4eb891bd31ed8760b66243",
-  "checkoutBranch": "claude/remove-receipt-strict-evidence-20260929",
+  "sourceRevision": "04dd456104655d290e8f4a3cefaa657647dd78c9",
+  "checkoutBranch": "claude/line-photo-ack-and-direct-read-20260929",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "2dcb8b104c76b4c8975bf55e3cbb587f57842f705ada5933f6e206115f47f9c7"
+      "sha256": "47396411a56152447e87d75b55d8727321184355403ba2fb55a9fbbda3d3b1d6"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T12:46:51.675Z",
-  "manifestDigest": "b243bcc8f6a1753999143fca2ea4cc0748bbb025111e189cdb09fb9062771fd0"
+  "generatedAt": "2026-09-29T12:58:35.380Z",
+  "manifestDigest": "7459eea442a057b4042c18b386dc1137cd1a50bd37563a3e0266b94b6ad6f60c"
 }
