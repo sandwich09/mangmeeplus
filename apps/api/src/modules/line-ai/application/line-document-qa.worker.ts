@@ -105,16 +105,22 @@ export class LineDocumentQaWorker {
     return pages;
   }
 
-  /** Foreground callers may await this promise up to their own cutoff; never cancel/re-kick it. */
+  /** Foreground callers may await this promise up to their own cutoff; never cancel/re-kick it. A read another
+   *  tick claimed first, or a moment with every slot busy, is waited for up to the job's own foreground deadline
+   *  (NAT05/NAT06 2026-09-29), so the admitting turn still answers in its reply instead of saying "กำลังอ่าน". */
   async execute(jobId: string): Promise<LineDocumentQaJobRow | null> {
-    if (this.running >= QA_CONCURRENCY) return null;
-    this.running += 1;
-    try {
-      const job = await this.jobs.claim(jobId, this.leaseOwner());
-      if (!job) return this.jobs.getById(jobId);
-      await this.runClaimed(job);
-      return this.jobs.getById(jobId);
-    } finally { this.running -= 1; }
+    for (;;) {
+      if (this.running < QA_CONCURRENCY) {
+        this.running += 1;
+        try {
+          const claimed = await this.jobs.claim(jobId, this.leaseOwner());
+          if (claimed) { await this.runClaimed(claimed); return this.jobs.getById(jobId); }
+        } finally { this.running -= 1; }
+      }
+      const job = await this.jobs.getById(jobId);
+      if (!['QUEUED', 'READING'].includes(job.status) || job.foregroundDeadlineAt.getTime() <= Date.now()) return job;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
   }
 
   private leaseOwner(): string { return `${process.env['HOSTNAME'] ?? 'api'}:document-qa:${randomUUID()}`; }

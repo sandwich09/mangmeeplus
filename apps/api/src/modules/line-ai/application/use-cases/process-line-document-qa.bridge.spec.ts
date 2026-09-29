@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 import sharp from 'sharp';
-import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
+import { ProcessLineWebhookUseCase, chatKeyHashOf } from './process-line-webhook.use-case';
 
 function fixture() {
   const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
@@ -186,7 +186,7 @@ describe('document reading speaks in file order, never ids (UAT 2026-09-29)', ()
   const ATTACHMENT = 'cmg1a2b3c4d5e6f7g8h9i0j1k';
   it('names answer sources and unread pages by their order in the read', async () => {
     const f = fixture();
-    Object.assign(f.result, { answerPageRefs: [{ attachmentId: ATTACHMENT, page: 1 }],
+    Object.assign(f.result, { answer: `ไฟล์ (${ATTACHMENT}) มีข้อความต้นทาง`, answerPageRefs: [{ attachmentId: ATTACHMENT, page: 1 }],
       pages: [{ attachmentId: ATTACHMENT, page: 1, visibleText: 'ข้อความต้นทาง', facts: [], evidence: [] }],
       coverage: { requested: [{ attachmentId: ATTACHMENT, page: 1 }, { attachmentId: ATTACHMENT, page: 2 }],
         read: [{ attachmentId: ATTACHMENT, page: 1 }], failed: [{ attachmentId: ATTACHMENT, page: 2, code: 'QA_PAGE_UNREADABLE' }] } });
@@ -194,6 +194,7 @@ describe('document reading speaks in file order, never ids (UAT 2026-09-29)', ()
     assert.match(f.delivered[0]!, /แหล่งคำตอบ: เอกสารแนบ ลำดับที่ 1 หน้า 1/u);
     assert.match(f.delivered[0]!, /ยังอ่านเอกสารแนบ ลำดับที่ 1 หน้า 2 ไม่สำเร็จ/u);
     assert.doesNotMatch(f.delivered[0]!, new RegExp(`${ATTACHMENT}|QA_PAGE_UNREADABLE`, 'u'));
+    assert.match(f.delivered[0]!, /ไฟล์ \(ไฟล์ที่ 1\) มีข้อความต้นทาง/u, 'a reader answer naming the id is rewritten to the file order');
   });
 
   it('offers cancel as its own words and cancels this chat\'s pending read from them', async () => {
@@ -397,4 +398,95 @@ it('allows a typed explicit expense write through the v2 PDF capture path after 
   await f.flow.executeReceiptUploadInner(f.event, 'บันทึกเอกสารนี้เป็นค่าใช้จ่าย', {});
   assert.equal(f.expenseInitializations(), 1);
   assert.deepEqual(f.trace, ['intake', 'expense-capture']);
+});
+
+// NAT05/NAT06 real-model re-test (2026-09-29).
+describe('document questions follow the current file, survive failures and never race their own answer', () => {
+  const qaRow = (n: number, job: string) => ({ id: `pending-${n}`, attachmentId: `attachment-${n}`, lineMessageId: `message-${n}`, status: 'RESOLVED_RECEIPT',
+    readJobId: job, revision: 1, mimeType: 'application/pdf', askedQuestionJson: { kind: 'LINE_DOCUMENT_QA' }, createdAt: new Date(Date.UTC(2026, 8, 29, 4, 10 + n)) });
+
+  it('reads the newest file the user asked about, and a file named by order beside it', async () => {
+    const f = fixture(), admitted: any[] = [];
+    f.flow.prisma.client.lineIntakePendingMedia.findMany = async () => [qaRow(2, 'job-2'), qaRow(1, 'job-1')];
+    f.flow.prisma.client.lineIntakePendingMedia.updateMany = async () => ({ count: 1 });
+    f.flow.documentQa.getById = async (id: string) => ({ ...f.owner, ownerMembershipId: 'member', ownerEpoch: 3,
+      attachmentsJson: [{ attachmentId: id === 'job-1' ? 'attachment-1' : 'attachment-2', requestedPages: [1, 2] }] });
+    f.flow.documentQa.admit = async (input: any) => { admitted.push(input.attachments.map((item: any) => item.attachmentId)); return { jobId: 'job', foregroundDeadlineAt: new Date(Date.now() + 10_000).toISOString() }; };
+    const ask = (messageText: string) => {
+      const event = Object.assign({ ...f.event }, { messageText, inputEvidence: { joinedSha256: 'digest' } });
+      f.flow.budgetGrantsV2.set(event, { turnKey: `turn-${messageText}` });
+      f.flow.boundConversations.set(event, f.flow.boundConversations.get(f.event));
+      return f.flow.resumeDocumentQuestionV2(event, 'request', { semanticSubrequests: [{ index: 0, kind: 'file', goal: 'อ่านไฟล์', requestedFilters: {} }] }, f.access);
+    };
+    assert.equal(await ask('หน้าสองเขียนว่าไง'), true);
+    assert.equal(await ask('ขอเทียบกับไฟล์แรกด้วย ยังอยู่มั้ย'), true);
+    assert.deepEqual(admitted, [['attachment-2'], ['attachment-1', 'attachment-2']]);
+  });
+
+  it('keeps the file after a failed read so the user can ask again; only a cancel lets it go', async () => {
+    for (const [status, kept] of [['FAILED', 'RESOLVED_RECEIPT'], ['EXPIRED', 'RESOLVED_RECEIPT'], ['CANCELED', 'EXPIRED']]) {
+      const f = fixture(), statuses: string[] = [];
+      f.flow.documentQa.getForDelivery = async () => null;
+      f.flow.documentQa.getById = async () => ({ ...f.owner, ownerMembershipId: 'member', ownerEpoch: 3, status, errorCode: 'QA_RESULT_INVALID' });
+      f.flow.prisma.client.lineIntakePendingMedia.updateMany = async ({ data }: any) => { statuses.push(data.status); return { count: 1 }; };
+      assert.equal(await f.flow.deliverDocumentQaResult(f.event, 'job', { ...f.owner, ownerEpoch: 3 }), true);
+      assert.deepEqual(statuses, [kept], status);
+    }
+  });
+
+  it('leaves a finished read to the turn that admitted it until that turn\'s window closes', async () => {
+    const f = fixture(), delivered: string[] = [];
+    const row = { id: 'pending', companyId: 'company', userId: 'user', membershipId: 'member', messagingChannelId: 'oa', lifecycleEpoch: 3,
+      chatKeyHash: chatKeyHashOf({ lineUserId: 'line-user' }), lineMessageId: 'message', readJobId: 'job',
+      askedQuestionJson: { kind: 'LINE_DOCUMENT_QA', webhookEventId: 'event', lineUserId: 'line-user' } };
+    let deadline = Date.now() + 5_000;
+    Object.assign(f.flow, {
+      contextV2: { load: async () => ({ row: { id: 'conversation', lifecycleEpoch: 3 } }) },
+      permissionResolver: { resolveAccess: async () => f.access },
+      deliverDocumentQaResult: async (_event: any, jobId: string) => { delivered.push(jobId); return true; },
+      logger: { warn: (entry: unknown) => { throw new Error(JSON.stringify(entry)); } },
+    });
+    f.flow.prisma.client.lineIntakePendingMedia.findMany = async () => [row];
+    f.flow.prisma.client.companyFeatureEntitlement = { findMany: async () => [] };
+    f.flow.documentQa.getById = async () => ({ id: 'job', foregroundDeadlineAt: new Date(deadline) });
+    assert.equal(await f.flow.recoverDocumentQaResults(), 0);
+    deadline = Date.now() - 1;
+    assert.equal(await f.flow.recoverDocumentQaResults(), 1);
+    assert.deepEqual(delivered, ['job']);
+  });
+
+  it('drafts "ทำร่าง…จากใบนี้" from the current file through the durable read, and never from a note with its own amount', async () => {
+    const f = fixture(), calls: any[] = [];
+    const event = Object.assign(f.event, { messageText: 'โอเค งั้นช่วยทำร่างค่าอาหารจากใบนี้ไว้ตรวจที' });
+    f.access.permissions.push('expense.receipt.upload');
+    f.flow.prisma.client.lineIntakePendingMedia.findMany = async () => [qaRow(2, 'job-2'), qaRow(1, 'job-1')];
+    f.flow.prisma.client.attachmentObject = { findFirst: async ({ where }: any) => ({ checksumSha256: `sum-${where.id}` }) };
+    Object.assign(f.flow, {
+      expenseRepo: { findByLineMessageId: async () => null, findById: async () => ({ updatedAt: new Date(0) }) },
+      createReceiptDraftFromPendingMedia: async (...args: any[]) => { calls.push(['draft', args[4].attachmentId, args[8]]); return { expenseId: 'expense-1' }; },
+      captureLine: { queueExpenseRead: async (input: any) => { calls.push(['read', input.attachmentId, input.attachmentChecksum]); return 'read-job'; } },
+      deliverCompletedReply: async (_event: any, text: string) => { f.delivered.push(text); }, persistIntakeTurn: async () => undefined,
+    });
+    const route = { semanticSubrequests: [{ index: 0, kind: 'write', writeIntent: 'EXPENSE_DOCUMENT_CAPTURE', goal: 'ทำร่างค่าอาหาร' }] };
+    assert.equal(await f.flow.draftCurrentDocumentV2(event, 'request', route, f.access), true);
+    assert.equal(calls[0][1], 'attachment-2');
+    assert.equal(calls[0][2].pushTargetId, 'line-user'); assert.equal(calls[0][2].ownerBinding.ownerEpoch, 3);
+    assert.deepEqual(calls[1], ['read', 'attachment-2', 'sum-attachment-2']);
+    assert.match(f.delivered.at(-1)!, /ยังไม่ได้ยืนยันรายการ/);
+    calls.length = 0;
+    f.flow.textValueCandidates = async () => ({ amounts: [{ value: '65' }] });
+    assert.equal(await f.flow.draftCurrentDocumentV2(event, 'request', route, f.access), false, 'a note with its own amount stays a text note');
+    assert.equal(calls.length, 0);
+  });
+
+  it('names a pending file clause by the customer\'s own words, never the router\'s goal', async () => {
+    const f = fixture(), question = 'ส่งผิด เอาไฟล์นี้แทนอันเมื่อกี้';
+    f.flow.restoreDocumentQaTask = async () => [{ index: 0, kind: 'file', goal: 'Replace the previously sent file with this new PDF' }];
+    f.flow.settleSemanticTask = async () => undefined;
+    Object.assign(f.result, { questionCoverage: [{ subrequestIndex: 0, status: 'needs_input', answer: 'ต้องการให้อ่านส่วนไหนคะ', answerPageRefs: [] }] });
+    f.flow.documentQa.getForDelivery = async () => ({ id: 'job', resultJson: f.result, status: 'ANSWER_READY', questionText: question, questionsJson: [{ subrequestIndex: 0, question }] });
+    assert.equal(await f.flow.deliverDocumentQaResult(f.event, 'job', { ...f.owner, ownerEpoch: 3 }), true);
+    assert.match(f.delivered[0]!, new RegExp(`ส่วนที่ยังรอ: ${question}`, 'u'));
+    assert.doesNotMatch(f.delivered[0]!, /Replace the previously/u);
+  });
 });
