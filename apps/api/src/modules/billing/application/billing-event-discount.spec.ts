@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { eventDiscountPath, holderEventDiscountTickets } from './billing-event-discount';
+import { BillingService } from './billing.service';
 
 const now = new Date('2026-10-01T03:00:00.000Z');
 const future = new Date('2026-10-31T10:00:00.000Z');
@@ -33,6 +34,29 @@ describe('sales-event holder view', () => {
     ]);
     assert.deepEqual(tickets[1], { serial: 'BBBB3333', eventName: 'งานสอง', discountSatang: 0, chatCreditUnits: 5_000,
       receiptImageUnits: 10, expiresAt: now.toISOString(), state: 'EXPIRED', batchSuspended: false });
+  });
+
+  it('LINE read (spec §8.1): the owner-only view, plus why a starting shop may not take the first-bill discount now', async () => {
+    const lineRead = (BillingService.prototype as any).lineEventDiscount;
+    const tickets = [{ serial: 'AAAA2222' }];
+    const context = { userId: 'user-1', companyId: 'company-1' };
+    const self = (path: string | null, used: boolean, deal: boolean) => {
+      const asked: any[] = [];
+      return { asked, eventDiscount: async (ctx: any) => { asked.push(ctx); return { path, tickets }; }, prisma: { client: {
+        salesEventTicket: { findFirst: async (args: any) => { asked.push(args.where); return used ? { id: 't' } : null; } },
+        packageChangeRequest: { findFirst: async () => deal ? { id: 'd' } : null } } } };
+    };
+    const starting = self('DISCOUNT', false, false);
+    assert.deepEqual(await lineRead.call(starting, context), { path: 'DISCOUNT', tickets, block: null });
+    assert.equal(starting.asked[0], context, 'the same owner check as the package page');
+    assert.deepEqual(starting.asked[1], { companyId: 'company-1', redeemedAs: 'DISCOUNT', state: { in: ['RESERVED', 'USED'] } });
+    assert.equal((await lineRead.call(self('DISCOUNT', true, false), context)).block, 'COMPANY_ALREADY_USED');
+    assert.equal((await lineRead.call(self('DISCOUNT', false, true), context)).block, 'DEAL_ACTIVE');
+    const paying = self('CREDIT', true, true);
+    assert.deepEqual(await lineRead.call(paying, context), { path: 'CREDIT', tickets, block: null });
+    assert.equal(paying.asked.length, 1, 'a shop that already has a package reads no first-bill block');
+    const denied = { eventDiscount: async () => { throw new Error('ต้องได้รับสิทธิ์จัดการแพ็กเกจบริษัท'); } };
+    await assert.rejects(lineRead.call(denied, context), /สิทธิ์จัดการแพ็กเกจ/);
   });
 
   it('reads no tickets for a login with no LINE linked', async () => {

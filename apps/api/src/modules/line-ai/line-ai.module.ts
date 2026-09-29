@@ -32,6 +32,7 @@ import { CrmInboxModule } from '../crm-inbox/crm-inbox.module';
 import { FeatureLaunchModule } from '../feature-launch/feature-launch.module';
 // P10-L: the LINE surface opens package-change requests and tells operators about support requests.
 import { ExternalSignupModule } from '../external-signup/external-signup.module';
+import { BillingModule } from '../billing/billing.module';
 
 // Infrastructure
 import { LineReplyAdapter } from './infrastructure/line-reply.adapter';
@@ -238,6 +239,8 @@ const erpTools = [
     // Supplies the shadow probe for the employee LINE webhook and the AI ledger drain (plan §3 F1).
     FeatureLaunchModule,
     ExternalSignupModule,
+    // LINE "ฉันมีส่วนลดไหม": the owner-only ส่วนลดจากงาน read the package page uses (sales-event spec §8.1).
+    BillingModule,
   ],
   controllers: [LineDocumentQaInternalController, InternalToolsController, InternalAiBudgetController, LineAiLedgerInternalController, LineCaptureResultsInternalController, LineWebhookController],
   providers: [

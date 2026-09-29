@@ -149,6 +149,8 @@ import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.s
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer, type PublicPolicyTopic } from '../../domain/logic/line-public-policy.logic';
+import { buildEventDiscountCard, EVENT_DISCOUNT_MEMBER_REPLY, isMangmeeDiscountQuestion } from '../../domain/logic/line-event-discount.logic';
+import { BillingService } from '../../../billing/application/billing.service';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
@@ -2045,6 +2047,9 @@ export class ProcessLineWebhookUseCase {
     @Optional() private readonly addCaptureFile?: AddExpenseCaptureFileUseCase,
     @Optional() private readonly completeCaptureFile?: CompleteExpenseCaptureFileUseCase,
     @Optional() private readonly captureLine?: ExpenseCaptureLineUseCase,
+    // LINE "ฉันมีส่วนลดไหม" (sales-event spec §8.1). Appended like the rest; absent, the question
+    // takes the ordinary turn it took before.
+    @Optional() private readonly billing?: BillingService,
   ) {}
 
   /**
@@ -2541,6 +2546,24 @@ export class ProcessLineWebhookUseCase {
     // Same mint as the lock card; in a group/room the button stays the plain package page (RV08).
     return buildPromotionCard('owner', await this.oneTapPackageUrl(event, identity.userId, companyId, 'promotion_card_packages')
       ?? new URL(targetPath, this.config.webBaseUrl).toString());
+  }
+
+  /**
+   * The ส่วนลดจากงาน answer (sales-event spec §8.1). The billing read is owner/plan-manager only; anyone
+   * else is told who asks. The package button is the promotion card's own one-tap link, and only on
+   * the answer that says this shop can use the discount now.
+   */
+  private async eventDiscountCard(event: LineTextEvent, context: RequestContext): Promise<LineReplyMessage> {
+    let facts: Awaited<ReturnType<BillingService['lineEventDiscount']>>;
+    try {
+      facts = await this.billing!.lineEventDiscount(context);
+    } catch (error) {
+      if (error instanceof ForbiddenException) return { type: 'text', text: EVENT_DISCOUNT_MEMBER_REPLY };
+      throw error;
+    }
+    const packageUrl = this.config.webBaseUrl ? await this.oneTapPackageUrl(event, context.userId, context.companyId, 'promotion_card_packages')
+      ?? new URL(`/companies/${encodeURIComponent(context.companyId)}/billing?channel=line`, this.config.webBaseUrl).toString() : undefined;
+    return buildEventDiscountCard(facts, packageUrl);
   }
 
   /**
@@ -5555,6 +5578,18 @@ export class ProcessLineWebhookUseCase {
         isOwner: resolvedAccess.roles.includes('OWNER'),
       })]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_receipt', undefined, companyId);
+      return;
+    }
+    // Sales-event spec §8.1 (Owner UAT 2026-09-29): "ฉันมีส่วนลดไหม" is about the holder's ส่วนลดจากงาน, even right
+    // after a receipt draft, so it is answered here — deterministic, before any AI turn — from the owner-only
+    // billing read. A discount placed on a bill ("ส่วนลดในบิลนี้") never matches and stays with the receipt flow.
+    if (this.billing && isMangmeeDiscountQuestion(event.messageText)) {
+      await this.deliverRequiredMessages(event, [await this.eventDiscountCard(event, {
+        requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+        membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
+        permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
+      })]);
+      await this.updateEventLog(event.webhookEventId, 'event_discount_answer', undefined, companyId);
       return;
     }
 
