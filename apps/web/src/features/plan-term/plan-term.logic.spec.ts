@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { planTermStateLabel } from '@watchdog-bms/contracts';
 import {
   PLAN_LOCK_COPY,
+  claimUnlockReload,
   isLockedShellPath,
   isRenewalPath,
   planLockReason,
@@ -162,5 +163,28 @@ describe('lock reason', () => {
     assert.doesNotMatch(page, /พักการใช้งาน/);
     assert.match(page, /\{copy\.staff\} ข้อมูลทั้งหมดยังอยู่ครบ/);
     assert.match(banner, /canManagePlan \? copy\.banner : copy\.staff/);
+  });
+});
+
+// Review 2026-09-29: the unlock fallback reloaded on every page load while the notice still lagged.
+describe('unlock reload fallback', () => {
+  const memory = () => {
+    const values = new Map<string, string>();
+    return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, values };
+  };
+
+  it('reloads once per attempt, and the claim survives into the next page load', () => {
+    const store = memory();
+    assert.equal(claimUnlockReload(() => store, 'attempt-1'), true);
+    assert.equal(store.values.get('unlock-reload:attempt-1'), '1');
+    // Same session storage after the reload: the second page load must not reload again.
+    assert.equal(claimUnlockReload(() => store, 'attempt-1'), false);
+    // A different purchase earns its own single reload.
+    assert.equal(claimUnlockReload(() => store, 'attempt-2'), true);
+  });
+
+  it('never reloads when storage is blocked, rather than risk a loop', () => {
+    assert.equal(claimUnlockReload(() => { throw new Error('SecurityError'); }, 'attempt-1'), false);
+    assert.equal(claimUnlockReload(() => ({ getItem: () => null, setItem: () => { throw new Error('QuotaExceededError'); } }), 'attempt-1'), false);
   });
 });

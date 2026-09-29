@@ -351,7 +351,7 @@ async function main() {
       assert.match(await documents.innerText(), /จะกรอกที่หน้าชำระเงิน/);
       await page.setViewportSize({ width: 390, height: 900 });
       await page.screenshot({ path: `${browser.evidenceDir}/purchase-no-setup-review-mobile.png`, fullPage: true });
-      await documents.getByRole('link', { name: 'แก้ไขข้อมูลบริษัท', exact: true }).click();
+      await documents.getByRole('link', { name: 'แก้ไขข้อมูลร้าน', exact: true }).click();
       await page.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true }).waitFor();
       for (const [label, value] of Object.entries({ 'ที่อยู่ (บ้านเลขที่ ถนน)': BILLING_TEST_ADDRESS.line1,
         'ตำบล / แขวง': BILLING_TEST_ADDRESS.subdistrict, 'อำเภอ / เขต': BILLING_TEST_ADDRESS.district,

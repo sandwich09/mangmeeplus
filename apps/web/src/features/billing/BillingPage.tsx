@@ -9,13 +9,13 @@ import { errorStatus, errorText } from './billing-error-text';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { BILLING_PAID_TIERS, DEFAULT_CHAT_CREDIT_SATANG, PLAN_TIER_PRESETS, planTermStateLabel, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView, type BillingPurchaseMode } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
-import { PLAN_LOCK_COPY, PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE, planLockReason } from '@/features/plan-term/plan-term.logic';
+import { PLAN_LOCK_COPY, PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE, claimUnlockReload, planLockReason } from '@/features/plan-term/plan-term.logic';
 import { notifyPlanTermChanged, type PlanLockReason } from '@/features/plan-term/plan-term.api';
 import { useLockedShell } from '@/features/plan-term/LockedShellScope';
 import { billingApi, type BillingHistory } from './billing.api';
 import BillingCollectionPanel from './BillingCollectionPanel';
 import BillingCapacityPicker from './BillingCapacityPicker';
-import {billingMonthlyAllowanceText, billingBackControl, billingControl, billingPrimaryControl, billingPurchaseModeLabel, billingSupportReference} from './billing-display';
+import {BILLING_RECIPIENT_WAIT_TEXT, billingMonthlyAllowanceText, billingBackControl, billingControl, billingPrimaryControl, billingPurchaseModeLabel, billingRecipientLocked, billingSupportReference} from './billing-display';
 import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels, dealRenewalText } from './billing-deal';
 import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
@@ -25,6 +25,7 @@ const button = billingControl;
 const enterpriseMenuSummary = 'เพิ่มสิทธิ์ออก ภ.ง.ด.53 และพิมพ์หนังสือรับรอง 50 ทวิในระบบ';
 /** Codes whose fix lives beside the document recipient, on the renewal tab (G16: routed by code, not by wording). */
 const RECIPIENT_ERROR_CODES = ['BILLING_EMAIL_UPDATE_PENDING', 'BILLING_RECIPIENT_UPDATE_REQUIRED', 'BILLING_EMAIL_CHANGED', 'BILLING_RECIPIENT_BOUNCED'];
+const RETURN_NOT_FOUND = 'ไม่พบรายการนี้ในร้านที่เลือก กรุณาดูประวัติหรือติดต่อทีมงาน';
 function navigateProvider(url: string, kind: 'checkout' | 'portal' | 'document') {
   const parsed = new URL(url);
   const hosts = kind === 'checkout' ? ['checkout.stripe.com'] : kind === 'portal' ? ['billing.stripe.com'] : ['invoice.stripe.com', 'pay.stripe.com', 'payments.stripe.com'];
@@ -32,8 +33,10 @@ function navigateProvider(url: string, kind: 'checkout' | 'portal' | 'document')
   window.location.assign(parsed.href);
 }
 
-export default function BillingPage({ companyId, returning = false, returnAttemptId = null, collectionId, previewHref, preview }: { companyId: string; returning?: boolean; returnAttemptId?: string | null; collectionId?: string; previewHref?: string;
+export default function BillingPage({ companyId, returning = false, returnAttemptId = null, collectionId, previewHref, preview, canOpenProfile = false }: { companyId: string; returning?: boolean; returnAttemptId?: string | null; collectionId?: string; previewHref?: string;
   preview?: { api: ReturnType<typeof billingApi>; navigate: typeof navigateProvider; openDocumentHistory: () => void; startWithPlans?: boolean; initialSection?: 'package' | 'payment' | 'history' };
+  /** `/settings/profile` needs `company.setup.read` (route-permissions.ts); without it the profile links would open a refusal. */
+  canOpenProfile?: boolean;
 }) {
   const router = useRouter();
   const [previewCollectionId, setPreviewCollectionId] = useState<string>();
@@ -60,7 +63,9 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     return () => window.removeEventListener('hashchange', selectHash);
   }, []);
   const [error, setError] = useState(''), [errorCode, setErrorCode] = useState<string | null>(null), [busy, setBusy] = useState(false), [reload, setReload] = useState(0);
-  const [checkoutCancelNotice, setCheckoutCancelNotice] = useState('');
+  // Item 6: a notice about a Checkout still being checked carries its own "อัปเดตข้อมูล" and goes away once
+  // the status has no attempt left to check; a finished outcome ("ยุติ…แล้ว") stays until the next action.
+  const [checkoutCancelNotice, setCheckoutCancelNotice] = useState<{ text: string; checking: boolean } | null>(null);
   const [confirmCheckoutCancel, setConfirmCheckoutCancel] = useState(false);
   const collectionChanged = useCallback(() => setReload(value => value + 1), []);
   useEffect(() => {
@@ -91,6 +96,16 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const [catalogUnavailable, setCatalogUnavailable] = useState(false);
   const [returnAttempt, setReturnAttempt] = useState<BillingAttemptView | null>(null), [returnError, setReturnError] = useState('');
   const [refreshNotice, setRefreshNotice] = useState('');
+  // Back from Stripe the browser may restore this page from its back-forward cache, frozen on the quote
+  // that was just spent: read everything again and leave the chooser.
+  useEffect(() => {
+    const restored = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      setChoosing(false); setQuote(null); setCapacity(null); setAccepted(false); setReload(value => value + 1);
+    };
+    window.addEventListener('pageshow', restored);
+    return () => window.removeEventListener('pageshow', restored);
+  }, []);
   const emailSettings = useRef<HTMLDivElement>(null), quoteHeading = useRef<HTMLHeadingElement>(null), backNavigation = useRef<HTMLDivElement>(null);
   useEffect(() => { if (quote || choosing) { backNavigation.current?.scrollIntoView({ block: 'start' }); quoteHeading.current?.focus({ preventScroll: true }); } }, [quote, choosing]);
   useEffect(() => { if (error && RECIPIENT_ERROR_CODES.includes(errorCode ?? '')) { setSection('payment'); emailSettings.current?.scrollIntoView({ block: 'start' }); } }, [error, errorCode]);
@@ -104,7 +119,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   // G12: Stripe's cancel_url adds `checkout=canceled`. Read after mount, so the server render matches.
   const [checkoutCanceled, setCheckoutCanceled] = useState(false);
   useEffect(() => { setCheckoutCanceled(returning && new URLSearchParams(window.location.search).get('checkout') === 'canceled'); }, [returning]);
-  const reopenChooser = useRef(false), unlockReloaded = useRef(false);
+  const reopenChooser = useRef(false);
   useEffect(() => {
     if (data && !intervalInitialized.current) {
       if (!new URLSearchParams(window.location.search).has('interval') && data.status.interval) setInterval(data.status.interval);
@@ -118,13 +133,14 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     Promise.all([api.status(), api.catalog(), api.history()]).then(([status, catalog, history]) => {
       if (!active) return;
       setData({ status, catalog, history });
+      if (!status.attemptId) setCheckoutCancelNotice(notice => notice?.checking ? null : notice);
       // F09/F10: after a one-tap cancel, the chooser opens only on a status that allows a new sale.
       if (reopenChooser.current && status.allowedActions.includes('new_sales') && !status.attemptId) { reopenChooser.current = false; setChoosing(true); setSection('package'); }
     }).catch(e => { if (active) { setData(null); setError(errorText(e)); setErrorCode(apiErrorCode(e)); } });
     if (returning) {
-      if (!returnAttemptId) setReturnError('ลิงก์ไม่มีเลขรายการที่ถูกต้อง กรุณาดูสถานะและประวัติการชำระเงินของบริษัท');
+      if (!returnAttemptId) setReturnError('ลิงก์ไม่มีเลขรายการที่ถูกต้อง กรุณาดูสถานะและประวัติการชำระเงินของร้าน');
       else void api.attempt(returnAttemptId).then(value => { if (active) { setReturnAttempt(value); setReturnError(''); } })
-        .catch(e => { if (active) { setReturnAttempt(null); setReturnError(errorStatus(e) === 404 ? 'ไม่พบรายการนี้ในบริษัทที่เลือก กรุณาดูประวัติหรือติดต่อทีมงาน' : errorText(e)); } });
+        .catch(e => { if (active) { setReturnAttempt(null); setReturnError(errorStatus(e) === 404 ? RETURN_NOT_FOUND : errorText(e)); } });
     }
     return () => { active = false; };
   }, [api, reload, returning, returnAttemptId]);
@@ -157,18 +173,23 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   }, [data?.catalog, quote]);
   // G13/F12: the return page reads only the attempt — every 2 s for 30 s, then every 5 s, for 3 minutes —
   // pauses while the page is hidden, stops at APPLIED/HELD/FAILED, and asks Stripe at most every 30 s.
+  // It also stops for a paid advance deal (it applies on its start date, not now), and never starts on
+  // a canceled return unless the old Checkout turned out paid. A failed read retries; only 403/404 end
+  // it. The 3 minutes are judged after a read, so a tab hidden longer still looks once before giving up.
+  const pendingDeal = !!data?.status.pendingDeal;
   useEffect(() => {
-    if (!returning || !returnAttemptId || returnError) return;
+    if (!returning || !returnAttemptId || returnError || pendingDeal) return;
+    if (checkoutCanceled && returnAttempt?.paymentState !== 'PAID') return;
     if (returnComplete || returnAttempt?.paymentState === 'FAILED' || ['HELD', 'FAILED'].includes(returnAttempt?.applyState ?? '')) return;
     let active = true, inFlight = false, timer = 0, lastRefresh = 0, lastPayment: string | null = returnAttempt?.paymentState ?? null;
     const startedAt = Date.now();
+    setTimedOut(false);
     const schedule = () => {
       window.clearTimeout(timer);
       if (active && document.visibilityState === 'visible') timer = window.setTimeout(() => void tick(), Date.now() - startedAt < 30_000 ? 2_000 : 5_000);
     };
     const tick = async () => {
       if (!active || inFlight) return;
-      if (Date.now() - startedAt >= 180_000) { setTimedOut(true); return; }
       if (Date.now() - lastRefresh >= 30_000) { lastRefresh = Date.now(); void api.refresh().catch(() => {}); }
       inFlight = true;
       try {
@@ -178,16 +199,18 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         // Status and history are re-read only when the answer moved (recipient, heading, documents).
         if (value.paymentState !== lastPayment || value.applyState === 'APPLIED') { lastPayment = value.paymentState; setReload(current => current + 1); }
       } catch (e) {
-        if (active) setReturnError(errorStatus(e) === 404 ? 'ไม่พบรายการนี้ในบริษัทที่เลือก กรุณาดูประวัติหรือติดต่อทีมงาน' : errorText(e));
-        return;
+        const code = errorStatus(e);
+        if (code === 403 || code === 404) { if (active) setReturnError(code === 404 ? RETURN_NOT_FOUND : errorText(e)); return; }
       } finally { inFlight = false; }
+      if (!active) return;
+      if (Date.now() - startedAt >= 180_000) { setTimedOut(true); return; }
       schedule();
     };
     const visible = () => { window.clearTimeout(timer); if (document.visibilityState === 'visible') void tick(); };
     void tick();
     document.addEventListener('visibilitychange', visible);
     return () => { active = false; window.clearTimeout(timer); document.removeEventListener('visibilitychange', visible); };
-  }, [api, returning, returnAttemptId, returnComplete, returnError, returnAttempt?.paymentState, returnAttempt?.applyState]);
+  }, [api, returning, returnAttemptId, returnComplete, returnError, returnAttempt?.paymentState, returnAttempt?.applyState, checkoutCanceled, pendingDeal]);
   async function action(work: (navigate: typeof navigateProvider) => Promise<void>) {
     if (running.current) return;
     running.current = true; setBusy(true); setError(''); setErrorCode(null);
@@ -265,14 +288,18 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const lockedShell = useLockedShell();
   // RV30: the moment a purchase confirms inside the locked shell, tell WorkspaceLayoutClient so it
   // re-reads the notice and switches shells in place, instead of waiting on the next focus/reload.
-  // If the shell is still locked 5 s later (no listener, or the notice not yet ACTIVE), reload once;
+  // If the shell is still locked 5 s later (no listener, or the notice not yet ACTIVE), reload — once
+  // per attempt across page loads (`claimUnlockReload`), so a notice that keeps lagging cannot loop;
   // the shell switch unmounts this page first and clears the timer.
+  const unlockAttempt = returnAttemptId ?? status?.attemptId ?? status?.reference ?? null;
   useEffect(() => {
     if (!confirmed || !lockedShell) return;
     notifyPlanTermChanged();
-    const timer = window.setTimeout(() => { if (!unlockReloaded.current) { unlockReloaded.current = true; window.location.reload(); } }, 5_000);
+    const timer = window.setTimeout(() => {
+      if (unlockAttempt && claimUnlockReload(() => window.sessionStorage, unlockAttempt)) window.location.reload();
+    }, 5_000);
     return () => window.clearTimeout(timer);
-  }, [confirmed, lockedShell]);
+  }, [confirmed, lockedShell, unlockAttempt]);
   // G10/F16: the quote's own clock (10 minutes), said out loud instead of a button that silently greys out.
   const [quoteExpired, setQuoteExpired] = useState(false);
   useEffect(() => {
@@ -288,6 +315,13 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     await requestQuote(quote.offer.offerKey, quote.offer.interval, recipientEmail, capacityDraft.current?.initialSelection, quote.purchaseMode, dealQuote?.dealId,
       quote.purchase?.kind === 'FULL_PACKAGE_UPGRADE' ? 'FULL_PACKAGE' : undefined);
   });
+  // R-A5: Checkout refuses a quote whose document recipient changed since it was priced
+  // (assertRecipientUnchanged: a recipient on file that differs from the one the quote pinned), so a
+  // change made from the confirm box's "แก้อีเมลรับเอกสาร" quotes the same choice again.
+  const staleRecipient = !!quote && !!status?.recipient?.email && status.recipient.email !== quote.billingEmail;
+  // Fires once per change; a failed re-quote shows its error rather than retrying on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (staleRecipient) void requoteSame(); }, [staleRecipient]);
   // G24: card auto-renew first; the other ways to pay fold under "วิธีชำระอื่น", open whenever the
   // chosen mode is one of them (or the card is not offered at all).
   const otherModesId = useId();
@@ -307,11 +341,27 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const packageHeading = status?.accessState === 'EXPIRED' ? PLAN_LOCK_COPY[lockReason].title
     : noPackage ? PLAN_LOCK_COPY.no_package.title : 'แพ็กเกจปัจจุบัน';
   const returnFailed = returning && returnAttempt?.paymentState === 'FAILED';
+  // Stripe sent the customer back after paying, and the API keeps the attempt OPEN until the reconciler
+  // applies it (the drain runs about every 10 s). While that answer is pending, nothing here may offer to
+  // end, resume or redo the payment — only after the 3-minute wait gives up do those come back.
+  const awaitingStripe = returning && !checkoutCanceled && !returnError && !timedOut && (!returnAttempt || returnAttempt.paymentState === 'PENDING');
   const hasPaymentToCheck = status && (!confirmed || ['past_due', 'unpaid'].includes(status.subscriptionState)) && (status.paymentState !== 'NONE' || status.attemptId || returnAttemptId || status.subscriptionState !== 'NONE');
-  const canResumePayment = status?.attemptId && status.canCancelCheckout && ['PENDING', 'FAILED', 'UNKNOWN', 'ACTION_REQUIRED'].includes(status.paymentState);
+  const canEndCheckout = !awaitingStripe && Boolean(status?.canCancelCheckout && status.attemptId);
+  const canResumePayment = canEndCheckout && ['PENDING', 'FAILED', 'UNKNOWN', 'ACTION_REQUIRED'].includes(status!.paymentState);
   // F09/F10: an unpaid Checkout is ended and replaced in one tap; the two-step confirm stays for
   // attempts whose outcome is unknown or needs action.
-  const oneTapCancel = Boolean(status?.canCancelCheckout && status.attemptId && status.paymentState === 'PENDING');
+  const oneTapCancel = canEndCheckout && status!.paymentState === 'PENDING';
+  // Paid, then held for the team (not a capacity choice, not a deal waiting for its start date).
+  const applyHeld = !!status && !status.capacityRepair && !status.pendingDeal && (returning ? returnAttempt?.applyState : status.applyState) === 'HELD';
+  const supportReference = billingSupportReference(returning ? returnAttemptId : status?.reference);
+  // Item 17: a no-package box saying "เลือกแพ็กเกจ…" with no button under it, and no other line saying
+  // why, was a dead end (sales closed, collection paused, policy not ready).
+  const canBuy = !!status?.allowedActions.includes('new_sales');
+  const saleClosedUnexplained = !!status && !canBuy && !status.attemptId && !status.refundReviewPending
+    && status.purchaseEligibility === 'ELIGIBLE' && status.accessState !== 'HELD';
+  const purchaseHint = canBuy || oneTapCancel ? lockReason === 'no_package' ? 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน' : 'เลือกแพ็กเกจเพื่อใช้งานต่อ'
+    : saleClosedUnexplained ? 'ยังเปิดรับชำระไม่ได้ชั่วคราว กรุณาลองใหม่ภายหลัง' : null;
+  const recipientLocked = !!status && billingRecipientLocked(status);
   const purchasing = choosing || !!quote || !!capacity;
   const showOverview = section === 'package' && !purchasing;
   // R-A7: a document bounced — said on the overview and above the recipient panel.
@@ -328,10 +378,11 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       <p className="break-words">{error}<button className={`${button} ml-3`} disabled={busy} onClick={() => setReload(value => value + 1)}>ลองใหม่</button></p>
       {/* The error text itself asks people to contact the team "with the reference" — so show it here
           instead of leaving that instruction with nothing on screen to read out. */}
-      {error.includes('ติดต่อทีมงานพร้อมเลขอ้างอิง') && (status?.reference || returnAttemptId) &&
-        <p className="break-all text-sm">เลขอ้างอิงสำหรับแจ้งทีมงาน: {billingSupportReference(returning ? returnAttemptId : status?.reference)}</p>}
+      {error.includes('ติดต่อทีมงานพร้อมเลขอ้างอิง') && supportReference &&
+        <p className="break-all text-sm">เลขอ้างอิงสำหรับแจ้งทีมงาน: {supportReference}</p>}
     </div>}
-    {checkoutCancelNotice && <p role="status" className="rounded-xl bg-gray-50 p-3">{checkoutCancelNotice}</p>}
+    {checkoutCancelNotice && <div role="status" className="space-y-2 rounded-xl bg-gray-50 p-3"><p>{checkoutCancelNotice.text}</p>
+      {checkoutCancelNotice.checking && <button className={button} disabled={busy} onClick={() => setReload(value => value + 1)}>อัปเดตข้อมูล</button>}</div>}
     {!data && !error && <p role="status">กำลังตรวจสอบสิทธิ์และรายการชำระเงิน…</p>}
     {data && status && <>
       {status.mode === 'TEST' && !preview && <div><MangmeeBadge tone="amber">โหมดทดสอบ · ไม่มีการรับเงินจริง</MangmeeBadge></div>}
@@ -342,18 +393,21 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       </nav>
       {showOverview && <>
       {status.allowedActions.includes('new_sales') && !!status.billingProfile?.missingFields.length && <p role="note" className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm leading-7 text-gray-700">
-        เอกสารจะออกในชื่อ <strong className="break-words">{status.billingProfile.name || status.companyName}</strong> · ที่อยู่กรอกได้ที่หน้าชำระเงิน หรือ <Link className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" href={`/companies/${encodeURIComponent(companyId)}/settings/profile#shop`}>เติมล่วงหน้าที่ข้อมูลร้าน</Link>
+        เอกสารจะออกในชื่อ <strong className="break-words">{status.billingProfile.name || status.companyName}</strong> · ที่อยู่กรอกได้ที่หน้าชำระเงิน{canOpenProfile && <> หรือ <Link className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline" href={`/companies/${encodeURIComponent(companyId)}/settings/profile#shop`}>เติมล่วงหน้าที่ข้อมูลร้าน</Link></>}
       </p>}
       {bounceBanner}
       <section aria-label="สถานะแพ็กเกจ" className="mangmee-card space-y-5 p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-bold">{returnFailed ? 'รายการชำระเงินนี้ไม่สำเร็จ' : status.pendingDeal ? status.pendingDeal.state === 'HELD' ? 'ชำระแล้ว ต้องตรวจสอบก่อนเริ่มดีล' : status.pendingDeal.state === 'PAID' ? 'ชำระดีลแล้ว รอเริ่มสิทธิ์' : 'ชำระแล้ว กำลังยืนยันการต่ออายุ' : confirmed ? returning ? dealReturn ? 'ใช้งานข้อเสนอพิเศษแล้ว' : 'ชำระแล้ว เปิดใช้งานแล้ว' : 'แพ็กเกจปัจจุบัน' : (returning ? returnAttempt?.paymentState === 'PAID' && returnAttempt.applyState !== 'APPLIED' : status.paymentState === 'PAID' && status.applyState !== 'APPLIED') ? 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์' : status.paymentState === 'FAILED' ? 'เรียกเก็บเงินไม่สำเร็จ' : checkoutCanceled && returnAttempt?.paymentState !== 'PAID' && !confirmed ? 'ยังไม่ได้ชำระ' : status.attemptId ? 'กำลังตรวจสอบรายการชำระเงิน' : packageHeading}</h2>
-          <MangmeeBadge tone={status.accessState === 'ACTIVE' ? 'brand' : 'amber'}>{status.accessState === 'HELD' ? 'อยู่ระหว่างตรวจสอบ' : planTermStateLabel(status.accessState === 'ACTIVE' ? 'ACTIVE' : lockReason === 'no_package' ? 'NO_PACKAGE' : 'EXPIRED')}</MangmeeBadge>
+          <MangmeeBadge tone={status.accessState === 'ACTIVE' ? 'brand' : 'amber'}>{status.accessState === 'HELD' ? 'ถูกพักใช้งานโดยผู้ดูแล' : planTermStateLabel(status.accessState === 'ACTIVE' ? 'ACTIVE' : lockReason === 'no_package' ? 'NO_PACKAGE' : 'EXPIRED')}</MangmeeBadge>
         </div>
-        {noPackage ? <dl className="grid gap-5 rounded-xl bg-gray-50 p-4">
+        {noPackage && awaitingStripe ? <div className="space-y-1 rounded-xl bg-gray-50 p-4">
+          <p className="text-lg font-bold text-gray-900">กำลังรอผลการชำระเงินจาก Stripe</p>
+          <p className="text-sm text-gray-600">ระบบตรวจผลให้อัตโนมัติ ไม่ต้องชำระซ้ำ</p>
+        </div> : noPackage ? <dl className="grid gap-5 rounded-xl bg-gray-50 p-4">
           {/* R2/R10: the same title PLAN_LOCK_COPY gives the heading above, on an expired shop — never
               a second, hardcoded "ยังไม่มีแพ็กเกจ" that would say something else under "แพ็กเกจหมดอายุแล้ว". */}
           <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{PLAN_LOCK_COPY[lockReason].title}</dd>
-            <p className="mt-1 text-sm text-gray-600">{lockReason === 'no_package' ? 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน' : 'เลือกแพ็กเกจเพื่อใช้งานต่อ'}</p>
+            {purchaseHint && <p className="mt-1 text-sm text-gray-600">{purchaseHint}</p>}
             {/* Only when a term really ran out: a shop that never had one starts and ends today. */}
             {lockReason === 'trial_ended' && status.termEndsAt && <p className="mt-1 text-sm text-gray-500">หมดอายุเมื่อ {date(status.termEndsAt)}</p>}</div>
         </dl> : <dl className="grid gap-5 rounded-xl bg-gray-50 p-4 sm:grid-cols-3">
@@ -365,8 +419,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             The recipient is written at apply, so until then Checkout's own address stands in. */}
         {returning && returnAttempt?.paymentState === 'PAID' && <div className="space-y-2 rounded-xl bg-gray-50 p-4" aria-label="อีเมลรับเอกสาร">
           <p className="break-all">ส่งเอกสารไปที่ <strong>{status.recipient?.email || 'อีเมลที่กรอกไว้ที่หน้าชำระเงิน'}</strong></p>
-          <button className={button} disabled={!returnComplete} onClick={openRecipientEditor}>แก้อีเมลรับเอกสาร</button>
-          {!returnComplete && <p className="text-sm text-gray-600">แก้อีเมลได้เมื่อเปิดสิทธิ์เสร็จ (อีกสักครู่)</p>}
+          <button className={button} disabled={recipientLocked} onClick={openRecipientEditor}>แก้อีเมลรับเอกสาร</button>
+          {recipientLocked && <p className="text-sm text-gray-600">{BILLING_RECIPIENT_WAIT_TEXT}</p>}
         </div>}
         {status.effectiveCapacity?.temporary&&<section className="space-y-2 rounded-xl border border-emerald-300 p-3" aria-label="สิทธิ์แพ็กเกจชั่วคราว"><p>ผู้ดูแลให้สิทธิ์ {PLAN_TIER_PRESETS[status.effectiveCapacity.tierKey].labelTh} ชั่วคราว</p><p>{status.effectiveCapacity.branchLimit} สาขา · {status.effectiveCapacity.employeeLimit} ผู้ใช้ ถึง {date(status.effectiveCapacity.temporary.expiresAt)}</p><p>เมื่อครบกำหนดจะใช้แพ็กเกจที่ซื้ออยู่ล่าสุด การซื้อเพิ่มด้านล่างคิดจากแพ็กเกจที่ชำระเงิน</p></section>}
 
@@ -381,28 +435,39 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {status.cancelAtPeriodEnd ? <p className="text-sm text-gray-600">หยุดต่ออายุแล้ว ใช้งานได้ถึงวันที่ระบุข้างต้น</p> : status.nextChargeAt && !status.collectionPause && <p className="text-sm text-gray-600">{status.renewalMode === 'PROMPTPAY_RENEW' ? 'ระบบจะออกบิล QR วันที่ ' : 'ต่ออายุอัตโนมัติวันที่ '}{date(status.nextChargeAt)}</p>}
         {status.renewalMode === 'PROMPTPAY_RENEW' && status.renewalInvoiceUrl && <div className="space-y-2 rounded-xl border border-brand-200 p-4"><p>บิลต่ออายุรอชำระ{status.renewalInvoiceDueAt ? ` · ครบกำหนด ${date(status.renewalInvoiceDueAt)}` : ''}</p><button className={button} disabled={busy} aria-busy={busy} onClick={() => action(async navigate => navigate(status.renewalInvoiceUrl!, 'document'))}>เปิดบิลและสแกน QR</button></div>}
         {status.graceEndsAt && <p>ระยะผ่อนผันถึง {date(status.graceEndsAt)} · ใช้ยอดใบเสร็จเดิมที่เหลือได้ ไม่มีการเติมโควตาจนกว่าจะชำระสำเร็จ</p>}
-        {status.purchaseEligibility === 'COMPANY_SALES_CLOSED' && <p role="status" className="text-sm leading-7 text-gray-600">บริษัทนี้ยังซื้อหรือเปลี่ยนแพ็กเกจผ่านเว็บไม่ได้ กรุณาติดต่อทีมมั่งมี</p>}
-        {status.purchaseEligibility === 'SOURCE_REVIEW_REQUIRED' && <p role="status" className="text-sm leading-7 text-gray-600">ข้อมูลการชำระเงินเดิมของบริษัทนี้ยังไม่ตรงกัน กรุณาติดต่อทีมมั่งมีก่อนเริ่มรายการใหม่</p>}
-        {status.purchaseEligibility === 'ENTITLEMENT_REVIEW_REQUIRED' && <p role="status" className="text-sm leading-7 text-gray-600">ข้อมูลสิทธิ์เมนูเดิมยังไม่พร้อม กรุณาติดต่อทีมมั่งมีก่อนชำระเงิน</p>}
+        {status.purchaseEligibility === 'COMPANY_SALES_CLOSED' && <p role="status" className="text-sm leading-7 text-gray-600">ร้านนี้ยังซื้อหรือเปลี่ยนแพ็กเกจผ่านเว็บไม่ได้ กรุณาติดต่อทีมงาน</p>}
+        {status.purchaseEligibility === 'SOURCE_REVIEW_REQUIRED' && <p role="status" className="text-sm leading-7 text-gray-600">ข้อมูลการชำระเงินเดิมของร้านนี้ยังไม่ตรงกัน กรุณาติดต่อทีมงานก่อนเริ่มรายการใหม่</p>}
+        {status.purchaseEligibility === 'ENTITLEMENT_REVIEW_REQUIRED' && <p role="status" className="text-sm leading-7 text-gray-600">ข้อมูลสิทธิ์เมนูเดิมยังไม่พร้อม กรุณาติดต่อทีมงานก่อนชำระเงิน</p>}
         {status.refundReviewPending && <p role="status" className="rounded-xl bg-amber-50 p-3">กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ คำขอนี้ไม่เปลี่ยนสิทธิ์แพ็กเกจเดิม คุณตรวจรายการเดิมด้านล่าง หรือ <a className="underline" href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อทีมมั่งมี</a> ได้</p>}
-        {status.accessState === 'HELD' && <p>บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน ข้อมูลยังอยู่ครบ</p>}
-        {(status.reference || returnAttemptId) && !confirmed && <details className="text-sm text-gray-500"><summary className="min-h-11 cursor-pointer py-2">เลขอ้างอิงสำหรับแจ้งทีมงาน</summary><p className="break-all">{billingSupportReference(returning ? returnAttemptId : status.reference)}</p></details>}
-        {returnFailed && <p role="status" className="rounded-xl bg-amber-50 p-3 text-amber-900">รายการนี้ไม่ได้ชำระสำเร็จหรือรายการหมดอายุ สิทธิ์แพ็กเกจเดิมยังคงเดิม</p>}
-        {returning && !confirmed && timedOut && <p role="status">ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง</p>}
+        {status.accessState === 'HELD' && <p>ร้านนี้ถูกพักใช้งานโดยผู้ดูแล กรุณาติดต่อทีมงาน ข้อมูลยังอยู่ครบ</p>}
+        {/* Paid but held: the team reviews before the rights open, and the reference is in plain sight. */}
+        {applyHeld && <p role="status" className="break-all rounded-xl bg-amber-50 p-3">ทีมงานกำลังตรวจสอบก่อนเปิดสิทธิ์{supportReference && ` · เลขอ้างอิง ${supportReference}`}</p>}
+        {supportReference && !confirmed && !applyHeld && <details className="text-sm text-gray-500"><summary className="min-h-11 cursor-pointer py-2">เลขอ้างอิงสำหรับแจ้งทีมงาน</summary><p className="break-all">{supportReference}</p></details>}
+        {/* A shop that never had a package has no "เดิม" to keep. */}
+        {returnFailed && <p role="status" className="rounded-xl bg-amber-50 p-3 text-amber-900">รายการนี้ไม่ได้ชำระสำเร็จหรือรายการหมดอายุ {noPackage && lockReason === 'no_package' ? 'ไม่มีการเรียกเก็บเงินจากรายการนี้' : 'สิทธิ์แพ็กเกจเดิมยังคงเดิม'}</p>}
+        {/* A paid advance deal applies on its start date: it is never told to contact the team. */}
+        {returning && !confirmed && timedOut && !status.pendingDeal && <p role="status">ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง</p>}
         {oneTapCancel && <button className="mangmee-btn mangmee-btn-primary" disabled={busy} aria-busy={busy} onClick={() => action(async () => {
           const result = await api.cancelCheckout(status.attemptId!);
-          if (result.state === 'EXPIRED') { reopenChooser.current = true; setCheckoutCancelNotice('ยุติหน้าชำระเงินเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย'); }
-          else if (result.state === 'COMPLETED') setCheckoutCancelNotice('รายการเดิมชำระสำเร็จแล้ว ระบบกำลังเปิดสิทธิ์ให้ ไม่ต้องซื้อใหม่');
-          else setCheckoutCancelNotice('กำลังตรวจผลรายการเดิมกับ Stripe กรุณารอสักครู่แล้วกดอัปเดตข้อมูล');
+          if (result.state === 'EXPIRED') { reopenChooser.current = true; setCheckoutCancelNotice({ text: 'ยุติหน้าชำระเงินเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย', checking: false }); }
+          else if (result.state === 'COMPLETED') setCheckoutCancelNotice({ text: 'รายการเดิมชำระสำเร็จแล้ว ระบบกำลังเปิดสิทธิ์ให้ ไม่ต้องซื้อใหม่', checking: true });
+          else setCheckoutCancelNotice({ text: 'กำลังตรวจผลรายการเดิมกับ Stripe กรุณารอสักครู่แล้วกดอัปเดตข้อมูล', checking: true });
           setReload(value => value + 1);
         })}>เลือกแพ็กเกจใหม่</button>}
-        {canResumePayment && <button className={button} disabled={busy} aria-busy={busy} onClick={() => action(async navigate => { const result = await api.resume(status.attemptId!); if (result.checkoutUrl) navigate(result.checkoutUrl, 'checkout'); else setReload(value => value + 1); })}>กลับไปยังรายการเดิม</button>}
-        {status.canCancelCheckout && status.attemptId && !oneTapCancel && (confirmCheckoutCancel ? <div className="space-y-2 rounded-xl border border-amber-300 p-3">
+        {canResumePayment && <button className={button} disabled={busy} aria-busy={busy} onClick={() => action(async navigate => {
+          const result = await api.resume(status.attemptId!);
+          if (result.checkoutUrl) { navigate(result.checkoutUrl, 'checkout'); return; }
+          // An expired or closed Checkout has no page to return to: say so instead of a silent reload.
+          setCheckoutCancelNotice({ text: 'หน้าชำระเงินเดิมเปิดต่อไม่ได้แล้ว ระบบกำลังตรวจผลรายการเดิม กรุณารอสักครู่แล้วกดอัปเดตข้อมูล', checking: true });
+          setReload(value => value + 1);
+        })}>กลับไปยังรายการเดิม</button>}
+        {canEndCheckout && !oneTapCancel && (confirmCheckoutCancel ? <div className="space-y-2 rounded-xl border border-amber-300 p-3">
           <p>ยุติหน้าชำระเงินรายการนี้ใช่ไหม? ระบบจะตรวจผลกับ Stripe ก่อนให้เริ่มรายการใหม่</p>
           <div className="flex flex-wrap gap-3"><button className={button} disabled={busy} aria-busy={busy} onClick={() => action(async () => {
             const result = await api.cancelCheckout(status.attemptId!);
             setConfirmCheckoutCancel(false);
-            setCheckoutCancelNotice(result.state === 'EXPIRED' ? 'ยุติหน้าชำระเงินแล้ว เลือกแพ็กเกจใหม่ได้' : 'กำลังตรวจผลรายการเดิม กรุณาอัปเดตข้อมูลก่อนเริ่มรายการใหม่');
+            setCheckoutCancelNotice(result.state === 'EXPIRED' ? { text: 'ยุติหน้าชำระเงินแล้ว เลือกแพ็กเกจใหม่ได้', checking: false }
+              : { text: 'กำลังตรวจผลรายการเดิม กรุณากดอัปเดตข้อมูลก่อนเริ่มรายการใหม่', checking: true });
             setReload(value => value + 1);
           })}>ยืนยันยุติหน้าชำระเงิน</button><button className={button} disabled={busy} onClick={() => setConfirmCheckoutCancel(false)}>ยังไม่ยุติ</button></div>
         </div> : <button className={button} disabled={busy} onClick={() => setConfirmCheckoutCancel(true)}>ยุติรายการที่ยังไม่ชำระ</button>)}
@@ -474,7 +539,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           <p>{deal.autoRenew ? `ราคานี้${deal.cadence === 'year' ? 'ทุกปี' : 'ทุกเดือน'}` : `รวม ${deal.months} เดือน`}</p>
           <p>{deal.branchLimit} สาขา · {deal.employeeLimit} ผู้ใช้ · {deal.monthlySlipLimit.toLocaleString('th-TH')} ใบต่อเดือน</p>
           {dealMenuLabels(deal.featureKeys).length > 0 && <p>เมนูที่ได้: {dealMenuLabels(deal.featureKeys).join(' · ')}</p>}
-          <p>{deal.creditScope === 'CHAT' ? 'เครดิตแชต' : 'เพดาน AI รวม'}: {dealAiCreditText(deal.aiMonthlyBudgetSatang, deal.creditScope)}</p>
+          <p>{deal.creditScope === 'CHAT' ? `เครดิต AI ${dealAiCreditText(deal.aiMonthlyBudgetSatang, 'CHAT')}` : `เพดาน AI รวม: ${dealAiCreditText(deal.aiMonthlyBudgetSatang)}`}</p>
           {deal.creditScope === 'CHAT' && <p className="text-sm text-gray-600">หากร้านมีค่าเครดิตพิเศษที่ผู้ดูแลตั้งไว้ จะคงค่านั้น</p>}
           {deal.description && <p className="text-sm text-gray-600">{deal.description}</p>}
           <p className="text-sm text-gray-600">ใช้ได้ถึง {date(deal.offerExpiresAt)}</p>
@@ -500,7 +565,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           </>}
         </fieldset>
         {status.renewalMode === 'CARD_AUTO' && status.subscriptionState === 'active' && status.paidThrough && Date.parse(status.paidThrough) > Date.now() && !availableModes.includes('CARD_ONCE') &&
-          <p role="status" className="rounded-xl bg-amber-50 p-4 text-sm leading-7">{modeUnavailable ? 'เลือกวิธีจ่ายใหม่นี้ได้ แต่ยังชำระซ้อนกับสมาชิกเดิมไม่ได้' : 'บริษัทนี้มีสมาชิกบัตรที่ต่ออายุอัตโนมัติอยู่'} หากต้องการเปลี่ยน ให้<button className="mx-1 font-semibold text-brand-700 underline" onClick={() => { setChoosing(false); setSection('payment'); }}>หยุดต่ออายุอัตโนมัติ</button>ก่อน สิทธิ์ที่จ่ายไว้ใช้ได้ถึง {date(status.paidThrough)} แล้วจึงซื้อด้วยวิธีใหม่</p>}
+          <p role="status" className="rounded-xl bg-amber-50 p-4 text-sm leading-7">{modeUnavailable ? 'เลือกวิธีจ่ายใหม่นี้ได้ แต่ยังชำระซ้อนกับสมาชิกเดิมไม่ได้' : 'ร้านนี้มีสมาชิกบัตรที่ต่ออายุอัตโนมัติอยู่'} หากต้องการเปลี่ยน ให้<button className="mx-1 font-semibold text-brand-700 underline" onClick={() => { setChoosing(false); setSection('payment'); }}>หยุดต่ออายุอัตโนมัติ</button>ก่อน สิทธิ์ที่จ่ายไว้ใช้ได้ถึง {date(status.paidThrough)} แล้วจึงซื้อด้วยวิธีใหม่</p>}
         {(status.renewalMode === 'CARD_ONCE' || status.renewalMode === 'PROMPTPAY_ONCE') && modeUnavailable &&
           <p role="status" className="rounded-xl bg-amber-50 p-4 text-sm leading-7">แพ็กเกจปัจจุบันเป็นแบบจ่ายครั้งเดียว ระหว่างที่ยังไม่หมดอายุ ซื้อแพ็กเกจอื่นได้ด้วยบัตรจ่ายครั้งเดียวหรือ PromptPay จ่ายครั้งเดียว หากต้องการต่ออายุอัตโนมัติให้เริ่มหลังแพ็กเกจนี้หมดอายุ</p>}
         <div className="flex gap-2">{(['month', 'year'] as const).map(value => <button key={value} className={interval === value ? billingPrimaryControl : button} aria-pressed={interval === value} onClick={() => { setInterval(value); setQuote(null); setCapacity(null); setCadenceNotice(false); }}>{value === 'month' ? 'รายเดือน' : 'รายปี'}</button>)}</div>
@@ -525,7 +590,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           {data.catalog.taxTreatment === 'EXCLUSIVE_VAT_7' && <p className="text-sm text-gray-600">ราคายังไม่รวม VAT 7%</p>}
           <p className="text-sm text-brand-700">{interval === 'year' ? `ใช้งาน 12 เดือน${saving > 0 ? ` · ประหยัด ${money(saving)}` : ''}` : 'ชำระรายเดือน'}</p><p>{offer.branchLimit} สาขา · {offer.employeeLimit} ผู้ใช้</p>
           <p>{offer.receiptAllowance.toLocaleString('th-TH')} ใบ ได้ทันทีเมื่อชำระสำเร็จ</p>
-          <p>เครดิตแชตเริ่มต้น {DEFAULT_CHAT_CREDIT_SATANG / 100} credit / เดือน · ใบเสร็จคิดตามจำนวนที่อ่านสำเร็จ</p>
+          <p>เครดิต AI {dealAiCreditText(DEFAULT_CHAT_CREDIT_SATANG, 'CHAT')} · ใบเสร็จคิดตามจำนวนที่อ่านสำเร็จ</p>
           {offer.offerKey === 'ENTERPRISE_1999' && <p className="text-sm text-gray-600">{enterpriseMenuSummary}</p>}
           {menus.length > 0 && <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2 font-semibold text-brand-700">ดูรายละเอียดทั้งหมด · {menus.length} เมนู</summary>
             <ul className="space-y-1 break-words">{menus.map(label => <li key={label}><span aria-hidden="true">✓ </span>{label}</li>)}</ul></details>}
@@ -556,14 +621,15 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             <div className="flex flex-wrap gap-x-2"><dt className="text-gray-500">ชื่อบนเอกสาร</dt><dd className="min-w-0 break-words">{quote.billingProfile?.name || quote.companyName}</dd></div>
             <div className="flex flex-wrap gap-x-2"><dt className="text-gray-500">ที่อยู่</dt><dd className="min-w-0 break-words">{quote.billingProfile && quote.billingProfile.missingFields.every(field => field === 'name')
               ? Object.values(quote.billingProfile.address).filter(Boolean).join(' ') : 'จะกรอกที่หน้าชำระเงิน'}</dd></div>
-            <div className="flex flex-wrap gap-x-2"><dt className="text-gray-500">อีเมลรับเอกสาร</dt><dd className="min-w-0 break-all">{quote.billingEmail || 'จะกรอกที่หน้าชำระเงิน'}</dd></div>
+            <div className="flex flex-wrap gap-x-2"><dt className="text-gray-500">อีเมลรับเอกสาร</dt><dd className="min-w-0 break-all">{quote.billingEmail || 'จะกรอกที่หน้าชำระเงิน'}
+              {quote.billingEmail && status.recipient?.bouncedAt && status.recipient.email === quote.billingEmail && <MangmeeBadge tone="amber" className="ml-2">ส่งไม่ถึง</MangmeeBadge>}</dd></div>
           </dl>
           <div className="mt-2 flex flex-wrap gap-x-4">
-            <Link className="inline-flex min-h-11 items-center text-brand-700 underline" href={billingProfileHref(companyId, {
+            {canOpenProfile && <Link className="inline-flex min-h-11 items-center text-brand-700 underline" href={billingProfileHref(companyId, {
               offer: quote.offer.offerKey, interval: quote.offer.interval, channel: pendingPurchase.current?.channel ?? 'web', purchaseMode: quote.purchaseMode,
               ...(dealQuote ? { dealId: dealQuote.dealId } : {}),
               ...(quote.purchase?.kind === 'FULL_PACKAGE_UPGRADE' ? { purchaseIntent: 'FULL_PACKAGE' as const } : {}),
-            })}>แก้ไขข้อมูลบริษัท</Link>
+            })}>แก้ไขข้อมูลร้าน</Link>}
             {status.recipient?.email && <button type="button" className="inline-flex min-h-11 items-center text-brand-700 underline" onClick={openRecipientEditor}>แก้อีเมลรับเอกสาร</button>}
           </div>
         </div><p>ราคาก่อนภาษี {money(quote.subtotalSatang)} · ภาษี {money(quote.taxSatang)}</p>
@@ -596,7 +662,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           <p className="font-semibold">{menusMoveLater ? `สิทธิ์เมนูตั้งแต่ ${menusMoveLater}` : 'สิทธิ์เมนูเมื่อชำระสำเร็จ'}</p>
           {quote.featureImpact.removed.length > 0 && <><p>{menusMoveLater ? `เมนูต่อไปนี้จะหยุดใช้ตั้งแต่ ${menusMoveLater} โดยข้อมูลเดิมยังเก็บไว้:` : 'เมนูต่อไปนี้จะหยุดใช้หลังชำระ โดยข้อมูลเดิมยังเก็บไว้:'}</p><ul className="list-disc space-y-1 break-words pl-6">{quote.featureImpact.removed.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
           {quote.featureImpact.added.length > 0 && <><p>{menusMoveLater ? `เมนูที่จะเปิดใช้เพิ่มตั้งแต่ ${menusMoveLater}:` : 'เมนูที่จะเปิดใช้เพิ่มหลังชำระ:'}</p><ul className="list-disc space-y-1 break-words pl-6">{quote.featureImpact.added.map(item => <li key={item.featureKey}>{item.labelTh}</li>)}</ul></>}
-          {quote.featureImpact.preservedAdmin > 0 && <p>สิทธิ์พิเศษที่ผู้ดูแลกำหนดให้เฉพาะบริษัทยังคงอยู่</p>}
+          {quote.featureImpact.preservedAdmin > 0 && <p>สิทธิ์พิเศษที่ผู้ดูแลกำหนดให้เฉพาะร้านนี้ยังคงอยู่</p>}
         </section>}
         {quote.pendingPlanChange && <div className="space-y-1 rounded-xl bg-amber-50 p-3"><p>รายการเปลี่ยนเป็น {quote.pendingPlanChange.offer.label} ({quote.pendingPlanChange.offer.interval === 'year' ? 'รายปี' : 'รายเดือน'}) จะมีผลจาก {date(quote.pendingPlanChange.oldEffectiveAt)} เป็น {date(quote.pendingPlanChange.newEffectiveAt)}</p><p>ยอดต่ออายุหลังวันนั้น {money(quote.pendingPlanChange.totalSatang)} · คงสาขา {quote.pendingPlanChange.capacity.retainedBranches.join(', ')} · คงผู้ใช้ {quote.pendingPlanChange.capacity.retainedMembers.join(', ')}</p><p>ซื้อสำเร็จจึงยืนยันวันเปลี่ยนใหม่ หากชำระไม่สำเร็จคำสั่งเดิมคงอยู่</p></div>}
         {quote.purchaseMode === 'PROMPTPAY_RENEW' ? <p>สแกน QR เพื่อจ่ายครั้งแรก จากนั้นระบบออกบิลใหม่ทุกงวด ต้องเปิดบิลและสแกน QR เอง ไม่มีการหักเงินอัตโนมัติ</p>
@@ -617,7 +683,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           // The quote was spent on the refused attempt: back to the chooser, which stays open.
           else if (result.state === 'FAILED') { setQuote(null); setAccepted(false); setError('ยังเปิดหน้าชำระเงินไม่ได้ กรุณาตรวจสอบราคาใหม่แล้วลองอีกครั้ง'); }
           // The reservation stands until Stripe answers: never retry, only look again.
-          else if (result.state === 'UNKNOWN') { setQuote(null); setChoosing(false); setCheckoutCancelNotice('กำลังตรวจกับ Stripe ว่าหน้าชำระเงินถูกสร้างหรือไม่ กรุณารอสักครู่แล้วกดอัปเดตข้อมูล ยังไม่ต้องเริ่มรายการใหม่'); setReload(value => value + 1); }
+          else if (result.state === 'UNKNOWN') { setQuote(null); setChoosing(false); setCheckoutCancelNotice({ text: 'กำลังตรวจกับ Stripe ว่าหน้าชำระเงินถูกสร้างหรือไม่ กรุณารอสักครู่แล้วกดอัปเดตข้อมูล ยังไม่ต้องเริ่มรายการใหม่', checking: true }); setReload(value => value + 1); }
           else { setQuote(null); setChoosing(false); setReload(value => value + 1); }
         })}>{busy ? 'กำลังตรวจสอบ…' : 'ยืนยันและไปชำระที่ Stripe'}</button></div>}
       </section>}

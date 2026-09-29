@@ -1,5 +1,5 @@
 import type { BillingDocumentResendResult } from '@watchdog-bms/contracts';
-import { apiErrorCode, translateApiError } from '@/common/api/api-error-message';
+import { apiErrorCode, apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 
 export const BILLING_GENERIC_ERROR = 'ยังยืนยันผลรายการไม่ได้ กรุณาตรวจสอบสถานะหรือติดต่อทีมงานพร้อมเลขอ้างอิง';
 
@@ -12,6 +12,8 @@ const PAGE_LABELS: Record<string, string> = {
   BILLING_RECIPIENT_UPDATE_REQUIRED: 'กรุณาตรวจและยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้ในส่วนอีเมล แล้วตรวจสรุปการชำระเงินใหม่',
   BILLING_EMAIL_CHANGED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อย แล้วตรวจสรุปการชำระเงินใหม่',
   BILLING_EMAIL_VERIFICATION_REQUIRED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อย แล้วตรวจสรุปการชำระเงินใหม่',
+  // The shared text says "กดอัปเดตข้อมูล"; the button beside this page's error box is "ลองใหม่".
+  BILLING_CHECKOUT_PENDING: 'ระบบกำลังตรวจรายการชำระเงินเดิมกับ Stripe กรุณารอสักครู่แล้วกดลองใหม่',
 };
 
 export function errorStatus(error: unknown): number | undefined {
@@ -21,15 +23,20 @@ export function errorStatus(error: unknown): number | undefined {
   return typeof status === 'number' ? status : undefined;
 }
 
-/** Thai for the package page: status → this page's wording → the shared map → this page's generic sentence.
- *  Never an API sentence (spec §12 error): an unmapped code reads as the generic one. */
+/** Thai for the package page: status → this page's wording → the shared map → the shared network/5xx
+ *  sentence → this page's generic sentence. Never an API sentence (spec §12 error): an unmapped code
+ *  reads as the generic one. A dropped connection or a 5xx is not "a result we cannot confirm", so it
+ *  never asks for the team and a reference — it says to try again. */
 export function errorText(error: unknown): string {
   const status = errorStatus(error), code = apiErrorCode(error);
   if (status === 401) return 'กรุณาเข้าสู่ระบบอีกครั้ง';
-  if (status === 403) return 'บัญชีนี้ยังไม่มีสิทธิ์จัดการแพ็กเกจและการชำระเงินของบริษัท';
+  if (status === 403) return 'บัญชีนี้ยังไม่มีสิทธิ์จัดการแพ็กเกจของร้านนี้ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจดำเนินการ';
   if (status === 429 && code !== 'BILLING_RESEND_LIMIT' && code !== 'EMAIL_OTP_RATE_LIMITED') return 'กรุณารอสักครู่แล้วลองใหม่';
-  if (!code) return BILLING_GENERIC_ERROR;
-  return (Object.hasOwn(PAGE_LABELS, code) ? PAGE_LABELS[code] : translateApiError(code)) ?? BILLING_GENERIC_ERROR;
+  const mapped = code ? (Object.hasOwn(PAGE_LABELS, code) ? PAGE_LABELS[code] : translateApiError(code)) : null;
+  if (mapped) return mapped;
+  if (status !== undefined && status >= 500) return apiErrorMessage({ status });
+  if ((error as { kind?: unknown } | null)?.kind === 'network_error') return apiErrorMessage({ kind: 'network_error' });
+  return BILLING_GENERIC_ERROR;
 }
 
 /** pr-d §3.7: Stripe resends the receipt only when its email changed, so the sentence says which went.
