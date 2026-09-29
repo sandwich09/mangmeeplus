@@ -286,6 +286,13 @@ After 15, 50, or more intervening turns, a direct continuation phrase or an answ
 
 If there are multiple resumable drafts, the reply lists compact targets with stable draft reference, date, vendor/purpose, and total if known. The user must select one by reference or ordinal before any answer is applied.
 
+### 10.2 Natural edit, cancel and status (NAT-12, 2026-09-30)
+
+- A spoken Thai amount ("สามร้อยบาท") grounds a draft value exactly like digits: the draft accepts any amount the value normalizer reads from the user's own text.
+- A correction of the draft this chat just opened ("อันเมื่อกี้ไม่ใช่ 300 เป็น 350 นะ", routed `EXPENSE_CAPTURE_CORRECTION`) is applied through this conversation to that same draft and its sole item. It never opens a second draft and never falls back to the older confirmed-record correction preview.
+- "เดี๋ยว ๆ ยกเลิกก่อน" while a draft is `OPEN` moves it to `CANCELLED` (table above) and closes the chat's waiting task. The reply says the draft is still recorded — not confirmed, not paid — with its web link, because the record is not deleted.
+- "สรุปบันทึกไปยัง" and "ขอดูข้อมูลเดิม" read the chat's newest record through `expense.explain_record`. Its result also lists the items this conversation holds that the document does not show yet, what the draft still asks for, and whether collection has stopped. The answer reads the current state; it never creates the draft again.
+
 ## 11. Response contract
 
 Every successful answer-collection response contains, in this order:
