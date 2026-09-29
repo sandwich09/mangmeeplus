@@ -177,6 +177,19 @@ export type BillingQuote = {
     segments: { start: string; end: string; amountSatang: number; receiptUnitsAdded: number }[] };
   capacity?: BillingCapacityImpact;
   pendingPlanChange?: { operationId: string; oldEffectiveAt: string; newEffectiveAt: string; offer: BillingOffer; totalSatang: number; capacity: BillingCapacityImpact };
+  /** Sales-event first-bill discount (sales-event spec §7.2), present only when the buyer's LINE identity holds a
+   *  ticket this purchase can use. `totalSatang` above stays the full price; "ชำระวันนี้" is `applied.totalSatang`
+   *  when the buyer chose USE. DECLINE keeps the offer so the confirm step can switch back. */
+  eventDiscount?: BillingQuoteEventDiscount;
+};
+export type BillingEventDiscountChoice = 'USE' | 'DECLINE';
+export type BillingQuoteEventDiscount = {
+  choice: BillingEventDiscountChoice; ticketSerial: string; eventName: string; expiresAt: string;
+  /** The ticket's own whole-baht discount (D). */
+  discountSatang: number;
+  /** Full price − discounted unit price: the "−{จำนวน}" line on the card and the confirm step. */
+  shownDiscountSatang: number;
+  applied?: { unitAmountSatang: number; subtotalSatang: number; taxSatang: number; totalSatang: number };
 };
 /** Spec §8.1: `productKind` tells it apart from `BillingQuote`; it carries `addOn` instead of `offer`. One-time only. */
 export type BillingAddOnQuote = {
@@ -246,6 +259,12 @@ export type BillingStatus = {
   /** Add-on balances and the add-on Checkout in flight (spec §8.1, §17.3). Declared by the foundation;
    *  no server fills it yet. Plan managers only. */
   addOns?: BillingAddOnSummary;
+  /** Sales-event first-bill discount this plan manager holds for this shop (sales-event spec §3.4 ก, §8), computed
+   *  with the same helper as the quote. Absent = no usable ticket or not a first purchase. `offers` lists the
+   *  package cards it lowers; empty when `reason` says why this shop cannot use it. One-time purchases only today. */
+  eventDiscount?: { ticketSerial: string; eventName: string; discountSatang: number; expiresAt: string;
+    reason: null | 'DEAL_ACTIVE' | 'COMPANY_ALREADY_USED';
+    offers: { offerKey: string; interval: BillingInterval; eventName: string; shownDiscountSatang: number }[] };
 };
 /** Spec §17.3: one server snapshot for both products; the client never adds numbers itself. Integer units per `unitScale`. */
 export type BillingAddOnBalance = { productKind: BillingAddOnProductKind; unitScale: 100 | 1;
@@ -273,6 +292,8 @@ export type BillingAttemptView = {
   /** Present when this Checkout paid a sales deal, so the return page can name what was bought. */
   deal?: { dealId: string; baseLabel: string; months: number };
   advanceDeal?: { startsAt: string; firstCycleEndsAt: string; nextChargeAt: string };
+  /** Sales-event discount on this Checkout: used once the payment is confirmed (sales-event spec §3.6). */
+  eventDiscount?: { shownDiscountSatang: number; state: 'IN_PAYMENT' | 'USED' };
 };
 export type BillingInvoiceItem = { id: string; number: string | null; currency: 'THB'; amountSatang: number;
   refundedSatang: number; disputed: boolean; financialObservedAt: string | null;

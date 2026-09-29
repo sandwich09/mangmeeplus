@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 import { stripeId, type StripeObject } from '../infrastructure/stripe.client';
 
 export function billingError(code: string, message: string): ConflictException { return new ConflictException({ code, message }); }
+/** The lowest price any paid offer may charge; a first-bill event discount never goes below it (sales-event spec §4.5). */
+export const MIN_OFFER_PRICE_SATANG = 1000;
 // PostgreSQL JSONB may reorder object keys; compare semantic snapshots, not insertion order.
 export function configurationHash(value: unknown): string {
   const canonical = (item: unknown): unknown => Array.isArray(item) ? item.map(canonical) : item && typeof item === 'object'
@@ -47,7 +49,7 @@ export function parseBillingPolicy(value: unknown): BillingPolicy {
       if(!Number.isSafeInteger(terms.monthlyReceiptAllowance)||terms.monthlyReceiptAllowance<1||terms.monthlyReceiptAllowance>Math.floor(2147483647/12))
         throw new BadRequestException({code:'CONTROL_OFFER_RECEIPTS_INVALID',message:'Invalid purchased receipt allowance'});
       for(const amount of [terms.monthlyPriceSatang,terms.annualPriceSatang])
-        if(!Number.isSafeInteger(amount)||amount<1000||quoteTotals(amount,p.taxTreatment).totalSatang>99999999)
+        if(!Number.isSafeInteger(amount)||amount<MIN_OFFER_PRICE_SATANG||quoteTotals(amount,p.taxTreatment).totalSatang>99999999)
           throw new BadRequestException({code:'CONTROL_OFFER_PRICE_INVALID',message:'Invalid paid offer price'});
     }
   }

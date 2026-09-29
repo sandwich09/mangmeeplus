@@ -97,6 +97,8 @@ export class BillingQuoteDto {
   @IsOptional() @IsIn(['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW']) purchaseMode?: string;
   @IsOptional() @IsIn(['FULL_PACKAGE']) purchaseIntent?: string;
   @IsOptional() @IsString() @MinLength(1) @MaxLength(40) dealId?: string;
+  /** Sales-event spec §7.2: the buyer's choice for a first-bill discount; omitted with an offer = USE. */
+  @IsOptional() @IsIn(['USE', 'DECLINE']) eventDiscountChoice?: string;
 }
 export class BillingCheckoutDto {
   @IsUUID() quoteId!: string;
