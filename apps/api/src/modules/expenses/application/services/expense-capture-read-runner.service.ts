@@ -1,4 +1,3 @@
-import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { createHash, randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
@@ -331,13 +330,10 @@ export class ExpenseCaptureReadRunnerService {
     // Windows run over whatever stage 1 produced, even when the read stopped early: facts from the
     // pages that WERE read are worth more to the reviewer than a job that reports only a pause.
     if (!pausedReason) {
-      const fieldEvidenceV2 = this.config.lineAiReliabilityV2Mode === 'on'
-        && isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, job.companyId);
       const savedWindows = Object.values(checkpoint.windows);
       // Old long-page checkpoints indexed windows after silently clipping page tails. Their wN
       // identities cannot be applied to the complete window plan, nor upgraded by inference.
-      if (savedWindows.length && (checkpoint.windowPlanVersion !== 2 && Object.values(checkpoint.pages).some(page => (page.text?.length ?? 0) > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars)
-        || fieldEvidenceV2 && savedWindows.some(window => window.fieldEvidenceVersion !== 2))) {
+      if (savedWindows.length && checkpoint.windowPlanVersion !== 2 && Object.values(checkpoint.pages).some(page => (page.text?.length ?? 0) > EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxWindowTextChars)) {
         return { status: 'FAILED', errorCode: 'CAPTURE_WINDOW_EVIDENCE_VERSION_CHANGED' };
       }
       checkpoint = { ...checkpoint, windowPlanVersion: 2 };
@@ -357,7 +353,6 @@ export class ExpenseCaptureReadRunnerService {
           jobId: job.id,
           windowId: window.id,
           window: {
-            ...(fieldEvidenceV2 ? { evidenceSource: { version: 2 as const, attachmentId: attachment.id, checksumSha256: checksum } } : {}),
             fileLabel: job.fileId ?? job.expenseId ?? job.id,
             pageIndexes: window.pageIndexes,
             pages: window.pages,
@@ -370,9 +365,6 @@ export class ExpenseCaptureReadRunnerService {
           manifest = markWindow(manifest, window.id, 'failed');
           await this.persist(job, owner, { checkpoint, manifest, calls });
           continue;
-        }
-        if (fieldEvidenceV2 && result.observations.fieldEvidenceVersion !== 2) {
-          return { status: 'FAILED', errorCode: 'CAPTURE_FIELD_EVIDENCE_UNSUPPORTED' };
         }
         checkpoint = { ...checkpoint, windows: { ...checkpoint.windows, [window.id]: result.observations } };
         if (result.modelLineage) lineage.push(result.modelLineage);

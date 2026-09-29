@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { PrismaPg } from '@prisma/adapter-pg';
-import type { ReceiptOcrEvidenceRole, ReceiptOcrResponse, RequestContext } from '@watchdog-bms/contracts';
+import type { ReceiptOcrResponse, RequestContext } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../generated/prisma/client';
 import type { PrismaService } from '../../common/database/prisma.service';
 import { pgSpecUnreachableReason } from '../../common/database/pg-spec-guard';
@@ -45,17 +45,6 @@ import { receiptQuotaSnapshot } from './application/company-ocr-governance';
 
 const databaseUrl = process.env.ONBOARDING_RECEIPT_TEST_DATABASE_URL;
 if (process.env.ONBOARDING_RECEIPT_REQUIRE_POSTGRES === 'true') assert.ok(databaseUrl, 'ONBOARDING_RECEIPT_TEST_DATABASE_URL is required');
-
-function receiptLocator(page: string, row: string, rawValue: string, role: ReceiptOcrEvidenceRole, occurrence = 0) {
-  const rowStart = page.indexOf(row); assert.notEqual(rowStart, -1);
-  let valueStart = -1, from = 0;
-  for (let index = 0; index <= occurrence; index += 1) {
-    valueStart = row.indexOf(rawValue, from); assert.notEqual(valueStart, -1);
-    from = valueStart + rawValue.length;
-  }
-  const start = rowStart + valueStart;
-  return { pageIndex: 0, role, rawValue, localSpan: { start, end: start + rawValue.length } };
-}
 
 describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => {
   it('reads a first receipt with printed zero before optional settings, under the effective 15 trial', async (t) => {
@@ -226,15 +215,7 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
         assert.equal(request.companyId, companyId);
         assert.equal(request.userId, userId);
         assert.equal(request.attachment.contentBase64, bytes.toString('base64'));
-        assert.equal(request.requireEvidenceV2, true);
         providerCalls += 1;
-        const rows = {
-          seller: 'SELLER ร้านขายกระดาษ', date: `DATE ${date}`, vatMode: 'VAT MODE NO_VAT',
-          subtotal: 'SUBTOTAL 100.00', total: 'TOTAL 100.00',
-          first: 'ITEM กระดาษ QTY 1 PRICE 100.00 AMOUNT 100.00',
-          second: 'ITEM ของแถม QTY 1 PRICE 0.00 AMOUNT 0.00',
-        };
-        const page = Object.values(rows).join('\n');
         const firstLine = { description: 'กระดาษ', quantity: '1', unitPrice: '100.00', amount: '100.00', evidenceSignal: 'กระดาษ 1 100.00' };
         const secondLine = { description: 'ของแถม', quantity: '1', unitPrice: '0.00', amount: '0.00', evidenceSignal: 'ของแถม 1 0.00' };
         const fields = {
@@ -245,25 +226,7 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
           contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT', businessDirection: 'PURCHASE_EXPENSE',
           transactionState: 'PAID', evidenceRoles: ['EXPENSE_SUPPORT'], confidence: 0.99, evidenceSignals: ['receipt'],
           amountSignals: ['100.00'], settlementSignals: ['paid'], missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
-        }, fields, receiptEvidence: {
-          version: 2, attachmentId: request.attachment.id,
-          attachmentSha256: createHash('sha256').update(bytes).digest('hex'), pages: [{ pageIndex: 0, text: page }],
-          fields: {
-            vendorName: receiptLocator(page, rows.seller, fields.vendorName, 'seller_name'),
-            expenseDate: receiptLocator(page, rows.date, fields.expenseDate, 'transaction_date'),
-            vatMode: receiptLocator(page, rows.vatMode, fields.vatMode, 'vat_mode'),
-            subtotalAmount: receiptLocator(page, rows.subtotal, fields.subtotalAmount, 'subtotal'),
-            grandTotalAmount: receiptLocator(page, rows.total, fields.grandTotalAmount, 'grand_total'),
-            'lines.0.description': receiptLocator(page, rows.first, firstLine.description, 'line_description'),
-            'lines.0.quantity': receiptLocator(page, rows.first, firstLine.quantity, 'line_quantity'),
-            'lines.0.unitPrice': receiptLocator(page, rows.first, firstLine.unitPrice, 'line_unit_price'),
-            'lines.0.amount': receiptLocator(page, rows.first, firstLine.amount, 'line_amount', 1),
-            'lines.1.description': receiptLocator(page, rows.second, secondLine.description, 'line_description'),
-            'lines.1.quantity': receiptLocator(page, rows.second, secondLine.quantity, 'line_quantity'),
-            'lines.1.unitPrice': receiptLocator(page, rows.second, secondLine.unitPrice, 'line_unit_price'),
-            'lines.1.amount': receiptLocator(page, rows.second, secondLine.amount, 'line_amount', 1),
-          },
-        }, usage: [{ tag: 'receipt-ocr', modelId: request.modelPolicy?.modelId ?? 'anthropic.claude-sonnet-4-6', ok: true,
+        }, fields, usage: [{ tag: 'receipt-ocr', modelId: request.modelPolicy?.modelId ?? 'anthropic.claude-sonnet-4-6', ok: true,
           inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 1 }],
         } satisfies ReceiptOcrResponse);
       };

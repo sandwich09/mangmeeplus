@@ -123,6 +123,8 @@ Required adversarial fixtures: 9007199254740993.01 precision; Feb29/nonleap/เ�
 
 W07A reuse capture/read jobs/domain facts: ทุก field has attachment/page/role/localspan or boundingbox และ rawvalue; parserตรวจตัวเลข **ภายในspanที่อ้างและroleเดียวกัน** ไม่ใช่เพียงพบตัวเลขที่ใดก็ได้ในOCR “TOTAL1177 CASH1200 CHANGE23” ต้องได้ total1177 หรือambiguous ไม่accept total1200 citingTOTAL1177 Human override versionชนะlateOCR; validateamount/date/currency/tax/duplicate/totalreconciliationผ่านdomainเดิม beforepreview ไม่มี high-confidence shortcut
 
+> **2026-09-29 note (Owner decision, "ลบทิ้งเลย"):** strict receipt evidence (W07A receipt grounding: `requireEvidenceV2` / `receiptEvidence` on receipt OCR, and `evidenceSource` / `fieldEvidenceVersion` on capture windows) was removed from the code. It was never tested against real receipts; its rules were too narrow for common Thai receipts; one failed field discarded the whole read; and a failed read cost about 60 s and 3 paid model calls. Receipt photos and PDF/file reads now use the normal read with its value cross-check. See `docs/agent-memory/web-receipt-evidence-v2-2026-09-29.md`.
+
 W07B เพิ่ม question-only entry ใน API dispatchก่อนfinancialcaptureadmission และก่อน PDFfastpath: classifyด้วยcaption+context+attachment metadata; ยังไม่อ่าน content เพื่อสร้างexpenseเอง Intentquestion-onlyไม่สร้าง ExpenseDraft/CaptureGroup/auto-handoff ถ้าข้อความไม่ชัดใช้ pending mediaถามcapturevsquestionครั้งเดียว Empty captionไม่ใช่อนุญาตfinancialwrite
 
 Reuse `AttachmentObject`/`AttachmentBlob`/`AttachmentLink` และ validation/download abstractionsเดิม; baselineยังมีDBblobstorage ไม่สมมติS3wired เพิ่ม link target `LINE_DOCUMENT_QA` ที่ resolveสิทธิ์fullownerในAPIเท่านั้น ไม่เปลี่ยนไฟล์ให้public
