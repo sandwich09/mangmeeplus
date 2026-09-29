@@ -14,7 +14,7 @@ import { PostmarkSendError } from '../../auth/infrastructure/postmark.client';
 import { renderBillingRecipientAdminNoticeEmail, renderBillingRecipientChangedEmail, renderBillingResendEmail, renderBillingStatusEmail } from '../../auth/infrastructure/auth-email.templates';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { planManagerRoleFilter } from '../../access-control/domain/logic/plan-manager.logic';
-import { BillingService, type BillingSnapshot } from './billing.service';
+import { BillingService, latestPackageInvoice, type BillingSnapshot } from './billing.service';
 import { BillingAdminService } from './billing-admin.service';
 import { BILLING_RECIPIENT_CHANGED } from './billing-email-recipient';
 import { billingError, hashBilling } from '../domain/billing-policy';
@@ -377,8 +377,7 @@ export class BillingNotificationsService {
       await this.sendRecipientNotice(`${intentKey}:new`, renderBillingRecipientAdminNoticeEmail(company.name, href, account.recipientEmail));
     }
     // The LINE delivery joins an applied invoice (drainDeliveries); without one there is nothing to anchor it.
-    const latest = await this.prisma.client.billingInvoice.findFirst({ where: { billingAccountId: account.id, applyStatus: 'APPLIED', appliedAt: { not: null } },
-      orderBy: [{ periodEnd: 'desc' }, { createdAt: 'desc' }] });
+    const latest = await latestPackageInvoice(this.prisma.client, { billingAccountId: account.id, applyStatus: 'APPLIED', appliedAt: { not: null } });
     if (!latest) return;
     await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, company.id);
@@ -421,8 +420,7 @@ export class BillingNotificationsService {
           if (!flagged.count) return;
           await tx.auditLog.create({ data: { companyId: row.companyId, action: 'billing.recipient.bounced', targetType: 'BillingAccount', targetId: row.accountId,
             requestId: row.attemptId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { attemptId: row.attemptId, kind: attempt.errorCode ?? 'suppressed' } } });
-          const latest = await tx.billingInvoice.findFirst({ where: { billingAccountId: row.accountId, applyStatus: 'APPLIED', appliedAt: { not: null } },
-            orderBy: [{ periodEnd: 'desc' }, { createdAt: 'desc' }] });
+          const latest = await latestPackageInvoice(tx, { billingAccountId: row.accountId, applyStatus: 'APPLIED', appliedAt: { not: null } });
           if (!latest) return;
           const managers = await this.planManagers(row.companyId, tx);
           await this.events.executeInTransaction({ companyId: row.companyId, triggerKey: 'billing.package_updated', sourceModule: 'billing', sourceType: 'invoice',

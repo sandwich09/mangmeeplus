@@ -80,6 +80,37 @@ export function billingOffer(tier: Exclude<PlanTierKey, 'FREE_TRIAL_15'>, interv
     reason: comingSoon ? 'COMING_SOON' : 'BILLING_NOT_READY' };
 }
 
+/**
+ * Add-on foundation (chat credit and receipt image spec §4, §8.1–§8.2; plan PR A): what a quote,
+ * attempt or invoice sells. Every row and snapshot written before add-ons is a PACKAGE.
+ * Owner 2026-09-29 ("no switches"): add-ons have no billing gate — an offer can be sold only once
+ * its Stripe Price is bound in the ACTIVE policy's `addOnPriceIds` and its product is ready.
+ */
+export const BILLING_PRODUCT_KINDS = ['PACKAGE', 'CHAT_CREDIT', 'RECEIPT_IMAGE'] as const;
+export type BillingProductKind = typeof BILLING_PRODUCT_KINDS[number];
+export type BillingAddOnProductKind = Exclude<BillingProductKind, 'PACKAGE'>;
+/** Absent = PACKAGE. Any other unknown value is null, so a reader fails closed instead of guessing. */
+export function billingProductKind(value: unknown): BillingProductKind | null {
+  if (value === undefined) return 'PACKAGE';
+  return (BILLING_PRODUCT_KINDS as readonly unknown[]).includes(value) ? value as BillingProductKind : null;
+}
+export const BILLING_ADDON_OFFER_KEYS = ['CHAT_50', 'CHAT_100', 'CHAT_300', 'RECEIPT_IMAGE_20', 'RECEIPT_IMAGE_50', 'RECEIPT_IMAGE_100'] as const;
+export type BillingAddOnOfferKey = typeof BILLING_ADDON_OFFER_KEYS[number];
+/** Catalog row (spec §8.1); a company's availability comes from its status. One Stripe line item, quantity 1. */
+export type BillingAddOnOffer = { offerKey: BillingAddOnOfferKey; productKind: BillingAddOnProductKind;
+  /** Integer units: CHAT_CREDIT counts 0.01 credit (unitScale 100), RECEIPT_IMAGE counts whole images (unitScale 1). */
+  quantityUnits: number; unitScale: 100 | 1; priceSatang: number; currency: 'THB'; validityMonths: 12;
+  availability: 'AVAILABLE' | 'UNAVAILABLE'; reason: string | null };
+/** Owner-confirmed prices and quantities (spec §4). Changing one is a new Owner decision, not a policy edit. */
+export const BILLING_ADDON_OFFERS: Record<BillingAddOnOfferKey, Pick<BillingAddOnOffer, 'productKind' | 'quantityUnits' | 'unitScale' | 'priceSatang'>> = {
+  CHAT_50: { productKind: 'CHAT_CREDIT', quantityUnits: 5000, unitScale: 100, priceSatang: 29900 },
+  CHAT_100: { productKind: 'CHAT_CREDIT', quantityUnits: 10000, unitScale: 100, priceSatang: 54900 },
+  CHAT_300: { productKind: 'CHAT_CREDIT', quantityUnits: 30000, unitScale: 100, priceSatang: 149900 },
+  RECEIPT_IMAGE_20: { productKind: 'RECEIPT_IMAGE', quantityUnits: 20, unitScale: 1, priceSatang: 34900 },
+  RECEIPT_IMAGE_50: { productKind: 'RECEIPT_IMAGE', quantityUnits: 50, unitScale: 1, priceSatang: 79900 },
+  RECEIPT_IMAGE_100: { productKind: 'RECEIPT_IMAGE', quantityUnits: 100, unitScale: 1, priceSatang: 149900 },
+};
+
 export type BillingPolicy = {
   schemaVersion: 1;
   /** New accepted purchases only; omitted tiers retain original defaults. */
@@ -96,6 +127,9 @@ export type BillingPolicy = {
   priceIds: Partial<Record<BillingOfferKey, string>>;
   /** Internal prepaid scheduling prices; never public offers. */
   zeroPriceIds?: Partial<Record<BillingOfferKey, string>>;
+  /** One-time add-on Prices (spec §8.4). Binding one is what makes that offer sellable (no gate, Owner
+   *  2026-09-29); publish only after every running binary parses this key (runbook: minimum binary per policy schema). */
+  addOnPriceIds?: Partial<Record<BillingAddOnOfferKey, string>>;
   taxRateId: string | null;
   portalConfigurationId: string | null;
   consentRevision: string;
@@ -119,6 +153,8 @@ export type BillingReceiptUsage = {
 export type BillingFeatureImpact = { removed: { featureKey:string; labelTh:string }[];
   added: { featureKey:string; labelTh:string }[]; preservedAdmin:number };
 export type BillingQuote = {
+  /** Add-on foundation: absent = PACKAGE; an add-on quote is a `BillingAddOnQuote`. */
+  productKind?: 'PACKAGE';
   /** Absent only on legacy quotes/history; new purchases require a reviewed profile. */
   billingProfile?: BillingCompanyProfile;
   quoteId: string; companyId: string; companyName: string; policyRevision: string; expiresAt: string;
@@ -141,6 +177,15 @@ export type BillingQuote = {
     segments: { start: string; end: string; amountSatang: number; receiptUnitsAdded: number }[] };
   capacity?: BillingCapacityImpact;
   pendingPlanChange?: { operationId: string; oldEffectiveAt: string; newEffectiveAt: string; offer: BillingOffer; totalSatang: number; capacity: BillingCapacityImpact };
+};
+/** Spec §8.1: `productKind` tells it apart from `BillingQuote`; it carries `addOn` instead of `offer`. One-time only. */
+export type BillingAddOnQuote = {
+  productKind: BillingAddOnProductKind;
+  quoteId: string; companyId: string; companyName: string; policyRevision: string; expiresAt: string;
+  purchaseMode: 'CARD_ONCE' | 'PROMPTPAY_ONCE';
+  addOn: BillingAddOnOffer; subtotalSatang: number; taxSatang: number; totalSatang: number;
+  taxTreatment: BillingTaxTreatment; consentRevision: string; billingEmail: string | null;
+  billingProfile?: BillingCompanyProfile;
 };
 export type BillingCapacitySelection = { sourceHash: string; branchIds: string[]; memberships: { id: string; defaultBranchId: string | null }[] };
 export type BillingCapacityOptions = { companyId: string; offerKey: string; interval: BillingInterval; sourceHash: string;
@@ -198,7 +243,21 @@ export type BillingStatus = {
   recipient?: BillingRecipientInfo;
   /** DQ5: the address typed at Stripe Checkout, offered to the shop profile; never written to the company. */
   checkoutAddress?: CompanyLegalAddress | null;
+  /** Add-on balances and the add-on Checkout in flight (spec §8.1, §17.3). Declared by the foundation;
+   *  no server fills it yet. Plan managers only. */
+  addOns?: BillingAddOnSummary;
 };
+/** Spec §17.3: one server snapshot for both products; the client never adds numbers itself. Integer units per `unitScale`. */
+export type BillingAddOnBalance = { productKind: BillingAddOnProductKind; unitScale: 100 | 1;
+  /** UNLIMITED only for a provable legacy right, never inferred from null. */
+  packageLimitKind: 'FINITE' | 'UNLIMITED';
+  packageRemainingUnits: number | null; additionalRemainingUnits: number; totalRemainingUnits: number | null;
+  packageResetsAt: string | null; packageExpiresAt: string | null; renewalPaymentDueAt: string | null;
+  nextAdditionalExpiry: { expiresAt: string; remainingUnits: number } | null;
+  useState: 'AVAILABLE' | 'PROCESSING' | 'EXHAUSTED' | 'PACKAGE_REQUIRED' | 'ADMIN_HOLD' | 'COMPANY_LIMIT' | 'FEATURE_UNAVAILABLE' | 'REVIEW_REQUIRED' | 'TEMPORARILY_UNAVAILABLE';
+  purchaseState: 'AVAILABLE' | 'PACKAGE_REQUIRED' | 'NOT_ELIGIBLE' | 'RENEWAL_PAYMENT_PENDING' | 'ADMIN_HOLD' | 'SALES_UNAVAILABLE' | 'PAYMENT_PENDING' | 'TEMPORARILY_UNAVAILABLE' };
+export type BillingAddOnQuotaSummary = { schemaVersion: 1; companyId: string; snapshotId: string; asOf: string; balances: BillingAddOnBalance[] };
+export type BillingAddOnSummary = { quotaSummary: BillingAddOnQuotaSummary; pendingAttempt: { attemptId: string; offerKey: BillingAddOnOfferKey } | null };
 export type BillingCollectionAction = 'CANCEL_RENEWAL' | 'RESUME_RENEWAL' | 'SCHEDULE_DOWNGRADE' | 'CANCEL_DOWNGRADE' | 'PREPAID_PLAN_CHANGE' | 'EXTEND_TERM' | 'ADMIN_PAUSE_COLLECTION' | 'ADMIN_RESUME_COLLECTION';
 export type BillingCollectionOperation = { id: string; companyId: string; action: BillingCollectionAction; state: string; version: number;
   previewHash: string; effectiveAt: string; nextRenewalTotalSatang: number; expiresAt: string; observedAt: string | null;

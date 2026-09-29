@@ -2,7 +2,7 @@
 
 วันที่: 2026-09-28
 อัปเดตล่าสุด: 2026-09-29 — แก้ตามรีวิว R1 ครบ 35 ข้อ (BLOCK 1, HIGH 9, MEDIUM 16, LOW 9) และบันทึกมติ Owner/controller 2026-09-29 (§3.1–§3.2); ตรวจอ้างอิงโค้ดทุกบรรทัดใหม่บน develop `8a91bc1c`. หลังรีวิว develop ได้งานแก้ของโปรแกรมซื้อแพ็กเกจ (#860, develop `9130455a`) ซึ่งทำให้บรรทัดในไฟล์ billing/LINE/หน้าเว็บแพ็กเกจหลายไฟล์เลื่อน (ประมาณ 3 ใน 4 ของที่อ้างในไฟล์เหล่านั้น) — ก่อนลงมือแต่ละ PR ให้ตรวจ anchor ซ้ำบน develop ล่าสุด
-สถานะ: **ราคา, D1–D12 และมติ 2026-09-29 ยืนยันแล้ว; มีคำถามค้างถึง Owner 7 ข้อพร้อมค่าเริ่มต้น (§3.3); ยังไม่ implement และยังไม่เปิดขาย**
+สถานะ: **ราคา, D1–D12 และมติ 2026-09-29 ยืนยันแล้ว; Owner รับค่าเริ่มต้นของ Q1–Q7 และสั่งไม่มี switch ของ add-on (O-04) 2026-09-29 (§3.1, §3.3); PR A (foundation) implement แล้ว ยังไม่เปิดขาย**
 
 เอกสารคู่กัน: [แผนงาน](../plans/chat-credit-and-receipt-addons-plan-th.md) · [audit แหล่งข้อมูลร่วม + ตรวจซ้ำบน develop](../research/chat-credit-and-receipt-addons-unified-source-audit-2026-09-29-th.md) · [ส่วนลดจากเซลล์ (งานคู่ขนาน)](sales-event-discounts-spec-th.md) · [ซื้อแพ็กเกจได้ทันทีหลังสมัคร](mangmee-purchase-without-setup-spec-th.md) · [คำศัพท์ "เครดิต AI" (W-01)](line-ai-credit-wording-and-deterministic-reads-spec-th.md) · [เครดิต AI 80 เดิม](ai-chat-credit-default-80-spec-th.md)
 
@@ -28,7 +28,7 @@
 8. เมื่อแพ็กเกจหมดอายุ เก็บยอดเพิ่มเติมที่ยังไม่หมดอายุไว้ ใช้ได้อีกเมื่อกลับมามีแพ็กเกจที่ใช้งานได้ (D2). อายุ 12 เดือนนับต่อ ไม่หยุดระหว่างนั้น และการเลือกแพ็กเกจใหม่ไม่ชุบยอดที่หมดอายุแล้ว
 9. Owner รับแนวทางแก้ impact ตามคำแนะนำ และให้ admin console เพิ่มยอดผ่านกลไก ADD_ON เดียวกับการซื้อ ทั้งรูปและแชต (D6). ไม่ปรับแพ็กหรือ operational cap จากการเพิ่มยอด
 
-ลำดับเอกสาร: สเปกนี้เป็นมติใหม่เหนือข้อความ “เดือนปฏิทิน/ไม่มี top-up” ใน [สเปกเครดิต 80 เดิม](ai-chat-credit-default-80-spec-th.md) **เฉพาะร้านที่ย้ายแล้ว** (§11). ร้านทดลอง ร้านที่ทีมงานตั้งค่าให้ และร้านที่ไม่มีช่วงที่ชำระ ยังใช้รอบเดือนปฏิทินต่อไปใน V1 (legacy ถาวรของ V1, §11.3). Override และ operational safety caps ของเอกสารเดิมยังมีผล. สินค้า IMAGE ของสเปกนี้แทนแนวคิด “ซื้อเฉพาะใบ” ที่ HIDDEN ใน [มติซื้อแพ็ก 2026-09-12](mangmee-billing-pack-amendment-2026-09-12.md) เมื่อเปิด gate ของสินค้านี้ (ข้อเสนอเดิมที่ให้ใช้ถึงวันหมดอายุแพ็กเกจไม่ถูกนำมาใช้); การเขียนเอกสารไม่เปิด gate เอง. คำศัพท์บนจอยึด W-01 (T-06, §17.1)
+ลำดับเอกสาร: สเปกนี้เป็นมติใหม่เหนือข้อความ “เดือนปฏิทิน/ไม่มี top-up” ใน [สเปกเครดิต 80 เดิม](ai-chat-credit-default-80-spec-th.md) **เฉพาะร้านที่ย้ายแล้ว** (§11). ร้านทดลอง ร้านที่ทีมงานตั้งค่าให้ และร้านที่ไม่มีช่วงที่ชำระ ยังใช้รอบเดือนปฏิทินต่อไปใน V1 (legacy ถาวรของ V1, §11.3). Override และ operational safety caps ของเอกสารเดิมยังมีผล. สินค้า IMAGE ของสเปกนี้แทนแนวคิด “ซื้อเฉพาะใบ” ที่ HIDDEN ใน [มติซื้อแพ็ก 2026-09-12](mangmee-billing-pack-amendment-2026-09-12.md) เมื่อเปิดขายสินค้านี้ (ข้อเสนอเดิมที่ให้ใช้ถึงวันหมดอายุแพ็กเกจไม่ถูกนำมาใช้); การเขียนเอกสารไม่เปิดขายเอง. คำศัพท์บนจอยึด W-01 (T-06, §17.1)
 
 ## 3. มติ V1
 
@@ -56,6 +56,7 @@ D1–D12 ยังมีผลตามคอลัมน์ “กติกา�
 | O-01 | ระหว่าง grace ของการต่ออายุด้วย PromptPay (ใบ QR รอบใหม่ยังไม่จ่าย ได้ไม่เกิน 7 วัน) รอบเครดิต AI ใหม่ **ใช้ได้ตั้งแต่วันครบรอบ**; ลูกค้าไม่ถูกบล็อกระหว่างจ่าย | §5.1 สถานะ `RENEWAL_PENDING`; §7 ตารางสถานะ; A34 |
 | O-02 | ผู้ซื้อคือทุกคนที่มี `company.plan.manage` ตามกฎที่ merge แล้ว (D-PF-10/R-C11) ไม่ใช่ OWNER เท่านั้น. ถอดแนวคิด “OWNER”/“ให้เจ้าของบริษัทเป็นผู้ซื้อ”/`OWNER_REQUIRED` ทุกจุด; ข้อความลูกค้าใช้ “เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ” | §1, §7.3, §17.3–§17.4, A11, A38 |
 | O-03 | ส่วนลดจากงานอีเวนต์ไม่ใช้กับ add-on (ตกลงกับสเปกส่วนลดแล้ว) | §4, §9.2 (validator ของ add-on ปฏิเสธส่วนลดทุกชนิด), §19 |
+| O-04 | ไม่มี switch — Owner: “อย่าทำ switch อีก เปิดไว้เลยเสมอ”. ไม่มี gate `addon_chat_credit`/`addon_receipt_image` หรือ flag/env ใหม่; offer ขายได้เมื่อ Price ของ offer นั้นผูกใน `addOnPriceIds` ของ policy ที่ ACTIVE และสินค้าพร้อมใช้ (เหมือน `priceIds` ของแพ็กเกจ). มตินี้แทนทุกจุดในสเปกนี้ที่อ้าง gate ต่อสินค้าของ add-on หรือการ “เปิด/ปิด gate” ของ add-on | §8.4, A37, §19; แผน PR A |
 
 ### 3.2 มติทางเทคนิคของ controller 2026-09-29
 
@@ -73,11 +74,11 @@ D1–D12 ยังมีผลตามคอลัมน์ “กติกา�
 
 ข้อมูลประกอบ T-09: controller แจ้งว่า migration ล่าสุดตอนนี้คือ `20260929030000` (จากงานแก้ที่กำลังเข้า); develop `69fba9d3` ที่ตรวจได้ยังจบที่ `20260928210000_line_support_request_reference` — ผู้ implement ต้องอ่านค่าจริงจาก develop ตอนเริ่มแต่ละ PR
 
-### 3.3 คำถามค้างถึง Owner (ค่าเริ่มต้นที่เสนอ)
+### 3.3 คำถามถึง Owner — รับค่าเริ่มต้นแล้ว 2026-09-29
 
-Implementation ใช้ค่าเริ่มต้นจนกว่า Owner ตอบ และทุกข้อเปลี่ยนได้ก่อนเปิดขายโดยไม่ต้องแก้ schema
+Owner ตอบ 2026-09-29 “ตามค่าเริ่มต้น”: ทุกข้อใช้ค่าในคอลัมน์มติ. ยังเปลี่ยนได้ก่อนเปิดขายโดยไม่ต้องแก้ schema
 
-| ID | คำถาม | ค่าเริ่มต้นที่เสนอ | ที่มา |
+| ID | คำถาม | มติ (Owner 2026-09-29 รับค่าเริ่มต้น) | ที่มา |
 | --- | --- | --- | --- |
 | Q1 | ระหว่าง grace ของการต่ออายุ เปิดให้ซื้อ add-on หรือไม่ | **ยังไม่เปิด** (คงครึ่งหลังของ D3): ใช้เครดิต AI รอบใหม่และยอดเดิมได้ตาม O-01; ปุ่มซื้อบอก “ชำระค่าแพ็กเกจรอบใหม่ก่อน จึงซื้อเพิ่มได้” พร้อมทางไปจ่าย | F-05 |
 | Q2 | Grace ของการต่ออายุด้วยบัตรที่ตัดไม่ผ่าน (`past_due`/`unpaid`) ใช้กติกาเดียวกับ O-01 หรือไม่ | **ใช้เหมือนกัน**: reconciler ต่อสิทธิ์ถึงวันสิ้น grace ด้วยโค้ดเดียวกันทั้งบัตรและ QR (`billing-reconciler.service.ts:1185-1229`) | F-05 |
@@ -300,8 +301,8 @@ Error code (F-15): **ไม่เพิ่มค่าใน `AI_BUDGET_REFUSAL_
 ### 8.4 Policy, gates และ readiness (F-09, F-28)
 
 - **Policy สองจังหวะ**: parser เดิมเข้มงวด (`assertKeys` whitelist `billing-policy.ts:19-21,29-30`; key ของ `priceIds` จำกัดแค่แพ็กเกจ `:54-57`) และ parse พังทำให้ policy เป็น null (`billing.service.ts:148-152`) → ปิดการขายแพ็กเกจทั้งหมด (`:307,:556`). จังหวะ 1: ปล่อย parser ที่รับ `addOnPriceIds` แบบตรวจ key/รูปแบบ และตรวจ price id ไม่ซ้ำข้าม `priceIds` ∪ `zeroPriceIds` ∪ `addOnPriceIds`. จังหวะ 2: เผยแพร่ policy ที่มี key นี้ **หลัง** binary ที่มี parser ใหม่ขึ้น UAT และ Production แล้วเท่านั้น; runbook บันทึก “binary ขั้นต่ำต่อ schema ของ policy” เพื่อไม่ rollback ไป binary ที่อ่าน policy ไม่ได้
-- **Gates ต่อสินค้า** เพิ่มใน `BILLING_ACTIONS` (`packages/contracts/src/billing.ts:39`): `addon_chat_credit`, `addon_receipt_image`. ตัวอ่าน gates ผ่อนปรนและปิดเป็นค่าเริ่มต้น (`billing-policy.ts:15-18`) จึงอ่านย้อนหลังได้; ตัวแก้ gate ตรวจครบทุก key (`billing-configuration.service.ts:106-109`) จึงแก้ gate ใหม่ได้หลัง deploy ครบทุก instance
-- **เงื่อนไขซื้อ add-on** (ครบทุกข้อ): ผู้ซื้อผ่าน `assertOwner`; `new_sales` เปิด (สวิตช์หยุดขายรวม); gate ของสินค้าเปิด; gate ของวิธีจ่าย (`card_once` / `promptpay_once`) เปิด; `salesCompanyIds` อนุญาต (`billing-policy.ts:91-96`); ไม่มีคำขอคืนเงินค้าง (`assertNoPendingRefund` `billing-refund-source.ts:21`); ไม่มีการเปลี่ยนอีเมลรับเอกสารหรือคำสั่งเรียกเก็บค้าง (`activeEmailOperationId`/`activeCollectionOperationId`); บริษัท ACTIVE และแพ็กเกจ ACTIVE ที่ไม่ใช่ทดลอง (D3); ไม่ใช่ช่วง grace (Q1); slot ของ add-on ว่าง; ร้านย้ายแล้วและสินค้านั้นพร้อมใช้จริงใน cohort (IMAGE: consumer เห็น lot; CHAT: ทุก lane CHAT ของร้านมี funding); headroom ของ TOTAL (§5.3). ปิด gate หยุดเฉพาะการซื้อใหม่ — การใช้ยอด การ reconcile การคืนเงิน และประวัติยังทำงาน
+- **ไม่มี gate ต่อสินค้า (O-04)**: `BILLING_ACTIONS` ไม่มี key ของ add-on. Offer ขายได้เมื่อผูก Price ใน `addOnPriceIds` ของ policy ที่ ACTIVE และสินค้านั้นพร้อมใช้; ไม่ผูก = ขายไม่ได้. การผูก Price จึงเป็นการเปิดขาย: PUBLISH_POLICY แบบ reviewed ต้องตรวจ Price ของ add-on กับ Stripe ก่อนเผยแพร่ (แผน PR E). ปิดขายรายสินค้า = เผยแพร่ policy ที่ถอด Price ของ offer นั้น; ปิดทั้งระบบ = `new_sales`
+- **เงื่อนไขซื้อ add-on** (ครบทุกข้อ): ผู้ซื้อผ่าน `assertOwner`; `new_sales` เปิด (สวิตช์หยุดขายรวม); offer ผูก Price ใน policy ที่ ACTIVE (O-04); gate ของวิธีจ่าย (`card_once` / `promptpay_once`) เปิด; `salesCompanyIds` อนุญาต (`billing-policy.ts:91-96`); ไม่มีคำขอคืนเงินค้าง (`assertNoPendingRefund` `billing-refund-source.ts:21`); ไม่มีการเปลี่ยนอีเมลรับเอกสารหรือคำสั่งเรียกเก็บค้าง (`activeEmailOperationId`/`activeCollectionOperationId`); บริษัท ACTIVE และแพ็กเกจ ACTIVE ที่ไม่ใช่ทดลอง (D3); ไม่ใช่ช่วง grace (Q1); slot ของ add-on ว่าง; ร้านย้ายแล้วและสินค้านั้นพร้อมใช้จริงใน cohort (IMAGE: consumer เห็น lot; CHAT: ทุก lane CHAT ของร้านมี funding); headroom ของ TOTAL (§5.3). ถอด Price หรือปิด `new_sales` หยุดเฉพาะการซื้อใหม่ — การใช้ยอด การ reconcile การคืนเงิน และประวัติยังทำงาน
 
 ## 9. Paid apply, slot แยก, duplicate และการกู้รายการ (T-02, T-03)
 
@@ -410,14 +411,14 @@ Error code (F-15): **ไม่เพิ่มค่าใน `AI_BUDGET_REFUSAL_
 | A34 | รอบตามช่วงที่ชำระ (T-01/O-01): ขอบรอบตรงวันต่ออายุของแพ็กเกจรายเดือน/รายปี/ดีล/one-time/subscription; รอบ RENEWAL_PENDING ใช้ได้ตั้งแต่ขอบรอบ; จ่ายระหว่าง grace ไม่เติมซ้ำ; grace หมดโดยไม่จ่ายปิดรอบ; เลือกแพ็กเกจใหม่เริ่ม anchor ใหม่โดยไม่มีรอบซ้อน |
 | A35 | เส้นทาง add-on ของร้านต่ออายุอัตโนมัติ (T-03): invariant §9.2 ครบสำหรับ CARD_AUTO, PROMPTPAY_RENEW, CARD_ONCE และ advance deal; ไม่มีการแจ้งเตือนแพ็กเกจ |
 | A36 | LINE v2 SHARED (T-04): hold durable พร้อม funding; settle/cancel/operator release/charge-at-bound ถูก lot; สองเดือนแย่ง lot เดียวไม่ใช้เกิน; turn ที่ข้ามขอบรอบใช้รอบเดิม; ไม่เปลี่ยน contract ของ Gateway/AgentCore |
-| A37 | Policy สองจังหวะและ gates: binary ใหม่อ่าน policy เก่า/ใหม่ได้; policy ที่มี `addOnPriceIds` ไม่ถูกเผยแพร่ก่อน binary ใหม่ขึ้นครบ; price id ซ้ำข้าม map ถูกปฏิเสธ; gates ใหม่ปิดเป็นค่าเริ่มต้น |
+| A37 | Policy สองจังหวะและ gates: binary ใหม่อ่าน policy เก่า/ใหม่ได้; policy ที่มี `addOnPriceIds` ไม่ถูกเผยแพร่ก่อน binary ใหม่ขึ้นครบ; price id ซ้ำข้าม map ถูกปฏิเสธ; ไม่มี gate ของ add-on และ offer ที่ไม่ผูก Price ขายไม่ได้ (O-04) |
 | A38 | สิทธิ์และคำศัพท์: บทบาทกำหนดเองที่มี `company.plan.manage` ซื้อได้; พนักงานเห็นเพียงข้อความ; ขีดจำกัดของร้านบอก “ติดต่อทีมงาน”; ใช้ “เครดิต AI”/“เพดานเครดิต AI ต่อเดือน” ตาม T-06; ไม่มี OWNER_REQUIRED |
 | A39 | แจ้งเตือนรู้ชนิดสินค้า ไม่มีตัวเลขใน LINE/อีเมล ไม่ใช้ข้อความแพ็กเกจ; การ์ดยอดรูปหมดส่งใหม่เมื่อยอดเปลี่ยนรุ่น; latch บนหน้าอัปโหลดล้างเมื่อยอดเปลี่ยน |
 | A40 | ลิงก์จาก LINE: mint ในเลนก่อนบันทึก ไม่ mint ในกลุ่ม เปิดเบราว์เซอร์ภายนอก และแสดงเฉพาะผู้มีสิทธิ์จัดการแพ็กเกจ; ขีดจำกัดของร้านใช้ postback ขอให้ทีมงานติดต่อกลับที่ไม่หยุด AI |
 
 ## 14. สถานะส่งต่อ
 
-สเปกนี้พร้อมแบ่งงานตามแผน (PR A–G). มติธุรกิจ D1–D12 และมติ 2026-09-29 ครบ; เหลือคำถาม Q1–Q7 ที่มีค่าเริ่มต้น. Implementation ต้องทำ lock matrix/cutover ตาม §8.3/§11 และหลักฐานตรวจรับตามแผน โดยคงราคาที่ Owner ยืนยัน. ก่อนแตะ cloud หรือเปิด gate ต้องอ่าน runbook ตาม AGENTS และบันทึก UAT/READY/Production run IDs กับ signed result/customer `OPEN` acceptance ตาม protocol. การอนุมัติราคาและขอ spec/plan ไม่ใช่การอนุมัติ deploy
+สเปกนี้พร้อมแบ่งงานตามแผน (PR A–G). มติธุรกิจ D1–D12 และมติ 2026-09-29 ครบ; Q1–Q7 ใช้ค่าเริ่มต้นตามมติ Owner 2026-09-29 (§3.3). Implementation ต้องทำ lock matrix/cutover ตาม §8.3/§11 และหลักฐานตรวจรับตามแผน โดยคงราคาที่ Owner ยืนยัน. ก่อนแตะ cloud หรือเปิด gate ต้องอ่าน runbook ตาม AGENTS และบันทึก UAT/READY/Production run IDs กับ signed result/customer `OPEN` acceptance ตาม protocol. การอนุมัติราคาและขอ spec/plan ไม่ใช่การอนุมัติ deploy
 
 ## 15. ข้อกำหนดเพิ่มจากการตรวจ E2E รอบ 2026-09-28 (ปรับให้ตรงมติ 2026-09-29)
 
@@ -737,9 +738,9 @@ Error ของการตั้งค่าอยู่หน้าผู้�
 ## 19. ความสัมพันธ์กับงานอื่นและลำดับงาน (T-07)
 
 1. **งานแก้ purchase flow ที่กำลังทำ** (หน้ากลับจากการชำระ, การปลดล็อก WorkspaceLayout, ลิงก์ lookup, sync ข้อมูลบริษัทไป Stripe, คำศัพท์ glossary) เข้า develop และ main ก่อน เพราะแก้ `BillingPage.tsx` และข้อความที่สเปกนี้อ้าง
-2. **Shared billing foundation** (แผน PR A) เป็น prerequisite ร่วมของ add-on และส่วนลดจากงานอีเวนต์: `productKind` บน attempt/ใบ, slot `activeAddOnAttemptId`, reader ของแพ็กเกจที่กรอง PACKAGE, decoder ของ snapshot/quote, parser ของ policy ที่ผ่อนปรน และ gates ต่อสินค้า
+2. **Shared billing foundation** (แผน PR A) เป็น prerequisite ร่วมของ add-on และส่วนลดจากงานอีเวนต์: `productKind` บน attempt/ใบ, slot `activeAddOnAttemptId`, reader ของแพ็กเกจที่กรอง PACKAGE, decoder ของ snapshot/quote, parser ของ policy ที่ผ่อนปรน (ไม่มี gate ต่อสินค้า, O-04)
 3. **Add-on** (PR B–G) ตามแผน
-4. **Release ร่วมกับส่วนลดจากงานอีเวนต์** (มติ Owner 2026-09-29, [สเปกส่วนลดจากงาน](sales-event-discounts-spec-th.md) SD-O6): สองงานนี้อยู่ใน candidate เดียวกัน ผ่าน UAT → READY → production รอบเดียว และเปิด gate `addon_chat_credit`, `addon_receipt_image` พร้อม `event_discounts`. เครดิตสำหรับร้านเดิมของงานนั้นใช้ grant seam ของ PR B และ PR C (แหล่งยอด `SALES_EVENT`, §6.1, §16) จึงทำต่อจากสอง PR นี้
+4. **Release ร่วมกับส่วนลดจากงานอีเวนต์** (มติ Owner 2026-09-29, [สเปกส่วนลดจากงาน](sales-event-discounts-spec-th.md) SD-O6): สองงานนี้อยู่ใน candidate เดียวกัน ผ่าน UAT → READY → production รอบเดียว และเปิดขาย add-on (ผูก Price ตาม O-04) พร้อมเปิดส่วนลดจากงาน. เครดิตสำหรับร้านเดิมของงานนั้นใช้ grant seam ของ PR B และ PR C (แหล่งยอด `SALES_EVENT`, §6.1, §16) จึงทำต่อจากสอง PR นี้
 5. **ส่วนลดจากงานอีเวนต์** ทำหลัง foundation ได้ แต่ PR ที่แก้ไฟล์ร่วมต้องต่อคิวทีละ PR: `billing.service.ts` (quote/checkout/status), `paid-checkout-invoice.ts` (add-on ใช้ validator แยก — การผ่อนการตรวจส่วนลดของ validator แพ็กเกจต้องไม่แตะ branch ของ add-on), `billing-refund-source.ts`, `billing-reconciler.service.ts`, `packages/contracts/src/billing.ts`, `schema.prisma`, `BillingPage.tsx` และ allowlist ใน `auth.guard.ts` (sync pins ทุกครั้ง)
 
 Interplay กับสเปกส่วนลด: ส่วนลดไม่ใช้กับ ADD_ON (O-03) และ validator ของ add-on ปฏิเสธส่วนลดทุกชนิด; ตัวเลือกใช้/ไม่ใช้ส่วนลดเป็นค่าต่อ quote ของแพ็กเกจ (`productKind = PACKAGE`) เท่านั้น ไม่เกี่ยวกับ slot ของ add-on และการจองส่วนลดระหว่างจ่าย (RESERVED) ผูกกับ attempt ของแพ็กเกจเท่านั้น (สเปกส่วนลด DRAFT v3 §4, SD-O4); เครดิตจากงานของร้านเดิมเข้าทาง grant ของสเปกนี้ด้วย source `SALES_EVENT` (§16); ชื่อ `purchaseIntent` เป็นของ discriminator สินค้าในสเปกนี้ (สเปกส่วนลดไม่ใช้ชื่อนี้กับเป้าหมายของส่วนลด); ส่วนลดไม่เพิ่มแท็บ (T-08); ลำดับ lock ร่วม §8.3; timestamp ของ migration จองตามลำดับ merge (แผน §3.4)
@@ -758,7 +759,7 @@ Interplay กับ purchase-without-setup (merge แล้ว): ผู้ซื
 | F-06 LINE v2 SHARED | HIGH | T-04; §5.3; §15.2; A36; แผน PR C/D |
 | F-07 คำศัพท์เครดิต | HIGH | T-06, Q6; §17.1; §18.2; แผน PR F (รายการข้อความ) |
 | F-08 ขีดจำกัดของร้าน | HIGH | T-05; §7.2; §17.4 |
-| F-09 policy parser เข้มงวด | HIGH | §8.4 (สองจังหวะ, gates ใน `BILLING_ACTIONS`); A37; แผน PR A |
+| F-09 policy parser เข้มงวด | HIGH | §8.4 (สองจังหวะ; ไม่มี gate ของ add-on ตาม O-04); A37; แผน PR A |
 | F-10 งาน delivery ข้ามระบบ | HIGH | T-09; แผน §3 |
 | F-11 มุมมองพนักงาน | MEDIUM | §7.3 (ทางเลือก ก) |
 | F-12 แท็บชนกัน | MEDIUM | T-08; §7.1 |
