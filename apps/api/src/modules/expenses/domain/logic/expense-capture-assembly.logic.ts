@@ -192,7 +192,6 @@ export function assembleCaptureObservations(
   const issuers = new Set(documents.map((document) => (document.issuer?.name ?? '').trim()).filter(Boolean));
 
   return {
-    ...(windows.length && windows.every(window => window.observations.fieldEvidenceVersion === 2) ? { fieldEvidenceVersion: 2 as const } : {}),
     documents,
     items,
     components,

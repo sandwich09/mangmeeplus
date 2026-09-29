@@ -8,6 +8,7 @@ import type {
   PartnerAiUsageMeasuresDto,
   PartnerAiUsageMonthDto,
   PartnerOcrUsageMonthDto,
+  PartnerReceiptImagesDto,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -20,6 +21,10 @@ import {
 } from '../../../line-ai/application/company-ai-usage-meter';
 import { resolveAiBudgetPolicy, toPartnerAiBudgetPolicyDto } from '../../../line-ai/application/company-ai-budget-policy';
 import { readAiBudgetMonthSnapshot } from '../../../line-ai/application/company-ai-budget-reservation';
+import { countReceiptOcrAdmissions } from '../../../line-ai/application/company-ocr-governance';
+import { isReceiptPackageKind, receiptLots, visibleReceiptLots, type ReceiptLot } from '../../../billing/application/billing-receipt-grants';
+import { effectiveMonthlySlipLimit } from '../../domain/logic/receipt-quota.logic';
+import { currentCapacityOverride } from '../../domain/logic/plan-capacity';
 
 const MONTH_SELECT = {
   monthKey: true,
@@ -182,6 +187,42 @@ export function buildAiUsageBreakdown(monthKey: string, rows: AiUsageBreakdownRo
   };
 }
 
+type ReceiptTerm = { tierKey: string; monthlySlipLimit: number; warmupUntil: Date | null; warmupSlipLimit: number | null;
+  billingReceiptAccountId: string | null; capacityOverride: unknown; termEndsAt: Date; termDisabledAt: Date | null };
+
+/**
+ * The receipt images a shop can still have read, from the lots and counter admission uses
+ * (`admitCompanyOcr`, add-on spec §6.1): a paid package draws its lots (package, then team, then
+ * purchased), a trial or staff-set package its monthly allowance plus admin gifts, and a shop with no
+ * package term has no image limit from a package at all.
+ */
+export function partnerReceiptImages(input: {
+  term: ReceiptTerm | null; companyActive: boolean; lots: ReceiptLot[]; monthlyUsed: number; enforced: boolean; now: Date;
+}): PartnerReceiptImagesDto {
+  const { term, lots, now } = input;
+  // `lots` is in admission order, so the first one with images left is the one drawn next.
+  const sum = (rows: ReceiptLot[]) => {
+    const next = rows.find((lot) => lot.remaining > 0) ?? rows[rows.length - 1];
+    return { limit: rows.reduce((total, lot) => total + lot.units - lot.revoked, 0),
+      remaining: rows.reduce((total, lot) => total + lot.remaining, 0), expiresAt: next?.expiresAt.toISOString() ?? null };
+  };
+  if (!term) return { basis: 'NONE', tierKey: null, enforced: false, active: input.companyActive, package: null,
+    additional: { remaining: 0, expiresAt: null }, totalRemaining: null };
+  const extra = sum(lots.filter((lot) => !isReceiptPackageKind(lot.kind)));
+  const additional = { remaining: extra.remaining, expiresAt: extra.remaining > 0 ? extra.expiresAt : null };
+  if (term.billingReceiptAccountId) {
+    const own = sum(lots.filter((lot) => isReceiptPackageKind(lot.kind)));
+    return { basis: 'PACKAGE_LOTS', tierKey: currentCapacityOverride(term, now)?.tierKey ?? term.tierKey, enforced: true,
+      active: input.companyActive && !term.termDisabledAt && term.termEndsAt > now,
+      package: { limit: own.limit, used: own.limit - own.remaining, remaining: own.remaining, expiresAt: own.expiresAt },
+      additional, totalRemaining: own.remaining + additional.remaining };
+  }
+  const limit = effectiveMonthlySlipLimit(term, now)!;
+  const remaining = Math.max(0, limit - input.monthlyUsed);
+  return { basis: 'MONTHLY', tierKey: term.tierKey, enforced: input.enforced, active: input.companyActive,
+    package: { limit, used: input.monthlyUsed, remaining, expiresAt: null }, additional, totalRemaining: remaining + additional.remaining };
+}
+
 function bangkokMonthRange(monthKey: string): { gte: Date; lt: Date } {
   const [year, month] = monthKey.split('-').map(Number);
   const bangkokOffsetMs = 7 * 60 * 60 * 1_000;
@@ -217,7 +258,9 @@ export class GetPartnerAiUsageUseCase {
       const txPrisma = { client: tx } as PrismaService;
       // PrismaPg uses one connection for an interactive transaction; keep these sequential so the
       // adapter never receives overlapping client.query calls while preserving the same snapshot.
-      const company = await tx.company.findUnique({ where: { id: companyId }, select: { id: true, planTerm: { select: { billingReceiptAccountId: true } } } });
+      const company = await tx.company.findUnique({ where: { id: companyId }, select: { id: true, status: true, planTerm: { select: {
+        billingReceiptAccountId: true, tierKey: true, monthlySlipLimit: true, warmupUntil: true, warmupSlipLimit: true,
+        capacityOverride: true, termEndsAt: true, termDisabledAt: true } } } });
       const months = await tx.companyAiMonthlyUsage.findMany({
         where: { companyId, monthKey: { in: [monthKey, previousMonthKey] } },
         select: MONTH_SELECT,
@@ -241,6 +284,7 @@ export class GetPartnerAiUsageUseCase {
           salesDealChatCreditEndsAt: true,
           budgetConfigVersion: true,
           pendingBudgetPolicy: true,
+          aiCreditCutoverAt: true,
         },
       });
       // One grouped read feeds tags, kinds, buckets, basis, adjustments and coverage, so every
@@ -280,14 +324,21 @@ export class GetPartnerAiUsageUseCase {
       // Spend, live holds and the breach flag from the SAME RepeatableRead snapshot as the caps
       // they are shown next to, so the console cannot quote a balance from a different moment.
       const budgetPosition = await readAiBudgetMonthSnapshot(tx, companyId, monthKey);
-      return { company, months, configuration, breakdownRows, platform, ocrMonths, ocrSources, currentUploads, previousUploads, budgetPosition };
+      // The receipt lots and the monthly allowance count admission reads, from this same snapshot.
+      const term = company?.planTerm ?? null;
+      const now = new Date();
+      const lots = term ? await receiptLots(tx, visibleReceiptLots(companyId, term.billingReceiptAccountId, now)) : [];
+      const monthlyUsed = term && !term.billingReceiptAccountId ? await countReceiptOcrAdmissions(tx, companyId, monthKey, true) : 0;
+      return { company, months, configuration, breakdownRows, platform, ocrMonths, ocrSources, currentUploads, previousUploads, budgetPosition,
+        now, lots, monthlyUsed };
     }, {
       isolationLevel: 'RepeatableRead',
       maxWait: 5_000,
       timeout: 15_000,
     });
 
-    const { company, months, configuration, breakdownRows, platform, ocrMonths, ocrSources, currentUploads, previousUploads, budgetPosition } = reads;
+    const { company, months, configuration, breakdownRows, platform, ocrMonths, ocrSources, currentUploads, previousUploads, budgetPosition,
+      now, lots, monthlyUsed } = reads;
 
     if (!company) throw new NotFoundException(`Partner company "${companyId}" not found.`);
 
@@ -297,8 +348,10 @@ export class GetPartnerAiUsageUseCase {
     const defaultSatang = platform.monthlyBudgetSatang;
     const policy = resolveAiBudgetPolicy({
       row: configuration, totalSatang: overrideSatang ?? defaultSatang,
-      override: overrideSatang !== null, monthKey,
+      override: overrideSatang !== null, monthKey, at: now,
     });
+    const dealSatang = configuration?.salesDealChatCreditSatang ?? null;
+    const dealEndsAt = configuration?.salesDealChatCreditEndsAt ?? null;
     // `cap - spent - reserved`, floored at 0. SHARED now has a CHAT cap; OCR remains within TOTAL.
     const scope = (capSatang: number | null, spentSatang: number, reservedSatang: number) => ({
       spentSatang, reservedSatang,
@@ -325,13 +378,17 @@ export class GetPartnerAiUsageUseCase {
         ceilingSatang: platform.ceilingSatang,
         // The SAME resolver admission uses (spec §12.5) — the console can never describe a policy
         // differently from the gate.
-        policy: toPartnerAiBudgetPolicyDto(policy, this.config.aiBudgetSplitActivationEnabled === true),
+        policy: toPartnerAiBudgetPolicyDto(policy),
         position: {
           total: scope(overrideSatang ?? defaultSatang, budgetPosition.spent.TOTAL, budgetPosition.reserved.TOTAL),
           chat: scope(policy.chatCapSatang, budgetPosition.spent.CHAT, budgetPosition.reserved.CHAT),
           ocr: scope(policy.mode === 'SPLIT' ? policy.ocrCapSatang : null, budgetPosition.spent.OCR, budgetPosition.reserved.OCR),
           unresolvedHolds: budgetPosition.unresolvedHolds,
           breach: budgetPosition.breach,
+        },
+        chatCredit: {
+          deal: dealSatang !== null && (!dealEndsAt || dealEndsAt > now) ? { satang: dealSatang, endsAt: dealEndsAt?.toISOString() ?? null } : null,
+          cutoverAt: configuration?.aiCreditCutoverAt?.toISOString() ?? null,
         },
       },
       topTags,
@@ -350,6 +407,8 @@ export class GetPartnerAiUsageUseCase {
           source: company.planTerm?.billingReceiptAccountId ? 'PAID_GRANTS' : configuration?.receiptQuotaEnforced == null ? 'DEFAULT' : 'COMPANY',
           defaultEnforced: this.config.receiptQuotaEnforced === true,
         },
+        receiptImages: partnerReceiptImages({ term: company.planTerm ?? null, companyActive: company.status === 'ACTIVE', lots, monthlyUsed, now,
+          enforced: (configuration?.receiptQuotaEnforced ?? this.config.receiptQuotaEnforced) === true }),
         current: ocrMonth(monthKey, currentUploads),
         previous: ocrMonth(previousMonthKey, previousUploads),
       },

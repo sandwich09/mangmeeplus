@@ -834,8 +834,10 @@ describe('AI credit funding order and use (add-on spec §5.2–§5.3, plan PR C3
       { units: 20_000, source: 'SALES_DEAL' });
     assert.deepEqual(aiCreditCycleAllowance({ ...base, row: { salesDealChatCreditSatang: 20_000, salesDealChatCreditEndsAt: new Date('2026-09-15T00:00:00Z') } }),
       { units: 8_000, source: 'DEFAULT' }, 'a deal that ended before the cycle start gives the default');
+    assert.deepEqual(aiCreditCycleAllowance({ ...base, override: true, totalSatang: 50_000, row: { monthlyBudgetSatang: 50_000, chatMonthlyBudgetSatang: 50_000 } }),
+      { units: 50_000, source: 'ADMIN_CHAT_CREDIT' });
     assert.deepEqual(aiCreditCycleAllowance({ ...base, override: true, totalSatang: 50_000, row: { monthlyBudgetSatang: 50_000 } }),
-      { units: 50_000, source: 'TOTAL_OVERRIDE' });
+      { units: 8_000, source: 'DEFAULT' }, 'a TOTAL override is only the safety ceiling (admin tab rework)');
     assert.deepEqual(aiCreditCycleAllowance({ ...base, row: { budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30_000, ocrMonthlyBudgetSatang: 10_000 } }),
       { units: 30_000, source: 'SPLIT_CHAT_CAP' });
   });

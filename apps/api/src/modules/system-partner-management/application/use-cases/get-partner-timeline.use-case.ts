@@ -190,11 +190,11 @@ export class GetPartnerTimelineUseCase {
     // The reason can be any of three (`SPLIT_CAPS_MISSING`, `SPLIT_EXCEEDS_TOTAL`,
     // `POLICY_MALFORMED`), so this line must not assert one of them. The exact red notice with what
     // to fix lives on the partner page, which is where the operator is going anyway.
-    if(money.policyInvalid)return all('การตั้งค่าเครดิต AI ของร้านไม่ถูกต้อง ระบบจึงปฏิเสธการเรียก AI ทุกช่องทาง ดูเหตุผลและแก้ได้ที่หมวด AI และโควตา ของร้านนี้');
+    if(money.policyInvalid)return all('การตั้งค่าเครดิต AI ของร้านไม่ถูกต้อง ระบบจึงปฏิเสธการเรียก AI ทุกช่องทาง ดูเหตุผลและแก้ได้ที่หมวด เครดิต AI และอ่านรูป ของร้านนี้');
     if(money.total!=='OK')return all('เครดิต AI ของเดือนนี้หมดแล้ว');
     // Both shares gone while the total still has money: neither a chat-only nor a receipt-only line
     // is true, and saying "the other share is still there" would be a lie.
-    if(money.chat!=='OK'&&money.ocr!=='OK')return all('ใช้ AI ทั้งส่วนแชตและส่วนอ่านเอกสารของเดือนนี้ไม่ได้แล้ว แม้เครดิตรวมจะยังเหลือ ดูเพดานแต่ละส่วนได้ที่หมวด AI และโควตา');
+    if(money.chat!=='OK'&&money.ocr!=='OK')return all('ใช้ AI ทั้งส่วนแชตและส่วนอ่านเอกสารของเดือนนี้ไม่ได้แล้ว แม้เพดานความปลอดภัยจะยังเหลือ ดูเพดานแต่ละส่วนได้ที่หมวด เครดิต AI และอ่านรูป');
     if(money.chat!=='OK')return chat(shareDetail(money.chat,'แชต','ส่วนอ่านเอกสารยังเหลือ'));
     if(money.ocr!=='OK')return receipt(shareDetail(money.ocr,'อ่านเอกสาร','ส่วนแชตยังเหลือ'));
     if(entitled!==null&&!entitled.has('expenses.upload'))return receipt('ร้านยังไม่ได้เปิดสิทธิ์อัปโหลดใบเสร็จ');

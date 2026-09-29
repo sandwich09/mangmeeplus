@@ -67,7 +67,7 @@ export async function checkReceiptQuotaRuntime(input: {
     if (browser) {
       const { page } = browser;
       await page.setViewportSize({ width: 390, height: 844 });
-      await page.goto(`${browser.origin}/system/partners/${companyId}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`${browser.origin}/system/partners/${companyId}?view=ai`, { waitUntil: 'domcontentloaded' });
       await page.getByTestId('receipt-quota-effective').getByText(/บังคับโควตา/).waitFor();
       for (const [mode, value] of [['observe', false], ['inherit', null], ['enforce', true]] as const) {
         await page.getByRole('textbox',{name:'เหตุผลที่ปรับการอ่านเอกสาร',exact:true}).fill('ปรับโควตาจากหน้า Admin');
@@ -93,7 +93,7 @@ export async function checkReceiptQuotaRuntime(input: {
       await page.getByTestId('receipt-quota-effective').getByText(/บังคับโควตา/).waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
       await page.goto(`${browser.origin}/system/partners`, { waitUntil: 'domcontentloaded' });
-      await page.goto(`${browser.origin}/system/partners/${companyId}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`${browser.origin}/system/partners/${companyId}?view=ai`, { waitUntil: 'domcontentloaded' });
       await page.getByTestId('receipt-quota-effective').getByText(/บังคับโควตา/).waitFor();
       await page.locator('#receipt-quota-mode').locator('..').screenshot({ path: `${browser.evidenceDir}/admin-receipt-quota-mobile.png` });
     }
@@ -111,7 +111,8 @@ export async function checkReceiptQuotaRuntime(input: {
     if (browser) {
       await browser.page.reload({ waitUntil: 'domcontentloaded' });
       await browser.page.getByTestId('receipt-quota-effective').getByText(/แพ็กเกจที่ชำระเงิน/).waitFor();
-      assert.equal(await browser.page.locator('#receipt-quota-mode').isDisabled(), true);
+      // Admin tab rework: a paid package always enforces, so the trial/staff-set choice is not shown at all.
+      assert.equal(await browser.page.locator('#receipt-quota-mode').count(), 0);
     }
     return ['runtime-receipt-quota-admin-cas-audit-legacy-input-and-validation', 'runtime-receipt-quota-web-line-inheritance-no-reset-and-statement-exclusion',
       'runtime-receipt-quota-paid-grants-cannot-bypass', ...(browser ? ['browser-admin-receipt-quota-three-modes-reload-return-mobile-and-paid-lock'] : []),

@@ -909,39 +909,11 @@ export type ReceiptOcrRequest = {
    * against what the page says rather than against itself.
    */
   documentText?: string;
-  /** API-only, company-gated request for strict W07A page/field provenance. */
-  requireEvidenceV2?: boolean;
-};
-
-export type ReceiptOcrEvidenceRole =
-  | 'seller_name' | 'seller_tax_id' | 'seller_branch' | 'seller_address' | 'buyer_name' | 'buyer_tax_id' | 'buyer_branch' | 'buyer_address'
-  | 'document_number' | 'transaction_date' | 'description' | 'quantity' | 'unit_price'
-  | 'vat_rate' | 'subtotal' | 'discount' | 'taxable_base' | 'vat_amount' | 'wht_rate'
-  | 'wht_amount' | 'wht_base' | 'grand_total' | 'currency' | 'vat_mode'
-  | 'line_description' | 'line_amount' | 'line_quantity' | 'line_unit_price' | 'line_vat'
-  | 'charge_amount' | 'charge_description' | 'charge_vat' | 'category' | 'missing_field';
-
-export type ReceiptOcrFieldEvidenceV2 = {
-  pageIndex: number;
-  role: ReceiptOcrEvidenceRole;
-  localSpan: { start: number; end: number };
-  rawValue: string;
-};
-
-/** Internal OCR provenance. The API binds page text to the submitted attachment digest and
- *  rechecks every field locator before business application. Never expose pages in user-facing DTOs. */
-export type ReceiptOcrEvidenceV2 = {
-  version: 2;
-  attachmentId: string;
-  attachmentSha256: string;
-  pages: Array<{ pageIndex: number; text: string }>;
-  fields: Record<string, ReceiptOcrFieldEvidenceV2>;
 };
 
 export type ReceiptOcrResponse = {
   status: 'ok' | 'not_configured' | 'failed';
   fields?: ReceiptOcrFieldResult;
-  receiptEvidence?: ReceiptOcrEvidenceV2;
   classification?: BusinessDocumentClassification;
   /** Evidence-validated utility parts. Intake may draft the prior receipt when it accompanies
    *  a new bill; this array itself never records a payment. */

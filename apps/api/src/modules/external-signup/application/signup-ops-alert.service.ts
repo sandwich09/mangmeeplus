@@ -78,7 +78,7 @@ export function signupOpsAlertBodyTh(kind: SignupOpsAlertKind): string {
     case 'ai_credit_holds_unresolved':
       // No shop name, no amount: this is an ops alert about state, and the operator decides per
       // company on the page. Only the page it names carries money figures.
-      return 'มีร้านที่ระบบกันเครดิต AI ไว้แล้วยังไม่ทราบผล หรือมีรายการใช้เกินที่กันไว้ที่ยังไม่รับทราบ เปิดหน้าร้านแล้วดูหมวด AI และโควตา หัวข้อ เครดิตที่กันไว้ค้าง ค่ะ';
+      return 'มีร้านที่ระบบกันเครดิต AI ไว้แล้วยังไม่ทราบผล หรือมีรายการใช้เกินที่กันไว้ที่ยังไม่รับทราบ เปิดหน้าร้านแล้วดูหมวด เครดิต AI และอ่านรูป หัวข้อ เครดิตที่กันไว้ค้าง ค่ะ';
   }
 }
 

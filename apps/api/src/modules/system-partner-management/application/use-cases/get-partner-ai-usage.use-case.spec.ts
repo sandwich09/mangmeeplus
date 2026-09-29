@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../../generated/prisma/client';
 import { pgSpecUnreachableReason } from '../../../../common/database/pg-spec-guard';
-import { GetPartnerAiUsageUseCase } from './get-partner-ai-usage.use-case';
+import { GetPartnerAiUsageUseCase, partnerReceiptImages } from './get-partner-ai-usage.use-case';
 import {
   __resetCompanyAiBudgetCache,
   bangkokMonthKey,
@@ -48,6 +48,10 @@ type BreakdownRow = {
   cacheReadSatang: number | null; cacheWriteSatang: number | null; firstAt: Date;
 };
 
+/** A STARTER term that is running; tests override what they are about. */
+const TERM = { tierKey: 'STARTER_249', monthlySlipLimit: 30, warmupUntil: null, warmupSlipLimit: null, capacityOverride: null,
+  termEndsAt: new Date(Date.now() + 20 * 86_400_000), termDisabledAt: null };
+
 function makePrisma(opts: {
   months?: Array<ReturnType<typeof monthRow>>;
   overrideSatang?: number | null;
@@ -60,13 +64,21 @@ function makePrisma(opts: {
   uploads?: [number, number];
   /** Split policy columns of the same configuration row (spec §12.5). */
   policy?: Record<string, unknown>;
+  /** A trial or staff-set term (no receipt account); `paid` gives the same term a receipt account. */
+  term?: Record<string, unknown> | null;
+  /** Receipt lots the admission would see, and this month's base admissions of a monthly term. */
+  lots?: Array<Record<string, unknown>>;
+  monthlyUsed?: number;
 } = {}) {
   const calls: { monthWhere?: any; rawSql?: string; rawParams?: unknown[]; ocrGroupBy?: any; uploadWhere?: any[]; transactionOptions?: any } = {};
   let uploadIndex = 0;
   const client: any = {
       company: {
-        findUnique: async () => opts.companyExists === false ? null : { id: 'co-1', planTerm: opts.paid ? { billingReceiptAccountId: 'paid-account' } : null },
+        findUnique: async () => opts.companyExists === false ? null : { id: 'co-1', status: 'ACTIVE',
+          planTerm: opts.paid || opts.term ? { ...TERM, ...opts.term, billingReceiptAccountId: opts.paid ? 'paid-account' : null } : null },
       },
+      billingReceiptGrant: { findMany: async () => (opts.lots ?? []).map((lot) => ({ _count: { admissions: 0 }, revokedAt: null, ...lot })) },
+      receiptUnitEntry: { groupBy: async () => [] },
       companyAiMonthlyUsage: {
         findMany: async (args: any) => { calls.monthWhere = args.where; return opts.months ?? []; },
       },
@@ -91,6 +103,7 @@ function makePrisma(opts: {
       },
       companyOcrUsageEvent: {
         groupBy: async (args: any) => { calls.ocrGroupBy = args; return opts.ocrSources ?? []; },
+        count: async () => opts.monthlyUsed ?? 0,
       },
       attachmentObject: {
         count: async (args: any) => {
@@ -143,7 +156,7 @@ describe('GetPartnerAiUsageUseCase', () => {
       ceilingSatang: 50_000_000,
       // Every existing SHARED company now has the separate 80-credit CHAT default.
       policy: { mode: 'SHARED', chatCapSatang: 8_000, ocrCapSatang: null, source: 'ACTIVE',
-        revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, splitActivationEnabled: false },
+        revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, chatSource: 'DEFAULT' },
       // CHAT has its own remaining credit; OCR still uses the total only.
       position: {
         total: { spentSatang: 0, reservedSatang: 0, availableSatang: 5_000_000 },
@@ -151,6 +164,7 @@ describe('GetPartnerAiUsageUseCase', () => {
         ocr: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
         unresolvedHolds: 0, breach: false,
       },
+      chatCredit: { deal: null, cutoverAt: null },
     });
   });
 
@@ -162,15 +176,16 @@ describe('GetPartnerAiUsageUseCase', () => {
       overrideSatang: 900_000,
       defaultSatang: 5_000_000,
       ceilingSatang: 50_000_000,
-      policy: { mode: 'SHARED', chatCapSatang: 900_000, ocrCapSatang: null, source: 'ACTIVE',
-        revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, splitActivationEnabled: false },
-      // The explicit operator override retains the special effective CHAT allowance.
+      // Admin tab rework: the TOTAL override is the safety ceiling only; the chat credit is its own.
+      policy: { mode: 'SHARED', chatCapSatang: 8_000, ocrCapSatang: null, source: 'ACTIVE',
+        revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, chatSource: 'DEFAULT' },
       position: {
         total: { spentSatang: 0, reservedSatang: 0, availableSatang: 900_000 },
-        chat: { spentSatang: 0, reservedSatang: 0, availableSatang: 900_000 },
+        chat: { spentSatang: 0, reservedSatang: 0, availableSatang: 8_000 },
         ocr: { spentSatang: 0, reservedSatang: 0, availableSatang: null },
         unresolvedHolds: 0, breach: false,
       },
+      chatCredit: { deal: null, cutoverAt: null },
     });
   });
 
@@ -601,16 +616,16 @@ describe('GetPartnerAiUsageUseCase', () => {
 });
 
 describe('GetPartnerAiUsageUseCase budget policy', () => {
-  const read = (opts: Parameters<typeof makePrisma>[0], splitEnabled = false) =>
-    new GetPartnerAiUsageUseCase(makePrisma(opts), { ...makeConfig(), aiBudgetSplitActivationEnabled: splitEnabled }).execute('co-1');
+  const read = (opts: Parameters<typeof makePrisma>[0]) =>
+    new GetPartnerAiUsageUseCase(makePrisma(opts), makeConfig()).execute('co-1');
 
   it('reports an ACTIVE split with both caps and the revision the writer will fence on', async () => {
     const result = await read({ overrideSatang: 10_000, policy: {
       budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 3_000, ocrMonthlyBudgetSatang: 7_000, budgetConfigVersion: 2, pendingBudgetPolicy: null,
-    } }, true);
+    } });
     assert.deepEqual(result.budget.policy, {
       mode: 'SPLIT', chatCapSatang: 3_000, ocrCapSatang: 7_000, source: 'ACTIVE',
-      revision: `2:${CURRENT}:ACTIVE`, pending: null, splitActivationEnabled: true,
+      revision: `2:${CURRENT}:ACTIVE`, pending: null, chatSource: 'SPLIT',
     });
   });
 
@@ -619,14 +634,73 @@ describe('GetPartnerAiUsageUseCase budget policy', () => {
     const result = await read({ overrideSatang: 10_000, policy: { budgetMode: 'SHARED', budgetConfigVersion: 1, pendingBudgetPolicy: pending } });
     assert.equal(result.budget.policy.mode, 'SHARED');
     assert.deepEqual(result.budget.policy.pending, pending);
-    assert.equal(result.budget.policy.splitActivationEnabled, false, 'the console must not offer SPLIT while the gate is shut');
   });
 
   it('surfaces an allocation that no longer fits the live total instead of quietly showing caps', async () => {
     const result = await read({ overrideSatang: 5_000, policy: {
       budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 3_000, ocrMonthlyBudgetSatang: 7_000, budgetConfigVersion: 2, pendingBudgetPolicy: null,
-    } }, true);
+    } });
     assert.equal(result.budget.policy.invalidReason, 'SPLIT_EXCEEDS_TOTAL');
     assert.equal(result.budget.effectiveSatang, 5_000, 'the total the seams compare against is unchanged');
+  });
+});
+
+describe('GetPartnerAiUsageUseCase — chat credit and receipt images (admin tab rework 2026-09-29)', () => {
+  const soon = new Date(Date.now() + 10 * 86_400_000);
+  const lot = (id: string, kind: string, units: number, admissions: number, expiresAt = soon) => ({
+    id, kind, units, availableAt: new Date(Date.now() - 86_400_000), expiresAt, createdAt: new Date(Date.now() - 86_400_000),
+    _count: { admissions },
+  });
+
+  it('names where the chat credit comes from: an admin setting wins over a live sales deal', async () => {
+    const endsAt = new Date(Date.now() + 30 * 86_400_000);
+    const result = await new GetPartnerAiUsageUseCase(makePrisma({ policy: { budgetMode: 'SHARED', chatMonthlyBudgetSatang: 15_000,
+      salesDealChatCreditSatang: 30_000, salesDealChatCreditEndsAt: endsAt } }), makeConfig()).execute('co-1');
+    assert.equal(result.budget.policy.chatCapSatang, 15_000);
+    assert.equal(result.budget.policy.chatSource, 'ADMIN');
+    assert.deepEqual(result.budget.chatCredit, { deal: { satang: 30_000, endsAt: endsAt.toISOString() }, cutoverAt: null });
+    assert.equal(result.budget.position.chat.availableSatang, 15_000);
+
+    const deal = await new GetPartnerAiUsageUseCase(makePrisma({ policy: { salesDealChatCreditSatang: 30_000, salesDealChatCreditEndsAt: endsAt } }),
+      makeConfig()).execute('co-1');
+    assert.deepEqual([deal.budget.policy.chatCapSatang, deal.budget.policy.chatSource], [30_000, 'SALES_DEAL']);
+  });
+
+  it('a paid package reads its lots: package first, then what the team gave or the shop bought', async () => {
+    const result = await new GetPartnerAiUsageUseCase(makePrisma({ paid: true,
+      lots: [lot('pkg', 'INITIAL', 30, 12), lot('gift', 'ADD_ON_ADMIN', 5, 0)] }), makeConfig()).execute('co-1');
+    assert.deepEqual(result.ocr.receiptImages, {
+      basis: 'PACKAGE_LOTS', tierKey: 'STARTER_249', enforced: true, active: true,
+      package: { limit: 30, used: 12, remaining: 18, expiresAt: soon.toISOString() },
+      additional: { remaining: 5, expiresAt: soon.toISOString() }, totalRemaining: 23,
+    });
+  });
+
+  it('a trial or staff-set term reads its monthly allowance with the enforcement in force', async () => {
+    const trial = await new GetPartnerAiUsageUseCase(makePrisma({ term: { tierKey: 'FREE_TRIAL_15', monthlySlipLimit: 15 }, monthlyUsed: 7 }),
+      { ...makeConfig(), receiptQuotaEnforced: true }).execute('co-1');
+    assert.deepEqual(trial.ocr.receiptImages, {
+      basis: 'MONTHLY', tierKey: 'FREE_TRIAL_15', enforced: true, active: true,
+      package: { limit: 15, used: 7, remaining: 8, expiresAt: null }, additional: { remaining: 0, expiresAt: null }, totalRemaining: 8,
+    });
+    const observed = await new GetPartnerAiUsageUseCase(makePrisma({ term: {}, monthlyUsed: 40,
+      ocrConfig: { enabled: true, monthlyLimit: null, receiptQuotaEnforced: false } }), { ...makeConfig(), receiptQuotaEnforced: true }).execute('co-1');
+    assert.equal(observed.ocr.receiptImages?.enforced, false, 'the company setting wins over the platform default');
+    assert.equal(observed.ocr.receiptImages?.package?.remaining, 0, 'used beyond the allowance never reads as negative');
+  });
+
+  it('a shop without a package term has no image limit from a package', async () => {
+    const result = await new GetPartnerAiUsageUseCase(makePrisma(), makeConfig()).execute('co-1');
+    assert.deepEqual(result.ocr.receiptImages, { basis: 'NONE', tierKey: null, enforced: false, active: true, package: null,
+      additional: { remaining: 0, expiresAt: null }, totalRemaining: null });
+  });
+
+  it('a paid package that ended or was held reads as inactive, and a current temporary tier is named', () => {
+    const now = new Date();
+    const term = { tierKey: 'STARTER_249', monthlySlipLimit: 30, warmupUntil: null, warmupSlipLimit: null, billingReceiptAccountId: 'acct',
+      capacityOverride: null, termEndsAt: new Date(now.getTime() - 1), termDisabledAt: null };
+    assert.equal(partnerReceiptImages({ term, companyActive: true, lots: [], monthlyUsed: 0, enforced: true, now }).active, false);
+    const held = partnerReceiptImages({ term: { ...term, termEndsAt: soon, termDisabledAt: now }, companyActive: true, lots: [], monthlyUsed: 0, enforced: true, now });
+    assert.deepEqual([held.active, held.package, held.totalRemaining], [false, { limit: 0, used: 0, remaining: 0, expiresAt: null }, 0]);
   });
 });

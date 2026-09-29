@@ -237,8 +237,6 @@ export type ExpenseCaptureReadResponse = {
 };
 
 export type ExpenseCaptureExtractWindow = {
-  /** v2 binds every retained value to the original attachment and page text. */
-  evidenceSource?: { version: 2; attachmentId: string; checksumSha256: string };
   fileLabel: string;
   pageIndexes: number[];
   pages: Array<{ pageIndex: number; text: string; sourceOffset?: number }>;
@@ -396,7 +394,6 @@ export type ExpenseCaptureFieldEvidence = {
 };
 
 export type ExpenseCaptureObservations = {
-  fieldEvidenceVersion?: 2;
   documents: ExpenseCaptureDocumentObservation[];
   items: ExpenseCaptureItemObservation[];
   components: ExpenseCaptureComponentObservation[];

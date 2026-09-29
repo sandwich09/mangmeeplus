@@ -67,9 +67,10 @@ Open questions:
 - Spec §4.2 says a late conversational answer should end with a bounded notice; this branch delivers the
   finished answer instead (production behaviour, owner ruling "cannot go silent"). The spec text needs updating.
 - The two-slot `simple` lane remains in the budget authority, but the API no longer selects it.
-- Web uploads use strict evidence v2 (LINE does not). In a probe with that flag both owner photos failed it 6/6
-  (the model never returned fieldEvidence, even on repair), so the web path may reject the same photos. Not
-  changed here.
+- Web uploads used strict evidence v2 (LINE does not). In a probe with that flag both owner photos failed it 6/6
+  with `OCR_SCHEMA_INVALID`. Correction (2026-09-29 evening): the model DID return `fieldEvidence` in 11 of 12
+  outputs; the gateway's citation checks rejected them. Fixed by option A, see
+  [web-receipt-evidence-v2-2026-09-29.md](web-receipt-evidence-v2-2026-09-29.md).
 
 Artifacts:
 - Tests: bound continuation cases (photo "1" / "ใบเสร็จค่ะ", check bill "1", draft control, free-text draft

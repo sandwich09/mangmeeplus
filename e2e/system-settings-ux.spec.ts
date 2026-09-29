@@ -178,12 +178,12 @@ test('company detail opens one section, preserves drafts and browser navigation 
   await nav.getByRole('link',{name:'สมาชิก',exact:true}).click();
   await expect(page.getByRole('textbox',{name:'อีเมลสมาชิก',exact:true})).toHaveValue('draft-only@example.test');
   await noOverflow(page);
-  await nav.getByRole('link',{name:'AI และโควตา',exact:true}).click();
-  await expect(page.getByRole('region',{name:'AI และโควตาบริษัท',exact:true})).toBeVisible();
+  await nav.getByRole('link',{name:'เครดิต AI และอ่านรูป',exact:true}).click();
+  await expect(page.getByRole('region',{name:'เครดิต AI และอ่านรูปของบริษัท',exact:true})).toBeVisible();
   await page.getByText('เปลี่ยนรุ่น AI ของบริษัท',{exact:true}).click();
   await page.getByLabel('เหตุผลที่เปลี่ยนรุ่น AI',{exact:true}).fill('ร่างการปรับ AI');
   await nav.getByRole('link',{name:'ภาพรวม',exact:true}).click();await noOverflow(page);
-  await nav.getByRole('link',{name:'AI และโควตา',exact:true}).click();
+  await nav.getByRole('link',{name:'เครดิต AI และอ่านรูป',exact:true}).click();
   await expect(page.getByLabel('เหตุผลที่เปลี่ยนรุ่น AI',{exact:true})).toHaveValue('ร่างการปรับ AI');
   await noOverflow(page);
   expect(writes).toEqual([]);await expectNoClientError(page);
