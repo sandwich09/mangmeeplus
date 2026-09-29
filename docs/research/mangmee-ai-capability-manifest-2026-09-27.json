@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "e4deeb4ab07ed1327cba253a52ad0fb69bf626a2",
-  "checkoutBranch": "claude/line-ai-regression-fixes-20260930",
-  "checkoutDirty": true,
+  "sourceRevision": "cf4ac7b8e84e2358c6a2c435fa34b69d6af481c8",
+  "checkoutBranch": "claude/line-ai-reimbursement-draft-fix-20260929",
+  "checkoutDirty": false,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -37,7 +37,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-reimbursement-draft.service.ts",
-      "sha256": "edae82b526cb027b042003f2bb124ba742387499bd03314c80d11b72588c51d4"
+      "sha256": "8ff8f1e52b785fbdc184e819694b331961633803b3b44df5b9236c6af4296205"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-banking-tools.use-case.ts",
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
-      "sha256": "5ca60d89153098246657e673b5d45b40cec7afde1f5b19e7de77fd1cb0b79bdf"
+      "sha256": "5557baf684a4e88bbf6ed359a740869ae4006496e557799986a886aa6dad4b90"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-crm-operational-tools.use-case.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "38af20fbfb63abc4eafef0c799cef518352bc00a27ef76c65cf8efb0ba2948d3"
+      "sha256": "a8344214564d3f6c29445bea1277929dd790869ded3ff7656b61e51c3f869809"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -173,7 +173,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "84c19b251350870878601b1dab9a36b491e4efa57c79fc099a95664444a143a7"
+      "sha256": "d3ea2b4aad8ea0fe7e70e2530e396e0fb881dee86b6d2069bececc08c05e5b14"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T17:35:16.156Z",
-  "manifestDigest": "8ebba4efcf220df551877970c12a1ce9b5ae7b85ec3b2c02b05f950fb905c359"
+  "generatedAt": "2026-09-29T18:39:27.811Z",
+  "manifestDigest": "8af4a071e8df2e4468444871f509fc24d92212255fd411419f9f3569402f789a"
 }
