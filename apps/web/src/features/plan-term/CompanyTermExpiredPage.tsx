@@ -17,7 +17,11 @@ import {
  * (Owner 2026-09-20 closed the free trial) — and the move is the same either way: choose one.
  * Staff get the neutral line; package prices and payment are not their business.
  */
-export default function CompanyTermExpiredPage({ companyId }: { companyId: string }) {
+export default function CompanyTermExpiredPage({ companyId, canOpenProfile = false }: {
+  companyId: string;
+  /** `/settings/profile` needs `company.setup.read` (route-permissions.ts); without it the link opens a refusal. */
+  canOpenProfile?: boolean;
+}) {
   const [notice, setNotice] = useState<PlanTermNotice | null>(null);
   const [settled, setSettled] = useState(false);
   const [error, setError] = useState<number | null>(null);
@@ -108,7 +112,7 @@ export default function CompanyTermExpiredPage({ companyId }: { companyId: strin
             อีเมล {PLAN_TERM_CONTACT_EMAIL}
           </a>
           {/* F28: Stripe Checkout collects the address, so the shop profile is optional, and last. */}
-          <a className="mt-3 inline-flex min-h-11 w-full items-center justify-center text-sm text-brand-700 underline" href={`/companies/${companyId}/settings/profile#shop`}>เติมข้อมูลร้านไว้ล่วงหน้า (ไม่บังคับ)</a>
+          {canOpenProfile && <a className="mt-3 inline-flex min-h-11 w-full items-center justify-center text-sm text-brand-700 underline" href={`/companies/${companyId}/settings/profile#shop`}>เติมข้อมูลร้านไว้ล่วงหน้า (ไม่บังคับ)</a>}
         </div>
       ) : (
         <div role="status" className="mangmee-card p-5 sm:p-7">

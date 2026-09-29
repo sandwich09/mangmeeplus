@@ -147,14 +147,31 @@ describe('addressChanged', () => {
 });
 
 describe('the Stripe Checkout address offer (DQ5)', () => {
-  // Stripe has no sub-district, so that box always arrives empty and must not blank what was typed.
+  // Stripe has no sub-district, so that box always arrives empty.
   const CHECKOUT = { line1: '99/1 ถนนสุขุมวิท', line2: null, subdistrict: '', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' };
-  it('fills only the boxes Checkout filled and says nothing when the form already holds them', () => {
-    assert.deepEqual(checkoutAddressToForm(CHECKOUT), { line1: '99/1 ถนนสุขุมวิท', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' });
+  it('fills the boxes Checkout filled, clears the sub-district, and says nothing when the form already holds them', () => {
+    assert.deepEqual(checkoutAddressToForm(CHECKOUT), { line1: '99/1 ถนนสุขุมวิท', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110', subdistrict: '' });
     assert.equal(checkoutAddressText(CHECKOUT), '99/1 ถนนสุขุมวิท คลองเตย กรุงเทพมหานคร 10110');
     assert.equal(checkoutAddressDiffers(CHECKOUT, BLANK_ADDRESS), true);
     assert.equal(checkoutAddressDiffers(CHECKOUT, FULL_ADDRESS), false);
     assert.equal(checkoutAddressDiffers(CHECKOUT, { ...FULL_ADDRESS, province: 'เชียงใหม่' }), true);
+  });
+
+  // Review 2026-09-29: keeping the old ตำบล under a new district from Checkout saved an address that
+  // does not exist; the fill blanks it so the owner picks the one that belongs to the new district.
+  it('never keeps a sub-district from another address under the district Checkout brings', () => {
+    const chiangMai = { ...FULL_ADDRESS, subdistrict: 'ศรีภูมิ', district: 'เมืองเชียงใหม่', province: 'เชียงใหม่', postalCode: '50200' };
+    const filled = { ...chiangMai, ...checkoutAddressToForm(CHECKOUT) };
+    assert.equal(filled.subdistrict, '');
+    assert.equal(filled.district, 'คลองเตย');
+    assert.equal(addressChanged(filled, chiangMai), true);
+  });
+
+  it('is offered only while the saved address is incomplete, and asks for the sub-district again', () => {
+    const page = readFileSync(new URL('./CompanyProfilePage.tsx', import.meta.url), 'utf8');
+    assert.match(page, /const checkoutFill = checkoutAddress && identity\?\.readiness\.identity\?\.reasons\.includes\('company_address_incomplete'\)/);
+    assert.match(page, /checkoutFilled && !address\.subdistrict\?\.trim\(\) && \(/);
+    assert.match(page, /กรุณาเลือกตำบล\/แขวงอีกครั้ง/);
   });
 });
 
