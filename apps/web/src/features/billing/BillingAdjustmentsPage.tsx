@@ -156,7 +156,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
         </div>:<p role="alert" className="py-3 text-red-700">ยังโหลดข้อมูลส่วนนี้ไม่ได้ <button type="button" className="min-h-11 underline" onClick={()=>setReload(n=>n+1)}>ลองอีกครั้ง</button></p>}
       </details>}
     </>}
-    <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงสำหรับตรวจสอบ</summary><p className="break-all">รหัสรายการ ใช้ค้นประวัติในระบบ: {billingSupportReference(invoiceId)}</p></details>
+    <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2">{admin?'ข้อมูลอ้างอิงสำหรับตรวจสอบ':'เลขอ้างอิงสำหรับแจ้งทีมงาน'}</summary><p className="break-all">{admin?`รหัสรายการ ใช้ค้นประวัติในระบบ: ${invoiceId}`:billingSupportReference(invoiceId)}</p></details>
   </>;
   return admin ? <main className="mx-auto max-w-4xl space-y-5 break-words p-4 text-base sm:p-8">{content}</main>
     : <BillingCustomerFrame title="เอกสารการชำระเงิน" description="เปิดเอกสารจาก Stripe ของรายการชำระเงินนี้" backHref={back} backLabel="กลับไปประวัติการชำระเงิน" onBack={preview?.back} showBackInWorkspace>{content}</BillingCustomerFrame>;
