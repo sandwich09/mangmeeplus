@@ -771,7 +771,9 @@ it('fails a bound semantic turn before pending media, ERP reads, or a LINE turn 
       errorCode: 'ROUTER_SEMANTIC_SCHEMA_INVALID' }),
     aiGatewayFn: () => assert.fail('invalid compact intake must not start the LINE turn'),
   });
-  const event: any = { ...BASE_EVENT, webhookEventId: 'compact-invalid-boundary', messageText: 'ดูรายจ่ายตามเงื่อนไขที่ไม่รองรับ' };
+  // Owner 2026-09-29 (production order): answer-shaped text — a numbered choice, ใบเสร็จ/ใช่/ไม่… —
+  // reads open work BEFORE routing so it can answer it. This request is not one, so nothing is read.
+  const event: any = { ...BASE_EVENT, webhookEventId: 'compact-invalid-boundary', messageText: 'ดูรายจ่ายตามเงื่อนไขพิเศษ' };
   const evidence = await createLineAiInputEvidence({ turnKey: 'compact-invalid-boundary', parts: [{ partId: 'part-0',
     eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] });
   assert.ok(evidence);
@@ -881,6 +883,47 @@ it('answers a bound general question once before two pending files can intercept
   assert.equal(h.aiGatewayRequests[0].semanticSubrequests?.[0]?.toolHint, 'expense.get_breakdown', 'toolHint survives the routePlan -> turnRequest mapping');
   assert.equal(pendingReads, 0, 'a general question does not enumerate or consume pending private files');
   assert.match(delivered.join('\n'), /กำไรขั้นต้น/);
+});
+
+// UAT 2026-09-29: "ร่างค่าใช้จ่ายมีอะไรบ้าง ติดปัญหาอะไรไหม" was routed with a prepared read, narrowed to the
+// two-slot 'simple' lane, and when the compiled fast lane could not serve it the gateway had no slot left to
+// plan — "ยังดึงข้อมูลส่วนนี้ไม่ได้" after zero calls. A prepared read now keeps the full read budget.
+it('a prepared read is narrowed to the full read lane, never the two-slot one that cannot fall back', async () => {
+  const { prisma } = makePrisma();
+  prisma.client.lineIntakePendingMedia.findMany = async () => [];
+  prisma.client.lineLedgerDelivery = { findMany: async () => [], findFirst: async () => null, findUnique: async () => null };
+  const prepared = parseLineAiPreparedPlan({
+    version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'list',
+    intentPlan: { status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+      intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }] },
+    proposedCalls: [{ toolName: 'expense.list_recent', input: { documentStatus: 'DRAFT' } }],
+  });
+  assert.ok(prepared);
+  const h = makeUseCase(prisma, {
+    permissions: ['line.ai.query'],
+    config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+      lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'], lineAiPreparedSimpleReadEnabled: true },
+    intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, preparedPlan: prepared,
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ร่างค่าใช้จ่ายที่ค้างอยู่', requiredEvidence: [], requestedFilters: { documentStatus: 'DRAFT' }, dependsOn: [] }] }),
+    aiGatewayFn: (request) => ({ requestId: request.requestId, replyText: 'ร่างค่าใช้จ่ายที่ค้างอยู่มี 1 รายการ', intent: 'read_summary',
+      agent: 'accounting', durationMs: 1, webLinks: [], sourceLabels: [], sourceRefs: [], toolsInvoked: ['expense.list_recent'], refused: false,
+      semanticCoverage: [{ index: 0, status: 'handled' }] }),
+  });
+  const event: any = { ...BASE_EVENT, webhookEventId: 'prepared-read-lane', messageText: 'ร่างค่าใช้จ่ายมีอะไรบ้าง' };
+  const evidence = await createLineAiInputEvidence({ turnKey: 'prepared-read-lane', parts: [{ partId: 'part-0',
+    eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] });
+  assert.ok(evidence); event.inputEvidence = evidence.inputEvidence;
+  const flow = h.useCase as any, grant = { turnKey: evidence.inputEvidence.turnKey }, lanes: string[] = [];
+  flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+    projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+    save: async () => true, createTurn: async (_owner: unknown, _epoch: number, data: unknown) => ({ id: 'turn-1', data }) };
+  flow.prepareTextGrantV2 = async (acceptedEvent: object) => { flow.budgetGrantsV2.set(acceptedEvent, grant); return grant; };
+  flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+  flow.aiGateway.narrowLineReliabilityGrant = async (_grant: unknown, lane: string) => { lanes.push(lane); return grant; };
+  flow.sendMessages = async () => 'ok';
+  await h.useCase.execute(event);
+  assert.deepEqual(lanes, ['mixed'], 'room to plan the read when the compiled lane cannot serve it');
+  assert.equal(h.aiGatewayRequests[0]?.preparedPlan?.complexity, 'simple', 'the prepared plan still travels, so its fast lane still runs first');
 });
 
 describe('AP22 live actor delivery fence', () => {
@@ -5907,6 +5950,42 @@ describe('LINE expense edit uses the three-turn preview boundary', () => {
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-edit-confirm', messageText: 'ยืนยันการแก้ไข', draftUpdatePreviewId: preview.previewId });
     assert.equal(calls.apply, 1, 'only a bound confirm postback reaches apply');
     assert.deepEqual(calls.appliedPreviewIds, [preview.previewId]);
+  });
+
+  // UAT 2026-09-29: in a bound chat the v2 route ran without the captures production gave its router, so
+  // "แก้ยอดเป็น 500" had nothing to correct. Same end result as production now: the preview card.
+  it('a bound chat routes "แก้ยอดเป็น 500" with its recent capture and ends in the same preview card', async () => {
+    const { prisma, updates } = makePrisma();
+    prisma.client.lineIntakePendingMedia.findMany = async () => [];
+    prisma.client.lineLedgerDelivery = { findMany: async () => [], findFirst: async () => null, findUnique: async () => null };
+    const previews: any[] = [];
+    const draftUpdate = { enabled: true,
+      preview: async (_ctx: any, input: any) => { previews.push(input); return { status: 'preview', preview }; },
+      pendingPreview: async () => preview, discardUndeliveredPreview: async () => undefined };
+    const { useCase, sentMessages, intakeRequests } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.update'], expenseRepo, draftUpdate, lineEditCapabilityFn: async () => true,
+      config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+        lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+      intakeRouteFn: (request: any) => route({ correctionHints: { targetExpenseId: request.recentCapturedExpenses?.[0]?.id, amount: { to: '500' } },
+        semanticSubrequests: [{ index: 0, kind: 'write', writeIntent: 'EXPENSE_CAPTURE_CORRECTION', goal: 'แก้ยอดเป็น 500',
+          requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] }),
+    });
+    const flow = useCase as any, grant = { turnKey: 'bound-correction' };
+    flow.loadCorrectionCandidates = async () => [candidate];
+    flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+      projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }), save: async () => true };
+    flow.prepareTextGrantV2 = async (accepted: object) => { flow.budgetGrantsV2.set(accepted, grant); return grant; };
+    flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+    flow.aiGateway.narrowLineReliabilityGrant = async () => grant;
+    const event: any = { ...BASE_EVENT, webhookEventId: 'evt-bound-edit-preview', messageText: 'แก้ยอดเป็น 500' };
+    event.inputEvidence = (await createLineAiInputEvidence({ turnKey: 'bound-correction', parts: [{ partId: 'part-0',
+      eventIdHash: 'e'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] }))!.inputEvidence;
+    await useCase.execute(event);
+    assert.deepEqual(intakeRequests[0]?.recentCapturedExpenses?.map((row: any) => row.id), [candidate.id], 'the capture production gave its router');
+    assert.equal(previews.length, 1, 'the correction becomes a preview');
+    assert.equal(previews[0].expenseId, candidate.id);
+    assert.ok(updates.some((row: any) => row.data?.status === 'draft_update_preview'));
+    assert.match(JSON.stringify(sentMessages), /action=draft-update-confirm/u, 'with its confirm button');
   });
 
   it('does not preview with the API flag off or without expense.update', async () => {

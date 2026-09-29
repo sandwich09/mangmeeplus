@@ -259,7 +259,7 @@ export function buildLineAssistantTextCardMessage(
     uri: link.uri,
   }));
   const cardText = body || 'เปิดดูรายละเอียดในเว็บแอป';
-  return {
+  const message: LineReplyMessage = {
     type: 'flex',
     altText: preview(cardText, 400) || 'ข้อมูลจากน้องมั่งมี',
     canonicalText: text,
@@ -268,6 +268,14 @@ export function buildLineAssistantTextCardMessage(
       webBaseUrl, companyId, buttons,
     ),
   };
+  // Nothing was cut: the prose is the body and every safe link is its own labelled button. A delivery
+  // plan may then send this card itself, with the text as its fallback — the form production sent
+  // (UAT 2026-09-29: the receipt reply had become a raw link with ids in plain text).
+  if (Array.from(cardText).length <= ANSWER_CARD_BODY_LIMIT && Array.from(title).length <= ANSWER_CARD_TITLE_LIMIT
+    && Array.from(badge ?? '').length <= ANSWER_CARD_BADGE_LIMIT) {
+    completeBusinessAnswerPresentations.set(message, businessAnswerPresentationFingerprint(message)!);
+  }
+  return message;
 }
 
 /** §10.1 expense draft card facts. Every field is a value the capture ALREADY produced and the
