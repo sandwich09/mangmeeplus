@@ -19,6 +19,7 @@ import {
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { ReimbursementDraftActionRecord, ReimbursementLineRecord, ReimbursementRequestRecord } from '../../reimbursements/domain/models/reimbursement.model';
 import { PrismaReimbursementRepository } from '../../reimbursements/infrastructure/prisma-reimbursement.repository';
+import { pickLineDefaultBranchId } from '../../expenses/domain/logic/line-receipt-branch.logic';
 import {
   LineReimbursementDraftUseCase,
   type LineReimbursementActionKey,
@@ -73,6 +74,8 @@ type Authority = {
   writeIndexes: number[];
   allowedSourceRefs?: LineAiSourceRefV2[];
   retainedTaskRef?: { taskId: string; subrequestIndex: number };
+  /** The draft action the conversation task this clause continues (its router taskRef) already holds. */
+  continuedActionId?: string;
 };
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -136,7 +139,7 @@ export class LineReimbursementDraftAdapterService {
       const prior = this.accepted(active)?.admission;
       const sameTask = authority.retainedTaskRef && prior?.taskId === authority.retainedTaskRef.taskId
         && prior.taskSubrequestIndex === authority.retainedTaskRef.subrequestIndex;
-      if (prior && !sameTask && (prior.requestId !== authority.acceptedRequest['requestId'] || prior.subrequestIndex !== input.subrequestIndex)
+      if (prior && !sameTask && active.id !== authority.continuedActionId && (prior.requestId !== authority.acceptedRequest['requestId'] || prior.subrequestIndex !== input.subrequestIndex)
         && (input.actionId !== active.id || input.taskId !== active.taskId)) return this.denied('reimbursement.draft.get_options', 'FINANCIAL_ACTION_SELECTION_REQUIRED');
       key = { actionId: active.id, taskId: active.taskId, actionOrdinal: active.actionOrdinal, operation: active.operation };
       if ((input.actionId && input.actionId !== key.actionId) || (input.taskId && input.taskId !== key.taskId)) {
@@ -326,7 +329,21 @@ export class LineReimbursementDraftAdapterService {
         dates: historical.dates.filter(item => contained(item.source)), periods: historical.periods.filter(item => contained(item.source)) };
       retainedTaskRef = { taskId: retained.taskRef.taskId, subrequestIndex: retained.taskRef.subrequestIndex };
     }
-    return { evidence: sourceEvidence, candidates: sourceCandidates, owner, acceptedRequest: request, writeIndexes, allowedSourceRefs, retainedTaskRef,
+    // NAT04 (2026-09-29): "ทำร่างจากใบที่สอง" continues the claim the previous turn left collecting. The router's
+    // taskRef names that conversation task, and the task remembers its draft action; nothing else links them.
+    let continuedActionId: string | undefined;
+    const continued = semantic.find(item => object(item) && writeIndexes.includes(Number(item['index'])) && object(item['taskRef'])) as Record<string, unknown> | undefined;
+    if (continued && !retainedTaskRef) {
+      const ref = continued['taskRef'] as Record<string, unknown>;
+      const conversation = await this.prisma.client.aiConversation.findUnique({ where: { id: lineConversationId(owner.owner) } });
+      const tasks = conversation?.lifecycleEpoch === owner.epoch && object(conversation.taskStateJson) && Array.isArray(conversation.taskStateJson['tasks'])
+        ? conversation.taskStateJson['tasks'] as Array<Record<string, unknown>> : [];
+      // The revision already moved when this turn resumed the task; the router's ref was checked there.
+      const task = tasks.find(item => item['taskId'] === ref['taskId']);
+      const slot = object(task?.['slots']) ? task!['slots'][`reimbursementActionId${String(ref['subrequestIndex'])}`] : undefined;
+      if (typeof slot === 'string' && UUID.test(slot)) continuedActionId = slot;
+    }
+    return { evidence: sourceEvidence, candidates: sourceCandidates, owner, acceptedRequest: request, writeIndexes, allowedSourceRefs, retainedTaskRef, continuedActionId,
       ctx: { requestId: ctx.requestId ?? grant.turnKey, authSubject: ctx.userId, userId: ctx.userId,
         companyId: ctx.companyId, membershipId: ctx.membershipId, roles: ctx.roles ?? [], permissions: ctx.permissions,
         scopes: { branchIds: ctx.branchIds, locationIds: ctx.locationIds }, authProvider: 'line' } };
@@ -410,12 +427,19 @@ export class LineReimbursementDraftAdapterService {
       ...(ctx.scopes.branchIds ? { id: { in: ctx.scopes.branchIds } } : {}),
       ...(family === 'branch' && query ? { OR: [{ name: { contains: query, mode: 'insensitive' as const } }, { code: { contains: query, mode: 'insensitive' as const } }] } : {}) };
     const branches = await this.prisma.client.branch.findMany({ where: branchWhere, orderBy: [{ name: 'asc' }, { id: 'asc' }],
-      skip: offset('branch'), take: PAGE_SIZE + 1, select: { id: true, name: true, code: true, updatedAt: true } });
+      skip: offset('branch'), take: PAGE_SIZE + 1, select: { id: true, name: true, code: true, type: true, updatedAt: true } });
     const branchChoices = branches.slice(0, PAGE_SIZE).map(row => this.choice(key.actionId, 'BRANCH', `${row.name} (${row.code})`, row.updatedAt.toISOString(), { id: row.id }));
     addPage('branch', branchChoices, branches.length > PAGE_SIZE);
+    // NAT04 (2026-09-29): a multi-branch member was asked for a branch before a single bill could be listed. The
+    // same member-branch rule LINE capture uses (default branch, sole branch, sole head office) picks it; the
+    // branch list stays offered, so naming another branch still switches.
+    const memberBranchId = offset('branch') === 0 && !input.branchChoiceId && !previous?.selected.branchChoiceId && ctx.membershipId
+      ? pickLineDefaultBranchId(branches, (await this.prisma.client.companyMembership.findUnique({ where: { id: ctx.membershipId }, select: { defaultBranchId: true } }))?.defaultBranchId)
+      : undefined;
     let selectedBranch = previousChoice(input.branchChoiceId, 'BRANCH')
       ?? (previous?.selected.branchChoiceId ? previousChoice(previous.selected.branchChoiceId, 'BRANCH') : undefined)
-      ?? (branches.length === 1 && offset('branch') === 0 ? branchChoices[0] : undefined);
+      ?? (branches.length === 1 && offset('branch') === 0 ? branchChoices[0] : undefined)
+      ?? branchChoices.find(item => item.raw['id'] === memberBranchId);
     if (selectedBranch) selectedBranch = await this.currentChoice(ctx, selectedBranch, previous);
 
     let selectedRequester: Choice | undefined;

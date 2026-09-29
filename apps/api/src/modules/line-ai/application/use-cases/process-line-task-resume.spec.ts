@@ -1,6 +1,6 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
+import { ProcessLineWebhookUseCase, pendingWorkReply } from './process-line-webhook.use-case';
 
 function fixture() {
   const event = { webhookEventId: 'followup' }, owner = { companyId: 'company' };
@@ -85,4 +85,69 @@ it('extracts QA questions only from exact original source spans, without replaci
   const clause = { index: 0, kind: 'file', goal: 'paraphrased total question', evidenceRefs: [{ partId: 'part', rawSha256: 'a'.repeat(64), startUtf16: 0, endUtf16: 12 }] };
   assert.deepEqual(f.flow.documentQaQuestions(event, [clause]), [{ subrequestIndex: 0, question: text.slice(0, 12) }]);
   assert.throws(() => f.flow.documentQaQuestions(event, [{ ...clause, evidenceRefs: [{ ...clause.evidenceRefs[0], rawSha256: 'b'.repeat(64) }] }]), /QA_QUESTION_EVIDENCE_MISSING/);
+});
+
+// NAT04/NAT12 real-model re-test (2026-09-29): typed cancel/review of the chat's one unconfirmed work.
+it('reads a typed cancel or a no-save review only as those, never a new value or a negated cancel', () => {
+  for (const text of ['เดี๋ยว ๆ ยกเลิกก่อน', 'ขอยกเลิกก่อน เดี๋ยวถามฝ่ายบัญชี', 'ไม่เอาแล้ว']) assert.equal(pendingWorkReply(text), 'cancel', text);
+  for (const text of ['ขอเช็กยอดกับชื่อร้านก่อน ยังไม่ต้องบันทึก', 'อย่าเพิ่งยืนยันนะ']) assert.equal(pendingWorkReply(text), 'review', text);
+  for (const text of ['ไม่ยกเลิกนะ', 'ยกเลิก 300 เป็น 350', 'เมื่อกี้เน็ตหลุด สรุปบันทึกไปยัง', 'ยอดขายวันนี้เท่าไหร่']) assert.equal(pendingWorkReply(text), null, text);
+});
+
+function pendingFixture(kind: 'edit' | 'claim') {
+  const f = fixture(), sent: string[] = [], calls: string[] = [], logs: string[] = [];
+  const event = Object.assign(f.event, { messageText: 'เดี๋ยว ๆ ยกเลิกก่อน', lineUserId: 'line-user' });
+  const edit = { previewId: 'preview-1', expenseId: 'expense-1', record: { vendorName: 'ค่าส่งของ', expenseDate: '2026-09-29', statusLabel: 'รอตรวจสอบ' },
+    tool: 'expense.draft.set_line', diff: [{ label: 'บรรทัด 1 จำนวนเงิน', before: '300.00', after: '350.00', kind: 'money' }],
+    totalsBefore: { grandTotalAmount: '300.0000' }, totalsAfter: { grandTotalAmount: '350.0000' }, warnings: [], expiresAt: '2026-09-29T10:00:00Z' };
+  const preview = { actionId: 'action', previewRevision: 2, confirmationDigest: 'd'.repeat(64), after: { amount: '245.00', reason: 'ซื้อของใช้ในออฟฟิศ',
+    lines: [{ lineNo: 1, description: 'ปากกา', incurredDate: '2026-09-24', amount: '245.00', purpose: 'ซื้อของใช้ในออฟฟิศ', linkedExpenseId: 'bill-1' }] } };
+  Object.assign(f.flow, {
+    config: { webBaseUrl: 'https://web.test' },
+    draftUpdate: { pendingPreview: async () => kind === 'edit' ? edit : null,
+      cancel: async (_ctx: any, _chat: string, id: string) => { calls.push(`edit-cancel:${id}`); return 'cancelled'; } },
+    reimbursementDrafts: {
+      active: async () => kind === 'claim' ? { id: 'action' } : null,
+      get: async () => ({ status: 'preview', preview }),
+      cancel: async ({ control }: any) => { calls.push(`claim-cancel:${control.actionId}:${control.previewRevision}`); return { status: 'cancelled', actionId: 'action' }; },
+      cancelCollection: async () => { throw new Error('a preview is cancelled by its revision'); },
+    },
+    expenseRepo: { findById: async (_company: string, id: string) => id === 'bill-1' ? { vendorNameSnapshot: 'ร้านเครื่องเขียนสมใจ', vendorDocumentNumber: 'NAT-STN-001' } : null },
+    finishReimbursementTask: async (_owner: any, _epoch: number, id: string, applied: boolean) => { calls.push(`finish:${id}:${applied}`); },
+    deliverReply: async (_event: any, text: string) => { sent.push(text); },
+    persistIntakeTurn: async () => undefined,
+    updateEventLog: async (_id: string, status: string) => { logs.push(status); },
+  });
+  const ctx = { requestId: 'request', userId: 'user', companyId: 'company', membershipId: 'member', permissions: ['expense.update'], scopes: {} };
+  return { ...f, event, ctx, sent, calls, logs };
+}
+
+it('a typed cancel drops the pending edit, closes its waiting task and says what stays recorded', async () => {
+  const f = pendingFixture('edit');
+  assert.equal(await f.flow.handlePendingWorkControl(f.event, f.ctx), true);
+  assert.deepEqual(f.calls, ['edit-cancel:preview-1']);
+  assert.equal(f.projection().tasks[0].state, 'canceled', 'the one waiting write task is closed');
+  assert.match(f.sent[0]!, /ยกเลิกการแก้ไขแล้ว/u); assert.match(f.sent[0]!, /ยอดรวม 300\.00 บาท/u);
+  assert.match(f.sent[0]!, /ยังบันทึกเป็นร่างไว้/u, 'never claims that nothing was recorded');
+  assert.deepEqual(f.logs, ['pending_work_cancelled']);
+});
+
+it('a no-save review restates the pending claim with its shop and writes nothing; a cancel drops it by its revision', async () => {
+  const review = pendingFixture('claim'); review.event.messageText = 'ขอเช็กยอดกับชื่อร้านก่อน ยังไม่ต้องบันทึก';
+  assert.equal(await review.flow.handlePendingWorkControl(review.event, review.ctx), true);
+  assert.deepEqual(review.calls, []);
+  assert.match(review.sent[0]!, /ร้านเครื่องเขียนสมใจ \(NAT-STN-001\)/u); assert.match(review.sent[0]!, /245\.00 บาท/u);
+  assert.match(review.sent[0]!, /ยังไม่ได้บันทึกใบเบิก/u);
+  const cancel = pendingFixture('claim');
+  assert.equal(await cancel.flow.handlePendingWorkControl(cancel.event, cancel.ctx), true);
+  assert.deepEqual(cancel.calls, ['claim-cancel:action:2', 'finish:action:false']);
+  assert.match(cancel.sent[0]!, /ยกเลิกร่างใบเบิกนี้แล้ว/u);
+});
+
+it('with nothing pending, or two pending things, the words stay an ordinary turn', async () => {
+  const none = pendingFixture('edit'); none.flow.draftUpdate.pendingPreview = async () => null;
+  assert.equal(await none.flow.handlePendingWorkControl(none.event, none.ctx), false);
+  const both = pendingFixture('edit'); both.flow.reimbursementDrafts.active = async () => ({ id: 'action' });
+  assert.equal(await both.flow.handlePendingWorkControl(both.event, both.ctx), false);
+  assert.deepEqual([...none.sent, ...both.sent], []);
 });
