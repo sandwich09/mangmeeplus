@@ -190,6 +190,20 @@ function pay(f: Awaited<ReturnType<typeof createFixture>>, attempt: any) {
   });
 }
 
+/** Stripe's paid card renewal of the deal's bound subscription, as `paidInvoiceEvidence` checks it; the Checkout stays `pay`'s. */
+function renew(f: Awaited<ReturnType<typeof createFixture>>, attempt: any, subscriptionId: string, start: Date, end: Date) {
+  const paid = pay(f, attempt), n = `renewal${f.compact}`, created = Math.floor(Date.now() / 1000);
+  return Object.assign(paid, {
+    intent: { ...paid.intent, id: `pi_${n}`, latest_charge: { ...paid.intent.latest_charge, id: `ch_${n}`, payment_intent: `pi_${n}` } },
+    payments: [{ ...paid.payments[0], invoice: `in_${n}`, payment: { type: 'payment_intent', payment_intent: `pi_${n}` } }],
+    invoiceLines: [{ parent: { type: 'subscription_item_details', subscription_item_details: { subscription_item: `si_${n}`, subscription: subscriptionId, proration: false } },
+      pricing: { price_details: { price: (attempt.quoteSnapshot as BillingSnapshot).priceId } }, currency: 'thb', livemode: false, quantity: 1,
+      period: { start: Math.floor(start.getTime() / 1000), end: Math.floor(end.getTime() / 1000) } }],
+    invoice: { ...paid.invoice, id: `in_${n}`, metadata: {}, billing_reason: 'subscription_cycle', collection_method: 'charge_automatically',
+      parent: { subscription_details: { subscription: subscriptionId } }, created, status_transitions: { paid_at: created } },
+  });
+}
+
 /** A provider scan that found this paid invoice with no local row: what the operator's IMPORT_INVOICE imports. */
 async function discovered(f: Awaited<ReturnType<typeof createFixture>>, invoice: any) {
   const base = { companyId: f.companyId, stripeAccountId: f.stripeAccountId, livemode: false, state: 'SUCCEEDED', sourceVersion: 0,
@@ -420,5 +434,47 @@ test('a held card advance-deal invoice retries through the one-time Checkout rou
     } finally {
       await clean(client, f.companyId, [f.userId, f.salesUserId], f.account.id);
       await client.$disconnect();
+    }
+  });
+
+test('a discovered renewal of a card advance deal\'s subscription imports against its one-time payment Checkout',
+  { skip: !databaseUrl }, async (t) => {
+    const url = new URL(databaseUrl!);
+    assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
+    assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci', '/watchdog_preview_20260923'].includes(url.pathname));
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    // As the PromptPay test: quote against a live old term, then cross its boundary so the paid deal activates.
+    t.mock.timers.enable({ apis: ['Date'], now: new Date() });
+    const startsAt = new Date(Date.now() + 5_000); startsAt.setMilliseconds(0);
+    const f = await createFixture(client, { currentMode: 'CARD_ONCE', paidThrough: startsAt });
+    try {
+      const { attempt } = await quoteAndCheckout(f, 'CARD_AUTO');
+      const advance = (attempt.quoteSnapshot as unknown as BillingSnapshot).advanceDeal!, endsAt = new Date(advance.firstCycleEndsAt);
+      t.mock.timers.tick(6_000);
+      await reconcile(f, attempt, 'CARD_AUTO');
+      const subscriptionId = `sub_${f.compact}`, active = await client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } });
+      assert.deepEqual([active.renewalMode, active.baseSubscriptionId, active.contractAttemptId, active.paidThrough?.toISOString()],
+        ['CARD_AUTO', subscriptionId, attempt.id, endsAt.toISOString()]);
+      // The trial ends and Stripe charges the first renewal; the scan finds that invoice with no local row.
+      t.mock.timers.tick(endsAt.getTime() - Date.now() + 60_000);
+      const paid = renew(f, attempt, subscriptionId, endsAt, appendPackageInterval(endsAt, 'month', advance.anchorDay));
+      const finding = await discovered(f, paid.invoice);
+      await client.billingAccount.update({ where: { id: f.account.id }, data: { leaseToken: null, leaseUntil: null } });
+      // The subscription path must expect the deal's payment-mode Checkout, not a subscription-mode one.
+      await f.reconciler.importDiscoveredInvoice(f.account.id, finding.id, finding.sourceHash, async () => {});
+      const invoice = await client.billingInvoice.findUniqueOrThrow({ where: { billingAccountId_providerInvoiceId: {
+        billingAccountId: f.account.id, providerInvoiceId: paid.invoice.id } } });
+      assert.deepEqual([invoice.subscriptionId, invoice.sourceAttemptId, invoice.providerStatus, invoice.applyStatus, invoice.periodStart.toISOString(), invoice.paidSatang],
+        [subscriptionId, null, 'paid', 'HELD', endsAt.toISOString(), paid.invoice.total]);
+      assert.equal(await client.billingIssue.count({ where: { companyId: f.companyId, kind: 'PAID_HELD', referenceId: invoice.id } }), 1);
+      const after = await client.billingAccount.findUniqueOrThrow({ where: { id: f.account.id } });
+      assert.deepEqual([after.renewalMode, after.baseSubscriptionId, after.contractAttemptId, after.paidThrough?.toISOString()],
+        ['CARD_AUTO', subscriptionId, attempt.id, endsAt.toISOString()], 'an import records the payment and changes no rights');
+      assert.equal((await client.companyPlanTerm.findUniqueOrThrow({ where: { companyId: f.companyId } })).termEndsAt.toISOString(), endsAt.toISOString());
+      assert.equal((f.stripe as any).captured().calls.filter((call: any) => call.method === 'POST' && call.path === '/subscriptions').length, 1);
+    } finally {
+      await clean(client, f.companyId, [f.userId, f.salesUserId], f.account.id);
+      await client.$disconnect();
+      t.mock.timers.reset();
     }
   });

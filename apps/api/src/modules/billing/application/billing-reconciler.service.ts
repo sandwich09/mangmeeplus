@@ -433,7 +433,7 @@ export class BillingReconcilerService {
       }
       if(!subscription||subscription.id!==subscriptionId||subscription.object!=='subscription'||subscription.livemode!==account.livemode||stripeId(subscription.customer)!==account.customerId||
         subscription.metadata?.billingAccountId!==account.id||
-        (snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' || eventDiscountCardAuto(snapshot)
+        (paymentCheckoutSnapshot(snapshot)
           ? session.mode !== 'payment' || session.subscription != null || account.baseSubscriptionId !== subscription.id
           : session.mode !== 'subscription' || stripeId(session.subscription) !== subscription.id) ||
         (attempt.subscriptionId&&attempt.subscriptionId!==subscription.id))throw new Error('billing.subscription_binding');
