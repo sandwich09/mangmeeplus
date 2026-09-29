@@ -1830,7 +1830,7 @@ async function lockedCompanyFor(
   userId: string,
   /** The chat's own id: the company it has selected is preferred when it is one of these shops. */
   lineUserId: string,
-): Promise<{ companyId: string; lockReason: PlanTermLockReason; canManagePlan: boolean } | null> {
+): Promise<{ companyId: string; lockReason: PlanTermLockReason; canManagePlan: boolean; companyName: string } | null> {
   const now = new Date();
   const where = {
     userId,
@@ -1844,7 +1844,7 @@ async function lockedCompanyFor(
   };
   const select = {
     companyId: true,
-    company: { select: { planTerm: { select: { termStartAt: true, termEndsAt: true, renewCount: true } } } },
+    company: { select: { name: true, brandName: true, planTerm: { select: { termStartAt: true, termEndsAt: true, renewCount: true } } } },
     roles: { select: { role: { select: { status: true, permissions: { select: { permission: { select: { key: true } } } } } } } },
   } as const;
   const context = await prisma.client.lineCompanyContext.findUnique({ where: { lineUserId }, select: { companyId: true } });
@@ -1860,6 +1860,7 @@ async function lockedCompanyFor(
     companyId: locked.companyId,
     lockReason: term ? planTermLockReason(term) : 'trial_ended',
     canManagePlan: canManagePlan(locked.roles),
+    companyName: locked.company?.brandName ?? locked.company?.name ?? '',
   };
 }
 
@@ -2390,7 +2391,7 @@ export class ProcessLineWebhookUseCase {
       const packageUrl = await this.oneTapPackageUrl(event, userId, locked.companyId, 'locked_card_packages');
       await this.deliverRequiredMessages(event, [buildPackageRequiredMessage({
         lockReason: locked.lockReason, companyId: locked.companyId, webBaseUrl: this.config.webBaseUrl,
-        ...(packageUrl ? { packageUrl } : {}),
+        companyName: locked.companyName, ...(packageUrl ? { packageUrl } : {}),
       })]);
     } else {
       // Billing closed (or no web base): there is no package page to send anyone to, so the reply
