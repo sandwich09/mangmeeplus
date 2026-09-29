@@ -24,6 +24,7 @@ import {
   parseCaptureNaturalText,
   parseCaptureObservationsJson,
   parseCaptureReadPages,
+  parseCategorySuggestion,
 } from '../../domain/logic/expense-capture-read.logic';
 import { AI_DOCUMENT_OCR_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, lineAiRetainedTaskSourceMatchesProjection, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, parseAiBudgetGrantV2, parseLineAiTaskProjection, parseLineAiPublicGeneralRequest, verifyLineAiInputEvidence, verifyLineAiRetainedTaskSource, verifyLineAiValueCandidatesV2, type AiBudgetScope, type AiModelLineage, type BusinessDocumentClassification, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiPublicGeneralRequest, type LineAiPublicGeneralResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeOnePassReceipt, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrFallbackReason, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
@@ -992,13 +993,17 @@ export class LineAiInternalController {
     | { ok: true; observations: ExpenseCaptureObservations }
     | { ok: false; errorCode: string; budgetScope?: AiBudgetScope }
   > {
+    // The model names a category by a short key and never copies a database id: ids created in one
+    // bootstrap differ in a few characters, and a real Sonnet read of a courier bill returned its
+    // neighbour's id (ค่าธรรมเนียมธนาคาร, 0.92) beside the delivery rows it quoted (2026-09-30).
+    const keyed = activeCategories.map((category, index) => ({ id: `c${index + 1}`, name: category.name }));
     const extraction = await provider.generateText({
       systemPrompt: CAPTURE_EXTRACT_PROMPT,
       messages: [{
         role: 'user',
         text: [
           'ACTIVE_CATEGORY_CATALOG_START',
-          JSON.stringify(activeCategories),
+          JSON.stringify(keyed),
           'ACTIVE_CATEGORY_CATALOG_END',
           'PRIOR_DOCUMENTS_START',
           JSON.stringify((window.priorDocuments ?? []).slice(0, EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxDocumentsPerWindow)),
@@ -1014,11 +1019,19 @@ export class LineAiInternalController {
     });
     if (!extraction.ok) return { ok: false, ...providerErrorEnvelope(extraction.error) };
     if (extraction.stopReason === 'max_tokens') return { ok: false, errorCode: 'OCR_OUTPUT_TRUNCATED' };
-    const parsed = parseCaptureObservationsJson(extraction.text, windowText, todayCivilDate());
+    const parsed = parseCaptureObservationsJson(
+      extraction.text, windowText, todayCivilDate(), new Set(keyed.map((category) => category.id)),
+    );
     if (!parsed) {
       try { JSON.parse(extraction.text.match(/\{[\s\S]*\}/)?.[0] ?? extraction.text); }
       catch { return { ok: false, errorCode: 'OCR_JSON_PARSE_FAILED' }; }
       return { ok: false, errorCode: 'OCR_SCHEMA_INVALID' };
+    }
+    // The parser admitted only offered keys, so `cN` is always the Nth category sent.
+    for (const document of parsed.documents) {
+      if (document.categorySuggestion) {
+        document.categorySuggestion.expenseCategoryId = activeCategories[Number(document.categorySuggestion.expenseCategoryId.slice(1)) - 1]!.id;
+      }
     }
     return { ok: true, observations: parsed };
   }
@@ -1900,31 +1913,8 @@ export function parseReceiptOcrJson(
       if (charges.length > 0) out.additionalCharges = charges;
     }
     if (typeof rawFields['confidence'] === 'number') out.confidence = Math.max(0, Math.min(1, rawFields['confidence']));
-    const suggestion = rawFields['categorySuggestion'];
-    if (suggestion && typeof suggestion === 'object') {
-      const candidate = suggestion as Record<string, unknown>;
-      const categoryId = typeof candidate['expenseCategoryId'] === 'string'
-        ? candidate['expenseCategoryId'].trim()
-        : '';
-      const confidence = candidate['confidence'];
-      const rawSignals = candidate['evidenceSignals'];
-      if (
-        categoryId
-        && activeCategoryIds.has(categoryId)
-        && typeof confidence === 'number'
-        && Number.isFinite(confidence)
-        && confidence >= 0
-        && confidence <= 1
-        && Array.isArray(rawSignals)
-        && rawSignals.length >= 1
-        && rawSignals.length <= 5
-      ) {
-        const evidenceSignals = rawSignals.map((signal) => typeof signal === 'string' ? signal.trim() : '');
-        if (evidenceSignals.every((signal) => signal.length >= 1 && signal.length <= 120 && documentText.includes(signal))) {
-          out.categorySuggestion = { expenseCategoryId: categoryId, confidence, evidenceSignals };
-        }
-      }
-    }
+    const categorySuggestion = parseCategorySuggestion(rawFields['categorySuggestion'], activeCategoryIds, documentText);
+    if (categorySuggestion) out.categorySuggestion = categorySuggestion;
     if (Array.isArray(rawFields['missingFields'])) {
       out.missingFields = rawFields['missingFields']
         .filter((v): v is string => typeof v === 'string')

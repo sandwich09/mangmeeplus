@@ -24,6 +24,7 @@ import {
   type ExpenseCaptureReadPage,
   type ExpenseCaptureRefundObservation,
   type ExpenseCaptureTotalObservation,
+  type ReceiptOcrFieldResult,
 } from '@watchdog-bms/contracts';
 import { parseBusinessDocumentClassification } from './business-document-classification.logic';
 
@@ -166,12 +167,13 @@ ABSOLUTE RULES
 - Every factual field may include fieldEvidence keyed by its dotted path (for example issuer.name, amount, documentDate): {"pageIndex":0,"localSpan":{"start":0,"end":12},"rawValue":"exact printed text"}. Offsets are UTF-16 in the original page text; respect SOURCE_OFFSET when a page continues in another window. Supply this locator whenever the same value appears more than once. All row evidence must be on a page belonging to its documentRef. Never borrow a name, date or number from another document/page.
 - One file may contain several documents and several purchases. Never merge two bills because the shop name matches, and never split one bill because it spans pages.
 
-documents[]: {"ref":"d1","pageIndexes":[0],"kind":"RECEIPT|TAX_INVOICE|ABBREVIATED_TAX_INVOICE|SUPPLIER_INVOICE_OR_BILL|ORDER_OR_CHECK_BILL|QUOTATION|PURCHASE_ORDER|DELIVERY_NOTE|TRANSFER_SLIP|MARKETPLACE_ORDER|HANDWRITTEN_CASH_BILL|APPOINTMENT_CARD|BOOKING_CONFIRMATION|RESERVATION_CONFIRMATION|SIGNATURE_IMAGE|OTHER_BUSINESS_DOCUMENT|NON_FINANCIAL_IMAGE|NEEDS_REVIEW","family":"EXPENSE_EVIDENCE|COMMERCIAL_DOCUMENT|PAYMENT_EVIDENCE|SCHEDULING_DOCUMENT|SIGNATURE_ASSET|OTHER_BUSINESS_DOCUMENT|NON_BUSINESS","issuer":{"name":"printed legal issuer/payee name","taxId":"13 digits","branchCode":"printed branch","storefront":"printed shop/store name","platform":"printed marketplace name"},"buyer":{"name":"","taxId":""},"documentNumber":"printed running number","documentDate":"YYYY-MM-DD","currency":"THB","printedPage":{"number":1,"of":3},"printedPages":[1,2],"continuationOfRef":"ref of the document in PRIOR_DOCUMENTS this one continues","classification":{...}}
+documents[]: {"ref":"d1","pageIndexes":[0],"kind":"RECEIPT|TAX_INVOICE|ABBREVIATED_TAX_INVOICE|SUPPLIER_INVOICE_OR_BILL|ORDER_OR_CHECK_BILL|QUOTATION|PURCHASE_ORDER|DELIVERY_NOTE|TRANSFER_SLIP|MARKETPLACE_ORDER|HANDWRITTEN_CASH_BILL|APPOINTMENT_CARD|BOOKING_CONFIRMATION|RESERVATION_CONFIRMATION|SIGNATURE_IMAGE|OTHER_BUSINESS_DOCUMENT|NON_FINANCIAL_IMAGE|NEEDS_REVIEW","family":"EXPENSE_EVIDENCE|COMMERCIAL_DOCUMENT|PAYMENT_EVIDENCE|SCHEDULING_DOCUMENT|SIGNATURE_ASSET|OTHER_BUSINESS_DOCUMENT|NON_BUSINESS","issuer":{"name":"printed legal issuer/payee name","taxId":"13 digits","branchCode":"printed branch","storefront":"printed shop/store name","platform":"printed marketplace name"},"buyer":{"name":"","taxId":""},"documentNumber":"printed running number","documentDate":"YYYY-MM-DD","currency":"THB","printedPage":{"number":1,"of":3},"printedPages":[1,2],"continuationOfRef":"ref of the document in PRIOR_DOCUMENTS this one continues","categorySuggestion":{"expenseCategoryId":"an id from the active catalogue","confidence":0.0,"evidenceSignals":["short exact window span"]},"classification":{...}}
 - classification is the object of the single-receipt reader and every enum below is CLOSED — a value outside its list makes the whole document unusable, so never invent one:
   {"contentKind":${options(BUSINESS_DOCUMENT_CONTENT_KINDS)},"documentFamily":<the family list above>,"documentKind":<the kind list above>,"businessDirection":${options(BUSINESS_DOCUMENT_DIRECTIONS)},"transactionState":${options(BUSINESS_DOCUMENT_TRANSACTION_STATES)},"evidenceRoles":[${options(BUSINESS_DOCUMENT_EVIDENCE_ROLES)}],"confidence":0.0,"evidenceSignals":[],"amountSignals":[],"settlementSignals":[],"missingRequiredSignals":[],"contradictionSignals":[],"requiresClarification":false}
   A page of one file is one document, so contentKind is DOCUMENT even when the file holds several; a purchase the buyer made is PURCHASE_EXPENSE; a receipt that prints settlement is PAID and evidenceRoles ["EXPENSE_SUPPORT"]. All signal spans must be exact substrings of the window text.
 - printedPages lists EVERY page number this document prints inside THIS window, in order (printedPage.number is the first of them). A document whose pages are all in this window must list them all: the reader decides "a page is missing" from the gaps in this list, so an incomplete list invents a hole in a complete receipt.
 - When a page continues a document listed in PRIOR_DOCUMENTS (a carried-forward total, the same printed number, an explicit "continued"), set continuationOfRef to that ref instead of describing a new document.
+- categorySuggestion is optional: at most one reporting category for the whole document. Use only an expenseCategoryId present in the active catalogue. Base the choice on the document's issuer, business purpose, and purchased items, never on catalogue text alone. evidenceSignals must contain 1-5 short exact spans copied from the window text, not category names copied from the catalogue. Omit categorySuggestion when the catalogue is empty or no category is clearly supported. A category is only a reporting dimension: never use it to infer or alter VAT, tax, payment, or document classification.
 
 items[]: {"id":"<page>:<line>","documentRef":"d1","description":"printed row name","quantity":"printed","unit":"printed","packSize":"printed","unitPrice":"printed","amount":"the row's own printed money column","listPrice":"printed before-discount price","taxMarker":"the row's printed tax letter or symbol, copied as printed","event":"sale|void|discount|price_correction|zero_price_promo|reward|info|unknown","linkedItemId":"the id of the row this one cancels or corrects","evidenceSpan":"..."}
 - event is what the ROW DID: an ordinary purchased line is "sale"; an explicit cancellation/reversal is "void" and must name the row it cancels in linkedItemId; a printed per-row reduction is "discount"; a corrected price is "price_correction"; a free/0.00 promotional row is "zero_price_promo"; points, stamps and coupons earned are "reward"; a descriptive or quantity-only line is "info". Use "unknown" when the row's role is genuinely unclear.
@@ -260,6 +262,8 @@ export function parseCaptureObservationsJson(
   text: string,
   windowText: string,
   todayIso: string = todayCivilDate(),
+  /** The ids the model was offered (the route's short keys); a suggestion naming any other is dropped. */
+  activeCategoryIds: ReadonlySet<string> = new Set(),
 ): ExpenseCaptureObservations | null {
   const json = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
   let raw: Record<string, unknown>;
@@ -359,6 +363,7 @@ export function parseCaptureObservationsJson(
       // multi-page receipt reads as a document with a hole in it.
       ...(printedPages.length > 0 ? { printedPages } : {}),
       ...optional('continuationOfRef', trimmed(row['continuationOfRef'], 64)),
+      ...optional('categorySuggestion', parseCategorySuggestion(row['categorySuggestion'], activeCategoryIds, windowText)),
       classification,
     });
   }
@@ -489,6 +494,30 @@ export function parseCaptureObservationsJson(
     },
   };
   return observations;
+}
+
+/**
+ * The photo reader's reporting-category rule, shared by `parseReceiptOcrJson` and the capture parser
+ * so a PDF and a photo clear the same bar: an id from the catalogue the model was shown, a confidence in
+ * [0, 1], and 1-5 short spans copied verbatim from the text the model read. Anything else is dropped.
+ */
+export function parseCategorySuggestion(
+  value: unknown,
+  activeCategoryIds: ReadonlySet<string>,
+  sourceText: string,
+): NonNullable<ReceiptOcrFieldResult['categorySuggestion']> | undefined {
+  const candidate = asRecord(value);
+  if (!candidate) return undefined;
+  const categoryId = typeof candidate['expenseCategoryId'] === 'string' ? candidate['expenseCategoryId'].trim() : '';
+  const confidence = candidate['confidence'];
+  const rawSignals = candidate['evidenceSignals'];
+  if (!categoryId || !activeCategoryIds.has(categoryId)
+    || typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1
+    || !Array.isArray(rawSignals) || rawSignals.length < 1 || rawSignals.length > 5) return undefined;
+  const evidenceSignals = rawSignals.map((signal) => (typeof signal === 'string' ? signal.trim() : ''));
+  return evidenceSignals.every((signal) => signal.length >= 1 && signal.length <= 120 && sourceText.includes(signal))
+    ? { expenseCategoryId: categoryId, confidence, evidenceSignals }
+    : undefined;
 }
 
 const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
