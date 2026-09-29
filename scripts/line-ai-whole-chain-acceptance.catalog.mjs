@@ -342,6 +342,8 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
 export const LINE_AI_WHOLE_CHAIN_SUITES = [
   { id: 'reliability-gateway-v2', cwd: 'apps/ai-gateway', command: '../../node_modules/.bin/tsx', args: ['--test',
     'src/agentcore/runtime.spec.ts',
+    // UAT 2026-09-29: the AgentCore runtime must run the full turn path from a minimal or stale env.
+    'src/agentcore/runtime-minimal-env.spec.ts',
     'src/modules/line-ai/agents/approved-knowledge.spec.ts',
     'src/modules/line-ai/agents/line-intake-compact-decision.spec.ts',
     'src/modules/line-ai/agents/read-tool-input.spec.ts',

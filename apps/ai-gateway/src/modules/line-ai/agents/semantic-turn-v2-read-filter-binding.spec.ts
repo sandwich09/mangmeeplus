@@ -373,8 +373,10 @@ describe('M4: a why/compare question implies the previous calendar month as its 
       ] },
     });
     assert.deepEqual(invokedInputs, [{ tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28' } }]);
-    assert.equal(result.semanticCoverage?.[1]?.status, 'unsupported');
-    assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+    // UAT 2026-09-29: a period nobody said is never read, and no longer a silent dead end either — it asks back.
+    assert.equal(result.semanticCoverage?.[1]?.status, 'needs_user');
+    assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'READ_FILTER_NOT_UNDERSTOOD');
+    assert.match(String(result.semanticCoverage?.[1]?.question), /ช่วงเวลา/);
   });
 
   it('still rejects a range two months before the grounded month, even for a why-question', async () => {
@@ -405,7 +407,7 @@ describe('M4: a why/compare question implies the previous calendar month as its 
     assert.deepEqual(invokedInputs, [
       { tool: 'expense.get_breakdown', input: { fromDate: '2026-09-01', toDate: '2026-09-28', groupBy: 'category' } },
     ]);
-    assert.equal(result.semanticCoverage?.[1]?.status, 'unsupported');
-    assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+    assert.equal(result.semanticCoverage?.[1]?.status, 'needs_user');
+    assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'READ_FILTER_NOT_UNDERSTOOD');
   });
 });

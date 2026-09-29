@@ -189,6 +189,26 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
     assert.equal((row.budgetAuthorityJson as any).narrowedLane, undefined);
   });
 
+  // UAT 2026-09-29 ("สวัสดีจ้า"): the intake's repair used to spend a general lane's only answer slot, so compose
+  // was refused before any model call. A repair never spends an answer slot; the turn still has one repair.
+  it('never lets an intake repair spend the answer slot of the lane it narrows into', async () => {
+    for (const item of [
+      { suffix: 'repair-general', lane: 'general' as const, profiles: ['line-answer/2' as const], slots: 2 },
+      { suffix: 'repair-simple', lane: 'simple' as const, profiles: ['line-answer/2' as const], slots: 2 },
+      { suffix: 'repair-mixed', lane: 'mixed' as const, profiles: ['line-control/2' as const, 'line-answer/2' as const], slots: 4 },
+    ]) {
+      const { grant } = await fixture(item.suffix, 'SPLIT', false);
+      const intake = await service.reserve(invocation(grant, 0, 'line-intake-text/2')); assert.ok(intake.ok); await settle(intake.envelope.invocationKey);
+      const repair = await service.reserve(invocation(grant, 1, 'line-intake-text/2'), true); assert.ok(repair.ok); await settle(repair.envelope.invocationKey);
+      const narrowed = await service.narrow(grant, item.lane, item.profiles, new Date(grant.admittedAtMs + 5_000)); assert.ok(narrowed);
+      assert.equal(narrowed.nextOrdinal, 2); assert.equal(narrowed.maxTurnSlots, item.slots);
+      const answer = await service.reserve(invocation(narrowed, 2, 'line-answer/2'));
+      assert.ok(answer.ok, `${item.lane}: the answer keeps its slot after the intake repair`); await settle(answer.envelope.invocationKey);
+      assert.equal((await service.reserve(invocation(narrowed, 3, 'line-answer/2'), true)).ok, false, `${item.lane}: the one repair was the intake's`);
+      if (item.slots === 2) assert.equal((await service.reserve(invocation(narrowed, 3, 'line-answer/2'))).ok, false, `${item.lane}: no third non-repair call`);
+    }
+  });
+
   it('honors a reviewed model output ceiling before spending and validates the live owner and input', async () => {
     const { grant, owner } = await fixture('capacity');
     assert.equal((await service.reserve({ ...invocation(grant, 0, 'line-answer/2'), requestedOutputTokens: 4097 })).ok, false);
