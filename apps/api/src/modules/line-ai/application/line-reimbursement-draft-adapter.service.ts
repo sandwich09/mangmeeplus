@@ -27,6 +27,7 @@ import {
 } from '../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
 import { lineConversationId, type LineConversationOwner } from './line-conversation-context.service';
 import { deliveryHash } from '../domain/logic/line-delivery-plan.logic';
+import { formatClaimMoney } from '../domain/logic/line-reimbursement-draft-card.logic';
 import type { ErpToolContext } from '../domain/ports/erp-read-tool.port';
 import { LineAiBudgetAuthorityService } from './line-ai-budget-authority.service';
 import { LineReimbursementDraftService } from './line-reimbursement-draft.service';
@@ -515,7 +516,7 @@ export class LineReimbursementDraftAdapterService {
         if (!request || request.status !== 'DRAFT' || request.updatedAt.toISOString() !== selectedTarget.revision) throw new Error('REIMBURSEMENT_CHOICE_STALE');
         const rows = (request.lines ?? []).slice(offset('line'), offset('line') + PAGE_SIZE + 1);
         const lineChoices = rows.slice(0, PAGE_SIZE).map(line => this.choice(key.actionId, 'LINE',
-          `${line.lineNo}. ${line.description} · ${line.amount} ${request.currency}`, line.updatedAt.toISOString(),
+          `${line.lineNo}. ${line.description} · ${formatClaimMoney(line.amount, request.currency)}`, line.updatedAt.toISOString(),
           { id: line.id, requestId: request.id, requestUpdatedAt: request.updatedAt.toISOString(), lineNo: line.lineNo },
           { lineNo: line.lineNo, incurredDate: line.incurredDate.toISOString().slice(0, 10), description: line.description,
             categoryKey: line.categoryKey, amount: line.amount, linked: !!line.linkedExpenseId }));

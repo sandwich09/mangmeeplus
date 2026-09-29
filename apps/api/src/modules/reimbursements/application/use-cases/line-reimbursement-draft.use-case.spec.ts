@@ -27,6 +27,7 @@ describe('LineReimbursementDraftUseCase', () => {
       isDraftActionOwnerCurrent: async () => true,
       findOrCreateDraftAction: async () => action,
       resolveCreateBranchId: async () => 'br1',
+      findBranchName: async (companyId: string, branchId: string) => companyId === 'c1' && branchId === 'br1' ? 'สำนักงานใหญ่' : null,
       assertReimbursementRequester: async () => ({ displayName: 'Owner' }),
       findPolicy: async () => null,
       resolveSourceLines: async (_company: string, _requester: string, _branch: string, _currency: string, lines: unknown) => lines,
@@ -49,6 +50,9 @@ describe('LineReimbursementDraftUseCase', () => {
     assert.equal(previewSaves, 1, 'retry neither bumps revision nor extends expiry');
     assert.equal((first as any).preview.after.amount, '120.0000');
     assert.equal((first as any).preview.after.lines[0].amount, '120.0000');
+    // Owner rule 2026-09-27/29: the card names the branch; the id stays for authority, never for display.
+    assert.equal((first as any).preview.after.branchName, 'สำนักงานใหญ่');
+    assert.equal((first as any).preview.after.branchId, 'br1');
     assert.equal((repo as any).createRequest, undefined, 'preview has no financial write method');
   });
 
@@ -61,6 +65,7 @@ describe('LineReimbursementDraftUseCase', () => {
       findOrCreateDraftAction: async () => action,
       findDraftAction: async () => action,
       resolveCreateBranchId: async () => 'br1',
+      findBranchName: async (companyId: string, branchId: string) => companyId === 'c1' && branchId === 'br1' ? 'สำนักงานใหญ่' : null,
       assertReimbursementRequester: async () => ({ displayName: 'Owner' }),
       findPolicy: async () => null,
       resolveSourceLines: async (_company: string, _requester: string, _branch: string, _currency: string, lines: any[]) =>
@@ -96,6 +101,10 @@ describe('LineReimbursementDraftUseCase', () => {
     const allowed = await useCase.confirm({ ctx: ctx(['reimbursement.read_own']), owner, actionId, previewRevision: 1, confirmationDigest: 'c'.repeat(64) });
     assert.equal(allowed.status, 'applied');
     assert.equal((allowed as any).receipt.currentState, 'DRAFT');
+    assert.equal('requestNo' in (allowed as any).receipt, false, 'a draft has no document number yet');
+    request.status = 'PENDING_APPROVAL'; request.requestNo = 'RB-2569-0007';
+    const submitted = await useCase.replay(ctx(['reimbursement.read_own']), owner, actionId);
+    assert.equal((submitted as any).receipt.requestNo, 'RB-2569-0007', 'the receipt carries the number the customer can quote');
     assert.deepEqual(await useCase.replay(ctx([]), owner, actionId), { status: 'blocked', errorCode: 'forbidden' });
   });
 

@@ -113,17 +113,17 @@ LINE proposal ใช้ changes เพื่อไม่ให้ model ต้�
 | description / purpose | description 1..500 required; purpose ≤500 optional. Optional purpose clearด้วย empty string. เกินlimitถามย่อ/ให้ผู้ใช้ยืนยันข้อความย่อใหม่ ห้ามเงียบตัด |
 | incurredDate | valid civil `YYYY-MM-DD`; deterministic source/date option; domain `reimbursementIncurredDateError` ยังตัดสิน future/invalid dates |
 | category | categoryKey 1..80 + server label≤160 จาก current allowed options; ไม่มี free-form category keyจากmodel และไม่เดาหมวดเพื่อให้ required fieldsครบ |
-| amount | positive decimal string `^\d{1,14}(?:\.\d{1,4})?$`; reuse `normalizeReimbursementAmount`, domain max line/total `99999999999999.99`; previewแสดงค่าหลัง domain normalization. ห้าม `Number` floating pointเป็นยอดคำนวณ |
+| amount | positive decimal string `^\d{1,14}(?:\.\d{1,4})?$`; reuse `normalizeReimbursementAmount`, domain max line/total `99999999999999.99`; previewใช้ค่าหลัง domain normalization แต่ลูกค้าเห็นเป็นบาทสองตำแหน่งพร้อมคั่นหลักพัน เช่น `1,234.50 บาท` ไม่ใช่ทศนิยมสี่ตำแหน่งที่เก็บ (Owner rule 2026-09-27/29, §5.1). ห้าม `Number` floating pointเป็นยอดคำนวณ |
 | attachment / linked expense | อย่างละหนึ่ง optionalต่อ lineตาม domain input; choiceID resolveเป็นID≤64; explicit null detaches; source expense revision/snapshotและattachment snapshot APIอ่านเอง |
 | aggregate fields | amount/category/date headers/receiptRequirementStatus สร้างด้วย `deriveHeaderFromLines`/`computeReceiptRequirement`; modelส่งไม่ได้ |
 
-Proposal JSON ≤128KiB; reject oversize whole proposal. Required fieldยังไม่ครบให้ `needs_fields` พร้อม field pathsและaccepted context, ไม่สร้าง placeholder request. Partial accepted fields เก็บใน action row สถานะ COLLECTING ตาม §6; task projection ≤16KiB เก็บเพียง locator/revision/ช่องที่ขาด ไม่ยัดทุก line เข้า model. Source spans ต้อง validate ก่อนบันทึกเป็น accepted fields พร้อม API validation receipt `{fieldPath,valueDigest,proof,validatedAt}`; เมื่อ original event หมด retention ใช้ accepted receipt ที่ API บันทึกเอง ไม่ยอมรับ model ส่ง receipt ใหม่. ถ้าหลักฐานเดิมยังไม่เคย validate และหายแล้วต้องถามซ้ำเฉพาะ field นั้น. Draft saveยอม missing receiptตาม policyเดิมและแสดง `REQUIRED` status; ไม่แสร้งว่าพร้อม submit.
+Proposal JSON ≤128KiB; reject oversize whole proposal. Required fieldยังไม่ครบให้ `needs_fields` พร้อม field pathsและaccepted context, ไม่สร้าง placeholder request. Partial accepted fields เก็บใน action row สถานะ COLLECTING ตาม §6; task projection ≤16KiB เก็บเพียง locator/revision/ช่องที่ขาด ไม่ยัดทุก line เข้า model. Source spans ต้อง validate ก่อนบันทึกเป็น accepted fields พร้อม API validation receipt `{fieldPath,valueDigest,proof,validatedAt}`; เมื่อ original event หมด retention ใช้ accepted receipt ที่ API บันทึกเอง ไม่ยอมรับ model ส่ง receipt ใหม่. ถ้าหลักฐานเดิมยังไม่เคย validate และหายแล้วต้องถามซ้ำเฉพาะ field นั้น. Draft saveยอม missing receiptตาม policyเดิมและบอกสถานะ `REQUIRED` เป็นประโยคไทย (“ยังขาดใบเสร็จบางรายการ”) ไม่พิมพ์ค่า enum (§5.1); ไม่แสร้งว่าพร้อม submit.
 
 ## 5. Preview และ confirmation
 
 API proposal pipeline: current owner/access → feature/action gate → target/options resolve → field/source validation → hydrate complete candidate → reuse domain validate/resolveSourceLines/evidence/derive-header → create preview. No request/line/signature/document-number mutationระหว่างpreview. ให้แยก domain prepare/validate function ที่เรียกทั้ง preview/applyหรือใช้ existing transaction dry-run pattern; ห้ามจำลองราคา/ยอดอีกสูตรหนึ่งใน LINE formatter. Validationที่ต้องอ่านDBอ่านผ่าน domain API/repoฝั่งERPเท่านั้น.
 
-`ReimbursementDraftPreviewV1` มี `{schemaVersion:1, actionId, previewRevision, operation, expiresAt, expectedRequestUpdatedAt?, targetRef?, before?, after, diff[], warnings[], confirmationDigest}`. `after` เป็น domain result snapshotที่ใช้ยืนยันจริง; include requester,branch,currency,ทุก resulting line, preserved/detached evidence, total, DRAFT, missing receipt/signature impact. Digest SHA-256 จาก canonical serialized command + owner binding + all source revisions + expected request revision + normalized after snapshot; ไม่hashเฉพาะคำสรุป.
+`ReimbursementDraftPreviewV1` มี `{schemaVersion:1, actionId, previewRevision, operation, expiresAt, expectedRequestUpdatedAt?, targetRef?, before?, after, diff[], warnings[], confirmationDigest}`. `after` เป็น domain result snapshotที่ใช้ยืนยันจริง; include requester,branch,currency,ทุก resulting line, preserved/detached evidence, total, DRAFT, missing receipt/signature impact. Branch มี `branchId` สำหรับ authority และ `branchName` (optional, อ่านจาก branch ของบริษัทตอนสร้าง preview) สำหรับแสดงผลเท่านั้น; `branchName` ไม่อยู่ใน command จึงไม่ทำให้ preview stale. Digest SHA-256 จาก canonical serialized command + owner binding + all source revisions + expected request revision + normalized after snapshot; ไม่hashเฉพาะคำสรุป.
 
 Previewอายุ600s ไม่ต่ออายุโดยretry. แก้proposalเดิมสร้าง `previewRevision + 1`, digest/expiryใหม่, old button invalid. ใช้หนึ่ง active financial previewต่อ owner เช่น existing expense UX; การส่งgeneral side questionไม่supersede preview. หากจะเริ่มอีก financial previewถาม replace/cancelก่อน; ไม่ล้าง PendingMedia/intake/jobหรือ completed receipt.
 
@@ -142,6 +142,26 @@ HTTP surface ของหน้า preview: `GET /companies/:companyId/reimburse
 - **ต่อคำขอเบิกข้าม turn:** turn ที่ router ต่อ task เดิม (`taskRef`) ใช้ action ที่ task นั้นจำไว้ (`reimbursementActionId*`) ได้ แทนการปฏิเสธเป็น `FINANCIAL_ACTION_SELECTION_REQUIRED`; สาขาเริ่มต้นเลือกด้วยกฎสาขาสมาชิกเดียวกับ LINE capture และยังเปลี่ยนได้
 - **router:** คำถามว่าบิลที่ผู้ใช้จ่ายเองเบิกได้ไหม อ่าน `reimbursement.get_summary` ไม่ใช่ความรู้ทั่วไป; ข้อความถัดไปที่ชี้บิล ("บิลร้าน X ที่ส่งไว้") ต่อคำขอเบิกเดิมแม้ไม่มีคำกริยา
 
+### 5.1 ข้อความที่ลูกค้าเห็น (Owner rule 2026-09-27/29)
+
+Owner rule: ข้อความถึงลูกค้าและ UI ใช้ภาษาไทยธรรมดา **ห้ามมี machine token** — id, enum key, รหัสสถานะภายใน, error code, field path, raw JSON หรือทศนิยมเกินจำเป็น. กฎนี้แทนข้อความเดิมในเอกสารนี้ที่ให้การ์ดแสดง “ค่าตรงตัว”: ความถูกต้องยังอยู่ที่ domain snapshot/digest/postback เดิม และยอดเงินยังตรงถึงสตางค์. การ์ด LINE ของร่างใบเบิก (`line-reimbursement-draft-card.logic.ts`) แสดงดังนี้:
+
+| ข้อมูล | ลูกค้าเห็น |
+|---|---|
+| สาขา | ชื่อสาขา (`branchName`); preview เก่าที่ไม่มีชื่อให้ละบรรทัดสาขา ไม่พิมพ์ id |
+| สถานะ | ป้ายไทย เช่น DRAFT → “ร่าง”, PENDING_APPROVAL → “รออนุมัติ” |
+| หลักฐานต่อรายการ | “มีไฟล์แนบ” / “ยังไม่มีไฟล์แนบ”; เปลี่ยนไฟล์ → “เปลี่ยนเป็นไฟล์ใหม่” |
+| บิลต้นทาง | เลขที่เอกสาร · ชื่อร้าน · วันที่ จาก source snapshot; ไม่มีข้อมูลให้ “บิลที่เลือกไว้”; ไม่ผูกบิลให้ละไว้ |
+| receiptRequirementStatus | ประโยคไทย เช่น REQUIRED → “ยังขาดใบเสร็จบางรายการ” |
+| หมวด | ป้ายหมวดภาษาไทยเท่านั้น; ไม่มีป้ายให้ “ยังไม่ได้เลือกหมวด” (ไม่ fallback เป็น categoryKey) |
+| ยอดเงิน | `1,234.50 บาท` (ปัดครึ่งขึ้นที่สตางค์ด้วย `normalizeReimbursementAmount`) |
+| วันที่ | รูปแบบ พ.ศ. เช่น “27 ก.ย. 2569” |
+| diff (UPDATE) | ป้ายไทย + ค่าเก่า → ค่าใหม่ที่จัดรูปแบบแล้ว เช่น “ยอดเงิน รายการที่ 1: 300.00 → 350.00 บาท”, “เพิ่มรายการที่ 3: …”, “ลบรายการที่ 2: …”; การเปลี่ยนลายเซ็นบอกด้วยประโยคลายเซ็นประโยคเดียว; fieldPath ที่ไม่รู้จักแสดง “ข้อมูลอื่นในใบเบิกมีการเปลี่ยนแปลง” |
+| warnings | ประโยคไทยต่อรหัส (`missing_receipt`), รหัสที่ไม่รู้จักใช้ประโยคกลาง |
+| ปุ่มยืนยัน | “บันทึกเป็นร่าง” / “ยกเลิกร่างนี้” |
+
+Postback data (`action`, `actionId`, `previewRevision`, `confirmationDigest`) ไม่ใช่ข้อความที่ลูกค้าอ่านจึงคงเดิม และลิงก์เว็บของ preview ใหญ่คงเดิม. ตัวเลือกบิล/รายการในใบเบิกใช้รูปแบบยอดเงินเดียวกัน. Unit test ของการ์ดตรวจว่าไม่มี cuid/uuid/hash, `DRAFT`, code ตัวพิมพ์ใหญ่, field path, snake/camelCase key, ทศนิยม ≥3 ตำแหน่ง หรือ JSON ในข้อความที่มองเห็นทุกแบบ.
+
 ## 6. Action storage, idempotency และ transaction
 
 เพิ่ม Prisma model **`ReimbursementDraftAction`** ใน `apps/api/prisma/schema.prisma` สำหรับใบเบิกเท่านั้น; no generic event-sourced workflow. PG เป็น source of truth; Redisใช้ rate-limit/cacheได้แต่ไม่มีสิทธิ์ตัดสินว่า createสำเร็จหรือไม่.
@@ -155,7 +175,7 @@ HTTP surface ของหน้า preview: `GET /companies/:companyId/reimburse
 | operation / status | CREATE or UPDATE; COLLECTING / PREVIEW / APPLIED / CANCELLED / EXPIRED / STALE |
 | previewRevision / requestId / expectedRequestUpdatedAt | 0 ขณะ COLLECTING, ≥1 เมื่อ PREVIEW; request nullableก่อนCREATEapply; ISO/DBtimestamprevision mandatoryforUPDATEpreview |
 | commandJson / previewJson / sourceProofJson | JSONBรวม≤128KiBต่อaction; exacttypedvalues + source digests/revisions, no rawmessage/image/providerprompt. Enforce applicationvalidator+DB octet limit |
-| confirmationDigest / resultJson / appliedRequestUpdatedAt | digest64 เมื่อ PREVIEW, nullable ตอน COLLECTING; receipt≤4KiB; revisionnullableก่อนapply. Result records committedrequestId/state=DRAFT/amount/currency/commit time/digest; currentstateอ่านใหม่เมื่อreplay |
+| confirmationDigest / resultJson / appliedRequestUpdatedAt | digest64 เมื่อ PREVIEW, nullable ตอน COLLECTING; receipt≤4KiB; revisionnullableก่อนapply. Result records committedrequestId/state=DRAFT/amount/currency/commit time/digest; currentstateและ `requestNo` (เมื่อมีหลัง submit) อ่านใหม่เมื่อreplay; requestIdอยู่ใน receiptเพื่อ recovery ไม่แสดงต่อลูกค้า |
 | previewDeliveryId | nullable ID ของ durable delivery ที่ผูก actionId/previewRevision/digest; API ตรวจ ACCEPTED ครบทุก preview part ก่อน LINE confirm; preview page ใช้ server receipt ของ exact revision ที่แสดง |
 | createdAt / updatedAt / expiresAt / appliedAt | DBtimestamps; COLLECTING expires 2h หลัง accepted update แต่ไม่เกิน createdAt+24h; PREVIEW fixed600s; appliedAtimmutable |
 
@@ -202,9 +222,9 @@ Retention: pending payloadหมดอายุตาม COLLECTING/PREVIEW dead
 
 ปรับ quiesce checkเป็นexisting shared assertionที่HTTPguardและnewusecaseเรียก ไม่สร้างsecurityframeworkใหม่. Modelusage chargeเฉพาะactualinvocationและtrace/actionlocators; sameOCR/source reuseretryไม่คิดreceiptOCRใหม่. Manualclaimdraftไม่มีreceiptcapturequota chargeเพิ่ม; attachmentOCRที่ผู้ใช้ร้องขอใช้approvedlaneเดียวตามbudgetappendix ไม่แอบเรียกexpensecaptureproviderเพื่ออ่านไฟล์. Companyusageentitlement/costlookupfailureไม่แปลว่าlegacyunlimited; explicit no-entitlement-rowlegacycaseเท่านั้นที่ใช้policyเดิม.
 
-Response unionใช้ `status` แบบtyped: `needs_fields | needs_target | preview | applied | cancelled | expired | stale | blocked | result_unknown`. `blocked.errorCode` allowlist: `forbidden`, `feature_disabled`, `unsupported_channel`, `write_quiesced`, `invalid_provenance`, `evidence_overflow`, `field_too_long`, `invalid_field`, `source_changed`, `invalid_source`, `state_not_editable`, `preview_not_fully_delivered`, `rate_limited`, `store_unavailable`, `schema_unsupported`. ใส่ `fieldPaths/limit/retryAfter` เฉพาะที่มีจริง; notfound/other-tenantใช้same `needs_target`ภายนอกไม่leak. Rate limitreusepreviewfamily20peractorcompany/300s; exhaustionไม่consumeconfirmationหรือลบacceptedfacts. Auditไม่มีrawprompt/sourcecontent.
+Response unionใช้ `status` แบบtyped: `needs_fields | needs_target | preview | applied | cancelled | expired | stale | blocked | result_unknown`. `blocked.errorCode` allowlist: `forbidden`, `feature_disabled`, `unsupported_channel`, `write_quiesced`, `invalid_provenance`, `evidence_overflow`, `field_too_long`, `invalid_field`, `source_changed`, `invalid_source`, `state_not_editable`, `preview_not_fully_delivered`, `rate_limited`, `store_unavailable`, `schema_unsupported`. ใส่ `fieldPaths/limit/retryAfter` เฉพาะที่มีจริง; ลูกค้าเห็นประโยคไทยหนึ่งประโยคต่อ errorCode (fieldPaths แปลงเป็นชื่อช่อง, path ภายในเช่น `activeAction` ไม่แสดง) ไม่เห็นรหัส ส่วนรหัสอยู่ใน result/log/audit (§5.1); notfound/other-tenantใช้same `needs_target`ภายนอกไม่leak. Rate limitreusepreviewfamily20peractorcompany/300s; exhaustionไม่consumeconfirmationหรือลบacceptedfacts. Auditไม่มีrawprompt/sourcecontent.
 
-Stale: invalidateexactpreviewแล้วเสนอrefreshsameoperationtarget ถ้าสิทธิ์ยังอยู่; ห้ามauto-rebase/auto-confirm. Unknown: “กำลังตรวจผลบันทึก”พร้อมactionlocatorภายใน ไม่บอกfailedแล้วชวนสร้างใหม่. Appliedตอบ“บันทึกร่างใบเบิกแล้ว”+authorizedlink+stateจริง; currentrecordsubsequentlysubmittedให้บอกสร้างสำเร็จก่อนหน้านี้และสถานะปัจจุบัน ไม่อ้างยังDRAFT. UI/LINEcard/capability/helpใช้same operation manifest ไม่บอกสร้างได้เมื่อwriterflagยังoff.
+Stale: invalidateexactpreviewแล้วเสนอrefreshsameoperationtarget ถ้าสิทธิ์ยังอยู่; ห้ามauto-rebase/auto-confirm. Unknown: “กำลังตรวจผลบันทึก”พร้อมactionlocatorภายใน ไม่บอกfailedแล้วชวนสร้างใหม่. Appliedตอบ“บันทึกร่างใบเบิกแล้ว”+authorizedlink+stateจริงเป็นป้ายไทย และเลขที่ใบเบิกเมื่อมีแล้ว ห้ามแสดง requestId (§5.1); currentrecordsubsequentlysubmittedให้บอกสร้างสำเร็จก่อนหน้านี้และสถานะปัจจุบัน ไม่อ้างยังDRAFT. UI/LINEcard/capability/helpใช้same operation manifest ไม่บอกสร้างได้เมื่อwriterflagยังoff.
 
 ## 9. Migration และ rollout ที่ตัดสินแล้ว
 
