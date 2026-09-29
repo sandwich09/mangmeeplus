@@ -512,6 +512,15 @@ describe('resolvePeriodCandidates (spec §3.1)', () => {
     assert.equal(unresolvedMonthName('ค่าใช้จ่ายเดือนละ 500 บาท', []), null);
   });
 
+  // NAT-09 (regression slice 2026-09-30): "ช่วยสรุปรายจ่ายสิงหาให้หน่อย" named August with neither เดือน nor a
+  // spaced boundary, so the router's correct dates were refused as ungrounded.
+  it('reads a spoken month right after a money noun, and still never a name or a longer word', () => {
+    const key = (text: string) => extractValueCandidates(text, '2026-09-30').periods?.map((period) => period.monthKey) ?? [];
+    assert.deepEqual(key('ช่วยสรุปรายจ่ายสิงหาให้หน่อย'), ['2026-08']);
+    assert.deepEqual(key('ยอดขายตุลาหน่อย'), ['2025-10']);
+    for (const text of ['รายจ่ายตุลาการเท่าไหร่', 'ค่าจ้างคุณกันยาให้หน่อย', 'ส่งให้กันยาหน่อย']) assert.deepEqual(key(text), [], text);
+  });
+
   // UAT 2026-09-29: "ของเดือนสิงหาละ" read no period, so the follow-up's August filter could not be grounded and
   // the customer got "ยังดึงข้อมูลไม่ได้". Every way people type a month must resolve through this one resolver.
   it('reads every spoken, dotted and full Thai month form a customer types, and nothing else', () => {

@@ -134,6 +134,21 @@ describe('compact LINE intake decision', () => {
     }
   });
 
+  it('keeps a file clause whose filters carry stray keys, which a read clause still may not (regression slice 2026-09-30, NAT-05 t2, NAT-06 t3)', async () => {
+    const text = 'หน้าสองเขียนว่าไง';
+    const created = await fixture(text);
+    const parse = (kind: string, filters: Record<string, unknown>) => parseLineIntakeCompactDecision({
+      raw: { subrequests: [{ kind, goal: text, sources: [{ part: 0, whole: true }], filters }] },
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS, enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+    });
+    assert.deepEqual(parse('file', { attachmentId: 'cmumxw9vb002tqvk1dbp9on5w', page: 2 })?.semanticSubrequests[0]?.requestedFilters,
+      { attachmentId: 'cmumxw9vb002tqvk1dbp9on5w', page: 2 });
+    assert.deepEqual(parse('file', { taskRef: null })?.semanticSubrequests[0]?.requestedFilters, {});
+    assert.equal(parse('read', { attachmentId: 'cmumxw9vb002tqvk1dbp9on5w' }), undefined);
+    assert.equal(parse('read', { taskRef: null }), undefined);
+    assert.equal(parse('file', JSON.parse('{"__proto__":null}') as Record<string, unknown>), undefined);
+  });
+
   it('rejects prototype keys instead of silently dropping a constraint', async () => {
     const text = 'ดูค่าใช้จ่ายเดือนนี้';
     const created = await fixture(text);
