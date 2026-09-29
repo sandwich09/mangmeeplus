@@ -62,6 +62,16 @@ test('"ตรวจแล้ว" appears only while there is a warm-up left to l
   assert.match(partnerPage, /ตรวจแล้ว/);
 });
 
+// BC02 (e2e/plan-term-billing-readiness.spec.ts): the retry was gated on `term === undefined`, which
+// also holds after a failed read, so it could never be pressed. The in-flight state is the skeleton:
+// load() clears `error` before it reads, so the error block (and this button) is gone meanwhile.
+test('the package read retry stays pressable after a failed read', () => {
+  assert.match(partnerPage, /setError\(null\);\s*setTerm\(undefined\);\s*setSourceVersion\(null\);\s*try \{\s*const result=await getPartnerPlanTerm\(companyId\)/);
+  const retry = /<button\b(?:(?!<button\b)[\s\S])*?>\s*ลองโหลดแพ็กเกจอีกครั้ง/.exec(partnerPage)?.[0] ?? '';
+  assert.match(retry, /onClick=\{\(\) => void load\(\)\}/);
+  assert.doesNotMatch(retry, /disabled=/);
+});
+
 // Review A-05. A LINE-first account is defined by what it does NOT have.
 test('lineOnlyUser is exactly "no username, no email, LINE linked"', () => {
   assert.equal(lineOnlyUser({ username: undefined, email: undefined, lineLinked: true }), true);

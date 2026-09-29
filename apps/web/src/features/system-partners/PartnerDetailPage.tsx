@@ -2603,7 +2603,9 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
       {error ? (
         <div className="space-y-3" role="alert">
           <p className="text-sm text-red-600">{error}</p>
-          <button type="button" className={btnSecondary} disabled={term === undefined} aria-busy={term === undefined} onClick={() => void load()}>
+          {/* Never disabled: `term === undefined` also holds after a failed read. load() clears `error`
+              before it reads, so while a read is in flight the skeleton below replaces this block. */}
+          <button type="button" className={btnSecondary} onClick={() => void load()}>
             ลองโหลดแพ็กเกจอีกครั้ง
           </button>
         </div>
