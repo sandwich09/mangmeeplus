@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "9c96de9ccd39b7a4656573ce8005e7c6589c365c",
-  "checkoutBranch": "claude/line-expense-category-pick-20260929",
+  "sourceRevision": "e4deeb4ab07ed1327cba253a52ad0fb69bf626a2",
+  "checkoutBranch": "claude/line-ai-regression-fixes-20260930",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -165,7 +165,7 @@
     },
     {
       "path": "docs/specs/mangmee-ai-core-capability-contract-2026-09-27.md",
-      "sha256": "39b331e40064aa6ceb85acee454ac946b755a5182af7e354aa3b17f28d0855f6"
+      "sha256": "b5850820fdaf839aca6f22ab9512fa388fce0188d0eb89df8d08c219bde5e747"
     },
     {
       "path": "packages/config/src/index.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T16:26:56.215Z",
-  "manifestDigest": "9bbbcdab6a36e2ceaa0a21b338a6e9d52277bd4ebfa83f1ef57535b3e9666aa1"
+  "generatedAt": "2026-09-29T17:35:16.156Z",
+  "manifestDigest": "8ebba4efcf220df551877970c12a1ce9b5ae7b85ec3b2c02b05f950fb905c359"
 }

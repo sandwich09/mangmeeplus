@@ -36,4 +36,10 @@ Decisions:
 - The catalogue is loaded only for an actor who may create an expense draft; question-only document turns read no expense data (bridge spec invariant).
 - Eval note: `scripts/line-ai-expense-advisor/production-ai-env.json` records only `LINE_AI_*` keys, so eval runs used `LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED` = false while UAT/Production run true (release records 2026-09-07/08). The category probe sets it true.
 
+## Regression slice 2026-09-30 (develop 8cafabcc) and its fixes
+
+Slice (production env locally: draft conversation + capture flags on, local AgentCore): 25/31 pass, 38.78 THB. New vs #903 runs: NAT-05 t4 "แค่ถามนะ อย่าเพิ่งลงรายจ่าย" routed `read` with no tool (#910 rule effect); NAT-06 t3 failed QA_BUDGET_UNAVAILABLE after an intake repair. Pre-existing: NAT-09 bare "สิงหา" (t1/t4/t5), NAT-01 t5 no advice. Also: as-of line used the UTC day; two reader answers in ครับ.
+Fixes (branch `claude/line-ai-regression-fixes-20260930`): FILE_KIND_RULE keeps scope-only clauses on the file (general without a file), never read; the compact decoder keeps `attachmentId`/`page` on a file clause and drops any other stray key there (both observed repairs: `attachmentId`, `taskRef:null`); the R2 two-dispatch QA ceiling and the transfer guard are unchanged (the guard is R2: intake1+reader1, never three); `asOfLine` uses the Bangkok day; the reader carries the shared persona; a spoken month right after รายจ่าย/ค่าใช้จ่าย/ยอด/ยอดขาย or before ให้ is read (names and longer words still are not).
+Proof: NAT-05 t1–5 twice 10/10; Starter #910 set twice 8/8 (sales/profit get the package reply, tax questions answered); NAT-09 t1 answers August 23,950.75; NAT-06 t1–3 with the observed bad first intake injected 3/3 (one intake call, reader answered). Spend 31.85 THB.
+
 Next: feature 2 (NAT04 fixture first, then draft → edit → cancel → status), then feature 3 (NAT11), then the regression slice.

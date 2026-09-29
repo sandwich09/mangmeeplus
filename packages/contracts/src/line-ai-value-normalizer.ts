@@ -1077,7 +1077,9 @@ const SPOKEN_MONTH_PERIOD_RULES: PeriodRule[] = [
     build: (m, today) => namedMonth(m[1]!, m[2], today),
   },
   {
-    pattern: new RegExp(`(?:^|\\s|[,(]|และ\\s*|แล้ว|ของ)(${PERIOD_SPOKEN_MONTH_ALTERNATION})${FULL_MONTH_NAME_REST}(?:\\s*(?:ปี\\s*)?['’]?(\\d{2,4}))?(?=$|\\s|และ|[),/.!?]|ล่ะ|ละ|นะ|คะ|ค่ะ|ครับ|บ้าง|หน่อย)`, 'giu'),
+    // NAT-09 ("ช่วยสรุปรายจ่ายสิงหาให้หน่อย"): a money noun right before the name and ให้ right after it are
+    // boundaries too — a name or a longer word (ค่าจ้างคุณกันยา, รายจ่ายตุลาการ) still never matches.
+    pattern: new RegExp(`(?:^|\\s|[,(]|และ\\s*|แล้ว|ของ|รายจ่าย|ค่าใช้จ่าย|ยอดขาย|ยอด)(${PERIOD_SPOKEN_MONTH_ALTERNATION})${FULL_MONTH_NAME_REST}(?:\\s*(?:ปี\\s*)?['’]?(\\d{2,4}))?(?=$|\\s|และ|[),/.!?]|ล่ะ|ละ|นะ|คะ|ค่ะ|ครับ|บ้าง|หน่อย|ให้)`, 'giu'),
     build: (m, today) => namedMonth(m[1]!, m[2], today),
   },
 ];
