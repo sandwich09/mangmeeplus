@@ -467,6 +467,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       // Add-ons PR B: the receipt allocator (package → team → purchased, D4/D8) and the shared grant seam + team grant (§16).
       'src/modules/billing/application/billing-receipt-allocator.spec.ts',
       'src/modules/billing/application/billing-addon-admin-grants.spec.ts',
+      // Sales-event discounts SD-C: first-bill amounts per tax treatment, eligibility, ticket choice and stale rules.
+      'src/modules/billing/domain/billing-event-discount.logic.spec.ts',
       'src/modules/system-partner-management/domain/logic/plan-capacity.spec.ts',
       'src/modules/billing/application/billing-collection.spec.ts',
       'src/modules/billing/application/billing-free-days.spec.ts',
