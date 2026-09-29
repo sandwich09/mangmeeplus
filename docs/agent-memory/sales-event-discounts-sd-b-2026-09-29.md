@@ -16,6 +16,11 @@ Open questions: none from SD-B. Release note: SD-B must not reach customers befo
 
 Artifacts: claim use-case + public controller (`POST /v1/public/event-discounts/claim`), LIFF page `GET /v1/auth/line/link-page/event-discount` (`LIFF_EVENT_DISCOUNT_PAGE` + mode `event-discount` in `LIFF_PAGE_SCRIPT`), `billing-event-discount.ts` + `BillingService.eventDiscount`, auth-guard allowlist `/event-discount` (pins synced), contracts `SalesEventClaimBody/Result`, `BillingEventDiscountView/Ticket`, two error codes with Thai text.
 
-Verification: see the SD-B commit message and the controller report. It covers the specs (claim logic, use-case, LIFF page, auth guard, PG claim spec), the typechecks, pins `--check`, the DI check, spec-suite coverage and the whole-chain run.
-
+Verification (2026-09-29 14:25, worktree above):
+- Native typecheck through the coordinator's serialized script: API rc=0, web rc=0.
+- Focused API specs: 174/174. These are the claim logic (9), the claim use-case (7), the LIFF page (11), the holder view (3) and auth.guard (39), plus the existing LIFF, signup, spec-suite coverage, body-validation and W00 manifest specs.
+- Web specs: 116/116 (error text, coverage, sales console).
+- `claim-event-discount.pg.spec.ts` against a fresh DB with all migrations: 3/3 (cap-1 race, same-person race, platform tenant + removed เซลล์).
+- Pins `--check`, both pin shell specs, check-di-metadata and `git diff --check`: clean.
+- Not run by rule (coordinator 2026-09-29): the full API/web suites, test:boot and the whole-chain run. The coordinator runs them once on the integrated branch.
 Next: SD-C fills `discount` (offers, reason) in the view and reserves and uses the ticket. SD-D adds the billing-page UI. SD-F adds `credit`.
