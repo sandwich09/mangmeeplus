@@ -51,14 +51,16 @@ export function lineEventDiscountAnswer(facts: LineEventDiscountFacts): { text: 
   const lines = tickets.map(ticketLine);
   if (!tickets.some(usable)) return { text: ['ตอนนี้ไม่มีส่วนลดจากงานที่ใช้ได้ค่ะ', ...lines, HOW_TO_GET].join('\n'), canUse: false };
   if (facts.path === 'DISCOUNT' && !facts.block) {
-    return { text: ['คุณมีส่วนลดจากงานค่ะ', ...lines,
-      'ลดตอนจ่ายค่าแพ็กเกจแบบจ่ายครั้งเดียวด้วยบัตรหรือ PromptPay เลือกใช้หรือไม่ใช้ได้ตอนจ่าย งานเดียวกันใช้ได้ร้านละครั้งค่ะ'].join('\n'), canUse: true };
+    // Owner 2026-09-29: several held discounts → the buyer picks one per payment. SD-O13: automatic renewal discounts its first bill only.
+    const pick = tickets.filter(usable).length > 1 ? 'เลือกได้ตอนจ่ายว่าจะใช้ส่วนลดไหน (ครั้งละ 1 ส่วนลด) หรือไม่ใช้' : 'เลือกใช้หรือไม่ใช้ได้ตอนจ่าย';
+    return { text: ['คุณมีส่วนลดจากงานค่ะ', ...lines, `ลดตอนจ่ายค่าแพ็กเกจด้วยบัตรหรือ PromptPay ${pick} งานเดียวกันใช้ได้ร้านละครั้ง`,
+      'ถ้าเลือกตัดบัตรอัตโนมัติหรือสแกนบิล QR ทุกงวด ลดเฉพาะบิลแรก รอบต่อไปคิดราคาเต็มค่ะ'].join('\n'), canUse: true };
   }
   // SD-O12: EVENT_ALREADY_USED = every ticket still usable is from an event this shop already used, so name those events.
   const spent = [...new Set(tickets.filter(usable).map((ticket) => ticket.eventName))].join(', ');
   const why = facts.block === 'EVENT_ALREADY_USED' ? `ร้านนี้ใช้ส่วนลดจากงาน ${spent} ไปแล้ว (งานเดียวกันใช้ได้ร้านละครั้ง) ค่ะ`
     : facts.block === 'DEAL_ACTIVE' ? 'ร้านนี้มีดีลพิเศษอยู่แล้ว จึงใช้ส่วนลดจากงานกับราคาดีลไม่ได้ค่ะ'
-    // Owner 2026-09-29: automatic renewals are a pending decision — say it plainly, never promise a date.
+    // A running automatic renewal: its rounds are never discounted (SD-O13 discounts only the first bill of a new package).
     : facts.path === 'CREDIT' ? 'ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้ค่ะ'
     : 'ข้อมูลการชำระเงินเดิมของร้านนี้ต้องให้ทีมงานตรวจก่อน จึงยังใช้ส่วนลดจากงานไม่ได้ค่ะ';
   return { text: ['คุณมีส่วนลดจากงานค่ะ', ...lines, why].join('\n'), canUse: false };

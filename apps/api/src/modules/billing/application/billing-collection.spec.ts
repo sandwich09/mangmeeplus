@@ -6,14 +6,14 @@ import type { BillingAccount } from '../../../generated/prisma/client';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 
 // Focused worker fault checks. Full HTTP/PG/browser coverage lives in billing-collection-smoke.
-function fixture(expired = false, promptPayRenew = false, advanceCardTrial = false) {
+function fixture(expired = false, promptPayRenew = false, advanceCardTrial = false, eventDiscountTrial = false) {
   const end = new Date(Date.now() + (expired ? -1 : 1) * 86400000); end.setMilliseconds(0);
   const account = { id: 'account', companyId: 'company', stripeAccountId: 'acct_test', livemode: false, customerId: 'cus_test',
     baseSubscriptionId: 'sub_test', paidThrough: end, version: 1, termProjectionHash: 'paid-term', activeAttemptId: null,
     activeCollectionOperationId: null, leaseToken: 'lease', leaseUntil: new Date(Date.now() + 60000),
     renewalMode: promptPayRenew ? 'PROMPTPAY_RENEW' : 'CARD_AUTO' } as unknown as BillingAccount;
   const sub: Record<string, any> = { id: 'sub_test', object: 'subscription', customer: 'cus_test', livemode: false, metadata: { billingAccountId: 'account' },
-    status: expired ? 'past_due' : promptPayRenew || advanceCardTrial ? 'trialing' : 'active', billing_mode: { type: 'classic' },
+    status: expired ? 'past_due' : promptPayRenew || advanceCardTrial || eventDiscountTrial ? 'trialing' : 'active', billing_mode: { type: 'classic' },
     collection_method: promptPayRenew ? 'send_invoice' : 'charge_automatically',
     payment_settings: promptPayRenew ? { payment_method_types: ['promptpay'] } : undefined, cancel_at_period_end: false,
     items: { data: [{ price: 'price_ProYear', quantity: 1, current_period_start: Math.floor(end.getTime() / 1000) - 365 * 86400, current_period_end: end.getTime() / 1000 }] } };
@@ -23,7 +23,8 @@ function fixture(expired = false, promptPayRenew = false, advanceCardTrial = fal
     $queryRaw: async () => [], company: { findUnique: async () => ({ status: companyHeld ? 'DISABLED' : 'ACTIVE', planTerm: null }) },
     billingSubscriptionContract: { findFirst: async () => ({ snapshotJson: { policy, priceId: 'price_ProYear',
       quote: { offer: billingOffer('PRO_999', 'year'), totalSatang: 999000, purchaseMode: promptPayRenew ? 'PROMPTPAY_RENEW' : 'CARD_AUTO' },
-      ...(advanceCardTrial ? { advanceDeal: { firstCycleEndsAt: end.toISOString() } } : {}) } }) },
+      ...(advanceCardTrial ? { advanceDeal: { firstCycleEndsAt: end.toISOString() } } : {}),
+      ...(eventDiscountTrial ? { eventDiscount: { choice: 'USE' } } : {}) } }) },
     billingOperation: {
       create: async ({ data }: any) => (operation = { ...data, id: 'operation', state: 'PREVIEW', version: 1, resultJson: null, errorCode: null, observedAt: null }),
       findFirstOrThrow: async () => operation,
@@ -94,6 +95,20 @@ test('prepaid card deal trial can stop the next charge while keeping the paid te
   assert.equal(f.sub.status, 'trialing');
   assert.equal(f.account.paidThrough, paidThrough);
   assert.equal(f.account.nextChargeAt, null);
+});
+
+test('SD-O13: a card trialing through its discounted first period can stop the first full-price charge and keeps the paid term', async () => {
+  const f = fixture(false, false, false, true), paidThrough = f.account.paidThrough;
+  await f.queue();
+  assert.equal(f.operation().proposedJson.params.cancel_at_period_end, true);
+  await f.service.advance(f.account, 'lease');
+  assert.equal(f.operation().state, 'SUCCEEDED');
+  assert.equal(f.sub.status, 'trialing'); assert.equal(f.sub.cancel_at_period_end, true);
+  assert.equal(f.account.paidThrough, paidThrough);
+  assert.equal(f.account.nextChargeAt, null);
+  // A card subscription trialing for any other reason is still refused here.
+  const other = fixture(); other.sub.status = 'trialing';
+  await assert.rejects(other.service.preview({ companyId: 'company', userId: 'owner' } as RequestContext, 'CANCEL_RENEWAL'));
 });
 
 test('old ambiguous command never posts again without an observed result', async () => {

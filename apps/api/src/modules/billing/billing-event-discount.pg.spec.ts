@@ -187,8 +187,8 @@ test('first-bill discount through quote and Checkout: choice, reservation, stale
       expiresAt: new Date(Date.now() + 30 * 86_400_000), claimRequestKey: `claim-${run}` } })).id;
     const ticket = () => client.salesEventTicket.findUniqueOrThrow({ where: { id: ticketId } });
 
-    // Renewing modes carry no offer today, and the quote does not error because of it.
-    assert.equal((await quote(shops[0]!, undefined, 'CARD_AUTO')).eventDiscount, undefined);
+    // SD-O13: a renewing mode's first bill carries the offer too (its binding is covered by billing-event-discount-renewal.pg.spec.ts).
+    assert.equal((await quote(shops[0]!, undefined, 'CARD_AUTO')).eventDiscount?.choice, 'USE');
 
     // DECLINE: full price, the offer kept for the confirm step, Checkout at full price, the ticket untouched.
     const declined = await quote(shops[0]!, 'DECLINE');

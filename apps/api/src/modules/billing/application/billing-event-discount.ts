@@ -2,7 +2,7 @@ import type { BillingEventDiscountTicket, BillingEventDiscountView, BillingOffer
 import { Prisma } from '../../../generated/prisma/client';
 import { DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 import { salesEventTicketDisplayState } from '../../sales-console/domain/sales-event-claim.logic';
-import { EVENT_DISCOUNT_MODES, pickEventDiscount, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
+import { EVENT_DISCOUNT_ONE_TIME_MODES, pickEventDiscount, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
 import { packageMenuPurchaseSource } from './billing-purchase-source';
 
 /**
@@ -44,9 +44,13 @@ async function holderTickets(tx: Tx, userId: string, companyId: string, now: Dat
     include: { batch: { select: { eventName: true } } }, orderBy: { id: 'asc' }, take: 50 });
 }
 
-/** The ticket and amounts a quote for this card would carry, or null (same helper as the page, SED-14). `basisSatang` = an upgrade's difference. */
-export async function eventDiscountOffer(tx: Tx, input: { userId: string; companyId: string; offer: BillingOffer; tax: BillingPolicy['taxTreatment']; now: Date; basisSatang?: number }) {
-  const tickets = await holderTickets(tx, input.userId, input.companyId, input.now);
+/**
+ * The ticket and amounts a quote for this card would carry, or null (same helper as the page, SED-14). `basisSatang` = an
+ * upgrade's difference. `serial` = the one the buyer chose (Owner 2026-09-29); null when it cannot lower this payment.
+ */
+export async function eventDiscountOffer(tx: Tx, input: { userId: string; companyId: string; offer: BillingOffer; tax: BillingPolicy['taxTreatment']; now: Date;
+  basisSatang?: number; serial?: string }) {
+  const tickets = (await holderTickets(tx, input.userId, input.companyId, input.now)).filter(ticket => !input.serial || ticket.serial === input.serial);
   if (!tickets.length || await eventDiscountBlock(tx, input.companyId, input.now)) return null;
   return pickEventDiscount(tickets, input.offer, input.tax, input.basisSatang);
 }
@@ -60,19 +64,25 @@ export async function eventDiscountHolderBlock(tx: Tx, input: { userId: string; 
 const byBest = (a: { discountSatang: number; expiresAt: Date; id: string }, b: { discountSatang: number; expiresAt: Date; id: string }) =>
   b.discountSatang - a.discountSatang || a.expiresAt.getTime() - b.expiresAt.getTime() || a.id.localeCompare(b.id);
 
-/** The package page's view (spec §3.4 ก, §8): the holder's best ticket and the cards it lowers, or why this shop cannot use it. */
+/** The package page's view (spec §3.4 ก, §8): the holder's best ticket and the cards it lowers, every usable ticket, or why this shop cannot use one. */
 export async function eventDiscountView(tx: Tx, input: { userId: string; companyId: string; offers: BillingOffer[]; tax: BillingPolicy['taxTreatment']; now: Date }): Promise<BillingStatus['eventDiscount']> {
   let tickets = await holderTickets(tx, input.userId, input.companyId, input.now), reason: NonNullable<BillingStatus['eventDiscount']>['reason'] = null;
   // SD-O12: nothing usable here, but a ticket from an event this shop already used → say so, naming that event.
   if (!tickets.length) { tickets = await holderTickets(tx, input.userId, input.companyId, input.now, true); reason = 'EVENT_ALREADY_USED'; }
   if (!tickets.length) return undefined;
   reason = await eventDiscountBlock(tx, input.companyId, input.now) ?? reason;
-  const best = [...tickets].sort(byBest)[0]!;
+  const sorted = [...tickets].sort(byBest), best = sorted[0]!;
+  // Each card the tickets in `pool` lower, with the best of them for that card.
+  const cards = (pool: typeof tickets) => input.offers.flatMap(offer => {
+    const pick = pickEventDiscount(pool, offer, input.tax);
+    return pick ? [{ offerKey: offer.offerKey, interval: offer.interval, eventName: pick.ticket.batch.eventName, shownDiscountSatang: pick.amounts.shownDiscountSatang }] : [];
+  });
   return { ticketSerial: best.serial, eventName: best.batch.eventName, discountSatang: best.discountSatang, expiresAt: best.expiresAt.toISOString(), reason,
-    offers: reason ? [] : input.offers.flatMap(offer => {
-      const pick = pickEventDiscount(tickets, offer, input.tax);
-      return pick ? [{ offerKey: offer.offerKey, interval: offer.interval, eventName: pick.ticket.batch.eventName, shownDiscountSatang: pick.amounts.shownDiscountSatang }] : [];
-    }) };
+    offers: reason ? [] : cards(tickets),
+    // Owner 2026-09-29: every discount usable here, best first, so the buyer picks which one this payment uses.
+    tickets: reason ? [] : sorted.map(ticket => ({ ticketSerial: ticket.serial, eventName: ticket.batch.eventName, discountSatang: ticket.discountSatang,
+      expiresAt: ticket.expiresAt.toISOString(), offers: cards([ticket]).map(card => ({ offerKey: card.offerKey, interval: card.interval,
+        shownDiscountSatang: card.shownDiscountSatang })) })).filter(ticket => ticket.offers.length) };
 }
 
 /**
@@ -117,13 +127,13 @@ export async function releaseEventDiscount(tx: Tx, attemptId: string): Promise<v
 const HOLDER_TICKET_LIMIT = 50;
 
 /**
- * Sales-event spec §4.1 / SD-O12: DISCOUNT wherever this shop can pay for a package in one go — a shop starting one, or a
- * paid one-time shop buying its next period, a change or an upgrade. An auto-renewing shop keeps the credit path (not built).
+ * Sales-event spec §4.1 / SD-O12: DISCOUNT wherever this shop can pay for a package in one go — a shop starting one (in any mode,
+ * SD-O13), or a paid one-time shop buying its next period, a change or an upgrade. An auto-renewing shop keeps the credit path (not built).
  */
 export function eventDiscountPath(source: BillingPurchaseSource, renewalMode?: string | null): BillingEventDiscountView['path'] {
   if (packageMenuPurchaseSource(source)) return 'DISCOUNT';
   if (source !== 'PAID_CURRENT_MODE') return null;
-  return EVENT_DISCOUNT_MODES.includes(renewalMode as BillingPurchaseMode) ? 'DISCOUNT' : 'CREDIT';
+  return EVENT_DISCOUNT_ONE_TIME_MODES.includes(renewalMode as BillingPurchaseMode) ? 'DISCOUNT' : 'CREDIT';
 }
 
 /**

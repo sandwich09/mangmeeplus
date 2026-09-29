@@ -804,6 +804,8 @@ const CODE_LABELS: Record<string, string> = {
   SALES_EVENT_ISSUE_FULL: 'ส่วนลดของชุดนี้ถูกแจกครบจำนวนแล้ว ถ้าต้องการแจกเพิ่ม ให้หัวหน้าทีมเพิ่มจำนวนแจกสูงสุด',
   SALES_EVENT_AGENT_INACTIVE: 'คุณไม่ได้เป็นผู้แจกของชุดนี้แล้ว จึงแสดง QR ไม่ได้ กรุณาติดต่อหัวหน้าทีม',
   SALES_EVENT_TICKET_NOT_REVOCABLE: 'ส่วนลดนี้กำลังชำระหรือใช้แล้ว เพิกถอนไม่ได้',
+  // Package page (Owner 2026-09-29): the held discount the buyer picked cannot lower this payment.
+  SALES_EVENT_TICKET_UNAVAILABLE: 'ส่วนลดที่เลือกใช้กับการจ่ายนี้ไม่ได้ กรุณาเลือกส่วนลดอื่นหรือไม่ใช้ครั้งนี้',
   // LINE claim (SD-B): the scan page shows its own copy; these cover any other surface.
   SALES_EVENT_QR_INVALID: 'QR นี้ใช้ไม่ได้ ขอ QR ของงานนี้จากทีมขายอีกครั้ง',
   SALES_EVENT_SELF_CLAIM: 'บัญชีทีมขายรับส่วนลดนี้ไม่ได้',
