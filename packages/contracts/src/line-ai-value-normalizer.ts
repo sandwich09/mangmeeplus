@@ -334,6 +334,14 @@ const THAI_MONTHS: Array<[string, number]> = [
   ['กค', 7], ['สค', 8], ['กย', 9], ['ตค', 10], ['พย', 11], ['ธค', 12],
 ];
 
+/** Spoken short month names (UAT 2026-09-29: "ของเดือนสิงหาละ" read no period, so the follow-up could not be
+ *  grounded). Chat-period use only, and only where the period rules below see a clear boundary — "กันยา" is also
+ *  a given name and "ตุลา" starts ตุลาการ — never inside receipt/date extraction. */
+const THAI_SPOKEN_MONTHS: Array<[string, number]> = [
+  ['มกรา', 1], ['กุมภา', 2], ['มีนา', 3], ['เมษา', 4], ['พฤษภา', 5], ['มิถุนา', 6],
+  ['กรกฎา', 7], ['กรกฏา', 7], ['สิงหา', 8], ['กันยา', 9], ['ตุลา', 10], ['พฤศจิกา', 11], ['ธันวา', 12],
+];
+
 const ENGLISH_MONTHS: Array<[string, number]> = [
   ['january', 1], ['february', 2], ['march', 3], ['april', 4], ['may', 5], ['june', 6],
   ['july', 7], ['august', 8], ['september', 9], ['october', 10], ['november', 11], ['december', 12],
@@ -409,7 +417,7 @@ function plausibleEraReadings(readings: YearReading[], todayIso: string, nearest
 
 function resolveNamedMonthYearReadings(monthName: string, rawYear: number, digits: number): YearReading[] {
   if (digits !== 2) return resolveYearReadings(rawYear, digits);
-  if (THAI_MONTH_NAMES.has(monthName.toLowerCase())) {
+  if (THAI_MONTH_NAMES.has(monthName.toLowerCase()) || /[\u0E00-\u0E7F]/u.test(monthName)) {
     const yearBe = 2500 + rawYear;
     return [{
       yearBe,
@@ -801,20 +809,29 @@ const PERIOD_MONTH_NAMES: Array<[string, number]> = [
 // generic month-name regex must not see them: มีค inside มีค่าใช้จ่าย is not March.
 const PERIOD_SHORT_MONTH_NAMES = THAI_MONTHS.filter(([name]) => !name.includes('.') && name.length <= 3);
 const PERIOD_SHORT_MONTH_ALTERNATION = PERIOD_SHORT_MONTH_NAMES.map(([name]) => name).sort((a, b) => b.length - a.length).join('|');
-const PERIOD_MONTH_ALTERNATION = PERIOD_MONTH_NAMES
-  .map(([name]) => name.replace(/\./g, '\\.'))
-  .sort((a, b) => b.length - a.length)
+/** A dotted Thai abbreviation as people type it: "ส.ค.", "ส.ค" (no final dot) or "ส. ค." (space after the dot). */
+function periodMonthNamePattern(name: string): string {
+  const dotted = /^([\u0E00-\u0E7F]+)\.([\u0E00-\u0E7F]+)\.$/u.exec(name);
+  return dotted ? `${dotted[1]}\\.\\s?${dotted[2]}\\.?` : name.replace(/\./g, '\\.');
+}
+const PERIOD_MONTH_ALTERNATION = [...PERIOD_MONTH_NAMES]
+  .sort((a, b) => b[0].length - a[0].length)
+  .map(([name]) => periodMonthNamePattern(name))
   .join('|');
 /** `may` is also an ordinary English word, so it names a month only when a year follows it. */
 const PERIOD_MONTH_ALTERNATION_NO_YEAR = PERIOD_MONTH_NAMES
   .filter(([name]) => name !== 'may' && name !== 'may.')
-  .map(([name]) => name.replace(/\./g, '\\.'))
-  .sort((a, b) => b.length - a.length)
+  .sort((a, b) => b[0].length - a[0].length)
+  .map(([name]) => periodMonthNamePattern(name))
   .join('|');
+const PERIOD_SPOKEN_MONTH_ALTERNATION = THAI_SPOKEN_MONTHS.map(([name]) => name).sort((a, b) => b.length - a.length).join('|');
+/** What completes a spoken name into its full name — left to the full-name rules, which also read its year. */
+const FULL_MONTH_NAME_REST = '(?!คม|ยน|พันธ์)';
 
 function periodMonthFromName(name: string): number | null {
-  const lowered = name.toLowerCase();
-  for (const [candidate, month] of [...PERIOD_MONTH_NAMES, ...PERIOD_SHORT_MONTH_NAMES]) if (candidate === lowered) return month;
+  const compact = name.toLowerCase().replace(/\s+/gu, '');
+  const lowered = /^[\u0E00-\u0E7F]+\.[\u0E00-\u0E7F]+$/u.test(compact) ? `${compact}.` : compact;
+  for (const [candidate, month] of [...PERIOD_MONTH_NAMES, ...PERIOD_SHORT_MONTH_NAMES, ...THAI_SPOKEN_MONTHS]) if (candidate === lowered) return month;
   return null;
 }
 
@@ -1042,7 +1059,27 @@ const PERIOD_RULES: PeriodRule[] = [
   { pattern: /last\s*year/gi, build: (_m, today) => yearsAgo(1, today, 'ปีที่แล้ว') },
   { pattern: /ปีนี้/gu, fuzzyGuard: true, build: (_m, today) => yearsAgo(0, today, 'ปีนี้') },
   { pattern: /this\s*year/gi, build: (_m, today) => yearsAgo(0, today, 'ปีนี้') },
-  { pattern: /(?:ปี|year)\s*['’]?(\d{2,4})/gi, build: (m) => namedYear(m[1]!) },
+  // "เดือนมกราปี 2568": a year written straight after a spoken month name is that month's year, read by the
+  // spoken-month rules below — never a whole-year period of its own.
+  { pattern: new RegExp(`(?<!(?:${PERIOD_SPOKEN_MONTH_ALTERNATION})\\s*)(?:ปี|year)\\s*['’]?(\\d{2,4})`, 'giu'), build: (m) => namedYear(m[1]!) },
+];
+
+/**
+ * Spoken month names (THAI_SPOKEN_MONTHS), applied AFTER the full-name typo pass so "เดือนสิงหาคาม 2568" stays the
+ * corrected full name with its year. After เดือน any word may follow — Thai writes no spaces, so "เดือนสิงหาละ" and
+ * "เดือนสิงหาจ่ายไปเท่าไหร่" are the normal shape — but never the rest of the full name. Without เดือน only between
+ * clear boundaries ("แล้วสิงหาล่ะ", "ของสิงหา", "สิงหา 69"), so a given name or a longer word that merely starts like
+ * one (น้องกันยา, ตุลาการ) never becomes a month.
+ */
+const SPOKEN_MONTH_PERIOD_RULES: PeriodRule[] = [
+  {
+    pattern: new RegExp(`เดือน\\s*(${PERIOD_SPOKEN_MONTH_ALTERNATION})${FULL_MONTH_NAME_REST}(?:\\s*(?:ปี\\s*)?['’]?(\\d{2,4}))?(?!\\d)`, 'giu'),
+    build: (m, today) => namedMonth(m[1]!, m[2], today),
+  },
+  {
+    pattern: new RegExp(`(?:^|\\s|[,(]|และ\\s*|แล้ว|ของ)(${PERIOD_SPOKEN_MONTH_ALTERNATION})${FULL_MONTH_NAME_REST}(?:\\s*(?:ปี\\s*)?['’]?(\\d{2,4}))?(?=$|\\s|และ|[),/.!?]|ล่ะ|ละ|นะ|คะ|ค่ะ|ครับ|บ้าง|หน่อย)`, 'giu'),
+    build: (m, today) => namedMonth(m[1]!, m[2], today),
+  },
 ];
 
 function lastNDays(n: number, todayIso: string): PeriodReading[] {
@@ -1303,7 +1340,7 @@ export function resolvePeriodCandidates(
     out.push(candidate);
   };
 
-  for (const rule of PERIOD_RULES) {
+  const applyRules = (rules: readonly PeriodRule[]): void => { for (const rule of rules) {
     for (const match of mapped.matchAll(rule.pattern)) {
       const start = match.index ?? 0;
       const end = start + match[0].length;
@@ -1316,7 +1353,8 @@ export function resolvePeriodCandidates(
       used.push({ start, end });
       for (const reading of rule.build(match, todayIso)) push(text.slice(start, end), reading, start, end);
     }
-  }
+  } };
+  applyRules(PERIOD_RULES);
   // Recover a clear, one-character typo in a full Thai month name. The original span remains on
   // the candidate for wire validation and audit; the correction is only a date interpretation.
   const typoPattern = /(?:เดือน\s*|^|[\s,(]|และ\s*)([ก-๙]{5,14}?)(?=$|\s|และ|[),/.!?]|ปี\s*\d)/gu;
@@ -1336,6 +1374,7 @@ export function resolvePeriodCandidates(
       }, start, end);
     }
   }
+  applyRules(SPOKEN_MONTH_PERIOD_RULES);
   for (const found of dateCandidateRanges(text, dates, scan)) push(found.span, found.reading, found.start, found.end);
 
   return scan ? out : out.sort((a, b) => text.indexOf(a.span) - text.indexOf(b.span)).slice(0, MAX_PERIOD_CANDIDATES);

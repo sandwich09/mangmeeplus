@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   AI_BUDGET_PROFILE_TABLE_DIGEST_V2, AI_BUDGET_PROFILES_V2, AI_BUDGET_ESTIMATOR_VERSION_V2,
+  aiBudgetV2CallAllowed, aiBudgetV2OrdinalCeiling,
   parseAiBudgetGrantV2, parseAiBudgetEnvelopeV2, lineDocumentQaInputEvidenceText, parseLineDocumentQaQuestions,
   type LineDocumentQaAttachment,
   type AiBudgetGrantV2, type AiBudgetInvocationV2, type AiBudgetEnvelopeV2, type AiBudgetProfileIdV2,
@@ -312,7 +313,7 @@ export class LineAiBudgetAuthorityService {
       ordinal: invocation.ordinal, sourceRoute: 'line-ai-v2', requestKind: initial.requestKind, modelId: grant.model.modelId,
       thbPerUsd: initial.tariff.thbPerUsd, thbPerUsdSource: 'pinned-grant', now,
     }, {
-      upperBoundSatang: priced.upperBoundSatang, maxTurnSlots: grant.maxTurnSlots,
+      upperBoundSatang: priced.upperBoundSatang, maxCalls: aiBudgetV2OrdinalCeiling(grant),
       snapshot: { ...priced.snapshot, profileId: invocation.profileId, inputDigest: invocation.inputDigest, payloadDigest: invocation.payloadDigest,
         schemaDigest: invocation.schemaDigest, estimatorVersion: invocation.estimatorVersion, promptVersion: invocation.promptVersion,
         profileTableDigest: grant.profileTableDigest, grantSignature: grant.signature, repair },
@@ -324,7 +325,8 @@ export class LineAiBudgetAuthorityService {
         if (!authority || authority.transferredToQa || !this.parentCurrent(current, grant.authorityKind, authority.owner, now)
           || authority.grant.signature !== grant.signature || digest(authority.tariff) !== digest(initial.tariff)
           || authority.nextOrdinal !== invocation.ordinal || (authority.profileCounts[invocation.profileId] ?? 0) >= profile.maxCalls
-          || (repair && authority.repairCount >= grant.maxRepairs) || !await this.ownerCurrent(tx, authority.owner)) return false;
+          // A repair never spends an answer slot, and an answer never spends the repair (UAT 2026-09-29).
+          || !aiBudgetV2CallAllowed(grant, invocation.ordinal, repair, authority.repairCount) || !await this.ownerCurrent(tx, authority.owner)) return false;
         // An unresolved prior paid call may still be executing; a new worker cannot overlap it.
         const running = await tx.aiBudgetReservation.count({ where: { companyId: grant.payerCompanyId, attemptKey: grant.attemptKey,
           stepKind: 'provider-v2', status: { in: ['RESERVED', 'DISPATCHED', 'UNRESOLVED'] } } });
