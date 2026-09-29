@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "cf4ac7b8e84e2358c6a2c435fa34b69d6af481c8",
-  "checkoutBranch": "claude/line-ai-reimbursement-draft-fix-20260929",
+  "sourceRevision": "2093a8e8a488907a787458e1b23772d3dda38379",
+  "checkoutBranch": "claude/line-ai-answer-preferences-20260930",
   "checkoutDirty": false,
   "sourceHashes": [
     {
@@ -21,7 +21,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-conversation-context.service.ts",
-      "sha256": "502389a9530ae73fa6abc193ee694c8266f126d0ab6c94c0107bca3a288ffda4"
+      "sha256": "16c5f981dfcdf020bfcd21fad09817961b4ac586e924ecece455fc3242c5a910"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-document-qa.service.ts",
@@ -101,11 +101,11 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "a8344214564d3f6c29445bea1277929dd790869ded3ff7656b61e51c3f869809"
+      "sha256": "2e998be8d45781f113398195e30c2736f678002bdf6691134de7ae831c81630b"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
-      "sha256": "65a45ca13daad39dbeaeba03f3d7f81808a3c785b5c30a06f13e8c38103cd5ee"
+      "sha256": "d902dfad84c4655c68614d829de17ebfd5ff79156140eb08f5d57669a7dfdc36"
     },
     {
       "path": "apps/api/src/modules/line-ai/infrastructure/public-lookup.ts",
@@ -165,7 +165,7 @@
     },
     {
       "path": "docs/specs/mangmee-ai-core-capability-contract-2026-09-27.md",
-      "sha256": "b5850820fdaf839aca6f22ab9512fa388fce0188d0eb89df8d08c219bde5e747"
+      "sha256": "fbea06a59ff593213d401b4ea4e2e4ba36fdd4ca86f4ab6ab72fb799b6c685f0"
     },
     {
       "path": "packages/config/src/index.ts",
@@ -181,7 +181,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "9e985675c7abb9ac0c7b90461b79d1f567d234b3ddb1c441c8ed08c6292c912b"
+      "sha256": "af8aa01c2752e7a0c23825063b5d028401fbbd8161a6d1e2811f98fa62383076"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T18:39:27.811Z",
-  "manifestDigest": "8af4a071e8df2e4468444871f509fc24d92212255fd411419f9f3569402f789a"
+  "generatedAt": "2026-09-29T19:04:29.803Z",
+  "manifestDigest": "285683466a9df20b9c12fa4bcad389b96e5a9b1999b00e3677ae36b7bac970ca"
 }
