@@ -947,15 +947,41 @@ describe('ReceiptOcrClient failure boundary', () => {
     }) as any;
     try {
       const client = new ReceiptOcrClient(config, undefined, state.prisma);
-      const response = await client.extract({ ...request, attachment: {
+      const response = await client.extract({ ...request, requireEvidenceV2: true, attachment: {
         id: 'attachment-1',
         mimeType: 'image/jpeg', contentBase64,
       } } as any);
-      assert.equal(sentBody.requireEvidenceV2, true, 'empty rollout enables strict evidence for the authorized company');
+      assert.equal(sentBody.requireEvidenceV2, true, 'an explicit request enters strict evidence mode');
       assert.equal(response.status, 'failed');
       assert.equal(response.errorCode, 'OCR_EVIDENCE_INVALID');
       assert.equal(response.usage?.length, 1, 'the paid usage survives API evidence rejection');
       assert.equal(state.providerUsage.length, 1, 'API validation runs after usage is recorded');
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  // Owner decision 2026-09-29 (option A): the web reads a receipt the way LINE does. Reliability v2
+  // on for every company (the UAT/production default) must not turn strict evidence on by itself.
+  it('reads without strict evidence by default, even with reliability v2 on for every company', async () => {
+    __resetCompanyAiBudgetCache();
+    const originalFetch = globalThis.fetch;
+    const state = readyPrisma();
+    let sentBody: any;
+    globalThis.fetch = mock.fn(async (_url: any, init: any) => {
+      sentBody = JSON.parse(init.body);
+      return new Response(JSON.stringify({ status: 'ok', fields: { grandTotalAmount: '1,529.00', vatAmount: '100.03' } }));
+    }) as any;
+    try {
+      const client = new ReceiptOcrClient({
+        aiGatewayInternalSecret: 'internal-secret', aiGatewayInternalUrl: 'http://ai.invalid',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
+        lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: [],
+      } as any, undefined, state.prisma);
+      const response = await client.extract({ ...request, attachment: {
+        id: 'attachment-1', mimeType: 'image/jpeg', contentBase64: Buffer.from('receipt').toString('base64'),
+      } } as any);
+      assert.equal(sentBody.requireEvidenceV2, false, 'the gateway is not asked for strict evidence');
+      assert.equal(response.status, 'ok', 'a read without an evidence envelope is not refused');
+      assert.equal(response.fields?.grandTotalAmount, '1,529.00');
     } finally { globalThis.fetch = originalFetch; }
   });
 
