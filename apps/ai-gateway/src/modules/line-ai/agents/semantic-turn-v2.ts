@@ -591,6 +591,7 @@ export async function runSemanticTurnV2(input: {
   // E5's two get_breakdown calls) may already have a good result. Resolved once, after every
   // control round has run, against the FINAL `results`/`forced` state.
   const bindingFailedIndices = new Set<number>();
+  const optionsBesideQuestion = new Set<number>();
   const ungroundedReadIndices = new Set<number>();
   // Items 1-3 (spec §2/§3 rows 17-18, §8, §11): the SAME deterministic scope/permission override
   // OrchestratorAgent.run() applies to a turn's sole fast-lane-eligible subrequest, applied here to
@@ -636,7 +637,9 @@ export async function runSemanticTurnV2(input: {
       const state = currentBudgetState();
       // A second control round must still leave the answer's slot; repairs never count against slots.
       if (state?.status !== 'active-v2' || state.calls - state.repairCount + 1 >= state.grant.maxTurnSlots
-        || !results.some(entry => entry.result.toolName === 'reimbursement.draft.get_options' && entry.result.status === 'ok')) break;
+        || !results.some(entry => entry.result.toolName === 'reimbursement.draft.get_options' && entry.result.status === 'ok')
+        // Every write already holds its question or final answer: a second round has nothing left to plan.
+        || inventory.every(item => item.kind !== 'write' || questions.has(item.index) || forced.has(item.index))) break;
       // Options issue opaque API IDs. A second bounded planning call can echo them into a preview.
     }
     const previousResultCount = results.length;
@@ -688,6 +691,16 @@ export async function runSemanticTurnV2(input: {
         : { status: 'unsupported', reasonCode: 'SEMANTIC_CONTROL_UNAVAILABLE', text: READ_UNAVAILABLE_TEXT[language] });
     else {
       for (const q of rawQuestions) questions.set(Number(q.index), String(q.text));
+      // NAT04 (2026-09-30): "บิลร้านเครื่องเขียนที่ส่งไว้สองใบอะ" was asked "which bill?" before the API had listed any
+      // bill, so the user had nothing to pick from. A claim's question still goes out, but only beside the claimable
+      // bills the read-only options call prints.
+      if (controlRound === 0 && input.reimbursementDraftEnabled && offered.some(meta => meta.name === 'reimbursement.draft.get_options')) {
+        for (const item of inventory) if (item.kind === 'write' && item.writeIntent === 'REIMBURSEMENT_REQUEST_START' && questions.has(item.index)
+          && !calls.some(call => call.index === item.index && call.toolName === 'reimbursement.draft.get_options')) {
+          calls.push({ index: item.index, toolName: 'reimbursement.draft.get_options', input: { operation: 'CREATE', subrequestIndex: item.index } });
+          optionsBesideQuestion.add(item.index);
+        }
+      }
       // E5 (tuning-6a): T-015-a "ทำไมมีร่างค้างเยอะจังคะ" planned only expense.list_recent; T-111-b
       // "ทำไมจ่ายร้านสมใจการค้าเยอะจังเดือนนี้ครับ" planned only a vendor-filtered get_breakdown —
       // both left the ranking facts (total, share, who's #1) invisible to compose. Runs on the
@@ -763,7 +776,7 @@ export async function runSemanticTurnV2(input: {
         const key = canonical([call.toolName, normalizedInput]);
         const prior = results.find(entry => entry.result.toolName === call.toolName && (entry as { inputKey?: string }).inputKey === key);
         if (prior) { results.push({ index, result: prior.result }); continue; }
-        if (seen.has(key) || questions.has(index)) continue;
+        if (seen.has(key) || questions.has(index) && !(optionsBesideQuestion.has(index) && call.toolName === 'reimbursement.draft.get_options')) continue;
         if (!meta || !normalizedInput || meta.category.startsWith('draft') && item.kind !== 'write'
           || meta.name === 'public.lookup' && item.kind !== 'public'
           || misroutedReadTool(meta.name, itemText.get(index) ?? req.messageText)) {

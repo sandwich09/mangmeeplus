@@ -129,6 +129,28 @@ describe('reimbursement draft input completion', () => {
   const options: ToolResult = { toolName: 'reimbursement.draft.get_options', status: 'ok', sourceRefs: [], asOf: '2026-09-30T03:00:00.000Z',
     data: { actionLocator: { actionId: ACTION, taskId: DRAFT_TASK, operation: 'CREATE' }, options: { taskRevision: 0, choices: [] } } };
 
+  // NAT04 (2026-09-30): the planner asked "which bill?" before any bill had been listed.
+  it('reads the claimable bills beside a claim question asked before any options', async () => {
+    const { req } = await turn('บิลร้านเครื่องเขียนที่ส่งไว้สองใบอะ');
+    const prompts: ProviderInput[] = [], invoked: Array<{ name: string; input: unknown }> = [];
+    const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+      prompts.push(input);
+      return { ok: true, text: JSON.stringify({ calls: [], questions: [{ index: 0, text: 'จะเบิกใบไหนคะ' }] }) };
+    } };
+    const result = await runWithUsageContext({ companyId: 'company', budget: { status: 'active-v2', grant: { maxTurnSlots: 5 } as never,
+      inputDigest: req.inputEvidence!.joinedSha256, sourceRoute: 'test', calls: 0, repairCount: 0 } }, () =>
+      runSemanticTurnV2({ req, provider, draftEditEnabled: false, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        async invoke(meta, _context, args): Promise<ToolResult> {
+          invoked.push({ name: meta.name, input: args });
+          return { ...options, sourceRefs: [{ label: 'ร่างใบเบิก', module: 'reimbursements', entityType: 'reimbursement_draft_action', entityId: ACTION, permissionChecked: true }] };
+        } }));
+    assert.deepEqual(invoked, [{ name: 'reimbursement.draft.get_options', input: { operation: 'CREATE', subrequestIndex: 0 } }]);
+    assert.deepEqual(prompts.map(prompt => prompt.usageTag), ['line.loop'], 'no second planning round and no compose');
+    assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
+    assert.equal(result.semanticCoverage?.[0]?.question, 'จะเบิกใบไหนคะ');
+    assert.ok(result.sourceRefs.some(ref => ref.entityType === 'reimbursement_draft_action'), 'the API prints the bills for this action');
+  });
+
   it('keeps only API-issued draft locators on get_options', async () => {
     const { req } = await turn('งั้นช่วยทำร่างจากใบที่สอง ซื้อของใช้ในออฟฟิศ');
     assert.deepEqual(completeReimbursementDraftInput('reimbursement.draft.get_options',
