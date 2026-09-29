@@ -580,31 +580,24 @@ describe('AgentCore Runtime – L-12 invocation bounds', () => {
     }
   }
 
-  it('answers the S-4 capability probe from this runtime flag without invoking the orchestrator', async () => {
+  // Owner 2026-09-29 ("no more switches; always on"): the release copies this artifact's env forward and it
+  // went stale on UAT, so the probe reports the always-on capability whatever the env says — never a 503.
+  it('answers the S-4 capability probe as always on, whatever this runtime env says, without invoking the orchestrator', async () => {
     const prior = process.env['LINE_AI_DRAFT_EDIT_ENABLED'];
     let orchestratorCalls = 0;
     try {
-      for (const enabled of [undefined, true, false]) {
-        if (enabled === undefined) delete process.env['LINE_AI_DRAFT_EDIT_ENABLED'];
-        else process.env['LINE_AI_DRAFT_EDIT_ENABLED'] = String(enabled);
+      for (const stale of [undefined, 'true', 'false', 'not-a-boolean']) {
+        if (stale === undefined) delete process.env['LINE_AI_DRAFT_EDIT_ENABLED'];
+        else process.env['LINE_AI_DRAFT_EDIT_ENABLED'] = stale;
         await withServer({ run: async () => { orchestratorCalls += 1; throw new Error('model path must not run'); } }, async (url) => {
           const response = await fetch(`${url}/invocations`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ lineDraftEditCapabilityProbe: true }),
           });
           assert.equal(response.status, 200);
-          assert.equal((await response.json() as any).lineDraftEditEnabled, enabled ?? true);
+          assert.equal((await response.json() as any).lineDraftEditEnabled, true);
         });
       }
-      process.env['LINE_AI_DRAFT_EDIT_ENABLED'] = 'not-a-boolean';
-      await withServer({ run: async () => { orchestratorCalls += 1; throw new Error('model path must not run'); } }, async (url) => {
-        const response = await fetch(`${url}/invocations`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lineDraftEditCapabilityProbe: true }),
-        });
-        assert.equal(response.status, 503);
-        assert.equal((await response.json() as any).error, 'LINE_DRAFT_EDIT_CONFIG_INVALID');
-      });
       assert.equal(orchestratorCalls, 0);
     } finally {
       if (prior === undefined) delete process.env['LINE_AI_DRAFT_EDIT_ENABLED'];
