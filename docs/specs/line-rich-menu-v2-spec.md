@@ -211,6 +211,8 @@ Actions:
 - Do not use `mailto:`: LINE URI actions support `http`, `https`, `line`, and `tel` schemes.
 - Footer button label: `เว็บไซต์อย่างเป็นทางการ`.
 - Footer URI: `https://official.mangmeeplus.com/`.
+- Owner 2026-09-29: the `ติดต่อเจ้าหน้าที่` footer button uses a URI action to `https://lin.ee/UU9pbOI` (LINE Official `@107ewccg`) so the customer can add the account and chat with staff there. This button does not send the support command, open a web support case, or change the assistant pause. Typed commands, previously sent cards, and other support entry points keep their existing behavior; no case/history is migrated.
+- Outbound URL rewriting must preserve `lin.ee` links without adding `openExternalBrowser=1`, as it already does for LINE add-friend deep links.
 - `altText`: `ติดต่อมั่งมี Plus: contact@mangmeeplus.com โทร 098-256-5628`.
 
 ### 6.7 เริ่มต้นใช้งานฟรี

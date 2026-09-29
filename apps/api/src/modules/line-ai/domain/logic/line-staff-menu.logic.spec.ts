@@ -414,11 +414,11 @@ describe('LINE staff menu', () => {
     assert.match(rendered, /https:\/\/official\.mangmeeplus\.com\//);
     assert.match(rendered, /clipboardText/);
     assert.equal(rendered.includes('mailto:'), false);
-    // P10-L §7 / HIGH-1: the rich menu's contact tile sends "ติดต่อเรา", which lands on THIS card.
-    // Without a button here the keyword that actually reaches a person — pausing the assistant and
-    // alerting the operators — was typing-only, and nobody could discover it.
-    assert.match(rendered, /ติดต่อเจ้าหน้าที่/);
-    assert.equal(staffMenuCommand('ติดต่อเจ้าหน้าที่'), 'staff_contact', 'and the label IS the command');
+    // The contact-card button opens the staff OA; typing the same label keeps the existing support route.
+    assert.deepEqual((card.contents as any).footer.contents.at(-1).action, {
+      type: 'uri', label: 'ติดต่อเจ้าหน้าที่', uri: 'https://lin.ee/UU9pbOI',
+    });
+    assert.equal(staffMenuCommand('ติดต่อเจ้าหน้าที่'), 'staff_contact', 'typed support remains available');
   });
 
   // line-support-request-spec-th §2.4/§3. The resume command lifts a hold a HUMAN put on the

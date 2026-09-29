@@ -2,6 +2,8 @@
 
 สถานะ: implementation v2 ตาม [LINE signup recovery/resolution](line-signup-recovery-and-resolution-spec-th.md) วันที่2026-09-07; ดูหลักฐานและสถานะส่งมอบใน [plan](../plans/line-signup-recovery-and-resolution-plan.md) ไม่ใช่ประกาศว่า deploy แล้ว
 
+ข้อยกเว้นทางเข้า (Owner 2026-09-29): ปุ่ม “ติดต่อเจ้าหน้าที่” เฉพาะการ์ด “ติดต่อเรา” ที่สร้างใหม่เปิดลิงก์เพิ่มเพื่อน `https://lin.ee/UU9pbOI` ของ OA `@107ewccg` เพื่อคุยกับเจ้าหน้าที่ในบัญชีนั้น ตาม [rich menu spec §6.6](line-rich-menu-v2-spec.md#66-ติดต่อเรา) การกด URI นี้ไม่ส่งคำสั่งเข้า webhook เดิม จึงไม่สร้างเคสหรือเปลี่ยน AI pause ส่วนคำพิมพ์ ปุ่มจากข้อความเก่า และทางเข้า support จุดอื่นยังใช้สัญญาด้านล่าง เคส/ประวัติเดิมไม่ย้ายหรือปิดโดยอัตโนมัติ
+
 ## สัญญาปัจจุบัน v2
 
 ข้อกำหนดส่วนนี้และ spec recovery/resolution มีผลเหนือประวัติ v1 ด้านล่างทั้งหมด:

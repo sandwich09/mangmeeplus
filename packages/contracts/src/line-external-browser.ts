@@ -9,7 +9,7 @@ export const LINE_EXTERNAL_BROWSER_PARAM = 'openExternalBrowser';
 export const LINE_TEXT_MESSAGE_MAX_CHARS = 5000;
 export const LINE_URI_ACTION_MAX_CHARS = 1000;
 /** Stays inside LINE: LIFF pages, LINE deep links (add-friend), and the official site is not the app. */
-const SKIP_HOSTS: ReadonlySet<string> = new Set(['liff.line.me', 'line.me', 'official.mangmeeplus.com']);
+const SKIP_HOSTS: ReadonlySet<string> = new Set(['liff.line.me', 'line.me', 'lin.ee', 'official.mangmeeplus.com']);
 /** Absolute http(s) URLs in free text, stopped where LINE's linkifier stops (line-handoff-link.service.ts:17). */
 const URL_PATTERN = /https?:\/\/[^\s<>"'`)\]}]+/g;
 /** Sentence punctuation or Thai text typed straight after a link belongs to the sentence, not the link
