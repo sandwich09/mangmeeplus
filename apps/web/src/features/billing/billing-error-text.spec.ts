@@ -55,8 +55,24 @@ describe('package page error text', () => {
   });
 
   it('never passes an unmapped API sentence through (F14)', () => {
-    assert.equal(errorText({ status: 503, code: 'BILLING_PROVIDER_UNAVAILABLE', message: 'temporary provider outage' }), BILLING_GENERIC_ERROR);
+    assert.equal(errorText({ status: 409, code: 'BILLING_SOMETHING_NEW', message: 'raw server sentence' }), BILLING_GENERIC_ERROR);
     assert.equal(errorText(new Error('Unexpected provider URL')), BILLING_GENERIC_ERROR);
+  });
+
+  // Review 2026-09-29: a dropped connection or a 5xx read as "cannot confirm — contact the team with
+  // the reference", which sent owners to the phone for an outage. Those are the shared retry sentences.
+  it('answers a network failure and a 5xx with the shared retry sentences, never the team-and-reference one', () => {
+    const outage = errorText({ status: 503, code: 'BILLING_PROVIDER_UNAVAILABLE', message: 'temporary provider outage' });
+    assert.match(outage, /ยังไม่พร้อมใช้งาน/);
+    assert.match(errorText({ status: 500, message: 'Internal server error' }), /ระบบขัดข้องชั่วคราว/);
+    assert.match(errorText({ status: 502 }), /เชื่อมต่อระบบไม่ได้ชั่วคราว/);
+    assert.match(errorText({ kind: 'network_error', message: 'Network request failed.' }), /ตรวจสอบอินเทอร์เน็ต/);
+    for (const text of [outage, errorText({ status: 500 }), errorText({ kind: 'network_error' })]) {
+      assert.notEqual(text, BILLING_GENERIC_ERROR);
+      assert.doesNotMatch(text, /เลขอ้างอิง/);
+    }
+    // A code the page knows still wins over the bare status.
+    assert.equal(errorText({ status: 503, code: 'BILLING_CHECKOUT_PENDING' }), 'ระบบกำลังตรวจรายการชำระเงินเดิมกับ Stripe กรุณารอสักครู่แล้วกดลองใหม่');
   });
 
   it('says what the QR-member refusal means and drops the dead legacy mapping', () => {
@@ -72,5 +88,16 @@ describe('resend result copy', () => {
       'ส่งเอกสารไปที่ a@example.test แล้ว ตรวจกล่องจดหมายและโฟลเดอร์สแปม · วันนี้ส่งซ้ำได้อีก 2 ครั้ง');
     assert.match(billingResendText({ invoiceSent: true, receiptUpdated: false, recipientEmail: 'a@example.test', remainingToday: 0 }),
       /^ส่งใบแจ้งหนี้ไปที่ a@example\.test แล้ว ใบเสร็จไม่ส่งซ้ำ.* วันนี้ส่งซ้ำได้อีก 0 ครั้ง$/);
+  });
+
+  // The recipient panel has no resend button above this text (only the documents page does), so it
+  // must not point at one.
+  it('points the recipient panel at payment history instead of a button it does not have', () => {
+    const result = { invoiceSent: true, receiptUpdated: false, recipientEmail: 'a@example.test', remainingToday: 3 } as const;
+    const documents = billingResendText(result), recipient = billingResendText(result, 'recipient');
+    assert.match(documents, /เปิดได้จากปุ่มด้านบน/);
+    assert.doesNotMatch(recipient, /ปุ่มด้านบน/);
+    assert.match(recipient, /ประวัติการชำระเงิน/);
+    assert.match(recipient, /^ส่งใบแจ้งหนี้ไปที่ a@example\.test แล้ว.* วันนี้ส่งซ้ำได้อีก 3 ครั้ง$/);
   });
 });

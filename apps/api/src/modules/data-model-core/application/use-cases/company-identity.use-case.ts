@@ -11,7 +11,9 @@ import {
 } from '@watchdog-bms/contracts';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditService } from '../../../audit/application/audit.service';
+import { enqueueCustomerProfileSync } from '../../../billing/application/billing-company-profile';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import {
   allowedChangeKinds,
@@ -44,6 +46,7 @@ export class CompanyIdentityUseCase {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly config: AppConfigService,
   ) {}
 
   async get(ctx: RequestContext, companyId: string): Promise<CompanyIdentityResponse> {
@@ -211,7 +214,8 @@ export class CompanyIdentityUseCase {
     });
   }
 
-  async patch(ctx: RequestContext, companyId: string, body: PatchCompanyIdentityRequest) {
+  /** `syncReason` names who changed it on the Stripe Customer sync this write queues (R-E3). */
+  async patch(ctx: RequestContext, companyId: string, body: PatchCompanyIdentityRequest, syncReason = 'ร้านปรับข้อมูลจดทะเบียน') {
     const normalized = this.normalizeBody(body);
 
     return this.prisma.client.$transaction(async (tx) => {
@@ -337,6 +341,11 @@ export class CompanyIdentityUseCase {
         },
         tx,
       );
+
+      // R-A2/R-E3: the registered name and address are what Stripe prints on the documents, so every
+      // write of them — the shop's own, or the team's through UpdatePartnerIdentityUseCase — queues the
+      // Customer sync in this same transaction. A no-op with billing off or no Stripe Customer yet.
+      await enqueueCustomerProfileSync(tx, this.config, companyId, syncReason, ctx.userId, nextVersion);
 
       return { legalIdentityVersion: nextVersion, revisionId: revision.id };
     });

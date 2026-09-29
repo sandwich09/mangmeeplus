@@ -51,22 +51,43 @@ export function planLockReason(source: { lockReason?: PlanLockReason } | null | 
 /**
  * The one wording table for a locked shop (spec R2/R10), read by the shell banner, the renewal
  * page and the package page. A shop that never had a package is told it has none to renew.
+ * `staff` is for a member who cannot buy (review 2026-09-29): it says who can, since a hint with
+ * no button under it was a dead end — and never "พักการใช้งาน" for a shop that is only unpaid.
  */
-export const PLAN_LOCK_COPY: Record<PlanLockReason, { banner: string; title: string; body: string }> = {
+export const PLAN_LOCK_COPY: Record<PlanLockReason, { banner: string; title: string; body: string; staff: string }> = {
   no_package: {
     banner: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ · เลือกแพ็กเกจเพื่อเริ่มใช้งาน',
     title: 'ยังไม่มีแพ็กเกจ',
     body: 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน ข้อมูลร้านและการตั้งค่าของคุณอยู่ครบ',
+    staff: 'ร้านนี้ยังไม่มีแพ็กเกจ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อเริ่มใช้งาน',
   },
   trial_ended: {
     banner: 'แพ็กเกจของร้านหมดอายุแล้ว · เลือกแพ็กเกจเพื่อใช้งานต่อ',
     title: 'แพ็กเกจหมดอายุแล้ว',
     body: 'ข้อมูลทั้งหมดยังอยู่ครบ ไม่มีอะไรหาย เมื่อเลือกแพ็กเกจแล้วใช้งานต่อได้ทันที',
+    staff: 'แพ็กเกจของร้านหมดอายุแล้ว ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อใช้งานต่อ',
   },
 };
 
 /** The single next step for both reasons: there is nothing to renew any more, only to choose. */
 export const PLAN_LOCK_CTA = 'เลือกแพ็กเกจ';
+
+/**
+ * RV30 fallback: the package page reloads a shell that is still locked after a purchase applied.
+ * Once per attempt ACROSS page loads (`unlock-reload:<attemptId>` in sessionStorage), so a notice
+ * that keeps lagging cannot reload the page forever. Storage that throws or is missing answers
+ * false: no reload beats a reload loop, and the shell's own focus/visibility re-reads still unlock it.
+ */
+export function claimUnlockReload(storage: () => Pick<Storage, 'getItem' | 'setItem'>, attemptId: string): boolean {
+  try {
+    const store = storage(), key = `unlock-reload:${attemptId}`;
+    if (store.getItem(key)) return false;
+    store.setItem(key, '1');
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // ---- Sidebar card (Owner 2026-08-31: the warning lives in the sidebar, user-collapsible) ----
 

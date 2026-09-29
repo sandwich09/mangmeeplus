@@ -12,6 +12,9 @@ export const LINE_URI_ACTION_MAX_CHARS = 1000;
 const SKIP_HOSTS: ReadonlySet<string> = new Set(['liff.line.me', 'line.me', 'official.mangmeeplus.com']);
 /** Absolute http(s) URLs in free text, stopped where LINE's linkifier stops (line-handoff-link.service.ts:17). */
 const URL_PATTERN = /https?:\/\/[^\s<>"'`)\]}]+/g;
+/** Sentence punctuation or Thai text typed straight after a link belongs to the sentence, not the link
+ *  (`)` never gets this far: URL_PATTERN already stops before it). */
+const URL_TRAILER = /[.,”฀-๿]+$/;
 
 function parse(url: string): URL | null { try { return new URL(url); } catch { return null; } }
 
@@ -45,7 +48,11 @@ export function stripLineExternalBrowserParam(pathOrUrl: string): string {
 
 /** Over `maxChars` the text stays as it was — never a link cut in half. The v2 plan passes Infinity. */
 export function withLineExternalBrowserText(text: string, maxChars: number = LINE_TEXT_MESSAGE_MAX_CHARS): string {
-  const out = text.replace(URL_PATTERN, (url) => withLineExternalBrowserParam(url));
+  const out = text.replace(URL_PATTERN, (match) => {
+    // The param goes on the link and the trailer stays after it: "…/billing." must not become "…/billing.?…".
+    const trailer = URL_TRAILER.exec(match)?.[0] ?? '';
+    return `${withLineExternalBrowserParam(match.slice(0, match.length - trailer.length))}${trailer}`;
+  });
   return out.length <= maxChars ? out : text;
 }
 

@@ -1,6 +1,7 @@
 import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { planTermState } from '@watchdog-bms/contracts';
 import type {
   SystemUserLookupDto,
   SystemUserLookupItemDto,
@@ -76,7 +77,9 @@ export class LookupUsersUseCase {
           orderBy: { createdAt: 'asc' },
           select: {
             status: true,
-            company: { select: { id: true, name: true, status: true } },
+            company: { select: { id: true, name: true, status: true, planTerm: { select: {
+              tierKey: true, termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true,
+            } } } },
             roles: { select: { role: { select: { key: true } } } },
           },
         },
@@ -111,6 +114,7 @@ export class LookupUsersUseCase {
         companyId: m.company.id,
         companyName: m.company.name,
         companyStatus: m.company.status as SystemUserLookupItemDto['memberships'][number]['companyStatus'],
+        companyPlanState: planTermState(m.company.planTerm, new Date(), m.company.status),
         membershipStatus: m.status as SystemUserLookupItemDto['memberships'][number]['membershipStatus'],
         roleKeys: m.roles.map((r) => r.role.key),
       })),

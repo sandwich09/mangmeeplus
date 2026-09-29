@@ -131,6 +131,7 @@ export class BillingRecipientAdminDto extends BillingEventPreviewDto {
 }
 export class BillingDocumentResendAdminDto {
   @IsString() @MinLength(1) @MaxLength(500) reason!: string;
+  @IsOptional() @IsString() @MaxLength(64) supportRequestId?: string;
 }
 
 export class BillingPlanAdjustmentDto extends BillingEventPreviewDto {

@@ -43,11 +43,14 @@ export class RequestLineSignupSupportUseCase {
       // The browser supplies no request, tenant or LINE identity to associate with this case.
       const signup = await tx.companySignupRequest.findFirst({
         where: { source: SIGNUP_SOURCE_LINE_OA, lineProviderUserId: lineUserId, lineChannelId: verified.channelId },
-        orderBy: { createdAt: 'desc' }, select: { id: true },
+        orderBy: { createdAt: 'desc' }, select: { id: true, state: true, companyId: true },
       });
+      // A COMPLETED application IS a shop (locked until it buys): the operator must see which one,
+      // not "ผู้ที่ยังไม่ได้เปิดร้าน" (review 2026-09-29).
+      const companyId = signup?.state === 'COMPLETED' ? signup.companyId ?? undefined : undefined;
       const created = await tx.lineSupportRequest.create({
         data: {
-          lineUserId, lineUserIdHash, signupRequestId: signup?.id,
+          lineUserId, lineUserIdHash, signupRequestId: signup?.id, companyId,
           requestText: LIFF_SUPPORT_REQUEST_TEXT,
           lastMessageText: LIFF_SUPPORT_REQUEST_TEXT,
           // สัญญา v3 ข้อ 9: the chat starts where the ask does.
@@ -55,6 +58,7 @@ export class RequestLineSignupSupportUseCase {
         },
       });
       await tx.auditLog.create({ data: {
+        ...(companyId ? { companyId } : {}),
         action: 'signup.line.support_requested', targetType: 'line_support_request', targetId: created.id,
         requestId: correlationRequestId, result: 'SUCCESS', riskLevel: 'LOW',
         metadataJson: { surface: 'liff_signup', linkedToSignup: Boolean(signup) },

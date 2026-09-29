@@ -117,9 +117,26 @@ describe('LookupUsersUseCase — response shape', () => {
       companyId: 'co-1',
       companyName: 'ร้านมั่งมี',
       companyStatus: 'ACTIVE',
+      companyPlanState: 'ACTIVE',
       membershipStatus: 'ACTIVE',
       roleKeys: ['OWNER', 'ADMIN'],
     });
+  });
+
+  // item 8: a term-locked company must never read as "ปิดใช้งาน" on this screen either.
+  it('reports a never-purchased company as NO_PACKAGE, not by its raw ACTIVE status', async () => {
+    const start = new Date('2026-09-01T00:00:00.000Z');
+    const users = [userRow({
+      memberships: [{
+        status: 'ACTIVE',
+        company: { id: 'co-1', name: 'ร้านมั่งมี', status: 'ACTIVE',
+          planTerm: { tierKey: 'FREE_TRIAL_15', termStartAt: start, termEndsAt: start, renewCount: 0, termDisabledAt: null } },
+        roles: [],
+      }],
+    })];
+    const [item] = (await run('สมชาย', { users }).result).items;
+    assert.equal(item.memberships[0].companyPlanState, 'NO_PACKAGE');
+    assert.equal(item.memberships[0].companyStatus, 'ACTIVE');
   });
 
   it('keeps a DISABLED membership — a merge leaves one behind and the admin has to see it', async () => {

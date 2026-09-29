@@ -26,7 +26,8 @@ function makeStore(overrides: {
 
   const client: any = {
     billingInvoice: { findFirst: async () => invoice },
-    billingIssue: { findFirst: async () => null, findUnique: async () => null },
+    billingIssue: { findFirst: async () => null, findUnique: async () => null,
+      create: async ({ data }: any) => ({ id: 'iss-1', version: 0, episode: 1, state: 'OPEN', ...data }) },
     billingOperation: {
       create: async ({ data }: any) => { const now = new Date(); const row = { id: `op-${++opSeq}`, version: 0, state: data.state ?? 'PREVIEW', leaseToken: null, leaseUntil: null,
         approverUserId: null, idempotencyKey: null, errorCode: null, observedAt: null, scheduledFor: null, resultJson: null, createdAt: now, updatedAt: now, ...data }; operations.push(row); return row; },
@@ -40,15 +41,14 @@ function makeStore(overrides: {
     billingAccount: {
       findUnique: async () => account,
       update: async ({ data }: any) => { Object.assign(account, resolveData(account, data)); return account; },
-      updateMany: async ({ where }: any) => {
-        if (where.leaseUntil && where.OR === undefined) { /* not used here */ }
-        Object.assign(account, { leaseToken: 'lease', leaseUntil: new Date(Date.now() + 120_000) });
-        return { count: 1 };
-      },
+      updateMany: async ({ data }: any) => { Object.assign(account, resolveData(account, data)); return { count: 1 }; },
     },
     auditLog: { create: async ({ data }: any) => { auditLogs.push(data); return data; } },
     emailSendAttempt: { create: async ({ data }: any) => { emailAttempts.push(data); return data; } },
     outboxEvent: { upsert: async ({ create }: any) => { outboxEvents.push(create); return create; } },
+    // Only what detectBillingIssue's no-prior-issue path touches (item 4's aged-unknown test):
+    // no SLA policy configured, and a plain create so the row it returns has an episode to log.
+    billingSettings: { findUnique: async () => null },
     userCredential: { findUnique: async ({ where }: any) => ({ userId: where.userId, status: 'ACTIVE', mustChangePassword: false, expiresAt: null, updatedAt: new Date('2026-01-01T00:00:00.000Z') }) },
     // Row-locking only matters against a real Postgres; the fake store has no concurrency to guard.
     $queryRaw: async () => [],
@@ -66,6 +66,7 @@ function makeStore(overrides: {
       }
       if (key === 'state' && value && typeof value === 'object' && 'in' in (value as any)) return (value as any).in.includes(row.state);
       if (key === 'id' && value && typeof value === 'object' && 'not' in (value as any)) return row.id !== (value as any).not;
+      if (value && typeof value === 'object' && 'gt' in (value as any)) return row[key] instanceof Date && row[key] > (value as any).gt;
       if (value === undefined) return true;
       return row[key] === value;
     });
@@ -257,5 +258,79 @@ describe('BillingDocumentAdminService.resend — R-D1 for admins (DQ10)', () => 
     assert.equal(auditLogs.some((entry) => entry.action === 'billing.document.resent' && entry.metadataJson.actor === 'ADMIN'), true);
     assert.equal(outboxEvents.length, 1);
     assert.equal(JSON.stringify(outboxEvents[0]).includes('old@example.com'), false, 'no email in the outbox payload');
+  });
+
+  it('records an optional supportRequestId on the audit entry, like the admin recipient change does (item 5)', async () => {
+    const { service, auditLogs } = makeStore({
+      stripeRequest: async (method: string, path: string) => {
+        if (method === 'GET' && path.startsWith('/invoices/')) return { id: 'in_1', livemode: false, customer: 'cus_1', parent: null, currency: 'thb', status: 'paid', total: 10_000, amount_paid: 10_000 };
+        if (path.includes('/invoices/') && path.includes('/send')) return { id: 'in_1' };
+        if (path.startsWith('/charges/')) return { receipt_email: 'old@example.com', metadata: {} };
+        return { id: 'in_1' };
+      },
+      invoice: { id: 'inv-1', billingAccountId: 'acct-1', providerNumber: 'INV-1', providerStatus: 'paid', applyStatus: 'APPLIED',
+        providerInvoiceId: 'in_1', providerChargeId: null, subscriptionId: null, totalSatang: 10_000, paidSatang: 10_000 },
+    });
+    const limits = { inspect: async () => ({ allowed: true, retryAfterSeconds: 0, count: 1 }), consume: async () => ({ allowed: true, retryAfterSeconds: 0, count: 1 }) } as any;
+    await service.resend(CONTEXT, 'co-1', 'inv-1', 'ลูกค้าโทรมาขอใบใหม่', limits, 'sup-123');
+    const entry = auditLogs.find((row) => row.action === 'billing.document.resent');
+    assert.equal(entry?.metadataJson.supportRequestId, 'sup-123');
+  });
+
+  it('omits supportRequestId from the audit entry when none is given', async () => {
+    const { service, auditLogs } = makeStore({
+      stripeRequest: async (method: string, path: string) => {
+        if (method === 'GET' && path.startsWith('/invoices/')) return { id: 'in_1', livemode: false, customer: 'cus_1', parent: null, currency: 'thb', status: 'paid', total: 10_000, amount_paid: 10_000 };
+        if (path.includes('/invoices/') && path.includes('/send')) return { id: 'in_1' };
+        if (path.startsWith('/charges/')) return { receipt_email: 'old@example.com', metadata: {} };
+        return { id: 'in_1' };
+      },
+      invoice: { id: 'inv-1', billingAccountId: 'acct-1', providerNumber: 'INV-1', providerStatus: 'paid', applyStatus: 'APPLIED',
+        providerInvoiceId: 'in_1', providerChargeId: null, subscriptionId: null, totalSatang: 10_000, paidSatang: 10_000 },
+    });
+    const limits = { inspect: async () => ({ allowed: true, retryAfterSeconds: 0, count: 1 }), consume: async () => ({ allowed: true, retryAfterSeconds: 0, count: 1 }) } as any;
+    await service.resend(CONTEXT, 'co-1', 'inv-1', 'ลูกค้าโทรมาขอใบใหม่', limits);
+    const entry = auditLogs.find((row) => row.action === 'billing.document.resent');
+    assert.equal('supportRequestId' in (entry?.metadataJson ?? {}), false);
+  });
+});
+
+describe('BillingDocumentAdminService.run — aged UNKNOWN (item 4, mirrors billing-refunds.service CONTROL_REFUND_AGED_UNKNOWN)', () => {
+  it('blocks a recipient change with CONTROL_RECIPIENT_AGED_UNKNOWN once 23h pass with no confirmed Stripe readback', async () => {
+    const { service, client, operations } = makeStore();
+    const op = await client.billingOperation.create({ data: {
+      type: 'UPDATE_BILLING_EMAIL', state: 'UNKNOWN', companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false,
+      referenceId: 'inv-1', initiatorUserId: 'admin-1', sourceVersion: 3, reason: 'ลูกค้าโทรแจ้งเปลี่ยนอีเมล',
+      requestHash: 'hash-1', expiresAt: new Date(Date.now() + 600_000),
+      proposedJson: { accountId: 'acct-1', customerId: 'cus_1', companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false,
+        invoiceId: 'inv-1', invoiceNumber: 'INV-0001', membershipId: 'mem-1', actorCompanyId: 'sys-co',
+        previousEmail: 'old@example.com', target: { email: 'new@example.com', source: 'ADMIN' }, localHash: 'hash-x' },
+      // Dispatched 24h ago; Stripe still reads back the old email (makeStore's default customer fake).
+      resultJson: { dispatchedAt: new Date(Date.now() - 24 * 3_600_000).toISOString(), providerKey: 'billing-recipient-admin-prior' },
+    } });
+    const result = await service.run(CONTEXT, op.id, op.version);
+    assert.equal(result.state, 'BLOCKED');
+    assert.equal(result.errorCode, 'CONTROL_RECIPIENT_AGED_UNKNOWN');
+    assert.equal(operations[0].leaseToken, null, 'lease released');
+  });
+
+  it('still just leaves it UNKNOWN under 23h old (unaged) so the reconciler keeps polling', async () => {
+    // A readback that matches neither the old nor the new email (not the aged case: still needs
+    // review, same as before this change) — CONTROL_PREVIEW_STALE with dispatchedAt set stays
+    // CONTROL_RECIPIENT_REVIEW/UNKNOWN, unlike the aged branch above.
+    const { service, client } = makeStore({ stripeRequest: async (_method: string, path: string) =>
+      path.includes('/customers/') ? { id: 'cus_1', object: 'customer', livemode: false, email: 'someone-else@example.com', metadata: { billingAccountId: 'acct-1' } } : {} });
+    const op = await client.billingOperation.create({ data: {
+      type: 'UPDATE_BILLING_EMAIL', state: 'UNKNOWN', companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false,
+      referenceId: 'inv-1', initiatorUserId: 'admin-1', sourceVersion: 3, reason: 'ลูกค้าโทรแจ้งเปลี่ยนอีเมล',
+      requestHash: 'hash-1', expiresAt: new Date(Date.now() + 600_000),
+      proposedJson: { accountId: 'acct-1', customerId: 'cus_1', companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false,
+        invoiceId: 'inv-1', invoiceNumber: 'INV-0001', membershipId: 'mem-1', actorCompanyId: 'sys-co',
+        previousEmail: 'old@example.com', target: { email: 'new@example.com', source: 'ADMIN' }, localHash: 'hash-x' },
+      resultJson: { dispatchedAt: new Date(Date.now() - 60_000).toISOString(), providerKey: 'billing-recipient-admin-prior' },
+    } });
+    const result = await service.run(CONTEXT, op.id, op.version);
+    assert.equal(result.state, 'UNKNOWN');
+    assert.equal(result.errorCode, 'CONTROL_RECIPIENT_REVIEW');
   });
 });

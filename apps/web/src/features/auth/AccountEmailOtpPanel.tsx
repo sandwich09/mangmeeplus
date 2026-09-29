@@ -111,7 +111,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0">
         <h2 id={`${id}-title`} className="text-base font-semibold text-gray-900">อีเมลบัญชีของฉัน</h2>
-        <p className="mt-1 text-sm leading-6 text-gray-500">ใช้เข้าสู่ระบบด้วยรหัส OTP รับแจ้งเตือนบัญชี และเป็นอีเมลตั้งต้นของเอกสารการชำระเงิน</p>
+        <p className="mt-1 text-sm leading-6 text-gray-500">ใช้เข้าสู่ระบบด้วยรหัส OTP และรับแจ้งเตือนบัญชี · ถ้ายืนยันแล้ว การซื้อครั้งแรกจะใช้อีเมลนี้รับเอกสาร · เปลี่ยนอีเมลรับเอกสารได้ที่หน้าแพ็กเกจ</p>
       </div>
       {state?.emailRequirement === 'READY' && !editing && <button type="button" className={button} onClick={() => { setEmail(''); setPassword(''); setShowPassword(false); setError(''); setNotice(''); setEditingLogin(false); setEditing(true); }}>เปลี่ยนอีเมล</button>}
     </div>
