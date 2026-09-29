@@ -6,7 +6,6 @@ import {
   type PatchCompanyIdentityRequest,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
-import { AppConfigService } from '../../../../common/config/app-config.service';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { CompanyIdentityUseCase } from '../../../data-model-core/application/use-cases/company-identity.use-case';
 import {
@@ -14,7 +13,6 @@ import {
   fieldLatchFromRevisions,
   type LegalIdentityField,
 } from '../../../data-model-core/domain/logic/company-legal-identity.logic';
-import { enqueueCustomerProfileSync } from '../../../billing/application/billing-company-profile';
 import { partnerMetadataLockError } from '../../domain/logic/partner-lock.logic';
 import { GetPartnerDetailUseCase } from './get-partner-detail.use-case';
 
@@ -51,7 +49,6 @@ export class UpdatePartnerIdentityUseCase {
     private readonly prisma: PrismaService,
     private readonly identity: CompanyIdentityUseCase,
     private readonly getDetail: GetPartnerDetailUseCase,
-    private readonly config: AppConfigService,
   ) {}
 
   async execute(cmd: UpdatePartnerIdentityCommand): Promise<PartnerCompanyDetailDto> {
@@ -65,11 +62,13 @@ export class UpdatePartnerIdentityUseCase {
 
     // 409 (stale legalIdentityVersion) and 422 (identity_change_kind_not_allowed / bad field
     // shape) from `patch` propagate unchanged — the console shows the same errors the company's
-    // own settings page would.
+    // own settings page would. `patch` also queues the Stripe Customer sync in its own transaction,
+    // so a second enqueue here (same idempotency key) would fail inside this audit transaction.
     const { legalIdentityVersion, revisionId } = await this.identity.patch(
       { userId: cmd.requestingAdminUserId, requestId: cmd.requestId } as RequestContext,
       cmd.companyId,
       cmd.body,
+      'ปรับข้อมูลจดทะเบียนโดยทีมงาน',
     );
 
     await this.prisma.client.$transaction(async (tx) => {
@@ -95,8 +94,6 @@ export class UpdatePartnerIdentityUseCase {
           },
         },
       });
-      await enqueueCustomerProfileSync(tx, this.config, cmd.companyId, 'ปรับข้อมูลจดทะเบียนโดยทีมงาน',
-        cmd.requestingAdminUserId, legalIdentityVersion);
     });
 
     return this.getDetail.execute(cmd.companyId);

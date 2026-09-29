@@ -924,7 +924,10 @@ export class BillingService {
       // whether this shop never had a package or ran one to its end. EXPIRED only; a HELD company
       // is an admin hold, which is neither.
       ...(state.accessState === 'EXPIRED' && term ? { lockReason: planTermLockReason(term) } : {}),
-      attemptId: attempt?.id ?? null, reference: invoice?.id ?? attempt?.id ?? null, observedAt: account?.observedAt?.toISOString() ?? null,
+      // The number a shop reads to the team: the purchase in flight while it has no invoice of its own
+      // (an older invoice would send support to the wrong row), the invoice once there is one.
+      attemptId: attempt?.id ?? null, reference: (attempt && invoice?.sourceAttemptId !== attempt.id ? attempt.id : invoice?.id) ?? null,
+      observedAt: account?.observedAt?.toISOString() ?? null,
       canCancelCheckout: !!attempt?.checkoutSessionId && !['COMPLETED','EXPIRED','FAILED'].includes(attempt.status) &&
         !(invoice?.sourceAttemptId === attempt.id && invoice.providerStatus === 'paid'),
       effectiveCapacity: term ? effectivePlanCapacity(term) : null, tierKey: term?.tierKey ?? null, interval: pending?.currentOffer?.interval ?? snapshot?.interval ?? null, termEndsAt: term?.termEndsAt.toISOString() ?? null, paidThrough: account?.paidThrough?.toISOString() ?? null,

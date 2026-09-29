@@ -101,6 +101,8 @@ function makePrisma(seed: {
 }
 
 const audit = { log: async () => undefined } as any;
+// Billing off: the Customer sync the patch queues is a no-op, so these tests need no billing tables.
+const billingOff = { stripeAccountId: '', billingMode: 'disabled' } as any;
 
 function ctx(permissions: string[]) {
   return { userId: 'u-1', requestId: 'req-1', companyId: 'co-1', permissions } as any;
@@ -113,7 +115,7 @@ describe('CompanyIdentityUseCase business type', () => {
   it('saves TSIC/OTHER with CAS and audit without changing legal identity', async () => {
     const { prisma, state } = makePrisma({});
     const entries: any[] = [];
-    const service = new CompanyIdentityUseCase(prisma, { log: async (...args: any[]) => { entries.push(args); } } as any);
+    const service = new CompanyIdentityUseCase(prisma, { log: async (...args: any[]) => { entries.push(args); } } as any, billingOff);
     const actor = ctx(['company.legal_identity.manage']);
     assert.deepEqual(await service.patchBusinessType(actor, 'co-1', { expectedVersion: 0, code: '56101' }), { code: '56101', other: null, version: 1 });
     await assert.rejects(() => service.patchBusinessType(actor, 'co-1', { expectedVersion: 0, code: 'OTHER', other: 'stale' }), ConflictException);
@@ -135,7 +137,7 @@ describe('CompanyIdentityUseCase business type', () => {
 
   it('rejects invalid codes, blank OTHER, wrong types and overlong descriptions before any write', async () => {
     const { prisma, writes } = makePrisma({});
-    const service = new CompanyIdentityUseCase(prisma, audit);
+    const service = new CompanyIdentityUseCase(prisma, audit, billingOff);
     for (const input of [{ code: '99999' }, { code: 'A' }, { code: 'OTHER', other: ' ' }, { code: 'OTHER', other: 'ก'.repeat(201) }, { code: '56101', other: {} }, { code: undefined }, { code: '56101', expectedVersion: -1 }]) {
       await assert.rejects(() => service.patchBusinessType(ctx([]), 'co-1', { expectedVersion: 0, ...input } as any), UnprocessableEntityException);
     }
@@ -148,7 +150,7 @@ describe('CompanyIdentityUseCase.get', () => {
   // answers, and step 5 of the wizard renders them differently.
   it('omits the sections the caller cannot read', async () => {
     const { prisma } = makePrisma({});
-    const response = await new CompanyIdentityUseCase(prisma, audit).get(ctx(SETUP_ONLY), 'co-1');
+    const response = await new CompanyIdentityUseCase(prisma, audit, billingOff).get(ctx(SETUP_ONLY), 'co-1');
 
     assert.equal('vatRegistration' in response, false);
     assert.equal('branches' in response, false);
@@ -158,7 +160,7 @@ describe('CompanyIdentityUseCase.get', () => {
 
   it('masks the identity under company.setup.read alone', async () => {
     const { prisma } = makePrisma({});
-    const response = await new CompanyIdentityUseCase(prisma, audit).get(ctx(SETUP_ONLY), 'co-1');
+    const response = await new CompanyIdentityUseCase(prisma, audit, billingOff).get(ctx(SETUP_ONLY), 'co-1');
 
     assert.deepEqual(response.identity, {
       masked: true,
@@ -171,7 +173,7 @@ describe('CompanyIdentityUseCase.get', () => {
 
   it('returns the full identity with the legal read permission', async () => {
     const { prisma } = makePrisma({});
-    const response = await new CompanyIdentityUseCase(prisma, audit).get(ctx(FULL), 'co-1');
+    const response = await new CompanyIdentityUseCase(prisma, audit, billingOff).get(ctx(FULL), 'co-1');
 
     assert.equal(response.identity?.masked, false);
     assert.equal((response.identity as any).taxId, '0105556000001');
@@ -183,7 +185,7 @@ describe('CompanyIdentityUseCase.get', () => {
   // to offer, so it ships to everyone who can open the screen — and carries no identity value.
   it('always ships the control block without leaking latch details', async () => {
     const { prisma } = makePrisma({ company: { legalIdentityCaptureCompletedAt: new Date(), legalIdentityAuthoritativeAt: new Date() } });
-    const response = await new CompanyIdentityUseCase(prisma, audit).get(ctx(SETUP_ONLY), 'co-1');
+    const response = await new CompanyIdentityUseCase(prisma, audit, billingOff).get(ctx(SETUP_ONLY), 'co-1');
 
     assert.deepEqual(response.control, {
       legalIdentityVersion: 2,
@@ -196,11 +198,11 @@ describe('CompanyIdentityUseCase.get', () => {
 
   it('does not leak the VAT prompt state through a readiness reason', async () => {
     const { prisma } = makePrisma({ promptResolved: false });
-    const hidden = await new CompanyIdentityUseCase(prisma, audit).get(ctx(SETUP_ONLY), 'co-1');
+    const hidden = await new CompanyIdentityUseCase(prisma, audit, billingOff).get(ctx(SETUP_ONLY), 'co-1');
     assert.deepEqual(hidden.readiness.identity?.reasons, []);
 
     const { prisma: prisma2 } = makePrisma({ promptResolved: false });
-    const shown = await new CompanyIdentityUseCase(prisma2, audit).get(ctx(FULL), 'co-1');
+    const shown = await new CompanyIdentityUseCase(prisma2, audit, billingOff).get(ctx(FULL), 'co-1');
     assert.deepEqual(shown.readiness.identity?.reasons, ['vat_status_unanswered']);
   });
 
@@ -211,7 +213,7 @@ describe('CompanyIdentityUseCase.get', () => {
         { legalIdentityVersion: 2, changeKind: 'LEGAL_CHANGE', snapshotJson: { registeredName: 'ข', addressJson: ADDRESS } },
       ],
     });
-    const response = await new CompanyIdentityUseCase(prisma, audit).get(ctx(FULL), 'co-1');
+    const response = await new CompanyIdentityUseCase(prisma, audit, billingOff).get(ctx(FULL), 'co-1');
     assert.deepEqual(response.control.fieldLatched, { registeredName: true, addressJson: false });
   });
 });
@@ -221,7 +223,7 @@ describe('CompanyIdentityUseCase.patch', () => {
 
   it('writes the field, bumps the version, mirrors the profile and appends a revision', async () => {
     const { prisma, state, writes } = makePrisma({});
-    const result = await new CompanyIdentityUseCase(prisma, audit).patch(ctx(FULL), 'co-1', {
+    const result = await new CompanyIdentityUseCase(prisma, audit, billingOff).patch(ctx(FULL), 'co-1', {
       ...capture,
       taxId: '0-9940-00165-67-6',
     });
@@ -236,7 +238,7 @@ describe('CompanyIdentityUseCase.patch', () => {
   it('refuses a stale version before writing anything', async () => {
     const { prisma, writes } = makePrisma({});
     await assert.rejects(
-      () => new CompanyIdentityUseCase(prisma, audit).patch(ctx(FULL), 'co-1', { ...capture, expectedLegalIdentityVersion: 1, registeredName: 'x' }),
+      () => new CompanyIdentityUseCase(prisma, audit, billingOff).patch(ctx(FULL), 'co-1', { ...capture, expectedLegalIdentityVersion: 1, registeredName: 'x' }),
       ConflictException,
     );
     assert.deepEqual(writes, []);
@@ -249,7 +251,7 @@ describe('CompanyIdentityUseCase.patch', () => {
     const { prisma, state } = makePrisma({
       company: { legalIdentityCaptureCompletedAt: null, legalIdentityAuthoritativeAt: authoritativeAt },
     });
-    await new CompanyIdentityUseCase(prisma, audit).patch(ctx(FULL), 'co-1', { ...capture, taxId: '0994000165676' });
+    await new CompanyIdentityUseCase(prisma, audit, billingOff).patch(ctx(FULL), 'co-1', { ...capture, taxId: '0994000165676' });
 
     assert.equal(state.company.tinExistsStatus, null);
     assert.equal(state.company.verificationLastAttemptStatus, null);
@@ -260,7 +262,7 @@ describe('CompanyIdentityUseCase.patch', () => {
     const { prisma } = makePrisma({ company: { legalIdentityCaptureCompletedAt: new Date(), legalIdentityAuthoritativeAt: new Date() } });
     await assert.rejects(
       () =>
-        new CompanyIdentityUseCase(prisma, audit).patch(ctx(FULL), 'co-1', {
+        new CompanyIdentityUseCase(prisma, audit, billingOff).patch(ctx(FULL), 'co-1', {
           expectedLegalIdentityVersion: 2,
           changeKind: 'CORRECTION',
           registeredName: 'ชื่อใหม่',
@@ -278,7 +280,7 @@ describe('CompanyIdentityUseCase.patch', () => {
 
   it('rejects a no-op and a malformed tax id and an unknown address key', async () => {
     const { prisma } = makePrisma({});
-    const useCase = new CompanyIdentityUseCase(prisma, audit);
+    const useCase = new CompanyIdentityUseCase(prisma, audit, billingOff);
     await assert.rejects(() => useCase.patch(ctx(FULL), 'co-1', capture), UnprocessableEntityException);
     await assert.rejects(() => useCase.patch(ctx(FULL), 'co-1', { ...capture, taxId: '123' }), UnprocessableEntityException);
     await assert.rejects(
@@ -287,9 +289,43 @@ describe('CompanyIdentityUseCase.patch', () => {
     );
   });
 
+  // Review 2026-09-29: the shop's own edit never reached Stripe — only the team's did — so its next
+  // invoice still carried the old name/address. The sync is queued in the identity transaction itself.
+  it('queues the Stripe Customer sync in the same transaction, only when the shop has a Customer', async () => {
+    const billingOn = { stripeAccountId: 'acct_test', billingMode: 'test' } as any;
+    const run = async (customerId: string | null, reason?: string) => {
+      const { prisma } = makePrisma({});
+      const ops: { data: any; tx: unknown }[] = [];
+      let identityTx: unknown;
+      const inner = prisma.client.$transaction;
+      prisma.client.$transaction = (fn: (t: any) => Promise<any>) => inner((t: any) => {
+        identityTx = t;
+        t.billingAccount = { findUnique: async ({ where }: any) => {
+          assert.deepEqual(where, { companyId_stripeAccountId_livemode: { companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false } });
+          return { id: 'acct-1', stripeAccountId: 'acct_test', livemode: false, customerId, version: 7 };
+        } };
+        t.billingOperation = { create: async ({ data }: any) => { ops.push({ data, tx: t }); return {}; } };
+        return fn(t);
+      });
+      await new CompanyIdentityUseCase(prisma, audit, billingOn).patch(ctx(FULL), 'co-1', { ...capture, registeredName: 'บริษัท ชื่อใหม่ จำกัด' }, reason);
+      return { ops, identityTx };
+    };
+
+    const shop = await run('cus_1');
+    assert.equal(shop.ops.length, 1);
+    assert.equal(shop.ops[0]!.tx, shop.identityTx, 'queued through the identity transaction, not a later one');
+    assert.equal(shop.ops[0]!.data.type, 'CUSTOMER_PROFILE_SYNC');
+    assert.equal(shop.ops[0]!.data.idempotencyKey, 'customer-sync:co-1:3');
+    assert.equal(shop.ops[0]!.data.initiatorUserId, 'u-1');
+    assert.equal(shop.ops[0]!.data.reason, 'ร้านปรับข้อมูลจดทะเบียน');
+    // The team's path names itself; a shop with no Stripe Customer yet queues nothing.
+    assert.equal((await run('cus_1', 'ปรับข้อมูลจดทะเบียนโดยทีมงาน')).ops[0]!.data.reason, 'ปรับข้อมูลจดทะเบียนโดยทีมงาน');
+    assert.equal((await run(null)).ops.length, 0);
+  });
+
   it('records the legal date on a legal change', async () => {
     const { prisma, state } = makePrisma({ company: { legalIdentityCaptureCompletedAt: new Date() } });
-    await new CompanyIdentityUseCase(prisma, audit).patch(ctx(FULL), 'co-1', {
+    await new CompanyIdentityUseCase(prisma, audit, billingOff).patch(ctx(FULL), 'co-1', {
       expectedLegalIdentityVersion: 2,
       changeKind: 'LEGAL_CHANGE',
       registeredName: 'บริษัท ทดสอบใหม่ จำกัด',
@@ -306,7 +342,7 @@ describe('CompanyIdentityUseCase.completeCapture', () => {
 
   it('closes the window once the identity is complete', async () => {
     const { prisma, state } = makePrisma({ branches: readyBranches, promptResolved: true });
-    const result = await new CompanyIdentityUseCase(prisma, audit).completeCapture(ctx(FULL), 'co-1', 2);
+    const result = await new CompanyIdentityUseCase(prisma, audit, billingOff).completeCapture(ctx(FULL), 'co-1', 2);
 
     assert.deepEqual(result, { legalIdentityVersion: 2, captureWindowOpen: false });
     assert.ok(state.company.legalIdentityCaptureCompletedAt instanceof Date);
@@ -319,7 +355,7 @@ describe('CompanyIdentityUseCase.completeCapture', () => {
       branches: readyBranches,
       promptResolved: true,
     });
-    const result = await new CompanyIdentityUseCase(prisma, audit).completeCapture(ctx(FULL), 'co-1', 999);
+    const result = await new CompanyIdentityUseCase(prisma, audit, billingOff).completeCapture(ctx(FULL), 'co-1', 999);
 
     assert.deepEqual(result, { legalIdentityVersion: 2, captureWindowOpen: false });
     assert.deepEqual(writes, []);
@@ -330,7 +366,7 @@ describe('CompanyIdentityUseCase.completeCapture', () => {
   it('refuses to close over an incomplete identity and says what is missing', async () => {
     const { prisma } = makePrisma({ company: { taxId: null }, branches: readyBranches, promptResolved: true });
     await assert.rejects(
-      () => new CompanyIdentityUseCase(prisma, audit).completeCapture(ctx(FULL), 'co-1', 2),
+      () => new CompanyIdentityUseCase(prisma, audit, billingOff).completeCapture(ctx(FULL), 'co-1', 2),
       (error: any) => {
         const body = error.getResponse();
         assert.equal(body.code, 'company_tax_identity_incomplete');
