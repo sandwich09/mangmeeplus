@@ -800,7 +800,7 @@ export class BillingService {
           const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: { in: ['CREATING', 'REQUESTING'] } }, data: { status: 'FAILED', errorCode: code, version: { increment: 1 } } });
           if (changed.count) {
             await tx.billingAccount.updateMany({ where: { id: account.id, activeAttemptId: attempt.id }, data: { activeAttemptId: null, version: { increment: 1 } } });
-            await releaseEventDiscount(tx, attempt.id);
+            if (snapshot.eventDiscount?.choice === 'USE') await releaseEventDiscount(tx, attempt.id);
           }
         });
         if (!(error instanceof StripeRequestError)) throw error;

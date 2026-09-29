@@ -79,7 +79,7 @@ export class BillingReconcilerService {
           collectionJson: { profileSync: { ...marker, confirmed: true } } } });
       if (!changed.count) throw new Error('billing.profile_sync_changed');
       await tx.billingAccount.updateMany({ where: { id: account.id, activeAttemptId: attempt.id }, data: { activeAttemptId: null, version: { increment: 1 } } });
-      await releaseEventDiscount(tx, attempt.id);
+      if (snapshot.eventDiscount?.choice === 'USE') await releaseEventDiscount(tx, attempt.id);
       await tx.billingIssue.updateMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
         kind: 'UNKNOWN_ATTEMPT', referenceId: attempt.id, state: { not: 'RESOLVED' } }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
     });
@@ -507,7 +507,7 @@ export class BillingReconcilerService {
         if (current.activeAttemptId !== attempt.id) throw new Error('billing.one_time_source_changed');
         await tx.billingAttempt.update({ where: { id: attempt.id }, data: { status: 'EXPIRED', checkoutSessionId: session.id } });
         await tx.billingAccount.update({ where: { id: account.id }, data: { activeAttemptId: null, observedAt: new Date(), version: { increment: 1 } } });
-        await releaseEventDiscount(tx, attempt.id);
+        if (snapshot.eventDiscount?.choice === 'USE') await releaseEventDiscount(tx, attempt.id);
       });
       return;
     }

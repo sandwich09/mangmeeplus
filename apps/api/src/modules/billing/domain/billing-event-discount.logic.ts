@@ -1,5 +1,6 @@
 import type { BillingOffer, BillingPolicy, BillingPurchaseMode, BillingQuote, BillingQuoteEventDiscount } from '@watchdog-bms/contracts';
-import { MIN_OFFER_PRICE_SATANG, quoteTotals } from './billing-policy';
+import { quoteTotals } from './billing-policy';
+import { eventDiscountUnitAmountSatang, SALES_EVENT_MIN_UNIT_AMOUNT_SATANG, scopeFromJson } from '../../sales-console/domain/sales-event.logic';
 
 /** Sales-event first-bill discount (docs/specs/sales-event-discounts-spec-th.md §4–§5), pure rules only. */
 export type EventDiscountAmounts = { unitAmountSatang: number; subtotalSatang: number; taxSatang: number; totalSatang: number; shownDiscountSatang: number };
@@ -17,9 +18,9 @@ export const EVENT_DISCOUNT_MODES: readonly BillingPurchaseMode[] = ['CARD_ONCE'
 /** Spec §5.1: price after a whole-baht discount D off P, per tax treatment. Null = this card gets no discount (never a partial one). */
 export function eventDiscountAmounts(priceSatang: number, discountSatang: number, tax: BillingPolicy['taxTreatment']): EventDiscountAmounts | null {
   if (!Number.isSafeInteger(priceSatang) || !Number.isSafeInteger(discountSatang) || discountSatang <= 0 || discountSatang % 100 !== 0) return null;
-  const inclusiveBase = quoteTotals(priceSatang, tax).subtotalSatang - discountSatang;
-  const unitAmountSatang = tax === 'INCLUSIVE_VAT_7' ? inclusiveBase + Math.round(inclusiveBase * 7 / 100) : priceSatang - discountSatang;
-  if (unitAmountSatang < MIN_OFFER_PRICE_SATANG || unitAmountSatang >= priceSatang) return null;
+  // One formula with the console's minimum-price check (SD-A), so a batch it accepts is the discount a quote gives.
+  const unitAmountSatang = eventDiscountUnitAmountSatang(priceSatang, discountSatang, tax);
+  if (unitAmountSatang < SALES_EVENT_MIN_UNIT_AMOUNT_SATANG || unitAmountSatang >= priceSatang) return null;
   return { unitAmountSatang, ...quoteTotals(unitAmountSatang, tax), shownDiscountSatang: priceSatang - unitAmountSatang };
 }
 
@@ -28,9 +29,9 @@ export function eventDiscountPurchase(quote: Pick<BillingQuote, 'purchaseMode' |
   return !quote.deal && !quote.upgrade && !!quote.purchaseMode && EVENT_DISCOUNT_MODES.includes(quote.purchaseMode) && KINDS.includes(quote.purchase?.kind ?? '');
 }
 
-export function eventDiscountInScope(scope: unknown, offer: Pick<BillingOffer, 'offerKey' | 'interval'>): boolean {
-  const value = scope as { tiers?: unknown; intervals?: unknown } | null;
-  return Array.isArray(value?.tiers) && value.tiers.includes(offer.offerKey) && Array.isArray(value?.intervals) && value.intervals.includes(offer.interval);
+export function eventDiscountInScope(scopeJson: unknown, offer: Pick<BillingOffer, 'offerKey' | 'interval'>): boolean {
+  const scope = scopeFromJson(scopeJson);
+  return (scope.tiers as string[]).includes(offer.offerKey) && (scope.intervals as string[]).includes(offer.interval);
 }
 
 /** Spec §4.3: of the holder's usable tickets, the one that takes most off this card; ties → expires first, then id. */

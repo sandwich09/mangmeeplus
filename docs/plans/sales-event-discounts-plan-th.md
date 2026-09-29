@@ -145,6 +145,10 @@ P3 คำตอบ Owner SD-Q1, Q2, Q3, Q5, Q8, Q9 ─────> เสร็
 
 เสร็จเมื่อ: SD-E17, SD-E21–SD-E23 ที่หน้าเว็บ และส่วน UI ของ SD-E15. ประมาณ 2.5–3.5 วัน
 
+**สถานะ SD-C + SD-D แบบ MVP (2026-09-29, branch `claude/sales-event-sd-cd-20260929`)** — ทำแล้วเฉพาะการซื้อจ่ายครั้งเดียว (CARD_ONCE, PROMPTPAY_ONCE) ที่เป็น INITIAL/RESTART: quote รับ `eventDiscountChoice` (ไม่ส่งแต่มีข้อเสนอ = USE) และเก็บ `snapshot.eventDiscount`; `quote.totalSatang` คงราคาเต็ม; Checkout จองรายการหลังสร้าง attempt (version fence, partial unique), stale เมื่อ quote ไม่มีข้อเสนอแต่ตอน Checkout มี, ไม่ stale เมื่อเลือกไม่ใช้; `price_data.unit_amount` เป็นยอดลดแล้ว; reconcile ใช้สิทธิ์ก่อนทางออก HELD และเปิด `EVENT_DISCOUNT_REVIEW` (อ้าง invoice) เมื่อรายการไม่ได้จองให้ attempt นี้; ปล่อยการจองเมื่อ Checkout ล้ม/ถูกปฏิเสธ, session หมดอายุ (รวมปุ่มยกเลิกและการยุติของแอดมิน) และ profile sync ล้ม; `paid-checkout-invoice.ts` รับยอดลดเฉพาะ snapshot ที่คำนวณตรงตามสูตร §5.1 (ใช้สูตรร่วม `eventDiscountUnitAmountSatang` ของ SD-A). หน้าแพ็กเกจอ่านข้อเสนอจาก `BillingStatus.eventDiscount` (route สถานะอยู่ใน allowlist อยู่แล้ว จึงไม่แตะ `auth.guard.ts`/pins); ไม่มี gate ตามมติ Owner (ชุดส่วนลดคือตัวควบคุม)
+
+**TODO ต่อจาก MVP**: CARD_AUTO และ PROMPTPAY_RENEW ด้วยกลไก subscription `trialing` ตามสเปก §5.3 ข้อ 1–6 (`paymentCheckoutSnapshot`, `setup_future_usage`, route ของ reconciler และ `reconcileOriginalInvoice`/`importDiscoveredInvoice`, ข้ามบิล $0, predicate trial ใน `billing-collection.ts`/`billing.service.ts`, `billingPurchaseSource`) แล้วขยาย `EVENT_DISCOUNT_MODES` ทั้งฝั่ง API และเว็บ — วันนี้ quote สองโหมดนี้ไม่มีข้อเสนอ และหน้าเว็บบอกว่าส่วนลดใช้กับการจ่ายครั้งเดียว; ที่ยังไม่ทำ: `eventDiscountSatang` ในประวัติ, ข้อความหมดอายุ/ระงับบนหน้าแพ็กเกจ, smoke HTTP, e2e 390 px, และหลักฐาน PG ระดับ reconcile (paid → USED, RETRY_APPLY, IMPORT_INVOICE)
+
 ### SD-F — เครดิตสำหรับร้านเดิม (ใหม่, SD-O6)
 
 ขึ้นกับ: SD-A, SD-B และ P4 (add-on PR B และ PR C). ไม่แตะ quote, checkout, reconciler หรือ Stripe
