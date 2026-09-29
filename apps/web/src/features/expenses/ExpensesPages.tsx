@@ -521,10 +521,10 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
               {/* G18: the package page is where the quota is bought; staff without the permission
                   cannot buy, so they are told who can instead of being sent to a page that bounces. */}
               {canManagePlan
-                ? <Link href={`/companies/${companyId}/billing`} className="underline">เปลี่ยนแพ็กเกจ</Link>
-                : <span>แจ้งเจ้าของร้านให้เปลี่ยนแพ็กเกจ</span>}
+                ? <Link href={`/companies/${companyId}/billing`} className="inline-flex min-h-11 items-center underline">เปลี่ยนแพ็กเกจ</Link>
+                : <span className="inline-flex min-h-11 items-center">แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจให้เปลี่ยนแพ็กเกจ</span>}
               {blockedExpenseId && (
-                <Link href={`/companies/${companyId}/expenses/${blockedExpenseId}`} className="underline">
+                <Link href={`/companies/${companyId}/expenses/${blockedExpenseId}`} className="inline-flex min-h-11 items-center underline">
                   กรอกใบเสร็จที่เพิ่งอัปโหลดเอง
                 </Link>
               )}

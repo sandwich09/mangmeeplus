@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BillingDocumentResend, RESEND_LIMIT, RESEND_NOTICE_EVENT, resendStripeDocuments } from './billing-document-resend';
 import { BILLING_NOTICE_EMAIL } from './billing-notifications.service';
+import { canResendDocuments } from './billing.service';
 import { StripeRequestError } from '../infrastructure/stripe.client';
 
 type Row = Record<string, any>;
@@ -91,5 +92,18 @@ describe('customer document resend (R-D1)', () => {
     const f = fixture();
     assert.deepEqual(await resendStripeDocuments(f.stripe as any, f.account as any, f.invoice as any, 'docs@example.test'), { invoiceSent: true, receiptUpdated: true });
     assert.equal(RESEND_NOTICE_EVENT, BILLING_NOTICE_EMAIL);
+  });
+});
+
+describe('resend button availability (documentActions.canResend)', () => {
+  it('hides once the recipient has bounced, since the command above refuses BILLING_RECIPIENT_BOUNCED', () => {
+    const row = { providerStatus: 'paid', applyStatus: 'APPLIED' };
+    const ready = { recipientEmail: 'docs@example.test', activeEmailOperationId: null, recipientBouncedAt: null };
+    assert.equal(canResendDocuments(row, ready), true, 'the button shows once everything is settled');
+    assert.equal(canResendDocuments(row, { ...ready, recipientBouncedAt: new Date() }), false, 'bounced recipient hides it');
+    assert.equal(canResendDocuments(row, { ...ready, recipientEmail: null }), false, 'no recipient hides it');
+    assert.equal(canResendDocuments(row, { ...ready, activeEmailOperationId: 'op-1' }), false, 'a pending recipient change hides it');
+    assert.equal(canResendDocuments({ ...row, providerStatus: 'open' }, ready), false, 'an unpaid document hides it');
+    assert.equal(canResendDocuments({ ...row, applyStatus: 'HELD' }, ready), false, 'a document not yet applied hides it');
   });
 });

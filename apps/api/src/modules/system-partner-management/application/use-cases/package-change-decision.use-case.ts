@@ -17,6 +17,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { LOGGER_TOKEN, type AppLogger } from '../../../../common/logger/logger.service';
 import { pushSystemLineMessage } from '../../../auth/infrastructure/system-line-push';
 import { checkShopMessage, shopMessageAllowedHosts } from '../../domain/logic/partner-line-message.logic';
+import { planManagerLineUserIds } from '../../../access-control/domain/logic/plan-manager.logic';
 import { lockPlanTermCompany } from '../lock-plan-term-company';
 import { assertPlanTermAdjustmentActor, planTermSourceVersion } from '../plan-term-adjustment';
 import { SetCompanyPlanTermUseCase, paidPlanReviewRequired } from './company-plan-term.use-cases';
@@ -177,8 +178,9 @@ export class PackageChangeDecisionUseCase {
   }
 
   /**
-   * Best-effort by contract: the tier has already moved, and a dead LINE OA must not undo it. The
-   * notice goes to the shop's OWNERs, which is who asked — never to every member.
+   * Best-effort by contract: the tier has already moved, and a dead LINE OA must not undo it. Since
+   * R-C11 any plan manager may open this request, so the reply goes to every plan manager (OWNER or
+   * a custom role with `company.plan.manage`) — never to every member.
    */
   private async notifyShop(
     companyId: string,
@@ -192,7 +194,7 @@ export class PackageChangeDecisionUseCase {
     const text = body.action === 'APPROVE'
       ? packageChangeApprovedMessageTh(requestedTierKey, note)
       : packageChangeRejectedMessageTh(note);
-    for (const providerUserId of await ownerLineUserIds(this.prisma, companyId, credentials.channelId)) {
+    for (const providerUserId of await planManagerLineUserIds(this.prisma.client, companyId, credentials.channelId)) {
       if (!await pushSystemLineMessage(token, providerUserId, text)) {
         this.logger.warn(
           { event: 'signup.line.package_change_notice_failed', riskLevel: 'LOW' },

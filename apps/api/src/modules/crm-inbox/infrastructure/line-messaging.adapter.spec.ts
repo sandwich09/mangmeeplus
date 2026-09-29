@@ -39,6 +39,26 @@ describe('LineMessagingAdapter.pushTextMessage', () => {
     }
   });
 
+  // Item 9: a shop's campaign, staff reply or reminder is its own words to its own customer — a
+  // link in it is not our app, so the R-B1 open-outside-LINE rewrite must leave it byte for byte.
+  it('sends the shop\'s text as written, with no external-browser escape added to its links', async () => {
+    const originalFetch = globalThis.fetch;
+    const bodies: string[] = [];
+    try {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        bodies.push(String(init?.body));
+        return new Response('', { status: 200 });
+      }) as typeof fetch;
+      const text = 'จองคิวได้ที่ https://shop.example.com/booking นะคะ';
+      const result = await new LineMessagingAdapter().pushTextMessage('token', 'U1', text, '11111111-1111-5111-8111-111111111111');
+      assert.deepEqual(result, { ok: true });
+      assert.equal(JSON.parse(bodies[0]!).messages[0].text, text);
+      assert.doesNotMatch(bodies[0]!, /openExternalBrowser/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('keeps a bare 409 as a failure', async () => {
     const originalFetch = globalThis.fetch;
     try {

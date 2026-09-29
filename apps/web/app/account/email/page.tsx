@@ -24,9 +24,12 @@ export default async function AccountEmailPage({ searchParams }: { searchParams:
   if (result.session.mustChangePassword) redirect(`/change-password?next=${encodeURIComponent(next)}`);
   if (result.session.legalAcceptanceRequired !== false) redirect(legalAcceptancePath(next, result.session.companyId));
   const billingReturn = company && result.session.permissions.includes('company.plan.manage');
-  const backHref = billingReturn ? `/companies/${encodeURIComponent(company)}/billing${query.has('interval') ? `?interval=${query.get('interval')}` : ''}` : '/billing/companies';
-  return <BillingCustomerFrame eyebrow="บัญชีของฉัน" title="จัดการอีเมลบัญชี" description="อีเมลบัญชีใช้เข้าสู่ระบบสำรองและรับแจ้งเตือน ไม่ต้องยืนยันก่อนซื้อแพ็กเกจ ส่วนอีเมลรับเอกสารกรอกได้ที่หน้าชำระเงิน"
-    backHref={backHref} backLabel={billingReturn ? 'กลับไปเลือกแพ็กเกจ' : 'กลับหน้าเลือกบริษัท'}>
+  // Someone who cannot manage the package came from that shop's settings (the locked hub's account
+  // card): the package picker would only tell them they have no shop to manage.
+  const backHref = billingReturn ? `/companies/${encodeURIComponent(company)}/billing${query.has('interval') ? `?interval=${query.get('interval')}` : ''}`
+    : company ? `/companies/${encodeURIComponent(company)}/settings` : '/billing/companies';
+  return <BillingCustomerFrame eyebrow="บัญชีของฉัน" title="จัดการอีเมลบัญชี" description="อีเมลบัญชีใช้เข้าสู่ระบบสำรองและรับแจ้งเตือน ไม่ต้องยืนยันก่อนซื้อแพ็กเกจ · ถ้ายืนยันแล้ว การซื้อครั้งแรกจะใช้อีเมลนี้รับเอกสาร · เปลี่ยนอีเมลรับเอกสารได้ที่หน้าแพ็กเกจ"
+    backHref={backHref} backLabel={billingReturn ? 'กลับไปเลือกแพ็กเกจ' : company ? 'กลับหน้าตั้งค่า' : 'กลับหน้าเลือกบริษัท'}>
     <AccountEmailOtpPanel reauthReturnTo={next} />
   </BillingCustomerFrame>;
 }

@@ -54,8 +54,10 @@ export function SettingsMenu({ companyId, permissions, profileBadge }: {
               <div className="font-bold text-gray-900">{LOCKED_ACCOUNT_CARD.title}</div>
               <div className="mt-1 text-sm leading-6 text-gray-500">{LOCKED_ACCOUNT_CARD.desc}</div>
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                {/* The account-email page sends its back link to this shop's settings only when it knows the shop. */}
                 {LOCKED_ACCOUNT_CARD.links.map((link) => (
-                  <Link key={link.key} href={link.href} className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto">
+                  <Link key={link.key} href={link.key === 'email' ? `${link.href}?company=${encodeURIComponent(companyId)}` : link.href}
+                    className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto">
                     {link.label}
                   </Link>
                 ))}

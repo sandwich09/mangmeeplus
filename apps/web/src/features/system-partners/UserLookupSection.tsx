@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { planTermStateLabel } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
@@ -30,6 +31,12 @@ const COMPANY_STATUS_LABEL: Record<SystemUserMembershipDto['companyStatus'], str
   DISABLED: 'ปิดใช้งาน',
   ARCHIVED: 'เก็บถาวร',
 };
+
+// R-C6/R-C7 (PartnerListPage.tsx's rowLabel rule): a term-locked company never reads as "ปิดใช้งาน".
+function companyStatusLabel(membership: SystemUserMembershipDto): string {
+  const state = membership.companyPlanState;
+  return state === 'NO_PACKAGE' || state === 'EXPIRED' ? planTermStateLabel(state) : COMPANY_STATUS_LABEL[membership.companyStatus];
+}
 
 /** A DISABLED membership is usually the leftover of a merge, but only the trail proves it — so the
  *  reason is only spelled out when this account actually has one. */
@@ -115,7 +122,7 @@ function UserCard({ user }: { user: SystemUserLookupItemDto }) {
             <Link href={`/system/partners/${membership.companyId}`} className="inline-flex min-h-11 items-center text-base font-medium text-brand-800 underline underline-offset-4">{membership.companyName}</Link>
             <p className="text-sm text-gray-700">บทบาท: {membership.roleKeys.length ? membership.roleKeys.map(roleKeyDisplayName).join(' · ') : 'ยังไม่มีบทบาท'}</p>
             <dl className="grid grid-cols-2 gap-2 text-sm text-gray-600">
-              <div><dt>สถานะบริษัท</dt><dd className="mt-1 text-gray-900">{COMPANY_STATUS_LABEL[membership.companyStatus]}</dd></div>
+              <div><dt>สถานะบริษัท</dt><dd className="mt-1 text-gray-900">{companyStatusLabel(membership)}</dd></div>
               <div><dt>สถานะสมาชิก</dt><dd className="mt-1 text-gray-900">{membershipStatusLabel(membership, hasMergeTrail)}</dd></div>
             </dl>
           </li>)}
@@ -140,7 +147,7 @@ function UserCard({ user }: { user: SystemUserLookupItemDto }) {
                       : '—'}
                   </td>
                   <td className="px-4 py-2 text-xs text-gray-600">
-                    {COMPANY_STATUS_LABEL[membership.companyStatus] ?? membership.companyStatus}
+                    {companyStatusLabel(membership)}
                   </td>
                   <td className="px-4 py-2 text-xs text-gray-600">
                     {membershipStatusLabel(membership, hasMergeTrail)}

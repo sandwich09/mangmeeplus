@@ -16,7 +16,10 @@ export async function billingTimeline(tx: Prisma.TransactionClient, scope: { com
   operations AS (SELECT * FROM "BillingOperation" WHERE type<>'OBSERVE_PROVIDER_INVOICE' AND "companyId"=${scope.companyId} AND "stripeAccountId"=${scope.stripeAccountId} AND livemode=${scope.livemode}),
   issues AS (SELECT * FROM "BillingIssue" WHERE "companyId"=${scope.companyId} AND "stripeAccountId"=${scope.stripeAccountId} AND livemode=${scope.livemode}),
   events AS (
-    SELECT 'PLAN_TERM:'||id AS reference,'PLAN_TERM'::text AS kind,'CURRENT_PLAN_TERM'::text AS type,"tierKey" AS state,"createdAt" AS "recordedAt",
+    -- Mirrors planTermLockReason() (plan-term.ts): a placeholder term (never purchased) carries a
+    -- leftover tierKey, which used to read as "ทดลองใช้ฟรี" for a shop that never had a trial (item 10).
+    SELECT 'PLAN_TERM:'||id AS reference,'PLAN_TERM'::text AS kind,'CURRENT_PLAN_TERM'::text AS type,
+      CASE WHEN "termEndsAt"<="termStartAt" AND "renewCount"=0 THEN 'NO_PACKAGE' ELSE "tierKey" END AS state,"createdAt" AS "recordedAt",
       NULL::timestamp AS "occurredAt","updatedAt",NULL::timestamp AS "observedAt",'ERP'::text AS origin,NULL::integer AS "amountSatang" FROM "CompanyPlanTerm" WHERE "companyId"=${scope.companyId}
     UNION ALL SELECT 'ATTEMPT:'||id,'ATTEMPT','PURCHASE',status,"createdAt","consentAt","updatedAt",NULL,channel,NULL FROM attempts
     UNION ALL SELECT 'INVOICE:'||id,'INVOICE','BILLING_INVOICE',"providerStatus"||' / '||"applyStatus","createdAt",NULL,"updatedAt","financialObservedAt",NULL,

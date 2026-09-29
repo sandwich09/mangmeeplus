@@ -42,7 +42,9 @@ test('the quota banner offers the two things the shop can still do', () => {
   // package page is where the quota is bought; staff without company.plan.manage cannot buy, so
   // they are told who can instead of being sent to settings, which just bounces them.
   assert.match(source, /canManagePlan\s*\?\s*<Link href=\{`\/companies\/\$\{companyId\}\/billing`\}[^>]*>เปลี่ยนแพ็กเกจ</);
-  assert.match(source, /แจ้งเจ้าของร้านให้เปลี่ยนแพ็กเกจ/);
+  assert.match(source, /แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจให้เปลี่ยนแพ็กเกจ/);
+  // 390 px phones: the link is a 44 px tap target, not a line of underlined text.
+  assert.match(source, /<Link href=\{`\/companies\/\$\{companyId\}\/billing`\} className="inline-flex min-h-11 items-center underline">/);
   assert.doesNotMatch(source, /href=\{`\/companies\/\$\{companyId\}\/settings`\}[^>]*>ขอเปลี่ยนแพ็กเกจ/);
   assert.match(source, /blockedExpenseId && \(/);
   assert.match(source, /href=\{`\/companies\/\$\{companyId\}\/expenses\/\$\{blockedExpenseId\}`\}/);

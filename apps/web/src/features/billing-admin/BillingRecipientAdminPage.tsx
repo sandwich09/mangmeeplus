@@ -13,7 +13,7 @@ const field=billingField;
 const time=(value:string|null)=>value?formatThaiDateTime(value):'ยังไม่มีผลตรวจ';
 
 // Purchase without setup PR E (R-E1/R-E2). Cloned from BillingRefundPage.tsx's reviewed-op shape.
-const states:Record<string,string>={PREVIEW:'ตรวจข้อมูลก่อนส่งคำขอ',AWAITING_APPROVAL:'รอยืนยันรายการ',QUEUED:'รับคำขอแล้ว รอตรวจผลจาก Stripe',RUNNING:'กำลังเปลี่ยนอีเมลผู้รับกับ Stripe',SUCCEEDED:'เปลี่ยนอีเมลผู้รับเอกสารแล้ว ระบบแจ้งลูกค้าทาง LINE และอีเมลแล้ว',UNKNOWN:'ยังยืนยันผลเปลี่ยนอีเมลไม่ได้',BLOCKED:'ต้องตรวจข้อมูลก่อนดำเนินการ',FAILED:'เปลี่ยนอีเมลผู้รับไม่สำเร็จ ต้องให้เจ้าหน้าที่ตรวจ',CANCELLED:'ยกเลิกคำขอแล้ว'};
+const states:Record<string,string>={PREVIEW:'ตรวจข้อมูลก่อนส่งคำขอ',AWAITING_APPROVAL:'รอยืนยันรายการ',QUEUED:'รับคำขอแล้ว รอตรวจผลจาก Stripe',RUNNING:'กำลังเปลี่ยนอีเมลผู้รับกับ Stripe',SUCCEEDED:'เปลี่ยนอีเมลรับเอกสารแล้ว ระบบส่งอีเมลแจ้งอีเมลเดิมและอีเมลใหม่ และแจ้งผู้มีสิทธิ์จัดการแพ็กเกจของร้าน',UNKNOWN:'ยังยืนยันผลเปลี่ยนอีเมลไม่ได้',BLOCKED:'ต้องตรวจข้อมูลก่อนดำเนินการ',FAILED:'เปลี่ยนอีเมลผู้รับไม่สำเร็จ ต้องให้เจ้าหน้าที่ตรวจ',CANCELLED:'ยกเลิกคำขอแล้ว'};
 const errors:Record<string,string>={
   BILLING_RECIPIENT_BUSY:'บริษัทมีรายการซื้อ คำสั่งต่ออายุ หรือคำขอเปลี่ยนผู้รับของลูกค้าค้างอยู่ รอให้เสร็จก่อน',
   BILLING_RECIPIENT_NO_CUSTOMER:'บริษัทนี้ยังไม่มีบัญชีลูกค้าใน Stripe จึงยังไม่มีผู้รับเอกสารให้เปลี่ยน',
@@ -24,6 +24,7 @@ const errors:Record<string,string>={
   CONTROL_IDEMPOTENCY_CONFLICT:'ข้อมูลคำขอต่างจากรายการเดิม กรุณาเปิดคำขอเดิมหรือตรวจใหม่',
   CONTROL_RECIPIENT_PROVIDER_REJECTED:'Stripe ปฏิเสธการเปลี่ยนอีเมล ต้องให้เจ้าหน้าที่ตรวจ',
   CONTROL_RECIPIENT_REVIEW:'ต้องตรวจรายการนี้กับ Stripe อีกครั้งก่อนดำเนินการต่อ',
+  CONTROL_RECIPIENT_AGED_UNKNOWN:'ยังยืนยันผลกับ Stripe ไม่ได้เกิน 23 ชั่วโมง ให้ตรวจที่ Stripe ก่อนทำรายการต่อ',
   CONTROL_REAUTH_REQUIRED:'กรุณายืนยันรหัสผ่านปัจจุบันก่อน',
   CONTROL_REAUTH_FAILED:'ยืนยันไม่ได้ กรุณาตรวจรหัสผ่านหรือใช้หน้ากู้บัญชี',
 };
@@ -103,7 +104,7 @@ export default function BillingRecipientAdminPage({companyId,invoiceId,operation
         {operation.state==='AWAITING_APPROVAL'&&<p>{operation.allowedActions.includes('approve')?'ตรวจข้อมูลและยืนยันรหัสผ่าน แล้วกดยืนยันเปลี่ยนอีเมลผู้รับ':'ให้ผู้ดูแลระบบหรือผู้มีสิทธิ์อีกคนเปิดลิงก์คำขอนี้เพื่อตรวจและอนุมัติ'}</p>}
         {operation.errorCode&&<p>{errors[operation.errorCode]??'ต้องตรวจรายการนี้อีกครั้ง'}</p>}
         {operation.dispatchedAt&&<p>ส่งคำสั่งครั้งแรก {time(operation.dispatchedAt)} · ตรวจผลล่าสุด {time(operation.observedAt)}</p>}
-        {operation.notifiedAt&&<p>แจ้งลูกค้าแล้วเมื่อ {time(operation.notifiedAt)}</p>}
+        {operation.notifiedAt&&<p>ส่งคำแจ้งเข้าคิวเมื่อ {time(operation.notifiedAt)}</p>}
         <details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิง</summary><p className="break-all">เลขคำขอ {operation.id}</p><p>ตรวจได้ถึง {time(operation.expiresAt)}</p></details>
         {operation.reviewCaseId&&<Link className={button} href={`/system/billing/issues/${encodeURIComponent(operation.reviewCaseId)}`}>เปิดเคสให้เจ้าหน้าที่ตรวจ</Link>}
       </section>

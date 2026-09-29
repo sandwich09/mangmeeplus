@@ -2,6 +2,7 @@ import { ACCESS_TOKEN_COOKIE, joinCookieChunks } from '@/common/auth/auth-cookie
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { internalApiV1Base } from '@/common/api/internal-api-base';
+import { lineLinkReason } from '@/common/auth/line-in-app-browser.logic';
 import {
   buildLineAuthorizeUrl,
   encodeLineLoginTxn,
@@ -25,10 +26,12 @@ export async function GET(request: NextRequest) {
   const emailReauth = request.nextUrl.searchParams.get('purpose') === 'email-reauth';
   const returnTo = sanitizeReturnTo(request.nextUrl.searchParams.get('returnTo'));
   // purchase-without-setup R-B5 (4): how often a LINE link met the login wall. `from`/`auto` come
-  // from LoginPage's auto-start; a manual tap on the LINE button carries only the returnTo signal.
-  if (!emailReauth && returnTo && /[?&]channel=line(?:&|$)/.test(returnTo)) {
-    const from = request.nextUrl.searchParams.get('from');
-    console.info(JSON.stringify({ event: 'login_wall_from_line_link', from: from === 'handoff-expired' || from === 'channel-line' ? from : null,
+  // from LoginPage's auto-start; a manual tap on the LINE button carries only the returnTo signal,
+  // which counts `openExternalBrowser=1` (every LINE notice's web link) as well as `channel=line`.
+  const from = request.nextUrl.searchParams.get('from');
+  if (!emailReauth && (lineLinkReason(returnTo) || from)) {
+    console.info(JSON.stringify({ event: 'login_wall_from_line_link',
+      from: from === 'handoff-expired' || from === 'channel-line' || from === 'line-link' ? from : null,
       auto: request.nextUrl.searchParams.get('auto') === '1',
       hasSession: Boolean(joinCookieChunks((name) => request.cookies.get(name)?.value, ACCESS_TOKEN_COOKIE)) }));
   }

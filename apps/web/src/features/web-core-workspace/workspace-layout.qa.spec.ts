@@ -26,6 +26,14 @@ test('a swallowed notice-fetch failure (null) is never read as an unlock', () =>
   assert.match(source, /result !== null && lockedRef\.current/);
 });
 
+test('a failed re-read (null) while locked leaves the shell locked instead of storing "no notice"', () => {
+  // Review 2026-09-29: `setLoaded({ notice: null })` swapped a locked shop into the business shell on
+  // any notice outage. The early return must sit before `setLoaded`, or the guard above is moot.
+  const guard = source.indexOf('if (result === null && lockedRef.current) return;');
+  assert.ok(guard > 0, 'the null-while-locked guard exists');
+  assert.ok(guard < source.indexOf('setLoaded({ companyId, notice: result })'), 'and runs before the notice is stored');
+});
+
 test('the re-read is driven by a revision counter, not by re-subscribing on every notice change', () => {
   assert.match(source, /const \[revision, setRevision\] = useState\(0\)/);
   assert.match(source, /const bump = \(\) => setRevision\(\(n\) => n \+ 1\)/);

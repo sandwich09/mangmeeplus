@@ -64,18 +64,40 @@ describe('BillingAdminService.lookup — R-E4/RV27', () => {
     assert.equal(result.href, '/system/billing/companies/co-2/checkouts/att-1');
   });
 
-  it('links a REFUND operation to the refund page and an UPDATE_BILLING_EMAIL operation to recipient-changes', async () => {
+  it('links a REFUND operation to the refund page, EXPIRE_CHECKOUT to checkout-expiry, and a repair type to operations', async () => {
     const refundService = makeService({ operations: [{ id: 'op-1', companyId: 'co-3', type: 'REFUND' }] });
     const refund = await refundService.lookup(CONTEXT, 'ABCD1234');
     assert.equal(refund.href, '/system/billing/refunds/op-1');
 
-    const recipientService = makeService({ operations: [{ id: 'op-2', companyId: 'co-3', type: 'UPDATE_BILLING_EMAIL' }] });
-    const recipient = await recipientService.lookup(CONTEXT, 'ABCD1234');
-    assert.equal(recipient.href, '/system/billing/recipient-changes/op-2');
+    const checkoutService = makeService({ operations: [{ id: 'op-1b', companyId: 'co-3', type: 'EXPIRE_CHECKOUT' }] });
+    const checkout = await checkoutService.lookup(CONTEXT, 'ABCD1234');
+    assert.equal(checkout.href, '/system/billing/checkout-expiry/op-1b');
 
     const otherService = makeService({ operations: [{ id: 'op-3', companyId: 'co-3', type: 'RECONCILE' }] });
     const other = await otherService.lookup(CONTEXT, 'ABCD1234');
     assert.equal(other.href, '/system/billing/operations/op-3');
+  });
+
+  it('links plan-adjustment, receipt-adjustment and configuration-change operation types to their own admin page', async () => {
+    const plan = await makeService({ operations: [{ id: 'op-plan', companyId: 'co-3', type: 'GRANT_OVERRIDE' }] }).lookup(CONTEXT, 'ABCD1234');
+    assert.equal(plan.href, '/system/billing/plan-adjustments/op-plan');
+
+    const receipts = await makeService({ operations: [{ id: 'op-rcpt', companyId: 'co-3', type: 'GRANT_RECEIPTS' }] }).lookup(CONTEXT, 'ABCD1234');
+    assert.equal(receipts.href, '/system/billing/receipt-adjustments/op-rcpt');
+
+    const config = await makeService({ operations: [{ id: 'op-cfg', companyId: 'co-3', type: 'PUBLISH_POLICY' }] }).lookup(CONTEXT, 'ABCD1234');
+    assert.equal(config.href, '/system/billing/configuration-changes/op-cfg');
+  });
+
+  it('links an admin-created UPDATE_BILLING_EMAIL to recipient-changes, but a customer-created one or a type with no page to the company page', async () => {
+    const adminChange = await makeService({ operations: [{ id: 'op-2', companyId: 'co-3', type: 'UPDATE_BILLING_EMAIL', proposedJson: { target: { source: 'ADMIN' } } }] }).lookup(CONTEXT, 'ABCD1234');
+    assert.equal(adminChange.href, '/system/billing/recipient-changes/op-2');
+
+    const customerChange = await makeService({ operations: [{ id: 'op-2b', companyId: 'co-3', type: 'UPDATE_BILLING_EMAIL', proposedJson: { target: { source: 'CUSTOMER' } } }] }).lookup(CONTEXT, 'ABCD1234');
+    assert.equal(customerChange.href, '/system/billing/companies/co-3');
+
+    const noPage = await makeService({ operations: [{ id: 'op-sync', companyId: 'co-3', type: 'CUSTOMER_PROFILE_SYNC' }] }).lookup(CONTEXT, 'ABCD1234');
+    assert.equal(noPage.href, '/system/billing/companies/co-3');
   });
 
   it('links an issue to the issue page', async () => {
