@@ -784,6 +784,8 @@ jobs:
             pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/billing-admin-tools.pg.spec.ts
           BILLING_PRODUCT_FOUNDATION_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/billing-product-foundation.pg.spec.ts
+          SALES_EVENT_CLAIM_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test src/modules/sales-console/claim-event-discount.pg.spec.ts
       # Every spec above builds its subject with `new`, so none of them asks Nest to wire
       # anything: a DI mistake passes the whole suite and only fails when the container starts.
       - run: pnpm --filter @watchdog-bms/api test:boot

@@ -419,6 +419,9 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/common/security/liff-start-handoff.spec.ts',
       // Sales-event discounts, LINE claim (SD-B): the QR token, ticket serial/expiry and refusal order.
       'src/modules/sales-console/domain/sales-event-claim.logic.spec.ts',
+      'src/modules/sales-console/application/claim-event-discount.use-case.spec.ts',
+      'src/common/security/liff-event-discount-page.spec.ts',
+      'src/modules/billing/application/billing-event-discount.spec.ts',
       // Web/LINE signup shares the durable mail consumer; preserve its provider boundary too.
       'src/modules/auth/infrastructure/postmark.client.spec.ts',
       'src/modules/auth/infrastructure/postmark-configuration.spec.ts',

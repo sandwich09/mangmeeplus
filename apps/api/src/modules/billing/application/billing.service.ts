@@ -50,6 +50,8 @@ import { billingFeaturePlan, type BillingFeaturePlan } from './billing-feature-e
 import { planMenuImpact } from './billing-plan-menus';
 import { assertDealOfferUnchanged, assertDealSnapshot, dealOffer, dealPurchaseModes, dealSnapshot, dealSnapshotHash, type DealSource } from '../domain/deal-offer';
 import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
+import { eventDiscountPath, holderEventDiscountTickets } from './billing-event-discount';
+import type { BillingEventDiscountView } from '@watchdog-bms/contracts';
 
 /** D-P5-6: the future contract a `SCHEDULE_PRICE_RETURN` writes. The invoice that applies it puts
  *  the shop back on the tier's default menus, AI credit and limits (Q1) even though it is a RENEWAL. */
@@ -212,6 +214,15 @@ export class BillingService {
     return { used, limit, remaining: limit === null ? null : Math.max(0, limit - used),
       resetsAt: quota.cadence ? null : resetsAt, cadence: quota.cadence ?? 'LEGACY_MONTH', expiresAt: quota.expiresAt ?? null,
       ...(quota.monthlyAllowance ? { monthlyAllowance: quota.monthlyAllowance } : {}) };
+  }
+
+  /** Sales-event spec §7.1 (SD-B): the caller's own ส่วนลดจากงาน and which way this shop could use one.
+   *  Allowlisted in the auth guard, so a shop with no package or an expired one can read it. */
+  async eventDiscount(context: RequestContext): Promise<BillingEventDiscountView> {
+    await this.assertOwner(context);
+    const company = await this.prisma.client.company.findUnique({ where: { id: context.companyId }, select: { planTerm: true } });
+    const source = await this.purchaseSource({ planTerm: company?.planTerm ?? null }, await this.account(context.companyId));
+    return { path: eventDiscountPath(source), tickets: await holderEventDiscountTickets(this.prisma.client, context.userId, new Date()) };
   }
 
   async capacity(context: RequestContext, offerKey: string, interval: string) {
