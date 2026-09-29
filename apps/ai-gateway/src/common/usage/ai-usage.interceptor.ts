@@ -15,6 +15,7 @@ import {
   parseAiBudgetGrantV2,
   parseLineAiInputEvidence,
   type AiUsageEntry,
+  aiBudgetV2RepairsBefore,
 } from '@watchdog-bms/contracts';
 import { drainUsage, runWithUsageContext, type BudgetRequestState } from './usage-context';
 
@@ -92,7 +93,7 @@ function readBudgetState(
     return {
       status: 'active-v2', grant, inputDigest: evidence.joinedSha256, sourceRoute,
       ...(typeof body?.requestId === 'string' && body.requestId ? { requestId: body.requestId } : {}),
-      calls: grant.nextOrdinal ?? 0, repairCount: 0,
+      calls: grant.nextOrdinal ?? 0, repairCount: aiBudgetV2RepairsBefore(grant),
     };
   }
   if (!hasLegacy) return undefined;

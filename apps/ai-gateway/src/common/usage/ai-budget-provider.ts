@@ -24,6 +24,7 @@ import {
   AI_BUDGET_IMAGE_TOKEN_CEILING,
   AI_BUDGET_ESTIMATOR_VERSION_V2,
   AI_BUDGET_PROFILES_V2,
+  aiBudgetV2CallAllowed,
   parseAiBudgetEnvelopeV2,
   AI_BUDGET_REFUSAL_CODES,
   type AiBudgetEnvelopeV2,
@@ -284,9 +285,12 @@ async function admitV2(
   const rendered = v2RenderedInput(input);
   if (rendered.inputTokenBound > profile.maxInputTokens) return refuse('v2_input_bound_exceeded');
   const ordinal = claimBudgetCallOrdinal();
-  if (ordinal >= grant.maxTurnSlots) return refuse('v2_turn_slot_exhausted');
   const repair = state.repairPending === true;
+  // A repair never spends an answer slot and an answer never spends the repair (aiBudgetV2CallAllowed). The
+  // state's repairCount starts from the repairs earlier stages spent (aiBudgetV2RepairsBefore); the API's
+  // reservation re-checks the same rule against the authority's own exact count.
   if (repair && state.repairCount >= grant.maxRepairs) return refuse('v2_repair_exhausted');
+  if (!aiBudgetV2CallAllowed(grant, ordinal, repair, state.repairCount)) return refuse('v2_turn_slot_exhausted');
   if (!opts.seam.stepV2) return refuse('v2_reservation_seam_unavailable');
   const invocation: AiBudgetInvocationV2 = {
     grant,

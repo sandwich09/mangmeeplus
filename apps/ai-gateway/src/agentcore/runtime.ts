@@ -1,4 +1,3 @@
-import { aiGatewayConfigSchema } from '@watchdog-bms/config';
 /**
  * AgentCore Runtime entry point – item 10B Phase 8.
  * Exposes GET /ping and POST /invocations per AgentCore HTTP protocol.
@@ -30,6 +29,7 @@ import {
   parseLineAiRetainedTaskSource,
   verifyLineAiRetainedTaskSource,
   parseAiBudgetGrantV2,
+  aiBudgetV2RepairsBefore,
   extractValueCandidates,
   asIntakeRouteIntent,
 } from '@watchdog-bms/contracts';
@@ -566,34 +566,43 @@ export async function loadJwtSecret(
   await resolveSecretInto(env, 'WATCHDOG_JWT_SECRET_ARN', 'WATCHDOG_JWT_SECRET_SOURCE_ARN', getSecret ?? readFromSecretsManager);
 }
 
+/**
+ * Builds the orchestrator from this process's environment alone. Owner 2026-09-29 ("no more switches; always
+ * on"): nothing on this path may read a LINE AI capability switch — the release copies the artifact's env
+ * forward, and a stale copy once turned four prepared families into "ยังดึงข้อมูลไม่ได้" (UAT 2026-09-29).
+ */
+export async function createRuntimeOrchestrator(): Promise<RuntimeOrchestrator> {
+  const [
+    { aiGatewayConfigSchema },
+    { AiGatewayConfigService },
+    { ToolPolicyEnforcerService },
+    { ErpToolClient },
+    { OrchestratorAgent },
+  ] = await Promise.all([
+    import('@watchdog-bms/config'),
+    import('../common/config/ai-gateway-config.service'),
+    import('../common/ai/tool-policy-enforcer.service'),
+    import('../modules/line-ai/infrastructure/erp-tool.client'),
+    import('../modules/line-ai/agents/orchestrator.agent'),
+  ]);
+
+  const envResult = aiGatewayConfigSchema.safeParse(process.env);
+  if (!envResult.success) {
+    throw new Error(`Config error: ${envResult.error.message}`);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const config = new (AiGatewayConfigService as any)() as InstanceType<typeof AiGatewayConfigService>;
+  const policyEnforcer = new ToolPolicyEnforcerService(config);
+  const erpTools = new ErpToolClient(config, policyEnforcer);
+  return new OrchestratorAgent(erpTools, config);
+}
+
 async function getRuntimeOrchestrator(): Promise<RuntimeOrchestrator> {
   runtimeOrchestrator ??= (async () => {
     await loadInternalSecret();
     await loadJwtSecret();
-    const [
-      { aiGatewayConfigSchema },
-      { AiGatewayConfigService },
-      { ToolPolicyEnforcerService },
-      { ErpToolClient },
-      { OrchestratorAgent },
-    ] = await Promise.all([
-      import('@watchdog-bms/config'),
-      import('../common/config/ai-gateway-config.service'),
-      import('../common/ai/tool-policy-enforcer.service'),
-      import('../modules/line-ai/infrastructure/erp-tool.client'),
-      import('../modules/line-ai/agents/orchestrator.agent'),
-    ]);
-
-    const envResult = aiGatewayConfigSchema.safeParse(process.env);
-    if (!envResult.success) {
-      throw new Error(`Config error: ${envResult.error.message}`);
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const config = new (AiGatewayConfigService as any)() as InstanceType<typeof AiGatewayConfigService>;
-    const policyEnforcer = new ToolPolicyEnforcerService(config);
-    const erpTools = new ErpToolClient(config, policyEnforcer);
-    return new OrchestratorAgent(erpTools, config);
+    return createRuntimeOrchestrator();
   })();
   return runtimeOrchestrator;
 }
@@ -633,8 +642,6 @@ async function handleInvocation(
   // question. Report the flag from this separately deployed process without running the model.
   if (typeof body === 'object' && body !== null
     && (body as Record<string, unknown>)['lineDraftEditCapabilityProbe'] === true) {
-    const draftEdit = aiGatewayConfigSchema.shape.LINE_AI_DRAFT_EDIT_ENABLED.safeParse(process.env['LINE_AI_DRAFT_EDIT_ENABLED']);
-    if (!draftEdit.success) { json(res, 503, { error: 'LINE_DRAFT_EDIT_CONFIG_INVALID' }); return; }
     const sourceCommit = process.env['GIT_SHA'];
     const artifactSha256 = process.env['AGENTCORE_ARTIFACT_SHA256'];
     const serviceVersion = process.env['SERVICE_VERSION'];
@@ -645,7 +652,9 @@ async function handleInvocation(
       turnId: (body as Record<string, unknown>)['turnId'],
       replyText: '', plan: { status: 'UNROUTABLE', intents: [] }, durationMs: 0, refused: false,
       sourceRefs: [], webLinks: [], toolsInvoked: [],
-      lineDraftEditEnabled: draftEdit.data,
+      // Owner 2026-09-29: draft edit is always on — never read from this artifact's own environment,
+      // which the release copies forward and which had gone stale (UAT 2026-09-29).
+      lineDraftEditEnabled: true,
       ...(runtimeIdentity ? { runtimeIdentity } : {}),
     });
     return;
@@ -664,7 +673,7 @@ async function handleInvocation(
       replyText: '', plan: { status: 'UNROUTABLE', intents: [] }, durationMs: 0, refused: false,
       sourceRefs: [], webLinks: [], toolsInvoked: [],
       lineBudgetV2Capability: {
-        supported: AI_BUDGET_V2_SUPPORTED === true && process.env['LINE_AI_AGENT_ORCHESTRATION_ENABLED'] !== 'false',
+        supported: AI_BUDGET_V2_SUPPORTED === true,
         inputContractVersion: 2,
         providerOutputVersion: 2,
         budgetContractVersion: 2,
@@ -709,7 +718,8 @@ async function handleInvocation(
     const orchestrationStartedAt = Date.now();
     const budget: BudgetRequestState | undefined = payload.inputEvidence && payload.budgetGrantV2
       ? { status: 'active-v2', grant: payload.budgetGrantV2, inputDigest: payload.inputEvidence.joinedSha256,
-          sourceRoute: 'line-turn', requestId: payload.turnId, calls: payload.budgetGrantV2.nextOrdinal ?? 0, repairCount: 0 }
+          sourceRoute: 'line-turn', requestId: payload.turnId, calls: payload.budgetGrantV2.nextOrdinal ?? 0,
+          repairCount: aiBudgetV2RepairsBefore(payload.budgetGrantV2) }
       : undefined;
     const { result, usage } = await runWithUsageContext({ companyId: payload.companyId, ...(budget ? { budget } : {}) }, async () => {
       const run = await orchestrator.run(turnReq);

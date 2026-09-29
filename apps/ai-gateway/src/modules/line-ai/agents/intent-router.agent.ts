@@ -5,7 +5,7 @@
  * route BEFORE any source-module use case runs. It emits a route plan only.
  * Uses model prompt when a provider is configured; fails closed when model routing is unavailable.
  */
-import { BUSINESS_DOCUMENT_REASON_CODES, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, extractValueCandidates, hasToolFeature, hasToolPermissions, isAmbiguousDateCandidate, formatDateClarifyQuestion, lineAiRetainedTaskSourceMatchesProjection, lineAiRetainedTaskSourceText, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan, parseLineAiSemanticSubrequests, verifyLineAiRetainedTaskSource } from '@watchdog-bms/contracts';
+import { BUSINESS_DOCUMENT_REASON_CODES, aiBudgetV2OrdinalCeiling, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, extractValueCandidates, hasToolFeature, hasToolPermissions, isAmbiguousDateCandidate, formatDateClarifyQuestion, lineAiRetainedTaskSourceMatchesProjection, lineAiRetainedTaskSourceText, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan, parseLineAiSemanticSubrequests, verifyLineAiRetainedTaskSource } from '@watchdog-bms/contracts';
 import type { AgentIntentPlan, LineAiConversationContext, LineAiInputEvidenceV2, LineAiOpenClarification, LineAiRetainedTaskSourceV2, LineAiSemanticSubrequestV2, LineAiTaskProjectionV2, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, LineIntakeExpenseItemHint, LineIntakeReimbursementHints, LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { Logger } from '@nestjs/common';
@@ -658,7 +658,7 @@ export class IntentRouterAgent {
     for (let attempt = 0; attempt < attemptLimit; attempt += 1) {
       if (attempt > 0) {
         const budget = currentBudgetState();
-        if (budget?.status !== 'active-v2' || budget.calls >= budget.grant.maxTurnSlots
+        if (budget?.status !== 'active-v2' || budget.calls >= aiBudgetV2OrdinalCeiling(budget.grant)
           || budget.repairCount >= budget.grant.maxRepairs) break;
         budget.repairPending = true;
       }
@@ -1223,7 +1223,7 @@ function parseIntakePlan(
     const compactStartedAt = Date.now();
     let compactRejection: CompactDecodeRejection | undefined;
     const compactDecision = inputEvidence && hasCompactDecision
-      ? parseLineIntakeCompactDecision({ raw: raw['decisionV1'], messageText, inputEvidence, enabledTools,
+      ? parseLineIntakeCompactDecision({ raw: socialDecisionOrRaw(intent, raw['decisionV1'], inputEvidence), messageText, inputEvidence, enabledTools,
         enabledPreparedFamilies, language: compactLanguage, valueCandidates: readValueCandidates ?? valueCandidates,
         recentReads: conversationContext?.recentReads,
         onReject: (reason) => { compactRejection = reason; } })
@@ -1420,6 +1420,22 @@ function parseIntakePlan(
   } catch {
     return null;
   }
+}
+
+/**
+ * UAT 2026-09-29 ("สวัสดีจ้า", replica "ขอบคุณค่ะ"): for pure social talk the router often reports NO request —
+ * `"decisionV1":{"subrequests":[]}` beside a valid advisorAnswer — which the decoder rejects, so the turn paid a
+ * second router call. ADVISOR_CONVERSATION already means "no company data, no tool, nothing to record", so its
+ * empty inventory stands for exactly one clause: a general reply to the whole message. Expanded here, before the
+ * shared decoder, so every other rule (and every other route's empty inventory) stays exactly as strict.
+ */
+function socialDecisionOrRaw(intent: LineIntakeRouteIntent, rawDecision: unknown, inputEvidence: LineAiInputEvidenceV2): unknown {
+  if (intent !== 'ADVISOR_CONVERSATION' || !rawDecision || typeof rawDecision !== 'object' || Array.isArray(rawDecision)) return rawDecision;
+  const decision = rawDecision as Record<string, unknown>;
+  const parts = inputEvidence.parts.flatMap((part, index) => part.rawText.length ? [{ part: index, whole: true }] : []);
+  if (!Array.isArray(decision['subrequests']) || decision['subrequests'].length || decision['simpleRead'] !== undefined
+    || Object.keys(decision).some((key) => key !== 'subrequests') || !parts.length) return rawDecision;
+  return { subrequests: [{ kind: 'general', goal: 'reply to the social message', sources: parts, filters: {} }] };
 }
 
 function unavailableIntakePlan(messageText: string, errorCode: string): LineIntakeRoutePlan {
