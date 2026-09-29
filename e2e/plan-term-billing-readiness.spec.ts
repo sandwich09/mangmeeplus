@@ -345,8 +345,10 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       expect((await ctx.request.post('/api/auth/login', { data: { username: staff.username, password: staff.password } })).status()).toBe(200);
       const page = await ctx.newPage();
       await page.goto(`/companies/${rig.companyId}/renew`);
-      await expect(page.getByRole('heading', { name: 'บริษัทนี้พักการใช้งานชั่วคราว', exact: true })).toBeVisible();
-      await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toHaveCount(0);
+      // Staff share the lock title, get a body naming who can buy, and no purchase CTA (card or banner).
+      await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
+      await expect(page.getByText('แพ็กเกจของร้านหมดอายุแล้ว ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อใช้งานต่อ ข้อมูลทั้งหมดยังอยู่ครบ', { exact: true })).toBeVisible();
+      await expect(page.getByRole('link', { name: 'เลือกแพ็กเกจ', exact: true })).toHaveCount(0);
     } finally { await ctx.close(); }
     await rig.db.companyMembership.updateMany({ where: { userId: staff.id }, data: { status: 'DISABLED' } });
     expect((await read(rig.companyId)).status()).toBe(403);
@@ -369,7 +371,10 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       await authedPage.route('**/api/v1/plan-term/notice', route => route.fulfill({ status, contentType: 'application/json', body: '{}' }));
       await authedPage.goto(`/companies/${rig.companyId}/renew`);
       await expect(authedPage.getByRole('heading', { name: title, exact: true })).toBeVisible();
-      await expect(authedPage.getByRole('heading', { name: 'บริษัทนี้พักการใช้งานชั่วคราว', exact: true })).toHaveCount(0);
+      // Never a real state instead: the lock view (owner and staff share its title) or no-term.
+      for (const state of ['แพ็กเกจหมดอายุแล้ว', 'บริษัทนี้ยังใช้งานได้ตามสิทธิ์']) {
+        await expect(authedPage.getByRole('heading', { name: state, exact: true })).toHaveCount(0);
+      }
       await authedPage.unroute('**/api/v1/plan-term/notice');
       if (status !== 401) {
         await authedPage.getByRole('button', { name: 'ลองใหม่', exact: true }).click();
