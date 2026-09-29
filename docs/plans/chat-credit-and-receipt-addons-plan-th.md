@@ -2,7 +2,7 @@
 
 วันที่: 2026-09-28
 อัปเดตล่าสุด: 2026-09-29 — เขียนแผนใหม่เป็น PR A–G ที่ลงมือได้ตามรีวิว R1 (F-01…F-35) และมติ Owner/controller 2026-09-29; อ้างอิงโค้ดตรวจบน develop `8a91bc1c` (origin/develop `69fba9d3` ต่างเฉพาะ `extended-tests.yml` บรรทัด 286). หลังรีวิว develop ได้งานแก้ของโปรแกรมซื้อแพ็กเกจ (#860, develop `9130455a`) ซึ่งทำให้บรรทัดในไฟล์ billing/LINE/หน้าเว็บแพ็กเกจหลายไฟล์เลื่อน (ประมาณ 3 ใน 4 ของที่อ้างในไฟล์เหล่านั้น) — ก่อนลงมือแต่ละ PR ให้ตรวจ anchor ซ้ำบน develop ล่าสุด
-สถานะ: **มติธุรกิจครบ (เหลือ Q1–Q7 ที่มีค่าเริ่มต้น); ยังไม่เริ่ม implementation; ต้องรอ prerequisite ใน §1**
+สถานะ: **มติธุรกิจครบ (Owner รับค่าเริ่มต้นของ Q1–Q7 2026-09-29); PR A implement แล้วบน branch `claude/addons-pr-a-foundation-20260929` (รอรีวิว/merge); PR B–G ยังไม่เริ่ม**
 
 อ้างอิง: [สเปก](../specs/chat-credit-and-receipt-addons-spec-th.md) · [audit แหล่งข้อมูลร่วม + ตรวจซ้ำ](../research/chat-credit-and-receipt-addons-unified-source-audit-2026-09-29-th.md) · [แผนส่วนลดจากเซลล์](sales-event-discounts-plan-th.md) · แบบงานข้ามระบบ [purchase-without-setup/xx-cross-cutting.md](purchase-without-setup/xx-cross-cutting.md) · [cloud operations](../runbooks/cloud-environment-operations.md) · [UAT/Production protocol](../runbooks/uat-production-v2-deployment.md)
 
@@ -34,7 +34,7 @@
 
 - **ส่วนลดจากงานอีเวนต์** เริ่มได้หลัง PR A (แผนส่วนลดต้องระบุ PR A เป็น prerequisite ร่วม). PR ที่แก้ไฟล์ร่วมต้องต่อคิวทีละ PR ไม่ทำพร้อมกัน: `billing.service.ts` (quote/checkout/status), `paid-checkout-invoice.ts`, `billing-refund-source.ts`, `billing-reconciler.service.ts`, `packages/contracts/src/billing.ts`, `schema.prisma`, `BillingPage.tsx`, `auth.guard.ts` (sync pins ทุกครั้ง). ข้อตกลง: validator ของ add-on อยู่ไฟล์ใหม่ (`paid-addon-invoice.ts`) จึงไม่ชนกับการผ่อน validator แพ็กเกจของงานส่วนลด; การล็อกการเลือกส่วนลดดูเฉพาะ attempt ที่ `productKind = PACKAGE`
 - เปิดขาย **รูป** ได้เมื่อ A, B, E, F (ส่วนรูป), G (cohort รูปพร้อม) ผ่าน UAT; เปิดขาย **เครดิต AI** ได้เมื่อ A, C, D, E, F, G ผ่าน UAT และ lane CHAT ทุกทางของร้านนั้นมี funding
-- **Release ร่วม (มติ Owner 2026-09-29, [สเปกส่วนลดจากงาน](../specs/sales-event-discounts-spec-th.md) SD-O6)**: add-on กับส่วนลดจากงานอีเวนต์ออก release เดียวกัน — candidate เดียวมี PR A–G และทุก PR ของ[แผนส่วนลด](sales-event-discounts-plan-th.md) (SD-A…SD-F) ผ่าน UAT → READY → production รอบเดียว และเปิด gate `addon_chat_credit`, `addon_receipt_image`, `event_discounts` ในขั้นเดียวกัน; gate ของแต่ละสินค้าปิดเป็นค่าเริ่มต้นจนถึงขั้นนั้น. เครดิตสำหรับร้านเดิมของงานส่วนลด (แผนส่วนลด PR SD-F) เรียก grant seam ของ PR B และ PR C ด้วยแหล่งยอด `SALES_EVENT` จึงต่อจากสอง PR นี้
+- **Release ร่วม (มติ Owner 2026-09-29, [สเปกส่วนลดจากงาน](../specs/sales-event-discounts-spec-th.md) SD-O6)**: add-on กับส่วนลดจากงานอีเวนต์ออก release เดียวกัน — candidate เดียวมี PR A–G และทุก PR ของ[แผนส่วนลด](sales-event-discounts-plan-th.md) (SD-A…SD-F) ผ่าน UAT → READY → production รอบเดียว และเปิดขาย add-on พร้อมส่วนลดจากงานในขั้นเดียวกัน; add-on ไม่มี gate (มติ Owner 2026-09-29, สเปก O-04, ดู PR A) จึงเปิดขายด้วยการผูก Price ใน policy ที่ ACTIVE และก่อนขั้นนั้นไม่ผูก. เครดิตสำหรับร้านเดิมของงานส่วนลด (แผนส่วนลด PR SD-F) เรียก grant seam ของ PR B และ PR C ด้วยแหล่งยอด `SALES_EVENT` จึงต่อจากสอง PR นี้
 
 ## 2. PR briefs
 
@@ -53,6 +53,13 @@
 - เทสต์: `packages/contracts/src/billing-addon.spec.ts` (ค่าคงที่หก offer, decoder, `BILLING_ACTIONS`) → `ci.yml:543`; `apps/api/src/modules/billing/domain/billing-policy-addon.spec.ts` (parser เก่า/ใหม่, ความไม่ซ้ำ, policy ที่ไม่มี key) → catalog; `apps/api/src/modules/billing/billing-product-foundation.pg.spec.ts` (ค่าเริ่มต้นของคอลัมน์, reader สี่จุดไม่เห็นใบ add-on ที่ `periodEnd` ใหม่กว่า, unique ของ slot) → `ci.yml` ต่อจาก `:782`
 - จบเมื่อ: typecheck/boot/เทสต์ผ่าน; `git diff` ไม่แตะ behavior ของแพ็กเกจ; ขึ้น UAT และ Production แล้วก่อนขั้นเผยแพร่ policy (F-09 จังหวะ 1)
 - ประมาณการ: 4–6 วันทำงาน
+- **มติ Owner 2026-09-29 ไม่มี switch (ต่างจาก A2/A3)**: “อย่าทำ switch อีก เปิดไว้เลยเสมอ” (สเปก O-04). PR A ไม่เพิ่ม `addon_chat_credit`/`addon_receipt_image` ใน `BILLING_ACTIONS` และไม่มี gate/flag/env ใหม่; ไม่แตะ `billing-configuration.service.ts` (บรรทัดที่ A3 อ้างเป็นโค้ดของ gate ทั้งหมด; editor รับ key ใหม่ผ่าน `parseBillingPolicy` อย่างเดียว). Offer ขายได้เมื่อ `addOnPriceIds[offerKey]` ผูกใน policy ที่ ACTIVE (แบบ `priceIds` ของแพ็กเกจ) และสินค้าพร้อม; ใน PR A ยังขายไม่ได้ เพราะไม่มีทาง quote และ reconciler ปฏิเสธ snapshot add-on. มตินี้แทนทุกจุดในแผนที่อ้าง gate ของ add-on (§1, §3.6, §4, AO-E67, §7). PR ถัดไปทำแทน gate ดังนี้:
+  - PR E: เงื่อนไขซื้อ §8.4 ใช้ “offer ผูก Price ใน policy ที่ ACTIVE และสินค้าพร้อม” แทน “gate ของสินค้าเปิด” (ไม่ผูก → `BILLING_ADDON_OFFER_UNAVAILABLE`, ยังไม่พร้อม → `BILLING_ADDON_NOT_READY`); `new_sales`, gate วิธีจ่าย `card_once`/`promptpay_once` และ `salesCompanyIds` บังคับตามเดิม; catalog/status ใช้เงื่อนไขเดียวกัน
+  - PR E: `validateProvider` ใน `billing-configuration.service.ts` ตรวจ Price ของ add-on ทุกตัวที่ผูกตอน PUBLISH_POLICY (one-time, THB, ยอดตาม `BILLING_ADDON_OFFERS`, active, livemode, tax behavior) และ impact preview แสดงการเปลี่ยน `addOnPriceIds` เพราะการผูกคือการเปิดขาย
+  - PR E หรือ F: `apps/web/src/features/billing-admin/BillingConfigurationPage.tsx` ยังไม่มีช่องผูก Price ของ add-on หกตัว และแผนเดิมไม่มี PR ใดรับงานนี้ ต้องมีก่อน U2
+  - ปิดขายรายสินค้า = PUBLISH_POLICY ที่ถอด Price ของ offer นั้น; ปิดทั้งหมด = `new_sales`; ไม่ลบยอดและไม่หยุด reconcile/คืนเงิน/ประวัติ
+  - แผนส่วนลดจากงานยังวาง gate `event_discounts` ใน SD-A: ต้องให้ Owner/controller ยืนยันก่อนเริ่ม SD-A ว่ามตินี้ครอบงานนั้นด้วยหรือไม่
+- **ผลบนโค้ดจริง (develop `4edd4568`, 2026-09-29)**: migration `20260929120000_billing_product_foundation`; reader `periodEnd desc` ยังมีสี่จุดเท่าเดิม (บรรทัดเลื่อนเป็น `billing.service.ts:817`, `billing-admin.service.ts:92`, `billing-notifications.service.ts:380,423`) ทั้งสี่เรียก helper เดียว `latestPackageInvoice` ที่กรอง PACKAGE; reader ของ attempt ยังอ่านเฉพาะ `activeAttemptId`. Reader ที่อ่านใบทุกใบของบัญชีและจะเห็นใบ add-on (ไม่อยู่ในรายการ A4) ให้ PR E ตัดสิน: `billing.service.ts:179` `purchaseSource` (ใบ paid ใดก็ได้เมื่อไม่ผูก attempt), `billing-restart.ts:34` (ทุกใบที่ map ต้อง APPLIED และไม่คืนเงิน), `billing-repeat.ts:143` `assertNoDebt` (ทุกใบ paid ใน Stripe ต้อง map และ APPLIED) — ใบ add-on ที่ HELD หรือคืนเงินจะบล็อก RESTART/REPEAT ซึ่งขัด A33. A5: reconciler ปฏิเสธ `billing.addon_reconcile_unsupported` สามจุด (`reconcileAccount` ก่อนเลือก `reconcileOneTime`, `importDiscoveredInvoice`, `reconcileOriginalInvoice`); PR E แทนสองจุดหลังด้วย branch ของ add-on แต่คงจุดแรก (slot แพ็กเกจต้องไม่มี add-on). เทสต์ contracts ตรวจว่า `BILLING_ACTIONS` ไม่มี gate ของ add-on แทนข้อเดิม และ PG spec ครอบ dispatch ของ reconciler ด้วยแถวจริง
 
 ### PR B — Ledger รูป, grant seam ร่วม, admin grant ของรูป — F-16, F-17 (รูป), F-19 (LINE), F-21, C03–C06
 
@@ -177,7 +184,7 @@ git add infra/security/validate-production-maintenance-release.sh .github/workfl
 ### 3.4 Migrations
 
 - ที่ `apps/api/prisma/migrations/<YYYYMMDDHHMMSS>_<snake>/migration.sql`; timestamp ต้องเรียงหลัง migration ล่าสุดบน develop ตอนเริ่ม PR (controller แจ้งว่าล่าสุดตอนนี้คือ `20260929030000`; develop `69fba9d3` ที่ตรวจได้จบที่ `20260928210000_line_support_request_reference`). ถ้า develop มี migration ใหม่กว่าก่อน merge ให้ขยับ timestamp (คงชื่อท้าย) แล้วแก้ชื่อในแผนและ memory ใน PR เดียวกัน; งานส่วนลดใช้กติกาเดียวกัน จึงจอง slot ตามลำดับ merge ไม่จองล่วงหน้า
-- ชื่อท้ายที่วางไว้: PR A `billing_product_foundation`; PR B `receipt_unit_entries`; PR C `ai_credit_ledger` (รวมคอลัมน์ cutover)
+- ชื่อท้ายที่วางไว้: PR A `billing_product_foundation` (ใช้ `20260929120000`); PR B `receipt_unit_entries`; PR C `ai_credit_ledger` (รวมคอลัมน์ cutover)
 - Additive เท่านั้น (`ADD COLUMN … DEFAULT/NULL`, `CREATE TABLE`, `CREATE INDEX` ไม่ใช้ `CONCURRENTLY`); ไม่มี `DROP/TRUNCATE/DELETE` (guard `production-a5-evidence.logic.ts:592-612`); ไม่มี Prisma enum (`prisma-enum-parity.spec.ts`)
 - CI: `prisma:validate` → `migration:review` → fresh `migrate deploy` (`ci.yml:773`) → PG specs → `test:boot` (`:785`); PG spec ของแต่ละ PR ต้องเขียน/อ่านทุกคอลัมน์ใหม่
 - Release: migration ที่ค้างบน Production ทำให้ READY เดินทาง `APPEND_ONLY_PENDING` ตาม runbook; แก้ migration หลังออก passport = เริ่ม UAT ใหม่
@@ -195,7 +202,7 @@ git add infra/security/validate-production-maintenance-release.sh .github/workfl
 | รายการ | วิธีอ่าน | ค่าที่ต้องเป็น |
 | --- | --- | --- |
 | `salesCompanyIds` ของ policy ที่ ACTIVE | `GET /v1/system/billing/settings` (`billing.controller.ts:325`, `system.billing.read`) | `null` หรือมีร้านทดสอบ (สำหรับ UAT) |
-| Gates | settings เดียวกัน | `addon_chat_credit`/`addon_receipt_image` = false จนถึงขั้นเปิดขายใน §5/§6 |
+| Price ของ add-on (แทน gate, มติ Owner 2026-09-29) | settings เดียวกัน | `addOnPriceIds` ของ policy ที่ ACTIVE ว่างจนถึงขั้นเปิดขายใน §5/§6 |
 | Binary ที่อ่าน `addOnPriceIds` ได้ | SHA ที่ deploy บน UAT/Production (runbook) | มี PR A ก่อนเผยแพร่ policy ที่มี key นี้ (F-09) |
 | Stripe Price หกตัว | Owner สร้างใน test mode (UAT) และ live mode (Production): one-time, THB, ยอดตาม §4 ของสเปก, tax behavior ตาม policy | ผูกใน `addOnPriceIds` ผ่าน PUBLISH_POLICY แบบ reviewed |
 | LINE v2 พร้อม | `/internal/ai/line-reliability-capabilities` ตอบ ready (`ai-gateway.client.ts:158-169`), ค่า `LINE_AI_RELIABILITY_V2_MODE` ของ task (ค่าเริ่มต้น `on` `packages/config/src/index.ts:29`), AgentCore runtime ตาม runbook | ready; ถ้าไม่ ready ห้ามเปิดขายเครดิต AI |
@@ -208,11 +215,11 @@ git add infra/security/validate-production-maintenance-release.sh .github/workfl
 
 - [ ] ไม่ backfill เงินหรือ lot จากเพดานรายเดือน; `productKind` ของแถวเดิมได้ `PACKAGE` จากค่าเริ่มต้นของคอลัมน์ (ไม่มีสคริปต์ backfill)
 - [ ] รายงาน cohort บน UAT แล้ว Production (อ่านอย่างเดียว ตาม runbook และประกาศก่อนใช้ session production)
-- [ ] Owner ตอบ Q5 หรือยอมรับค่าเริ่มต้นก่อนย้ายร้านที่มี override
+- [x] Owner รับค่าเริ่มต้นของ Q5 (2026-09-29) — ใช้ค่าจาก resolver เดิม ณ วันย้ายเป็น allowance ต่อรอบ
 - [ ] ย้ายร้านทดสอบบน UAT ครบกลุ่ม: CARD_AUTO รายเดือน, PROMPTPAY_RENEW รายเดือน, CARD_ONCE รายปี, ดีลต่ออายุอัตโนมัติ, ดีลจ่ายครั้งเดียว, ร้านที่ขอบรอบตรงต้นเดือน
 - [ ] หลักฐานรายบริษัท: ช่วงที่ชำระ, ยอด legacy ที่เหลือ, วันย้าย, รอบแรก, ต้นทุนช่วงรอยต่อ, grant/hold ก่อน/หลัง; ไม่มี PII
 - [ ] ประกาศลูกค้า (ข้อความ Owner อนุมัติ) ก่อนวันย้ายของ Production
-- [ ] ย้าย Production ทีละกลุ่มหลัง UAT ผ่าน และเปิด gate ต่อสินค้าหลังกลุ่มนั้นย้ายแล้ว
+- [ ] ย้าย Production ทีละกลุ่มหลัง UAT ผ่าน และเปิดขายต่อสินค้า (ผูก Price) หลังกลุ่มนั้นย้ายแล้ว
 
 ## 5. UAT (Stripe test mode) — ทำตามลำดับ บันทึกผลทุกข้อ
 
@@ -252,13 +259,13 @@ git add infra/security/validate-production-maintenance-release.sh .github/workfl
 | `docs/specs/line-ai-credit-wording-and-deterministic-reads-spec-th.md` | หมายเหตุแก้แล้วรอบนี้; §3 เพิ่มแถว “เพดานเครดิต AI ต่อเดือน” (คอนโซล), วลีตามรอบของร้านที่ย้าย, คำตอบ Q6; §5.1/§5.2 ข้อความใหม่ | PR F |
 | `docs/specs/mangmee-billing-pack-amendment-2026-09-12.md` | หมายเหตุแก้แล้วรอบนี้; ส่วน “ทางเลือกซื้อเฉพาะใบเสร็จ — HIDDEN” เปลี่ยนสถานะเป็น “แทนด้วยสินค้ารูปของ add-on” เมื่อเปิด gate | PR G / ตอนเปิดขาย |
 | `docs/specs/mangmee-line-web-billing-ui-spec-th.md` | แท็บที่ 4 ตามสเปก §7.1 | PR F |
-| `docs/specs/mangmee-billing-controls-spec-th.md` + สเปกผู้ดูแลคนเดียว | operation `ADDON_ADMIN_GRANT`/`ADDON_ADMIN_REVOKE`, gates ใหม่ | PR B / PR A |
+| `docs/specs/mangmee-billing-controls-spec-th.md` + สเปกผู้ดูแลคนเดียว | operation `ADDON_ADMIN_GRANT`/`ADDON_ADMIN_REVOKE` (ไม่มี gate ใหม่ ตามมติ Owner 2026-09-29) | PR B |
 | `docs/specs/line-ai-credit-hold-reconciliation-spec-th.md` | หมายเหตุแก้แล้วรอบนี้; เพิ่ม hold ที่มี funding และการค้นเกินสองเดือน | PR C |
 | `docs/specs/mangmee-sales-deals-and-locked-signup-spec-th.md` | เครดิต AI ของดีลเป็นต่อรอบเดือนของแพ็กเกจ | PR F |
-| `docs/specs/mangmee-purchase-without-setup-spec-th.md` §9 | “ไม่แตะ BillingInvoice” ถูกแทนด้วย `productKind` ของ PR A | PR A |
+| `docs/specs/mangmee-purchase-without-setup-spec-th.md` §9 | “ไม่แตะ BillingInvoice” ถูกแทนด้วย `productKind` ของ PR A | PR A (ทำแล้ว) |
 | `docs/specs/sales-event-discounts-spec-th.md` / แผน | ระบุ PR A เป็น prerequisite ร่วม, ไม่มีแท็บ, ล็อกเฉพาะ attempt แพ็กเกจ; เครดิตร้านเดิมผ่าน seam ด้วยแหล่ง `SALES_EVENT` และ release ร่วม (ทำแล้ว 2026-09-29) | งานส่วนลด (ไม่อยู่ในไฟล์ของแผนนี้) |
-| `docs/runbooks/uat-production-v2-deployment.md` | “binary ขั้นต่ำต่อ schema ของ policy” (F-09) | PR A |
-| `docs/agent-memory/chat-credit-addons-implementation.md` | สร้างตอนเริ่ม PR A | PR A |
+| `docs/runbooks/uat-production-v2-deployment.md` | “binary ขั้นต่ำต่อ schema ของ policy” (F-09) | PR A (ทำแล้ว) |
+| `docs/agent-memory/chat-credit-addons-implementation.md` | สร้างตอนเริ่ม PR A | PR A (ทำแล้ว) |
 
 ## 8. ประมาณการ (F-25)
 
@@ -334,7 +341,7 @@ git add infra/security/validate-production-maintenance-release.sh .github/workfl
 | AO-E64 | Invariant ของสเปก §9.2 สำหรับ CARD_AUTO, PROMPTPAY_RENEW, CARD_ONCE, advance deal | A35 | PG (E) |
 | AO-E65 | Grace ของ QR: รอบใหม่ใช้ได้ที่ขอบรอบ; จ่ายแล้วไม่เติมซ้ำ; ไม่จ่ายรอบปิด | A34 | cycles spec + PG (C) |
 | AO-E66 | Turn ของ LINE v2 ข้ามขอบรอบใช้รอบเดิม; grant v2 ไม่เปลี่ยน | A36 | `line-ai-budget-authority.pg.spec.ts` (C) |
-| AO-E67 | Binary ใหม่อ่าน policy เก่า/ใหม่; price id ซ้ำข้าม map ถูกปฏิเสธ; gates ปิดเป็นค่าเริ่มต้น | A37 | `billing-policy-addon.spec.ts` (A) |
+| AO-E67 | Binary ใหม่อ่าน policy เก่า/ใหม่; price id ซ้ำข้าม map ถูกปฏิเสธ; ไม่มี gate ของ add-on (มติ Owner 2026-09-29) | A37 | `billing-policy-addon.spec.ts` (A) |
 | AO-E68 | Reader สี่จุดของแพ็กเกจไม่เห็นใบ add-on | A13 | `billing-product-foundation.pg.spec.ts` (A) — release gate |
 | AO-E69 | แจ้งเตือน add-on ไม่มีตัวเลขและไม่ใช้ข้อความแพ็กเกจ | A39 | notifications spec (E) |
 | AO-E70 | การ์ดรูปหมดส่งใหม่เมื่อยอดเปลี่ยนรุ่น; latch เว็บล้าง | A39 | webhook spec (B), web spec (F) |

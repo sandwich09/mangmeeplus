@@ -9805,6 +9805,9 @@ model BillingAccount {
   customerId          String?
   baseSubscriptionId  String?
   activeAttemptId     String?
+  /// Add-on checkout slot (add-on spec T-02, §9.1): never read or written together with `activeAttemptId`,
+  /// so an open add-on payment never blocks a package renewal, grace or command.
+  activeAddOnAttemptId String? @unique
   activeEmailOperationId      String? @unique
   activeCollectionOperationId String? @unique
   collectionPauseJson Json?
@@ -9906,6 +9909,8 @@ model BillingAttempt {
   idempotencyKey    String
   requestHash       String
   quoteSnapshot     Json
+  /// PACKAGE | CHAT_CREDIT | RECEIPT_IMAGE (String, not a Prisma enum); equals the snapshot's kind.
+  productKind       String @default("PACKAGE")
   policyRevisionId  String
   consentRevision   String
   consentAt         DateTime
@@ -9935,6 +9940,9 @@ model BillingInvoice {
   providerNumber    String?
   offerSnapshot     Json
   contractSnapshot  Json?
+  /// PACKAGE | CHAT_CREDIT | RECEIPT_IMAGE. Every package reader that orders by `periodEnd` filters PACKAGE;
+  /// an add-on invoice also sets periodStart = periodEnd = paidAt (add-on spec §8.2, F-35).
+  productKind       String @default("PACKAGE")
   policyRevisionId  String
   currency          String
   totalSatang       Int
@@ -9957,6 +9965,7 @@ model BillingInvoice {
   updatedAt         DateTime @updatedAt
   @@unique([billingAccountId, providerInvoiceId])
   @@index([applyStatus, updatedAt])
+  @@index([billingAccountId, productKind, periodEnd])
 }
 
 model BillingProviderEvent {
