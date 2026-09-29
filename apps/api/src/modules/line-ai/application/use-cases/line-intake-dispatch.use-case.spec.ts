@@ -2994,6 +2994,48 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
     }
   });
 
+  // UAT 2026-09-29 (owner photo: a table bill "Total 1,712.54" with a QR payment slip beside it): the
+  // reader copied the separator, Number() gave NaN, and the customer was told to send the final receipt.
+  for (const [name, fields, amountSignals] of [
+    ['a total printed with a thousands separator', { grandTotalAmount: '1,712.54', vatAmount: '112.04' }, ['Total 1,712.54']],
+    ['an amount the read kept only as a signal', { vatAmount: '112.04' }, ['Total 1,712.54']],
+  ] as const) {
+    it(`a check bill with ${name} asks production's paid/unpaid question, never "send the final receipt"`, async () => {
+      const { prisma, pendingMediaRows } = makePrisma();
+      const checkBill = businessClassification({ documentFamily: 'COMMERCIAL_DOCUMENT', documentKind: 'ORDER_OR_CHECK_BILL',
+        transactionState: 'DUE', amountSignals: [...amountSignals], settlementSignals: [], missingRequiredSignals: ['MISSING_PAYMENT_EVIDENCE'] });
+      const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.review', 'line.ai.query'],
+        boundV2: true, prisma, routePlan: RECEIPT_ROUTE, receiptOcrResult: { status: 'ok', classification: checkBill, fields },
+        substituteResult: { handled: true, status: 'OPEN', expenseId: 'expense-1', acceptedFields: [], blockers: [], replyText: '' } });
+      await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+      assert.equal(pendingMediaRows[0]?.askedQuestionJson?.kind, 'CHECK_BILL_ACTION', 'the bill waits for the paid/unpaid answer');
+      assert.match(h.replies.join('\n'), /จ่ายเงินแล้วหรือยังคะ/u);
+      assert.doesNotMatch(h.replies.join('\n'), /ส่งใบเสร็จฉบับสุดท้าย หรือระบุ/u);
+    });
+  }
+
+  it('a quantity-only order with no amount still says what is missing instead of asking paid/unpaid', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    const order = businessClassification({ documentFamily: 'COMMERCIAL_DOCUMENT', documentKind: 'ORDER_OR_CHECK_BILL', transactionState: 'ORDERED',
+      amountSignals: [], settlementSignals: [], missingRequiredSignals: ['QUANTITY_ONLY', 'MISSING_MONETARY_AMOUNT'] });
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.review', 'line.ai.query'],
+      boundV2: true, prisma, routePlan: RECEIPT_ROUTE, receiptOcrResult: { status: 'ok', classification: order, fields: { quantity: '2' } },
+      substituteResult: { handled: true, status: 'OPEN', expenseId: 'expense-1', acceptedFields: [], blockers: [], replyText: '' } });
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    assert.equal(pendingMediaRows.length, 0);
+    assert.match(h.replies.join('\n'), /ยังไม่พบยอดเงินรวม/u);
+  });
+
+  it("the photo's draft reply is production's card: the link on a button, never raw text with ids", async () => {
+    const { prisma } = makePrisma();
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true, routePlan: RECEIPT_ROUTE, prisma });
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    const reply: any = h.sentMessages[0]?.[0];
+    assert.equal(reply?.type, 'flex', 'a card, as production sent it');
+    assert.doesNotMatch(JSON.stringify(reply.contents.body), /https?:\/\//u, 'no raw link in the card body');
+    assert.match(JSON.stringify(reply.contents.footer), /expense-1/u, 'the draft link rides on the button');
+  });
+
   it('two unclear photos: files are named by order and time, buttons send their own words, and a tap picks the right one', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], boundV2: true,
@@ -3107,6 +3149,11 @@ describe('LINE intake dispatch – a bound (v2) chat answers open work in produc
     assert.equal(executed.length, 1, 'the draft takes the answer');
     assert.equal(executed[0].messageText, '99 ถนนสุขุมวิท กรุงเทพ');
     assert.match(h.replies.join('\n'), /บันทึกที่อยู่ร้านแล้ว/u);
+    // UAT 2026-09-29: this reply was plain text ending in a raw link with ids; production sent a card.
+    const reply: any = h.sentMessages.at(-1)?.at(-1);
+    assert.equal(reply?.type, 'flex', "production's card, not text");
+    assert.doesNotMatch(JSON.stringify(reply.contents.body), /https?:\/\//u, 'no raw link in the card body');
+    assert.match(JSON.stringify(reply.contents.footer), /expense-draft-1/u, 'the draft link rides on the button');
   });
 
   it('a correction reaches the router with the captures it may correct', async () => {

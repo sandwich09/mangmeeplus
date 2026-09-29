@@ -1255,6 +1255,17 @@ function parseIntakePlan(
       const { taskRef: _taskRef, ...withoutTaskRef } = item;
       return withoutTaskRef;
     });
+    // UAT 2026-09-29 (owner: "ของเดิมดีอยู่แล้ว"): a draft's answer came back routed as
+    // EXPENSE_DRAFT_CONTINUATION — target draft, hints and resolved question all present — while its one
+    // clause was filed as `general` (2 of 3 real runs), so the bound chat read it out as a knowledge
+    // question and the draft never took the answer. Production dispatched on the intent. When this request
+    // offered the open work that intent continues, that one clause is the write; the API still validates it.
+    if (semanticSubrequests?.length === 1 && !semanticSubrequests[0]!.writeIntent
+      && ['general', 'help'].includes(semanticSubrequests[0]!.kind)
+      && ((intent === 'EXPENSE_DRAFT_CONTINUATION' && activeExpenseDrafts?.length)
+        || (intent === 'EXPENSE_CAPTURE_CORRECTION' && recentCapturedExpenses?.length))) {
+      semanticSubrequests = [{ ...semanticSubrequests[0]!, kind: 'write', writeIntent: intent }];
+    }
     if (retainedTaskSource && (semanticSubrequests?.length !== 1
       || semanticSubrequests[0]!.kind !== retainedTaskSource.semanticSubrequest.kind
       || semanticSubrequests[0]!.writeIntent !== retainedTaskSource.semanticSubrequest.writeIntent

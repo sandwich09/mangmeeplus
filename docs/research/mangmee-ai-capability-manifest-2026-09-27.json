@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "5963edac9dd66db3b7b6fbead9bc4bdb0c5b1233",
+  "sourceRevision": "5c75aeab9f9fa213d19cfee82c05449b7fffd1f2",
   "checkoutBranch": "claude/line-bound-continuations-20260929",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "412b5ddbe4467aaf36af0f893b1d6475e244a5b494510d1b0b316f4bd0d89fe2"
+      "sha256": "336f12af19bc138469da771ae85bef403fdf5516fda7634a7eaaf44a96e24087"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T05:31:36.522Z",
-  "manifestDigest": "112ecc8979b1cc921edad914eb6700f0fb7bd32254b1f7d6a8f4eb22670b3c99"
+  "generatedAt": "2026-09-29T06:38:49.752Z",
+  "manifestDigest": "5bfefae4a03661472ce0eeb535013500f41be63aae7afd805af9e21e94f3f10d"
 }

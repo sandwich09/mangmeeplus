@@ -3430,7 +3430,9 @@ export class ProcessLineWebhookUseCase {
     /** Spec §13: the state badge the reply's own use case chose. Absent renders exactly as before. */
     badge?: string,
   ): Promise<void> {
-    if (this.boundConversations.has(event)) return this.deliverRequiredMessages(event, [{ type: 'text', text }]);
+    // Bound chats render the same card production sends (UAT 2026-09-29: the receipt draft reply had
+    // become plain text ending in a raw link with ids). A lossless card is a complete presentation, so
+    // the delivery plan sends the card itself with this text as its fallback.
     if (Array.from(text).length > LINE_FLEX_CARD_BODY_MAX_CHARS) {
       return this.deliverCompletedReplies(event, splitLineExpenseDraftReply(text), companyId, access, undefined, true);
     }
@@ -3470,7 +3472,11 @@ export class ProcessLineWebhookUseCase {
     requestedDraftEdit = false,
   ): Promise<void> {
     if (texts.length === 0 || texts.length > (this.boundConversations.has(event) ? 15 : LINE_MAX_MESSAGES_PER_REPLY)) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
-    if (this.boundConversations.has(event)) return this.deliverRequiredMessages(event, texts.map(text => ({ type: 'text' as const, text })));
+    // Production's render handles up to one LINE reply's worth of parts; a longer bound answer is
+    // split across the plan's batches as lossless text.
+    if (this.boundConversations.has(event) && texts.length > LINE_MAX_MESSAGES_PER_REPLY) {
+      return this.deliverRequiredMessages(event, texts.map(text => ({ type: 'text' as const, text })));
+    }
     const messages = await this.timeStage(event.webhookEventId, 'render', async () => {
       const terminal = texts[texts.length - 1]!;
       // Default-off is the legacy shape exactly: every part a text message, completion quick reply on the
@@ -4465,9 +4471,13 @@ export class ProcessLineWebhookUseCase {
     // answer that is late after the foreground deadline. A second photo queued behind the first one
     // (UAT 2026-09-29) finished past that deadline, the plan failed validation and the draft was
     // never announced. A QA result keeps its own job deadline.
+    // The same holds for any answer already finished when the foreground deadline has passed: a long
+    // text turn used to throw PLAN_INVALID_LIFETIME here and end silent. Production delivered it.
     const durableMediaResult = !('messageText' in event);
+    const qaDeadline = this.documentQaDelivery.get(event)?.jobDeadlineAt.getTime();
+    const foregroundDeadline = qaDeadline ?? (log.budgetAuthorityJson as { grant?: { finalDeadlineAtMs?: number } } | null)?.grant?.finalDeadlineAtMs ?? log.createdAt.getTime() + 40_000;
     const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt,
-      firstDispatchDeadlineAt: !this.documentQaDelivery.get(event) && durableMediaResult ? expiresAt : new Date(this.documentQaDelivery.get(event)?.jobDeadlineAt.getTime() ?? (log.budgetAuthorityJson as { grant?: { finalDeadlineAtMs?: number } } | null)?.grant?.finalDeadlineAtMs ?? log.createdAt.getTime() + 40_000).toISOString(), authorization, control, businessResult: reimbursement?.status === 'applied' ? { kind: 'REIMBURSEMENT_DRAFT', operationKey: String(reimbursement.receipt.actionId), committedAt: String(reimbursement.receipt.committedAt), recordIds: [String(reimbursement.receipt.requestId)], resultingRevisions: [String(reimbursement.receipt.appliedRequestUpdatedAt)] } : null,
+      firstDispatchDeadlineAt: qaDeadline === undefined && (durableMediaResult || foregroundDeadline < now.getTime() + 500) ? expiresAt : new Date(foregroundDeadline).toISOString(), authorization, control, businessResult: reimbursement?.status === 'applied' ? { kind: 'REIMBURSEMENT_DRAFT', operationKey: String(reimbursement.receipt.actionId), committedAt: String(reimbursement.receipt.committedAt), recordIds: [String(reimbursement.receipt.requestId)], resultingRevisions: [String(reimbursement.receipt.appliedRequestUpdatedAt)] } : null,
       answer: { status: pendingSubrequestIds.length ? 'PARTIAL' : 'COMPLETE', pendingSubrequestIds, items },
       preferredMessages: items.map((_item, index) => index < messages.length && index !== financialControlIndex ? messages[index]! : null),
       ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) });
@@ -8603,11 +8613,18 @@ export class ProcessLineWebhookUseCase {
       },
     });
     if (decision.outcome === 'reference' || decision.outcome === 'unsupported') {
+      // UAT 2026-09-29: a table bill printed "Total 1,712.54" and the reader copied the separator, so
+      // Number() gave NaN and the customer got "send the final receipt" instead of this question.
+      // Production asked it; a bill with a printed amount always asks it now, separator or not, and
+      // even when the read kept the amount only as a signal.
+      const checkBillTotal = Number(String(ocr.fields?.grandTotalAmount ?? '').replace(/,/g, ''));
       const checkBillAwaitingDecision = decision.outcome === 'reference'
         && decision.classification?.contentKind === 'DOCUMENT'
         && decision.classification.documentKind === 'ORDER_OR_CHECK_BILL'
-        && Number.isFinite(Number(ocr.fields?.grandTotalAmount))
-        && Number(ocr.fields?.grandTotalAmount) > 0;
+        && ((Number.isFinite(checkBillTotal) && checkBillTotal > 0)
+          || (decision.classification.amountSignals.length > 0
+            && !decision.classification.missingRequiredSignals.some((signal) =>
+              signal === 'MISSING_MONETARY_AMOUNT' || signal === 'MISSING_TRANSACTION_TOTAL')));
       if (checkBillAwaitingDecision && canCaptureExpense && this.substituteReceiptContinuation) {
         const reply = formatCheckBillDecisionReply();
         const { created, pending } = await this.ensurePendingMedia(
