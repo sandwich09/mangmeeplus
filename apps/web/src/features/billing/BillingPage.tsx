@@ -324,7 +324,13 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     actions={previewHref && <Link className="mangmee-btn mangmee-btn-secondary" href={previewHref}>พรีวิวขั้นตอน (local)</Link>}
     backHref={status?.accessState === 'ACTIVE' ? `/companies/${encodeURIComponent(companyId)}/dashboard` : lockedShell ? `/companies/${encodeURIComponent(companyId)}/settings` : '/billing/companies'}
     backLabel={status?.accessState === 'ACTIVE' ? 'กลับแดชบอร์ด' : lockedShell ? 'กลับหน้าตั้งค่า' : 'กลับหน้าเลือกบริษัท'}>
-    {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4">{error}<button className={`${button} ml-3`} disabled={busy} onClick={() => setReload(value => value + 1)}>ลองใหม่</button></div>}
+    {error && <div role="alert" className="space-y-2 rounded-xl border border-red-200 bg-red-50 p-4">
+      <p className="break-words">{error}<button className={`${button} ml-3`} disabled={busy} onClick={() => setReload(value => value + 1)}>ลองใหม่</button></p>
+      {/* The error text itself asks people to contact the team "with the reference" — so show it here
+          instead of leaving that instruction with nothing on screen to read out. */}
+      {error.includes('ติดต่อทีมงานพร้อมเลขอ้างอิง') && (status?.reference || returnAttemptId) &&
+        <p className="break-all text-sm">เลขอ้างอิงสำหรับแจ้งทีมงาน: {billingSupportReference(returning ? returnAttemptId : status?.reference)}</p>}
+    </div>}
     {checkoutCancelNotice && <p role="status" className="rounded-xl bg-gray-50 p-3">{checkoutCancelNotice}</p>}
     {!data && !error && <p role="status">กำลังตรวจสอบสิทธิ์และรายการชำระเงิน…</p>}
     {data && status && <>
@@ -344,8 +350,10 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           <MangmeeBadge tone={status.accessState === 'ACTIVE' ? 'brand' : 'amber'}>{status.accessState === 'HELD' ? 'อยู่ระหว่างตรวจสอบ' : planTermStateLabel(status.accessState === 'ACTIVE' ? 'ACTIVE' : lockReason === 'no_package' ? 'NO_PACKAGE' : 'EXPIRED')}</MangmeeBadge>
         </div>
         {noPackage ? <dl className="grid gap-5 rounded-xl bg-gray-50 p-4">
-          <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">ยังไม่มีแพ็กเกจ</dd>
-            <p className="mt-1 text-sm text-gray-600">เลือกแพ็กเกจเพื่อเริ่มใช้งาน</p>
+          {/* R2/R10: the same title PLAN_LOCK_COPY gives the heading above, on an expired shop — never
+              a second, hardcoded "ยังไม่มีแพ็กเกจ" that would say something else under "แพ็กเกจหมดอายุแล้ว". */}
+          <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-2 text-lg font-bold text-gray-900">{PLAN_LOCK_COPY[lockReason].title}</dd>
+            <p className="mt-1 text-sm text-gray-600">{lockReason === 'no_package' ? 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน' : 'เลือกแพ็กเกจเพื่อใช้งานต่อ'}</p>
             {/* Only when a term really ran out: a shop that never had one starts and ends today. */}
             {lockReason === 'trial_ended' && status.termEndsAt && <p className="mt-1 text-sm text-gray-500">หมดอายุเมื่อ {date(status.termEndsAt)}</p>}</div>
         </dl> : <dl className="grid gap-5 rounded-xl bg-gray-50 p-4 sm:grid-cols-3">

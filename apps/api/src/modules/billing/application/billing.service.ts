@@ -1,4 +1,4 @@
-import { BillingEmailRecipient } from './billing-email-recipient';
+import { BillingEmailRecipient, pendingAdminRecipientChange } from './billing-email-recipient';
 import { BillingDocumentResend } from './billing-document-resend';
 import { checkoutAddressOf } from './billing-recipient-capture';
 import { assertBillingProfileUnchanged, billingProfileComplete, stripeCustomerSyncPayload, stripeCustomerSynced } from './billing-company-profile';
@@ -79,8 +79,10 @@ function assertRecipientUnchanged(account: Pick<BillingAccount, 'recipientEmail'
 }
 /** R-D1: resend needs a paid, applied invoice, a recipient and no recipient change in flight. */
 export function canResendDocuments(row: { providerStatus: string; applyStatus: string },
-  account: Pick<BillingAccount, 'recipientEmail' | 'activeEmailOperationId'>): boolean {
-  return row.providerStatus === 'paid' && row.applyStatus === 'APPLIED' && !!account.recipientEmail && !account.activeEmailOperationId;
+  account: Pick<BillingAccount, 'recipientEmail' | 'activeEmailOperationId' | 'recipientBouncedAt'>): boolean {
+  // The command itself refuses BILLING_RECIPIENT_BOUNCED (billing-document-resend.ts); the button must
+  // agree, or it offers a resend that can only fail.
+  return row.providerStatus === 'paid' && row.applyStatus === 'APPLIED' && !!account.recipientEmail && !account.activeEmailOperationId && !account.recipientBouncedAt;
 }
 
 @Injectable()
@@ -865,6 +867,10 @@ export class BillingService {
             (account.baseSubscriptionId ? renewalMode === 'CARD_AUTO' && mode === 'CARD_AUTO' : renewalMode === 'CARD_ONCE' || renewalMode === 'PROMPTPAY_ONCE'
               ? oneTimeMode(mode) : true));
     const refundReviewPending = !!(account && await pendingRefund(this.prisma.client, account));
+    // PR E: an admin-initiated recipient change holds the account without setting activeEmailOperationId
+    // (it has its own lease/drain) — the same gate `current()` (billing-email-recipient.ts) already
+    // respects for `stored.canChange`, reused here so this can never open while that one refuses.
+    const recipientAdminPending = !!(account && await pendingAdminRecipientChange(this.prisma.client, account));
     const issues = this.config.stripeAccountId ? await this.prisma.client.billingIssue.findMany({ where: { companyId: company.id, stripeAccountId: this.stripe.accountId,
       livemode: this.stripe.livemode, state: { not: 'RESOLVED' } }, take: 10, select: { id: true, kind: true } }) : [];
     const finalActions = allowedActions.filter(action => (action !== 'new_sales' || availablePurchaseModes.length > 0) &&
@@ -938,7 +944,7 @@ export class BillingService {
       // R-A7/R-A8: the column only — no Stripe read here, so it stays empty until the payment applies.
       recipient: { email: account?.recipientEmail ?? null, source: (account?.recipientSource as BillingRecipientSource | null) ?? null,
         bouncedAt: account?.recipientBouncedAt?.toISOString() ?? null,
-        canChange: !!account?.customerId && !account.activeEmailOperationId && !account.activeAttemptId },
+        canChange: !!account?.customerId && !account.activeEmailOperationId && !account.activeAttemptId && !recipientAdminPending },
       checkoutAddress: checkoutAddressOf(account?.checkoutAddressJson),
       issues: issues.map((i) => ({ reference: i.id, code: i.kind })) };
   }

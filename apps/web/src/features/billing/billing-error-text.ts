@@ -32,9 +32,12 @@ export function errorText(error: unknown): string {
   return (Object.hasOwn(PAGE_LABELS, code) ? PAGE_LABELS[code] : translateApiError(code)) ?? BILLING_GENERIC_ERROR;
 }
 
-/** pr-d §3.7: Stripe resends the receipt only when its email changed, so the sentence says which went. */
-export function billingResendText(result: BillingDocumentResendResult): string {
-  return result.receiptUpdated
-    ? `ส่งเอกสารไปที่ ${result.recipientEmail} แล้ว ตรวจกล่องจดหมายและโฟลเดอร์สแปม · วันนี้ส่งซ้ำได้อีก ${result.remainingToday} ครั้ง`
+/** pr-d §3.7: Stripe resends the receipt only when its email changed, so the sentence says which went.
+ *  `context` picks the "open the receipt" clue: the documents page has its own resend button above this
+ *  text; the recipient panel does not, so it points at the payment history instead. */
+export function billingResendText(result: BillingDocumentResendResult, context: 'documents' | 'recipient' = 'documents'): string {
+  if (result.receiptUpdated) return `ส่งเอกสารไปที่ ${result.recipientEmail} แล้ว ตรวจกล่องจดหมายและโฟลเดอร์สแปม · วันนี้ส่งซ้ำได้อีก ${result.remainingToday} ครั้ง`;
+  return context === 'recipient'
+    ? `ส่งใบแจ้งหนี้ไปที่ ${result.recipientEmail} แล้ว ใบเสร็จไม่ได้ส่งซ้ำเพราะอีเมลยังเป็นอีเมลเดิม เปิดใบเสร็จได้ที่ประวัติการชำระเงิน · วันนี้ส่งซ้ำได้อีก ${result.remainingToday} ครั้ง`
     : `ส่งใบแจ้งหนี้ไปที่ ${result.recipientEmail} แล้ว ใบเสร็จไม่ส่งซ้ำเพราะอีเมลไม่เปลี่ยน เปิดได้จากปุ่มด้านบน · วันนี้ส่งซ้ำได้อีก ${result.remainingToday} ครั้ง`;
 }
