@@ -27,7 +27,9 @@ const RECEIPT_TEXT: Record<string, string> = { REQUIRED: 'ยังขาดใ�
 const WARNING_TEXT: Record<string, string | null> = { missing_receipt: 'บันทึกเป็นร่างได้ แต่ต้องแนบใบเสร็จให้ครบก่อนยื่นเบิก', signatures_invalidated: null };
 const receiptText = (status: unknown) => RECEIPT_TEXT[String(status)] ?? 'กรุณาตรวจหลักฐานในเว็บ';
 const categoryText = (item: { categoryLabel?: string }) => item.categoryLabel?.trim() || 'ยังไม่ได้เลือกหมวด';
-const evidenceText = (line: ClaimLine) => line.attachmentId ? 'มีไฟล์แนบ' : 'ยังไม่มีไฟล์แนบ';
+/** The same test as the claim's evidence status (`isLineEvidenced`): a bill claimed by reference brings its own receipt,
+ *  so its line never reads "ยังไม่มีไฟล์แนบ" beside "มีหลักฐานครบทุกรายการแล้ว" (2026-09-30). The web draft page says the same. */
+const evidenceText = (line: ClaimLine) => line.attachmentId ? 'มีไฟล์แนบ' : line.linkedExpenseId ? 'ใช้ใบเสร็จจากบิลต้นทาง' : 'ยังไม่มีไฟล์แนบ';
 
 /** A claimed bill as the customer knows it — document number, shop, date — never its record id. */
 function sourceText(line: ClaimLine): string | undefined {
@@ -49,7 +51,7 @@ const CLAIM_FIELDS: Record<string, Field<ClaimSnapshot>> = {
 };
 const LINE_FIELDS: Array<Field<ClaimLine>> = [['รายละเอียด', line => line.description], ['วันที่จ่าย', line => formatThaiDate(line.incurredDate)],
   ['วัตถุประสงค์', line => line.purpose ?? '-'], ['หมวด', categoryText], ['ยอดเงิน', line => formatClaimAmount(line.amount), true],
-  ['ไฟล์แนบ', evidenceText], ['บิลต้นทาง', line => sourceText(line) ?? '-']];
+  ['หลักฐาน', evidenceText], ['บิลต้นทาง', line => sourceText(line) ?? '-']];
 const change = <T>([label, render, money]: Field<T>, before: T, after: T, currency: string, where = '') =>
   render(before) === render(after) ? [] : [`${label}${where}: ${render(before)} → ${render(after)}${money ? ` ${unit(currency)}` : ''}`];
 

@@ -18,6 +18,9 @@ const bill = { schemaVersion: 1, expenseId: ids.expense, expenseDate: '2026-09-2
 const taxi = { lineRef: 'b'.repeat(64), lineNo: 1, description: 'ค่าแท็กซี่', categoryKey: 'travel', incurredDate: '2026-09-27', amount: '1234.5000' };
 const pens = { lineRef: 'c'.repeat(64), lineNo: 2, description: 'ปากกาและแฟ้ม', categoryKey: 'supplies', categoryLabel: 'วัสดุอุปกรณ์', incurredDate: '2026-09-26',
   amount: '380.0000', attachmentId: ids.attachment, linkedExpenseId: ids.expense, sourceExpenseSnapshot: bill };
+// A line's three evidence situations: nothing yet (taxi), its own file, a bill claimed by reference (no file of its own).
+const ownFile = { ...taxi, lineRef: 'd'.repeat(64), lineNo: 2, attachmentId: ids.attachment };
+const byBill = { ...pens, lineRef: 'e'.repeat(64), lineNo: 3, attachmentId: undefined };
 const preview = {
   schemaVersion: 1, actionId: ids.action, previewRevision: 7, operation: 'UPDATE', expiresAt: '2999-01-01T00:00:00.000Z', confirmationDigest: ids.digest,
   before: { requesterDisplayName: 'พิม', branchId: ids.branch, branchName: 'สำนักงานใหญ่', amount: '100.0000', currency: 'THB', reason: 'เดิม',
@@ -26,6 +29,9 @@ const preview = {
     receiptRequirementStatus: 'REQUIRED', status: 'DRAFT', lines: [taxi, pens], signatureImpact: 'INVALIDATED' },
   diff: [{ fieldPath: 'lines' }], warnings: ['missing_receipt', 'signatures_invalidated'],
 };
+/** A new draft as the use case builds it: the claim's evidence status and warning come from the lines. */
+const created = (lines: unknown[], receiptRequirementStatus: string) => ({ ...preview, operation: 'CREATE', before: undefined, diff: [{ fieldPath: 'request' }],
+  after: { ...preview.after, lines, receiptRequirementStatus, signatureImpact: 'NONE' }, warnings: receiptRequirementStatus === 'REQUIRED' ? ['missing_receipt'] : [] });
 const receipt = { schemaVersion: 1, actionId: ids.action, operation: 'CREATE', requestId: ids.request, committedState: 'DRAFT', amount: '1614.5000',
   currency: 'THB', confirmationDigest: ids.digest, committedAt: '2026-09-30T01:00:00.000Z', appliedRequestUpdatedAt: '2026-09-30T01:00:00.000Z' };
 
@@ -42,6 +48,18 @@ describe('ReimbursementDraftActionView', () => {
       'การแก้ไขนี้จะลบลายเซ็นเดิม และต้องลงนามใหม่ภายหลัง', 'บันทึกเป็นร่างได้ แต่ต้องแนบใบเสร็จให้ครบก่อนยื่นเบิก', 'ยืนยันบันทึกเป็นร่าง']) assert.ok(texts.includes(text), text);
     // The revision still travels with confirm/cancel (reimbursements.api.spec.ts); it is never shown.
     assert.doesNotMatch(texts.join('\n'), /รุ่น|DRAFT|travel|THB|2026-09-2\d/u);
+  });
+
+  it('says where each line\'s evidence comes from in the LINE card\'s words, and an evidenced claim never reads "no file" (2026-09-30)', () => {
+    const all = visible(render(ready({ status: 'preview', preview: created([taxi, ownFile, byBill], 'REQUIRED') })));
+    for (const text of ['ยังไม่ได้เลือกหมวด · ยังไม่มีไฟล์แนบ', 'ยังไม่ได้เลือกหมวด · มีไฟล์แนบ',
+      'วัสดุอุปกรณ์ · ใช้ใบเสร็จจากบิลต้นทาง · บิลต้นทาง: INV-0042 · ร้านเครื่องเขียนสมใจ · 26 ก.ย. 2569', 'ยังขาดใบเสร็จบางรายการ']) assert.ok(all.includes(text), text);
+    // The real-model run: a bill claimed by reference is the claim's whole evidence, and its line says so.
+    for (const lines of [[byBill], [ownFile, byBill]]) {
+      const shown = visible(render(ready({ status: 'preview', preview: created(lines, 'ATTACHED') })));
+      assert.ok(shown.includes('มีหลักฐานครบทุกรายการแล้ว'));
+      assert.doesNotMatch(shown.join('\n'), /ยังไม่มีไฟล์แนบ|ต้องแนบใบเสร็จ/u);
+    }
   });
 
   it('renders terminal and unknown recovery states without offering a second create', () => {
@@ -87,7 +105,7 @@ describe('no customer-visible draft page text carries a machine token (Owner rul
         lines: [{ ...taxi, categoryLabel: '  ', amount: '0.9950' }, { ...pens, sourceExpenseSnapshot: undefined, amount: null }] } };
     const states: ViewState[] = [
       { kind: 'loading' }, { kind: 'error', notice: 'read_failed' }, { kind: 'unknown', notice: 'result_unconfirmed' }, { kind: 'unknown', notice: 'connection_lost' },
-      ready({ status: 'preview', preview }), ready({ status: 'preview', preview: odd }),
+      ready({ status: 'preview', preview }), ready({ status: 'preview', preview: odd }), ready({ status: 'preview', preview: created([taxi, ownFile, byBill], 'REQUIRED') }),
       ready({ status: 'preview', preview: { ...preview, operation: 'CREATE', before: undefined, diff: [{ fieldPath: 'request' }], warnings: ['missing_receipt'] } }),
       ready({ status: 'preview', preview: { ...preview, expiresAt: '2000-01-01T00:00:00.000Z' } }),
       { kind: 'ready', result: { status: 'preview', preview }, submitting: 'confirm' },
