@@ -13,7 +13,7 @@ const date=(value:string)=>new Date(value).toLocaleString('th-TH',{timeZone:'Asi
 const state:Record<string,string>={PREVIEW:'ตรวจจำนวนก่อนส่งคำขอ',AWAITING_APPROVAL:'รอยืนยันรายการ',SUCCEEDED:'ปรับใบเสร็จแล้ว',CANCELLED:'ยกเลิกคำขอแล้ว'};
 const api=<T,>(path:string,body?:unknown,key?:string)=>authedApiFetch<T>(`/system/billing${path}`,{cache:'no-store',suppressErrorToast:true,...body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json',...key?{'Idempotency-Key':key}:{}},body:JSON.stringify(body)}});
 const errors:Record<string,string>={CONTROL_RECEIPT_TERM_REQUIRED:'ร้านนี้ยังไม่มีระยะใช้งานหรือหมดอายุแล้ว กลับไปตรวจและต่ออายุแพ็กเกจก่อน',CONTROL_PAID_RECEIPTS_REQUIRED:'หน้านี้เพิ่มใบเสร็จให้แพ็กเกจที่ชำระเงินและยังไม่หมดอายุ กรุณากลับไปดูสถานะแพ็กเกจ',CONTROL_COMPANY_HELD:'บริษัทนี้ถูกพักใช้งาน กรุณาตรวจสถานะบริษัทก่อน',CONTROL_OPERATION_IN_PROGRESS:'มีรายการเดิมกำลังดำเนินการ เปิดสถานะแพ็กเกจเพื่อตรวจให้เสร็จก่อน',CONTROL_PREVIEW_STALE:'ข้อมูลหรือวันหมดอายุเปลี่ยนแล้ว ยกเลิกคำขอเดิมและตรวจข้อมูลใหม่'};
-const readWarnings={OCR_DISABLED:'ร้านนี้ปิดการอ่านเอกสารด้วย AI อยู่',OCR_LIMIT_REACHED:'ร้านนี้ใช้จำนวนครั้งอ่านเอกสารครบแล้ว',AI_BUDGET_REACHED:'ร้านนี้ใช้เครดิต AI ของเดือนนี้หมดแล้ว',
+const readWarnings={OCR_DISABLED:'ร้านนี้ปิดการอ่านเอกสารด้วย AI อยู่',OCR_LIMIT_REACHED:'ร้านนี้ใช้จำนวนครั้งอ่านเอกสารครบแล้ว',AI_BUDGET_REACHED:'ค่าใช้ AI ของร้านนี้ถึงเพดานความปลอดภัยของเดือนนี้แล้ว',
   // Spec §11.4: the total still has credit, but the share this shop allocated to reading documents
   // does not — so "ยังมีเครดิตเหลือ" must not read as "อ่านใบเสร็จต่อได้". Neutral about the cause
   // (used up, or a cap of 0) and about the other shares, either of which may also be gone.
@@ -21,7 +21,7 @@ const readWarnings={OCR_DISABLED:'ร้านนี้ปิดการอ่�
   // Credit-wording spec §5.3: jobs in flight, or holds whose provider outcome is still unknown, keep
   // credit reserved — so the usable balance can be lower than the AI page shows. No figure here; the
   // operator reads the real position in the partner console.
-  AI_CREDIT_HOLDS_PENDING:'มีงาน AI ที่กำลังทำอยู่หรือยังไม่ทราบผล ระบบกันเครดิตไว้ชั่วคราว เครดิตที่ใช้ได้จริงอาจต่ำกว่าที่แสดง ตรวจได้ที่หมวด AI และโควตา'};
+  AI_CREDIT_HOLDS_PENDING:'มีงาน AI ที่กำลังทำอยู่หรือยังไม่ทราบผล ระบบกันเครดิตไว้ชั่วคราว เครดิตที่ใช้ได้จริงอาจต่ำกว่าที่แสดง ตรวจได้ที่หมวด เครดิต AI และอ่านรูป'};
 function message(error:unknown){return errors[apiErrorCode(error)??'']??apiErrorMessage(error);}
 
 export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{companyId?:string;operationId?:string}){
@@ -68,7 +68,7 @@ export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{c
     <button className={button} disabled={busy||loading} onClick={()=>{generation.current++;setData(null);setOperation(null);setLoading(true);setRefresh(n=>n+1);}}>โหลดข้อมูลล่าสุด</button>
     {loading&&<p role="status">กำลังโหลดข้อมูล…</p>}{error&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-red-800">{error}</p>}{notice&&<p role="status" className="rounded-lg bg-green-50 p-3">{notice}</p>}
     {(data?.readWarnings??operation?.readWarnings??[]).length>0&&<section className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4" aria-label="การตั้งค่าที่จำกัดการอ่านเอกสาร">
-      {(data?.readWarnings??operation?.readWarnings??[]).map(w=><p key={w}>{readWarnings[w]}</p>)}<p>เพิ่มใบเสร็จแล้วก็ยังติดการตั้งค่านี้ ตรวจที่เมนูเครดิตการใช้ AI ก่อนให้ร้านอ่านเอกสารเพิ่ม</p>
+      {(data?.readWarnings??operation?.readWarnings??[]).map(w=><p key={w}>{readWarnings[w]}</p>)}<p>เพิ่มใบเสร็จแล้วก็ยังติดการตั้งค่านี้ ตรวจที่หน้าร้าน หมวด เครดิต AI และอ่านรูป ก่อนให้ร้านอ่านเอกสารเพิ่ม</p>
     </section>}
     {data&&<>
       <section className="space-y-3 rounded-xl border border-gray-200 p-4 bg-white"><h2 className="font-bold">{data.companyName}</h2><p>อ่านใบเสร็จได้อีก {data.remaining?.toLocaleString('th-TH')??'ไม่จำกัด'}{data.remaining!==null&&' ใบ'}</p>

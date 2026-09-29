@@ -339,7 +339,7 @@ describe('the timeline last line: why the assistant is refusing right now', () =
       // The reason can be any of three, so this line must not assert one of them; it points at the
       // page where the exact red notice lives.
       assert.doesNotMatch(refusal!.detail!, /รวมกันไม่เกินเครดิตรวม/);
-      assert.match(refusal!.detail!, /AI และโควตา/);
+      assert.match(refusal!.detail!, /เครดิต AI และอ่านรูป/);
     });
 
     it('says BOTH shares are gone rather than promising the other one is still there', async () => {

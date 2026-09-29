@@ -51,7 +51,20 @@ import {
   ocrRemaining,
   satangToBaht,
   satangToBahtInput,
+  aiChatCreditSourceText,
+  aiTabStatusRows,
+  bahtText,
+  chatCreditConfirmMessage,
+  chatCreditDraftChanged,
+  chatCreditInputFromUsage,
+  chatCreditPolicyRequest,
+  parseChatCreditInput,
+  receiptImagesSourceText,
+  receiptImageTiles,
+  receiptQuotaControlVisible,
+  safetyCeilingConfirmMessage,
 } from './ai-budget.logic';
+import type { PartnerAiUsageDto, PartnerReceiptImagesDto } from '@watchdog-bms/contracts';
 
 describe('satangToBaht', () => {
   it('renders satang as baht with exactly two decimals', () => {
@@ -303,7 +316,7 @@ describe('split AI budget policy helpers', () => {
     });
     // Exactly the total still fits; one satang more does not.
     assert.equal(validateAiBudgetDraft({ ...draft, ocr: '70.01' }, saved).ok, false);
-    assert.match((validateAiBudgetDraft({ ...draft, ocr: '80' }, saved) as { notice: string }).notice, /เกินเครดิตรวมที่บันทึกไว้/);
+    assert.match((validateAiBudgetDraft({ ...draft, ocr: '80' }, saved) as { notice: string }).notice, /เกินเพดานความปลอดภัยที่บันทึกไว้/);
     // Both caps are required — an empty one is never read as "no cap on that bucket".
     assert.match((validateAiBudgetDraft({ ...draft, ocr: '' }, saved) as { notice: string }).notice, /เพดานอ่านเอกสาร/);
     assert.match((validateAiBudgetDraft({ ...draft, chat: '' }, saved) as { notice: string }).notice, /เพดานแชต/);
@@ -359,7 +372,7 @@ describe('split AI budget policy helpers', () => {
     assert.equal(aiBudgetAvailableLabel(0), '฿0.00');
     assert.equal(aiBudgetAvailableLabel(3000), '฿30.00');
     // A SHARED bucket has no separate cap, so what is left there IS the shared total.
-    assert.equal(aiBudgetAvailableLabel(null), 'ตามเครดิตรวม');
+    assert.equal(aiBudgetAvailableLabel(null), 'ตามเพดานความปลอดภัย');
     assert.notEqual(aiBudgetAvailableLabel(null), aiBudgetCapLabel(null));
     assert.notEqual(aiBudgetAvailableLabel(0), aiBudgetCapLabel(0));
   });
@@ -396,7 +409,7 @@ describe('split AI budget policy helpers', () => {
     assert.match(scheduled, /ปิดส่วนนี้/);
     const reverting = aiBudgetPendingText(
       { mode: 'SHARED', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: null, effectiveMonthKey: '2026-10' }, month)!;
-    assert.match(reverting, /เครดิตรวมก้อนเดียว/);
+    assert.match(reverting, /กลับไปไม่แยกเพดาน/);
   });
 
   it('treats only the two 409 fences as "reload and re-check"', async () => {
@@ -423,7 +436,7 @@ describe('split AI budget policy helpers', () => {
   });
 
   it('labels the two modes and the reserved column in Thai', () => {
-    assert.equal(AI_BUDGET_MODE_LABELS.SHARED, 'เครดิตรวมก้อนเดียว');
+    assert.equal(AI_BUDGET_MODE_LABELS.SHARED, 'ไม่แยกเพดาน');
     assert.equal(AI_BUDGET_MODE_LABELS.SPLIT, 'แยกเพดานแชตและอ่านเอกสาร');
     // Reserved money is not spend and adds no provider call; the label has to say so.
     assert.equal(AI_BUDGET_RESERVED_NOTE, 'กันไว้ระหว่างเรียก AI');
@@ -517,5 +530,154 @@ describe('held credit that needs an operator decision (hold spec §4.1–4.2)', 
     assert.equal(AI_CREDIT_HOLD_EMPTY_NOTE, 'ไม่มีรายการค้าง');
     assert.equal(AI_CREDIT_HOLD_HELP_NOTE.includes('\n'), false);
     assert.match(AI_CREDIT_HOLD_HELP_NOTE, /ระบบจะบันทึกยอดจริงเพิ่มเอง/);
+  });
+});
+
+// ── Admin tab rework 2026-09-29: chat credit, receipt images, safety ceiling ─────────────────────
+
+const date = (iso: string) => `วันที่ ${iso.slice(0, 10)}`;
+const images = (over: Partial<PartnerReceiptImagesDto> = {}): PartnerReceiptImagesDto => ({
+  basis: 'PACKAGE_LOTS', tierKey: 'BASIC_499', enforced: true, active: true,
+  package: { limit: 50, used: 20, remaining: 30, expiresAt: '2026-10-29T08:10:55.000Z' },
+  additional: { remaining: 0, expiresAt: null }, totalRemaining: 30, ...over,
+});
+/** A SHARED BASIC shop with the default 80 credit, 12.34 used, and a ฿2,000 platform ceiling. */
+function usageFixture(over: { budget?: Partial<PartnerAiUsageDto['budget']>; policy?: Partial<PartnerAiUsageDto['budget']['policy']>;
+  chat?: Partial<PartnerAiUsageDto['budget']['position']['chat']>; ocrConfig?: Partial<PartnerAiUsageDto['ocr']['config']>;
+  usedCount?: number; receiptImages?: PartnerReceiptImagesDto | undefined; totalSpent?: number } = {}): PartnerAiUsageDto {
+  const policy = { mode: 'SHARED' as const, chatCapSatang: 8_000, ocrCapSatang: null, source: 'ACTIVE' as const, revision: '0:2026-09:ACTIVE',
+    pending: null, chatSource: 'DEFAULT' as const, ...over.policy };
+  return {
+    current: null, previous: null,
+    budget: { effectiveSatang: 200_000, overrideSatang: null, defaultSatang: 200_000, ceilingSatang: 1_000_000, policy,
+      position: {
+        total: { spentSatang: over.totalSpent ?? 1_234, reservedSatang: 0, availableSatang: 200_000 - (over.totalSpent ?? 1_234) },
+        chat: { spentSatang: 1_234, reservedSatang: 0, availableSatang: 6_766, ...over.chat },
+        ocr: { spentSatang: 0, reservedSatang: 0, availableSatang: null }, unresolvedHolds: 0, breach: false,
+      },
+      chatCredit: { deal: null, cutoverAt: null }, ...over.budget },
+    topTags: [], otherTags: { tags: 0, costSatang: 0, calls: 0, inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, cacheCostSatang: null },
+    breakdown: undefined as never,
+    ocr: { config: { enabled: true, monthlyLimit: null, version: 0, updatedAt: null, ...over.ocrConfig },
+      planQuota: { enforced: true, source: 'PAID_GRANTS', defaultEnforced: true },
+      receiptImages: 'receiptImages' in over ? over.receiptImages : images(),
+      current: { monthKey: '2026-09', usedCount: over.usedCount ?? 20, uploadedReceiptDocumentCount: 0, sourceCounts: [] },
+      previous: { monthKey: '2026-08', usedCount: 0, uploadedReceiptDocumentCount: 0, sourceCounts: [] } },
+  };
+}
+const row = (rows: ReturnType<typeof aiTabStatusRows>, key: string) => rows.find((item) => item.key === key);
+
+describe('admin tab rework: chat credit, receipt images and the safety ceiling', () => {
+  it('writes money in a sentence without a trailing .00', () => {
+    assert.equal(bahtText(8_000), '80 บาท');
+    assert.equal(bahtText(200_000), '2,000 บาท');
+    assert.equal(bahtText(1_234), '12.34 บาท');
+  });
+
+  it('names where the chat credit comes from, in plain Thai', () => {
+    assert.equal(aiChatCreditSourceText(usageFixture(), date), 'ค่าเริ่มต้น 80 บาท');
+    assert.equal(aiChatCreditSourceText(usageFixture({ policy: { chatSource: 'ADMIN', chatCapSatang: 15_000 } }), date), 'ผู้ดูแลตั้งให้ร้านนี้ 150 บาท');
+    assert.equal(aiChatCreditSourceText(usageFixture({ policy: { chatSource: 'SALES_DEAL', chatCapSatang: 30_000 },
+      budget: { chatCredit: { deal: { satang: 30_000, endsAt: '2026-10-29T00:00:00.000Z' }, cutoverAt: null } } }), date), 'ดีลขาย 300 บาท ถึง วันที่ 2026-10-29');
+    assert.equal(aiChatCreditSourceText(usageFixture({ policy: { chatSource: 'SALES_DEAL', chatCapSatang: 30_000 },
+      budget: { chatCredit: { deal: { satang: 30_000, endsAt: null }, cutoverAt: null } } }), date), 'ดีลขาย 300 บาท ตลอดที่ดีลยังต่ออายุ');
+    assert.match(aiChatCreditSourceText(usageFixture({ policy: { mode: 'SPLIT', chatSource: 'SPLIT', chatCapSatang: 3_000 } }), date), /^แยกเพดานแชต 30 บาท/);
+    assert.match(aiChatCreditSourceText(usageFixture({ budget: { chatCredit: { deal: null, cutoverAt: '2026-09-01T00:00:00.000Z' } } }), date,
+      Date.parse('2026-09-15T00:00:00.000Z')), /^รอบเครดิต AI ของแพ็กเกจ/);
+  });
+
+  it('names where the receipt images come from, per kind of shop', () => {
+    assert.equal(receiptImagesSourceText(images({ tierKey: 'STARTER_249', package: { limit: 30, used: 0, remaining: 30, expiresAt: '2026-10-29T08:10:55.000Z' } }), date),
+      'แพ็กเกจ เริ่มต้น (STARTER) 30 รูป หมดอายุ วันที่ 2026-10-29');
+    assert.equal(receiptImagesSourceText(images({ basis: 'MONTHLY', tierKey: 'FREE_TRIAL_15', package: { limit: 15, used: 3, remaining: 12, expiresAt: null } }), date),
+      'ช่วงทดลอง 15 รูปต่อเดือน');
+    assert.equal(receiptImagesSourceText(images({ basis: 'MONTHLY', enforced: false, package: { limit: 100, used: 3, remaining: 97, expiresAt: null } }), date),
+      'แพ็กเกจที่ทีมงานตั้งให้ (เติบโต (BASIC)) 100 รูปต่อเดือน — นับอย่างเดียว ไม่หยุดอ่านเมื่อครบ');
+    assert.match(receiptImagesSourceText(images({ basis: 'NONE', tierKey: null, package: null, totalRemaining: null }), date), /^ยังไม่มีแพ็กเกจ/);
+  });
+
+  it('lists which rule is in force: all fine for a normal paid shop', () => {
+    const rows = aiTabStatusRows(usageFixture(), date);
+    assert.deepEqual(rows.map((item) => item.key), ['chat-source', 'chat-balance', 'images-source', 'images-balance', 'ocr-limit', 'ocr-enabled', 'safety']);
+    assert.ok(rows.every((item) => item.tone === 'ok'), JSON.stringify(rows));
+    assert.equal(row(rows, 'chat-balance')?.value, 'ใช้ 12.34 บาท เหลือ 67.66 บาท');
+    assert.equal(row(rows, 'images-balance')?.value, 'เหลือ 30 รูป (จากแพ็กเกจ 30)');
+    assert.equal(row(rows, 'ocr-limit')?.value, 'ไม่ได้ตั้ง', 'an unset OCR limit is "not set", never "unlimited"');
+    assert.equal(row(rows, 'safety')?.value, 'ค่ากลางของระบบ 2,000 บาท (ใช้ไป 12.34 บาท)');
+    assert.ok(rows.every((item) => !/ไม่จำกัด/.test(item.value)));
+  });
+
+  it('flags a stale OCR limit that stops a paid shop before its package runs out', () => {
+    const warn = row(aiTabStatusRows(usageFixture({ ocrConfig: { monthlyLimit: 30 }, usedCount: 20 }), date), 'ocr-limit');
+    assert.equal(warn?.tone, 'warn');
+    assert.match(warn!.value, /ต่ำกว่ารูปที่ร้านยังเหลือ/);
+    const stop = row(aiTabStatusRows(usageFixture({ ocrConfig: { monthlyLimit: 30 }, usedCount: 30 }), date), 'ocr-limit');
+    assert.equal(stop?.tone, 'stop');
+    assert.match(stop!.value, /แม้แพ็กเกจยังมีรูปเหลือ/);
+  });
+
+  it('says what is stopped now: chat used up, images used up, OCR off, ceiling reached, policy unreadable', () => {
+    const rows = aiTabStatusRows(usageFixture({ chat: { spentSatang: 8_000, availableSatang: 0 }, ocrConfig: { enabled: false }, totalSpent: 200_000,
+      receiptImages: images({ package: { limit: 30, used: 30, remaining: 0, expiresAt: null }, totalRemaining: 0 }),
+      policy: { invalidReason: 'POLICY_MALFORMED' } }), date);
+    for (const key of ['policy', 'chat-balance', 'images-balance', 'ocr-enabled', 'safety']) assert.equal(row(rows, key)?.tone, 'stop', key);
+    assert.match(row(rows, 'images-balance')!.value, /จนกว่าจะต่อแพ็กเกจหรือเพิ่มยอด/);
+    const inactive = row(aiTabStatusRows(usageFixture({ receiptImages: images({ active: false }) }), date), 'images-source');
+    assert.equal(inactive?.tone, 'stop');
+  });
+
+  it('warns when a monthly allowance only counts, and when the ceiling is below the chat credit', () => {
+    const rows = aiTabStatusRows(usageFixture({ receiptImages: images({ basis: 'MONTHLY', enforced: false, tierKey: 'FREE_TRIAL_15',
+      package: { limit: 15, used: 18, remaining: 0, expiresAt: null }, totalRemaining: 0 }),
+    budget: { effectiveSatang: 5_000, overrideSatang: 5_000 } }), date);
+    assert.equal(row(rows, 'images-source')?.tone, 'warn');
+    assert.equal(row(rows, 'images-balance')?.tone, 'warn');
+    assert.equal(row(rows, 'safety')?.tone, 'warn');
+    assert.match(row(rows, 'safety')!.value, /^ตั้งเฉพาะร้านนี้ 50 บาท/);
+    // No package term: nothing about an image balance is claimed at all.
+    const none = aiTabStatusRows(usageFixture({ receiptImages: images({ basis: 'NONE', tierKey: null, package: null, totalRemaining: null }) }), date);
+    assert.equal(row(none, 'images-balance'), undefined);
+  });
+
+  it('edits the chat credit as its own value: empty = default or deal, 0 closes chat', () => {
+    assert.deepEqual(parseChatCreditInput(''), { ok: true, satang: null });
+    assert.deepEqual(parseChatCreditInput(' 150.5 '), { ok: true, satang: 15_050 });
+    assert.deepEqual(parseChatCreditInput('0'), { ok: true, satang: 0 });
+    assert.equal(parseChatCreditInput('1e').ok, false);
+    assert.equal(parseChatCreditInput('150.555').ok, false);
+    assert.equal(chatCreditInputFromUsage(usageFixture()), '', 'the default is not an admin setting to prefill');
+    const admin = usageFixture({ policy: { chatSource: 'ADMIN', chatCapSatang: 15_000 } });
+    assert.equal(chatCreditInputFromUsage(admin), '150');
+    assert.equal(chatCreditDraftChanged(admin, '150'), false);
+    assert.equal(chatCreditDraftChanged(admin, ''), true);
+    assert.equal(chatCreditDraftChanged(usageFixture(), ''), false);
+    assert.equal(chatCreditDraftChanged(usageFixture(), 'x'), true, 'an unparsable draft lets the operator press Save and hear why');
+    assert.deepEqual(chatCreditPolicyRequest(15_000, '2026-09'),
+      { mode: 'SHARED', chatMonthlyBudgetSatang: 15_000, ocrMonthlyBudgetSatang: null, effectiveMonthKey: '2026-09' });
+  });
+
+  it('confirms a chat credit and a ceiling change with what happens, and never ties the two', () => {
+    const chat = chatCreditConfirmMessage(usageFixture(), 1_000, 'ทดสอบ', date);
+    assert.match(chat, /ค่าเริ่มต้น 80 บาท → ผู้ดูแลตั้งให้ร้านนี้ 10 บาท/);
+    assert.match(chat, /หลังบันทึกแชต AI จะหยุดจนขึ้นเดือนใหม่/);
+    assert.match(chatCreditConfirmMessage(usageFixture(), 500_000, 'ทดสอบ', date), /สูงกว่าเพดานความปลอดภัย 2,000 บาท/);
+    const ceiling = safetyCeilingConfirmMessage(usageFixture(), 500_000, 'ทดสอบ');
+    assert.match(ceiling, /2,000 บาท → 5,000 บาท/);
+    assert.match(ceiling, /เครดิตแชตของร้านไม่เปลี่ยน/);
+  });
+
+  it('shows the trial/staff-set enforcement choice only where it does something', () => {
+    assert.equal(receiptQuotaControlVisible({ receiptImages: images() }), false, 'a paid package always enforces');
+    assert.equal(receiptQuotaControlVisible({ receiptImages: images({ basis: 'MONTHLY' }) }), true);
+    assert.equal(receiptQuotaControlVisible({ receiptImages: images({ basis: 'NONE' }) }), false, 'no allowance, nothing to enforce');
+    assert.equal(receiptQuotaControlVisible({ planQuota: { enforced: true, source: 'PAID_GRANTS', defaultEnforced: true } }), false);
+    assert.equal(receiptQuotaControlVisible({ planQuota: { enforced: false, source: 'DEFAULT', defaultEnforced: false } }), true);
+  });
+
+  it('shows images from the package, added, and in total — counts, never money', () => {
+    const tiles = receiptImageTiles(images({ additional: { remaining: 5, expiresAt: '2027-09-29T00:00:00.000Z' }, totalRemaining: 35 }), date);
+    assert.deepEqual(tiles.map((tile) => [tile.key, tile.value]), [['package', '30 รูป จาก 50'], ['additional', '5 รูป'], ['total', '35 รูป']]);
+    assert.match(tiles[0]!.note, /หมดอายุ วันที่ 2026-10-29/);
+    assert.deepEqual(receiptImageTiles(images({ basis: 'NONE', package: null, totalRemaining: null }), date), []);
   });
 });

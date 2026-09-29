@@ -1389,10 +1389,13 @@ export class BillingReconcilerService {
         if (rewritesFeatures && snapshot.featurePlan)
           disabledFeatures = await applyBillingFeaturePlan(tx, company.id, invoice.id, contract.initiatingUserId, snapshot.featurePlan);
         // Q1: the deal's AI credit goes back to the platform default in the same commit as its
-        // menus. `applyDealRequest` is the only writer that set it, and this is its mirror.
+        // menus. `applyDealRequest` is the only writer that set it, and this is its mirror — for an
+        // old v2/v3 deal that is the TOTAL and the SHARED chat credit it also wrote (admin tab rework).
         if (returning) await tx.companyAiConfiguration.updateMany({ where: { companyId: company.id },
           data: snapshot.dealReturn!.creditScope === 'CHAT'
             ? { salesDealChatCreditSatang: null, salesDealChatCreditEndsAt: null } : { monthlyBudgetSatang: null } });
+        if (returning && snapshot.dealReturn!.creditScope !== 'CHAT') await tx.companyAiConfiguration.updateMany({
+          where: { companyId: company.id, budgetMode: 'SHARED' }, data: { chatMonthlyBudgetSatang: null } });
         if (current.graceEndsAt && current.paidThrough) await tx.billingReceiptGrant.updateMany({ where: { billingAccountId: account.id,
           companyId: company.id, kind: { in: ['INITIAL', 'RENEWAL', 'REPEAT', 'UPGRADE'] }, expiresAt: current.graceEndsAt, serviceEnd: { lte: current.paidThrough } }, data: { expiresAt: current.paidThrough } });
         const term = await tx.companyPlanTerm.upsert({ where: { companyId: company.id }, create: {

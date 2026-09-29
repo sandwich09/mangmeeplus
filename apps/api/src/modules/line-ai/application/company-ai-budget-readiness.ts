@@ -82,7 +82,6 @@ export async function readAiBudgetReadiness(
   const policy = resolveAiBudgetPolicy({
     row: input.row,
     totalSatang: input.totalSatang,
-    // An explicit legacy/admin TOTAL override is also the effective SHARED CHAT cap.
     override: input.row?.monthlyBudgetSatang != null,
     monthKey: input.monthKey,
   });

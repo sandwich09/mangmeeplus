@@ -54,11 +54,11 @@ export async function checkAdminAiAdjustments(input:{prisma:PrismaService;compan
     }while(cursor);
     assert.ok(pages>=2);assert.equal(ids.size,await db.auditLog.count({where:{targetId:companyId,targetType:'company',result:'SUCCESS',action:{in:['system.partner_ai_model.update','system.partner_ocr_config.update']}}}));
     if(browser){
-      const page=browser.page;await page.goto(`${browser.origin}/system/partners/${companyId}`,{waitUntil:'domcontentloaded'});
+      const page=browser.page;await page.goto(`${browser.origin}/system/partners/${companyId}?view=ai`,{waitUntil:'domcontentloaded'});
       await page.locator('#ai-monthly-budget').waitFor();
-      await page.getByRole('button',{name:'ตรวจเครดิตก่อนบันทึก',exact:true}).click();
-      await page.getByText('กรุณาระบุเหตุผลที่ปรับเครดิต AI',{exact:true}).waitFor();
-      await page.getByRole('textbox',{name:'เหตุผลที่ปรับเครดิต AI',exact:true}).fill('เพิ่มงบจากหน้าร้านและตรวจประวัติ');
+      await page.getByRole('button',{name:'ตรวจเพดานก่อนบันทึก',exact:true}).click();
+      await page.getByText('กรุณาระบุเหตุผลที่ปรับเพดานความปลอดภัย',{exact:true}).waitFor();
+      await page.getByRole('textbox',{name:'เหตุผลที่ปรับเพดานความปลอดภัย',exact:true}).fill('เพิ่มงบจากหน้าร้านและตรวจประวัติ');
       // Invalid nonempty input must survive in the field, never sanitize to an intentional clear.
       let invalidWrites=0;const watchInvalid=(r:any)=>{if(r.url().endsWith(aiPath)&&r.method()==='PUT')invalidWrites++;};
       page.on('request',watchInvalid);
@@ -71,7 +71,7 @@ export async function checkAdminAiAdjustments(input:{prisma:PrismaService;compan
           ['0','กรอกงบตั้งแต่ 1 บาท หากต้องการหยุดใช้ AI ให้ปิดสิทธิ์ผู้ช่วย AI ของบริษัท'],
         ]) {
           await page.locator('#ai-monthly-budget').fill(raw!);
-          await page.getByRole('button',{name:'ตรวจเครดิตก่อนบันทึก',exact:true}).click();
+          await page.getByRole('button',{name:'ตรวจเพดานก่อนบันทึก',exact:true}).click();
           await page.getByText(message!,{exact:true}).last().waitFor();
           assert.equal(await page.locator('#ai-monthly-budget').inputValue(),raw);
           assert.equal(await page.getByRole('dialog').count(),0);
@@ -81,11 +81,11 @@ export async function checkAdminAiAdjustments(input:{prisma:PrismaService;compan
         assert.equal((await db.companyAiConfiguration.findUniqueOrThrow({where:{companyId}})).monthlyBudgetSatang,first*2);
       }finally{page.off('request',watchInvalid);}
       await page.locator('#ai-monthly-budget').fill(String(first*3/100));
-      await page.getByRole('button',{name:'ตรวจเครดิตก่อนบันทึก',exact:true}).click();
-      const dialog=page.getByRole('dialog');await dialog.getByText('ตรวจเครดิต AI ก่อนบันทึก',{exact:true}).waitFor();
+      await page.getByRole('button',{name:'ตรวจเพดานก่อนบันทึก',exact:true}).click();
+      const dialog=page.getByRole('dialog');await dialog.getByText('ตรวจเพดานความปลอดภัยก่อนบันทึก',{exact:true}).waitFor();
       await dialog.getByRole('button',{name:'กลับไปแก้',exact:true}).filter({hasText:'กลับไปแก้'}).click();
       assert.equal((await db.companyAiConfiguration.findUniqueOrThrow({where:{companyId}})).monthlyBudgetSatang,first*2);
-      await page.getByRole('button',{name:'ตรวจเครดิตก่อนบันทึก',exact:true}).click();
+      await page.getByRole('button',{name:'ตรวจเพดานก่อนบันทึก',exact:true}).click();
       const changed=page.waitForResponse(r=>r.url().endsWith(aiPath)&&r.request().method()==='PUT');
       await dialog.getByRole('button',{name:'ยืนยันบันทึก',exact:true}).click();assert.equal((await changed).status(),200);
       const history=page.getByRole('region',{name:'ประวัติการปรับ AI',exact:true});
@@ -96,43 +96,43 @@ export async function checkAdminAiAdjustments(input:{prisma:PrismaService;compan
       await history.getByText('เหตุผล: เพิ่มงบจากหน้าร้านและตรวจประวัติ',{exact:true}).waitFor();
       await history.getByRole('button',{name:'หน้าถัดไป',exact:true}).click();await history.locator('[data-adjustment-id]').first().waitFor();
       // An intervening Admin write is visible as a conflict, never silently replaced.
-      await page.getByRole('textbox',{name:'เหตุผลที่ปรับเครดิต AI',exact:true}).fill('ตรวจการเปลี่ยนงบพร้อมกัน');
+      await page.getByRole('textbox',{name:'เหตุผลที่ปรับเพดานความปลอดภัย',exact:true}).fill('ตรวจการเปลี่ยนงบพร้อมกัน');
       await page.locator('#ai-monthly-budget').fill(String(first/100));
       assert.equal((await request(aiPath,'PUT',{...original,expectedMonthlyBudgetSatang:first*3,monthlyBudgetSatang:first*2})).status,200);
-      await page.getByRole('button',{name:'ตรวจเครดิตก่อนบันทึก',exact:true}).click();
+      await page.getByRole('button',{name:'ตรวจเพดานก่อนบันทึก',exact:true}).click();
       const stale=page.waitForResponse(r=>r.url().endsWith(aiPath)&&r.request().method()==='PUT');
       await dialog.getByRole('button',{name:'ยืนยันบันทึก',exact:true}).click();assert.equal((await stale).status(),409);
       await page.getByText('มีผู้แก้การตั้งค่า AI แล้ว กรุณาโหลดข้อมูลล่าสุดและตรวจสอบก่อนบันทึกใหม่',{exact:true}).waitFor();
       await page.waitForFunction(value=>(document.querySelector('#ai-monthly-budget') as HTMLInputElement)?.value===value,String(first*2/100));
-      assert.equal(await page.getByRole('textbox',{name:'เหตุผลที่ปรับเครดิต AI',exact:true}).inputValue(),'ตรวจการเปลี่ยนงบพร้อมกัน');
+      assert.equal(await page.getByRole('textbox',{name:'เหตุผลที่ปรับเพดานความปลอดภัย',exact:true}).inputValue(),'ตรวจการเปลี่ยนงบพร้อมกัน');
       // Deliver the real HTTP write, then lose only its browser response. Retry must not add an audit.
-      await page.getByRole('textbox',{name:'เหตุผลที่ปรับเครดิต AI',exact:true}).fill('ทดสอบคำตอบขาดหายหลังบันทึก');
+      await page.getByRole('textbox',{name:'เหตุผลที่ปรับเพดานความปลอดภัย',exact:true}).fill('ทดสอบคำตอบขาดหายหลังบันทึก');
       await page.locator('#ai-monthly-budget').fill(String(first*3/100));
       const beforeLost=await auditCount();
       await page.route(`**${aiPath}`,async route=>{const response=await route.fetch();assert.equal(response.status(),200);await route.abort('connectionreset');},{times:1});
-      await page.getByRole('button',{name:'ตรวจเครดิตก่อนบันทึก',exact:true}).click();
+      await page.getByRole('button',{name:'ตรวจเพดานก่อนบันทึก',exact:true}).click();
       const failed=page.waitForEvent('requestfailed',r=>r.url().endsWith(aiPath));
       await dialog.getByRole('button',{name:'ยืนยันบันทึก',exact:true}).click();await failed;
-      await page.getByRole('button',{name:'ตรวจเครดิตก่อนบันทึก',exact:true}).waitFor();
+      await page.getByRole('button',{name:'ตรวจเพดานก่อนบันทึก',exact:true}).waitFor();
       assert.equal(await auditCount(),beforeLost+1);
-      await page.getByRole('button',{name:'ตรวจเครดิตก่อนบันทึก',exact:true}).click();
+      await page.getByRole('button',{name:'ตรวจเพดานก่อนบันทึก',exact:true}).click();
       const replay=page.waitForResponse(r=>r.url().endsWith(aiPath)&&r.request().method()==='PUT');
       await dialog.getByRole('button',{name:'ยืนยันบันทึก',exact:true}).click();assert.equal((await replay).status(),200);
       await history.getByText('เหตุผล: ทดสอบคำตอบขาดหายหลังบันทึก',{exact:true}).waitFor();assert.equal(await auditCount(),beforeLost+1);
       await history.getByRole('button',{name:'หน้าถัดไป',exact:true}).click();await history.locator('[data-adjustment-id]').first().waitFor();
       // Release an old company's successful response after client-side navigation away.
-      await page.getByRole('textbox',{name:'เหตุผลที่ปรับเครดิต AI',exact:true}).fill('บันทึกแล้วออกจากหน้าร้านเดิม');
+      await page.getByRole('textbox',{name:'เหตุผลที่ปรับเพดานความปลอดภัย',exact:true}).fill('บันทึกแล้วออกจากหน้าร้านเดิม');
       await page.locator('#ai-monthly-budget').fill(String(first/100));
       let release!:()=>void,ready!:()=>void,done!:()=>void;
       const held=new Promise<void>(r=>{release=r;}),arrived=new Promise<void>(r=>{ready=r;}),finished=new Promise<void>(r=>{done=r;});
       await page.route(`**${aiPath}`,async route=>{try{const response=await route.fetch();assert.equal(response.status(),200);ready();await held;await route.fulfill({response});}finally{done();}},{times:1});
-      await page.getByRole('button',{name:'ตรวจเครดิตก่อนบันทึก',exact:true}).click();
+      await page.getByRole('button',{name:'ตรวจเพดานก่อนบันทึก',exact:true}).click();
       await dialog.getByRole('button',{name:'ยืนยันบันทึก',exact:true}).click();await arrived;
       try {
         await page.getByRole('link',{name:'กลับไปรายชื่อพาร์ทเนอร์',exact:true}).click();
         await page.waitForURL(`${browser.origin}/system/partners`);
       }finally{release();await finished;}
-      assert.equal(await page.getByText(`บันทึกเครดิต AI ต่อเดือน ${(first/100).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2})} บาท แล้ว`,{exact:true}).count(),0);
+      assert.equal(await page.getByText(`บันทึกเพดานความปลอดภัย ฿${(first/100).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2})} แล้ว`,{exact:true}).count(),0);
       await page.goto(`${browser.origin}/system/partners/${companyId}`,{waitUntil:'domcontentloaded'});
       await history.getByText('เหตุผล: บันทึกแล้วออกจากหน้าร้านเดิม',{exact:true}).waitFor();
       await page.waitForFunction(value=>(document.querySelector('#ai-monthly-budget') as HTMLInputElement)?.value===value,String(first/100));
@@ -148,7 +148,7 @@ export async function checkAdminAiAdjustments(input:{prisma:PrismaService;compan
       await page.getByRole('alert').getByRole('button',{name:'ลองโหลดใหม่',exact:true}).waitFor();
       assert.ok(blockedReads>=1);await page.unroute(platformRoute,unavailable);
       await page.getByRole('alert').getByRole('button',{name:'ลองโหลดใหม่',exact:true}).click();
-      await page.getByRole('heading',{name:'เครดิต AI กลาง',exact:true}).waitFor();
+      await page.getByRole('heading',{name:'เพดานความปลอดภัยค่า AI กลาง',exact:true}).waitFor();
       await page.locator('#platform-ai-monthly-budget').waitFor();
       let platformWrites=0;const watchPlatform=(r:any)=>{if(r.url().endsWith(platformPath)&&r.method()==='PUT')platformWrites++;};
       page.on('request',watchPlatform);

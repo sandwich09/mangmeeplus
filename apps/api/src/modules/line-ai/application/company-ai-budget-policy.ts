@@ -8,7 +8,7 @@
  * caller supplies the already-read configuration row, the effective total `T` it resolved, and the
  * PINNED Bangkok month; this file only decides.
  */
-import { DEFAULT_CHAT_CREDIT_SATANG, type PartnerAiBudgetPolicyDto } from '@watchdog-bms/contracts';
+import { DEFAULT_CHAT_CREDIT_SATANG, type PartnerAiBudgetPolicyDto, type PartnerAiChatCreditSource } from '@watchdog-bms/contracts';
 import { bangkokMonthKey } from './company-ai-usage-meter';
 
 export type AiBudgetMode = 'SHARED' | 'SPLIT';
@@ -37,9 +37,10 @@ export type AiBudgetPendingPolicy = {
  * a fresh row does — the same tolerance `resolveEffectiveBudget` already gives a missing delegate.
  */
 export type CompanyAiBudgetPolicyRow = {
-  /** Explicit legacy/admin total override also defines the SHARED CHAT ceiling. */
+  /** The shop's own TOTAL safety ceiling. Since 2026-09-29 it no longer sets the chat credit. */
   monthlyBudgetSatang?: number | null;
   budgetMode?: string | null;
+  /** SPLIT: the chat cap. SHARED: the chat credit an admin set for this shop; null = default or deal. */
   chatMonthlyBudgetSatang?: number | null;
   ocrMonthlyBudgetSatang?: number | null;
   /** New sales deals override the platform CHAT default without replacing admin settings. */
@@ -56,9 +57,11 @@ export type ResolvedAiBudgetPolicy = {
   mode: AiBudgetMode;
   totalSatang: number;
   override: boolean;
-  /** SHARED enforces the default or deal CHAT cap; OCR remains within the total. */
+  /** SHARED enforces the admin, deal or default CHAT cap; OCR remains within the total. */
   chatCapSatang: number | null;
   ocrCapSatang: number | null;
+  /** Where `chatCapSatang` comes from — the one answer the console, allowance and gate share. */
+  chatSource: PartnerAiChatCreditSource;
   /** `PENDING_ACTIVATED` = the stored pending policy's month has arrived; the columns lag. */
   source: 'ACTIVE' | 'PENDING_ACTIVATED';
   /** ONLY a pending policy whose month is still in the future. It changes nothing yet. */
@@ -145,18 +148,22 @@ export function resolveAiBudgetPolicy(input: {
     ? { mode: parsed.mode as string, chat: parsed.chatMonthlyBudgetSatang, ocr: parsed.ocrMonthlyBudgetSatang }
     : { mode: activeMode, chat: row.chatMonthlyBudgetSatang ?? null, ocr: row.ocrMonthlyBudgetSatang ?? null };
 
-  // SHARED's old split columns were informational. Enforcing an old 0 here would close a shop.
-  // Existing explicit TOTAL overrides were the operator's AI credit before CHAT had its own cap.
-  // Preserve that effective special allowance; new deals only replace the platform default.
-  const dealCreditLive = !row.salesDealChatCreditEndsAt || row.salesDealChatCreditEndsAt > (input.at ?? new Date());
-  const sharedChatCap = input.override ? input.totalSatang
-    : dealCreditLive ? row.salesDealChatCreditSatang ?? DEFAULT_CHAT_CREDIT_SATANG : DEFAULT_CHAT_CREDIT_SATANG;
+  // Owner 2026-09-29 (admin tab rework): under SHARED an admin sets the chat credit itself, and the
+  // TOTAL override is only the safety ceiling. Migration 20260929200000 wrote every legacy TOTAL
+  // override into the chat column (and cleared unused SHARED leftovers), so no shop's credit moved.
+  // An admin value wins over a deal; a live deal only replaces the platform default.
+  const dealCreditLive = row.salesDealChatCreditSatang != null
+    && (!row.salesDealChatCreditEndsAt || row.salesDealChatCreditEndsAt > (input.at ?? new Date()));
+  const sharedChat = effective.chat !== null ? { cap: effective.chat, source: 'ADMIN' as const }
+    : dealCreditLive ? { cap: row.salesDealChatCreditSatang!, source: 'SALES_DEAL' as const }
+      : { cap: DEFAULT_CHAT_CREDIT_SATANG, source: 'DEFAULT' as const };
 
   const base = {
     totalSatang: input.totalSatang,
     override: input.override,
     chatCapSatang: effective.chat,
     ocrCapSatang: effective.ocr,
+    chatSource: effective.mode === 'SPLIT' ? 'SPLIT' as const : sharedChat.source,
     source: (reached ? 'PENDING_ACTIVATED' : 'ACTIVE') as 'ACTIVE' | 'PENDING_ACTIVATED',
     pending: reached ? null : parsed ?? null,
     // One expression for the fence, so the writer's CAS and this read can never drift apart.
@@ -170,7 +177,7 @@ export function resolveAiBudgetPolicy(input: {
       || Number.isNaN(row.salesDealChatCreditEndsAt.getTime())))) {
     return { ...base, mode: 'SHARED', pending: null, invalidReason: 'POLICY_MALFORMED' };
   }
-  if (effective.mode === 'SHARED') return { ...base, mode: 'SHARED', chatCapSatang: sharedChatCap };
+  if (effective.mode === 'SHARED') return { ...base, mode: 'SHARED', chatCapSatang: sharedChat.cap };
 
   if (effective.chat === null || effective.ocr === null) {
     return { ...base, mode: 'SPLIT', invalidReason: 'SPLIT_CAPS_MISSING' };
@@ -183,18 +190,16 @@ export function resolveAiBudgetPolicy(input: {
 
 /**
  * The AI credit a cut-over company gets per package cycle (add-on spec §5.1, Q5): what THIS resolver
- * gives it as CHAT credit at the cycle start — the sales deal's credit while it lasts, an explicit
- * TOTAL override, a SPLIT CHAT cap, or the default 80 — with where it came from. A deal that ends
+ * gives it as CHAT credit at the cycle start — an admin's chat credit, the sales deal's credit while
+ * it lasts, a SPLIT CHAT cap, or the default 80 — with where it came from. A deal that ends
  * mid-cycle keeps the snapshot to the end of that cycle, because the lot is written once.
  */
 export function aiCreditCycleAllowance(input: {
   row: CompanyAiBudgetPolicyRow | null | undefined; totalSatang: number; override: boolean; monthKey: string; at: Date;
-}): { units: number; source: 'DEFAULT' | 'SALES_DEAL' | 'TOTAL_OVERRIDE' | 'SPLIT_CHAT_CAP' } {
+}): { units: number; source: 'DEFAULT' | 'SALES_DEAL' | 'ADMIN_CHAT_CREDIT' | 'SPLIT_CHAT_CAP' } {
   const policy = resolveAiBudgetPolicy(input);
-  const dealLive = input.row?.salesDealChatCreditSatang != null
-    && (!input.row.salesDealChatCreditEndsAt || input.row.salesDealChatCreditEndsAt > input.at);
-  return { units: policy.chatCapSatang ?? 0,
-    source: policy.mode === 'SPLIT' ? 'SPLIT_CHAT_CAP' : input.override ? 'TOTAL_OVERRIDE' : dealLive ? 'SALES_DEAL' : 'DEFAULT' };
+  const source = { SPLIT: 'SPLIT_CHAT_CAP', ADMIN: 'ADMIN_CHAT_CREDIT', SALES_DEAL: 'SALES_DEAL', DEFAULT: 'DEFAULT' } as const;
+  return { units: policy.chatCapSatang ?? 0, source: source[policy.chatSource] };
 }
 
 /** The wire shape of a resolved policy — one place, so the writer and the admin read agree. */
@@ -207,5 +212,6 @@ export function toPartnerAiBudgetPolicyDto(policy: ResolvedAiBudgetPolicy): Part
     revision: policy.revision,
     pending: policy.pending,
     ...(policy.invalidReason ? { invalidReason: policy.invalidReason } : {}),
+    chatSource: policy.chatSource,
   };
 }

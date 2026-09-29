@@ -169,7 +169,7 @@ test.describe('SYS — system admin', () => {
       // Keep this browser check read-only and deterministic: chat is at its default ฿80 cap while
       // the shared total still has room, which is the readiness state the admin needs to diagnose.
       usage.budget.effectiveSatang = 100_000;
-      usage.budget.policy = { ...usage.budget.policy, mode: 'SHARED', chatCapSatang: 8_000, ocrCapSatang: null };
+      usage.budget.policy = { ...usage.budget.policy, mode: 'SHARED', chatCapSatang: 8_000, ocrCapSatang: null, chatSource: 'DEFAULT' };
       usage.budget.position = {
         ...usage.budget.position,
         total: { spentSatang: 8_000, reservedSatang: 0, availableSatang: 92_000 },
@@ -185,20 +185,23 @@ test.describe('SYS — system admin', () => {
       route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ message: 'not available in this check' }) }));
 
     await page.goto(`/system/partners/${COMPANY_ID}?view=ai`);
-    const usageCard = page.getByRole('heading', { name: 'การใช้งานและเครดิต AI', exact: true }).locator('..').locator('..');
-    await expect(usageCard.getByRole('status')).toContainText('กำลังโหลดข้อมูล AI');
+    const statusCard = page.getByRole('heading', { name: 'เงื่อนไขที่ใช้กับร้านนี้ตอนนี้', exact: true }).locator('..').locator('..');
+    await expect(statusCard.getByRole('status')).toContainText('กำลังโหลดข้อมูล AI');
     releaseFirstFailure();
-    await expect(usageCard.getByRole('button', { name: 'ลองโหลดข้อมูลอีกครั้ง', exact: true })).toBeVisible();
+    await expect(statusCard.getByRole('button', { name: 'ลองโหลดข้อมูลอีกครั้ง', exact: true })).toBeVisible();
     allowRetry = true;
-    await usageCard.getByRole('button', { name: 'ลองโหลดข้อมูลอีกครั้ง', exact: true }).click();
+    await statusCard.getByRole('button', { name: 'ลองโหลดข้อมูลอีกครั้ง', exact: true }).click();
 
-    await expect(usageCard.getByTestId('ai-budget-position')).toBeVisible();
-    const chat = usageCard.getByTestId('ai-budget-scope-chat');
+    // "ใช้ได้หรือไม่ได้": chat is stopped at its default 80, the safety ceiling still has room.
+    await expect(statusCard.getByTestId('ai-status-chat-source')).toContainText('ค่าเริ่มต้น 80 บาท');
+    await expect(statusCard.getByTestId('ai-status-chat-balance')).toHaveAttribute('data-tone', 'stop');
+    await expect(statusCard.getByTestId('ai-status-safety')).toHaveAttribute('data-tone', 'ok');
+    const chat = page.getByTestId('ai-chat-credit');
     await expect(chat).toContainText('฿80.00');
     await expect(chat).toContainText('฿0.00');
-    const total = usageCard.getByTestId('ai-budget-scope-total');
-    await expect(total).toContainText('฿1,000.00');
-    await expect(total).toContainText('฿920.00');
+    const ceiling = page.getByTestId('ai-safety-ceiling');
+    await expect(ceiling).toContainText('฿1,000.00');
+    await expect(ceiling).toContainText('ไม่ใช่เครดิตของร้าน');
     expect(attempts).toBeGreaterThanOrEqual(2);
     expect(recoveredReads).toBe(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

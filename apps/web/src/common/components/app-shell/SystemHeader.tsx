@@ -49,7 +49,7 @@ const SECTIONS = [
   { href: '/system/email-delivery', label: 'สถานะอีเมล', group: 'คำขอและการติดต่อ' },
   { href: '/system/sales-team', label: 'ทีมขาย', group: 'ตั้งค่าระบบ' },
   { href: '/system/line-settings', label: 'ตั้งค่า LINE', group: 'ตั้งค่าระบบ' },
-  { href: '/system/ai-budget', label: 'เครดิตการใช้ AI', group: 'ตั้งค่าระบบ' },
+  { href: '/system/ai-budget', label: 'เพดานความปลอดภัยค่า AI', group: 'ตั้งค่าระบบ' },
   { href: '/system/platform-access', label: 'เปิด–ปิดบริการ', group: 'ตั้งค่าระบบ' },
 ];
 

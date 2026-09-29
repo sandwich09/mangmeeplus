@@ -894,6 +894,23 @@ describe('SetPartnerAiModelUseCase — split budget policy', () => {
     assert.equal(saved.modelId, null, 'the model gate is a SPLIT rule only');
   });
 
+  it('admin tab rework: sets a shop chat credit this month through SHARED, even with spend, and a TOTAL edit never moves it', async () => {
+    const state = makePolicyPrisma({ row: { monthlyBudgetSatang: 8_000, chatMonthlyBudgetSatang: 8_000, modelId: null },
+      monthUsage: { costSatang: 5_000, callCount: 9 } });
+    const saved = await run(state, { budgetPolicy: { mode: 'SHARED', chatMonthlyBudgetSatang: 15_000, ocrMonthlyBudgetSatang: null, effectiveMonthKey: THIS_MONTH } });
+    assert.deepEqual([state.row().budgetMode, state.row().chatMonthlyBudgetSatang, state.row().monthlyBudgetSatang], ['SHARED', 15_000, 8_000]);
+    assert.deepEqual([saved.budgetPolicy.chatCapSatang, saved.budgetPolicy.chatSource], [15_000, 'ADMIN']);
+    assert.equal(state.audits.at(-1).metadataJson.fromChatMonthlyBudgetSatang, 8_000);
+    assert.equal(state.audits.at(-1).metadataJson.toChatMonthlyBudgetSatang, 15_000);
+    // The safety ceiling is its own field: raising it leaves the chat credit exactly where it was.
+    await run(state, { monthlyBudgetSatang: 300_000, expectedMonthlyBudgetSatang: 8_000, expectedBudgetRevision: undefined });
+    assert.deepEqual([state.row().monthlyBudgetSatang, state.row().chatMonthlyBudgetSatang], [300_000, 15_000]);
+    // Clearing hands the shop back to the default (or its sales deal).
+    const cleared = await run(state, { budgetPolicy: { mode: 'SHARED', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: null, effectiveMonthKey: THIS_MONTH },
+      expectedBudgetRevision: `1:${THIS_MONTH}:ACTIVE` });
+    assert.deepEqual([cleared.budgetPolicy.chatCapSatang, cleared.budgetPolicy.chatSource], [8_000, 'DEFAULT']);
+  });
+
   it('keeps the canonical lock order and refuses a locked company before any policy write', async () => {
     const state = makePolicyPrisma({ row: { monthlyBudgetSatang: 100 } });
     await run(state, { budgetPolicy: split() });

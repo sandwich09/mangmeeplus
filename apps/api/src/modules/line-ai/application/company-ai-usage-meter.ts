@@ -425,10 +425,7 @@ export async function assertCompanyAiBudget(
       const chatSpent = row?.costSatang ?? 0;
       if (chatSpent >= policy.chatCapSatang!) {
         return { allowed: false, reason: 'exceeded', spendSatang: chatSpent,
-          budgetSatang: policy.chatCapSatang!,
-          override: budget.override || (budget.policyRow?.salesDealChatCreditSatang != null &&
-            (!budget.policyRow.salesDealChatCreditEndsAt || budget.policyRow.salesDealChatCreditEndsAt > new Date())),
-          budgetScope: 'CHAT' };
+          budgetSatang: policy.chatCapSatang!, override: policy.chatSource !== 'DEFAULT', budgetScope: 'CHAT' };
       }
     } catch (err) {
       logger.warn({ msg: 'ai.chat_credit.read_failed', companyId, error: (err as Error).message });
