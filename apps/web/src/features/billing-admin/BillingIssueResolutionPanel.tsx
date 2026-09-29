@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import type { BillingApplyInvoiceView, BillingOperatorIssue, BillingOperatorOverview } from '@watchdog-bms/contracts';
+import { BILLING_EVENT_DISCOUNT_REVIEW_ISSUE, type BillingApplyInvoiceView, type BillingOperatorIssue, type BillingOperatorOverview } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { billingControl, billingPrimaryControl, billingLabel } from '../billing/billing-display';
 import BillingOperationPanel from './BillingOperationPanel';
@@ -69,6 +69,11 @@ function nextStep(issue: BillingOperatorIssue, overview: BillingOperatorOverview
   let description = 'ตรวจรายการต้นทางและประวัติของบริษัทเพื่อหาสาเหตุ แล้วดำเนินการจากเครื่องมือของรายการนั้น', action = 'เปิดข้อมูลบริษัทเพื่อตรวจสาเหตุ', href: string | null = company;
   if (['PAID_HELD','PAID_NOT_APPLIED','PROVIDER_INVOICE_REVIEW','PROVIDER_INVOICE_SCAN_FAILED','ZERO_INVOICE_REVIEW'].includes(issue.kind)) {
     description = 'ต้องตรวจใบแจ้งหนี้เดิมและหลักฐานการชำระก่อนตัดสินใจให้สิทธิ์'; action = 'ตรวจใบแจ้งหนี้ของบริษัท'; href = company ? `${company}/invoice-scans${issue.kind === 'PROVIDER_INVOICE_SCAN_FAILED' ? `/${ref}` : ''}` : null;
+  } else if (issue.kind === BILLING_EVENT_DISCOUNT_REVIEW_ISSUE) {
+    // Sales-event §6.3: the bill was paid at the discounted amount, but no discount was held for it.
+    // The shop keeps what it paid for; an operator checks the bill and the discount list, then closes it.
+    description = 'ลูกค้าจ่ายบิลนี้ในยอดที่ลดด้วยส่วนลดจากงาน แต่ระบบไม่พบส่วนลดที่จองไว้ให้รายการนี้ สิทธิ์ของร้านเปิดตามยอดที่จ่ายแล้ว ให้ตรวจบิลกับรายการส่วนลดจากงานของร้าน แล้วปิดเรื่องเมื่อตรวจเสร็จ';
+    action = financial ? 'ตรวจบิลที่ใช้ส่วนลด' : 'เปิดรายการส่วนลดของบริษัท'; href = company && financial ? `${company}/invoices/${ref}` : company;
   } else if (issue.kind === 'PROVIDER_EVENT_FAILED') {
     description = 'มั่งมีรับข้อมูลจาก Stripe แล้ว แต่ตรวจรายการนั้นไม่สำเร็จ เปิดรายการเดิมเพื่อตรวจและลองประมวลผลอีกครั้ง'; action = 'ตรวจรายการแจ้งจาก Stripe'; href = platform ? `/system/billing/provider-events/${ref}` : null;
   } else if (issue.kind.startsWith('PROVIDER_SCAN_')) {

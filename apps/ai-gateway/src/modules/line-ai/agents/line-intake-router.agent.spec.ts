@@ -231,6 +231,29 @@ describe('LINE intake router – routeIntake', () => {
     assert.equal(plan.preparedPlan, undefined);
   });
 
+  it('UAT 2026-09-29: a draft answer routed as continuation keeps its one clause as that write, not a general question', async () => {
+    const text = 'ค่าเครื่องเขียนและวัสดุสำนักงาน';
+    const built = await createLineAiInputEvidence({ turnKey: 'draft-answer-kind', parts: [{ partId: 'part-0',
+      eventIdHash: 'e'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const draft = { expenseId: 'expense-1', label: 'ร่าง 1', status: 'OPEN' as const,
+      questions: [{ id: 'I01-CATEGORY', itemRef: 'I01', prompt: 'เป็นค่าใช้จ่ายหมวดไหนคะ' }] };
+    // The observed real answer: the intent, target and hints say "continue this draft"; the clause says general.
+    const answer = { intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.9, resolvedClarificationIds: ['I01-CATEGORY'],
+      captureHints: { targetExpenseId: 'expense-1', description: text, items: [{ itemRef: 'I01', sourceText: text, description: text, confidence: 0.88, missingFields: [] }], confidence: 0.9, missingFields: [] },
+      decisionV1: { subrequests: [{ kind: 'general', goal: 'ตอบคำถามหมวดค่าใช้จ่าย', sources: [{ part: 0, whole: true }], filters: {} }] } };
+    const routed = await new IntentRouterAgent(modelAnswer(answer)).routeIntake(baseRequest({ messageText: text,
+      inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true }, activeExpenseDrafts: [draft] }));
+    assert.equal(routed.status, 'ROUTED');
+    assert.equal(routed.semanticSubrequests?.[0]?.kind, 'write');
+    assert.equal(routed.semanticSubrequests?.[0]?.writeIntent, 'EXPENSE_DRAFT_CONTINUATION');
+    // Without an open draft on offer there is nothing to continue: the clause stays exactly as the model filed it.
+    const unoffered = await new IntentRouterAgent(modelAnswer(answer)).routeIntake(baseRequest({ messageText: text,
+      inputEvidence: built.inputEvidence, capabilities: { fusedPlan: true } }));
+    assert.equal(unoffered.semanticSubrequests?.[0]?.kind, 'general');
+    assert.equal(unoffered.semanticSubrequests?.[0]?.writeIntent, undefined);
+  });
+
   it('rejects compact output that also carries either legacy planning field', async () => {
     const text = 'ดูค่าใช้จ่าย';
     const built = await createLineAiInputEvidence({ turnKey: 'compact-conflict', parts: [{ partId: 'part-0',

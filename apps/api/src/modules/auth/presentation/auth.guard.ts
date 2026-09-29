@@ -99,7 +99,7 @@ export function isBillingRecoveryRoute(method: string, path: string): boolean {
   const clean = cleanRequestPath(path).toLowerCase();
   if ((method === 'GET' || method === 'POST') && /^\/v1\/companies\/[^/]+\/package-change-requests$/.test(clean)) return true;
   const prefix = '/v1/companies/[^/]+/billing';
-  return method === 'GET' ? new RegExp(`^${prefix}(?:/history|/capacity|/recipient(?:/[^/]+)?|/attempts/[^/]+|/collection/[^/]+|/invoices/[^/]+/adjustments/(?:refunds|credit-notes))?$`).test(clean)
+  return method === 'GET' ? new RegExp(`^${prefix}(?:/history|/capacity|/event-discount|/recipient(?:/[^/]+)?|/attempts/[^/]+|/collection/[^/]+|/invoices/[^/]+/adjustments/(?:refunds|credit-notes))?$`).test(clean)
     : method === 'POST' && new RegExp(`^${prefix}/(?:quote|checkout|portal|refresh|recipient/preview|recipient/otp/(?:request|confirm)|recipient/[^/]+/(?:submit|cancel)|collection/preview|collection/[^/]+/(?:submit|withdraw|capacity)|attempts/[^/]+/(?:resume|cancel|capacity)|documents/[^/]+/(?:open|resend))$`).test(clean);
 }
 

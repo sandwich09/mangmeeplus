@@ -25,6 +25,10 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
   after(async () => {
     if (!client) return;
     await client.lineWebhookEventLog.deleteMany({ where: { companyId: { startsWith: tag } } });
+    await client.companyPlanTerm.deleteMany({ where: { companyId: { startsWith: tag } } });
+    const accounts = await client.billingAccount.findMany({ where: { companyId: { startsWith: tag } }, select: { id: true } });
+    await client.billingInvoice.deleteMany({ where: { billingAccountId: { in: accounts.map(row => row.id) } } });
+    await client.billingAccount.deleteMany({ where: { companyId: { startsWith: tag } } });
     await client.company.deleteMany({ where: { id: { startsWith: tag } } });
     await client.user.deleteMany({ where: { id: { startsWith: tag } } });
     await client.$disconnect();
@@ -295,4 +299,34 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
     assert.equal((await service.reserve({ ...invocation(grant, 2, 'document-qa/2'), inputDigest }, true)).ok, false);
   });
 
+  it('pins the AI credit cycle of a cut-over turn in the API-side authority, never in the signed grant (A36, C4)', async () => {
+    const { grant, input, owner } = await fixture('credit', 'SHARED', false);
+    const companyId = grant.payerCompanyId;
+    const start = new Date(Date.now() - 5 * 86_400_000), end = new Date(Date.now() + 25 * 86_400_000);
+    const account = await client.billingAccount.create({ data: { companyId, stripeAccountId: `acct_${companyId}`, livemode: false,
+      renewalMode: 'CARD_ONCE', billingAnchorDay: start.getUTCDate(), paidThrough: end } });
+    await client.billingInvoice.create({ data: { billingAccountId: account.id, providerInvoiceId: `in_${companyId}`, offerSnapshot: {},
+      policyRevisionId: 'synthetic', currency: 'thb', totalSatang: 24_900, paidSatang: 24_900, periodStart: start, periodEnd: end,
+      providerStatus: 'paid', evidenceHash: 'synthetic', applyStatus: 'APPLIED', appliedAt: start } });
+    await client.companyPlanTerm.create({ data: { companyId, tierKey: 'STARTER', branchLimit: 1, employeeLimit: 3, monthlySlipLimit: 30,
+      termStartAt: start, termEndsAt: end, billingReceiptAccountId: account.id } });
+    await client.companyAiConfiguration.update({ where: { companyId }, data: { aiCreditCutoverAt: new Date(Date.now() - 86_400_000) } });
+    const intake = await service.reserve(invocation(grant, 0, 'line-intake-text/2')); assert.ok(intake.ok);
+    const authority = (await client.lineWebhookEventLog.findUniqueOrThrow({ where: { id: grant.authorityId } })).budgetAuthorityJson as any;
+    const lot = await client.aiCreditGrant.findFirstOrThrow({ where: { companyId, sourceKind: 'INCLUDED_CYCLE' } });
+    assert.deepEqual(authority.fundingContext, { cycleKey: lot.cycleKey });
+    assert.deepEqual(authority.grant, grant, 'the signed grant is unchanged');
+    assert.equal(JSON.stringify(grant).includes('cycle'), false);
+    await settle(intake.envelope.invocationKey);
+    const narrowed = await service.narrow(grant, 'mixed', ['line-control/2', 'line-answer/2']); assert.ok(narrowed);
+    const next = await service.reserve(invocation(narrowed, 1, 'line-control/2')); assert.ok(next.ok);
+    assert.deepEqual((await client.aiCreditEntry.findMany({ where: { reservationId: next.envelope.reservationId } })).map(row => row.grantId), [lot.id]);
+    // An image intake keeps its CHAT bucket and spends no AI credit (plan C4).
+    const event = await client.lineWebhookEventLog.create({ data: { companyId, webhookEventId: `${companyId}-image`, eventType: 'message' } });
+    const image = await service.issue({ ...input, authorityId: event.id, turnKey: `${companyId}-image-turn`, attemptKey: `${companyId}-image`,
+      requestKind: 'IMAGE', admittedAtMs: Date.now(), allowedProfileIds: ['line-intake-image/2'], owner: { kind: 'PRIVATE', owner, epoch: input.owner.kind === 'PRIVATE' ? input.owner.epoch : 0 } });
+    assert.ok(image);
+    const read = await service.reserve(invocation(image, 0, 'line-intake-image/2')); assert.ok(read.ok);
+    assert.equal(await client.aiCreditEntry.count({ where: { reservationId: read.envelope.reservationId } }), 0);
+  });
 });

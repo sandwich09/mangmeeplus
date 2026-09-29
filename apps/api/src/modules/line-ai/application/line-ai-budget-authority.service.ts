@@ -22,6 +22,9 @@ type BudgetAuthority = {
   requestKind: 'TEXT' | 'IMAGE' | 'OTHER';
   inputDigest: string; modelContextTokens: number; modelMaxOutputTokens: number; nextOrdinal: number; coalescingExtraMs?: number; narrowedLane?: string;
   profileCounts: Partial<Record<AiBudgetProfileIdV2, number>>; repairCount: number; transferredToQa?: string;
+  /** Add-on spec §5.3: the AI credit cycle this turn's first funded call used. API-side only, never
+   *  in the signed grant, so the Gateway/AgentCore contract is unchanged; later calls stay on it. */
+  fundingContext?: { cycleKey: string };
 };
 export type IssueLineAiBudgetGrant = {
   authorityKind: 'webhook_event' | 'ledger_entry' | 'qa_job'; authorityId: string; owner: AuthorityOwner;
@@ -314,10 +317,14 @@ export class LineAiBudgetAuthorityService {
       thbPerUsd: initial.tariff.thbPerUsd, thbPerUsdSource: 'pinned-grant', now,
     }, {
       upperBoundSatang: priced.upperBoundSatang, maxCalls: aiBudgetV2OrdinalCeiling(grant),
+      // Plan C4: an image intake keeps its CHAT cost bucket but never spends AI credit (spec §5.4;
+      // audit N-1 still waits for the LINE AI owner to confirm the v2 bucket).
+      fundsAiCredit: invocation.profileId !== 'line-intake-image/2',
+      fundingAsOf: new Date(grant.admittedAtMs), pinnedCycleKey: initial.fundingContext?.cycleKey,
       snapshot: { ...priced.snapshot, profileId: invocation.profileId, inputDigest: invocation.inputDigest, payloadDigest: invocation.payloadDigest,
         schemaDigest: invocation.schemaDigest, estimatorVersion: invocation.estimatorVersion, promptVersion: invocation.promptVersion,
         profileTableDigest: grant.profileTableDigest, grantSignature: grant.signature, repair },
-      authorizeAndClaim: async tx => {
+      authorizeAndClaim: async (tx, funding) => {
         const parent = this.parent(tx, grant.authorityKind);
         const current = await parent.findUnique({ where: { id: grant.authorityId } });
         const authority = current?.budgetAuthorityJson as BudgetAuthority | undefined;
@@ -331,8 +338,11 @@ export class LineAiBudgetAuthorityService {
         const running = await tx.aiBudgetReservation.count({ where: { companyId: grant.payerCompanyId, attemptKey: grant.attemptKey,
           stepKind: 'provider-v2', status: { in: ['RESERVED', 'DISPATCHED', 'UNRESOLVED'] } } });
         if (running) return false;
+        // A turn funds every call from ONE cycle: a different one means the pin raced (A36).
+        if (funding && authority.fundingContext && authority.fundingContext.cycleKey !== funding.cycleKey) return false;
         const next: BudgetAuthority = { ...authority, nextOrdinal: authority.nextOrdinal + 1,
-          repairCount: authority.repairCount + Number(repair), profileCounts: { ...authority.profileCounts, [invocation.profileId]: (authority.profileCounts[invocation.profileId] ?? 0) + 1 } };
+          repairCount: authority.repairCount + Number(repair), profileCounts: { ...authority.profileCounts, [invocation.profileId]: (authority.profileCounts[invocation.profileId] ?? 0) + 1 },
+          ...(funding && !authority.fundingContext ? { fundingContext: { cycleKey: funding.cycleKey } } : {}) };
         return (await parent.updateMany({ where: { id: grant.authorityId, budgetAuthorityRevision: current.budgetAuthorityRevision },
           data: { budgetAuthorityJson: next as unknown as Prisma.InputJsonValue, budgetAuthorityRevision: { increment: 1 } } })).count === 1;
       },

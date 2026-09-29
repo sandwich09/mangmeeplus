@@ -63,6 +63,7 @@ import {
   isOcrPreProviderHttpStatus,
   isOcrPreProviderRefusal,
   isOcrRetryableProviderFailure,
+  isSinglePageReceiptImage,
   releaseCompanyOcrAdmission,
 } from '../application/company-ocr-governance';
 
@@ -358,6 +359,7 @@ export class AiGatewayClient {
         requestId: request.attachment.id,
         monthKey: budgetMonthKey,
         enforceReceiptQuota: this.config.receiptQuotaEnforced,
+        singlePageImage: isSinglePageReceiptImage(request.attachment.mimeType),
       });
       if (!admission.allowed) {
         // Money was held before this count/switch/plan gate; its refusal proves no provider ran.
@@ -492,6 +494,8 @@ export class AiGatewayClient {
       // The LINE lane's ONE document-read admission: the receipt OCR below runs with
       // `ocrAlreadyAdmitted`, so if the plan ceiling is not applied here it is not applied at all.
       enforceReceiptQuota: this.config.receiptQuotaEnforced,
+      // `mediaId` exists only for a downloaded JPEG/PNG (see `requestLineIntakeRoute`): one image page (D4).
+      singlePageImage: true,
     });
     if (!admission.allowed) {
       // Held money first, count second (ADR 0013 §5): this refusal proves no provider call started.

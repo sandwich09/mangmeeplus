@@ -11,7 +11,7 @@ import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/bill
 import { paidPackageCheckoutEvidence, type PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { resolveAppliedInvoiceIssues, detectBillingIssue } from './billing-issues';
 import { termProjectionHash } from '../domain/paid-invoice';
-import { grantPaidPackageReceipts, paidReceiptBalance } from './billing-receipt-grants';
+import { grantPaidPackageReceipts, packageReceiptBalance } from './billing-receipt-grants';
 import { fulfillPaidPackageRequest } from './billing-package-request';
 import { assertMappedCharge, recordBillingFinancials } from './billing-financial';
 import { collectionContract, ownedSchedule, simpleCollection } from './billing-schedule';
@@ -482,7 +482,7 @@ export class BillingRepeat {
       if (invoice.appliedAt) { await resolveAppliedInvoiceIssues(tx,account,invoice.id); return; }
       const end = new Date(journal.paidThrough!), start = new Date(journal.serviceStart!);
       if (end <= new Date()) throw review();
-      const balance = await paidReceiptBalance(tx, account.companyId, account.id, evidence.paidAt);
+      const balance = await packageReceiptBalance(tx, account.companyId, account.id, evidence.paidAt);
       if (snapshot.upgrade) {
         if (balance.remaining + snapshot.upgrade.receiptUnitsAdded > 2147483647) throw review();
       } else fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval, offer:snapshot.quote.offer, verifiedPaidAt: evidence.paidAt,

@@ -71,9 +71,11 @@ test('trial conversion and unrestricted paid carryover on PostgreSQL', { skip: !
       const { id, createdAt, ...data } = trial;
       await assert.rejects(db.billingReceiptGrant.create({ data: { ...data, sourceKey: 'second' } }));
       await assert.rejects(db.billingReceiptGrant.update({ where: { id }, data: { units: 16 } }));
-      assert.equal((await read('paid-uses-earliest-gift')).allowed, true);
-      const event = await db.companyOcrUsageEvent.findFirstOrThrow({ where: { companyId, requestId: 'paid-uses-earliest-gift' } });
-      assert.equal((await db.billingReceiptGrant.findUniqueOrThrow({ where: { id: event.billingReceiptGrantId! } })).kind, 'ADMIN_ADJUSTMENT');
+      // Add-on spec §6 / D8 (plan PR B): package units, the trial carryover among them, go before an Admin
+      // gift even when the gift expires first — the order replaced FEFO across every lot on purpose.
+      assert.equal((await read('paid-uses-package-before-gift')).allowed, true);
+      const event = await db.companyOcrUsageEvent.findFirstOrThrow({ where: { companyId, requestId: 'paid-uses-package-before-gift' } });
+      assert.equal((await db.billingReceiptGrant.findUniqueOrThrow({ where: { id: event.billingReceiptGrantId! } })).kind, 'TRIAL_CARRYOVER');
     });
     await t.test('upgrade/repeat preserve hundreds of paid receipts, with fixed trial/admin expiry', async () => {
       await db.$transaction(tx => grantPaidPackageReceipts(tx, { ...paid, sourceKey: 'upgrade', kind: 'UPGRADE', units: 600 }));

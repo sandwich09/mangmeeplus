@@ -32,6 +32,7 @@ import {
   LIFF_PAGE_CSP,
   LIFF_PAGE_SCRIPT,
   liffPageHtml,
+  LIFF_EVENT_DISCOUNT_PAGE,
   LINE_CHANNEL_ID_PATTERN,
   LINE_ID_TOKEN_MAX_LENGTH,
   LINE_ID_TOKEN_PATTERN,
@@ -664,6 +665,30 @@ export class AuthController {
       <p><a id="go-signup" class="btn" href="/v1/auth/line/link-page/signup" hidden>เปิดร้านใหม่</a></p>
       <p><button id="link">ลองอีกครั้ง</button></p>
       <pre id="detail"></pre>`,
+    });
+  }
+
+  /**
+   * Sales-event discounts (spec §3.3). A เซลล์'s booth QR opens `https://liff.line.me/<id>/event-discount?t=…`,
+   * which resolves to this sub-path of the registered LIFF endpoint. The page claims with the LIFF ID
+   * token (`POST /v1/public/event-discounts/claim`) and shows only what the batch gives; the QR token
+   * stays in the page's own query string, which the request log never records.
+   */
+  @Public()
+  @Get('line/link-page/event-discount')
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  @Header('Cache-Control', 'no-store, max-age=0')
+  @Header('Referrer-Policy', 'no-referrer')
+  @Header('Content-Security-Policy', LIFF_PAGE_CSP)
+  @ApiOperation({ summary: 'LIFF page: claim a sales-event discount after scanning a booth QR (sales-event spec §3.3)' })
+  lineEventDiscountPage(@Req() req: Request): string {
+    return liffPageHtml({
+      ...LIFF_EVENT_DISCOUNT_PAGE,
+      data: {
+        'liff-mode': 'event-discount',
+        'liff-id': this.config.lineLiffId ?? '',
+        'api-base': publicApiBase(req),
+      },
     });
   }
 

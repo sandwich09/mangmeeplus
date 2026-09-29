@@ -15,11 +15,22 @@ import type {
   SalesDealStatus,
   SalesDealSubmitBody,
   SalesDealView,
+  SalesEventAgentSearch,
+  SalesEventBatchInput,
+  SalesEventBatchList,
+  SalesEventBatchStateBody,
+  SalesEventBatchUpdate,
+  SalesEventBatchView,
+  SalesEventQr,
+  SalesEventTicketList,
+  SalesEventTicketRevokeBody,
+  SalesEventTicketView,
   SalesAttributionFlagListDto,
   SalesAttributionFlagReviewBody,
   SalesMyWorkDto,
   SalesReferralUpdateBody,
   SalesReportSummary,
+  SalesEventReport,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 
@@ -159,6 +170,16 @@ export function getSalesReportSummary(
   return apiFetch<SalesReportSummary>(`/v1/sales/reports/summary?${query.toString()}`, { ...init, suppressErrorToast: true });
 }
 
+/** Sales-event report (spec §10): separate from the sales figures above — never sales credit. */
+export function getSalesEventReport(
+  params: { from: string; to: string; teamLeadUserId?: string },
+  init?: { signal?: AbortSignal },
+): Promise<SalesEventReport> {
+  const query = new URLSearchParams({ from: params.from, to: params.to });
+  if (params.teamLeadUserId) query.set('teamLeadUserId', params.teamLeadUserId);
+  return apiFetch<SalesEventReport>(`/v1/sales/events/report?${query.toString()}`, { ...init, suppressErrorToast: true });
+}
+
 export function listSalesAttributionFlags(init?: { signal?: AbortSignal }): Promise<SalesAttributionFlagListDto> {
   return apiFetch<SalesAttributionFlagListDto>('/v1/system/sales-attribution/flags', { ...init, suppressErrorToast: true });
 }
@@ -166,6 +187,61 @@ export function listSalesAttributionFlags(init?: { signal?: AbortSignal }): Prom
 /** `keep: true` = "ตัดออกจากยอด" (the flag stands); `false` = "ยืนยันว่าไม่ผิดปกติ". */
 export function reviewSalesAttributionFlag(companyId: string, body: SalesAttributionFlagReviewBody): Promise<SalesAttributionFlagListDto> {
   return apiFetch<SalesAttributionFlagListDto>(`/v1/system/sales-attribution/${encodeURIComponent(companyId)}/review`, {
+    method: 'POST', body: JSON.stringify(body), suppressErrorToast: true,
+  });
+}
+
+// ── ส่วนลดจากงาน (sales-event-discounts spec §7.1) ──
+
+function withCursor(path: string, params: Record<string, string | null | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) if (value) query.set(key, value);
+  return query.size > 0 ? `${path}?${query.toString()}` : path;
+}
+
+export function listSalesEventBatches(cursor?: string | null, init?: { signal?: AbortSignal }): Promise<SalesEventBatchList> {
+  return apiFetch<SalesEventBatchList>(withCursor('/v1/sales/events/batches', { cursor }), { ...init, suppressErrorToast: true });
+}
+
+export function getSalesEventBatch(batchId: string, init?: { signal?: AbortSignal }): Promise<SalesEventBatchView> {
+  return apiFetch<SalesEventBatchView>(`/v1/sales/events/batches/${encodeURIComponent(batchId)}`, { ...init, suppressErrorToast: true });
+}
+
+export function createSalesEventBatch(body: SalesEventBatchInput): Promise<SalesEventBatchView> {
+  return apiFetch<SalesEventBatchView>('/v1/sales/events/batches', { method: 'POST', body: JSON.stringify(body), suppressErrorToast: true });
+}
+
+export function updateSalesEventBatch(batchId: string, body: SalesEventBatchUpdate): Promise<SalesEventBatchView> {
+  return apiFetch<SalesEventBatchView>(`/v1/sales/events/batches/${encodeURIComponent(batchId)}`, {
+    method: 'PATCH', body: JSON.stringify(body), suppressErrorToast: true,
+  });
+}
+
+export function changeSalesEventBatchState(batchId: string, body: SalesEventBatchStateBody): Promise<SalesEventBatchView> {
+  return apiFetch<SalesEventBatchView>(`/v1/sales/events/batches/${encodeURIComponent(batchId)}/state`, {
+    method: 'POST', body: JSON.stringify(body), suppressErrorToast: true,
+  });
+}
+
+export function searchSalesEventAgents(q: string, cursor?: string | null, init?: { signal?: AbortSignal }): Promise<SalesEventAgentSearch> {
+  return apiFetch<SalesEventAgentSearch>(withCursor('/v1/sales/events/agents', { q: q.trim(), cursor }), { ...init, suppressErrorToast: true });
+}
+
+/** A fresh QR on every call; the previous one keeps working until its own five minutes run out. */
+export function issueSalesEventQr(batchId: string): Promise<SalesEventQr> {
+  return apiFetch<SalesEventQr>(`/v1/sales/events/batches/${encodeURIComponent(batchId)}/qr`, {
+    method: 'POST', body: JSON.stringify({}), suppressErrorToast: true,
+  });
+}
+
+export function listSalesEventTickets(batchId: string, cursor?: string | null, init?: { signal?: AbortSignal }): Promise<SalesEventTicketList> {
+  return apiFetch<SalesEventTicketList>(withCursor(`/v1/sales/events/batches/${encodeURIComponent(batchId)}/tickets`, { cursor }), {
+    ...init, suppressErrorToast: true,
+  });
+}
+
+export function revokeSalesEventTicket(ticketId: string, body: SalesEventTicketRevokeBody): Promise<SalesEventTicketView> {
+  return apiFetch<SalesEventTicketView>(`/v1/sales/events/tickets/${encodeURIComponent(ticketId)}/revoke`, {
     method: 'POST', body: JSON.stringify(body), suppressErrorToast: true,
   });
 }

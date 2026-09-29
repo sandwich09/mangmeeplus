@@ -1,6 +1,7 @@
 import type { BillingSnapshot } from '../application/billing.service';
 import { stripeId, type StripeObject } from '../infrastructure/stripe.client';
 import { billingError, hashBilling, paidVariant } from './billing-policy';
+import { eventDiscountExpected } from './billing-event-discount.logic';
 
 export type PaidCheckoutEvidence = {
   invoiceId: string; customerId: string; chargeId: string; checkoutSessionId: string; paidAt: Date;
@@ -19,8 +20,10 @@ export function paidPackageCheckoutEvidence(input: {
   const reject = () => { throw billingError('BILLING_CHECKOUT_INVOICE_MISMATCH', 'หลักฐานรายการซื้อเพิ่มต้องตรวจสอบ กรุณาดูสถานะรายการเดิม'); };
   paidVariant(snapshot.quote.offer.offerKey, snapshot.quote.offer.interval);
   const bound = (value: StripeObject) => value.metadata?.billingAttemptId === attemptId && value.metadata?.billingAccountId === billingAccountId;
-  const total = snapshot.quote.totalSatang, tax = snapshot.quote.taxSatang;
-  const chargedPrice = snapshot.upgrade?.amountSatang ?? snapshot.quote.offer.priceSatang;
+  // Sales-event spec §5.2: a lower first bill is expected only from a consistent eventDiscount in the attempt snapshot.
+  const discounted = snapshot.eventDiscount?.choice === 'USE' ? eventDiscountExpected(snapshot) ?? reject() : null;
+  const total = discounted?.totalSatang ?? snapshot.quote.totalSatang, tax = discounted?.taxSatang ?? snapshot.quote.taxSatang;
+  const chargedPrice = discounted?.unitAmountSatang ?? snapshot.upgrade?.amountSatang ?? snapshot.quote.offer.priceSatang;
   if (!Number.isSafeInteger(total) || total <= 0 || !Number.isSafeInteger(tax) || tax < 0 ||
       !/^prod_[a-zA-Z0-9]+$/.test(productId) || session.object !== 'checkout.session' || session.livemode !== livemode ||
       session.mode !== 'payment' || session.status !== 'complete' || session.payment_status !== 'paid' ||

@@ -13,7 +13,10 @@ import { join } from 'node:path';
 
 const PAGES = [
   'SalesCompaniesPage.tsx', 'SalesConsoleParts.tsx', 'SalesDealFormPage.tsx', 'SalesDealsPage.tsx',
+  'SalesEventBatchForm.tsx', 'SalesEventBatchPage.tsx', 'SalesEventsPage.tsx',
   'SalesMyWorkPage.tsx', 'SalesMyProfilePage.tsx', 'SalesProfileEditor.tsx', 'SalesReportsPage.tsx', 'SalesTeamPage.tsx',
+  // Sales-event report view of /sales/reports (SD-E).
+  'SalesEventReportSection.tsx',
 ];
 
 const SHELL = join(__dirname, '../../common/components/app-shell/SalesHeader.tsx');

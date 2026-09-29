@@ -103,6 +103,8 @@ function harness(options: Options = {}) {
       companyOcrMonthlyUsage:{findUnique:async()=>options.ocrUsage??null},
       platformAiBudgetConfig:{findUnique:async()=>options.platformBudget??null},
       billingReceiptGrant:{findMany:async()=>options.paidGrants??[]},
+      // Add-on plan PR B: the receipt ledger; these fixtures predate it, so every use is a legacy admission count.
+      receiptUnitEntry:{groupBy:async()=>[]},
       companyAiMonthlyUsage: { findUnique: async () => options.aiUsage ?? null },
       companyAiConfiguration: { findUnique: async () => options.aiConfig ?? null },
       // The split-budget position (spec §12.3): empty for every SHARED case, which is exactly the
@@ -382,10 +384,10 @@ describe('current Admin AI support explanation',()=>{
   const term={tierKey:'PRO_999',monthlySlipLimit:100,warmupUntil:null,warmupSlipLimit:null,termEndsAt:new Date('2030-01-01'),billingReceiptAccountId:'paid-account'};
   const refusals=async(options:Options)=>(await harness(options).controller.partnerTimeline('co-1')).entries.filter(e=>e.kind==='ai_refusal');
   it('uses remaining annual/repurchased grants instead of a monthly cap, and does not call receipt exhaustion a chat refusal',async()=>{
-    assert.deepEqual(await refusals({planTerm:term,ocrUsage:{usedCount:150},paidGrants:[{id:'grant',units:1200,_count:{admissions:150},expiresAt:term.termEndsAt}]}),[]);
-    const result=await refusals({planTerm:term,paidGrants:[{id:'grant',units:1200,_count:{admissions:1200},expiresAt:term.termEndsAt}]});
+    assert.deepEqual(await refusals({planTerm:term,ocrUsage:{usedCount:150},paidGrants:[{id:'grant',kind:'INITIAL',units:1200,_count:{admissions:150},expiresAt:term.termEndsAt}]}),[]);
+    const result=await refusals({planTerm:term,paidGrants:[{id:'grant',kind:'INITIAL',units:1200,_count:{admissions:1200},expiresAt:term.termEndsAt}]});
     assert.equal(result[0]?.label,'ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้');assert.equal(result[0]?.detail,'ใช้จำนวนใบเสร็จที่มีอยู่ครบแล้ว');
-    assert.deepEqual(await refusals({planTerm:term,paidGrants:[{id:'old',units:1200,_count:{admissions:1200},expiresAt:term.termEndsAt},{id:'repeat',units:1200,_count:{admissions:0},expiresAt:term.termEndsAt}]}),[]);
+    assert.deepEqual(await refusals({planTerm:term,paidGrants:[{id:'old',kind:'INITIAL',units:1200,_count:{admissions:1200},expiresAt:term.termEndsAt},{id:'repeat',kind:'REPEAT',units:1200,_count:{admissions:0},expiresAt:term.termEndsAt}]}),[]);
   });
   it('honours current enforcement, OCR switch/operations limit, feature entitlement and live platform budget',async()=>{
     assert.deepEqual(await refusals({planTerm:{...term,billingReceiptAccountId:null},ocrUsage:{usedCount:150},enforced:false}),[]);
