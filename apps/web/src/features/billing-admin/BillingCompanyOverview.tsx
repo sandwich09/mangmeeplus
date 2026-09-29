@@ -68,7 +68,7 @@ export default function BillingCompanyOverview({ company: c, overview, loading, 
         <p className="mt-2 text-gray-600">ส่วนลดที่ร้านนี้กำลังใช้หรือใช้แล้ว ค้นด้วยเลขส่วนลดได้จากช่องค้นหาด้วยเลขอ้างอิง</p>
         <div className="mt-4 divide-y divide-gray-100">{c.eventDiscounts.map(d => <article key={d.serial} className="flex flex-wrap items-center justify-between gap-4 py-4"><div className="min-w-0">
           <h3 className="break-words font-semibold text-gray-900">{d.eventName} · ชุด {d.batchName}</h3>
-          <p className="mt-1 text-sm text-gray-600">เลขส่วนลด {d.serial} · {d.redeemedAs === 'CREDIT' ? 'รับเป็นเครดิต' : 'ลดบิลแรก'} · {d.state === 'RESERVED' ? 'กำลังชำระ' : d.state === 'USED' ? 'ใช้แล้ว' : d.state === 'REVOKED' ? 'เพิกถอนแล้ว' : 'ยังไม่ได้ใช้'}</p>
+          <p className="mt-1 text-sm text-gray-600">เลขส่วนลด {d.serial} · {d.redeemedAs === 'CREDIT' ? 'รับเป็นเครดิต' : 'ลดค่าแพ็กเกจ'} · {d.state === 'RESERVED' ? 'กำลังชำระ' : d.state === 'USED' ? 'ใช้แล้ว' : d.state === 'REVOKED' ? 'เพิกถอนแล้ว' : 'ยังไม่ได้ใช้'}</p>
           {d.appliedDiscountSatang !== null && <p className="mt-1 text-sm text-gray-600">ส่วนลด {money(d.appliedDiscountSatang)}</p>}
           {(d.usedAt ?? d.reservedAt) && <p className="mt-1 text-sm text-gray-600">{d.usedAt ? `ใช้เมื่อ ${formatThaiDateTime(d.usedAt)}` : `เริ่มชำระเมื่อ ${formatThaiDateTime(d.reservedAt)}`}</p>}
         </div>{d.invoiceId && <Link onClick={leaving} className={billingControl} href={`${base}/invoices/${encodeURIComponent(d.invoiceId)}`}>ดูบิลที่ใช้ส่วนลด</Link>}</article>)}</div>

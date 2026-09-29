@@ -177,8 +177,8 @@ export type BillingQuote = {
     segments: { start: string; end: string; amountSatang: number; receiptUnitsAdded: number }[] };
   capacity?: BillingCapacityImpact;
   pendingPlanChange?: { operationId: string; oldEffectiveAt: string; newEffectiveAt: string; offer: BillingOffer; totalSatang: number; capacity: BillingCapacityImpact };
-  /** Sales-event first-bill discount (sales-event spec §7.2), present only when the buyer's LINE identity holds a
-   *  ticket this purchase can use. `totalSatang` above stays the full price; "ชำระวันนี้" is `applied.totalSatang`
+  /** Sales-event discount (sales-event spec §7.2, SD-O12), present only when the buyer's LINE identity holds a
+   *  ticket this purchase can use. `totalSatang` above stays the undiscounted charge; "ชำระวันนี้" is `applied.totalSatang`
    *  when the buyer chose USE. DECLINE keeps the offer so the confirm step can switch back. */
   eventDiscount?: BillingQuoteEventDiscount;
 };
@@ -259,11 +259,13 @@ export type BillingStatus = {
   /** Add-on balances and the add-on Checkout in flight (spec §8.1, §17.3). Declared by the foundation;
    *  no server fills it yet. Plan managers only. */
   addOns?: BillingAddOnSummary;
-  /** Sales-event first-bill discount this plan manager holds for this shop (sales-event spec §3.4 ก, §8), computed
-   *  with the same helper as the quote. Absent = no usable ticket or not a first purchase. `offers` lists the
-   *  package cards it lowers; empty when `reason` says why this shop cannot use it. One-time purchases only today. */
+  /** Sales-event discount this plan manager holds for this shop (sales-event spec §3.4 ก, §8, SD-O12), computed
+   *  with the same helper as the quote. Absent = no ticket, or this shop cannot pay for a package in one go now.
+   *  `offers` lists the package cards it lowers; empty when `reason` says why this shop cannot use it
+   *  (EVENT_ALREADY_USED: every ticket held is from an event this shop already used — one per event per shop,
+   *  `eventName` names it). One-time purchases only today. */
   eventDiscount?: { ticketSerial: string; eventName: string; discountSatang: number; expiresAt: string;
-    reason: null | 'DEAL_ACTIVE' | 'COMPANY_ALREADY_USED';
+    reason: null | 'DEAL_ACTIVE' | 'EVENT_ALREADY_USED';
     offers: { offerKey: string; interval: BillingInterval; eventName: string; shownDiscountSatang: number }[] };
 };
 /** Spec §17.3: one server snapshot for both products; the client never adds numbers itself. Integer units per `unitScale`. */

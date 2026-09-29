@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import type {BillingAccount,BillingAttempt} from '../../../generated/prisma/client';
 import {checkoutExpiryBinding,checkoutExpirySession} from './billing-checkout-expiry-source';
+import {BILLING_DRAFT_POLICY,billingOffer} from '@watchdog-bms/contracts';
 const account={id:'account',companyId:'company',stripeAccountId:'acct_Test',livemode:false,customerId:'cus_Test',activeAttemptId:'attempt'} as BillingAccount;
 const attempt={id:'attempt',billingAccountId:account.id,checkoutSessionId:'cs_test_Test',quoteId:'quote',policyRevisionId:'revision',consentRevision:'consent',consentAt:new Date(1000),
   quoteSnapshot:{quote:{quoteId:'quote',companyId:'company',policyRevision:'revision',consentRevision:'consent',totalSatang:99900}}} as unknown as BillingAttempt;
@@ -22,4 +23,15 @@ test('foreign/malformed/recoverable session and changed original account/quote c
   assert.notEqual(checkoutExpiryBinding(account,attempt),checkoutExpiryBinding({...account,customerId:'cus_Changed'},attempt));
   assert.notEqual(checkoutExpiryBinding(account,attempt),checkoutExpiryBinding({...account,activeAttemptId:'new'},attempt));
   assert.equal(checkoutExpiryBinding(account,attempt),checkoutExpiryBinding(account,{...attempt,updatedAt:new Date(),status:'EXPIRED',version:123}));
+});
+test('a sales-event discounted Checkout is still the original session: its own discounted total, never the undiscounted one',()=>{
+  const snapshot={quote:{...(attempt.quoteSnapshot as {quote:object}).quote,purchaseMode:'CARD_ONCE',purchase:{kind:'REPEAT'},offer:billingOffer('BASIC_499','month'),totalSatang:49900},
+    policy:{...BILLING_DRAFT_POLICY,taxTreatment:'NOT_VAT_REGISTERED'},eventDiscount:{choice:'USE',ticketSerial:'ABCD2345',eventName:'งาน',expiresAt:'2026-11-01T00:00:00.000Z',
+      discountSatang:10000,shownDiscountSatang:10000,applied:{unitAmountSatang:39900,subtotalSatang:39900,taxSatang:0,totalSatang:39900},ticketId:'t',ticketVersion:1,batchId:'b',salesUserId:'u'}};
+  const discounted={...attempt,quoteSnapshot:snapshot} as unknown as BillingAttempt,paying={...session,mode:'payment'};
+  assert.equal(checkoutExpirySession(account,discounted,{...paying,amount_total:39900}).canExpire,true);
+  assert.throws(()=>checkoutExpirySession(account,discounted,{...paying,amount_total:49900}));
+  // A snapshot whose discount does not add up proves nothing: back to the quote's own total, so the discounted session is refused.
+  const tampered={...attempt,quoteSnapshot:{...snapshot,eventDiscount:{...snapshot.eventDiscount,discountSatang:20000}}} as unknown as BillingAttempt;
+  assert.throws(()=>checkoutExpirySession(account,tampered,{...paying,amount_total:39900}));
 });

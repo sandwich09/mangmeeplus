@@ -3930,11 +3930,12 @@ model SalesEventQrToken {
 }
 
 /// "ส่วนลดจากงาน" — one per LINE identity per batch. Amounts, rewards, scope, expiry and the เซลล์ are
-/// frozen at issue. Used once and one way only: `redeemedAs` DISCOUNT (first bill) or CREDIT.
+/// frozen at issue. Used once and one way only: `redeemedAs` DISCOUNT (a package payment) or CREDIT.
 /// The LINE identity is kept for matching only and never leaves the API.
-/// Partial uniques in the migration SQL (Prisma cannot express them):
-///   "SalesEventTicket_company_discount_key" ("companyId") WHERE state IN ('RESERVED','USED') AND "redeemedAs" = 'DISCOUNT'
+/// Partial unique in the migration SQL (Prisma cannot express it):
 ///   "SalesEventTicket_batch_company_key" ("batchId", "companyId") WHERE state IN ('RESERVED','USED')
+/// One ticket per shop per event (SD-O12, any batch with the same eventName) is checked in the checkout transaction;
+/// the lifetime "SalesEventTicket_company_discount_key" was dropped by 20260929190000_sales_event_discount_per_event.
 model SalesEventTicket {
   id                      String          @id @default(cuid())
   /// 8 characters from an alphabet with no 0/O or 1/I — the number people quote.

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { billingOffer, BILLING_DRAFT_POLICY, type BillingQuote } from '@watchdog-bms/contracts';
-import { eventDiscountAmounts, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, pickEventDiscount, type EventDiscountSnapshot } from './billing-event-discount.logic';
+import { eventDiscountAmounts, eventDiscountBasis, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, pickEventDiscount, type EventDiscountSnapshot } from './billing-event-discount.logic';
 
 test('spec §5.1: 499 less 100 in all three tax treatments, whole baht only, never below ฿10 or the full price', () => {
   assert.deepEqual(eventDiscountAmounts(49900, 10000, 'NOT_VAT_REGISTERED'),
@@ -18,14 +18,15 @@ test('spec §5.1: 499 less 100 in all three tax treatments, whole baht only, nev
 });
 
 const quote = (over: Partial<BillingQuote> = {}) => ({ purchaseMode: 'CARD_ONCE', purchase: { kind: 'INITIAL' }, ...over }) as BillingQuote;
-test('spec §4.1.1: first purchases paid in one go only; deals, upgrades, repeats and renewing modes never', () => {
-  assert.equal(eventDiscountPurchase(quote()), true);
-  assert.equal(eventDiscountPurchase(quote({ purchaseMode: 'PROMPTPAY_ONCE', purchase: { kind: 'RESTART' } as BillingQuote['purchase'] })), true);
-  for (const kind of ['REPEAT', 'SCHEDULED_CHANGE', 'UPGRADE', 'FULL_PACKAGE_UPGRADE', 'ADVANCE_DEAL'])
-    assert.equal(eventDiscountPurchase(quote({ purchase: { kind } as BillingQuote['purchase'] })), false, kind);
-  for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) assert.equal(eventDiscountPurchase(quote({ purchaseMode })), false, purchaseMode);
+test('spec §4.1.1 / SD-O12: any package payment made in one go; never a deal or an automatic renewal', () => {
+  for (const kind of ['INITIAL', 'RESTART', 'REPEAT', 'SCHEDULED_CHANGE', 'UPGRADE', 'FULL_PACKAGE_UPGRADE'])
+    for (const purchaseMode of ['CARD_ONCE', 'PROMPTPAY_ONCE'] as const)
+      assert.equal(eventDiscountPurchase(quote({ purchaseMode, purchase: { kind } as BillingQuote['purchase'] })), true, `${kind} ${purchaseMode}`);
+  assert.equal(eventDiscountPurchase(quote({ purchase: { kind: 'ADVANCE_DEAL' } as BillingQuote['purchase'] })), false);
+  for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const)
+    for (const kind of ['INITIAL', 'REPEAT', 'UPGRADE'])
+      assert.equal(eventDiscountPurchase(quote({ purchaseMode, purchase: { kind } as BillingQuote['purchase'] })), false, `${kind} ${purchaseMode}`);
   assert.equal(eventDiscountPurchase(quote({ deal: { dealId: 'd', months: 1, description: '', baseLabel: '' } })), false);
-  assert.equal(eventDiscountPurchase(quote({ upgrade: { prorationAt: '', nextRenewalTotalSatang: 0, segments: [] } })), false);
 });
 
 test('spec §4.3: the card gets the ticket that takes most off it, in scope; ties go to the one expiring first, then id', () => {
@@ -42,6 +43,10 @@ test('spec §4.3: the card gets the ticket that takes most off it, in scope; tie
   assert.equal(pickEventDiscount(tickets.slice(0, 2), offer, 'NOT_VAT_REGISTERED')?.ticket.id, 'a');
   assert.equal(pickEventDiscount(tickets, billingOffer('BASIC_499', 'year'), 'NOT_VAT_REGISTERED'), null, 'yearly is out of scope');
   assert.equal(pickEventDiscount(tickets, billingOffer('PRO_999', 'month'), 'NOT_VAT_REGISTERED')?.ticket.id, 'e');
+  // An upgrade: scope from the target offer, the amount off its prorated difference; under ฿10 after it = no discount.
+  assert.deepEqual(pickEventDiscount(tickets, billingOffer('PRO_999', 'month'), 'NOT_VAT_REGISTERED', 25000)?.amounts,
+    { unitAmountSatang: 5000, subtotalSatang: 5000, taxSatang: 0, totalSatang: 5000, shownDiscountSatang: 20000 });
+  assert.equal(pickEventDiscount(tickets, billingOffer('PRO_999', 'month'), 'NOT_VAT_REGISTERED', 20500), null);
 });
 
 test('spec §4.3 stale rules: USE reserves, DECLINE never goes stale, a quote that saw no offer goes stale once one exists', () => {
@@ -65,4 +70,19 @@ test('spec §5.2: the expected first bill comes only from a consistent USE snaps
   assert.equal(eventDiscountExpected({ ...snapshot(), eventDiscount: { choice: 'DECLINE', offeredTicketId: 't' } }), null);
   assert.equal(eventDiscountExpected({ ...snapshot(), quote: quote({ offer, purchaseMode: 'CARD_AUTO' }) }), null);
   assert.equal(eventDiscountExpected({ ...snapshot(), deal: {} }), null);
+  assert.equal(eventDiscountExpected({ ...snapshot(), upgrade: { amountSatang: 20000 } }), null, 'an upgrade source on a non-upgrade quote is refused');
+});
+
+test('SD-O12: an UPGRADE takes the discount off its own prorated charge, recomputed from the same basis at Checkout', () => {
+  const offer = billingOffer('PRO_999', 'month'), upgrade = { amountSatang: 31000 }, policy = { ...BILLING_DRAFT_POLICY, taxTreatment: 'EXCLUSIVE_VAT_7' as const };
+  const upgradeQuote = quote({ offer, purchase: { kind: 'UPGRADE' } as BillingQuote['purchase'] });
+  assert.equal(eventDiscountBasis({ quote: upgradeQuote, upgrade }), 31000);
+  assert.equal(eventDiscountBasis({ quote: quote({ offer }) }), offer.priceSatang);
+  const amounts = eventDiscountAmounts(31000, 10000, 'EXCLUSIVE_VAT_7')!, { shownDiscountSatang, ...applied } = amounts;
+  assert.deepEqual(amounts, { unitAmountSatang: 21000, subtotalSatang: 21000, taxSatang: 1470, totalSatang: 22470, shownDiscountSatang: 10000 });
+  const eventDiscount = { choice: 'USE', ticketSerial: 'ABCD2345', eventName: 'งาน', expiresAt: '2026-11-01T00:00:00.000Z', discountSatang: 10000,
+    shownDiscountSatang, applied, ticketId: 't', ticketVersion: 1, batchId: 'b', salesUserId: 'u' } as EventDiscountSnapshot;
+  assert.deepEqual(eventDiscountExpected({ quote: upgradeQuote, policy, upgrade, eventDiscount }), amounts);
+  assert.equal(eventDiscountExpected({ quote: upgradeQuote, policy, eventDiscount }), null, 'an UPGRADE without its source has no basis');
+  assert.equal(eventDiscountExpected({ quote: upgradeQuote, policy, upgrade: { amountSatang: 32000 }, eventDiscount }), null, 'a different charge does not add up');
 });
