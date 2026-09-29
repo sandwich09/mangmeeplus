@@ -371,6 +371,46 @@ describe('LINE intake router – routeIntake', () => {
     assert.equal(plan.errorCode, 'ROUTER_SEMANTIC_SCHEMA_INVALID');
   });
 
+  // UAT 2026-09-29 ("สวัสดีจ้า"): the router's first output for pure social talk reported NO request — the
+  // recorded real-model output below (Sonnet 4.6, local AgentCore replica, "ขอบคุณค่ะ") — and the decoder's
+  // `subrequests.length < 1` rule sent it to a repair, whose call then spent the general lane's only answer slot.
+  it('accepts an empty ADVISOR_CONVERSATION decision as one general clause in ONE router call', async () => {
+    const text = 'ขอบคุณค่ะ';
+    const built = await createLineAiInputEvidence({ turnKey: 'social-empty-decision', parts: [{ partId: 'part-0',
+      eventIdHash: 'a'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const recorded = '{"intent":"ADVISOR_CONVERSATION","language":"th","confidence":0.97,"semanticOutcome":"AMBIGUOUS","fundingSource":"UNKNOWN","decisionV1":{"subrequests":[]},"advisorAnswer":{"version":1,"mode":"SOCIAL_CHAT","confidence":0.97,"needsTools":false,"answerText":"ยินดีเลยค่ะ 😊 มีอะไรให้ช่วยอีกบอกได้เสมอนะคะ"}}';
+    let calls = 0;
+    const provider = { generateText: async () => { calls += 1; return { ok: true as const, text: recorded }; } };
+    const plan = await runWithUsageContext({ budget: { status: 'active-v2', grant: { maxTurnSlots: 4, maxRepairs: 1 } as never,
+      inputDigest: built.inputEvidence.joinedSha256, sourceRoute: 'test', calls: 0, repairCount: 0 } }, () =>
+      new IntentRouterAgent(provider).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence,
+        capabilities: { advisor: true, reimbursementSemantic: true } })));
+    assert.equal(calls, 1, 'a legitimate social decision spends no repair call');
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.intent, 'ADVISOR_CONVERSATION');
+    assert.deepEqual(plan.semanticSubrequests?.map((item) => [item.kind, item.evidenceRefs?.[0]?.startUtf16, item.evidenceRefs?.[0]?.endUtf16]),
+      [['general', 0, text.length]]);
+    assert.equal(plan.advisorAnswer?.answerText, 'ยินดีเลยค่ะ 😊 มีอะไรให้ช่วยอีกบอกได้เสมอนะคะ');
+  });
+
+  it('keeps an empty decision on any other route invalid: it still spends the one repair and fails typed', async () => {
+    const text = 'ค่าใช้จ่ายเดือนนี้เท่าไหร่';
+    const built = await createLineAiInputEvidence({ turnKey: 'business-empty-decision', parts: [{ partId: 'part-0',
+      eventIdHash: 'b'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    let calls = 0;
+    const provider = { generateText: async () => { calls += 1; return { ok: true as const, text: JSON.stringify({
+      intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95, decisionV1: { subrequests: [] } }) }; } };
+    const plan = await runWithUsageContext({ budget: { status: 'active-v2', grant: { maxTurnSlots: 4, maxRepairs: 1 } as never,
+      inputDigest: built.inputEvidence.joinedSha256, sourceRoute: 'test', calls: 0, repairCount: 0 } }, () =>
+      new IntentRouterAgent(provider).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence,
+        capabilities: { advisor: true } })));
+    assert.equal(calls, 2);
+    assert.equal(plan.status, 'UNAVAILABLE');
+    assert.equal(plan.errorCode, 'ROUTER_SEMANTIC_SCHEMA_INVALID');
+  });
+
   it('shows the taskRef object shape, never a bare id, in the compact prompt', () => {
     const prompt = intakeRouterSystemPrompt({}, false, true);
     assert.ok(prompt.includes('"taskRef": {"taskId":"...","taskRevision":1,"subrequestIndex":0}'),

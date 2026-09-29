@@ -18,7 +18,7 @@ import { isExplicitJokeAsk, ResponseComposerAgent, featureDisabledReply } from '
 import { normalizePlanToolAccess, removeRuntimeBlockedTools, toolAccessOutcome } from './tool-availability';
 import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext, type PreparedSimpleReadEligibility } from '../domain/logic/prepared-simple-read.logic';
 import { expenseNameResolutionIssue, expenseNameResolutionReplyText } from '../domain/logic/business-read-result-semantics';
-import { activePreparedFamilies, formatExpenseSummary, formatPreparedSimpleRead, isEnglish, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
+import { APPROVED_PREPARED_FAMILY_KEYS, formatExpenseSummary, formatPreparedSimpleRead, isEnglish, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { formatDraftUpdateReply } from './draft-update-formatter';
 import { offeredKnowledgeMetadata, productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
@@ -1131,7 +1131,7 @@ export class OrchestratorAgent {
       const prepared = parseLineAiPreparedPlan(req.preparedPlan);
       // A simple grant has already spent its intake slot. Reuse the guarded, compiled read
       // instead of spending the last slot planning and then refusing the answer.
-      if (this.config.lineAiPreparedSimpleReadEnabled && inventory.length === 1 && item.kind === 'read'
+      if (inventory.length === 1 && item.kind === 'read'
         && !item.dependsOn.length && !item.entityReference && prepared
         && !unresolvedMonthName(req.messageText, req.valueCandidates?.periods
           ?? resolvePeriodCandidates(req.messageText, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })))
@@ -1171,15 +1171,15 @@ export class OrchestratorAgent {
       }
       return runSemanticTurnV2({ req,
         provider: createProvider(this.config, { modelId: req.modelPolicy?.modelId }), invoke: (meta, context, args) => this.erpTools.invoke(meta, context, args),
-        draftEditEnabled: this.config.lineAiDraftEditEnabled, reimbursementDraftEnabled: this.config.lineAiReimbursementDraftWriteEnabled,
-        publicLookupEnabled: this.config.lineAiPublicLookupEnabled, approvedKnowledgeEnabled: this.config.lineAiApprovedKnowledgeEnabled,
+        draftEditEnabled: true, reimbursementDraftEnabled: true,
+        publicLookupEnabled: this.config.lineAiPublicLookupEnabled, approvedKnowledgeEnabled: true,
         // C1(c): same compiled-formatter allowlist the prepared lane uses, reused only to render a
         // full-path read's own already-fetched result when the model's answer fails grounding twice.
-        enabledDeterministicFamilies: activePreparedFamilies(this.config.lineAiDeterministicResponseFamilies) });
+        enabledDeterministicFamilies: APPROVED_PREPARED_FAMILY_KEYS });
     }
     const startMs = Date.now();
     const knowledgeRequest = req as LineAiTurnRequest & { approvedKnowledge?: boolean; selectedKnowledgeCardIds?: string[] };
-    const knowledgeEnabled = this.config.lineAiApprovedKnowledgeEnabled === true && knowledgeRequest.approvedKnowledge === true;
+    const knowledgeEnabled = knowledgeRequest.approvedKnowledge === true;
     const knowledgeAccess = (language?: string) => productKnowledgeAccess(
       req.userContext.permissions, req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? [],
       !!req.userContext.membershipId && !!req.userContext.companyId,
@@ -1267,7 +1267,7 @@ export class OrchestratorAgent {
       // Bounded HERE, not just validated at the far end: the API DTO caps this at 1000 with
       // `forbidNonWhitelisted`, so an unbounded forward would 400 EVERY tool call of a turn whose
       // message happens to be longer — turning a long message into a total read outage.
-      ...(this.config.lineAiDraftEditEnabled ? { groundingText: req.messageText.slice(0, GROUNDING_TEXT_MAX) } : {}),
+      groundingText: req.messageText.slice(0, GROUNDING_TEXT_MAX),
       actorDelegations: req.actorDelegations,
     };
 
@@ -1276,7 +1276,7 @@ export class OrchestratorAgent {
     // with a deterministic formatter — no router.route, native/model loop, critic, or composer. ANY
     // pre-call failure runs ZERO prepared calls and falls through to the fresh, non-narrowed route()
     // below; a post-call outcome is answered here (never re-executing the tool).
-    if (this.config.lineAiPreparedSimpleReadEnabled && !unresolvedMonth) {
+    if (!unresolvedMonth) {
       if (req.preparedPlan) {
         const laneResult = await this.executePreparedSimpleRead(ctx, req, startMs);
         if (laneResult) return laneResult;
@@ -1294,7 +1294,7 @@ export class OrchestratorAgent {
     }
 
     // Route intents. Fresh, non-narrowed delegation preserved (Phase 3 shadow may then compare).
-    const router = new IntentRouterAgent(provider, this.config.lineAiDraftEditEnabled, { enabled: knowledgeEnabled });
+    const router = new IntentRouterAgent(provider, true, { enabled: knowledgeEnabled });
     const routedPlan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications,
       knowledgeEnabled ? offeredKnowledgeMetadata(PRODUCT_HELP_PACK, knowledgeAccess()) : undefined);
     this.maybeShadowComparePreparedPlan(req, routedPlan);
@@ -1390,7 +1390,7 @@ export class OrchestratorAgent {
     if (plan.status !== 'UNROUTABLE' && !zeroToolIntent && !askUserQuestion) {
       const budget = maxToolCalls;
       let textOutputs: SpecialistOutput[] = [];
-      if (this.config.lineAiTooluseLoopEnabled && typeof provider.generateWithTools === 'function') {
+      if (typeof provider.generateWithTools === 'function') {
         const native = await this.dispatchByNativeToolLoop(ctx, req, plan, provider, budget);
         if (!native.unavailable) {
           nativeRan = true;
@@ -1597,10 +1597,10 @@ export class OrchestratorAgent {
       // can promise a total the server did not compute — and no model text can imply the change
       // was saved. The API attaches the [ยืนยัน]/[ยกเลิก] buttons to this same turn.
       replyText = draftUpdateReply(toolData)!;
-    } else if (explainedRecordReply(toolData, this.config.lineAiDraftEditEnabled)) {
+    } else if (explainedRecordReply(toolData, true)) {
       // Spec §5.5: an explain answer is rendered by the deterministic Thai template only. No model
       // call, so no sentence can restate someone's money in a number the tool did not return.
-      replyText = explainedRecordReply(toolData, this.config.lineAiDraftEditEnabled)!;
+      replyText = explainedRecordReply(toolData, true)!;
     } else if (plan.status !== 'UNROUTABLE' && toolData.length > 0) {
       replyText = await composer.composeAnswer(req.messageText, toolData, composed.replyText, provider, {
         planLanguage: plan.language,
@@ -1847,7 +1847,7 @@ export class OrchestratorAgent {
       entitledFeatures: entitled === undefined ? undefined : entitled === null ? null : new Set(entitled),
       hasAttachment: (req.attachments?.length ?? 0) > 0,
       hasOpenClarification: (req.openClarifications?.length ?? 0) > 0,
-      enabledFamilies: activePreparedFamilies(this.config.lineAiDeterministicResponseFamilies),
+      enabledFamilies: APPROVED_PREPARED_FAMILY_KEYS,
     };
   }
 
@@ -1926,13 +1926,13 @@ export class OrchestratorAgent {
       case 'sales':
       case 'crm':
       case 'tax':
-        return new AccountingSummaryAgent(this.erpTools, this.config.lineAiDraftEditEnabled);
+        return new AccountingSummaryAgent(this.erpTools, true);
       case 'inventory':
         return new InventoryAgent(this.erpTools);
       case 'general':
       case 'notifications':
         // ponytail: general falls back to accounting summary (dashboard/notifications)
-        return new AccountingSummaryAgent(this.erpTools, this.config.lineAiDraftEditEnabled);
+        return new AccountingSummaryAgent(this.erpTools, true);
       default:
         return null;
     }
@@ -1982,7 +1982,7 @@ export class OrchestratorAgent {
     provider: IModelProvider,
     budget: number,
   ): Promise<{ outputs: SpecialistOutput[]; askUser?: string }> {
-    const available = availableToolsForPlan(plan, ctx.permissions, this.config.lineAiDraftEditEnabled);
+    const available = availableToolsForPlan(plan, ctx.permissions, true);
     if (available.size === 0 || budget <= 0) return { outputs: [] };
 
     const outputs: SpecialistOutput[] = [];
@@ -2043,7 +2043,7 @@ export class OrchestratorAgent {
     budget: number,
   ): Promise<{ unavailable: boolean; outputs: SpecialistOutput[]; askUser?: string; coverage?: LineAiCoverageItem[] }> {
     const generateWithTools = provider.generateWithTools?.bind(provider);
-    const available = availableToolsForPlan(plan, ctx.permissions, this.config.lineAiDraftEditEnabled);
+    const available = availableToolsForPlan(plan, ctx.permissions, true);
     if (!generateWithTools || available.size === 0 || budget <= 0) return { unavailable: true, outputs: [] };
 
     const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
@@ -2120,7 +2120,7 @@ export class OrchestratorAgent {
       const toolCalls = res.toolCalls.filter((c) => c.name !== ASK_USER_TOOL_NAME);
       if (res.stopReason !== 'tool_use' || res.toolCalls.length === 0) {
         // Model believes it is done. Critic judges; uncovered sub-requests re-enter once.
-        if (this.config.lineAiCoverageCriticEnabled && judges === 0) {
+        if (judges === 0) {
           await judgeCoverage();
           const uncovered = (coverage ?? []).filter((v) => v.verdict === 'uncovered');
           if (uncovered.length > 0 && used < budget) {
@@ -2201,7 +2201,7 @@ export class OrchestratorAgent {
 
     // Budget-exhausted (or post-resume) exit: make sure the verdicts reflect the final facts —
     // the critic marks the unanswered tail so the reply defers honestly (spec §13).
-    if (this.config.lineAiCoverageCriticEnabled && outputs.length > 0 && judges < 2 && (judges === 0 || executedSinceJudge > 0)) {
+    if (outputs.length > 0 && judges < 2 && (judges === 0 || executedSinceJudge > 0)) {
       await judgeCoverage();
     }
 

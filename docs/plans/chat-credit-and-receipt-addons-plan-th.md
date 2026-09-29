@@ -34,7 +34,7 @@
 
 - **ส่วนลดจากงานอีเวนต์** เริ่มได้หลัง PR A (แผนส่วนลดต้องระบุ PR A เป็น prerequisite ร่วม). PR ที่แก้ไฟล์ร่วมต้องต่อคิวทีละ PR ไม่ทำพร้อมกัน: `billing.service.ts` (quote/checkout/status), `paid-checkout-invoice.ts`, `billing-refund-source.ts`, `billing-reconciler.service.ts`, `packages/contracts/src/billing.ts`, `schema.prisma`, `BillingPage.tsx`, `auth.guard.ts` (sync pins ทุกครั้ง). ข้อตกลง: validator ของ add-on อยู่ไฟล์ใหม่ (`paid-addon-invoice.ts`) จึงไม่ชนกับการผ่อน validator แพ็กเกจของงานส่วนลด; การล็อกการเลือกส่วนลดดูเฉพาะ attempt ที่ `productKind = PACKAGE`
 - เปิดขาย **รูป** ได้เมื่อ A, B, E, F (ส่วนรูป), G (cohort รูปพร้อม) ผ่าน UAT; เปิดขาย **เครดิต AI** ได้เมื่อ A, C, D, E, F, G ผ่าน UAT และ lane CHAT ทุกทางของร้านนั้นมี funding
-- ปล่อยทีละฟีเจอร์ต่อ release; gate ของแต่ละสินค้าปิดเป็นค่าเริ่มต้น
+- **Release ร่วม (มติ Owner 2026-09-29, [สเปกส่วนลดจากงาน](../specs/sales-event-discounts-spec-th.md) SD-O6)**: add-on กับส่วนลดจากงานอีเวนต์ออก release เดียวกัน — candidate เดียวมี PR A–G และทุก PR ของ[แผนส่วนลด](sales-event-discounts-plan-th.md) (SD-A…SD-F) ผ่าน UAT → READY → production รอบเดียว และเปิด gate `addon_chat_credit`, `addon_receipt_image`, `event_discounts` ในขั้นเดียวกัน; gate ของแต่ละสินค้าปิดเป็นค่าเริ่มต้นจนถึงขั้นนั้น. เครดิตสำหรับร้านเดิมของงานส่วนลด (แผนส่วนลด PR SD-F) เรียก grant seam ของ PR B และ PR C ด้วยแหล่งยอด `SALES_EVENT` จึงต่อจากสอง PR นี้
 
 ## 2. PR briefs
 
@@ -58,10 +58,10 @@
 
 | งาน | ไฟล์ | สิ่งที่ทำ |
 | --- | --- | --- |
-| B1 ตัวจัดสรรตามกลุ่ม | `billing/application/billing-receipt-grants.ts:8-22` | แทน FEFO รวมด้วย กลุ่มแพ็กเกจ (INITIAL/RENEWAL/REPEAT/UPGRADE/TRIAL_CARRYOVER) → ทีมงาน (ADMIN_ADJUSTMENT/ADD_ON_ADMIN) → ซื้อ (ADD_ON_PAID) แล้ว FEFO; เพิ่ม `packageReceiptBalance` สำหรับ flow แพ็กเกจ และเปลี่ยนผู้เรียก `billing.service.ts:495`, `billing-reconciler.service.ts:600`; คงผู้เรียก OCR (`company-ocr-governance.ts:96,101,298,306`) ให้ใช้ตัวจัดสรรใหม่ |
+| B1 ตัวจัดสรรตามกลุ่ม | `billing/application/billing-receipt-grants.ts:8-22` | แทน FEFO รวมด้วย กลุ่มแพ็กเกจ (INITIAL/RENEWAL/REPEAT/UPGRADE/TRIAL_CARRYOVER) → ทีมงาน (ADMIN_ADJUSTMENT/ADD_ON_ADMIN/SALES_EVENT) → ซื้อ (ADD_ON_PAID) แล้ว FEFO; เพิ่ม `packageReceiptBalance` สำหรับ flow แพ็กเกจ และเปลี่ยนผู้เรียก `billing.service.ts:495`, `billing-reconciler.service.ts:600`; คงผู้เรียก OCR (`company-ocr-governance.ts:96,101,298,306`) ให้ใช้ตัวจัดสรรใหม่ |
 | B2 entry ของรูป | schema + migration `<ts>_receipt_unit_entries`; `line-ai/application/company-ocr-governance.ts:187-356,421-489` | ตาราง entry (logical operation คงที่, generation, lot, RESERVE/CONSUME/RELEASE/REVOKE unique); admission เขียน RESERVE, ผล OCR ที่ใช้ได้เขียน CONSUME, `releaseCompanyOcrAdmission` เขียน RELEASE; projection แยก reserved/consumed; resume เปลี่ยน id event (`:259-260`) ไม่ทำให้ entry หาย. กติกา D4/Q4 ใช้เฉพาะร้านที่ย้ายแล้ว |
 | B3 จุดบันทึกผลใช้ได้ | web `expenses/infrastructure/receipt-ocr.client.ts:295-400`, LINE `line-ai/infrastructure/ai-gateway.client.ts:353-410,486-510`, capture `expenses/application/services/expense-capture-read-runner.service.ts:446-463,610-630` | ส่ง logical operation + คุณสมบัติไฟล์ (หน้าเดียว/หลายหน้า) ที่ server ตัดสินเข้า admission; บันทึก CONSUME เมื่อผลใช้งานได้ durable (รวม NEEDS_REVIEW); lot ADD_ON เลือกได้เฉพาะหน้าเดียว |
-| B4 grant seam | ไฟล์ใหม่ `billing/application/billing-addon-grants.ts` | `applyAddOnGrant(tx, {...})` (สเปก §16 ข้อ 1) ฝั่งรูป: insert `BillingReceiptGrant` kind `ADD_ON_PAID`/`ADD_ON_ADMIN`, expiry `appendPackageInterval(at, 'year')`; ถือ L1 → L4; ไม่เรียก `grantPaidPackageReceipts` และไม่เขียน `CompanyPlanTerm` |
+| B4 grant seam | ไฟล์ใหม่ `billing/application/billing-addon-grants.ts` | `applyAddOnGrant(tx, {...})` (สเปก §16 ข้อ 1) ฝั่งรูป: insert `BillingReceiptGrant` kind `ADD_ON_PAID`/`ADD_ON_ADMIN`/`SALES_EVENT` (แหล่ง `SALES_EVENT` เรียกจากแผนส่วนลด PR SD-F), expiry `appendPackageInterval(at, 'year')`; ถือ L1 → L4; ไม่เรียก `grantPaidPackageReceipts` และไม่เขียน `CompanyPlanTerm` |
 | B5 admin grant (รูป) | ไฟล์ใหม่ `billing/application/billing-addon-admin-grants.service.ts`; route ใน `billing/presentation/billing.controller.ts` (บล็อก `system/billing` `:74-`); DTO ใน `billing.dto.ts`; ลงทะเบียน provider ใน `billing.module.ts` | operation `ADDON_ADMIN_GRANT`/`ADDON_ADMIN_REVOKE` แบบ reviewed (preview → submit → approve, `canApproveBillingChange` `billing-approval.ts:7-10`); สิทธิ์ `override.manage`/`approval.approve`/`financial.read`; source hash ไม่รวม slot (C04); expiry คำนวณ ไม่รับจาก request (C03); ใช้ได้กับร้านที่ย้ายแล้ว |
 | B6 การ์ดรูปหมดต่อรุ่นของยอด | `company-ocr-governance.ts:145-178`; `process-line-webhook.use-case.ts:10649-10687` | key ของ claim = `<monthKey>#<generation>` โดย generation = รุ่นของยอดรูปเพิ่มเติม (เช่น เวลา lot ล่าสุด); ไม่เขียน `CompanyPlanTerm` ตอนเพิ่มยอด |
 
@@ -79,7 +79,7 @@
 | C4 intake รูปไม่ตัดเครดิต AI | `line-ai-budget-authority.service.ts:126-127,311` | profile `line-intake-image/2` ไม่จัดสรร funding ของเครดิต AI (bucket ต้นทุนคงเดิม); บันทึก N-1 ของ audit ให้เจ้าของ LINE AI ยืนยัน |
 | C5 hold เก่า | `system-partner-management/application/use-cases/partner-ai-credit-holds.use-case.ts:84-90`; `listAiBudgetCreditHolds` `company-ai-budget-reservation.ts:1034-` | ค้น UNRESOLVED/hold ที่มี funding ทุกเดือน (แบ่งหน้า) ไม่ใช่แค่สองเดือน (C11) |
 | C6 เพดาน TOTAL | `set-partner-ai-model.use-case.ts:122-133,249-265`, `set-platform-ai-budget.use-case.ts:55-82`; readiness | readiness ของการขายตามสเปก §5.3; ตัวตั้งเพดานเตือนเมื่อจะลดต่ำกว่ายอดเชิงพาณิชย์ที่ถืออยู่ (อ่านอย่างเดียวใต้ lock เดิม ไม่สลับลำดับ lock) |
-| C7 grant seam + admin grant เครดิต AI | `billing-addon-grants.ts`, `billing-addon-admin-grants.service.ts` (จาก PR B) | ฝั่งเครดิต AI ของ seam และของ admin grant |
+| C7 grant seam + admin grant เครดิต AI | `billing-addon-grants.ts`, `billing-addon-admin-grants.service.ts` (จาก PR B) | ฝั่งเครดิต AI ของ seam (รวมแหล่ง `SALES_EVENT` ที่แผนส่วนลด PR SD-F เรียก) และของ admin grant |
 
 - เทสต์: `line-ai/application/ai-credit-cycles.spec.ts` (วัน 15/29/30/31, ปีอธิกสุรทิน, รายปี 12 รอบ, ดีล N เดือน, one-time ต่อช่วง, `RENEWAL_PENDING` จ่าย/ไม่จ่าย, เลือกแพ็กเกจใหม่) → catalog `api-behavior`; `line-ai/application/ai-credit-funding.pg.spec.ts` (v2 reserve/settle/cancel/release/charge พร้อม funding; SHARED และ SPLIT; สองเดือนแย่ง lot เดียว; turn ข้ามขอบรอบ; hold เก่ากว่าสองเดือน) → `LINE_AI_RELIABILITY_POSTGRES_SUITES` ใน catalog (`scripts/line-ai-whole-chain-acceptance.catalog.mjs:533-`) ที่ `extended-tests.yml:276` รันด้วย `--reliability-postgres`; ขยาย `company-ai-budget-reservation.spec.ts` (catalog `:475`) และ `line-ai-budget-authority.pg.spec.ts` (catalog `:536`)
 - ไม่แตะ contract ของ Gateway/AgentCore (grant v2 ไม่เปลี่ยน); ถ้าเพิ่ม provider ใน `line-ai.module.ts` → regenerate W00
@@ -218,7 +218,7 @@ git add infra/security/validate-production-maintenance-release.sh .github/workfl
 
 | # | ขั้น | ผ่านเมื่อ |
 | --- | --- | --- |
-| U1 | Readbacks §3.6; PR A–G อยู่ใน candidate เดียว; `ci.yml`/`extended-tests.yml` ตรง main | ครบทุกแถว |
+| U1 | Readbacks §3.6; PR A–G และทุก PR ของแผนส่วนลดจากงาน (SD-A…SD-F) อยู่ใน candidate เดียว (release ร่วม §1); `ci.yml`/`extended-tests.yml` ตรง main | ครบทุกแถว |
 | U2 | Owner สร้าง Price test mode หกตัว แล้วเผยแพร่ policy UAT ที่มี `addOnPriceIds` (หลัง binary UAT มี parser ใหม่) | catalog แสดง add-on หกชุด; ซื้อแพ็กเกจยังเปิดตามเดิม |
 | U3 | ย้ายร้านทดสอบตาม §4 | รอบแรกตรงขอบช่วงที่ชำระ; ไม่มีเติมรายเดือนหลังย้าย |
 | U4 | ร้าน CARD_AUTO ซื้อเครดิต AI 50 ด้วยบัตร | APPLIED ≤ 3 นาที; ยอดเพิ่มเติม +50; ประวัติมีรายการซื้อ; readback: subscription/`paidThrough`/`renewalMode`/`nextChargeAt`/เครดิตของดีล/referral ไม่เปลี่ยน; แจ้งเตือน LINE ไม่มีตัวเลข |
@@ -256,7 +256,7 @@ git add infra/security/validate-production-maintenance-release.sh .github/workfl
 | `docs/specs/line-ai-credit-hold-reconciliation-spec-th.md` | หมายเหตุแก้แล้วรอบนี้; เพิ่ม hold ที่มี funding และการค้นเกินสองเดือน | PR C |
 | `docs/specs/mangmee-sales-deals-and-locked-signup-spec-th.md` | เครดิต AI ของดีลเป็นต่อรอบเดือนของแพ็กเกจ | PR F |
 | `docs/specs/mangmee-purchase-without-setup-spec-th.md` §9 | “ไม่แตะ BillingInvoice” ถูกแทนด้วย `productKind` ของ PR A | PR A |
-| `docs/specs/sales-event-discounts-spec-th.md` / แผน | ระบุ PR A เป็น prerequisite ร่วม, ไม่มีแท็บ, ล็อกเฉพาะ attempt แพ็กเกจ | งานส่วนลด (ไม่อยู่ในไฟล์ของแผนนี้) |
+| `docs/specs/sales-event-discounts-spec-th.md` / แผน | ระบุ PR A เป็น prerequisite ร่วม, ไม่มีแท็บ, ล็อกเฉพาะ attempt แพ็กเกจ; เครดิตร้านเดิมผ่าน seam ด้วยแหล่ง `SALES_EVENT` และ release ร่วม (ทำแล้ว 2026-09-29) | งานส่วนลด (ไม่อยู่ในไฟล์ของแผนนี้) |
 | `docs/runbooks/uat-production-v2-deployment.md` | “binary ขั้นต่ำต่อ schema ของ policy” (F-09) | PR A |
 | `docs/agent-memory/chat-credit-addons-implementation.md` | สร้างตอนเริ่ม PR A | PR A |
 

@@ -329,6 +329,28 @@ export function parseAiBudgetGrantV2(value: unknown): AiBudgetGrantV2 | undefine
   };
 }
 
+/**
+ * Answer slots and the turn's single repair are separate allowances (UAT 2026-09-29: an intake repair spent a
+ * general turn's only answer slot, compose was refused before any model call, and a greeting got the fallback).
+ * `maxTurnSlots` bounds the NON-repair calls of the turn, intake included; the `maxRepairs` repair — intake,
+ * control or answer — rides on top and never spends one. QA keeps its whole-task two-dispatch ceiling
+ * (intake1+QA1 or QA1+repair1, never three). `repairsBefore` is the authority's count before this call.
+ */
+export function aiBudgetV2OrdinalCeiling(grant: Pick<AiBudgetGrantV2, 'authorityKind' | 'maxTurnSlots' | 'maxRepairs'>): number {
+  return grant.authorityKind === 'qa_job' ? grant.maxTurnSlots : grant.maxTurnSlots + grant.maxRepairs;
+}
+/** Repairs a turn's earlier stages already spent, as far as a runtime holding only the grant can tell: a private
+ *  turn's intake makes exactly one non-repair call, so a narrowed grant resuming at ordinal 2 spent the repair.
+ *  Only ever used to skip a call the API would refuse anyway — the API authority's own count stays exact. */
+export function aiBudgetV2RepairsBefore(grant: Pick<AiBudgetGrantV2, 'authorityKind' | 'nextOrdinal' | 'maxRepairs'>): number {
+  return grant.authorityKind === 'qa_job' ? 0 : Math.min(grant.maxRepairs, Math.max(0, (grant.nextOrdinal ?? 0) - 1));
+}
+export function aiBudgetV2CallAllowed(grant: Pick<AiBudgetGrantV2, 'authorityKind' | 'maxTurnSlots' | 'maxRepairs'>,
+  ordinal: number, repair: boolean, repairsBefore: number): boolean {
+  if (!Number.isSafeInteger(ordinal) || ordinal < 0 || ordinal >= aiBudgetV2OrdinalCeiling(grant)) return false;
+  return repair ? repairsBefore < grant.maxRepairs : ordinal - repairsBefore < grant.maxTurnSlots;
+}
+
 /** V2 envelope parser; fixed table/profile limits and immutable invocation values are exact. */
 export function parseAiBudgetEnvelopeV2(value: unknown): AiBudgetEnvelopeV2 | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
@@ -338,7 +360,7 @@ export function parseAiBudgetEnvelopeV2(value: unknown): AiBudgetEnvelopeV2 | un
   const profileId = raw['profileId'];
   if (raw['version'] !== 2 || !grant || typeof profileId !== 'string' || !PROFILE_IDS_V2.has(profileId)
     || !grant.allowedProfileIds.includes(profileId as AiBudgetProfileIdV2)
-    || !validSafeInt(raw['ordinal']) || Number(raw['ordinal']) >= grant.maxTurnSlots
+    || !validSafeInt(raw['ordinal']) || Number(raw['ordinal']) >= aiBudgetV2OrdinalCeiling(grant)
     || !validSafeInt(raw['inputTokenBound'], 1) || !validSafeInt(raw['requestedOutputTokens'], 1)
     || raw['estimatorVersion'] !== AI_BUDGET_ESTIMATOR_VERSION_V2
     || typeof raw['promptVersion'] !== 'string' || !SAFE_ID.test(raw['promptVersion'])

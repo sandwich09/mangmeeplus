@@ -342,6 +342,9 @@ export function scoreFacts(expectedFacts: ExpectedFact[], deliveredText: string)
 const REFUSAL_MARKERS = [
   'ยังดึงข้อมูลส่วนนี้ไม่ได้', 'ยังไม่ได้ทำรายการให้', 'ระบบตอบช้ากว่าปกติ',
   'ยังไม่แน่ใจว่าหมายถึงอะไร', 'ยังไม่มีเรื่อง', 'ไม่มีสิทธิ์ดูส่วนนั้น',
+  // UAT 2026-09-29: the general-item fallback ("ขอโทษค่ะ น้องมั่งมียังตอบข้อนี้ไม่ได้ …") and the pure-general
+  // turn's own failure lines. Without them a greeting that dead-ended still scored as answered.
+  'ยังตอบข้อนี้ไม่ได้', 'ยังตอบคำถามนี้ไม่สำเร็จ', 'ยังตรวจสอบคำตอบครบทุกส่วนไม่ได้',
 ];
 
 // Thai disambiguation-question markers. Thai rarely uses "?"; a clarifying question is a distinct
@@ -362,6 +365,10 @@ export function scoreTags(tags: TurnTags, evidence: CapturedEvidence): CheckResu
   if (tags.must_ask_choice) reasons.push(...scoreMustAskChoice(evidence.offeredChoices, evidence.deliveredText).reasons);
   if (tags.no_tool && evidence.toolCalls.length > 0) reasons.push(`no_tool_violated:${evidence.toolCalls.map((c) => c.tool).join(',')}`);
   if (tags.must_answer && evidence.deliveredText.trim().length === 0) reasons.push('must_answer_violated:empty_reply');
+  // A stock non-answer is not an answer: a social turn that fell back used to pass on "non-empty" alone.
+  else if (tags.must_answer && REFUSAL_MARKERS.some((marker) => evidence.deliveredText.includes(marker))) {
+    reasons.push('must_answer_violated:stock_non_answer');
+  }
   if (tags.must_not_refuse && REFUSAL_MARKERS.some((marker) => evidence.deliveredText.includes(marker))) {
     reasons.push('must_not_refuse_violated');
   }

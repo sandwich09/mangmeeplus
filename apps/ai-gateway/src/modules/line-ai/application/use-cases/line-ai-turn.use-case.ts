@@ -132,7 +132,6 @@ export class LineAiTurnUseCase {
 
   /** Effective S-4 capability across the Gateway and an optionally separate AgentCore artifact. */
   async lineDraftEditCapabilityEnabled(): Promise<boolean> {
-    if (!this.config.lineAiDraftEditEnabled) return false;
     // The deterministic path has no S-4 tool catalog. Never report full LINE edit capability
     // unless the serving orchestration is enabled.
     if (!this.config.lineAiAgentOrchestrationEnabled) return false;
