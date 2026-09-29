@@ -14,7 +14,7 @@ test('the panel detects the LINE in-app browser on mount', () => {
 test('inside the LINE browser, reauth offers a reopen instead of a dead-end redirect', () => {
   // RV23: `reauthenticate()` sends the browser to /login, which finds no session inside LINE's own
   // browser and lands empty — the fix is to leave that browser first.
-  assert.match(source, /const lineReauthButton = inLineBrowser\s*\n\s*\? </);
+  assert.match(source, /const lineReauthButton =[\s\S]*?\{inLineBrowser\s*\n\s*\? </);
   assert.match(source, /เปิดหน้านี้ใน Safari\/Chrome/);
   assert.match(source, /ทำในเบราว์เซอร์ของ LINE ไม่ได้ กรุณาเปิดหน้านี้ใน Safari หรือ Chrome ก่อน/);
   assert.match(source, /onClick=\{reopenOutsideLine\}/);
@@ -32,6 +32,6 @@ test('every LINE-reauth entry point renders the same button, not three independe
   // definition inside `lineReauthButton` itself.
   const directHandlers = [...source.matchAll(/onClick=\{reauthenticate\}/g)];
   assert.equal(directHandlers.length, 1, 'reauthenticate must only be wired once, inside lineReauthButton');
-  const usages = [...source.matchAll(/\{state\.lineLinked && lineReauthButton\}/g)];
+  const usages = [...source.matchAll(/\{state\.lineLinked && (?:Date\.now\(\) >= lineReauthUntil && )?lineReauthButton\}/g)];
   assert.equal(usages.length, 3, 'all three LINE-reauth entry points share lineReauthButton');
 });
