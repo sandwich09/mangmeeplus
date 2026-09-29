@@ -38,7 +38,7 @@ import { PartnerLifecycleTransitionUseCase } from '../../system-partner-manageme
 
 import { termProjectionHash } from '../domain/paid-invoice';
 import { receiptQuotaSnapshot } from '../../line-ai/application/company-ocr-governance';
-import { paidReceiptBalance } from './billing-receipt-grants';
+import { packageReceiptBalance } from './billing-receipt-grants';
 import { trialReceiptCarryover, type TrialCarryoverSource } from './billing-trial-carryover';
 import { billingState } from '../domain/billing-state';
 import { planTermLockReason } from '../../system-partner-management/domain/logic/plan-term.logic';
@@ -504,7 +504,7 @@ export class BillingService {
     quote.purchase = { kind: advanceDeal ? 'ADVANCE_DEAL' : fullPackageUpgrade ? 'FULL_PACKAGE_UPGRADE' : oneTimeChange ? 'SCHEDULED_CHANGE' : repeat || oneTime ? 'REPEAT' : restart || purchaseSource === 'PAID_EXPIRED_CURRENT_MODE' ? 'RESTART' : 'INITIAL', previousPaidThrough: advanceDeal?.paidThrough ?? repeat?.paidThrough ?? oneTime?.paidThrough ?? restart?.paidThrough ?? null,
       ...(repeat && repeat.sourceInterval !== interval && !existing?.pendingPlanChangeId ? { previousInterval: repeat.sourceInterval } : {}),
       projectedPaidThrough: advanceDeal?.firstCycleEndsAt ?? impact.paidThrough.toISOString(), receiptUnitsAdded: impact.receiptUnitsAdded,
-      projectedRemainingReceipts: impact.remainingReceipts + (advanceDeal || repeat || oneTime ? 0 : (await paidReceiptBalance(this.prisma.client,company.id,null)).remaining) };
+      projectedRemainingReceipts: impact.remainingReceipts + (advanceDeal || repeat || oneTime ? 0 : (await packageReceiptBalance(this.prisma.client,company.id,null)).remaining) };
     if (upgrade) {
       quote.expiresAt = new Date(Date.parse(upgrade.prorationAt)+600000).toISOString();
       const paidThrough = repeat?.paidThrough ?? oneTime!.paidThrough;

@@ -165,6 +165,9 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_REFUND_PENDING: 'กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ กรุณาโหลดสถานะล่าสุดหรือติดต่อทีมงาน',
   BILLING_NOT_READY: 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน',
   // Operator copy (pr-d §2.3 จ): System Admin screens read these through apiErrorMessage.
+  // Add-on plan PR B: adding or taking back add-on units (เพิ่มยอดให้ลูกค้า).
+  CONTROL_ADDON_NOT_READY: 'ร้านนี้ยังรับยอดเพิ่มเติมชนิดนี้ไม่ได้ ร้านต้องมีแพ็กเกจที่ชำระแล้วก่อน',
+  CONTROL_COMPANY_HELD: 'ร้านนี้ถูกพักใช้งานอยู่ ตรวจสถานะร้านก่อนทำรายการนี้',
   CONTROL_ASSIGNEE_REVIEW: 'ผู้รับงานหรือผู้สำรองไม่มีสิทธิ์ดูแลบริษัทนี้แล้ว กรุณาเลือกใหม่หรือคืนเคสเข้าคิว',
   CONTROL_CHECKOUT_OUTCOME_UNKNOWN: 'ยังยืนยันผลยุติหน้าชำระเงินเดิมไม่ได้ กรุณาตรวจรายการเดิมอีกครั้ง',
   CONTROL_CHECKOUT_SOURCE_CHANGED: 'ข้อมูลหน้าชำระเงินเดิมเปลี่ยนหรือยังไม่ครบ กรุณาตรวจรายการเดิมอีกครั้ง',

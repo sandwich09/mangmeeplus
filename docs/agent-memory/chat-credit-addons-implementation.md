@@ -1,6 +1,6 @@
 # Agent Memory: chat-credit-addons-implementation
 
-Status: PR A (shared billing foundation) implemented 2026-09-29 and committed on branch `claude/addons-pr-a-foundation-20260929` (worktree `/private/tmp/mangmee-addons-pr-a-20260929`, base develop `4edd4568`). Not pushed, no PR, not deployed. PR B–G not started. Develop moved to `3242f214` meanwhile (LINE-AI files only, no overlap, no migration).
+Status: PR A (shared billing foundation) merged to develop as #878 (`3a863b70`). PR B (receipt image ledger, shared add-on grant seam, admin grant for images) implemented 2026-09-29 on branch `claude/addons-pr-b-image-ledger-20260929` (worktree `/private/tmp/mangmee-addons-pr-b-20260929`, base develop `3a863b70`); committed, not pushed, no PR, not deployed. PR C–G not started.
 Owner: thawatchai / Claude (controller + implementer)
 Scope: add-on program PR A–G — spec `docs/specs/chat-credit-and-receipt-addons-spec-th.md`, plan `docs/plans/chat-credit-and-receipt-addons-plan-th.md`. Sales-event discounts (`docs/specs/sales-event-discounts-spec-th.md`, plan SD-A…SD-F) builds on PR A.
 
@@ -39,4 +39,26 @@ Verification (2026-09-29, worktree above):
 - W00 manifest spec 4/4, not regenerated (no hashed file changed). `sync-production-maintenance-release-pins.mjs --check`: status=current. Web typecheck 0. `git diff --check` clean.
 - PG on throwaway postgres:16 `mangmee-addons-pra-pg-20260929` (port 15532, fresh `migrate deploy` of two DBs, removed afterwards): foundation 4/4, recipient-capture 3/3, admin-tools 3/3; Extended billing PG (receipts, grace, trial-carryover, caps, issues, advance-deal, purchase-source) 58/58; settings + issue-resolution 7/7.
 
-Next: controller reviews the branch → push → PR to develop → twin to main (`ci.yml` changed). Then Extended Tests if wanted, and release through UAT and Production before any policy with `addOnPriceIds` is published (F-09). PR B and PR C can start from develop after merge.
+## PR B (2026-09-29)
+
+Decisions:
+- Image cut-over = the company's receipts come from its billing account's lots (`CompanyPlanTerm.billingReceiptAccountId`, spec §11.3/§16 item 9). No separate image marker; `aiCreditCutoverAt` (PR C) is AI credit only. `LEGACY_MONTH` shops keep every old rule.
+- B1 allocator (`billing-receipt-grants.ts`): package (INITIAL/RENEWAL/REPEAT/UPGRADE/TRIAL_CARRYOVER) → team (ADMIN_ADJUSTMENT/ADD_ON_ADMIN/SALES_EVENT) → purchased (ADD_ON_PAID), FEFO inside a group; unknown kind fails closed. This changes lot order for paid shops that hold a legacy ADMIN_ADJUSTMENT gift (package first, previously FEFO across both) — spec §6/D8 asks for it.
+- `packageReceiptBalance` excludes only the three add-on kinds (plan text says "package kinds only"; excluding ADMIN_ADJUSTMENT would change quotes/usage of shops with legacy gifts). Package flows and `receiptQuotaSnapshot` use it, so the existing `BillingReceiptUsage` keeps its meaning; add-on balances are PR E's `quotaSummary`.
+- Ledger: `ReceiptUnitEntry` (RESERVE/CONSUME/RELEASE/REVOKE, unique `(companyId, operationKey, generation, kind)`, `operationKey = <sourceRoute>:<requestId>`). `CompanyOcrUsageEvent.receiptUnitGeneration` null = admission from before the ledger, still counted from its event: no backfill, and a rolling deploy cannot hand out a unit twice. Resume renews the event id, not the generation.
+- D4/Q4: `settleCompanyOcrAdmission(..., noReceipt)` releases a non-receipt read in a cut-over shop but keeps the event (request fence; the ops brake still counts the provider read). Technical failures still go through `releaseCompanyOcrAdmission` (deletes the event). Signature/reference/substitute/UNSUPPORTED/CLARIFY LINE images still CONSUME (charged as today) — needs a LINE-AI owner decision (PR F).
+- Seam API (for PR C, PR E, SD-F): `applyAddOnGrant(tx, { companyId, billingAccountId, productKind, sourceKind: 'ADD_ON_PAID'|'ADD_ON_ADMIN'|'SALES_EVENT', sourceKey, sourceHash (sha256 hex), units, at })` → `{ productKind, lotId, units, availableAt, expiresAt, replayed }`, plus `addOnGrantReady(db, companyId, billingAccountId, productKind)`. Takes L1 → L4 itself (re-entrant); runs in the caller's transaction; caller verifies its source and writes its own audit. No `expiresAt` input (spec §16 item 1 lists one): always `appendPackageInterval(at, 'year')`. Same key + same payload (hash excludes `at`) returns the first lot and dates; different payload throws `billing.addon_source_changed`. `CHAT_CREDIT` throws `billing.addon_consumer_not_ready` until PR C adds its branch (and `addOnGrantReady`'s).
+- B5 admin: reviewed `ADDON_ADMIN_GRANT`/`ADDON_ADMIN_REVOKE` with the receipt-adjustment permission set. Revoke is a preview type (spec §8.1 listed a `revoke` action). Revoke only team lots (ADD_ON_ADMIN, SALES_EVENT), REVOKE entry for unused units + `revokedAt`. New Thai texts: `CONTROL_ADDON_NOT_READY`, `CONTROL_COMPANY_HELD` (the latter already thrown by the legacy receipt adjustment without text).
+- B6: quota card claim key `<monthKey>` (no add-on lot, unchanged) or `<monthKey>#<latest add-on lot createdAt ms>`, computed inside claim/release, so `process-line-webhook.use-case.ts` needed no card change.
+- Migration `20260929150000_receipt_unit_entries` also replaces `BillingReceiptGrant_valid_units_period_kind` with a wider check (add-on kinds, units > 0) by the same drop/add the ADMIN_ADJUSTMENT and TRIAL_CARRYOVER migrations used; passes `assertProductionA5NoDestructiveSql`.
+- The PG spec went to the `ci.yml` Step 0 release gate (controller instruction), not `extended-tests.yml` (plan §3.1): `ci.yml` changed again → twin to main before any UAT `all` dispatch.
+
+`process-line-webhook.use-case.ts` lines touched (for the in-flight LINE media fixes): import at `:175` (+`settleCompanyOcrAdmission`), type at `:379` (+`noReceipt?`), `executeReceiptUpload` finally `:7974-7977` (new `else if` settle branch), non-receipt classification `:8587` (`admissionAttempt.noReceipt = true`).
+
+Blockers / hand-offs for PR C:
+- Add the `CHAT_CREDIT` branch to `applyAddOnGrant` and `addOnGrantReady` (AiCreditGrant lot, `aiCreditCutoverAt`), and `chat` to `BillingAddOnCredits`; the admin service already accepts `productKind: 'CHAT_CREDIT'` and refuses it through `addOnGrantReady`.
+- PR C's migration timestamp must follow `20260929150000`.
+
+Next: see the verification block below; then controller review → push → PR to develop → twin to main (`ci.yml`). PR C and SD-F build on the seam above.
+
+PR A next (done): controller reviews the branch → push → PR to develop → twin to main (`ci.yml` changed). Then Extended Tests if wanted, and release through UAT and Production before any policy with `addOnPriceIds` is published (F-09). PR B and PR C can start from develop after merge.

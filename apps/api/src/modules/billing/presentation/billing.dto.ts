@@ -151,6 +151,13 @@ export class BillingReceiptAdjustmentDto extends BillingEventPreviewDto {
   @IsOptional() @IsISO8601({strict:true,strictSeparator:true}) expiresAt?: string;
   @IsOptional() @IsUUID() grantId?: string;
 }
+/** Add-on plan PR B: no expiry field — a team grant lasts 12 months from its approval (D8, C03). */
+export class BillingAddOnGrantDto extends BillingEventPreviewDto {
+  @IsIn(['ADDON_ADMIN_GRANT','ADDON_ADMIN_REVOKE']) type!: string;
+  @IsIn(['CHAT_CREDIT','RECEIPT_IMAGE']) productKind!: string;
+  @IsOptional() @IsInt() @Min(1) units?: number;
+  @IsOptional() @IsUUID() grantId?: string;
+}
 export class BillingRefundDto extends BillingEventPreviewDto {
   @IsInt() @Min(1) amountSatang!: number;
   @IsString() @MaxLength(500) memo!: string;

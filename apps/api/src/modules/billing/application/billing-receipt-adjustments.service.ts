@@ -14,6 +14,7 @@ import { BillingAdminService } from './billing-admin.service';
 import { BillingConfigurationService } from './billing-configuration.service';
 import { receiptQuotaSnapshot } from '../../line-ai/application/company-ocr-governance';
 import { assertKeys, billingError, hashBilling, configurationHash } from '../domain/billing-policy';
+import { receiptLots } from './billing-receipt-grants';
 
 const types=['GRANT_RECEIPTS','REVOKE_RECEIPTS'];
 const stale=()=>billingError('CONTROL_PREVIEW_STALE','ข้อมูลหรือวันหมดอายุเปลี่ยนแล้ว โหลดข้อมูลล่าสุดและตรวจใหม่');
@@ -77,12 +78,14 @@ export class BillingReceiptAdjustmentsService {
     return q.planLimit===null?null:Math.max(0,q.planLimit-q.usedCount);
   }
   private async grant(tx:Prisma.TransactionClient,companyId:string,accountId:string|null,id:string){
-    const row=await tx.billingReceiptGrant.findFirst({where:{id,companyId,kind:'ADMIN_ADJUSTMENT',OR:[{billingAccountId:accountId},{billingAccountId:null}]},include:{_count:{select:{admissions:true}}}});
-    if(!row)throw new NotFoundException();return row;
+    const row=await tx.billingReceiptGrant.findFirst({where:{id,companyId,kind:'ADMIN_ADJUSTMENT',OR:[{billingAccountId:accountId},{billingAccountId:null}]}});
+    if(!row)throw new NotFoundException();
+    // Add-on plan PR B: the same ledger projection admission uses, not a count of admission rows.
+    const [lot]=await receiptLots(tx,{id:row.id});return {...row,lot:lot!};
   }
   private grantView(row:Awaited<ReturnType<BillingReceiptAdjustmentsService['grant']>>):BillingAdminReceiptGrant {
     const active=!row.revokedAt&&row.availableAt<=new Date()&&row.expiresAt>new Date();
-    return {id:row.id,units:row.units,used:row._count.admissions,remaining:active?Math.max(0,row.units-row._count.admissions):0,
+    return {id:row.id,units:row.units,used:row.lot.consumed+row.lot.reserved,remaining:active?row.lot.remaining:0,
       expiresAt:row.expiresAt.toISOString(),revokedAt:row.revokedAt?.toISOString()??null,active};
   }
   private async row(context:RequestContext,id:string,tx:Prisma.TransactionClient=this.prisma.client){
