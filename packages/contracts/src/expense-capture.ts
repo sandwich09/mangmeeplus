@@ -15,6 +15,7 @@ import type {
   BusinessDocumentClassification,
   BusinessDocumentFamily,
   BusinessDocumentKind,
+  ReceiptOcrFieldResult,
 } from './line-ai.js';
 import type { AiBudgetEnvelope } from './ai-budget-bounds.js';
 import type { AiModelLineage, AiUsageEntry } from './ai-lineage.js';
@@ -310,6 +311,13 @@ export type ExpenseCaptureDocumentObservation = {
    */
   printedPages?: number[];
   continuationOfRef?: string;
+  /**
+   * The photo reader's reporting-category suggestion for this whole document, same shape and rule:
+   * an id from the request's `activeCategories` plus 1-5 exact spans of the window text. Advisory —
+   * `receipt-ocr-apply` writes it only for an active category of the company and at or above
+   * `RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE`.
+   */
+  categorySuggestion?: NonNullable<ReceiptOcrFieldResult['categorySuggestion']>;
   classification: BusinessDocumentClassification;
 };
 

@@ -32,6 +32,7 @@ import { PrismaExpenseCaptureRepository, type CaptureReadJobRow } from '../../in
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { ExpenseCaptureReadClient } from '../../infrastructure/expense-capture-read.client';
 import { ExpenseCaptureAutoSplitService } from './expense-capture-auto-split.service';
+import { aiSelectableExpenseCategories } from './expense-category-bootstrap.service';
 import { isStaleOcrApply, ReceiptOcrApplyService } from './receipt-ocr-apply.service';
 
 /** Appendix §4.5: the lease one chunk must comfortably fit inside, renewed after every chunk. */
@@ -339,6 +340,10 @@ export class ExpenseCaptureReadRunnerService {
       checkpoint = { ...checkpoint, windowPlanVersion: 2 };
       const windows = planWindows(checkpoint.pages);
       manifest = { ...manifest, windows: windows.map((window) => ({ id: window.id, pageIndexes: window.pageIndexes, state: 'pending' as const })) };
+      // The shop's active categories minus the catch-all, so each document can name one the apply
+      // below writes when it clearly fits, by the photo reader's rule (Owner 2026-09-29).
+      const activeCategories = aiSelectableExpenseCategories(await this.expenses.listCategories(job.companyId))
+        .map(({ id, name }) => ({ id, name }));
       for (const window of windows) {
         if (checkpoint.windows[window.id]) continue;
         if (calls >= EXPENSE_CAPTURE_MAX_PROVIDER_CALLS) { pausedReason = 'call_budget'; break; }
@@ -358,6 +363,7 @@ export class ExpenseCaptureReadRunnerService {
             pages: window.pages,
             ...(priorDocuments(checkpoint.windows).length > 0 ? { priorDocuments: priorDocuments(checkpoint.windows) } : {}),
           },
+          activeCategories,
         });
         calls += 1;
         if (result.status !== 'ok') {
