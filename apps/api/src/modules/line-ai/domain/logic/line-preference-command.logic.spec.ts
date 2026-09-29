@@ -38,3 +38,42 @@ test('forgetting a preference keeps the chat task state', async () => {
   assert.equal('taskStateJson' in updates[0], false);
   assert.equal('stateVersion' in updates[0], false);
 });
+
+// NAT11 (2026-09-30): the router names a natural remember/see/forget request; only a preference-only message in a
+// bound private chat reaches the owner-bound commands, and the reply states only what storage confirmed.
+test('a routed answer-preference request runs through the owner-bound commands', async () => {
+  const { ProcessLineWebhookUseCase } = await import('../../application/use-cases/process-line-webhook.use-case');
+  const event = { webhookEventId: 'event', lineUserId: 'line-user', replyToken: 'reply', messageText: 'x' };
+  const owner = { companyId: 'company', userId: 'user', membershipId: 'member', channel: 'line', channelKind: 'USER', messagingChannelId: 'oa', chatKeyHash: 'chat' };
+  const setup = (stored: Record<string, string>) => {
+    const flow: any = Object.create(ProcessLineWebhookUseCase.prototype), changes: any[] = [], delivered: string[] = [];
+    Object.assign(flow, { config: { lineAiPreferencesEnabled: true }, retainedTaskSources: new WeakMap(),
+      boundConversations: new WeakMap([[event, { owner, id: 'conversation', epoch: 3 }]]),
+      contextV2: { listPreferences: async () => ({ version: 2, epoch: 3, values: stored }),
+        changePreferences: async (_owner: unknown, command: unknown) => { changes.push(command); return 'applied'; } },
+      audit: { log: async () => undefined }, deliverReply: async (_event: unknown, text: string) => { delivered.push(text); }, updateEventLog: async () => undefined });
+    return { flow, changes, delivered };
+  };
+  const general = [{ index: 0, kind: 'general', goal: 'preference' }];
+  const remember = setup({});
+  assert.equal(await remember.flow.handleRoutedPreference(event, 'request', { status: 'ROUTED', semanticSubrequests: general,
+    responsePreference: { kind: 'set', values: { detail: 'short' } } }), true);
+  assert.deepEqual(remember.changes.map(change => change.set), [{ detail: 'short' }]);
+  assert.match(remember.delivered[0]!, /^จำไว้แล้วค่ะ ต่อไปจะตอบแบบสั้น/u);
+  const list = setup({ detail: 'short' });
+  assert.equal(await list.flow.handleRoutedPreference(event, 'request', { status: 'ROUTED', semanticSubrequests: general, responsePreference: { kind: 'list' } }), true);
+  assert.equal(list.changes.length, 0); assert.match(list.delivered[0]!, /• สั้น/u);
+  const forgetNothing = setup({});
+  assert.equal(await forgetNothing.flow.handleRoutedPreference(event, 'request', { status: 'ROUTED', semanticSubrequests: general,
+    responsePreference: { kind: 'delete', keys: ['detail'] } }), true);
+  assert.equal(forgetNothing.changes.length, 0); assert.equal(forgetNothing.delivered[0], LINE_PREFERENCE_NOTHING_TO_FORGET);
+  // A one-off style beside a business question, an invalid shape, or an unbound chat stores nothing and keeps the normal turn.
+  const mixed = setup({});
+  assert.equal(await mixed.flow.handleRoutedPreference(event, 'request', { status: 'ROUTED', semanticSubrequests: [...general, { index: 1, kind: 'read', goal: 'why' }],
+    responsePreference: { kind: 'set', values: { detail: 'detailed' } } }), false);
+  assert.equal(await mixed.flow.handleRoutedPreference(event, 'request', { status: 'ROUTED', semanticSubrequests: general,
+    responsePreference: { kind: 'set', values: { memo: 'ชอบกาแฟ' } } }), false);
+  assert.equal(await mixed.flow.handleRoutedPreference({ ...event }, 'request', { status: 'ROUTED', semanticSubrequests: general,
+    responsePreference: { kind: 'list' } }), false);
+  assert.deepEqual([mixed.changes.length, mixed.delivered.length], [0, 0]);
+});

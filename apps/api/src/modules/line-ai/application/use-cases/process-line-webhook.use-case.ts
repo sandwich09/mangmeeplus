@@ -3723,6 +3723,17 @@ export class ProcessLineWebhookUseCase {
     await this.applyPreferenceCommand(event, requestId, command); return true;
   }
 
+  /** NAT11 (2026-09-30): "ต่อไปตอบสั้น ๆ แบบนี้นะ จำไว้ได้มั้ย" / "ตอนนี้จำอะไรเกี่ยวกับวิธีตอบฉันอยู่บ้าง" / "ลืมเรื่องตอบสั้นไปก่อน" reach
+   *  the same owner-bound commands as the exact command words once the router names them. A message that also asks
+   *  for business work keeps its normal turn, and nothing is stored from it. */
+  private async handleRoutedPreference(event: LineTextEvent, requestId: string, routePlan: LineIntakeRoutePlan): Promise<boolean> {
+    const preference = routePlan.status === 'ROUTED' && !this.retainedTaskSources?.has(event)
+      ? parseLineAiResponsePreferenceCommand(routePlan.responsePreference) : undefined;
+    if (!preference || !this.boundConversations.has(event)
+      || !(routePlan.semanticSubrequests ?? []).every(item => ['general', 'help'].includes(item.kind))) return false;
+    await this.applyPreferenceCommand(event, requestId, preference); return true;
+  }
+
   /** Runs one explicit preference request — the exact command words, or one the router named (NAT11 2026-09-30) —
    *  through the owner-bound commands. The reply states only what storage confirmed. */
   private async applyPreferenceCommand(event: LineTextEvent, requestId: string, command: LinePreferenceCommand): Promise<void> {
@@ -5794,6 +5805,7 @@ export class ProcessLineWebhookUseCase {
           ? LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY);
         await this.updateEventLog(event.webhookEventId, 'provider_unavailable', semanticRoutePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
+      if (await this.handleRoutedPreference(event, requestId, semanticRoutePlan)) return;
       if (await this.resumeDocumentQuestionV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
       if (await this.draftCurrentDocumentV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
       if (semanticRoutePlan.semanticSubrequests.every(item => ['general', 'help'].includes(item.kind))) {
@@ -6415,13 +6427,7 @@ export class ProcessLineWebhookUseCase {
       // Domain grounding sees the selected immutable clause. The current intake input/grant stay on the selection event.
       normalizedText = retainedTask.sourceText;
     }
-    // NAT11 (2026-09-30): "ต่อไปตอบสั้น ๆ แบบนี้นะ จำไว้ได้มั้ย" / "ตอนนี้จำอะไรเกี่ยวกับวิธีตอบฉันอยู่บ้าง" / "ลืมเรื่องตอบสั้นไปก่อน"
-    // reach the same owner-bound commands as the exact command words once the router names them. A message that
-    // also asks for business work keeps its normal turn; nothing is stored from it.
-    const preference = routePlan.status === 'ROUTED' && !retainedTask ? parseLineAiResponsePreferenceCommand(routePlan.responsePreference) : undefined;
-    if (preference && this.boundConversations.has(event) && (routePlan.semanticSubrequests ?? []).every(item => ['general', 'help'].includes(item.kind))) {
-      await this.applyPreferenceCommand(event, requestId, preference); return;
-    }
+    if (await this.handleRoutedPreference(event, requestId, routePlan)) return;
     const typedWrites = routePlan.semanticSubrequests?.filter(item => item.kind === 'write');
     const multipleExistingBusinessWrites = (typedWrites?.length ?? 0) > 1 && typedWrites!.every(item => item.writeIntent
       && ['EXPENSE_DOCUMENT_CAPTURE', 'EXPENSE_DRAFT_CONTINUATION', 'EXPENSE_CAPTURE_CORRECTION', 'SUBSTITUTE_RECEIPT_CONTINUATION', 'REIMBURSEMENT_REQUEST_START'].includes(item.writeIntent));
