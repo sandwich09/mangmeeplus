@@ -229,7 +229,7 @@ export default function SalesEventBatchPage({ batchId, canManageEvents }: { batc
           <p className="text-xs text-gray-500">
             เซลล์ผู้แจก: {batch.agents.map((agent) => `${agent.displayName || 'เซลล์'}${agent.active ? '' : ' (ถอดแล้ว)'}`).join(', ')}
           </p>
-          <p className="text-xs text-gray-400">สร้างโดย {batch.createdByDisplayName || 'ทีมขาย'} · แก้ไขครั้งที่ {batch.revision}</p>
+          <p className="text-xs text-gray-400">สร้างโดย {batch.createdByDisplayName || 'ทีมขาย'} · {formatThaiDateTime(batch.createdAt)}</p>
         </MangmeeCard>
       )}
 

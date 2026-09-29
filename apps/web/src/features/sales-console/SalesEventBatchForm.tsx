@@ -56,7 +56,7 @@ function AgentPicker({
     <fieldset className="grid gap-2" id="agentUserIds">
       <legend className="text-sm font-medium text-gray-700">เซลล์ผู้แจก</legend>
       <TextField label="ค้นหาชื่อเซลล์" name="eventAgentQuery" value={query} autoComplete="off"
-        hint="เลือกได้เฉพาะเซลล์ในทีมของคุณ" onChange={(event) => setQuery(event.target.value)} />
+        hint="พิมพ์ชื่อ ชื่อผู้ใช้ หรือรหัสเซลล์" onChange={(event) => setQuery(event.target.value)} />
       {pinned.map((userId) => (
         <SwitchField key={userId} name={`agent-${userId}`} label={known.get(userId) || 'เซลล์ที่เลือกไว้'} checked
           onChange={() => onToggle({ userId, displayName: known.get(userId) ?? '', salesCode: '' }, false)} />

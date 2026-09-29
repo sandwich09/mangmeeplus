@@ -166,6 +166,10 @@ describe('console screens (source guards)', () => {
       assert.doesNotMatch(source(file), /ตั๋ว/, file);
       // State keys only ever go through a label map; a JSX text node holding one is a leak.
       assert.doesNotMatch(source(file), />\s*\{?[^<]*\b(?:batch|ticket)\.state\}\s*</, file);
+      // Nor an id, a version counter or an action key (owner rule: no machine tokens on screen).
+      // (`key={batch.id}` and `${batch.id}` in a URL are attributes, not text: the lookbehind skips them.)
+      assert.doesNotMatch(source(file), /(?<![=$])\{(?:batch|ticket|agent)\.(?:id|userId|version|revision|salesUserId|createdByUserId)\}/, file);
+      assert.doesNotMatch(source(file), /(?<![=$])\{(?:action|decision)\}/, file);
     }
   });
 
