@@ -79,6 +79,13 @@ const FULL_THAI_MONTHS = ['มกราคม', 'กุมภาพันธ์'
 const THAI_MONTH_ABBR_DOTTED = ['ม\\.ค\\.', 'ก\\.พ\\.', 'มี\\.ค\\.', 'เม\\.ย\\.', 'พ\\.ค\\.', 'มิ\\.ย\\.', 'ก\\.ค\\.', 'ส\\.ค\\.', 'ก\\.ย\\.', 'ต\\.ค\\.', 'พ\\.ย\\.', 'ธ\\.ค\\.'];
 const CE_YEAR_AFTER_THAI_MONTH = new RegExp(`(${[...FULL_THAI_MONTHS, ...THAI_MONTH_ABBR_DOTTED].join('|')})(\\s*)(20\\d{2})(?!\\d)`, 'gu');
 
+// Round 10 (2026-09-30, NAT04 turn 1): the model copied a tool's web path into its prose — "ดูรายละเอียดเพิ่มเติมได้ที่
+// /companies/<company id>/expenses" — so the customer read an app path and the company id. Composed prose names the page in
+// plain Thai instead; the links the server appends itself (the เปิดดู buttons) are added after this runs and never pass here.
+const APP_PAGE_TH: Record<string, string> = { expenses: 'หน้าค่าใช้จ่ายบนเว็บ', reimbursements: 'หน้าใบเบิกบนเว็บ' };
+const APP_MARKDOWN_LINK = /\[([^\]\n]+)\]\((?:https?:\/\/[^\s/)]+)?\/companies\/[^\s)]*\)/gu;
+const APP_PATH = /(?:https?:\/\/[^\s/]+)?\/companies\/[^\s/?#)]+(?:\/([A-Za-z-]+))?(?:[/?#][^\s)]*)?/gu;
+
 function isTableSeparatorRow(line: string): boolean {
   return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/u.test(line);
 }
@@ -106,6 +113,8 @@ export function sanitizeMangmeeComposedText(text: string): string {
   result = result
     .replace(STATUS_GLOSS_PATTERN, '')
     .replace(STATUS_ENUM_PATTERN, (token) => STATUS_ENUM_TH[token]!)
-    .replace(CE_YEAR_AFTER_THAI_MONTH, (_match, month: string, spacing: string, year: string) => `${month}${spacing}${Number(year) + 543}`);
+    .replace(CE_YEAR_AFTER_THAI_MONTH, (_match, month: string, spacing: string, year: string) => `${month}${spacing}${Number(year) + 543}`)
+    .replace(APP_MARKDOWN_LINK, '$1')
+    .replace(APP_PATH, (_match, page?: string) => APP_PAGE_TH[page ?? ''] ?? 'หน้าเว็บของบริษัท');
   return result.split('\n').map((line) => line.replace(/[ \t]{2,}/gu, ' ').trim()).join('\n').trim();
 }
