@@ -391,6 +391,20 @@ describe('LineAiTurnUseCase -> OrchestratorAgent -> real v2 provider path', () =
     assert.equal(run.usage.length, 2);
   });
 
+  // The 2026-09-28 eval's knowledge questions ("หัก ณ ที่จ่ายคืออะไรครับ", 8 tuning + 2 held-out turns) got one
+  // rejected compose and then GENERAL_ANSWER_UNAVAILABLE: a two-slot general lane had no room for the repair.
+  it('gives a two-slot general lane its compose repair: the repair is not an answer slot', async () => {
+    const run = await makeScenario({ messageText: 'หัก ณ ที่จ่ายคืออะไรครับ', maxTurnSlots: 2, nextOrdinal: 1,
+      subrequests: [{ kind: 'general', goal: 'อธิบายหัก ณ ที่จ่าย' }],
+      answers: [
+        '{"answers":[{"index":0,"status":"handled","text":"คำตอบแรก"},{"index":0,"status":"handled","text":"คำตอบซ้ำ"}]}',
+        '{"answers":[{"index":0,"status":"handled","text":"หัก ณ ที่จ่ายคือภาษีที่ผู้จ่ายหักไว้แล้วนำส่งแทนผู้รับค่ะ"}]}',
+      ] });
+    assert.deepEqual(run.steps.map((step) => [step.invocation.ordinal, step.repair]), [[1, false], [2, true]]);
+    assert.deepEqual(run.response.semanticCoverage?.map((item) => item.status), ['handled']);
+    assert.match(run.response.replyText, /หัก ณ ที่จ่ายคือภาษี/);
+  });
+
   it('skips composition when control already resolves every clause, while preserving inventory order', async () => {
     const subrequests = [{ kind: 'read' as const, goal: 'ตรวจข้อแรก' }, { kind: 'read' as const, goal: 'ตรวจข้อสอง' }];
     const cases = [
