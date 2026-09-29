@@ -13,7 +13,6 @@ import {
   isAiCreditHoldConflict,
   AI_BUDGET_MODE_LABELS,
   AI_BUDGET_RESERVED_NOTE,
-  AI_BUDGET_SPLIT_DISABLED_NOTE,
   AI_BUDGET_STALE_MESSAGE,
   aiBudgetAvailableLabel,
   aiBudgetCapLabel,
@@ -403,7 +402,7 @@ describe('split AI budget policy helpers', () => {
   it('treats only the two 409 fences as "reload and re-check"', async () => {
     assert.equal(isAiBudgetPolicyConflict('partner_ai_budget_revision_conflict'), true);
     assert.equal(isAiBudgetPolicyConflict('partner_ai_configuration_changed'), true);
-    for (const code of ['partner_ai_budget_split_not_enabled', 'ocr_config_version_conflict', null, undefined]) {
+    for (const code of ['partner_ai_budget_split_exceeds_total', 'ocr_config_version_conflict', null, undefined]) {
       assert.equal(isAiBudgetPolicyConflict(code), false, String(code));
     }
     let reloads = 0;
@@ -428,7 +427,6 @@ describe('split AI budget policy helpers', () => {
     assert.equal(AI_BUDGET_MODE_LABELS.SPLIT, 'แยกเพดานแชตและอ่านเอกสาร');
     // Reserved money is not spend and adds no provider call; the label has to say so.
     assert.equal(AI_BUDGET_RESERVED_NOTE, 'กันไว้ระหว่างเรียก AI');
-    assert.match(AI_BUDGET_SPLIT_DISABLED_NOTE, /ยังไม่เปิด/);
     assert.match(AI_BUDGET_STALE_MESSAGE, /โหลดค่าล่าสุด/);
   });
 });

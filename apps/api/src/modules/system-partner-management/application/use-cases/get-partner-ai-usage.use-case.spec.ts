@@ -143,7 +143,7 @@ describe('GetPartnerAiUsageUseCase', () => {
       ceilingSatang: 50_000_000,
       // Every existing SHARED company now has the separate 80-credit CHAT default.
       policy: { mode: 'SHARED', chatCapSatang: 8_000, ocrCapSatang: null, source: 'ACTIVE',
-        revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, splitActivationEnabled: false },
+        revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null },
       // CHAT has its own remaining credit; OCR still uses the total only.
       position: {
         total: { spentSatang: 0, reservedSatang: 0, availableSatang: 5_000_000 },
@@ -163,7 +163,7 @@ describe('GetPartnerAiUsageUseCase', () => {
       defaultSatang: 5_000_000,
       ceilingSatang: 50_000_000,
       policy: { mode: 'SHARED', chatCapSatang: 900_000, ocrCapSatang: null, source: 'ACTIVE',
-        revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null, splitActivationEnabled: false },
+        revision: `0:${bangkokMonthKey()}:ACTIVE`, pending: null },
       // The explicit operator override retains the special effective CHAT allowance.
       position: {
         total: { spentSatang: 0, reservedSatang: 0, availableSatang: 900_000 },
@@ -601,16 +601,16 @@ describe('GetPartnerAiUsageUseCase', () => {
 });
 
 describe('GetPartnerAiUsageUseCase budget policy', () => {
-  const read = (opts: Parameters<typeof makePrisma>[0], splitEnabled = false) =>
-    new GetPartnerAiUsageUseCase(makePrisma(opts), { ...makeConfig(), aiBudgetSplitActivationEnabled: splitEnabled }).execute('co-1');
+  const read = (opts: Parameters<typeof makePrisma>[0]) =>
+    new GetPartnerAiUsageUseCase(makePrisma(opts), makeConfig()).execute('co-1');
 
   it('reports an ACTIVE split with both caps and the revision the writer will fence on', async () => {
     const result = await read({ overrideSatang: 10_000, policy: {
       budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 3_000, ocrMonthlyBudgetSatang: 7_000, budgetConfigVersion: 2, pendingBudgetPolicy: null,
-    } }, true);
+    } });
     assert.deepEqual(result.budget.policy, {
       mode: 'SPLIT', chatCapSatang: 3_000, ocrCapSatang: 7_000, source: 'ACTIVE',
-      revision: `2:${CURRENT}:ACTIVE`, pending: null, splitActivationEnabled: true,
+      revision: `2:${CURRENT}:ACTIVE`, pending: null,
     });
   });
 
@@ -619,13 +619,12 @@ describe('GetPartnerAiUsageUseCase budget policy', () => {
     const result = await read({ overrideSatang: 10_000, policy: { budgetMode: 'SHARED', budgetConfigVersion: 1, pendingBudgetPolicy: pending } });
     assert.equal(result.budget.policy.mode, 'SHARED');
     assert.deepEqual(result.budget.policy.pending, pending);
-    assert.equal(result.budget.policy.splitActivationEnabled, false, 'the console must not offer SPLIT while the gate is shut');
   });
 
   it('surfaces an allocation that no longer fits the live total instead of quietly showing caps', async () => {
     const result = await read({ overrideSatang: 5_000, policy: {
       budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 3_000, ocrMonthlyBudgetSatang: 7_000, budgetConfigVersion: 2, pendingBudgetPolicy: null,
-    } }, true);
+    } });
     assert.equal(result.budget.policy.invalidReason, 'SPLIT_EXCEEDS_TOTAL');
     assert.equal(result.budget.effectiveSatang, 5_000, 'the total the seams compare against is unchanged');
   });

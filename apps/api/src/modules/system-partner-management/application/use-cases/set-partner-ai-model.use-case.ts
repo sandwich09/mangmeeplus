@@ -105,12 +105,7 @@ export class SetPartnerAiModelUseCase {
       if (desired.effectiveMonthKey !== monthKey && desired.effectiveMonthKey !== nextMonthKey) {
         throw new UnprocessableEntityException('partner_ai_budget_effective_month_invalid');
       }
-      // ADR 0013 §9 readiness gate. The flag is false by default and wired into no deploy, so
-      // merging this code cannot move any company off SHARED. `!== true` on purpose: a stale
-      // `packages/config` dist that never parsed the key reads as OFF, never as ON.
-      if (desired.mode === 'SPLIT' && this.config.aiBudgetSplitActivationEnabled !== true) {
-        throw new UnprocessableEntityException('partner_ai_budget_split_not_enabled');
-      }
+      // Owner 2026-09-29: no activation switch — SPLIT is savable whenever the money rules below hold.
     }
 
     const company = await this.prisma.client.company.findUnique({
@@ -409,7 +404,7 @@ export class SetPartnerAiModelUseCase {
       modelId: saved.modelId,
       monthlyBudgetSatang: saved.monthlyBudgetSatang,
       updatedAt: saved.updatedAt?.toISOString() ?? null,
-      budgetPolicy: toPartnerAiBudgetPolicyDto(policy, this.config.aiBudgetSplitActivationEnabled === true),
+      budgetPolicy: toPartnerAiBudgetPolicyDto(policy),
       ...('aiCreditWarning' in saved && saved.aiCreditWarning ? { aiCreditWarning: saved.aiCreditWarning } : {}),
     };
   }

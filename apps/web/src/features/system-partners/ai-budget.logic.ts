@@ -437,10 +437,6 @@ export function aiBudgetPendingText(
   return `เริ่มเดือน ${formatMonth(pending.effectiveMonthKey)}: ${AI_BUDGET_MODE_LABELS[pending.mode] ?? pending.mode} — ${allocation}`;
 }
 
-/** The activation gate is a server readiness flag (ADR 0013 §9), not a permission problem. */
-export const AI_BUDGET_SPLIT_DISABLED_NOTE =
-  'ระบบยังไม่เปิดให้แยกเพดานแชตกับอ่านเอกสาร จึงบันทึกโหมดแยกเพดานไม่ได้ ยังดูยอดได้ทุกส่วน และยังตั้งเครดิตรวมก้อนเดียวหรือยกเลิกค่าที่ตั้งให้เริ่มเดือนถัดไปได้ตามปกติ';
-
 /** Holds are not spend and add no provider call — label them so, wherever the number appears. */
 export const AI_BUDGET_RESERVED_NOTE = 'กันไว้ระหว่างเรียก AI';
 

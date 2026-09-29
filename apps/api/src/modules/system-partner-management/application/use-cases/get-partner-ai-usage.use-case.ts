@@ -325,7 +325,7 @@ export class GetPartnerAiUsageUseCase {
         ceilingSatang: platform.ceilingSatang,
         // The SAME resolver admission uses (spec §12.5) — the console can never describe a policy
         // differently from the gate.
-        policy: toPartnerAiBudgetPolicyDto(policy, this.config.aiBudgetSplitActivationEnabled === true),
+        policy: toPartnerAiBudgetPolicyDto(policy),
         position: {
           total: scope(overrideSatang ?? defaultSatang, budgetPosition.spent.TOTAL, budgetPosition.reserved.TOTAL),
           chat: scope(policy.chatCapSatang, budgetPosition.spent.CHAT, budgetPosition.reserved.CHAT),

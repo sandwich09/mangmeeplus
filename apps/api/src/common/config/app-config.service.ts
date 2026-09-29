@@ -219,8 +219,6 @@ export class AppConfigService {
   get aiMonthlyBudgetSatang(): number { return this.config.AI_MONTHLY_BUDGET_SATANG; }
   /** Highest per-company override the partner console may set, in satang (metering spec §7.4). */
   get aiMonthlyBudgetSatangCeiling(): number { return this.config.AI_MONTHLY_BUDGET_SATANG_CEILING; }
-  /** ADR 0013 §9 readiness gate: OFF (the default everywhere) refuses saving a SPLIT budget policy. */
-  get aiBudgetSplitActivationEnabled(): boolean { return this.config.AI_BUDGET_SPLIT_ACTIVATION_ENABLED; }
   get passwordResetRequestMaxPerIdentifier(): number { return this.config.PASSWORD_RESET_REQUEST_MAX_PER_IDENTIFIER; }
   get passwordResetRequestMaxPerIp(): number { return this.config.PASSWORD_RESET_REQUEST_MAX_PER_IP; }
   get passwordResetRequestWindowSeconds(): number { return this.config.PASSWORD_RESET_REQUEST_WINDOW_SECONDS; }

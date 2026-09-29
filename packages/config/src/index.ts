@@ -436,11 +436,6 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // Highest per-company override the operator may set, in satang (metering spec §7.4). Bounds
   // the blast radius of a mistyped budget; production refuses a ceiling below the default.
   AI_MONTHLY_BUDGET_SATANG_CEILING: z.coerce.number().int().positive().default(1000000),
-  // Readiness gate for separate CHAT/OCR caps (ADR 0013 §9). OFF — the default, and the value
-  // every deploy uses because this key is deliberately wired into no deploy script — means the
-  // admin writer refuses to save `SPLIT` at all, so merging the code cannot change behaviour.
-  // Opening it is a separate, runbook-governed operator decision after UAT acceptance.
-  AI_BUDGET_SPLIT_ACTIVATION_ENABLED: envBoolean.default(false),
   PASSWORD_RESET_REQUEST_MAX_PER_IDENTIFIER: z.coerce.number().int().positive().default(3),
   PASSWORD_RESET_REQUEST_MAX_PER_IP: z.coerce.number().int().positive().default(10),
   PASSWORD_RESET_REQUEST_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),

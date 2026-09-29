@@ -212,7 +212,7 @@ export type SetPartnerAiModelDto = {
    * Separate CHAT/OCR caps (remediation spec §12.4). Absent = preserve whatever is saved;
    * `null` = cancel a FUTURE pending policy only (it can never revert an already-effective one);
    * an object = the desired policy for `effectiveMonthKey`, which must be the current or the next
-   * Bangkok month. Saving `SPLIT` is refused entirely unless the server's activation flag is on.
+   * Bangkok month.
    */
   budgetPolicy?: PartnerAiBudgetPolicyInput | null;
   /** Required with `budgetPolicy`: the `budget.policy.revision` of the read this edit is based on. */
@@ -246,8 +246,6 @@ export type PartnerAiBudgetPolicyDto = {
   pending: PartnerAiBudgetPolicyInput | null;
   /** Set => this company's AI admission is refused until an operator fixes the policy. */
   invalidReason?: 'SPLIT_CAPS_MISSING' | 'SPLIT_EXCEEDS_TOTAL' | 'POLICY_MALFORMED';
-  /** ADR 0013 §9 readiness gate; false = the console must not offer SPLIT as savable. */
-  splitActivationEnabled: boolean;
 };
 
 /** One scope's money position. `available` is `cap - spent - reserved`, floored at 0. */
