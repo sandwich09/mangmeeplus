@@ -328,11 +328,11 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       requestId: 'req-unsold-ar', webhookEventId: 'event-unsold-ar', messageText: 'ดูลูกค้าที่ค้างชำระให้หน่อยคับ',
       messagePreviewHash: 'c'.repeat(16),
       entitledFeatureKeys: NO_UNSOLD_MODULES_ENTITLED,
-      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'ถามลูกค้าค้างชำระ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามลูกค้าค้างชำระ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
       userContext: baseUserContext(['reimbursement.read']),
     };
     const result = await runSemanticTurnV2({
-      req, provider: { async generateText(): Promise<ProviderOutput> { throw new Error('a fully forced general-kind clause must never need the model'); } },
+      req, provider: wrongToolControlProvider('reimbursement.get_summary'),
       draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool for an unsold-module clause'); },
     });
@@ -345,11 +345,11 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       requestId: 'req-unsold-payroll', webhookEventId: 'event-unsold-payroll', messageText: 'คำนวณเงินเดือนพนักงานให้หน่อยครับ',
       messagePreviewHash: 'd'.repeat(16),
       entitledFeatureKeys: ['expenses', 'reimbursement', 'employee_access', 'sales_documents', 'reports', 'inventory', 'bank_reconciliation', 'procurement'],
-      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'ถามคำนวณเงินเดือน', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามคำนวณเงินเดือน', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
       userContext: baseUserContext(['access.employee.read']),
     };
     const result = await runSemanticTurnV2({
-      req, provider: { async generateText(): Promise<ProviderOutput> { throw new Error('must never need the model'); } },
+      req, provider: wrongToolControlProvider('expense.list_recent'),
       draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool for payroll'); },
     });
@@ -362,11 +362,11 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       requestId: 'req-unsold-invoice', webhookEventId: 'event-unsold-invoice', messageText: 'ช่วยออกใบแจ้งหนี้ให้ลูกค้าหน่อยครับ',
       messagePreviewHash: 'e'.repeat(16),
       entitledFeatureKeys: NO_UNSOLD_MODULES_ENTITLED,
-      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'ขอออกใบแจ้งหนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      semanticSubrequests: [{ index: 0, kind: 'write', goal: 'ขอออกใบแจ้งหนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
       userContext: baseUserContext(['expense.read']),
     };
     const result = await runSemanticTurnV2({
-      req, provider: { async generateText(): Promise<ProviderOutput> { throw new Error('must never need the model'); } },
+      req, provider: wrongToolControlProvider('expense.list_recent'),
       draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool'); },
     });
@@ -379,11 +379,11 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       requestId: 'req-unsold-bank', webhookEventId: 'event-unsold-bank', messageText: 'เช็คยอดคงเหลือบัญชีธนาคารหน่อยค่ะ',
       messagePreviewHash: 'f'.repeat(16),
       entitledFeatureKeys: NO_UNSOLD_MODULES_ENTITLED,
-      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'ถามยอดบัญชีธนาคาร', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามยอดบัญชีธนาคาร', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
       userContext: baseUserContext(['expense.read']),
     };
     const result = await runSemanticTurnV2({
-      req, provider: { async generateText(): Promise<ProviderOutput> { throw new Error('must never need the model'); } },
+      req, provider: wrongToolControlProvider('expense.list_recent'),
       draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool'); },
     });
@@ -396,11 +396,11 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       requestId: 'req-unsold-stock', webhookEventId: 'event-unsold-stock', messageText: 'เช็ค stock สินค้าคงเหลือให้หน่อยครับ',
       messagePreviewHash: '1'.repeat(16),
       entitledFeatureKeys: NO_UNSOLD_MODULES_ENTITLED,
-      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'ถามสต็อกสินค้า', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามสต็อกสินค้า', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
       userContext: baseUserContext(['expense.read']),
     };
     const result = await runSemanticTurnV2({
-      req, provider: { async generateText(): Promise<ProviderOutput> { throw new Error('must never need the model'); } },
+      req, provider: wrongToolControlProvider('expense.list_recent'),
       draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool'); },
     });
@@ -413,11 +413,11 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       requestId: 'req-unsold-po', webhookEventId: 'event-unsold-po', messageText: 'ขอดูใบสั่งซื้อค้างอยู่กี่ใบคะ',
       messagePreviewHash: '2'.repeat(16),
       entitledFeatureKeys: NO_UNSOLD_MODULES_ENTITLED,
-      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'ถามใบสั่งซื้อ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ถามใบสั่งซื้อ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
       userContext: baseUserContext(['expense.read']),
     };
     const result = await runSemanticTurnV2({
-      req, provider: { async generateText(): Promise<ProviderOutput> { throw new Error('must never need the model'); } },
+      req, provider: wrongToolControlProvider('expense.list_recent'),
       draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool'); },
     });
@@ -503,6 +503,45 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
     assert.equal(invoked, 1, 'the real sales tool is called once the feature is entitled');
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.ok(result.replyText.includes('12,345'), result.replyText);
+  });
+
+  // Owner 2026-09-29 ("ต้องคุยได้ เป็นความรู้ทั่วไป"): a concept question on an unsold topic is general
+  // business knowledge — the composer answers it, never the package-limit copy.
+  it('a general concept question on an unsold topic is composed, never the package copy', async () => {
+    const answer = 'กำไรขั้นต้นคือยอดขายหักต้นทุนขายค่ะ';
+    const result = await runSemanticTurnV2({
+      req: { requestId: 'req-general-profit', webhookEventId: 'event-general-profit', messageText: 'กำไรขั้นต้นคืออะไร',
+        messagePreviewHash: '6'.repeat(16), entitledFeatureKeys: NO_UNSOLD_MODULES_ENTITLED,
+        semanticSubrequests: [{ index: 0, kind: 'general', goal: 'อธิบายกำไรขั้นต้น', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+        userContext: baseUserContext(['expense.read']) },
+      provider: { async generateText(): Promise<ProviderOutput> {
+        return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', text: answer }] }) };
+      } },
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('a general clause never calls a tool'); },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.equal(result.replyText, answer);
+  });
+
+  // Owner eval 2026-09-29: "VAT คืออะไร" was answered correctly and still reached the customer as "ยังตอบข้อนี้
+  // ไม่ได้" — the model's optional reasonCode "general_knowledge" failed the coverage contract's UPPER_SNAKE shape.
+  it('keeps a composed answer whose optional reasonCode the coverage contract would reject', async () => {
+    const answer = 'VAT คือภาษีมูลค่าเพิ่ม อัตราปกติ 7% ค่ะ';
+    const result = await runSemanticTurnV2({
+      req: { requestId: 'req-general-vat', webhookEventId: 'event-general-vat', messageText: 'VAT คืออะไร',
+        messagePreviewHash: '7'.repeat(16), entitledFeatureKeys: NO_UNSOLD_MODULES_ENTITLED,
+        semanticSubrequests: [{ index: 0, kind: 'general', goal: 'อธิบาย VAT', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+        userContext: baseUserContext(['expense.read']) },
+      provider: { async generateText(): Promise<ProviderOutput> {
+        return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', text: answer, sourceRefIds: [], reasonCode: 'general_knowledge' }] }) };
+      } },
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('a general clause never calls a tool'); },
+    });
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, undefined);
+    assert.equal(result.replyText, answer);
   });
 });
 

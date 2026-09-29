@@ -235,11 +235,24 @@ describe('scopePolicyOverride: combined entry point and kind exemption', () => {
     assert.equal(override?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
   });
 
-  it('applies the unsold-module check for kind "read" or "general"', () => {
+  it('applies the unsold-module check for kind "read" and "write"', () => {
     const asRead = scopePolicyOverride('ขอดูยอดขายเดือนนี้หน่อยจ้ะ', 'read', [], ['expenses'], 'th');
-    const asGeneral = scopePolicyOverride('ขอดูยอดขายเดือนนี้หน่อยจ้ะ', 'general', [], ['expenses'], 'th');
+    const asWrite = scopePolicyOverride('ช่วยออกใบแจ้งหนี้ให้ลูกค้าหน่อยครับ', 'write', [], ['expenses'], 'th');
     assert.equal(asRead?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
-    assert.equal(asGeneral?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+    assert.equal(asWrite?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+  });
+
+  // Owner 2026-09-29: general business knowledge is never blocked by the shop's package (payroll has no
+  // feature at all, so "เงินเดือน…" was blocked for every shop).
+  it('never applies the unsold-module check to kind "general"', () => {
+    for (const text of ['รายได้เท่าไหร่ต้องจด VAT', 'กำไรขั้นต้นคืออะไร', 'เงินเดือนหักประกันสังคมกี่เปอร์เซ็นต์']) {
+      assert.equal(scopePolicyOverride(text, 'general', [], ['expenses'], 'th'), undefined, text);
+    }
+  });
+
+  it('still applies the LINE action boundary to kind "general"', () => {
+    const override = scopePolicyOverride('ช่วยอนุมัติใบเบิกของสมชายให้หน่อยค่ะ', 'general', [], ['expenses'], 'th');
+    assert.equal(override?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
   });
 
   it('a company with the feature entitled is never blocked', () => {
