@@ -21,14 +21,14 @@ P1 งานแก้ purchase flow ─> P2 foundation (add-on PR A) ─┬─> 
                                                         ├─> add-on PR C ─┼─> SD-F (เครดิตร้านเดิม) ─┐
                                                         ├─> add-on PR D, E, F, G ────────────────────┤
                                                         └─> SD-A ─> SD-B ─> SD-C ─> SD-D ────────────┼─> SD-E ─> native proof + UAT ร่วม ─> Production ร่วม
-P3 คำตอบ Owner SD-Q1, Q2, Q3, Q5, Q8, Q9 (หรือยอมรับค่าเริ่มต้น) ─────> ก่อนเริ่ม SD-C และ SD-F
+P3 คำตอบ Owner SD-Q1, Q2, Q3, Q5, Q8, Q9 ─────> เสร็จ 2026-09-29: รับค่าเริ่มต้นทั้งหมด (สเปก SD-O9)
 ```
 
 | ID | Prerequisite | ทำไมงานนี้ต้องรอ |
 |---|---|---|
 | P1 | งานแก้ purchase flow ที่กำลังทำ: สถานะหลังกลับจาก Stripe, ปลดล็อก WorkspaceLayout, แผงผู้รับเอกสาร, label, ลิงก์ค้นหาแอดมิน, sync ข้อมูลร้านไป Stripe, คำศัพท์ | แก้ `BillingPage.tsx`, หน้า return และข้อความชุดเดียวกับที่ SD-D แก้ |
 | P2 | Foundation = PR A ของแผน add-on (T-02, T-07): `BillingAttempt.productKind` และ `BillingInvoice.productKind` (`String @default("PACKAGE")`), ช่องจอง `BillingAccount.activeAddOnAttemptId` แยกจาก `activeAttemptId`, reader ของแพ็กเกจกรอง PACKAGE | การจองส่วนลดราคาผูกกับ attempt ของแพ็กเกจใน `activeAttemptId` เท่านั้น; ถ้า checkout ของ add-on ใช้ช่องเดียวกัน quote แพ็กเกจจะถูกบล็อก (`billing.service.ts:347`) และสถานะ "กำลังชำระ" จะผิด (SED-16); validator ของ add-on ต้องปฏิเสธ `eventDiscount` |
-| P3 | คำตอบ Owner SD-Q1, SD-Q2, SD-Q3, SD-Q5, SD-Q8, SD-Q9 หรือยอมรับค่าเริ่มต้นในสเปก §12 | วันหมดอายุ, RESTART, เครดิตยอดขาย, ครั้งต่อชุด และร้านที่ยังไม่ย้าย กำหนดโค้ดของ SD-C และ SD-F |
+| P3 | **เสร็จ 2026-09-29**: Owner รับค่าเริ่มต้นของ SD-Q1, SD-Q2, SD-Q3, SD-Q5, SD-Q8, SD-Q9 ในสเปก §12 (SD-O9) | วันหมดอายุ, RESTART, เครดิตยอดขาย, ครั้งต่อชุด และร้านที่ยังไม่ย้าย กำหนดโค้ดของ SD-C และ SD-F |
 | P4 | PR B และ PR C ของแผน add-on merge แล้ว: grant seam `applyAddOnGrant` ใน `apps/api/src/modules/billing/application/billing-addon-grants.ts` ทั้งฝั่งรูป (B4) และเครดิต AI (C7) พร้อมแหล่ง `SALES_EVENT` | SD-F เรียก seam นี้ ไม่สร้าง ledger เอง |
 
 **Release ร่วม (SD-O6)**: ทุก PR ของงานนี้ (SD-A…SD-F) กับ add-on PR A–G อยู่ใน candidate เดียวกัน ผ่าน UAT → READY → Production รอบเดียว และเปิด gate `event_discounts`, `addon_chat_credit`, `addon_receipt_image` ในขั้นเดียวกัน. PR ใดที่ merge ก่อนต้องให้ gate ปิดไว้
@@ -378,6 +378,6 @@ SD-A, SD-C, SD-D และ SD-F แก้ `ci.yml` หรือ `extended-tests.
 | D2 ปรับเดโม | ยกเลิก — เดโมไม่อยู่ใน repo และแบบใหม่ไม่มีหน้าจอสะสม/เลือก |
 | รอบเอกสาร 2026-09-29 (v2) | spec, plan, audit ปรับตามมติและรีวิว R2 (merge #862) |
 | รอบเอกสาร 2026-09-29 (v3) | ตัวเลือกใช้/ไม่ใช้ (SD-O4), หนึ่งครั้งต่อร้าน (SD-O5), เครดิตร้านเดิม (SD-O6), QR เดียว (SD-O7), ดีลรับเครดิตได้ (SD-O8), release ร่วม; anchor ตรวจใหม่บน `105b0dc6`; สเปก/แผน add-on เพิ่ม `SALES_EVENT` และ release ร่วม |
-| SD-A … SD-F | ยังไม่เริ่ม; รอ P1, P2, P4 และคำตอบหรือค่าเริ่มต้นของ SD-Q1, Q2, Q3, Q5, Q8, Q9 |
+| SD-A … SD-F | ยังไม่เริ่ม; รอ P1, P2, P4 (P3 เสร็จ 2026-09-29: Owner รับค่าเริ่มต้นของ SD-Q ที่เหลือ) |
 
 ไม่ได้รันเทสต์ในรอบนี้ (งานเอกสาร). ตอนลงมือให้รันเทสต์ที่ระบุใน §2 บน worktree ของ develop ล่าสุด
