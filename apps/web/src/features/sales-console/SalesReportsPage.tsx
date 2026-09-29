@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import type { SalesReportMonth, SalesReportRow } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard, MangmeePage, MangmeeStatCard } from '@/common/components/mangmee';
@@ -12,6 +13,7 @@ import {
   salesReportTotals, sortSalesReportMonths, type SalesReportRange, type SalesReportTotals,
 } from './sales-console.logic';
 import { SalesEmpty, SalesNotice } from './SalesConsoleParts';
+import SalesEventReportSection from './SalesEventReportSection';
 
 /**
  * §17.2: a shop is counted once, at its first paid activation, so this report is a plain sum — no
@@ -78,6 +80,9 @@ function MonthFigures({ rows, totals }: { rows: SalesReportRow[]; totals: SalesR
 }
 
 export default function SalesReportsPage() {
+  // `?view=events` opens the sales-event discount report (spec §10) — its own figures, never sales.
+  const params = useSearchParams();
+  const [eventsView, setEventsView] = useState(() => params.get('view') === 'events');
   const [range, setRange] = useState<SalesReportRange>(() => defaultSalesReportRange());
   const [leadFilter, setLeadFilter] = useState('');
   const [months, setMonths] = useState<SalesReportMonth[] | null>(null);
@@ -116,9 +121,20 @@ export default function SalesReportsPage() {
   return (
     <MangmeePage
       eyebrow="ทีมขายมั่งมี"
-      title={ownNumbers ? 'ยอดของฉัน' : 'รายงานยอดขาย'}
-      description="นับเฉพาะร้านที่เปิดใช้งานครั้งแรก ร้านละครั้งเดียว · รอบต่ออายุไม่นับ · หักคืนเงินแล้ว"
+      title={eventsView ? 'รายงานส่วนลดจากงาน' : ownNumbers ? 'ยอดของฉัน' : 'รายงานยอดขาย'}
+      description={eventsView
+        ? 'นับส่วนลดที่แจกในช่วงเดือนที่เลือก ตามงาน ชุด และเซลล์ผู้แจก'
+        : 'นับเฉพาะร้านที่เปิดใช้งานครั้งแรก ร้านละครั้งเดียว · รอบต่ออายุไม่นับ · หักคืนเงินแล้ว'}
     >
+      <div role="group" aria-label="เลือกรายงาน" className="grid grid-cols-2 gap-2">
+        {[{ events: false, label: 'ยอดขาย' }, { events: true, label: 'ส่วนลดจากงาน' }].map((tab) => (
+          <button key={tab.label} type="button" aria-pressed={eventsView === tab.events} onClick={() => setEventsView(tab.events)}
+            className={`min-h-11 rounded-lg border px-3 text-sm font-semibold ${eventsView === tab.events ? 'border-brand-700 bg-brand-50 text-brand-800' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       <MangmeeCard className="grid gap-4 p-4 sm:grid-cols-3">
         {/* Native month boxes: the picker every phone already knows, and the exact 'YYYY-MM' the
             endpoint parses — no format to agree on twice. */}
@@ -136,6 +152,8 @@ export default function SalesReportsPage() {
       </MangmeeCard>
 
       {rangeError && <SalesNotice tone="warning">{rangeError}</SalesNotice>}
+
+      {eventsView ? !rangeError && <SalesEventReportSection from={range.from} to={range.to} teamLeadUserId={leadFilter} /> : <>
       {error && <SalesNotice tone="error">{error}</SalesNotice>}
 
       {rows.length > 0 && (
@@ -163,6 +181,7 @@ export default function SalesReportsPage() {
           มี {totals.flaggedCount.toLocaleString('th-TH')} ร้านที่ระบบตั้งธงไว้และยังไม่นับรวมในยอด ผู้ดูแลระบบเป็นผู้ตรวจ
         </SalesNotice>
       )}
+      </>}
     </MangmeePage>
   );
 }

@@ -30,6 +30,7 @@ import type {
   SalesMyWorkDto,
   SalesReferralUpdateBody,
   SalesReportSummary,
+  SalesEventReport,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 
@@ -167,6 +168,16 @@ export function getSalesReportSummary(
   if (params.teamLeadUserId) query.set('teamLeadUserId', params.teamLeadUserId);
   if (params.salesUserId) query.set('salesUserId', params.salesUserId);
   return apiFetch<SalesReportSummary>(`/v1/sales/reports/summary?${query.toString()}`, { ...init, suppressErrorToast: true });
+}
+
+/** Sales-event report (spec §10): separate from the sales figures above — never sales credit. */
+export function getSalesEventReport(
+  params: { from: string; to: string; teamLeadUserId?: string },
+  init?: { signal?: AbortSignal },
+): Promise<SalesEventReport> {
+  const query = new URLSearchParams({ from: params.from, to: params.to });
+  if (params.teamLeadUserId) query.set('teamLeadUserId', params.teamLeadUserId);
+  return apiFetch<SalesEventReport>(`/v1/sales/events/report?${query.toString()}`, { ...init, suppressErrorToast: true });
 }
 
 export function listSalesAttributionFlags(init?: { signal?: AbortSignal }): Promise<SalesAttributionFlagListDto> {

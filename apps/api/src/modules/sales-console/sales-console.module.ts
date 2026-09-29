@@ -15,10 +15,12 @@ import { SalesEventsService } from './application/sales-events.service';
 import { SalesReferralService } from './application/sales-referral.service';
 import { SalesReportsService } from './application/sales-reports.service';
 import { SalesRenewalService } from './application/sales-renewal.service';
+import { SalesEventReportsService } from './application/sales-event-reports.service';
 import { PublicEventDiscountsController } from './presentation/http/public-event-discounts.controller';
 import { SalesController } from './presentation/http/sales.controller';
 import { SalesEventsController } from './presentation/http/sales-events.controller';
 import { SalesInternalController } from './presentation/http/sales-internal.controller';
+import { SalesEventReportsController } from './presentation/http/sales-event-reports.controller';
 import { SystemSalesAgentsController, SystemSalesAttributionController, SystemSalesReferralController } from './presentation/http/system-sales-agents.controller';
 
 /**
@@ -43,9 +45,10 @@ import { SystemSalesAgentsController, SystemSalesAttributionController, SystemSa
     SystemSalesReferralController,
     SalesInternalController,
     PublicEventDiscountsController,
+    SalesEventReportsController,
   ],
   providers: [SalesAgentsService, SalesCompanySearchService, SalesDealsService, SalesReferralService,
-    SalesReportsService, SalesRenewalService, SalesEventsService, ClaimEventDiscountUseCase],
+    SalesReportsService, SalesRenewalService, SalesEventsService, ClaimEventDiscountUseCase, SalesEventReportsService],
   exports: [SalesReferralService, SalesDealsService],
 })
 export class SalesConsoleModule {}

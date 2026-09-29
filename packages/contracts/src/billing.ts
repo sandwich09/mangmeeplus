@@ -347,6 +347,9 @@ export type BillingOperatorCompany = {
   graceEndsAt: string | null; cancelEffectiveAt: string | null; origin: 'web' | 'line' | null;
   branchLimit: number | null; employeeLimit: number | null; pendingPlanChangeId: string | null; collectionOperationId: string | null;
 };
+/** Sales-event discounts §6.3: the reconciler raised it because a bill was paid at the discounted amount
+ *  but no ticket was RESERVED for that attempt. Apply is not blocked; an operator checks and closes it. */
+export const BILLING_EVENT_DISCOUNT_REVIEW_ISSUE = 'EVENT_DISCOUNT_REVIEW';
 export type BillingOperatorIssue = { id: string; companyId: string | null; companyName?:string|null; kind: string; reference: string;
   operationType?:string|null;
   relatedInvoiceId?:string|null; relatedRefundOperationId?:string|null; resolvedAt?:string|null;
@@ -368,7 +371,15 @@ export type BillingBatchView={id:string;version:number;previewHash:string;state:
 export type BillingBatchList={items:BillingBatchView[];nextCursor:string|null};
 export type BillingBatchExport={csv:string;sha256:string;rowCount:number;exportedAt:string;fileName:string};
 export type BillingOperatorCompanyDetail = BillingOperatorCompany & { usage: BillingReceiptUsage;
-  issues: BillingOperatorIssue[]; financial: { invoices: BillingInvoiceItem[]; nextCursor: string | null } | null };
+  issues: BillingOperatorIssue[]; financial: { invoices: BillingInvoiceItem[]; nextCursor: string | null } | null;
+  /** Sales-event discounts this shop reserved or used (spec SD-E20), newest first, at most 25. Optional
+   *  only so a contracts-first merge keeps older API builds compiling; the API always sends it. */
+  eventDiscounts?: BillingCompanyEventDiscount[] };
+/** `appliedDiscountSatang` and `invoiceId` are null without `system.billing.financial.read`. The lot of a
+ *  credit use arrives with SD-F. The serial is shown: it is the number the shop and the เซลล์ quote. */
+export type BillingCompanyEventDiscount = { serial: string; eventName: string; batchName: string;
+  redeemedAs: 'DISCOUNT' | 'CREDIT' | null; state: 'ISSUED' | 'RESERVED' | 'USED' | 'REVOKED';
+  appliedDiscountSatang: number | null; invoiceId: string | null; usedAt: string | null; reservedAt: string | null };
 export type BillingTimelineEntry = { reference: string; kind: string; type: string; state: string; recordedAt: string; occurredAt: string | null;
   updatedAt: string | null; observedAt: string | null; origin: string | null; amountSatang: number | null; href: string | null };
 export type BillingHistoryExport = {fileName:string;csv:string;rowCount:number;exportedAt:string;nextCursor:string|null;financialIncluded:boolean;auditIncluded:boolean;sha256:string};
@@ -507,4 +518,5 @@ export type BillingRecipientAdminOperation = BillingOperationView & { type: 'UPD
   allowedActions: ('submit' | 'approve' | 'cancel' | 'run')[]; dispatchedAt: string | null; reviewCaseId: string | null; notifiedAt: string | null };
 /** Admin document resend needs an internal reason; the result shape is `BillingDocumentResendResult` above. */
 export type BillingDocumentAdminResendInput = { reason: string };
-export type BillingReferenceLookup = { kind: 'INVOICE' | 'ATTEMPT' | 'OPERATION' | 'ISSUE'; id: string; companyId: string; companyName: string; href: string };
+/** `EVENT_TICKET`: the 8-character serial of a sales-event discount the shop used (sales-event spec §7.1). */
+export type BillingReferenceLookup = { kind: 'INVOICE' | 'ATTEMPT' | 'OPERATION' | 'ISSUE' | 'EVENT_TICKET'; id: string; companyId: string; companyName: string; href: string };

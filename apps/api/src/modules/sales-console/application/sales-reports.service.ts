@@ -30,6 +30,17 @@ const FLAG_ROW_LIMIT = 200;
 
 export type SalesReportQuery = { from?: string; to?: string; teamLeadUserId?: string; salesUserId?: string };
 
+/** Bangkok month range of a report request; shared with the event report so both refuse alike. */
+export function salesReportRange(query: SalesReportQuery): ReturnType<typeof reportRange> {
+  try { return reportRange(query.from, query.to, new Date()); }
+  catch (error) {
+    if (error instanceof SalesReportRangeError) {
+      throw salesBadRequest('SALES_REPORT_RANGE_INVALID', 'ช่วงเดือนไม่ถูกต้อง ใช้รูปแบบ ปี-เดือน และไม่เกิน 24 เดือน');
+    }
+    throw error;
+  }
+}
+
 @Injectable()
 export class SalesReportsService {
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
@@ -39,14 +50,7 @@ export class SalesReportsService {
    * see every team, optionally narrowed. The narrowing is a filter, never an escalation.
    */
   async summary(ctx: RequestContext, query: SalesReportQuery): Promise<SalesReportSummary> {
-    let range;
-    try { range = reportRange(query.from, query.to, new Date()); }
-    catch (error) {
-      if (error instanceof SalesReportRangeError) {
-        throw salesBadRequest('SALES_REPORT_RANGE_INVALID', 'ช่วงเดือนไม่ถูกต้อง ใช้รูปแบบ ปี-เดือน และไม่เกิน 24 เดือน');
-      }
-      throw error;
-    }
+    const range = salesReportRange(query);
     const salesUserIds = await this.visibleAgents(ctx, query);
     const rows = salesUserIds === null ? [] : await this.prisma.client.salesAttribution.findMany({
       where: { paidAt: { gte: range.start, lt: range.end }, ...(salesUserIds ? { salesUserId: { in: salesUserIds } } : {}) },
@@ -70,9 +74,10 @@ export class SalesReportsService {
   /**
    * `null` = "this caller can see nothing" (an agent asking for someone else). `undefined` = every
    * agent. An array narrows. Keeping the three cases distinct is what stops an empty `in: []`
-   * filter from silently meaning "no filter".
+   * filter from silently meaning "no filter". The event report (sales-event-reports.service.ts)
+   * scopes by the same rule (sales-event spec §9).
    */
-  private async visibleAgents(ctx: RequestContext, query: SalesReportQuery): Promise<string[] | null | undefined> {
+  async visibleAgents(ctx: RequestContext, query: SalesReportQuery): Promise<string[] | null | undefined> {
     if (!canSeeAllDeals(ctx)) {
       if (query.salesUserId && query.salesUserId !== ctx.userId) return null;
       return [ctx.userId];
@@ -88,7 +93,7 @@ export class SalesReportsService {
     return undefined;
   }
 
-  private async agentIndex(userIds: readonly string[]): Promise<Map<string, { displayName: string;
+  async agentIndex(userIds: readonly string[]): Promise<Map<string, { displayName: string;
     teamLeadUserId: string | null; teamLeadDisplayName: string | null }>> {
     const ids = [...new Set(userIds)];
     if (ids.length === 0) return new Map();

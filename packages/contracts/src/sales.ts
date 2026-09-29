@@ -213,6 +213,29 @@ export type SalesReportRow = {
 };
 export type SalesReportMonth = { monthKey: string; rows: SalesReportRow[] };
 export type SalesReportSummary = { months: SalesReportMonth[]; from: string; to: string };
+/**
+ * `GET /v1/sales/events/report` (sales-event spec §10): event → batch → เซลล์, over tickets ISSUED in
+ * the month range. Kept apart from `SalesReportSummary` on purpose — a ticket is never sales credit
+ * (SD-Q3); sales credit still follows the deal / referral attribution. No LINE identity, no document.
+ * ponytail: discount path only; SD-F adds the credit units granted.
+ */
+export type SalesEventReportFigures = SalesEventTicketCounts & {
+  /** Σ `discountSatang` of tickets still usable: the most the open tickets could still cost. */
+  openDiscountSatang: number;
+  /** Σ `appliedDiscountSatang` of tickets USED as a first-bill discount. RESERVED is not counted. */
+  appliedDiscountSatang: number;
+  /** Σ `paidSatang` / `refundedSatang` of the bills those tickets were used on, one bill once. */
+  paidSatang: number; refundedSatang: number;
+};
+export type SalesEventReportAgent = { salesUserId: string; displayName: string; figures: SalesEventReportFigures };
+export type SalesEventReportBatch = { batchId: string; batchName: string; figures: SalesEventReportFigures; agents: SalesEventReportAgent[] };
+export type SalesEventReportEvent = { eventName: string; figures: SalesEventReportFigures; batches: SalesEventReportBatch[] };
+export type SalesEventReport = {
+  from: string; to: string; events: SalesEventReportEvent[]; totals: SalesEventReportFigures;
+  /** More tickets than one request reads: narrow the months. */
+  truncated: boolean;
+};
+
 /** How many months one report request may span — a lead asking for "everything" is a mistake, not a need. */
 export const SALES_REPORT_MAX_MONTHS = 24;
 export const SALES_REPORT_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;

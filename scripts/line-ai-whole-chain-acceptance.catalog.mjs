@@ -434,6 +434,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/sales-console/domain/sales-renewal.logic.spec.ts',
       // Sales-event discounts, console (SD-A): batch form, state machine, QR life, ฿10 first-bill floor.
       'src/modules/sales-console/domain/sales-event.logic.spec.ts',
+      // Sales-event report: event → batch → เซลล์ counts and the discount given (SD-E18).
+      'src/modules/sales-console/domain/sales-event-report.logic.spec.ts',
       // Phase 3 deal offer / snapshot / purchase-mode rules (same reason as above).
       'src/modules/billing/domain/deal-offer.spec.ts',
       'src/modules/billing/application/billing-deal-chat-credit.spec.ts',
