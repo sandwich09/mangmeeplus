@@ -279,6 +279,7 @@ function mergeDocument(
   into.documentDate ??= from.documentDate;
   into.currency ??= from.currency;
   into.buyer ??= from.buyer;
+  into.categorySuggestion ??= from.categorySuggestion;
   if (from.issuer) into.issuer = { ...from.issuer, ...into.issuer };
   // The printed "page n of m" of ANY page proves how many pages the document claims to have.
   if (from.printedPage?.of !== undefined && (into.printedPage?.of ?? 0) < from.printedPage.of) {
