@@ -26,7 +26,7 @@ import {
 import {
   summariseQueue, matchesSearch, pageBounds,
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
-  policyDecisionPreview, approverNotReadyHelp, type HubTab,
+  policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
@@ -344,7 +344,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                         <td className="font-mono text-xs">{r.requestNo ?? '—'}</td>
                         <td>{r.requesterDisplayNameSnapshot ?? '—'}</td>
                         <td>{r.reason}</td>
-                        <td className="text-gray-500">{r.categoryLabelSnapshot ?? r.categoryKey}</td>
+                        <td className="text-gray-500">{categoryText(r.categoryLabelSnapshot)}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.amount, r.currency)}</td>
                         <td><StatusBadge status={r.status} /></td>
@@ -596,20 +596,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
       {staleReview && <StaleApprovalDialog
         requestNo={staleReview.detail.requestNo ?? staleReview.row.requestNo}
         diff={diffApprovalFields(
-          {
-            reason: staleReview.row.reason,
-            amount: formatMoney(staleReview.row.amount),
-            currency: staleReview.row.currency,
-            categoryLabel: staleReview.row.categoryLabelSnapshot ?? staleReview.row.categoryKey,
-            lineCount: staleReview.row.lineCount ?? 1,
-          },
-          {
-            reason: staleReview.detail.reason,
-            amount: formatMoney(staleReview.detail.amount),
-            currency: staleReview.detail.currency,
-            categoryLabel: staleReview.detail.categoryLabelSnapshot ?? staleReview.detail.categoryKey,
-            lineCount: (staleReview.detail.lines ?? []).length,
-          },
+          approvalComparable(staleReview.row, staleReview.row.lineCount ?? 1),
+          approvalComparable(staleReview.detail, (staleReview.detail.lines ?? []).length),
         )}
         lines={staleReview.detail.lines ?? []}
         currency={staleReview.detail.currency}
@@ -737,7 +725,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
                         <td><div className="flex flex-wrap items-center gap-2"><StatusBadge status={r.status} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">อาจซ้ำ</MangmeeBadge>}</div></td>
-                        <td className="text-xs text-gray-500">{FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? r.financeReviewStatus}</td>
+                        <td className="text-xs text-gray-500">{FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—'}</td>
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
                             <button type="button" aria-label="ดูรายละเอียด" title="ดูรายละเอียด"

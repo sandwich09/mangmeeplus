@@ -92,6 +92,14 @@ export function diffApprovalFields(before: ApprovalComparable, after: ApprovalCo
   });
 }
 
+/** A queue row or a fresh detail in the words the stale-approval dialog prints: money with its unit, never a key. */
+export function approvalComparable(claim: any, lineCount: number): ApprovalComparable {
+  return {
+    reason: claim?.reason, amount: money(claim?.amount, claim?.currency), currency: currencyWord(claim?.currency),
+    categoryLabel: categoryText(claim?.categoryLabelSnapshot), lineCount,
+  };
+}
+
 export function paymentReferenceRequired(method: string): boolean {
   return method === 'BANK_TRANSFER' || method === 'CHEQUE';
 }
@@ -107,7 +115,7 @@ export function validatePaymentForm(input: {
   const outstanding = Number(input.outstandingAmount);
   if (!(paid > 0)) return 'จำนวนเงินต้องมากกว่า 0';
   if (paid > outstanding) return 'จำนวนเงินเกินยอดที่อนุมัติ';
-  if (paid !== outstanding) return 'ต้องจ่ายเต็มจำนวน (MVP รองรับการจ่ายเต็มเท่านั้น)';
+  if (paid !== outstanding) return 'ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น';
   if (paymentReferenceRequired(input.paymentMethod) && (!input.paymentReference || input.paymentReference.trim() === '')) {
     return 'ต้องระบุเลขอ้างอิงสำหรับการโอนเงิน/เช็ค';
   }
@@ -538,3 +546,16 @@ export function formatMoney(v: unknown, currency?: string): string {
   const amount = Number(v ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return currency ? `${amount} ${currency === 'THB' ? 'บาท' : currency}` : amount;
 }
+
+/* Owner rule 2026-09-27/29: plain Thai, no id, enum key, code or ISO date on screen, and the same words as
+ * the LINE card (apps/api/.../line-reimbursement-draft-card.logic.ts). */
+const satang = new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** "บาท" for the one currency a claim takes, never the code. */
+const currencyWord = (currency: unknown) => (!currency || currency === 'THB' ? 'บาท' : String(currency));
+/** "1,234.50 บาท", like formatMoney, but the decimal string is formatted as is (no float) and rounds half up like the API. */
+export function money(value: unknown, currency?: unknown) {
+  if (typeof value !== 'string' || !/^\d+(?:\.\d{1,4})?$/.test(value)) return 'ยังตรวจสอบจำนวนเงินไม่ได้';
+  return `${satang.format(value as `${number}`)} ${currencyWord(currency)}`;
+}
+/** A category by its Thai label; a missing label never falls back to the key. */
+export const categoryText = (label: unknown) => (typeof label === 'string' && label.trim()) || 'ยังไม่ได้เลือกหมวด';

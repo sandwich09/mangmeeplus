@@ -7,13 +7,14 @@ import { reimbursementIncurredDateError, todayCivilDate, type ReimbursementSourc
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { formatThaiDate } from '@/common/i18n/thai-date';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { EmptyState } from '@/common/components/state/EmptyState';
 import { LoadingState } from '@/common/components/state/LoadingState';
 import { createReimbursement, getReimbursementSourceOptions, getReimbursement, updateReimbursementDraft, uploadReceiptFile } from './reimbursements.api';
 import { ICON, ErrorBanner, inputClass, btnClass, ghostClass } from '../expenses/ExpensesUi';
 import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
-import { collectReceiptUploadResults, mergeDraftLineEvidence, validateRequestForm, errorMessage, sumLineAmounts, formatMoney, errorText } from './reimbursements.logic';
+import { collectReceiptUploadResults, mergeDraftLineEvidence, validateRequestForm, errorMessage, sumLineAmounts, formatMoney, errorText, money, categoryText } from './reimbursements.logic';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
 import { REIMBURSEMENT_CREATE_UNAVAILABLE } from './reimbursements.model';
@@ -47,7 +48,7 @@ const emptyForm = () => ({ reason: '', currency: 'THB', missingReceiptReason: ''
 
 /** One-line preview of a collapsed row: date · description · amount. */
 function lineSummary(line: FormLine): string {
-  const parts = [line.incurredDate, line.description.trim(), line.amount ? `${formatMoney(line.amount)} บาท` : ''].filter(Boolean);
+  const parts = [formatThaiDate(line.incurredDate, ''), line.description.trim(), line.amount ? money(line.amount) : ''].filter(Boolean);
   return parts.length > 0 ? parts.join(' · ') : 'ยังไม่ได้กรอกข้อมูล';
 }
 
@@ -365,7 +366,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-gray-600">สกุลเงิน</label>
                 <ThemedSelect aria-label="สกุลเงิน" className={inputClass} value={form.currency} onChange={e => setForm(f => ({ ...f, currency: e.target.value }))}>
-                  <option value="THB">บาท (THB)</option>
+                  <option value="THB">บาท</option>
                 </ThemedSelect>
               </div>
               <div>
@@ -400,7 +401,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
                     <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left"
                       aria-expanded={!collapsedLines[i]} onClick={() => setCollapsedLines(c => ({ ...c, [i]: !c[i] }))}>
                       <span className={cx('text-gray-400 transition-transform', !collapsedLines[i] && 'rotate-90')}>▶</span>
-                      <span className="text-sm font-bold text-gray-700">รายการที่ {i + 1}</span>
+                      <span className="shrink-0 text-sm font-bold text-gray-700">รายการที่ {i + 1}</span>
                       {collapsedLines[i] && <span className="truncate text-xs text-gray-500">{lineSummary(l)}</span>}
                     </button>
                     {form.lines.length > 1 && (
@@ -416,7 +417,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
                         <option value="">กรอกและแนบใบเสร็จเอง</option>
                         {l.linkedExpenseId && !sourceOptions.items.some(source => source.expenseId === l.linkedExpenseId) && <option value={l.linkedExpenseId}>รายการต้นทางที่บันทึกไว้</option>}
                         {sourceOptions.items.map(source => <option key={source.expenseId} value={source.expenseId} disabled={!source.eligible || source.currency !== form.currency || form.lines.some((other, j) => j !== i && other.linkedExpenseId === source.expenseId)}>
-                          {source.label} · {formatMoney(source.amount)} {source.currency} {source.reason ? `— ${errorMessage(source.reason)}` : source.currency !== form.currency ? '— สกุลเงินไม่ตรงกับใบเบิก' : ''}
+                          {source.label} · {money(source.amount, source.currency)} {source.reason ? `— ${errorMessage(source.reason)}` : source.currency !== form.currency ? '— สกุลเงินไม่ตรงกับใบเบิก' : ''}
                         </option>)}
                       </ThemedSelect>
                       {l.sourceExpenseSnapshot && <ReimbursementSourceFacts source={l.sourceExpenseSnapshot} />}
@@ -433,7 +434,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
                     <div>
                       <label className="mb-1.5 block text-xs font-semibold text-gray-600">หมวดใบเบิก *</label>
                       <ThemedSelect aria-label="หมวด" className={inputClass} value={l.categoryKey} onChange={e => setLine(i, { categoryKey: e.target.value, categoryLabel: undefined })}>
-                        {!CATEGORY_OPTIONS.some(category => category.value === l.categoryKey) && <option value={l.categoryKey}>{l.categoryLabel ?? l.categoryKey}</option>}
+                        {!CATEGORY_OPTIONS.some(category => category.value === l.categoryKey) && <option value={l.categoryKey}>{categoryText(l.categoryLabel)}</option>}
                         {CATEGORY_OPTIONS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                       </ThemedSelect>
                       {l.linkedExpenseId && <p className="mt-1 text-xs text-gray-500">หมวดบัญชีใช้ตามค่าใช้จ่ายต้นทาง</p>}
@@ -481,7 +482,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           </dl>
           <div className="my-4 border-t border-gray-100 pt-4">
             <div className="text-xs font-semibold text-gray-500">ยอดรวม</div>
-            <div className="mt-2 text-[26px] font-extrabold leading-none tracking-tight tabular-nums text-gray-900">{formatMoney(total)} {form.currency}</div>
+            <div className="mt-2 text-[26px] font-extrabold leading-none tracking-tight tabular-nums text-gray-900">{formatMoney(total, form.currency)}</div>
           </div>
           {error && <ErrorBanner message={error} />}
           <div className="mt-4 space-y-2">
