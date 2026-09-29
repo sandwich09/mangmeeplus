@@ -4144,6 +4144,9 @@ model CompanyOcrUsageEvent {
   requestId   String
   billingReceiptGrantId String?
   billingReceiptGrant BillingReceiptGrant? @relation(fields: [billingReceiptGrantId, companyId], references: [id, companyId], onDelete: Restrict)
+  /// Add-on plan PR B: the `ReceiptUnitEntry.generation` this admission reserved. Null = no lot, or an
+  /// admission from before the ledger, which still counts as used exactly as it always did.
+  receiptUnitGeneration Int?
   createdAt   DateTime @default(now())
   company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -9868,10 +9871,31 @@ model BillingReceiptGrant {
   company           Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   billingAccount    BillingAccount? @relation(fields: [billingAccountId, companyId], references: [id, companyId], onDelete: Restrict)
   admissions        CompanyOcrUsageEvent[]
+  unitEntries       ReceiptUnitEntry[]
 
   @@unique([id, companyId])
   @@unique([billingAccountId, sourceKey])
   @@index([companyId, billingAccountId, expiresAt])
+}
+
+/// Receipt image ledger (add-on spec §8.2, §15.3; plan PR B). Append-only: an admission RESERVEs one unit
+/// of a lot, a usable result CONSUMEs it, a read with no usable result RELEASEs it, and an operator REVOKE
+/// takes a lot's unused units. `operationKey` is the admission fence (`<sourceRoute>:<requestId>`), stable
+/// when resume renews the event id; `generation` counts re-admissions of that operation after a release.
+/// kind: RESERVE | CONSUME | RELEASE | REVOKE (String, no Prisma enum).
+model ReceiptUnitEntry {
+  id           String   @id @default(uuid())
+  companyId    String
+  grantId      String
+  operationKey String
+  generation   Int
+  kind         String
+  units        Int
+  createdAt    DateTime @default(now())
+  grant        BillingReceiptGrant @relation(fields: [grantId, companyId], references: [id, companyId], onDelete: Cascade)
+
+  @@unique([companyId, operationKey, generation, kind])
+  @@index([grantId, kind])
 }
 
 /// Immutable customer consent for recurring collection from a service boundary.

@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "5963edac9dd66db3b7b6fbead9bc4bdb0c5b1233",
-  "checkoutBranch": "claude/line-bound-continuations-20260929",
+  "sourceRevision": "aa19246d434f81e252d61915528d5001e9f992f6",
+  "checkoutBranch": "claude/addons-pr-b-image-ledger-20260929",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "412b5ddbe4467aaf36af0f893b1d6475e244a5b494510d1b0b316f4bd0d89fe2"
+      "sha256": "6b51113f582085d307062ce51ebcbe34e6158073aaa3a8f967a6fbc79e47fa2b"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T05:31:36.522Z",
-  "manifestDigest": "112ecc8979b1cc921edad914eb6700f0fb7bd32254b1f7d6a8f4eb22670b3c99"
+  "generatedAt": "2026-09-29T06:31:22.807Z",
+  "manifestDigest": "c997a3a4de67ce7ee7802ac0de6d676045fdbd4cf91616964d12ad5d36c77dc8"
 }
