@@ -245,30 +245,38 @@ function parseCoverage(value: unknown): LineDocumentQaPageCoverage | undefined {
   return { requested, read, failed };
 }
 
-function parseLocalSpan(value: unknown, text: string): LineDocumentQaLocalSpan | undefined {
-  if (!isObject(value) || !Number.isSafeInteger(value['start']) || !Number.isSafeInteger(value['end'])) return undefined;
-  const start = Number(value['start']);
-  const end = Number(value['end']);
-  return start >= 0 && end > start && end <= text.length ? { start, end } : undefined;
+/** Where a claim sits on its page. A reader copies page text reliably but miscounts UTF-16 offsets:
+ *  on NAT06 (2026-09-27/29) every claim was a verbatim substring, yet 7 of 13 stated spans were a few
+ *  characters off and the whole correct answer was thrown away. So the span is found from the claim's own
+ *  text (a stated start only picks between repeated copies), whitespace/Unicode-normalised containment
+ *  keeps a claim with no exact span, and an unlocatable claim is dropped — never the answer. */
+const normalizedClaimText = (value: string): string => value.normalize('NFC').replace(/\s+/gu, ' ').trim();
+function locateClaim(visibleText: string, text: string, hint: unknown): { localSpan?: LineDocumentQaLocalSpan } | undefined {
+  if (!text.trim()) return undefined;
+  const found: number[] = [];
+  for (let at = visibleText.indexOf(text); at >= 0 && found.length < 64; at = visibleText.indexOf(text, at + 1)) found.push(at);
+  if (found.length) {
+    const near = isObject(hint) && Number.isSafeInteger(hint['start']) ? Number(hint['start']) : 0;
+    const start = found.reduce((best, at) => Math.abs(at - near) < Math.abs(best - near) ? at : best);
+    return { localSpan: { start, end: start + text.length } };
+  }
+  return normalizedClaimText(visibleText).includes(normalizedClaimText(text)) ? {} : undefined;
 }
 
 function parseEvidence(value: unknown, attachmentId: string, page: number, text: string, role: LineDocumentQaEvidence['role']): LineDocumentQaEvidence | undefined {
   if (!isObject(value) || value['attachmentId'] !== attachmentId || value['page'] !== page || value['role'] !== role
     || !boundedText(value['text'], LINE_DOCUMENT_QA_LIMITS.maxClaimBytes)) return undefined;
-  const span = value['localSpan'] === undefined ? undefined : parseLocalSpan(value['localSpan'], text);
-  if (!span || text.slice(span.start, span.end) !== value['text']) return undefined;
-  return { attachmentId, page, role, text: value['text'], ...(span ? { localSpan: span } : {}) };
+  const located = locateClaim(text, value['text'], value['localSpan']);
+  return located ? { attachmentId, page, role, text: value['text'], ...located } : undefined;
 }
 
 function parseFact(value: unknown, attachmentId: string, page: number, visibleText: string): LineDocumentQaFact | undefined {
   if (!isObject(value) || value['attachmentId'] !== attachmentId || value['page'] !== page
-    || !boundedText(value['text'], LINE_DOCUMENT_QA_LIMITS.maxClaimBytes) || !boundedText(value['role'], 64)) return undefined;
-  const text = value['text'] as string;
-  const span = value['localSpan'] === undefined ? undefined : parseLocalSpan(value['localSpan'], visibleText);
-  if (!span || visibleText.slice(span.start, span.end) !== text || !text.trim() || !String(value['role']).trim()) return undefined;
+    || !boundedText(value['text'], LINE_DOCUMENT_QA_LIMITS.maxClaimBytes) || !boundedText(value['role'], 64) || !value['role'].trim()) return undefined;
   const confidence = value['confidence'];
   if (confidence !== undefined && !['high', 'medium', 'low', 'unknown'].includes(String(confidence))) return undefined;
-  return { attachmentId, page, text, role: value['role'], ...(span ? { localSpan: span } : {}), ...(confidence ? { confidence: confidence as LineDocumentQaFact['confidence'] } : {}) };
+  const located = locateClaim(visibleText, value['text'], value['localSpan']);
+  return located ? { attachmentId, page, text: value['text'], role: value['role'], ...located, ...(confidence ? { confidence: confidence as LineDocumentQaFact['confidence'] } : {}) } : undefined;
 }
 
 /** Strict result parser used at the Gateway/API boundary; bytes are checked before persistence. */
@@ -290,16 +298,19 @@ export function parseLineDocumentQaResult(value: unknown): LineDocumentQaResult 
     const pageKeyValue = pageKey(attachmentId, page);
     if (seenPages.has(pageKeyValue)) return undefined;
     seenPages.add(pageKeyValue);
-    const facts = item['facts'].map((fact) => parseFact(fact, attachmentId, page, item['visibleText'] as string));
-    const evidence = item['evidence'].map((entry) => parseEvidence(entry, attachmentId, page, item['visibleText'] as string, 'visible_text'));
-    if (facts.some((fact) => !fact) || evidence.some((entry) => !entry)) return undefined;
-    pages.push({ attachmentId, page, visibleText: item['visibleText'], facts: facts as LineDocumentQaFact[], evidence: evidence as LineDocumentQaEvidence[] });
+    // A claim that cannot be checked against this page is dropped; the checked ones stay.
+    const facts = item['facts'].flatMap((fact) => parseFact(fact, attachmentId, page, item['visibleText'] as string) ?? []);
+    const evidence = item['evidence'].flatMap((entry) => parseEvidence(entry, attachmentId, page, item['visibleText'] as string, 'visible_text') ?? []);
+    pages.push({ attachmentId, page, visibleText: item['visibleText'], facts, evidence });
   }
   const readKeys = new Set(coverage.read.map(item => pageKey(item.attachmentId, item.page)));
   if (pages.length !== readKeys.size || pages.some(item => !readKeys.has(pageKey(item.attachmentId, item.page)))) return undefined;
-  if (!Array.isArray(value['answerPageRefs']) || value['answerPageRefs'].length > 20 || (readKeys.size > 0 && value['answerPageRefs'].length === 0)
+  // With per-question answers the whole answer's sources may be left to them (NAT05 2026-09-29), so an empty
+  // top-level list is checked after questionCoverage below; everything a list does name must be a read page.
+  if (!Array.isArray(value['answerPageRefs']) || value['answerPageRefs'].length > 20
+    || (readKeys.size > 0 && value['answerPageRefs'].length === 0 && value['questionCoverage'] === undefined)
     || value['answerPageRefs'].some(ref => !isObject(ref) || typeof ref['attachmentId'] !== 'string' || !parsePage(ref['page']) || !readKeys.has(pageKey(ref['attachmentId'], Number(ref['page']))))) return undefined;
-  const answerPageRefs = value['answerPageRefs'].map(ref => ({ attachmentId: ref['attachmentId'] as string, page: Number(ref['page']) }));
+  let answerPageRefs = value['answerPageRefs'].map(ref => ({ attachmentId: ref['attachmentId'] as string, page: Number(ref['page']) }));
   let questionCoverage: LineDocumentQaQuestionCoverage[] | undefined;
   if (value['questionCoverage'] !== undefined) {
     if (!Array.isArray(value['questionCoverage']) || value['questionCoverage'].length < 1 || value['questionCoverage'].length > 8) return undefined;
@@ -321,7 +332,12 @@ export function parseLineDocumentQaResult(value: unknown): LineDocumentQaResult 
         answer: item.status === 'unreadable' ? LINE_DOCUMENT_QA_UNREADABLE_ANSWER : item.answer, answerPageRefs: refs });
     }
   }
-  const answer = questionCoverage ? questionCoverage.map(item => `คำถาม ${item.subrequestIndex + 1}: ${item.answer}`).join('\n\n')
+  if (!answerPageRefs.length && questionCoverage) {
+    answerPageRefs = [...new Map(questionCoverage.flatMap(item => item.answerPageRefs).map(ref => [pageKey(ref.attachmentId, ref.page), ref])).values()];
+    if (readKeys.size > 0 && !answerPageRefs.length) return undefined;
+  }
+  const answer = questionCoverage ? questionCoverage.length === 1 ? questionCoverage[0]!.answer
+    : questionCoverage.map(item => `คำถาม ${item.subrequestIndex + 1}: ${item.answer}`).join('\n\n')
     : readKeys.size ? value['answer'] : LINE_DOCUMENT_QA_UNREADABLE_ANSWER;
   if (!boundedText(answer, LINE_DOCUMENT_QA_LIMITS.maxAnswerBytes)) return undefined;
   const parsed: LineDocumentQaResult = { version: 1, readerVersion: LINE_DOCUMENT_QA_READER_VERSION,
