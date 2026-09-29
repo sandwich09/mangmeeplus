@@ -151,6 +151,17 @@ describe('LINE expense draft conversation logic', () => {
     assert.ok(photo.unresolvedQuestions.some((question) => question.id === 'I01-CATEGORY'));
   });
 
+  it('grounds an amount the user spelled out in Thai words (NAT-12 "สามร้อยบาท")', () => {
+    const state = buildInitialLineExpenseDraftContinuation({
+      workflowId: 'wf-spoken', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',
+      targetRevision: '2026-09-29T00:00:00.000Z', provisionalExpenseDate: '2026-09-29', categories,
+      messageText: 'ทำร่างค่าส่งของวันนี้สามร้อยบาทให้หน่อย',
+      hints: { confidence: 0.93, items: [{ sourceText: 'ค่าส่งของวันนี้สามร้อยบาท', description: 'ค่าส่งของ', totalAmount: '300' }] },
+    });
+    assert.equal(state.items[0]?.totalAmount, '300');
+    assert.equal(state.unresolvedQuestions.some((question) => question.id === 'I01-PRICE'), false);
+  });
+
   it('does not borrow another item number as evidence for an incomplete item', () => {
     const state = buildInitialLineExpenseDraftContinuation({
       workflowId: 'wf-cross-item', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',

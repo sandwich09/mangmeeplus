@@ -133,6 +133,15 @@ Postback `{action:'reimbursement_draft_confirm'|'reimbursement_draft_cancel',act
 
 HTTP surface ของหน้า preview: `GET /companies/:companyId/reimbursements/draft-actions/:actionId` คืน exact preview + revision/digest/expiry หลัง full-owner authorization; `POST .../:actionId/confirm` และ `POST .../:actionId/cancel` รับเพียง `{previewRevision,confirmationDigest}` พร้อม existing authenticated session/LINE handoff context. GET ไม่เปลี่ยน financial state; POST ใช้ domain handler เดียวกับ LINE postback. Web-render receipt ผูก action revision/digest ที่ผู้ใช้เปิดจริงก่อน confirm; ไม่มี model-tool route ไป POST เหล่านี้. Controller ใช้ current operation predicate ตาม §8 ไม่บังคับ create permission กับ UPDATE ทุกกรณี. Reuse existing web auth/CSRF/handoff controls.
 
+**หมายเหตุ 2026-09-30 (NAT04 ใบเบิกจากบิลที่ส่งไว้):** แก้จากผลโมเดลจริง ไม่เปลี่ยนสัญญาเดิม
+
+- **อ่านร่างกลับแล้วไม่ "เปลี่ยนไปแล้ว":** `get` เตรียม command ใหม่แล้วเทียบกับ command ที่เก็บ แต่เทียบของสดกับ JSON ที่เก็บไว้ บรรทัดที่ไม่มีไฟล์ใบเสร็จ (เบิกจากบิลที่บันทึกไว้) มี `attachmentSnapshot: undefined` ซึ่ง JSON ไม่มี จึงเป็น stale ทุกครั้งที่แชตแสดงร่าง ตอนนี้เทียบในรูป JSON แบบเดียวกับที่ `preview` บันทึก
+- **รายการบิลถึงผู้ใช้:** `readDisplayOptions` ตรวจซ้ำและแสดงเฉพาะบิลที่เบิกได้ (`eligible`) บิลที่เบิกไม่ได้เคยทำให้การตรวจซ้ำล้มแล้วซ่อนทั้งรายการ; รายการแสดงร้าน วันที่แบบไทย และยอด
+- **คำถาม "เบิกใบไหน" มาพร้อมรายการ:** เมื่อ planner ถามก่อนเรียก options gateway เรียก `reimbursement.draft.get_options` (อ่านอย่างเดียว) ให้ API พิมพ์รายการบิลคู่กับคำถาม และไม่เรียก planning รอบสอง
+- **locator และ span มาจากระบบ ไม่ให้โมเดลจำหรือนับ:** gateway คง `taskId`/`actionId` ของ get_options เฉพาะค่าที่ API ออกให้ (locator ของ turn นี้ หรือ action ที่ task จำไว้) — `taskRef` ของบทสนทนาไม่ใช่ task ของร่าง; preview ใช้ locator และ task revision จาก get_options ของ turn เดียวกัน และคำของผู้ใช้ (`fields.reason` ฯลฯ) ได้ span ที่ตรงตัวครั้งเดียวในข้อความ ตามกฎ quote ของ compact decoder; API ยังตรวจ id ค่า และ proof ทุกตัวเหมือนเดิม
+- **ต่อคำขอเบิกข้าม turn:** turn ที่ router ต่อ task เดิม (`taskRef`) ใช้ action ที่ task นั้นจำไว้ (`reimbursementActionId*`) ได้ แทนการปฏิเสธเป็น `FINANCIAL_ACTION_SELECTION_REQUIRED`; สาขาเริ่มต้นเลือกด้วยกฎสาขาสมาชิกเดียวกับ LINE capture และยังเปลี่ยนได้
+- **router:** คำถามว่าบิลที่ผู้ใช้จ่ายเองเบิกได้ไหม อ่าน `reimbursement.get_summary` ไม่ใช่ความรู้ทั่วไป; ข้อความถัดไปที่ชี้บิล ("บิลร้าน X ที่ส่งไว้") ต่อคำขอเบิกเดิมแม้ไม่มีคำกริยา
+
 ## 6. Action storage, idempotency และ transaction
 
 เพิ่ม Prisma model **`ReimbursementDraftAction`** ใน `apps/api/prisma/schema.prisma` สำหรับใบเบิกเท่านั้น; no generic event-sourced workflow. PG เป็น source of truth; Redisใช้ rate-limit/cacheได้แต่ไม่มีสิทธิ์ตัดสินว่า createสำเร็จหรือไม่.

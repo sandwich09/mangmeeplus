@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildReimbursementDraftMessages, reimbursementPreviewText } from './line-reimbursement-draft-card.logic';
+import { buildReimbursementDraftMessages, buildReimbursementOptionsMessages, reimbursementPreviewText } from './line-reimbursement-draft-card.logic';
 import { parseLineReimbursementDraftControl } from '../../application/line-reimbursement-draft.service';
 import type { LineReimbursementDraftPreview } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
 
@@ -32,5 +32,28 @@ describe('LINE reimbursement exact preview control', () => {
     assert.equal(messages.length, 1); assert.equal(messages[0]!.type, 'text');
     assert.ok(JSON.stringify(messages).includes(`/reimbursements/draft-actions/${preview.actionId}`));
     assert.ok(!JSON.stringify(messages).includes('reimbursement_draft_confirm'));
+  });
+});
+
+describe('reimbursement choices speak to the customer (NAT04 2026-09-29)', () => {
+  it('names missing fields in words, never paths', () => {
+    const [message] = buildReimbursementDraftMessages({ status: 'needs_fields', actionId: 'a', actionRevision: 1,
+      fieldPaths: ['fields.reason', 'lineChanges.0.values.amount'] }, 'https://web.test', 'company');
+    assert.equal((message as any).text, 'ร่างใบเบิกยังไม่ครบค่ะ ยังไม่ได้บันทึกอะไร ขอเพิ่ม: เหตุผลการเบิก, ยอดเงิน');
+    const [empty] = buildReimbursementDraftMessages({ status: 'needs_fields', actionId: 'a', actionRevision: 1, fieldPaths: [] }, 'https://web.test', 'company');
+    assert.doesNotMatch((empty as any).text, /กรุณาระบุ: $|ขอเพิ่ม/u);
+  });
+
+  it('offers only claimable bills once branch and requester are chosen, without category or file noise', () => {
+    const text = (buildReimbursementOptionsMessages({ selected: { branchChoiceId: 'b', requesterChoiceId: 'r' }, pages: {}, choices: [
+      { kind: 'BRANCH', label: 'สำนักงานใหญ่ (BKK)' }, { kind: 'REQUESTER', label: 'คุณเอ' }, { kind: 'CATEGORY', label: 'อาหาร' },
+      { kind: 'ATTACHMENT', label: 'receipt.png' },
+      { kind: 'SOURCE', label: 'NAT-STN-002 · ร้านเครื่องเขียนบ้านกระดาษ', details: { eligible: true, incurredDate: '2026-09-26', amount: '380' } },
+      { kind: 'SOURCE', label: 'EXP-1 · ปั๊มน้ำมัน', details: { eligible: false } },
+      { kind: 'SOURCE', label: 'NAT-STN-001 · ร้านเครื่องเขียนสมใจ', details: { eligible: true, incurredDate: '2026-09-24', amount: '245' } },
+    ] })[0] as any).text as string;
+    assert.match(text, /^เลือกบิลที่จะเบิก/u);
+    assert.match(text, /1\) NAT-STN-002 · ร้านเครื่องเขียนบ้านกระดาษ · 26 ก\.ย\. 2569 · 380 บาท\n2\) NAT-STN-001 · ร้านเครื่องเขียนสมใจ · 24 ก\.ย\. 2569 · 245 บาท/u);
+    assert.doesNotMatch(text, /ปั๊มน้ำมัน|สำนักงานใหญ่|คุณเอ|อาหาร|receipt\.png/u);
   });
 });

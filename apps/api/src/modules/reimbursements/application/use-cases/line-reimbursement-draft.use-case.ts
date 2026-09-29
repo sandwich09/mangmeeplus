@@ -476,7 +476,10 @@ export class LineReimbursementDraftUseCase {
             title: command.title ?? '', reason: command.reason,
             missingReceiptReason: command.missingReceiptReason ?? null, lines,
           });
-      return isDeepStrictEqual(prepared.command, command);
+      // The stored command is the JSON form preview() saved; compare like with like. A line with no receipt file
+      // prepares `attachmentSnapshot: undefined`, a key the stored JSON never has (NAT04 2026-09-30: every preview
+      // of a bill claimed by reference read as changed the moment it was shown).
+      return isDeepStrictEqual(jsonClone(prepared.command), command);
     } catch { return false; }
   }
 

@@ -48,7 +48,7 @@ import {
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
 import { aiSelectableExpenseCategories } from '../../../expenses/application/services/expense-category-bootstrap.service';
 import { LINE_RECENT_CAPTURE_WINDOW_MS, listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
-import { receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/line-receipt-status.logic';
+import { namesLineMedia, receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/line-receipt-status.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type { ExpenseRecord } from '../../../expenses/domain/models/expense.model';
 import { pickLineDefaultBranchId } from '../../../expenses/domain/logic/line-receipt-branch.logic';
@@ -69,6 +69,8 @@ import {
   draftUpdateBlockedReply,
   draftUpdateChangedReply,
   draftUpdateMoveSuggestionReply,
+  draftUpdateCanonicalDiff,
+  formatRecordLabel,
 } from '../../domain/logic/line-draft-update-card.logic';
 import {
   CHECK_BILL_PAYMENT_CHOICES,
@@ -1264,6 +1266,19 @@ export function toAiTurnIntent(rawIntent: string, refusalReason?: string): (type
  *  normally (never consume the pending row on a guess).
  *  ponytail: substring match over a fixed keyword set — enough for the short yes/no follow-up;
  *  swap for the intake router only if free-form replies start slipping through. */
+/** NAT04/NAT12 (2026-09-29): the two answers a person types to the one unconfirmed piece of work this chat
+ *  holds (an expense-edit preview or a reimbursement draft) — drop it, or look at it again without saving.
+ *  Production answers open work with its own matchers before routing (RECEIPT-05); without this the cancel went
+ *  to a general answer that said "ยกเลิกแล้ว" while the preview and its task stayed open. Anything else, or any
+ *  number in the text (a new value), is an ordinary turn. */
+export function pendingWorkReply(text: string): 'cancel' | 'review' | null {
+  const t = normalizeLineText(text).trim();
+  if (!t || t.length > 80 || /[0-9๐-๙]/u.test(t) || /(?:ไม่|อย่า)ยกเลิก/u.test(t)) return null;
+  if (/ยกเลิก|ไม่เอาแล้ว|ไม่ต้องแล้ว|ไม่ทำแล้ว|\bcancel\b/iu.test(t)) return 'cancel';
+  if (/(?:ยังไม่ต้อง|อย่าเพิ่ง|ยังไม่|ไม่ต้อง)(?:บันทึก|ยืนยัน|เซฟ|save)/iu.test(t)) return 'review';
+  return null;
+}
+
 export function classifyPendingMediaReply(text: string): 'receipt' | 'illustration' | 'multiple' | 'ambiguous' {
   const t = (text ?? '').toLowerCase().trim();
   // The question is numbered, so a lone choice is unambiguous. Anchored to the whole reply on
@@ -3426,6 +3441,7 @@ export class ProcessLineWebhookUseCase {
         userMessagePreview: normalizeLineText(event.messageText),
         replyText: outcome.preview.previewId, intent: 'CORRECTION',
       });
+      await this.settleWriteLane(event, 'needs_user', 'กดยืนยันในบัตรเพื่อแก้รายการ หรือพิมพ์ยกเลิก');
       await this.updateEventLog(event.webhookEventId, 'draft_update_preview', undefined, ctx.companyId);
       return 'proposed';
     }
@@ -3612,6 +3628,88 @@ export class ProcessLineWebhookUseCase {
         companyId: bound.owner.companyId, turnId: mixed.requestId, kind: 'turn' }, 'acked');
     }
     return result;
+  }
+
+  /** Cancel or review the one unconfirmed piece of work this chat holds; see `pendingWorkReply`. A cancel is real
+   *  (the preview or draft is dropped and its waiting task closed) and the reply says what stays recorded; a
+   *  review restates the pending work from the server's own snapshot and writes nothing. */
+  private async handlePendingWorkControl(event: LineTextEvent, ctx: RequestContext): Promise<boolean> {
+    const bound = this.boundConversations.get(event), reply = pendingWorkReply(event.messageText);
+    if (!bound || !reply) return false;
+    const chatKeyHash = chatKeyHashOf(event);
+    const edit = await this.draftUpdate?.pendingPreview(ctx, chatKeyHash).catch(() => null) ?? null;
+    const action = await this.reimbursementDrafts?.active({ ctx, owner: bound.owner, ownerEpoch: bound.epoch }).catch(() => null) ?? null;
+    // An expense draft still collecting answers in this chat is pending work too (NAT-12: "เดี๋ยว ๆ
+    // ยกเลิกก่อน" after a text-note draft must not be answered "nothing was saved").
+    const openDrafts = reply === 'cancel' && this.expenseDraftConversation
+      ? (await this.expenseDraftConversation.routeContexts(ctx, chatKeyHash).catch(() => [])).filter(draft => draft.status === 'OPEN')
+      : [];
+    // Nothing pending is an ordinary turn; two pending things are the router's to ask about.
+    if ([edit, action, ...openDrafts].filter(Boolean).length !== 1) return false;
+    let text: string;
+    if (openDrafts.length) {
+      const result = await this.expenseDraftConversation!.execute(ctx, { messageText: 'ยกเลิก', chatKeyHash,
+        webhookEventId: event.webhookEventId, captureHints: { targetExpenseId: openDrafts[0]!.expenseId } });
+      if (!result.handled || result.status !== 'CANCELLED') return false;
+      await this.closeWaitingWriteTask(bound);
+      text = [...result.replyTexts, 'ร่างนี้ยังบันทึกไว้ (ยังไม่ยืนยัน ยังไม่จ่าย) ถ้าไม่ใช้แล้วลบได้ในเว็บค่ะ',
+        absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${openDrafts[0]!.expenseId}`)].join('\n');
+    } else if (edit) {
+      const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${edit.expenseId}`);
+      if (reply === 'review') text = `${draftUpdateCanonicalDiff(edit)}\n\nยังไม่ได้แก้รายการค่ะ กดยืนยันในบัตรเมื่อพร้อม หรือพิมพ์ยกเลิกได้เลย`;
+      else if (await this.draftUpdate!.cancel(ctx, chatKeyHash, edit.previewId) === 'cancelled') {
+        await this.closeWaitingWriteTask(bound);
+        text = [`ยกเลิกการแก้ไขแล้วค่ะ รายการเดิมไม่เปลี่ยน: ${formatRecordLabel(edit.record)} · ยอดรวม ${moneyLabel(edit.totalsBefore.grandTotalAmount)} บาท`,
+          'รายการนี้ยังบันทึกเป็นร่างไว้ (ยังไม่ยืนยัน ยังไม่จ่าย) ถ้าไม่ใช้แล้วลบได้ในเว็บค่ะ', link].join('\n');
+      } else text = 'คำขอแก้ไขนี้หมดอายุหรือรายการเปลี่ยนไปแล้วค่ะ ยังไม่ได้แก้ไขรายการ';
+    } else {
+      const current = await this.reimbursementDrafts.get({ ctx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: action!.id });
+      if (reply === 'review') text = current.status === 'preview'
+        ? `${await this.reimbursementReviewText(ctx, current.preview)}\n\nยังไม่ได้บันทึกใบเบิกค่ะ กดบันทึกในบัตรเมื่อพร้อม หรือพิมพ์ยกเลิกได้เลย`
+        : 'ร่างใบเบิกนี้ยังไม่ครบค่ะ ยังไม่ได้บันทึกอะไร บอกบิลหรือข้อมูลที่ต้องการเบิกต่อได้เลย หรือพิมพ์ยกเลิก';
+      else {
+        const result = current.status === 'preview'
+          ? await this.reimbursementDrafts.cancel({ ctx, owner: bound.owner, ownerEpoch: bound.epoch, control: { action: 'reimbursement_draft_cancel',
+            actionId: current.preview.actionId, previewRevision: current.preview.previewRevision, confirmationDigest: current.preview.confirmationDigest } })
+          : await this.reimbursementDrafts.cancelCollection({ ctx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: action!.id });
+        if (result.status === 'cancelled') {
+          await this.finishReimbursementTask(bound.owner, bound.epoch, action!.id, false);
+          await this.closeWaitingWriteTask(bound);
+          text = 'ยกเลิกร่างใบเบิกนี้แล้วค่ะ ยังไม่ได้สร้างใบเบิกหรือเปลี่ยนรายการใด ถ้าพร้อมแล้วเริ่มใหม่ได้เลย';
+        } else text = result.status === 'applied' ? 'ร่างใบเบิกนี้บันทึกไปแล้วค่ะ จึงยกเลิกจากแชตไม่ได้ ตรวจหรือยกเลิกได้ในเว็บ'
+          : 'ร่างใบเบิกนี้หมดอายุหรือเปลี่ยนไปแล้วค่ะ ยังไม่ได้สร้างใบเบิก';
+      }
+    }
+    await this.deliverReply(event, text);
+    await this.persistIntakeTurn({ event, userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: normalizeLineText(event.messageText), replyText: text, intent: reply === 'cancel' ? 'CORRECTION' : 'CLARIFY' });
+    await this.updateEventLog(event.webhookEventId, reply === 'cancel' ? 'pending_work_cancelled' : 'pending_work_reviewed', undefined, ctx.companyId);
+    return true;
+  }
+
+  /** The pending reimbursement preview in words, with each source bill's own shop and document number. */
+  private async reimbursementReviewText(ctx: RequestContext, preview: import('../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case').LineReimbursementDraftPreview): Promise<string> {
+    const lines = await Promise.all(preview.after.lines.map(async line => {
+      const source = line.linkedExpenseId ? await this.expenseRepo?.findById(ctx.companyId, line.linkedExpenseId).catch(() => null) : null;
+      return [`• ${source?.vendorNameSnapshot ?? line.description}${source?.vendorDocumentNumber ? ` (${source.vendorDocumentNumber})` : ''}`,
+        `  ${line.description} · ${formatReplyDate(line.incurredDate) ?? line.incurredDate} · ${moneyLabel(line.amount)} บาท`,
+        ...(line.purpose ? [`  วัตถุประสงค์: ${line.purpose}`] : [])].join('\n');
+    }));
+    return ['ร่างใบเบิกที่รอยืนยัน:', ...lines, `ยอดรวม ${moneyLabel(preview.after.amount)} บาท`, `เหตุผล: ${preview.after.reason}`].join('\n');
+  }
+
+  /** Close the one task still waiting on unconfirmed work after that work was cancelled. */
+  private async closeWaitingWriteTask(bound: { owner: LineConversationOwner; epoch: number }): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const projection = await this.contextV2.projection(bound.owner);
+      if (!projection || projection.lifecycleEpoch !== bound.epoch) return;
+      const waiting = projection.tasks.filter(task => ['active', 'waiting_user', 'paused'].includes(task.state)
+        && task.subrequests.some(sub => sub.kind === 'write' && ['pending', 'needs_user'].includes(sub.status)));
+      if (waiting.length !== 1) return;
+      const tasks = projection.tasks.map(task => task !== waiting[0] ? task : { ...task, revision: task.revision + 1, state: 'canceled' as const,
+        subrequests: task.subrequests.map(sub => sub.kind === 'write' && ['pending', 'needs_user'].includes(sub.status) ? { ...sub, status: 'unsupported' as const } : sub) });
+      if (await this.contextV2.save(bound.owner, projection.stateVersion, bound.epoch, { version: 2, tasks })) return;
+    }
   }
 
   private async handleDocumentQaControl(event: LineTextEvent): Promise<boolean> {
@@ -4110,7 +4208,10 @@ export class ProcessLineWebhookUseCase {
       return [task.taskId, task.revision];
     }));
     const result = this.deliveryReimbursements?.get(event)?.result;
-    const actionIds = result?.status === 'preview' ? [result.preview.actionId] : result?.status === 'applied' ? [String(result.receipt.actionId)] : [];
+    // A draft still collecting is remembered too, so the next message that continues this task reaches the
+    // same draft instead of being refused as a second financial action (NAT04 2026-09-29).
+    const actionIds = result?.status === 'preview' ? [result.preview.actionId] : result?.status === 'applied' ? [String(result.receipt.actionId)]
+      : result?.status === 'needs_fields' || result?.status === 'needs_target' ? [result.actionId] : [];
     const completion = { version: 1 as const, actionIds, ownerEpoch: bound.epoch, conversationId: bound.id,
       accessFingerprint: this.deliveryAccess.get(event)!.fingerprint, mappings, coverage, revisions };
     const previous = (row.completionJson ?? {}) as Record<string, Prisma.InputJsonValue>;
@@ -4189,6 +4290,33 @@ export class ProcessLineWebhookUseCase {
       }
       if (await this.contextV2.save(bound.owner, projection.stateVersion, bound.epoch, { version: 2, tasks })) return;
     }
+  }
+
+  /** A legacy write lane's outcome for its bound task (NAT12 2026-09-29): a created draft stayed "pending" in the
+   *  task projection, so the next answer told the customer nothing had been recorded. */
+  /** A correction of this chat's one open text-note draft, applied through the draft's own answer path. */
+  private async correctOpenExpenseDraft(event: LineTextEvent, ctx: RequestContext, hints: LineIntakeRoutePlan['correctionHints'],
+    messageText: string, candidates: LineIntakeCorrectionCandidate[]) {
+    if (!hints || !this.expenseDraftConversation || !(hints.amount || hints.expenseDate || hints.vendorName)) return null;
+    const chatKeyHash = chatKeyHashOf(event);
+    const open = (await this.expenseDraftConversation.routeContexts(ctx, chatKeyHash)).filter(draft => draft.status === 'OPEN');
+    const draft = open.length === 1 && candidates.some(candidate => candidate.id === open[0]!.expenseId) ? open[0]! : undefined;
+    if (!draft || (hints.targetExpenseId && hints.targetExpenseId !== draft.expenseId)) return null;
+    const itemRef = hints.amount ? await this.expenseDraftConversation.soleItemRef(ctx, chatKeyHash, draft.expenseId) : undefined;
+    if (hints.amount && !itemRef) return null;
+    const result = await this.expenseDraftConversation.execute(ctx, { messageText, chatKeyHash, webhookEventId: event.webhookEventId,
+      captureHints: { targetExpenseId: draft.expenseId,
+        ...(hints.expenseDate ? { expenseDate: hints.expenseDate.to } : {}),
+        ...(hints.vendorName ? { vendorName: hints.vendorName.to } : {}),
+        ...(hints.amount ? { items: [{ itemRef, totalAmount: hints.amount.to, sourceText: messageText }] } : {}) } });
+    return result.handled && result.acceptedFields.length > 0 ? result : null;
+  }
+
+  private async settleWriteLane(event: LineTextEvent, status: 'handled' | 'needs_user', question?: string): Promise<void> {
+    const mappings = this.semanticTaskMappings.get(event);
+    if (!mappings?.length || this.mixedBusinessQuestions?.get(event)) return;
+    await this.settleSemanticTask(event, mappings.map(item => status === 'handled' ? { index: item.index, status }
+      : { index: item.index, status, reasonCode: 'BUSINESS_INPUT_REQUIRED', question: (question ?? '').slice(0, 500) }));
   }
 
   private documentQaQuestions(event: LineTextEvent, inventory: NonNullable<LineAiTurnRequest['semanticSubrequests']>) {
@@ -5702,6 +5830,9 @@ export class ProcessLineWebhookUseCase {
     if (await this.handlePreferenceCommand(event, requestId)) return;
     if (await this.handlePendingMediaControl(event)) return;
     if (await this.handleDocumentQaControl(event)) return;
+    if (await this.handlePendingWorkControl(event, { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+      membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
+      scopes: resolvedAccess.scopes, authProvider: 'line' })) return;
     if (await this.prepareRetainedTaskSelection(event)) return;
     const canQuery = resolvedAccess.permissions.includes('line.ai.query');
     const canEditLine = resolvedAccess.permissions.includes('expense.update');
@@ -6890,6 +7021,7 @@ export class ProcessLineWebhookUseCase {
         // persisted and ledgered, so a later turn resolves exactly what the user was asked.
         const clarifyReply = formatTextExpenseClarifyReply(error);
         await this.deliverReply(event, clarifyReply);
+        await this.settleWriteLane(event, 'needs_user', clarifyReply);
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: clarifyReply, intent: 'CLARIFY',
@@ -6957,6 +7089,7 @@ export class ProcessLineWebhookUseCase {
           categoryName: captured.categoryName,
           item: captured.expense.vendorNameSnapshot ?? captured.expense.note,
         }));
+      await this.settleWriteLane(event, 'handled');
       await this.ackConsumed(capturePlan, 'evidence_capture');
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -7009,6 +7142,21 @@ export class ProcessLineWebhookUseCase {
       // is the own-record marker, and the detector additionally refuses a message that names
       // somebody else's document. `amount` is handled below because it arrives as a router HINT
       // rather than as words this function can read.
+      // NAT-12: a text-note draft still collecting answers keeps its staged amount in that collection,
+      // not on a line, so correcting it is an answer to the draft itself.
+      const draftAnswer = expenseDraftConversationEnabled
+        ? await this.correctOpenExpenseDraft(event, expenseDraftCtx, routePlan.correctionHints, normalizedText, correctionCandidates)
+        : null;
+      if (draftAnswer) {
+        this.rememberContinuationDeliverySource(event, expenseDraftCtx, draftAnswer);
+        await this.deliverCompletedReplies(event, this.withDraftWebLink(draftAnswer.replyTexts, companyId, draftAnswer.expenseId), companyId, resolvedAccess, undefined, true);
+        await this.settleWriteLane(event, 'needs_user', draftAnswer.replyTexts.join('\n'));
+        await this.ackConsumed(correctionPlan, 'correction_apply');
+        await this.persistIntakeTurn({ event, userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: draftAnswer.replyTexts.join('\n'), intent: 'CORRECTION' });
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
       const hints = routePlan.correctionHints;
       const hintedFields = (['expenseDate', 'amount', 'vendorName', 'documentNumber', 'note'] as const)
         .filter((field) => hints?.[field] !== undefined);
@@ -9158,8 +9306,9 @@ export class ProcessLineWebhookUseCase {
   /**
    * §17.5 "ไฟล์เมื่อกี้ทำไมส่งไม่ได้" — deterministic, read-only, no OCR and no model.
    *
-   * Returns false ONLY when this deployment has no attempt log at all, in which case the caller
-   * keeps today's behaviour rather than inventing an answer. Everything else — including "we could
+   * Returns false when this deployment has no attempt log at all, or when this chat sent no file
+   * and the message names none, in which case the caller keeps today's behaviour rather than
+   * inventing an answer. Everything else — including "we could
    * not look" and "no attempt found" — is answered here, because §17.5's whole point is that those
    * two are DIFFERENT answers and neither may be dressed up as a cause.
    */
@@ -9181,6 +9330,9 @@ export class ProcessLineWebhookUseCase {
       // Bookkeeping rows (the A45 question, an earlier ambiguity list) are not files to report on.
       const attempts = rows.filter((row) => row.stage !== 'ROUTE');
       if (attempts.length === 0) {
+        // No file was sent in this chat, so a bare "บันทึกไปยัง" asks about the note just captured and
+        // the record lanes answer it (NAT-12). Naming a file still gets the honest "no file" reply.
+        if (!namesLineMedia(input.normalizedText)) return false;
         reply = FILE_ATTEMPT_NONE_REPLY;
       } else {
         // A numbered answer to an ambiguity list already shown wins over a fresh list (§17.5).

@@ -1,5 +1,6 @@
 /** NAT diagnostic: exact owner-approved questions, real synthetic ERP seeds, no answer oracle in execution. */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,7 +38,7 @@ export const NATURAL_DIAGNOSTIC_POLICY = {
   semanticReview: 'Review actual accepted LINE wire, actual tools and durable state; old exact-tool/fact/effect scorer is not NAT correctness.',
   publicLookup: false, fabricatedAssistantHistory: false,
   limitations: {
-    'NAT-04': 'MISSING_PRIOR_RECEIPTS: two earlier stationery uploads are not available. Run truthfulness/missing-evidence diagnostic only; full source-selection/reimbursement path is NOT_RUN_FIXTURE_REQUIRED.',
+    'NAT-04': 'PRIOR_RECEIPTS_SEEDED (2026-09-29): the two stationery receipts sent earlier in this chat are personally paid drafts with their receipt attached, seeded in the NAT-04 snapshot only; the assistant still has to offer the second one itself before turn 3.',
     'NAT-05': 'NAT-only readable synthetic PNG and draft label; owner has not certified visual labels or OCR answers. Original 225-case asset is preserved separately.',
     'NAT-06': 'NAT-only real two-page PDFs: partial page has readable text plus an obscured field; replacement page has unreadable business body and readable test marker. Labels remain unreviewed.',
     'NAT-03': 'Turn 3 ordinal must resolve only if the preceding accepted answer actually supplied that choice; no choices are seeded.',
@@ -119,6 +120,34 @@ function seedRows(): RuntimeSourceSnapshot['rows'] {
   }
   return rows;
 }
+/** NAT-04 prerequisite (fixture fix 2026-09-29): the two stationery receipts this user sent in this chat and
+ *  paid personally — drafts with the receipt attached, the exact sources a reimbursement draft may pick. Seeded
+ *  in the NAT-04 snapshot only, so every other scenario's reviewed totals stay unchanged. */
+function priorStationeryReceipts(lineUserId: string): RuntimeSourceSnapshot['rows'] {
+  const chatKeyHash = createHash('sha256').update(lineUserId, 'utf8').digest('hex').slice(0, 16);
+  const pixels = ['iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGM4oaEBAALUARkFUI+kAAAAAElFTkSuQmCC',
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPQ0DgBAAGUARn8OyyYAAAAAElFTkSuQmCC'];
+  return ([['1', 'ร้านเครื่องเขียนสมใจ', 'NAT-STN-001', '245.0000', 'ปากกาและแฟ้มเอกสาร', '2026-09-24'],
+    ['2', 'ร้านเครื่องเขียนบ้านกระดาษ', 'NAT-STN-002', '380.0000', 'กระดาษ A4 สองรีม', '2026-09-26']] as const)
+    .flatMap(([n, vendor, documentNumber, amount, item, date], index) => {
+      const bytes = Buffer.from(pixels[index]!, 'base64'), attachmentId = `nat-stationery-receipt-${n}`, expenseId = `NAT-STATIONERY-${n}`;
+      return [
+        { model: 'attachmentObject', data: { id: attachmentId, companyId, branchId: 'branch-bkk', storageProvider: 'db', bucket: 'db',
+          objectKey: `nat/stationery-receipt-${n}.png`, originalFileName: `stationery-receipt-${n}.png`, mimeType: 'image/png', byteSize: bytes.length,
+          checksumSha256: createHash('sha256').update(bytes).digest('hex'), status: 'ACTIVE', uploadedByUserId: actor, uploadedAt: `${date}T04:00:00.000Z`,
+          blob: { create: { companyId, data: bytes } } } },
+        { model: 'expenseRecord', data: { id: expenseId, companyId, branchId: 'branch-bkk', expenseDate: `${date}T05:00:00.000Z`, createdByUserId: actor,
+          payerUserId: actor, status: 'DRAFT', captureSource: 'LINE_UPLOAD', expenseCategoryId: 'nat-category-office', vendorNameSnapshot: vendor,
+          vendorDocumentNumber: documentNumber, currency: 'THB', vatMode: 'NO_VAT', taxEvidenceStatus: 'SUPPORTING_ONLY', paymentMethod: 'CASH',
+          subtotalAmount: amount, taxableAmount: amount, grandTotalAmount: amount, netPayableAmount: amount, outstandingAmount: amount, paidAmount: '0.0000',
+          paymentStatus: 'UNPAID', primaryAttachmentId: attachmentId, sourceChannelMetadataJson: { channel: 'LINE', kind: 'pending_media', chatKeyHash },
+          lines: { create: [{ companyId, lineNumber: 1, description: item, quantity: '1.0000', unitPrice: amount, lineSubtotalAmount: amount,
+            taxableAmount: amount, lineTotalAmount: amount, expenseCategoryId: 'nat-category-office' }] } } },
+        { model: 'attachmentLink', data: { id: `nat-stationery-link-${n}`, companyId, attachmentId, targetType: 'expense.record', targetId: expenseId,
+          purpose: 'expense.receipt.primary', linkedByUserId: actor } },
+      ];
+    });
+}
 const rows = seedRows();
 // Declared subjects for review, not a claim that each capability passed or was exercised.
 const sharedSubjects = ['C01', 'C02', 'C04', 'C06', 'C14', 'C15', 'C16', 'C18'];
@@ -158,7 +187,9 @@ export const NATURAL_CORPUS: ReliabilityCorpus = {
 validateReliabilityCorpus(NATURAL_CORPUS);
 export const NATURAL_SOURCE_SNAPSHOT_MANIFEST: CorpusSourceSnapshotManifest = {
   version: 1, snapshots: Object.fromEntries(NATURAL_CORPUS.fixtures.map(fixture => [fixture.fixture.sourceSnapshot, {
-    rows: structuredClone(rows), lineUserId: AUTHORED_SOURCE_SNAPSHOT_MANIFEST.snapshots[baseFixture.fixture.sourceSnapshot]!.lineUserId,
+    rows: fixture.id === 'NAT-04' ? [...structuredClone(rows), ...priorStationeryReceipts(AUTHORED_SOURCE_SNAPSHOT_MANIFEST.snapshots[baseFixture.fixture.sourceSnapshot]!.lineUserId)]
+      : structuredClone(rows),
+    lineUserId: AUTHORED_SOURCE_SNAPSHOT_MANIFEST.snapshots[baseFixture.fixture.sourceSnapshot]!.lineUserId,
     assets: Object.fromEntries(fixture.assets.map(asset => [asset.id, { path: join(NATURAL_ASSET_DIR, NATURAL_ASSET_MANIFEST[asset.id]!.fileName),
       sha256: asset.sha256, mimeType: asset.mimeType }])),
   }])), snapshotDigests: {},

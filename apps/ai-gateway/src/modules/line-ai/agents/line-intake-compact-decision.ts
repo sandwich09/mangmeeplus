@@ -138,7 +138,7 @@ function sourceRefs(raw: unknown, evidence: LineAiInputEvidenceV2): LineAiSemant
   return refs;
 }
 
-function boundedFilters(value: unknown, fileClause = false): Record<string, string | number | boolean | null> | undefined {
+function boundedFilters(value: unknown, kind?: unknown): Record<string, string | number | boolean | null> | undefined {
   if (!plainObject(value) || Object.keys(value).length > 16) return undefined;
   const filters = Object.create(null) as Record<string, string | number | boolean | null>;
   for (const [key, item] of Object.entries(value)) {
@@ -146,10 +146,14 @@ function boundedFilters(value: unknown, fileClause = false): Record<string, stri
     const scalar = item === null || typeof item === 'boolean'
       || typeof item === 'number' && Number.isFinite(item)
       || typeof item === 'string' && item.length <= 200;
-    if (fileClause) {
+    if (kind === 'file') {
       if (FILE_CLAUSE_FILTER_KEYS.has(key) && scalar) filters[key] = item as string | number | boolean | null;
       continue;
     }
+    // A write clause's values travel in its own hints (captureHints, correctionHints, reimbursementHints)
+    // and the draft tools' choices; its filters decide nothing. NAT-04 (2026-09-29): {"expenseIds":[…]} on a
+    // claim clause rejected the decision twice and the turn ran out of time — so a stray one is dropped.
+    if (kind === 'write' && (!KNOWN_FILTER_KEYS.has(key) || !scalar)) continue;
     if (!KNOWN_FILTER_KEYS.has(key) || !scalar) return undefined;
     filters[key] = item as string | number | boolean | null;
   }
@@ -405,7 +409,7 @@ export function parseLineIntakeCompactDecision(input: {
       || !SEMANTIC_KINDS.has(item['kind'] as LineAiSemanticSubrequestV2['kind'])
       || typeof item['goal'] !== 'string' || !item['goal'].trim() || item['goal'].length > 800) return reject('decision_shape_invalid');
     const refs = sourceRefs(item['sources'], inputEvidence);
-    const filters = boundedFilters(item['filters'], item['kind'] === 'file');
+    const filters = boundedFilters(item['filters'], item['kind']);
     if (!refs || !filters) return reject('decision_shape_invalid');
     const requiredEvidence = item['requiredEvidence'] === undefined ? [] : item['requiredEvidence'];
     const dependsOn = item['dependsOn'] === undefined ? [] : item['dependsOn'];

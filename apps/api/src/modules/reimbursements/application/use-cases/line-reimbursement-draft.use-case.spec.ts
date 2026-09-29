@@ -52,6 +52,37 @@ describe('LineReimbursementDraftUseCase', () => {
     assert.equal((repo as any).createRequest, undefined, 'preview has no financial write method');
   });
 
+  // NAT04 (2026-09-30): a line with no receipt file (a bill claimed by reference) was prepared again with
+  // `attachmentSnapshot: undefined`, a key the stored JSON never has, so the preview read as changed at once.
+  it('reads a fresh preview back as current when its lines carry no receipt snapshot', async () => {
+    let action = collecting();
+    const repo = {
+      isDraftActionOwnerCurrent: async () => true,
+      findOrCreateDraftAction: async () => action,
+      findDraftAction: async () => action,
+      resolveCreateBranchId: async () => 'br1',
+      assertReimbursementRequester: async () => ({ displayName: 'Owner' }),
+      findPolicy: async () => null,
+      resolveSourceLines: async (_company: string, _requester: string, _branch: string, _currency: string, lines: any[]) =>
+        lines.map(line => ({ ...line, sourceExpenseSnapshot: undefined, attachmentSnapshot: undefined })),
+      saveDraftActionPreview: async (input: any) => {
+        action = { ...action, status: 'PREVIEW', previewRevision: input.previewRevision, commandJson: input.commandJson,
+          previewJson: input.previewJson, sourceProofJson: input.sourceProofJson, confirmationDigest: input.confirmationDigest,
+          expiresAt: input.expiresAt, updatedAt: new Date(action.updatedAt.getTime() + 1) };
+        return action;
+      },
+    } as any;
+    const useCase = new LineReimbursementDraftUseCase(repo, { validate: async () => undefined } as any, config);
+    const request = { ctx: ctx(['line.ai.query', 'ai.tool.invoke', 'reimbursement.create']), owner,
+      key: { actionId, taskId, actionOrdinal: 1, operation: 'CREATE' as const }, operation: 'CREATE' as const,
+      sourceProof, request: { reason: 'ซื้อของใช้ในออฟฟิศ', branchId: 'br1', lines: [{ lineNo: 1,
+        incurredDate: '2026-09-24', description: 'ปากกาและแฟ้มเอกสาร', categoryKey: 'office', categoryLabel: 'ค่าอุปกรณ์สำนักงาน', amount: '245' }] } };
+    const now = new Date('2026-09-27T04:00:00.000Z');
+    assert.equal((await useCase.preview(request, now)).status, 'preview');
+    const read = await useCase.get({ ctx: request.ctx, owner, actionId, now: new Date(now.getTime() + 60_000) });
+    assert.equal(read.status, 'preview');
+  });
+
   it('keeps an APPLIED receipt readable while the writer flag is off, but still requires current read authority', async () => {
     const applied = { ...collecting(), status: 'APPLIED' as const, previewRevision: 1, requestId: actionId,
       confirmationDigest: 'c'.repeat(64), appliedAt: new Date(), appliedRequestUpdatedAt: new Date(),
