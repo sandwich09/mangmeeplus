@@ -116,9 +116,12 @@ export class LineReimbursementDraftAdapterService {
     if (!active || active.id !== input.actionId || active.status !== 'COLLECTING') return null;
     const options = this.accepted(active)?.options;
     if (!options || options.actionId !== active.id || options.taskId !== active.taskId || Date.parse(options.expiresAt) <= Date.now()) return null;
+    // NAT04 (2026-09-30): a bill that cannot be claimed is never offered, so it is neither re-checked nor printed.
+    // Re-checking it always failed (it is not eligible), which hid every claimable bill along with it.
+    const shown: StoredOptions = { ...options, choices: options.choices.filter(choice => choice.kind !== 'SOURCE' || choice.details?.['eligible'] !== false) };
     try {
-      for (const choice of options.choices) await this.currentChoice(input.ctx, choice, options);
-      return this.publicOptions(options);
+      for (const choice of shown.choices) await this.currentChoice(input.ctx, choice, options);
+      return this.publicOptions(shown);
     } catch { return null; }
   }
 

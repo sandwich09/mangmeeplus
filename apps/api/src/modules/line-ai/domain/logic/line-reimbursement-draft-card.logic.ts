@@ -1,6 +1,7 @@
 import type { LineReimbursementDraftResult, LineReimbursementDraftPreview } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { splitLineDeliveryText } from './line-delivery-plan.logic';
+import { formatThaiDate } from './line-draft-update-card.logic';
 
 /** Domain snapshots are already authorized and calculated. Preserve every line/diff/decimal. */
 export function reimbursementPreviewText(preview: LineReimbursementDraftPreview): string {
@@ -67,7 +68,8 @@ export function buildReimbursementOptionsMessages(options: { choices: Array<{ ki
   const lines = [bills.length ? 'เลือกบิลที่จะเบิกได้เลยค่ะ พิมพ์ลำดับหรือชื่อร้าน พร้อมเหตุผลการเบิก' : 'ตัวเลือกที่ตรวจสิทธิ์แล้ว กรุณาระบุชื่อที่ต้องการ หากชื่อซ้ำให้ระบุรายละเอียดเพิ่ม'];
   for (const [kind, name] of Object.entries(names)) {
     if (skipped.has(kind)) continue;
-    const choices = kind === 'SOURCE' ? bills.map(choice => ({ ...choice, label: [choice.label, choice.details?.['incurredDate'],
+    const choices = kind === 'SOURCE' ? bills.map(choice => ({ ...choice, label: [choice.label,
+      typeof choice.details?.['incurredDate'] === 'string' ? formatThaiDate(choice.details['incurredDate']) : undefined,
       choice.details?.['amount'] ? `${choice.details['amount']} บาท` : undefined].filter(Boolean).join(' · ') }))
       : options.choices.filter(choice => choice.kind === kind);
     if (!choices.length) continue;

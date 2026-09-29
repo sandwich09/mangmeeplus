@@ -53,7 +53,7 @@ describe('reimbursement choices speak to the customer (NAT04 2026-09-29)', () =>
       { kind: 'SOURCE', label: 'NAT-STN-001 · ร้านเครื่องเขียนสมใจ', details: { eligible: true, incurredDate: '2026-09-24', amount: '245' } },
     ] })[0] as any).text as string;
     assert.match(text, /^เลือกบิลที่จะเบิก/u);
-    assert.match(text, /1\) NAT-STN-002 · ร้านเครื่องเขียนบ้านกระดาษ · 2026-09-26 · 380 บาท\n2\) NAT-STN-001 · ร้านเครื่องเขียนสมใจ · 2026-09-24 · 245 บาท/u);
+    assert.match(text, /1\) NAT-STN-002 · ร้านเครื่องเขียนบ้านกระดาษ · 26 ก\.ย\. 2569 · 380 บาท\n2\) NAT-STN-001 · ร้านเครื่องเขียนสมใจ · 24 ก\.ย\. 2569 · 245 บาท/u);
     assert.doesNotMatch(text, /ปั๊มน้ำมัน|สำนักงานใหญ่|คุณเอ|อาหาร|receipt\.png/u);
   });
 });

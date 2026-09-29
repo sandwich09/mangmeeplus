@@ -10,6 +10,7 @@ import {
 import { runWithUsageContext } from '../../../common/usage/usage-context';
 import type { IModelProvider, ProviderInput, ProviderOutput } from '../infrastructure/provider/provider.port';
 import { runSemanticTurnV2 } from './semantic-turn-v2';
+import { completeReimbursementDraftInput } from './reimbursement-draft-input';
 
 const TASK = '40000000-0000-4000-8000-000000000001';
 
@@ -98,5 +99,71 @@ describe('semantic turn retained task source', () => {
     assert.equal(done.result.semanticCoverage?.[0]?.status, 'needs_user');
     assert.equal(done.result.semanticCoverage?.[0]?.reasonCode, 'CONFIRMATION_REQUIRED');
     assert.match(done.result.replyText, /ยังไม่ได้บันทึกหรือยื่นใบเบิก/u);
+  });
+});
+
+// NAT04 (2026-09-30): "งั้นช่วยทำร่างจากใบที่สอง ซื้อของใช้ในออฟฟิศ" echoed the conversation task id as the draft's
+// taskId (INVALID_REIMBURSEMENT_AUTHORITY), and a preview needs the user's words at their exact UTF-16 span.
+describe('reimbursement draft input completion', () => {
+  const ACTION = '40000000-0000-4000-8000-0000000000aa', DRAFT_TASK = '40000000-0000-4000-8000-0000000000bb';
+  const CONVERSATION = 'c'.repeat(64);
+  async function turn(text: string) {
+    const created = await createLineAiInputEvidence({ turnKey: 'claim-turn', parts: [{ partId: 'claim-part',
+      eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.parse('2026-09-30T03:00:00.000Z'), rawText: text }] });
+    assert.ok(created);
+    const candidates = await extractValueCandidatesV2(created.inputEvidence, '2026-09-30');
+    assert.ok(candidates);
+    const part = created.inputEvidence.parts[0]!;
+    const req: LineAiTurnRequest = { requestId: 'request-claim', webhookEventId: 'event-claim', messageText: text,
+      messagePreviewHash: 'e'.repeat(16), inputEvidence: created.inputEvidence, valueCandidates: candidates,
+      taskProjection: { version: 2, stateVersion: 5, lifecycleEpoch: 0, expiresAtMs: Date.parse('2026-09-30T04:00:00.000Z'),
+        tasks: [{ taskId: CONVERSATION, revision: 2, kind: 'write', state: 'active', userGoal: 'เบิก', subrequests: [{ index: 0, kind: 'write', goal: 'เบิก', status: 'pending' }],
+          slots: { reimbursementActionId0: ACTION } }] },
+      semanticSubrequests: [{ index: 0, kind: 'write', writeIntent: 'REIMBURSEMENT_REQUEST_START', goal: 'เบิกใบที่สอง', requiredEvidence: [],
+        requestedFilters: {}, dependsOn: [], taskRef: { taskId: CONVERSATION, taskRevision: 1, subrequestIndex: 0 },
+        evidenceRefs: [{ partId: part.partId, startUtf16: 0, endUtf16: text.length, rawSha256: part.rawSha256 }] }],
+      userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
+        permissions: ['ai.tool.invoke', 'reimbursement.create'], roles: ['owner'], branchIds: [], locationIds: [], locale: 'th-TH' } } as LineAiTurnRequest;
+    return { req, part };
+  }
+  const options: ToolResult = { toolName: 'reimbursement.draft.get_options', status: 'ok', sourceRefs: [], asOf: '2026-09-30T03:00:00.000Z',
+    data: { actionLocator: { actionId: ACTION, taskId: DRAFT_TASK, operation: 'CREATE' }, options: { taskRevision: 0, choices: [] } } };
+
+  it('keeps only API-issued draft locators on get_options', async () => {
+    const { req } = await turn('งั้นช่วยทำร่างจากใบที่สอง ซื้อของใช้ในออฟฟิศ');
+    assert.deepEqual(completeReimbursementDraftInput('reimbursement.draft.get_options',
+      { operation: 'CREATE', subrequestIndex: 0, taskId: CONVERSATION, actionId: ACTION }, [], req), { operation: 'CREATE', subrequestIndex: 0, actionId: ACTION });
+    assert.deepEqual(completeReimbursementDraftInput('reimbursement.draft.get_options',
+      { operation: 'CREATE', subrequestIndex: 0, actionId: 'f'.repeat(64) }, [], req), { operation: 'CREATE', subrequestIndex: 0 });
+    assert.deepEqual(completeReimbursementDraftInput('reimbursement.draft.get_options',
+      { operation: 'CREATE', subrequestIndex: 0, taskId: DRAFT_TASK, actionId: ACTION }, [{ result: options }], req),
+      { operation: 'CREATE', subrequestIndex: 0, taskId: DRAFT_TASK, actionId: ACTION });
+  });
+
+  it('gives a preview the issued locator and binds the user\'s words to their exact span', async () => {
+    const text = 'งั้นช่วยทำร่างจากใบที่สอง ซื้อของใช้ในออฟฟิศ';
+    const { req, part } = await turn(text);
+    const completed = completeReimbursementDraftInput('reimbursement.draft.preview_create', { action: { actionId: ACTION, taskId: CONVERSATION },
+      proposal: { lineChanges: [{ operation: 'ADD', values: { linkedExpenseChoiceId: 'a'.repeat(64) } }],
+        fields: { reason: { value: 'ซื้อของใช้ในออฟฟิศ', proof: { kind: 'USER_TEXT', refs: [{ partId: part.partId, startUtf16: 3, endUtf16: 9, rawSha256: part.rawSha256 }] } } } } },
+      [{ result: options }], req) as Record<string, any>;
+    const start = text.indexOf('ซื้อของใช้ในออฟฟิศ');
+    assert.deepEqual(completed.action, { actionId: ACTION, taskId: DRAFT_TASK, operation: 'CREATE' });
+    assert.equal(completed.proposal.taskId, DRAFT_TASK);
+    assert.equal(completed.proposal.taskRevision, 0);
+    assert.equal(completed.proposal.schemaVersion, 1);
+    assert.deepEqual(completed.proposal.fields.reason, { value: 'ซื้อของใช้ในออฟฟิศ', proof: { kind: 'USER_TEXT',
+      refs: [{ partId: part.partId, startUtf16: start, endUtf16: start + 'ซื้อของใช้ในออฟฟิศ'.length, rawSha256: part.rawSha256 }] } });
+    assert.deepEqual(completed.proposal.lineChanges, [{ operation: 'ADD', values: { linkedExpenseChoiceId: 'a'.repeat(64) } }]);
+    // Words the user did not type exactly once stay as planned, for the API to refuse.
+    const paraphrase = completeReimbursementDraftInput('reimbursement.draft.preview_create',
+      { action: {}, proposal: { fields: { reason: 'ซื้อของใช้สำนักงาน' } } }, [{ result: options }], req) as Record<string, any>;
+    assert.equal(paraphrase.proposal.fields.reason, 'ซื้อของใช้สำนักงาน');
+    const { req: twice } = await turn('ค่ารถ ค่ารถ');
+    assert.equal((completeReimbursementDraftInput('reimbursement.draft.preview_create',
+      { action: {}, proposal: { fields: { reason: 'ค่ารถ' } } }, [{ result: options }], twice) as Record<string, any>).proposal.fields.reason, 'ค่ารถ');
+    // No get_options result in this turn: nothing is filled in.
+    const bare = { action: { actionId: ACTION, taskId: CONVERSATION }, proposal: {} };
+    assert.equal(completeReimbursementDraftInput('reimbursement.draft.preview_create', bare, [], req), bare);
   });
 });
