@@ -824,12 +824,11 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: 'false' }).LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED, false);
   });
 
-  it('the CHAT/OCR split activation gate defaults off and opts in only on an explicit boolean', () => {
-    // ADR 0013 §9: this is the one switch that lets a company leave SHARED. It is wired into no
-    // deploy script, so UAT and Production parse this default and cannot change behaviour on merge.
-    assert.equal(apiConfigSchema.parse(base).AI_BUDGET_SPLIT_ACTIVATION_ENABLED, false);
-    assert.equal(apiConfigSchema.parse({ ...base, AI_BUDGET_SPLIT_ACTIVATION_ENABLED: 'true' }).AI_BUDGET_SPLIT_ACTIVATION_ENABLED, true);
-    assert.equal(apiConfigSchema.parse({ ...base, AI_BUDGET_SPLIT_ACTIVATION_ENABLED: 'false' }).AI_BUDGET_SPLIT_ACTIVATION_ENABLED, false);
+  it('has no CHAT/OCR split activation switch: SPLIT is always savable (owner 2026-09-29)', () => {
+    // A deploy that still carries the retired key must parse (zod drops unknown keys) and never
+    // surface it, so an old ECS baseline cannot bring the switch back.
+    assert.equal('AI_BUDGET_SPLIT_ACTIVATION_ENABLED' in apiConfigSchema.shape, false);
+    assert.equal('AI_BUDGET_SPLIT_ACTIVATION_ENABLED' in apiConfigSchema.parse({ ...base, AI_BUDGET_SPLIT_ACTIVATION_ENABLED: 'true' }), false);
   });
 
   it('buyer expense capture: intake ON by default, bounded page/concurrency/retention numbers', () => {

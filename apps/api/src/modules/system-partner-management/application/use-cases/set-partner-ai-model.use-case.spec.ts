@@ -16,13 +16,11 @@ import { nextBangkokMonthKey } from '../../../line-ai/application/company-ai-bud
 const APPROVED = 'global.anthropic.claude-sonnet-4-6';
 const CEILING = 50_000_000; // ฿500,000
 
-function makeConfig(aiBudgetSplitActivationEnabled = false) {
+function makeConfig() {
   return {
     approvedAiModelIds: [APPROVED, 'global.anthropic.claude-haiku-4-5-20251001-v1:0'],
     aiMonthlyBudgetSatang: 5_000_000,
     aiMonthlyBudgetSatangCeiling: CEILING,
-    // ADR 0013 §9: production default. Split tests opt in explicitly, exactly as an operator must.
-    aiBudgetSplitActivationEnabled,
   } as any;
 }
 
@@ -675,8 +673,8 @@ const policyCmd = (fields: Partial<SetPartnerAiModelCommand> = {}): SetPartnerAi
   now: SEPT, expectedBudgetRevision: `0:${THIS_MONTH}:ACTIVE`, ...fields,
 });
 
-const run = (state: ReturnType<typeof makePolicyPrisma>, fields: Partial<SetPartnerAiModelCommand> = {}, splitEnabled = true) =>
-  new SetPartnerAiModelUseCase(state.prisma, makeConfig(splitEnabled)).execute(policyCmd(fields));
+const run = (state: ReturnType<typeof makePolicyPrisma>, fields: Partial<SetPartnerAiModelCommand> = {}) =>
+  new SetPartnerAiModelUseCase(state.prisma, makeConfig()).execute(policyCmd(fields));
 
 const rejectsWith = async (promise: Promise<unknown>, needle: string) => assert.rejects(promise, (err: unknown) => {
   assert.ok(err instanceof UnprocessableEntityException, `expected 422 for ${needle}, got ${err}`);
@@ -687,22 +685,18 @@ const rejectsWith = async (promise: Promise<unknown>, needle: string) => assert.
 describe('SetPartnerAiModelUseCase — split budget policy', () => {
   beforeEach(() => __resetCompanyAiBudgetCache());
 
-  it('ADR 0013 §9: with the activation flag off, SPLIT cannot be saved for this month or scheduled', async () => {
+  it('owner 2026-09-29: SPLIT is savable for this month or next with no activation switch at all', async () => {
     for (const effectiveMonthKey of [THIS_MONTH, NEXT_MONTH]) {
       const state = makePolicyPrisma({ row: {} });
-      await rejectsWith(run(state, { budgetPolicy: split({ effectiveMonthKey }) }, false), 'partner_ai_budget_split_not_enabled');
-      assert.deepEqual(state.audits, [], 'a refused activation writes nothing at all');
+      const saved = await run(state, { budgetPolicy: split({ effectiveMonthKey }) });
+      assert.equal(state.audits.length, 1, effectiveMonthKey);
+      assert.equal('splitActivationEnabled' in saved.budgetPolicy, false, 'the retired flag is not on the wire');
     }
-    // Writing/keeping SHARED is unaffected by the gate.
-    const shared = makePolicyPrisma({ row: { budgetMode: 'SHARED' } });
-    const saved = await run(shared, { budgetPolicy: { mode: 'SHARED', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: null, effectiveMonthKey: THIS_MONTH } }, false);
-    assert.equal(saved.budgetPolicy.mode, 'SHARED');
-    assert.equal(saved.budgetPolicy.splitActivationEnabled, false);
   });
 
   it('absent = preserve: a model-only write never touches the policy or bumps its version', async () => {
     const state = makePolicyPrisma({ row: { budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70, budgetConfigVersion: 4, monthlyBudgetSatang: 100 } });
-    const saved = await new SetPartnerAiModelUseCase(state.prisma, makeConfig(true)).execute({
+    const saved = await new SetPartnerAiModelUseCase(state.prisma, makeConfig()).execute({
       ...policyCmd(), modelId: APPROVED, expectedModelId: null, expectedBudgetRevision: undefined,
     });
     assert.equal(state.row().budgetConfigVersion, 4);
@@ -712,7 +706,7 @@ describe('SetPartnerAiModelUseCase — split budget policy', () => {
 
   it('requires the CAS fence with any policy write, and refuses a stale one with 409', async () => {
     const state = makePolicyPrisma({ row: { budgetConfigVersion: 2 } });
-    await rejectsWith(new SetPartnerAiModelUseCase(state.prisma, makeConfig(true))
+    await rejectsWith(new SetPartnerAiModelUseCase(state.prisma, makeConfig())
       .execute({ ...policyCmd(), budgetPolicy: split(), expectedBudgetRevision: undefined }), 'partner_ai_budget_revision_required');
     await assert.rejects(run(state, { budgetPolicy: split(), expectedBudgetRevision: `1:${THIS_MONTH}:ACTIVE` }),
       (err: unknown) => err instanceof ConflictException && (err.getResponse() as any).code === 'partner_ai_budget_revision_conflict');
@@ -766,13 +760,13 @@ describe('SetPartnerAiModelUseCase — split budget policy', () => {
 
   it('refuses a total change that would leave an ACTIVE or PENDING allocation above the new total (F-05)', async () => {
     const active = makePolicyPrisma({ row: { monthlyBudgetSatang: 100, budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70 } });
-    await rejectsWith(new SetPartnerAiModelUseCase(active.prisma, makeConfig(true)).execute({
+    await rejectsWith(new SetPartnerAiModelUseCase(active.prisma, makeConfig()).execute({
       ...policyCmd(), monthlyBudgetSatang: 99, expectedMonthlyBudgetSatang: 100, expectedBudgetRevision: undefined,
     }), 'partner_ai_budget_total_below_split_allocation');
     assert.equal(active.row().monthlyBudgetSatang, 100);
 
     const scheduled = makePolicyPrisma({ row: { monthlyBudgetSatang: 100, pendingBudgetPolicy: split() } });
-    await rejectsWith(new SetPartnerAiModelUseCase(scheduled.prisma, makeConfig(true)).execute({
+    await rejectsWith(new SetPartnerAiModelUseCase(scheduled.prisma, makeConfig()).execute({
       ...policyCmd(), monthlyBudgetSatang: 99, expectedMonthlyBudgetSatang: 100, expectedBudgetRevision: undefined,
     }), 'partner_ai_budget_total_below_split_allocation');
 
@@ -781,7 +775,7 @@ describe('SetPartnerAiModelUseCase — split budget policy', () => {
       row: { monthlyBudgetSatang: 100, budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70 },
       platform: { monthlyBudgetSatang: 50, ceilingSatang: CEILING },
     });
-    await rejectsWith(new SetPartnerAiModelUseCase(cleared.prisma, makeConfig(true)).execute({
+    await rejectsWith(new SetPartnerAiModelUseCase(cleared.prisma, makeConfig()).execute({
       ...policyCmd(), monthlyBudgetSatang: null, expectedMonthlyBudgetSatang: 100, expectedBudgetRevision: undefined,
     }), 'partner_ai_budget_total_below_split_allocation');
   });
@@ -898,6 +892,23 @@ describe('SetPartnerAiModelUseCase — split budget policy', () => {
     const shared = makePolicyPrisma({ row: { modelId: null, monthlyBudgetSatang: 100 } });
     const saved = await run(shared, { monthlyBudgetSatang: 200, expectedMonthlyBudgetSatang: 100 });
     assert.equal(saved.modelId, null, 'the model gate is a SPLIT rule only');
+  });
+
+  it('admin tab rework: sets a shop chat credit this month through SHARED, even with spend, and a TOTAL edit never moves it', async () => {
+    const state = makePolicyPrisma({ row: { monthlyBudgetSatang: 8_000, chatMonthlyBudgetSatang: 8_000, modelId: null },
+      monthUsage: { costSatang: 5_000, callCount: 9 } });
+    const saved = await run(state, { budgetPolicy: { mode: 'SHARED', chatMonthlyBudgetSatang: 15_000, ocrMonthlyBudgetSatang: null, effectiveMonthKey: THIS_MONTH } });
+    assert.deepEqual([state.row().budgetMode, state.row().chatMonthlyBudgetSatang, state.row().monthlyBudgetSatang], ['SHARED', 15_000, 8_000]);
+    assert.deepEqual([saved.budgetPolicy.chatCapSatang, saved.budgetPolicy.chatSource], [15_000, 'ADMIN']);
+    assert.equal(state.audits.at(-1).metadataJson.fromChatMonthlyBudgetSatang, 8_000);
+    assert.equal(state.audits.at(-1).metadataJson.toChatMonthlyBudgetSatang, 15_000);
+    // The safety ceiling is its own field: raising it leaves the chat credit exactly where it was.
+    await run(state, { monthlyBudgetSatang: 300_000, expectedMonthlyBudgetSatang: 8_000, expectedBudgetRevision: undefined });
+    assert.deepEqual([state.row().monthlyBudgetSatang, state.row().chatMonthlyBudgetSatang], [300_000, 15_000]);
+    // Clearing hands the shop back to the default (or its sales deal).
+    const cleared = await run(state, { budgetPolicy: { mode: 'SHARED', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: null, effectiveMonthKey: THIS_MONTH },
+      expectedBudgetRevision: `1:${THIS_MONTH}:ACTIVE` });
+    assert.deepEqual([cleared.budgetPolicy.chatCapSatang, cleared.budgetPolicy.chatSource], [8_000, 'DEFAULT']);
   });
 
   it('keeps the canonical lock order and refuses a locked company before any policy write', async () => {

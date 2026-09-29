@@ -212,7 +212,8 @@ export type SetPartnerAiModelDto = {
    * Separate CHAT/OCR caps (remediation spec §12.4). Absent = preserve whatever is saved;
    * `null` = cancel a FUTURE pending policy only (it can never revert an already-effective one);
    * an object = the desired policy for `effectiveMonthKey`, which must be the current or the next
-   * Bangkok month. Saving `SPLIT` is refused entirely unless the server's activation flag is on.
+   * Bangkok month. Under `SHARED`, `chatMonthlyBudgetSatang` is this shop's chat credit set by an
+   * admin (`null` = the default or a sales deal); `monthlyBudgetSatang` is only the safety ceiling.
    */
   budgetPolicy?: PartnerAiBudgetPolicyInput | null;
   /** Required with `budgetPolicy`: the `budget.policy.revision` of the read this edit is based on. */
@@ -220,6 +221,12 @@ export type SetPartnerAiModelDto = {
 };
 
 export type PartnerAiBudgetMode = 'SHARED' | 'SPLIT';
+
+/**
+ * Where the chat credit in force comes from (admin tab rework 2026-09-29): the platform default,
+ * an admin setting for this shop, a live sales deal, or a SPLIT chat cap.
+ */
+export type PartnerAiChatCreditSource = 'DEFAULT' | 'ADMIN' | 'SALES_DEAL' | 'SPLIT';
 
 /** `0` closes that bucket; `null` means "not set", never "unlimited". SPLIT requires both caps. */
 export type PartnerAiBudgetPolicyInput = {
@@ -246,8 +253,8 @@ export type PartnerAiBudgetPolicyDto = {
   pending: PartnerAiBudgetPolicyInput | null;
   /** Set => this company's AI admission is refused until an operator fixes the policy. */
   invalidReason?: 'SPLIT_CAPS_MISSING' | 'SPLIT_EXCEEDS_TOTAL' | 'POLICY_MALFORMED';
-  /** ADR 0013 §9 readiness gate; false = the console must not offer SPLIT as savable. */
-  splitActivationEnabled: boolean;
+  /** Where `chatCapSatang` comes from. Absent from an API that predates the admin tab rework. */
+  chatSource?: PartnerAiChatCreditSource;
 };
 
 /** One scope's money position. `available` is `cap - spent - reserved`, floored at 0. */
@@ -457,6 +464,13 @@ export type PartnerAiUsageDto = {
      * non-terminal holds, so the console can say "not enough left" without ever calling it "full".
      */
     position: PartnerAiBudgetPositionDto;
+    /** Chat credit facts the console explains next to `policy.chatSource` (admin tab rework). */
+    chatCredit?: {
+      /** A sales deal's chat credit that is live now, even when an admin setting wins over it. */
+      deal: { satang: number; endsAt: string | null } | null;
+      /** From this instant AI credit runs on package cycles and lots (add-on spec §11); null = not moved. */
+      cutoverAt: string | null;
+    };
   };
   /** Current month's spend by `usageTag`, highest first, at most 10 rows. */
   topTags: Array<{ tag: string } & PartnerAiUsageMeasuresDto>;
@@ -467,9 +481,38 @@ export type PartnerAiUsageDto = {
     config: PartnerOcrConfigDto;
     /** Observed enforcement, independent from the operational OCR cap. Paid grants cannot be bypassed. */
     planQuota?: { enforced: boolean; source: 'PAID_GRANTS' | 'COMPANY' | 'DEFAULT'; defaultEnforced: boolean };
+    /** The receipt-image balance admission uses right now (admin tab rework). Absent from an older API. */
+    receiptImages?: PartnerReceiptImagesDto;
     current: PartnerOcrUsageMonthDto;
     previous: PartnerOcrUsageMonthDto;
   };
+};
+
+/**
+ * Receipt images a shop can still have read, from the same lots and counters admission uses
+ * (add-on spec §6.1, §17.2). Counts are images, never money.
+ */
+export type PartnerReceiptImagesDto = {
+  /**
+   * `PACKAGE_LOTS`: a paid package — package lots, then team and purchased lots; always enforced.
+   * `MONTHLY`: a trial or staff-set package — an allowance per Bangkok month plus admin gifts.
+   * `NONE`: no package term, so no image limit comes from a package.
+   */
+  basis: 'PACKAGE_LOTS' | 'MONTHLY' | 'NONE';
+  tierKey: string | null;
+  /** Whether reaching the limit stops reading. `PACKAGE_LOTS` is always true. */
+  enforced: boolean;
+  /** `PACKAGE_LOTS`: the package is paid up and the company is active; otherwise reading is refused. */
+  active: boolean;
+  /**
+   * Package lots now (`PACKAGE_LOTS`) or this month's allowance (`MONTHLY`); null for `NONE`.
+   * `expiresAt` is the lot admission draws from next (null for a monthly allowance).
+   */
+  package: { limit: number; used: number; remaining: number; expiresAt: string | null } | null;
+  /** Team gifts and purchases ("ยอดเพิ่มเติม"); `expiresAt` is the lot drawn next, null when none is left. */
+  additional: { remaining: number; expiresAt: string | null };
+  /** `package.remaining + additional.remaining`; null for `NONE`. */
+  totalRemaining: number | null;
 };
 
 export type PartnerOcrUsageMonthDto = {

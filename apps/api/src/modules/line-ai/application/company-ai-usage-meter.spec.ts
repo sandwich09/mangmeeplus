@@ -1524,11 +1524,15 @@ describe('resolveAiBudgetPolicy', () => {
     }
   });
 
-  it('keeps a SHARED company SHARED with caps that were merely left behind — null is "not set", never unlimited', () => {
+  it('under SHARED the chat column is the chat credit an admin set; OCR stays inside the total', () => {
     const policy = resolve(policyRow({ chatMonthlyBudgetSatang: 30, ocrMonthlyBudgetSatang: 70 }));
     assert.equal(policy.mode, 'SHARED');
-    assert.equal(policy.invalidReason, undefined, 'C+O is not validated while the caps are not enforced');
-    assert.deepEqual([policy.chatCapSatang, policy.ocrCapSatang], [8000, 70]);
+    assert.equal(policy.invalidReason, undefined, 'C+O is not validated under SHARED');
+    assert.deepEqual([policy.chatCapSatang, policy.ocrCapSatang, policy.chatSource], [30, 70, 'ADMIN']);
+    // Admin tab rework 2026-09-29: a TOTAL override is the safety ceiling only, never the chat credit.
+    const ceilingOnly = resolveAiBudgetPolicy({ row: policyRow({ monthlyBudgetSatang: 50_000 }), totalSatang: 50_000, override: true, monthKey: '2026-09' });
+    assert.deepEqual([ceilingOnly.chatCapSatang, ceilingOnly.chatSource], [8000, 'DEFAULT']);
+    assert.deepEqual([resolve(policyRow()).chatCapSatang, resolve(policyRow()).chatSource], [8000, 'DEFAULT']);
   });
 
   it('expires a one-time sales credit with its paid deal term', () => {
@@ -1622,17 +1626,24 @@ describe('assertCompanyAiBudget split policy gate', () => {
       { budgetBucket: 'OCR' } as any), { allowed: true });
   });
 
-  it('preserves an existing operator total override above a newer deal credit', async () => {
-    const prisma = { client: {
-      companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: 30_000,
-        salesDealChatCreditSatang: 12_000 }) },
+  it('an admin chat credit wins over a newer deal credit; a TOTAL override alone does not', async () => {
+    const withRow = (row: Record<string, unknown>) => ({ client: {
+      companyAiConfiguration: { findUnique: async () => row },
       companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 12_000 }) },
       companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 12_000 }) },
-    } } as any;
-    assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-deal', bangkokMonthKey(),
+    } } as any);
+    // Migration 20260929200000 holds a legacy TOTAL override as the SHARED chat credit.
+    const admin = withRow({ monthlyBudgetSatang: 30_000, chatMonthlyBudgetSatang: 30_000, salesDealChatCreditSatang: 12_000 });
+    assert.deepEqual(await assertCompanyAiBudget(admin, budgetConfig, 'co-deal', bangkokMonthKey(),
       { budgetBucket: 'CHAT' } as any), { allowed: true });
-    assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-deal', bangkokMonthKey(),
+    assert.deepEqual(await assertCompanyAiBudget(admin, budgetConfig, 'co-deal', bangkokMonthKey(),
       { budgetBucket: 'OCR' } as any), { allowed: true });
+    const ceilingOnly = withRow({ monthlyBudgetSatang: 30_000, salesDealChatCreditSatang: 12_000 });
+    assert.deepEqual(await assertCompanyAiBudget(ceilingOnly, budgetConfig, 'co-deal', bangkokMonthKey(),
+      { budgetBucket: 'CHAT' } as any), { allowed: false, reason: 'exceeded', spendSatang: 12_000,
+      budgetSatang: 12_000, override: true, budgetScope: 'CHAT' });
+    assert.deepEqual(await assertCompanyAiBudget(ceilingOnly, budgetConfig, 'co-deal', bangkokMonthKey(),
+      { budgetBucket: 'OCR' } as any), { allowed: true }, 'the safety ceiling still has room for OCR');
   });
 
   it('uses the sales credit when there is no operator override', async () => {
@@ -1803,19 +1814,22 @@ describe('readAiBudgetReadiness — the truth table admin surfaces must agree wi
       mode: 'SHARED', total: 'EXHAUSTED', chat: 'OK', ocr: 'EXHAUSTED', unresolvedHolds: 0, breach: false,
       reserved: { TOTAL: 0, CHAT: 0, OCR: 0 },
     });
-    // Old SHARED split columns were informational and remain so.
-    const informational = { budgetMode: 'SHARED', chatMonthlyBudgetSatang: 0, ocrMonthlyBudgetSatang: 0 };
-    const answer = await readiness(tx({ total: 1 }), informational, 10_000);
+    // Admin tab rework: a SHARED chat value is the admin's chat credit (0 closes chat); OCR stays under TOTAL.
+    const closedChat = { budgetMode: 'SHARED', chatMonthlyBudgetSatang: 0, ocrMonthlyBudgetSatang: 0 };
+    const answer = await readiness(tx({ total: 1 }), closedChat, 10_000);
     assert.equal(answer.ocr, 'OK');
-    assert.equal(answer.chat, 'OK');
+    assert.equal(answer.chat, 'CLOSED');
     const chatFull = await readiness(tx({ total: 8000, buckets: [{ bucket: 'CHAT', costSatang: 8000 }] }),
       null, 20_000);
     assert.equal(chatFull.chat, 'EXHAUSTED');
     assert.equal(chatFull.ocr, 'OK');
 
-    const adminOverride = await readiness(tx({ total: 12_000, buckets: [{ bucket: 'CHAT', costSatang: 12_000 }] }),
+    const adminCredit = await readiness(tx({ total: 12_000, buckets: [{ bucket: 'CHAT', costSatang: 12_000 }] }),
+      { monthlyBudgetSatang: 20_000, chatMonthlyBudgetSatang: 20_000, budgetMode: 'SHARED' }, 20_000);
+    assert.equal(adminCredit.chat, 'OK', 'an admin chat credit sets the SHARED CHAT cap');
+    const ceilingOnly = await readiness(tx({ total: 12_000, buckets: [{ bucket: 'CHAT', costSatang: 12_000 }] }),
       { monthlyBudgetSatang: 20_000, budgetMode: 'SHARED' }, 20_000);
-    assert.equal(adminOverride.chat, 'OK', 'an explicit admin TOTAL override also sets the SHARED CHAT cap');
+    assert.equal(ceilingOnly.chat, 'EXHAUSTED', 'a TOTAL override is the safety ceiling, not the chat credit');
   });
 
   it('SPLIT: CHAT full leaves OCR open, and OCR full leaves CHAT open — no borrowing (§12.1)', async () => {

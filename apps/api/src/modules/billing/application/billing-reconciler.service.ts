@@ -38,6 +38,7 @@ import { dealSnapshotHash } from '../domain/deal-offer';
 import type { PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { releaseEventDiscount, useEventDiscount } from './billing-event-discount';
 import { eventDiscountCardAuto } from '../domain/billing-event-discount.logic';
+import { paymentCheckoutSnapshot } from '../domain/billing-checkout-mode';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
@@ -425,14 +426,14 @@ export class BillingReconcilerService {
         if(subscription||session.mode!=='payment'||stripeId(session.invoice)!==invoice.id)throw new Error('billing.original_invoice_changed');
         await this.billing.repeater.importPayment(account,attempt,session,invoice,lease,recordOnly);return;
       }
-      if ((['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes(snapshot.quote.purchaseMode ?? '') || eventDiscountCardAuto(snapshot)) && !subscription) {
+      if (paymentCheckoutSnapshot(snapshot) && !subscription) {
         if (subscription || session.mode !== 'payment' || stripeId(session.invoice) !== invoice.id) throw new Error('billing.original_invoice_changed');
         await this.reconcileOneTime(account, attempt, lease, recordOnly, session, invoice);
         return;
       }
       if(!subscription||subscription.id!==subscriptionId||subscription.object!=='subscription'||subscription.livemode!==account.livemode||stripeId(subscription.customer)!==account.customerId||
         subscription.metadata?.billingAccountId!==account.id||
-        (snapshot.quote.purchaseMode === 'PROMPTPAY_RENEW' || eventDiscountCardAuto(snapshot)
+        (paymentCheckoutSnapshot(snapshot)
           ? session.mode !== 'payment' || session.subscription != null || account.baseSubscriptionId !== subscription.id
           : session.mode !== 'subscription' || stripeId(session.subscription) !== subscription.id) ||
         (attempt.subscriptionId&&attempt.subscriptionId!==subscription.id))throw new Error('billing.subscription_binding');
@@ -461,8 +462,7 @@ export class BillingReconcilerService {
       // Continue only the customer's original paid pack; the existing journal fences every command.
       await this.billing.repeater.advance(account,initial,lease,this.config.sesWebBaseUrl);return;
     }
-    if (initial && (['CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'].includes((initial.quoteSnapshot as unknown as BillingSnapshot).quote.purchaseMode ?? '') ||
-        eventDiscountCardAuto(initial.quoteSnapshot as unknown as BillingSnapshot))) {
+    if (initial && paymentCheckoutSnapshot(initial.quoteSnapshot as unknown as BillingSnapshot)) {
       if (account.activeAttemptId !== initial.id) throw new Error('billing.original_attempt_changed');
       await this.reconcileOneTime(account, initial, lease);
       return;
@@ -1389,10 +1389,13 @@ export class BillingReconcilerService {
         if (rewritesFeatures && snapshot.featurePlan)
           disabledFeatures = await applyBillingFeaturePlan(tx, company.id, invoice.id, contract.initiatingUserId, snapshot.featurePlan);
         // Q1: the deal's AI credit goes back to the platform default in the same commit as its
-        // menus. `applyDealRequest` is the only writer that set it, and this is its mirror.
+        // menus. `applyDealRequest` is the only writer that set it, and this is its mirror — for an
+        // old v2/v3 deal that is the TOTAL and the SHARED chat credit it also wrote (admin tab rework).
         if (returning) await tx.companyAiConfiguration.updateMany({ where: { companyId: company.id },
           data: snapshot.dealReturn!.creditScope === 'CHAT'
             ? { salesDealChatCreditSatang: null, salesDealChatCreditEndsAt: null } : { monthlyBudgetSatang: null } });
+        if (returning && snapshot.dealReturn!.creditScope !== 'CHAT') await tx.companyAiConfiguration.updateMany({
+          where: { companyId: company.id, budgetMode: 'SHARED' }, data: { chatMonthlyBudgetSatang: null } });
         if (current.graceEndsAt && current.paidThrough) await tx.billingReceiptGrant.updateMany({ where: { billingAccountId: account.id,
           companyId: company.id, kind: { in: ['INITIAL', 'RENEWAL', 'REPEAT', 'UPGRADE'] }, expiresAt: current.graceEndsAt, serviceEnd: { lte: current.paidThrough } }, data: { expiresAt: current.paidThrough } });
         const term = await tx.companyPlanTerm.upsert({ where: { companyId: company.id }, create: {

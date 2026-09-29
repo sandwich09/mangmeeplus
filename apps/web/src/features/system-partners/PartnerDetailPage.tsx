@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  DEFAULT_CHAT_CREDIT_SATANG,
   FEATURE_CATALOG,
   FEATURE_PACKAGE_PRESETS,
   MENU_ENTITLEMENT_BINDINGS,
@@ -86,7 +87,6 @@ import {
   AI_BUDGET_BUCKET_LABELS,
   AI_BUDGET_MODE_LABELS,
   AI_BUDGET_RESERVED_NOTE,
-  AI_BUDGET_SPLIT_DISABLED_NOTE,
   AI_BUDGET_STALE_MESSAGE,
   AI_CREDIT_HOLD_ACTION_LABELS,
   AI_CREDIT_HOLD_EMPTY_NOTE,
@@ -112,12 +112,24 @@ import {
   isAiCreditHoldConflict,
   type AiCreditHoldAction,
   aiUsageBasisNote,
+  aiChatCreditSourceText,
+  aiTabStatusRows,
   canManageAiBudget,
+  chatCreditConfirmMessage,
+  chatCreditDraftChanged,
+  chatCreditInputFromUsage,
+  chatCreditPolicyRequest,
   hasAiBudgetPolicy,
+  parseChatCreditInput,
+  receiptImagesSourceText,
+  receiptImageTiles,
+  receiptQuotaControlVisible,
   reloadAfterAiBudgetConflict,
+  safetyCeilingConfirmMessage,
   validateAiBudgetDraft,
   type AiBudgetDraft,
   type AiBudgetPolicyRequest,
+  type AiTabStatusTone,
   budgetBarClass,
   budgetBarWidth,
   budgetPercent,
@@ -126,7 +138,6 @@ import {
   OCR_CONFIG_STALE_MESSAGE,
   parseBudgetBahtInput,
   parseOcrMonthlyLimitInput,
-  ocrRemaining,
   ocrUnsavedToggleMessage,
   ocrUsageTrackingNote,
   satangToBaht,
@@ -1597,12 +1608,11 @@ function AiBudgetPolicyPanel({
   const pendingText = aiBudgetPendingText(policy.pending, formatThaiMonth);
   const months = aiBudgetMonthOptions(monthKey);
   const changed = aiBudgetDraftChanged(draft, policy, monthKey);
-  const splitBlocked = policy.splitActivationEnabled === false;
 
   return (
     <section className="space-y-4 border-t-2 border-gray-100 pt-5" aria-labelledby="ai-budget-policy-title">
       <div>
-        <h3 id="ai-budget-policy-title" className="text-base font-bold text-gray-900">แยกเพดานเครดิต AI ของบริษัทนี้</h3>
+        <h3 id="ai-budget-policy-title" className="text-base font-bold text-gray-900">โหมดแยกเพดานของร้านนี้</h3>
         <p className="mt-1 text-sm leading-6 text-gray-600">
           ใช้อยู่: <strong className="font-bold text-gray-900">{AI_BUDGET_MODE_LABELS[policy.mode] ?? policy.mode}</strong>
           {policy.source === 'PENDING_ACTIVATED' && ' · เริ่มมีผลแล้วตามที่ตั้งไว้ล่วงหน้า'}
@@ -1674,18 +1684,12 @@ function AiBudgetPolicyPanel({
         </p>
       ) : (
         <>
-          {splitBlocked && (
-            <p data-testid="ai-budget-split-disabled" className="rounded-xl border border-gray-300 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-700">
-              {AI_BUDGET_SPLIT_DISABLED_NOTE}
-            </p>
-          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-mode">โหมดเครดิต AI
               <select id="ai-budget-mode" className={`${inputClass} mt-1 min-h-12 text-base`} value={draft.mode}
                 disabled={saving || busy} onChange={(e) => onDraft({ ...draft, mode: e.target.value as AiBudgetDraft['mode'] })}>
                 <option value="SHARED">{AI_BUDGET_MODE_LABELS.SHARED}</option>
-                {/* ADR 0013 §9: SPLIT is offered but not savable until the server flag is on. */}
-                <option value="SPLIT" disabled={splitBlocked}>{AI_BUDGET_MODE_LABELS.SPLIT}</option>
+                <option value="SPLIT">{AI_BUDGET_MODE_LABELS.SPLIT}</option>
               </select>
             </label>
             <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-month">เดือนที่เริ่มใช้
@@ -1710,8 +1714,8 @@ function AiBudgetPolicyPanel({
             </label>
           </div>
           <p className="text-xs leading-5 text-gray-500">
-            ผลรวมเพดานต้องไม่เกินเครดิตรวมที่บันทึกไว้ {satangToBaht(usage.budget.effectiveSatang)} · ใส่ 0 เพื่อปิดส่วนนั้น
-            {' · '}เครดิตรวมด้านบนต้องบันทึกก่อน ระบบตรวจกับค่าที่บันทึกแล้วเท่านั้น
+            ผลรวมเพดานต้องไม่เกินเพดานความปลอดภัยที่บันทึกไว้ {satangToBaht(usage.budget.effectiveSatang)} · ใส่ 0 เพื่อปิดส่วนนั้น
+            {' · '}โหมดแยกเพดานต้องตั้งรุ่น AI ของร้านก่อน และถ้าเดือนนี้ร้านใช้ AI ไปแล้วต้องเลือกเริ่มเดือนถัดไป
           </p>
           <label className="block text-base">เหตุผลที่ปรับเพดานเครดิต AI
             <textarea aria-label="เหตุผลที่ปรับเพดานเครดิต AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500}
@@ -1849,7 +1853,13 @@ function AiCreditHoldsPanel({
   );
 }
 
-// -- AI usage meter + monthly budget override (metering spec §7.7)
+// -- "เครดิต AI และอ่านรูป" tab: chat credit, receipt images, safety ceiling (admin tab rework 2026-09-29)
+
+const STATUS_TONE_CLASS: Record<AiTabStatusTone, { dot: string; text: string; label: string }> = {
+  ok: { dot: 'bg-green-500', text: 'text-gray-900', label: 'ใช้ได้' },
+  warn: { dot: 'bg-amber-500', text: 'text-amber-900', label: 'ควรตรวจ' },
+  stop: { dot: 'bg-red-600', text: 'text-red-800', label: 'หยุดอยู่' },
+};
 
 function AiUsageBudgetSection({
   companyId,
@@ -1872,6 +1882,10 @@ function AiUsageBudgetSection({
   const [ocrLimitInput, setOcrLimitInput] = useState('');
   const [ocrLoading, setOcrLoading] = useState(false);
   const [budgetReason,setBudgetReason]=useState(''),[ocrReason,setOcrReason]=useState('');
+  // This shop's own chat credit (SHARED `chatMonthlyBudgetSatang`), prefilled from the SAVED policy.
+  const [chatInput,setChatInput]=useState('');
+  const [chatReason,setChatReason]=useState('');
+  const [chatLoading,setChatLoading]=useState(false);
   // Split policy (spec §12.4). The draft is prefilled from the SAVED policy on every load, so a
   // company switch or a conflict reload can never leave the previous company's values in the form.
   const [policyDraft,setPolicyDraft]=useState<AiBudgetDraft|null>(null);
@@ -1907,9 +1921,11 @@ function AiUsageBudgetSection({
       // Version skew: a pre-E1a API sends no `budget.policy`/`budget.position` at all. Leave the
       // draft null and render no panel, exactly as `hasAiUsageBreakdown` drops the D1 breakdown —
       // a TypeError here would put the WHOLE card into its error state.
-      setPolicyDraft(hasAiBudgetPolicy(result)
+      const policyReady=hasAiBudgetPolicy(result);
+      setPolicyDraft(policyReady
         ? aiBudgetDraftFromPolicy(result.budget.policy, aiBudgetCurrentMonthKey(result))
         : null);
+      setChatInput(policyReady ? chatCreditInputFromUsage(result) : '');
       setBudgetInput(result.budget.overrideSatang === null ? '' : satangToBahtInput(result.budget.overrideSatang));
       setOcrEnabled(result.ocr.config.enabled);
       setReceiptQuotaMode(result.ocr.config.receiptQuotaEnforced == null ? 'inherit' : result.ocr.config.receiptQuotaEnforced ? 'enforce' : 'observe');
@@ -1930,22 +1946,30 @@ function AiUsageBudgetSection({
     return ()=>{generation.current++;};
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Two separate facts, and BOTH must disable every control on this card. `undefined` (a pre-D2 API)
+  // keeps the old behaviour of showing the forms and letting the server answer 403.
+  const canManage = canManageAiBudget(usage);
+  const locked = fieldsLocked || !canManage;
+  const saving = budgetLoading || ocrLoading || policyLoading || chatLoading;
+
+  /** The safety ceiling (`monthlyBudgetSatang`). It no longer moves the chat credit (admin tab rework). */
   const handleBudgetSave = async () => {
-    if(!usage||locked||budgetLoading||ocrLoading||policyLoading)return;
+    if(!usage||locked||saving)return;
     const reason=partnerAdjustmentReason(budgetReason);
-    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับเครดิต AI','error');return;}
+    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับเพดานความปลอดภัย','error');return;}
     const parsed=parseBudgetBahtInput(budgetInput);
     if(!parsed.ok){showToast(parsed.message, 'error');return;}
     const token=generation.current,desired=parsed.monthlyBudgetSatang??usage.budget.defaultSatang;
-    const accepted=await confirm({title:'ตรวจเครดิต AI ก่อนบันทึก',message:`เครดิต AI รวมต่อเดือน ${satangToBaht(usage.budget.effectiveSatang)} → ${satangToBaht(desired)} ใช้รวมแล้ว ${satangToBaht(usage.current?.costSatang??0)}${desired<=(usage.current?.costSatang??0)?' หลังบันทึกจะใช้ AI เพิ่มไม่ได้จนกว่าจะเพิ่มเครดิตหรือขึ้นเดือนใหม่':''}\nเครดิตรวมใหม่ใช้กับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
+    const accepted=await confirm({title:'ตรวจเพดานความปลอดภัยก่อนบันทึก',message:safetyCeilingConfirmMessage(usage,desired,reason),confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
     if(!accepted||token!==generation.current)return;
     setBudgetLoading(true);
     try {
       const result=await setPartnerAiModel(companyId,{monthlyBudgetSatang:parsed.monthlyBudgetSatang,expectedMonthlyBudgetSatang:usage.budget.overrideSatang,reason});
       if(token!==generation.current)return;
-      setUsage(prev=>prev?{...prev,budget:{...prev.budget,overrideSatang:result.monthlyBudgetSatang,effectiveSatang:result.monthlyBudgetSatang??prev.budget.defaultSatang}}:prev);
       setBudgetReason('');onChanged();
-      showToast(result.monthlyBudgetSatang===null?'บันทึกแล้ว บริษัทนี้ใช้เครดิต AI รวมตามค่าเริ่มต้นของระบบ':`บันทึกเครดิต AI รวมต่อเดือน ${satangToBaht(result.monthlyBudgetSatang)} แล้ว`,'success');
+      showToast(result.monthlyBudgetSatang===null?'บันทึกแล้ว ร้านนี้ใช้เพดานความปลอดภัยค่ากลางของระบบ':`บันทึกเพดานความปลอดภัย ${satangToBaht(result.monthlyBudgetSatang)} แล้ว`,'success');
+      setBudgetLoading(false);
+      await loadUsage();
     }catch(err){
       if(token!==generation.current)return;
       showToast(apiErrorMessage(err),'error');
@@ -1953,22 +1977,40 @@ function AiUsageBudgetSection({
     }finally{if(token===generation.current)setBudgetLoading(false);}
   };
 
-  const spendSatang = usage?.current?.costSatang ?? 0;
-  // Two separate facts, and BOTH must disable every control on this card. Before this, a read-only
-  // operator could see the total-budget and OCR forms and only ever get a 403 out of them.
-  // `undefined` (a pre-D2 API) keeps today's behaviour of showing them.
-  const canManage = canManageAiBudget(usage);
-  const locked = fieldsLocked || !canManage;
-  const percent = usage ? budgetPercent(spendSatang, usage.budget.effectiveSatang) : 0;
-  const savedOcrEnabled = usage?.ocr.config.enabled ?? true;
-  const ocrTogglePendingMessage = ocrUnsavedToggleMessage(savedOcrEnabled, ocrEnabled);
+  /** This shop's chat credit, through the existing budget-policy writer (SHARED + chat, this month). */
+  const handleChatSave = async () => {
+    if(!usage||locked||saving)return;
+    const reason=partnerAdjustmentReason(chatReason);
+    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับเครดิตแชต','error');return;}
+    const parsed=parseChatCreditInput(chatInput);
+    if(!parsed.ok){showToast(parsed.notice,'error');return;}
+    const token=generation.current;
+    const accepted=await confirm({title:'ตรวจเครดิตแชตก่อนบันทึก',message:chatCreditConfirmMessage(usage,parsed.satang,reason,formatThaiDate),
+      confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
+    if(!accepted||token!==generation.current)return;
+    setChatLoading(true);
+    try {
+      await setPartnerAiModel(companyId,{reason,budgetPolicy:chatCreditPolicyRequest(parsed.satang,aiBudgetCurrentMonthKey(usage)),
+        expectedBudgetRevision:usage.budget.policy.revision});
+      if(token!==generation.current)return;
+      setChatReason('');onChanged();
+      showToast(parsed.satang===null?'บันทึกแล้ว ร้านนี้ใช้เครดิตแชตตามค่าเริ่มต้นหรือดีลขาย':`บันทึกเครดิตแชต ${satangToBaht(parsed.satang)} ต่อเดือนแล้ว`,'success');
+      setChatLoading(false);
+      await loadUsage();
+    }catch(err){
+      if(token!==generation.current)return;
+      setChatLoading(false);
+      if(await reloadAfterAiBudgetConflict(apiErrorCode(err),loadUsage)){showToast(AI_BUDGET_STALE_MESSAGE,'error');return;}
+      showToast(apiErrorMessage(err),'error');
+    }finally{if(token===generation.current)setChatLoading(false);}
+  };
 
   /** One writer for both the policy save and the cancel-pending action (spec §12.4/§12.5). */
   const savePolicy = async (
     body: { budgetPolicy: AiBudgetPolicyRequest | null },
     successMessage: string,
   ) => {
-    if(!usage||locked||policyLoading||budgetLoading||ocrLoading)return;
+    if(!usage||locked||saving)return;
     const reason=partnerAdjustmentReason(policyReason);
     if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับเพดานเครดิต AI','error');return;}
     const token=generation.current;
@@ -2028,7 +2070,7 @@ function AiUsageBudgetSection({
    * first and then says what changed — the row the operator clicked will simply not be there.
    */
   const handleHoldAction = async (hold: PartnerAiCreditHoldDto, action: AiCreditHoldAction) => {
-    if(locked||holdBusyId||budgetLoading||ocrLoading||policyLoading)return;
+    if(locked||holdBusyId||saving)return;
     const reason=partnerAdjustmentReason(holdReason);
     if(!reason){showToast('กรุณาระบุเหตุผลที่จัดการเครดิตที่กันไว้','error');return;}
     const token=generation.current;
@@ -2056,7 +2098,7 @@ function AiUsageBudgetSection({
   };
 
   const handleOcrSave = async () => {
-    if (!usage||locked||ocrLoading||budgetLoading||policyLoading) return;
+    if (!usage||locked||saving) return;
     const reason=partnerAdjustmentReason(ocrReason);
     if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับการอ่านเอกสาร','error');return;}
     const token=generation.current;
@@ -2093,7 +2135,8 @@ function AiUsageBudgetSection({
       const config = await setPartnerOcrConfig(companyId, {
         reason,
         enabled: ocrEnabled,
-        ...(usage.ocr.planQuota ? { receiptQuotaEnforced: receiptQuotaMode === 'inherit' ? null : receiptQuotaMode === 'enforce' } : {}),
+        // Omitted = preserved: a paid package always enforces, so its hidden choice is never re-sent.
+        ...(usage.ocr.planQuota && receiptQuotaControlVisible(usage.ocr) ? { receiptQuotaEnforced: receiptQuotaMode === 'inherit' ? null : receiptQuotaMode === 'enforce' } : {}),
         monthlyLimit: parsed.monthlyLimit,
         expectedVersion: usage.ocr.config.version,
       });
@@ -2118,151 +2161,145 @@ function AiUsageBudgetSection({
     }
   };
 
+  const policyReady = !!usage && hasAiBudgetPolicy(usage);
+  const statusRows = usage ? aiTabStatusRows(usage, formatThaiDate) : [];
+  const images = usage?.ocr.receiptImages;
+  const quotaVisible = usage ? receiptQuotaControlVisible(usage.ocr) : false;
+  const savedOcrEnabled = usage?.ocr.config.enabled ?? true;
+  const ocrTogglePendingMessage = ocrUnsavedToggleMessage(savedOcrEnabled, ocrEnabled);
+  const spendSatang = usage?.current?.costSatang ?? 0;
+  const percent = usage ? budgetPercent(spendSatang, usage.budget.effectiveSatang) : 0;
+  const chat = policyReady ? usage!.budget.position.chat : null;
+  const chatCap = policyReady ? usage!.budget.policy.chatCapSatang : null;
+  const chatPercent = chat && chatCap ? budgetPercent(chat.spentSatang, chatCap) : 0;
+  const split = policyReady && usage!.budget.policy.mode === 'SPLIT';
+  const chatChanged = policyReady && chatCreditDraftChanged(usage!, chatInput);
+  const deal = usage?.budget.chatCredit?.deal ?? null;
+  // Open the advanced split controls only when they are what this shop actually runs on.
+  const advancedOpen = policyReady && (split || usage!.budget.policy.pending !== null || !!usage!.budget.policy.invalidReason);
+  const readOnlyNote = canManage
+    ? 'บริษัทนี้อ่านได้อย่างเดียวตามสถานะบริษัท เปลี่ยนสถานะได้ในหมวดภาพรวม'
+    : 'บัญชีของคุณดูข้อมูลได้ แต่ยังไม่มีสิทธิ์แก้การตั้งค่านี้';
+
   return (
-    <SectionCard title="การใช้งานและเครดิต AI">
-      {usageLoading && <p role="status" aria-busy="true" className="mb-3 flex items-center gap-2 text-sm text-gray-500"><span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" />กำลังโหลดข้อมูล AI...</p>}
-      {usageError ? (
-        <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4">
-          <p className="text-sm leading-6 text-red-800">{usageError}</p>
-          <button
-            type="button"
-            className="mangmee-btn mangmee-btn-secondary min-h-11 text-base"
-            disabled={usageLoading} aria-busy={usageLoading}
-            onClick={() => { setUsageError(null); void loadUsage(); }}
-          >
-            ลองโหลดข้อมูลอีกครั้ง
-          </button>
-        </div>
-      ) : !usage ? (
-        <div className="h-16 rounded border border-gray-100 animate-pulse" />
-      ) : (
-        <>
-          <p className="text-xs text-gray-500">
-            เครดิต AI รวมต่อเดือนของบริษัทนี้เป็นเพดานทุกช่องทาง — เมื่อยอดรวมถึงเพดาน ระบบจะปฏิเสธการเรียก AI จนถึงเดือนถัดไป
-            เพดานแชตที่แยกต่างหากแสดงในตารางด้านล่าง
-            เว้นว่างไว้ = ใช้ค่าเริ่มต้นของแพลตฟอร์ม
-          </p>
-
-          <div>
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <p className="text-sm text-gray-700">
-                ใช้เดือนนี้{' '}
-                <span className="font-semibold tabular-nums text-gray-900">{satangToBaht(spendSatang)}</span>
-                {' จากเครดิต '}
-                <span className="tabular-nums">{satangToBaht(usage.budget.effectiveSatang)}</span>
-                {usage.budget.overrideSatang === null ? ' (ค่าเริ่มต้นของระบบ)' : ' (Admin ปรับให้)' }
-              </p>
-              <span className={`text-xs font-medium tabular-nums ${budgetTextClass(percent)}`}>{percent}%</span>
-            </div>
-            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-              <div className={`h-full rounded-full ${budgetBarClass(percent)}`} style={{ width: `${budgetBarWidth(percent)}%` }} />
-            </div>
-            <p className="mt-1 text-xs text-gray-400">
-              {usage.current
-                ? `${formatThaiMonth(usage.current.monthKey)} · ${usage.current.callCount} ครั้ง · ${usage.current.inputTokens.toLocaleString('th-TH')} in / ${usage.current.outputTokens.toLocaleString('th-TH')} out tokens`
-                : 'เดือนนี้ยังไม่มีการใช้งาน AI'}
-            </p>
-          </div>
-
-          <p className="text-sm text-gray-600">
-            {usage.previous
-              ? <>เดือนก่อน ({formatThaiMonth(usage.previous.monthKey)}): <span className="tabular-nums">{satangToBaht(usage.previous.costSatang)}</span> · {usage.previous.callCount} ครั้ง</>
-              : 'เดือนก่อนยังไม่มีค่าใช้จ่าย AI'}
-          </p>
-
-          <AiUsageBreakdown usage={usage} />
-
-          {usage.topTags.length === 0 ? (
-            <p className="text-sm text-gray-500">เดือนนี้ยังไม่มีการใช้งาน AI</p>
-          ) : (
-            <div className="overflow-x-auto">
-              {/* Five columns cannot be read at 390px; scroll inside this container, never the page. */}
-              <table className="w-full min-w-[560px] text-sm">
-                <thead>
-                  <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
-                    <th className="py-2 pr-4 font-medium">ประเภทการใช้งาน</th>
-                    <th className="py-2 pr-4 font-medium">ค่าใช้จ่าย</th>
-                    <th className="py-2 pr-4 font-medium">จำนวนครั้ง</th>
-                    <th className="py-2 pr-4 font-medium">in / out tokens</th>
-                    <th className="py-2 font-medium">ต้นทุน cache</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {usage.topTags.map((row) => (
-                    <tr key={row.tag} className="border-b border-gray-100">
-                      <td className="py-2.5 pr-4 font-mono text-gray-700">{row.tag}</td>
-                      <td className="py-2.5 pr-4 tabular-nums text-gray-800">{satangToBaht(row.costSatang)}</td>
-                      <td className="py-2.5 pr-4 tabular-nums text-gray-800">{row.calls}</td>
-                      <td className="py-2.5 pr-4 tabular-nums text-gray-600">
-                        {row.inputTokens.toLocaleString('th-TH')} / {row.outputTokens.toLocaleString('th-TH')}
-                      </td>
-                      <td className="py-2.5 tabular-nums text-gray-600">{aiCacheCostLabel(row.cacheCostSatang)}</td>
-                    </tr>
-                  ))}
-                  {/* Optional chaining for the same version skew: a pre-D1 response has no remainder row. */}
-                  {(usage.otherTags?.tags ?? 0) > 0 && (
-                    <tr className="border-b border-gray-100 bg-gray-50">
-                      <td className="py-2.5 pr-4 text-gray-700">อื่น ๆ ({usage.otherTags.tags.toLocaleString('th-TH')} ประเภท)</td>
-                      <td className="py-2.5 pr-4 tabular-nums text-gray-800">{satangToBaht(usage.otherTags.costSatang)}</td>
-                      <td className="py-2.5 pr-4 tabular-nums text-gray-800">{usage.otherTags.calls}</td>
-                      <td className="py-2.5 pr-4 tabular-nums text-gray-600">
-                        {usage.otherTags.inputTokens.toLocaleString('th-TH')} / {usage.otherTags.outputTokens.toLocaleString('th-TH')}
-                      </td>
-                      <td className="py-2.5 tabular-nums text-gray-600">{aiCacheCostLabel(usage.otherTags.cacheCostSatang)}</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <label className="block text-base">เหตุผลที่ปรับเครดิต AI
-            <textarea aria-label="เหตุผลที่ปรับเครดิต AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={budgetReason} disabled={budgetLoading||ocrLoading||policyLoading||locked} onChange={e=>setBudgetReason(e.target.value)} />
-          </label>
-          <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3">
-            <div className="flex-1">
-              <label className="block text-xs text-gray-500 mb-1" htmlFor="ai-monthly-budget">เครดิต AI รวมต่อเดือน (บาท)</label>
-              <input
-                id="ai-monthly-budget"
-                className={`${inputClass} min-h-11 text-base`}
-                type="text"
-                inputMode="decimal"
-                placeholder={satangToBahtInput(usage.budget.defaultSatang)}
-                value={budgetInput}
-                onChange={(e) => setBudgetInput(e.target.value)}
-                disabled={budgetLoading || ocrLoading || policyLoading || locked} aria-busy={Boolean(budgetLoading)}
-              />
-            </div>
+    <>
+      <SectionCard title="เงื่อนไขที่ใช้กับร้านนี้ตอนนี้">
+        {usageLoading && <p role="status" aria-busy="true" className="flex items-center gap-2 text-sm text-gray-500"><span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" />กำลังโหลดข้อมูล AI...</p>}
+        {usageError ? (
+          <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4">
+            <p className="text-sm leading-6 text-red-800">{usageError}</p>
             <button
               type="button"
-              className={`${btnPrimary} min-h-11 text-base`}
-              disabled={budgetLoading || ocrLoading || policyLoading || locked} aria-busy={Boolean(budgetLoading)}
-              onClick={() => void handleBudgetSave()}
+              className="mangmee-btn mangmee-btn-secondary min-h-11 text-base"
+              disabled={usageLoading} aria-busy={usageLoading}
+              onClick={() => { setUsageError(null); void loadUsage(); }}
             >
-              {budgetLoading ? 'กำลังบันทึก…' : 'ตรวจเครดิตก่อนบันทึก'}
+              ลองโหลดข้อมูลอีกครั้ง
             </button>
           </div>
-          <p className="break-words text-sm text-gray-600">เครดิต AI: {usage.budget.overrideSatang === null ? 'ค่าเริ่มต้นแพลตฟอร์ม' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่าเริ่มต้นแพลตฟอร์ม'}</p>
-          <p className="text-xs text-gray-400">
-            เว้นว่างเพื่อใช้เครดิตเริ่มต้น {satangToBaht(usage.budget.defaultSatang)} ตั้งได้ไม่เกิน {satangToBaht(usage.budget.ceilingSatang)}
-          </p>
+        ) : !usage ? (
+          <div className="h-16 rounded border border-gray-100 animate-pulse" />
+        ) : (
+          <dl className="divide-y divide-gray-100" data-testid="ai-tab-status">
+            {statusRows.map((row) => (
+              <div key={row.key} className="flex flex-col gap-1 py-3 sm:flex-row sm:gap-4" data-testid={`ai-status-${row.key}`} data-tone={row.tone}>
+                <dt className="flex items-center gap-2 text-sm font-medium text-gray-600 sm:w-56 sm:shrink-0">
+                  <span aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 rounded-full ${STATUS_TONE_CLASS[row.tone].dot}`} />
+                  {row.label}
+                </dt>
+                <dd className={`text-base leading-6 ${STATUS_TONE_CLASS[row.tone].text}`}>
+                  <span className="sr-only">{STATUS_TONE_CLASS[row.tone].label}: </span>{row.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </SectionCard>
+
+      {usage && !usageError && (<>
+        <SectionCard title="เครดิต AI">
+          {policyReady && chat ? (
+            <div className="space-y-2" data-testid="ai-chat-credit">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="text-sm text-gray-700">
+                  เครดิตแชตเดือนนี้{' '}
+                  <span className="text-2xl font-bold tabular-nums text-gray-900">{aiBudgetCapLabel(chatCap)}</span>
+                </p>
+                {chatCap ? <span className={`text-xs font-medium tabular-nums ${budgetTextClass(chatPercent)}`}>{chatPercent}%</span> : null}
+              </div>
+              {chatCap ? (
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                  <div className={`h-full rounded-full ${budgetBarClass(chatPercent)}`} style={{ width: `${budgetBarWidth(chatPercent)}%` }} />
+                </div>
+              ) : null}
+              <p className="text-sm text-gray-700">
+                ใช้แล้ว <span className="tabular-nums">{satangToBaht(chat.spentSatang)}</span>
+                {' · '}เหลือ <span className="tabular-nums">{aiBudgetAvailableLabel(chat.availableSatang)}</span>
+                {chat.reservedSatang > 0 && <>{' · '}{AI_BUDGET_RESERVED_NOTE} <span className="tabular-nums">{satangToBaht(chat.reservedSatang)}</span></>}
+              </p>
+              <p className="text-sm text-gray-600">มาจาก: {aiChatCreditSourceText(usage, formatThaiDate)}</p>
+              {deal && usage.budget.policy.chatSource === 'ADMIN' && (
+                <p className="text-sm leading-6 text-gray-600">
+                  ร้านนี้มีดีลขาย {satangToBaht(deal.satang)}{deal.endsAt ? ` ถึง ${formatThaiDate(deal.endsAt)}` : ''} แต่ค่าที่ผู้ดูแลตั้งมีผลก่อน ลบค่าที่ตั้งเพื่อใช้เครดิตจากดีล
+                </p>
+              )}
+              <p className="text-xs leading-5 text-gray-500">
+                เครดิตแชตใช้กับแชตและงาน AI ทั่วไป ไม่รวมการอ่านรูปใบเสร็จ นับตามเดือนไทยและเริ่มใหม่ทุกต้นเดือน
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-600">ยังอ่านเครดิตแชตของร้านนี้ไม่ได้</p>
+          )}
+
+          {policyReady && (locked ? (
+            <p data-testid="ai-chat-credit-read-only" className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-600">{readOnlyNote}</p>
+          ) : split ? (
+            <p className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-700">
+              ร้านนี้แยกเพดานแชตกับอ่านเอกสาร ปรับเครดิตแชตได้ในตั้งค่าขั้นสูงด้านล่าง
+            </p>
+          ) : (
+            <div className="space-y-3 border-t border-gray-100 pt-4">
+              <label className="block text-sm font-bold text-gray-700" htmlFor="ai-chat-credit-input">เครดิตแชตต่อเดือนของร้านนี้ (บาท)
+                <input id="ai-chat-credit-input" className={`${inputClass} mt-1 min-h-12 text-base`} type="text" inputMode="decimal"
+                  placeholder={`เว้นว่าง = ${deal ? 'ใช้เครดิตจากดีลขาย' : `ค่าเริ่มต้น ${satangToBahtInput(DEFAULT_CHAT_CREDIT_SATANG)} บาท`}`}
+                  value={chatInput} disabled={saving} onChange={(e) => setChatInput(e.target.value)} />
+              </label>
+              <p className="text-xs leading-5 text-gray-500">
+                ตั้งได้ทุกแพ็กเกจรวมร้านทดลอง · เว้นว่างเพื่อกลับไปใช้ค่าเริ่มต้นหรือเครดิตจากดีลขาย · ใส่ 0 เพื่อปิดแชต AI ของร้านนี้ · มีผลทันทีกับเดือนนี้
+              </p>
+              <label className="block text-base">เหตุผลที่ปรับเครดิตแชต
+                <textarea aria-label="เหตุผลที่ปรับเครดิตแชต" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500}
+                  value={chatReason} disabled={saving} onChange={(e) => setChatReason(e.target.value)} />
+              </label>
+              <button type="button" className={`${btnPrimary} min-h-12 min-w-32 text-base`} data-testid="ai-chat-credit-save"
+                disabled={saving || !chatChanged} aria-busy={chatLoading} onClick={() => void handleChatSave()}>
+                {chatLoading ? 'กำลังบันทึก…' : 'ตรวจเครดิตแชตก่อนบันทึก'}
+              </button>
+            </div>
+          ))}
 
           {policyDraft && (
-            <AiBudgetPolicyPanel
-              usage={usage}
-              monthKey={aiBudgetCurrentMonthKey(usage)}
-              draft={policyDraft}
-              onDraft={setPolicyDraft}
-              reason={policyReason}
-              onReason={setPolicyReason}
-              saving={policyLoading}
-              busy={budgetLoading || ocrLoading || usageLoading}
-
-              canManage={canManage}
-              companyLocked={fieldsLocked}
-              onSave={() => void handlePolicySave()}
-              onCancelPending={() => void handleCancelPending()}
-            />
+            <details className="rounded-xl border border-gray-200 bg-white px-4" open={advancedOpen}>
+              <summary className="flex min-h-11 cursor-pointer items-center py-2 text-sm font-medium text-gray-700">
+                ตั้งค่าขั้นสูง: แยกเพดานเงินของแชตกับอ่านเอกสาร
+              </summary>
+              <div className="pb-4">
+                <AiBudgetPolicyPanel
+                  usage={usage}
+                  monthKey={aiBudgetCurrentMonthKey(usage)}
+                  draft={policyDraft}
+                  onDraft={setPolicyDraft}
+                  reason={policyReason}
+                  onReason={setPolicyReason}
+                  saving={policyLoading}
+                  busy={budgetLoading || ocrLoading || chatLoading || usageLoading}
+                  canManage={canManage}
+                  companyLocked={fieldsLocked}
+                  onSave={() => void handlePolicySave()}
+                  onCancelPending={() => void handleCancelPending()}
+                />
+              </div>
+            </details>
           )}
 
           {holds && (
@@ -2272,23 +2309,97 @@ function AiUsageBudgetSection({
               onReason={setHoldReason}
               busyId={holdBusyId}
               canEdit={holds.canManage && !holds.companyLocked && !fieldsLocked}
-              disabled={budgetLoading || ocrLoading || policyLoading || usageLoading}
+              disabled={saving || usageLoading}
               onAct={(hold, action) => void handleHoldAction(hold, action)}
             />
           )}
+        </SectionCard>
 
-          <section className="space-y-4 border-t-2 border-gray-100 pt-5" aria-labelledby="ocr-governance-title">
+        <SectionCard title="จำนวนอ่านรูปใบเสร็จ">
+          <section className="space-y-3" aria-label="ยอดรูปใบเสร็จของร้าน" data-testid="ai-receipt-images">
+            {images ? (
+              <>
+                <p className="text-base font-medium text-gray-900">{receiptImagesSourceText(images, formatThaiDate)}</p>
+                {images.basis === 'PACKAGE_LOTS' && !images.active && (
+                  <p className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-900">
+                    แพ็กเกจหมดอายุหรือถูกพัก ระบบจึงยังไม่อ่านรูปใบเสร็จของร้านนี้
+                  </p>
+                )}
+                {receiptImageTiles(images, formatThaiDate).length > 0 && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {receiptImageTiles(images, formatThaiDate).map((tile) => (
+                      <div key={tile.key} className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3" data-testid={`ai-receipt-${tile.key}`}>
+                        <p className="text-sm font-medium text-gray-600">{tile.label}</p>
+                        <p className="mt-1 text-2xl font-bold tabular-nums text-gray-900">{tile.value}</p>
+                        <p className="mt-1 text-xs leading-5 text-gray-500">{tile.note}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {images.additional.remaining > 0 && (
+                  <p className="text-xs leading-5 text-gray-500">ยอดเพิ่มเติมใช้กับรูปใบเสร็จหน้าเดียว (JPG หรือ PNG) ไม่ใช้กับ PDF</p>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-gray-600">ยังอ่านยอดรูปใบเสร็จของร้านนี้ไม่ได้</p>
+            )}
+          </section>
+
+          <section className="space-y-3 border-t border-gray-100 pt-4" aria-labelledby="ocr-usage-title">
+            <h3 id="ocr-usage-title" className="text-base font-bold text-gray-900">อ่านเอกสารเดือนนี้ ({formatThaiMonth(usage.ocr.current.monthKey)})</h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+                <p className="text-sm font-medium text-blue-800">อ่านแล้วทุกช่องทาง</p>
+                <p className="mt-1 text-2xl font-bold tabular-nums text-blue-950">
+                  {usage.ocr.current.usedCount.toLocaleString('th-TH')}<span className="ml-1 text-base font-medium">ครั้ง</span>
+                </p>
+                <p className="mt-1 text-xs leading-5 text-blue-700">รวมรูป statement · เทียบกับเพดาน OCR รายเดือน</p>
+              </div>
+              <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
+                <p className="text-sm font-medium text-violet-800">ใบเสร็จที่อัปโหลดสำเร็จ</p>
+                <p className="mt-1 text-2xl font-bold tabular-nums text-violet-950">
+                  {usage.ocr.current.uploadedReceiptDocumentCount.toLocaleString('th-TH')}<span className="ml-1 text-base font-medium">ฉบับ</span>
+                </p>
+                <p className="mt-1 text-xs leading-5 text-violet-700">ไม่รวมลายเซ็น ไฟล์ที่ระบบสร้าง และหลักฐานจ่ายเงิน</p>
+              </div>
+            </div>
+            {ocrUsageTrackingNote(usage.ocr.current.monthKey) && (
+              <p className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
+                {ocrUsageTrackingNote(usage.ocr.current.monthKey)}
+              </p>
+            )}
+            <div className="grid gap-2 sm:grid-cols-3">
+              {usage.ocr.current.sourceCounts.map((source) => (
+                <div key={source.sourceRoute} className="flex min-h-11 items-center justify-between rounded-lg bg-gray-50 px-3 text-sm">
+                  <span className="text-gray-600">
+                    {source.sourceRoute === 'receipt-ocr-web'
+                      ? 'ใบเสร็จบนเว็บ'
+                      : source.sourceRoute === 'receipt-ocr-line'
+                        ? 'รูปจาก LINE ที่ AI ตรวจ'
+                        : 'รูป Statement'}
+                  </span>
+                  <strong className="tabular-nums text-gray-900">{source.reads.toLocaleString('th-TH')}</strong>
+                </div>
+              ))}
+            </div>
+            <p className="text-sm text-gray-500">
+              เดือนก่อน ({formatThaiMonth(usage.ocr.previous.monthKey)}): อ่าน {usage.ocr.previous.usedCount.toLocaleString('th-TH')} ครั้ง ·
+              ใบเสร็จอัปโหลด {usage.ocr.previous.uploadedReceiptDocumentCount.toLocaleString('th-TH')} ฉบับ
+            </p>
+          </section>
+
+          <section className="space-y-4 border-t border-gray-100 pt-4" aria-labelledby="ocr-governance-title">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h3 id="ocr-governance-title" className="text-base font-bold text-gray-900">ควบคุมการอ่านเอกสารด้วย OCR</h3>
                 <p className="mt-1 text-sm leading-6 text-gray-600">
-                  ตั้งจำนวนครั้งต่อเดือนสำหรับบริษัทนี้โดยเฉพาะ ครอบคลุมใบเสร็จจากเว็บ/LINE และรูป statement
+                  ปิดการอ่าน หรือตั้งเพดานจำนวนครั้งต่อเดือนของร้านนี้ ครอบคลุมใบเสร็จจากเว็บ/LINE และรูป statement
                 </p>
               </div>
               <div className="flex min-h-12 items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3">
                 <EntitlementSwitch
                   checked={ocrEnabled}
-                  disabled={ocrLoading || budgetLoading || policyLoading || locked} aria-busy={Boolean(ocrLoading)}
+                  disabled={saving || locked} aria-busy={Boolean(ocrLoading)}
                   label="เปิดให้ AI อ่านเอกสาร"
                   onClick={() => setOcrEnabled((value) => !value)}
                 />
@@ -2313,84 +2424,33 @@ function AiUsageBudgetSection({
               </div>
             )}
 
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-4">
-                <p className="text-sm font-medium text-blue-800">อ่านแล้วเดือนนี้</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums text-blue-950">
-                  {usage.ocr.current.usedCount.toLocaleString('th-TH')}
-                  <span className="ml-1 text-base font-medium">ครั้ง</span>
+            {quotaVisible && (
+              <div className="space-y-2">
+                <label htmlFor="receipt-quota-mode" className="block text-sm font-bold text-gray-700">เมื่อรูปของแพ็กเกจทดลองหรือแพ็กเกจที่ทีมงานตั้งให้ครบ</label>
+                <select id="receipt-quota-mode" className={`${inputClass} min-h-12 text-base`} value={receiptQuotaMode}
+                  onChange={(event) => setReceiptQuotaMode(event.target.value)}
+                  disabled={saving || locked || !usage.ocr.planQuota}>
+                  <option value="inherit">ตามค่าเริ่มต้นของระบบ ({usage.ocr.planQuota?.defaultEnforced ? 'หยุดอ่าน' : 'นับอย่างเดียว'})</option>
+                  <option value="enforce">บังคับ — ครบแล้วหยุดอ่านใบใหม่</option>
+                  <option value="observe">นับอย่างเดียว — ยังอ่านต่อได้เมื่อครบ</option>
+                </select>
+                <p className="text-sm leading-6 text-gray-600" data-testid="receipt-quota-effective">
+                  {usage.ocr.planQuota
+                    ? `สถานะที่บันทึก: ${usage.ocr.planQuota.enforced ? 'บังคับโควตา' : 'นับอย่างเดียว'} · ${usage.ocr.planQuota.source === 'COMPANY' ? 'การตั้งค่าบริษัท' : 'ค่าเริ่มต้นของระบบ'}`
+                    : 'ยังโหลดสถานะการบังคับโควตาไม่ได้'}
                 </p>
-                <p className="mt-1 text-xs text-blue-700">{formatThaiMonth(usage.ocr.current.monthKey)}</p>
               </div>
-              <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-4">
-                <p className="text-sm font-medium text-green-800">คงเหลือ</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums text-green-950">
-                  {ocrRemaining(usage.ocr.current.usedCount, usage.ocr.config.monthlyLimit)?.toLocaleString('th-TH') ?? 'ไม่จำกัด'}
-                </p>
-                <p className="mt-1 text-xs text-green-700">รีเซ็ตเมื่อขึ้นเดือนใหม่ตามเวลาไทย</p>
-              </div>
-              <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-4">
-                <p className="text-sm font-medium text-violet-800">ใบเสร็จที่อัปโหลดสำเร็จ</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums text-violet-950">
-                  {usage.ocr.current.uploadedReceiptDocumentCount.toLocaleString('th-TH')}
-                  <span className="ml-1 text-base font-medium">ฉบับ</span>
-                </p>
-                <p className="mt-1 text-xs text-violet-700">ไม่รวมลายเซ็น ไฟล์ที่ระบบสร้าง และหลักฐานจ่ายเงิน</p>
-              </div>
-            </div>
-
-            {ocrUsageTrackingNote(usage.ocr.current.monthKey) && (
-              <p className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
-                {ocrUsageTrackingNote(usage.ocr.current.monthKey)}
+            )}
+            {!quotaVisible && images?.basis === 'PACKAGE_LOTS' && (
+              <p className="text-sm leading-6 text-gray-600" data-testid="receipt-quota-effective">
+                แพ็กเกจที่ชำระเงินหยุดอ่านเมื่อรูปหมดหรือแพ็กเกจหมดอายุเสมอ จึงไม่มีตัวเลือกนับอย่างเดียว
               </p>
             )}
 
-            <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-              <p className="text-sm font-bold text-gray-800">อ่านจากช่องทางไหนเดือนนี้</p>
-              <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                {usage.ocr.current.sourceCounts.map((source) => (
-                  <div key={source.sourceRoute} className="flex min-h-11 items-center justify-between rounded-lg bg-gray-50 px-3 text-sm">
-                    <span className="text-gray-600">
-                      {source.sourceRoute === 'receipt-ocr-web'
-                        ? 'ใบเสร็จบนเว็บ'
-                        : source.sourceRoute === 'receipt-ocr-line'
-                          ? 'รูปจาก LINE ที่ AI ตรวจ'
-                          : 'รูป Statement'}
-                    </span>
-                    <strong className="tabular-nums text-gray-900">{source.reads.toLocaleString('th-TH')}</strong>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-3 text-sm text-gray-500">
-                เดือนก่อน ({formatThaiMonth(usage.ocr.previous.monthKey)}): อ่าน {usage.ocr.previous.usedCount.toLocaleString('th-TH')} ครั้ง ·
-                ใบเสร็จอัปโหลด {usage.ocr.previous.uploadedReceiptDocumentCount.toLocaleString('th-TH')} ฉบับ
-              </p>
-            </div>
-
-            <div className="space-y-2 border-t border-gray-100 pt-4">
-              <label htmlFor="receipt-quota-mode" className="block text-sm font-bold text-gray-700">บังคับโควตาใบเสร็จของแพ็กเกจทดลอง / กำหนดเอง</label>
-              <select id="receipt-quota-mode" className={`${inputClass} min-h-12 text-base`} value={receiptQuotaMode}
-                onChange={(event) => setReceiptQuotaMode(event.target.value)}
-                disabled={ocrLoading || budgetLoading || policyLoading || locked || !usage.ocr.planQuota || usage.ocr.planQuota.source === 'PAID_GRANTS'}>
-                <option value="inherit">ตามค่าเริ่มต้นของระบบ</option>
-                <option value="enforce">บังคับ — ครบโควตาแล้วหยุดอ่านใบใหม่</option>
-                <option value="observe">นับอย่างเดียว — ยังอ่านต่อได้เมื่อครบโควตา</option>
-              </select>
-              <p className="text-sm leading-6 text-gray-600" data-testid="receipt-quota-effective">
-                {usage.ocr.planQuota
-                  ? `สถานะที่บันทึก: ${usage.ocr.planQuota.enforced ? 'บังคับโควตา' : 'นับอย่างเดียว'} · ${usage.ocr.planQuota.source === 'PAID_GRANTS' ? 'แพ็กเกจที่ชำระเงิน' : usage.ocr.planQuota.source === 'COMPANY' ? 'การตั้งค่าบริษัท' : 'ค่าเริ่มต้นของระบบ'}`
-                  : 'ยังโหลดสถานะการบังคับโควตาไม่ได้'}
-              </p>
-              <p className="text-xs leading-5 text-gray-500">มีผลกับคำขอใหม่จากเว็บและ LINE หลังบันทึก ไม่รีเซ็ตจำนวนที่ใช้ แพ็กเกจที่ชำระเงินบังคับโควตาและวันหมดอายุเสมอ ส่วนรูป statement ใช้เพดาน OCR ด้านล่าง</p>
-            </div>
-
-            <label className="block text-base">เหตุผลที่ปรับการอ่านเอกสาร
-              <textarea aria-label="เหตุผลที่ปรับการอ่านเอกสาร" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={ocrReason} disabled={ocrLoading||budgetLoading||policyLoading||locked} onChange={e=>setOcrReason(e.target.value)} />
-            </label>
-            <div className="grid gap-3 border-t border-gray-100 pt-4 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
               <div>
                 <label className="mb-1 block text-sm font-bold text-gray-700" htmlFor="ocr-monthly-limit">
-                  จำนวน OCR สูงสุดต่อเดือน
+                  เพดาน OCR รายเดือนของร้านนี้ (ครั้ง)
                 </label>
                 <input
                   id="ocr-monthly-limit"
@@ -2400,32 +2460,152 @@ function AiUsageBudgetSection({
                   max={1_000_000}
                   step={1}
                   inputMode="numeric"
-                  placeholder="เว้นว่าง = ไม่จำกัด"
+                  placeholder="เว้นว่าง = ไม่ได้ตั้งเพดาน"
                   value={ocrLimitInput}
                   onChange={(event) => setOcrLimitInput(event.target.value)}
-                  disabled={ocrLoading || budgetLoading || policyLoading || locked} aria-busy={Boolean(ocrLoading)}
+                  disabled={saving || locked} aria-busy={Boolean(ocrLoading)}
                 />
                 <p className="mt-1 text-xs leading-5 text-gray-500">
-                  เปิด OCR: {savedOcrEnabled ? 'เปิด' : 'ปิด'} → {ocrEnabled ? 'เปิด' : 'ปิด'} · โควตา: {usage.ocr.config.monthlyLimit ?? 'ไม่จำกัด'} → {ocrLimitInput.trim() || 'ไม่จำกัด'} ครั้ง/เดือน
+                  ถ้าตั้งไว้ ระบบหยุดอ่านเอกสารทุกชนิดเมื่อครบจำนวนนี้ แม้แพ็กเกจยังมีรูปเหลือ · นับทุกครั้งที่ส่งเอกสารให้ OCR แม้อ่านไม่สำเร็จ
                 </p>
                 <p className="mt-1 text-xs leading-5 text-gray-500">
-                  นับทุกครั้งที่ระบบเริ่มส่งเอกสารให้ OCR แม้อ่านไม่สำเร็จ เพราะผู้ให้บริการอาจคิดต้นทุนแล้ว
+                  เปิด OCR: {savedOcrEnabled ? 'เปิด' : 'ปิด'} → {ocrEnabled ? 'เปิด' : 'ปิด'} · เพดาน: {usage.ocr.config.monthlyLimit ?? 'ไม่ได้ตั้ง'} → {ocrLimitInput.trim() || 'ไม่ได้ตั้ง'} ครั้ง/เดือน
                 </p>
               </div>
-              <button
-                type="button"
-                className={`${btnPrimary} min-h-12 min-w-32 text-base`}
-                disabled={ocrLoading || budgetLoading || policyLoading || locked} aria-busy={Boolean(ocrLoading)}
-                onClick={() => void handleOcrSave()}
-              >
-                {ocrLoading ? 'กำลังบันทึก…' : 'บันทึก OCR'}
-              </button>
             </div>
+            <label className="block text-base">เหตุผลที่ปรับการอ่านเอกสาร
+              <textarea aria-label="เหตุผลที่ปรับการอ่านเอกสาร" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={ocrReason} disabled={saving||locked} onChange={e=>setOcrReason(e.target.value)} />
+            </label>
+            <button
+              type="button"
+              className={`${btnPrimary} min-h-12 min-w-32 text-base`}
+              disabled={saving || locked} aria-busy={Boolean(ocrLoading)}
+              onClick={() => void handleOcrSave()}
+            >
+              {ocrLoading ? 'กำลังบันทึก…' : 'บันทึก OCR'}
+            </button>
           </section>
-          {confirmDialog}
-        </>
-      )}
-    </SectionCard>
+        </SectionCard>
+
+        <SectionCard title="เพดานความปลอดภัยค่า AI ต่อเดือน (ทุกช่องทางรวม)">
+          <div className="space-y-2" data-testid="ai-safety-ceiling">
+            <p className="text-sm leading-6 text-gray-600">
+              เพดานนี้กันค่าใช้ AI ทุกช่องทางของร้านไม่ให้เกินต่อเดือน ไม่ใช่เครดิตของร้าน — ถ้าถึงเพดาน ระบบหยุดเรียก AI ทุกช่องทางจนขึ้นเดือนใหม่
+            </p>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-sm text-gray-700">
+                ใช้ทุกช่องทางเดือนนี้{' '}
+                <span className="font-semibold tabular-nums text-gray-900">{satangToBaht(spendSatang)}</span>
+                {' จากเพดาน '}
+                <span className="tabular-nums">{satangToBaht(usage.budget.effectiveSatang)}</span>
+                {usage.budget.overrideSatang === null ? ' (ค่ากลางของระบบ)' : ' (ตั้งเฉพาะร้านนี้)'}
+              </p>
+              <span className={`text-xs font-medium tabular-nums ${budgetTextClass(percent)}`}>{percent}%</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+              <div className={`h-full rounded-full ${budgetBarClass(percent)}`} style={{ width: `${budgetBarWidth(percent)}%` }} />
+            </div>
+          </div>
+          {locked ? (
+            <p className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-600">{readOnlyNote}</p>
+          ) : (
+            <div className="space-y-3 border-t border-gray-100 pt-4">
+              <label className="block text-base">เหตุผลที่ปรับเพดานความปลอดภัย
+                <textarea aria-label="เหตุผลที่ปรับเพดานความปลอดภัย" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={budgetReason} disabled={saving} onChange={e=>setBudgetReason(e.target.value)} />
+              </label>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="min-w-0 grow basis-48">
+                  <label className="mb-1 block text-sm font-bold text-gray-700" htmlFor="ai-monthly-budget">เพดานของร้านนี้ (บาท)</label>
+                  <input
+                    id="ai-monthly-budget"
+                    className={`${inputClass} min-h-11 text-base`}
+                    type="text"
+                    inputMode="decimal"
+                    placeholder={satangToBahtInput(usage.budget.defaultSatang)}
+                    value={budgetInput}
+                    onChange={(e) => setBudgetInput(e.target.value)}
+                    disabled={saving} aria-busy={Boolean(budgetLoading)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className={`${btnPrimary} min-h-11 text-base`}
+                  disabled={saving} aria-busy={Boolean(budgetLoading)}
+                  onClick={() => void handleBudgetSave()}
+                >
+                  {budgetLoading ? 'กำลังบันทึก…' : 'ตรวจเพดานก่อนบันทึก'}
+                </button>
+              </div>
+              <p className="break-words text-sm text-gray-600">เพดาน: {usage.budget.overrideSatang === null ? 'ค่ากลางของระบบ' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่ากลางของระบบ'}</p>
+              <p className="text-xs text-gray-500">
+                เว้นว่างเพื่อใช้ค่ากลาง {satangToBaht(usage.budget.defaultSatang)} ตั้งได้ไม่เกิน {satangToBaht(usage.budget.ceilingSatang)} · การปรับเพดานไม่เปลี่ยนเครดิตแชต
+              </p>
+            </div>
+          )}
+        </SectionCard>
+
+        <details className="rounded-xl border border-gray-200 bg-white p-4">
+          <summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">รายละเอียดค่าใช้ AI เดือนนี้</summary>
+          <div className="space-y-4 pt-3">
+            <p className="text-sm text-gray-600">
+              {usage.current
+                ? `${formatThaiMonth(usage.current.monthKey)} · ${satangToBaht(usage.current.costSatang)} · ${usage.current.callCount} ครั้ง · ${usage.current.inputTokens.toLocaleString('th-TH')} in / ${usage.current.outputTokens.toLocaleString('th-TH')} out tokens`
+                : 'เดือนนี้ยังไม่มีการใช้งาน AI'}
+            </p>
+            <p className="text-sm text-gray-600">
+              {usage.previous
+                ? <>เดือนก่อน ({formatThaiMonth(usage.previous.monthKey)}): <span className="tabular-nums">{satangToBaht(usage.previous.costSatang)}</span> · {usage.previous.callCount} ครั้ง</>
+                : 'เดือนก่อนยังไม่มีค่าใช้จ่าย AI'}
+            </p>
+
+            <AiUsageBreakdown usage={usage} />
+
+            {usage.topTags.length > 0 && (
+              <div className="overflow-x-auto">
+                {/* Five columns cannot be read at 390px; scroll inside this container, never the page. */}
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+                      <th className="py-2 pr-4 font-medium">ประเภทการใช้งาน</th>
+                      <th className="py-2 pr-4 font-medium">ค่าใช้จ่าย</th>
+                      <th className="py-2 pr-4 font-medium">จำนวนครั้ง</th>
+                      <th className="py-2 pr-4 font-medium">in / out tokens</th>
+                      <th className="py-2 font-medium">ต้นทุน cache</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usage.topTags.map((row) => (
+                      <tr key={row.tag} className="border-b border-gray-100">
+                        <td className="py-2.5 pr-4 font-mono text-gray-700">{row.tag}</td>
+                        <td className="py-2.5 pr-4 tabular-nums text-gray-800">{satangToBaht(row.costSatang)}</td>
+                        <td className="py-2.5 pr-4 tabular-nums text-gray-800">{row.calls}</td>
+                        <td className="py-2.5 pr-4 tabular-nums text-gray-600">
+                          {row.inputTokens.toLocaleString('th-TH')} / {row.outputTokens.toLocaleString('th-TH')}
+                        </td>
+                        <td className="py-2.5 tabular-nums text-gray-600">{aiCacheCostLabel(row.cacheCostSatang)}</td>
+                      </tr>
+                    ))}
+                    {/* Optional chaining for the same version skew: a pre-D1 response has no remainder row. */}
+                    {(usage.otherTags?.tags ?? 0) > 0 && (
+                      <tr className="border-b border-gray-100 bg-gray-50">
+                        <td className="py-2.5 pr-4 text-gray-700">อื่น ๆ ({usage.otherTags.tags.toLocaleString('th-TH')} ประเภท)</td>
+                        <td className="py-2.5 pr-4 tabular-nums text-gray-800">{satangToBaht(usage.otherTags.costSatang)}</td>
+                        <td className="py-2.5 pr-4 tabular-nums text-gray-800">{usage.otherTags.calls}</td>
+                        <td className="py-2.5 pr-4 tabular-nums text-gray-600">
+                          {usage.otherTags.inputTokens.toLocaleString('th-TH')} / {usage.otherTags.outputTokens.toLocaleString('th-TH')}
+                        </td>
+                        <td className="py-2.5 tabular-nums text-gray-600">{aiCacheCostLabel(usage.otherTags.cacheCostSatang)}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </details>
+      </>)}
+      {confirmDialog}
+    </>
   );
 }
 
@@ -2948,7 +3128,7 @@ function ShopMessageSection({ companyId, supportRequestId, supportAskerRef, show
   );
 }
 
-const COMPANY_VIEWS = [{key:'overview',label:'ภาพรวม'}, {key:'members',label:'สมาชิก'}, {key:'package',label:'แพ็กเกจและฟีเจอร์'}, {key:'ai',label:'AI และโควตา'}, {key:'contact',label:'ติดต่อและประวัติ'}] as const;
+const COMPANY_VIEWS = [{key:'overview',label:'ภาพรวม'}, {key:'members',label:'สมาชิก'}, {key:'package',label:'แพ็กเกจและฟีเจอร์'}, {key:'ai',label:'เครดิต AI และอ่านรูป'}, {key:'contact',label:'ติดต่อและประวัติ'}] as const;
 
 export default function PartnerDetailPage({ companyId, canManageMembers = false, canEditIdentity = false, supportRequestId, supportAskerRef }: {
   companyId: string;
@@ -3411,7 +3591,7 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
       </section>}
       {opened('members')&&<section hidden={view!=='members'} aria-label="สมาชิกบริษัท" className="space-y-5"><p className="text-gray-600">ตรวจสมาชิกและการผูก LINE เลือกดำเนินการเฉพาะคนที่ต้องการดูแล</p><MembersSection companyId={companyId} canManageMembers={canManageMembers} showToast={showToast}/></section>}
       {opened('package')&&<section hidden={view!=='package'} aria-label="แพ็กเกจและฟีเจอร์บริษัท" className="space-y-5"><PlanTermSection key={`term-${companyId}`} companyId={companyId} companyStatus={currentStatus} fieldsLocked={fieldsLocked} showToast={showToast}/><PackageMenuSection companyId={companyId} entitlements={detail.featureEntitlements} setVersion={detail.setVersion} fieldsLocked={fieldsLocked} normalizationPending={isNormalizationPending(detail.entitlementNormalizationPending)} showToast={showToast} onSaved={load}/></section>}
-      {opened('ai')&&<section hidden={view!=='ai'} aria-label="AI และโควตาบริษัท" className="space-y-5"><p className="text-gray-600">ดูการใช้งานและปรับเครดิต AI หรือจำนวนเอกสาร ระบบให้ตรวจผลกระทบก่อนบันทึก</p>
+      {opened('ai')&&<section hidden={view!=='ai'} aria-label="เครดิต AI และอ่านรูปของบริษัท" className="space-y-5"><p className="text-gray-600">ดูว่าเงื่อนไขไหนใช้กับร้านนี้ ปรับเครดิตแชต จำนวนอ่านรูป และเพดานความปลอดภัย ระบบให้ตรวจผลกระทบก่อนบันทึก</p>
         <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} onChanged={()=>setAiHistoryRefresh(n=>n+1)} />
         <details className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เปลี่ยนรุ่น AI ของบริษัท</summary>
         {/* AI model */}
@@ -3455,7 +3635,7 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
         </SectionCard>
 
         </details>
-        <details className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 text-gray-600">ดูประวัติการปรับ AI และโควตา</summary><PartnerAiAdjustmentHistory key={`ai-history-${companyId}-${aiHistoryRefresh}`} companyId={companyId}/></details>
+        <details className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 text-gray-600">ดูประวัติการปรับเครดิต AI และอ่านรูป</summary><PartnerAiAdjustmentHistory key={`ai-history-${companyId}-${aiHistoryRefresh}`} companyId={companyId}/></details>
       </section>}
       {opened('contact')&&<section hidden={view!=='contact'} aria-label="ติดต่อและประวัติบริษัท" className="space-y-5"><ShopMessageSection key={`message-${companyId}`} companyId={companyId} supportRequestId={supportRequestId} supportAskerRef={supportAskerRef} showToast={showToast}/><ShopTimelineSection key={`timeline-${companyId}`} companyId={companyId}/></section>}
     </main>

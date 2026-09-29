@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "4d37c76d31edfb69ebc73b3101261db9d1072308",
-  "checkoutBranch": "claude/uat-round2-20260929",
+  "sourceRevision": "fd714bde15eff65d1a4eb891bd31ed8760b66243",
+  "checkoutBranch": "claude/remove-receipt-strict-evidence-20260929",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -161,15 +161,15 @@
     },
     {
       "path": "docs/plans/mangmee-ai-implementation-index-2026-09-27.md",
-      "sha256": "210721ea3763001603829067430fae86bad924a52eb876821d1cc06cea39538e"
+      "sha256": "a87ba543d7e073f212d8bbe77ed697eb14c08b1178aa505d9d78852380bd911b"
     },
     {
       "path": "docs/specs/mangmee-ai-core-capability-contract-2026-09-27.md",
-      "sha256": "58a4e4b7a026a9228b430cefa9a36d2c47e3668dca30757868f7f106bcb1b5f7"
+      "sha256": "6227f4acdebf57c3bf0c27ab1f2c61e911eaa1e758e0c3f664871d2810539bd5"
     },
     {
       "path": "packages/config/src/index.ts",
-      "sha256": "df0c78a152946ae4f8a90a9b8a9be2771ea199df4cead47b3d539f8071dc528a"
+      "sha256": "f7c05e43929980cb38f5ef82639f26dd11b513b00379da8ec933a30f0f043bb7"
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
@@ -181,7 +181,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "cf67a25980331211441bc267299117c03977e5851e279457a3daeff5ad6bc0bc"
+      "sha256": "9e985675c7abb9ac0c7b90461b79d1f567d234b3ddb1c441c8ed08c6292c912b"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T08:29:31.714Z",
-  "manifestDigest": "c3bf4cc6af13fe1f9f4d27f84aedc7624feefdb54c48bb80b5f636f93bcc0f6b"
+  "generatedAt": "2026-09-29T12:46:51.675Z",
+  "manifestDigest": "b243bcc8f6a1753999143fca2ea4cc0748bbb025111e189cdb09fb9062771fd0"
 }

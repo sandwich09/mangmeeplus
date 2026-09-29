@@ -18,7 +18,7 @@ import { readAiCreditCycle, type AiCreditCycle } from './ai-credit-cycles';
 export type AiCreditSourceKind = 'INCLUDED_CYCLE' | 'ADD_ON_PAID' | 'ADD_ON_ADMIN' | 'SALES_EVENT';
 /** Why a funded call was refused. Internal only: the gateway still sees the existing refusal code. */
 export type AiCreditRefusalCause = 'PACKAGE_REQUIRED' | 'EXHAUSTED' | 'INSUFFICIENT';
-export type AiCreditAllowanceSource = 'DEFAULT' | 'SALES_DEAL' | 'TOTAL_OVERRIDE' | 'SPLIT_CHAT_CAP';
+export type AiCreditAllowanceSource = 'DEFAULT' | 'SALES_DEAL' | 'ADMIN_CHAT_CREDIT' | 'SPLIT_CHAT_CAP';
 
 const LIVE_HOLD = ['RESERVED', 'DISPATCHED', 'UNRESOLVED'] as const;
 /** Spec §5.2 / D8: package, then team-given (admin gift, sales event), then purchased. */

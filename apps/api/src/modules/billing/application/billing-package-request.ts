@@ -89,10 +89,17 @@ export async function applyDealRequest(tx: Prisma.TransactionClient, input: { co
       salesDealChatCreditEndsAt: input.deal.cadence ? null : input.serviceEnd },
     update: { salesDealChatCreditSatang: input.deal.aiMonthlyBudgetSatang,
       salesDealChatCreditEndsAt: input.deal.cadence ? null : input.serviceEnd } });
-  if (input.deal.creditScope !== 'CHAT' && input.deal.aiMonthlyBudgetSatang !== null) await tx.companyAiConfiguration.upsert({
-    where: { companyId: input.companyId },
-    create: { companyId: input.companyId, monthlyBudgetSatang: input.deal.aiMonthlyBudgetSatang },
-    update: { monthlyBudgetSatang: input.deal.aiMonthlyBudgetSatang } });
+  // A v2/v3 deal means the old coupled value: a TOTAL that was also the chat credit. Since the TOTAL
+  // is only the safety ceiling now (admin tab rework 2026-09-29), write the chat credit beside it on a
+  // SHARED row, so an old deal still buys what it bought. A SPLIT row keeps its own chat cap.
+  if (input.deal.creditScope !== 'CHAT' && input.deal.aiMonthlyBudgetSatang !== null) {
+    await tx.companyAiConfiguration.upsert({
+      where: { companyId: input.companyId },
+      create: { companyId: input.companyId, monthlyBudgetSatang: input.deal.aiMonthlyBudgetSatang },
+      update: { monthlyBudgetSatang: input.deal.aiMonthlyBudgetSatang } });
+    await tx.companyAiConfiguration.updateMany({ where: { companyId: input.companyId, budgetMode: 'SHARED' },
+      data: { chatMonthlyBudgetSatang: input.deal.aiMonthlyBudgetSatang } });
+  }
   // §17.2: one row per company, ever — and D3 renewals never write one at all, because a renewal
   // is not a first activation. `writeSalesAttribution` re-checks the company anyway; skipping the
   // call keeps a renewal from ever being the row that wins the race.
