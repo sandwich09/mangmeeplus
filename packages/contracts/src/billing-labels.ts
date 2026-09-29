@@ -87,6 +87,8 @@ const issueKinds: Record<string,string> = {
   PLAN_MENU_MOVE_REVIEW:'ต้องตรวจการย้ายชุดเมนูตามแพ็กเกจใหม่',
   // Customer recipient-change flow (billing-email-recipient.ts), item 10.
   EMAIL_RECIPIENT_REVIEW:'ต้องตรวจการเปลี่ยนอีเมลรับเอกสาร',
+  // Sales-event discounts §6.3: a bill was paid at the discounted amount but its discount was not held for it.
+  EVENT_DISCOUNT_REVIEW:'ต้องตรวจส่วนลดจากงานของบิลนี้',
 };
 export const billingIssueLabel = (value:string) => Object.hasOwn(issueKinds,value)?issueKinds[value]!:'รายการที่ต้องตรวจสอบ';
 const operationKinds: Record<string,string> = {
