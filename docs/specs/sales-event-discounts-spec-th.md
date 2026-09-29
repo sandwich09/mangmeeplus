@@ -2,7 +2,7 @@
 
 ปรับล่าสุด 2026-09-29 · **DRAFT v2 — ใช้มติ Owner และมติเทคนิค 2026-09-29 แล้ว; คำถามค้าง §12 มีค่าเริ่มต้น ต้องได้คำตอบหรือยอมรับค่าเริ่มต้นก่อนเริ่ม PR SD-C**
 
-- ฐานโค้ดที่ตรวจ: develop `8a91bc1c` และ `origin/develop` `69fba9d3` (ต่างจาก `8a91bc1c` เฉพาะ `.github/workflows/extended-tests.yml:286`). ทุก `file:line` ในเอกสารนี้อ้างฐานนี้ และตรวจกับไฟล์จริงแล้ว
+- ฐานโค้ดที่ตรวจ: develop `8a91bc1c` และ `origin/develop` `69fba9d3` (ต่างจาก `8a91bc1c` เฉพาะ `.github/workflows/extended-tests.yml:286`). ทุก `file:line` ในเอกสารนี้อ้างฐานนี้ และตรวจกับไฟล์จริงแล้ว. หลังรีวิว develop ได้งานแก้ของโปรแกรมซื้อแพ็กเกจ (#860, develop `9130455a`) ซึ่งทำให้บรรทัดในไฟล์ billing/LINE/หน้าเว็บแพ็กเกจหลายไฟล์เลื่อน (ประมาณ 3 ใน 4 ของที่อ้างในไฟล์เหล่านั้น) — ก่อนลงมือแต่ละ PR ให้ตรวจ anchor ซ้ำบน develop ล่าสุด
 - เอกสารคู่กัน: [Plan](../plans/sales-event-discounts-plan-th.md) · [Audit และผลตรวจซ้ำบน develop](../research/sales-event-discounts-e2e-impact-audit-2026-09-29-th.md). Memory ของงานนี้ยังไม่มีใน repo (ลิงก์ `../agent-memory/sales-event-discounts-2026-09-28.md` ของ DRAFT v1 ไม่มีไฟล์)
 - เกี่ยวข้อง: [Sales deals](mangmee-sales-deals-and-locked-signup-spec-th.md) (§4 "ไม่มี coupon บน subscription" ใช้ต่อ) · [ซื้อแพ็กเกจได้ทันทีหลังสมัคร](mangmee-purchase-without-setup-spec-th.md) (R-A1, R-A6, R-B1, R-C1, R-C2, D-PF-5, D-PF-10/R-C11) · [Add-on เครดิต AI และอ่านรูป](chat-credit-and-receipt-addons-spec-th.md) (เจ้าของ layout หน้า billing และฐาน billing ร่วม: มติ T-02, T-07, T-08)
 - รหัสของเอกสารชุดนี้ขึ้นต้น `SD-`: SD-O มติ Owner, SD-T มติเทคนิค, SD-Q คำถามค้าง, SD-E เกณฑ์รับงาน, SD-A ผลตรวจ — กันชนกับรหัส A/E/O/T ของสเปก add-on

@@ -1,7 +1,7 @@
 # แผนงาน: ซื้อเครดิต AI และจำนวนอ่านรูปใบเสร็จเพิ่ม (ADD_ON)
 
 วันที่: 2026-09-28
-อัปเดตล่าสุด: 2026-09-29 — เขียนแผนใหม่เป็น PR A–G ที่ลงมือได้ตามรีวิว R1 (F-01…F-35) และมติ Owner/controller 2026-09-29; อ้างอิงโค้ดตรวจบน develop `8a91bc1c` (origin/develop `69fba9d3` ต่างเฉพาะ `extended-tests.yml` บรรทัด 286)
+อัปเดตล่าสุด: 2026-09-29 — เขียนแผนใหม่เป็น PR A–G ที่ลงมือได้ตามรีวิว R1 (F-01…F-35) และมติ Owner/controller 2026-09-29; อ้างอิงโค้ดตรวจบน develop `8a91bc1c` (origin/develop `69fba9d3` ต่างเฉพาะ `extended-tests.yml` บรรทัด 286). หลังรีวิว develop ได้งานแก้ของโปรแกรมซื้อแพ็กเกจ (#860, develop `9130455a`) ซึ่งทำให้บรรทัดในไฟล์ billing/LINE/หน้าเว็บแพ็กเกจหลายไฟล์เลื่อน (ประมาณ 3 ใน 4 ของที่อ้างในไฟล์เหล่านั้น) — ก่อนลงมือแต่ละ PR ให้ตรวจ anchor ซ้ำบน develop ล่าสุด
 สถานะ: **มติธุรกิจครบ (เหลือ Q1–Q7 ที่มีค่าเริ่มต้น); ยังไม่เริ่ม implementation; ต้องรอ prerequisite ใน §1**
 
 อ้างอิง: [สเปก](../specs/chat-credit-and-receipt-addons-spec-th.md) · [audit แหล่งข้อมูลร่วม + ตรวจซ้ำ](../research/chat-credit-and-receipt-addons-unified-source-audit-2026-09-29-th.md) · [แผนส่วนลดจากเซลล์](sales-event-discounts-plan-th.md) · แบบงานข้ามระบบ [purchase-without-setup/xx-cross-cutting.md](purchase-without-setup/xx-cross-cutting.md) · [cloud operations](../runbooks/cloud-environment-operations.md) · [UAT/Production protocol](../runbooks/uat-production-v2-deployment.md)

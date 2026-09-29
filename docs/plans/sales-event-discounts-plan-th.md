@@ -4,7 +4,7 @@
 
 [Spec](../specs/sales-event-discounts-spec-th.md) · [Audit และผลตรวจซ้ำบน develop](../research/sales-event-discounts-e2e-impact-audit-2026-09-29-th.md) · [แบบของงานข้ามทุก PR](purchase-without-setup/xx-cross-cutting.md) · [Runbook deploy](../runbooks/uat-production-v2-deployment.md) · [Runbook cloud](../runbooks/cloud-environment-operations.md). Memory ของงานนี้ยังไม่มีใน repo (ลิงก์ของ DRAFT v1 ไม่มีไฟล์).
 
-ฐานที่ตรวจ: develop `8a91bc1c` และ `origin/develop` `69fba9d3`. ทุก `file:line` ตรวจกับไฟล์จริงแล้ว; ตอนลงมือให้ตรวจ anchor ซ้ำบน develop ล่าสุดก่อนแก้ (แบบ xx-cross-cutting §2.1). รหัส SD-O/SD-T/SD-Q/SD-E อยู่ในสเปก
+ฐานที่ตรวจ: develop `8a91bc1c` และ `origin/develop` `69fba9d3`. ทุก `file:line` ตรวจกับไฟล์จริงแล้ว; ตอนลงมือให้ตรวจ anchor ซ้ำบน develop ล่าสุดก่อนแก้ (แบบ xx-cross-cutting §2.1). หลังรีวิว develop ได้งานแก้ของโปรแกรมซื้อแพ็กเกจ (#860, develop `9130455a`) ซึ่งทำให้บรรทัดในไฟล์ billing/LINE/หน้าเว็บแพ็กเกจหลายไฟล์เลื่อน (ประมาณ 3 ใน 4 ของที่อ้างในไฟล์เหล่านั้น) — ก่อนลงมือแต่ละ PR ให้ตรวจ anchor ซ้ำบน develop ล่าสุด. รหัส SD-O/SD-T/SD-Q/SD-E อยู่ในสเปก
 
 ## 0. ส่งมอบอะไร และไม่ทำอะไร
 

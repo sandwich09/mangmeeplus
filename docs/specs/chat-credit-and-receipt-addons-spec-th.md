@@ -1,7 +1,7 @@
 # สเปก: ซื้อเครดิต AI และจำนวนอ่านรูปใบเสร็จเพิ่ม (ADD_ON)
 
 วันที่: 2026-09-28
-อัปเดตล่าสุด: 2026-09-29 — แก้ตามรีวิว R1 ครบ 35 ข้อ (BLOCK 1, HIGH 9, MEDIUM 16, LOW 9) และบันทึกมติ Owner/controller 2026-09-29 (§3.1–§3.2); ตรวจอ้างอิงโค้ดทุกบรรทัดใหม่บน develop `8a91bc1c`
+อัปเดตล่าสุด: 2026-09-29 — แก้ตามรีวิว R1 ครบ 35 ข้อ (BLOCK 1, HIGH 9, MEDIUM 16, LOW 9) และบันทึกมติ Owner/controller 2026-09-29 (§3.1–§3.2); ตรวจอ้างอิงโค้ดทุกบรรทัดใหม่บน develop `8a91bc1c`. หลังรีวิว develop ได้งานแก้ของโปรแกรมซื้อแพ็กเกจ (#860, develop `9130455a`) ซึ่งทำให้บรรทัดในไฟล์ billing/LINE/หน้าเว็บแพ็กเกจหลายไฟล์เลื่อน (ประมาณ 3 ใน 4 ของที่อ้างในไฟล์เหล่านั้น) — ก่อนลงมือแต่ละ PR ให้ตรวจ anchor ซ้ำบน develop ล่าสุด
 สถานะ: **ราคา, D1–D12 และมติ 2026-09-29 ยืนยันแล้ว; มีคำถามค้างถึง Owner 7 ข้อพร้อมค่าเริ่มต้น (§3.3); ยังไม่ implement และยังไม่เปิดขาย**
 
 เอกสารคู่กัน: [แผนงาน](../plans/chat-credit-and-receipt-addons-plan-th.md) · [audit แหล่งข้อมูลร่วม + ตรวจซ้ำบน develop](../research/chat-credit-and-receipt-addons-unified-source-audit-2026-09-29-th.md) · [ส่วนลดจากเซลล์ (งานคู่ขนาน)](sales-event-discounts-spec-th.md) · [ซื้อแพ็กเกจได้ทันทีหลังสมัคร](mangmee-purchase-without-setup-spec-th.md) · [คำศัพท์ "เครดิต AI" (W-01)](line-ai-credit-wording-and-deterministic-reads-spec-th.md) · [เครดิต AI 80 เดิม](ai-chat-credit-default-80-spec-th.md)
