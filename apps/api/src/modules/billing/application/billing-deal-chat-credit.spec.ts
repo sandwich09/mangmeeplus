@@ -31,17 +31,19 @@ test('new deal writes only its CHAT override and preserves the admin total budge
   assert.deepEqual(aiWrite.update, { salesDealChatCreditSatang: null, salesDealChatCreditEndsAt: serviceEnd });
 });
 
-test('old approved deal still writes its legacy TOTAL override', async () => {
-  let aiWrite: any;
+test('old approved deal still writes its legacy TOTAL override, and the chat credit it always meant', async () => {
+  let aiWrite: any, chatWrite: any;
   const tx = {
     packageChangeRequest: {
       findFirst: async () => ({ id: 'deal_1', status: 'APPROVED', renewalOfRequestId: 'previous_deal' }),
       updateMany: async () => ({ count: 1 }),
     },
-    companyAiConfiguration: { upsert: async (write: any) => { aiWrite = write; } },
+    companyAiConfiguration: { upsert: async (write: any) => { aiWrite = write; }, updateMany: async (write: any) => { chatWrite = write; } },
     auditLog: { create: async () => ({}) },
   } as any;
   await applyDealRequest(tx, { companyId: 'company_1', invoiceId: 'invoice_1',
     deal: deal('TOTAL', 12_000), priceSatang: 49_900, paidAt });
   assert.deepEqual(aiWrite.update, { monthlyBudgetSatang: 12_000 });
+  // Admin tab rework: the TOTAL is only the safety ceiling now, so a SHARED row gets the chat credit too.
+  assert.deepEqual(chatWrite, { where: { companyId: 'company_1', budgetMode: 'SHARED' }, data: { chatMonthlyBudgetSatang: 12_000 } });
 });

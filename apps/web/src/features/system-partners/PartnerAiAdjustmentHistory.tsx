@@ -5,8 +5,8 @@ import {apiErrorMessage} from '@/common/api/api-error-message';
 import {formatThaiDateTime} from '@/common/i18n/thai-date';
 import {getPartnerAiAdjustments} from './system-partners.api';
 
-const labels:Record<PartnerAiAdjustmentField,string>={modelId:'รุ่น AI',monthlyBudgetSatang:'เครดิต AI รวมต่อเดือน',enabled:'การอ่านเอกสารด้วย AI',monthlyLimit:'จำนวนครั้งอ่านเอกสารต่อเดือน',receiptQuotaEnforced:'การจำกัดใบเสร็จตามแพ็กเกจ',
-  budgetMode:'โหมดเครดิต AI',chatMonthlyBudgetSatang:'เพดานแชต AI ต่อเดือน',ocrMonthlyBudgetSatang:'เพดานอ่านเอกสารต่อเดือน',budgetConfigVersion:'เวอร์ชันการตั้งค่าเครดิต',pendingBudgetPolicy:'เครดิตที่ตั้งให้เริ่มเดือนถัดไป',
+const labels:Record<PartnerAiAdjustmentField,string>={modelId:'รุ่น AI',monthlyBudgetSatang:'เพดานความปลอดภัยค่า AI ต่อเดือน',enabled:'การอ่านเอกสารด้วย AI',monthlyLimit:'จำนวนครั้งอ่านเอกสารต่อเดือน',receiptQuotaEnforced:'การจำกัดใบเสร็จตามแพ็กเกจ',
+  budgetMode:'โหมดเครดิต AI',chatMonthlyBudgetSatang:'เครดิตแชตต่อเดือน',ocrMonthlyBudgetSatang:'เพดานอ่านเอกสารต่อเดือน',budgetConfigVersion:'เวอร์ชันการตั้งค่าเครดิต',pendingBudgetPolicy:'เครดิตที่ตั้งให้เริ่มเดือนถัดไป',
   creditHoldStatus:'เครดิตที่กันไว้ค้าง',creditBreachAcknowledged:'การรับทราบรายการใช้เกินที่กันไว้'};
 /** The hold statuses the three operator decisions move between (hold spec §4.2). */
 const HOLD_STATUS_TH:Record<string,string>={UNRESOLVED:'ยังไม่ทราบผล',CANCELLED:'ปล่อยเครดิตคืนแล้ว',SETTLED:'คิดเป็นค่าใช้จ่ายแล้ว'};
@@ -16,15 +16,15 @@ const baht=(v:number)=>`${(v/100).toLocaleString('th-TH',{minimumFractionDigits:
 function pendingText(v:string):string {
   const [mode,chat,ocr,month]=v.split(':');
   if(!month)return v;
-  return mode==='SPLIT'?`แยกเพดาน แชต ${baht(Number(chat))} / อ่านเอกสาร ${baht(Number(ocr))} เริ่ม ${month}`:`เครดิตรวมก้อนเดียว เริ่ม ${month}`;
+  return mode==='SPLIT'?`แยกเพดาน แชต ${baht(Number(chat))} / อ่านเอกสาร ${baht(Number(ocr))} เริ่ม ${month}`:`ไม่แยกเพดาน เริ่ม ${month}`;
 }
 function value(field:PartnerAiAdjustmentField,v:string|number|boolean|null):string {
-  if(v===null)return field==='monthlyLimit'?'ไม่จำกัด'
+  if(v===null)return field==='monthlyLimit'?'ไม่ได้ตั้ง'
     :field==='pendingBudgetPolicy'?'ไม่มี'
     // A split cap is never "inherit": null means the operator has not allocated it (spec §12.1).
     :field==='chatMonthlyBudgetSatang'||field==='ocrMonthlyBudgetSatang'?'ยังไม่ตั้ง'
     :'ใช้ค่าเริ่มต้นของระบบ';
-  if(field==='budgetMode')return v==='SPLIT'?'แยกเพดานแชตกับอ่านเอกสาร':'เครดิตรวมก้อนเดียว';
+  if(field==='budgetMode')return v==='SPLIT'?'แยกเพดานแชตกับอ่านเอกสาร':'ไม่แยกเพดาน';
   if(field==='pendingBudgetPolicy'&&typeof v==='string')return pendingText(v);
   if(field==='creditHoldStatus'&&typeof v==='string')return HOLD_STATUS_TH[v]??v;
   if(SATANG_FIELDS.has(field)&&typeof v==='number')return baht(v);

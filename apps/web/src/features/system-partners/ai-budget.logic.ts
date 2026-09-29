@@ -1,5 +1,6 @@
-// Pure helpers for the partner console's "AI Usage & Budget" card. The API speaks satang; the
+// Pure helpers for the partner console's "เครดิต AI และอ่านรูป" tab. The API speaks satang; the
 // operator thinks in baht, so the conversion and the guardrails live here where they are testable.
+import { billingPlanLabel, DEFAULT_CHAT_CREDIT_SATANG, type PartnerAiUsageDto, type PartnerReceiptImagesDto } from '@watchdog-bms/contracts';
 
 /** Same money idiom as the expenses surface, kept local to this feature. */
 export const satangToBaht = (satang: number) =>
@@ -192,13 +193,13 @@ export function hasAiUsageBreakdown(usage: { breakdown?: unknown } | null | unde
 // ── Split CHAT/OCR budget policy (remediation spec §11.3, §12.4, §12.5) ──────
 
 export const AI_BUDGET_MODE_LABELS: Record<string, string> = {
-  SHARED: 'เครดิตรวมก้อนเดียว',
+  SHARED: 'ไม่แยกเพดาน',
   SPLIT: 'แยกเพดานแชตและอ่านเอกสาร',
 };
 
 export const AI_BUDGET_SCOPE_LABELS = {
-  total: 'เครดิตรวมทั้งเดือน',
-  chat: 'เพดานแชตและ AI ทั่วไป',
+  total: 'เพดานความปลอดภัยทั้งเดือน',
+  chat: 'เครดิตแชตและ AI ทั่วไป',
   ocr: 'เพดาน AI อ่านเอกสาร',
 } as const;
 
@@ -323,7 +324,7 @@ export function validateAiBudgetDraft(
   if (chat.satang + ocr.satang > saved.totalSatang) {
     return {
       ok: false,
-      notice: `ผลรวมเพดาน ${satangToBaht(chat.satang + ocr.satang)} เกินเครดิตรวมที่บันทึกไว้ ${satangToBaht(saved.totalSatang)} กรุณาลดเพดานหรือบันทึกเครดิตรวมที่สูงขึ้นก่อน`,
+      notice: `ผลรวมเพดาน ${satangToBaht(chat.satang + ocr.satang)} เกินเพดานความปลอดภัยที่บันทึกไว้ ${satangToBaht(saved.totalSatang)} กรุณาลดเพดานหรือบันทึกเพดานความปลอดภัยที่สูงขึ้นก่อน`,
     };
   }
   return {
@@ -397,7 +398,7 @@ export const aiBudgetCapLabel = (capSatang: number | null): string =>
  * cap: what is left there is simply the shared total, not a setting somebody forgot.
  */
 export const aiBudgetAvailableLabel = (availableSatang: number | null): string =>
-  availableSatang === null ? 'ตามเครดิตรวม' : satangToBaht(availableSatang);
+  availableSatang === null ? 'ตามเพดานความปลอดภัย' : satangToBaht(availableSatang);
 
 /**
  * During a rolling deploy this page can be served by a pre-E1a API, whose `budget` carries neither
@@ -419,7 +420,7 @@ export function aiBudgetInvalidNotice(invalidReason: string | undefined): string
   if (!invalidReason) return null;
   const fix: Record<string, string> = {
     SPLIT_CAPS_MISSING: 'โหมดแยกเพดานถูกตั้งไว้แต่ยังไม่มีเพดานครบทั้งสองส่วน กรอกทั้งเพดานแชตและเพดานอ่านเอกสาร (ใส่ 0 หากต้องการปิดส่วนนั้น) แล้วบันทึก',
-    SPLIT_EXCEEDS_TOTAL: 'ผลรวมเพดานแชตและอ่านเอกสารเกินเครดิตรวมของเดือนนี้ ลดเพดานอย่างน้อยหนึ่งส่วน หรือเพิ่มเครดิตรวมก่อน แล้วบันทึกอีกครั้ง',
+    SPLIT_EXCEEDS_TOTAL: 'ผลรวมเพดานแชตและอ่านเอกสารเกินเพดานความปลอดภัยของเดือนนี้ ลดเพดานอย่างน้อยหนึ่งส่วน หรือเพิ่มเพดานความปลอดภัยก่อน แล้วบันทึกอีกครั้ง',
     POLICY_MALFORMED: 'ค่าที่บันทึกไว้อ่านไม่ได้ ตั้งโหมดและเพดานใหม่ทั้งชุดแล้วบันทึก',
   };
   return `ตอนนี้ระบบปฏิเสธการเรียก AI ของบริษัทนี้ทุกช่องทาง เพราะการตั้งค่าเครดิตไม่ถูกต้อง — ${fix[invalidReason] ?? 'ตั้งโหมดและเพดานใหม่ทั้งชุดแล้วบันทึก'}`;
@@ -433,7 +434,7 @@ export function aiBudgetPendingText(
   if (!pending) return null;
   const allocation = pending.mode === 'SPLIT'
     ? `แชต ${aiBudgetCapLabel(pending.chatMonthlyBudgetSatang)} · อ่านเอกสาร ${aiBudgetCapLabel(pending.ocrMonthlyBudgetSatang)}`
-    : 'กลับไปใช้เครดิตรวมก้อนเดียว';
+    : 'กลับไปไม่แยกเพดาน';
   return `เริ่มเดือน ${formatMonth(pending.effectiveMonthKey)}: ${AI_BUDGET_MODE_LABELS[pending.mode] ?? pending.mode} — ${allocation}`;
 }
 
@@ -572,4 +573,189 @@ export function isAiCreditHoldConflict(code: string | null | undefined): boolean
   return code === 'partner_ai_credit_hold_already_resolved'
     || code === 'partner_ai_credit_breach_already_acknowledged'
     || code === 'partner_ai_credit_hold_not_found';
+}
+
+// ── Admin tab rework 2026-09-29: chat credit, receipt images, safety ceiling ─────────────────────
+
+/** Money in a sentence: "80 บาท", "2,000 บาท", "12.34 บาท" — never a trailing ".00". */
+export const bahtText = (satang: number): string =>
+  `${(satang / 100).toLocaleString('th-TH', { minimumFractionDigits: satang % 100 === 0 ? 0 : 2, maximumFractionDigits: 2 })} บาท`;
+
+type DateText = (iso: string) => string;
+const isTrial = (tierKey: string | null) => tierKey === 'FREE_TRIAL_15';
+
+/** Cut over to package cycles and credit lots (add-on spec §11). No shop is, until the cutover tool runs. */
+const cutOver = (usage: Pick<PartnerAiUsageDto, 'budget'>, now: number) =>
+  !!usage.budget.chatCredit?.cutoverAt && Date.parse(usage.budget.chatCredit.cutoverAt) <= now;
+
+/** Where this month's chat credit comes from, in the words the status list and the credit card share. */
+export function aiChatCreditSourceText(usage: Pick<PartnerAiUsageDto, 'budget'>, formatDate: DateText, now = Date.now()): string {
+  const { policy, chatCredit } = usage.budget;
+  const cap = policy.chatCapSatang ?? 0;
+  if (cutOver(usage, now)) return `รอบเครดิต AI ของแพ็กเกจ (${bahtText(cap)} ต่อรอบ) และยอดเพิ่มเติม`;
+  if (policy.chatSource === 'ADMIN') return `ผู้ดูแลตั้งให้ร้านนี้ ${bahtText(cap)}`;
+  if (policy.chatSource === 'SALES_DEAL') {
+    const endsAt = chatCredit?.deal?.endsAt;
+    return `ดีลขาย ${bahtText(cap)}${endsAt ? ` ถึง ${formatDate(endsAt)}` : ' ตลอดที่ดีลยังต่ออายุ'}`;
+  }
+  if (policy.chatSource === 'SPLIT') return `แยกเพดานแชต ${policy.chatCapSatang === null ? 'ยังไม่ตั้ง' : bahtText(cap)} (ตั้งค่าขั้นสูง)`;
+  return `ค่าเริ่มต้น ${bahtText(DEFAULT_CHAT_CREDIT_SATANG)}`;
+}
+
+/** The package the receipt images come from, e.g. "แพ็กเกจ เริ่มต้น (STARTER) 30 รูป หมดอายุ 29 ต.ค. 2569". */
+export function receiptImagesSourceText(images: PartnerReceiptImagesDto, formatDate: DateText): string {
+  const plan = billingPlanLabel(images.tierKey);
+  const limit = images.package?.limit ?? 0;
+  if (images.basis === 'NONE') return 'ยังไม่มีแพ็กเกจ — จำนวนรูปไม่ถูกจำกัดจากแพ็กเกจ';
+  if (images.basis === 'PACKAGE_LOTS') {
+    return `แพ็กเกจ ${plan} ${limit.toLocaleString('th-TH')} รูป${images.package?.expiresAt ? ` หมดอายุ ${formatDate(images.package.expiresAt)}` : ''}`;
+  }
+  const scope = isTrial(images.tierKey) ? 'ช่วงทดลอง' : `แพ็กเกจที่ทีมงานตั้งให้ (${plan})`;
+  return `${scope} ${limit.toLocaleString('th-TH')} รูปต่อเดือน${images.enforced ? '' : ' — นับอย่างเดียว ไม่หยุดอ่านเมื่อครบ'}`;
+}
+
+export type AiTabStatusTone = 'ok' | 'warn' | 'stop';
+export type AiTabStatusRow = { key: string; label: string; value: string; tone: AiTabStatusTone };
+
+/**
+ * "ใช้ได้หรือไม่ได้" (Owner 2026-09-29): which rule is in force for this shop right now, one row each,
+ * from the saved server state only. `stop` = this rule is refusing work now; `warn` = it will, or it
+ * does not do what an operator would expect.
+ */
+export function aiTabStatusRows(usage: PartnerAiUsageDto, formatDate: DateText, now = Date.now()): AiTabStatusRow[] {
+  const rows: AiTabStatusRow[] = [];
+  const add = (key: string, label: string, value: string, tone: AiTabStatusTone = 'ok') => rows.push({ key, label, value, tone });
+  const { budget, ocr } = usage;
+  const images = ocr.receiptImages;
+  if (hasAiBudgetPolicy(usage)) {
+    const invalid = aiBudgetInvalidNotice(budget.policy.invalidReason);
+    if (invalid) add('policy', 'การตั้งค่าเครดิต AI', invalid, 'stop');
+    add('chat-source', 'เครดิตแชตมาจาก', aiChatCreditSourceText(usage, formatDate, now));
+    const cap = budget.policy.chatCapSatang, chat = budget.position.chat;
+    if (!cutOver(usage, now) && cap !== null) {
+      if (cap === 0) add('chat-balance', 'เครดิตแชตเดือนนี้', 'ปิดแชต AI ของร้านนี้ (0 บาท)', 'stop');
+      else if (chat.availableSatang === 0) add('chat-balance', 'เครดิตแชตเดือนนี้', `หมดแล้ว (ใช้ ${bahtText(chat.spentSatang)}) — แชต AI หยุดจนขึ้นเดือนใหม่`, 'stop');
+      else add('chat-balance', 'เครดิตแชตเดือนนี้', `ใช้ ${bahtText(chat.spentSatang)} เหลือ ${bahtText(chat.availableSatang ?? cap)}`);
+    }
+  }
+  if (images) {
+    const source = receiptImagesSourceText(images, formatDate);
+    if (images.basis === 'PACKAGE_LOTS' && !images.active) add('images-source', 'จำนวนอ่านรูปมาจาก', `${source} — แพ็กเกจหมดอายุหรือถูกพัก จึงยังอ่านรูปไม่ได้`, 'stop');
+    else add('images-source', 'จำนวนอ่านรูปมาจาก', source, images.basis === 'MONTHLY' && !images.enforced ? 'warn' : 'ok');
+    if (images.basis !== 'NONE' && images.package && images.totalRemaining !== null) {
+      const parts = `จากแพ็กเกจ ${images.package.remaining.toLocaleString('th-TH')}${images.additional.remaining > 0 ? ` · ยอดเพิ่มเติม ${images.additional.remaining.toLocaleString('th-TH')}` : ''}`;
+      if (images.totalRemaining === 0 && images.enforced) {
+        add('images-balance', 'รูปใบเสร็จคงเหลือ', images.basis === 'MONTHLY'
+          ? 'ครบแล้ว — ระบบไม่อ่านรูปใบเสร็จใหม่จนขึ้นเดือนใหม่' : 'ครบแล้ว — ระบบไม่อ่านรูปใบเสร็จใหม่จนกว่าจะต่อแพ็กเกจหรือเพิ่มยอด', 'stop');
+      } else if (images.basis === 'MONTHLY' && !images.enforced && images.package.remaining === 0) {
+        add('images-balance', 'รูปใบเสร็จคงเหลือ', 'ครบจำนวนของเดือนนี้แล้ว แต่ยังอ่านต่อได้เพราะตั้งเป็นนับอย่างเดียว', 'warn');
+      } else add('images-balance', 'รูปใบเสร็จคงเหลือ', `เหลือ ${images.totalRemaining.toLocaleString('th-TH')} รูป (${parts})`);
+    }
+  }
+  const limit = ocr.config.monthlyLimit, used = ocr.current.usedCount;
+  if (limit === null) add('ocr-limit', 'เพดาน OCR รายเดือน', 'ไม่ได้ตั้ง');
+  else if (used >= limit) add('ocr-limit', 'เพดาน OCR รายเดือน', `${limit.toLocaleString('th-TH')} ครั้ง — ครบแล้ว ระบบหยุดอ่านเอกสารทุกชนิดจนขึ้นเดือนใหม่ แม้แพ็กเกจยังมีรูปเหลือ`, 'stop');
+  else if (images && images.totalRemaining !== null && limit - used < images.totalRemaining) {
+    add('ocr-limit', 'เพดาน OCR รายเดือน', `${limit.toLocaleString('th-TH')} ครั้ง (อ่านแล้ว ${used.toLocaleString('th-TH')}) — ต่ำกว่ารูปที่ร้านยังเหลือ ระบบจะหยุดอ่านที่เพดานนี้ก่อน`, 'warn');
+  } else add('ocr-limit', 'เพดาน OCR รายเดือน', `${limit.toLocaleString('th-TH')} ครั้ง (อ่านแล้ว ${used.toLocaleString('th-TH')})`);
+  add('ocr-enabled', 'การอ่านเอกสารด้วย AI', ocr.config.enabled ? 'เปิดอยู่' : 'ปิดอยู่ — AI ไม่อ่านเอกสารใหม่', ocr.config.enabled ? 'ok' : 'stop');
+  if (hasAiBudgetPolicy(usage)) {
+    const ceiling = budget.effectiveSatang, spent = budget.position.total.spentSatang;
+    const text = `${budget.overrideSatang === null ? 'ค่ากลางของระบบ' : 'ตั้งเฉพาะร้านนี้'} ${bahtText(ceiling)} (ใช้ไป ${bahtText(spent)})`;
+    if (spent >= ceiling) add('safety', 'เพดานความปลอดภัยค่า AI', `${text} — ถึงเพดานแล้ว AI หยุดทุกช่องทางจนขึ้นเดือนใหม่`, 'stop');
+    else if (budget.policy.chatCapSatang !== null && budget.policy.chatCapSatang > ceiling) {
+      add('safety', 'เพดานความปลอดภัยค่า AI', `${text} — ต่ำกว่าเครดิตแชต แชตจึงใช้ได้ไม่เกินเพดานนี้`, 'warn');
+    } else add('safety', 'เพดานความปลอดภัยค่า AI', text);
+    if (budget.position.breach) add('breach', 'เครดิตที่กันไว้', 'มีรายการใช้เกินที่กันไว้ ระบบหยุดรับงานใหม่ของส่วนนั้น — ดูหัวข้อเครดิตที่กันไว้ค้าง', 'stop');
+    else if (budget.position.unresolvedHolds > 0) add('holds', 'เครดิตที่กันไว้', `${budget.position.unresolvedHolds.toLocaleString('th-TH')} รายการยังไม่ทราบผล — เครดิตส่วนนั้นยังถูกกันไว้`, 'warn');
+  }
+  return rows;
+}
+
+/** The chat credit editor. Empty = no own setting (the default or a sales deal); 0 closes chat. */
+export type ChatCreditParse = { ok: true; satang: number | null } | { ok: false; notice: string };
+
+export function parseChatCreditInput(raw: string): ChatCreditParse {
+  const trimmed = raw.trim();
+  if (trimmed === '') return { ok: true, satang: null };
+  const parts = BAHT_INPUT.exec(trimmed);
+  if (!parts) return { ok: false, notice: 'กรอกเครดิตแชตเป็นบาท ทศนิยมไม่เกิน 2 ตำแหน่ง เช่น 150 หรือ 150.50' };
+  const satang = Number(parts[1]) * 100 + Number((parts[2] ?? '').padEnd(2, '0'));
+  if (!Number.isSafeInteger(satang) || satang > 2_147_483_647) return { ok: false, notice: 'จำนวนเงินมากเกินไป กรุณาตรวจตัวเลขแล้วกรอกใหม่' };
+  return { ok: true, satang };
+}
+
+/** The admin's own chat credit, or '' when the shop follows the default or a sales deal. */
+export function chatCreditInputFromUsage(usage: Pick<PartnerAiUsageDto, 'budget'>): string {
+  const { policy } = usage.budget;
+  return policy.chatSource === 'ADMIN' && policy.chatCapSatang !== null ? satangToBahtInput(policy.chatCapSatang) : '';
+}
+
+/** Whether saving would change the shop's own chat credit; a draft that does not parse is "changed". */
+export function chatCreditDraftChanged(usage: Pick<PartnerAiUsageDto, 'budget'>, raw: string): boolean {
+  const parsed = parseChatCreditInput(raw);
+  const { policy } = usage.budget;
+  return !parsed.ok || parsed.satang !== (policy.chatSource === 'ADMIN' ? policy.chatCapSatang : null);
+}
+
+/**
+ * The write for this editor, through the existing budget-policy writer: SHARED with the chat credit,
+ * effective this month. `null` hands the shop back to the default or its sales deal.
+ */
+export function chatCreditPolicyRequest(satang: number | null, currentMonthKey: string): AiBudgetPolicyRequest {
+  return { mode: 'SHARED', chatMonthlyBudgetSatang: satang, ocrMonthlyBudgetSatang: null, effectiveMonthKey: currentMonthKey };
+}
+
+/** What the confirm dialog says before an admin changes a shop's chat credit. */
+export function chatCreditConfirmMessage(usage: Pick<PartnerAiUsageDto, 'budget'>, satang: number | null, reason: string, formatDate: DateText): string {
+  const { chatCredit, position, effectiveSatang } = usage.budget;
+  const deal = chatCredit?.deal;
+  const after = satang !== null ? `ผู้ดูแลตั้งให้ร้านนี้ ${bahtText(satang)}`
+    : deal ? `ดีลขาย ${bahtText(deal.satang)}${deal.endsAt ? ` ถึง ${formatDate(deal.endsAt)}` : ''}` : `ค่าเริ่มต้น ${bahtText(DEFAULT_CHAT_CREDIT_SATANG)}`;
+  const spent = position.chat.spentSatang, cap = satang ?? deal?.satang ?? DEFAULT_CHAT_CREDIT_SATANG;
+  return [
+    `เครดิตแชตต่อเดือน: ${aiChatCreditSourceText(usage, formatDate)} → ${after}`,
+    `เดือนนี้ใช้แชตไปแล้ว ${bahtText(spent)}${cap <= spent ? ' หลังบันทึกแชต AI จะหยุดจนขึ้นเดือนใหม่' : ''}`,
+    ...(cap > effectiveSatang ? [`เครดิตนี้สูงกว่าเพดานความปลอดภัย ${bahtText(effectiveSatang)} แชตจึงใช้ได้ไม่เกินเพดานนั้น`] : []),
+    'มีผลกับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบ',
+    `เหตุผล: ${reason}`,
+  ].join('\n');
+}
+
+/** What the confirm dialog says before an admin changes the safety ceiling. Chat credit never moves with it. */
+export function safetyCeilingConfirmMessage(usage: Pick<PartnerAiUsageDto, 'budget' | 'current'>, desiredSatang: number, reason: string): string {
+  const spent = usage.current?.costSatang ?? 0;
+  return [
+    `เพดานความปลอดภัยค่า AI ต่อเดือน: ${bahtText(usage.budget.effectiveSatang)} → ${bahtText(desiredSatang)}`,
+    `เดือนนี้ใช้ AI ทุกช่องทางไปแล้ว ${bahtText(spent)}${desiredSatang <= spent ? ' หลังบันทึก AI จะหยุดทุกช่องทางจนขึ้นเดือนใหม่' : ''}`,
+    'เครดิตแชตของร้านไม่เปลี่ยน',
+    `เหตุผล: ${reason}`,
+  ].join('\n');
+}
+
+/**
+ * The trial/staff-set quota enforcement choice has an effect only on a monthly allowance: a paid
+ * package always enforces, and a shop with no package has no allowance to enforce. An API without
+ * `receiptImages` keeps the old rule (hidden for paid grants only).
+ */
+export function receiptQuotaControlVisible(ocr: Pick<PartnerAiUsageDto['ocr'], 'receiptImages' | 'planQuota'>): boolean {
+  return ocr.receiptImages ? ocr.receiptImages.basis === 'MONTHLY' : ocr.planQuota?.source !== 'PAID_GRANTS';
+}
+
+export type ReceiptImageTile = { key: string; label: string; value: string; note: string };
+
+/** The three numbers of the receipt card: from the package, added, and in total — images, never money. */
+export function receiptImageTiles(images: PartnerReceiptImagesDto, formatDate: DateText): ReceiptImageTile[] {
+  if (images.basis === 'NONE' || !images.package) return [];
+  const count = (n: number) => `${n.toLocaleString('th-TH')} รูป`;
+  const monthly = images.basis === 'MONTHLY';
+  return [
+    { key: 'package', label: monthly ? 'เดือนนี้' : 'จากแพ็กเกจ', value: `${count(images.package.remaining)} จาก ${images.package.limit.toLocaleString('th-TH')}`,
+      note: monthly ? `ใช้แล้ว ${images.package.used.toLocaleString('th-TH')} · เริ่มนับใหม่ทุกต้นเดือน`
+        : `ใช้แล้ว ${images.package.used.toLocaleString('th-TH')}${images.package.expiresAt ? ` · หมดอายุ ${formatDate(images.package.expiresAt)}` : ''}` },
+    { key: 'additional', label: 'ยอดเพิ่มเติม', value: count(images.additional.remaining),
+      note: images.additional.expiresAt ? `ใช้ได้ถึง ${formatDate(images.additional.expiresAt)}` : 'ทีมงานเพิ่มให้หรือร้านซื้อเพิ่ม' },
+    { key: 'total', label: 'คงเหลือรวม', value: count(images.totalRemaining ?? 0),
+      note: images.enforced ? 'ครบแล้วระบบหยุดอ่านรูปใบเสร็จใหม่' : 'ตั้งเป็นนับอย่างเดียว ครบแล้วยังอ่านต่อได้' },
+  ];
 }
