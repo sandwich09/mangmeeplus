@@ -6,6 +6,7 @@ import { Prisma } from '../../../../generated/prisma/client';
 import { bangkokMonthKey, invalidateCompanyAiBudgetConfiguration } from '../../../line-ai/application/company-ai-usage-meter';
 import { readAiBudgetMonthSnapshot } from '../../../line-ai/application/company-ai-budget-reservation';
 import { parsePendingBudgetPolicy } from '../../../line-ai/application/company-ai-budget-policy';
+import { readAiCreditSalesReadiness } from '../../../line-ai/application/company-ai-budget-readiness';
 
 /** Single-row table (spec §7.3): the platform has exactly one budget configuration. */
 const PLATFORM_CONFIG_ID = 'platform';
@@ -52,6 +53,7 @@ export class SetPlatformAiBudgetUseCase {
       );
     }
 
+    let aiCreditWarningCompanyCount = 0;
     const saved = await this.prisma.client.$transaction(async (tx) => {
       // Also fences company override writes against a concurrently lowered platform ceiling.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'platform-ai-budget'}))`;
@@ -95,6 +97,14 @@ export class SetPlatformAiBudgetUseCase {
             affectedCompanyCount: affected.length,
             affectedCompanyIds: affected.map((row) => row.companyId),
           });
+        }
+        // Plan C6: warn, never refuse, when an inheriting company on AI credit would hold more
+        // credit than this month's room under the lower default. Read-only, platform lock alone.
+        const now = new Date();
+        for (const row of await tx.companyAiConfiguration.findMany({ where: { monthlyBudgetSatang: null, aiCreditCutoverAt: { lte: now } } })) {
+          const credit = await readAiCreditSalesReadiness(tx, { companyId: row.companyId, monthKey, at: now, row,
+            totalSatang: cmd.monthlyBudgetSatang, packUnits: 0 });
+          if (credit.reason === 'TOTAL_HEADROOM') aiCreditWarningCompanyCount += 1;
         }
       }
       const result = await tx.platformAiBudgetConfig.upsert({
@@ -146,6 +156,7 @@ export class SetPlatformAiBudgetUseCase {
         monthlyBudgetSatang: this.config.aiMonthlyBudgetSatang,
         ceilingSatang: this.config.aiMonthlyBudgetSatangCeiling,
       },
+      ...(aiCreditWarningCompanyCount ? { aiCreditWarningCompanyCount } : {}),
     };
   }
 }

@@ -1,6 +1,6 @@
 # Spec: LINE AI — การเคลียร์เครดิตที่กันไว้ค้าง (unresolved holds และ breach)
 
-> ส่วนเพิ่มจาก [สเปก add-on](chat-credit-and-receipt-addons-spec-th.md) 2026-09-29: หน้าลูกค้าไม่แสดงยอดกันไว้ และรวมยอดทีมงาน+ยอดซื้อเป็น “ยอดเพิ่มเติม” (§17). การจอง/กู้รายการและมุมมอง operator ในเอกสารนี้ยังทำงานตามเดิม; ห้ามคืนยอดที่จองเพียงเพื่อซ่อนตัวเลข หรือใช้ projection ของลูกค้าแทนข้อมูลที่ operator ต้องตรวจ. สำหรับร้านที่ย้ายแล้ว hold ของ LINE v2 ใน SHARED จะผูก funding ของเครดิต AI (แพ็กเกจ → ทีมงาน → ซื้อ, add-on §5.3/T-04): operator release และ charge-at-bound ต้องแปลง entry ของ lot เดิมภายใต้ lock เดือนเดิม, หลักฐานที่มาช้าไม่หยิบ lot ใหม่ และรายการต้องค้น hold ที่ UNRESOLVED ได้เกินสองเดือน (วันนี้ `partner-ai-credit-holds.use-case.ts:84-90` อ่านแค่เดือนปัจจุบันกับเดือนก่อน) — งานใน PR C ของแผน add-on
+> ส่วนเพิ่มจาก [สเปก add-on](chat-credit-and-receipt-addons-spec-th.md) 2026-09-29: หน้าลูกค้าไม่แสดงยอดกันไว้ และรวมยอดทีมงาน+ยอดซื้อเป็น “ยอดเพิ่มเติม” (§17). การจอง/กู้รายการและมุมมอง operator ในเอกสารนี้ยังทำงานตามเดิม; ห้ามคืนยอดที่จองเพียงเพื่อซ่อนตัวเลข หรือใช้ projection ของลูกค้าแทนข้อมูลที่ operator ต้องตรวจ. สำหรับร้านที่ย้ายแล้ว hold ของ LINE v2 ใน SHARED ผูก funding ของเครดิต AI (แพ็กเกจ → ทีมงาน → ซื้อ, add-on §5.3/T-04) — **implement แล้วใน add-on PR C (2026-09-29)**: entry `RESERVE` ของ lot นับเป็นยอดกันไว้เฉพาะขณะ reservation ยัง live (RESERVED/DISPATCHED/UNRESOLVED) จึงให้ operator release, cancel และ sweep คืนเครดิตด้วยสถานะ reservation ที่เขียนอยู่แล้วโดยไม่ต้องเขียน entry เพิ่ม; settle และ charge-at-bound เขียน `CONSUME` ของ lot เดิมไม่เกินยอดที่กันไว้ (lock เดือนเดิม); หลักฐานที่มาช้าหลัง release บันทึกต้นทุนเต็มแต่ไม่ตัดเครดิตซ้ำ (ผู้ให้บริการรับ) และไม่หยิบ lot ใหม่; หน้า operator ค้น hold ได้ทุกเดือนแบบแบ่งหน้า (sweep ทุกเดือนที่ยังมีแถว RESERVED/DISPATCHED ก่อนอ่าน)
 
 ## 1. สถานะและขอบเขต
 
@@ -34,7 +34,7 @@
 
 ### 4.1 อ่าน
 
-- `GET /v1/system/partners/:id/ai-credit-holds` (`system.partner_dashboard.read`): เรียก lazy sweep เดียวกับ admission ก่อน (idempotent) แล้วคืนรายการ hold ของเดือนปัจจุบันและเดือนก่อนที่ `status ∈ {UNRESOLVED}` และรายการ `breach = true` ที่ยังไม่ acknowledged; ต่อรายการ: id, stepKind (ป้ายไทย: แชต/อ่านเอกสาร/…), bucket, upperBoundSatang, settledCostSatang (breach), createdAt/dispatchedAt, อายุ, sourceRoute/requestKind, invocationKey (ย่อ), status; ไม่มีข้อความลูกค้า
+- `GET /v1/system/partners/:id/ai-credit-holds` (`system.partner_dashboard.read`): เรียก lazy sweep เดียวกับ admission ก่อน (idempotent) แล้วคืนรายการ hold ของทุกเดือน (add-on PR C: ครั้งละ 100 รายการ ใหม่ก่อน ต่อด้วย `?cursor=`; เดิมอ่านเฉพาะเดือนปัจจุบันและเดือนก่อน) ที่ `status ∈ {UNRESOLVED}` และรายการ `breach = true` ที่ยังไม่ acknowledged; ต่อรายการ: id, stepKind (ป้ายไทย: แชต/อ่านเอกสาร/…), bucket, upperBoundSatang, settledCostSatang (breach), createdAt/dispatchedAt, อายุ, sourceRoute/requestKind, invocationKey (ย่อ), status; ไม่มีข้อความลูกค้า
 - หน้า partner "AI และโควตา": section "เครดิตที่กันไว้ค้าง" ใต้ตารางเพดาน (ใช้คำตาม spec wave 2 §3) — ตาราง + ปุ่มต่อแถว; ว่าง ⇒ บรรทัดเดียว "ไม่มีรายการค้าง"; read-only operator เห็นตารางไม่มีปุ่ม; บริษัท locked ไม่มีปุ่ม
 
 ### 4.2 การกระทำ (`system.partner_ai_model.manage`, reason 1–500 ตัวอักษร, confirm dialog, audit)

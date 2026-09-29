@@ -15,12 +15,14 @@
  * quota and the entitlement gates all still apply.
  */
 import {
+  aiCreditCycleAllowance,
   resolveAiBudgetPolicy,
   type AiBudgetMode,
   type AiBudgetPolicyInvalidReason,
   type CompanyAiBudgetPolicyRow,
 } from './company-ai-budget-policy';
 import { readAiBudgetMonthSnapshot } from './company-ai-budget-reservation';
+import { readAiCreditBalance } from './ai-credit-ledger';
 
 export type AiBudgetScopeReadiness =
   /** Money is left in this scope. NOT a guarantee that any particular step can start. */
@@ -74,6 +76,7 @@ export async function readAiBudgetReadiness(
      * passed in rather than re-derived here from a model and an FX rate.
      */
     boundSatang?: number;
+    at?: Date;
   },
 ): Promise<AiBudgetReadiness> {
   const policy = resolveAiBudgetPolicy({
@@ -115,7 +118,45 @@ export async function readAiBudgetReadiness(
     : {
       ...base,
       total,
-      chat: scope(policy.chatCapSatang, snapshot.spent.CHAT, snapshot.reserved.CHAT),
+      // Add-on spec §18.3: after cutover the calendar CHAT cap is gone (admission funds from AI
+      // credit lots), so CHAT is only as ready as TOTAL — the same rule `reserveAiBudgetStep` uses.
+      chat: input.row?.aiCreditCutoverAt && input.row.aiCreditCutoverAt <= (input.at ?? new Date())
+        ? total : scope(policy.chatCapSatang, snapshot.spent.CHAT, snapshot.reserved.CHAT),
       ocr: total,
     };
+}
+
+export type AiCreditSalesReadiness = {
+  ready: boolean;
+  /** Why not: legacy shop, no paid cycle now (D3/D2), unreadable policy, or not enough TOTAL room. */
+  reason: 'NOT_CUT_OVER' | 'NO_PAID_CYCLE' | 'POLICY_INVALID' | 'TOTAL_HEADROOM' | null;
+  /** This Bangkok month's TOTAL minus spend and live holds. */
+  headroomSatang: number;
+  /** AI credit the company holds now (package + added), in units = satang of CHAT cost. */
+  commercialUnits: number;
+};
+
+/**
+ * Add-on spec §5.3 (F-18) and §8.4: AI credit may be sold only when this month's TOTAL headroom
+ * covers what the company already holds plus the pack, so nothing is sold that the safety cap
+ * would then refuse. Also what a cap writer checks before lowering a total under held credit (C6).
+ * Read-only — the quote and checkout (plan PR E) evaluate it again at their own instant.
+ */
+export async function readAiCreditSalesReadiness(tx: any, input: {
+  companyId: string; monthKey: string; at: Date; row: CompanyAiBudgetPolicyRow | null | undefined; totalSatang: number; packUnits: number;
+}): Promise<AiCreditSalesReadiness> {
+  const none = { headroomSatang: 0, commercialUnits: 0 };
+  if (!input.row?.aiCreditCutoverAt || input.row.aiCreditCutoverAt > input.at) return { ready: false, reason: 'NOT_CUT_OVER', ...none };
+  const override = input.row.monthlyBudgetSatang != null;
+  if (resolveAiBudgetPolicy({ row: input.row, totalSatang: input.totalSatang, override, monthKey: input.monthKey }).invalidReason) {
+    return { ready: false, reason: 'POLICY_INVALID', ...none };
+  }
+  const balance = await readAiCreditBalance(tx, { companyId: input.companyId, at: input.at,
+    allowance: (cycle) => aiCreditCycleAllowance({ row: input.row, totalSatang: input.totalSatang, override, monthKey: input.monthKey, at: cycle.start }) });
+  if (!balance.cycle) return { ready: false, reason: 'NO_PAID_CYCLE', ...none };
+  const snapshot = await readAiBudgetMonthSnapshot(tx, input.companyId, input.monthKey);
+  const headroomSatang = input.totalSatang - snapshot.spent.TOTAL - snapshot.reserved.TOTAL;
+  const commercialUnits = balance.totalRemainingUnits;
+  const ready = headroomSatang >= commercialUnits + input.packUnits;
+  return { ready, reason: ready ? null : 'TOTAL_HEADROOM', headroomSatang, commercialUnits };
 }

@@ -1755,7 +1755,7 @@ function AiCreditHoldsPanel({
         <h3 id="ai-credit-holds-title" className="text-base font-bold text-gray-900">เครดิตที่กันไว้ค้าง</h3>
         <p className="mt-1 text-sm leading-6 text-gray-600">
           เครดิตที่ระบบกันไว้แล้วยังไม่ทราบผลจากผู้ให้บริการ AI และรายการที่ใช้เกินที่กันไว้ — ระบบไม่ปล่อยคืนเองตามเวลา
-          {' '}ดูเดือนนี้และเดือนก่อน ({holds.monthKeys.map((monthKey) => formatThaiMonth(monthKey)).join(' · ')})
+          {' '}ค้นทุกเดือนที่ยังมีรายการค้าง ({holds.monthKeys.map((monthKey) => formatThaiMonth(monthKey)).join(' · ')})
         </p>
       </div>
 

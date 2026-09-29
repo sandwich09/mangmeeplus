@@ -455,6 +455,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/system-partner-management/application/use-cases/update-partner-identity.use-case.spec.ts',
       // Chat credit and receipt image add-ons PR A: the policy parser reads old and new policies (spec §8.4, A37).
       'src/modules/billing/domain/billing-policy-addon.spec.ts',
+      // Add-ons PR C: AI credit cycles follow the paid package periods (spec §5.1, T-01, O-01; A06/A34).
+      'src/modules/line-ai/application/ai-credit-cycles.spec.ts',
       'src/modules/system-partner-management/domain/logic/plan-capacity.spec.ts',
       'src/modules/billing/application/billing-collection.spec.ts',
       'src/modules/billing/application/billing-free-days.spec.ts',
@@ -539,6 +541,8 @@ export const LINE_AI_RELIABILITY_POSTGRES_SUITES = [{ id: 'reliability-postgres-
   'src/modules/line-ai/application/line-retained-task-source.pg.spec.ts',
   'src/modules/line-ai/application/line-ai-budget-authority.pg.spec.ts',
   'src/modules/line-ai/application/company-ai-budget-reservation.pg.spec.ts',
+  // Add-ons PR C: AI credit funding of LINE v2 holds (spec §5.3, §8.3; A05/A07/A09/A30/A34/A36).
+  'src/modules/line-ai/application/ai-credit-funding.pg.spec.ts',
   'src/modules/line-ai/application/line-capture-delivery.pg.spec.ts',
   'src/modules/line-ai/application/line-conversation-context.pg.spec.ts',
   'src/modules/line-ai/application/line-document-qa.pg.spec.ts',
