@@ -47,7 +47,7 @@ import {
 } from '../../../expenses/application/use-cases/expense-upload.use-case';
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
 import { LINE_RECENT_CAPTURE_WINDOW_MS, listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
-import { receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/line-receipt-status.logic';
+import { namesLineMedia, receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/line-receipt-status.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type { ExpenseRecord } from '../../../expenses/domain/models/expense.model';
 import { pickLineDefaultBranchId } from '../../../expenses/domain/logic/line-receipt-branch.logic';
@@ -9235,8 +9235,9 @@ export class ProcessLineWebhookUseCase {
   /**
    * §17.5 "ไฟล์เมื่อกี้ทำไมส่งไม่ได้" — deterministic, read-only, no OCR and no model.
    *
-   * Returns false ONLY when this deployment has no attempt log at all, in which case the caller
-   * keeps today's behaviour rather than inventing an answer. Everything else — including "we could
+   * Returns false when this deployment has no attempt log at all, or when this chat sent no file
+   * and the message names none, in which case the caller keeps today's behaviour rather than
+   * inventing an answer. Everything else — including "we could
    * not look" and "no attempt found" — is answered here, because §17.5's whole point is that those
    * two are DIFFERENT answers and neither may be dressed up as a cause.
    */
@@ -9258,6 +9259,9 @@ export class ProcessLineWebhookUseCase {
       // Bookkeeping rows (the A45 question, an earlier ambiguity list) are not files to report on.
       const attempts = rows.filter((row) => row.stage !== 'ROUTE');
       if (attempts.length === 0) {
+        // No file was sent in this chat, so a bare "บันทึกไปยัง" asks about the note just captured and
+        // the record lanes answer it (NAT-12). Naming a file still gets the honest "no file" reply.
+        if (!namesLineMedia(input.normalizedText)) return false;
         reply = FILE_ATTEMPT_NONE_REPLY;
       } else {
         // A numbered answer to an ambiguity list already shown wins over a fresh list (§17.5).
