@@ -229,14 +229,16 @@ test.describe('EXP — expenses + receipts', () => {
       .toBe('READY_FOR_CONFIRMATION');
   });
 
-  test('EXP-04A @p1 cancellation dialog keeps or rejects a draft with API truth', async ({ authedPage, api, companyId }) => {
+  test('EXP-04A @p1 cancellation switches to deletion only after success', async ({ authedPage, api, companyId }, info) => {
     const created = await createExpense(api, companyId);
     await gotoCompany(authedPage, companyId, `/expenses/${created.id}`);
     await authedPage.setViewportSize({ width: 390, height: 844 });
-    // Invalid drafts remain rejectable through the secondary-action menu on the first step.
+    // Invalid drafts remain cancellable directly from the first step, with one click to the dialog.
     await expect(authedPage.getByRole('button', { name: 'ถัดไป', exact: true })).toBeDisabled();
-    await expect(authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true })).not.toBeVisible();
-    await authedPage.locator('summary').filter({ hasText: /^เพิ่มเติม$/ }).click();
+    await expect(authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true })).toBeVisible();
+    const deleteButton = authedPage.locator('button').filter({ hasText: /^ลบ$/ });
+    await expect(deleteButton).toHaveCount(0);
+    await expect(authedPage.locator('summary').filter({ hasText: /^เพิ่มเติม$/ })).toHaveCount(0);
     await authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true }).click();
 
     const dialog = authedPage.getByRole('dialog', { name: 'ยืนยันการยกเลิกรายการ' });
@@ -250,14 +252,138 @@ test.describe('EXP — expenses + receipts', () => {
     await expect(dialog).toBeHidden();
     expect((await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`))).status).toBe('DRAFT');
 
-    await authedPage.locator('summary').filter({ hasText: /^เพิ่มเติม$/ }).click();
     await authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true }).click();
     await expect(reason).toHaveValue('');
     await reason.fill('บันทึกรายการผิด');
+    let releaseReject!: () => void;
+    let rejectGate = new Promise<void>((resolve) => { releaseReject = resolve; });
+    let failReject = true;
+    await authedPage.route(`**/companies/${companyId}/expenses/${created.id}/reject`, async (route) => {
+      await rejectGate;
+      if (failReject) await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'ยกเลิกไม่สำเร็จ กรุณาลองอีกครั้ง' }) });
+      else await route.continue();
+    });
     await confirm.click();
+    await expect(dialog.getByRole('button', { name: 'กำลังยกเลิก…', exact: true })).toBeDisabled();
+    await expect(reason).toBeDisabled();
+    await expect(deleteButton).toHaveCount(0);
+    releaseReject();
+    await expect(confirm).toBeEnabled();
+    await expect(dialog).toBeVisible();
+    await expect(reason).toHaveValue('บันทึกรายการผิด');
+    await expect(deleteButton).toHaveCount(0);
+    expect((await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`))).status).toBe('DRAFT');
+
+    failReject = false;
+    rejectGate = new Promise<void>((resolve) => { releaseReject = resolve; });
+    await confirm.click();
+    await expect(dialog.getByRole('button', { name: 'กำลังยกเลิก…', exact: true })).toBeDisabled();
+    await expect(deleteButton).toHaveCount(0);
+    releaseReject();
     await expect(dialog).toBeHidden();
     expect((await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`))).status).toBe('REJECTED');
+    await expect(deleteButton).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true })).toHaveCount(0);
+    await expect(authedPage.locator('summary').filter({ hasText: /^เพิ่มเติม$/ })).toHaveCount(0);
+    await expect(authedPage.getByRole('button', { name: 'เริ่มตรวจใหม่', exact: true })).toBeVisible();
+    await authedPage.screenshot({ path: info.outputPath('cancelled-delete-390.png') });
+    await deleteButton.click();
+    await expect(authedPage.getByRole('button', { name: 'ลบถาวร', exact: true })).toBeVisible();
+    await authedPage.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
+    await expect(authedPage.getByRole('button', { name: 'ลบถาวร', exact: true })).toBeHidden();
+    expect((await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`))).status).toBe('REJECTED');
   });
+
+  for (const width of [390, 1280]) {
+    test(`EXP-READ-LOCK locks the complete form and preserves edits at ${width}px`, async ({ authedPage: page, api, companyId, urls }, info) => {
+      const created = await createExpense(api, companyId);
+      const path = `companies/${companyId}/expenses/${created.id}`;
+      const stored = await json<FullExpenseDetail>(await api.get(path));
+      const attachmentId = `synthetic-${created.id}`;
+      const receipt = uniqueReceiptPng();
+      let detail = { ...stored, primaryAttachmentId: attachmentId, attachments: [{
+        id: attachmentId, purpose: 'expense.receipt.primary' as const, originalFileName: 'synthetic.png',
+        mimeType: 'image/png', byteSize: receipt.length, checksumSha256: null, status: 'ACTIVE', createdAt: stored.updatedAt,
+      }] };
+      // Only OCR/status/preview responses are simulated. No provider call or charge is made.
+      let job: { status: string; applied?: boolean } | null = null;
+      let releaseRead!: () => void;
+      let readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+      let refreshGate = Promise.resolve();
+      let refreshStarted = false;
+      await page.route(`**/v1/${path}`, async (route) => {
+        refreshStarted = true;
+        await refreshGate;
+        await route.fulfill({ json: detail });
+      });
+      await page.route(`**/v1/${path}/read-status`, (route) => route.fulfill({ json: { files: job ? [{
+        fileId: 'synthetic-job', attachmentId, pagesRead: 0, pageCount: 1, pausedReason: null, lastErrorCode: null, ...job,
+      }] : [] } }));
+      await page.route(`**/v1/${path}/extraction-request`, async (route) => {
+        await readGate;
+        await route.fulfill({ json: { status: 'ok', ...(job ? { readJobId: 'synthetic-job', readStatus: job.status } : {}) } });
+      });
+      await page.route(`**/attachments/${attachmentId}/download-url*`, (route) => route.fulfill({ json: { downloadUrl: `${urls.web}/__synthetic-receipt.png` } }));
+      await page.route('**/__synthetic-receipt.png', (route) => route.fulfill({ contentType: 'image/png', body: receipt }));
+      await page.setViewportSize({ width, height: 844 });
+      await gotoCompany(page, companyId, `/expenses/${created.id}`);
+      const form = page.getByTestId('expense-review-form');
+      const vendor = form.getByRole('textbox', { name: /^ชื่อผู้ขาย/, includeHidden: true });
+      const read = form.getByRole('button', { name: 'อ่านเอกสารอีกครั้ง', exact: true });
+      await vendor.fill('ค่าที่พิมพ์ไว้ก่อนอ่าน');
+      const originalInput = await vendor.elementHandle();
+      await read.click();
+      await expect(form.locator(':scope > fieldset')).toHaveAttribute('inert', '');
+      await expect(vendor).toBeDisabled();
+      await expect(form.locator('input:enabled, textarea:enabled, select:enabled, button:enabled')).toHaveCount(0);
+      const select = form.locator('summary').first();
+      await select.evaluate((element: HTMLElement) => element.focus());
+      expect(await form.evaluate((element) => element.contains(document.activeElement))).toBe(false);
+      const bounds = await form.boundingBox();
+      const cover = await form.locator(':scope > .absolute').boundingBox();
+      expect(cover).toEqual(bounds);
+      await expect(form.getByRole('status').filter({ hasText: 'AI กำลังอ่านเอกสาร' })).toBeInViewport();
+      if (width === 1280) await expect(page.getByRole('button', { name: 'เปิดเต็มจอ', exact: true })).toBeEnabled();
+      await page.screenshot({ path: info.outputPath(`read-lock-${width}.png`), fullPage: true });
+      releaseRead();
+      await expect(vendor).toBeEnabled();
+      await expect(vendor).toHaveValue('ค่าที่พิมพ์ไว้ก่อนอ่าน');
+      expect(await originalInput!.evaluate((element) => element.isConnected)).toBe(true);
+
+      // A queued response on the SAME attachment must hand off to polling without unlocking.
+      readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+      await read.click();
+      job = { status: 'QUEUED' };
+      const queuedResponse = page.waitForResponse((response) => response.url().endsWith('/extraction-request'));
+      releaseRead();
+      await queuedResponse;
+      await expect(form.getByRole('button', { name: 'อ่านเอกสารอีกครั้ง', exact: true, includeHidden: true })).toHaveCount(1);
+      await expect(vendor).toBeDisabled();
+      let releaseRefresh!: () => void;
+      refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+      refreshStarted = false;
+      detail = { ...detail, vendorNameSnapshot: 'ผลอ่านล่าสุด', updatedAt: new Date(Date.now() + 1000).toISOString() };
+      job = { status: width === 390 ? 'PARTIAL' : 'DONE', applied: true };
+      await expect.poll(() => refreshStarted).toBe(true);
+      await expect(vendor).toBeDisabled();
+      releaseRefresh();
+      await expect(vendor).toBeEnabled();
+      await expect(vendor).toHaveValue('ผลอ่านล่าสุด');
+      expect(await originalInput!.evaluate((element) => element.isConnected)).toBe(true);
+
+      // Returning to a running job locks immediately; a terminal failure permits manual entry.
+      job = { status: 'READING' };
+      await page.reload();
+      await expect(vendor).toBeDisabled();
+      job = { status: width === 390 ? 'PAUSED' : 'FAILED' };
+      await expect(vendor).toBeEnabled();
+      await vendor.fill('กรอกต่อหลังอ่านไม่สำเร็จ');
+      await expect(vendor).toHaveValue('กรอกต่อหลังอ่านไม่สำเร็จ');
+      await expect(page.getByRole('button', { name: 'ยกเลิกรายการ', exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: info.outputPath(`review-ready-${width}.png`), fullPage: true });
+    });
+  }
 
   test('EXP-05 @p1 moves draft through ready and confirmed with API truth', async ({ api, request, companyId }) => {
     test.skip(

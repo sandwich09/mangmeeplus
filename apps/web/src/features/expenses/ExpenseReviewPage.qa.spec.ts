@@ -67,7 +67,7 @@ test('the read state is shown beside the file, not only as a toast', () => {
 test('polling follows the durable job and never starts a read of its own', () => {
   assert.match(source, /if \(!detail\?\.primaryAttachmentId\) return;/);
   assert.match(source, /getExpenseReadStatus\(companyId, expenseId\)/);
-  assert.match(source, /if \(file\?\.status === 'DONE' && file\.applied !== false\) void load\(\);/);
+  assert.match(source, /if \(\(file\?\.status === 'DONE' \|\| file\?\.status === 'PARTIAL'\) && file\.applied !== false\)/);
   assert.match(source, /}, 3_000\);/);
 });
 
@@ -101,7 +101,7 @@ test('more than one document in a file says what was created, not where to go (a
   assert.match(source, /readState\s*\?\s*readState\.multiDocument === true/);
   assert.match(source, /contentKind === 'MULTI_DOCUMENT'/);
   // …and a DONE the API says was NOT applied does not send the page to re-read an unchanged draft.
-  assert.match(source, /file\?\.status === 'DONE' && file\.applied !== false/);
+  assert.match(source, /file\?\.status === 'DONE' \|\| file\?\.status === 'PARTIAL'\) && file\.applied !== false/);
   // The ids come off the job, so the notice can never promise records the engine did not create.
   assert.match(source, /const splitExpenseIds = readState\?\.splitExpenseIds \?\? \[\];/);
   assert.match(source, /t\('expenses\.capture\.auto_split', locale\)\.replace\('\{count\}'/);
