@@ -245,7 +245,9 @@ export const SALES_ERROR_CODES = ['SALES_DEAL_STATE_CONFLICT', 'SALES_DEAL_SELF_
   // Sales-event discounts, console (spec §7.3). SD-B/SD-C/SD-F add the claim and redemption codes.
   'SALES_EVENT_BATCH_INVALID', 'SALES_EVENT_REWARD_REQUIRED', 'SALES_EVENT_DISCOUNT_TOO_HIGH', 'SALES_EVENT_BATCH_STALE',
   'SALES_EVENT_NOT_FOUND', 'SALES_EVENT_CLAIM_CLOSED', 'SALES_EVENT_ISSUE_FULL', 'SALES_EVENT_AGENT_INACTIVE',
-  'SALES_EVENT_TICKET_NOT_REVOCABLE'] as const;
+  'SALES_EVENT_TICKET_NOT_REVOCABLE',
+  // Sales-event discounts, LINE claim (spec §7.3, SD-B). The LIFF page carries its own copy too.
+  'SALES_EVENT_QR_EXPIRED', 'SALES_EVENT_SELF_CLAIM'] as const;
 export type SalesErrorCode = typeof SALES_ERROR_CODES[number];
 
 // ── Sales-event discounts (docs/specs/sales-event-discounts-spec-th.md §6, §7.1, §9) ──────────────
