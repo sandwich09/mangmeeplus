@@ -12,7 +12,7 @@ import { currentBudgetState } from '../../../common/usage/usage-context';
 import { productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
 import { PRODUCT_HELP_PACK } from './approved-product-help';
 import { buildCapabilityHelp } from './response-composer.agent';
-import { formatPreparedSimpleRead } from './prepared-simple-read-formatter';
+import { assumedYearNote, formatPreparedSimpleRead, periodLine } from './prepared-simple-read-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
 import { MANGMEE_PERSONA_PROMPT, sanitizeMangmeeComposedText } from './mangmee-persona';
@@ -52,6 +52,9 @@ const SCOPE_LINE_TEXT: Record<'th' | 'en', string> = {
   th: 'ขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ',
   en: 'Scope: only records related to you',
 };
+// Owner 2026-09-29: a composed answer that already says the year was assumed, or that a named year / this year's
+// month has not come yet, gets nothing appended — narrow on purpose, since "ยอดยังไม่ถึงงบ" is not that.
+const ASSUMED_YEAR_ALREADY_STATED = /ไม่ได้ระบุปี|ปีนี้ยังไม่ถึง|\d{4}\s*ยังไม่ถึง|no year given|hasn't started/iu;
 
 // C4/Spec §8 row "นอกแพ็กเกจ": an explicit write clause whose writeIntent the tool catalog does not
 // support at all (e.g. "ออกใบแจ้งหนี้" — invoicing) — never a tool call, never a question implying
@@ -224,6 +227,20 @@ function preferredAnswerShapes(toolName: string, data: unknown, messageText: str
   return bounded || messageAsksForList(messageText) ? ['list', 'single_metric'] : ['single_metric', 'list'];
 }
 
+/** The period candidate whose exact window a result reports reading, with that result's as-of — so an answer can
+ *  say its year was assumed (assumedYearNote) from the candidate's own flag, never a re-derived year. */
+function readPeriod(good: ToolResult[], periods: readonly LineAiPeriodCandidate[]): { period: LineAiPeriodCandidate; asOf?: string } | undefined {
+  for (const result of good) {
+    const echoed = object(result.data) ? result.data['period'] : undefined;
+    const window = object(echoed) ? echoed : undefined;
+    const fromDate = result.queryApplied?.period?.startDate ?? window?.['fromDate'];
+    const toDate = result.queryApplied?.period?.endDate ?? window?.['toDate'];
+    const period = periods.find(candidate => candidate.fromDate === fromDate && candidate.toDate === toDate);
+    if (period) return { period, asOf: result.asOf };
+  }
+  return undefined;
+}
+
 /**
  * C1(c): grounding failed twice for this read — never show the raw rejection line. Try the SAME
  * verified, model-free formatter the prepared lane already trusts, on this item's own tool
@@ -236,6 +253,7 @@ function preferredAnswerShapes(toolName: string, data: unknown, messageText: str
  */
 function deterministicReadFallback(
   good: ToolResult[], language: 'th' | 'en', locale: string, enabledFamilies: ReadonlySet<string>, messageText: string, comparison?: ExpensePeriodComparison,
+  periodNote = '',
 ): { status: 'handled' | 'unsupported'; replyText: string; sourceRefIds: string[] } {
   const sourceRefIds = good.flatMap(result => result.sourceRefs.map(sourceId));
   if (comparison) return { status: 'handled', replyText: expensePeriodComparisonReplyText(comparison), sourceRefIds };
@@ -258,7 +276,7 @@ function deterministicReadFallback(
     for (const shape of preferredAnswerShapes(primary.toolName, primary.data, messageText)) {
       const key = preparedFamilyKey(primary.toolName, shape);
       if (!enabledFamilies.has(key)) continue;
-      const formatted = formatPreparedSimpleRead(key, output, { language, locale });
+      const formatted = formatPreparedSimpleRead(key, output, { language, locale, periodNote });
       if (formatted.kind === 'answer') return { status: 'handled', replyText: formatted.replyText, sourceRefIds: formatted.sourceRefs.map(sourceId) };
     }
   }
@@ -987,6 +1005,9 @@ export async function runSemanticTurnV2(input: {
     // A6: flips to false the instant `answer` is replaced by deterministic/reviewed text below —
     // sanitizeMangmeeComposedText must never touch a quoted user string or a tool-derived data value.
     let modelComposed = !!composed;
+    // Owner 2026-09-29: a bare month/quarter/range that fell back to last year is said out loud on every read answer.
+    const read = item.kind === 'read' ? readPeriod(good, (readContext?.candidates ?? req.valueCandidates)?.periods ?? []) : undefined;
+    const periodNote = assumedYearNote(read?.period, read?.asOf, language === 'en');
     // Item 2 (223-turn eval batch 2, T-011#2/T-062#0/T-008#3): expense.list_recent/get_breakdown's
     // {vendorAmbiguous|categoryAmbiguous, available…}/{vendorUnresolved|categoryUnresolved, …} is a
     // real, permission-checked answer — never trust the model's free-form prose around it (the eval
@@ -1037,7 +1058,7 @@ export async function runSemanticTurnV2(input: {
     // render. Reuse the SAME model-free formatter the grounding-failure path below already trusts;
     // when it cannot render this shape either, `answer` is left exactly as the C1(d) default above.
     else if (item.kind === 'read' && answer.reasonCode === 'SEMANTIC_ANSWER_UNAVAILABLE' && good.length > 0) {
-      const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText);
+      const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText, undefined, periodNote);
       if (fallback.status === 'handled') {
         answer = { index: item.index, status: 'handled', text: fallback.replyText, reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED',
           ...(fallback.sourceRefIds.length > 0 ? { sourceRefIds: fallback.sourceRefIds } : {}) };
@@ -1078,7 +1099,7 @@ export async function runSemanticTurnV2(input: {
         // fallback below: try the verified, model-free formatter on this item's own good tool
         // results first; only when it cannot render this shape does it fall to the honest §8
         // terminal — either way `unsupported`, never `needs_user` (R-L2/R-L3).
-        const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText, comparisonByIndex.get(item.index));
+        const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText, comparisonByIndex.get(item.index), periodNote);
         answer = { index: item.index, status: fallback.status, text: fallback.replyText,
           reasonCode: fallback.status === 'handled' ? 'DETERMINISTIC_FALLBACK_RENDERED' : 'SOURCE_COVERAGE_MISSING',
           ...(fallback.sourceRefIds.length > 0 ? { sourceRefIds: fallback.sourceRefIds } : {}) };
@@ -1098,7 +1119,7 @@ export async function runSemanticTurnV2(input: {
           // C1(c): never show the raw rejection line — reuse the SAME verified, model-free
           // formatter the prepared lane trusts for this exact tool result; failing that, an
           // honest §8 terminal that still carries this item's real source link.
-          const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText, comparisonByIndex.get(item.index));
+          const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText, comparisonByIndex.get(item.index), periodNote);
           answer = { index: item.index, status: fallback.status, text: fallback.replyText,
             reasonCode: fallback.status === 'handled' ? 'DETERMINISTIC_FALLBACK_RENDERED' : 'ANSWER_NUMBER_NOT_GROUNDED',
             ...(fallback.sourceRefIds.length > 0 ? { sourceRefIds: fallback.sourceRefIds } : {}) };
@@ -1139,6 +1160,10 @@ export async function runSemanticTurnV2(input: {
     if (modelComposed && !SCOPE_LINE_ALREADY_STATED.test(answer.text)
       && good.some(result => { const scope = resultAccessScope(result); return scope === 'own' || scope === 'related'; })) {
       answer.text = `${answer.text}\n${SCOPE_LINE_TEXT[language]}`;
+    }
+    // Owner 2026-09-29: the same period line the fast lane prints, after grounding like the scope line above.
+    if (modelComposed && answer.status === 'handled' && read && periodNote && !ASSUMED_YEAR_ALREADY_STATED.test(answer.text)) {
+      answer.text += periodLine({ fromDate: read.period.fromDate, toDate: read.period.toDate }, undefined, language === 'en', read.period.label, periodNote);
     }
     texts.push(answer.text);
     coverage.push({ index: item.index, status: answer.status, ...(answer.reasonCode ? { reasonCode: answer.reasonCode } : {}),

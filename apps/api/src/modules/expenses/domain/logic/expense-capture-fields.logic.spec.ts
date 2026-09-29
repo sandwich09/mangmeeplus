@@ -207,3 +207,45 @@ describe('capture draft fields — controller review of W10: a photographed summ
     assert.equal(verified.grandTotalAmount, '80.00');
   });
 });
+
+/**
+ * Owner 2026-09-29 ("หมวดหมู่ AI ควรจับได้เลย"): the PDF lane now carries the photo reader's category
+ * pick onto the draft fields, where `receipt-ocr-apply` applies it by the same rule as a photo.
+ */
+describe('capture draft fields — the document category', () => {
+  const pick = { expenseCategoryId: 'cat-freight', confidence: 0.94, evidenceSignals: ['ค่าจัดส่งพัสดุ'] };
+
+  it('hands the document category to the apply unchanged', () => {
+    const { mapped } = mapping({ categorySuggestion: pick }, { totals: [total('document_total', '120.00')] });
+    assert.deepEqual(mapped?.fields.categorySuggestion, pick);
+  });
+
+  it('adds none when the read named none', () => {
+    const { mapped } = mapping({}, { totals: [total('document_total', '120.00')] });
+    assert.ok(mapped);
+    assert.equal('categorySuggestion' in mapped.fields, false);
+  });
+
+  it('keeps the first window\'s pick for a document continued in a later window, and takes a later one when the first named none', () => {
+    const page = (ref: string, over: Partial<ExpenseCaptureDocumentObservation>): ExpenseCaptureObservations => ({
+      documents: [{
+        ref, pageIndexes: [ref === 'a' ? 0 : 1], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE',
+        issuer: { name: 'ขนส่งตัวอย่าง' }, documentNumber: 'SHP-1', classification: classification('RECEIPT'), ...over,
+      }],
+      items: [], components: [], totals: [], payments: [], refunds: [],
+      completeness: { itemsTruncated: false, unreadableRows: 0, pagesCovered: [], notes: [] },
+    });
+    const later = { ...pick, expenseCategoryId: 'cat-other' };
+    const kept = assembleCaptureObservations([
+      { id: 'w1', observations: page('a', { categorySuggestion: pick }) },
+      { id: 'w2', observations: page('b', { continuationOfRef: 'a', categorySuggestion: later }) },
+    ], { pageCount: 2 });
+    assert.equal(kept.documents.length, 1);
+    assert.deepEqual(kept.documents[0]!.categorySuggestion, pick);
+    const filled = assembleCaptureObservations([
+      { id: 'w1', observations: page('a', {}) },
+      { id: 'w2', observations: page('b', { continuationOfRef: 'a', categorySuggestion: later }) },
+    ], { pageCount: 2 });
+    assert.deepEqual(filled.documents[0]!.categorySuggestion, later);
+  });
+});

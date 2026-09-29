@@ -193,12 +193,19 @@ export class CaptureLineExpenseNoteUseCase {
         ...(validated.expenseCategoryId ? { expenseCategoryId: validated.expenseCategoryId } : {}),
       },
       categories: activeCategories,
+      applyCategoryHints: true,
     }) : undefined;
     const draftLines = initialState
       ? materializedLineExpenseDraftItems(initialState)
       : amount
         ? [{ lineNumber: 1, description, quantity: '1', unitPrice: amount, expenseCategoryId: validated.expenseCategoryId ?? undefined }]
         : [];
+    // The document carries a category only when every item shares one (as the photo path writes it);
+    // differing item categories stay on their own lines.
+    const itemCategoryIds = new Set(initialState?.items.map((item) => item.expenseCategoryId));
+    const documentCategoryId = initialState
+      ? (itemCategoryIds.size === 1 ? initialState.items[0]?.expenseCategoryId : undefined)
+      : validated.expenseCategoryId;
 
     const expense = await this.createDraft.execute(ctx, {
       captureSource: 'LINE_UPLOAD',
@@ -210,7 +217,7 @@ export class CaptureLineExpenseNoteUseCase {
       expenseDate: initialState?.header.expenseDate ?? validated.expenseDate ?? provisionalDate,
       vatMode: validated.vatMode,
       inputVatClaimStatus: 'NEEDS_REVIEW',
-      ...(!initialState && validated.expenseCategoryId ? { expenseCategoryId: validated.expenseCategoryId } : {}),
+      ...(documentCategoryId ? { expenseCategoryId: documentCategoryId } : {}),
       missingReceiptReason: LINE_TEXT_NOTE_MISSING_RECEIPT_MARKER,
       note: initialState?.header.businessPurpose ?? description,
       lines: draftLines,

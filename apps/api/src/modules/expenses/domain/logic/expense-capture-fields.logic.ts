@@ -69,6 +69,8 @@ export function captureFieldsFromObservations(
   if (document.documentNumber) fields.documentNumber = document.documentNumber; else missing.add('documentNumber');
   if (document.documentDate) fields.expenseDate = document.documentDate; else missing.add('expenseDate');
   if (document.currency) fields.currency = document.currency;
+  // The photo reader's own field: `receipt-ocr-apply` decides whether it is written (active, ≥ bar).
+  if (document.categorySuggestion) fields.categorySuggestion = document.categorySuggestion;
 
   const grandTotal = totalOf('document_total');
   if (grandTotal) fields.grandTotalAmount = grandTotal; else missing.add('grandTotalAmount');

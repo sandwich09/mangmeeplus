@@ -182,6 +182,12 @@ async function build(options: {
       return expense;
     },
     linkAttachmentToTarget: async (...args: any[]) => { evidenceLinks.push(args); },
+    // The starter template's shape: `accountHintKey` is what keeps the catch-all out of AI choice.
+    listCategories: async () => [
+      { id: 'cat-freight', companyId: 'co-1', name: 'ค่าขนส่ง', accountHintKey: 'expense.freight' },
+      { id: 'cat-misc', companyId: 'co-1', name: 'ค่าใช้จ่ายเบ็ดเตล็ด', accountHintKey: 'expense.miscellaneous' },
+      { id: 'cat-meals', companyId: 'co-1', name: 'ค่าอาหารและเครื่องดื่ม', accountHintKey: 'expense.meals' },
+    ],
   };
   const storage = { getObject: async () => ({ bytes, mimeType: 'application/pdf' }) };
 
@@ -629,6 +635,39 @@ describe('capture read runner — what it refuses to apply', () => {
       assert.equal(harness.outbox[0]![3].documentCount, 2);
       assert.equal(harness.outbox[0]![3].applied, true);
       assert.deepEqual(harness.outbox[0]![3].splitExpenseIds, ['split-1'], 'both lanes link to what was created');
+    } finally { harness.restore(); }
+  });
+
+  /**
+   * Owner 2026-09-29 ("หมวดหมู่ AI ควรจับได้เลย"): a PDF used to be read with NO catalogue, so its
+   * draft never got the category a photo of the same receipt gets. Each window is now offered the
+   * photo reader's catalogue, and each document's pick reaches the ordinary apply, which decides.
+   */
+  it('offers every window the shop catalogue minus the catch-all, and hands each document its own category', async () => {
+    const suggestion = (id: string, signal: string) => ({ expenseCategoryId: id, confidence: 0.93, evidenceSignals: [signal] });
+    const shops = twoShops();
+    shops.documents[0]!.categorySuggestion = suggestion('cat-freight', 'ร้าน ก');
+    shops.documents[1]!.categorySuggestion = suggestion('cat-meals', 'ขนม 40.00');
+    harness = await build({ pages: 2, extractResults: [{ status: 'ok', observations: shops }] });
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.deepEqual(harness.extractCalls[0]!.activeCategories, [
+        { id: 'cat-freight', name: 'ค่าขนส่ง' },
+        { id: 'cat-meals', name: 'ค่าอาหารและเครื่องดื่ม' },
+      ], 'ids and names only, never the catch-all');
+      assert.deepEqual(harness.applyCalls.map((call) => [call[1], call[2].categorySuggestion]), [
+        ['exp-1', suggestion('cat-freight', 'ร้าน ก')],
+        ['split-1', suggestion('cat-meals', 'ขนม 40.00')],
+      ], 'the draft the file was uploaded to, and the split draft, each get their own document\'s pick');
+    } finally { harness.restore(); }
+  });
+
+  it('leaves the category to the reviewer when the read named none', async () => {
+    harness = await build();
+    try {
+      await harness.runner.runClaimed(harness.job as any);
+      assert.equal(harness.applyCalls.length, 1);
+      assert.equal(harness.applyCalls[0]![2].categorySuggestion, undefined);
     } finally { harness.restore(); }
   });
 
