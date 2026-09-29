@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { Prisma } from '../../../../generated/prisma/client';
 import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
 import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.service';
-import { parseLineDeliveryPlan, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
-import { buildLineBusinessAnswerMessage, inheritCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
+import { deliveryHash, parseLineDeliveryPlan, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
+import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, inheritCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
 
 it('answers an admitted private general/help turn without private ERP prefetch or touching four waiting tasks', async () => {
   const event: any = { webhookEventId: 'evt', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'ทำไมท้องฟ้าเป็นสีฟ้า', inputEvidence: { joinedSha256: 'digest' } };
@@ -193,4 +193,74 @@ it('freezes the trusted expense card and safe link through the actual webhook v2
     assert.match(fallback.text, /https:\/\/app\.example\.com\/companies\/company\/expenses/);
     assert.equal(fallback.text.split('openExternalBrowser=1').length, 2);
   }
+});
+
+// UAT 2026-09-29 (main c4513ddd): the owner sent two receipt photos back to back. The second one waited
+// behind the first, its draft was created 62 s after acceptance — past the 40 s foreground deadline — and
+// the plan that should have announced it failed validation (PLAN_INVALID_LIFETIME) in 13 ms. The draft
+// existed; the customer never heard about it.
+function mediaResultFlow(createdAt: Date, capture: { saved?: DeliveryPlanV2 }) {
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  Object.assign(flow, {
+    config: { aiDataRetentionDays: 30 }, semanticDelivery: new WeakMap(), documentQaDelivery: new WeakMap(), deliveryReimbursements: new WeakMap(), deliveryDraftPreviews: new WeakMap(),
+    deliveryAccess: new WeakMap(), deliverySources: new WeakMap(), publicPolicyTopics: new WeakMap(),
+    deliveryReceiptSources: new WeakMap(), deliverySubstituteSources: new WeakMap(), deliveryCandidates: new WeakMap(),
+    persistSemanticTaskCompletion: async () => undefined,
+    webhookPlanAuthorization: async (_event: any, expiresAt: string) => ({ v: 2, kind: 'PRIVATE', issuedAt: createdAt.toISOString(), expiresAt,
+      actor: { userId: 'user', companyId: 'company', membershipId: 'member', requestId: 'request', accessFingerprint: 'fingerprint', channelId: 'oa', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation', ownerEpoch: 0 },
+      proofs: [{ id: 'receipt', kind: 'EXPENSE_REVISION', records: [{ id: 'expense-2', revision: 'r1' }], categories: [], choices: null }] }),
+    prisma: { client: { lineTurnOutcome: { findUnique: async () => null },
+      lineWebhookEventLog: { findUnique: async () => ({ createdAt, budgetAuthorityJson: { grant: { finalDeadlineAtMs: createdAt.getTime() + 40_000 } } }) } } },
+    deliveryPlans: { savePlan: async (_owner: unknown, plan: DeliveryPlanV2) => { capture.saved = plan; return { id: plan.planId }; } },
+    replayDeliveryPlan: async () => 'ok',
+  });
+  return flow;
+}
+const SECOND_PHOTO: any = { webhookEventId: 'second-photo', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', lineMessageId: 'msg-2', messageType: 'image' };
+
+it('a photo result that finishes after the foreground deadline still freezes a deliverable plan', async () => {
+  const capture: { saved?: DeliveryPlanV2 } = {};
+  const flow = mediaResultFlow(new Date(Date.now() - 62_000), capture);
+  assert.equal(await flow.sendMessagesV2(SECOND_PHOTO, [{ type: 'text', text: '🧾 บันทึกร่างค่าใช้จ่ายแล้ว ยอด 120.00 บาท' }]), 'ok');
+  assert.ok(capture.saved && parseLineDeliveryPlan(capture.saved), 'the plan validates');
+  assert.ok(Date.parse(capture.saved!.firstDispatchDeadlineAt) > Date.parse(capture.saved!.readyAt), 'its first send may still start');
+  assert.equal(capture.saved!.firstDispatchDeadlineAt, capture.saved!.expiresAt, 'a stored-file result lives as long as its plan');
+});
+
+it('an expired reply token is followed at once by a push of the same frozen batch (E4)', async () => {
+  const capture: { saved?: DeliveryPlanV2 } = {};
+  await mediaResultFlow(new Date(Date.now() - 62_000), capture).sendMessagesV2(SECOND_PHOTO, [{ type: 'text', text: '🧾 บันทึกร่างค่าใช้จ่ายแล้ว' }]);
+  const plan = capture.saved!, row = { id: plan.planId, status: 'READY', planJson: plan, planHash: deliveryHash(plan), outcomeId: 'outcome-2' };
+  const sent: Array<{ transport: string; messages: unknown }> = [];
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  Object.assign(flow, {
+    prisma: { client: { lineDeliveryPlan: { findUnique: async () => row }, lineTurnOutcome: { updateMany: async () => ({ count: 1 }) } } },
+    verifyWebhookPlan: async () => true,
+    deliveryPlans: {
+      claimPlan: async () => ({ row, plan, states: [{ status: 'READY', variant: 'primary', replyAttempted: false, pushAttempts: 0 }], token: 'lease', fence: {} }),
+      beginPlanBatch: async () => ({ index: 0, timeoutMs: 5_000 }),
+      finishPlanBatch: async (claim: any, index: number, result: any) => {
+        claim.states[index] = { ...claim.states[index], status: result.kind === 'accepted' ? 'ACCEPTED' : 'READY' }; return true;
+      },
+    },
+    lineReply: { sendFrozenV2: async (input: any) => {
+      sent.push({ transport: input.transport, messages: input.messages });
+      return input.transport === 'REPLY' ? { kind: 'rejected', code: 'REPLY_TOKEN_REJECTED', rejection: 'TOKEN' } : { kind: 'accepted', code: 'API_ACCEPTED' };
+    } },
+  });
+  assert.equal(await flow.replayDeliveryPlan(plan.planId, { ...SECOND_PHOTO, pushTargetId: 'line' }, 2), 'ok');
+  assert.deepEqual(sent.map(item => item.transport), ['REPLY', 'PUSH'], 'the push follows the refused reply in the same turn');
+  assert.deepEqual(sent[1]!.messages, sent[0]!.messages, 'the same frozen words, not a re-render');
+});
+
+it('a deterministic receipt reply is delivered as its card with the link on a button, as production sent it', async () => {
+  const capture: { saved?: DeliveryPlanV2 } = {};
+  const text = '📸 บันทึกเป็นร่างค่าใช้จ่ายแล้ว (รอตรวจสอบ)\n• ยอดรวม – 120.00 บาท\n\n✅ ตรวจสอบและยืนยันในเว็บแอป:\nhttps://app.example.com/companies/company/expenses/expense-2';
+  const card = buildLineAssistantTextCardMessage(text, 'https://app.example.com', 'company');
+  await mediaResultFlow(new Date(), capture).sendMessagesV2(SECOND_PHOTO, [card]);
+  const primary = capture.saved!.batches[0]!.primary.messages[0]!, fallback = capture.saved!.batches[0]!.fallback?.messages[0];
+  assert.equal(primary.type, 'flex', 'the card itself, not its canonical text');
+  assert.doesNotMatch(JSON.stringify((primary as any).contents.body), /https?:\/\//u, 'no raw link in the card body');
+  assert.match(JSON.stringify((primary as any).contents.footer), /ตรวจสอบและยืนยันในเว็บแอป/u, 'the link is the labelled button');
+  assert.equal(fallback?.type, 'text', 'the plain text stays the fallback');
 });

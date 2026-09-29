@@ -1924,6 +1924,15 @@ export function lineClarificationContentHash(item: Pick<LedgerSubRequestInput, '
     item.subject ?? null, item.clarifyForIntent ?? null, item.candidateExpenseIds ?? [], item.pendingMedia ?? null]));
 }
 
+/** What this chat left open, read the way production a2b926c6 read it before routing a text turn. */
+type LineOpenWorkContext = {
+  openWaiting: Awaited<ReturnType<LineAiLedgerService['openWaitingUser']>>;
+  openClarifications?: LineAiOpenClarification[];
+  recentCapturedExpenses: LineIntakeCorrectionCandidate[];
+  activeExpenseDrafts: LineExpenseDraftRouteContext[];
+  substituteContext: LineIntakeSubstituteContext;
+};
+
 @Injectable()
 export class ProcessLineWebhookUseCase {
   private readonly logger = new Logger(ProcessLineWebhookUseCase.name);
@@ -3860,19 +3869,40 @@ export class ProcessLineWebhookUseCase {
     throw new Error('LINE_CONTEXT_STALE_STATE');
   }
 
-  /** Exact selection controls choose a stored clause; they never import a different owner's text or restart its old budget. */
+  /** Exact selection controls choose a stored clause; they never import a different owner's text or restart its old budget.
+   *  The buttons send their own words ("ทำข้อ 2 ก่อน", "ทำรายการ 1 ต่อ") — never a task id — and the
+   *  words map back here to the same waiting clause the button was built from; `/task choose` stays
+   *  accepted for a button delivered before that change. */
   private async prepareRetainedTaskSelection(event: LineTextEvent): Promise<boolean> {
-    if (!event.messageText.startsWith('/task choose ')) return false;
+    const words = /^ทำ(ข้อ|รายการ) ([1-8]) (?:ก่อน|ต่อ)$/u.exec(event.messageText.trim());
+    if (!event.messageText.startsWith('/task choose ') && !words) return false;
     const bound = this.boundConversations.get(event);
     if (!bound) return false;
     this.retainedTaskSources.delete(event);
+    let choice: { taskId: string; revision: number; index: number } | undefined;
+    const legacy = /^\/task choose ([A-Za-z0-9_-]{1,128}) ([0-9]{1,10}) ([0-7])$/u.exec(event.messageText);
+    if (legacy) choice = { taskId: legacy[1]!, revision: Number(legacy[2]), index: Number(legacy[3]) };
+    const projection = await this.contextV2.projection(bound.owner).catch(() => null);
+    if (words) {
+      // The same list the buttons were built from, in the same order (remainingTaskChoiceMessages).
+      const waiting = (projection?.tasks ?? []).flatMap(task => task.subrequests.flatMap(sub => {
+        const locator = sub.kind === 'write' && ['needs_user', 'pending'].includes(sub.status)
+          && task.sourceRevisionLocators?.find(item => item.sourceType.startsWith(`LINE_ACCEPTED_TASK_${sub.index}_`));
+        return locator ? [{ task, sub, originalIndex: Number(locator.sourceType.split('_').at(-1)) }] : [];
+      }));
+      // Nothing is waiting to be chosen, so these are ordinary words for the normal route.
+      if (!waiting.length) return false;
+      const number = Number(words[2]);
+      const picked = words[1] === 'ข้อ'
+        ? waiting.filter(item => item.originalIndex === number - 1).at(-1)
+        : waiting[number - 1];
+      if (picked) choice = { taskId: picked.task.taskId, revision: picked.task.revision, index: picked.sub.index };
+    }
     try {
-      const match = /^\/task choose ([A-Za-z0-9_-]{1,128}) ([0-9]{1,10}) ([0-7])$/u.exec(event.messageText);
-      const projection = await this.contextV2.projection(bound.owner);
-      const task = match && projection?.tasks.find(item => item.taskId === match[1]);
-      const localIndex = Number(match?.[3]);
+      const task = choice && projection?.tasks.find(item => item.taskId === choice!.taskId);
+      const localIndex = Number(choice?.index);
       const sub = task?.subrequests.find(item => item.index === localIndex);
-      if (!match || !projection || projection.lifecycleEpoch !== bound.epoch || !task || task.revision !== Number(match[2])
+      if (!choice || !projection || projection.lifecycleEpoch !== bound.epoch || !task || task.revision !== choice.revision
         || !['waiting_user', 'paused'].includes(task.state) || sub?.kind !== 'write' || !['needs_user', 'pending'].includes(sub.status)) throw new Error('LINE_TASK_STALE_SELECTION');
       const locator = task.sourceRevisionLocators?.find(item => item.sourceType.startsWith(`LINE_ACCEPTED_TASK_${localIndex}_`));
       const originalIndex = Number(locator?.sourceType.split('_').at(-1));
@@ -3918,7 +3948,7 @@ export class ProcessLineWebhookUseCase {
     const choices = remaining.slice(0, 8);
     return [{ type: 'text', text: ['รายการต่อไปนี้ยังไม่ได้ทำ รายละเอียดเดิมยังอยู่ค่ะ เลือกงานที่จะทำต่อได้เลย',
       ...choices.map(({ sub }, index) => `${index + 1}) ${sub.goal}`)].join('\n'), quickReply: { items: choices.map(({ task, sub, revision }, index) => ({
-        type: 'action' as const, action: { type: 'message' as const, label: `ทำรายการ ${index + 1} ต่อ`, text: `/task choose ${task.taskId} ${revision} ${sub.index}` },
+        type: 'action' as const, action: { type: 'message' as const, label: `ทำรายการ ${index + 1} ต่อ`, text: `ทำรายการ ${index + 1} ต่อ` },
       })) } }];
   }
 
@@ -3930,9 +3960,9 @@ export class ProcessLineWebhookUseCase {
     const items = writes.map(item => {
       const mapping = mappings.find(value => value.index === item.index), task = projection.tasks.find(value => value.taskId === mapping?.taskId);
       if (!task || !mapping) throw new Error('LINE_TASK_SOURCE_MISSING');
-      // Successful delivery increments the task revision once. Failed delivery leaves this control unusable.
+      // The words name the clause; prepareRetainedTaskSelection maps them back to this waiting task.
       return { type: 'action' as const, action: { type: 'message' as const, label: `ทำข้อ ${item.index + 1} ก่อน`,
-        text: `/task choose ${task.taskId} ${task.revision + 1} ${mapping.subrequestIndex}` } };
+        text: `ทำข้อ ${item.index + 1} ก่อน` } };
     });
     const text = ['มีคำขอสร้างหรือแก้เอกสารหลายรายการค่ะ ระบบยังไม่ได้เริ่มรายการใด กรุณาเลือกทำทีละรายการ',
       ...writes.map(item => `${item.index + 1}) ${item.goal}`),
@@ -4260,7 +4290,8 @@ export class ProcessLineWebhookUseCase {
   }
 
   async replayDeliveryPlan(planId: string, event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string }, automaticBatches = 1): Promise<LineDeliveryResult> {
-    for (let n = 0; n < Math.min(2, automaticBatches); n++) {
+    let attempts = Math.min(2, automaticBatches);
+    for (let n = 0; n < attempts; n++) {
       const row = await this.prisma.client.lineDeliveryPlan.findUnique({ where: { id: planId } });
       const plan = parseLineDeliveryPlan(row?.planJson);
       if (!row || !plan || row.planHash !== deliveryHash(plan) || !row.outcomeId) return 'failed_permanent';
@@ -4279,6 +4310,9 @@ export class ProcessLineWebhookUseCase {
       const frozen = claim.plan.batches[dispatch.index]![claim.states[dispatch.index]!.variant]!;
       const result = await this.lineReply.sendFrozenV2({ channelId: plan.authorization.kind === 'PRIVATE' ? plan.authorization.actor.channelId : plan.authorization.destination.channelId, transport, target: transport === 'REPLY' ? event.replyToken : event.pushTargetId ?? event.lineUserId, messages: frozen.messages, pushRetryKey: frozen.pushRetryKey, timeoutMs: dispatch.timeoutMs });
       if (!await this.deliveryPlans.finishPlanBatch(claim, dispatch.index, result)) return 'failed_other';
+      // E4 (production's reply path): a reply token LINE no longer accepts is answered by pushing the
+      // same frozen batch now, instead of leaving the customer to wait for the recovery sweep.
+      if (result.kind === 'rejected' && result.rejection === 'TOKEN' && transport === 'REPLY') { attempts += 1; continue; }
       if (result.kind !== 'accepted') return result.rejection === 'PERMANENT' ? 'failed_permanent' : 'failed_other';
       if (claim.states.every(s => s.status === 'ACCEPTED')) {
         await this.prisma.client.lineTurnOutcome.updateMany({ where: { id: row.outcomeId, deliveredAt: null }, data: { deliveredAt: new Date() } });
@@ -4426,8 +4460,14 @@ export class ProcessLineWebhookUseCase {
     const control = reimbursement?.status === 'preview' && reimbursementControlIndex >= 0
       ? { kind: 'REIMBURSEMENT_DRAFT_CONFIRM' as const, actionId: reimbursement.preview.actionId, previewRevision: reimbursement.preview.previewRevision, confirmationDigest: reimbursement.preview.confirmationDigest, expiresAt: reimbursement.preview.expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) }
       : controlIndex >= 0 && previewProof && draft?.previewId ? { kind: 'EXPENSE_EDIT_CONFIRM' as const, previewId: draft.previewId, previewRevision: String(previewProof.previewRevision), expiresAt, requiredItemIds: items.map((_x, i) => `${planId}:item:${i}`) } : null;
+    // A photo/file turn reports a file the server already stored (and usually the draft it became), so
+    // like a QA job its answer is a durable obligation for the plan's lifetime — not a conversational
+    // answer that is late after the foreground deadline. A second photo queued behind the first one
+    // (UAT 2026-09-29) finished past that deadline, the plan failed validation and the draft was
+    // never announced. A QA result keeps its own job deadline.
+    const durableMediaResult = !('messageText' in event);
     const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt,
-      firstDispatchDeadlineAt: new Date(this.documentQaDelivery.get(event)?.jobDeadlineAt.getTime() ?? (log.budgetAuthorityJson as { grant?: { finalDeadlineAtMs?: number } } | null)?.grant?.finalDeadlineAtMs ?? log.createdAt.getTime() + 40_000).toISOString(), authorization, control, businessResult: reimbursement?.status === 'applied' ? { kind: 'REIMBURSEMENT_DRAFT', operationKey: String(reimbursement.receipt.actionId), committedAt: String(reimbursement.receipt.committedAt), recordIds: [String(reimbursement.receipt.requestId)], resultingRevisions: [String(reimbursement.receipt.appliedRequestUpdatedAt)] } : null,
+      firstDispatchDeadlineAt: !this.documentQaDelivery.get(event) && durableMediaResult ? expiresAt : new Date(this.documentQaDelivery.get(event)?.jobDeadlineAt.getTime() ?? (log.budgetAuthorityJson as { grant?: { finalDeadlineAtMs?: number } } | null)?.grant?.finalDeadlineAtMs ?? log.createdAt.getTime() + 40_000).toISOString(), authorization, control, businessResult: reimbursement?.status === 'applied' ? { kind: 'REIMBURSEMENT_DRAFT', operationKey: String(reimbursement.receipt.actionId), committedAt: String(reimbursement.receipt.committedAt), recordIds: [String(reimbursement.receipt.requestId)], resultingRevisions: [String(reimbursement.receipt.appliedRequestUpdatedAt)] } : null,
       answer: { status: pendingSubrequestIds.length ? 'PARTIAL' : 'COMPLETE', pendingSubrequestIds, items },
       preferredMessages: items.map((_item, index) => index < messages.length && index !== financialControlIndex ? messages[index]! : null),
       ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) });
@@ -4817,6 +4857,87 @@ export class ProcessLineWebhookUseCase {
       }
       return true;
     } catch { return false; }
+  }
+
+  /** The open work production passed to its router: waiting questions, correction targets, drafts and
+   *  substitute state. `null` means a fail-closed gate has already answered the turn. */
+  private async loadOpenWorkContext(event: LineTextEvent, requestId: string, ctx: RequestContext, input: {
+    chatKey: string; corrections: boolean; drafts: boolean; substituteMode: string;
+  }): Promise<LineOpenWorkContext | null> {
+    let openWaiting: LineOpenWorkContext['openWaiting'];
+    try {
+      openWaiting = this.ledger ? await this.ledger.openWaitingUser(ctx.companyId, input.chatKey, ctx.userId) : [];
+    } catch (err) {
+      // Consumption-marker state is unreadable. Continuing with "no open clarifications" is NOT
+      // fail-closed: a bare "590" answering an earlier question would be routed as a new capture.
+      if (!(err instanceof ConsumptionMarkerUnavailableError)) throw err;
+      // `reason` separates a missing consumer group, an unreadable Redis and an incomplete scan for
+      // operators; the customer reply and the terminal status stay the same for all of them.
+      this.logger.warn({ msg: 'line_ai_marker_unavailable', requestId, reason: err.reason });
+      await this.deliverReply(event, ERROR_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'marker_unavailable', 'CONSUMPTION_MARKER_UNAVAILABLE', ctx.companyId);
+      return null;
+    }
+    if (!await this.waitingSourcesCurrent(event, ctx, openWaiting)) return null;
+    const openClarifications: LineAiOpenClarification[] | undefined = openWaiting.length > 0
+      ? openWaiting.map(({ id, question, text, subject, askedAt, clarifyForIntent, candidateExpenseIds, pendingMedia }) => ({
+        id, question, text, ...(subject && { subject }), askedAt,
+        ...(clarifyForIntent && { clarifyForIntent }),
+        ...(candidateExpenseIds?.length && { candidateExpenseIds }),
+        ...(pendingMedia && { pendingMedia }),
+      }))
+      : undefined;
+    // Correction targets: this user's recent captures in THIS chat, inside branch scope.
+    const recentCapturedExpenses = input.corrections
+      ? await this.loadCorrectionCandidates(ctx.companyId, ctx.userId, chatKeyHashOf(event), ctx.scopes ?? {})
+      : [];
+    const activeExpenseDrafts = input.drafts && this.expenseDraftConversation
+      ? await this.expenseDraftConversation.routeContexts(ctx, chatKeyHashOf(event))
+      : [];
+    // Bounded substitute context for the semantic router (DATA only, never authority). In PRIMARY the
+    // AUTHORITATIVE workflowState (none/open/paused/multiple) is read from the continuation rows (execute
+    // re-reads them before any action); OFF/SHADOW keep the cheap signal so the legacy path adds NO query.
+    // `workflowState` is NEVER rewritten from a ledger clarification — a pending paraphrase-start
+    // confirmation (which has no workflow row yet) is encoded ONLY via hasPendingQuestion, so the next
+    // affirmative still inherits the substitute route without faking an OPEN workflow.
+    const substituteContextBase: LineIntakeSubstituteContext = input.substituteMode === 'primary' && this.substituteReceiptContinuation
+      ? await this.substituteReceiptContinuation.substituteContext(ctx, { chatKeyHash: chatKeyHashOf(event), recentCandidateCount: recentCapturedExpenses.length })
+      : {
+          workflowState: 'none', hasPendingQuestion: false, preparedState: 'none',
+          recentCandidateCount: Math.min(recentCapturedExpenses.length, 5),
+        };
+    return { openWaiting, openClarifications, recentCapturedExpenses, activeExpenseDrafts, substituteContext: {
+      ...substituteContextBase,
+      hasPendingQuestion: substituteContextBase.hasPendingQuestion
+        || openWaiting.some((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION'),
+    } };
+  }
+
+  /** Owner 2026-09-29: production decides a reply to open work with its own matchers BEFORE routing —
+   *  RECEIPT-05 (`classifyPendingMediaReply`), the question recorded on the pending file (check bill,
+   *  substitute scan), and the draft controls. True only when this text is such an answer AND that work
+   *  is open in this chat. Text first, so an ordinary question reads no pending state here. */
+  private async answersOpenWork(event: LineTextEvent, ctx: RequestContext, drafts: boolean): Promise<boolean> {
+    const text = event.messageText;
+    if (splitPendingMediaReply(text) || classifyPendingMediaReply(text) !== 'ambiguous' || checkBillPaymentChoice(text)
+      || substituteScanConfirmAnswer(text) || numberedSelection(text, 9) !== undefined) {
+      const rows = await this.prisma.client.lineIntakePendingMedia.findMany({
+        where: { companyId: ctx.companyId, userId: ctx.userId, status: 'PENDING', expiresAt: { gt: new Date() }, ...this.pendingMediaBinding(event) },
+        orderBy: { createdAt: 'asc' }, take: 6,
+      });
+      // Same row the RECEIPT-05 block answers; with several files and none chosen it asks which first.
+      const chosen = rows.filter(row => (row.askedQuestionJson as { selectedForContinuation?: boolean } | null)?.selectedForContinuation === true);
+      if (rows.length > 1 && chosen.length !== 1) return true;
+      const row = chosen[0] ?? rows[0];
+      const asked = row && this.substituteReceiptContinuation ? parseSubstituteMediaQuestion(row.askedQuestionJson, chatKeyHashOf(event)) : undefined;
+      if (row && (!asked ? !!splitPendingMediaReply(text) || classifyPendingMediaReply(text) !== 'ambiguous'
+        : asked.kind === 'CHECK_BILL_ACTION' ? !!checkBillPaymentChoice(text)
+          : asked.kind === 'SUBSTITUTE_SCAN_CONFIRM' ? !!substituteScanConfirmAnswer(text)
+            : asked.kind === 'SUBSTITUTE_SCAN_PICK' ? numberedSelection(text, asked.evidenceIds.length) !== undefined
+              : !!substituteMediaAnswer(text, asked.choices))) return true;
+    }
+    return drafts && !!this.expenseDraftConversation && isDeterministicLineExpenseDraftInput(text)
+      && (await this.expenseDraftConversation.routeContexts(ctx, chatKeyHashOf(event))).length > 0;
   }
 
   private async waitingSourcesCurrent(event: LineTextEvent, ctx: RequestContext, open: Array<LineAiOpenClarification & { entry: LedgerEntry }>): Promise<boolean> {
@@ -5537,18 +5658,44 @@ export class ProcessLineWebhookUseCase {
     }
 
     // V2 classifies once from accepted input plus the authorized, bounded chat/task snapshot before
-    // pending-media/draft interceptors can consume or write. Source-specific ERP candidates stay below
-    // this point and are loaded only for a route that needs their existing domain flow.
+    // pending-media/draft interceptors can consume or write. Owner 2026-09-29 ("ของเดิมดีอยู่แล้ว"):
+    // production a2b926c6's order is the rule. A reply that answers work this chat left open — the
+    // photo question's "1" or "ใบเสร็จค่ะ", a check bill's "1", a draft control — skips this route and
+    // reaches the deterministic handlers below exactly as production reaches them. Everything else is
+    // routed here as before, now with the open work production gave its router (captures to correct,
+    // drafts to continue, questions waiting for an answer, substitute state).
     const boundSemanticV2 = canQuery && this.boundConversations.has(event);
     let conversationContext: LineAiConversationContext | undefined = boundSemanticV2
       ? await this.loadConversationContext(companyId, identity.userId, event) : undefined;
     let semanticRoutePlan: GovernedLineIntakeRoutePlan | undefined;
-    if (boundSemanticV2) {
+    // Item 10F: chatKey = groupId ?? roomId ?? userId (same as the buffer); open waiting_user
+    // ledger entries ride the turn as DATA so the model can complete the ORIGINAL request.
+    const chatKey = event.pushTargetId ?? event.lineUserId;
+    const expenseDraftCtx: RequestContext = {
+      requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+      membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
+      permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
+    };
+    const draftRoutingEnabled = expenseDraftConversationEnabled && canCaptureExpense && !!this.expenseDraftConversation;
+    const substituteMode = this.boundConversations.has(event) ? 'primary' : this.config.lineAiSubstituteSemanticRoutingMode;
+    // Read once per turn — by the v2 route when it runs first, otherwise where production read it.
+    let openWork: LineOpenWorkContext | null | undefined;
+    const loadOpenWork = async () => openWork !== undefined ? openWork
+      : openWork = await this.loadOpenWorkContext(event, requestId, expenseDraftCtx, {
+        chatKey, corrections: canCaptureExpense || canEditLine, drafts: draftRoutingEnabled, substituteMode,
+      });
+    if (boundSemanticV2 && !await this.answersOpenWork(event, expenseDraftCtx, draftRoutingEnabled)) {
+      const open = await loadOpenWork();
+      if (!open) return;
       const candidates = await this.textValueCandidates(event, event.messageText);
       semanticRoutePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({ event, requestId, webhookEventId: event.webhookEventId,
         companyId, userId: identity.userId, permissions: resolvedAccess.permissions, enabledFeatures: entitledFeatureKeys ? [...entitledFeatureKeys] : null,
         entitledFeatureKeys,
-        messageText: event.messageText, conversationContext, ...(candidates ? { valueCandidates: candidates } : {}) }));
+        messageText: event.messageText, conversationContext, ...(candidates ? { valueCandidates: candidates } : {}),
+        ...(open.openClarifications ? { openClarifications: open.openClarifications } : {}),
+        ...(open.recentCapturedExpenses.length ? { recentCapturedExpenses: open.recentCapturedExpenses } : {}),
+        ...(open.activeExpenseDrafts.length ? { activeExpenseDrafts: open.activeExpenseDrafts } : {}),
+        substituteContext: open.substituteContext }));
       this.intakePlansV2.set(event, semanticRoutePlan);
       if (semanticRoutePlan.status !== 'ROUTED' || !semanticRoutePlan.semanticSubrequests?.length) {
         await this.deliverReply(event, isTransientLineAiRouteFailure(semanticRoutePlan.errorCode)
@@ -5652,7 +5799,9 @@ export class ProcessLineWebhookUseCase {
           [PENDING_MEDIA_RESOLUTION]?: { id: string; companyId: string; userId: string; status: 'RESOLVED_ILLUSTRATION' | 'RESOLVED_MULTI_ENTRY_REVIEW' };
         })[PENDING_MEDIA_RESOLUTION] = { id: pendingMedia.id, companyId, userId: identity.userId, status: 'RESOLVED_ILLUSTRATION' };
         // Route on the stored caption instead of the yes/no reply — the deferred question is answered now.
-        normalizedText = normalizeLineText(pendingMedia.caption ?? normalizedText);
+        // A bound chat keeps the accepted words: its route may only classify text its input evidence
+        // proves, and the caption already rides along as the open question's own text.
+        if (!this.boundConversations.has(event)) normalizedText = normalizeLineText(pendingMedia.caption ?? normalizedText);
       }
       if (decision === 'multiple') {
         (event as LineTextEvent & {
@@ -5686,42 +5835,9 @@ export class ProcessLineWebhookUseCase {
       conversationContext = await this.loadConversationContext(companyId, identity.userId, event);
     }
     const valueCandidates = await this.textValueCandidates(event, normalizedText);
-    // Item 10F: chatKey = groupId ?? roomId ?? userId (same as the buffer); open waiting_user
-    // ledger entries ride the turn as DATA so the model can complete the ORIGINAL request.
-    const chatKey = event.pushTargetId ?? event.lineUserId;
-    const expenseDraftCtx: RequestContext = {
-      requestId, authSubject: identity.userId, userId: identity.userId, companyId,
-      membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
-      permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
-    };
-    let openWaiting: Awaited<ReturnType<LineAiLedgerService['openWaitingUser']>>;
-    try {
-      openWaiting = this.ledger ? await this.ledger.openWaitingUser(companyId, chatKey, identity.userId) : [];
-    } catch (err) {
-      // Consumption-marker state is unreadable. Continuing with "no open clarifications" is NOT
-      // fail-closed: a bare "590" answering an earlier question would be routed as a new capture.
-      if (!(err instanceof ConsumptionMarkerUnavailableError)) throw err;
-      // `reason` separates a missing consumer group, an unreadable Redis and an incomplete scan for
-      // operators; the customer reply and the terminal status stay the same for all of them.
-      this.logger.warn({ msg: 'line_ai_marker_unavailable', requestId, reason: err.reason });
-      await this.deliverReply(event, ERROR_REPLY);
-      await this.updateEventLog(event.webhookEventId, 'marker_unavailable', 'CONSUMPTION_MARKER_UNAVAILABLE', companyId);
-      return;
-    }
-    if (!await this.waitingSourcesCurrent(event, expenseDraftCtx, openWaiting)) return;
-    const openClarifications: LineAiOpenClarification[] | undefined = openWaiting.length > 0
-      ? openWaiting.map(({ id, question, text, subject, askedAt, clarifyForIntent, candidateExpenseIds, pendingMedia }) => ({
-        id, question, text, ...(subject && { subject }), askedAt,
-        ...(clarifyForIntent && { clarifyForIntent }),
-        ...(candidateExpenseIds?.length && { candidateExpenseIds }),
-        ...(pendingMedia && { pendingMedia }),
-      }))
-      : undefined;
-
-    // Correction targets: this user's recent captures in THIS chat, inside branch scope.
-    const recentCapturedExpenses = canCaptureExpense || canEditLine
-      ? await this.loadCorrectionCandidates(companyId, identity.userId, chatKeyHashOf(event), resolvedAccess.scopes)
-      : [];
+    const open = await loadOpenWork();
+    if (!open) return;
+    const { openWaiting, openClarifications, recentCapturedExpenses } = open;
     if (isUtilityBillSaveRequest(normalizedText)) {
       if (!await this.mayDeliverBusinessReply(event)) return;
       if (recentCapturedExpenses.length && !await this.correctionCandidatesCurrent(expenseDraftCtx, chatKeyHashOf(event), JSON.stringify(recentCapturedExpenses))) {
@@ -5739,9 +5855,7 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
     }
-    let activeExpenseDrafts = expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation
-      ? await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event))
-      : [];
+    let activeExpenseDrafts = open.activeExpenseDrafts;
     let draftRouteSnapshot = JSON.stringify(activeExpenseDrafts);
     const draftRouteCurrent = async () => {
       if (!expenseDraftConversationEnabled || !canCaptureExpense || !this.expenseDraftConversation) return true;
@@ -5942,28 +6056,12 @@ export class ProcessLineWebhookUseCase {
     }
 
     const hasSubstituteClarification = openWaiting.some((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION');
-    const substituteMode = this.boundConversations.has(event) ? 'primary' : this.config.lineAiSubstituteSemanticRoutingMode;
     const continuationCtx: RequestContext = {
       requestId, authSubject: identity.userId, userId: identity.userId, companyId,
       membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
       permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
     };
-    // Bounded substitute context for the semantic router (DATA only, never authority). In PRIMARY the
-    // AUTHORITATIVE workflowState (none/open/paused/multiple) is read from the continuation rows (execute
-    // re-reads them before any action); OFF/SHADOW keep the cheap signal so the legacy path adds NO query.
-    // `workflowState` is NEVER rewritten from a ledger clarification — a pending paraphrase-start
-    // confirmation (which has no workflow row yet) is encoded ONLY via hasPendingQuestion, so the next
-    // affirmative still inherits the substitute route without faking an OPEN workflow.
-    const substituteContextBase: LineIntakeSubstituteContext = substituteMode === 'primary' && this.substituteReceiptContinuation
-      ? await this.substituteReceiptContinuation.substituteContext(continuationCtx, { chatKeyHash: chatKeyHashOf(event), recentCandidateCount: recentCapturedExpenses.length })
-      : {
-          workflowState: 'none', hasPendingQuestion: false, preparedState: 'none',
-          recentCandidateCount: Math.min(recentCapturedExpenses.length, 5),
-        };
-    const substituteContext: LineIntakeSubstituteContext = {
-      ...substituteContextBase,
-      hasPendingQuestion: substituteContextBase.hasPendingQuestion || hasSubstituteClarification,
-    };
+    const substituteContext = open.substituteContext;
     // OFF (default) and SHADOW keep develop's EXACT legacy regex-first interception before the router
     // (R1/R2 capture-first, GAP-C next-step). PRIMARY skips it and dispatches the semantic route AFTER
     // routePlan (below), so the two paths never both run.
@@ -6240,8 +6338,12 @@ export class ProcessLineWebhookUseCase {
       }
       const hasPublic = routePlan.semanticSubrequests?.some(item => item.kind === 'public') === true && this.config.lineAiPublicLookupEnabled;
       const onlyGeneral = routePlan.semanticSubrequests?.every(item => ['general', 'help'].includes(item.kind)) === true;
+      // A prepared read keeps the full read budget. Its compiled fast lane still spends no further call,
+      // but when that lane cannot serve the message the gateway now plans it with tools instead of
+      // answering "ยังดึงข้อมูลส่วนนี้ไม่ได้" after zero calls (UAT 2026-09-29: the two-slot 'simple' lane
+      // left no room for that fallback).
       const lane = hasPublic ? 'public' : onlyGeneral ? 'general' : !routePlan.semanticSubrequests && (routePlan.intent === 'ADVISOR_CONVERSATION' || routePlan.intent === 'UNSUPPORTED') ? 'general'
-        : routePlan.preparedPlan?.complexity === 'simple' ? 'simple' : 'mixed';
+        : 'mixed';
       const profiles: AiBudgetProfileIdV2[] = lane === 'public' ? ['line-control/2', 'line-answer/2', 'public-lookup/2'] : lane === 'general' ? ['line-answer/2'] : ['line-control/2', 'line-answer/2'];
       let narrowed;
       try { narrowed = await this.aiGateway.narrowLineReliabilityGrant(initialGrantV2, lane, profiles); }
@@ -7839,8 +7941,15 @@ export class ProcessLineWebhookUseCase {
       if (err instanceof LineDeliveryError) return { outcome: 'done' };
       if (saved?.uploaded) {
         const texts = await this.savedReceiptReplies(event, saved.companyId, saved.expenseId);
-        await this.deliverRequiredMessages(event, texts.map((text) => buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, saved!.companyId))).catch(() => {});
-        await this.updateEventLog(event.webhookEventId, 'completed', undefined, saved.companyId);
+        const delivered = await this.deliverRequiredMessages(event, texts.map((text) => buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, saved!.companyId)))
+          .then(() => true, (error: unknown) => {
+            this.logger.warn({ msg: 'line_receipt_saved_reply_failed', webhookEventId: event.webhookEventId, expenseId: saved!.expenseId, ...safeLineErrorDetails(error) });
+            return false;
+          });
+        // A draft the customer never heard about is not a delivered turn (UAT 2026-09-29). A parked
+        // v2 plan keeps its own `delivery_pending` row for the recovery sweep; this never overwrites it.
+        await this.updateEventLog(event.webhookEventId, delivered ? 'completed' : 'delivery_failed',
+          delivered ? undefined : 'LINE_RECEIPT_RESULT_UNDELIVERED', saved.companyId);
         return { outcome: 'done' };
       }
       // Branch ambiguity is a data-setup state, not a transient fault: say what to do instead of

@@ -681,6 +681,21 @@ describe('tuning-5b: confidence floor, why/compare/advice guard, and derived sub
     assert.equal(parsed?.simpleReadRejection, 'why_compare_advice_question');
   });
 
+  it('UAT 2026-09-29: a draft list that also asks "any problem?" is not a fast-lane list', async () => {
+    // Routed prepared at UAT, then answered "ยังดึงข้อมูลส่วนนี้ไม่ได้" with zero calls: no list formatter can
+    // say what is wrong with each draft, so the question keeps the full path.
+    const text = 'ร่างค่าใช้จ่ายมีอะไรบ้าง ติดปัญหาอะไรไหม';
+    const created = await fixture(text);
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, { documentStatus: 'draft' }, { subrequest: 0, tool: 'expense.list_recent', answerShape: 'list', confidence: 0.9 }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: PREPARED_FAMILIES, language: 'th',
+    });
+    assert.equal(parsed?.preparedPlan, undefined);
+    assert.equal(parsed?.simpleReadRejection, 'why_compare_advice_question');
+    assert.equal(parsed?.semanticSubrequests.length, 1, 'the question itself still reaches normal planning');
+  });
+
   it('B3a (eval T-090-a): a 0.75-0.85 simple read now reaches a preparedPlan (0.70 is still invalid_simple_shape)', async () => {
     // The shared contract floor (LINE_AI_PREPARED_PLAN_BOUNDS.simpleConfidenceFloor) moved 0.85 -> 0.75
     // together with this decoder's own floor, so 0.80 now builds a plan end to end.

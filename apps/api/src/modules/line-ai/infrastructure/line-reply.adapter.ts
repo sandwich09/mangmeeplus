@@ -111,6 +111,11 @@ export function safeLineErrorDetails(error: unknown): Record<string, string | nu
     ...(safe(value.code) ? { errorCode: safe(value.code)! } : {}),
     ...(safe(cause.code) ? { causeCode: safe(cause.code)! } : {}),
     ...(typeof value.httpStatus === 'number' ? { providerStatus: value.httpStatus } : {}),
+    // Our own refusals throw bare codes (`PLAN_INVALID_LIFETIME`, `LINE_PLAN_CANONICAL_TEXT_REQUIRED`).
+    // A message that is exactly such a code carries no customer data, so it is kept; any other
+    // message is still dropped. Without it a local delivery refusal logged only `errorClass: Error`.
+    ...(typeof value.message === 'string' && /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(value.message) && value.message.length <= 80
+      ? { errorMessageCode: value.message } : {}),
   };
 }
 
