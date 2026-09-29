@@ -5,6 +5,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, billingOffer, type BillingPurchaseMode } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../generated/prisma/client';
 import { BillingService } from './application/billing.service';
+import { BillingReconcilerService } from './application/billing-reconciler.service';
 import { StripeRequestError } from './infrastructure/stripe.client';
 import { eventDiscountOffer, eventDiscountView, releaseEventDiscount, reserveEventDiscount, useEventDiscount } from './application/billing-event-discount';
 import type { EventDiscountSnapshot } from './domain/billing-event-discount.logic';
@@ -122,6 +123,7 @@ test('first-bill discount through quote and Checkout: choice, reservation, stale
     'PRO_999:month': 'price_ProMonth', 'PRO_999:year': 'price_ProYear', 'ENTERPRISE_1999:month': 'price_EntMonth', 'ENTERPRISE_1999:year': 'price_EntYear' } };
   const state = { policy, revision: { id: 'synthetic-revision' }, settings: { version: 1 }, gates: Object.fromEntries(BILLING_ACTIONS.map(action => [action, true])) };
   const customers = new Map<string, Record<string, unknown>>(), sessions: Record<string, any>[] = [];
+  let paid: Record<string, any> = {};
   let probe: null | (() => Promise<void>) = null;
   const stripe = { enabled: true, accountId: stripeAccountId, livemode: false,
     assertAccount: async () => { const check = probe; probe = null; if (check) await check(); },
@@ -133,6 +135,7 @@ test('first-bill discount through quote and Checkout: choice, reservation, stale
         if (method === 'POST') customers.set(id, params);
         return { id, metadata: { billingAccountId: account.id }, ...customers.get(id) };
       }
+      if (path.startsWith('/payment_intents/')) return paid.intent;
       if (method === 'POST' && path === '/checkout/sessions') {
         sessions.push(params);
         return { id: `cs_${run}${sessions.length}`, object: 'checkout.session', livemode: false, mode: params.mode, client_reference_id: params.client_reference_id,
@@ -140,7 +143,8 @@ test('first-bill discount through quote and Checkout: choice, reservation, stale
       }
       throw new Error(`unmocked Stripe request ${method} ${path}`);
     },
-    list: async () => [] };
+    list: async (path: string) => path === '/invoice_payments' ? paid.payments ?? [] : path.endsWith('/line_items') ? paid.checkoutLines ?? []
+      : path.endsWith('/lines') ? paid.invoiceLines ?? [] : [] };
   const service = { prisma: { client }, config: { stripeAccountId, sesWebBaseUrl: 'https://app.example.test' }, stripe,
     assertOwner: async () => {}, assertTaxSettings: async () => {}, settings: async () => state,
     account: (id: string, tx = client) => tx.billingAccount.findUnique({ where: { companyId_stripeAccountId_livemode: { companyId: id, stripeAccountId, livemode: false } } }),
@@ -214,16 +218,55 @@ test('first-bill discount through quote and Checkout: choice, reservation, stale
     const reserved = await ticket();
     assert.deepEqual([reserved.state, reserved.redeemedAs, reserved.companyId, reserved.attemptId, reserved.appliedDiscountSatang],
       ['RESERVED', 'DISCOUNT', shops[1], opened.attemptId, 10000]);
+
+    // Paid at the discounted amount: the proof passes, the package applies with full rights, and the ticket is USED on that invoice.
+    const attempt = await client.billingAttempt.findUniqueOrThrow({ where: { id: opened.attemptId } });
+    const lease = `lease-${run}`, amount = 39900, created = Math.floor(Date.now() / 1000) - 60, customerId = `cus_${run}1`;
+    const account = await client.billingAccount.update({ where: { companyId_stripeAccountId_livemode: { companyId: shops[1]!, stripeAccountId, livemode: false } },
+      data: { leaseToken: lease, leaseUntil: new Date(Date.now() + 120_000) } });
+    const meta = { billingAttemptId: attempt.id, billingAccountId: account.id };
+    const charge = { id: `ch_${run}`, livemode: false, status: 'succeeded', paid: true, captured: true, currency: 'thb', amount, customer: customerId,
+      payment_intent: `pi_${run}`, payment_method_details: { type: 'card' }, amount_refunded: 0, disputed: false, balance_transaction: null };
+    paid = { intent: { id: `pi_${run}`, livemode: false, status: 'succeeded', currency: 'thb', amount_received: amount, customer: customerId, latest_charge: charge },
+      payments: [{ object: 'invoice_payment', livemode: false, status: 'paid', invoice: `in_${run}`, payment: { type: 'payment_intent', payment_intent: `pi_${run}` }, amount_paid: amount, currency: 'thb' }],
+      checkoutLines: [{ quantity: 1, currency: 'thb', amount_total: amount, amount_tax: 0, amount_discount: 0,
+        price: { id: `price_inline${run}`, product: 'prod_Synthetic', type: 'one_time', active: false, recurring: null, livemode: false, currency: 'thb', unit_amount: amount } }],
+      invoiceLines: [{ parent: { type: 'invoice_item_details', invoice_item_details: { invoice_item: `ii_${run}`, subscription: null, proration: false } },
+        pricing: { price_details: { price: `price_inline${run}`, product: 'prod_Synthetic' } }, amount, currency: 'thb', livemode: false, quantity: 1 }] };
+    const session = { id: attempt.checkoutSessionId, object: 'checkout.session', livemode: false, mode: 'payment', status: 'complete', payment_status: 'paid',
+      subscription: null, customer: customerId, client_reference_id: attempt.id, metadata: meta, invoice: `in_${run}`, payment_intent: `pi_${run}`,
+      invoice_creation: { enabled: true }, currency: 'thb', amount_total: amount, total_details: { amount_tax: 0, amount_discount: 0, amount_shipping: 0 }, created,
+      customer_details: { email: `${owner}@example.test` } };
+    const invoice = { id: `in_${run}`, object: 'invoice', livemode: false, customer: customerId, metadata: meta, status: 'paid', billing_reason: 'manual',
+      collection_method: 'send_invoice', parent: null, currency: 'thb', total: amount, amount_paid: amount, amount_remaining: 0, starting_balance: 0,
+      status_transitions: { paid_at: created + 3 }, number: `SD-${run}` };
+    const reconciler = new BillingReconcilerService({ client } as any, {} as any, stripe as any, service, {} as any);
+    await (reconciler as any).reconcileOneTime(account, attempt, lease, undefined, session, invoice);
+    const row = await client.billingInvoice.findUniqueOrThrow({ where: { sourceAttemptId: attempt.id } });
+    assert.deepEqual([row.totalSatang, row.paidSatang, row.applyStatus], [39900, 39900, 'APPLIED']);
+    const usedTicket = await ticket();
+    assert.deepEqual([usedTicket.state, usedTicket.redeemedAs, usedTicket.companyId, usedTicket.invoiceId], ['USED', 'DISCOUNT', shops[1], row.id]);
+    const after = await client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+    assert.deepEqual([after.activeAttemptId, after.renewalMode, after.contractAttemptId], [null, 'CARD_ONCE', attempt.id]);
+    assert.equal((await client.companyPlanTerm.findUniqueOrThrow({ where: { companyId: shops[1]! } })).tierKey, 'BASIC_499', 'rights come from the offer, not the money');
+    assert.equal(await client.billingIssue.count({ where: { companyId: shops[1]!, kind: 'EVENT_DISCOUNT_REVIEW' } }), 0);
   } finally {
-    const accounts = await client.billingAccount.findMany({ where: { companyId: { in: shops } }, select: { id: true } });
-    await client.billingAccount.updateMany({ where: { companyId: { in: shops } }, data: { activeAttemptId: null } });
-    await client.billingAttempt.deleteMany({ where: { billingAccountId: { in: accounts.map(row => row.id) } } });
-    await client.billingQuote.deleteMany({ where: { companyId: { in: shops } } });
-    await client.billingAccount.deleteMany({ where: { companyId: { in: shops } } });
-    if (batchId) { await client.salesEventTicket.deleteMany({ where: { batchId } }); await client.salesEventBatch.deleteMany({ where: { id: batchId } }); }
-    await client.externalIdentity.deleteMany({ where: { userId: owner } });
-    await client.company.deleteMany({ where: { id: { in: shops } } });
-    await client.user.deleteMany({ where: { id: owner } });
+    const accounts = (await client.billingAccount.findMany({ where: { companyId: { in: shops } }, select: { id: true } })).map(row => row.id);
+    const cleanup: (() => Promise<unknown>)[] = [
+      () => client.billingAccount.updateMany({ where: { companyId: { in: shops } }, data: { activeAttemptId: null, contractAttemptId: null } }),
+      ...(batchId ? [() => client.salesEventTicket.deleteMany({ where: { batchId } }), () => client.salesEventBatch.deleteMany({ where: { id: batchId } })] : []),
+      ...['outboxEvent', 'auditLog', 'billingIssue', 'entitlementCommand', 'entitlementTransition', 'runoffSnapshot', 'companyFeatureEntitlement',
+        'companyEntitlementNormalization', 'companyEntitlementSet', 'salesAttribution', 'billingOperation', 'billingReceiptGrant', 'billingQuote']
+        .map(model => () => (client as any)[model].deleteMany({ where: { companyId: { in: shops } } })),
+      () => client.billingAttempt.deleteMany({ where: { billingAccountId: { in: accounts } } }),
+      () => client.billingInvoice.deleteMany({ where: { billingAccountId: { in: accounts } } }),
+      () => client.companyPlanTerm.deleteMany({ where: { companyId: { in: shops } } }),
+      () => client.billingAccount.deleteMany({ where: { companyId: { in: shops } } }),
+      () => client.externalIdentity.deleteMany({ where: { userId: owner } }),
+      () => client.company.deleteMany({ where: { id: { in: shops } } }),
+      () => client.user.deleteMany({ where: { id: owner } }),
+    ];
+    for (const step of cleanup) await step().catch(() => undefined);
     await client.$disconnect();
   }
 });
