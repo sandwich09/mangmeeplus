@@ -367,7 +367,7 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     assert.ok(compose);
     assert.match(compose.systemPrompt, /comes only from billing\.get_package_catalog in this turn — this shop's own usage and room come from billing\.get_package_usage — never from memory, a guess or your own arithmetic/);
     assert.match(compose.systemPrompt, /a price with vat is said as the price plus that VAT and its payable total; about VAT say only what vatNote says/);
-    assert.match(compose.systemPrompt, /Selling prices are the only money you may name: never state, estimate or hint at what anything costs MangmeePlus/);
+    assert.match(compose.systemPrompt, /Selling prices are the only money you may name: never state, estimate or hint at what anything costs to provide/);
     assert.match(compose.systemPrompt, /never turn credits or receipts into money or into a number of messages/);
     assert.match(compose.systemPrompt, /never say how many packages there are or how many are bigger: list them, never 'มี 3 แบบ'/);
     assert.match(compose.systemPrompt, /Asking prices, contents or a comparison is not asking how to buy: end with what was asked, never with a line such as 'หากต้องการซื้อหรือเปลี่ยนแพ็กเกจ ทำได้ที่หน้าแพ็กเกจบนเว็บ'\./);

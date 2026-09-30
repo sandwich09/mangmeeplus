@@ -841,8 +841,8 @@ describe('ResponseComposerAgent – capability help', () => {
   // Owner 2026-09-30 (~16:00): the tool-less casual lane (also the public group lane) names no package price
   // and never a MangmeePlus cost; prices come only from billing.get_package_catalog in a business turn.
   it('keeps package prices and MangmeePlus costs out of the tool-less casual lane', () => {
-    assert.match(CASUAL_CONVERSATION_SYSTEM_PROMPT, /Never state, estimate or hint at what anything costs MangmeePlus itself — AI or model cost, cost per receipt or per credit, margins, payment fees, exchange rates\./);
-    assert.match(CASUAL_CONVERSATION_SYSTEM_PROMPT, /Never state or guess a MangmeePlus package price or what a package includes in this lane/);
+    assert.match(CASUAL_CONVERSATION_SYSTEM_PROMPT, /Never state, estimate or hint at what anything costs to provide this service — AI or model cost, cost per receipt or per credit, margins, payment fees, exchange rates\./);
+    assert.match(CASUAL_CONVERSATION_SYSTEM_PROMPT, /Never state or guess the price or contents of this service's packages in this lane/);
   });
 
   it('keeps the pre-entitlement full text when no caller context is supplied', () => {
