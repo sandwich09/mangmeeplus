@@ -785,7 +785,30 @@ export type LineSubstituteMediaContext = {
   /** The sender chose “มีใบเสร็จฉบับสุดท้าย”; the next eligible receipt replaces the primary file
    *  on this same expense instead of opening another expense. */
   finalReceiptExpected?: boolean;
+  /** When the chat was last asked for a signature / a check bill's final receipt (the asking state's
+   *  `lastActivityAt`), so a caption-less photo is claimed only right after that ask. */
+  signatureRequestedAt?: string;
+  finalReceiptRequestedAt?: string;
 };
+
+/** How long after the chat asked for a signed form's scan, a signature or a final receipt a caption-less
+ *  photo is still taken as that picture (coordinator 2026-09-30, "about 30 minutes"). */
+export const SUBSTITUTE_PHOTO_ASK_WINDOW_MS = 30 * 60_000;
+
+/** UAT round 10 (2026-09-30, Owner "ถ้าอ่านรูปได้แล้วต้องสร้างเลย จะวนกลับมาถามทำไม"): a week-old OPEN substitute
+ *  state with no ask at all turned every caption-less receipt photo into the numbered "ยังไม่แน่ใจว่าเป็นอะไร" question.
+ *  A caption-less photo belongs to open substitute work only when this chat was just asked for exactly that
+ *  picture — a printed form's signed scan, a signature, or a check bill's final receipt — within the window. An ask
+ *  with no reliable time never claims one. Every other caption-less photo is read and drafted as a new expense. */
+export function substituteAwaitsCaptionlessPhoto(context: LineSubstituteMediaContext, now = new Date()): boolean {
+  const recent = (at: string | undefined) => {
+    const time = at ? Date.parse(at) : Number.NaN;
+    return Number.isFinite(time) && time <= now.getTime() + 60_000 && now.getTime() - time <= SUBSTITUTE_PHOTO_ASK_WINDOW_MS;
+  };
+  return context.awaitingScans.some((scan) => recent(scan.preparedAt))
+    || (context.signatureRequested && recent(context.signatureRequestedAt))
+    || (context.finalReceiptExpected === true && recent(context.finalReceiptRequestedAt));
+}
 
 export type LineSubstituteMediaChoice =
   | 'WET_SIGNED_SCAN' | 'SIGNATURE' | 'PAYMENT_EVIDENCE' | 'SUPPORTING_EVIDENCE' | 'NEW_EXPENSE' | 'NO_RECORD';
@@ -1305,7 +1328,13 @@ export class LineSubstituteReceiptContinuationUseCase {
     const signatureRequested = asked && !await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId);
     const finalReceiptExpected = states.some((state) => ACTIVE_STATUSES.has(state.status)
       && state.pendingDecision === 'CHECK_BILL_FINAL_RECEIPT');
-    return { expenseId, awaitingScans, signatureRequested, finalReceiptExpected };
+    const newestActivity = (matches: (state: LineSubstituteReceiptContinuation) => boolean) => states
+      .filter((state) => ACTIVE_STATUSES.has(state.status) && matches(state)).map((state) => state.lastActivityAt)
+      .filter((at) => typeof at === 'string').sort().at(-1);
+    const signatureRequestedAt = signatureRequested ? newestActivity((state) => state.signatureRequested === true) : undefined;
+    const finalReceiptRequestedAt = finalReceiptExpected ? newestActivity((state) => state.pendingDecision === 'CHECK_BILL_FINAL_RECEIPT') : undefined;
+    return { expenseId, awaitingScans, signatureRequested, finalReceiptExpected,
+      ...(signatureRequestedAt ? { signatureRequestedAt } : {}), ...(finalReceiptRequestedAt ? { finalReceiptRequestedAt } : {}) };
   }
 
   /** Closes the check-bill question after the webhook has attached and re-read a valid final receipt. */
