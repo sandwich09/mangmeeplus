@@ -242,7 +242,9 @@ describe('LineAiTurnUseCase – feature flag routing', () => {
     assert.match(inheritedBranch.replyText, /ช่วงค่าใช้จ่ายที่ติดตามไว้/);
   });
 
-  it('deterministic path keeps the safe current-month expense summary on its permission-checked tool', async () => {
+  it('deterministic path keeps the safe current-month expense summary on its permission-checked tool', async (t) => {
+    // Mid-month "now": on the 1st the current-month range is a single day and prints as one date.
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-15T05:00:00.000Z') });
     const calls: Array<{ tool: string; input: Record<string, unknown> }> = [];
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
     const month = Number(today.slice(5, 7));

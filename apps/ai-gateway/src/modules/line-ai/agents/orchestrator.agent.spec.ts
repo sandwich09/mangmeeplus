@@ -432,7 +432,9 @@ describe('OrchestratorAgent', () => {
     assert.ok(okCalls.every((call) => call.status === 'ok' && call.errorCode === undefined), 'success must not invent an errorCode');
   });
 
-  it('shows a complete broad expense summary while preserving source-backed details and counts on request', async () => {
+  it('shows a complete broad expense summary while preserving source-backed details and counts on request', async (t) => {
+    // Mid-month "now": on the 1st the current-month range is a single day and prints as one date.
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-15T05:00:00.000Z') });
     const calledTools: string[] = [];
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
     const currentMonthStart = `${today.slice(0, 7)}-01`;
