@@ -64,6 +64,9 @@ export function sanitizeMangmeePersonaText(text: string): string {
 // sanitizeMangmeePersonaText above (whose ครับ/ผม fix this wraps first).
 const STATUS_GLOSS_WORDS = ['Needs Review', 'Ready For Confirmation', 'Partially Paid', 'Draft', 'Confirmed', 'Paid', 'Unpaid', 'Rejected', 'Voided'];
 const STATUS_GLOSS_PATTERN = new RegExp(`\\((?:${STATUS_GLOSS_WORDS.join('|')})\\)`, 'gu');
+// Advisor S1 eval (2026-10-01): "รายการรอตรวจสอบ (pendingReview) รวม 6 รายการ" — a tool field name glossed in
+// parentheses. A parenthesized camelCase identifier is never customer wording.
+const FIELD_GLOSS_PATTERN = /\((?:[a-z]+(?:[A-Z][a-z0-9]*)+)\)/gu;
 
 // Same 8 Thai labels the persona line above tells the model to use, plus READY_FOR_CONFIRMATION
 // (not one of the 8 — its customer-facing Thai label is apps/web's own expenses.model.ts
@@ -115,6 +118,7 @@ export function sanitizeMangmeeComposedText(text: string): string {
     .join('\n');
   result = result
     .replace(STATUS_GLOSS_PATTERN, '')
+    .replace(FIELD_GLOSS_PATTERN, '')
     .replace(STATUS_ENUM_PATTERN, (token) => STATUS_ENUM_TH[token]!)
     .replace(CE_YEAR_AFTER_THAI_MONTH, (_match, month: string, spacing: string, year: string) => `${month}${spacing}${Number(year) + 543}`)
     .replace(APP_MARKDOWN_LINK, '$1')
