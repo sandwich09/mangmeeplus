@@ -590,6 +590,16 @@ done
 
 ### Production
 
+**Promotion poster by hotfix (owner 2026-09-30: short path, no console yet).** Ship a new poster
+with `infra/kamal/deploy-prod-hotfix` on top of the serving Production SHA, not through UAT and
+`promote-prod`. Add the image under `apps/web/public/assets/` with a new versioned file name (for
+example `package-poster-YYYYMMDD.png`) and never overwrite a served one, because LINE and Cloudflare
+cache images by URL. LINE needs PNG or JPEG under 1 MB, because the same URL is also the preview.
+The code change that points to it is ordinary `.ts` (today `PACKAGE_POSTER_PATH` in
+`line-staff-menu.logic.ts`). Declare the image, the `.ts` and each changed spec with `--hotfix-path`,
+pass each changed spec with `--regression-test` ([rules](../../infra/kamal/README.md)), and land the
+same change on develop and main so the next release keeps it.
+
 Production release ใหม่ต้องผ่าน signed UAT Passport และ Production READY แล้ว dispatch
 `deploy-production-v2.yml` ตาม `uat-production-v2-deployment.md`; ห้ามเรียก `deploy.sh` จาก
 workstation เพื่อทำ promotion. ค่า capacity/status ด้านล่างเป็น inventory/diagnostic context เท่านั้น.
