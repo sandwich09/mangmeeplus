@@ -359,6 +359,10 @@ function validInput(meta: ToolMeta, input: unknown, req: LineAiTurnRequest,
     [...periods, ...(req.conversationContext?.recentReads ?? []).flatMap(entry => entry.period ? [entry.period] : [])])) {
     dates.add(period.fromDate); dates.add(period.toDate);
   }
+  // Advisor S1 eval (2026-10-01, "มีงานอะไรค้างอยู่บ้าง"): the daily closing reads today when given no date, so
+  // when the message names no day at all, an explicit today on it is that same read — never an ungrounded date.
+  const closingToday = (c && 'todayIso' in c ? c.todayIso : undefined) ?? retainedCandidates?.todayIso;
+  if (meta.name === 'expense.get_daily_closing' && closingToday && !c?.dates?.length && !c?.periods?.length) dates.add(closingToday);
   for (const key of ['fromDate', 'toDate', 'date', 'newSince', 'newUntil']) if (canonicalInput[key] !== undefined && !dates.has(String(canonicalInput[key]))) return undefined;
   if (canonicalInput.periodKey !== undefined) {
     const rawPeriodKey = String(canonicalInput.periodKey);
