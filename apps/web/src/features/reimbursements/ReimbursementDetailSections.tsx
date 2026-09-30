@@ -175,7 +175,7 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
     >
       <div className="space-y-4">
         <ErrorBanner message="คำขอนี้ถูกแก้ไขหลังจากส่งอนุมัติ กรุณาตรวจสอบข้อมูลล่าสุดก่อนตัดสินใจ" />
-        <div className="overflow-x-auto">
+        <div className="mangmee-table-scroll">
           <table className="mangmee-table">
             <thead>
               <tr><th>ข้อมูล</th><th>ก่อนหน้า</th><th>ปัจจุบัน</th></tr>
@@ -201,7 +201,7 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
         )}
         <div>
           <h4 className="mb-2 text-sm font-bold text-gray-900">รายการปัจจุบัน</h4>
-          <div className="overflow-x-auto">
+          <div className="mangmee-table-scroll">
             <table className="mangmee-table">
               <thead>
                 <tr><th>#</th><th>วันที่</th><th>รายการ</th><th>หมวด</th><th className="text-right">จำนวนเงิน</th></tr>
@@ -534,6 +534,25 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
   const paperSigned = detail.documentSignedVia === 'PAPER' || detail.documentSignedVia === 'BOTH';
   const paperCopy = signedCopies.find((copy: any) => copy.acknowledgedAt);
   const canAttachSignedCopy = canUploadSignedCopy(detail, userId, permissions);
+  // One receipt block for the phone card and the table cell, so the upload rules live in one place.
+  const lineReceipt = (l: any) => (
+    <>
+      {l.sourceExpenseSnapshot ? l.sourceExpenseSnapshot.attachments.map((file: { id: string; fileName: string }) => (
+        <button key={file.id} className="block min-h-11 max-w-48 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(file.id, file.fileName)}>📎 {file.fileName}</button>
+      )) : l.attachmentId ? (
+        <button className="min-h-11 max-w-40 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(l.attachmentId, l.attachmentFileName ?? 'receipt.jpg')}>
+          📎 {l.attachmentFileName ?? 'เปิดไฟล์แนบ'}
+        </button>
+      ) : <div className="text-gray-600">{l.linkedExpenseId ? '🔗 ค่าใช้จ่ายที่บันทึกไว้' : '—'}</div>}
+      {canEditDraft && !l.sourceExpenseSnapshot && (
+        <div className="mt-1 space-y-1">
+          <ThemedFile file={null} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
+          <p className="leading-5 text-gray-400">PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF</p>
+          {l.attachmentId && <button className="min-h-11 text-red-600 hover:underline" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
+        </div>
+      )}
+    </>
+  );
   return (
     <>
       {/* Where the claim is on its journey — the question the status chip alone never answered. */}
@@ -570,7 +589,26 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
 
       <MangmeeCard className="p-4">
         <h4 className="mb-2 text-sm font-bold text-gray-900">รายการเบิก ({lines.length})</h4>
-        <div className="overflow-x-auto">
+        {/* Phones: one card per line. Seven columns on 390 px squeezed Thai text to a letter per row. */}
+        <div className="space-y-2 sm:hidden" data-testid="reimbursement-line-cards">
+          {lines.length === 0 ? <p className="py-3 text-center text-sm text-gray-400">ไม่มีรายการ</p> : lines.map((l: any) => (
+            <div key={l.id ?? l.lineNo} className="rounded-xl border border-gray-200 p-3">
+              <div className="flex items-start justify-between gap-3 text-sm">
+                <div className="min-w-0 break-words font-medium text-gray-900">{l.description}</div>
+                <div className="shrink-0 font-semibold tabular-nums text-gray-900">{formatMoney(l.amount, detail.currency)}</div>
+              </div>
+              <div className="mt-1 break-words text-xs text-gray-500">{`${dateShort(l.incurredDate)} · ${categoryText(l.categoryLabelSnapshot)}`}</div>
+              {l.purpose && <div className="mt-0.5 break-words text-xs text-gray-500">{`วัตถุประสงค์: ${l.purpose}`}</div>}
+              {l.sourceExpenseSnapshot && <ReimbursementSourceFacts source={l.sourceExpenseSnapshot} />}
+              <div className="mt-2 text-xs">{lineReceipt(l)}</div>
+            </div>
+          ))}
+          <div className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 px-3 py-2.5 text-sm font-medium">
+            <span>รวมเป็นเงิน</span>
+            <span className="tabular-nums">{formatMoney(detail.amount, detail.currency)}</span>
+          </div>
+        </div>
+        <div className="mangmee-table-scroll hidden sm:block" data-testid="reimbursement-lines-table">
           <table className="mangmee-table">
             <thead>
               <tr>
@@ -587,22 +625,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                   <td className="text-gray-500">{l.purpose ?? '—'}</td>
                   <td className="text-gray-500">{categoryText(l.categoryLabelSnapshot)}</td>
                   <td className="text-right tabular-nums">{formatMoney(l.amount)}</td>
-                  <td className="text-xs">
-                    {l.sourceExpenseSnapshot ? l.sourceExpenseSnapshot.attachments.map((file: { id: string; fileName: string }) => (
-                      <button key={file.id} className="block min-h-11 max-w-48 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(file.id, file.fileName)}>📎 {file.fileName}</button>
-                    )) : l.attachmentId ? (
-                      <button className="min-h-11 max-w-40 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(l.attachmentId, l.attachmentFileName ?? 'receipt.jpg')}>
-                        📎 {l.attachmentFileName ?? 'เปิดไฟล์แนบ'}
-                      </button>
-                    ) : <div className="text-gray-600">{l.linkedExpenseId ? '🔗 ค่าใช้จ่ายที่บันทึกไว้' : '—'}</div>}
-                    {canEditDraft && !l.sourceExpenseSnapshot && (
-                      <div className="mt-1 space-y-1">
-                        <ThemedFile file={null} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
-                        <p className="leading-5 text-gray-400">PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF</p>
-                        {l.attachmentId && <button className="min-h-11 text-red-600 hover:underline" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
-                      </div>
-                    )}
-                  </td>
+                  <td className="text-xs">{lineReceipt(l)}</td>
                 </tr>
               ))}
             </tbody>

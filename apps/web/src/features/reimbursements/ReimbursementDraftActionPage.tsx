@@ -51,6 +51,9 @@ function sourceText(source: any): string {
 }
 /** The card's per-line evidence words, by the same test as the claim's evidence status: a bill claimed by reference brings its own receipt. */
 const evidenceText = (line: any) => line.attachmentId ? 'มีไฟล์แนบ' : line.linkedExpenseId ? 'ใช้ใบเสร็จจากบิลต้นทาง' : 'ยังไม่มีไฟล์แนบ';
+/** Category · evidence · claimed bill, under the line's description on the phone card and in the table alike. */
+const lineFacts = (line: any) => [categoryText(line.categoryLabel), evidenceText(line),
+  line.linkedExpenseId ? `บิลต้นทาง: ${sourceText(line.sourceExpenseSnapshot)}` : ''].filter(Boolean).join(' · ');
 
 const fieldLabels: Record<string, string> = {
   request: 'สร้างร่างใบเบิก', title: 'ชื่อรายการ', reason: 'เหตุผล', missingReceiptReason: 'เหตุผลที่ไม่มีใบเสร็จ',
@@ -76,13 +79,25 @@ function Snapshot({ value, label }: { value: any; label: string }) {
         {value.title && <div><dt className="text-gray-500">ชื่อรายการ</dt><dd>{value.title}</dd></div>}
         {value.missingReceiptReason && <div><dt className="text-gray-500">เหตุผลที่ไม่มีใบเสร็จ</dt><dd>{value.missingReceiptReason}</dd></div>}
       </dl>
-      <div className="mt-4 overflow-x-auto">
+      {/* Phones: one card per line, as on the claim page. Four columns left the item a sliver of a 390 px screen. */}
+      <div className="mt-4 space-y-2 sm:hidden" data-testid="draft-line-cards">
+        {(value.lines ?? []).map((line: any) => (
+          <div className="rounded-xl border border-gray-200 p-3" key={line.lineRef}>
+            <div className="flex items-start justify-between gap-3 text-sm">
+              <div className="min-w-0 break-words font-medium text-gray-900">{line.description}</div>
+              <div className="shrink-0 font-semibold tabular-nums">{money(line.amount, value.currency)}</div>
+            </div>
+            <div className="mt-1 text-xs tabular-nums text-gray-500">{formatThaiDate(line.incurredDate)}</div>
+            <div className="mt-0.5 break-words text-xs text-gray-500">{lineFacts(line)}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mangmee-table-scroll mt-4 hidden sm:block" data-testid="draft-lines-table">
         <table className="min-w-full text-left text-sm">
           <thead><tr className="border-b text-gray-500"><th className="py-2 pr-3">#</th><th className="py-2 pr-3">รายการ</th><th className="py-2 pr-3">วันที่</th><th className="py-2 text-right">จำนวน</th></tr></thead>
           <tbody>{(value.lines ?? []).map((line: any) => (
             <tr className="border-b last:border-0" key={line.lineRef}>
-              <td className="py-3 pr-3">{line.lineNo}</td><td className="py-3 pr-3">{line.description}<div className="text-xs text-gray-500">{[categoryText(line.categoryLabel), evidenceText(line),
-                line.linkedExpenseId ? `บิลต้นทาง: ${sourceText(line.sourceExpenseSnapshot)}` : ''].filter(Boolean).join(' · ')}</div></td>
+              <td className="py-3 pr-3">{line.lineNo}</td><td className="py-3 pr-3">{line.description}<div className="text-xs text-gray-500">{lineFacts(line)}</div></td>
               <td className="whitespace-nowrap py-3 pr-3 tabular-nums">{formatThaiDate(line.incurredDate)}</td><td className="whitespace-nowrap py-3 text-right tabular-nums">{money(line.amount, value.currency)}</td>
             </tr>
           ))}</tbody>

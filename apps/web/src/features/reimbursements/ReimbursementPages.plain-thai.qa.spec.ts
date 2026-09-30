@@ -197,6 +197,26 @@ describe('claim pages speak plain Thai (Owner rule 2026-09-27/29)', () => {
   });
 });
 
+describe('the claim lines fit a 390 px phone (Owner, 2026-09-30)', () => {
+  it('shows each line as a card below sm, with the same receipt upload, and keeps the table from sm up', () => {
+    const html = detailSections(draft, ids.requester, ['reimbursement.update_own_draft']);
+    // Before: only the seven-column table, which squeezed Thai text to one letter per row on a phone.
+    assert.match(html, /<div class="[^"]*\bsm:hidden\b[^"]*" data-testid="reimbursement-line-cards">/u);
+    assert.match(html, /<div class="mangmee-table-scroll hidden sm:block" data-testid="reimbursement-lines-table"><table class="mangmee-table">/u);
+    const cardsAt = html.indexOf('data-testid="reimbursement-line-cards"'), tableAt = html.indexOf('data-testid="reimbursement-lines-table"');
+    const cards = html.slice(cardsAt, tableAt), table = html.slice(tableAt);
+    const cardTexts = visible(cards);
+    for (const text of ['ค่าแท็กซี่', '1,234.50 บาท', '27 ก.ย. 2569 · ยังไม่ได้เลือกหมวด', 'วัตถุประสงค์: ไปพบลูกค้า',
+      'ปากกาและแฟ้ม', '380.00 บาท', '26 ก.ย. 2569 · ยังไม่ได้เลือกหมวด', 'ร้านเครื่องเขียนสมใจ', 'รวมเป็นเงิน', '1,614.50 บาท',
+      'PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF', 'นำไฟล์ออก']) assert.ok(cardTexts.includes(text), text);
+    // The typed line takes a receipt upload; the line picked from a saved bill keeps that bill's files instead.
+    assert.equal(cards.match(/type="file"/gu)?.length, 1);
+    assert.equal(table.match(/type="file"/gu)?.length, 1);
+    assert.ok(visible(table).includes('ใบเสร็จ'), 'the table keeps its receipt column');
+    assert.ok(visible(detailSections(paid, ids.requester, [])).includes('27 ก.ย. 2569 · เดินทาง'), 'a card names the line category by its label');
+  });
+});
+
 const MACHINE_TOKENS: Array<[string, RegExp]> = [ // ReimbursementDraftActionPage.qa.spec.ts's set
   ['cuid/uuid/hash-like id', /\b[a-z0-9]{20,}\b|[0-9a-f]{8}-[0-9a-f]{4}-/iu], ['enum or code', /[A-Z_]{4,}/u],
   ['field path', /\w+\.\d+\.\w+|\b[a-zA-Z]\w*\.(?:\d|[a-z]\w*\b)/u], ['camelCase key', /\b[a-z]+[A-Z]\w*\b/u], ['snake_case code', /\b[a-z]+_[a-z_]+\b/u],
