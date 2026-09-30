@@ -90,7 +90,10 @@ type BacklogMoney = { currency: string; amount: string };
 type BacklogGroup = { count: number; totalsByCurrency: BacklogMoney[]; oldestSubmittedOn?: string; oldestApprovedOn?: string; longestWaitDays: number };
 export type ReimbursementApprovalBacklog = {
   accessScope: 'company' | 'related' | 'own';
+  /** Claims at every stage: approval, finance review and payment. */
   total: number;
+  /** The part still waiting for an approver (eval 2026-09-30: answers called the whole total "ค้างอนุมัติ"). */
+  awaitingApprovalCount: number;
   totalsByCurrency: BacklogMoney[];
   /** Only claims exactly one active person can approve. */
   byApprover: Array<{ name: string } & BacklogGroup>;
@@ -100,6 +103,8 @@ export type ReimbursementApprovalBacklog = {
   /** Longest wait first, at most 10: the desk of each claim ("ใบของฉันค้างที่ใคร"). */
   items: Array<{ id: string; documentNumber: string | null; requesterName: string; amount: string; currency: string;
     waitingOn: string; submittedOn: string; approvedOn?: string; waitDays: number }>;
+  /** Only when the caller's own claims came back empty: none on record vs. none waiting (eval R-20). */
+  hasOwnClaims?: boolean;
 };
 
 type Money = ReturnType<typeof d>;
@@ -197,6 +202,10 @@ export class GetReimbursementApprovalBacklogUseCase {
       ...(group.approved ? { oldestApprovedOn: group.oldest } : { oldestSubmittedOn: group.oldest }), longestWaitDays: waitDays(group.oldest) });
     const all = [...groups.values()];
     const shared = groups.get('pile');
+    // Eval R-20: a manager with no claims heard "all of yours were processed"; nothing waiting and nothing on record differ.
+    const hasOwnClaims = mine && rows.length === 0
+      ? (await this.repo.listRequests({ companyId: ctx.companyId, requesterUserId: ctx.userId, scopes: ctx.scopes ?? {}, take: 1 })).length > 0
+      : undefined;
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.ai_tool.read',
@@ -206,6 +215,7 @@ export class GetReimbursementApprovalBacklogUseCase {
     return {
       accessScope: mine ? 'own' : canReadAll ? 'company' : 'related',
       total: rows.length,
+      awaitingApprovalCount: [...deskByRow.values()].filter((entry) => entry.approverUserId || entry.key === 'pile' || entry.kind === 'no_active_approver').length,
       totalsByCurrency: moneyList(overall),
       byApprover: all.filter((group) => group.approver).map((group) => ({ name: group.label, ...summary(group) }))
         .sort((a, b) => b.count - a.count || b.longestWaitDays - a.longestWaitDays || a.name.localeCompare(b.name, 'th')),
@@ -216,6 +226,7 @@ export class GetReimbursementApprovalBacklogUseCase {
       }),
       items: items.sort((a, b) => b.waitDays - a.waitDays || a.submittedOn.localeCompare(b.submittedOn)
         || (a.documentNumber ?? a.id).localeCompare(b.documentNumber ?? b.id)).slice(0, 10),
+      ...(hasOwnClaims !== undefined ? { hasOwnClaims } : {}),
     };
   }
 }

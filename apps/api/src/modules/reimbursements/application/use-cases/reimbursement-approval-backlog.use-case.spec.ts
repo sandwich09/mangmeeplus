@@ -30,11 +30,16 @@ const step = (requestId: string, overrides: Record<string, unknown> = {}) => ({
 const NAMES: Record<string, string> = { mgrA: 'สมศรี', mgrB: 'สมชาย', gone: 'ปรีชา', owner: 'เจ้าของ' };
 
 /** `active[branch]` = who can still act there; everyone else has left or lost that branch. */
-function repo(rows: any[], steps: any[], active: Record<string, string[]>) {
-  const calls: any = { list: undefined, active: [] as any[], names: [] as string[][] };
+function repo(rows: any[], steps: any[], active: Record<string, string[]>, anyOwn: any[] = []) {
+  const calls: any = { list: undefined, own: undefined, active: [] as any[], names: [] as string[][] };
   return {
     calls,
-    listRequests: async (where: any) => { calls.list = where; return rows; },
+    // The backlog read filters by status; the only other read is "does the caller have any claim at all".
+    listRequests: async (where: any) => {
+      if (where.statuses) { calls.list = where; return rows; }
+      calls.own = where;
+      return anyOwn;
+    },
     findPendingApprovalSteps: async (_companyId: string, ids: string[]) => steps.filter((s) => ids.includes(s.reimbursementRequestId)),
     findActiveApproverUserIds: async (_companyId: string, ids: string[], branchId?: string) => {
       calls.active.push({ ids, branchId });
@@ -68,6 +73,7 @@ describe('GetReimbursementApprovalBacklogUseCase — whose desk (advisor spec §
     assert.equal(JSON.stringify(result).includes('สมชาย'), false);
     assert.deepEqual(r.calls.names, [['mgrA', 'mgrA']]);
     assert.equal(result.total, 4);
+    assert.equal(result.awaitingApprovalCount, 4);
   });
 
   it('never counts or names someone who left: one active assignee is a single approver, none is its own group', async () => {
@@ -118,6 +124,9 @@ describe('GetReimbursementApprovalBacklogUseCase — whose desk (advisor spec §
     ]);
     // Currencies are never added together.
     assert.deepEqual(result.totalsByCurrency, [{ currency: 'THB', amount: '460.00' }, { currency: 'USD', amount: '40.50' }]);
+    // Eval 2026-09-30: the total spans every stage; only this part still waits for an approver ("ค้างอนุมัติ").
+    assert.equal(result.total, 6);
+    assert.equal(result.awaitingApprovalCount, 0);
     assert.deepEqual(r.calls.list.statuses, ['PENDING_APPROVAL', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'APPROVED']);
   });
 
@@ -152,5 +161,24 @@ describe('GetReimbursementApprovalBacklogUseCase — whose desk (advisor spec §
     assert.deepEqual(result.items.map((item) => item.waitDays), [12, 11, 10, 9, 8, 7, 6, 5, 4, 3]);
     // Same data on a re-read the same day: the delivery hash compares it.
     assert.deepEqual(await run(r), result);
+  });
+
+  // Eval R-20: a manager with no claims of their own heard "all of yours were processed".
+  it('says whether the caller has any claim at all when none of their own is waiting', async () => {
+    const none = repo([], [], {});
+    const noClaims = await run(none, ctx({ userId: 'mgr', permissions: ['reimbursement.read'] }), { requester: 'me' });
+    assert.equal(noClaims.hasOwnClaims, false);
+    assert.deepEqual(none.calls.own, { companyId: 'co', requesterUserId: 'mgr', scopes: { branchIds: ['b1', 'b2'] }, take: 1 });
+
+    const paidOnly = await run(repo([], [], {}, [claim({ status: 'PAID' })]), ctx({ userId: 'mgr', permissions: ['reimbursement.read'] }), { requester: 'me' });
+    assert.equal(paidOnly.hasOwnClaims, true);
+
+    // Only asked for the caller's own empty list; a shop-wide or non-empty answer never carries it.
+    const shop = repo([], [], {});
+    assert.equal('hasOwnClaims' in await run(shop), false);
+    assert.equal(shop.calls.own, undefined);
+    const waiting = claim();
+    assert.equal('hasOwnClaims' in await run(repo([waiting], [step(waiting.id, { assignedApproverUserIds: ['mgrA'] })], { b1: ['mgrA'] }),
+      ctx({ permissions: ['reimbursement.read_own'] })), false);
   });
 });
