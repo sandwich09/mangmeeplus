@@ -277,6 +277,16 @@ describe('advisor S1: signing or approving a substitute receipt from LINE', () =
     }
   });
 
+  it('a bare imperative that opens with the verb is a request even without a politeness marker', () => {
+    for (const text of ['อนุมัติใบรับรองนี้เลย', 'เซ็นใบรับรองแทนใบเสร็จอันนี้เลย']) {
+      assert.equal(scopePolicyOverride(text, 'write', APPROVER, ['expenses'], 'th')?.webPage, 'substitute-receipts', text);
+    }
+    // Claims and expenses keep their request-marker rule unchanged.
+    assert.equal(lineActionBoundaryReplyText('อนุมัติใบเบิกนี้เลย', ['reimbursement.approve'], 'th'), undefined);
+    // A statement that does not open with the verb is still no command.
+    assert.equal(scopePolicyOverride('ใบรับรองของฉันอนุมัติแล้วหรือยัง', 'read', APPROVER, ['expenses'], 'th'), undefined);
+  });
+
   it('an approve request needs expense.confirm; without it the role limit is named and no link is offered', () => {
     const approver = scopePolicyOverride('ช่วยอนุมัติใบรับรองนี้ให้หน่อย', 'write', APPROVER, ['expenses'], 'th');
     assert.ok(approver!.text.startsWith('การอนุมัติใบรับรองแทนใบเสร็จทำผ่าน LINE ไม่ได้'), approver!.text);

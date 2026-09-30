@@ -103,7 +103,9 @@ export function unsoldModuleReplyText(topic: UnsoldModuleTopic, language: ScopeP
 
 // ---- Item 2: approve/reject/pay a reimbursement, or confirm/void an expense, from LINE --------
 
-type LineActionRule = { noun: readonly string[]; verb: readonly string[]; permission: string; actionLabelTh: string; page: 'reimbursements' | 'expenses' | 'substitute-receipts' };
+type LineActionRule = { noun: readonly string[]; verb: readonly string[]; permission: string; actionLabelTh: string; page: 'reimbursements' | 'expenses' | 'substitute-receipts';
+  /** A bare imperative that opens with the verb ("อนุมัติใบรับรองนี้เลย") is a request too, with no politeness marker. */
+  imperative?: boolean };
 
 const REIMBURSEMENT_NOUN_TH = ['ใบเบิก', 'เบิกจ่าย', 'คำขอเบิก'];
 const EXPENSE_NOUN_TH = ['ค่าใช้จ่าย', 'รายจ่าย'];
@@ -121,11 +123,11 @@ const LINE_ACTION_RULES: readonly LineActionRule[] = [
   { noun: EXPENSE_NOUN_TH, verb: ['ยกเลิก'], permission: 'expense.void', actionLabelTh: 'ยกเลิกรายการค่าใช้จ่าย', page: 'expenses' },
   // Advisor S1 (spec §2.6, §4.3 S3): certifying or approving a substitute receipt stays on the web, where the
   // whole document is read before it is signed (assertWeb on certify/approve).
-  { noun: SUBSTITUTE_NOUN_TH, verb: ['อนุมัติ'], permission: 'expense.confirm', actionLabelTh: 'อนุมัติใบรับรองแทนใบเสร็จ', page: 'substitute-receipts' },
-  { noun: SUBSTITUTE_NOUN_TH, verb: [...SIGN_VERB_TH, 'ลงชื่อ', 'รับรอง'], permission: 'expense.read_own', actionLabelTh: 'ลงลายมือชื่อใบรับรองแทนใบเสร็จ', page: 'substitute-receipts' },
+  { noun: SUBSTITUTE_NOUN_TH, verb: ['อนุมัติ'], permission: 'expense.confirm', actionLabelTh: 'อนุมัติใบรับรองแทนใบเสร็จ', page: 'substitute-receipts', imperative: true },
+  { noun: SUBSTITUTE_NOUN_TH, verb: [...SIGN_VERB_TH, 'ลงชื่อ', 'รับรอง'], permission: 'expense.read_own', actionLabelTh: 'ลงลายมือชื่อใบรับรองแทนใบเสร็จ', page: 'substitute-receipts', imperative: true },
   // A bare "เซ็นให้หน่อย" names no document: the only thing anyone signs in this product is a substitute
   // receipt (a saved signature image says ลายเซ็น, stripped before the verb check).
-  { noun: [], verb: SIGN_VERB_TH, permission: 'expense.read_own', actionLabelTh: 'ลงลายมือชื่อใบรับรองแทนใบเสร็จ', page: 'substitute-receipts' },
+  { noun: [], verb: SIGN_VERB_TH, permission: 'expense.read_own', actionLabelTh: 'ลงลายมือชื่อใบรับรองแทนใบเสร็จ', page: 'substitute-receipts', imperative: true },
 ];
 const OTHER_DOCUMENT_NOUN_TH = [...REIMBURSEMENT_NOUN_TH, ...EXPENSE_NOUN_TH];
 
@@ -161,9 +163,11 @@ function withoutStatePhrases(text: string): string {
 }
 
 function lineActionRuleFor(text: string): LineActionRule | undefined {
-  if (!includesAny(text, REQUEST_MARKERS_TH) || includesAny(text, STATUS_QUESTION_MARKERS_TH)) return undefined;
+  if (includesAny(text, STATUS_QUESTION_MARKERS_TH)) return undefined;
+  const requested = includesAny(text, REQUEST_MARKERS_TH);
   const verbCheckText = withoutStatePhrases(text);
-  return LINE_ACTION_RULES.find((rule) => (rule.noun.length ? includesAny(text, rule.noun) : !includesAny(text, OTHER_DOCUMENT_NOUN_TH))
+  return LINE_ACTION_RULES.find((rule) => (requested || rule.imperative && rule.verb.some((verb) => text.trim().startsWith(verb)))
+    && (rule.noun.length ? includesAny(text, rule.noun) : !includesAny(text, OTHER_DOCUMENT_NOUN_TH))
     && includesAny(verbCheckText, rule.verb));
 }
 
