@@ -126,6 +126,10 @@ export type ReserveAiBudgetStepInput = {
    *  posted by the gateway — which has no business knowing it — still lands with the right D1
    *  metadata instead of UNKNOWN, which would make the month read "partial coverage" forever. */
   requestKind?: AiRequestKind;
+  /** Owner 2026-09-30: work the system accepted before the credit ran out (see
+   *  `CompanyAiBudgetStep.admitOverCap`). Only the cap decision (`decideAiBudgetStep`) yields, never
+   *  for a cap of 0; the hold is written, marked and settled like any other. */
+  admitOverCap?: boolean;
   /** Resolved OUTSIDE the transaction — `resolveThbPerUsd` may make an outbound call. */
   thbPerUsd: number;
   thbPerUsdSource: string;
@@ -392,7 +396,13 @@ export async function reserveAiBudgetStep(
         bucket: input.bucket, boundSatang: bound, totalSatang: policy.totalSatang, capSatang,
         spent: spend, reserved, override: policy.override,
       });
-      if (!decision.ok) return decision;
+      // A cap of 0 is an admin's explicit closure (Owner 2026-09-30 "ไม่ทำต่อ"): never passed over.
+      const closedByAdmin = policy.totalSatang === 0 || capSatang === 0;
+      if (!decision.ok && (!input.admitOverCap || closedByAdmin)) return decision;
+      if (!decision.ok) {
+        logger.warn({ msg: 'ai.budget.admitted_over_cap', companyId: input.companyId, monthKey: input.monthKey,
+          budgetScope: decision.budgetScope, stepKind: input.stepKind, ordinal: input.ordinal });
+      }
 
       // Funding is decided BEFORE the ordinal claim: a refusal returns (commits) without burning the
       // turn's ordinal. Still under `partner-ocr-config` (L1), so two months or two turns can never
@@ -417,7 +427,9 @@ export async function reserveAiBudgetStep(
           attemptKey: input.attemptKey, invocationKey, upperBoundSatang: bound,
           pricingSnapshot: { ...priced.snapshot, thbPerUsdSource: input.thbPerUsdSource,
             // The marker settlement reads: only a funded hold has AI credit entries to turn into use.
-            ...(funding ? { aiCredit: { cycleKey: funding.cycleKey } } : {}) },
+            ...(funding ? { aiCredit: { cycleKey: funding.cycleKey } } : {}),
+            // The marker `budget-step` reads, so every further call of this turn inherits it.
+            ...(input.admitOverCap ? { admitOverCap: true } : {}) },
           requestKind: input.requestKind ?? null, status: rendered ? 'DISPATCHED' : 'RESERVED', ownerToken,
           ...(rendered ? { dispatchedAt: now } : {}),
         },

@@ -72,9 +72,14 @@ infra/kamal/promote-prod --profile <non-root-production-profile> \
   --production-browser-acceptance --apply
 ```
 
-Repeat `--hotfix-path` for **every** changed path and `--regression-test` for the relevant tests.
+Repeat `--hotfix-path` for **every** changed path, images and specs included, and `--regression-test`
+for the relevant tests: every changed `src` spec must be one, and an image-only hotfix still names at
+least one existing spec. Hotfix paths are limited to `docs/`, `src/**/*.{ts,tsx,js,jsx,css}` of the
+four apps and `packages/contracts`, `e2e/**/*.spec.ts`, and raster images under
+`apps/web/public/assets/` (`png`, `jpg`, `jpeg`, `webp`; never `svg` or any other public file).
 Hotfix proves ancestry and the complete Production-base diff; schema/dependency/build/controller
-changes are rejected. It preserves verified serving config instead of importing main's settings.
+changes are rejected. Every hotfix rebuilds all images from its pinned source, so a new public image
+ships in `api-web`. It preserves verified serving config instead of importing main's settings.
 UAT promotion verifies the enrolled `trustedUatSigningKeyArn`, the signed receipt (maximum24hours),
 all four immutable images and AgentCore archive. It copies exact image digests without rebuilding or
 rewriting metadata. Historical receipts without a signed `promotionBundle` are rejected; create a

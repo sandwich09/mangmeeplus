@@ -25,6 +25,9 @@ type BudgetAuthority = {
   /** Add-on spec §5.3: the AI credit cycle this turn's first funded call used. API-side only, never
    *  in the signed grant, so the Gateway/AgentCore contract is unchanged; later calls stay on it. */
   fundingContext?: { cycleKey: string };
+  /** Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): work accepted before the credit ran out. Every call
+   *  under this authority passes the cap (never a cap of 0). API-side only, like `fundingContext`. */
+  admitOverCap?: true;
 };
 export type IssueLineAiBudgetGrant = {
   authorityKind: 'webhook_event' | 'ledger_entry' | 'qa_job'; authorityId: string; owner: AuthorityOwner;
@@ -32,6 +35,8 @@ export type IssueLineAiBudgetGrant = {
   admittedAtMs: number; coalescingExtraMs: number; lane: 'general' | 'simple' | 'mixed' | 'public' | 'document_qa';
   model: AiBudgetGrantV2['model']; modelContextTokens: number; modelMaxOutputTokens: number; tariff: AiTariffV2;
   allowedProfileIds: AiBudgetProfileIdV2[];
+  /** See `BudgetAuthority.admitOverCap`; decided by the admitted webhook producer only. */
+  admitOverCap?: boolean;
 };
 const canonical = (value: unknown): string => value === null || typeof value !== 'object' ? JSON.stringify(value)
   : Array.isArray(value) ? `[${value.map(canonical).join(',')}]`
@@ -159,7 +164,8 @@ export class LineAiBudgetAuthorityService {
       }
       const authority: BudgetAuthority = { version: 2, grant, owner: input.owner, tariff: structuredClone(input.tariff),
         requestKind: input.requestKind, inputDigest: input.inputDigest, modelContextTokens: input.modelContextTokens, modelMaxOutputTokens: input.modelMaxOutputTokens,
-        coalescingExtraMs: input.coalescingExtraMs, nextOrdinal: 0, profileCounts: {}, repairCount: 0 };
+        coalescingExtraMs: input.coalescingExtraMs, nextOrdinal: 0, profileCounts: {}, repairCount: 0,
+        ...(input.admitOverCap ? { admitOverCap: true as const } : {}) };
       if (Buffer.byteLength(JSON.stringify(authority)) > MAX_AUTHORITY_BYTES) return null;
       const updated = await delegate.updateMany({ where: { id: row.id, budgetAuthorityRevision: row.budgetAuthorityRevision, budgetAuthorityJson: { equals: Prisma.DbNull } },
         data: { budgetAuthorityJson: authority as unknown as Prisma.InputJsonValue, budgetAuthorityRevision: { increment: 1 } } });
@@ -248,7 +254,8 @@ export class LineAiBudgetAuthorityService {
         const sealed = { ...state, transferredToQa: jobId };
         if ((await parent.updateMany({ where: { id: row.id, budgetAuthorityRevision: row.budgetAuthorityRevision },
           data: { budgetAuthorityJson: sealed as unknown as Prisma.InputJsonValue, budgetAuthorityRevision: { increment: 1 } } })).count !== 1) throw new Error('QA_TRANSFER_RACED');
-        const moved: BudgetAuthority = { ...state, grant: nextGrant, inputDigest, narrowedLane: 'document_qa' };
+        // A queued document question was accepted with its turn, so its later calls pass the cap (Owner 2026-09-30).
+        const moved: BudgetAuthority = { ...state, grant: nextGrant, inputDigest, narrowedLane: 'document_qa', admitOverCap: true };
         if ((await this.parent(tx, 'qa_job').updateMany({ where: { id: jobId, budgetAuthorityRevision: job.budgetAuthorityRevision,
           budgetAuthorityJson: { equals: Prisma.DbNull } },
           data: { budgetAuthorityJson: moved as unknown as Prisma.InputJsonValue, budgetAuthorityRevision: { increment: 1 } } })).count !== 1) throw new Error('QA_TRANSFER_RACED');
@@ -315,6 +322,7 @@ export class LineAiBudgetAuthorityService {
       companyId: grant.payerCompanyId, monthKey: grant.monthKey, bucket: 'CHAT', stepKind: 'provider-v2', attemptKey: grant.attemptKey,
       ordinal: invocation.ordinal, sourceRoute: 'line-ai-v2', requestKind: initial.requestKind, modelId: grant.model.modelId,
       thbPerUsd: initial.tariff.thbPerUsd, thbPerUsdSource: 'pinned-grant', now,
+      ...(initial.admitOverCap ? { admitOverCap: true } : {}),
     }, {
       upperBoundSatang: priced.upperBoundSatang, maxCalls: aiBudgetV2OrdinalCeiling(grant),
       // Plan C4: an image intake keeps its CHAT cost bucket but never spends AI credit (spec §5.4;

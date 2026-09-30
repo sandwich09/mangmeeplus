@@ -244,7 +244,7 @@ export class CompanyEmployeeSummaryTool implements ErpReadToolPort {
     }
     const sourceRefs: SourceRef[] = [{
       label: 'พนักงาน', module: 'employee-access', entityType: 'employee_summary',
-      asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/settings/employees`,
+      asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/settings/access-overview`,
     }];
     // Counts only — no names, phone numbers, or identity fields leave this tool.
     return {
@@ -275,7 +275,7 @@ export class CompanyEmployeeDetailTool implements ErpReadToolPort {
     }
     const sourceRefs: SourceRef[] = [{
       label: 'ข้อมูลพนักงาน', module: 'employee-access', entityType: 'employee_detail',
-      asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/settings/employees`,
+      asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/settings/access-overview`,
     }];
     const nameQuery = typeof input?.nameQuery === 'string' ? input.nameQuery.trim().slice(0, 120) : '';
     if (!nameQuery) {

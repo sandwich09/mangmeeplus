@@ -83,9 +83,11 @@ function makeUseCase(opts: {
   const permissionResolver = {
     resolveAccess: async () => state.access,
   } as any;
+  const turnOptions: any[] = [];
   const aiGateway = {
-    requestLineTurn: async (req: any) => {
+    requestLineTurn: async (req: any, options?: any) => {
       turnRequests.push(req);
+      turnOptions.push(options);
       opts.duringTurn?.();
       if (opts.turnFn) return opts.turnFn(req);
       return {
@@ -133,7 +135,7 @@ function makeUseCase(opts: {
   const warnings: any[] = [];
   const terminalLogs: any[] = [];
   (useCase as any).logger = { warn: (payload: any) => warnings.push(payload), debug: () => {}, log: (payload: any) => terminalLogs.push(payload), error: () => {} };
-  return { useCase, acks, ackReasons, pushes, turnRequests, aiTurnUpdates, eventUpdates, shadowRecords, shadowFlushes, warnings, terminalLogs, state, identityReads, deliveryRows, prisma };
+  return { useCase, acks, ackReasons, pushes, turnRequests, turnOptions, aiTurnUpdates, eventUpdates, shadowRecords, shadowFlushes, warnings, terminalLogs, state, identityReads, deliveryRows, prisma };
 }
 
 describe('v2 ledger never recreates a paid turn from a stale Redis reference', () => {
@@ -723,6 +725,24 @@ describe('DrainLineLedgerUseCase finally-flush (mutation-proved)', () => {
     assert.equal(warns[0].event, LAUNCH_SHADOW_READ_FAILED_EVENT);
     assert.equal(JSON.stringify(warns).includes('c1-secret'), false);
   });
+});
+
+// Owner 2026-09-30 ("ข้อความตอนเครดิตหมดระหว่างส่งซ้ำ ต้องยอมให้ใช้เกินโควต้า"): a queued or reclaimed turn —
+// and a sub_request of one — is re-run past the AI credit cap and answered for real. The admission
+// itself (cap yields, usage metered, every other refusal kept) is proven in ai-gateway.client.spec.ts.
+describe('drain: a queued turn may go past the AI credit cap', () => {
+  for (const kind of ['turn', 'sub_request'] as const) {
+    it(`asks for over-cap admission at the next retry ordinal and delivers the real answer: ${kind}`, async () => {
+      const h = makeUseCase({ claims: [{ entry: entry({ kind }), deliveryCount: 2, idleMs: 10_000 }] });
+
+      const result = await h.useCase.execute(20, NOW);
+
+      assert.deepEqual(h.turnOptions, [{ retryOrdinal: 2, admitOverCap: true }]);
+      assert.equal(result.followedUp, 1);
+      assert.ok(h.pushes[0].text.includes('5,000'), 'the real answer, not the credit notice');
+      assert.doesNotMatch(h.pushes[0].text, /เครดิต AI/);
+    });
+  }
 });
 
 /**

@@ -179,6 +179,12 @@ export type CompanyAiBudgetStep = {
   ordinal?: number;
   requestKind?: AiRequestKind;
   requestId?: string;
+  /** Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): set ONLY for work the system accepted before the
+   *  credit ran out — a turn the LINE ledger drain re-runs, an orphan replay, a parked photo's resumed
+   *  answer, one re-ask after a failed answer. The cap refusals (exceeded, insufficient; TOTAL and
+   *  CHAT) admit instead and usage is recorded as usual; every other refusal still stands, and a cap
+   *  of 0 — an admin's explicit closure — is never passed ("ไม่ทำต่อ"). */
+  admitOverCap?: boolean;
 };
 
 /**
@@ -200,6 +206,7 @@ async function reserveCompanyAiBudgetStep(
     companyId, monthKey, bucket: step.budgetBucket, stepKind: step.stepKind, attemptKey: step.attemptKey,
     ordinal: step.ordinal ?? 0, sourceRoute: step.sourceRoute, modelId: step.modelId,
     ...(step.requestKind ? { requestKind: step.requestKind } : {}),
+    ...(step.admitOverCap ? { admitOverCap: true } : {}),
     thbPerUsd: fx.rate, thbPerUsdSource: fx.source,
   });
   if (outcome.ok) return { allowed: true, reservation: outcome.reservation };
@@ -407,7 +414,13 @@ export async function assertCompanyAiBudget(
   // and adds a settled CHAT bucket stop below, with the same bounded overshoot as its total.
   if (policy.mode === 'SPLIT') return reserveCompanyAiBudgetStep(prisma, config, companyId, monthKey, step!);
 
-  if (spendSatang >= budget.budgetSatang) {
+  // `admitOverCap` yields ONLY the two cap comparisons below; both reads and every other refusal still
+  // stand, and the caller meters the turn's usage exactly as any other. A cap of 0 is never passed: no
+  // writer can store one except the admin console's "ปิด" (sales-deal credits and the admin/platform
+  // totals are at least 1 satang, the default chat credit is 8,000), so a 0 is an explicit closure.
+  if (spendSatang >= budget.budgetSatang && step?.admitOverCap && budget.budgetSatang > 0) {
+    logger.warn({ msg: 'ai.budget.admitted_over_cap', companyId, monthKey, budgetScope: 'TOTAL', spendSatang, budgetSatang: budget.budgetSatang });
+  } else if (spendSatang >= budget.budgetSatang) {
     emitSecurityEvent(logger, SECURITY_EVENT.aiCompanyBudgetExceeded, 'HIGH', {
       companyId,
       spendSatang,
@@ -423,7 +436,9 @@ export async function assertCompanyAiBudget(
         select: { costSatang: true },
       });
       const chatSpent = row?.costSatang ?? 0;
-      if (chatSpent >= policy.chatCapSatang!) {
+      if (chatSpent >= policy.chatCapSatang! && step.admitOverCap && policy.chatCapSatang! > 0) {
+        logger.warn({ msg: 'ai.budget.admitted_over_cap', companyId, monthKey, budgetScope: 'CHAT', spendSatang: chatSpent, budgetSatang: policy.chatCapSatang });
+      } else if (chatSpent >= policy.chatCapSatang!) {
         return { allowed: false, reason: 'exceeded', spendSatang: chatSpent,
           budgetSatang: policy.chatCapSatang!, override: policy.chatSource !== 'DEFAULT', budgetScope: 'CHAT' };
       }

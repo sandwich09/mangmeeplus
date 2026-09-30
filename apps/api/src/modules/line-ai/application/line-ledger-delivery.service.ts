@@ -15,7 +15,11 @@ const PLAN_TERMINAL = new Set(['ACCEPTED', 'CANCELLED', 'REFUSED', 'EXPIRED']);
 
 const LEASE_MS = 3 * 60_000;
 const TERMINAL = new Set(['ACCEPTED', 'REFUSED', 'PARKED']);
-export type LineLedgerCompletion = { status: string; refused: boolean; errorCode: string | null; replyPreview: string; toolCount: number; outcome?: 'followed_up' | 'refused'; reason?: string; budgetScope?: AiBudgetScope; deliveryPlanVersion?: 2; deliveryPlanId?: string };
+export type LineLedgerCompletion = { status: string; refused: boolean; errorCode: string | null; replyPreview: string; toolCount: number; outcome?: 'followed_up' | 'refused'; reason?: string; budgetScope?: AiBudgetScope; deliveryPlanVersion?: 2; deliveryPlanId?: string;
+  /** Set once by `consumeReaskPass`: the re-ask this notice allowed past the AI credit cap was used. */
+  reaskPassUsedAt?: string };
+/** Owner 2026-09-30: how long after an "original answer unavailable" notice the person's re-ask may pass the cap. */
+export const LINE_AI_REASK_PASS_MS = 30 * 60_000;
 export type LineLedgerClaim = { kind: 'prepare' | 'deliver' | 'terminal' | 'busy'; row: LineLedgerDelivery; token: string };
 
 export const lineLedgerDeliveryId = (entry: Pick<LedgerEntry, 'key' | 'id' | 'durableDeliveryId' | 'reliabilityVersion'>) =>
@@ -93,6 +97,30 @@ export class LineLedgerDeliveryService {
       data: { status, errorCode, ...(status === 'ACCEPTED' ? { acceptedAt: new Date() } : {}), leaseToken: null, leaseExpiresAt: null },
     });
     return updated.count === 1;
+  }
+
+  /**
+   * Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): after this ledger told a person that their previous answer
+   * did not complete (the v2 "original answer unavailable" notice), their next AI turn in the SAME private
+   * chat within `LINE_AI_REASK_PASS_MS` may pass the AI credit cap once. The pass is that notice's own row,
+   * matched on its frozen conversation id (company, person, membership, channel and chat) and spent by one
+   * CAS, so it never serves a second turn, another chat or another person. Nothing else is authorized by it.
+   */
+  async consumeReaskPass(owner: { companyId: string; userId: string; conversationId: string }, now = new Date()): Promise<boolean> {
+    const rows = await this.prisma.client.lineLedgerDelivery.findMany({
+      where: { companyId: owner.companyId, userId: owner.userId, status: 'ACCEPTED', acceptedAt: { gt: new Date(now.getTime() - LINE_AI_REASK_PASS_MS) },
+        authorizationJson: { path: ['staticRefusal'], equals: 'original_answer_unavailable' } },
+      orderBy: { acceptedAt: 'desc' }, take: 5,
+      select: { id: true, updatedAt: true, acceptedRequestJson: true, completionJson: true },
+    });
+    const pass = rows.find((row) => (row.acceptedRequestJson as { conversationId?: unknown } | null)?.conversationId === owner.conversationId
+      && !(row.completionJson as LineLedgerCompletion | null)?.reaskPassUsedAt);
+    if (!pass) return false;
+    const spent = await this.prisma.client.lineLedgerDelivery.updateMany({
+      where: { id: pass.id, updatedAt: pass.updatedAt },
+      data: { completionJson: { ...(pass.completionJson as Record<string, unknown>), reaskPassUsedAt: now.toISOString() } as Prisma.InputJsonValue },
+    });
+    return spent.count === 1;
   }
 
   /** Producer fence is acquired before the child lock; network/authorization never runs here. */

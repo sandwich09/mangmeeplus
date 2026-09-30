@@ -15,8 +15,9 @@ import { InternalAiBudgetController } from './internal-ai-budget.controller';
 const HAIKU = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
 const config = { aiGatewayInternalSecret: 'workload-secret', aiMonthlyBudgetSatang: 1_000_000 } as never;
 
-/** Just enough of the ledger for reserve + dispatch; the engine's own behaviour is proven elsewhere. */
-function prismaWithParent(parent: Record<string, unknown> | null) {
+/** Just enough of the ledger for reserve + dispatch; the engine's own behaviour is proven elsewhere.
+ *  `spent` is the month's spend in the total AND each bucket (caps: 1,000,000 / 500,000 / 500,000). */
+function prismaWithParent(parent: Record<string, unknown> | null, spent = 0) {
   const created: any[] = [];
   const tx = {
     $executeRaw: async () => 0,
@@ -32,8 +33,8 @@ function prismaWithParent(parent: Record<string, unknown> | null) {
       create: async (args: any) => { created.push(args.data); return { id: 'res-new' }; },
       updateMany: async () => ({ count: 1 }),
     },
-    companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
-    companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
+    companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: spent }) },
+    companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: spent }) },
   } as any;
   tx.companyAiConfiguration = {
     findUnique: async () => ({
@@ -125,6 +126,26 @@ describe('POST /internal/ai/budget-step', () => {
 
     assert.deepEqual(await controller.budgetStep('workload-secret', stepBody()),
       { ok: false, code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
+  });
+
+  // Owner 2026-09-30: a turn the LINE ledger drain re-runs passes the cap on EVERY call, so its further
+  // calls inherit the drain's admission — from the parent hold, never from anything in the body.
+  it('lets the further calls of a drain retry pass a full bucket, inherited from the PARENT only', async () => {
+    const turnParent = { bucket: 'CHAT', sourceRoute: 'line-turn', requestKind: 'TEXT', status: 'DISPATCHED',
+      pricingSnapshot: { modelId: HAIKU, thbPerUsd: 33, thbPerUsdSource: 'stored' } };
+    const turnStep = stepBody({ attemptKey: 'line-text:ab12:r1', stepKind: 'line-turn', admitOverCap: true });
+    const full = 500_000;
+
+    const unmarked = prismaWithParent(turnParent, full);
+    assert.deepEqual(await new InternalAiBudgetController(config, unmarked.prisma).budgetStep('workload-secret', turnStep),
+      { ok: false, code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' }, 'a body cannot ask for it');
+    assert.equal(unmarked.created.length, 0);
+
+    const drained = prismaWithParent({ ...turnParent, pricingSnapshot: { ...turnParent.pricingSnapshot, admitOverCap: true } }, full);
+    const result = await new InternalAiBudgetController(config, drained.prisma).budgetStep('workload-secret', turnStep);
+    assert.equal((result as { ok: boolean }).ok, true);
+    assert.equal(drained.created[0].pricingSnapshot.admitOverCap, true, 'and it passes on to the next call');
+    assert.equal(drained.created[0].invocationKey, 'co-1#line-text:ab12:r1#line-turn#1');
   });
 
   it('refuses an undeclared step kind and a malformed month key', async () => {

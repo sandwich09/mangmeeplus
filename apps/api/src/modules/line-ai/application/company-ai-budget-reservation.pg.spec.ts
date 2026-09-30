@@ -552,6 +552,65 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
     assert.ok(position.reserved.CHAT <= 400_000, 'and stayed inside its cap');
   });
 
+  // Owner 2026-09-30 ("ข้อความตอนเครดิตหมดระหว่างส่งซ้ำ ต้องยอมให้ใช้เกินโควต้า"): the LINE ledger drain's
+  // retry of a turn is reserved past the cap, on real rows under the real locks.
+  const drainRetry = (companyId: string, attemptKey: string) => reserveAiBudgetStep(prisma, config, {
+    companyId, monthKey: MONTH, bucket: 'CHAT', stepKind: 'crm-intake', attemptKey, ordinal: 0,
+    sourceRoute: 'crm-intake', modelId: HAIKU, thbPerUsd: 33, thbPerUsdSource: 'stored', admitOverCap: true,
+  });
+
+  it('owner 2026-09-30: a drain retry reserves past a full CHAT, settles once; live stays refused', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const companyId = await company('drain-over-cap');
+    for (let i = 0; i < CHAT_ADMITS; i += 1) assert.ok((await reserve(companyId, 'CHAT', i, `fill-${i}`)).ok);
+    assert.equal(((await reserve(companyId, 'CHAT', 0, 'live-before')) as { reason: string }).reason, 'insufficient');
+
+    const retry = await drainRetry(companyId, 'line-text:drain:r1');
+    assert.ok(retry.ok, 'the retry is admitted past the cap');
+    const row = await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: retry.reservation.id } });
+    assert.equal((row.pricingSnapshot as { admitOverCap?: unknown }).admitOverCap, true);
+    assert.equal(row.upperBoundSatang, CHAT_BOUND, 'priced like any other hold');
+    assert.equal(await markAiBudgetStepDispatched(prisma, retry.reservation.id, retry.reservation.ownerToken), true);
+
+    const results = await Promise.all(Array.from({ length: 4 }, () => settleAiBudgetStep(prisma, {
+      invocationKey: retry.reservation.invocationKey, entry: evidence(), meta: { sourceRoute: 'crm-intake' },
+    })));
+    assert.equal(results.filter((r) => r === 'settled').length, 1, 'settled exactly once');
+    assert.equal(await client.aiUsageEvent.count({ where: { invocationKey: retry.reservation.invocationKey } }), 1);
+    const position = await client.$transaction((tx) => readAiBudgetMonthSnapshot(tx, companyId, MONTH));
+    assert.ok(position.spent.CHAT + position.reserved.CHAT > CHAT_CAP, 'the month really went past the cap');
+
+    assert.equal((await reserve(companyId, 'CHAT', 0, 'live-after')).ok, false, 'the live path is still refused');
+    assert.equal(((await drainRetry(companyId, 'line-text:drain:r1')) as { reason: string }).reason, 'already_claimed',
+      'one retry attempt is still one hold');
+  });
+
+  it('owner 2026-09-30: an admin closure (a CHAT cap of 0) is never passed, not even by a drain retry', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const companyId = await company('drain-closed', { chat: 0 });
+
+    const retry = await drainRetry(companyId, 'line-text:drain-closed:r1');
+    assert.equal((retry as { reason: string }).reason, 'exceeded');
+    assert.equal((retry as { budgetScope: string }).budgetScope, 'CHAT');
+    assert.equal(await client.aiBudgetReservation.count({ where: { companyId } }), 0, 'no hold is left behind');
+  });
+
+  it('owner 2026-09-30: only the cap yields — a breach still closes the scope to a drain retry', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const companyId = await company('drain-breach', { total: 1_000_000, chat: 500_000, ocr: 500_000 });
+    const held = await reserve(companyId, 'CHAT', 0, 'drain-breach-attempt');
+    assert.ok(held.ok);
+    await markAiBudgetStepDispatched(prisma, held.reservation.id, held.reservation.ownerToken);
+    await settleAiBudgetStep(prisma, {
+      invocationKey: held.reservation.invocationKey,
+      entry: evidence({ inputTokens: 5_000_000, outputTokens: 500_000 }), meta: { sourceRoute: 'crm-intake' },
+    });
+
+    const retry = await drainRetry(companyId, 'line-text:drain-breach:r1');
+    assert.equal((retry as { reason: string }).reason, 'unavailable');
+    assert.equal((retry as { detail: string }).detail, 'invariant_breach');
+  });
+
   it('item 5: requestKind pinned at reserve time lands on a settlement that supplies none', async (t) => {
     if (unreachable) return t.skip(unreachable);
     const companyId = await company('request-kind', { total: 1_000_000, chat: 500_000, ocr: 500_000 });
