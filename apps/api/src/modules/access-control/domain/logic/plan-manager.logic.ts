@@ -5,6 +5,9 @@
 // keep passing; a custom role with the permission now passes too. Plain functions, no Nest wiring.
 
 export const PLAN_MANAGE_PERMISSION_KEY = 'company.plan.manage';
+/** Advisor spec §2.2 (Owner 2026-09-30): what a reader WITHOUT the permission above is told in place
+ *  of a purchase, package-change or view-packages button. */
+export const ASK_PLAN_MANAGER_TH = 'หากต้องการใช้ต่อ แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ';
 
 type RoleWithPermissions = {
   status?: string | null;

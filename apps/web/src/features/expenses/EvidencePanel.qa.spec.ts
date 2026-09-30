@@ -16,3 +16,8 @@ test('changing any export filter clears old package results and ignores late exp
   assert.match(source, /\[branchId, dateField, yearMonth, documentStatus, taxEvidenceStatus, sourceDocumentType, postingStatus, flagFilter\]/);
   assert.match(source, /สร้างเมื่อ \{formatThaiDateTime\(packageResult\.generatedAt\)\}/);
 });
+
+test('the expense category table scrolls sideways on a phone instead of squeezing Thai names (Owner, 2026-09-30)', () => {
+  // It has no phone card view, so it sits in the shared scroller like the other migrated tables.
+  assert.match(source, /<div className="mangmee-table-scroll">\s*<table className="mangmee-table">\s*<thead><tr>\{\['ชื่อหมวดหมู่'/u);
+});

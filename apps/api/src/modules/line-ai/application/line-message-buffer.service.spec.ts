@@ -1556,3 +1556,29 @@ describe('v2 buffer rollout admission', () => {
     }
   });
 });
+
+// Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): a message the orphan sweep replays was accepted before the AI
+// credit ran out, so its turn may pass the cap. The mark lives in memory only and never comes from LINE.
+describe('LineMessageBufferService – an orphan replay may pass the AI credit cap', () => {
+  it('marks a replayed text and photo in memory only; a LINE webhook never', async () => {
+    const h = makeHarness({ debounceMs: 0 });
+    h.rows.set('replayed-text', {
+      webhookEventId: 'replayed-text', status: 'received', errorCode: 'RETRYABLE_ORPHAN_REPLAY',
+      createdAt: new Date(Date.now() - 5 * 60_000), processedAt: null, payloadJson: null,
+    });
+
+    await h.service.enqueue(textEnv('fresh-text', 'ยอดขายวันนี้'));
+    await h.service.enqueue(textEnv('replayed-text', 'ค่าใช้จ่ายเดือนนี้', { userId: 'user-2' }), true);
+    await h.service.enqueue(mediaEnv('replayed-photo', { userId: 'user-3' }), true);
+    await settle();
+    await sleep(20);
+
+    const executed = (id: string) => h.executed.find((event) => event.webhookEventId === id);
+    assert.equal(executed('fresh-text')?.admitOverCap, undefined);
+    assert.equal(executed('replayed-text')?.admitOverCap, true);
+    assert.equal(h.receipts.find(({ event }) => event.webhookEventId === 'replayed-photo')?.event.admitOverCap, true);
+    for (const id of ['fresh-text', 'replayed-text', 'replayed-photo']) {
+      assert.equal((h.rows.get(id)?.payloadJson as any)?.item?.admitOverCap, undefined, `${id}: never stored, so never trusted from a payload`);
+    }
+  });
+});

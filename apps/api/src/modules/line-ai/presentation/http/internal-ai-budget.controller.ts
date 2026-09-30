@@ -115,7 +115,7 @@ export class InternalAiBudgetController {
     // No parent, or a parent that was PROVEN never to have called a provider: nothing may continue
     // a chain whose first call was cancelled.
     if (!parent || parent.status === 'CANCELLED') return this.refuse('unavailable', 'TOTAL');
-    const snapshot = (parent.pricingSnapshot ?? {}) as { modelId?: unknown; thbPerUsd?: unknown; thbPerUsdSource?: unknown };
+    const snapshot = (parent.pricingSnapshot ?? {}) as { modelId?: unknown; thbPerUsd?: unknown; thbPerUsdSource?: unknown; admitOverCap?: unknown };
     const modelId = typeof snapshot.modelId === 'string' ? snapshot.modelId : '';
     const thbPerUsd = Number(snapshot.thbPerUsd);
 
@@ -125,6 +125,8 @@ export class InternalAiBudgetController {
       sourceRoute: parent.sourceRoute, modelId, thbPerUsd,
       // Inherited, never taken from the body: the gateway does not classify requests.
       ...(parent.requestKind ? { requestKind: parent.requestKind as 'TEXT' | 'IMAGE' | 'OTHER' } : {}),
+      // The ledger drain's retry admission (owner 2026-09-30) covers the whole turn — also parent-only.
+      ...(snapshot.admitOverCap === true ? { admitOverCap: true } : {}),
       thbPerUsdSource: typeof snapshot.thbPerUsdSource === 'string' ? snapshot.thbPerUsdSource : 'reservation',
     });
     if (!outcome.ok) {

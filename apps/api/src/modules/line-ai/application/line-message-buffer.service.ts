@@ -67,6 +67,8 @@ export type LineBufferIncomingItem =
       inputEvidence?: import('@watchdog-bms/contracts').LineAiInputEvidenceV2;
       lineMessageId?: string;
       timestamp: number;
+      /** In memory only, added by `enqueue` for an orphan replay AFTER the payload is stored. */
+      admitOverCap?: true;
     }
   | {
       kind: 'media';
@@ -81,6 +83,8 @@ export type LineBufferIncomingItem =
       /** Set only by durable orphan replay; fresh webhooks resolve and snapshot it below. */
       assistantPausedAtAcceptance?: true;
       timestamp: number;
+      /** In memory only, added by `enqueue` for an orphan replay AFTER the payload is stored. */
+      admitOverCap?: true;
     };
 
 export type LineBufferEnvelope = {
@@ -177,7 +181,10 @@ export class LineMessageBufferService implements OnModuleDestroy {
   /** Fast path called per webhook event BEFORE the 200 ack. Does dedup + the
    *  `received` log row (both DB-backed, ~ms) and appends to memory. All slow
    *  work (AI turns, replies) happens asynchronously on the worker loop. */
-  async enqueue(envelope: LineBufferEnvelope): Promise<void> {
+  async enqueue(envelope: LineBufferEnvelope,
+    /** Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): the orphan sweep is replaying a message this system
+     *  already accepted, so its turn may pass the AI credit cap. Never set for a LINE webhook. */
+    orphanReplay = false): Promise<void> {
     // The legal gate must run before acceptEvent: its recoverable payload contains raw chat
     // text/reply tokens/media ids. Preflight receives identity coordinates only, so a pending
     // employee message never crosses the durable-payload boundary.
@@ -267,7 +274,8 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // writes, which is what keeps the buffer race-free on the event loop.
     try {
       // Keep the payer for cohort accounting, separate from private rollout scope.
-      this.appendAccepted(acceptedEnvelope, acceptedAt, legal.companyId, !!publicAdmission);
+      this.appendAccepted(orphanReplay ? { ...acceptedEnvelope, item: { ...acceptedEnvelope.item, admitOverCap: true } } : acceptedEnvelope,
+        acceptedAt, legal.companyId, !!publicAdmission);
     } catch (error) {
       // The event row exists but the payload never reached memory. Mark it
       // immediately reclaimable before returning non-2xx to LINE.
@@ -1057,6 +1065,8 @@ export class LineMessageBufferService implements OnModuleDestroy {
       ...(last.draftUpdatePreviewId ? { draftUpdatePreviewId: last.draftUpdatePreviewId } : {}),
       ...(last.answerDeliveryControl ? { answerDeliveryControl: last.answerDeliveryControl } : {}),
           ...(last.reimbursementDraftControl ? { reimbursementDraftControl: last.reimbursementDraftControl } : {}),
+      // A turn that carries a replayed, already-accepted message is still owed its answer.
+      ...(textItems.some((item) => item.admitOverCap) ? { admitOverCap: true as const } : {}),
     };
   }
 
@@ -1077,6 +1087,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       pushTargetId: state.chatId,
       assistantPaused,
       ...(media.companyIdAtAcceptance ? { companyIdAtAcceptance: media.companyIdAtAcceptance } : {}),
+      ...(media.admitOverCap ? { admitOverCap: true as const } : {}),
     };
   }
 

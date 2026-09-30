@@ -154,9 +154,9 @@ function makeHarness(rows: Row[], opts: {
   } as any;
   const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
   const buffer = {
-    enqueue: async (envelope: any) => {
+    enqueue: async (envelope: any, orphanReplay?: boolean) => {
       if (opts.enqueueThrows) throw new Error('buffer unavailable');
-      enqueued.push(envelope);
+      enqueued.push({ ...envelope, orphanReplay });
     },
     holds: (webhookEventId: string) => opts.held?.includes(webhookEventId) ?? false,
   } as any;
@@ -316,6 +316,8 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.equal(result.replayed, 1);
     assert.equal(enqueued.length, 1);
     assert.equal(enqueued[0].item.webhookEventId, 'e1');
+    // Owner 2026-09-30: an already-accepted message is still owed its answer, so it may pass the AI credit cap.
+    assert.equal(enqueued[0].orphanReplay, true);
     // acceptEvent() only reclaims `received` + RETRYABLE_, so the stamp is what makes replay work.
     assert.equal(store.get('e1')?.status, 'received');
     assert.equal(store.get('e1')?.errorCode, 'RETRYABLE_ORPHAN_REPLAY');

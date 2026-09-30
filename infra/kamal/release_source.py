@@ -37,10 +37,12 @@ def hotfix_source(root, baseline, candidate, allowed_paths):
         require(parts and not path.startswith('/') and '..' not in parts and '\\' not in path,
                 'Invalid hotfix path')
         # Build/config/dependency/schema/controller changes use the UAT promotion path.
+        # Public raster images only (e.g. a new promotion poster); never svg (it can carry script).
         require(path.startswith('docs/') or re.fullmatch(
             r'(?:apps/(?:api|ai-gateway|workers|web)|packages/contracts)/src/.+\.(ts|tsx|js|jsx|css)', path)
-            or re.fullmatch(r'e2e/.+\.spec\.ts', path),
-            'Hotfix path is outside application source/tests/docs: ' + path)
+            or re.fullmatch(r'e2e/.+\.spec\.ts', path)
+            or re.fullmatch(r'apps/web/public/assets/.+\.(png|jpg|jpeg|webp)', path),
+            'Hotfix path is outside application source/tests/docs/public images: ' + path)
 
     def git(*args):
         result = subprocess.run(['git', *args], cwd=root, capture_output=True)

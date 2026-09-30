@@ -10,7 +10,71 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Release 2026-09-29 — UAT and Production Kamal (current)
+## Hotfix 2026-09-30 evening — claim lines on a phone (current)
+
+After this section, Production serves hotfix source `908e7aab`. `main` `b7d86eb8` (#937) merges it and has the same tree. UAT still serves `7b1b1c11`, which does not have this web fix. This is the first live use of the isolated `deploy-prod-hotfix` path since the Kamal cutover, run from a clean `main` controller at `7b1b1c11`. The GitHub workflow ID is `NOT_DISPATCHED`. Times are Bangkok.
+
+| Env | Operation | Source | Result | Seconds |
+|---|---|---|---|---|
+| Production | `20260930T104206Z-2a3baa82` (preflight) | `908e7aab` on baseline `7b1b1c11` | PREFLIGHT_PASSED_NO_DEPLOYMENT | 29.3 |
+| Production | `20260930T104258Z-3c7568ae` | `908e7aab`: isolated hotfix, no UAT, no migration. Changed paths: `apps/web/src/features/reimbursements/ReimbursementDetailSections.tsx` and the regression spec `ReimbursementPages.plain-thai.qa.spec.ts`. Below `sm`, the claim-detail "รายการเบิก" lines show as cards, because the seven-column table squeezed Thai text to one letter per row on the owner's phone. From `sm` up, the table is unchanged inside `.mangmee-table-scroll`. | ACCEPTED_LINE_DEFERRED 17:54, website ready 17:51:59 (540.5 s), acceptance written 17:53:41. Serving `live`, `OPEN`, 10/10 browser checks, with the owner signing in personally; 4 SSM sessions closed. The controller reran typecheck and the regression spec in its isolated build. Phases: build 173.2 s, publish-and-pull 83.6 s, rollout 117.0 s. | 678.6 |
+
+**The hotfix path took about 11 minutes end to end, with no UAT.** Owner go: "แต่เอาใบเบิกขึ้น hotfix prod ให้ลูกค้าก่อน ส่วนตัวอื่นตามไปทีหลังได้".
+- The claim hub was left out because its queues already had phone cards below `md`.
+- The same round's other phone fixes went to develop and main without a release:
+  - the expense category table moved to the shared scroller;
+  - the LINE draft-claim page got line cards.
+- The draft-claim page is a W00-hashed file, so that change regenerated `docs/research/mangmee-ai-capability-manifest-2026-09-27.json`.
+
+## Hotfixes 2026-09-30 afternoon — signup constraint and promotion poster
+
+After this section, UAT and Production both serve `main` `7b1b1c11`. Every run used the local Kamal path from a clean `main` controller worktree, and GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok.
+
+| Env | Operation | Source (main) | Result | Seconds |
+|---|---|---|---|---|
+| UAT | `20260930T075925Z-c2ca32d0` (prepared by `1c2365fd`, 150 s) | `2d3202e6` (signup hotfix, #929 twin = develop `76fe8766` via #930: migration `20260930150000_signup_discovery_source_sales`. The signup form's "เซลล์ของมั่งมี" source `SALES` was refused by check constraint `CompanySignupRequest_discovery_source_check`; the owner reported 5 errors at 14:40–14:41) | ACCEPTED_LINE_DEFERRED 15:04, smoke (owner urgency), 2 SSM sessions closed. Preflight `20260930T080458Z-d06e2152` PREFLIGHT_PASSED_NO_DEPLOYMENT (31.1 s). | 320.6 |
+| Production | `20260930T080539Z-c0fec60b` | `2d3202e6`, promoted from UAT `c2ca32d0` with no rebuild, after preflight `d06e2152` | ACCEPTED_LINE_DEFERRED 15:13, website ready 15:11:24 (345.4 s), acceptance written 15:12:58. Serving `live`, `OPEN`, 10/10 browser checks, with the owner signing in personally; 4 SSM sessions closed. It applied migration `20260930150000`; nothing else changed since `e52c151a`, as the owner asked. | 484.6 |
+| UAT | `20260930T083206Z-0c27be3d` (prepared by `7c5fb548`, 300 s) | `7b1b1c11` (promotion-poster hotfix, #931 twin = develop `994acf5e` via #932: the rich-menu "โปรโมชั่น" reply sends the owner's package poster `apps/web/public/assets/line/package-poster-20260930.png` before the card, and the "ให้ทีมงานติดต่อกลับ" button is removed) | **FAILED** 15:38 before any mutation: "UAT pre-mutation budget exceeded; reuse the exact validated --prepared-build". `publish-and-pull` took 307.5 s, so pre-mutation work reached 365.8 s against the 360 s cap. No lock or `active.json` was left behind; 2 SSM sessions closed. | 368.2 |
+| UAT | `20260930T083847Z-867eb170` (prepared by `7c5fb548`, 300 s; the same prepared build as `0c27be3d`) | `7b1b1c11` | ACCEPTED_LINE_DEFERRED 15:43, smoke, 2 SSM sessions closed. `publish-and-pull` took 22.4 s and pre-mutation work 70.2 s. Preflight `20260930T084354Z-3d7d675e` PREFLIGHT_PASSED_NO_DEPLOYMENT (27.9 s). | 294.4 |
+| Production | `20260930T084428Z-be573e55` | `7b1b1c11`, promoted from UAT `867eb170` with no rebuild, after preflight `3d7d675e` | ACCEPTED_LINE_DEFERRED 15:55, website ready 15:52:46 (497.6 s), acceptance written 15:54:19. Serving `live`, `OPEN`, 10/10 browser checks, with the owner signing in personally; 4 SSM sessions closed. No migration. The poster URL returned 200 `image/png`, 265474 bytes, before login. | 634.2 |
+
+**The hotfix path refuses migrations and non-source files.** `deploy-prod-hotfix` rejects schema changes: `infra/kamal/README.md` says "hotfix mode requires an unchanged catalog". Its path allowlist (`infra/kamal/release_source.py`) accepted only application `src/` files (ts, tsx, js, jsx, css), e2e specs and `docs/`, so both fixes went through UAT and `promote-prod`. A controller change that allows `apps/web/public/assets` images on the hotfix path was in progress on 2026-09-30; the owner wants future posters to ship that way.
+
+**The UAT pre-mutation budget.** The apply stops before any mutation when pre-mutation work passes 360 s, and a slow `publish-and-pull` (307.5 s on `0c27be3d`) tripped it. The documented fix is to re-run the apply with the same `--prepared-build`: the layers are already pushed, so `867eb170` needed only 22.4 s for that phase. This is not a duplicate dispatch to discover a new error.
+
+**Owner-directed speed on a critical fix.** The owner said "ไม่ต้องตรวจแล้ว ต้องขึ้นเลย", so the controller's 17-step check was stopped after step 08 (typecheck passed). The migration was proven instead on a throwaway Postgres 18.3: the old rule refuses `SALES`, and the new rule accepts `SALES` and still refuses bad values. UAT then applied the migration before Production.
+
+**Poster file names are versioned.** LINE and Cloudflare cache images by URL, so a new poster needs a new file name; the current one is `package-poster-20260930.png`.
+
+---
+
+## Release 2026-09-29 night to 2026-09-30 morning — UAT rounds 7–11 and Production
+
+After this section, UAT and Production both serve `main` `e52c151a`. Every run used the local Kamal path from a clean `main` controller worktree, and GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok.
+
+- Round 7 used `--uat-browser-acceptance`, with the owner typing the credentials themselves in the Claude built-in browser.
+- Rounds 8–11 used `--uat-smoke-acceptance` (customer-acceptance kind `owner_authorized_uat_config_readiness_smoke`), with no admin login. The owner authorised it for rounds 8 and 9 while asleep and chose it for round 10; round 11, the urgent photo fix, kept that choice.
+- The Production release used `--production-browser-acceptance`, with the owner signing in personally. The owner first reviewed the list of changes since the previous Production release and then gave an explicit go.
+
+| Env | Operation | Source (main) | Result | Seconds |
+|---|---|---|---|---|
+| UAT | `20260929T151224Z-ddc79adc` (prepared by `0b833881`, 216 s) | `b72cab2f` (main-only hotfix #906 carrying #905: LINE text-note draft key) | ACCEPTED_LINE_DEFERRED 22:18, website ready 22:16:38 (253 s), browser acceptance written 22:17:49 with the owner signing in personally, 2 SSM sessions closed. **Not promoted**: the owner's LINE test created the draft with no category, and the owner held Production until the category fix. | 347.3 |
+| UAT | `20260929T171047Z-d88af0f2` (prepare only) | `4244add6` (#913 twin = develop `8cafabcc`) | PREPARED_NO_DEPLOYMENT 00:17 on 09-30. Never applied: superseded so that #914 PDF categories could ride along. | 410.0 |
+| UAT | `20260929T173136Z-bbeda54d` (prepared by `0f75908b`, 245 s) | `07c5be1c` (#915 twin = develop `5c2bd5aa`: #903 document Q&A, #904 ledger, #905 text-note draft key, #909 Codex expense review lock, #910 general knowledge, #911 expense categories on LINE text and photos, #912 assumed-year note, #914 PDF categories) | ACCEPTED_LINE_DEFERRED 00:35 on 09-30, smoke, 2 SSM sessions closed. Production preflight `20260929T173615Z-6f93ff70` PREFLIGHT_PASSED_NO_DEPLOYMENT (17.6 s). Not promoted; superseded by round 9. | 257.4 |
+| UAT | `20260929T175952Z-445f673f` (prepared by `3e5b1ff4`, 280 s) | `e7643d91` (#917 twin = develop `2f5d26f5`: adds #916 regression fixes: file questions stay document questions, the as-of line uses the Bangkok day, bare Thai month names) | ACCEPTED_LINE_DEFERRED 01:04, smoke, 2 SSM sessions closed. Preflight `20260929T180425Z-ebe8d3ab` PREFLIGHT_PASSED_NO_DEPLOYMENT (19.2 s). Not promoted: the owner chose to test round 10 in one pass. | 264.0 |
+| UAT | `20260929T234807Z-8679ae44` (prepared by `ab1a6cd1`, 255 s) | `74748a06` (#925 twin = develop `cf783811`: adds #918 LINE reimbursement drafts, #919 answer preferences, #920 plain-Thai LINE claim card, #921/#922 plain-Thai web reimbursement pages, #923 claim locator and raw-path sanitiser, #924 bill-linked evidence wording) | ACCEPTED_LINE_DEFERRED 06:53, smoke, 2 SSM sessions closed. Preflight `20260929T235405Z-295f589a` PREFLIGHT_PASSED_NO_DEPLOYMENT (25.1 s). **Not promoted**: in the owner's LINE test, caption-less receipt photos were intercepted by a week-old open substitute-receipt state on the test shop. | 344.4 |
+| UAT | `20260930T003118Z-4da29c2e` (prepared by `c1200a77`, 244 s) | `e52c151a` (#927 twin = develop `0f97a148`: adds #926, where a caption-less photo is read and drafted, and substitute-receipt work claims a photo only after an explicit ask within the last 30 minutes) | ACCEPTED_LINE_DEFERRED 07:37, smoke, 2 SSM sessions closed. Preflight `20260930T003728Z-2aa69227` PREFLIGHT_PASSED_NO_DEPLOYMENT (26.4 s). | 347.5 |
+| Production | `20260930T011743Z-e16962f3` | `e52c151a`, promoted from UAT `4da29c2e` with no rebuild, after preflight `2aa69227` | ACCEPTED_LINE_DEFERRED 08:28, website ready 08:24:44 (420.7 s), acceptance written 08:28:02. Serving `live`, `OPEN`, 10/10 browser checks, with the owner signing in personally; 4 SSM sessions closed. No migration and no `infra/kamal` change since the previous Production release (`0cb704db`). | 659.8 |
+
+**Smoke acceptance is promotable; Production acceptance is never smoke.** A `--uat-smoke-acceptance` run needs no admin login, yet it still signs ACCEPTED_LINE_DEFERRED with a promotion bundle, and `promote-prod` accepts that receipt for 24 hours. Use smoke only with the owner's consent. Production promotion still needs the owner's own sign-in and the 10 browser checks.
+
+**Superseded UAT rounds need no cleanup.** Rounds 7–10 were never promoted. Each later round replaced the release on the UAT hosts, and the prepare and apply that followed the unapplied prepare `d88af0f2` ran without any cleanup.
+
+**macOS has no `timeout`.** A `promote-prod` preflight wrapped in `timeout` exits 127 before the controller starts, so nothing runs. Run the controller without it.
+
+---
+
+## Release 2026-09-29 — UAT and Production Kamal
 
 The owner started both UAT hosts at about 09:24 Bangkok; they had been stopped since 2026-09-26. Every release below used the local Kamal path from a clean `main` controller worktree, with `--uat-browser-acceptance` or `--production-browser-acceptance`. In each case the owner typed the credentials themselves in the Claude built-in browser. The controller then verified `/auth/me` identity and permissions, the platform-access page, public `OPEN`, logout, and the 401 after logout. GitHub workflow IDs are `NOT_DISPATCHED`.
 
@@ -563,6 +627,16 @@ done
 **`run-a5-capacity-mutating.sh` ต้องการ `minTaskCount >= 1`** ต้องเปิดก่อนรัน U5 capacity
 
 ### Production
+
+**Promotion poster by hotfix (owner 2026-09-30: short path, no console yet).** Ship a new poster
+with `infra/kamal/deploy-prod-hotfix` on top of the serving Production SHA, not through UAT and
+`promote-prod`. Add the image under `apps/web/public/assets/` with a new versioned file name (for
+example `package-poster-YYYYMMDD.png`) and never overwrite a served one, because LINE and Cloudflare
+cache images by URL. LINE needs PNG or JPEG under 1 MB, because the same URL is also the preview.
+The code change that points to it is ordinary `.ts` (today `PACKAGE_POSTER_PATH` in
+`line-staff-menu.logic.ts`). Declare the image, the `.ts` and each changed spec with `--hotfix-path`,
+pass each changed spec with `--regression-test` ([rules](../../infra/kamal/README.md)), and land the
+same change on develop and main so the next release keeps it.
 
 Production release ใหม่ต้องผ่าน signed UAT Passport และ Production READY แล้ว dispatch
 `deploy-production-v2.yml` ตาม `uat-production-v2-deployment.md`; ห้ามเรียก `deploy.sh` จาก

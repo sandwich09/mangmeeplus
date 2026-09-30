@@ -1690,6 +1690,79 @@ describe('assertCompanyAiBudget split policy gate', () => {
   }
 });
 
+// Owner 2026-09-30 ("ข้อความตอนเครดิตหมดระหว่างส่งซ้ำ ต้องยอมให้ใช้เกินโควต้า"): the LINE ledger drain's
+// retry of a turn passes the cap; only the two cap comparisons yield.
+describe('admitOverCap — the LINE ledger drain retry', () => {
+  const drainStep = (over: Record<string, unknown> = {}) => ({ budgetBucket: 'CHAT', admitOverCap: true, ...over }) as any;
+  /** SHARED: TOTAL 10,000 with an admin chat credit of 8,000. */
+  const shared = (spend: number, chatSpend: number, over: Record<string, unknown> = {}) => ({ client: {
+    companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: 10_000, chatMonthlyBudgetSatang: 8_000 }) },
+    companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: spend }) },
+    companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: chatSpend }) },
+    ...over,
+  } } as any);
+
+  it('admits past the TOTAL and the CHAT cap and logs it, with no exceeded event', async () => {
+    assert.deepEqual(await assertCompanyAiBudget(shared(10_000, 8_000), budgetConfig, 'co-drain', bangkokMonthKey(), drainStep()),
+      { allowed: true });
+    assert.deepEqual(warnings.filter((w) => w?.msg === 'ai.budget.admitted_over_cap').map((w) => w.budgetScope), ['TOTAL', 'CHAT']);
+    assert.equal(warnings.filter((w) => w?.msg === 'ai.company_budget.exceeded').length, 0);
+  });
+
+  it('the live path (no admitOverCap) still refuses at the same spend', async () => {
+    const live = drainStep({ admitOverCap: undefined });
+    const total = await assertCompanyAiBudget(shared(10_000, 8_000), budgetConfig, 'co-live', bangkokMonthKey(), live);
+    assert.equal(total.allowed, false);
+    if (!total.allowed) assert.equal(total.reason, 'exceeded');
+    assert.deepEqual(await assertCompanyAiBudget(shared(8_000, 8_000), budgetConfig, 'co-live', bangkokMonthKey(), live),
+      { allowed: false, reason: 'exceeded', spendSatang: 8_000, budgetSatang: 8_000, override: true, budgetScope: 'CHAT' });
+  });
+
+  it('keeps every other refusal: an unreadable meter or CHAT row, an invalid policy, a busy lease', async () => {
+    const throwing = { findUnique: async () => { throw new Error('DB_DOWN'); } };
+    assert.deepEqual(await assertCompanyAiBudget(shared(0, 0, { companyAiMonthlyUsage: throwing }), budgetConfig, 'co-meter-down',
+      bangkokMonthKey(), drainStep()), { allowed: false, reason: 'unavailable' });
+    assert.deepEqual(await assertCompanyAiBudget(shared(0, 0, { companyAiMonthlyBucketUsage: throwing }), budgetConfig, 'co-chat-down',
+      bangkokMonthKey(), drainStep()), { allowed: false, reason: 'unavailable', budgetScope: 'CHAT' });
+    const invalid = shared(0, 0, { companyAiConfiguration: { findUnique: async () => ({
+      monthlyBudgetSatang: 100, budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 90, ocrMonthlyBudgetSatang: 90 }) } });
+    assert.deepEqual(await assertCompanyAiBudget(invalid, budgetConfig, 'co-invalid', bangkokMonthKey(), drainStep()),
+      { allowed: false, reason: 'unavailable' });
+
+    let release!: () => void;
+    let started!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    const first = runWithCompanyAiBudgetAdmission(shared(0, 0), budgetConfig, undefined, 'co-drain-busy',
+      async () => { started(); await held; return 'first'; }, 'chat');
+    await ready;
+    try {
+      const retry = await runWithCompanyAiBudgetAdmission(shared(10_000, 8_000), budgetConfig, undefined, 'co-drain-busy',
+        async () => 'unexpected', 'chat', drainStep());
+      assert.equal(retry.allowed, false);
+      if (!retry.allowed) assert.equal(retry.reason, 'busy');
+    } finally { release(); await first; }
+  });
+
+  // Owner 2026-09-30 ("ไม่ทำต่อ"): an admin's explicit closure — a cap of 0 — wins over every over-cap admission.
+  it('never passes a cap of 0: an admin-closed chat credit, or a total of 0, still refuses', async () => {
+    const closedChat = shared(0, 0, { companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: 10_000, chatMonthlyBudgetSatang: 0 }) } });
+    assert.deepEqual(await assertCompanyAiBudget(closedChat, budgetConfig, 'co-closed-chat', bangkokMonthKey(), drainStep()),
+      { allowed: false, reason: 'exceeded', spendSatang: 0, budgetSatang: 0, override: true, budgetScope: 'CHAT' });
+    const zeroTotal = shared(0, 0, { companyAiConfiguration: { findUnique: async () => null } });
+    const total = await assertCompanyAiBudget(zeroTotal, { ...budgetConfig, aiMonthlyBudgetSatang: 0 }, 'co-zero-total', bangkokMonthKey(),
+      drainStep({ budgetBucket: 'OCR' }));
+    assert.equal(total.allowed, false);
+    if (!total.allowed) assert.equal(total.reason, 'exceeded');
+    assert.equal(warnings.filter((w) => w?.msg === 'ai.budget.admitted_over_cap').length, 0);
+  });
+
+  it('runs the action under the lease over the cap, so its caller meters it like any turn', async () => {
+    assert.deepEqual(await runWithCompanyAiBudgetAdmission(shared(10_000, 8_000), budgetConfig, undefined, 'co-drain-run',
+      async () => 'answered', 'chat', drainStep()), { allowed: true, value: 'answered' });
+  });
+});
+
 // ── Phase E1b: the shared refusal mapper and the bucket aggregate ────────────
 
 describe('companyAiBudgetRefusal with split scopes (spec §9.1, §12.3)', () => {
