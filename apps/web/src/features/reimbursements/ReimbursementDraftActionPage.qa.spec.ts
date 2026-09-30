@@ -62,6 +62,16 @@ describe('ReimbursementDraftActionView', () => {
     }
   });
 
+  it('shows each line as a card on a phone and keeps the table from sm up (Owner, 2026-09-30)', () => {
+    const html = render(ready({ status: 'preview', preview: created([taxi, pens], 'REQUIRED') }));
+    // Before: only the four-column table, which left the item a sliver of a 390 px phone.
+    assert.match(html, /<div class="[^"]*\bsm:hidden\b[^"]*" data-testid="draft-line-cards">/u);
+    assert.match(html, /<div class="mangmee-table-scroll mt-4 hidden sm:block" data-testid="draft-lines-table"><table /u);
+    const cards = visible(html.slice(html.indexOf('data-testid="draft-line-cards"'), html.indexOf('data-testid="draft-lines-table"')));
+    for (const text of ['ค่าแท็กซี่', '1,234.50 บาท', '27 ก.ย. 2569', 'ยังไม่ได้เลือกหมวด · ยังไม่มีไฟล์แนบ', 'ปากกาและแฟ้ม', '380.00 บาท', '26 ก.ย. 2569',
+      'วัสดุอุปกรณ์ · มีไฟล์แนบ · บิลต้นทาง: INV-0042 · ร้านเครื่องเขียนสมใจ · 26 ก.ย. 2569']) assert.ok(cards.includes(text), text);
+  });
+
   it('renders terminal and unknown recovery states without offering a second create', () => {
     const applied = render(ready({ status: 'applied', receipt: { ...receipt, currentState: 'DRAFT' } }));
     assert.ok(visible(applied).includes('ยอด 1,614.50 บาท · สถานะปัจจุบัน ร่าง'));

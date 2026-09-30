@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "ca1d9e13aa39341a9589fc9887c7cfc02b3effe4",
-  "checkoutBranch": "claude/advisor-r1-s8-cards-20260930",
+  "sourceRevision": "8356f4ea4258ca5ab7ae8cb01a256f6d07600b28",
+  "checkoutBranch": "claude/phone-tables-develop-20260930",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/web/src/features/reimbursements/ReimbursementDraftActionPage.tsx",
-      "sha256": "02671762a7147ab41a533fabfddf65628fc76888cd99d620542dc29d2e2cea1c"
+      "sha256": "6cceecaf3a4407f443b3523b370d835435d670b49eefbc101b579e5859be41da"
     },
     {
       "path": "apps/web/src/features/reports/ReportsWorkspacePage.tsx",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T10:22:26.985Z",
-  "manifestDigest": "494480fe9ccbd4e96090b65d9d5eb18b942a47e77bbde487a54d5e75b43e702f"
+  "generatedAt": "2026-09-30T10:49:54.217Z",
+  "manifestDigest": "4c94acbce50703c1688ffeb400a972031b3d939ea20fc5e94bd42f733c9d93f6"
 }

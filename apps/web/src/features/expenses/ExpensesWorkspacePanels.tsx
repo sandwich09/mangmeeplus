@@ -194,7 +194,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
         {error ? <div className="p-4"><StateBanner error={error} /></div> : loading ? (
           <LoadingState label="กำลังโหลด..." />
         ) : (
-          <div className="overflow-x-auto">
+          <div className="mangmee-table-scroll">
             <table className="mangmee-table">
               <thead><tr>{['ชื่อหมวดหมู่', ...(showsTax ? ['Tax Code เริ่มต้น'] : []), 'ที่มา', 'เปิดใช้', ''].map((h) => <th key={h} className={cx('!text-[13px]', (h === 'ที่มา' || h === 'เปิดใช้') && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
               <tbody>
