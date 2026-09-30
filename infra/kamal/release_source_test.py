@@ -48,7 +48,7 @@ class SourceContracts(unittest.TestCase):
     def put(self, path, content):
         p = self.root / path
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
+        p.write_bytes(content if isinstance(content, bytes) else content.encode())
 
     def commit(self):
         self.git('add', '.')
@@ -80,6 +80,47 @@ class SourceContracts(unittest.TestCase):
         self.assertEqual(hotfix_source(self.root, self.base, candidate, paths)['changedPaths'], sorted(paths))
         with self.assertRaisesRegex(ValueError, 'outside application'):
             hotfix_source(self.root, self.base, candidate, ['packages/contracts/package.json'])
+
+    def test_public_raster_images_ship_alone_or_with_their_source_pointer(self):
+        images = [f'apps/web/public/assets/line/poster-20261001.{ext}' for ext in ('png', 'jpg', 'jpeg', 'webp')]
+        for path in images: self.put(path, b'\x89PNG\r\n\x1a\n\0' + path.encode())
+        image_only = self.commit()
+        self.assertEqual(hotfix_source(self.root, self.base, image_only, images)['changedPaths'], sorted(images))
+        paths = ['apps/web/public/assets/line/poster-20261002.png', self.path]
+        self.put(paths[0], b'\x89PNG\r\n\x1a\n\0\xff')
+        self.put(self.path, "export const POSTER = '/assets/line/poster-20261002.png';\n")
+        with_pointer = self.commit()
+        self.assertEqual(hotfix_source(self.root, image_only, with_pointer, paths)['changedPaths'], sorted(paths))
+
+    def test_rejects_other_public_files_and_images_outside_public_assets(self):
+        for path in ('apps/web/public/assets/line/poster.svg', 'apps/web/public/assets/line/poster.js',
+                     'apps/web/public/assets/line/poster.html', 'apps/web/public/assets/line/poster.json',
+                     'apps/web/public/assets/line/poster.gif', 'apps/web/public/assets/line/poster.PNG',
+                     'apps/web/public/assets/line/poster.png.svg', 'apps/web/public/legal/releases/v4/terms-th.html',
+                     'apps/web/public/poster.png', 'apps/web/public/brand/logo.png', 'apps/web/public/assets.png',
+                     'apps/web/src/poster.png', 'apps/api/public/assets/poster.png',
+                     'apps/web/public/assets/line/poster.png/', 'apps/web/public/assets/line/poster.png\n'):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'outside application'):
+                hotfix_source(self.root, self.base, self.base, [path])
+
+    def test_image_paths_keep_traversal_alias_symlink_and_executable_checks(self):
+        for path in ('apps/web/public/assets/../../../../infra/kamal/release.png', 'apps/web/public/assets/../index.png',
+                     '/apps/web/public/assets/line/poster.png', 'apps\\web\\public\\assets\\line\\poster.png'):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'Invalid hotfix path'):
+                hotfix_source(self.root, self.base, self.base, [path])
+        image = 'apps/web/public/assets/line/poster.png'
+        self.put(image, b'\x89PNG\r\n\x1a\n\0')
+        candidate = self.commit()
+        for alias in ('apps/web/public/assets/line/./poster.png', 'apps/web/public/assets//line/poster.png'):
+            with self.subTest(path=alias), self.assertRaisesRegex(ValueError, 'complete declared'):
+                hotfix_source(self.root, self.base, candidate, [alias])
+        (self.root / image).chmod(0o755)
+        executable = self.commit()
+        (self.root / image).unlink(); (self.root / image).symlink_to('/etc/passwd')
+        symlink = self.commit()
+        for bad in (executable, symlink):
+            with self.subTest(candidate=bad), self.assertRaisesRegex(ValueError, 'symlinks or executable'):
+                hotfix_source(self.root, candidate, bad, [image])
 
     def test_rejects_symlinks_and_wrong_baseline(self):
         p = self.root / self.path

@@ -157,5 +157,26 @@ class ReleasePaths(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'invalid signed artifact'): r.source_and_build()
             self.assertFalse(any('build-complete.py' in ' '.join(c) for c in calls))
 
+    def test_image_only_hotfix_rebuilds_every_image_and_runs_its_declared_regression(self):
+        spec = 'apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts'
+        with tempfile.TemporaryDirectory() as tmp:
+            r = m.Release.__new__(m.Release); r.work = Path(tmp); r.pinned_sha = 'a' * 40
+            r.release_path = 'hotfix'; r.receipt = {}; calls = []
+            r.args = argparse.Namespace(environment='production', apply=True, prepared_build=None, regression_test=[spec],
+                                        hotfix_path=['apps/web/public/assets/line/package-poster-20261001.png'])
+            def command(args, cwd=None, **kw):
+                calls.append((args, cwd))
+                if args[:3] == ['git', 'worktree', 'add']:
+                    (Path(args[4]) / spec).parent.mkdir(parents=True); (Path(args[4]) / spec).write_text('')
+                elif args[1:2] == [str(m.HELPERS / 'build-complete.py')]:
+                    m.write(Path(args[3]) / 'build-result.json', {'status': 'passed'})
+            r.command = command
+            r.source_and_build()
+            # build-complete.py builds api-web (which copies apps/web/public), ai-gateway, workers and tools.
+            self.assertEqual(calls[1][0][1:], [str(m.HELPERS / 'build-complete.py'), str(r.source), str(r.build_dir)])
+            self.assertEqual(calls[2], (['pnpm', 'exec', 'tsx', '--test', spec.removeprefix('apps/api/')], r.source / 'apps/api'))
+            self.assertEqual(len(calls), 3)
+            self.assertEqual(r.receipt['hotfixValidation']['regressionTests'], [spec])
+
 
 if __name__ == '__main__': unittest.main()
