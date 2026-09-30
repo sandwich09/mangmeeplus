@@ -34,3 +34,19 @@ Next: implement R1 (S0, S2a, S1, S3, S8) per plan section 3; run each slice's re
 - 2026-09-30 ~16:00 owner decision (replaces "never prices", real-model testing still paused): added `billing.get_package_catalog` (spec §5.1a). Reads `BillingService.catalog()` (the public package-page catalog, ACTIVE-policy prices), VAT from the policy's `taxTreatment` via `quoteTotals`, menus from `packageMenuLabels` (moved from the web's `dealMenuLabels` into contracts; the web re-exports the old name). `ai.tool.invoke` only; package page link only for `company.plan.manage`. Whitelisted data: no AI budget, revision, mode or codes. Router/control/answer rules updated; the casual (tool-less, incl. group chat) prompt now names no package price and no MangmeePlus cost. Unit specs only; eval set grown to 32 turns (P-07 now expects the price; P-24..P-32 catalog, VAT via one runner pass per `ADVS2A_TAX`), not run.
 - VAT today: the production policy was recorded as NOT_VAT_REGISTERED at live enablement (runbook, 2026-09-21), so answers give prices as they are; not re-read from the production DB in this work.
 - Poster vs code (spec §11 items 22–23): prices, limits, receipts, yearly ×10 and ENTERPRISE ภ.ง.ด.53/50 ทวิ match; the 1,990 THB setup service and ENTERPRISE "*Custom" are not in the catalog (not answered); poster "สลิป" vs page "ใบเสร็จ"; the page's "เครดิต AI 80 เครดิต/เดือน" is not on the poster. Group chat cannot answer prices (no tools) — owner question.
+- Real-model testing resumed 2026-09-30 ~23:20 (owner "เริ่มทดสอบบนเครื่องได้เลย"); 32-turn set, strict scorer, pass bar = two consecutive runs with every turn passing:
+
+| Run | Code | Score | THB | Failing cases (cause) |
+|---|---|---|---|---|
+| r5 | 06feb843 | 30/32 | 26.89 | P-31 "กำไรต่อแพ็กเกจ" got the unsold P&L line (keyword scope policy); P-32 "มี 3 แบบ" count failed grounding, plus an unasked buy line |
+| r6 | 14267e7f | 30/32 | 27.09 | P-31 correct refusal cited no source, fell to the dead end; P-32 count again |
+| r7 | 2b1d79b9 | 31/32 | 27.24 | P-31 echoed the Latin brand "MangmeePlus" from the rule text |
+| r8 | 8fd61be4 | invalid | 15.40 | run crossed midnight: P-17 delivery re-read changed, P-18..P-32 not run (fixture business date changed) |
+| r9 | 8fd61be4 | 30/32 | 24.97 | P-02 fixture term ended before 1 Nov so no restart date existed (harness fixed: term today+40); P-28 "คุ้มกว่ารายเดือน" |
+| r10 | ca9668ed | 29/32 | 27.56 | P-01 "margin", P-12 "reset" (English words); P-32 unasked "หากต้องการเปลี่ยนแพ็กเกจ…" close |
+| r11 | c33f0339 | 31/32 | 27.45 | P-02 answered 63 left and the period 1–31 ต.ค. but not the restart date 1 พ.ย. (resetsOn was in the data) |
+
+- Spend: 236.50 THB of the 250 THB slice cap (r1–r4 59.88 + r5–r11 176.62). Pass bar NOT met; another run would pass the cap, so testing stopped for a cap decision.
+- Next fix (not made, unmeasured): ANSWER_PROMPT — for a monthly allowance, say the day the count starts again from receipts.resetsOn. Then two consecutive runs (~55 THB).
+- Whole-chain on 1 Oct: two pre-existing first-of-month date tests fail on any branch (orchestrator.agent.spec.ts "ช่วง: 1 … – 1 …" and line-ai-turn.use-case.spec.ts "/– 1 /"); every earlier run on 30 Sep passed.
+
