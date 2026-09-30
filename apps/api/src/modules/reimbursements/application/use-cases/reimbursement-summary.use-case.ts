@@ -71,9 +71,10 @@ export class GetReimbursementAiSummaryUseCase {
 /** Claims still waiting on someone. APPROVED is the transient hand-off to finance or payment. */
 const BACKLOG_STATUSES = ['PENDING_APPROVAL', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'APPROVED'];
 
-/** The web's desk words (`CURRENT_DESK_LABELS` in reimbursements.model.ts) plus the two waits only this view names. */
+/** The web's desk words (`CURRENT_DESK_LABELS` in reimbursements.model.ts) plus the two waits only this view names.
+ *  Finance says which of its two waits it is (eval 2026-09-30: a bare "ฝ่ายการเงิน" came back as "(รออนุมัติ)"). */
 export const BACKLOG_DESK_LABELS = {
-  finance: 'ฝ่ายการเงิน',
+  finance: 'ฝ่ายการเงิน (รอตรวจสอบ)',
   payment: 'ฝ่ายการเงิน (รอบันทึกจ่าย)',
   no_active_approver: 'ไม่มีผู้อนุมัติที่ยังใช้งานอยู่',
   status_pending: 'รอระบบปรับสถานะ',

@@ -111,7 +111,7 @@ describe('GetReimbursementApprovalBacklogUseCase — whose desk (advisor spec §
     const result = await run(r);
 
     assert.deepEqual(result.desks, [
-      { kind: 'finance', label: 'ฝ่ายการเงิน', count: 2, totalsByCurrency: [{ currency: 'THB', amount: '200.00' }], oldestApprovedOn: '2026-09-27', longestWaitDays: 3 },
+      { kind: 'finance', label: 'ฝ่ายการเงิน (รอตรวจสอบ)', count: 2, totalsByCurrency: [{ currency: 'THB', amount: '200.00' }], oldestApprovedOn: '2026-09-27', longestWaitDays: 3 },
       { kind: 'payment', label: 'ฝ่ายการเงิน (รอบันทึกจ่าย)', count: 3,
         totalsByCurrency: [{ currency: 'THB', amount: '160.00' }, { currency: 'USD', amount: '40.50' }], oldestApprovedOn: '2026-09-26', longestWaitDays: 4 },
       { kind: 'status_pending', label: 'รอระบบปรับสถานะ', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-23', longestWaitDays: 7 },

@@ -86,7 +86,7 @@ describe('advisor S3: reimbursement.get_approval_backlog wiring and prompt rules
     assert.deepEqual(invoked, [{ requester: 'me' }]);
     const compose = calls.find((call) => call.usageTag === 'line.compose')!;
     assert.match(compose.systemPrompt, /the sharedPile is its own line \(claims several people can approve\) and is never added to, split among or named after any person/);
-    assert.match(compose.systemPrompt, /lead with what was asked .* before any full list/);
+    assert.match(compose.systemPrompt, /the first line answers exactly the group asked about .* opens with the grand total only when the question is about all claims/);
     assert.match(compose.systemPrompt, /for what to do next use only a group's note, never a guessed cause or fix/);
     // Every number is the tool's own, so the grounded answer is kept; the own-scope line is added.
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
@@ -118,7 +118,8 @@ describe('advisor S3: reimbursement.get_approval_backlog wiring and prompt rules
   // was read as a broken round and the user got "ยังดึงข้อมูลไม่ได้" instead of the question.
   it('treats a planning round that only asks the user a question as that question', async () => {
     const question = 'การอนุมัติใบเบิกต้องทำบนเว็บค่ะ อยากให้น้องมั่งมีสรุปใบที่รออนุมัติให้ดูก่อนไหมคะ';
-    const { provider } = recordingProvider([JSON.stringify({ questions: [{ index: 0, text: question }] })]);
+    // Run 3 (R-06): the planner wrote "หนูมั่งมี"; her name is the only self-reference.
+    const { provider } = recordingProvider([JSON.stringify({ questions: [{ index: 0, text: question.replace('น้องมั่งมี', 'หนูมั่งมี') }] })]);
     const result = await runSemanticTurnV2({ req: request('อนุมัติให้หมดเลย', ['ai.tool.invoke', 'reimbursement.approve'], {}, 'write'),
       provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
       async invoke(): Promise<ToolResult> { throw new Error('no tool may run'); } });
