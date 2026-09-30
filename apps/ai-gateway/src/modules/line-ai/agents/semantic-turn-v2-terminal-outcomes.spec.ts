@@ -302,7 +302,7 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
   }
 
   it('composes a manager\'s answer under the package rules and links the package page', async () => {
-    const data = { package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-10-15', renewal: 'ต่ออายุอัตโนมัติ' },
+    const data = { package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-10-15' },
       capacity: { branches: { used: 4, limit: 5, remaining: 1 }, members: { used: 3, limit: 10, remaining: 7 } },
       receipts: { used: 70, limit: 100, remaining: 30, cadence: 'ตามรอบที่ชำระ', periodStartOn: '2026-09-15', periodEndsOn: '2026-10-15',
         resetsOn: null, expiresOn: null, additional: null, paceNote: null,
@@ -324,10 +324,10 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     });
     const compose = calls.find((call) => call.usageTag === 'line.compose');
     assert.ok(compose);
-    assert.match(compose.systemPrompt, /never name, compare or recommend any package other than package\.label/);
+    assert.match(compose.systemPrompt, /In any answer about packages, whether or not billing\.get_package_usage ran: never state or guess a price, never name, compare or recommend any package other than this shop's own package\.label/);
     assert.match(compose.systemPrompt, /never suggest upgrading, a bigger package or buying more/);
     assert.match(compose.systemPrompt, /'ขาดประมาณ N ใบ' with N = projectedShortfall/);
-    assert.match(compose.systemPrompt, /add no line inviting them to upgrade, change, add to, buy or manage the package/);
+    assert.match(compose.systemPrompt, /add no line inviting them to upgrade, change, add to, buy or manage a package/);
     assert.match(compose.systemPrompt, /never write a web address yourself/);
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.match(result.replyText, /ขาดประมาณ 50 ใบ/);

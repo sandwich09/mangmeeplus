@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "633a9977c5c911d7912787f9ce0d74f3ae8e2d1f",
+  "sourceRevision": "74c41de3fae40960907905b8178ffb70957405c5",
   "checkoutBranch": "claude/advisor-r1-s2a-package-20260930",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -73,7 +73,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-package-tools.use-case.ts",
-      "sha256": "a9d3df642a3e86888781713226719c74429ac33a681cc307a6a20250d985e3d9"
+      "sha256": "da919b822013b91070963f600b4639fe0739778350f71f42c4677311e86f5fa1"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-procurement-ledger-tools.use-case.ts",
@@ -8735,6 +8735,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T05:38:16.891Z",
-  "manifestDigest": "51801943bfcd501479e9f68d859d863ce6328e28a68da5a0657ec5d293a704c7"
+  "generatedAt": "2026-09-30T05:47:31.504Z",
+  "manifestDigest": "00e20a78da5ed898f1a9c2db23af1324f4386f89149ea36e56f2732ec653ad30"
 }

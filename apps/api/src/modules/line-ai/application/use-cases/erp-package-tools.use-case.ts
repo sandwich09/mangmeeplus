@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { addCivilDays, billingPlanLabel, civilDate, type SourceRef, type ToolResult } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
-import type { BillingAccount } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { BillingService } from '../../../billing/application/billing.service';
 import { isReceiptAddOnKind, visibleReceiptLots } from '../../../billing/application/billing-receipt-grants';
@@ -20,16 +19,6 @@ const PACE_NOTES = {
   no_single_cycle: 'ใบเสร็จที่ใช้ได้มาจากหลายรอบหรือมีส่วนที่ผู้ดูแลเพิ่มให้ จึงคาดการณ์จากอัตราการใช้รอบเดียวไม่ได้',
 } as const;
 
-/** The package page's own reading of the renewal columns (BillingService.status): an old subscription
- *  row still means card auto-renew, and a stopped or paused renewal is not one. Plain Thai, as every
- *  value an answer may quote: eval 2026-09-30 saw a raw code repeated to the customer. */
-function renewal(account: BillingAccount | null): string {
-  const mode = account?.renewalMode !== 'NONE' ? account?.renewalMode : account?.baseSubscriptionId ? 'CARD_AUTO' : 'NONE';
-  if (mode === 'CARD_ONCE' || mode === 'PROMPTPAY_ONCE') return 'จ่ายครั้งเดียว ไม่มีการตัดเงินงวดถัดไป';
-  return (mode === 'CARD_AUTO' || mode === 'PROMPTPAY_RENEW') && !account?.cancelAtPeriodEnd && !account?.collectionPauseJson
-    ? 'ต่ออายุอัตโนมัติ' : 'ไม่ได้ตั้งต่ออายุอัตโนมัติ';
-}
-
 const room = (used: number, limit: number | null) => ({ used, limit, remaining: limit === null ? null : Math.max(0, limit - used) });
 
 /**
@@ -37,7 +26,10 @@ const room = (used: number, limit: number | null) => ({ used, limit, remaining: 
  * room, and receipt reads with an API-computed projection — the numbers the package page shows
  * (BillingService.usage, effectivePlanCapacity, the plan-limit counts). Read-only: never
  * BillingService.status() (it calls Stripe and throws for a non-manager) or capacity() (it locks the
- * company row), never a price, never another package.
+ * company row), never a price, never another package. Every value is a number, a civil date or plain
+ * Thai an answer may quote. No renewal mode: it is not among the figures the owner approved for chat
+ * (spec §10 item 1), and in the 2026-09-30 eval it drew unasked renewal notes that became buy/change
+ * nudges.
  */
 @Injectable()
 export class BillingGetPackageUsageTool implements ErpReadToolPort {
@@ -54,11 +46,10 @@ export class BillingGetPackageUsageTool implements ErpReadToolPort {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf, errorCode: PACKAGE_MANAGER_REQUIRED };
     }
     const now = new Date(asOf), today = civilDate(now);
-    const [term, usage, account, branches, members] = await Promise.all([
+    const [term, usage, branches, members] = await Promise.all([
       this.prisma.client.companyPlanTerm.findUnique({ where: { companyId: ctx.companyId }, select: { tierKey: true, branchLimit: true,
         employeeLimit: true, capacityOverride: true, billingReceiptAccountId: true, termEndsAt: true, termDisabledAt: true } }),
       this.billing.usage(ctx.companyId),
-      this.billing.account(ctx.companyId),
       planCapacityUsed.branches(this.prisma.client, ctx.companyId),
       planCapacityUsed.members(this.prisma.client, ctx.companyId),
     ]);
@@ -90,7 +81,7 @@ export class BillingGetPackageUsageTool implements ErpReadToolPort {
       toolName: this.toolName,
       status: 'ok',
       data: {
-        package: { label: billingPlanLabel(term?.tierKey), termEndsOn, renewal: renewal(account) },
+        package: { label: billingPlanLabel(term?.tierKey), termEndsOn },
         capacity: { branches: room(branches, capacity?.branchLimit ?? null), members: room(members, capacity?.employeeLimit ?? null) },
         receipts: {
           used: usage.used, limit: usage.limit, remaining: usage.remaining, cadence: monthly ? 'รายเดือน เริ่มนับใหม่ทุกต้นเดือน' : 'ตามรอบที่ชำระ',

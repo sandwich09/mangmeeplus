@@ -9,7 +9,7 @@ const NOW = new Date('2026-09-28T03:00:00.000Z');
 const MANAGER = { companyId: 'c1', userId: 'u1', membershipId: 'm1', permissions: ['ai.tool.invoke', 'company.plan.manage'], locale: 'th' } as any;
 
 type Usage = Record<string, unknown>;
-function fakes(options: { term?: Record<string, unknown> | null; usage: Usage; lots?: Array<Record<string, unknown>>; account?: Record<string, unknown> | null }) {
+function fakes(options: { term?: Record<string, unknown> | null; usage: Usage; lots?: Array<Record<string, unknown>> }) {
   const calls: string[] = [];
   const prisma = { client: {
     companyPlanTerm: { findUnique: async () => { calls.push('term'); return options.term === undefined ? TERM : options.term; } },
@@ -21,7 +21,6 @@ function fakes(options: { term?: Record<string, unknown> | null; usage: Usage; l
   } };
   const billing = {
     usage: async (companyId: string) => { calls.push('usage'); assert.equal(companyId, 'c1'); return options.usage; },
-    account: async () => { calls.push('account'); return options.account ?? null; },
   };
   return { tool: new BillingGetPackageUsageTool(prisma as any, billing as any), calls };
 }
@@ -45,12 +44,11 @@ describe('billing.get_package_usage (advisor spec §5.1)', () => {
 
   it('answers a paid allowance with its lot period, the projection and the package page link', async (t) => {
     t.mock.timers.enable({ apis: ['Date'], now: NOW });
-    const { tool } = fakes({ usage: PAID_USAGE, lots: [LOT, { ...LOT, kind: 'ADD_ON_PAID', serviceStart: new Date('2026-09-20T03:00:00.000Z') }],
-      account: { renewalMode: 'CARD_AUTO', baseSubscriptionId: 'sub-1', cancelAtPeriodEnd: false, collectionPauseJson: null } });
+    const { tool } = fakes({ usage: PAID_USAGE, lots: [LOT, { ...LOT, kind: 'ADD_ON_PAID', serviceStart: new Date('2026-09-20T03:00:00.000Z') }] });
     const result = await tool.execute(MANAGER);
     assert.equal(result.status, 'ok');
     assert.deepEqual(result.data, {
-      package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-10-15', renewal: 'ต่ออายุอัตโนมัติ' },
+      package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-10-15' },
       capacity: { branches: { used: 4, limit: 5, remaining: 1 }, members: { used: 3, limit: 10, remaining: 7 } },
       receipts: { used: 70, limit: 100, remaining: 30, cadence: 'ตามรอบที่ชำระ', periodStartOn: '2026-09-15', periodEndsOn: '2026-10-15',
         resetsOn: null, expiresOn: null, additional: null,
@@ -114,15 +112,5 @@ describe('billing.get_package_usage (advisor spec §5.1)', () => {
     assert.deepEqual(strings.filter((value) => /[A-Za-z]/u.test(value.replace('(PRO)', ''))), []);
     assert.notEqual(first.asOf, second.asOf);
     assert.equal(lineReadResultHash(first), lineReadResultHash(second));
-  });
-
-  it('reads the renewal the way the package page does', async (t) => {
-    t.mock.timers.enable({ apis: ['Date'], now: NOW });
-    const renewal = async (account: Record<string, unknown> | null) =>
-      ((await fakes({ usage: PAID_USAGE, lots: [LOT], account }).tool.execute(MANAGER)).data as any).package.renewal;
-    assert.equal(await renewal(null), 'ไม่ได้ตั้งต่ออายุอัตโนมัติ');
-    assert.equal(await renewal({ renewalMode: 'PROMPTPAY_ONCE' }), 'จ่ายครั้งเดียว ไม่มีการตัดเงินงวดถัดไป');
-    assert.equal(await renewal({ renewalMode: 'NONE', baseSubscriptionId: 'sub-1' }), 'ต่ออายุอัตโนมัติ');
-    assert.equal(await renewal({ renewalMode: 'PROMPTPAY_RENEW', cancelAtPeriodEnd: true }), 'ไม่ได้ตั้งต่ออายุอัตโนมัติ');
   });
 });
