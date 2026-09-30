@@ -1221,9 +1221,10 @@ describe('ProcessLineWebhookUseCase', () => {
         assert.equal(card.type, 'flex', 'trial policy must use the standard assistant card');
         assert.equal(card.contents.header.contents[0].text, 'การเริ่มใช้งานและการต่ออายุ');
         assert.match(JSON.stringify(card.contents.body), /ไม่เรียกเก็บเงินอัตโนมัติ/);
-        // Owner 2026-09-30 (advisor spec §2.2): the staff door replaces the public package page.
+        // Owner 2026-09-30 (advisor spec §2.2): the company's official staff LINE replaces the public
+        // package page; the typed "ติดต่อเจ้าหน้าที่" command keeps its own inbox route.
         assert.deepEqual(card.contents.footer.contents.map((button: any) => button.action), [
-          { type: 'message', label: 'ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
+          { type: 'uri', label: 'ติดต่อเจ้าหน้าที่', uri: 'https://lin.ee/UU9pbOI' },
         ]);
         assert.doesNotMatch(card.canonicalText, /https?:\/\//, 'no package link in the text fallback either');
         assert.match(card.canonicalText, /มีคำถามเพิ่มเติม กดติดต่อเจ้าหน้าที่ได้เลยค่ะ$/);

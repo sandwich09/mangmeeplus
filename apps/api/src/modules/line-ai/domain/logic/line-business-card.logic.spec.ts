@@ -14,6 +14,7 @@ import {
   buildPublicPolicyCardMessage,
 } from './line-business-card.logic';
 import { resolvePublicPolicyAnswer } from './line-public-policy.logic';
+import { buildContactCard, STAFF_OA_URL } from './line-staff-menu.logic';
 import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-manager.logic';
 
 const response = (cards?: NonNullable<LineAiTurnResponse['presentation']>['cards']): LineAiTurnResponse => ({
@@ -551,16 +552,24 @@ describe('CHAT budget refusal card', () => {
 
 // Owner 2026-09-30 (advisor spec §2.2): a public policy question gets the staff door, never the
 // public package page — not as a button, not as a line in the text a Flex downgrade would send.
+// The door is the company's official staff LINE ("เปลี่ยนเป็นลิ้งไปหาไลน์ official ของบริษัท").
 describe('public policy card', () => {
   it('ends with the staff door and carries no package link anywhere', () => {
     for (const question of ['ยกเลิกแพ็กเกจได้เงินคืนไหม', 'หลังหมดโปรฟรีแล้วเป็นยังไงต่อ', 'แพ็กเกจรายปีเติมสิทธิ์ทุกเดือนไหม']) {
       const message = buildPublicPolicyCardMessage(resolvePublicPolicyAnswer(question)!) as any;
       assert.deepEqual(message.contents.footer.contents.map((button: any) => button.action), [
-        { type: 'message', label: 'ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
+        { type: 'uri', label: 'ติดต่อเจ้าหน้าที่', uri: STAFF_OA_URL },
       ], question);
       assert.equal(message.quickReply, undefined, 'the button is the one staff door; no quick reply repeats it');
       assert.match(message.canonicalText, /มีคำถามเพิ่มเติม กดติดต่อเจ้าหน้าที่ได้เลยค่ะ$/, question);
-      assert.doesNotMatch(JSON.stringify(message), /official\.mangmeeplus|https?:\/\/|ดูรายละเอียดแพ็กเกจ|"label":"ดูแพ็กเกจ"/, question);
+      assert.doesNotMatch(message.canonicalText, /https?:\/\//, question);
+      assert.doesNotMatch(JSON.stringify(message), /official\.mangmeeplus|ดูรายละเอียดแพ็กเกจ|"label":"ดูแพ็กเกจ"/, question);
     }
+  });
+
+  it('opens the same staff LINE as the contact card', () => {
+    const contact = (buildContactCard() as any).contents.footer.contents.map((button: any) => button.action);
+    assert.ok(contact.some((action: any) => action.type === 'uri' && action.label === 'ติดต่อเจ้าหน้าที่' && action.uri === STAFF_OA_URL));
+    assert.equal(STAFF_OA_URL, 'https://lin.ee/UU9pbOI');
   });
 });

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CALLBACK_COMMAND, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CALLBACK_COMMAND, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, STAFF_OA_URL, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import { isPublicPolicyFollowUp, resolvePublicPolicyAnswer } from './line-public-policy.logic';
 import { buildPublicPolicyCardMessage } from './line-business-card.logic';
@@ -742,7 +742,7 @@ describe('standalone trial pricing FAQ', () => {
       assert.doesNotMatch(reply.text, /https?:\/\/|ดูรายละเอียดแพ็กเกจ/);
       assert.match(reply.text, /มีคำถามเพิ่มเติม กดติดต่อเจ้าหน้าที่ได้เลยค่ะ$/);
       assert.deepEqual((buildPublicPolicyCardMessage(answer!) as any).contents.footer.contents[0].action, {
-        type: 'message', label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND,
+        type: 'uri', label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL,
       });
     }
   });
@@ -784,7 +784,7 @@ describe('public policy conversation', () => {
     assert.equal(card.type, 'flex');
     if (card.type === 'flex') {
       assert.deepEqual((card.contents as any).footer.contents.map((button: any) => button.action), [
-        { type: 'message', label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND },
+        { type: 'uri', label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL },
       ]);
       assert.doesNotMatch(card.canonicalText!, /https?:\/\//);
     }

@@ -5,6 +5,7 @@ import {
   EMPLOYEE_DOOR_COMMAND,
   PACKAGE_CHANGE_COMMAND,
   STAFF_CONTACT_COMMAND,
+  STAFF_OA_URL,
   PROFILE_GUARD_COMMAND,
   PROFILE_GUARD_LATER_COMMAND,
   VIEW_PACKAGES_COMMAND,
@@ -156,14 +157,14 @@ function bubble(
 
 /** Public policy uses the same card as assistant answers, without a tenant or model lookup.
  *  Owner 2026-09-30 (advisor spec §2.2): the answer leads to a person, not the public package page —
- *  the staff door is the card's one button, so no quick reply repeats it. */
+ *  its one button opens the company's official staff LINE, so no quick reply repeats it. */
 export function buildPublicPolicyCardMessage(answer: PublicPolicyAnswer): LineReplyMessage {
   return {
     type: 'flex',
     altText: preview(answer.text, 400),
     canonicalText: answer.text,
     contents: bubble({ title: answer.title, text: answer.text }, undefined, '',
-      [{ label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND }]),
+      [{ label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL }]),
   };
 }
 
