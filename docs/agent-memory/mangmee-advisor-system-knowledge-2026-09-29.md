@@ -60,4 +60,3 @@ Next: implement R1 (S0, S2a, S1, S3, S8) per plan section 3; run each slice's re
 - Spend: 236.50 THB of the 250 THB slice cap (r1–r4 59.88 + r5–r11 176.62). Pass bar NOT met; another run would pass the cap, so testing stopped for a cap decision.
 - After r11 (coordinator, code only, no model calls): a receipt answer on a monthly allowance now always names the restart day — `withReceiptRestartDate` appends "ใบเสร็จจะเริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ" when the composed text lacks it, plus a matching ANSWER_PROMPT line. Unmeasured; the pass bar still needs two consecutive runs (~55 THB) once the owner decides the budget.
 - Whole-chain on 1 Oct: two pre-existing first-of-month date tests fail on any branch (orchestrator.agent.spec.ts "ช่วง: 1 … – 1 …" and line-ai-turn.use-case.spec.ts "/– 1 /"); every earlier run on 30 Sep passed.
-
