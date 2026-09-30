@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "24511224a9f966b8cffa1c7fa1e1131e13ee1dd8",
+  "sourceRevision": "d7bb58b12bca848e6d06a12d9e89bbe9f78e8dff",
   "checkoutBranch": "claude/advisor-r1-s1-signatures-20260930",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -33,7 +33,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
-      "sha256": "f1e7bc892d8215cb056a0345fad8ebd9c08ad862d4f1ea5b36bc7513794b8766"
+      "sha256": "cc4b8dc32025cba3600811973b5249a0f420ca0cc32b0b5c7f88ba6e0e8ddb4f"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-reimbursement-draft.service.ts",
@@ -177,7 +177,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "87746fce2746f421c191aa1b2df074ebbf2711002f65ceb59163fa0244a29fb3"
+      "sha256": "5156caca2969bcccd7a904baed55f2c03d57395ac6deab6b98dd9dfd13c86a17"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -8747,6 +8747,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T05:23:35.497Z",
-  "manifestDigest": "61773919eed7fb51ea45e0d96e9d77a669d281f4d3fa0300c6caa6d41144c5ab"
+  "generatedAt": "2026-09-30T16:59:21.677Z",
+  "manifestDigest": "71e7a4f5ba60b2f35bca4d68df3d1c55658ed1af2c7b2702321d870b07e04bc8"
 }

@@ -1413,7 +1413,7 @@ export class PrismaExpenseRepository {
       branchScopeWhere({ branchIds: filter.branchIds }), step,
       ...(filter.excludeEvidenceIds?.length ? [{ id: { notIn: [...filter.excludeEvidenceIds] } }] : []),
     ] };
-    const [rows, count] = await this.prisma.client.$transaction([
+    const [rows, count, paperCount] = await this.prisma.client.$transaction([
       this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
         where,
         select: {
@@ -1424,8 +1424,10 @@ export class PrismaExpenseRepository {
         take,
       }),
       this.prisma.client.expenseSubstituteReceiptEvidence.count({ where }),
+      // APPROVER: the paper copies waiting to be accepted are the step's only PREPARED rows.
+      this.prisma.client.expenseSubstituteReceiptEvidence.count({ where: { ...where, status: 'PREPARED' } }),
     ]);
-    return { rows, count };
+    return { rows, count, paperCount: filter.step === 'APPROVER' ? paperCount : 0 };
   }
 
   /** Payer-certified corrections waiting for approval, each with the approver of the receipt it corrects —

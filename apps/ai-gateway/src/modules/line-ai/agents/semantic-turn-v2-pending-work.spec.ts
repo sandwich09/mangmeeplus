@@ -14,7 +14,7 @@ const TODAY = '2026-09-30';
 const APPROVER = ['expense.read', 'expense.read_own', 'expense.confirm', 'reimbursement.approve'];
 const STAFF = ['expense.read_related', 'expense.read_own'];
 
-async function turn(messageText: string, permissions: string[], plannedTools: string[]) {
+async function turn(messageText: string, permissions: string[], plannedTools: string[], split = false) {
   const built = await createLineAiInputEvidence({ turnKey: `turn-${messageText.length}`,
     parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.parse(`${TODAY}T02:00:00.000Z`), rawText: messageText }] });
   assert.ok(built);
@@ -22,12 +22,12 @@ async function turn(messageText: string, permissions: string[], plannedTools: st
   assert.ok(valueCandidates);
   const request: LineAiTurnRequest = {
     requestId: 'req-q', webhookEventId: 'event-q', messageText, messagePreviewHash: 'c'.repeat(16), valueCandidates,
-    semanticSubrequests: [{ index: 0, kind: 'read', goal: messageText, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+    semanticSubrequests: (split ? plannedTools : [plannedTools[0]]).map((_, index) => ({ index, kind: 'read' as const, goal: messageText, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} })),
     userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
       permissions, roles: ['OWNER'], branchIds: [], locationIds: [], locale: 'th-TH' } as LineAiTurnRequest['userContext'],
   };
   const invoked: string[] = [];
-  const control = JSON.stringify({ calls: plannedTools.map((toolName) => ({ index: 0, toolName, input: {} })) });
+  const control = JSON.stringify({ calls: plannedTools.map((toolName, index) => ({ index: split ? index : 0, toolName, input: {} })) });
   const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
     return { ok: true, text: input.usageTag === 'line.loop' ? control
       : JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'สรุปงานที่รอคุณแล้วค่ะ', sourceRefIds: [`expenses:${invoked[0]}:summary`] }] }) };
@@ -50,6 +50,12 @@ describe('advisor Q1/Q2: the day\'s checklist vs the caller\'s own pending work'
   it('Q2 never reaches for a queue this caller is not offered (no reimbursement.approve)', async () => {
     const invoked = await turn('งานค้างของฉันมีอะไรบ้าง', STAFF, ['expense.get_daily_closing']);
     assert.deepEqual([...invoked].sort(), ['expense.get_daily_closing', 'expense.list_substitute_receipts_to_sign']);
+  });
+
+  it('Q2 split by the router into one read per queue reads each queue once', async () => {
+    const invoked = await turn('มีอะไรค้างที่ฉันต้องทำบ้างคะ', APPROVER,
+      ['expense.get_daily_closing', 'expense.list_substitute_receipts_to_sign', 'reimbursement.list_pending_approvals'], true);
+    assert.deepEqual([...invoked].sort(), ['expense.get_daily_closing', 'expense.list_substitute_receipts_to_sign', 'reimbursement.list_pending_approvals']);
   });
 
   it('Q1 stays the daily closing alone', async () => {

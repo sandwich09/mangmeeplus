@@ -486,8 +486,13 @@ export class ListCompanySubstituteReceiptsUseCase {
 
 export type SubstituteReceiptSignatureQueueStep = {
   count: number;
+  /** APPROVER: how many of `count` wait at each step, so a reply that groups the items by step states real counts. */
+  byStep?: Array<{ stepLabel: string; count: number }>;
   items: Array<{ documentNumber: string; payeeName: string; amount: string; currency: string; expenseDate: string; preparedOn: string; stepLabel: string }>;
 };
+
+const APPROVE_STEP_LABEL = 'รอคุณอนุมัติ';
+const PAPER_STEP_LABEL = 'ฉบับกระดาษรอคุณตรวจรับ';
 
 function signatureQueueStep(
   page: Awaited<ReturnType<PrismaExpenseRepository['listSubstituteReceiptsAwaitingSignature']>>,
@@ -495,6 +500,9 @@ function signatureQueueStep(
 ): SubstituteReceiptSignatureQueueStep {
   return {
     count: page.count,
+    ...(step === 'APPROVER' ? { byStep: [
+      { stepLabel: APPROVE_STEP_LABEL, count: page.count - page.paperCount }, { stepLabel: PAPER_STEP_LABEL, count: page.paperCount },
+    ].filter((entry) => entry.count > 0) } : {}),
     items: page.rows.map((row) => ({
       documentNumber: row.documentNumber,
       payeeName: row.payeeName ?? row.expense.vendorNameSnapshot ?? '',
@@ -505,7 +513,7 @@ function signatureQueueStep(
       // Plain Thai, the web hub's own wording (never the status enum): a PREPARED row in the approver
       // step is a paper copy waiting to be accepted.
       stepLabel: step === 'PAYER' ? 'รอคุณลงลายมือชื่อในฐานะผู้จ่ายเงิน'
-        : row.status === 'PREPARED' ? 'ฉบับกระดาษรอคุณตรวจรับ' : 'รอคุณอนุมัติ',
+        : row.status === 'PREPARED' ? PAPER_STEP_LABEL : APPROVE_STEP_LABEL,
     })),
   };
 }

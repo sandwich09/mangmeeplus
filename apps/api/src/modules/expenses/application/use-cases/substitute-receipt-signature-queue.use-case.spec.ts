@@ -25,14 +25,14 @@ function harness(options: {
   policy?: { approvalMode: 'OWNER_SELF' | 'DESIGNATED_APPROVERS'; approverUserIds: string[] } | null;
   eligible?: string[];
   corrections?: Array<{ id: string; originalApproverUserId: string | null }>;
-  pages?: Partial<Record<'PAYER' | 'APPROVER', { rows: unknown[]; count: number }>>;
+  pages?: Partial<Record<'PAYER' | 'APPROVER', { rows: unknown[]; count: number; paperCount?: number }>>;
 } = {}) {
   const calls: Array<{ filter: QueueFilter; take: number }> = [];
   const correctionScopes: Array<string[] | undefined> = [];
   const repo = {
     listSubstituteReceiptsAwaitingSignature: async (_companyId: string, filter: QueueFilter, take: number) => {
       calls.push({ filter, take });
-      return options.pages?.[filter.step] ?? { rows: [], count: 0 };
+      return { paperCount: 0, ...(options.pages?.[filter.step] ?? { rows: [], count: 0 }) };
     },
     getSubstituteReceiptPolicy: async () => options.policy === undefined ? null : options.policy,
     listEligibleSubstituteReceiptApprovers: async () => (options.eligible ?? ['me']).map((userId) => ({ userId, displayName: userId })),
@@ -126,8 +126,11 @@ describe('ListMySubstituteReceiptSignaturesUseCase — the caller\'s own signatu
   });
 
   it('labels a payer-certified receipt and a paper copy waiting to be accepted in plain Thai', async () => {
-    const { useCase } = harness({ pages: { APPROVER: { rows: [row({ status: 'PAYER_CERTIFIED' }), row({ status: 'PREPARED', signatureMode: 'PAPER' })], count: 2 } } });
+    const { useCase } = harness({ pages: { APPROVER: { rows: [row({ status: 'PAYER_CERTIFIED' }), row({ status: 'PREPARED', signatureMode: 'PAPER' })], count: 5, paperCount: 1 } } });
     const result = await useCase.execute(ctx(), { limit: 10 });
     assert.deepEqual(result.asApprover!.items.map((item) => item.stepLabel), ['รอคุณอนุมัติ', 'ฉบับกระดาษรอคุณตรวจรับ']);
+    // A reply that groups the items by step states these database counts, never a count of the page.
+    assert.deepEqual(result.asApprover!.byStep, [{ stepLabel: 'รอคุณอนุมัติ', count: 4 }, { stepLabel: 'ฉบับกระดาษรอคุณตรวจรับ', count: 1 }]);
+    assert.equal(result.asPayer!.byStep, undefined);
   });
 });

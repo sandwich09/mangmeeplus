@@ -119,6 +119,7 @@ test('advisor S1: the caller-own substitute receipt signature queue on real Post
       const result = await useCase.execute(ctx(owner, 'OWNER', APPROVE), { role: 'approver', limit: 2 });
       assert.equal(result.asApprover!.items.length, 2);
       assert.equal(result.asApprover!.count, 6);
+      assert.deepEqual(result.asApprover!.byStep, [{ stepLabel: 'รอคุณอนุมัติ', count: 4 }, { stepLabel: 'ฉบับกระดาษรอคุณตรวจรับ', count: 2 }]);
     });
 
     await t.test('DESIGNATED_APPROVERS: only the designated approver, and never their own receipt', async () => {
