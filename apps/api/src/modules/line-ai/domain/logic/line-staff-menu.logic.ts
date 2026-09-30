@@ -11,6 +11,8 @@ export const PACKAGE_CHANGE_COMMAND = 'ขอเปลี่ยนแพ็ก�
 export const VIEW_PACKAGES_COMMAND = 'โปรโมชั่น';
 export const EMPLOYEE_DOOR_COMMAND = 'ฉันเป็นพนักงาน';
 export const STAFF_CONTACT_COMMAND = 'ติดต่อเจ้าหน้าที่';
+/** The staff LINE OA (Owner 2026-09-29). A BUTTON opens it; the typed command keeps its inbox route. */
+export const STAFF_OA_URL = 'https://lin.ee/UU9pbOI';
 /**
  * G19 (purchase-without-setup spec §12/RV32): the promotion card's "ask the team" is a CALLBACK request,
  * not a package-change request and not "ติดต่อเจ้าหน้าที่" — it must not silence the assistant for 24 h.
@@ -442,7 +444,7 @@ export function buildContactCard(): LineReplyMessage {
         { type: 'button', style: 'secondary', action: { type: 'uri', label: 'โทร 098-256-5628', uri: 'tel:0982565628' } },
         { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://official.mangmeeplus.com/' } },
         // Owner 2026-09-29: add the staff OA and chat there; typed support commands keep their route.
-        { type: 'button', style: 'secondary', action: { type: 'uri', label: STAFF_CONTACT_COMMAND, uri: 'https://lin.ee/UU9pbOI' } },
+        { type: 'button', style: 'secondary', action: { type: 'uri', label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL } },
       ] },
     },
   };

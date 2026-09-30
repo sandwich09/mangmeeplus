@@ -2,9 +2,9 @@
   "schemaVersion": "line-ai-capability-manifest/v1",
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
-  "baseRevision": "2d3202e66a0dade56793fd27c8127f13b51a5001",
-  "sourceRevision": "2d3202e66a0dade56793fd27c8127f13b51a5001",
-  "checkoutBranch": "claude/line-promotion-poster-hotfix-20260930",
+  "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
+  "sourceRevision": "ca1d9e13aa39341a9589fc9887c7cfc02b3effe4",
+  "checkoutBranch": "claude/advisor-r1-s8-cards-20260930",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -45,7 +45,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts",
-      "sha256": "44e607a7b9ad253e03250ce49cf8a845ba967502768cfcf4f692bce96b4aea09"
+      "sha256": "30f8065283be5301889016664c6ea59327d093852e537dc119d88a4493794e81"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "aec9261779dde5081d565048b9440939c124d9f4e3267855e8c1b0f5ce9ecfb6"
+      "sha256": "538818a561d0bfecb311bee673d8474800878e478d791910d89c87cb44b53769"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -125,7 +125,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-ai-budget.controller.ts",
-      "sha256": "cf6c9c4bab64a9e82310e7d5718458ad7eb9d1ee305bc7216c6156a739c3a92f"
+      "sha256": "61eec64fe69c332a3ba1532b5f4d624c4ae5f18466670e3134135557241744ab"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T08:21:17.069Z",
-  "manifestDigest": "74e9a0cc03b47291aa6cc222ae4da817c533c37f3635990064433cbfb3a8e029"
+  "generatedAt": "2026-09-30T10:22:26.985Z",
+  "manifestDigest": "494480fe9ccbd4e96090b65d9d5eb18b942a47e77bbde487a54d5e75b43e702f"
 }

@@ -107,6 +107,29 @@ describe('LINE queued exact-delivery reservation on isolated PostgreSQL', { skip
         assert.equal(await service.beginSend(claim, now), false);
         assert.equal((await client.lineLedgerDelivery.findUniqueOrThrow({ where: { id: claim.row.id } })).errorCode, 'LINE_ORIGINAL_OUTCOME_OWNS_DELIVERY');
       });
+
+      // Owner 2026-09-30: one re-ask after "the previous answer did not complete" may pass the AI credit cap.
+      await t.test('the re-ask pass is spent once, only in the same conversation, only inside its window', async () => {
+        const notice = (id: string, conversationId: string, over: Record<string, unknown> = {}) => client.lineLedgerDelivery.create({ data: {
+          id: `reask-${id}-${tag}`, companyId, userId, webhookEventId: `reask-${id}-${tag}`, entryId: `${id}-0`, entryKind: 'turn',
+          status: 'ACCEPTED', acceptedAt: new Date(), expiresAt: new Date(Date.now() + 60_000),
+          authorizationJson: { v: 1, staticRefusal: 'original_answer_unavailable' },
+          completionJson: { ...completion, status: 'provider_unavailable', refused: true },
+          acceptedRequestJson: { conversationId }, ...over,
+        } });
+        await notice('a', 'conversation-a');
+        const pass = { companyId, userId, conversationId: 'conversation-a' };
+        assert.equal(await service.consumeReaskPass({ ...pass, conversationId: 'conversation-b' }), false, 'another chat');
+        assert.equal(await service.consumeReaskPass({ ...pass, userId: 'another-person' }), false, 'another person');
+        assert.deepEqual((await Promise.all([service.consumeReaskPass(pass), service.consumeReaskPass(pass)])).sort(), [false, true], 'spent once');
+        assert.equal(await service.consumeReaskPass(pass), false, 'gone after its one use');
+        assert.ok(((await client.lineLedgerDelivery.findUniqueOrThrow({ where: { id: `reask-a-${tag}` } })).completionJson as { reaskPassUsedAt?: string }).reaskPassUsedAt);
+
+        await notice('old', 'conversation-old', { acceptedAt: new Date(Date.now() - 31 * 60_000) });
+        assert.equal(await service.consumeReaskPass({ ...pass, conversationId: 'conversation-old' }), false, 'the window has ended');
+        await notice('other', 'conversation-other', { authorizationJson: { v: 1, staticRefusal: 'feature_disabled' } });
+        assert.equal(await service.consumeReaskPass({ ...pass, conversationId: 'conversation-other' }), false, 'only the unfinished-answer notice');
+      });
     } finally {
       if (companyId) await client.lineWebhookEventLog.deleteMany({ where: { companyId } });
       if (companyId) await client.company.deleteMany({ where: { id: companyId } });

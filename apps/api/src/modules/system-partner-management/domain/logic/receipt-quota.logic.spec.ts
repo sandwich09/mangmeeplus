@@ -8,6 +8,7 @@ import {
   trialReceiptCounterLineTh,
   TRIAL_COUNTER_TIER_KEY,
 } from './receipt-quota.logic';
+import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-manager.logic';
 
 const trial = (over: Partial<Parameters<typeof effectiveMonthlySlipLimit>[0] & object> = {}) => ({
   tierKey: TRIAL_COUNTER_TIER_KEY,
@@ -93,6 +94,27 @@ describe('receipt quota copy (spec §7)', () => {
     }
     assert.match(receiptQuotaExceededTextTh(15, TRIAL_COUNTER_TIER_KEY), /ช่วงทดลอง/);
     assert.match(receiptQuotaExceededShortTextTh(15, TRIAL_COUNTER_TIER_KEY), /ในช่วงทดลอง/);
+  });
+
+  // Advisor spec §2.2 (Owner 2026-09-30): a reader without `company.plan.manage` is not pointed at
+  // buying — no "ดูแพ็กเกจ", no "ขอเปลี่ยนแพ็กเกจ", no "ซื้อ" — only told who to ask. The fact stays.
+  it('tells a reader who may not buy who to ask, in every variant, and keeps the buyer wording by default', () => {
+    for (const [limit, tierKey, cadence, gift] of [
+      [15, TRIAL_COUNTER_TIER_KEY, undefined, false], [30, 'STARTER_249', undefined, false], [null, 'STARTER_249', undefined, false],
+      [25, 'STARTER_249', 'PAID_GRANTS', false], [25, 'STARTER_249', undefined, true],
+    ] as const) {
+      for (const text of [receiptQuotaExceededTextTh(limit, tierKey, cadence, gift, false),
+        receiptQuotaExceededShortTextTh(limit, tierKey, cadence, gift, false)]) {
+        assert.ok(text.endsWith(` ${ASK_PLAN_MANAGER_TH}`), text);
+        assert.doesNotMatch(text, /แพ็กเกจที่ใหญ่|ขอเปลี่ยนแพ็กเกจ|ซื้อ|ดูสถานะ/, text);
+      }
+      assert.equal(receiptQuotaExceededTextTh(limit, tierKey, cadence, gift),
+        receiptQuotaExceededTextTh(limit, tierKey, cadence, gift, true), 'the default is the buyer wording');
+      assert.equal(receiptQuotaExceededShortTextTh(limit, tierKey, cadence, gift),
+        receiptQuotaExceededShortTextTh(limit, tierKey, cadence, gift, true));
+    }
+    assert.equal(receiptQuotaExceededTextTh(15, TRIAL_COUNTER_TIER_KEY, undefined, false, false),
+      `ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ${ASK_PLAN_MANAGER_TH}`);
   });
 
   it('numbers the trial counter line n of limit', () => {
