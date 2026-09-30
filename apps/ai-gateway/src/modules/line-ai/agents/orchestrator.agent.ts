@@ -1120,7 +1120,7 @@ export class OrchestratorAgent {
       const language = req.responsePreferences?.language ?? (req.userContext.locale.startsWith('en') ? 'en' : 'th');
       const text = evidenceRefsText(soleItem.evidenceRefs, req.inputEvidence, req.messageText);
       const override = scopePolicyOverride(text, soleItem.kind, req.userContext.permissions,
-        req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, language);
+        req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, language, soleItem.toolHint);
       if (override) {
         return { plan: { status: 'ROUTABLE', language, intents: [], refusals: [], requiresHumanReview: false },
           outputs: [], replyText: override.text, sourceRefs: [], webLinks: [], durationMs: Date.now() - policyCheckStartedMs,

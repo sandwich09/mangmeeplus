@@ -259,4 +259,16 @@ describe('scopePolicyOverride: combined entry point and kind exemption', () => {
     const override = scopePolicyOverride('ขอดูยอดขายเดือนนี้หน่อยจ้ะ', 'read', [], ['expenses', 'sales_documents'], 'th');
     assert.equal(override, undefined);
   });
+
+  // Advisor S2a (owner 2026-09-30 ~16:00; eval r5 P-31): "กำไรต่อแพ็กเกจ" routed to the package catalog is
+  // about MangmeePlus's own packages, not this shop's P&L — the catalog answer, not the unsold-module line.
+  it('a package question routed to a package read is not an unsold-module question', () => {
+    const text = 'มั่งมีมีต้นทุน AI ต่อใบเสร็จเท่าไหร่ กำไรต่อแพ็กเกจเท่าไหร่';
+    assert.equal(scopePolicyOverride(text, 'read', [], ['expenses'], 'th', 'billing.get_package_catalog'), undefined);
+    assert.equal(scopePolicyOverride('ร้านรายได้ 1 ล้านใช้แพคเกจไหนได้บ้าง', 'read', [], ['expenses'], 'th', 'billing.get_package_catalog'), undefined);
+    // The hint alone never lifts the reply: the clause must name a package or MangmeePlus, and any other hint keeps it.
+    assert.equal(scopePolicyOverride('กำไรเดือนนี้เท่าไหร่', 'read', [], ['expenses'], 'th', 'billing.get_package_catalog')?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+    assert.equal(scopePolicyOverride(text, 'read', [], ['expenses'], 'th', 'expense.list_recent')?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+    assert.equal(scopePolicyOverride(text, 'read', [], ['expenses'], 'th')?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+  });
 });
