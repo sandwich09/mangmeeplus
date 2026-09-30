@@ -139,6 +139,9 @@ const REQUEST_MARKERS_TH = ['ช่วย', 'กรุณา', 'หน่อย'
 const STATE_PHRASES_TH = [
   'รออนุมัติ', 'อนุมัติแล้ว', 'ที่อนุมัติแล้ว', 'รอจ่าย', 'จ่ายแล้ว', 'ยังไม่จ่าย',
   'รอยืนยัน', 'ยืนยันแล้ว', 'ถูกปฏิเสธ', 'ปฏิเสธแล้ว', 'ถูกยกเลิก', 'ยกเลิกแล้ว',
+  // Advisor S3 eval (2026-09-30, "สรุปใบเบิกที่ค้างให้หน่อย แยกตามคนอนุมัติ"): the approver, or who has not approved
+  // yet, names a person or a state — a backlog question, never a request to approve or reject.
+  'ผู้อนุมัติ', 'คนอนุมัติ', 'คนที่อนุมัติ', 'ยังไม่อนุมัติ',
 ];
 
 function withoutStatePhrases(text: string): string {

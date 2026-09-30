@@ -176,6 +176,13 @@ describe('item 2: LINE approve/reject/pay/confirm/void action boundary (spec §1
     assert.equal(lineActionBoundaryReplyText('ขอดูใบเบิกที่จ่ายแล้วหน่อย', [], 'th'), undefined);
   });
 
+  it('does not fire for a backlog question naming the approver or who has not approved yet (advisor S3)', () => {
+    assert.equal(lineActionBoundaryReplyText('สรุปใบเบิกที่ค้างให้หน่อย แยกตามคนอนุมัติ', APPROVER, 'th'), undefined);
+    assert.equal(lineActionBoundaryReplyText('ช่วยดูหน่อยว่าใครยังไม่อนุมัติใบเบิก', APPROVER, 'th'), undefined);
+    assert.equal(lineActionBoundaryReplyText('ขอดูใบเบิกแยกตามผู้อนุมัติหน่อย', APPROVER, 'th'), undefined);
+    assert.ok(lineActionBoundaryReplyText('ช่วยอนุมัติใบเบิกที่ยังไม่อนุมัติหน่อย', APPROVER, 'th')?.includes('LINE ไม่ได้'));
+  });
+
   it('still fires when a real action verb accompanies the state phrase (C2)', () => {
     const text = lineActionBoundaryReplyText('ช่วยอนุมัติใบเบิกที่รออนุมัติหน่อย', APPROVER, 'th')!;
     assert.ok(text.includes('LINE ไม่ได้'), text);

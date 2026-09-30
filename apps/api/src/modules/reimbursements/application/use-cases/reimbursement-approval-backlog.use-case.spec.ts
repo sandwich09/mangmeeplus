@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { GetReimbursementApprovalBacklogUseCase, SHARED_PILE_LABEL } from './reimbursement-summary.use-case';
+import { GetReimbursementApprovalBacklogUseCase, NO_ACTIVE_APPROVER_NOTE, SHARED_PILE_LABEL } from './reimbursement-summary.use-case';
 
 // 2026-09-30 10:00 Bangkok.
 const NOW = new Date('2026-09-30T03:00:00.000Z');
@@ -81,7 +81,7 @@ describe('GetReimbursementApprovalBacklogUseCase — whose desk (advisor spec §
 
     assert.deepEqual(result.byApprover.map((row) => [row.name, row.count]), [['สมศรี', 1]]);
     assert.equal(result.sharedPile, null);
-    assert.deepEqual(result.desks.map((row) => [row.kind, row.label, row.count]), [['no_active_approver', 'ไม่มีผู้อนุมัติที่ยังใช้งานอยู่', 2]]);
+    assert.deepEqual(result.desks.map((row) => [row.kind, row.label, row.count, row.note]), [['no_active_approver', 'ไม่มีผู้อนุมัติที่ยังใช้งานอยู่', 2, NO_ACTIVE_APPROVER_NOTE]]);
     assert.equal(JSON.stringify(result).includes('ปรีชา'), false);
     assert.equal(r.calls.names.flat().includes('gone'), false);
   });

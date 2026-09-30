@@ -79,6 +79,9 @@ export const BACKLOG_DESK_LABELS = {
   status_pending: 'รอระบบปรับสถานะ',
 } as const;
 export const SHARED_PILE_LABEL = 'กองกลาง (อนุมัติได้หลายคน)';
+/** The recovery rule (`frozenApprovalAuthority` FALLBACK → `matchesApproverRole`), so the answer names the real next
+ *  step instead of guessing one (eval 2026-09-30: "ติดต่อทีม HR", "จะค้างไม่มีกำหนด"). */
+export const NO_ACTIVE_APPROVER_NOTE = 'ผู้ที่ถูกกำหนดให้อนุมัติไม่อยู่หรือไม่ได้ดูแลสาขานี้แล้ว เจ้าของร้านหรือผู้มีบทบาทอนุมัติเดิมอนุมัติแทนได้บนเว็บ';
 
 type BacklogDeskKind = keyof typeof BACKLOG_DESK_LABELS;
 type BacklogMoney = { currency: string; amount: string };
@@ -92,7 +95,7 @@ export type ReimbursementApprovalBacklog = {
   byApprover: Array<{ name: string } & BacklogGroup>;
   /** Owner 2026-09-30 ("แยกเป็นกองกลาง"): claims several people can approve, counted for no one. */
   sharedPile: ({ label: string } & BacklogGroup) | null;
-  desks: Array<{ kind: BacklogDeskKind; label: string } & BacklogGroup>;
+  desks: Array<{ kind: BacklogDeskKind; label: string; note?: string } & BacklogGroup>;
   /** Longest wait first, at most 10: the desk of each claim ("ใบของฉันค้างที่ใคร"). */
   items: Array<{ id: string; documentNumber: string | null; requesterName: string; amount: string; currency: string;
     waitingOn: string; submittedOn: string; approvedOn?: string; waitDays: number }>;
@@ -208,7 +211,7 @@ export class GetReimbursementApprovalBacklogUseCase {
       sharedPile: shared ? { label: shared.label, ...summary(shared) } : null,
       desks: (Object.keys(BACKLOG_DESK_LABELS) as BacklogDeskKind[]).flatMap((kind) => {
         const group = groups.get(kind);
-        return group ? [{ kind, label: group.label, ...summary(group) }] : [];
+        return group ? [{ kind, label: group.label, ...summary(group), ...(kind === 'no_active_approver' ? { note: NO_ACTIVE_APPROVER_NOTE } : {}) }] : [];
       }),
       items: items.sort((a, b) => b.waitDays - a.waitDays || a.submittedOn.localeCompare(b.submittedOn)
         || (a.documentNumber ?? a.id).localeCompare(b.documentNumber ?? b.id)).slice(0, 10),

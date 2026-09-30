@@ -59,10 +59,12 @@ describe('advisor S3: reimbursement.get_approval_backlog wiring and prompt rules
 
   it('routes who/where questions to the backlog, "me" only for the user\'s own claims, and never as a simple read', () => {
     const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true, false, new Set(['reimbursement.get_summary::single_metric']));
-    assert.match(prompt, /WHO or WHERE reimbursement claims are waiting — ค้างที่ใคร, อยู่ที่ใคร, กองอยู่ที่ใคร, ใครยังไม่อนุมัติ, ใบไหนรอนานที่สุด — is a read with tool reimbursement\.get_approval_backlog/);
-    assert.match(prompt, /filter requester "me" only when the user asks about their OWN claims/);
+    assert.match(prompt, /whether reimbursement claims are stuck, or WHO or WHERE they are waiting — ใบเบิกค้างไหม, มีใบเบิกค้างอยู่บ้าง, ค้างที่ใคร, อยู่ที่ใคร, กองอยู่ที่ใคร, ใครยังไม่อนุมัติ, ใบไหนรอนานที่สุด — is a read with tool reimbursement\.get_approval_backlog/);
+    assert.match(prompt, /Its only filter is requester "me", and only when the user asks about their OWN claims/);
+    // Run 1 (R-18 t2): "ที่รอสมศรี" came back as vendorName, which the backlog cannot take, so the read failed closed.
+    assert.match(prompt, /a person named in the question \(ที่รอสมศรี\) is never a filter — no vendorName or any other key/);
     assert.match(prompt, /Claims waiting for the user themself to approve \(รอฉันอนุมัติ\) stay reimbursement\.list_pending_approvals/);
-    assert.match(prompt, /is not a simple read: omit simpleRead so normal planning uses reimbursement\.get_approval_backlog/);
+    assert.match(prompt, /\(ใบเบิกค้างไหม, ค้างที่ใคร, อยู่ที่ใคร, ใครยังไม่อนุมัติ, รอนานที่สุด\), is not a simple read: omit simpleRead so normal planning uses reimbursement\.get_approval_backlog/);
   });
 
   it('plans the backlog with requester "me", keeps the pile out of any person\'s count, and says the scope', async () => {
@@ -79,11 +81,13 @@ describe('advisor S3: reimbursement.get_approval_backlog wiring and prompt rules
     });
 
     const control = calls.find((call) => call.usageTag === 'line.loop')!;
-    assert.match(control.systemPrompt, /For who or where reimbursement claims are waiting .* call reimbursement\.get_approval_backlog, with input requester "me" only when the user asks about their own claims/);
+    assert.match(control.systemPrompt, /For whether reimbursement claims are stuck or who or where they are waiting .* call reimbursement\.get_approval_backlog, with input requester "me" only when the user asks about their own claims .* and never a person's name as input/);
     assert.ok(JSON.parse(control.text).tools.some((tool: { name: string }) => tool.name === TOOL));
     assert.deepEqual(invoked, [{ requester: 'me' }]);
     const compose = calls.find((call) => call.usageTag === 'line.compose')!;
     assert.match(compose.systemPrompt, /the sharedPile is its own line \(claims several people can approve\) and is never added to, split among or named after any person/);
+    assert.match(compose.systemPrompt, /lead with what was asked .* before any full list/);
+    assert.match(compose.systemPrompt, /for what to do next use only a group's note, never a guessed cause or fix/);
     // Every number is the tool's own, so the grounded answer is kept; the own-scope line is added.
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.ok(result.replyText.startsWith(answer), result.replyText);
