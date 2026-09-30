@@ -260,3 +260,56 @@ describe('scopePolicyOverride: combined entry point and kind exemption', () => {
     assert.equal(override, undefined);
   });
 });
+
+// Advisor S1 (spec §2.6, §4.3 S3): signing or approving a substitute receipt stays on the web.
+describe('advisor S1: signing or approving a substitute receipt from LINE', () => {
+  const PAYER = ['expense.read_own', 'expense.read_related'];
+  const APPROVER = [...PAYER, 'expense.confirm'];
+
+  it('a sign request — with or without naming the document — says why it is web-only and links the page', () => {
+    for (const text of ['เซ็นให้หน่อย', 'ช่วยเซ็นใบรับรองแทนใบเสร็จให้หน่อยค่ะ', 'ช่วยลงนามใบรับรองนี้หน่อย', 'ช่วยรับรองใบรับรองให้หน่อยนะ']) {
+      const override = scopePolicyOverride(text, 'write', PAYER, ['expenses'], 'th');
+      assert.equal(override?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED', text);
+      assert.ok(override!.text.includes('ลงลายมือชื่อใบรับรองแทนใบเสร็จทำผ่าน LINE ไม่ได้'), override!.text);
+      assert.ok(override!.text.includes('ก่อนเซ็น'), 'gives the reason, not just the rule');
+      assert.ok(override!.text.includes('หน้าใบรับรองแทนใบเสร็จบนเว็บ'), override!.text);
+      assert.equal(override!.webPage, 'substitute-receipts', text);
+    }
+  });
+
+  it('a bare imperative that opens with the verb is a request even without a politeness marker', () => {
+    for (const text of ['อนุมัติใบรับรองนี้เลย', 'เซ็นใบรับรองแทนใบเสร็จอันนี้เลย']) {
+      assert.equal(scopePolicyOverride(text, 'write', APPROVER, ['expenses'], 'th')?.webPage, 'substitute-receipts', text);
+    }
+    // Claims and expenses keep their request-marker rule unchanged.
+    assert.equal(lineActionBoundaryReplyText('อนุมัติใบเบิกนี้เลย', ['reimbursement.approve'], 'th'), undefined);
+    // A statement that does not open with the verb is still no command.
+    assert.equal(scopePolicyOverride('ใบรับรองของฉันอนุมัติแล้วหรือยัง', 'read', APPROVER, ['expenses'], 'th'), undefined);
+  });
+
+  it('an approve request needs expense.confirm; without it the role limit is named and no link is offered', () => {
+    const approver = scopePolicyOverride('ช่วยอนุมัติใบรับรองนี้ให้หน่อย', 'write', APPROVER, ['expenses'], 'th');
+    assert.ok(approver!.text.startsWith('การอนุมัติใบรับรองแทนใบเสร็จทำผ่าน LINE ไม่ได้'), approver!.text);
+    assert.equal(approver!.webPage, 'substitute-receipts');
+    const staff = scopePolicyOverride('ช่วยอนุมัติใบรับรองนี้ให้หน่อย', 'write', PAYER, ['expenses'], 'th');
+    assert.ok(staff!.text.startsWith('บทบาทของคุณยังไม่มีสิทธิ์อนุมัติใบรับรองแทนใบเสร็จ'), staff!.text);
+    assert.equal(staff!.webPage, undefined);
+  });
+
+  it('a question about the queue — even with a request marker — is never read as a command', () => {
+    for (const text of [
+      'ใบรับรองใบเสร็จกี่ใบที่ฉันต้องเซ็น', 'มีใบรับรองแทนใบเสร็จรอฉันเซ็นกี่ใบ', 'มีใบรับรองรอฉันอนุมัติไหม',
+      'ช่วยดูหน่อยว่ามีใบรับรองที่ต้องเซ็นไหม', 'ช่วยบอกหน่อยว่าใบรับรองรอเซ็นกี่ใบ', 'ช่วยดูใบรับรองที่รอฉันอนุมัติหน่อย',
+      'ขอดูใบรับรองที่รอลงนามหน่อย', 'ช่วยอธิบายหน่อยว่าใบรับรองแทนใบเสร็จคืออะไร',
+    ]) assert.equal(scopePolicyOverride(text, 'read', APPROVER, ['expenses'], 'th'), undefined, text);
+  });
+
+  it('never fires for a saved-signature request, signing in, or a claim/expense sentence', () => {
+    for (const text of ['ช่วยส่งลายเซ็นให้หน่อย', 'ช่วยอัปโหลดลายเซ็นหน่อยค่ะ', 'ช่วยบอกวิธีลงชื่อเข้าใช้หน่อย']) {
+      assert.equal(lineActionBoundaryReplyText(text, APPROVER, 'th'), undefined, text);
+    }
+    // A signing word beside a claim is the claim's own rule (or none) — never the substitute page.
+    assert.equal(scopePolicyOverride('ช่วยเซ็นอนุมัติใบเบิกให้หน่อย', 'write', ['reimbursement.approve'], ['expenses'], 'th')?.webPage, undefined);
+    assert.equal(scopePolicyOverride('ช่วยเซ็นใบเบิกให้หน่อย', 'write', APPROVER, ['expenses'], 'th'), undefined);
+  });
+});

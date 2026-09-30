@@ -103,10 +103,15 @@ export function unsoldModuleReplyText(topic: UnsoldModuleTopic, language: ScopeP
 
 // ---- Item 2: approve/reject/pay a reimbursement, or confirm/void an expense, from LINE --------
 
-type LineActionRule = { noun: readonly string[]; verb: readonly string[]; permission: string; actionLabelTh: string; page: 'reimbursements' | 'expenses' };
+type LineActionRule = { noun: readonly string[]; verb: readonly string[]; permission: string; actionLabelTh: string; page: 'reimbursements' | 'expenses' | 'substitute-receipts';
+  /** A bare imperative that opens with the verb ("อนุมัติใบรับรองนี้เลย") is a request too, with no politeness marker. */
+  imperative?: boolean };
 
 const REIMBURSEMENT_NOUN_TH = ['ใบเบิก', 'เบิกจ่าย', 'คำขอเบิก'];
 const EXPENSE_NOUN_TH = ['ค่าใช้จ่าย', 'รายจ่าย'];
+const SUBSTITUTE_NOUN_TH = ['ใบรับรอง', 'ใบแทนใบเสร็จ'];
+// "ลงชื่อ" also means signing in (ลงชื่อเข้าใช้), so it counts only beside the document's own name.
+const SIGN_VERB_TH = ['เซ็น', 'ลงนาม', 'ลงลายมือชื่อ'];
 
 // Spec §11: gateway never sends/approves/pays on the user's behalf. The final mutation always
 // happens on the web app, never over LINE — regardless of whether this actor may do it at all.
@@ -116,7 +121,15 @@ const LINE_ACTION_RULES: readonly LineActionRule[] = [
   { noun: REIMBURSEMENT_NOUN_TH, verb: ['จ่าย', 'โอนเงิน', 'ชำระเงิน'], permission: 'reimbursement.payment.record', actionLabelTh: 'จ่ายใบเบิก', page: 'reimbursements' },
   { noun: EXPENSE_NOUN_TH, verb: ['ยืนยัน'], permission: 'expense.confirm', actionLabelTh: 'ยืนยันรายการค่าใช้จ่าย', page: 'expenses' },
   { noun: EXPENSE_NOUN_TH, verb: ['ยกเลิก'], permission: 'expense.void', actionLabelTh: 'ยกเลิกรายการค่าใช้จ่าย', page: 'expenses' },
+  // Advisor S1 (spec §2.6, §4.3 S3): certifying or approving a substitute receipt stays on the web, where the
+  // whole document is read before it is signed (assertWeb on certify/approve).
+  { noun: SUBSTITUTE_NOUN_TH, verb: ['อนุมัติ'], permission: 'expense.confirm', actionLabelTh: 'อนุมัติใบรับรองแทนใบเสร็จ', page: 'substitute-receipts', imperative: true },
+  { noun: SUBSTITUTE_NOUN_TH, verb: [...SIGN_VERB_TH, 'ลงชื่อ', 'รับรอง'], permission: 'expense.read_own', actionLabelTh: 'ลงลายมือชื่อใบรับรองแทนใบเสร็จ', page: 'substitute-receipts', imperative: true },
+  // A bare "เซ็นให้หน่อย" names no document: the only thing anyone signs in this product is a substitute
+  // receipt (a saved signature image says ลายเซ็น, stripped before the verb check).
+  { noun: [], verb: SIGN_VERB_TH, permission: 'expense.read_own', actionLabelTh: 'ลงลายมือชื่อใบรับรองแทนใบเสร็จ', page: 'substitute-receipts', imperative: true },
 ];
+const OTHER_DOCUMENT_NOUN_TH = [...REIMBURSEMENT_NOUN_TH, ...EXPENSE_NOUN_TH];
 
 // eval T-093-b root cause for this classifier: "ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ" ("has my claim not
 // been paid yet?") contains the noun "ใบเบิก" and the verb "จ่าย" but ASKS about status, it does not
@@ -139,6 +152,10 @@ const REQUEST_MARKERS_TH = ['ช่วย', 'กรุณา', 'หน่อย'
 const STATE_PHRASES_TH = [
   'รออนุมัติ', 'อนุมัติแล้ว', 'ที่อนุมัติแล้ว', 'รอจ่าย', 'จ่ายแล้ว', 'ยังไม่จ่าย',
   'รอยืนยัน', 'ยืนยันแล้ว', 'ถูกปฏิเสธ', 'ปฏิเสธแล้ว', 'ถูกยกเลิก', 'ยกเลิกแล้ว',
+  // Advisor S1: a substitute receipt's signing states ("มีใบรับรองรอเซ็นกี่ใบ") and the queue wording, plus two
+  // nouns that carry a verb inside them (ใบรับรอง ⊃ รับรอง, ลายเซ็น ⊃ เซ็น).
+  'รอเซ็น', 'เซ็นแล้ว', 'ต้องเซ็น', 'รอฉันเซ็น', 'รอคุณเซ็น', 'รอลงนาม', 'ลงนามแล้ว', 'ต้องลงนาม',
+  'รอลงลายมือชื่อ', 'ต้องลงลายมือชื่อ', 'รอรับรอง', 'รอฉันอนุมัติ', 'รอคุณอนุมัติ', 'ใบรับรอง', 'ลายเซ็น',
 ];
 
 function withoutStatePhrases(text: string): string {
@@ -146,9 +163,12 @@ function withoutStatePhrases(text: string): string {
 }
 
 function lineActionRuleFor(text: string): LineActionRule | undefined {
-  if (!includesAny(text, REQUEST_MARKERS_TH) || includesAny(text, STATUS_QUESTION_MARKERS_TH)) return undefined;
+  if (includesAny(text, STATUS_QUESTION_MARKERS_TH)) return undefined;
+  const requested = includesAny(text, REQUEST_MARKERS_TH);
   const verbCheckText = withoutStatePhrases(text);
-  return LINE_ACTION_RULES.find((rule) => includesAny(text, rule.noun) && includesAny(verbCheckText, rule.verb));
+  return LINE_ACTION_RULES.find((rule) => (requested || rule.imperative && rule.verb.some((verb) => text.trim().startsWith(verb)))
+    && (rule.noun.length ? includesAny(text, rule.noun) : !includesAny(text, OTHER_DOCUMENT_NOUN_TH))
+    && includesAny(verbCheckText, rule.verb));
 }
 
 /** Never "ดึงข้อมูลไม่ได้" — an honest reason: do it on the web when the actor may, or that their
@@ -157,11 +177,12 @@ function lineActionRuleFor(text: string): LineActionRule | undefined {
 export function lineActionBoundaryReplyText(text: string, permissions: readonly string[], language: ScopePolicyLanguage): string | undefined {
   const rule = lineActionRuleFor(text);
   if (!rule) return undefined;
-  const pageLabelTh = rule.page === 'reimbursements' ? 'ใบเบิก' : 'รายจ่าย';
+  const pageLabelTh = { reimbursements: 'ใบเบิก', expenses: 'รายจ่าย', 'substitute-receipts': 'ใบรับรองแทนใบเสร็จ' }[rule.page];
+  const substitute = rule.page === 'substitute-receipts';
   if (permissions.includes(rule.permission)) {
     return language === 'en'
-      ? `This action can't be completed on LINE. Please go to the ${rule.page} page on the web to do it.`
-      : `การ${rule.actionLabelTh}ทำผ่าน LINE ไม่ได้ค่ะ ไปที่หน้า${pageLabelTh}บนเว็บได้เลยค่ะ`;
+      ? `This action can't be completed on LINE. Please go to the ${substitute ? 'substitute receipts' : rule.page} page on the web to do it.`
+      : `การ${rule.actionLabelTh}ทำผ่าน LINE ไม่ได้ค่ะ ${substitute ? 'ต้องเปิดอ่านเอกสารฉบับเต็มบนเว็บก่อนเซ็น ' : ''}ไปที่หน้า${pageLabelTh}บนเว็บได้เลยค่ะ`;
   }
   return language === 'en'
     ? 'Your role does not have permission to do this yet.'
@@ -196,6 +217,8 @@ export function readOnlyCaptureReplyText(text: string, permissions: readonly str
 export type ScopePolicyOverride = {
   reasonCode: 'LINE_ACTION_NOT_SUPPORTED' | 'READONLY_ROLE_CANNOT_CREATE' | 'PACKAGE_FEATURE_NOT_ENABLED';
   text: string;
+  /** The web page the reply sends a permitted user to, for the caller to link. */
+  webPage?: 'substitute-receipts';
 };
 
 /**
@@ -219,7 +242,11 @@ export function scopePolicyOverride(
   language: ScopePolicyLanguage,
 ): ScopePolicyOverride | undefined {
   const lineAction = lineActionBoundaryReplyText(text, permissions, language);
-  if (lineAction) return { reasonCode: 'LINE_ACTION_NOT_SUPPORTED', text: lineAction };
+  if (lineAction) {
+    const rule = lineActionRuleFor(text);
+    return { reasonCode: 'LINE_ACTION_NOT_SUPPORTED', text: lineAction,
+      ...(rule?.page === 'substitute-receipts' && permissions.includes(rule.permission) ? { webPage: rule.page } : {}) };
+  }
   const readOnly = readOnlyCaptureReplyText(text, permissions, language);
   if (readOnly) return { reasonCode: 'READONLY_ROLE_CANNOT_CREATE', text: readOnly };
   if (kind !== 'help' && kind !== 'general') {

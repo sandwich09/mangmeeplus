@@ -650,6 +650,19 @@ describe('compact LINE intake decision: write clauses and other coverage', () =>
     assert.deepEqual(parsed.preparedPlan.proposedCalls[0]?.input, {});
   });
 
+  it('advisor Q2 (owner 2026-09-30): "my pending work" never takes the one-tool daily-closing fast lane', async () => {
+    const text = 'มีอะไรค้างที่ฉันต้องทำบ้างคะ';
+    const created = await fixture(text);
+    const parsed = parseLineIntakeCompactDecision({
+      raw: decision(text, {}, { subrequest: 0, tool: 'expense.get_daily_closing', subject: 'expense', agent: 'accounting', answerShape: 'single_metric', confidence: 0.95 }),
+      messageText: text, inputEvidence: created.inputEvidence, enabledTools: ROUTER_ENABLED_TOOLS,
+      enabledPreparedFamilies: new Set(['expense.get_daily_closing::single_metric']), language: 'th',
+    });
+    assert.equal(parsed?.preparedPlan, undefined);
+    assert.equal(parsed?.simpleReadRejection, 'my_pending_work_question');
+    assert.equal(parsed?.semanticSubrequests.length, 1, 'the clause still reaches normal planning, which reads the queues');
+  });
+
   it('item 4 (eval T-104): grounds an explicit daily-closing "date" filter against a real today candidate', async () => {
     const text = 'closing วันนี้เป็นไงบ้างคะ';
     const created = await fixture(text);

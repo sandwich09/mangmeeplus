@@ -64,6 +64,9 @@ export function sanitizeMangmeePersonaText(text: string): string {
 // sanitizeMangmeePersonaText above (whose ครับ/ผม fix this wraps first).
 const STATUS_GLOSS_WORDS = ['Needs Review', 'Ready For Confirmation', 'Partially Paid', 'Draft', 'Confirmed', 'Paid', 'Unpaid', 'Rejected', 'Voided'];
 const STATUS_GLOSS_PATTERN = new RegExp(`\\((?:${STATUS_GLOSS_WORDS.join('|')})\\)`, 'gu');
+// Advisor S1 eval (2026-10-01): "รายการรอตรวจสอบ (pendingReview) รวม 6 รายการ" — a tool field name glossed in
+// parentheses. A parenthesized camelCase identifier is never customer wording.
+const FIELD_GLOSS_PATTERN = /\((?:[a-z]+(?:[A-Z][a-z0-9]*)+)\)/gu;
 
 // Same 8 Thai labels the persona line above tells the model to use, plus READY_FOR_CONFIRMATION
 // (not one of the 8 — its customer-facing Thai label is apps/web's own expenses.model.ts
@@ -82,9 +85,12 @@ const CE_YEAR_AFTER_THAI_MONTH = new RegExp(`(${[...FULL_THAI_MONTHS, ...THAI_MO
 // Round 10 (2026-09-30, NAT04 turn 1): the model copied a tool's web path into its prose — "ดูรายละเอียดเพิ่มเติมได้ที่
 // /companies/<company id>/expenses" — so the customer read an app path and the company id. Composed prose names the page in
 // plain Thai instead; the links the server appends itself (the เปิดดู buttons) are added after this runs and never pass here.
-const APP_PAGE_TH: Record<string, string> = { expenses: 'หน้าค่าใช้จ่ายบนเว็บ', reimbursements: 'หน้าใบเบิกบนเว็บ' };
+const APP_PAGE_TH: Record<string, string> = { expenses: 'หน้าค่าใช้จ่ายบนเว็บ', reimbursements: 'หน้าใบเบิกบนเว็บ',
+  // Advisor S1: the substitute-receipt hub (where one signs and approves) and the saved-signature page.
+  'expenses/substitute-receipts': 'หน้าใบรับรองแทนใบเสร็จบนเว็บ', 'expenses/signatures': 'หน้าลายเซ็นของฉันบนเว็บ' };
 const APP_MARKDOWN_LINK = /\[([^\]\n]+)\]\((?:https?:\/\/[^\s/)]+)?\/companies\/[^\s)]*\)/gu;
-const APP_PATH = /(?:https?:\/\/[^\s/]+)?\/companies\/[^\s/?#)]+(?:\/([A-Za-z-]+))?(?:[/?#][^\s)]*)?/gu;
+// The second segment counts only when it ends there (never the start of an id such as "/cmun9ll0j").
+const APP_PATH = /(?:https?:\/\/[^\s/]+)?\/companies\/[^\s/?#)]+(?:\/([A-Za-z-]+)(?:\/([A-Za-z-]+)(?![\w-]))?)?(?:[/?#][^\s)]*)?/gu;
 
 function isTableSeparatorRow(line: string): boolean {
   return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/u.test(line);
@@ -112,9 +118,10 @@ export function sanitizeMangmeeComposedText(text: string): string {
     .join('\n');
   result = result
     .replace(STATUS_GLOSS_PATTERN, '')
+    .replace(FIELD_GLOSS_PATTERN, '')
     .replace(STATUS_ENUM_PATTERN, (token) => STATUS_ENUM_TH[token]!)
     .replace(CE_YEAR_AFTER_THAI_MONTH, (_match, month: string, spacing: string, year: string) => `${month}${spacing}${Number(year) + 543}`)
     .replace(APP_MARKDOWN_LINK, '$1')
-    .replace(APP_PATH, (_match, page?: string) => APP_PAGE_TH[page ?? ''] ?? 'หน้าเว็บของบริษัท');
+    .replace(APP_PATH, (_match, page?: string, subpage?: string) => APP_PAGE_TH[`${page}/${subpage}`] ?? APP_PAGE_TH[page ?? ''] ?? 'หน้าเว็บของบริษัท');
   return result.split('\n').map((line) => line.replace(/[ \t]{2,}/gu, ' ').trim()).join('\n').trim();
 }

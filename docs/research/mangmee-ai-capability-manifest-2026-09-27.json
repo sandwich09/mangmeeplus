@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "8356f4ea4258ca5ab7ae8cb01a256f6d07600b28",
-  "checkoutBranch": "claude/phone-tables-develop-20260930",
+  "sourceRevision": "15addc98eb2c914c0780931d55b834ff22747c08",
+  "checkoutBranch": "claude/advisor-r1-integration-20261001",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -33,7 +33,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
-      "sha256": "f1e7bc892d8215cb056a0345fad8ebd9c08ad862d4f1ea5b36bc7513794b8766"
+      "sha256": "cc4b8dc32025cba3600811973b5249a0f420ca0cc32b0b5c7f88ba6e0e8ddb4f"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-reimbursement-draft.service.ts",
@@ -84,6 +84,10 @@
       "sha256": "2b1f3fd7248c7cafa9aae7228a139f77f14997d24622dc9ab4e698ccb09ccdf7"
     },
     {
+      "path": "apps/api/src/modules/line-ai/application/use-cases/erp-substitute-receipt-tools.use-case.ts",
+      "sha256": "caadd945304f3cbc5adac398560b6149572622f1ebc4d47b7450e782816eaa11"
+    },
+    {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.ts",
       "sha256": "12089445f244ec867b54b7759c86897980b56807ca00d29b16e8e29aac3adc03"
     },
@@ -121,7 +125,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
-      "sha256": "0d3d4b30ca842eb1a8d9b1e7dd2714c230650d9923469ad06624ac3f49a593d1"
+      "sha256": "2f790bdf3637f40bca451e1f0c1a50c0c827f6d880a9909af8533b1c9ecf2856"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-ai-budget.controller.ts",
@@ -129,7 +133,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
-      "sha256": "282e9c644081bc895f86ae8f9a81eacaf2eaabfed2f1f4cb69a7e485e20eb7eb"
+      "sha256": "103e01f7f85560ceb485fba25f365d22243384e808fa595298d13f4587ef40d8"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/line-ai-ledger-internal.controller.ts",
@@ -173,7 +177,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "d3ea2b4aad8ea0fe7e70e2530e396e0fb881dee86b6d2069bececc08c05e5b14"
+      "sha256": "5156caca2969bcccd7a904baed55f2c03d57395ac6deab6b98dd9dfd13c86a17"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -387,6 +391,7 @@
       "expense.get_daily_closing",
       "expense.get_detail",
       "expense.list_recent",
+      "expense.list_substitute_receipts_to_sign",
       "inventory.get_product_detail",
       "inventory.get_stock_balance",
       "inventory.list_low_stock",
@@ -2298,6 +2303,94 @@
         {
           "path": "apps/api/src/modules/line-ai/application/use-cases/erp-expense-daily-closing.use-case.ts",
           "symbol": "ExpenseGetDailyClosingTool"
+        }
+      ]
+    },
+    {
+      "operation": "expense.list_substitute_receipts_to_sign",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [],
+        "optional": [
+          "limit",
+          "role"
+        ],
+        "allowed": [
+          "limit",
+          "role"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [],
+        "anyOfPermissions": [
+          "expense.confirm",
+          "expense.read_own",
+          "expense.read_related"
+        ],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [
+          "expenses"
+        ],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "general"
+      ],
+      "questionKinds": [
+        "list",
+        "summary"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "expenses",
+        "businessSubjects": [
+          "expense"
+        ],
+        "adapterClass": "ExpenseListSubstituteReceiptsToSignTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R1",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": true,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"expense.list_substitute_receipts_to_sign\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → ExpenseListSubstituteReceiptsToSignTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/ExpenseListSubstituteReceiptsToSignTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/use-cases/erp-substitute-receipt-tools.use-case.ts",
+          "symbol": "ExpenseListSubstituteReceiptsToSignTool"
         }
       ]
     },
@@ -7335,6 +7428,7 @@
         "expense.get_daily_closing",
         "expense.get_detail",
         "expense.list_recent",
+        "expense.list_substitute_receipts_to_sign",
         "line.explain_file_attempt"
       ],
       "apiIntakes": [
@@ -7969,7 +8063,8 @@
         "expense.get_breakdown",
         "expense.get_daily_closing",
         "expense.get_detail",
-        "expense.list_recent"
+        "expense.list_recent",
+        "expense.list_substitute_receipts_to_sign"
       ],
       "apiIntakes": [
         "line.receipt_capture"
@@ -8361,6 +8456,10 @@
         "provider": "ReimbursementListPendingApprovalsTool"
       },
       {
+        "parameter": "substituteReceiptsToSign",
+        "provider": "ExpenseListSubstituteReceiptsToSignTool"
+      },
+      {
         "parameter": "customerSummary",
         "provider": "CrmGetCustomerSummaryTool"
       },
@@ -8536,6 +8635,7 @@
       "ExpenseGetDailyClosingTool",
       "ExpenseGetDetailTool",
       "ExpenseListRecentTool",
+      "ExpenseListSubstituteReceiptsToSignTool",
       "InventoryGetProductDetailTool",
       "InventoryGetStockBalanceTool",
       "InventoryListLowStockTool",
@@ -8606,6 +8706,7 @@
       "expense.get_daily_closing",
       "expense.get_detail",
       "expense.list_recent",
+      "expense.list_substitute_receipts_to_sign",
       "inventory.get_product_detail",
       "inventory.get_stock_balance",
       "inventory.list_low_stock",
@@ -8646,6 +8747,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T10:49:54.217Z",
-  "manifestDigest": "4c94acbce50703c1688ffeb400a972031b3d939ea20fc5e94bd42f733c9d93f6"
+  "generatedAt": "2026-09-30T18:44:48.148Z",
+  "manifestDigest": "9ffa0bdcdda29ff7b57541e500cdbf0b2db4f8e72955a25e907f54e3afe90a1f"
 }

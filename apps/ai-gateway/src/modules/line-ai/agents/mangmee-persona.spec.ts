@@ -147,6 +147,19 @@ describe('sanitizeMangmeeComposedText (batch5 A6)', () => {
     assert.equal(sanitizeMangmeeComposedText(plain), plain);
   });
 
+  it('advisor S1: names the substitute-receipt and my-signature pages, never "หน้าค่าใช้จ่าย" for them', () => {
+    assert.equal(sanitizeMangmeeComposedText('เซ็นได้ที่ /companies/c-1/expenses/substitute-receipts นะคะ'), 'เซ็นได้ที่ หน้าใบรับรองแทนใบเสร็จบนเว็บ นะคะ');
+    assert.equal(sanitizeMangmeeComposedText('เปิด https://app.example.test/companies/c-1/expenses/substitute-receipts/cmx9a1b2?mode=view ได้เลยค่ะ'),
+      'เปิด หน้าใบรับรองแทนใบเสร็จบนเว็บ ได้เลยค่ะ');
+    assert.equal(sanitizeMangmeeComposedText('ดูได้ที่ /companies/c-1/expenses/substitute-receiptsค่ะ'), 'ดูได้ที่ หน้าใบรับรองแทนใบเสร็จบนเว็บค่ะ');
+    assert.equal(sanitizeMangmeeComposedText('ตั้งลายเซ็นที่ /companies/c-1/expenses/signatures ค่ะ'), 'ตั้งลายเซ็นที่ หน้าลายเซ็นของฉันบนเว็บ ค่ะ');
+  });
+
+  it('advisor S1 eval sample: strips a parenthesized tool field name', () => {
+    assert.equal(sanitizeMangmeeComposedText('• รายการรอตรวจสอบ (pendingReview) รวม 6 รายการ'), '• รายการรอตรวจสอบ รวม 6 รายการ');
+    assert.equal(sanitizeMangmeeComposedText('ร้านเครื่องเขียน (สาขา 1) 350 บาท (Grab)'), 'ร้านเครื่องเขียน (สาขา 1) 350 บาท (Grab)');
+  });
+
   it('leaves a vendor name like "Grab" or "PTT" completely untouched', () => {
     const input = 'จ่าย Grab และซื้อน้ำมันที่ PTT รวม 500 บาท';
     assert.equal(sanitizeMangmeeComposedText(input), input);

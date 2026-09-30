@@ -361,6 +361,15 @@ describe('read memory extraction (spec §4 R-M1)', () => {
     assert.equal(memory.shownItems, undefined);
   });
 
+  it('expense.list_substitute_receipts_to_sign: remembers the list only — no status basis, filter or item to inherit', () => {
+    const memory = readMemoryEvidence({
+      toolName: 'expense.list_substitute_receipts_to_sign', status: 'ok', asOf, sourceRefs: [],
+      data: { accessScope: 'own', total: 1, asPayer: { count: 1, items: [{ documentNumber: 'SRC-1', payeeName: 'ร้านป้าแดง', amount: '350' }] } },
+      queryApplied: { statusBasis: 'waiting_for_caller_signature_or_approval', filters: { role: 'payer' } },
+    } as any)!;
+    assert.deepEqual(memory, { tool: 'expense.list_substitute_receipts_to_sign', answerShape: 'list', asOf });
+  });
+
   it('reimbursement.list_pending_approvals: shownItems in the tool\'s own order, no queryApplied needed', () => {
     const memory = readMemoryEvidence({
       toolName: 'reimbursement.list_pending_approvals', status: 'ok', asOf, sourceRefs: [],

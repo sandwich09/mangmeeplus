@@ -608,7 +608,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.get_daily_closing',
-    description: 'Read a one-day operational expense-closing checklist only: occurred, paid, outstanding, due, overdue, review, evidence, duplicate, and bounded details by currency. Do not use for week, month, or date-range totals. This alone already answers a general "what do I need to do/check today", "สรุปวันนี้", or "closing วันนี้" question — never also call notifications.list_open_alerts, dashboard.get_business_health_summary, or reimbursement.list_pending_approvals for that same question. Call reimbursement.list_pending_approvals as a separate, additional read only when the user explicitly names pending/รออนุมัติ approvals.',
+    description: 'Read a one-day operational expense-closing checklist only: occurred, paid, outstanding, due, overdue, review, evidence, duplicate, and bounded details by currency. Do not use for week, month, or date-range totals. This alone already answers a general "what do I need to do/check today" ("วันนี้มีอะไรต้องทำบ้าง"), "สรุปวันนี้", or "closing วันนี้" question — never also call notifications.list_open_alerts, dashboard.get_business_health_summary, expense.list_substitute_receipts_to_sign, or reimbursement.list_pending_approvals for that same question. Call reimbursement.list_pending_approvals as a separate, additional read only when the user explicitly names pending/รออนุมัติ approvals. Only the caller\'s OWN pending work — a message that says the work is left pending (ค้าง): "มีอะไรค้างที่ฉันต้องทำ", "งานค้างของฉัน" — also reads expense.list_substitute_receipts_to_sign and, when offered, reimbursement.list_pending_approvals.',
     businessSubjects: ['expense'],
     questionKinds: ['summary', 'list', 'breakdown'],
     category: 'read_summary',
@@ -619,6 +619,25 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
     optionalInputFields: ['date', 'branchId', 'detailLimit'],
+  },
+  {
+    // Advisor spec §5.2 (slice S1): the caller's OWN signature queue — never a company-wide list.
+    name: 'expense.list_substitute_receipts_to_sign',
+    description: 'List substitute receipts (ใบรับรองแทนใบเสร็จรับเงิน) waiting for THIS user\'s own signature: as the named actual payer who must certify, or as an eligible approver who must approve (paper copies waiting to be accepted included). Returns counts per step and up to 10 items each (document number, payee name, amount, date). Signing and approving happen only on the web. Never another person\'s queue and never a company-wide list. A question about this queue ("ใบรับรองที่ฉันต้องเซ็นมีกี่ใบ", "มีใบรับรองรอฉันอนุมัติไหม") is a read, never a request to make a new substitute receipt; a follow-up about the receipts it just listed (which one, whose, how much) reads it again. Never for a general today\'s to-do ("วันนี้มีอะไรต้องทำบ้าง"), which expense.get_daily_closing alone answers.',
+    businessSubjects: ['expense'],
+    questionKinds: ['summary', 'list'],
+    category: 'read_summary',
+    // Payer half: the same permissions as the web certify route (expense.controller.ts
+    // @RequireAnyPermission('expense.read_related', 'expense.read_own')), so it never lists a receipt the
+    // caller cannot open on the web. Approver half: expense.confirm plus eligibility, checked inside the tool.
+    requiredPermissions: [],
+    anyOfPermissions: ['expense.read_related', 'expense.read_own', 'expense.confirm'],
+    sourceModule: 'expenses',
+    supportedAgents: ['accounting', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    optionalInputFields: ['role', 'limit'],
+    inputEnumValues: { role: ['payer', 'approver'] },
   },
   {
     name: 'sales.get_sales_summary',
