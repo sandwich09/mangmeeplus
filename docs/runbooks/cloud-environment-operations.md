@@ -10,7 +10,29 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Release 2026-09-29 night to 2026-09-30 morning — UAT rounds 7–11 and Production (current)
+## Hotfixes 2026-09-30 afternoon — signup constraint and promotion poster (current)
+
+After this section, UAT and Production both serve `main` `7b1b1c11`. Every run used the local Kamal path from a clean `main` controller worktree, and GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok.
+
+| Env | Operation | Source (main) | Result | Seconds |
+|---|---|---|---|---|
+| UAT | `20260930T075925Z-c2ca32d0` (prepared by `1c2365fd`, 150 s) | `2d3202e6` (signup hotfix, #929 twin = develop `76fe8766` via #930: migration `20260930150000_signup_discovery_source_sales`. The signup form's "เซลล์ของมั่งมี" source `SALES` was refused by check constraint `CompanySignupRequest_discovery_source_check`; the owner reported 5 errors at 14:40–14:41) | ACCEPTED_LINE_DEFERRED 15:04, smoke (owner urgency), 2 SSM sessions closed. Preflight `20260930T080458Z-d06e2152` PREFLIGHT_PASSED_NO_DEPLOYMENT (31.1 s). | 320.6 |
+| Production | `20260930T080539Z-c0fec60b` | `2d3202e6`, promoted from UAT `c2ca32d0` with no rebuild, after preflight `d06e2152` | ACCEPTED_LINE_DEFERRED 15:13, website ready 15:11:24 (345.4 s), acceptance written 15:12:58. Serving `live`, `OPEN`, 10/10 browser checks, with the owner signing in personally; 4 SSM sessions closed. It applied migration `20260930150000`; nothing else changed since `e52c151a`, as the owner asked. | 484.6 |
+| UAT | `20260930T083206Z-0c27be3d` (prepared by `7c5fb548`, 300 s) | `7b1b1c11` (promotion-poster hotfix, #931 twin = develop `994acf5e` via #932: the rich-menu "โปรโมชั่น" reply sends the owner's package poster `apps/web/public/assets/line/package-poster-20260930.png` before the card, and the "ให้ทีมงานติดต่อกลับ" button is removed) | **FAILED** 15:38 before any mutation: "UAT pre-mutation budget exceeded; reuse the exact validated --prepared-build". `publish-and-pull` took 307.5 s, so pre-mutation work reached 365.8 s against the 360 s cap. No lock or `active.json` was left behind; 2 SSM sessions closed. | 368.2 |
+| UAT | `20260930T083847Z-867eb170` (prepared by `7c5fb548`, 300 s; the same prepared build as `0c27be3d`) | `7b1b1c11` | ACCEPTED_LINE_DEFERRED 15:43, smoke, 2 SSM sessions closed. `publish-and-pull` took 22.4 s and pre-mutation work 70.2 s. Preflight `20260930T084354Z-3d7d675e` PREFLIGHT_PASSED_NO_DEPLOYMENT (27.9 s). | 294.4 |
+| Production | `20260930T084428Z-be573e55` | `7b1b1c11`, promoted from UAT `867eb170` with no rebuild, after preflight `3d7d675e` | ACCEPTED_LINE_DEFERRED 15:55, website ready 15:52:46 (497.6 s), acceptance written 15:54:19. Serving `live`, `OPEN`, 10/10 browser checks, with the owner signing in personally; 4 SSM sessions closed. No migration. The poster URL returned 200 `image/png`, 265474 bytes, before login. | 634.2 |
+
+**The hotfix path refuses migrations and non-source files.** `deploy-prod-hotfix` rejects schema changes: `infra/kamal/README.md` says "hotfix mode requires an unchanged catalog". Its path allowlist (`infra/kamal/release_source.py`) accepted only application `src/` files (ts, tsx, js, jsx, css), e2e specs and `docs/`, so both fixes went through UAT and `promote-prod`. A controller change that allows `apps/web/public/assets` images on the hotfix path was in progress on 2026-09-30; the owner wants future posters to ship that way.
+
+**The UAT pre-mutation budget.** The apply stops before any mutation when pre-mutation work passes 360 s, and a slow `publish-and-pull` (307.5 s on `0c27be3d`) tripped it. The documented fix is to re-run the apply with the same `--prepared-build`: the layers are already pushed, so `867eb170` needed only 22.4 s for that phase. This is not a duplicate dispatch to discover a new error.
+
+**Owner-directed speed on a critical fix.** The owner said "ไม่ต้องตรวจแล้ว ต้องขึ้นเลย", so the controller's 17-step check was stopped after step 08 (typecheck passed). The migration was proven instead on a throwaway Postgres 18.3: the old rule refuses `SALES`, and the new rule accepts `SALES` and still refuses bad values. UAT then applied the migration before Production.
+
+**Poster file names are versioned.** LINE and Cloudflare cache images by URL, so a new poster needs a new file name; the current one is `package-poster-20260930.png`.
+
+---
+
+## Release 2026-09-29 night to 2026-09-30 morning — UAT rounds 7–11 and Production
 
 After this section, UAT and Production both serve `main` `e52c151a`. Every run used the local Kamal path from a clean `main` controller worktree, and GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok.
 
