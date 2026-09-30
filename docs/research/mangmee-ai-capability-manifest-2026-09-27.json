@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "cf783811f46686581743776c1f8e238c970dab4c",
-  "checkoutBranch": "claude/line-ai-substitute-photo-narrow-20260930",
-  "checkoutDirty": true,
+  "sourceRevision": "ca8b3cfe93585f69685b1e39c39e71ad57ed22b4",
+  "checkoutBranch": "claude/advisor-r1-s8-cards-20260930",
+  "checkoutDirty": false,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -45,7 +45,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts",
-      "sha256": "44e607a7b9ad253e03250ce49cf8a845ba967502768cfcf4f692bce96b4aea09"
+      "sha256": "30f8065283be5301889016664c6ea59327d093852e537dc119d88a4493794e81"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "cbe52d9577e411c02ff2ada92b386a69f85945c83d76bd323e100440eac425fb"
+      "sha256": "51295d0525d0891b038d1987fb287408b293800fccda5bff5e3b86022dcde622"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T00:15:17.138Z",
-  "manifestDigest": "d9d52804f4ffba1c1b2b99f8df934fe9f4b8d053ea59f5c5f881ef30b1a214ae"
+  "generatedAt": "2026-09-30T05:06:16.716Z",
+  "manifestDigest": "3093190b4d2b358d03763eb56baab62a39142e98416bf33d0c96abf0d672b6bb"
 }
