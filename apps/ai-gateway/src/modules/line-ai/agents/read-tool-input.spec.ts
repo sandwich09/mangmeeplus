@@ -183,14 +183,14 @@ describe('item 4: misroutedReadTool combinator (shared by the fast lane and the 
 // Advisor Q2 (owner 2026-09-30): "งานค้างของฉัน" reads the caller's own queues; Q1 "วันนี้มีอะไรต้องทำ" never does.
 describe('advisor Q2: the caller\'s own pending work vs the one-day checklist', () => {
   it('recognises the caller\'s own pending work', () => {
-    for (const text of ['มีอะไรค้างที่ฉันต้องทำบ้าง', 'งานค้างของฉันมีอะไรบ้างคะ', 'มีงานค้างอะไรบ้าง', 'ฉันมีอะไรค้างอยู่บ้าง', 'มีอะไรรอผมทำอยู่ไหมครับ']) {
+    for (const text of ['มีอะไรค้างที่ฉันต้องทำบ้าง', 'งานค้างของฉันมีอะไรบ้างคะ', 'มีงานค้างอะไรบ้าง', 'ฉันมีอะไรค้างอยู่บ้าง', 'มีอะไรรอผมทำอยู่ไหมครับ', 'มีงานอะไรค้างอยู่บ้าง']) {
       assert.equal(myPendingWorkQuestion(text), true, text);
     }
   });
 
   it('leaves Q1, a named document, and unpaid spending to their own tools', () => {
     for (const text of ['วันนี้มีอะไรต้องทำบ้าง', 'สรุปวันนี้หน่อย', 'closing วันนี้', 'วันนี้มีอะไรค้างไหม', 'ใบเบิกของฉันค้างอยู่ที่ใคร',
-      'มีใบรับรองค้างเซ็นไหม', 'ฉันค้างจ่ายค่าไฟอยู่เท่าไหร่', 'มีบิลค้างที่ฉันต้องจ่ายไหม']) {
+      'มีใบรับรองค้างเซ็นไหม', 'ฉันค้างจ่ายค่าไฟอยู่เท่าไหร่', 'มีบิลค้างที่ฉันต้องจ่ายไหม', 'งานซ่อมแอร์ค้างจ่ายเท่าไหร่']) {
       assert.equal(myPendingWorkQuestion(text), false, text);
     }
   });

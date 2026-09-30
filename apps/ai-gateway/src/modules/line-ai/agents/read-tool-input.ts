@@ -151,7 +151,7 @@ export function reimbursementStatusQuestion(text: string): boolean {
 /** Advisor Q2 (owner 2026-09-30): "มีอะไรค้างที่ฉันต้องทำ", "งานค้างของฉัน" ask for the caller's OWN pending
  *  work across queues — never Q1's one-day checklist ("วันนี้มีอะไรต้องทำ"), which stays on its fast lane. A
  *  message naming one document ("ใบเบิกของฉันค้างที่ใคร", "ค้างจ่าย") asks about that document instead. */
-const MY_PENDING_WORK_PATTERN = /งานค้าง|(?:อะไร|งาน)[^\n]{0,12}(?:ค้าง|รอ)[^\n]{0,12}(?:ฉัน|ผม|หนู|ดิฉัน)|(?:ฉัน|ผม|หนู|ดิฉัน)[^\n]{0,12}ค้าง/u;
+const MY_PENDING_WORK_PATTERN = /งาน[^\n]{0,8}ค้าง|(?:อะไร|งาน)[^\n]{0,12}(?:ค้าง|รอ)[^\n]{0,12}(?:ฉัน|ผม|หนู|ดิฉัน)|(?:ฉัน|ผม|หนู|ดิฉัน)[^\n]{0,12}ค้าง/u;
 const NAMED_DOCUMENT_WORDS_TH = ['ใบเบิก', 'เบิก', 'ค่าใช้จ่าย', 'รายจ่าย', 'ใบรับรอง', 'ใบแทน', 'บิล', 'ใบเสร็จ', 'จ่าย', 'ชำระ'];
 
 export function myPendingWorkQuestion(text: string): boolean {

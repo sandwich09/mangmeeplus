@@ -1417,7 +1417,7 @@ export class PrismaExpenseRepository {
       this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
         where,
         select: {
-          documentNumber: true, payeeName: true, status: true, signatureMode: true, preparedAt: true,
+          documentNumber: true, payeeName: true, status: true, preparedAt: true,
           expense: { select: { expenseDate: true, vendorNameSnapshot: true, currency: true, grandTotalAmount: true } },
         },
         orderBy: [{ preparedAt: 'asc' }, { id: 'asc' }],
