@@ -58,6 +58,12 @@ describe('advisor Q1/Q2: the day\'s checklist vs the caller\'s own pending work'
     assert.deepEqual([...invoked].sort(), ['expense.get_daily_closing', 'expense.list_substitute_receipts_to_sign', 'reimbursement.list_pending_approvals']);
   });
 
+  it('Q2 for a caller who approves no claims reads their own claims, never the approval queue it is not offered', async () => {
+    const invoked = await turn('งานค้างของฉันมีอะไรบ้าง', [...STAFF, 'reimbursement.read_own'],
+      ['expense.get_daily_closing', 'expense.list_substitute_receipts_to_sign', 'reimbursement.list_pending_approvals'], true);
+    assert.deepEqual([...invoked].sort(), ['expense.get_daily_closing', 'expense.list_substitute_receipts_to_sign', 'reimbursement.get_summary']);
+  });
+
   it('Q1 stays the daily closing alone', async () => {
     const invoked = await turn('วันนี้มีอะไรต้องทำบ้างคะ', APPROVER, ['expense.get_daily_closing']);
     assert.deepEqual(invoked, ['expense.get_daily_closing']);

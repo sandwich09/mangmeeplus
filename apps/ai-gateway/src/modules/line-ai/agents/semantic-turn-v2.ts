@@ -762,8 +762,14 @@ export async function runSemanticTurnV2(input: {
       // own queues this caller is offered — whatever the router hinted or the planner chose. Planned like
       // any other call, so the SAME binding gate below still decides each one. Once per request: a queue
       // the router already gave its own subrequest is never read again for a sibling one.
+      const approvalQueueOffered = offered.some(meta => meta.name === 'reimbursement.list_pending_approvals');
       for (const item of inventory) {
         if (item.kind !== 'read' || scopePolicyForcedIndices.has(item.index) || !myPendingWorkQuestion(itemText.get(item.index) ?? req.messageText)) continue;
+        // A caller who approves no claims has no approval queue: the claims part of their own pending work is
+        // their own claims' status — never a dead end on a tool this caller is not offered.
+        if (!approvalQueueOffered && offered.some(meta => meta.name === 'reimbursement.get_summary')) {
+          for (const call of calls) if (call.index === item.index && call.toolName === 'reimbursement.list_pending_approvals') Object.assign(call, { toolName: 'reimbursement.get_summary', input: {} });
+        }
         for (const toolName of MY_PENDING_WORK_TOOLS) {
           if (calls.length < 8 && offered.some(meta => meta.name === toolName)
             && !calls.some(call => call.toolName === toolName)) calls.push({ index: item.index, toolName, input: {} });
