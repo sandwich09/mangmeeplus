@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "54c93214d1b6214a766a028410e5ef8aac1ee379",
+  "sourceRevision": "b474111ec51114976003facafce68dc1d7ece55b",
   "checkoutBranch": "claude/advisor-r1-s8-cards-20260930",
   "checkoutDirty": false,
   "sourceHashes": [
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "51295d0525d0891b038d1987fb287408b293800fccda5bff5e3b86022dcde622"
+      "sha256": "1bc0688f38517b03609986d69ae602dad479ee8299d58b578c09378b87111fdb"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T05:34:00.219Z",
-  "manifestDigest": "e9f130ec13cd383462383eaa37901f8278e53e69ba1fb1b59fdb1d2554833ab9"
+  "generatedAt": "2026-09-30T06:18:03.022Z",
+  "manifestDigest": "b4309190493ef4a0737c7a60445418b0b4dd7fd5254934fee74e55c97ff060e2"
 }
