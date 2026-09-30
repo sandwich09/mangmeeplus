@@ -60,10 +60,13 @@ describe('advisor S3: reimbursement.get_approval_backlog wiring and prompt rules
   it('routes who/where questions to the backlog, "me" only for the user\'s own claims, and never as a simple read', () => {
     const prompt = intakeRouterSystemPrompt({ fusedPlan: true }, false, true, false, new Set(['reimbursement.get_summary::single_metric']));
     assert.match(prompt, /whether reimbursement claims are stuck, or WHO or WHERE they are waiting — ใบเบิกค้างไหม, มีใบเบิกค้างอยู่บ้าง, ค้างที่ใคร, อยู่ที่ใคร, กองอยู่ที่ใคร, ใครยังไม่อนุมัติ, ใบไหนรอนานที่สุด — is a read with tool reimbursement\.get_approval_backlog/);
-    assert.match(prompt, /Its only filter is requester "me", and only when the user asks about their OWN claims/);
-    // Run 1 (R-18 t2): "ที่รอสมศรี" came back as vendorName, which the backlog cannot take, so the read failed closed.
-    assert.match(prompt, /a person named in the question \(ที่รอสมศรี\) is never a filter — no vendorName or any other key/);
-    assert.match(prompt, /Claims waiting for the user themself to approve \(รอฉันอนุมัติ\) stay reimbursement\.list_pending_approvals/);
+    assert.match(prompt, /claims waiting for the user themself to approve \(รอฉันอนุมัติ\) stay reimbursement\.list_pending_approvals/);
+    // Run 1 (R-18 t2) sent "ที่รอสมศรี" as vendorName; runs 2-5 sent "อนุมัติแล้วยังไม่จ่าย" to get_summary with
+    // paymentStatus/documentStatus it cannot take (G-03, which develop answers). Neither read may carry a state or a name.
+    assert.match(prompt, /reimbursement\.get_summary, reimbursement\.list_pending_approvals and reimbursement\.get_approval_backlog take no status, payment or name filter/);
+    assert.match(prompt, /a state or a person in the question \(อนุมัติแล้ว, ยังไม่จ่าย, รอจ่าย, ที่รอสมศรี\) is never a filter on them/);
+    assert.match(prompt, /their only filter is requester "me" on reimbursement\.get_approval_backlog, when the user asks about their OWN claims/);
+    assert.doesNotMatch(prompt, /an amount still unpaid/);
     assert.match(prompt, /\(ใบเบิกค้างไหม, ค้างที่ใคร, อยู่ที่ใคร, ใครยังไม่อนุมัติ, รอนานที่สุด\), is not a simple read: omit simpleRead so normal planning uses reimbursement\.get_approval_backlog/);
   });
 
