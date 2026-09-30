@@ -828,6 +828,16 @@ describe('ResponseComposerAgent – capability help', () => {
     assert.doesNotMatch(english, /sales and sales documents/);
   });
 
+  it('names the package line only for a caller who manages the package (advisor S2a, owner 2026-09-30)', () => {
+    const manager = ask([...STAFF, 'ai.tool.invoke', 'company.plan.manage'], EXPENSES_ONLY);
+    assert.match(manager, /• แพ็กเกจและใบเสร็จคงเหลือ/);
+    assert.match(teach([...STAFF, 'ai.tool.invoke', 'company.plan.manage'], EXPENSES_ONLY), /อยากรู้ว่าแพ็กเกจพอไหม พิมพ์ว่า “แพ็กเกจนี้พอไหม”/);
+    // Every assistant user can call the package tool (a non-manager gets its typed refusal), so the
+    // tool alone must never light the line — and a caller with no known access is never told it either.
+    assert.doesNotMatch(ask([...STAFF, 'ai.tool.invoke'], EXPENSES_ONLY), /แพ็กเกจ/);
+    assert.doesNotMatch(agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH'), /แพ็กเกจ/);
+  });
+
   it('keeps the pre-entitlement full text when no caller context is supplied', () => {
     const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH');
     assert.match(reply, /ยอดขายและเอกสารขาย/);

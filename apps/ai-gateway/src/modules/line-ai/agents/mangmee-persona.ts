@@ -82,7 +82,7 @@ const CE_YEAR_AFTER_THAI_MONTH = new RegExp(`(${[...FULL_THAI_MONTHS, ...THAI_MO
 // Round 10 (2026-09-30, NAT04 turn 1): the model copied a tool's web path into its prose — "ดูรายละเอียดเพิ่มเติมได้ที่
 // /companies/<company id>/expenses" — so the customer read an app path and the company id. Composed prose names the page in
 // plain Thai instead; the links the server appends itself (the เปิดดู buttons) are added after this runs and never pass here.
-const APP_PAGE_TH: Record<string, string> = { expenses: 'หน้าค่าใช้จ่ายบนเว็บ', reimbursements: 'หน้าใบเบิกบนเว็บ' };
+const APP_PAGE_TH: Record<string, string> = { expenses: 'หน้าค่าใช้จ่ายบนเว็บ', reimbursements: 'หน้าใบเบิกบนเว็บ', billing: 'หน้าแพ็กเกจบนเว็บ' };
 const APP_MARKDOWN_LINK = /\[([^\]\n]+)\]\((?:https?:\/\/[^\s/)]+)?\/companies\/[^\s)]*\)/gu;
 const APP_PATH = /(?:https?:\/\/[^\s/]+)?\/companies\/[^\s/?#)]+(?:\/([A-Za-z-]+))?(?:[/?#][^\s)]*)?/gu;
 

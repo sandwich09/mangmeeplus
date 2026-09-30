@@ -374,6 +374,9 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'src/modules/employee-access/application/use-cases/role-management.use-case.spec.ts',
     'src/modules/line-ai/application/line-reimbursement-draft.service.spec.ts',
     'src/modules/line-ai/application/use-cases/erp-banking-tools.use-case.spec.ts',
+    // Advisor S2a: billing.get_package_usage (P8 refusal, package figures, pace) and its package-pace-v1 formula.
+    'src/modules/line-ai/application/use-cases/erp-package-tools.use-case.spec.ts',
+    'src/modules/line-ai/domain/logic/package-usage-pace.logic.spec.ts',
     'src/modules/line-ai/application/use-cases/erp-report-tools.use-case.spec.ts',
     'src/modules/line-ai/application/use-cases/line-public-general.spec.ts',
     'src/modules/line-ai/application/use-cases/process-line-document-qa.bridge.spec.ts',

@@ -142,6 +142,8 @@ describe('sanitizeMangmeeComposedText (batch5 A6)', () => {
       'เปิดที่ หน้าค่าใช้จ่ายบนเว็บ ได้เลยค่ะ');
     assert.equal(sanitizeMangmeeComposedText('ดู[ที่นี่](/companies/c-1/reimbursements/draft-actions/a-1)นะคะ'), 'ดูที่นี่นะคะ');
     assert.equal(sanitizeMangmeeComposedText('ดูได้ที่ /companies/c-1/sales.'), 'ดูได้ที่ หน้าเว็บของบริษัท.');
+    // Advisor S2a: the package tool's own page (billing.get_package_usage sourceRefs) has a name of its own.
+    assert.equal(sanitizeMangmeeComposedText('ดูได้ที่ /companies/c-1/billing ค่ะ'), 'ดูได้ที่ หน้าแพ็กเกจบนเว็บ ค่ะ');
     // Anything that is not an app path is left alone.
     const plain = 'ค่าส่งของ/ค่าขนส่ง 350 บาท ดูได้ที่หน้าเว็บ';
     assert.equal(sanitizeMangmeeComposedText(plain), plain);

@@ -139,6 +139,7 @@ const CAPABILITY_COPY = {
       bookings: { line: '• นัดหมายและคิว', example: 'คิววันนี้มีอะไรบ้าง' },
       procurement: { line: '• จัดซื้อและผู้ขาย', example: 'ใบสั่งซื้อที่ค้างอยู่มีอะไรบ้าง' },
       alerts: { line: '• งานค้างและการแจ้งเตือน', example: 'มีงานค้างอะไรบ้าง' },
+      package: { line: '• แพ็กเกจและใบเสร็จคงเหลือ', example: 'แพ็กเกจนี้พอไหม' },
     },
   },
   en: {
@@ -157,6 +158,7 @@ const CAPABILITY_COPY = {
       bookings: { line: '• bookings and queues', example: 'What is on today’s schedule?' },
       procurement: { line: '• procurement and suppliers', example: 'Which purchase orders are still open?' },
       alerts: { line: '• pending work and alerts', example: 'What is pending for me?' },
+      package: { line: '• your package and receipts left', example: 'Is my package enough?' },
     },
   },
 } as const satisfies Record<'th' | 'en', {
@@ -190,6 +192,7 @@ const TEACHING_COPY = {
       bookings: 'อยากดูคิวหรือนัด',
       procurement: 'อยากดูของที่สั่งซื้อ',
       alerts: 'อยากรู้ว่ามีงานค้างไหม',
+      package: 'อยากรู้ว่าแพ็กเกจพอไหม',
     },
     approvals: 'ถ้ามีรายการรอคุณอนุมัติ พิมพ์ว่า “รายการรออนุมัติ” น้องมั่งมีจะสรุปให้ก่อน ส่วนการกดอนุมัติจริงทำในเว็บค่ะ',
     menu: 'อยากเห็นเมนูทั้งหมด กดปุ่ม “เมนูหลัก” ด้านล่างได้เลยค่ะ',
@@ -211,6 +214,7 @@ const TEACHING_COPY = {
       bookings: 'To see bookings',
       procurement: 'To see purchase orders',
       alerts: 'To see pending work',
+      package: 'To check your package',
     },
     approvals: 'If claims are waiting for you, type “pending approvals” and Nong Mangmee summarizes them first; the approval itself happens in the web app.',
     menu: 'To see the full menu, tap the “เมนูหลัก” (main menu) button below.',
@@ -256,7 +260,7 @@ function usableAccess(access?: CapabilityAccess): { groups: LineCapabilityGroupI
   const permissions = access ? access.permissions ?? [] : undefined;
   const groups = permissions
     ? usableCapabilityGroupIds(permissions, entitled)
-    : [...LINE_CAPABILITY_GROUPS].map((group) => group.id);
+    : LINE_CAPABILITY_GROUPS.filter((group) => !('requiredPermissions' in group)).map((group) => group.id);
   const receipt = permissions ? canAdvertiseReceiptCapture(permissions, entitled) : true;
   // The one role-scoped claim (spec T3): derived from the registry tool that would answer it, never
   // from a role name. A no-context caller never sees it — the old copy never claimed it either.

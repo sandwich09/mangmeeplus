@@ -266,6 +266,73 @@ describe('reimbursement.list_pending_approvals forbidden outcome: a terminal per
   });
 });
 
+// Advisor S2a (docs/specs/mangmee-advisor-system-knowledge-2026-09-29-th.md §5.1, owner 2026-09-30 §10
+// items 2 and 4): billing.get_package_usage is offered to every assistant user; a caller who does not
+// manage the package gets one fixed P8 line whatever the clause kind, and a manager's answer is composed
+// under the no-price / no-other-package / projection-only rules.
+describe('billing.get_package_usage: P8 for a non-manager, composed rules for a manager', () => {
+  const CONTROL_CALL = JSON.stringify({ calls: [{ index: 0, toolName: 'billing.get_package_usage', input: {} }] });
+  function request(kind: 'read' | 'write', messageText: string, permissions: string[]): LineAiTurnRequest {
+    return { requestId: `req-package-${kind}`, webhookEventId: `event-package-${kind}`, messageText, messagePreviewHash: 'f'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind, goal: 'แพ็กเกจของร้าน', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(permissions) };
+  }
+
+  for (const [kind, text] of [['read', 'เหลือใบเสร็จกี่ใบ'], ['write', 'ขอเปลี่ยนแพ็กเกจได้ไหม']] as const) {
+    it(`answers a ${kind} clause with the fixed ask-the-owner line, no link, never "the package lacks this"`, async () => {
+      const prompts: string[] = [];
+      const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+        prompts.push(input.systemPrompt ?? ''); return { ok: true, text: CONTROL_CALL };
+      } };
+      const result = await runSemanticTurnV2({
+        req: request(kind, text, ['ai.tool.invoke', 'expense.read']), provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+        publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        async invoke(): Promise<ToolResult> {
+          return { toolName: 'billing.get_package_usage', status: 'forbidden', sourceRefs: [], asOf: '2026-09-30T03:00:00.000Z', errorCode: 'PACKAGE_MANAGER_REQUIRED' };
+        },
+      });
+      assert.equal(prompts.length, 1, 'only the control round runs — never a compose call around a refusal');
+      assert.match(prompts[0]!, /call billing\.get_package_usage whatever the clause kind/);
+      const coverage = result.semanticCoverage?.[0];
+      assert.equal(coverage?.status, 'handled');
+      assert.equal(coverage?.reasonCode, 'PACKAGE_MANAGER_REQUIRED');
+      assert.equal(result.replyText, 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ');
+      assert.deepEqual(result.webLinks, []);
+    });
+  }
+
+  it('composes a manager\'s answer under the package rules and links the package page', async () => {
+    const data = { package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-10-15', renewal: 'auto' },
+      capacity: { branches: { used: 4, limit: 5, remaining: 1 }, members: { used: 3, limit: 10, remaining: 7 } },
+      receipts: { used: 70, limit: 100, remaining: 30, cadence: 'paid_period', periodStartOn: '2026-09-15', periodEndsOn: '2026-10-15',
+        resetsOn: null, expiresOn: null, additional: null, paceNote: null,
+        pace: { formula: 'package-pace-v1', projectedUsed: 150, projectedShortfall: 50, daysElapsed: 14, daysLeft: 16, daysInPeriod: 30 } } };
+    const calls: Array<{ usageTag: string; systemPrompt: string }> = [];
+    const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+      calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '' });
+      return { ok: true, text: input.usageTag === 'line.compose' ? JSON.stringify({ answers: [{ index: 0, status: 'handled',
+        text: 'ใบเสร็จรอบนี้ใช้ไป 70 จาก 100 ใบ เหลือ 30 ใบค่ะ คาดการณ์จากการใช้ 14 วันที่ผ่านมา ขาดประมาณ 50 ใบ',
+        sourceRefIds: ['billing:package_usage:summary'] }] }) : CONTROL_CALL };
+    } };
+    const result = await runSemanticTurnV2({
+      req: request('read', 'ใบเสร็จจะพอถึงสิ้นรอบไหม', ['ai.tool.invoke', 'company.plan.manage']), provider, draftEditEnabled: false,
+      reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> {
+        return { toolName: 'billing.get_package_usage', status: 'ok', data, asOf: '2026-09-28T03:00:00.000Z', sourceRefs: [{ label: 'แพ็กเกจของร้าน',
+          module: 'billing', entityType: 'package_usage', permissionChecked: true, webPath: '/companies/company/billing' }] };
+      },
+    });
+    const compose = calls.find((call) => call.usageTag === 'line.compose');
+    assert.ok(compose);
+    assert.match(compose.systemPrompt, /never name, compare or recommend any package other than package\.label/);
+    assert.match(compose.systemPrompt, /never suggest upgrading, a bigger package or buying more/);
+    assert.match(compose.systemPrompt, /'ขาดประมาณ N ใบ' with N = projectedShortfall/);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.match(result.replyText, /ขาดประมาณ 50 ใบ/);
+    assert.deepEqual(result.webLinks, [{ label: 'แพ็กเกจของร้าน', path: '/companies/company/billing' }]);
+  });
+});
+
 // Items 1-4 (docs/specs/mangmee-ai-expense-advisor-spec-th.md §2, §3 rows 17-18, §8, §11): real-model
 // eval evidence (tuning-3) showed sales/P&L/receivables answered with an expense or reimbursement
 // substitute, model-written refusals with jargon or a wrong reason, "cannot fetch data" instead of a

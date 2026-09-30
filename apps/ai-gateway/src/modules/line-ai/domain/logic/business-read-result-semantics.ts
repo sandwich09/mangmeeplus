@@ -158,6 +158,19 @@ export function reimbursementApprovalNotPermittedReplyText(english: boolean): st
     : 'บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ ถ้าต้องการดูใบเบิกของตัวเอง ถามได้เลย เช่น “ใบเบิกของฉันถึงไหนแล้ว”';
 }
 
+// ─── billing.get_package_usage forbidden outcome (advisor spec §5.1, P8) ─────────────────────────
+// erp-package-tools.use-case.ts refuses a caller without `company.plan.manage` with this errorCode.
+// Owner decision 2026-09-30 (§10 item 2): that caller hears one fixed sentence, whatever the clause
+// asked (figures, an upgrade, a package change) — never a figure, never a package link, and never a
+// wrong reason such as "the package does not include this".
+export const PACKAGE_MANAGER_REQUIRED = 'PACKAGE_MANAGER_REQUIRED';
+
+export function packageManagerRequiredReplyText(english: boolean): string {
+  return english
+    ? 'For this shop\'s package and credit, please ask the shop owner or someone who manages the package.'
+    : 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ';
+}
+
 // ─── A3 (batch5, T-084-b): reimbursement.list_pending_approvals has no code-computed total ───────
 // erp-reimbursement-tools.use-case.ts's ReimbursementListPendingApprovalsTool returns `total` (the
 // full count, never truncated) and `items` capped to the first 10 rows — no total AMOUNT at all.

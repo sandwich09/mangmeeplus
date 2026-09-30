@@ -89,6 +89,7 @@ Grouping instead by `toolFeatureKeys(tool)` — the exact axis `hasToolFeature` 
 | นัดหมายและคิว | `crm.bookings` |
 | จัดซื้อและผู้ขาย | `procurement` |
 | งานค้างและการแจ้งเตือน | `dashboard_notifications` |
+| แพ็กเกจและใบเสร็จคงเหลือ | none — source module `billing`, and only for a caller holding `company.plan.manage` (advisor spec §5.1, owner 2026-09-30): `billing.get_package_usage` runs for every assistant user and answers a non-manager with a typed refusal, so the tool alone never lights this line. A caller with no known access is never told it either. |
 | (receipt capture sentence) | `expenses.upload` — **not** derived from a tool; see §10.1. The predicate is the intake path's own check: `expenses.upload` entitled ∧ any of `expense.receipt.line_upload` / `expense.receipt.upload` / `expense.create` |
 
 A tool whose feature keys match no group is not advertised; it is not an error, and it must not silently widen an unrelated line. The reimbursement tools stay deliberately feature-ungated for retained reads under their own source/permission checks. Current `LINE_CAPABILITY_GROUPS` includes sourceModule reimbursements in the expenses group; this does not advertise creation when reimbursement is off.

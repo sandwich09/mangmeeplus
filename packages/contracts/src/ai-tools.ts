@@ -232,11 +232,16 @@ export const LINE_CAPABILITY_GROUPS = [
   // Assigned workflow tasks and run failures are "pending work and alerts" to the user, and the old
   // hardcoded copy claimed them under that wording; they keep their own feature gate.
   { id: 'alerts', featureKeys: ['dashboard_notifications', 'workflow_automation'] },
+  // billing.get_package_usage is offered to every assistant user so a non-manager reaches its typed
+  // refusal; only someone who manages the package is told the assistant answers it (owner 2026-09-30).
+  { id: 'package', featureKeys: [], sourceModules: ['billing'], requiredPermissions: ['company.plan.manage'] },
 ] as const satisfies ReadonlyArray<{
   id: string;
   featureKeys: readonly string[];
   /** Matched in addition to featureKeys, for modules that are deliberately not feature-gated. */
   sourceModules?: readonly string[];
+  /** Advertised only to a caller holding all of these, when the tool itself answers others with a refusal. */
+  requiredPermissions?: readonly string[];
 }>;
 
 export type LineCapabilityGroupId = (typeof LINE_CAPABILITY_GROUPS)[number]['id'];
@@ -280,7 +285,9 @@ export function usableCapabilityGroupIds(
   const usable = LINE_TOOL_REGISTRY.filter(
     (tool) => tool.executionReady !== false && hasToolPermissions(tool, permissions) && hasToolFeature(tool, entitled),
   );
-  return LINE_CAPABILITY_GROUPS.filter((group) => usable.some((tool) => inCapabilityGroup(tool, group))).map((group) => group.id);
+  return LINE_CAPABILITY_GROUPS.filter((group) => usable.some((tool) => inCapabilityGroup(tool, group))
+    && (!('requiredPermissions' in group) || group.requiredPermissions.every((permission) => permissions.includes(permission))))
+    .map((group) => group.id);
 }
 
 /** A tool belongs to a group when the group owns one of its feature keys, or its whole module. */
@@ -1003,6 +1010,23 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
     requiredInputFields: ['publicQuestion', 'topic', 'locale', 'temporalIntent', 'sourcePolicyId'],
+  },
+  {
+    name: 'billing.get_package_usage',
+    description: "Read THIS company's current package: its name, the date it runs until, branch and member room used/limit, and receipt reads used/limit/remaining in the current allowance with an API-computed straight-line projection to the allowance's end. Also the tool for a question about upgrading, changing or buying this company's package: it decides who may be sent to the package page. Only a caller who manages the package gets figures; anyone else gets a typed refusal. Never prices and never another package. Use for 'แพ็กเกจพอไหม', 'เหลือใบเสร็จกี่ใบ', 'เพิ่มสาขาได้อีกไหม', 'อัปเกรดแพ็กเกจ'. Public package prices and package contents are not this tool.",
+    businessSubjects: ['company', 'expense'],
+    questionKinds: ['summary'],
+    category: 'read_summary',
+    // Offered to every assistant user so a non-manager reaches the typed PACKAGE_MANAGER_REQUIRED refusal
+    // (owner decision 2026-09-30, advisor spec §10 item 2); the tool itself checks company.plan.manage,
+    // the permission canManagePlan/assertOwner use. Same pattern as public.lookup.
+    requiredPermissions: ['ai.tool.invoke'],
+    // `billing` is deliberately absent from TOOL_MODULE_FEATURE_KEYS: every company that reaches the
+    // assistant has a working package (locked companies are answered before any AI turn).
+    sourceModule: 'billing',
+    supportedAgents: ['accounting', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
   },
   {
     name: 'bank.get_account_balances',

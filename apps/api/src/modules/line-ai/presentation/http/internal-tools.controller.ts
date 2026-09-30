@@ -55,6 +55,7 @@ import { AccountingGetSummaryTool, AccountingListRecentDocumentsTool, Procuremen
 import { ExpenseGetDailyClosingTool } from '../../application/use-cases/erp-expense-daily-closing.use-case';
 import { ReportsMonthlySummaryTool } from '../../application/use-cases/erp-report-tools.use-case';
 import { ReimbursementListPendingApprovalsTool } from '../../application/use-cases/erp-reimbursement-tools.use-case';
+import { BillingGetPackageUsageTool } from '../../application/use-cases/erp-package-tools.use-case';
 import { CrmGetCustomerSummaryTool, CrmSearchCustomersTool, CrmGetCustomer360Tool } from '../../application/use-cases/erp-crm-tools.use-case';
 import {
   InventoryGetProductDetailTool,
@@ -242,6 +243,7 @@ export class InternalToolsController {
     private readonly draftSetVatMode: ExpenseDraftSetVatModeTool,
     private readonly bankAccountBalances: BankGetAccountBalancesTool,
     private readonly bankReconciliationStatus: BankGetReconciliationStatusTool,
+    private readonly packageUsage: BillingGetPackageUsageTool,
     @Optional() private readonly publicLookup?: PublicLookupAdmissionTool,
     @Optional() private readonly reimbursementDraftGetOptions?: ReimbursementDraftGetOptionsTool,
     @Optional() private readonly reimbursementDraftPreviewCreate?: ReimbursementDraftPreviewCreateTool,
@@ -315,6 +317,7 @@ export class InternalToolsController {
     this.toolMap.set('expense.draft.set_vat_mode', this.draftSetVatMode);
     this.toolMap.set('bank.get_account_balances', this.bankAccountBalances);
     this.toolMap.set('bank.get_reconciliation_status', this.bankReconciliationStatus);
+    this.toolMap.set('billing.get_package_usage', this.packageUsage);
     if (this.publicLookup) this.toolMap.set('public.lookup', this.publicLookup);
     if (this.reimbursementDraftGetOptions) this.toolMap.set('reimbursement.draft.get_options', this.reimbursementDraftGetOptions);
     if (this.reimbursementDraftPreviewCreate) this.toolMap.set('reimbursement.draft.preview_create', this.reimbursementDraftPreviewCreate);
