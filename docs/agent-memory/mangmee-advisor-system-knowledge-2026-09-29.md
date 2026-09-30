@@ -1,6 +1,11 @@
 # Agent Memory: mangmee-advisor-system-knowledge
 
 Status: R1 in progress (started 2026-09-30). Spec and plan refreshed against develop `05f7f675` on `claude/advisor-system-knowledge-plan-20260929` (docs PR #908). No R1 code yet.
+S8 (2026-09-30): DONE on `claude/advisor-r1-s8-cards-20260930`, not pushed (controller integration check passed at `183a3ea0`; owner additions A and B added after it).
+- Commits: `ca8b3cfe` purchase buttons by purchase right, FAQ card, employee-list link; `7a691a65` queued-turn over-cap admission; `54c93214` FAQ staff button opens the staff LINE OA; `183a3ea0` and `93226d47` W00 manifest; then this docs commit.
+- Verification: touched unit specs green (usage meter, gateway client, budget-step controller, reservation, drain, webhook, first-signup, card, staff menu, receipt quota, employee tools); API typecheck rc=0; W00 manifest regenerated, its spec green; reservation, budget-authority and AI-credit-funding PG specs green on a throwaway Postgres 18.3 with CI=1; whole-chain acceptance green.
+- Found, not changed: the web upload's quota message still says "ดูแพ็กเกจที่ใหญ่ขึ้น" to every uploader (no button); the promotion card an employee pulls still carries the public-website button (plan keeps that card out of scope); the queued-turn credit notice (`formatAiBudgetRefusalNotice`) still invites a package change, but after addition A it is only a fallback.
+- Open: queued v2 turns (the production default) are never re-run by the drain, so addition A reaches v1 entries only; a person's own resend after a failed v2 turn is a live turn and is still refused at the cap. Ask the Owner whether "ส่งซ้ำ" covers that. Also ask whether the plan manager's quota wording "ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย" conflicts with 10.4.
 Owner: Thawatchai.
 Scope: R1 slices S0 (measure the G set, fix only failures), S2a (package and receipt quota), S1 (substitute receipts to sign, plus my pending work), S3 (reimbursement backlog) and S8 (deterministic LINE card buttons and links). Spec `docs/specs/mangmee-advisor-system-knowledge-2026-09-29-th.md`, plan `docs/plans/mangmee-advisor-system-knowledge-plan-2026-09-29-th.md`.
 Decisions (Owner, 2026-09-29 and 2026-09-30; spec section numbers in brackets):
@@ -20,6 +25,8 @@ Decisions (Owner, 2026-09-29 and 2026-09-30; spec section numbers in brackets):
 - Purchase buttons only for purchase-right holders; others get a short "tell the owner" sentence. The public-policy FAQ card gets a contact-staff button instead of the package link. Both fixes plus the employee-list link ship with R1 as S8 (2.2, 11.17).
 - S2b (AI credit balance) ships with add-on credit sales; E9 is not pulled forward. Manager buttons go to the package page until then.
 - Work and test release by release ("รันทดสอบก่อนดีกว่า ทำเป็นชุดๆ"); R1 real-model budget is capped at 800 THB for S0, S2a, S1 and S3; S8 needs none (10.11).
+- A queued or reclaimed LINE turn (ledger drain, sub_requests included) may go past the AI credit cap, TOTAL and CHAT, exceeded and insufficient; usage is metered as usual, every other refusal stays, and the live first attempt still refuses at the cap ("ข้อความตอนเครดิตหมดระหว่างส่งซ้ำ ต้องยอมให้ใช้เกินโควต้า", 2026-09-30; spec 4.1).
+- The public-policy FAQ card's staff button opens the company's official staff LINE, the same link as the contact card; a typed "ติดต่อเจ้าหน้าที่" keeps its support-inbox route (2026-09-30; spec 2.2, 11.18).
 - Not decided yet: 10.8 (anomaly thresholds) and 10.12 (who reviews new guide cards), to be asked before R3/R4.
 Open questions: none yet.
 Artifacts: none yet.
