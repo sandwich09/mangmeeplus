@@ -51,8 +51,26 @@ export const MANGMEE_PERSONA_PROMPT = MANGMEE_PERSONA_LINES.join('\n');
  * value (a vendor/category name, an id, a raw figure) — callers must keep those out of the text
  * this function sees, since it cannot itself tell composed prose from an embedded quote.
  */
-export function sanitizeMangmeePersonaText(text: string): string {
-  return text.replace(/ครับ/gu, 'ค่ะ').replace(/ผม/gu, 'น้องมั่งมี');
+export function sanitizeMangmeePersonaText(text: string, bareSelfReference = true): string {
+  return fixMangmeeSelfReference(text.replace(/ครับ/gu, 'ค่ะ').replace(/ผม/gu, 'น้องมั่งมี'), bareSelfReference);
+}
+
+// Advisor S3 eval (2026-09-30/10-01): planner questions the customer reads verbatim still said "หนูมั่งมี" and
+// "หนูช่วยดู…" although the persona bans หนู. "หนู" is also a rat ("กำจัดหนู", "ยาเบื่อหนู"), a child ("น้องหนู"), a
+// shop name ("ร้านหนูนา"), a person's nickname or the customer's own self-reference, so only her own-voice forms are
+// rewritten: her name, or "หนู" directly before a verb she uses about herself, never inside a quoted phrase — and the
+// bare form only when the caller says nothing in the turn (the user's text, the conversation, a tool result) says หนู.
+// ponytail: a closed verb list; add a verb when an eval shows a new self-reference form.
+const SELF_REFERENCE_VERBS = ['ช่วย', 'จะ', 'สามารถ', 'ขอ', 'ยัง', 'ไม่', 'ได้', 'ดู', 'ดึง', 'เช็ค', 'เช็ก', 'ตรวจ', 'สรุป', 'หา',
+  'แนะนำ', 'เข้าใจ', 'คิด', 'ทำ', 'บอก', 'อธิบาย', 'เตรียม', 'รบกวน', 'เอง', 'ก็'];
+const SELF_REFERENCE = new RegExp(`หนูมั่งมี|(?<!เบื่อ|กำจัด|ดัก|จับ|ไล่|น้อง|ตัว|ลูก|มี|เจอ|เห็น)หนู(?=${SELF_REFERENCE_VERBS.join('|')})`, 'gu');
+const QUOTED_PHRASE = /(“[^”]*”|"[^"]*")/u;
+
+/** Her name is the only self-reference (persona line above): "หนู…" in her own voice becomes "น้องมั่งมี…". With `bare`
+ *  false only "หนูมั่งมี" is rewritten, since a bare "หนู" may then be the user's or a name from the data. */
+export function fixMangmeeSelfReference(text: string, bare = true): string {
+  const pattern = bare ? SELF_REFERENCE : /หนูมั่งมี/gu;
+  return text.split(QUOTED_PHRASE).map((part, index) => (index % 2 ? part : part.replace(pattern, 'น้องมั่งมี'))).join('');
 }
 
 // ─── tuning-4 (batch5 A6): deterministic backstop for the Markdown/status-key rules above ─────────
@@ -101,8 +119,8 @@ function tableRowToBullet(line: string): string {
  *  or a CE year in Thai prose. Deterministic, MODEL-COMPOSED text only — never a quoted user string
  *  or a tool-derived data value (a vendor/category name, an id, a raw figure), same restriction as
  *  sanitizeMangmeePersonaText, whose ครับ/ผม fix runs first here. */
-export function sanitizeMangmeeComposedText(text: string): string {
-  let result = sanitizeMangmeePersonaText(text)
+export function sanitizeMangmeeComposedText(text: string, bareSelfReference = true): string {
+  let result = sanitizeMangmeePersonaText(text, bareSelfReference)
     .replace(/```[a-zA-Z]*\n?/gu, '').replace(/```/gu, '')
     .replace(/^#{1,6}[ \t]*/gmu, '')
     .replace(/\*\*/gu, '').replace(/__/gu, '');
