@@ -144,6 +144,11 @@ describe('sanitizeMangmeeComposedText (batch5 A6)', () => {
     assert.equal(sanitizeMangmeeComposedText('ดูได้ที่ /companies/c-1/sales.'), 'ดูได้ที่ หน้าเว็บของบริษัท.');
     // Advisor S2a: the package tool's own page (billing.get_package_usage sourceRefs) has a name of its own.
     assert.equal(sanitizeMangmeeComposedText('ดูได้ที่ /companies/c-1/billing ค่ะ'), 'ดูได้ที่ หน้าแพ็กเกจบนเว็บ ค่ะ');
+    // Advisor S2a real samples: a tool data field quoted in brackets is dropped; a web address or ordinary bracket stays.
+    assert.equal(sanitizeMangmeeComposedText('คาดว่าจะไม่เกินโควต้า (projectedShortfall = 0) น่าจะพอค่ะ'), 'คาดว่าจะไม่เกินโควต้า น่าจะพอค่ะ');
+    assert.equal(sanitizeMangmeeComposedText('และแพ็กเกจนี้ไม่มีการต่ออายุอัตโนมัติ (renewal: none) นะคะ'), 'และแพ็กเกจนี้ไม่มีการต่ออายุอัตโนมัติ นะคะ');
+    for (const kept of ['ภาษีมูลค่าเพิ่ม (VAT 7%) รวมแล้ว', 'ดูประกาศได้ที่ (https://www.rd.go.th) นะคะ', 'แพ็กเกจ มืออาชีพ (PRO) ใช้ได้ถึง 21 ต.ค. 2569'])
+      assert.equal(sanitizeMangmeeComposedText(kept), kept);
     // Anything that is not an app path is left alone.
     const plain = 'ค่าส่งของ/ค่าขนส่ง 350 บาท ดูได้ที่หน้าเว็บ';
     assert.equal(sanitizeMangmeeComposedText(plain), plain);

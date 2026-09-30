@@ -83,6 +83,9 @@ const CE_YEAR_AFTER_THAI_MONTH = new RegExp(`(${[...FULL_THAI_MONTHS, ...THAI_MO
 // /companies/<company id>/expenses" — so the customer read an app path and the company id. Composed prose names the page in
 // plain Thai instead; the links the server appends itself (the เปิดดู buttons) are added after this runs and never pass here.
 const APP_PAGE_TH: Record<string, string> = { expenses: 'หน้าค่าใช้จ่ายบนเว็บ', reimbursements: 'หน้าใบเบิกบนเว็บ', billing: 'หน้าแพ็กเกจบนเว็บ' };
+// Advisor S2a eval 2026-09-30: "(renewal: none)", "(projectedShortfall = 0)" — a tool data field the model quoted
+// in brackets. A web address in brackets is left alone.
+const DATA_FIELD_PARENTHETICAL = /\s*\(\s*[a-z][A-Za-z0-9_.]*\s*(?:=|:(?!\/\/))[^()\n]*\)/gu;
 const APP_MARKDOWN_LINK = /\[([^\]\n]+)\]\((?:https?:\/\/[^\s/)]+)?\/companies\/[^\s)]*\)/gu;
 const APP_PATH = /(?:https?:\/\/[^\s/]+)?\/companies\/[^\s/?#)]+(?:\/([A-Za-z-]+))?(?:[/?#][^\s)]*)?/gu;
 
@@ -115,6 +118,7 @@ export function sanitizeMangmeeComposedText(text: string): string {
     .replace(STATUS_ENUM_PATTERN, (token) => STATUS_ENUM_TH[token]!)
     .replace(CE_YEAR_AFTER_THAI_MONTH, (_match, month: string, spacing: string, year: string) => `${month}${spacing}${Number(year) + 543}`)
     .replace(APP_MARKDOWN_LINK, '$1')
-    .replace(APP_PATH, (_match, page?: string) => APP_PAGE_TH[page ?? ''] ?? 'หน้าเว็บของบริษัท');
+    .replace(APP_PATH, (_match, page?: string) => APP_PAGE_TH[page ?? ''] ?? 'หน้าเว็บของบริษัท')
+    .replace(DATA_FIELD_PARENTHETICAL, '');
   return result.split('\n').map((line) => line.replace(/[ \t]{2,}/gu, ' ').trim()).join('\n').trim();
 }

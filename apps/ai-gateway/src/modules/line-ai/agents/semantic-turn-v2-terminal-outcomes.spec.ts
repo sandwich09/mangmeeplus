@@ -329,6 +329,8 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     assert.match(compose.systemPrompt, /'ขาดประมาณ N ใบ' with N = projectedShortfall/);
     assert.match(compose.systemPrompt, /add no line inviting them to upgrade, change, add to, buy or manage a package/);
     assert.match(compose.systemPrompt, /never write a web address yourself/);
+    assert.match(compose.systemPrompt, /no closing line pointing to the package page/);
+    assert.match(compose.systemPrompt, /Never write a field name, a code or an equation from the tool data/);
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.match(result.replyText, /ขาดประมาณ 50 ใบ/);
     assert.deepEqual(result.webLinks, [{ label: 'แพ็กเกจของร้าน', path: '/companies/company/billing' }]);
