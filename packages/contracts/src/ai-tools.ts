@@ -234,6 +234,7 @@ export const LINE_CAPABILITY_GROUPS = [
   { id: 'alerts', featureKeys: ['dashboard_notifications', 'workflow_automation'] },
   // billing.get_package_usage is offered to every assistant user so a non-manager reaches its typed
   // refusal; only someone who manages the package is told the assistant answers it (owner 2026-09-30).
+  // billing.get_package_catalog (package prices and contents, for anyone) shares the module and adds no line.
   { id: 'package', featureKeys: [], sourceModules: ['billing'], requiredPermissions: ['company.plan.manage'] },
 ] as const satisfies ReadonlyArray<{
   id: string;
@@ -1013,7 +1014,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'billing.get_package_usage',
-    description: "Read THIS company's current package: its name, the date it runs until, branch and member room used/limit, and receipt reads used/limit/remaining in the current allowance with an API-computed straight-line projection to the allowance's end. Also the tool for a question about upgrading, changing or buying this company's package: it decides who may be sent to the package page. Only a caller who manages the package gets figures; anyone else gets a typed refusal. Never prices and never another package. Use for 'แพ็กเกจพอไหม', 'เหลือใบเสร็จกี่ใบ', 'เพิ่มสาขาได้อีกไหม', 'อัปเกรดแพ็กเกจ'. Public package prices and package contents are not this tool.",
+    description: "Read THIS company's current package: its name, the date it runs until, branch and member room used/limit, and receipt reads used/limit/remaining in the current allowance with an API-computed straight-line projection to the allowance's end. Also the tool for a question about upgrading, changing or buying this company's package: it decides who may be sent to the package page. Only a caller who manages the package gets figures; anyone else gets a typed refusal. Never prices and never another package. Use for 'แพ็กเกจพอไหม', 'เหลือใบเสร็จกี่ใบ', 'เพิ่มสาขาได้อีกไหม', 'อัปเกรดแพ็กเกจ'. Package prices and what each package includes are billing.get_package_catalog.",
     businessSubjects: ['company', 'expense'],
     questionKinds: ['summary'],
     category: 'read_summary',
@@ -1026,6 +1027,20 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     sourceModule: 'billing',
     supportedAgents: ['accounting', 'general'],
     sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+  },
+  {
+    name: 'billing.get_package_catalog',
+    description: "Read the packages MangmeePlus sells, the same for every shop and every caller: each package's name, monthly and yearly selling price, the amount payable with VAT when VAT applies, branch and user limits, receipt reads, and the menus it includes. Selling prices only, never a cost. Use for 'แพ็กเกจเริ่มต้นราคาเท่าไหร่', 'แต่ละแพ็กเกจต่างกันยังไง', 'รายปีราคาเท่าไหร่', 'แพ็กเกจธุรกิจได้อะไรบ้าง'. Never this shop's own package, its dates or its usage (billing.get_package_usage).",
+    businessSubjects: ['company'],
+    questionKinds: ['summary', 'list'],
+    category: 'read_summary',
+    // Owner 2026-09-30 (advisor spec §10 item 1 as amended): anyone who talks to the assistant may ask
+    // package prices and contents. The same public data as GET /v1/billing/catalog (@Public).
+    requiredPermissions: ['ai.tool.invoke'],
+    sourceModule: 'billing',
+    supportedAgents: ['accounting', 'general'],
+    sensitiveAudit: false,
     requiresErpPermissionCheck: true,
   },
   {

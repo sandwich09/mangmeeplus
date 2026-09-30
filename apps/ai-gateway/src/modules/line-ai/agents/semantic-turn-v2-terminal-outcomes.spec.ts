@@ -324,7 +324,8 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     });
     const compose = calls.find((call) => call.usageTag === 'line.compose');
     assert.ok(compose);
-    assert.match(compose.systemPrompt, /In any answer about packages, whether or not billing\.get_package_usage ran: never state or guess a price, never name, compare or recommend any package other than this shop's own package\.label/);
+    assert.match(compose.systemPrompt, /an answer about whether this shop's package is enough names no package other than its own package\.label/);
+    assert.match(compose.systemPrompt, /Never recommend a package/);
     assert.match(compose.systemPrompt, /never suggest upgrading, a bigger package or buying more/);
     assert.match(compose.systemPrompt, /'ขาดประมาณ N ใบ' with N = projectedShortfall/);
     assert.match(compose.systemPrompt, /add no line inviting them to upgrade, change, add to, buy or manage a package/);
@@ -334,6 +335,43 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.match(result.replyText, /ขาดประมาณ 50 ใบ/);
     assert.deepEqual(result.webLinks, [{ label: 'แพ็กเกจของร้าน', path: '/companies/company/billing' }]);
+  });
+
+  // Owner 2026-09-30 (~16:00, spec §5.1a): anyone may ask package prices and contents; they come only from
+  // the catalog read, as selling prices with VAT per the billing policy, and never as a cost.
+  it('answers a staff member\'s price question from billing.get_package_catalog, with no package page link', async () => {
+    const control = JSON.stringify({ calls: [{ index: 0, toolName: 'billing.get_package_catalog', input: {} }] });
+    const data = { packages: [{ name: 'เริ่มต้น (STARTER)', branches: 1, users: 2, monthly: { price: '249', vat: '17.43', payable: '266.43', receiptReads: 30 },
+      yearly: { price: '2,490', vat: '174.30', payable: '2,664.30', receiptReads: 360, months: 12, averagePerMonth: '207.50', savingVersusMonthly: '498', pricedAsMonths: 10 },
+      menus: ['ผู้ช่วย AI ทาง LINE', 'ค่าใช้จ่ายและใบเสร็จ'] }], vatNote: 'ราคานี้ยังไม่รวม VAT 7% ยอดที่ชำระสุทธิคือราคารวม VAT',
+      usersNote: 'จำนวนผู้ใช้รวมเจ้าของร้าน', yearlyReceiptsNote: 'แบบรายปีได้สิทธิ์อ่านใบเสร็จของทั้งปีทันทีเมื่อชำระสำเร็จ', aiCreditPerMonth: 80 };
+    const calls: Array<{ usageTag: string; systemPrompt: string }> = [];
+    const invoked: string[] = [];
+    const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+      calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '' });
+      return { ok: true, text: input.usageTag === 'line.compose' ? JSON.stringify({ answers: [{ index: 0, status: 'handled',
+        text: 'แพ็กเกจเริ่มต้น (STARTER) ราคา 249 บาท/เดือน บวก VAT 17.43 บาท รวมชำระ 266.43 บาทค่ะ', sourceRefIds: ['billing:package_catalog:summary'] }] }) : control };
+    } };
+    const result = await runSemanticTurnV2({
+      req: request('read', 'แพ็กเกจเริ่มต้นราคาเท่าไหร่', ['ai.tool.invoke', 'expense.read']), provider, draftEditEnabled: false,
+      reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(meta: { name: string }): Promise<ToolResult> {
+        invoked.push(meta.name);
+        return { toolName: 'billing.get_package_catalog', status: 'ok', data, asOf: '2026-09-30T09:00:00.000Z',
+          sourceRefs: [{ label: 'แพ็กเกจที่เปิดขาย', module: 'billing', entityType: 'package_catalog', permissionChecked: true }] };
+      },
+    });
+    assert.deepEqual(invoked, ['billing.get_package_catalog']);
+    assert.match(calls[0]!.systemPrompt, /call billing\.get_package_catalog with input \{\} whatever the clause kind/);
+    const compose = calls.find((call) => call.usageTag === 'line.compose');
+    assert.ok(compose);
+    assert.match(compose.systemPrompt, /comes only from billing\.get_package_catalog in this turn — this shop's own usage and room come from billing\.get_package_usage — never from memory, a guess or your own arithmetic/);
+    assert.match(compose.systemPrompt, /a price with vat is said as the price plus that VAT and its payable total; about VAT say only what vatNote says/);
+    assert.match(compose.systemPrompt, /Selling prices are the only money you may name: never state, estimate or hint at what anything costs MangmeePlus/);
+    assert.match(compose.systemPrompt, /never turn credits or receipts into money or into a number of messages/);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.match(result.replyText, /266\.43/);
+    assert.deepEqual(result.webLinks, [], 'someone who cannot buy gets no package page link');
   });
 });
 

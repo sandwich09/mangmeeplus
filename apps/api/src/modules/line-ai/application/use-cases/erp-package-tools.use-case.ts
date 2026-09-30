@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { addCivilDays, billingPlanLabel, civilDate, type SourceRef, type ToolResult } from '@watchdog-bms/contracts';
+import { addCivilDays, billingPlanLabel, civilDate, DEFAULT_CHAT_CREDIT_SATANG, packageMenuLabels, type BillingOffer, type BillingTaxTreatment,
+  type SourceRef, type ToolResult } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { BillingService } from '../../../billing/application/billing.service';
+import { quoteTotals } from '../../../billing/domain/billing-policy';
+import { baht } from '../../domain/logic/line-event-discount.logic';
 import { isReceiptAddOnKind, visibleReceiptLots } from '../../../billing/application/billing-receipt-grants';
 import { PLAN_MANAGE_PERMISSION_KEY } from '../../../access-control/domain/logic/plan-manager.logic';
 import { effectivePlanCapacity } from '../../../system-partner-management/domain/logic/plan-capacity';
@@ -99,6 +102,79 @@ export class BillingGetPackageUsageTool implements ErpReadToolPort {
       basisVersion: PACKAGE_PACE_FORMULA,
       queryApplied: { timezone: 'Asia/Bangkok', dateBasis: 'bangkok_civil_day', statusBasis: 'current_package_term',
         dataset: 'billing.package_usage', accessScope: 'company' },
+    };
+  }
+}
+
+/** What the answer may say about VAT, from the ACTIVE billing policy — the same treatment every quote charges. */
+const VAT_NOTES: Record<BillingTaxTreatment | 'UNKNOWN', string> = {
+  INCLUSIVE_VAT_7: 'ราคานี้รวม VAT 7% แล้ว ยอดที่ชำระคือราคานี้',
+  EXCLUSIVE_VAT_7: 'ราคานี้ยังไม่รวม VAT 7% ยอดที่ชำระสุทธิคือราคารวม VAT',
+  NOT_VAT_REGISTERED: 'ราคานี้ไม่มี VAT บวกเพิ่ม ยอดที่ชำระเท่ากับราคา',
+  UNKNOWN: 'ยังไม่มีข้อมูลว่าราคานี้มี VAT หรือไม่',
+};
+const NOT_ON_SALE: Record<Exclude<BillingOffer['availability'], 'AVAILABLE'>, string> = {
+  UNAVAILABLE: 'ยังไม่เปิดให้ซื้อตอนนี้',
+  COMING_SOON: 'เร็ว ๆ นี้ ยังไม่เปิดให้ซื้อ',
+};
+
+/** A selling price and what the buyer pays for it: `quoteTotals` is the purchase quote's own VAT arithmetic. */
+function sellingPrice(offer: BillingOffer, tax: BillingTaxTreatment | null) {
+  const totals = quoteTotals(offer.priceSatang, tax);
+  return { price: baht(offer.priceSatang), ...(totals.taxSatang ? { vat: baht(totals.taxSatang) } : {}), payable: baht(totals.totalSatang),
+    receiptReads: offer.receiptAllowance, ...(offer.availability === 'AVAILABLE' ? {} : { notOnSale: NOT_ON_SALE[offer.availability] }) };
+}
+
+/**
+ * `billing.get_package_catalog` (advisor spec §5.1a, owner decision 2026-09-30 ~16:00). The packages on
+ * sale, read from `BillingService.catalog()` — the public package-page catalog (GET /v1/billing/catalog),
+ * so ACTIVE-policy prices and VAT treatment follow the policy with no second price list. The same for
+ * every shop and every caller: anyone who talks to the assistant may ask. Selling prices only: the
+ * catalog's AI safety budget, its revision stamps and anything else that is not a price a customer pays
+ * never leave this function (the whitelist below). Every value is a number or plain Thai an answer may quote.
+ */
+@Injectable()
+export class BillingGetPackageCatalogTool implements ErpReadToolPort {
+  toolName = 'billing.get_package_catalog';
+
+  constructor(private readonly billing: BillingService) {}
+
+  async execute(ctx: ErpToolContext): Promise<ToolResult> {
+    const asOf = new Date().toISOString();
+    const catalog = await this.billing.catalog();
+    const offers = new Map(catalog.offers.map((offer) => [`${offer.offerKey}:${offer.interval}`, offer]));
+    const packages = [...new Set(catalog.offers.map((offer) => offer.offerKey))].flatMap((tier) => {
+      const month = offers.get(`${tier}:month`), year = offers.get(`${tier}:year`);
+      if (!month || !year) return [];
+      const saving = month.priceSatang * 12 - year.priceSatang;
+      const pricedAsMonths = year.priceSatang / month.priceSatang;
+      return [{
+        name: month.label, branches: month.branchLimit, users: month.employeeLimit,
+        monthly: sellingPrice(month, catalog.taxTreatment),
+        yearly: { ...sellingPrice(year, catalog.taxTreatment), months: 12, averagePerMonth: baht(Math.round(year.priceSatang / 12)),
+          ...(saving > 0 ? { savingVersusMonthly: baht(saving) } : {}), ...(Number.isInteger(pricedAsMonths) ? { pricedAsMonths } : {}) },
+        menus: packageMenuLabels(month.featureKeys),
+      }];
+    });
+    // The package page is where a package is bought, so only someone who may buy gets its link (spec §2.2).
+    const sourceRefs: SourceRef[] = [{
+      label: 'แพ็กเกจที่เปิดขาย', module: 'billing', entityType: 'package_catalog', asOf, permissionChecked: true,
+      ...(ctx.permissions.includes(PLAN_MANAGE_PERMISSION_KEY) ? { webPath: `/companies/${ctx.companyId}/billing` } : {}),
+    }];
+    return {
+      toolName: this.toolName,
+      status: 'ok',
+      data: {
+        packages,
+        vatNote: VAT_NOTES[catalog.taxTreatment ?? 'UNKNOWN'],
+        usersNote: 'จำนวนผู้ใช้รวมเจ้าของร้าน',
+        yearlyReceiptsNote: 'แบบรายปีได้สิทธิ์อ่านใบเสร็จของทั้งปีทันทีเมื่อชำระสำเร็จ',
+        // The package page's own line on every package card ("เครดิต AI 80 เครดิต/เดือน").
+        aiCreditPerMonth: DEFAULT_CHAT_CREDIT_SATANG / 100,
+      },
+      sourceRefs,
+      asOf,
+      queryApplied: { timezone: 'Asia/Bangkok', dateBasis: 'current_catalog', statusBasis: 'selling_price', dataset: 'billing.package_catalog' },
     };
   }
 }

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { BillingGetPackageUsageTool, PACKAGE_MANAGER_REQUIRED } from './erp-package-tools.use-case';
+import { BILLING_PAID_TIERS, billingOffer, type BillingCatalog, type BillingPolicy, type BillingTaxTreatment } from '@watchdog-bms/contracts';
+import { BillingGetPackageCatalogTool, BillingGetPackageUsageTool, PACKAGE_MANAGER_REQUIRED } from './erp-package-tools.use-case';
 import { lineReadResultHash } from '../line-read-evidence.service';
 import { PLATFORM_SEAT_EXEMPT_ROLE } from '../../../system-partner-management/application/plan-term-limit';
 
@@ -112,5 +113,79 @@ describe('billing.get_package_usage (advisor spec §5.1)', () => {
     assert.deepEqual(strings.filter((value) => /[A-Za-z]/u.test(value.replace('(PRO)', ''))), []);
     assert.notEqual(first.asOf, second.asOf);
     assert.equal(lineReadResultHash(first), lineReadResultHash(second));
+  });
+});
+
+/** What BillingService.catalog() returns: billingOffer for every paid tier and interval under the ACTIVE policy. */
+function catalog(taxTreatment: BillingTaxTreatment | null, policy: Partial<BillingPolicy> | null = null): BillingCatalog {
+  const offers = BILLING_PAID_TIERS.flatMap((tier) => (['month', 'year'] as const).map((interval) => {
+    const offer = billingOffer(tier, interval, policy);
+    // Sales open, as in production; ENTERPRISE stays "coming soon" while its Prices are unbound.
+    if (offer.availability === 'UNAVAILABLE') { offer.availability = 'AVAILABLE'; offer.reason = null; }
+    return offer;
+  }));
+  return { schemaVersion: 1, mode: 'LIVE', policyRevision: 'rev-1', catalogRevision: 'catalog-1', generatedAt: new Date().toISOString(),
+    validUntil: new Date(Date.now() + 30_000).toISOString(), taxTreatment, offers, aiMonthlyBudgetSatang: 123_456 };
+}
+const STAFF = { ...MANAGER, permissions: ['ai.tool.invoke', 'expense.read'] };
+const catalogTool = (value: () => BillingCatalog) => new BillingGetPackageCatalogTool({ catalog: async () => value() } as any);
+
+describe('billing.get_package_catalog (advisor spec §5.1a, owner 2026-09-30)', () => {
+  it('lists every package on sale from the billing catalog: prices, limits, receipts and menus, for any caller', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: NOW });
+    const result = await catalogTool(() => catalog('NOT_VAT_REGISTERED')).execute(STAFF);
+    assert.equal(result.status, 'ok');
+    const data = result.data as any;
+    assert.deepEqual(data.packages.map((item: any) => [item.name, item.monthly.price, item.yearly.price, item.branches, item.users, item.monthly.receiptReads]), [
+      ['เริ่มต้น (STARTER)', '249', '2,490', 1, 2, 30], ['เติบโต (BASIC)', '499', '4,990', 2, 5, 50],
+      ['มืออาชีพ (PRO)', '999', '9,990', 5, 10, 100], ['ธุรกิจ (ENTERPRISE)', '1,999', '19,990', 10, 30, 500]]);
+    assert.deepEqual(data.packages[0], {
+      name: 'เริ่มต้น (STARTER)', branches: 1, users: 2,
+      monthly: { price: '249', payable: '249', receiptReads: 30 },
+      yearly: { price: '2,490', payable: '2,490', receiptReads: 360, months: 12, averagePerMonth: '207.50', savingVersusMonthly: '498', pricedAsMonths: 10 },
+      menus: ['ผู้ช่วย AI ทาง LINE', 'แดชบอร์ด', 'ค่าใช้จ่ายและใบเสร็จ', 'การเบิกจ่าย', 'พนักงานและสิทธิ์', 'การแจ้งเตือน'],
+    });
+    const enterprise = data.packages[3];
+    assert.deepEqual(enterprise.menus.filter((menu: string) => !data.packages[0].menus.includes(menu)), ['ออก ภ.ง.ด.53 ในระบบ', 'ออกหนังสือรับรอง 50 ทวิในระบบ']);
+    assert.equal(enterprise.monthly.notOnSale, 'เร็ว ๆ นี้ ยังไม่เปิดให้ซื้อ');
+    assert.equal(data.vatNote, 'ราคานี้ไม่มี VAT บวกเพิ่ม ยอดที่ชำระเท่ากับราคา');
+    assert.equal(data.aiCreditPerMonth, 80);
+    assert.deepEqual(result.sourceRefs.map((ref) => ref.webPath), [undefined], 'no package page link for someone who cannot buy');
+    assert.equal((await catalogTool(() => catalog(null)).execute(MANAGER)).sourceRefs[0]!.webPath, '/companies/c1/billing');
+  });
+
+  it('gives the net amount payable with VAT exactly as a purchase quote charges it', async () => {
+    const starter = async (tax: BillingTaxTreatment | null) => ((await catalogTool(() => catalog(tax)).execute(STAFF)).data as any);
+    const exclusive = await starter('EXCLUSIVE_VAT_7');
+    assert.deepEqual([exclusive.packages[0].monthly.price, exclusive.packages[0].monthly.vat, exclusive.packages[0].monthly.payable], ['249', '17.43', '266.43']);
+    assert.deepEqual([exclusive.packages[0].yearly.price, exclusive.packages[0].yearly.vat, exclusive.packages[0].yearly.payable], ['2,490', '174.30', '2,664.30']);
+    assert.equal(exclusive.vatNote, 'ราคานี้ยังไม่รวม VAT 7% ยอดที่ชำระสุทธิคือราคารวม VAT');
+    const inclusive = await starter('INCLUSIVE_VAT_7');
+    assert.deepEqual([inclusive.packages[0].monthly.price, inclusive.packages[0].monthly.vat, inclusive.packages[0].monthly.payable], ['249', '16.29', '249']);
+    assert.equal(inclusive.vatNote, 'ราคานี้รวม VAT 7% แล้ว ยอดที่ชำระคือราคานี้');
+    // No VAT, or no policy to say: never an invented VAT figure.
+    for (const tax of ['NOT_VAT_REGISTERED', null] as const) assert.equal((await starter(tax)).packages[0].monthly.vat, undefined);
+    assert.equal((await starter(null)).vatNote, 'ยังไม่มีข้อมูลว่าราคานี้มี VAT หรือไม่');
+  });
+
+  it('follows the ACTIVE policy prices, and never lets a cost, a budget or a code reach the answer', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: NOW });
+    const policy = { offerTerms: { STARTER_249: { monthlyPriceSatang: 19_900, annualPriceSatang: 189_000, monthlyReceiptAllowance: 40 } } };
+    const tool = catalogTool(() => catalog('NOT_VAT_REGISTERED', policy));
+    const first = await tool.execute(MANAGER);
+    const starter = (first.data as any).packages[0];
+    assert.deepEqual(starter.monthly, { price: '199', payable: '199', receiptReads: 40 });
+    assert.equal(starter.yearly.price, '1,890');
+    assert.equal(starter.yearly.pricedAsMonths, undefined, 'no "pay N months" line unless the yearly price is exactly N monthly prices');
+    const text = JSON.stringify(first.data);
+    assert.doesNotMatch(text, /satang|budget|cost|revision|margin|fee/iu);
+    assert.doesNotMatch(text, /STARTER_249|"(?:month|year)"|AVAILABLE/u);
+    assert.ok(!text.includes('123456') && !text.includes('1,234.56'), 'the AI safety budget never leaves the catalog');
+    const strings = text.match(/:"[^"]*"/gu) ?? [];
+    assert.deepEqual(strings.filter((value) => /[A-Za-z]/u.test(value.replace(/\((?:STARTER|BASIC|PRO|ENTERPRISE)\)|VAT|AI|LINE/gu, ''))), []);
+    t.mock.timers.tick(90_000);
+    const second = await tool.execute(MANAGER);
+    assert.notEqual(first.asOf, second.asOf);
+    assert.equal(lineReadResultHash(first), lineReadResultHash(second), 'catalog stamps and read time never enter the evidence');
   });
 });

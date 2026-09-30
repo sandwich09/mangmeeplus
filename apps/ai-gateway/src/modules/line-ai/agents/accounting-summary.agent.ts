@@ -67,6 +67,7 @@ export const ALLOWED_TOOLS = new Set([
   'reimbursement.get_detail',
   'reports.get_monthly_report_summary',
   'billing.get_package_usage',
+  'billing.get_package_catalog',
   // S-4 draft edit (spec §5.4). They belong to the accounting specialist because they act on the
   // expense record it already reads; the router catalog is what decides whether they are offered.
   ...LINE_DRAFT_UPDATE_TOOLS,
@@ -123,6 +124,7 @@ const TOOL_FACT_LABELS: Record<string, string> = {
   'workflow.list_recent_failures': 'automation ที่ล้มเหลว',
   'workflow.summarize_rule_health': 'สุขภาพ automation',
   'billing.get_package_usage': 'แพ็กเกจและใบเสร็จคงเหลือ',
+  'billing.get_package_catalog': 'แพ็กเกจและราคา',
 };
 
 function formatMoney(value: unknown): string {

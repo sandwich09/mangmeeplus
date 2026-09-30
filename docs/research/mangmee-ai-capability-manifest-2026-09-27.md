@@ -1,6 +1,6 @@
 # W00 capability manifest
 
-The [JSON artifact](./mangmee-ai-capability-manifest-2026-09-27.json) snapshots the 72 registered operations, API intake/routes, Nest provider and `ERP_READ_TOOL_REGISTRY` wiring, 18 sellable feature families, default rollout flags, and deferred voice capability. It is generated from runtime contracts and Nest metadata; TypeScript AST is used only to connect live controller parameters to imported provider source files.
+The [JSON artifact](./mangmee-ai-capability-manifest-2026-09-27.json) snapshots the 73 registered operations, API intake/routes, Nest provider and `ERP_READ_TOOL_REGISTRY` wiring, 18 sellable feature families, default rollout flags, and deferred voice capability. It is generated from runtime contracts and Nest metadata; TypeScript AST is used only to connect live controller parameters to imported provider source files.
 
 The artifact records wiring and authorization boundaries, not database result correctness, customer entitlements, live provider behavior, or release readiness. Three registry entries are explicitly non-ready and hidden from callable catalogs: `crm.suggest_sales_followups`, the unhandled registry alias `accounting.capture_receipt_evidence` (receipt capture is a separate webhook intake), and `hr.get_leave_summary`. `line.explain_file_attempt` is wired through the controller and evidence replay registry. Voice remains deferred.
 
