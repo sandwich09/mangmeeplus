@@ -2,9 +2,9 @@
   "schemaVersion": "line-ai-capability-manifest/v1",
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
-  "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "cf783811f46686581743776c1f8e238c970dab4c",
-  "checkoutBranch": "claude/line-ai-substitute-photo-narrow-20260930",
+  "baseRevision": "2d3202e66a0dade56793fd27c8127f13b51a5001",
+  "sourceRevision": "2d3202e66a0dade56793fd27c8127f13b51a5001",
+  "checkoutBranch": "claude/line-promotion-poster-hotfix-20260930",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "cbe52d9577e411c02ff2ada92b386a69f85945c83d76bd323e100440eac425fb"
+      "sha256": "aec9261779dde5081d565048b9440939c124d9f4e3267855e8c1b0f5ce9ecfb6"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T00:15:17.138Z",
-  "manifestDigest": "d9d52804f4ffba1c1b2b99f8df934fe9f4b8d053ea59f5c5f881ef30b1a214ae"
+  "generatedAt": "2026-09-30T08:21:17.069Z",
+  "manifestDigest": "74e9a0cc03b47291aa6cc222ae4da817c533c37f3635990064433cbfb3a8e029"
 }
