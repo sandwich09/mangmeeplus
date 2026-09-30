@@ -15,12 +15,12 @@ const SOURCE_REF = { label: 'ใบเบิกที่ยังรออยู
   permissionChecked: true as const, asOf: '2026-09-30T03:00:00.000Z', webPath: '/companies/company/reimbursements' };
 const SOURCE_ID = 'reimbursements:reimbursement_approval_backlog:summary';
 
-function request(messageText: string, permissions: string[]): LineAiTurnRequest {
+function request(messageText: string, permissions: string[], requestedFilters: Record<string, string> = {}, kind: 'read' | 'write' = 'read'): LineAiTurnRequest {
   return {
     requestId: 'req-s3', webhookEventId: 'event-s3', messageText, messagePreviewHash: 'e'.repeat(16),
     valueCandidates: { version: 2, inputDigest: 'a'.repeat(64), extractorVersion: 'value-v2', todayIso: '2026-09-30',
       completeness: 'complete', counts: { amounts: 0, dates: 0, periods: 0 }, amounts: [], dates: [], periods: [] },
-    semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ใบเบิกค้างที่ใคร', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+    semanticSubrequests: [{ index: 0, kind, goal: 'ใบเบิกค้างที่ใคร', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters }],
     userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
       permissions, roles: ['STAFF'], branchIds: [], locationIds: [], locale: 'th-TH' } as LineAiTurnRequest['userContext'],
   };
@@ -93,5 +93,36 @@ describe('advisor S3: reimbursement.get_approval_backlog wiring and prompt rules
     assert.ok(result.replyText.startsWith(answer), result.replyText);
     assert.match(result.replyText, /ขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ|ของคุณ/);
     assert.deepEqual(result.webLinks, [{ label: SOURCE_REF.label, path: SOURCE_REF.webPath }]);
+  });
+
+  // Run 2 (R-13, "ใบเบิกที่รอจ่ายอยู่ที่ใคร"): the router attached paymentStatus UNPAID, which the backlog cannot take,
+  // and the read failed closed into "ยังดึงข้อมูลไม่ได้". Its groups already answer a stage or a person; a branch it
+  // cannot narrow to still fails closed, since that answer would silently be the whole shop.
+  it('answers a stage or a person from the backlog\'s own groups, but never silently widens a branch', async () => {
+    const run = async (filters: Record<string, string>) => {
+      const invoked: Array<Record<string, unknown>> = [];
+      const { provider } = recordingProvider([
+        JSON.stringify({ calls: [{ index: 0, toolName: TOOL, input: {} }], questions: [] }),
+        JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'รอจ่าย 1 ใบค่ะ', sourceRefIds: [SOURCE_ID] }] }),
+      ]);
+      await runSemanticTurnV2({ req: request('ใบเบิกที่รอจ่ายอยู่ที่ใคร', ['ai.tool.invoke', 'reimbursement.read'], filters),
+        provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        async invoke(_meta, _ctx, args): Promise<ToolResult> { invoked.push(args); return { ...BACKLOG, data: { ...(BACKLOG.data as object), total: 1 } }; } });
+      return invoked;
+    };
+    assert.deepEqual(await run({ paymentStatus: 'UNPAID', vendorName: 'สมศรี', documentStatus: 'APPROVED' }), [{}]);
+    assert.deepEqual(await run({ branchId: 'สาขา 2' }), []);
+  });
+
+  // Run 2 (R-06, "อนุมัติให้หมดเลย"): the planner answered with only a question for the user and no "calls" key; that
+  // was read as a broken round and the user got "ยังดึงข้อมูลไม่ได้" instead of the question.
+  it('treats a planning round that only asks the user a question as that question', async () => {
+    const question = 'การอนุมัติใบเบิกต้องทำบนเว็บค่ะ อยากให้น้องมั่งมีสรุปใบที่รออนุมัติให้ดูก่อนไหมคะ';
+    const { provider } = recordingProvider([JSON.stringify({ questions: [{ index: 0, text: question }] })]);
+    const result = await runSemanticTurnV2({ req: request('อนุมัติให้หมดเลย', ['ai.tool.invoke', 'reimbursement.approve'], {}, 'write'),
+      provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('no tool may run'); } });
+    assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');
+    assert.equal(result.replyText, question);
   });
 });
