@@ -90,7 +90,7 @@ import {
 } from './application/use-cases/erp-business-tools.use-case';
 import { ReportsMonthlySummaryTool } from './application/use-cases/erp-report-tools.use-case';
 import { ExpenseGetDailyClosingTool } from './application/use-cases/erp-expense-daily-closing.use-case';
-import { ReimbursementListPendingApprovalsTool } from './application/use-cases/erp-reimbursement-tools.use-case';
+import { ReimbursementListPendingApprovalsTool, ReimbursementGetApprovalBacklogTool } from './application/use-cases/erp-reimbursement-tools.use-case';
 import { CrmGetCustomerSummaryTool, CrmSearchCustomersTool, CrmGetCustomer360Tool } from './application/use-cases/erp-crm-tools.use-case';
 import {
   InventoryGetProductDetailTool,
@@ -195,6 +195,7 @@ const erpTools = [
   ReimbursementListPendingApprovalsTool,
   ReimbursementGetSummaryTool,
   ReimbursementGetDetailTool,
+  ReimbursementGetApprovalBacklogTool,
   AccountingGetDocumentDetailTool,
   AccountingGetReceivableSummaryTool,
   CrmGetCustomerSummaryTool,

@@ -58,6 +58,7 @@ function expenseSummaryEvidence(result: ToolResult): ExpenseSummaryEvidence | un
 const READ_MEMORY_TOOLS = new Set([
   'expense.list_recent', 'expense.get_breakdown', 'expense.get_detail', 'expense.get_daily_closing',
   'reimbursement.list_pending_approvals', 'reimbursement.get_summary', 'reimbursement.get_detail',
+  'reimbursement.get_approval_backlog',
 ]);
 
 /** Hardcoded per tool, not derived from the data shape: a detail read is a "single_metric"-style
@@ -70,6 +71,7 @@ const READ_MEMORY_ANSWER_SHAPE: Record<string, 'single_metric' | 'list'> = {
   'reimbursement.list_pending_approvals': 'list',
   'reimbursement.get_summary': 'single_metric',
   'reimbursement.get_detail': 'single_metric',
+  'reimbursement.get_approval_backlog': 'list',
 };
 
 const READ_MEMORY_MAX_SHOWN_ITEMS = 10;
@@ -158,6 +160,10 @@ export function readMemoryEvidence(result: ToolResult): LineAiReadMemory | undef
       shownItems = [{ ordinal: 1, id, label: readMemoryLabel(data[labelKey], 'ไม่ระบุ'),
         ...(typeof date === 'string' ? { date: date.slice(0, 10) } : {}) }];
     }
+  } else if (result.toolName === 'reimbursement.get_approval_backlog') {
+    // The claims it listed, so "ใบแรก" can open one; no filter or status basis worth carrying into a later read.
+    const items = readMemoryRecordItems(data['items'], 'id', 'documentNumber', 'ใบเบิก', 'submittedOn');
+    return { tool: result.toolName, answerShape: 'list', asOf: result.asOf, ...(items.length > 0 ? { shownItems: items } : {}) };
   } else if (result.toolName === 'expense.get_daily_closing') {
     const date = data['date'];
     return {
