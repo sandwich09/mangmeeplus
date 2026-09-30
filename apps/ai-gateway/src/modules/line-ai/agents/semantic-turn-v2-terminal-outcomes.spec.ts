@@ -332,6 +332,7 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     assert.match(compose.systemPrompt, /never write a web address yourself/);
     assert.match(compose.systemPrompt, /no closing line pointing to the package page/);
     assert.match(compose.systemPrompt, /Never write a field name, a code or an equation from the tool data/);
+    assert.match(compose.systemPrompt, /in a Thai answer no English word such as reset or margin: say เริ่มนับใหม่ or เหลือเผื่อ\./);
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.match(result.replyText, /ขาดประมาณ 50 ใบ/);
     assert.deepEqual(result.webLinks, [{ label: 'แพ็กเกจของร้าน', path: '/companies/company/billing' }]);
@@ -350,7 +351,7 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
       calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '' });
       return { ok: true, text: input.usageTag === 'line.compose' ? JSON.stringify({ answers: [{ index: 0, status: 'handled',
-        text: 'แพ็กเกจเริ่มต้น (STARTER) ราคา 249 บาท/เดือน บวก VAT 17.43 บาท รวมชำระ 266.43 บาทค่ะ', sourceRefIds: ['billing:package_catalog:summary'] }] }) : control };
+        text: 'แพ็กเกจเริ่มต้น (STARTER) ราคา 249 บาท/เดือน บวก VAT 17.43 บาท รวมชำระ 266.43 บาทค่ะ\nหากต้องการซื้อแพ็กเกจ ทำได้บนเว็บค่ะ', sourceRefIds: ['billing:package_catalog:summary'] }] }) : control };
     } };
     const result = await runSemanticTurnV2({
       req: request('read', 'แพ็กเกจเริ่มต้นราคาเท่าไหร่', ['ai.tool.invoke', 'expense.read']), provider, draftEditEnabled: false,
@@ -375,6 +376,7 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     assert.match(compose.systemPrompt, /say you can only share the prices packages are sold at, as a handled answer that still cites billing\.get_package_catalog's sourceRefIds when it ran\./);
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.match(result.replyText, /266\.43/);
+    assert.doesNotMatch(result.replyText, /หากต้องการซื้อแพ็กเกจ/, 'an unasked buy line is dropped');
     assert.deepEqual(result.webLinks, [], 'someone who cannot buy gets no package page link');
   });
 });

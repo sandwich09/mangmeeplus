@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { aggregateState, aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText,
   expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares,
-  reimbursementApprovalNotPermittedReplyText, packageManagerRequiredReplyText, reimbursementPendingApprovalsTotal } from './business-read-result-semantics';
+  reimbursementApprovalNotPermittedReplyText, packageManagerRequiredReplyText, reimbursementPendingApprovalsTotal,
+  withoutUnaskedPackagePurchaseLine } from './business-read-result-semantics';
 
 describe('business read result semantics', () => {
   it('uses the API-applied period instead of the requested proposal', () => {
@@ -94,6 +95,23 @@ describe('billing.get_package_usage forbidden outcome (PACKAGE_MANAGER_REQUIRED,
     assert.equal(packageManagerRequiredReplyText(false), 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ');
     assert.match(packageManagerRequiredReplyText(true), /ask the shop owner or someone who manages the package/);
     for (const text of [packageManagerRequiredReplyText(false), packageManagerRequiredReplyText(true)]) assert.doesNotMatch(text, /\d|https?:|\/companies\//u);
+  });
+});
+
+describe('package answers invite no unasked purchase (owner 2026-09-30, advisor eval r5/r6/r10)', () => {
+  it('drops the closing buy or change invitation unless the clause asked about buying, changing or upgrading', () => {
+    const prices = 'แพ็กเกจที่ใหญ่กว่ามีดังนี้ค่ะ\n\n• เติบโต — รายเดือน 499 บาท\n\nหมายเหตุ: ยังไม่มีข้อมูลว่าราคาเหล่านี้รวม VAT หรือไม่ค่ะ';
+    const question = 'แล้วแพ็กเกจที่ใหญ่กว่าราคาเท่าไหร่';
+    assert.equal(withoutUnaskedPackagePurchaseLine(`${prices}\n\nหากต้องการเปลี่ยนแพ็กเกจ ทำได้บนเว็บที่หน้าแพ็กเกจของร้านค่ะ`, question), prices);
+    // r5: the invitation rode the end of the VAT note on the same line.
+    assert.equal(withoutUnaskedPackagePurchaseLine('หมายเหตุ: ยังไม่มีข้อมูลว่าราคาข้างต้นรวม VAT หรือไม่ และหากต้องการเปลี่ยนหรือซื้อแพ็กเกจ สามารถทำได้บนเว็บที่หน้าแพ็กเกจของร้านค่ะ', question),
+      'หมายเหตุ: ยังไม่มีข้อมูลว่าราคาข้างต้นรวม VAT หรือไม่');
+    // Asked how to upgrade: the web-page answer is the answer.
+    const upgrade = 'การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ\nหากต้องการเปลี่ยนแพ็กเกจ กดลิงก์ด้านล่างได้เลยค่ะ';
+    assert.equal(withoutUnaskedPackagePurchaseLine(upgrade, 'อยากอัปเกรดแพ็กเกจต้องทำยังไง'), upgrade);
+    // A page pointer that invites no purchase, and "ยังไม่เปิดให้ซื้อ", stay.
+    for (const kept of ['ถ้าอยากติดตามใกล้ชิด ดูรายละเอียดได้ที่หน้าแพ็กเกจของร้านนะคะ', 'แพ็กเกจธุรกิจยังไม่เปิดให้ซื้อตอนนี้ค่ะ'])
+      assert.equal(withoutUnaskedPackagePurchaseLine(kept, question), kept);
   });
 });
 
