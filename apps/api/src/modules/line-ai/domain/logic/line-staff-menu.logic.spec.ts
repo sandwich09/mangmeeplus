@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { statSync } from 'node:fs';
+import { join } from 'node:path';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CALLBACK_COMMAND, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, STAFF_OA_URL, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, linePostbackCommandText, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CALLBACK_COMMAND, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, STAFF_OA_URL, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import { isPublicPolicyFollowUp, resolvePublicPolicyAnswer } from './line-public-policy.logic';
 import { buildPublicPolicyCardMessage } from './line-business-card.logic';
@@ -695,14 +697,10 @@ describe('promotion menu (rich menu v2 ver2)', () => {
     // Glossary 2026-09-29: no English on a customer card.
     assert.match(JSON.stringify(buildPromotionCard('owner')), /🎁 แพ็กเกจที่เหมาะกับร้านคุณ/);
     assert.doesNotMatch(JSON.stringify(buildPromotionCard('owner')), /Package/);
-    assert.deepEqual(employee.map((action: any) => action.label),
-      ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานติดต่อกลับ', 'คุยกับทีมงาน']);
-    // G19: a callback request travels as a postback with no id or state in it (SEC-04).
-    assert.deepEqual(employee[1], { type: 'postback', label: PACKAGE_CALLBACK_COMMAND, data: 'action=package-callback', displayText: PACKAGE_CALLBACK_COMMAND });
+    assert.deepEqual(employee.map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'คุยกับทีมงาน']);
     // An unusable URL drops its button rather than sending a broken link, like every card here.
     assert.deepEqual(actions('stranger').map((action: any) => action.label), ['ดูแพ็กเกจบนเว็บ', 'คุยกับทีมงาน']);
-    assert.deepEqual(actions('owner').map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานติดต่อกลับ', 'คุยกับทีมงาน']);
-    assert.deepEqual(actions('owner')[1], employee[1]);
+    assert.deepEqual(actions('owner').map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'คุยกับทีมงาน']);
     // G20: the business package adds tax documents; it never "opens every menu".
     assert.doesNotMatch(JSON.stringify(buildPromotionCard('owner', 'https://x/l/t')), /ครบทุกเมนู/);
     assert.match(JSON.stringify(buildPromotionCard('owner', 'https://x/l/t')), /เพิ่มเอกสารภาษี ภ\.ง\.ด\.53 และ 50 ทวิ/);
@@ -712,6 +710,32 @@ describe('promotion menu (rich menu v2 ver2)', () => {
     assert.equal(staffMenuCommand(PACKAGE_CALLBACK_COMMAND), 'package_callback');
     assert.equal(staffMenuCommand(` ${PACKAGE_CALLBACK_COMMAND} `), 'package_callback');
     assert.equal(staffMenuCommand(`${PACKAGE_CALLBACK_COMMAND}ด่วน`), null);
+  });
+
+  // Owner 2026-09-30: the callback button is gone for everyone; the other buttons stay as they were.
+  it('offers no callback button to anyone, while cards already in chats still resolve it', () => {
+    const labels = (audience: 'owner' | 'employee' | 'stranger', url?: string) =>
+      (buildPromotionCard(audience, url) as any).contents.footer.contents.map((button: any) => button.action.label);
+    assert.deepEqual(labels('owner', 'https://x/l/t'), ['เลือกแพ็กเกจ', 'ดูรายละเอียดบนเว็บ', 'คุยกับทีมงาน']);
+    assert.deepEqual(labels('stranger', 'https://liff.line.me/1234567890-abcdef/signup'), ['เปิดร้านใหม่', 'ดูแพ็กเกจบนเว็บ', 'คุยกับทีมงาน']);
+    assert.deepEqual(labels('employee'), ['ดูรายละเอียดบนเว็บ', 'คุยกับทีมงาน']);
+    for (const audience of ['owner', 'employee', 'stranger'] as const) {
+      const card = JSON.stringify(buildPromotionCard(audience, 'https://x/l/t'));
+      assert.ok(!card.includes(PACKAGE_CALLBACK_COMMAND) && !card.includes('"postback"'), audience);
+    }
+    // G19: the postback an old card carries still reaches the callback request.
+    assert.equal(linePostbackCommandText('action=package-callback'), PACKAGE_CALLBACK_COMMAND);
+  });
+
+  it('builds the package poster from an https web base, and nothing without one', () => {
+    const url = 'https://app.example.com/assets/line/package-poster-20260930.png';
+    for (const base of ['https://app.example.com', 'https://app.example.com/']) {
+      assert.deepEqual(buildPackagePosterMessage(base), { type: 'image', originalContentUrl: url, previewImageUrl: url });
+    }
+    for (const base of [undefined, '', 'http://localhost:3000', 'not a url']) assert.equal(buildPackagePosterMessage(base), undefined, String(base));
+    // The URL names a committed file in the web app's public folder; LINE's preview field caps it at 1 MB.
+    const file = statSync(join(__dirname, '../../../../../../web/public', new URL(url).pathname));
+    assert.ok(file.size > 0 && file.size <= 1024 * 1024, String(file.size));
   });
 });
 

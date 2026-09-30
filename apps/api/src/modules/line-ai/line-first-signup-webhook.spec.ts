@@ -1562,7 +1562,7 @@ describe('โปรโมชั่น card leads into the app, per audience', ()
   // R-C11: the button follows `company.plan.manage` on an ACTIVE role, which OWNER always holds.
   const shop = (key: string, companyId = 'co-1', managesPlan = key === 'OWNER') => [{ companyId, roles: [{ role: { key, status: 'ACTIVE',
     permissions: managesPlan ? [{ permission: { key: 'company.plan.manage' } }] : [] } }], company: { name: 'ร้านนิด' } }];
-  const actions = (h: Harness) => (h.replies.flat()[0] as any).contents.footer.contents.map((button: any) => button.action);
+  const actions = (h: Harness) => h.replies.flat().find((message: any) => message.type === 'flex').contents.footer.contents.map((button: any) => button.action);
   const seam = (minted: any[]) => ({
     linkFor: async (ctx: unknown, targetPath: string) => { minted.push({ ctx, targetPath }); return `${WEB_BASE}/l/handoff-1`; },
     wrapOutgoingLineContent: async (_ctx: unknown, messages: unknown) => messages,
@@ -1600,8 +1600,7 @@ describe('โปรโมชั่น card leads into the app, per audience', ()
 
     assert.equal(rendered(h).includes('/companies/co-1/billing'), false, 'the package page is owner-only');
     assert.match(rendered(h), /เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจ/);
-    assert.deepEqual(actions(h).map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'ให้ทีมงานติดต่อกลับ', 'คุยกับทีมงาน']);
-    assert.equal(actions(h)[1].type, 'postback');
+    assert.deepEqual(actions(h).map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'คุยกับทีมงาน']);
     assert.equal(outcome(h), 'staff_menu_promotion');
   });
 
@@ -1612,6 +1611,32 @@ describe('โปรโมชั่น card leads into the app, per audience', ()
     assert.deepEqual(actions(h)[0], { type: 'uri', label: 'เปิดร้านใหม่', uri: 'https://liff.line.me/1234567890-abcdef/signup' });
     assert.equal(rendered(h).includes('/billing'), false, 'nobody without an account is sent to a tenant page');
     assert.equal(outcome(h), 'staff_menu_promotion');
+  });
+
+  // Owner 2026-09-30: the package poster goes out first, then the card, whoever tapped the tile.
+  it('sends the package poster before the card to a stranger, an employee and an owner', async () => {
+    const poster = `${WEB_BASE}/assets/line/package-poster-20260930.png`;
+    const context = { companyId: 'co-1', aiPausedUntil: null };
+    for (const setup of [{ identity: null }, { identity, memberships: shop('STAFF'), context }, { identity, memberships: shop('OWNER'), context }]) {
+      const h = harness(setup);
+      await h.useCase.execute(event('โปรโมชั่น'));
+
+      assert.equal(h.replies.length, 1, 'one reply, not two sends');
+      assert.deepEqual(h.replies[0].map((message: any) => message.type), ['image', 'flex']);
+      assert.deepEqual(h.replies[0][0], { type: 'image', originalContentUrl: poster, previewImageUrl: poster });
+      assert.equal(actions(h).some((action: any) => action.type === 'postback'), false, 'no callback button');
+      assert.equal(outcome(h), 'staff_menu_promotion');
+    }
+  });
+
+  it('sends the card alone when there is no https web address for the poster', async () => {
+    for (const webBaseUrl of [undefined, 'http://localhost:3000']) {
+      const h = harness({ identity, memberships: shop('OWNER'), context: { companyId: 'co-1', aiPausedUntil: null }, webBaseUrl });
+      await h.useCase.execute(event('โปรโมชั่น'));
+
+      assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['flex'], String(webBaseUrl));
+      assert.equal(outcome(h), 'staff_menu_promotion');
+    }
   });
 });
 

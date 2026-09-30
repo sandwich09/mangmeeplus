@@ -16,10 +16,10 @@ export const STAFF_OA_URL = 'https://lin.ee/UU9pbOI';
 /**
  * G19 (purchase-without-setup spec §12/RV32): the promotion card's "ask the team" is a CALLBACK request,
  * not a package-change request and not "ติดต่อเจ้าหน้าที่" — it must not silence the assistant for 24 h.
- * Travels as a postback so the words never enter the chat as something the customer typed.
+ * Owner 2026-09-30: the card no longer shows the button. Its `action=package-callback` postback
+ * (POSTBACK_ACTIONS) and these words still resolve, so cards already in people's chats keep working.
  */
 export const PACKAGE_CALLBACK_COMMAND = 'ให้ทีมงานติดต่อกลับ';
-export const PACKAGE_CALLBACK_POSTBACK = 'action=package-callback';
 /**
  * The way BACK from a support pause (line-support-request-spec-th §2.4, §2.2 delta รอบ 6 ข้อ 6).
  * Without it the only exit from "a human is handling this" was waiting 24 hours — the customer had
@@ -304,7 +304,24 @@ export function buildServiceEntitlementMessage(entitled: ReadonlySet<string> | n
 }
 
 /**
- * Public pre-sales card. Keep the obsolete PRO-free poster out of the live reply.
+ * Owner 2026-09-30: every โปรโมชั่น reply opens with the package poster the owner supplied, then the
+ * card. The file name is versioned because LINE and Cloudflare cache an image by its URL, so a new
+ * poster needs a new name. LINE fetches images over https only, so with no https web base the card
+ * goes alone — the fail-open every card here uses for an unusable URL.
+ */
+const PACKAGE_POSTER_PATH = '/assets/line/package-poster-20260930.png';
+
+export function buildPackagePosterMessage(webBaseUrl: string | undefined): LineReplyMessage | undefined {
+  if (!webBaseUrl || !URL.canParse(PACKAGE_POSTER_PATH, webBaseUrl)) return undefined;
+  const url = new URL(PACKAGE_POSTER_PATH, webBaseUrl);
+  // 1080×1350 PNG under LINE's 1 MB preview limit, so one file serves both fields.
+  return url.protocol === 'https:' ? { type: 'image', originalContentUrl: url.toString(), previewImageUrl: url.toString() } : undefined;
+}
+
+/**
+ * Public pre-sales card, sent right after the package poster (`buildPackagePosterMessage`). The old
+ * PRO-free poster (`mangmeeplus-package-promo-1080x1350.png`) stays out of the live reply. Owner
+ * 2026-09-30: no "ให้ทีมงานติดต่อกลับ" button for anyone; "คุยกับทีมงาน" is the way to a person.
  *
  * Owner 2026-09-21: the tile leads INTO the app now, so the main button follows whoever tapped it.
  * `url` is the owner's own package page (the one-tap handoff link, or the plain tenant page when no
@@ -329,11 +346,6 @@ export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', 
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
         ...(url ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: stranger ? 'เปิดร้านใหม่' : 'เลือกแพ็กเกจ', uri: url } }] : []),
         { type: 'button', style: 'secondary', action: { type: 'uri', label: stranger ? 'ดูแพ็กเกจบนเว็บ' : 'ดูรายละเอียดบนเว็บ', uri: 'https://official.mangmeeplus.com/' } },
-        // Spec §3.7: the promotion card is a PULL, so the one thing it must let the reader do is
-        // ask — the request lands in the support inbox as a callback rather than changing anything
-        // by itself. A stranger has no shop yet, so that ask only exists once they have one.
-        // G19: a callback request that files a support row without pausing the assistant (RV32).
-        ...(stranger ? [] : [{ type: 'button', style: 'secondary', action: { type: 'postback', label: PACKAGE_CALLBACK_COMMAND, data: PACKAGE_CALLBACK_POSTBACK, displayText: PACKAGE_CALLBACK_COMMAND } }]),
         { type: 'button', style: 'secondary', action: { type: 'message', label: 'คุยกับทีมงาน', text: 'ติดต่อเรา' } },
       ] },
     },

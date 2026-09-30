@@ -155,7 +155,7 @@ import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type Cla
 import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer, type PublicPolicyTopic } from '../../domain/logic/line-public-policy.logic';
 import { buildEventDiscountCard, EVENT_DISCOUNT_MEMBER_REPLY, isMangmeeDiscountQuestion } from '../../domain/logic/line-event-discount.logic';
 import { BillingService } from '../../../billing/application/billing.service';
-import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
@@ -5539,7 +5539,9 @@ export class ProcessLineWebhookUseCase {
     // the card names no company and no plan, and nothing on it changes anything.
     if (publicCommand === 'promotion') {
       this.publicPolicyTopics.set(event, 'trial');
-      await this.deliverRequiredMessages(event, [await this.promotionCard(event)]);
+      // Owner 2026-09-30: the package poster first, then the card, for every audience.
+      const poster = buildPackagePosterMessage(this.config.webBaseUrl);
+      await this.deliverRequiredMessages(event, [...(poster ? [poster] : []), await this.promotionCard(event)]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_promotion');
       return;
     }

@@ -1249,12 +1249,16 @@ describe('ProcessLineWebhookUseCase', () => {
       // A fresh instance on each turn proves this is delivery-backed, not process-local memory.
       const h = makeUseCase(prisma, { config: { lineAiTerminalOutcomeReplayEnabled: true } });
       await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `policy-${++i}`, messageText });
-      assert.equal(h.sentMessages[0].type, 'flex');
+      // Owner 2026-09-30: the โปรโมชั่น turn sends the package poster before its card.
+      assert.deepEqual(h.sentMessageBatches[0].map((message: any) => message.type), i === 1 ? ['image', 'flex'] : ['flex']);
       if (i > 1) assert.match(h.sentMessages[0].canonicalText, i === 7 ? /ขอโทษ.*หน้าค่าใช้จ่ายไม่ใช่/ : /ไม่บังคับซื้อทันที/);
       assert.equal(h.getAiGatewayCalled(), false);
       assert.equal(h.intakeRequests.length, 0);
     }
     assert.equal(turnOutcomeWrites.length, 7);
+    // The durable outcome replay reads back must hold the poster too, at its https URL.
+    assert.deepEqual(turnOutcomeWrites[0].create.messagesJson.map((message: any) => message.type), ['image', 'flex']);
+    assert.equal(turnOutcomeWrites[0].create.messagesJson[0].originalContentUrl, 'https://app.example.com/assets/line/package-poster-20260930.png');
     // Owner 2026-09-21: only the โปรโมชั่น turn asks who tapped it, to choose its main button (the
     // scoped lookup plus its channel-agnostic fallback, both finding nothing here). The policy
     // answers that follow still read no account fact at all.

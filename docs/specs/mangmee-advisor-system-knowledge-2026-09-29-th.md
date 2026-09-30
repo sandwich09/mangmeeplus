@@ -21,7 +21,7 @@
   - #916: ผู้อ่านเอกสารใช้ persona เดียวกัน (`document-qa.use-case.ts:32`) และ "แค่ถาม" เรื่องไฟล์ยังเป็นคำถามไฟล์ (`intent-router.agent.ts:451`)
     - "ข้อมูล ณ" ใช้วันตามเวลาไทย (`prepared-simple-read-formatter.ts:58`) และอ่านชื่อเดือนไทยแบบพูดได้ (`line-ai-value-normalizer.ts:1080`)
 - **ช่องว่างของ Starter ที่เกี่ยวข้อง:** [starter advisor gap audit](../research/mangmee-starter-advisor-gap-audit-2026-09-26-th.md) G2 และ G8
-- **หมวดค่าใช้จ่าย:** [ข้อเสนอขยายหมวดค่าใช้จ่าย](mangmee-expense-category-expansion-2026-09-29-th.md) เป็นเอกสารคู่ (Owner พักงานหมวดไว้ 2026-09-30)
+- **หมวดค่าใช้จ่าย:** [ข้อเสนอขยายหมวดค่าใช้จ่าย](mangmee-expense-category-expansion-2026-09-29-th.md) เป็นเอกสารคู่ พร้อมแผน [mangmee-expense-category-expansion-plan-2026-09-30-th.md](../plans/mangmee-expense-category-expansion-plan-2026-09-30-th.md) (Owner ตัดสินครบ 2026-09-30 และพักการลงมือไว้จนกว่าจะสั่ง)
   - ชุด V1 มี 12 หมวด (`expense-category-bootstrap.service.ts:48-115`) ไม่มีหมวดวัตถุดิบ และรวมน้ำมันกับค่าไฟไว้ในหมวดใหญ่ การแยกยอด (§4.6 E6) และรายการผิดปกติ (§5.6) จึงคมได้แค่เท่าที่หมวดของร้านละเอียด
   - ตั้งแต่ #911 และ #914 AI ใส่หมวดให้รายการจาก LINE (ข้อความ รูป และ PDF) เมื่อมั่นใจเท่านั้น และไม่เลือกหมวดเบ็ดเตล็ด (`aiSelectableExpenseCategories`, `expense-category-bootstrap.service.ts:122-124`) รายการเก่ากว่านั้นจาก LINE ส่วนมากไม่มีหมวด ดู §5.6
   - เมื่อมีหมวดใหม่ การเทียบข้ามวันที่เพิ่มหมวดต้องบอกข้อจำกัด (ข้อเสนอฯ §5.3)

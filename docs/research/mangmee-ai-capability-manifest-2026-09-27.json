@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "b474111ec51114976003facafce68dc1d7ece55b",
+  "sourceRevision": "ca1d9e13aa39341a9589fc9887c7cfc02b3effe4",
   "checkoutBranch": "claude/advisor-r1-s8-cards-20260930",
-  "checkoutDirty": false,
+  "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "1bc0688f38517b03609986d69ae602dad479ee8299d58b578c09378b87111fdb"
+      "sha256": "538818a561d0bfecb311bee673d8474800878e478d791910d89c87cb44b53769"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T06:18:03.022Z",
-  "manifestDigest": "b4309190493ef4a0737c7a60445418b0b4dd7fd5254934fee74e55c97ff060e2"
+  "generatedAt": "2026-09-30T10:22:26.985Z",
+  "manifestDigest": "494480fe9ccbd4e96090b65d9d5eb18b942a47e77bbde487a54d5e75b43e702f"
 }
