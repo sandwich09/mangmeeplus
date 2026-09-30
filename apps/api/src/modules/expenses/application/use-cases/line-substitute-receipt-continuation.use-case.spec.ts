@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import {
+  SUBSTITUTE_PHOTO_ASK_WINDOW_MS,
+  substituteAwaitsCaptionlessPhoto,
   classifySubstituteMedia,
   isCanonicalSubstituteStart,
   isSubstituteCancelControl,
@@ -1147,6 +1149,10 @@ describe('R13 — the assistant asks before producing the document', () => {
     // The photo arrives with a numbered choice that can become a signature…
     const media = await h.useCase.loadOpenMediaContext(ctx(SIGNER), 'chat-hash');
     assert.ok(substituteMediaChoices(media!).includes('SIGNATURE'));
+    // …because the chat was JUST asked for it: the ask time rides along, and only a recent ask claims a bare photo.
+    assert.ok(media!.signatureRequestedAt);
+    assert.equal(substituteAwaitsCaptionlessPhoto(media!, new Date(Date.parse(media!.signatureRequestedAt!) + 60_000)), true);
+    assert.equal(substituteAwaitsCaptionlessPhoto(media!, new Date(Date.parse(media!.signatureRequestedAt!) + SUBSTITUTE_PHOTO_ASK_WINDOW_MS + 1)), false);
 
     // …and answering it stores an asset that is usable immediately.
     const asset = await new CreateSignatureAssetUseCase(
@@ -1567,6 +1573,26 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
       parseSubstituteMediaQuestion({ kind: 'SUBSTITUTE_SCAN_CONFIRM', chatKeyHash: 'chat-hash', evidenceId: 'evidence-1' }, 'chat-hash'),
       { kind: 'SUBSTITUTE_SCAN_CONFIRM', chatKeyHash: 'chat-hash', evidenceId: 'evidence-1' },
     );
+  });
+
+  // UAT round 10 (2026-09-30): a week-old OPEN state with no ask turned every caption-less receipt photo into the
+  // numbered "ยังไม่แน่ใจว่าเป็นอะไร" question; the Owner's rule is "ถ้าอ่านรูปได้แล้วต้องสร้างเลย".
+  it('claims a caption-less photo only right after asking for exactly that picture', () => {
+    const now = new Date('2026-09-30T00:03:00.000Z');
+    const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
+    const open = { expenseId: 'expense-old', awaitingScans: [], signatureRequested: false, finalReceiptExpected: false };
+    assert.equal(substituteAwaitsCaptionlessPhoto(open, now), false, 'an OPEN state with no ask never claims a bare photo');
+    const scan = { expenseId: 'expense-1', evidenceId: 'evidence-1', documentNumber: 'SR-1', amountLabel: '120.00 บาท' };
+    assert.equal(substituteAwaitsCaptionlessPhoto({ ...open, awaitingScans: [{ ...scan, preparedAt: ago(5) }] }, now), true, 'a form printed 5 minutes ago');
+    assert.equal(substituteAwaitsCaptionlessPhoto({ ...open, awaitingScans: [{ ...scan, preparedAt: ago(120) }] }, now), false, 'a form printed 2 hours ago');
+    assert.equal(substituteAwaitsCaptionlessPhoto({ ...open, signatureRequested: true, signatureRequestedAt: ago(10) }, now), true);
+    assert.equal(substituteAwaitsCaptionlessPhoto({ ...open, signatureRequested: true, signatureRequestedAt: ago(45) }, now), false);
+    assert.equal(substituteAwaitsCaptionlessPhoto({ ...open, signatureRequested: true }, now), false, 'an ask with no time never claims');
+    assert.equal(substituteAwaitsCaptionlessPhoto({ ...open, finalReceiptExpected: true, finalReceiptRequestedAt: ago(1) }, now), true);
+    assert.equal(substituteAwaitsCaptionlessPhoto({ ...open, finalReceiptExpected: true, finalReceiptRequestedAt: ago(31) }, now), false);
+    // A caption still speaks for itself, exactly as before: its own signals pick the class.
+    assert.equal(classifySubstituteMedia('สลิปโอนค่ะ', false), 'PAYMENT_EVIDENCE');
+    assert.equal(classifySubstituteMedia('ฟอร์มที่เซ็นแล้ว ลายเซ็นอยู่ด้านล่าง', true), 'SIGNATURE');
   });
 
   it('reads awaiting-scan from the consumed state plus the live evidence row', async () => {

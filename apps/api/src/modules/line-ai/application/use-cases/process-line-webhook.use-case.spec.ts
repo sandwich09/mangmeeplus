@@ -3996,6 +3996,47 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(auditEvents[0]?.metadataJson.reason, 'MALWARE_DETECTED');
   });
 
+  // UAT round 10 (2026-09-30, Owner's own chat): a week-old OPEN substitute state with no ask turned two clear receipt
+  // photos into "ยังไม่แน่ใจว่าเป็นอะไร ตอบเลขข้อ…" and nothing was read. Owner: "ถ้าอ่านรูปได้แล้วต้องสร้างเลย".
+  it('reads and drafts a caption-less receipt photo even while an old substitute state is open, asking nothing', async () => {
+    const { prisma } = makePrisma();
+    const pendingRows: any[] = [];
+    (prisma.client as any).lineIntakePendingMedia = {
+      findFirst: async () => null,
+      findUnique: async () => pendingRows.at(-1) ?? null,
+      create: async ({ data }: any) => { const row = { id: `pending-${pendingRows.length}`, ...data }; pendingRows.push(row); return row; },
+    };
+    let expenseDrafts = 0, contextReads = 0;
+    const { useCase, replies } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create', 'expense.review'],
+      intakeRouteFn: () => assert.fail('a caption-less photo with no recent media ask skips the intake router'),
+      receiptOcrFn: () => ({ status: 'ok', classification: receiptClassification('1990'),
+        fields: { grandTotalAmount: '1990', vendorName: 'SPORTSWORLD' } }),
+      initReceiptUpload: { execute: async () => { expenseDrafts += 1; return { expenseId: 'exp-new', attachmentId: 'att-new' }; } },
+      completeReceiptUpload: { execute: async () => undefined },
+      createUploadIntent: { execute: async () => ({ attachmentId: 'att-new', uploadUrl: 'https://upload', uploadMethod: 'PUT' }) },
+      completeAttachmentUpload: { execute: async () => undefined },
+      // The UAT state: OPEN since last week, nothing asked (no form, no signature, no pending decision).
+      substituteReceiptContinuation: { loadOpenMediaContext: async () => { contextReads += 1;
+        return { expenseId: 'exp-week-old', awaitingScans: [], signatureRequested: false, finalReceiptExpected: false }; } },
+    });
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
+      fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+    }) });
+    (useCase as any).uploadLineMedia = async () => undefined;
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-old-substitute', lineUserId: 'line-user-secret', replyToken: 'reply-old-substitute',
+      lineMessageId: 'line-msg-old-substitute', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.ok(contextReads >= 1, 'the open work was looked at');
+    assert.equal(expenseDrafts, 1, 'the photo became a new expense draft');
+    assert.deepEqual(pendingRows.map(row => row.askedQuestionJson?.kind).filter(Boolean), [], 'no numbered media question was parked');
+    assert.doesNotMatch(replies.join('\n'), /ยังไม่แน่ใจว่าเป็นอะไร|ตอบเลขข้อ/u);
+  });
+
   it('explains a check bill and parks it without creating an expense draft', async () => {
     const { prisma } = makePrisma();
     const pendingRows: any[] = [];
