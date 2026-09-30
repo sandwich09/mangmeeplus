@@ -28,7 +28,7 @@ import {
   ListUnpostedReimbursementPaymentsUseCase,
   ExportReimbursementEvidenceUseCase,
 } from './application/use-cases/reimbursement-finance.use-case';
-import { GetReimbursementAiSummaryUseCase } from './application/use-cases/reimbursement-summary.use-case';
+import { GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase } from './application/use-cases/reimbursement-summary.use-case';
 import { PreviewReimbursementClaimFormUseCase } from './application/use-cases/reimbursement-claim-form.use-case';
 import {
   CompleteClaimSignatureUploadUseCase,
@@ -74,12 +74,13 @@ import { LineReimbursementDraftUseCase } from './application/use-cases/line-reim
     ListUnpostedReimbursementPaymentsUseCase,
     ExportReimbursementEvidenceUseCase,
     GetReimbursementAiSummaryUseCase,
+    GetReimbursementApprovalBacklogUseCase,
     PreviewReimbursementClaimFormUseCase,
     InitClaimSignatureUploadUseCase,
     CompleteClaimSignatureUploadUseCase,
     SignClaimFormUseCase,
     LinkSignedClaimFormCopyUseCase,
   ],
-  exports: [PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, ListReimbursementApproverOptionsUseCase, GetReimbursementAiSummaryUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase, LineReimbursementDraftUseCase],
+  exports: [PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, ListReimbursementApproverOptionsUseCase, GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase, LineReimbursementDraftUseCase],
 })
 export class ReimbursementsModule {}

@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "15addc98eb2c914c0780931d55b834ff22747c08",
+  "sourceRevision": "eac26527abaa22b81243574c5dcb58d8a3322034",
   "checkoutBranch": "claude/advisor-r1-integration-20261001",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -33,7 +33,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts",
-      "sha256": "cc4b8dc32025cba3600811973b5249a0f420ca0cc32b0b5c7f88ba6e0e8ddb4f"
+      "sha256": "36f6af74c0f45f64db3bbbb0380cab579d25ec7c84d24e824a5a96b0b418fe33"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-reimbursement-draft.service.ts",
@@ -77,7 +77,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-reimbursement-tools.use-case.ts",
-      "sha256": "bf33e494ef21fc97a0a1f49602dc14c7e4f1fc592511b7a8854f268d1c61d421"
+      "sha256": "f31b1d9a891eafeaa70b004f81f77caa141f71a642f925a3b94b0982a3f057c6"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-report-tools.use-case.ts",
@@ -125,7 +125,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
-      "sha256": "2f790bdf3637f40bca451e1f0c1a50c0c827f6d880a9909af8533b1c9ecf2856"
+      "sha256": "bc81a7e29169e838a1ea8c87221d613550d1c0dcb3db24db44fbf9ce55160b19"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-ai-budget.controller.ts",
@@ -133,7 +133,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
-      "sha256": "103e01f7f85560ceb485fba25f365d22243384e808fa595298d13f4587ef40d8"
+      "sha256": "ede23a97a551ef268f6d33a5a5799dfdc1f1c167542ebdfe1c138ba4ce7829d5"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/line-ai-ledger-internal.controller.ts",
@@ -177,7 +177,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "5156caca2969bcccd7a904baed55f2c03d57395ac6deab6b98dd9dfd13c86a17"
+      "sha256": "207b5c436a210a40cb1aacbf8b4be411af381aa8d31315e6f8a7ee4e7b40fe87"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -410,6 +410,7 @@
       "reimbursement.draft.get_options",
       "reimbursement.draft.preview_create",
       "reimbursement.draft.preview_update",
+      "reimbursement.get_approval_backlog",
       "reimbursement.get_detail",
       "reimbursement.get_summary",
       "reimbursement.list_pending_approvals",
@@ -5545,6 +5546,92 @@
       ]
     },
     {
+      "operation": "reimbursement.get_approval_backlog",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [],
+        "optional": [
+          "requester"
+        ],
+        "allowed": [
+          "requester"
+        ]
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [],
+        "anyOfPermissions": [
+          "reimbursement.read",
+          "reimbursement.read_own",
+          "reimbursement.read_related"
+        ],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "general"
+      ],
+      "questionKinds": [
+        "breakdown",
+        "list",
+        "summary"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "reimbursements",
+        "businessSubjects": [
+          "employee",
+          "reimbursement"
+        ],
+        "adapterClass": "ReimbursementGetApprovalBacklogTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R1",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": true,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"reimbursement.get_approval_backlog\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → ReimbursementGetApprovalBacklogTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/ReimbursementGetApprovalBacklogTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/use-cases/erp-reimbursement-tools.use-case.ts",
+          "symbol": "ReimbursementGetApprovalBacklogTool"
+        }
+      ]
+    },
+    {
       "operation": "hr.get_leave_summary",
       "execution": "read_tool",
       "implementation": "registered_unwired",
@@ -8217,6 +8304,7 @@
         "reimbursement.draft.get_options",
         "reimbursement.draft.preview_create",
         "reimbursement.draft.preview_update",
+        "reimbursement.get_approval_backlog",
         "reimbursement.get_detail",
         "reimbursement.get_summary",
         "reimbursement.list_pending_approvals"
@@ -8584,6 +8672,10 @@
         "provider": "BankGetReconciliationStatusTool"
       },
       {
+        "parameter": "reimbursementBacklog",
+        "provider": "ReimbursementGetApprovalBacklogTool"
+      },
+      {
         "parameter": "publicLookup",
         "provider": "PublicLookupAdmissionTool"
       },
@@ -8655,6 +8747,7 @@
       "ReimbursementDraftGetOptionsTool",
       "ReimbursementDraftPreviewCreateTool",
       "ReimbursementDraftPreviewUpdateTool",
+      "ReimbursementGetApprovalBacklogTool",
       "ReimbursementGetDetailTool",
       "ReimbursementGetSummaryTool",
       "ReimbursementListPendingApprovalsTool",
@@ -8726,6 +8819,7 @@
       "reimbursement.draft.get_options",
       "reimbursement.draft.preview_create",
       "reimbursement.draft.preview_update",
+      "reimbursement.get_approval_backlog",
       "reimbursement.get_detail",
       "reimbursement.get_summary",
       "reimbursement.list_pending_approvals",
@@ -8747,6 +8841,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T18:44:48.148Z",
-  "manifestDigest": "9ffa0bdcdda29ff7b57541e500cdbf0b2db4f8e72955a25e907f54e3afe90a1f"
+  "generatedAt": "2026-09-30T18:47:53.088Z",
+  "manifestDigest": "bf27659d420bad080ccd0d8d71de487ea270196db00269fb7a5974e0321bafea"
 }

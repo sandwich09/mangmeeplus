@@ -156,6 +156,9 @@ const STATE_PHRASES_TH = [
   // nouns that carry a verb inside them (ใบรับรอง ⊃ รับรอง, ลายเซ็น ⊃ เซ็น).
   'รอเซ็น', 'เซ็นแล้ว', 'ต้องเซ็น', 'รอฉันเซ็น', 'รอคุณเซ็น', 'รอลงนาม', 'ลงนามแล้ว', 'ต้องลงนาม',
   'รอลงลายมือชื่อ', 'ต้องลงลายมือชื่อ', 'รอรับรอง', 'รอฉันอนุมัติ', 'รอคุณอนุมัติ', 'ใบรับรอง', 'ลายเซ็น',
+  // Advisor S3 eval (2026-09-30, "สรุปใบเบิกที่ค้างให้หน่อย แยกตามคนอนุมัติ"): the approver, or who has not approved
+  // yet, names a person or a state — a backlog question, never a request to approve or reject.
+  'ผู้อนุมัติ', 'คนอนุมัติ', 'คนที่อนุมัติ', 'ยังไม่อนุมัติ',
 ];
 
 function withoutStatePhrases(text: string): string {

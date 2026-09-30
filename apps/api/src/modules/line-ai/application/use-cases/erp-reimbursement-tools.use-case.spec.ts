@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ReimbursementListPendingApprovalsTool } from './erp-reimbursement-tools.use-case';
+import { ReimbursementGetApprovalBacklogTool, ReimbursementListPendingApprovalsTool } from './erp-reimbursement-tools.use-case';
 
 const baseCtx = {
   companyId: 'co-1',
@@ -95,5 +95,49 @@ describe('ReimbursementListPendingApprovalsTool', () => {
 
     assert.deepEqual(result.data, { total: 0, items: [] });
     assert.equal(result.sourceRefs.length, 1);
+  });
+});
+
+describe('ReimbursementGetApprovalBacklogTool', () => {
+  const backlog = {
+    accessScope: 'company', total: 12, totalsByCurrency: [{ currency: 'THB', amount: '1200.00' }],
+    byApprover: [{ name: 'สมศรี', count: 2, totalsByCurrency: [], oldestSubmittedOn: '2026-09-23', longestWaitDays: 7 }],
+    sharedPile: { label: 'กองกลาง (อนุมัติได้หลายคน)', count: 3, totalsByCurrency: [], oldestSubmittedOn: '2026-09-24', longestWaitDays: 6 },
+    desks: [], items: Array.from({ length: 10 }, (_, i) => ({ id: `rb-${i}` })),
+  };
+
+  // Scope, branch and active-approver rules live in the use case: the adapter hands it the caller's
+  // own roles/scopes and only "requester: me" from the model, never anything else it sent.
+  it('delegates with the caller context and passes only requester "me" through', async () => {
+    const seen: any[] = [];
+    const tool = new ReimbursementGetApprovalBacklogTool({ execute: async (ctx: any, input: any) => { seen.push({ ctx, input }); return backlog; } } as any);
+
+    await tool.execute(baseCtx, { requester: 'me' });
+    await tool.execute(baseCtx, { requester: 'someone-else', companyId: 'other' } as any);
+
+    assert.deepEqual(seen.map((call) => call.input), [{ requester: 'me' }, {}]);
+    assert.equal(seen[0].ctx.companyId, 'co-1');
+    assert.deepEqual(seen[0].ctx.roles, ['MANAGER']);
+    assert.deepEqual(seen[0].ctx.scopes, { branchIds: ['branch-1'], locationIds: undefined });
+  });
+
+  it('links the claim list, states its own scope, and reports the item cap as more rows', async () => {
+    const result = await new ReimbursementGetApprovalBacklogTool({ execute: async () => backlog } as any).execute(baseCtx, { requester: 'me' });
+
+    assert.equal(result.status, 'ok');
+    assert.equal(result.data, backlog);
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/co-1/reimbursements');
+    assert.equal(result.queryApplied?.accessScope, 'company');
+    assert.deepEqual(result.queryApplied?.filters, { requester: 'me' });
+    assert.deepEqual(result.completeness?.rows, { returned: 10, hasMore: true, nextCursor: null });
+    assert.equal(result.completeness?.groups.returned, 2);
+  });
+
+  it('answers forbidden instead of throwing when the caller cannot read claims', async () => {
+    const { ForbiddenException } = await import('@nestjs/common');
+    const result = await new ReimbursementGetApprovalBacklogTool({ execute: async () => { throw new ForbiddenException('no'); } } as any)
+      .execute(baseCtx);
+    assert.equal(result.status, 'forbidden');
+    assert.equal(result.data, undefined);
   });
 });

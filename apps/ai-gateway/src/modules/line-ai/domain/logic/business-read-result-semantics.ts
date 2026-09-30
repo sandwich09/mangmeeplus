@@ -158,6 +158,35 @@ export function reimbursementApprovalNotPermittedReplyText(english: boolean): st
     : 'บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ ถ้าต้องการดูใบเบิกของตัวเอง ถามได้เลย เช่น “ใบเบิกของฉันถึงไหนแล้ว”';
 }
 
+// ─── Advisor S3: reimbursement.get_approval_backlog wording that must not depend on the model ──────
+// Eval 2026-09-30/10-01 (R-20): with nothing waiting, a manager who had never filed a claim was told all of theirs had
+// been processed. An empty backlog has one true answer per scope, so it is rendered here and never composed.
+export function emptyApprovalBacklogReplyText(data: unknown, english: boolean): string | undefined {
+  const backlog = record(data);
+  if (backlog?.['total'] !== 0) return undefined;
+  if (backlog['accessScope'] === 'own') {
+    return backlog['hasOwnClaims'] === false
+      ? (english ? 'You have no reimbursement claims yet.' : 'คุณยังไม่มีใบเบิกในระบบค่ะ')
+      : (english ? 'None of your reimbursement claims is waiting right now.' : 'ตอนนี้ไม่มีใบเบิกของคุณที่รออยู่ค่ะ');
+  }
+  if (backlog['accessScope'] === 'related') {
+    return english ? 'No reimbursement claim related to you is waiting right now.' : 'ตอนนี้ไม่มีใบเบิกที่เกี่ยวข้องกับคุณที่รออยู่ค่ะ';
+  }
+  return english ? 'No reimbursement claim is waiting right now.' : 'ตอนนี้ไม่มีใบเบิกที่รออยู่ค่ะ';
+}
+
+// Eval 2026-09-30/10-01 (R-01, R-12): the backlog total also counts claims already approved and waiting for finance or
+// payment, yet composed answers opened with "ค้างอนุมัติรวม 8 ใบ". Only that total, and only when it is more than what
+// still waits for an approver, is re-worded to "ค้างอยู่"; a group's own "ค้างอนุมัติ 2 ใบ" is left alone.
+export function approvalBacklogStageWording(text: string, data: unknown): string {
+  const backlog = record(data);
+  const total = backlog?.['total'], awaiting = backlog?.['awaitingApprovalCount'];
+  if (typeof total !== 'number' || typeof awaiting !== 'number' || total <= awaiting) return text;
+  const count = [...new Set([String(total), total.toLocaleString('en-US')])].join('|');
+  return text.replace(new RegExp(`(ค้าง|รอ)(?:การ)?อนุมัติ(\\s*(?:อยู่)?\\s*(?:รวม|ทั้งหมด)?\\s*)(${count})(\\s*(?:ใบ|รายการ))`, 'gu'),
+    (_match, verb: string, middle: string, number: string, unit: string) => `${verb}${middle.includes('อยู่') ? '' : 'อยู่'}${middle}${number}${unit}`);
+}
+
 // ─── A3 (batch5, T-084-b): reimbursement.list_pending_approvals has no code-computed total ───────
 // erp-reimbursement-tools.use-case.ts's ReimbursementListPendingApprovalsTool returns `total` (the
 // full count, never truncated) and `items` capped to the first 10 rows — no total AMOUNT at all.

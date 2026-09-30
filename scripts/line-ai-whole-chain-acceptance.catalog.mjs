@@ -366,6 +366,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'src/modules/line-ai/domain/logic/business-read-result-semantics.spec.ts',
     'src/modules/line-ai/infrastructure/provider/public-lookup.spec.ts',
     'src/modules/line-ai/presentation/http/line-reliability-capabilities.controller.spec.ts',
+    // Advisor S3: "ใบเบิกค้างที่ใคร" through router, planner and compose; the shared pile stays its own line.
+    'src/modules/line-ai/agents/semantic-turn-v2-approval-backlog.spec.ts',
   ] },
   { id: 'reliability-api-v2', cwd: 'apps/api', command: '../../node_modules/.bin/tsx', args: ['--test',
     'src/modules/billing/application/billing-feature-entitlements.spec.ts',
@@ -393,6 +395,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'src/modules/line-ai/application/use-cases/erp-substitute-receipt-tools.use-case.spec.ts',
     'src/modules/reimbursements/application/use-cases/line-reimbursement-draft.use-case.spec.ts',
     'src/modules/reimbursements/presentation/http/reimbursement-draft-action.controller.spec.ts',
+    // Advisor S3: whose desk the waiting claims are on (pile vs one approver, departed approvers, branch, scope).
+    'src/modules/reimbursements/application/use-cases/reimbursement-approval-backlog.use-case.spec.ts',
   ] },
   { id: 'reliability-web-v2', cwd: 'apps/web', command: '../../node_modules/.bin/tsx', args: ['--test',
     'src/features/reimbursements/ReimbursementDraftActionPage.qa.spec.ts',

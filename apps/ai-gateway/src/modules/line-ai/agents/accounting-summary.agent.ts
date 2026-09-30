@@ -66,6 +66,7 @@ export const ALLOWED_TOOLS = new Set([
   'reimbursement.list_pending_approvals',
   'reimbursement.get_summary',
   'reimbursement.get_detail',
+  'reimbursement.get_approval_backlog',
   'reports.get_monthly_report_summary',
   // S-4 draft edit (spec §5.4). They belong to the accounting specialist because they act on the
   // expense record it already reads; the router catalog is what decides whether they are offered.
@@ -84,6 +85,7 @@ const TOOL_FACT_LABELS: Record<string, string> = {
   'expense.draft.set_vat_mode': 'ตัวอย่างการแก้รายการ',
   'reimbursement.get_summary': 'สรุปเบิกจ่าย',
   'reimbursement.get_detail': 'ข้อมูลเบิกจ่าย',
+  'reimbursement.get_approval_backlog': 'ใบเบิกค้างที่ใคร',
   'reports.get_monthly_report_summary': 'สรุปรายงานรายเดือน',
   'crm.get_customer_summary': 'สรุปลูกค้า',
   'crm.search_customers': 'รายชื่อลูกค้า',
