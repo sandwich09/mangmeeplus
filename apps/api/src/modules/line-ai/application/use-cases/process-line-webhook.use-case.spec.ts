@@ -655,7 +655,7 @@ function makeUseCase(
 	    roles?: string[];
 	    branchIds?: string[];
 	    aiGatewayFn?: (req?: any) => any;
-	    intakeRouteFn?: (req?: any) => any;
+	    intakeRouteFn?: (req?: any, options?: any) => any;
 	    sendReplyFn?: (token: string, messages: any[]) => Promise<any>;
       sendPushFn?: (to: string, messages: any[]) => Promise<any>;
       malwareScanFn?: (bytes: Buffer) => Promise<void>;
@@ -713,9 +713,9 @@ function makeUseCase(
 	        if (aiGatewayFn) return aiGatewayFn(req);
 	        throw new Error('AI Gateway not expected');
 	      },
-	      requestLineIntakeRoute: async (req: any) => {
+	      requestLineIntakeRoute: async (req: any, options?: any) => {
 	        intakeRequests.push(req);
-	        if (intakeRouteFn) return intakeRouteFn(req);
+	        if (intakeRouteFn) return intakeRouteFn(req, options);
 	        throw new Error('LINE intake router not expected');
 	      },
 	      lineDraftEditCapabilityEnabled: async (requestId: string) => opts.lineEditCapabilityFn?.(requestId) ?? false,
@@ -4385,6 +4385,32 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.doesNotMatch(JSON.stringify(sentMessages), /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|โปรโมชั่น/);
     });
 
+    // Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): a photo accepted before the credit ran out is replayed by
+    // the orphan sweep; its intake and its read may pass the AI money cap. A fresh photo asks neither.
+    it('lets an orphan-replayed photo pass the money cap on its intake and its read, and a fresh one not', async () => {
+      for (const replay of [true, false]) {
+        const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 0 });
+        const intake: any[] = [];
+        const reads: any[] = [];
+        const { useCase } = captureUseCase(state.prisma, {
+          intakeRouteFn: (_req: any, options: any) => { intake.push(options); return ROUTED_EXPENSE_DOCUMENT; },
+          receiptOcrFn: (_req: any, options: any) => {
+            reads.push(options);
+            return { status: 'ok', classification: receiptClassification('500.00'), fields: { grandTotalAmount: '500.00' } };
+          },
+        });
+
+        await useCase.executeReceiptUpload({
+          webhookEventId: `evt-photo-${replay}`, lineUserId: 'line-user-secret', replyToken: `reply-photo-${replay}`,
+          lineMessageId: `line-msg-photo-${replay}`, messageType: 'image', messagingChannelId: 'msg-channel-1',
+          ...(replay ? { admitOverCap: true as const } : {}),
+        }, 'บันทึกค่าใช้จ่าย');
+
+        assert.equal(intake[0]?.admitOverCap, replay ? true : undefined, `intake, replay=${replay}`);
+        assert.equal(reads[0]?.admitOverCap, replay ? true : undefined, `read, replay=${replay}`);
+      }
+    });
+
     // Add-on plan PR B / AO-E70 (spec §6, F-19): the claim is per month AND balance generation. Units
     // bought or given mid-month start a generation, so running out again earns the card with its buttons
     // again — and adding them wrote nothing to CompanyPlanTerm for this to notice.
@@ -5166,7 +5192,7 @@ import { ConsumptionMarkerUnavailableError } from '../line-ai-consumption-marker
 function makeLedgerUseCase(prisma: any, opts: {
   permissions?: string[];
   aiGatewayFn?: (req?: any, options?: any) => any;
-  intakeRouteFn?: (req?: any) => any;
+  intakeRouteFn?: (req?: any, options?: any) => any;
   openWaiting?: any[];
   /** Replaces the whole ledger read, so a test can drive the REAL service or throw a typed refusal. */
   openWaitingUser?: (companyId: string, chatKey: string, userId: string) => Promise<any[]>;
@@ -5204,9 +5230,9 @@ function makeLedgerUseCase(prisma: any, opts: {
         if (opts.aiGatewayFn) return opts.aiGatewayFn(req, options);
         throw new Error('AI Gateway not expected');
       },
-      requestLineIntakeRoute: async (req: any) => {
+      requestLineIntakeRoute: async (req: any, options?: any) => {
         intakeRequests.push(req);
-        if (opts.intakeRouteFn) return opts.intakeRouteFn(req);
+        if (opts.intakeRouteFn) return opts.intakeRouteFn(req, options);
         return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 };
       },
     } as any,
@@ -5284,13 +5310,89 @@ describe('ProcessLineWebhookUseCase – the monthly AI budget is not congestion 
   it('never asks for over-cap admission on the live first attempt', async () => {
     const { prisma } = makePrisma();
     const seen: any[] = [];
-    const h = makeLedgerUseCase(prisma, { aiGatewayFn: (_req: any, options: any) => { seen.push(options); return LEDGER_TURN_RESPONSE; } });
+    const intake: any[] = [];
+    const h = makeLedgerUseCase(prisma, {
+      intakeRouteFn: (_req: any, options: any) => { intake.push(options); return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }; },
+      aiGatewayFn: (_req: any, options: any) => { seen.push(options); return LEDGER_TURN_RESPONSE; },
+    });
 
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-live-admission', messageText: 'ยอดขายวันนี้' });
 
     assert.equal(seen.length, 1, 'the live turn reached the gateway client');
     assert.equal(seen[0]?.admitOverCap, undefined);
     assert.equal(seen[0]?.retryOrdinal, undefined);
+    assert.equal(intake[0]?.admitOverCap, undefined, 'nor on its intake');
+  });
+
+  // Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): a message the system accepted before the credit ran out.
+  it('lets an orphan-replayed message pass the cap on its intake and on its turn', async () => {
+    const { prisma } = makePrisma();
+    const seen: any[] = [];
+    const intake: any[] = [];
+    const h = makeLedgerUseCase(prisma, {
+      intakeRouteFn: (_req: any, options: any) => { intake.push(options); return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }; },
+      aiGatewayFn: (_req: any, options: any) => { seen.push(options); return LEDGER_TURN_RESPONSE; },
+    });
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-orphan-replay', messageText: 'ยอดขายวันนี้', admitOverCap: true });
+
+    assert.equal(intake[0]?.admitOverCap, true);
+    assert.equal(seen[0]?.admitOverCap, true);
+  });
+
+  it('lets a parked photo\'s resumed answer pass the cap on the turn it starts', async () => {
+    const { prisma } = makePrisma();
+    prisma.client.lineIntakePendingMedia.findFirst = async () => ({
+      id: 'pending-1', attachmentId: 'att-parked', lineMessageId: 'line-msg-photo', mimeType: 'image/jpeg',
+      caption: 'รูปนี้คืออะไร', askedQuestionJson: null, status: 'PENDING',
+    });
+    const intake: any[] = [];
+    const h = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      intakeRouteFn: (_req: any, options: any) => { intake.push(options); return { status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.9 }; },
+      aiGatewayFn: () => LEDGER_TURN_RESPONSE,
+    });
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-parked-answer', messageText: '2' });
+
+    assert.equal(intake[0]?.admitOverCap, true, '"2" = not a receipt: the parked photo\'s caption is answered now');
+  });
+
+  it('spends a re-ask pass on the first AI turn of the same chat only, and issues that turn\'s grant with it', async () => {
+    const { prisma } = makePrisma();
+    const intake: any[] = [];
+    const h = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      intakeRouteFn: (_req: any, options: any) => { intake.push(options); return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }; },
+    });
+    const passes: any[] = [];
+    const grants: unknown[] = [];
+    Object.assign(h.useCase as any, {
+      deliveryPlans: { consumeReaskPass: async (owner: any) => { passes.push(owner); return passes.length === 1; } },
+      prepareTextGrantV2: async (event: any) => { grants.push(event.admitOverCap); return undefined; },
+      reliabilityContext: async () => ({}),
+    });
+    const owner = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line', channelKind: 'USER',
+      messagingChannelId: 'msg-channel-1', chatKeyHash: 'chat-hash' };
+    const route = async (webhookEventId: string, bound: boolean) => {
+      const event: any = { ...BASE_EVENT, webhookEventId, messageText: 'ยอดขายวันนี้' };
+      if (bound) (h.useCase as any).boundConversations.set(event, { owner, id: 'line-v2:conversation-a', epoch: 0 });
+      await (h.useCase as any).tryRouteIntake({ event, requestId: `req-${webhookEventId}`, webhookEventId,
+        companyId: 'company-1', userId: 'user-1', permissions: ['line.ai.query'], messageText: event.messageText });
+      return event;
+    };
+
+    const unbound = await route('evt-group-or-v1', false);
+    const first = await route('evt-reask-1', true);
+    const second = await route('evt-reask-2', true);
+
+    assert.deepEqual(passes, [0, 1].map(() => ({ companyId: 'company-1', userId: 'user-1', conversationId: 'line-v2:conversation-a' })),
+      'looked up only for a bound private chat, by its own conversation');
+    assert.equal(unbound.admitOverCap, undefined);
+    assert.equal(first.admitOverCap, true);
+    assert.equal(second.admitOverCap, undefined, 'the pass is gone after its one use');
+    assert.deepEqual(grants, [undefined, true, undefined], 'the v2 grant of the re-ask carries it');
+    assert.deepEqual(intake.map((options) => options?.admitOverCap), [undefined, true, undefined]);
   });
 
   it('acks the turn as refused, so the reclaim worker stops re-running a closed admission', async () => {

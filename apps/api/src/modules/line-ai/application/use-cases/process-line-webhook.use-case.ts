@@ -212,6 +212,10 @@ export type LineTextEvent = {
   /** P12-3b: filled in once the turn has resolved WHO it is answering, so the send boundary can
    *  mint a deep-link handoff. Absent until then — an unlinked prompt has nobody to mint for. */
   handoff?: LineHandoffRecipient;
+  /** Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): this message was accepted before the AI credit ran out
+   *  — an orphan replay (set by the buffer), a parked photo's resumed answer, or the one re-ask after a
+   *  failed answer — so its admissions may pass the cap. Server-set only, never from LINE JSON. */
+  admitOverCap?: true;
 };
 
 /** The identity an outgoing message is addressed to; the only thing a handoff token binds. */
@@ -239,6 +243,8 @@ export type LineReceiptUploadEvent = {
   beforeReply?: () => Promise<void>;
   /** Set by the capture lanes only (appendix §3): the handoff surface this reply's link belongs to. */
   handoffSurface?: string;
+  /** See `LineTextEvent.admitOverCap`: set by the buffer for an orphan replay of this photo. */
+  admitOverCap?: true;
 };
 
 /** `defer_text` = the intake router judged the accompanying caption to be a
@@ -2332,11 +2338,18 @@ export class ProcessLineWebhookUseCase {
     activeExpenseDrafts?: LineExpenseDraftRouteContext[];
     substituteContext?: LineIntakeSubstituteContext;
     busyWaitDeadlineMs?: number;
+    /** A photo accepted before the AI credit ran out (`LineReceiptUploadEvent.admitOverCap`). */
+    admitOverCap?: boolean;
   }): Promise<GovernedLineIntakeRoutePlan> {
     const continuation = input.event && this.mediaTextContinuations.get(input.event);
     if (continuation) return continuation.route;
     const cached = input.event && this.intakePlansV2.get(input.event);
     if (cached) return cached;
+    // Owner 2026-09-30: the first AI turn after "the previous answer did not complete" passes the cap once.
+    const bound = input.event && this.boundConversations.get(input.event);
+    if (input.event && bound && !input.event.admitOverCap && await this.deliveryPlans?.consumeReaskPass?.(
+      { companyId: bound.owner.companyId, userId: bound.owner.userId, conversationId: bound.id }).catch(() => false)) input.event.admitOverCap = true;
+    const admitOverCap = input.admitOverCap || !!input.event?.admitOverCap;
     try {
       const hasImageContent = !!input.attachment?.contentBase64
         && (input.attachment.mimeType === 'image/png' || input.attachment.mimeType === 'image/jpeg');
@@ -2410,7 +2423,8 @@ export class ProcessLineWebhookUseCase {
               }],
             }
           : {}),
-      }, { busyWaitDeadlineMs: input.busyWaitDeadlineMs, retryWebhookEventId: input.retryWebhookEventId, onAdmitted: input.onAdmitted });
+      }, { busyWaitDeadlineMs: input.busyWaitDeadlineMs, retryWebhookEventId: input.retryWebhookEventId, onAdmitted: input.onAdmitted,
+        ...(admitOverCap ? { admitOverCap: true } : {}) });
     } catch (err) {
       // Spec §9.1: our own money gate refused BEFORE any provider ran. Collapsing that into
       // `ROUTER_UNREACHABLE` is what lost the reason and sent the turn straight back into the same
@@ -3900,7 +3914,8 @@ export class ProcessLineWebhookUseCase {
     const grant = await this.aiGateway.issueLineReliabilityGrant(requestId, { authorityKind: 'webhook_event', authorityId: log.id,
       owner: { kind: 'PRIVATE', owner: bound.owner, epoch: bound.epoch }, turnKey: evidence.turnKey, attemptKey: deliveryHash(['line-turn-v2', event.webhookEventId]),
       inputDigest: evidence.joinedSha256, requestKind: hasImageContent ? 'IMAGE' : 'TEXT', admittedAtMs: first, coalescingExtraMs: Math.min(6000, Math.max(0, last - first)),
-      lane: 'public', allowedProfileIds: [hasImageContent ? 'line-intake-image/2' : 'line-intake-text/2'] });
+      lane: 'public', allowedProfileIds: [hasImageContent ? 'line-intake-image/2' : 'line-intake-text/2'],
+      ...(event.admitOverCap ? { admitOverCap: true } : {}) });
     if (!grant) throw new HttpException({ code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' }, 429);
     this.budgetGrantsV2.set(event, grant); return grant;
   }
@@ -6035,6 +6050,8 @@ export class ProcessLineWebhookUseCase {
         (event as LineTextEvent & {
           [PENDING_MEDIA_RESOLUTION]?: { id: string; companyId: string; userId: string; status: 'RESOLVED_ILLUSTRATION' | 'RESOLVED_MULTI_ENTRY_REVIEW' };
         })[PENDING_MEDIA_RESOLUTION] = { id: pendingMedia.id, companyId, userId: identity.userId, status: 'RESOLVED_ILLUSTRATION' };
+        // Owner 2026-09-30: the photo was accepted before; this answer resumes it, so its turn passes the cap.
+        event.admitOverCap = true;
         // Route on the stored caption instead of the yes/no reply — the deferred question is answered now.
         // A bound chat keeps the accepted words: its route may only classify text its input evidence
         // proves, and the caption already rides along as the open question's own text.
@@ -7447,7 +7464,8 @@ export class ProcessLineWebhookUseCase {
     // 8. Call AI Gateway
     let turnResponse: LineAiTurnResponse;
     try {
-      turnResponse = await this.timeStage(event.webhookEventId, 'gateway_turn', () => this.aiGateway.requestLineTurn(turnRequest, { busyWaitDeadlineMs }));
+      turnResponse = await this.timeStage(event.webhookEventId, 'gateway_turn', () => this.aiGateway.requestLineTurn(turnRequest, { busyWaitDeadlineMs,
+        ...(event.admitOverCap ? { admitOverCap: true } : {}) }));
     } catch (err) {
       this.logger.error({ msg: 'AI Gateway error', requestId, ...safeLineErrorDetails(err) });
       const failure = classifyLineAiGatewayFailure(err);
@@ -8516,6 +8534,7 @@ export class ProcessLineWebhookUseCase {
       requestId,
       webhookEventId: event.webhookEventId,
       retryWebhookEventId: event.webhookEventId,
+      ...(event.admitOverCap ? { admitOverCap: true } : {}),
       onAdmitted: (identity) => { admissionAttempt.identity = identity; admissionAttempt.companyId = companyId; },
       companyId,
       userId: identity.userId,
@@ -8741,6 +8760,7 @@ export class ProcessLineWebhookUseCase {
       routePlan.onePassReceipt,
       admissionAttempt,
       event.webhookEventId,
+      event.admitOverCap,
     );
     if (readOcr.errorCode === 'OCR_REQUEST_ALREADY_ADMITTED') {
       // A crashed provider attempt may still own its lease — refused at the router's admission or, for a
@@ -11258,6 +11278,8 @@ ${link}`, ctx.companyId, access);
     admissionAttempt?: LineReceiptAdmissionAttempt,
     /** A reader-only photo is admitted by the reader, so a crash replay resumes there, as the router's would. */
     retryWebhookEventId?: string,
+    /** A photo accepted before the AI credit ran out (`LineReceiptUploadEvent.admitOverCap`). */
+    admitOverCap?: boolean,
   ): Promise<ReceiptOcrPreflight> {
     if (!media.contentBase64 || (media.mimeType !== 'image/jpeg' && media.mimeType !== 'image/png' && media.mimeType !== 'application/pdf')) {
       return { status: 'NOT_REQUESTED', fields: null, classification: null };
@@ -11293,6 +11315,7 @@ ${link}`, ctx.companyId, access);
       }, { ocrAlreadyAdmitted, admissionIdentity: admissionAttempt?.identity,
         onAdmitted: (identity) => { if (admissionAttempt) { admissionAttempt.identity = identity; admissionAttempt.companyId = ctx.companyId; } },
         ...(retryWebhookEventId ? { retryWebhookEventId } : {}),
+        ...(admitOverCap ? { admitOverCap: true } : {}),
         busyWaitDeadlineMs: Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS });
       if (result.fallbackReasons?.length) {
         this.logger.warn({

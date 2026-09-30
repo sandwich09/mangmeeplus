@@ -33,7 +33,7 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
     await client.user.deleteMany({ where: { id: { startsWith: tag } } });
     await client.$disconnect();
   });
-  async function fixture(suffix: string, mode = 'SPLIT', classified = true) {
+  async function fixture(suffix: string, mode = 'SPLIT', classified = true, extra: Partial<IssueLineAiBudgetGrant> = {}) {
     const companyId = `${tag}-${suffix}`; const userId = `${companyId}-user`; const membershipId = `${companyId}-member`;
     await client.company.create({ data: { id: companyId, name: companyId } });
     await client.user.create({ data: { id: userId, displayName: 'Synthetic grant user', status: 'ACTIVE' } });
@@ -49,7 +49,7 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
       model: { provider: 'bedrock', modelId: model, region: 'ap-southeast-1' }, modelContextTokens: 200000, modelMaxOutputTokens: 4096,
       tariff: { version: 'synthetic-tariff:1', provider: 'bedrock', modelId: model, region: 'ap-southeast-1', thbPerUsd: 33,
         usdPerMTok: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } },
-      allowedProfileIds: ['line-intake-text/2'],
+      allowedProfileIds: ['line-intake-text/2'], ...extra,
     };
     let grant = await service.issue(input); assert.ok(grant);
     if (classified) {
@@ -251,6 +251,8 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
     assert.equal(grant.maxTurnSlots, 2); assert.equal(grant.nextOrdinal, 1);
     assert.equal(grant.finalDeadlineAtMs, f.grant.admittedAtMs + 900000);
     assert.deepEqual(await service.transferToDocumentQa(f.grant, job.id, inputDigest), grant);
+    // Owner 2026-09-30: the queued question was accepted with its turn, so its later calls pass the cap.
+    assert.equal(((await (client as any).lineDocumentQaJob.findUniqueOrThrow({ where: { id: job.id } })).budgetAuthorityJson as { admitOverCap?: unknown }).admitOverCap, true);
     assert.equal(await service.issue(f.input), null);
     assert.equal(await service.narrow(f.grant, 'mixed', ['line-control/2']), null);
     assert.equal(await service.validate(f.grant, hash, f.owner), false);
@@ -280,6 +282,38 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
     const live = raced.find(Boolean)!;
     await client.aiConversation.update({ where: { id: f.context.id }, data: { lifecycleEpoch: { increment: 1 } } });
     assert.equal(await service.validate(live, documentQaAuthorityInputDigest(live.authorityId === job1.id ? job1 : job2)!, f.owner), false);
+  });
+
+  // Owner 2026-09-30: work accepted before the credit ran out passes the cap on every call of its turn
+  // ("ทุกกรณีที่ระบบรับไว้ก่อน"); an admin's closure — a cap of 0 — is never passed ("ไม่ทำต่อ").
+  it('owner 2026-09-30: an authority for accepted work reserves past a full CHAT; a fresh one is refused; a closed CHAT refuses both', async () => {
+    const spendChat = async (companyId: string, monthKey: string, costSatang: number) => {
+      await client.companyAiMonthlyUsage.create({ data: { companyId, monthKey, costSatang, callCount: 1 } });
+      await client.companyAiMonthlyBucketUsage.create({ data: { companyId, monthKey, bucket: 'CHAT', costSatang, callCount: 1 } });
+    };
+    const fresh = await fixture('overcap-fresh', 'SPLIT', false);
+    await spendChat(fresh.owner.companyId, fresh.grant.monthKey, 500000);
+    const refused = await service.reserve(invocation(fresh.grant, 0, 'line-intake-text/2'));
+    assert.equal(refused.ok, false);
+    assert.equal((refused as { reason: string }).reason, 'exceeded');
+
+    const accepted = await fixture('overcap-accepted', 'SPLIT', false, { admitOverCap: true });
+    await spendChat(accepted.owner.companyId, accepted.grant.monthKey, 500000);
+    const first = await service.reserve(invocation(accepted.grant, 0, 'line-intake-text/2')); assert.ok(first.ok);
+    assert.equal(await settle(first.envelope.invocationKey), 'settled');
+    const narrowed = await service.narrow(accepted.grant, 'mixed', ['line-control/2', 'line-answer/2']); assert.ok(narrowed);
+    const second = await service.reserve(invocation(narrowed, 1)); assert.ok(second.ok, 'the whole turn passes, not only its first call');
+    assert.equal(await settle(second.envelope.invocationKey), 'settled');
+    assert.equal(await settle(second.envelope.invocationKey), 'duplicate', 'never charged twice');
+    assert.equal(await client.aiUsageEvent.count({ where: { companyId: accepted.owner.companyId } }), 2, 'each call recorded once');
+    const stored = await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: second.envelope.reservationId } });
+    assert.equal((stored.pricingSnapshot as { admitOverCap?: unknown }).admitOverCap, true);
+    assert.equal(stored.status, 'SETTLED');
+
+    const closed = await fixture('overcap-closed', 'SPLIT', false, { admitOverCap: true });
+    await client.companyAiConfiguration.update({ where: { companyId: closed.owner.companyId }, data: { chatMonthlyBudgetSatang: 0 } });
+    assert.equal((await service.reserve(invocation(closed.grant, 0, 'line-intake-text/2'))).ok, false, 'a CHAT cap of 0 is an admin closure');
+    assert.equal(await client.aiBudgetReservation.count({ where: { companyId: closed.owner.companyId } }), 0, 'and no hold is left behind');
   });
 
   it('resolves private tools from authenticated durable ownership only', async () => {

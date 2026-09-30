@@ -223,7 +223,9 @@ export class RecoverOrphanLineEventsUseCase {
         continue;
       }
       try {
-        await this.buffer.enqueue(envelope);
+        // Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): a message this system accepted before the AI credit
+        // ran out is still owed its answer, so the replay may pass the cap (never an admin's closure).
+        await this.buffer.enqueue(envelope, true);
         result.replayed += 1;
       } catch (err) {
         // Left reclaimable on purpose: the next tick retries until the age bound parks it.

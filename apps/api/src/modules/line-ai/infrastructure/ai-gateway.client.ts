@@ -243,7 +243,7 @@ export class AiGatewayClient {
   async requestLineTurn(
     request: LineAiTurnRequest,
     /** `retryOrdinal` is the ledger drain's `deliveryCount`: the same attempt, the next try.
-     *  `admitOverCap` is the drain's too (owner 2026-09-30): see `CompanyAiBudgetStep.admitOverCap`. */
+     *  `admitOverCap`: see `CompanyAiBudgetStep.admitOverCap` (owner 2026-09-30). */
     options: { busyWaitDeadlineMs?: number; retryOrdinal?: number; admitOverCap?: boolean } = {},
   ): Promise<LineAiTurnResponse> {
     const grant = await this.validateLineV2(request, { companyId: request.userContext.companyId, userId: request.userContext.internalUserId, membershipId: request.userContext.membershipId });
@@ -311,7 +311,9 @@ export class AiGatewayClient {
 
   async requestReceiptOcr(
     request: ReceiptOcrRequest,
-    options: { ocrAlreadyAdmitted?: boolean; admissionIdentity?: CompanyOcrAdmissionIdentity; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void; busyWaitDeadlineMs?: number; retryWebhookEventId?: string } = {},
+    options: { ocrAlreadyAdmitted?: boolean; admissionIdentity?: CompanyOcrAdmissionIdentity; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void; busyWaitDeadlineMs?: number; retryWebhookEventId?: string;
+      /** See `CompanyAiBudgetStep.admitOverCap`: the AI money cap only, never the receipt-read count. */
+      admitOverCap?: boolean } = {},
   ): Promise<ReceiptOcrResponse> {
     const companyId = request.companyId;
     await this.assertRateLimit('ocr', companyId);
@@ -341,6 +343,7 @@ export class AiGatewayClient {
         stepKind: 'receipt-ocr', attemptKey: `line-image:${aiBudgetAttemptHash(request.attachment?.id ?? request.requestId)}`,
         sourceRoute: 'receipt-ocr', modelId: modelPolicy?.modelId ?? '', requestId: request.requestId,
         ...classifyAiUsageRequest('receipt-ocr', receiptOcrContent(request)),
+        ...(options.admitOverCap ? { admitOverCap: true } : {}),
       },
     );
   }
@@ -419,7 +422,9 @@ export class AiGatewayClient {
   }
 
   /** LINE Intake Router: semantic route plan before intake dispatch. */
-  async requestLineIntakeRoute(request: LineIntakeRouteRequest, options: { busyWaitDeadlineMs?: number; retryWebhookEventId?: string; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void } = {}): Promise<GovernedLineIntakeRoutePlan> {
+  async requestLineIntakeRoute(request: LineIntakeRouteRequest, options: { busyWaitDeadlineMs?: number; retryWebhookEventId?: string; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void;
+    /** See `CompanyAiBudgetStep.admitOverCap`. A v2 grant carries it in its own authority instead. */
+    admitOverCap?: boolean } = {}): Promise<GovernedLineIntakeRoutePlan> {
     const grant = await this.validateLineV2(request, { companyId: request.companyId, userId: request.userId });
     if (request.retainedTaskSource !== undefined) {
       const retained = await verifyLineAiRetainedTaskSource(request.retainedTaskSource);
@@ -467,6 +472,7 @@ export class AiGatewayClient {
           : `line-text:${aiBudgetAttemptHash(request.webhookEventId ?? request.requestId)}`,
         sourceRoute: 'line-intake-route', modelId: modelPolicy?.modelId ?? '', requestId: request.requestId,
         ...classifyAiUsageRequest('line-intake-route', media ? 'image' : 'text'),
+        ...(options.admitOverCap ? { admitOverCap: true } : {}),
       },
     );
     // The AI Gateway is a separate service; its optional prepared plan is untrusted wire JSON. Re-bound

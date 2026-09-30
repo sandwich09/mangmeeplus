@@ -24,6 +24,8 @@ export type LineBufferTextItem = {
   acceptedAt: number;
   /** Process-local arrival sequence — tie-break for identical timestamps. */
   seq: number;
+  /** In memory only: an orphan-sweep replay of a message accepted earlier (Owner 2026-09-30). */
+  admitOverCap?: true;
 };
 
 export type LineBufferMediaItem = {
@@ -41,6 +43,8 @@ export type LineBufferMediaItem = {
   companyIdAtAcceptance?: string;
   /** True when the assistant was paused at durable acceptance; a later resume must not replay it into AI. */
   assistantPausedAtAcceptance?: true;
+  /** In memory only: an orphan-sweep replay of a photo accepted earlier (Owner 2026-09-30). */
+  admitOverCap?: true;
 };
 
 export type LineBufferItem = LineBufferTextItem | LineBufferMediaItem;

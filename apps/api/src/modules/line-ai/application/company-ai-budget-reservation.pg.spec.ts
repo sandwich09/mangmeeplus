@@ -585,6 +585,16 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
       'one retry attempt is still one hold');
   });
 
+  it('owner 2026-09-30: an admin closure (a CHAT cap of 0) is never passed, not even by a drain retry', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const companyId = await company('drain-closed', { chat: 0 });
+
+    const retry = await drainRetry(companyId, 'line-text:drain-closed:r1');
+    assert.equal((retry as { reason: string }).reason, 'exceeded');
+    assert.equal((retry as { budgetScope: string }).budgetScope, 'CHAT');
+    assert.equal(await client.aiBudgetReservation.count({ where: { companyId } }), 0, 'no hold is left behind');
+  });
+
   it('owner 2026-09-30: only the cap yields — a breach still closes the scope to a drain retry', async (t) => {
     if (unreachable) return t.skip(unreachable);
     const companyId = await company('drain-breach', { total: 1_000_000, chat: 500_000, ocr: 500_000 });

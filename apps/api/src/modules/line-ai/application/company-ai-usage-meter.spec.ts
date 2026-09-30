@@ -1744,6 +1744,19 @@ describe('admitOverCap — the LINE ledger drain retry', () => {
     } finally { release(); await first; }
   });
 
+  // Owner 2026-09-30 ("ไม่ทำต่อ"): an admin's explicit closure — a cap of 0 — wins over every over-cap admission.
+  it('never passes a cap of 0: an admin-closed chat credit, or a total of 0, still refuses', async () => {
+    const closedChat = shared(0, 0, { companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: 10_000, chatMonthlyBudgetSatang: 0 }) } });
+    assert.deepEqual(await assertCompanyAiBudget(closedChat, budgetConfig, 'co-closed-chat', bangkokMonthKey(), drainStep()),
+      { allowed: false, reason: 'exceeded', spendSatang: 0, budgetSatang: 0, override: true, budgetScope: 'CHAT' });
+    const zeroTotal = shared(0, 0, { companyAiConfiguration: { findUnique: async () => null } });
+    const total = await assertCompanyAiBudget(zeroTotal, { ...budgetConfig, aiMonthlyBudgetSatang: 0 }, 'co-zero-total', bangkokMonthKey(),
+      drainStep({ budgetBucket: 'OCR' }));
+    assert.equal(total.allowed, false);
+    if (!total.allowed) assert.equal(total.reason, 'exceeded');
+    assert.equal(warnings.filter((w) => w?.msg === 'ai.budget.admitted_over_cap').length, 0);
+  });
+
   it('runs the action under the lease over the cap, so its caller meters it like any turn', async () => {
     assert.deepEqual(await runWithCompanyAiBudgetAdmission(shared(10_000, 8_000), budgetConfig, undefined, 'co-drain-run',
       async () => 'answered', 'chat', drainStep()), { allowed: true, value: 'answered' });
