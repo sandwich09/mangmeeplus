@@ -328,6 +328,7 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     assert.match(compose.systemPrompt, /Never recommend a package/);
     assert.match(compose.systemPrompt, /never suggest upgrading, a bigger package or buying more/);
     assert.match(compose.systemPrompt, /'ขาดประมาณ N ใบ' with N = projectedShortfall/);
+    assert.match(compose.systemPrompt, /When receipts\.resetsOn is present, an answer about receipts says that day as the day the count starts again\./);
     assert.match(compose.systemPrompt, /add no line inviting them to upgrade, change, add to, buy or manage a package/);
     assert.match(compose.systemPrompt, /never write a web address yourself/);
     assert.match(compose.systemPrompt, /no closing line pointing to the package page/);
@@ -336,6 +337,33 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.match(result.replyText, /ขาดประมาณ 50 ใบ/);
     assert.deepEqual(result.webLinks, [{ label: 'แพ็กเกจของร้าน', path: '/companies/company/billing' }]);
+  });
+
+  // Eval r11 P-02: the model gave the month's range but not the restart day the tool returned; code adds it.
+  it('adds the restart day to a monthly receipt answer that leaves it out, once', async () => {
+    const data = { package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-11-10' },
+      capacity: { branches: { used: 4, limit: 5, remaining: 1 }, members: { used: 4, limit: 10, remaining: 6 } },
+      receipts: { used: 37, limit: 100, remaining: 63, cadence: 'รายเดือน เริ่มนับใหม่ทุกต้นเดือน', periodStartOn: '2026-10-01', periodEndsOn: '2026-10-31',
+        resetsOn: '2026-11-01', expiresOn: null, additional: null, pace: null, paceNote: 'รอบนี้เพิ่งเริ่มไม่ถึง 7 วัน ยังเร็วเกินไปที่จะคาดการณ์' } };
+    for (const [composed, expected] of [
+      ['รอบเดือนนี้ (1–31 ต.ค. 2569) ใช้ไปแล้ว 37 ใบ เหลืออีก 63 ใบค่ะ', 'รอบเดือนนี้ (1–31 ต.ค. 2569) ใช้ไปแล้ว 37 ใบ เหลืออีก 63 ใบค่ะ\nใบเสร็จจะเริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ'],
+      ['เหลืออีก 63 ใบ เริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ', 'เหลืออีก 63 ใบ เริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ'],
+    ] as const) {
+      const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+        return { ok: true, text: input.usageTag === 'line.compose' ? JSON.stringify({ answers: [{ index: 0, status: 'handled', text: composed,
+          sourceRefIds: ['billing:package_usage:summary'] }] }) : CONTROL_CALL };
+      } };
+      const result = await runSemanticTurnV2({
+        req: request('read', 'เหลือใบเสดอีกกี่ใบคะ', ['ai.tool.invoke', 'company.plan.manage']), provider, draftEditEnabled: false,
+        reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        async invoke(): Promise<ToolResult> {
+          return { toolName: 'billing.get_package_usage', status: 'ok', data, asOf: '2026-10-01T03:00:00.000Z', sourceRefs: [{ label: 'แพ็กเกจของร้าน',
+            module: 'billing', entityType: 'package_usage', permissionChecked: true, webPath: '/companies/company/billing' }] };
+        },
+      });
+      assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+      assert.equal(result.replyText, expected);
+    }
   });
 
   // Owner 2026-09-30 (~16:00, spec §5.1a): anyone may ask package prices and contents; they come only from

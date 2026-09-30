@@ -47,6 +47,6 @@ Next: implement R1 (S0, S2a, S1, S3, S8) per plan section 3; run each slice's re
 | r11 | c33f0339 | 31/32 | 27.45 | P-02 answered 63 left and the period 1–31 ต.ค. but not the restart date 1 พ.ย. (resetsOn was in the data) |
 
 - Spend: 236.50 THB of the 250 THB slice cap (r1–r4 59.88 + r5–r11 176.62). Pass bar NOT met; another run would pass the cap, so testing stopped for a cap decision.
-- Next fix (not made, unmeasured): ANSWER_PROMPT — for a monthly allowance, say the day the count starts again from receipts.resetsOn. Then two consecutive runs (~55 THB).
+- After r11 (coordinator, code only, no model calls): a receipt answer on a monthly allowance now always names the restart day — `withReceiptRestartDate` appends "ใบเสร็จจะเริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ" when the composed text lacks it, plus a matching ANSWER_PROMPT line. Unmeasured; the pass bar still needs two consecutive runs (~55 THB) once the owner decides the budget.
 - Whole-chain on 1 Oct: two pre-existing first-of-month date tests fail on any branch (orchestrator.agent.spec.ts "ช่วง: 1 … – 1 …" and line-ai-turn.use-case.spec.ts "/– 1 /"); every earlier run on 30 Sep passed.
 

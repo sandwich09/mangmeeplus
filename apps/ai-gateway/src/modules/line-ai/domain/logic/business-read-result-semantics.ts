@@ -1,4 +1,4 @@
-import type { SpecialistOutput } from '@watchdog-bms/contracts';
+import { formatThaiDate, mapThaiDigits, type SpecialistOutput, type ToolResult } from '@watchdog-bms/contracts';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -300,6 +300,35 @@ function formatSignedPercent(percent: number | undefined): string | undefined {
 const THAI_MONTH_ABBR = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const ENGLISH_MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const CIVIL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
+const THAI_MONTH_FULL = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+
+/** True when `text` names this day of this month in any form an answer uses: "1 พ.ย.", "1 พย", "1 พฤศจิกายน",
+ *  "1/11" (Thai digits too), or "Nov 1". The year may be there or not. */
+function statesCivilDay(text: string, month: number, day: number): boolean {
+  const abbr = THAI_MONTH_ABBR[month - 1]!;
+  const thai = `(?<![\\d.])${day}\\s*(?:${abbr.replace(/\./gu, '\\.')}|${abbr.replace(/\./gu, '')}|${THAI_MONTH_FULL[month - 1]}|/\\s*0?${month}(?!\\d))`;
+  const english = `\\b${ENGLISH_MONTH_ABBR[month - 1]}[a-z]*\\.?\\s*${day}(?!\\d)`;
+  return new RegExp(`${thai}|${english}`, 'iu').test(mapThaiDigits(text));
+}
+
+/**
+ * Advisor S2a (eval r11 P-02, 2026-10-01): a monthly receipt allowance starts counting again on
+ * `receipts.resetsOn` from billing.get_package_usage, and an answer about receipts must say that day.
+ * The model gave only the month's range ("1–31 ต.ค.") although the tool returned the day, and the prompt
+ * rule alone failed before, so a receipt answer that does not name the day gets one line that does.
+ * No restart day in the data (a paid allowance, or a package that ends first) leaves the answer as is.
+ */
+export function withReceiptRestartDate(text: string, results: readonly ToolResult[], english: boolean): string {
+  const usage = results.find((result) => result.toolName === 'billing.get_package_usage' && result.status === 'ok');
+  const resetsOn = record(record(usage?.data)?.['receipts'])?.['resetsOn'];
+  const date = typeof resetsOn === 'string' ? CIVIL_DATE.exec(resetsOn) : null;
+  if (!date) return text;
+  const [year, month, day] = [Number(date[1]), Number(date[2]), Number(date[3])];
+  const aboutReceipts = english ? /receipt/iu.test(text) : /ใบเสร็จ|\d\s*ใบ/u.test(mapThaiDigits(text));
+  if (!aboutReceipts || statesCivilDay(text, month, day)) return text;
+  return `${text}\n${english ? `Receipts start counting again on ${ENGLISH_MONTH_ABBR[month - 1]} ${day}, ${year}.`
+    : `ใบเสร็จจะเริ่มนับใหม่ ${formatThaiDate({ day, month, yearBe: year + 543 })} ค่ะ`}`;
+}
 
 function lastDayOfMonthCe(yearCe: number, month: number): number {
   return new Date(Date.UTC(yearCe, month, 0)).getUTCDate();
