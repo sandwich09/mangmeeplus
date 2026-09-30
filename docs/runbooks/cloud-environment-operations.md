@@ -10,7 +10,23 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Hotfixes 2026-09-30 afternoon — signup constraint and promotion poster (current)
+## Hotfix 2026-09-30 evening — claim lines on a phone (current)
+
+After this section, Production serves hotfix source `908e7aab`. `main` `b7d86eb8` (#937) merges it and has the same tree. UAT still serves `7b1b1c11`, which does not have this web fix. This is the first live use of the isolated `deploy-prod-hotfix` path since the Kamal cutover, run from a clean `main` controller at `7b1b1c11`. The GitHub workflow ID is `NOT_DISPATCHED`. Times are Bangkok.
+
+| Env | Operation | Source | Result | Seconds |
+|---|---|---|---|---|
+| Production | `20260930T104206Z-2a3baa82` (preflight) | `908e7aab` on baseline `7b1b1c11` | PREFLIGHT_PASSED_NO_DEPLOYMENT | 29.3 |
+| Production | `20260930T104258Z-3c7568ae` | `908e7aab`: isolated hotfix, no UAT, no migration. Changed paths: `apps/web/src/features/reimbursements/ReimbursementDetailSections.tsx` and the regression spec `ReimbursementPages.plain-thai.qa.spec.ts`. Below `sm`, the claim-detail "รายการเบิก" lines show as cards, because the seven-column table squeezed Thai text to one letter per row on the owner's phone. From `sm` up, the table is unchanged inside `.mangmee-table-scroll`. | ACCEPTED_LINE_DEFERRED 17:54, website ready 17:51:59 (540.5 s), acceptance written 17:53:41. Serving `live`, `OPEN`, 10/10 browser checks, with the owner signing in personally; 4 SSM sessions closed. The controller reran typecheck and the regression spec in its isolated build. Phases: build 173.2 s, publish-and-pull 83.6 s, rollout 117.0 s. | 678.6 |
+
+**The hotfix path took about 11 minutes end to end, with no UAT.** Owner go: "แต่เอาใบเบิกขึ้น hotfix prod ให้ลูกค้าก่อน ส่วนตัวอื่นตามไปทีหลังได้".
+- The claim hub was left out because its queues already had phone cards below `md`.
+- The same round's other phone fixes went to develop and main without a release:
+  - the expense category table moved to the shared scroller;
+  - the LINE draft-claim page got line cards.
+- The draft-claim page is a W00-hashed file, so that change regenerated `docs/research/mangmee-ai-capability-manifest-2026-09-27.json`.
+
+## Hotfixes 2026-09-30 afternoon — signup constraint and promotion poster
 
 After this section, UAT and Production both serve `main` `7b1b1c11`. Every run used the local Kamal path from a clean `main` controller worktree, and GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok.
 
