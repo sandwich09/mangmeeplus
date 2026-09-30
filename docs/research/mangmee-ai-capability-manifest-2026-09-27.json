@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "cd07a01780b1997a250cc3cd3f5bbc800aa93215",
-  "checkoutBranch": "claude/claim-evidence-wording-20260930",
-  "checkoutDirty": false,
+  "sourceRevision": "cf783811f46686581743776c1f8e238c970dab4c",
+  "checkoutBranch": "claude/line-ai-substitute-photo-narrow-20260930",
+  "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -101,7 +101,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "2e998be8d45781f113398195e30c2736f678002bdf6691134de7ae831c81630b"
+      "sha256": "cbe52d9577e411c02ff2ada92b386a69f85945c83d76bd323e100440eac425fb"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -8646,6 +8646,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-29T23:31:14.130Z",
-  "manifestDigest": "4e62eeaaf17229589f7045a14297bf2e2358ca5c17c79426e11df64f396f119b"
+  "generatedAt": "2026-09-30T00:15:17.138Z",
+  "manifestDigest": "d9d52804f4ffba1c1b2b99f8df934fe9f4b8d053ea59f5c5f881ef30b1a214ae"
 }

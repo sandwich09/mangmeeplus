@@ -83,6 +83,7 @@ import {
   numberedSelection,
   parseSubstituteMediaQuestion,
   isSignatureCaptionText,
+  substituteAwaitsCaptionlessPhoto,
   substituteMediaAnswer,
   substituteMediaChoices,
   substituteMediaQuestion,
@@ -8495,7 +8496,9 @@ export class ProcessLineWebhookUseCase {
       substituteWorkOpen: async () => {
         if (!this.substituteReceiptContinuation || !access.permissions.includes('expense.receipt.upload')) return false;
         try {
-          return !!await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event));
+          // Asked only for a caption-less photo: open work claims it only right after asking for exactly it.
+          const open = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event));
+          return !!open && substituteAwaitsCaptionlessPhoto(open);
         } catch {
           return true;
         }
@@ -8682,7 +8685,10 @@ export class ProcessLineWebhookUseCase {
       && (routePlan.status !== 'ROUTED' || routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE')) {
       try {
         const context = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event));
-        const outcome = context
+        // UAT round 10: a caption-less photo is a new expense unless this chat was just asked for exactly that
+        // picture. A caption keeps its own signals and a file keeps its lane, as before.
+        const claims = context && (event.messageType !== 'image' || caption || substituteAwaitsCaptionlessPhoto(context));
+        const outcome = context && claims
           ? await this.handleSubstituteMediaArrival({
             event, ctx, access, companyId, userId: identity.userId, requestId, caption, captionSuffix, media, context,
           })
