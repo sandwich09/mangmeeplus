@@ -10,7 +10,33 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Release 2026-09-29 — UAT and Production Kamal (current)
+## Release 2026-09-29 night to 2026-09-30 morning — UAT rounds 7–11 and Production (current)
+
+After this section, UAT and Production both serve `main` `e52c151a`. Every run used the local Kamal path from a clean `main` controller worktree, and GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok.
+
+- Round 7 used `--uat-browser-acceptance`, with the owner typing the credentials themselves in the Claude built-in browser.
+- Rounds 8–11 used `--uat-smoke-acceptance` (customer-acceptance kind `owner_authorized_uat_config_readiness_smoke`), with no admin login. The owner authorised it for rounds 8 and 9 while asleep and chose it for round 10; round 11, the urgent photo fix, kept that choice.
+- The Production release used `--production-browser-acceptance`, with the owner signing in personally. The owner first reviewed the list of changes since the previous Production release and then gave an explicit go.
+
+| Env | Operation | Source (main) | Result | Seconds |
+|---|---|---|---|---|
+| UAT | `20260929T151224Z-ddc79adc` (prepared by `0b833881`, 216 s) | `b72cab2f` (main-only hotfix #906 carrying #905: LINE text-note draft key) | ACCEPTED_LINE_DEFERRED 22:18, website ready 22:16:38 (253 s), browser acceptance written 22:17:49 with the owner signing in personally, 2 SSM sessions closed. **Not promoted**: the owner's LINE test created the draft with no category, and the owner held Production until the category fix. | 347.3 |
+| UAT | `20260929T171047Z-d88af0f2` (prepare only) | `4244add6` (#913 twin = develop `8cafabcc`) | PREPARED_NO_DEPLOYMENT 00:17 on 09-30. Never applied: superseded so that #914 PDF categories could ride along. | 410.0 |
+| UAT | `20260929T173136Z-bbeda54d` (prepared by `0f75908b`, 245 s) | `07c5be1c` (#915 twin = develop `5c2bd5aa`: #903 document Q&A, #904 ledger, #905 text-note draft key, #909 Codex expense review lock, #910 general knowledge, #911 expense categories on LINE text and photos, #912 assumed-year note, #914 PDF categories) | ACCEPTED_LINE_DEFERRED 00:35 on 09-30, smoke, 2 SSM sessions closed. Production preflight `20260929T173615Z-6f93ff70` PREFLIGHT_PASSED_NO_DEPLOYMENT (17.6 s). Not promoted; superseded by round 9. | 257.4 |
+| UAT | `20260929T175952Z-445f673f` (prepared by `3e5b1ff4`, 280 s) | `e7643d91` (#917 twin = develop `2f5d26f5`: adds #916 regression fixes: file questions stay document questions, the as-of line uses the Bangkok day, bare Thai month names) | ACCEPTED_LINE_DEFERRED 01:04, smoke, 2 SSM sessions closed. Preflight `20260929T180425Z-ebe8d3ab` PREFLIGHT_PASSED_NO_DEPLOYMENT (19.2 s). Not promoted: the owner chose to test round 10 in one pass. | 264.0 |
+| UAT | `20260929T234807Z-8679ae44` (prepared by `ab1a6cd1`, 255 s) | `74748a06` (#925 twin = develop `cf783811`: adds #918 LINE reimbursement drafts, #919 answer preferences, #920 plain-Thai LINE claim card, #921/#922 plain-Thai web reimbursement pages, #923 claim locator and raw-path sanitiser, #924 bill-linked evidence wording) | ACCEPTED_LINE_DEFERRED 06:53, smoke, 2 SSM sessions closed. Preflight `20260929T235405Z-295f589a` PREFLIGHT_PASSED_NO_DEPLOYMENT (25.1 s). **Not promoted**: in the owner's LINE test, caption-less receipt photos were intercepted by a week-old open substitute-receipt state on the test shop. | 344.4 |
+| UAT | `20260930T003118Z-4da29c2e` (prepared by `c1200a77`, 244 s) | `e52c151a` (#927 twin = develop `0f97a148`: adds #926, where a caption-less photo is read and drafted, and substitute-receipt work claims a photo only after an explicit ask within the last 30 minutes) | ACCEPTED_LINE_DEFERRED 07:37, smoke, 2 SSM sessions closed. Preflight `20260930T003728Z-2aa69227` PREFLIGHT_PASSED_NO_DEPLOYMENT (26.4 s). | 347.5 |
+| Production | `20260930T011743Z-e16962f3` | `e52c151a`, promoted from UAT `4da29c2e` with no rebuild, after preflight `2aa69227` | ACCEPTED_LINE_DEFERRED 08:28, website ready 08:24:44 (420.7 s), acceptance written 08:28:02. Serving `live`, `OPEN`, 10/10 browser checks, with the owner signing in personally; 4 SSM sessions closed. No migration and no `infra/kamal` change since the previous Production release (`0cb704db`). | 659.8 |
+
+**Smoke acceptance is promotable; Production acceptance is never smoke.** A `--uat-smoke-acceptance` run needs no admin login, yet it still signs ACCEPTED_LINE_DEFERRED with a promotion bundle, and `promote-prod` accepts that receipt for 24 hours. Use smoke only with the owner's consent. Production promotion still needs the owner's own sign-in and the 10 browser checks.
+
+**Superseded UAT rounds need no cleanup.** Rounds 7–10 were never promoted. Each later round replaced the release on the UAT hosts, and the prepare and apply that followed the unapplied prepare `d88af0f2` ran without any cleanup.
+
+**macOS has no `timeout`.** A `promote-prod` preflight wrapped in `timeout` exits 127 before the controller starts, so nothing runs. Run the controller without it.
+
+---
+
+## Release 2026-09-29 — UAT and Production Kamal
 
 The owner started both UAT hosts at about 09:24 Bangkok; they had been stopped since 2026-09-26. Every release below used the local Kamal path from a clean `main` controller worktree, with `--uat-browser-acceptance` or `--production-browser-acceptance`. In each case the owner typed the credentials themselves in the Claude built-in browser. The controller then verified `/auth/me` identity and permissions, the platform-access page, public `OPEN`, logout, and the 401 after logout. GitHub workflow IDs are `NOT_DISPATCHED`.
 
