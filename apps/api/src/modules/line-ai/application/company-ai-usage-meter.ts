@@ -179,6 +179,10 @@ export type CompanyAiBudgetStep = {
   ordinal?: number;
   requestKind?: AiRequestKind;
   requestId?: string;
+  /** Owner 2026-09-30 ("ข้อความตอนเครดิตหมดระหว่างส่งซ้ำ ต้องยอมให้ใช้เกินโควต้า"): set ONLY by the LINE
+   *  ledger drain for a turn it re-runs. The cap refusals (exceeded, insufficient; TOTAL and CHAT)
+   *  admit instead and usage is recorded as usual; every other refusal still stands. */
+  admitOverCap?: boolean;
 };
 
 /**
@@ -200,6 +204,7 @@ async function reserveCompanyAiBudgetStep(
     companyId, monthKey, bucket: step.budgetBucket, stepKind: step.stepKind, attemptKey: step.attemptKey,
     ordinal: step.ordinal ?? 0, sourceRoute: step.sourceRoute, modelId: step.modelId,
     ...(step.requestKind ? { requestKind: step.requestKind } : {}),
+    ...(step.admitOverCap ? { admitOverCap: true } : {}),
     thbPerUsd: fx.rate, thbPerUsdSource: fx.source,
   });
   if (outcome.ok) return { allowed: true, reservation: outcome.reservation };
@@ -407,7 +412,11 @@ export async function assertCompanyAiBudget(
   // and adds a settled CHAT bucket stop below, with the same bounded overshoot as its total.
   if (policy.mode === 'SPLIT') return reserveCompanyAiBudgetStep(prisma, config, companyId, monthKey, step!);
 
-  if (spendSatang >= budget.budgetSatang) {
+  // `admitOverCap` (the ledger drain's retry) yields ONLY the two cap comparisons below; both reads
+  // and every other refusal still stand. The caller meters the turn's usage exactly as any other.
+  if (spendSatang >= budget.budgetSatang && step?.admitOverCap) {
+    logger.warn({ msg: 'ai.budget.admitted_over_cap', companyId, monthKey, budgetScope: 'TOTAL', spendSatang, budgetSatang: budget.budgetSatang });
+  } else if (spendSatang >= budget.budgetSatang) {
     emitSecurityEvent(logger, SECURITY_EVENT.aiCompanyBudgetExceeded, 'HIGH', {
       companyId,
       spendSatang,
@@ -423,7 +432,9 @@ export async function assertCompanyAiBudget(
         select: { costSatang: true },
       });
       const chatSpent = row?.costSatang ?? 0;
-      if (chatSpent >= policy.chatCapSatang!) {
+      if (chatSpent >= policy.chatCapSatang! && step.admitOverCap) {
+        logger.warn({ msg: 'ai.budget.admitted_over_cap', companyId, monthKey, budgetScope: 'CHAT', spendSatang: chatSpent, budgetSatang: policy.chatCapSatang });
+      } else if (chatSpent >= policy.chatCapSatang!) {
         return { allowed: false, reason: 'exceeded', spendSatang: chatSpent,
           budgetSatang: policy.chatCapSatang!, override: policy.chatSource !== 'DEFAULT', budgetScope: 'CHAT' };
       }

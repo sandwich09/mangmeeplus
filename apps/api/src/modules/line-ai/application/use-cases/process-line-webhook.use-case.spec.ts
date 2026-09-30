@@ -5164,7 +5164,7 @@ import { ConsumptionMarkerUnavailableError } from '../line-ai-consumption-marker
 
 function makeLedgerUseCase(prisma: any, opts: {
   permissions?: string[];
-  aiGatewayFn?: (req?: any) => any;
+  aiGatewayFn?: (req?: any, options?: any) => any;
   intakeRouteFn?: (req?: any) => any;
   openWaiting?: any[];
   /** Replaces the whole ledger read, so a test can drive the REAL service or throw a typed refusal. */
@@ -5197,10 +5197,10 @@ function makeLedgerUseCase(prisma: any, opts: {
     { resolveAccess: async () => ({ membershipId: 'mem-1', roles: ['STAFF'], permissions: opts.permissions ?? ['line.ai.query'], scopes: {} }) } as any,
     { log: async () => undefined } as any,
     {
-      requestLineTurn: async (req: any) => {
+      requestLineTurn: async (req: any, options?: any) => {
         events.push('gateway');
         aiGatewayRequests.push(req);
-        if (opts.aiGatewayFn) return opts.aiGatewayFn(req);
+        if (opts.aiGatewayFn) return opts.aiGatewayFn(req, options);
         throw new Error('AI Gateway not expected');
       },
       requestLineIntakeRoute: async (req: any) => {
@@ -5276,6 +5276,20 @@ describe('ProcessLineWebhookUseCase – the monthly AI budget is not congestion 
     assert.match(rendered, /แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
     assert.doesNotMatch(rendered, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|โปรโมชั่น/);
     assert.equal(h.sentMessages[0].contents.footer, undefined);
+  });
+
+  // Owner 2026-09-30: only the ledger drain's retry may go past the cap; the live first attempt
+  // still asks the ordinary admission, which refuses at the cap with the cards above.
+  it('never asks for over-cap admission on the live first attempt', async () => {
+    const { prisma } = makePrisma();
+    const seen: any[] = [];
+    const h = makeLedgerUseCase(prisma, { aiGatewayFn: (_req: any, options: any) => { seen.push(options); return LEDGER_TURN_RESPONSE; } });
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-live-admission', messageText: 'ยอดขายวันนี้' });
+
+    assert.equal(seen.length, 1, 'the live turn reached the gateway client');
+    assert.equal(seen[0]?.admitOverCap, undefined);
+    assert.equal(seen[0]?.retryOrdinal, undefined);
   });
 
   it('acks the turn as refused, so the reclaim worker stops re-running a closed admission', async () => {

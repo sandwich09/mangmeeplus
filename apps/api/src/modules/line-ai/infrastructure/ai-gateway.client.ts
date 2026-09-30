@@ -242,8 +242,9 @@ export class AiGatewayClient {
 
   async requestLineTurn(
     request: LineAiTurnRequest,
-    /** `retryOrdinal` is the ledger drain's `deliveryCount`: the same attempt, the next try. */
-    options: { busyWaitDeadlineMs?: number; retryOrdinal?: number } = {},
+    /** `retryOrdinal` is the ledger drain's `deliveryCount`: the same attempt, the next try.
+     *  `admitOverCap` is the drain's too (owner 2026-09-30): see `CompanyAiBudgetStep.admitOverCap`. */
+    options: { busyWaitDeadlineMs?: number; retryOrdinal?: number; admitOverCap?: boolean } = {},
   ): Promise<LineAiTurnResponse> {
     const grant = await this.validateLineV2(request, { companyId: request.userContext.companyId, userId: request.userContext.internalUserId, membershipId: request.userContext.membershipId });
     if (request.retainedTaskSource !== undefined) {
@@ -303,6 +304,7 @@ export class AiGatewayClient {
         attemptKey: `line-text:${aiBudgetAttemptHash(request.webhookEventId || request.requestId)}${options.retryOrdinal ? `:r${options.retryOrdinal}` : ''}`,
         sourceRoute: 'line-turn', modelId: request.modelPolicy?.modelId ?? '', requestId: request.requestId,
         ...classifyAiUsageRequest('line-turn', turnContent),
+        ...(options.admitOverCap ? { admitOverCap: true } : {}),
       },
     );
   }

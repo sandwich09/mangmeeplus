@@ -729,7 +729,8 @@ describe('AiGatewayClient monthly budget', () => {
     return { prisma: { client } as any, recorded, setSpend: (value: number) => { spend = value; } };
   }
 
-  async function turnWith(prisma: unknown, onFetch?: () => void): Promise<{ error: unknown; calls: number }> {
+  async function turnWith(prisma: unknown, onFetch?: () => void,
+    options?: Parameters<AiGatewayClient['requestLineTurn']>[1]): Promise<{ error: unknown; calls: number }> {
     const client = new AiGatewayClient(budgetConfig, delegation, undefined, prisma as any);
     const originalFetch = globalThis.fetch;
     let calls = 0;
@@ -739,7 +740,7 @@ describe('AiGatewayClient monthly budget', () => {
       return { ok: true, json: async () => ({ requestId: 'request-1', usage: [usageRow] }) } as Response;
     };
     try {
-      await client.requestLineTurn(turnRequest);
+      await client.requestLineTurn(turnRequest, options);
       return { error: undefined, calls };
     } catch (error) {
       return { error, calls };
@@ -789,6 +790,32 @@ describe('AiGatewayClient monthly budget', () => {
     const next = await turnWith(meter.prisma);
     assert.ok(next.error instanceof HttpException);
     assert.equal(next.calls, 0);
+  });
+
+  // Owner 2026-09-30 ("ข้อความตอนเครดิตหมดระหว่างส่งซ้ำ ต้องยอมให้ใช้เกินโควต้า").
+  it('admits the ledger drain retry past the cap and meters it like any turn; the live call still refuses', async () => {
+    const meter = meterPrisma(200_000);
+
+    const retry = await turnWith(meter.prisma, undefined, { retryOrdinal: 1, admitOverCap: true });
+    assert.equal(retry.error, undefined, 'the retry gets its real answer');
+    assert.equal(retry.calls, 1);
+    assert.equal(meter.recorded.length, 1, 'and its usage is recorded exactly once, like any other turn');
+
+    const { error: liveError, calls: liveCalls } = await turnWith(meter.prisma);
+    assert.ok(liveError instanceof HttpException);
+    assert.deepEqual(liveError.getResponse(), { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' });
+    assert.equal(liveCalls, 0);
+  });
+
+  it('still refuses the drain retry when the meter itself cannot be read', async () => {
+    const broken = { client: {
+      companyAiConfiguration: { findUnique: async () => null },
+      companyAiMonthlyUsage: { findUnique: async () => { throw new Error('DB_DOWN'); } },
+    } };
+    const { error, calls } = await turnWith(broken, undefined, { retryOrdinal: 1, admitOverCap: true });
+    assert.ok(error instanceof HttpException);
+    assert.deepEqual(error.getResponse(), { code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' });
+    assert.equal(calls, 0);
   });
 });
 
@@ -1001,6 +1028,29 @@ describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)
     assert.ok(error instanceof HttpException);
     assert.deepEqual(error.getResponse(), { code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'CHAT' });
   });
+
+  // Owner 2026-09-30 ("ข้อความตอนเครดิตหมดระหว่างส่งซ้ำ ต้องยอมให้ใช้เกินโควต้า").
+  for (const [label, policy] of [
+    ['a full CHAT (exceeded)', { total: 100_000, chat: 1_000, ocr: 50_000, spentChat: 1_000 }],
+    ['a near-limit CHAT (insufficient)', { total: 100_000, chat: 45, ocr: 50_000, spentChat: 2 }],
+  ] as const) {
+    it(`admits the ledger drain retry past ${label}, marks the hold for the turn's further calls, and settles it once`, async () => {
+      const { prisma, reservations, events } = splitPrisma({ ...policy });
+      const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
+      const fetchStub = captureFetch({ requestId: 'transport-1', usage: [usageRow] });
+      try {
+        await client.requestLineTurn(turnRequest(), { retryOrdinal: 1, admitOverCap: true });
+      } finally { fetchStub.restore(); }
+
+      assert.equal(fetchStub.bodies.length, 1, 'the retry reaches the provider for its real answer');
+      assert.ok(fetchStub.bodies[0].budgetEnvelope, 'under the same bounded envelope as any hold');
+      const hold = [...reservations.values()][0];
+      assert.equal(hold.attemptKey, `line-text:${aiBudgetAttemptHash('evt-9001')}:r1`);
+      assert.equal(hold.pricingSnapshot.admitOverCap, true, 'budget-step reads this for the rest of the turn');
+      assert.equal(hold.status, 'SETTLED');
+      assert.equal(events.size, 1, 'usage recorded exactly once');
+    });
+  }
 
   it('an OCR-insufficient image intake reports the OCR scope while CHAT stays open (E-02)', async () => {
     const { prisma } = splitPrisma({ total: 100_000, chat: 50_000, ocr: 10, spentOcr: 1 });

@@ -126,6 +126,9 @@ export type ReserveAiBudgetStepInput = {
    *  posted by the gateway — which has no business knowing it — still lands with the right D1
    *  metadata instead of UNKNOWN, which would make the month read "partial coverage" forever. */
   requestKind?: AiRequestKind;
+  /** Owner 2026-09-30: the LINE ledger drain's retry of a turn. Only the cap decision
+   *  (`decideAiBudgetStep`) yields; the hold is written, marked and settled like any other. */
+  admitOverCap?: boolean;
   /** Resolved OUTSIDE the transaction — `resolveThbPerUsd` may make an outbound call. */
   thbPerUsd: number;
   thbPerUsdSource: string;
@@ -392,7 +395,11 @@ export async function reserveAiBudgetStep(
         bucket: input.bucket, boundSatang: bound, totalSatang: policy.totalSatang, capSatang,
         spent: spend, reserved, override: policy.override,
       });
-      if (!decision.ok) return decision;
+      if (!decision.ok && !input.admitOverCap) return decision;
+      if (!decision.ok) {
+        logger.warn({ msg: 'ai.budget.admitted_over_cap', companyId: input.companyId, monthKey: input.monthKey,
+          budgetScope: decision.budgetScope, stepKind: input.stepKind, ordinal: input.ordinal });
+      }
 
       // Funding is decided BEFORE the ordinal claim: a refusal returns (commits) without burning the
       // turn's ordinal. Still under `partner-ocr-config` (L1), so two months or two turns can never
@@ -417,7 +424,9 @@ export async function reserveAiBudgetStep(
           attemptKey: input.attemptKey, invocationKey, upperBoundSatang: bound,
           pricingSnapshot: { ...priced.snapshot, thbPerUsdSource: input.thbPerUsdSource,
             // The marker settlement reads: only a funded hold has AI credit entries to turn into use.
-            ...(funding ? { aiCredit: { cycleKey: funding.cycleKey } } : {}) },
+            ...(funding ? { aiCredit: { cycleKey: funding.cycleKey } } : {}),
+            // The marker `budget-step` reads, so every further call of this turn inherits it.
+            ...(input.admitOverCap ? { admitOverCap: true } : {}) },
           requestKind: input.requestKind ?? null, status: rendered ? 'DISPATCHED' : 'RESERVED', ownerToken,
           ...(rendered ? { dispatchedAt: now } : {}),
         },
