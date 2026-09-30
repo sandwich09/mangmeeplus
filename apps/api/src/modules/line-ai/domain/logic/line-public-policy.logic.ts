@@ -1,5 +1,3 @@
-export const PUBLIC_PACKAGE_URL = 'https://official.mangmeeplus.com/';
-
 // Public policy only. These are defaults, not a lookup of this caller's plan or payment status.
 // Sources and the owner amendments are recorded in docs/agent-memory/line-trial-policy-conversation-20260918.md.
 const ANSWERS = {
@@ -75,8 +73,10 @@ export function isPublicPolicyFollowUp(messageText: string): boolean {
   return FOLLOW_UP.test(text) || charge.test(text) || noPurchase.test(text);
 }
 
+/** Owner 2026-09-30 (advisor spec §2.2): every policy answer ends by pointing at a person — the card's
+ *  ติดต่อเจ้าหน้าที่ button — and never at the public package page. */
 function answer(topic: PublicPolicyTopic): PublicPolicyAnswer {
-  return { topic, ...ANSWERS[topic], text: `${ANSWERS[topic].text}\nดูรายละเอียดแพ็กเกจ: ${PUBLIC_PACKAGE_URL}` };
+  return { topic, ...ANSWERS[topic], text: `${ANSWERS[topic].text}\nมีคำถามเพิ่มเติม กดติดต่อเจ้าหน้าที่ได้เลยค่ะ` };
 }
 
 export function resolvePublicPolicyAnswer(messageText: string, previous?: PublicPolicyTopic): PublicPolicyAnswer | null {
@@ -105,8 +105,8 @@ export function resolvePublicPolicyAnswer(messageText: string, previous?: Public
   for (const [topic, pattern] of questions) if (pattern.test(text)) return answer(topic);
   if (!previous || !FOLLOW_UP.test(text)) return null;
   if (/(?:หน้าค่าใช้จ่าย|ลิง(?:ก์|ค์)?ผิด|ไม่เจอแพ็กเกจ)/u.test(text)) {
-    return { topic: previous, title: 'ลิงก์ข้อมูลแพ็กเกจ', text: 'ขอโทษค่ะ หน้าค่าใช้จ่ายไม่ใช่หน้าข้อมูลแพ็กเกจที่คุณถาม กดปุ่มดูแพ็กเกจด้านล่างเพื่อดูข้อมูลบนเว็บไซต์มั่งมี Plus ได้ค่ะ\n'
-      + `หากยังเปิดไม่ได้ กดติดต่อเจ้าหน้าที่ได้เลยค่ะ\nดูรายละเอียดแพ็กเกจ: ${PUBLIC_PACKAGE_URL}` };
+    return { topic: previous, title: 'สอบถามเรื่องแพ็กเกจ', text: 'ขอโทษค่ะ หน้าค่าใช้จ่ายไม่ใช่หน้าข้อมูลแพ็กเกจที่คุณถาม\n'
+      + 'เรื่องแพ็กเกจ กดติดต่อเจ้าหน้าที่ให้ทีมงานช่วยตอบได้เลยค่ะ' };
   }
   if (text === 'แล้วข้อมูลหายไหม' || text === 'แล้วข้อมูลจะหายไหม') return answer('data');
   if (/^(?:แน่(?:ใจ)?นะ|จริงไหม)$/u.test(text)) return answer(previous);

@@ -732,16 +732,16 @@ describe('standalone trial pricing FAQ', () => {
     ]) {
       const answer = resolvePublicPolicyAnswer(text);
       assert.equal(answer?.topic, 'trial', text);
-      const reply = { type: 'text', text: answer!.text, quickReply: buildPublicPolicyCardMessage(answer!).quickReply };
-      assert.equal(reply?.type, 'text', text);
-      if (reply?.type !== 'text') throw new Error(text);
+      const reply = { type: 'text', text: answer!.text };
       assert.match(reply.text, /เลือกและชำระแพ็กเกจ/);
       assert.match(reply.text, /ไม่เรียกเก็บเงินอัตโนมัติ/);
       assert.match(reply.text, /มีสิทธิ์ทดลองฟรีอยู่ก่อน/);
       assert.match(reply.text, /249/, 'R1: the locked shop now needs to hear the starting price');
       assert.doesNotMatch(reply.text, /PRO|ฟรีตลอด|เปิดดูรายการ|นอกขอบเขต|ซื้อได้แล้ว/);
-      assert.match(reply.text, /https:\/\/official\.mangmeeplus\.com\//);
-      assert.deepEqual(reply.quickReply?.items[0]?.action, {
+      // Owner 2026-09-30 (advisor spec §2.2): the answer ends at the staff door, never the package page.
+      assert.doesNotMatch(reply.text, /https?:\/\/|ดูรายละเอียดแพ็กเกจ/);
+      assert.match(reply.text, /มีคำถามเพิ่มเติม กดติดต่อเจ้าหน้าที่ได้เลยค่ะ$/);
+      assert.deepEqual((buildPublicPolicyCardMessage(answer!) as any).contents.footer.contents[0].action, {
         type: 'message', label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND,
       });
     }
@@ -777,11 +777,16 @@ describe('public policy conversation', () => {
     const wrongLink = resolvePublicPolicyAnswer('เข้าแล้วมาหน้าค่าใช้จ่าย', topic)!;
     assert.match(wrongLink.text, /ขอโทษ.*หน้าค่าใช้จ่ายไม่ใช่หน้าข้อมูลแพ็กเกจ/);
     assert.doesNotMatch(wrongLink.text, /ดีเลย|เข้าได้แล้ว/);
+    // The card no longer has a package button, so the repair must not send anyone looking for one.
+    assert.doesNotMatch(wrongLink.text, /ปุ่มดูแพ็กเกจ|https?:\/\//);
+    assert.match(wrongLink.text, /กดติดต่อเจ้าหน้าที่/);
     const card = buildPublicPolicyCardMessage(wrongLink);
     assert.equal(card.type, 'flex');
     if (card.type === 'flex') {
-      assert.equal((card.contents as any).footer.contents[0].action.uri, 'https://official.mangmeeplus.com/');
-      assert.match(card.canonicalText!, /https:\/\/official\.mangmeeplus\.com\//);
+      assert.deepEqual((card.contents as any).footer.contents.map((button: any) => button.action), [
+        { type: 'message', label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND },
+      ]);
+      assert.doesNotMatch(card.canonicalText!, /https?:\/\//);
     }
   });
 

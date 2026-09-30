@@ -182,7 +182,7 @@ import { type CompanyOcrAdmissionIdentity, releaseCompanyOcrAdmission, LINE_RECE
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
 import { isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../../auth/domain/logic/line-handoff.logic';
-import { canManagePlan, planManagerRoleFilter } from '../../../access-control/domain/logic/plan-manager.logic';
+import { canManagePlan, planManagerRoleFilter, PLAN_MANAGE_PERMISSION_KEY } from '../../../access-control/domain/logic/plan-manager.logic';
 import {
   classifyLineAiGatewayFailure,
   classifyLineAiTerminalOutcome,
@@ -7414,7 +7414,8 @@ export class ProcessLineWebhookUseCase {
     if (routePlan.budgetErrorCode && routePlan.budgetErrorCode !== AI_BUDGET_REFUSAL_CODES.busy) {
       const permanent = isAiBudgetPermanentRefusal(routePlan.budgetErrorCode);
       await (permanent
-        ? this.deliverRequiredMessages(event, [buildAiBudgetExceededMessage(await this.isTrialTier(companyId), routePlan)])
+        ? this.deliverRequiredMessages(event, [buildAiBudgetExceededMessage(await this.isTrialTier(companyId), routePlan,
+          resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))])
         : this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY));
       await this.updateEventLog(
         event.webhookEventId,
@@ -7455,7 +7456,8 @@ export class ProcessLineWebhookUseCase {
       // ledger entry for the reclaim worker to keep retrying against a closed admission.
       if (failure.replyKind === 'budget_exceeded') {
         await this.deliverRequiredMessages(event, [
-          buildAiBudgetExceededMessage(await this.isTrialTier(companyId), { budgetErrorCode: failure.budgetCode, budgetScope: failure.budgetScope }),
+          buildAiBudgetExceededMessage(await this.isTrialTier(companyId), { budgetErrorCode: failure.budgetCode, budgetScope: failure.budgetScope },
+            resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY)),
         ]);
         if (ledgerTurnId && this.ledger) {
           await this.ledger.ack(
@@ -8772,7 +8774,8 @@ export class ProcessLineWebhookUseCase {
     // never to count. Answered before `decideLineBusinessDocument` because the generic OCR-governance
     // clarify ("what is this picture?") is the wrong reply to a shop that needs a bigger package.
     if (ocr.errorCode === RECEIPT_QUOTA_ERROR_CODE) {
-      const refusal = await this.deliverReceiptQuotaRefusal(event, companyId, identity.userId);
+      const refusal = await this.deliverReceiptQuotaRefusal(event, companyId, identity.userId,
+        access.permissions.includes(PLAN_MANAGE_PERMISSION_KEY));
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`,
@@ -11206,6 +11209,8 @@ ${link}`, ctx.companyId, access);
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     companyId: string,
     userId: string,
+    /** Advisor spec §2.2: the reader holds `company.plan.manage`; only they are shown the way to buy. */
+    canManagePlan: boolean,
   ): Promise<string> {
     const monthKey = bangkokMonthKey();
     // A snapshot failure must not lose the turn: the shop is owed an answer for the photo it just
@@ -11218,11 +11223,11 @@ ${link}`, ctx.companyId, access);
     const limit = displayReceiptQuotaLimit(planLimit, tierKey, cadence);
     const first = await claimReceiptQuotaNotice(this.prisma, companyId, monthKey);
     const text = first
-      ? receiptQuotaExceededTextTh(limit, tierKey, cadence, 'monthlyAllowance' in snapshot)
-      : receiptQuotaExceededShortTextTh(limit, tierKey, cadence, 'monthlyAllowance' in snapshot);
+      ? receiptQuotaExceededTextTh(limit, tierKey, cadence, 'monthlyAllowance' in snapshot, canManagePlan)
+      : receiptQuotaExceededShortTextTh(limit, tierKey, cadence, 'monthlyAllowance' in snapshot, canManagePlan);
     let delivered = true;
     try {
-      if (first) await this.deliverRequiredMessages(event, [buildReceiptQuotaExceededMessage(text)]);
+      if (first) await this.deliverRequiredMessages(event, [buildReceiptQuotaExceededMessage(text, canManagePlan)]);
       else await this.deliverReply(event, text);
     } catch (error) {
       // The month is claimed BEFORE the send, which is what makes the card exactly-once. If the send

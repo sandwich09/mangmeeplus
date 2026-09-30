@@ -11,7 +11,10 @@ import {
   buildReceiptQuotaExceededMessage,
   buildReimbursementHandoffMessage,
   buildReimbursementPayerClarificationMessage,
+  buildPublicPolicyCardMessage,
 } from './line-business-card.logic';
+import { resolvePublicPolicyAnswer } from './line-public-policy.logic';
+import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-manager.logic';
 
 const response = (cards?: NonNullable<LineAiTurnResponse['presentation']>['cards']): LineAiTurnResponse => ({
   requestId: 'r1', replyText: cards?.map(card => card.text).join('\n\n') ?? 'fallback', sourceRefs: [], sourceLabels: [], webLinks: [],
@@ -478,7 +481,7 @@ describe('reimbursement intake cards — server-owned, never rendered from model
 
 describe('receipt quota card (P10-L §3.7/§7)', () => {
   it('sends the two §7 buttons as chat commands, not links out of the conversation', () => {
-    const message = buildReceiptQuotaExceededMessage('ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย');
+    const message = buildReceiptQuotaExceededMessage('ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย', true);
     assert.equal(message.type, 'flex');
     const bubble = message.contents as any;
     assert.deepEqual(bubble.footer.contents.map((button: any) => button.action), [
@@ -488,9 +491,20 @@ describe('receipt quota card (P10-L §3.7/§7)', () => {
     ]);
   });
 
+  // Advisor spec §2.2 (Owner 2026-09-30): no purchase, package-change or view-packages button for a
+  // reader without `company.plan.manage`; the sentence the caller passes already names who to ask.
+  it('shows no button at all to a reader who may not buy', () => {
+    const text = `ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ${ASK_PLAN_MANAGER_TH}`;
+    const message = buildReceiptQuotaExceededMessage(text, false);
+    assert.equal(message.type, 'flex');
+    assert.equal((message as any).contents.footer, undefined);
+    assert.equal((message as { altText: string }).altText, text);
+    assert.doesNotMatch(JSON.stringify(message), /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|โปรโมชั่น/);
+  });
+
   it('keeps the spoken sentence as altText, so the chat preview reads as the same words', () => {
     const text = 'ช่วงทดลองให้ AI อ่านรูปได้ 10 ครั้ง ตอนนี้ครบแล้วค่ะ (ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย';
-    const message = buildReceiptQuotaExceededMessage(text);
+    const message = buildReceiptQuotaExceededMessage(text, true);
     assert.equal(message.type, 'flex');
     assert.equal((message as { altText: string }).altText, text);
     assert.equal((message as { contents: any }).contents.body.contents[1].text, text);
@@ -499,8 +513,9 @@ describe('receipt quota card (P10-L §3.7/§7)', () => {
 
 describe('CHAT budget refusal card', () => {
   it('does not suggest a package change as a same-month chat-credit refill', () => {
-    for (const budgetErrorCode of ['AI_MONTHLY_BUDGET_EXCEEDED', 'AI_BUDGET_INSUFFICIENT']) {
-      const message = buildAiBudgetExceededMessage(false, { budgetErrorCode, budgetScope: 'CHAT' });
+    // The staff door only, whether or not the reader may buy.
+    for (const canManagePlan of [true, false]) for (const budgetErrorCode of ['AI_MONTHLY_BUDGET_EXCEEDED', 'AI_BUDGET_INSUFFICIENT']) {
+      const message = buildAiBudgetExceededMessage(false, { budgetErrorCode, budgetScope: 'CHAT' }, canManagePlan);
       const rendered = JSON.stringify(message);
       assert.match(rendered, /เครดิต AI ส่วนแชต/);
       assert.match(rendered, /ไม่เติมเครดิตแชตในเดือนนี้/);
@@ -512,10 +527,40 @@ describe('CHAT budget refusal card', () => {
     }
   });
 
-  it('keeps the existing package actions for a TOTAL refusal', () => {
+  it('keeps the existing package actions for a TOTAL refusal to a reader who may buy', () => {
     const rendered = JSON.stringify(buildAiBudgetExceededMessage(false,
-      { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' }));
+      { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' }, true));
     assert.match(rendered, /ขอเปลี่ยนแพ็กเกจ/);
     assert.match(rendered, /"label":"ดูแพ็กเกจ"/);
+  });
+
+  // Advisor spec §2.2 (Owner 2026-09-30): "ถ้าไม่มีสิทธิ์ซื้อ ต้องไม่มีปุ่มนำไปซื้อ".
+  it('gives a reader who may not buy no package button, only who to ask', () => {
+    for (const trialTier of [true, false]) {
+      for (const refusal of [undefined, { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' as const },
+        { budgetErrorCode: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'TOTAL' as const }]) {
+        const message = buildAiBudgetExceededMessage(trialTier, refusal, false) as any;
+        assert.equal(message.contents.footer, undefined, 'no button at all');
+        assert.ok(message.altText.endsWith(` ${ASK_PLAN_MANAGER_TH}`), message.altText);
+        assert.doesNotMatch(JSON.stringify(message), /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|โปรโมชั่น/);
+        assert.match(message.altText, /เดือนหน้าเริ่มใหม่/, 'still says when the credit comes back');
+      }
+    }
+  });
+});
+
+// Owner 2026-09-30 (advisor spec §2.2): a public policy question gets the staff door, never the
+// public package page — not as a button, not as a line in the text a Flex downgrade would send.
+describe('public policy card', () => {
+  it('ends with the staff door and carries no package link anywhere', () => {
+    for (const question of ['ยกเลิกแพ็กเกจได้เงินคืนไหม', 'หลังหมดโปรฟรีแล้วเป็นยังไงต่อ', 'แพ็กเกจรายปีเติมสิทธิ์ทุกเดือนไหม']) {
+      const message = buildPublicPolicyCardMessage(resolvePublicPolicyAnswer(question)!) as any;
+      assert.deepEqual(message.contents.footer.contents.map((button: any) => button.action), [
+        { type: 'message', label: 'ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
+      ], question);
+      assert.equal(message.quickReply, undefined, 'the button is the one staff door; no quick reply repeats it');
+      assert.match(message.canonicalText, /มีคำถามเพิ่มเติม กดติดต่อเจ้าหน้าที่ได้เลยค่ะ$/, question);
+      assert.doesNotMatch(JSON.stringify(message), /official\.mangmeeplus|https?:\/\/|ดูรายละเอียดแพ็กเกจ|"label":"ดูแพ็กเกจ"/, question);
+    }
   });
 });

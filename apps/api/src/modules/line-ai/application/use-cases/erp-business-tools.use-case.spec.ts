@@ -300,6 +300,13 @@ describe('CompanyEmployeeSummaryTool', () => {
     const result = await new CompanyEmployeeSummaryTool(ownerOnly).execute({ ...baseCtx, permissions: ['access.employee.read'] });
     assert.equal((result.data as any).total, 1);
   });
+
+  // Advisor spec §5.5: the link opens "รายชื่อพนักงาน" (same `access.employee.read` route), not the
+  // add-employee form at /settings/employees.
+  it('links to the employee list page', async () => {
+    const result = await new CompanyEmployeeSummaryTool(prisma).execute({ ...baseCtx, permissions: ['access.employee.read'] });
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/settings/access-overview');
+  });
 });
 
 describe('CompanyEmployeeDetailTool', () => {
@@ -322,6 +329,11 @@ describe('CompanyEmployeeDetailTool', () => {
   it('asks for a name when nameQuery is missing (needsName signal for clarify)', async () => {
     const result = await new CompanyEmployeeDetailTool(prismaWith([somchai])).execute({ ...baseCtx, permissions: ['access.employee.read'] });
     assert.deepEqual(result.data, { matches: 0, needsName: true });
+  });
+
+  it('links to the employee list page, not the add-employee form', async () => {
+    const result = await new CompanyEmployeeDetailTool(prismaWith([somchai])).execute({ ...baseCtx, permissions: ['access.employee.read'] }, { nameQuery: 'สมชาย' });
+    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/settings/access-overview');
   });
 
   it('returns contact detail on a single match — never identity fields', async () => {

@@ -10,8 +10,9 @@ import {
   VIEW_PACKAGES_COMMAND,
 } from './line-staff-menu.logic';
 
-import { PUBLIC_PACKAGE_URL, type PublicPolicyAnswer } from './line-public-policy.logic';
+import type { PublicPolicyAnswer } from './line-public-policy.logic';
 import { HANDOFF_PATH_PREFIX } from '../../../auth/domain/logic/line-handoff.logic';
+import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-manager.logic';
 
 const THEME = {
   brand: '#22C55E',
@@ -153,19 +154,16 @@ function bubble(
   };
 }
 
-/** Public policy uses the same card as assistant answers, without a tenant or model lookup. */
+/** Public policy uses the same card as assistant answers, without a tenant or model lookup.
+ *  Owner 2026-09-30 (advisor spec §2.2): the answer leads to a person, not the public package page —
+ *  the staff door is the card's one button, so no quick reply repeats it. */
 export function buildPublicPolicyCardMessage(answer: PublicPolicyAnswer): LineReplyMessage {
   return {
     type: 'flex',
     altText: preview(answer.text, 400),
     canonicalText: answer.text,
-    quickReply: { items: [
-      { type: 'action', action: { type: 'message', label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND } },
-    ] },
-    contents: bubble({
-      title: answer.title,
-      text: answer.text.replace(`\nดูรายละเอียดแพ็กเกจ: ${PUBLIC_PACKAGE_URL}`, ''),
-    }, undefined, '', [{ label: 'ดูแพ็กเกจ', uri: PUBLIC_PACKAGE_URL }]),
+    contents: bubble({ title: answer.title, text: answer.text }, undefined, '',
+      [{ label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND }]),
   };
 }
 
@@ -498,7 +496,9 @@ export function buildSignupStatusCard(companyName: string, businessHours: boolea
 export function buildAiBudgetExceededMessage(
   trialTier: boolean,
   /** The typed refusal, when the caller has one (spec §9.1). Absent ⇒ the legacy TOTAL-exhausted card. */
-  refusal?: { budgetErrorCode?: string; budgetScope?: AiBudgetScope },
+  refusal: { budgetErrorCode?: string; budgetScope?: AiBudgetScope } | undefined,
+  /** The reader holds `company.plan.manage` (advisor spec §2.2). Only they get the package buttons. */
+  canManagePlan: boolean,
 ): LineReplyMessage {
   // §9.1: money is LEFT — it just cannot cover this job's upper bound. Saying "ครบ/เต็ม" here would
   // be false, and the shop would stop trying smaller work that still fits.
@@ -508,24 +508,25 @@ export function buildAiBudgetExceededMessage(
   // prove until §12 ships. Until then the card says less rather than something it cannot stand by.
   const chatOnly = refusal?.budgetScope === 'CHAT';
   const what = chatOnly ? 'เครดิต AI ส่วนแชตของเดือนนี้' : 'เครดิต AI ของเดือนนี้';
+  // §2.2: whoever cannot buy is told who can, never offered a package action they cannot take.
+  const next = canManagePlan ? ' หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ' : ` ${ASK_PLAN_MANAGER_TH}`;
   const text = insufficient
     ? `${chatOnly ? 'เครดิต AI ส่วนแชตที่เหลือ' : 'เครดิต AI ที่เหลือ'}ของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ `
       + `${trialTier ? 'ช่วงทดลองมีเครดิต AI จำกัดต่อเดือน ' : ''}เดือนหน้าเริ่มใหม่`
       + `${chatOnly ? ' การเปลี่ยนแพ็กเกจไม่เติมเครดิตแชตในเดือนนี้ หากต้องการตรวจสอบสิทธิ์ดีลพิเศษ กรุณาติดต่อทีมงานค่ะ'
-        : ' หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ'}`
+        : next}`
     : chatOnly
       ? `${what}หมดแล้วค่ะ เดือนหน้าเริ่มใหม่ การเปลี่ยนแพ็กเกจไม่เติมเครดิตแชตในเดือนนี้ `
         + 'หากต้องการตรวจสอบสิทธิ์ดีลพิเศษ กรุณาติดต่อทีมงานค่ะ'
     : trialTier
-      ? `${what}หมดแล้วค่ะ ช่วงทดลองมีเครดิต AI จำกัดต่อเดือน เดือนหน้าเริ่มใหม่ `
-        + 'หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ'
-      : `${what}หมดแล้วค่ะ เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ`;
+      ? `${what}หมดแล้วค่ะ ช่วงทดลองมีเครดิต AI จำกัดต่อเดือน เดือนหน้าเริ่มใหม่${next}`
+      : `${what}หมดแล้วค่ะ เดือนหน้าเริ่มใหม่${next}`;
   const actions = chatOnly
     ? [{ label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND }]
-    : [
+    : canManagePlan ? [
       { label: 'ดูแพ็กเกจ', text: VIEW_PACKAGES_COMMAND },
       { label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND },
-    ];
+    ] : [];
   return {
     type: 'flex',
     altText: preview(text, 400),
@@ -633,8 +634,9 @@ export function buildProfileGuardNudgeCard(): LineReplyMessage {
  * photo they just sent, and "ดูแพ็กเกจ" is defined by the spec as a PULL of the promotion card that
  * already exists in this lane — a web link would leave the conversation to show the same thing.
  * The limit is passed in, never written into the sentence: a warm-up shop meets this wall at 10.
+ * Advisor spec §2.2: the buttons only for a reader who may buy; `text` already says who to ask otherwise.
  */
-export function buildReceiptQuotaExceededMessage(text: string): LineReplyMessage {
+export function buildReceiptQuotaExceededMessage(text: string, canManagePlan: boolean): LineReplyMessage {
   return {
     type: 'flex',
     altText: preview(text, 400),
@@ -642,10 +644,10 @@ export function buildReceiptQuotaExceededMessage(text: string): LineReplyMessage
       { title: 'โควตาให้ AI อ่านรูปเดือนนี้ครบแล้ว', badge: '📄 ครบโควตาเดือนนี้', text },
       undefined,
       '',
-      [
+      canManagePlan ? [
         { label: 'ดูแพ็กเกจ', text: VIEW_PACKAGES_COMMAND },
         { label: 'ขอเปลี่ยนแพ็กเกจ', text: PACKAGE_CHANGE_COMMAND },
-      ],
+      ] : [],
     ),
   };
 }
