@@ -369,8 +369,9 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     assert.match(compose.systemPrompt, /a price with vat is said as the price plus that VAT and its payable total; about VAT say only what vatNote says/);
     assert.match(compose.systemPrompt, /Selling prices are the only money you may name: never state, estimate or hint at what anything costs MangmeePlus/);
     assert.match(compose.systemPrompt, /never turn credits or receipts into money or into a number of messages/);
-    assert.match(compose.systemPrompt, /or how many packages there are;/);
-    assert.match(compose.systemPrompt, /Asking prices, contents or a comparison is not asking how to buy: that answer ends with what was asked, with no line on where or how to buy or change a package\./);
+    assert.match(compose.systemPrompt, /never say how many packages there are or how many are bigger: list them, never 'มี 3 แบบ'/);
+    assert.match(compose.systemPrompt, /Asking prices, contents or a comparison is not asking how to buy: end with what was asked, never with a line such as 'หากต้องการซื้อหรือเปลี่ยนแพ็กเกจ ทำได้ที่หน้าแพ็กเกจบนเว็บ'\./);
+    assert.match(compose.systemPrompt, /say you can only share the prices packages are sold at, as a handled answer that still cites billing\.get_package_catalog's sourceRefIds when it ran\./);
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.match(result.replyText, /266\.43/);
     assert.deepEqual(result.webLinks, [], 'someone who cannot buy gets no package page link');
