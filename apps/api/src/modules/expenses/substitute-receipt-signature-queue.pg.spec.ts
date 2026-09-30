@@ -56,7 +56,7 @@ test('advisor S1: the caller-own substitute receipt signature queue on real Post
       const expense = await client.expenseRecord.create({ data: { companyId, branchId: (data['branchId'] as string | null | undefined) ?? b1, expenseDate: at,
         createdByUserId: staff, status: 'NEEDS_REVIEW', vendorNameSnapshot: `ร้าน ${label}`, grandTotalAmount: '350.0000', subtotalAmount: '350.0000',
         taxableAmount: '350.0000', netPayableAmount: '350.0000', outstandingAmount: '350.0000', paidAmount: '0' } });
-      const row = await client.expenseSubstituteReceiptEvidence.create({ data: { companyId, branchId: expense.branchId, expenseId: expense.id,
+      const row = await client.expenseSubstituteReceiptEvidence.create({ data: { companyId, expenseId: expense.id,
         version: 1, status: 'PREPARED', documentNumber: `${tag}-${label}`, idempotencyKey: `${tag}-${++sequence}`, originalSourceDocumentType: 'EXPENSE_NOTE_TEXT',
         reasonCode: 'RECEIPT_UNAVAILABLE', missingReceiptReason: 'ผู้ขายไม่ออกใบเสร็จ', businessPurpose: 'ใช้ในกิจการ', paymentEvidenceAttachmentIds: [],
         supportingAttachmentIds: [], preparedByUserId: owner, preparedAt: new Date(at.getTime() + sequence * 60_000), expenseUpdatedAtAtPreparation: expense.updatedAt,
