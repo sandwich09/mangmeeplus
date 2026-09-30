@@ -119,7 +119,7 @@ describe('LINE ERP core detail tools', () => {
   });
 
   it('wires all eight adapters into the internal tool map', () => {
-    const dependenciesBeforeCoreDetailAdapters = Array.from({ length: 44 }, () => ({}));
+    const dependenciesBeforeCoreDetailAdapters = Array.from({ length: 45 }, () => ({}));
     const adapters = [
       { execute: async () => ({}) }, { execute: async () => ({}) },
       { execute: async () => ({}) }, { execute: async () => ({}) },
