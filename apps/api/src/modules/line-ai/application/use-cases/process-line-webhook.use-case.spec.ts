@@ -9,6 +9,7 @@ import { featureTemporarilyUnavailable } from '../../../employee-access/applicat
 import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
 import { ROLE_GRANTS } from '../../../auth/permission-registry';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
+import { TH_SME_EXPENSE_CATEGORIES_V1 } from '../../../expenses/application/services/expense-category-bootstrap.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { buildLineAssistantTextCardMessage } from '../../domain/logic/line-business-card.logic';
@@ -107,6 +108,32 @@ describe('LINE intake offered tool authority', () => {
     for (const forbidden of ['sales.get_sales_summary', 'ledger.get_financial_summary', 'reports.get_monthly_report_summary', 'inventory.search_products']) {
       assert.equal(h.intakeRequests[0].offeredToolNames.includes(forbidden), false);
     }
+  });
+
+  it('offers a bound private turn the shop catalogue minus the catch-all, so a text note can be filed (UAT 2026-09-29)', async () => {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query'], intakeRouteFn: () => ({
+      status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.93,
+    }) });
+    const handler = h.useCase as any;
+    handler.prepareTextGrantV2 = async () => ({ turnKey: 'turn' });
+    handler.reliabilityContext = async () => ({});
+    const catalogue = { listCategories: async () => TH_SME_EXPENSE_CATEGORIES_V1.map((row, index) =>
+      ({ id: `cat-${index}`, name: row.name, accountHintKey: row.accountHintKey })) };
+    const route = async (permissions: string[], expenseRepo: unknown) => {
+      const event = { webhookEventId: `bound-categories-${permissions.length}` };
+      handler.boundConversations.set(event, {});
+      handler.expenseRepo = expenseRepo;
+      await handler.tryRouteIntake({ event, requestId: event.webhookEventId, companyId: 'company-1', userId: 'user-1',
+        permissions, messageText: 'ค่าส่งของ 300 บาท' });
+      return h.intakeRequests.at(-1).activeCategories.map((category: { name: string }) => category.name);
+    };
+    const offered = await route(['line.ai.query', 'expense.receipt.line_upload'], catalogue);
+    assert.equal(offered.length, TH_SME_EXPENSE_CATEGORIES_V1.length - 1);
+    assert.ok(offered.includes('ค่าขนส่ง'));
+    assert.ok(!offered.includes('ค่าใช้จ่ายเบ็ดเตล็ด'), 'a person, never the AI, files something under the catch-all');
+    const questionOnly = await route(['line.ai.query'], new Proxy({}, { get() { throw new Error('no expense read for a question-only actor'); } }));
+    assert.deepEqual(questionOnly, []);
   });
 });
 
@@ -3967,6 +3994,47 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(intakeRequests.length, 0);
     assert.equal(uploadIntents, 0);
     assert.equal(auditEvents[0]?.metadataJson.reason, 'MALWARE_DETECTED');
+  });
+
+  // UAT round 10 (2026-09-30, Owner's own chat): a week-old OPEN substitute state with no ask turned two clear receipt
+  // photos into "ยังไม่แน่ใจว่าเป็นอะไร ตอบเลขข้อ…" and nothing was read. Owner: "ถ้าอ่านรูปได้แล้วต้องสร้างเลย".
+  it('reads and drafts a caption-less receipt photo even while an old substitute state is open, asking nothing', async () => {
+    const { prisma } = makePrisma();
+    const pendingRows: any[] = [];
+    (prisma.client as any).lineIntakePendingMedia = {
+      findFirst: async () => null,
+      findUnique: async () => pendingRows.at(-1) ?? null,
+      create: async ({ data }: any) => { const row = { id: `pending-${pendingRows.length}`, ...data }; pendingRows.push(row); return row; },
+    };
+    let expenseDrafts = 0, contextReads = 0;
+    const { useCase, replies } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create', 'expense.review'],
+      intakeRouteFn: () => assert.fail('a caption-less photo with no recent media ask skips the intake router'),
+      receiptOcrFn: () => ({ status: 'ok', classification: receiptClassification('1990'),
+        fields: { grandTotalAmount: '1990', vendorName: 'SPORTSWORLD' } }),
+      initReceiptUpload: { execute: async () => { expenseDrafts += 1; return { expenseId: 'exp-new', attachmentId: 'att-new' }; } },
+      completeReceiptUpload: { execute: async () => undefined },
+      createUploadIntent: { execute: async () => ({ attachmentId: 'att-new', uploadUrl: 'https://upload', uploadMethod: 'PUT' }) },
+      completeAttachmentUpload: { execute: async () => undefined },
+      // The UAT state: OPEN since last week, nothing asked (no form, no signature, no pending decision).
+      substituteReceiptContinuation: { loadOpenMediaContext: async () => { contextReads += 1;
+        return { expenseId: 'exp-week-old', awaitingScans: [], signatureRequested: false, finalReceiptExpected: false }; } },
+    });
+    (useCase as any).downloadLineMedia = async () => ({ ok: true, media: ({
+      fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+    }) });
+    (useCase as any).uploadLineMedia = async () => undefined;
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-old-substitute', lineUserId: 'line-user-secret', replyToken: 'reply-old-substitute',
+      lineMessageId: 'line-msg-old-substitute', messageType: 'image', messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.ok(contextReads >= 1, 'the open work was looked at');
+    assert.equal(expenseDrafts, 1, 'the photo became a new expense draft');
+    assert.deepEqual(pendingRows.map(row => row.askedQuestionJson?.kind).filter(Boolean), [], 'no numbered media question was parked');
+    assert.doesNotMatch(replies.join('\n'), /ยังไม่แน่ใจว่าเป็นอะไร|ตอบเลขข้อ/u);
   });
 
   it('explains a check bill and parks it without creating an expense draft', async () => {

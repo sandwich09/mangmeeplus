@@ -12,8 +12,8 @@
  * `unverified` when the output does not match the family's exact shape, so the caller falls back to an
  * honest terminal without claiming success. No provider, no tool re-invocation.
  */
-import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS } from '@watchdog-bms/contracts';
-import type { LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
+import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS } from '@watchdog-bms/contracts';
+import type { LineAiPeriodCandidate, LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
 
@@ -32,6 +32,8 @@ export type PreparedFormatContext = {
    *  — the user's own words plus the dates, e.g. `เดือนที่แล้ว (1–31 ส.ค. 2569)`. Set only when the
    *  input matched a candidate exactly, so it can never name a window the tool did not read. */
   periodLabel?: string;
+  /** `assumedYearNote` for that SAME selected candidate: said right after the period it qualifies. */
+  periodNote?: string;
   /** Customer wording copied from the request when branch scope is explicit; never an ERP identifier. */
   branchLabel?: string;
   /** Thai calendar rendering for the as-of date, used only by the expense summary answer. */
@@ -51,7 +53,9 @@ function groupThousands(value: string): string {
 
 function asOfLine(asOf: string | undefined, english: boolean, thaiLabel?: string): string {
   if (!asOf) return '';
-  const day = asOf.slice(0, 10);
+  // The Bangkok civil day, not the instant's UTC date: between 00:00 and 07:00 the UTC slice said
+  // yesterday (regression slice 2026-09-30, "ข้อมูล ณ 29 ก.ย." at 00:20 on the 30th).
+  const day = asOfInZone(asOf, 'Asia/Bangkok')?.day ?? asOf.slice(0, 10);
   // C6 (batch 5c): always a Thai/English calendar date, never the bare ISO string — "ข้อมูล ณ 28 ก.ย.
   // 2569" / "Data as of 28 Sep 2026", always with the year. `thaiLabel` (expense-summary's own
   // full-month override, e.g. "28 กันยายน 2569") still wins when the caller supplies one.
@@ -105,15 +109,16 @@ function thaiExpenseRange(data: Record<string, unknown> | undefined): string | u
  * own echoed effective period. It NEVER fabricates: when neither names a period, it returns '' and the reply
  * simply omits the period line rather than asserting a default the tool may not have used.
  */
-function periodLine(
+export function periodLine(
   proposedInput: Record<string, unknown> | undefined,
   data: Record<string, unknown> | undefined,
   english: boolean,
   periodLabel?: string,
+  note = '',
 ): string {
   // The label already reads as Thai ("เดือนที่แล้ว (1–31 ส.ค. 2569)"), so it replaces the bare ISO
   // range for a Thai answer.
-  if (!english && periodLabel) return `\nช่วง: ${periodLabel}`;
+  if (!english && periodLabel) return `\nช่วง: ${periodLabel}${note}`;
   const effective = appliedPeriod(data);
   const from = effective?.fromDate ?? (typeof proposedInput?.['fromDate'] === 'string' ? proposedInput['fromDate'] as string : undefined);
   const to = effective?.toDate ?? (typeof proposedInput?.['toDate'] === 'string' ? proposedInput['toDate'] as string : undefined);
@@ -132,7 +137,34 @@ function periodLine(
     }
   }
   if (!phrase) return '';
-  return english ? `\nPeriod: ${phrase}` : `\nช่วง: ${phrase}`;
+  return english ? `\nPeriod: ${phrase}${note}` : `\nช่วง: ${phrase}${note}`;
+}
+
+/**
+ * Owner 2026-09-29 ("ดูรายจ่ายเดือนตุลา" on 29 Sep was answered with an empty ต.ค. 2568 and no word why): a month,
+ * quarter or range written without a year resolves to its latest non-future occurrence (`year_assumed_latest_past`).
+ * When that fell back to an EARLIER year than the as-of day's, the answer says the year was assumed, and — for a
+ * month or quarter — that this year's one has not started yet. The flag is carried from the selected candidate,
+ * never re-derived; a written year, a relative word, or a bare period read in the current year gets ''. The as-of
+ * (never the process clock) is "today", like every other date this formatter prints.
+ */
+export function assumedYearNote(
+  period: Pick<LineAiPeriodCandidate, 'kind' | 'fromDate' | 'assumptions'> | undefined,
+  asOf: string | undefined,
+  english: boolean,
+): string {
+  const today = asOfInZone(asOf, 'Asia/Bangkok')?.day;
+  if (!today || !period?.assumptions.includes(PERIOD_ASSUMPTIONS.yearAssumedLatest)
+    || period.fromDate.slice(0, 4) >= today.slice(0, 4)) return '';
+  const month = Number(period.fromDate.slice(5, 7));
+  const englishMonth = new Date(Date.UTC(2000, month - 1, 1)).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+  // A Thai quarter name carries its own trailing space: "ไตรมาส 4 ที่ผ่านมา", but "ตุลาคมที่ผ่านมา".
+  const name = period.kind === 'month' ? (english ? englishMonth : THAI_FULL_MONTH_NAMES[month - 1])
+    : period.kind === 'quarter' ? (english ? `Q${(month + 2) / 3}` : `ไตรมาส ${(month + 2) / 3} `) : undefined;
+  const note = english ? ` (no year given, so this is the most recent ${name ?? 'such period'})`
+    : ` (ไม่ได้ระบุปี จึงดู${name ?? 'ช่วง'}ที่ผ่านมาล่าสุด)`;
+  const upcoming = name !== undefined && `${today.slice(0, 4)}${period.fromDate.slice(4)}` > today;
+  return upcoming ? `${note}\n${english ? `This year's ${name} hasn't started yet.` : `${name}ปีนี้ยังไม่ถึงค่ะ`}` : note;
 }
 
 function sourceData(output: SpecialistOutput, tool: string): Record<string, unknown> | undefined {
@@ -259,7 +291,7 @@ function formatSalesSummarySingleMetric(output: SpecialistOutput, ctx: PreparedF
   // C6 (batch 5c): no "ที่มา:/Source:" line — see groundedSource's docstring above.
   const sourceText = '';
 
-  const replyText = `${label}: ${amount}${countText}${periodLine(ctx.proposedInput, data, english, ctx.periodLabel)}${sourceText}${asOfLine(output.asOf, english)}`;
+  const replyText = `${label}: ${amount}${countText}${periodLine(ctx.proposedInput, data, english, ctx.periodLabel, ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -388,7 +420,7 @@ export function formatExpenseSummary(
 
   const localizedAsOf = ctx.asOfLabel ?? thaiExpenseAsOfLabel(asOf);
   const asOfText = english ? asOfLine(asOf, true) : localizedAsOf ? asOfLine(asOf, false, localizedAsOf) : '';
-  const replyText = `${label}: ${amount}${countText}${filtersText}${scopeText}${basisText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfText}`;
+  const replyText = `${label}: ${amount}${countText}${filtersText}${scopeText}${basisText}${cancelledText}${periodLine(undefined, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined), ctx.periodNote)}${sourceText}${asOfText}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -464,7 +496,7 @@ function formatExpenseListRecentList(output: SpecialistOutput, ctx: PreparedForm
     ? `Expenses: ${moneyText(totalAmount)} THB (${plural(total, 'record')})`
     : `ค่าใช้จ่าย: ${moneyText(totalAmount)} บาท (${groupThousands(String(total))} รายการ)`;
   const replyText = `${headline}${itemLines}${moreText}${filtersText}${scopeText}`
-    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfLine(output.asOf, english)}`;
+    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined), ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -604,7 +636,7 @@ function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedForma
   const axisLabel = english ? axis.labelEn : axis.labelTh;
   const headline = english ? `Expenses by ${axisLabel}` : `ค่าใช้จ่ายแยกตาม${axisLabel}`;
   const replyText = `${headline}${groupLines}${othersLine}${totalText}${filtersText}${scopeText}`
-    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined))}${sourceText}${asOfLine(output.asOf, english)}`;
+    + `${periodLine(ctx.proposedInput, data, english, ctx.periodLabel ?? (!english ? thaiExpenseRange(data) : undefined), ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -657,7 +689,7 @@ function formatAccountingSummaryList(output: SpecialistOutput, ctx: PreparedForm
   const headline = english
     ? `Accounting documents: ${plural(total, 'record')}`
     : `เอกสารบัญชี: ${groupThousands(String(total))} รายการ`;
-  const replyText = `${headline}${typeLines}${moreText}${periodLine(ctx.proposedInput, data, english, ctx.periodLabel)}${sourceText}${asOfLine(output.asOf, english)}`;
+  const replyText = `${headline}${typeLines}${moreText}${periodLine(ctx.proposedInput, data, english, ctx.periodLabel, ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -879,7 +911,7 @@ function formatTaxVatSummarySingleMetric(output: SpecialistOutput, ctx: Prepared
     : '\n(ยังไม่ผ่านการรับรองจากนักบัญชี กรุณาตรวจสอบก่อนยื่นแบบ)';
 
   const replyText = `${headline}${sidesText}${statusText}`
-    + `${periodLine(undefined, undefined, english, ctx.periodLabel)}${sourceText}${asOfLine(output.asOf, english)}${certifyText}`;
+    + `${periodLine(undefined, undefined, english, ctx.periodLabel, ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}${certifyText}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
@@ -983,7 +1015,7 @@ function formatCrmCustomerSummaryList(output: SpecialistOutput, ctx: PreparedFor
     : '';
 
   const replyText = `${headline}${totalText}${basisText}`
-    + `${periodLine(undefined, undefined, english, ctx.periodLabel)}${sourceText}${asOfLine(output.asOf, english)}`;
+    + `${periodLine(undefined, undefined, english, ctx.periodLabel, ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 

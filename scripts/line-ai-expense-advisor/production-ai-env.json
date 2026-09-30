@@ -1,6 +1,10 @@
 {
-  "_note": "Non-secret AI settings of the production release captured 2026-09-26 (api-web and ai-gateway resolved env). The eval applies them so a run measures what customers get. LINE_AI_AGENT_RUNTIME stays strands-local (AgentCore is AWS-hosted); families come from MANGMEE_EVAL_DETERMINISTIC_RESPONSE_FAMILIES.",
+  "_note": "Non-secret AI settings of the production release captured 2026-09-26 (api-web and ai-gateway resolved env). The eval applies them so a run measures what customers get. LINE_AI_AGENT_RUNTIME stays strands-local here (production runs agentcore, AWS-hosted); families come from MANGMEE_EVAL_DETERMINISTIC_RESPONSE_FAMILIES. The capture and intake flags (LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED through AI_LLM_MAX_PER_COMPANY) come from the production release 2026-09-29 (op b8cb2eaa) carried-forward env; until then every eval ran the LINE draft conversation off while UAT and Production run it on. Login, handoff and signup flags are left out: they are not capture or intake behaviour.",
   "api": {
+    "AI_LLM_MAX_PER_COMPANY": "60",
+    "AI_OCR_MAX_PER_COMPANY": "20",
+    "EXPENSE_CAPTURE_GROUP_INTAKE_ENABLED": "true",
+    "EXPENSE_DRAFT_NUMBERING_ENABLED": "true",
     "LINE_AI_ADVISOR_MODE": "social",
     "LINE_AI_BUFFER_DEBOUNCE_MS": "1000",
     "LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED": "false",
@@ -12,7 +16,10 @@
     "LINE_AI_LOADING_ON_ACCEPT_ENABLED": "true",
     "LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED": "true",
     "LINE_AI_PREPARED_SIMPLE_READ_ENABLED": "true",
-    "LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED": "true"
+    "LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED": "true",
+    "LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED": "true",
+    "LINE_FREE_AI_BUDGET_SATANG": "8000",
+    "RECEIPT_QUOTA_ENFORCED": "true"
   },
   "gateway": {
     "AI_AGENT_REGISTRY_ENABLED": "true",

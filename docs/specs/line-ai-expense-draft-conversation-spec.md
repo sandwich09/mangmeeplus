@@ -286,6 +286,13 @@ After 15, 50, or more intervening turns, a direct continuation phrase or an answ
 
 If there are multiple resumable drafts, the reply lists compact targets with stable draft reference, date, vendor/purpose, and total if known. The user must select one by reference or ordinal before any answer is applied.
 
+### 10.2 Natural edit, cancel and status (NAT-12, 2026-09-30)
+
+- A spoken Thai amount ("สามร้อยบาท") grounds a draft value exactly like digits: the draft accepts any amount the value normalizer reads from the user's own text.
+- A correction of the draft this chat just opened ("อันเมื่อกี้ไม่ใช่ 300 เป็น 350 นะ", routed `EXPENSE_CAPTURE_CORRECTION`) is applied through this conversation to that same draft and its sole item. It never opens a second draft and never falls back to the older confirmed-record correction preview.
+- "เดี๋ยว ๆ ยกเลิกก่อน" while a draft is `OPEN` moves it to `CANCELLED` (table above) and closes the chat's waiting task. The reply says the draft is still recorded — not confirmed, not paid — with its web link, because the record is not deleted.
+- "สรุปบันทึกไปยัง" and "ขอดูข้อมูลเดิม" read the chat's newest record through `expense.explain_record`. Its result also lists the items this conversation holds that the document does not show yet, what the draft still asks for, and whether collection has stopped. The answer reads the current state; it never creates the draft again.
+
 ## 11. Response contract
 
 Every successful answer-collection response contains, in this order:
@@ -340,6 +347,8 @@ The renderer must measure the actual Messaging API limit and split deterministic
 - Match only active categories in the current company.
 - Preserve the user's source wording even when a normalized category is selected.
 - If one category match is sufficiently grounded, show it as “suggested” until accepted according to existing permission rules.
+- Owner decision 2026-09-29 (“หมวดหมู่ AI ควรจับได้เลย”): a text note's AI category is applied to the draft item and its line, exactly as the single-turn text capture has always applied a category hint, instead of waiting for confirmation. The router may name a category only from the active catalogue and only when it clearly fits; a note-level category covers the items that name none of their own and never replaces an item's own. The document carries the category when every item shares it. When the router names none, the item's category question stays and the draft asks. The draft is still reviewed and confirmed by a person; the category stays editable and never posts on its own. Photo drafts keep the receipt reader's auto-fill rule (at or above `RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE`, otherwise a suggestion). The router's capture `confidence` is not used as a category gate: it measures the whole capture, and a clear category on an item-ambiguous note ("ซื้อปากกากับกระดาษ 150", capture 0.82) must still be filed.
+- The template catch-all (`expense.miscellaneous`) is never offered to AI category selection on LINE (router or receipt reader). When nothing clearly fits, the category stays empty and the draft asks; a person can still choose the catch-all.
 - If several categories are plausible, show the candidates and ask one category question for that item.
 - Do not let a document-wide category overwrite differing item categories.
 - Account/tax/inventory suggestions include confidence, rule/model version, source, and explanation sufficient for review.

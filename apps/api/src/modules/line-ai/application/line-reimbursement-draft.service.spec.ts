@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LineReimbursementDraftService, parseLineReimbursementDraftControl } from './line-reimbursement-draft.service';
+import { LineReimbursementDraftAdapterService } from './line-reimbursement-draft-adapter.service';
 
 const actionId = '018fbad0-4d4e-7cc7-8e43-0123456789ac';
 const digest = 'a'.repeat(64);
@@ -54,5 +55,25 @@ describe('LineReimbursementDraftService', () => {
     assert.equal(seen[0].owner.actorUserId, 'u1');
     assert.equal(seen[1].owner.messagingChannelId, 'oa1');
     assert.equal(seen[2].owner.ownerEpoch, 7);
+  });
+});
+
+// NAT04 (2026-09-30): the bill list never reached the chat — re-checking a bill that cannot be claimed always
+// failed, and that failure hid every claimable bill with it.
+describe('LineReimbursementDraftAdapterService display options', () => {
+  it('prints the claimable bills even when the options also hold bills that cannot be claimed', async () => {
+    const source = (id: string, eligible: boolean) => ({ choiceId: id.repeat(64), kind: 'SOURCE', label: `bill-${id}`, revision: `rev-${id}`,
+      details: { eligible }, raw: { expenseId: `expense-${id}`, branchId: 'branch', requesterUserId: 'u1' } });
+    const options = { schemaVersion: 1, actionId, taskId: actionId, taskRevision: 0, operation: 'CREATE', revision: 'x',
+      issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(), selected: {}, pages: {},
+      choices: [source('a', true), source('b', false), source('c', true)] };
+    const active = { id: actionId, taskId: actionId, status: 'COLLECTING',
+      commandJson: { schemaVersion: 1, kind: 'COLLECTION', accepted: { schemaVersion: 1, options } } };
+    const repo = { listReimbursementSources: async (_company: string, _branch: string, _user: string, _query: string, expenseId: string) =>
+      [{ expenseId, eligible: expenseId !== 'expense-b', updatedAt: `rev-${expenseId.slice(-1)}` }] };
+    const adapter = new LineReimbursementDraftAdapterService({} as any, repo as any, {} as any, {} as any, { active: async () => active } as any);
+    const shown = await adapter.readDisplayOptions({ ctx, owner, ownerEpoch: 1, actionId });
+    assert.deepEqual(shown?.choices.map(choice => choice.label), ['bill-a', 'bill-c']);
+    assert.equal(shown?.choices.some(choice => 'raw' in choice), false);
   });
 });

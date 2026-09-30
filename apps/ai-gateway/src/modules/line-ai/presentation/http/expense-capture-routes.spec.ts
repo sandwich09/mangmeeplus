@@ -80,14 +80,17 @@ function stubBedrock(answers: {
   extractStopReason?: string;
 }) {
   const original = BedrockRuntimeClient.prototype.send;
-  const calls: Array<{ kind: 'read' | 'extract'; images: number; documents: number; systemPrompt: string }> = [];
+  const calls: Array<{ kind: 'read' | 'extract'; images: number; documents: number; systemPrompt: string; userText: string }> = [];
   let extractIndex = 0;
   (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
     const content = command.input.messages.at(-1).content;
     const images = content.filter((block: any) => block.image).length;
     const documents = content.filter((block: any) => block.document).length;
     const kind = images > 0 || documents > 0 ? 'read' : 'extract';
-    calls.push({ kind, images, documents, systemPrompt: command.input.system?.[0]?.text ?? '' });
+    calls.push({
+      kind, images, documents, systemPrompt: command.input.system?.[0]?.text ?? '',
+      userText: content.map((block: any) => block.text ?? '').join('\n'),
+    });
     if (kind === 'read') {
       return {
         usage: { inputTokens: 1_000, outputTokens: 200, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
@@ -294,6 +297,49 @@ describe('capture-extract', () => {
     } finally { truncated.restore(); }
   });
 
+  /**
+   * Owner 2026-09-29 ("หมวดหมู่ AI ควรจับได้เลย"): the API always sent this route a catalogue, but the
+   * route never asked for a category and the parser had nowhere to keep one, so no PDF draft ever got
+   * the category a photo of the same receipt gets.
+   */
+  it('reads the document category from the catalogue the API sent, and from nothing else', async () => {
+    const answer = (expenseCategoryId: string) => observationsJson({
+      documents: [{
+        ref: 'd1', pageIndexes: [0], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE', issuer: { name: 'ร้านตัวอย่าง จำกัด' },
+        documentNumber: 'INV-77', categorySuggestion: { expenseCategoryId, confidence: 0.91, evidenceSignals: ['น้ำดื่ม'] },
+        classification: classification(),
+      }],
+    });
+    const offer = extractRequest({
+      activeCategories: [{ id: 'cmumxahlk0005kwk1d8lunr6r', name: 'ค่าเครื่องดื่ม' }, { id: 'cmumxahll0006kwk1imv1lko3', name: 'ค่าขนส่ง' }],
+    });
+    const keyed = stubBedrock({ extract: [answer('c1')] });
+    try {
+      const result = await controller().captureExtract('secret', offer);
+      assert.equal(result.status, 'ok');
+      assert.deepEqual(result.observations?.documents[0]!.categorySuggestion,
+        { expenseCategoryId: 'cmumxahlk0005kwk1d8lunr6r', confidence: 0.91, evidenceSignals: ['น้ำดื่ม'] },
+        'the short key the model named maps back to the id the API sent');
+      // Ids created in one bootstrap differ in a few characters; a real read copied the next row's.
+      assert.ok(keyed.calls[0]!.userText.includes('[{"id":"c1","name":"ค่าเครื่องดื่ม"},{"id":"c2","name":"ค่าขนส่ง"}]'));
+      assert.ok(!keyed.calls[0]!.userText.includes('cmumxahl'), 'the model never sees a database id');
+    } finally { keyed.restore(); }
+
+    const copiedId = stubBedrock({ extract: [answer('cmumxahlk0005kwk1d8lunr6r')] });
+    try {
+      const result = await controller().captureExtract('secret', offer);
+      assert.equal(result.observations?.documents[0]!.categorySuggestion, undefined, 'only an offered key is read');
+    } finally { copiedId.restore(); }
+
+    const notOffered = stubBedrock({ extract: [answer('c1')] });
+    try {
+      const result = await controller().captureExtract('secret', extractRequest());
+      assert.equal(result.status, 'ok');
+      assert.equal(result.observations?.documents[0]!.categorySuggestion, undefined, 'no catalogue, no category');
+      assert.ok(notOffered.calls[0]!.userText.includes('ACTIVE_CATEGORY_CATALOG_START\n[]\n'));
+    } finally { notOffered.restore(); }
+  });
+
   it('refuses a window past the declared character ceiling instead of truncating it', async () => {
     const result = await controller().captureExtract('secret', extractRequest({
       window: { fileLabel: 'f', pageIndexes: [0], pages: [{ pageIndex: 0, text: 'x'.repeat(13_000) }] },
@@ -359,6 +405,27 @@ describe('capture observation parser', () => {
     assert.equal(parsed?.documents[0]!.issuer.name, undefined);
     assert.equal(parsed?.documents[0]!.documentNumber, undefined);
     assert.equal(parsed?.documents[0]!.documentDate, undefined);
+  });
+
+  it('keeps a category pick only when it clears the photo reader\'s bar', () => {
+    const catalogue = new Set(['cat-water']);
+    const withPick = (categorySuggestion: unknown) => parseCaptureObservationsJson(observationsJson({
+      documents: [{
+        ref: 'd1', pageIndexes: [0], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE',
+        issuer: { name: 'ร้านตัวอย่าง จำกัด' }, categorySuggestion, classification: classification(),
+      }],
+    }), WINDOW_TEXT, undefined, catalogue)?.documents[0]!.categorySuggestion;
+    const pick = { expenseCategoryId: 'cat-water', confidence: 0.9, evidenceSignals: ['น้ำดื่ม 2 24.00'] };
+    assert.deepEqual(withPick(pick), pick);
+    assert.equal(withPick({ ...pick, expenseCategoryId: 'cat-invented' }), undefined, 'an id outside the catalogue');
+    assert.equal(withPick({ ...pick, confidence: 1.4 }), undefined, 'a confidence outside [0, 1]');
+    assert.equal(withPick({ ...pick, evidenceSignals: ['ค่าเครื่องดื่ม'] }), undefined, 'evidence the window never printed');
+    assert.equal(withPick({ ...pick, evidenceSignals: [] }), undefined, 'no evidence at all');
+    assert.equal(parseCaptureObservationsJson(observationsJson({
+      documents: [{ ref: 'd1', pageIndexes: [0], kind: 'RECEIPT', family: 'EXPENSE_EVIDENCE', issuer: {}, categorySuggestion: pick, classification: classification() }],
+    }), WINDOW_TEXT)?.documents[0]!.categorySuggestion, undefined, 'no catalogue, no category');
+    assert.ok(CAPTURE_EXTRACT_PROMPT.includes('"categorySuggestion":{"expenseCategoryId"'), 'and the prompt asks for it');
+    assert.ok(CAPTURE_EXTRACT_PROMPT.includes('Omit categorySuggestion when the catalogue is empty or no category is clearly supported'));
   });
 
   it('returns null when nothing survives, so the caller can spend its repair', () => {

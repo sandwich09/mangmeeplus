@@ -417,6 +417,38 @@ describe('LINE intake router – routeIntake', () => {
     assert.equal(plan.advisorAnswer?.answerText, 'ยินดีเลยค่ะ 😊 มีอะไรให้ช่วยอีกบอกได้เสมอนะคะ');
   });
 
+  // NAT11 (2026-09-30): natural "จำไว้" wording never reached the preference commands, so the chat promised to remember
+  // and stored nothing. The router now names the request; only a bound private chat is offered the field.
+  it('names an explicit answer-preference request only under the bound-chat capability, re-validated', async () => {
+    const text = 'ต่อไปตอบสั้น ๆ แบบนี้นะ จำไว้ได้มั้ย';
+    const built = await createLineAiInputEvidence({ turnKey: 'preference-remember', parts: [{ partId: 'part-0',
+      eventIdHash: 'c'.repeat(64), acceptedAtMs: 1, rawText: text }] });
+    assert.ok(built);
+    const route = (preference: unknown, capabilities: Record<string, boolean>) => {
+      const prompts: string[] = [];
+      const provider = { generateText: async (input: { systemPrompt?: string }) => { prompts.push(input.systemPrompt ?? '');
+        return { ok: true as const, text: JSON.stringify({ intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 0.95, semanticOutcome: 'AMBIGUOUS',
+          fundingSource: 'UNKNOWN', decisionV1: { subrequests: [] }, responsePreference: preference }) }; } };
+      return runWithUsageContext({ budget: { status: 'active-v2', grant: { maxTurnSlots: 4, maxRepairs: 1 } as never,
+        inputDigest: built.inputEvidence.joinedSha256, sourceRoute: 'test', calls: 0, repairCount: 0 } }, async () => ({ prompts,
+        plan: await new IntentRouterAgent(provider).routeIntake(baseRequest({ messageText: text, inputEvidence: built.inputEvidence,
+          capabilities: { advisor: true, reimbursementSemantic: true, ...capabilities } })) }));
+    };
+    const offered = await route({ kind: 'set', values: { detail: 'short' } }, { responsePreference: true });
+    assert.deepEqual(offered.plan.responsePreference, { kind: 'set', values: { detail: 'short' } });
+    assert.match(offered.prompts[0]!, /Answer preferences \(OPTIONAL "responsePreference"\)/u);
+    assert.deepEqual(offered.plan.semanticSubrequests?.map(item => item.kind), ['general']);
+    const notOffered = await route({ kind: 'set', values: { detail: 'short' } }, {});
+    assert.equal(notOffered.plan.responsePreference, undefined, 'a group chat or an older API never gets one');
+    assert.doesNotMatch(notOffered.prompts[0]!, /responsePreference/u);
+    for (const invalid of [{ kind: 'set', values: { detail: 'tiny' } }, { kind: 'set', values: {} }, { kind: 'set', values: { memo: 'ชอบกาแฟ' } },
+      { kind: 'delete', keys: ['detail', 'detail'] }, { kind: 'list', extra: true }, 'list']) {
+      assert.equal((await route(invalid, { responsePreference: true })).plan.responsePreference, undefined, JSON.stringify(invalid));
+    }
+    assert.deepEqual((await route({ kind: 'delete', keys: ['detail'] }, { responsePreference: true })).plan.responsePreference, { kind: 'delete', keys: ['detail'] });
+    assert.deepEqual((await route({ kind: 'list' }, { responsePreference: true })).plan.responsePreference, { kind: 'list' });
+  });
+
   it('keeps an empty decision on any other route invalid: it still spends the one repair and fails typed', async () => {
     const text = 'ค่าใช้จ่ายเดือนนี้เท่าไหร่';
     const built = await createLineAiInputEvidence({ turnKey: 'business-empty-decision', parts: [{ partId: 'part-0',

@@ -2255,7 +2255,8 @@ describe('LINE intake dispatch – media path', () => {
   it('with a signature request open, a signature-like image keeps the router and is saved as a usable personal signature, not an expense draft', async () => {
     const h = makeHarness({
       permissions: ['expense.signature.self_manage', 'expense.receipt.line_upload', 'expense.receipt.upload'],
-      substituteMediaContext: { expenseId: 'expense-1', awaitingScans: [], signatureRequested: true },
+      // Asked for a signature a moment ago (UAT round 10: only a recent ask keeps a bare photo off the direct read).
+      substituteMediaContext: { expenseId: 'expense-1', awaitingScans: [], signatureRequested: true, signatureRequestedAt: new Date().toISOString() },
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },
     });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
@@ -2278,8 +2279,8 @@ describe('LINE intake dispatch – media path', () => {
   it('signature route without any personal-signature or signing permission is refused', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload', 'expense.receipt.upload'],
-      // Open substitute work keeps the router for a caption-less photo; it is the router that calls this a signature.
-      substituteMediaContext: { expenseId: 'expense-1', awaitingScans: [] },
+      // A signature asked for a moment ago keeps the router for a caption-less photo; it is the router that calls this a signature.
+      substituteMediaContext: { expenseId: 'expense-1', awaitingScans: [], signatureRequested: true, signatureRequestedAt: new Date().toISOString() },
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },
     });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
@@ -2509,7 +2510,7 @@ describe('LINE intake dispatch – media path', () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.signature.manage'],
       // Receipt or requested signature? Only the kept router is asked, and it cannot tell.
-      substituteMediaContext: { expenseId: 'expense-1', awaitingScans: [], signatureRequested: true },
+      substituteMediaContext: { expenseId: 'expense-1', awaitingScans: [], signatureRequested: true, signatureRequestedAt: new Date().toISOString() },
       routePlan: { status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0.5 },
       prisma,
     });
@@ -3809,7 +3810,8 @@ describe('classifyPendingMediaReply (RECEIPT-05 follow-up resolver)', () => {
 describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
   const SCAN = {
     expenseId: 'expense-1', evidenceId: 'evidence-1', documentNumber: 'SUB-202608-00007',
-    amountLabel: '50.0000 THB', preparedAt: '2026-08-20T09:00:00.000Z',
+    // Printed five minutes ago: a caption-less photo right after that ask may be the signed sheet.
+    amountLabel: '50.0000 THB', preparedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
   };
   const AWAITING = { expenseId: 'expense-1', awaitingScans: [SCAN] };
   const OPEN_ONLY = { expenseId: 'expense-1', awaitingScans: [] };
@@ -3846,14 +3848,14 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
     assert.equal(h.linkScanCalls.length, 0, '§16: a photo alone links nothing');
   });
 
-  it('asks one numbered question without the signed-form choice when nothing awaits a scan', async () => {
+  it('asks one numbered question without the signed-form choice when a caption names nothing and nothing awaits a scan', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     const h = makeHarness({
       permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: OPEN_ONLY,
       routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
     });
 
-    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'อันนี้นะ');
 
     assert.equal((h.replies[0] ?? '').includes('ฟอร์มที่เซ็นแล้ว'), false);
     assert.match(h.replies[0] ?? '', /1\) สลิป\/หลักฐานการจ่ายของรายการนี้/);
@@ -3862,6 +3864,26 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
       pendingMediaRows[0].askedQuestionJson,
       askedClass(['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']),
     );
+  });
+
+  // UAT round 10 (2026-09-30, the Owner's own chat): a week-old OPEN state that asked for nothing turned two clear
+  // caption-less receipts into this numbered question. Owner: "ถ้าอ่านรูปได้แล้วต้องสร้างเลย จะวนกลับมาถามทำไม".
+  it('reads and drafts a caption-less photo as a new expense when the open work asked for no picture recently', async () => {
+    for (const context of [OPEN_ONLY, { expenseId: 'expense-1', awaitingScans: [{ ...SCAN, preparedAt: '2026-08-20T09:00:00.000Z' }] },
+      { expenseId: 'expense-1', awaitingScans: [], signatureRequested: true }]) {
+      const { prisma, pendingMediaRows } = makePrisma();
+      const h = makeHarness({
+        permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: context,
+        routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+      });
+
+      await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+
+      assert.equal(h.routeRequests.length, 0, 'the router is skipped exactly as when no work is open');
+      assert.equal(h.initCalls.length, 1, 'the photo becomes a new expense draft');
+      assert.deepEqual(pendingMediaRows.map(row => row.askedQuestionJson?.kind).filter(Boolean), [], 'no numbered question is parked');
+      assert.doesNotMatch(h.replies.join('\n'), /ยังไม่แน่ใจว่าเป็นอะไร|ตอบเลขข้อ/u);
+    }
   });
 
   it('attaches straight to the open work when the caption already says what the file is', async () => {
@@ -5977,6 +5999,14 @@ describe('LINE capture answers and §17.5 status questions', () => {
     assert.match(h.replies.at(-1) ?? '', /ตอนนี้ยังไม่พบไฟล์ที่จะอ่านค่ะ/);
     assert.equal(h.turnRequests.length, 0, 'answered deterministically, with no model call');
     assert.equal(h.ocrRequests.length, 0, 'a status question never costs a read');
+  });
+
+  it('§17.5: a bare "บันทึกไปยัง" in a chat that sent no file goes to the record lanes, not the no-file reply (NAT-12)', async () => {
+    const { prisma } = makePrisma();
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], prisma } as any);
+    await h.useCase.execute({ ...answer('เมื่อกี้เน็ตหลุด สรุปบันทึกไปยัง'), webhookEventId: 'evt-status-note' });
+    assert.doesNotMatch(h.replies.at(-1) ?? '', /ยังไม่พบไฟล์ที่จะอ่าน/);
+    assert.ok(h.routeRequests.length >= 1, 'the semantic route decides what "it" is');
   });
 
   it('§17.5: an oversize rejection is explained with its real size and the real limit', async () => {

@@ -358,8 +358,9 @@ describe('LineAiTurnUseCase -> OrchestratorAgent -> real v2 provider path', () =
     assert.deepEqual(run.apiCalls.map((call) => call.body.toolName), [
       'reimbursement.draft.get_options', 'reimbursement.draft.preview_create',
     ]);
+    // NAT-04 (2026-09-30): a draft write is answered by the fixed draft text and the API's own card, so no compose call.
     assert.deepEqual(run.steps.map((step) => [step.invocation.ordinal, step.invocation.profileId]), [
-      [1, 'line-control/2'], [2, 'line-control/2'], [3, 'line-answer/2'],
+      [1, 'line-control/2'], [2, 'line-control/2'],
     ]);
     const [options, preview] = run.apiCalls;
     assert.equal(options?.actorDelegation, 'reimbursement-options-delegation-v2');

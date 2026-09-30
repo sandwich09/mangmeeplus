@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
-import { activePreparedFamilies, COMPILED_PREPARED_FAMILY_KEYS, formatPreparedSimpleRead, preparedTerminalReply } from './prepared-simple-read-formatter';
+import { resolvePeriodCandidates, type SourceRef, type SpecialistOutput } from '@watchdog-bms/contracts';
+import { activePreparedFamilies, assumedYearNote, COMPILED_PREPARED_FAMILY_KEYS, formatPreparedSimpleRead, preparedTerminalReply } from './prepared-simple-read-formatter';
 
 const SALES = 'sales.get_sales_summary::single_metric';
 const EXPENSE = 'expense.list_recent::single_metric';
@@ -64,6 +64,13 @@ describe('prepared-simple-read compiled formatter registry', () => {
       assert.match(r.replyText, /ข้อมูล ณ 15 ก\.ค\. 2569/);
       assert.equal(r.webLinks[0]?.path, '/sales');
     }
+  });
+
+  it('dates "ข้อมูล ณ" by the Bangkok day, not the UTC day, just after midnight (regression slice 2026-09-30)', () => {
+    const output = { ...salesOutput({ totalSales: '5,000' }), asOf: '2026-09-29T17:22:00.000Z' };
+    const r = formatPreparedSimpleRead(SALES, output, { language: 'th', locale: 'th-TH' });
+    assert.equal(r.kind, 'answer');
+    if (r.kind === 'answer') assert.match(r.replyText, /ข้อมูล ณ 30 ก\.ย\. 2569/);
   });
 
   it('states the REQUESTED single date from the validated proposed input (Thai)', () => {
@@ -1251,6 +1258,59 @@ describe('R-L4 F8 expense.list_recent::list — ค่าใช้จ่าย�
     if (r.kind !== 'answer') return;
     assert.match(r.replyText, /^ค่าใช้จ่าย: 40,453\.00 บาท \(14 รายการ\)/);
     assert.match(r.replyText, /\nแสดง 5 จาก 14 รายการ/);
+  });
+});
+
+// ── Owner 2026-09-29: a bare month the resolver moved to last year says so ─────────────────────────────
+// Production 29 Sep 2026 23:08, "ดูรายจ่าย ให้หน่อย เดือน ตุลา" answered "ช่วง: 1–31 ต.ค. 2568" with no word why.
+// Same chain as the orchestrator's prepared lane: the resolver's candidate → its label and note → the formatter.
+describe('assumed-year note on the period line (owner 2026-09-29)', () => {
+  const answer = (text: string, todayIso: string, lang: typeof TH = TH): string => {
+    const [period] = resolvePeriodCandidates(text, todayIso);
+    assert.ok(period, `the resolver read no period from "${text}"`);
+    const asOf = `${todayIso}T16:08:00.000Z`; // 23:08 in Bangkok
+    const data = expenseListData({ total: 0, items: [], summary: { totalAmount: '0.00' },
+      period: { fromDate: period.fromDate, toDate: period.toDate, defaultedToCurrentMonth: false } });
+    const r = formatPreparedSimpleRead(EXPENSE_LIST, expenseOutput(data, asOf), {
+      ...lang, proposedInput: { fromDate: period.fromDate, toDate: period.toDate }, periodLabel: period.label,
+      periodNote: assumedYearNote(period, asOf, lang.language === 'en'),
+    });
+    assert.equal(r.kind, 'answer');
+    return r.kind === 'answer' ? r.replyText : '';
+  };
+
+  it('"ตุลา" on 29 Sep: says the year was assumed and that this October has not started', () => {
+    assert.equal(answer('ดูรายจ่าย ให้หน่อย เดือน ตุลา', '2026-09-29'), 'ค่าใช้จ่าย: 0.00 บาท (0 รายการ)'
+      + '\nช่วง: 1–31 ต.ค. 2568 (ไม่ได้ระบุปี จึงดูตุลาคมที่ผ่านมาล่าสุด)\nตุลาคมปีนี้ยังไม่ถึงค่ะ\nข้อมูล ณ 29 ก.ย. 2569');
+    assert.equal(answer('show expenses for October', '2026-09-29', EN), 'Expenses: 0.00 THB (0 records)'
+      + '\nPeriod: 1 Oct 2025 – 31 Oct 2025 (no year given, so this is the most recent October)'
+      + "\nThis year's October hasn't started yet.\nData as of 29 Sep 2026");
+  });
+
+  it('"สิงหา" on 29 Sep is this year\'s August: no note', () => {
+    assert.equal(answer('ดูรายจ่าย ให้หน่อย เดือน สิงหา', '2026-09-29'),
+      'ค่าใช้จ่าย: 0.00 บาท (0 รายการ)\nช่วง: 1–31 ส.ค. 2569\nข้อมูล ณ 29 ก.ย. 2569');
+  });
+
+  it('a written year and a relative month: no note', () => {
+    assert.equal(answer('ดูรายจ่าย เดือนตุลาคม 2568', '2026-09-29'),
+      'ค่าใช้จ่าย: 0.00 บาท (0 รายการ)\nช่วง: 1–31 ต.ค. 2568\nข้อมูล ณ 29 ก.ย. 2569');
+    assert.equal(answer('ดูรายจ่าย เดือนนี้', '2026-09-29'),
+      'ค่าใช้จ่าย: 0.00 บาท (0 รายการ)\nช่วง: เดือนนี้ (1–29 ก.ย. 2569)\nข้อมูล ณ 29 ก.ย. 2569');
+  });
+
+  it('"ตุลา" on 15 Oct is this October: no note, so the note can never loop', () => {
+    assert.equal(answer('ดูรายจ่าย ให้หน่อย เดือน ตุลา', '2026-10-15'),
+      'ค่าใช้จ่าย: 0.00 บาท (0 รายการ)\nช่วง: 1–15 ต.ค. 2569\nข้อมูล ณ 15 ต.ค. 2569');
+  });
+
+  it('names a quarter, keeps a range generic, and says nothing without an as-of', () => {
+    const asOf = '2026-09-29T16:08:00.000Z';
+    const [quarter] = resolvePeriodCandidates('ดูรายจ่าย ไตรมาส 4', '2026-09-29');
+    assert.equal(assumedYearNote(quarter, asOf, false), ' (ไม่ได้ระบุปี จึงดูไตรมาส 4 ที่ผ่านมาล่าสุด)\nไตรมาส 4 ปีนี้ยังไม่ถึงค่ะ');
+    const [range] = resolvePeriodCandidates('ดูรายจ่าย 1-15 ต.ค.', '2026-09-29');
+    assert.equal(assumedYearNote(range, asOf, false), ' (ไม่ได้ระบุปี จึงดูช่วงที่ผ่านมาล่าสุด)');
+    assert.equal(assumedYearNote(quarter, undefined, false), '');
   });
 });
 

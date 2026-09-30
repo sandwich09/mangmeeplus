@@ -18,7 +18,7 @@ import { isExplicitJokeAsk, ResponseComposerAgent, featureDisabledReply } from '
 import { normalizePlanToolAccess, removeRuntimeBlockedTools, toolAccessOutcome } from './tool-availability';
 import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext, type PreparedSimpleReadEligibility } from '../domain/logic/prepared-simple-read.logic';
 import { expenseNameResolutionIssue, expenseNameResolutionReplyText } from '../domain/logic/business-read-result-semantics';
-import { APPROVED_PREPARED_FAMILY_KEYS, formatExpenseSummary, formatPreparedSimpleRead, isEnglish, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
+import { APPROVED_PREPARED_FAMILY_KEYS, assumedYearNote, formatExpenseSummary, formatPreparedSimpleRead, isEnglish, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { formatDraftUpdateReply } from './draft-update-formatter';
 import { offeredKnowledgeMetadata, productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
@@ -451,6 +451,7 @@ function deterministicExpenseSummaryReply(
     return formatExpenseSummary(
       data,
       { language, locale: req.userContext.locale, periodLabel: candidate?.label ?? thaiExpenseRangeLabel(fromDate, toDate),
+        periodNote: assumedYearNote(candidate, output.asOf, language === 'en'),
         ...(expenseBranchScopeRequested(req.messageText) ? { branchLabel: requestedBranch ?? 'สาขาที่ระบุ' } : {}),
         ...(asOfLabel ? { asOfLabel } : {}) },
       output.facts.find(fact => fact.sourceRef?.module === 'expenses' && fact.sourceRef.entityType === 'expense_summary')?.sourceRef,
@@ -1807,7 +1808,8 @@ export class OrchestratorAgent {
     // pre-call check used internally — recomputed here only to pick the friendly period label.)
     const contextCandidates = conversationReadCandidates(req.conversationContext, req.valueCandidates)?.candidates;
     const preparedCandidates = contextCandidates ?? req.valueCandidates;
-    const periodLabel = selectedPeriodCandidate(preparedCandidates, toolInput)?.label;
+    const periodCandidate = selectedPeriodCandidate(preparedCandidates, toolInput);
+    const periodLabel = periodCandidate?.label;
     const output = await specialist.run(ctx, { ...normIntent, requiredTools: [call.toolName] }, 1, toolInput, periodLabel);
     if (output.toolCalls.length !== 1 || output.toolCalls[0]?.name !== call.toolName) {
       return this.buildPreparedHonestTerminal(singlePlan, output, req, startMs);
@@ -1821,6 +1823,7 @@ export class OrchestratorAgent {
         // Spec §3.4: when the validated input selected a period the resolver read from the user's own
         // words, the answer names that period in those words AND in dates ("เดือนที่แล้ว (1–31 ส.ค. 2569)").
         ...(periodLabel ? { periodLabel } : {}),
+        periodNote: assumedYearNote(periodCandidate, output.asOf, isEnglish({ language: singlePlan.language, locale: req.userContext.locale })),
       });
       if (formatted.kind === 'answer') {
         this.logger.log({ msg: 'line.ai.prepared_simple_read.served', requestId: req.requestId, tool: call.toolName, answerShape, periodSource });

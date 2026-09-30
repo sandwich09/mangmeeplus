@@ -7,7 +7,7 @@ import {
 } from './line-ai-advisor-answer.js';
 import {
   ADVISOR_REFUSAL_CODES, ADVISOR_TONE_PREFACES, asIntakeRouteIntent, asIntakeRouterCapabilities,
-  isBusinessIntakeIntent, LINE_INTAKE_ROUTE_INTENTS, MANGMEE_CONVERSATION_MODES,
+  isBusinessIntakeIntent, LINE_INTAKE_ROUTE_INTENTS, MANGMEE_CONVERSATION_MODES, parseLineAiResponsePreferenceCommand,
 } from './line-ai.js';
 import type { AdvisorRefusalCode, AdvisorTonePreface, MangmeeConversationMode, PreparedAdvisorAnswer } from './line-ai.js';
 import { createLineAiInputEvidence } from './line-ai-input-evidence.js';
@@ -260,5 +260,27 @@ describe('advisor route contract – membership at every receiver boundary', () 
     // A polluted prototype cannot supply the flag: only own literal-true counts.
     const viaProto = Object.create({ advisor: true }) as Record<string, unknown>;
     assert.equal(asIntakeRouterCapabilities(viaProto).advisor, undefined);
+  });
+});
+
+// NAT11 (2026-09-30): the router's answer-preference request is re-validated at every receiver, like the advisor draft.
+describe('parseLineAiResponsePreferenceCommand', () => {
+  it('keeps exact allowlisted list/set/delete requests and nothing else', () => {
+    assert.deepEqual(parseLineAiResponsePreferenceCommand({ kind: 'list' }), { kind: 'list' });
+    assert.deepEqual(parseLineAiResponsePreferenceCommand({ kind: 'set', values: { detail: 'short', presentation: 'bullets' } }),
+      { kind: 'set', values: { detail: 'short', presentation: 'bullets' } });
+    assert.deepEqual(parseLineAiResponsePreferenceCommand({ kind: 'delete', keys: ['detail'] }), { kind: 'delete', keys: ['detail'] });
+    assert.deepEqual(parseLineAiResponsePreferenceCommand({ kind: 'delete', keys: 'all' }), { kind: 'delete', keys: 'all' });
+    for (const invalid of [undefined, null, 'list', [], { kind: 'list', keys: 'all' }, { kind: 'set', values: {} }, { kind: 'set', values: { detail: 'tiny' } },
+      { kind: 'set', values: { memo: 'รายได้ 1,000,000' } }, { kind: 'set', values: { detail: 'short' }, keys: 'all' }, { kind: 'delete', keys: [] },
+      { kind: 'delete', keys: ['detail', 'detail'] }, { kind: 'delete', keys: ['balance'] }, { kind: 'delete', keys: 'everything' }, { kind: 'remember' },
+      JSON.parse('{"kind":"set","values":{"__proto__":{"detail":"short"}}}')]) {
+      assert.equal(parseLineAiResponsePreferenceCommand(invalid), undefined, JSON.stringify(invalid));
+    }
+  });
+
+  it('is a trusted router capability only as a literal true', () => {
+    assert.deepEqual(asIntakeRouterCapabilities({ responsePreference: true }), { responsePreference: true });
+    assert.deepEqual(asIntakeRouterCapabilities({ responsePreference: 'true' }), {});
   });
 });

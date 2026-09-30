@@ -46,7 +46,14 @@ test('NAT is diagnostic, not asset certification or exact-tool acceptance', () =
   assert.equal(NATURAL_DIAGNOSTIC_POLICY.exactToolGoldens, false);
   assert.equal(NATURAL_DIAGNOSTIC_POLICY.aggregateQualityScore, false);
   assert.ok(NATURAL_CORPUS.fixtures.every(row => !row.capabilities.includes('C09') && !row.capabilities.includes('C13')));
-  assert.ok(NATURAL_DIAGNOSTIC_POLICY.limitations['NAT-04'].includes('NOT_RUN_FIXTURE_REQUIRED'));
+  assert.ok(NATURAL_DIAGNOSTIC_POLICY.limitations['NAT-04'].includes('PRIOR_RECEIPTS_SEEDED'));
+  // The two prior stationery receipts exist only where NAT-04 needs them, as claimable drafts with a receipt.
+  const nat04 = NATURAL_SOURCE_SNAPSHOT_MANIFEST.snapshots['nat-NAT-04']!.rows;
+  const receipts = nat04.filter(row => row.model === 'expenseRecord' && String(row.data.id).startsWith('NAT-STATIONERY-'));
+  assert.deepEqual(receipts.map(row => [row.data.status, row.data.payerUserId === row.data.createdByUserId, row.data.primaryAttachmentId]),
+    [['DRAFT', true, 'nat-stationery-receipt-1'], ['DRAFT', true, 'nat-stationery-receipt-2']]);
+  assert.equal(nat04.filter(row => row.model === 'attachmentLink').length, 2);
+  assert.ok(!NATURAL_SOURCE_SNAPSHOT_MANIFEST.snapshots['nat-NAT-01']!.rows.some(row => String(row.data.id).startsWith('NAT-STATIONERY-')));
   assert.ok(NATURAL_CORPUS.fixtures.every(row => row.provenance.reviewedBy === null && row.assets.every(asset => asset.labelledBy === null)));
   assert.throws(() => validateReliabilityCorpus(NATURAL_CORPUS, true), /CORPUS_NOT_REVIEWED/);
   assert.match(NATURAL_ARTIFACT_DIGEST, /^[a-f0-9]{64}$/);

@@ -77,8 +77,8 @@ describe('validatePaymentForm', () => {
   it('accepts full payment', () => {
     assert.equal(validatePaymentForm(ok), null);
   });
-  it('rejects partial payment', () => {
-    assert.ok(validatePaymentForm({ ...ok, paidAmount: '250' }));
+  it('rejects partial payment, in the words the API and the user guide use', () => {
+    assert.equal(validatePaymentForm({ ...ok, paidAmount: '250' }), 'ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น');
   });
   it('rejects overpayment', () => {
     assert.ok(validatePaymentForm({ ...ok, paidAmount: '600' }));

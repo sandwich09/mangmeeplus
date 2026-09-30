@@ -27,6 +27,7 @@ describe('LineReimbursementDraftUseCase', () => {
       isDraftActionOwnerCurrent: async () => true,
       findOrCreateDraftAction: async () => action,
       resolveCreateBranchId: async () => 'br1',
+      findBranchName: async (companyId: string, branchId: string) => companyId === 'c1' && branchId === 'br1' ? 'สำนักงานใหญ่' : null,
       assertReimbursementRequester: async () => ({ displayName: 'Owner' }),
       findPolicy: async () => null,
       resolveSourceLines: async (_company: string, _requester: string, _branch: string, _currency: string, lines: unknown) => lines,
@@ -49,7 +50,42 @@ describe('LineReimbursementDraftUseCase', () => {
     assert.equal(previewSaves, 1, 'retry neither bumps revision nor extends expiry');
     assert.equal((first as any).preview.after.amount, '120.0000');
     assert.equal((first as any).preview.after.lines[0].amount, '120.0000');
+    // Owner rule 2026-09-27/29: the card names the branch; the id stays for authority, never for display.
+    assert.equal((first as any).preview.after.branchName, 'สำนักงานใหญ่');
+    assert.equal((first as any).preview.after.branchId, 'br1');
     assert.equal((repo as any).createRequest, undefined, 'preview has no financial write method');
+  });
+
+  // NAT04 (2026-09-30): a line with no receipt file (a bill claimed by reference) was prepared again with
+  // `attachmentSnapshot: undefined`, a key the stored JSON never has, so the preview read as changed at once.
+  it('reads a fresh preview back as current when its lines carry no receipt snapshot', async () => {
+    let action = collecting();
+    const repo = {
+      isDraftActionOwnerCurrent: async () => true,
+      findOrCreateDraftAction: async () => action,
+      findDraftAction: async () => action,
+      resolveCreateBranchId: async () => 'br1',
+      findBranchName: async (companyId: string, branchId: string) => companyId === 'c1' && branchId === 'br1' ? 'สำนักงานใหญ่' : null,
+      assertReimbursementRequester: async () => ({ displayName: 'Owner' }),
+      findPolicy: async () => null,
+      resolveSourceLines: async (_company: string, _requester: string, _branch: string, _currency: string, lines: any[]) =>
+        lines.map(line => ({ ...line, sourceExpenseSnapshot: undefined, attachmentSnapshot: undefined })),
+      saveDraftActionPreview: async (input: any) => {
+        action = { ...action, status: 'PREVIEW', previewRevision: input.previewRevision, commandJson: input.commandJson,
+          previewJson: input.previewJson, sourceProofJson: input.sourceProofJson, confirmationDigest: input.confirmationDigest,
+          expiresAt: input.expiresAt, updatedAt: new Date(action.updatedAt.getTime() + 1) };
+        return action;
+      },
+    } as any;
+    const useCase = new LineReimbursementDraftUseCase(repo, { validate: async () => undefined } as any, config);
+    const request = { ctx: ctx(['line.ai.query', 'ai.tool.invoke', 'reimbursement.create']), owner,
+      key: { actionId, taskId, actionOrdinal: 1, operation: 'CREATE' as const }, operation: 'CREATE' as const,
+      sourceProof, request: { reason: 'ซื้อของใช้ในออฟฟิศ', branchId: 'br1', lines: [{ lineNo: 1,
+        incurredDate: '2026-09-24', description: 'ปากกาและแฟ้มเอกสาร', categoryKey: 'office', categoryLabel: 'ค่าอุปกรณ์สำนักงาน', amount: '245' }] } };
+    const now = new Date('2026-09-27T04:00:00.000Z');
+    assert.equal((await useCase.preview(request, now)).status, 'preview');
+    const read = await useCase.get({ ctx: request.ctx, owner, actionId, now: new Date(now.getTime() + 60_000) });
+    assert.equal(read.status, 'preview');
   });
 
   it('keeps an APPLIED receipt readable while the writer flag is off, but still requires current read authority', async () => {
@@ -65,6 +101,10 @@ describe('LineReimbursementDraftUseCase', () => {
     const allowed = await useCase.confirm({ ctx: ctx(['reimbursement.read_own']), owner, actionId, previewRevision: 1, confirmationDigest: 'c'.repeat(64) });
     assert.equal(allowed.status, 'applied');
     assert.equal((allowed as any).receipt.currentState, 'DRAFT');
+    assert.equal('requestNo' in (allowed as any).receipt, false, 'a draft has no document number yet');
+    request.status = 'PENDING_APPROVAL'; request.requestNo = 'RB-2569-0007';
+    const submitted = await useCase.replay(ctx(['reimbursement.read_own']), owner, actionId);
+    assert.equal((submitted as any).receipt.requestNo, 'RB-2569-0007', 'the receipt carries the number the customer can quote');
     assert.deepEqual(await useCase.replay(ctx([]), owner, actionId), { status: 'blocked', errorCode: 'forbidden' });
   });
 

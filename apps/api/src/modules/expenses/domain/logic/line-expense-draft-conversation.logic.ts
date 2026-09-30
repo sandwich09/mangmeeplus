@@ -145,7 +145,11 @@ function groundedNumber(text: string, value: string | undefined, positive = fals
   const parsed = decimal(value, positive);
   if (!parsed) return undefined;
   const wanted = new Decimal(parsed);
-  return numericValues(text).some((candidate) => candidate.eq(wanted)) ? parsed : undefined;
+  // A spoken amount ("สามร้อยบาท", NAT-12) is the same evidence as its digits.
+  const spoken = () => extractValueCandidates(text).amounts.some((amount) => {
+    try { return new Decimal(amount.value).eq(wanted); } catch { return false; }
+  });
+  return numericValues(text).some((candidate) => candidate.eq(wanted)) || spoken() ? parsed : undefined;
 }
 
 function groundedText(text: string, value: unknown): string | undefined {
@@ -266,6 +270,10 @@ export function buildInitialLineExpenseDraftContinuation(input: {
   hints?: LineIntakeCaptureHints;
   categories: readonly ExpenseCategorySummary[];
   now?: string;
+  /** Owner 2026-09-29, spec §13: a TEXT note's AI category is applied, not only suggested, exactly as
+   *  the single-turn text capture has always applied it; the router names one only when it clearly
+   *  fits. Photo callers leave this off — the receipt reader's own auto-fill rule decides theirs. */
+  applyCategoryHints?: boolean;
 }): LineExpenseDraftContinuation {
   const now = input.now ?? new Date().toISOString();
   const categories = categoryMap(input.categories);
@@ -273,13 +281,17 @@ export function buildInitialLineExpenseDraftContinuation(input: {
   const hintedItems = (input.hints?.items ?? [])
     .map((hint, index) => initialItem(hint, index, input.messageText, categories))
     .filter((item): item is LineExpenseDraftItem => Boolean(item));
+  // The note's own category covers every item that names none of its own; it never replaces one.
+  const noteCategoryId = activeCategoryId(input.hints?.expenseCategoryId, categories);
+  for (const item of hintedItems) if (!item.suggestedCategoryId && noteCategoryId) item.suggestedCategoryId = noteCategoryId;
   const fallbackDescription = groundedText(input.messageText, input.hints?.description)
     ?? bounded(input.messageText, 120);
-  const items = hintedItems.length > 0 ? hintedItems : fallbackDescription ? [{
+  const items: LineExpenseDraftItem[] = hintedItems.length > 0 ? hintedItems : fallbackDescription ? [{
     itemRef: 'I01', sourceText: fallbackDescription, description: fallbackDescription,
     ...(groundedNumber(input.messageText, input.hints?.amount) ? { totalAmount: groundedNumber(input.messageText, input.hints?.amount) } : {}),
-    ...(activeCategoryId(input.hints?.expenseCategoryId, categories) ? { suggestedCategoryId: input.hints?.expenseCategoryId } : {}),
+    ...(noteCategoryId ? { suggestedCategoryId: noteCategoryId } : {}),
   }] : [];
+  if (input.applyCategoryHints) for (const item of items) if (item.suggestedCategoryId) item.expenseCategoryId = item.suggestedCategoryId;
   const expenseDate = groundedDate(input.messageText, input.hints?.expenseDate);
   const header = {
     provisionalExpenseDate: input.provisionalExpenseDate,
@@ -313,7 +325,7 @@ export function buildInitialLineExpenseDraftContinuation(input: {
   }
   for (const item of state.items) {
     for (const [field, suffix] of [
-      ['description', 'DESC'], ['quantity', 'QTY'], ['unitPrice', 'PRICE'], ['totalAmount', 'PRICE'],
+      ['description', 'DESC'], ['quantity', 'QTY'], ['unitPrice', 'PRICE'], ['totalAmount', 'PRICE'], ['expenseCategoryId', 'CATEGORY'],
     ] as const) {
       if (item[field]) state.provenance[`${item.itemRef}-${suffix}`] = { source: 'LINE_AI_SOURCE_GROUNDED', acceptedAt: now, messageHash: hash, ...(input.webhookEventId ? { webhookEventId: input.webhookEventId } : {}) };
     }
