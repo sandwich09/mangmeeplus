@@ -8,7 +8,7 @@ import { isReceiptAddOnKind, visibleReceiptLots } from '../../../billing/applica
 import { PLAN_MANAGE_PERMISSION_KEY } from '../../../access-control/domain/logic/plan-manager.logic';
 import { effectivePlanCapacity } from '../../../system-partner-management/domain/logic/plan-capacity';
 import { planCapacityUsed } from '../../../system-partner-management/application/plan-term-limit';
-import { packagePace, singlePaidCycle } from '../../domain/logic/package-usage-pace.logic';
+import { PACKAGE_PACE_FORMULA, packagePace, singlePaidCycle } from '../../domain/logic/package-usage-pace.logic';
 
 /** Advisor spec §5.1 / P8: the typed refusal the gateway answers with the fixed "ask the owner" line. */
 export const PACKAGE_MANAGER_REQUIRED = 'PACKAGE_MANAGER_REQUIRED';
@@ -21,11 +21,13 @@ const PACE_NOTES = {
 } as const;
 
 /** The package page's own reading of the renewal columns (BillingService.status): an old subscription
- *  row still means card auto-renew, and a stopped or paused renewal is not one. */
-function renewal(account: BillingAccount | null): 'auto' | 'one_time' | 'none' {
+ *  row still means card auto-renew, and a stopped or paused renewal is not one. Plain Thai, as every
+ *  value an answer may quote: eval 2026-09-30 saw a raw code repeated to the customer. */
+function renewal(account: BillingAccount | null): string {
   const mode = account?.renewalMode !== 'NONE' ? account?.renewalMode : account?.baseSubscriptionId ? 'CARD_AUTO' : 'NONE';
-  if (mode === 'CARD_ONCE' || mode === 'PROMPTPAY_ONCE') return 'one_time';
-  return (mode === 'CARD_AUTO' || mode === 'PROMPTPAY_RENEW') && !account?.cancelAtPeriodEnd && !account?.collectionPauseJson ? 'auto' : 'none';
+  if (mode === 'CARD_ONCE' || mode === 'PROMPTPAY_ONCE') return 'จ่ายครั้งเดียว ไม่มีการตัดเงินงวดถัดไป';
+  return (mode === 'CARD_AUTO' || mode === 'PROMPTPAY_RENEW') && !account?.cancelAtPeriodEnd && !account?.collectionPauseJson
+    ? 'ต่ออายุอัตโนมัติ' : 'ไม่ได้ตั้งต่ออายุอัตโนมัติ';
 }
 
 const room = (used: number, limit: number | null) => ({ used, limit, remaining: limit === null ? null : Math.max(0, limit - used) });
@@ -91,7 +93,7 @@ export class BillingGetPackageUsageTool implements ErpReadToolPort {
         package: { label: billingPlanLabel(term?.tierKey), termEndsOn, renewal: renewal(account) },
         capacity: { branches: room(branches, capacity?.branchLimit ?? null), members: room(members, capacity?.employeeLimit ?? null) },
         receipts: {
-          used: usage.used, limit: usage.limit, remaining: usage.remaining, cadence: monthly ? 'monthly' : 'paid_period',
+          used: usage.used, limit: usage.limit, remaining: usage.remaining, cadence: monthly ? 'รายเดือน เริ่มนับใหม่ทุกต้นเดือน' : 'ตามรอบที่ชำระ',
           // A month ends on its last day; a paid period on the day it runs until, as the package page prints it.
           periodStartOn: cycle?.startOn ?? null, periodEndsOn: cycle && (monthly ? addCivilDays(cycle.endOn, -1) : cycle.endOn),
           resetsOn, expiresOn: expiresOn !== termEndsOn ? expiresOn : null,
@@ -103,6 +105,7 @@ export class BillingGetPackageUsageTool implements ErpReadToolPort {
       },
       sourceRefs,
       asOf,
+      basisVersion: PACKAGE_PACE_FORMULA,
       queryApplied: { timezone: 'Asia/Bangkok', dateBasis: 'bangkok_civil_day', statusBasis: 'current_package_term',
         dataset: 'billing.package_usage', accessScope: 'company' },
     };

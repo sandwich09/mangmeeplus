@@ -106,7 +106,7 @@ describe('billing.get_package_usage on PostgreSQL', { skip: !url }, () => {
   it('reads a monthly allowance by calendar month, counting receipt reads only', async () => {
     const data = await read(monthlyShop);
     const { resetsAt } = billingMonth(now);
-    assert.deepEqual([data.receipts.used, data.receipts.limit, data.receipts.remaining, data.receipts.cadence], [12, 30, 18, 'monthly']);
+    assert.deepEqual([data.receipts.used, data.receipts.limit, data.receipts.remaining, data.receipts.cadence], [12, 30, 18, 'รายเดือน เริ่มนับใหม่ทุกต้นเดือน']);
     assert.equal(data.receipts.periodStartOn, `${civilDate(now).slice(0, 7)}-01`);
     assert.equal(data.receipts.periodEndsOn, addCivilDays(civilDate(new Date(resetsAt)), -1));
     assert.equal(data.receipts.resetsOn, civilDate(new Date(resetsAt)));

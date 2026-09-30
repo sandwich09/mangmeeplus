@@ -1,7 +1,8 @@
 import { civilDate, civilDateToUtcDate, type CivilDate } from '@watchdog-bms/contracts';
 
 /**
- * Advisor spec §5.1 formula `package-pace-v1` (owner decision 2026-09-30, §10 item 4b): a straight-line
+ * Advisor spec §5.1 formula `package-pace-v1` (owner decision 2026-09-30, §10 item 4b; the tool reports it as
+ * its basisVersion, never inside the data an answer reads): a straight-line
  * projection of this cycle's receipt reads to the cycle's end, computed here so an answer can say
  * "likely enough" or "short by about N" without doing arithmetic of its own. Bangkok civil days;
  * `endOn` is exclusive — the day a monthly allowance resets, or the day a paid period ends.
@@ -11,7 +12,6 @@ export const PACKAGE_PACE_FORMULA = 'package-pace-v1';
 export const PACKAGE_PACE_MIN_DAYS = 7;
 
 export type PackagePace = {
-  formula: typeof PACKAGE_PACE_FORMULA;
   projectedUsed: number;
   projectedShortfall: number;
   daysElapsed: number;
@@ -30,8 +30,7 @@ export function packagePace(input: { used: number; limit: number | null; startOn
   const daysElapsed = Math.min(daysInPeriod, dayCount(input.startOn, input.today) + 1);
   if (daysElapsed < PACKAGE_PACE_MIN_DAYS) return 'too_early';
   const projectedUsed = Math.ceil((input.used * daysInPeriod) / daysElapsed);
-  return { formula: PACKAGE_PACE_FORMULA, projectedUsed, projectedShortfall: Math.max(0, projectedUsed - input.limit),
-    daysElapsed, daysLeft: daysInPeriod - daysElapsed, daysInPeriod };
+  return { projectedUsed, projectedShortfall: Math.max(0, projectedUsed - input.limit), daysElapsed, daysLeft: daysInPeriod - daysElapsed, daysInPeriod };
 }
 
 /** The one paid period every visible package lot shares; null when lots from different periods overlap

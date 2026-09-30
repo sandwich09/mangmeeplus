@@ -302,11 +302,11 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
   }
 
   it('composes a manager\'s answer under the package rules and links the package page', async () => {
-    const data = { package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-10-15', renewal: 'auto' },
+    const data = { package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-10-15', renewal: 'ต่ออายุอัตโนมัติ' },
       capacity: { branches: { used: 4, limit: 5, remaining: 1 }, members: { used: 3, limit: 10, remaining: 7 } },
-      receipts: { used: 70, limit: 100, remaining: 30, cadence: 'paid_period', periodStartOn: '2026-09-15', periodEndsOn: '2026-10-15',
+      receipts: { used: 70, limit: 100, remaining: 30, cadence: 'ตามรอบที่ชำระ', periodStartOn: '2026-09-15', periodEndsOn: '2026-10-15',
         resetsOn: null, expiresOn: null, additional: null, paceNote: null,
-        pace: { formula: 'package-pace-v1', projectedUsed: 150, projectedShortfall: 50, daysElapsed: 14, daysLeft: 16, daysInPeriod: 30 } } };
+        pace: { projectedUsed: 150, projectedShortfall: 50, daysElapsed: 14, daysLeft: 16, daysInPeriod: 30 } } };
     const calls: Array<{ usageTag: string; systemPrompt: string }> = [];
     const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
       calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '' });
@@ -327,6 +327,8 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     assert.match(compose.systemPrompt, /never name, compare or recommend any package other than package\.label/);
     assert.match(compose.systemPrompt, /never suggest upgrading, a bigger package or buying more/);
     assert.match(compose.systemPrompt, /'ขาดประมาณ N ใบ' with N = projectedShortfall/);
+    assert.match(compose.systemPrompt, /add no line inviting them to upgrade, change, add to, buy or manage the package/);
+    assert.match(compose.systemPrompt, /never write a web address yourself/);
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.match(result.replyText, /ขาดประมาณ 50 ใบ/);
     assert.deepEqual(result.webLinks, [{ label: 'แพ็กเกจของร้าน', path: '/companies/company/billing' }]);

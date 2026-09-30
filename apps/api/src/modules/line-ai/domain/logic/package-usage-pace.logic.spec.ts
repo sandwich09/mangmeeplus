@@ -1,13 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { PACKAGE_PACE_FORMULA, packagePace, singlePaidCycle } from './package-usage-pace.logic';
+import { packagePace, singlePaidCycle } from './package-usage-pace.logic';
 
 const september = { startOn: '2026-09-01', endOn: '2026-10-01' };
 
 describe('package-pace-v1 (advisor spec §5.1)', () => {
   it('reproduces the spec §6.3 examples: likely enough, and short by about 12', () => {
     assert.deepEqual(packagePace({ used: 41, limit: 50, ...september, today: '2026-09-29' }),
-      { formula: PACKAGE_PACE_FORMULA, projectedUsed: 43, projectedShortfall: 0, daysElapsed: 29, daysLeft: 1, daysInPeriod: 30 });
+      { projectedUsed: 43, projectedShortfall: 0, daysElapsed: 29, daysLeft: 1, daysInPeriod: 30 });
     const short = packagePace({ used: 45, limit: 50, ...september, today: '2026-09-22' });
     assert.ok(typeof short === 'object');
     assert.equal(short.projectedUsed, 62);
