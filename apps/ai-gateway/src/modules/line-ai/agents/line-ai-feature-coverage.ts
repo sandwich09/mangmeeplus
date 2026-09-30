@@ -94,6 +94,11 @@ export const LINE_AI_FEATURE_COVERAGE: readonly LineAiFeatureCoverageRow[] = [
     sourceModule: 'expenses', navigationMenuIds: ['expenses'],
   },
   {
+    id: 'substitute_receipt_queue', feature: 'Substitute receipts waiting for my signature or approval', status: 'covered', questionKinds: ['summary', 'list'],
+    tools: tools('expense.list_substitute_receipts_to_sign'), requiredPermissions: ['expense.read_related', 'expense.read_own', 'expense.confirm'],
+    sourceModule: 'expenses',
+  },
+  {
     id: 'sales_received', feature: 'Sales and customer cash received summary', status: 'covered', questionKinds: ['report'],
     tools: tools('sales.get_sales_summary'), requiredPermissions: ['crm.report.read'], sourceModule: 'accounting-documents',
   },

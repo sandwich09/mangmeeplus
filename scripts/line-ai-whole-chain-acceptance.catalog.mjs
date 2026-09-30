@@ -361,6 +361,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'src/modules/line-ai/agents/semantic-turn-v2-persona-sanitize.spec.ts',
     // tuning-3 item 4: grouped two-period comparisons skip compose and rank their own groups.
     'src/modules/line-ai/agents/semantic-turn-v2-compose-skip.spec.ts',
+    // Advisor Q1/Q2: "งานค้างของฉัน" also reads the caller's own queues; "วันนี้มีอะไรต้องทำ" never does.
+    'src/modules/line-ai/agents/semantic-turn-v2-pending-work.spec.ts',
     'src/modules/line-ai/domain/logic/business-read-result-semantics.spec.ts',
     'src/modules/line-ai/infrastructure/provider/public-lookup.spec.ts',
     'src/modules/line-ai/presentation/http/line-reliability-capabilities.controller.spec.ts',
@@ -386,6 +388,9 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'src/modules/line-ai/infrastructure/public-lookup.spec.ts',
     'src/modules/line-ai/line-ai-capability-manifest.spec.ts',
     'src/modules/expenses/application/use-cases/expense-extraction.use-case.spec.ts',
+    // Advisor S1: the caller's own substitute-receipt signature queue and its LINE read tool.
+    'src/modules/expenses/application/use-cases/substitute-receipt-signature-queue.use-case.spec.ts',
+    'src/modules/line-ai/application/use-cases/erp-substitute-receipt-tools.use-case.spec.ts',
     'src/modules/reimbursements/application/use-cases/line-reimbursement-draft.use-case.spec.ts',
     'src/modules/reimbursements/presentation/http/reimbursement-draft-action.controller.spec.ts',
   ] },
@@ -569,4 +574,6 @@ export const LINE_AI_RELIABILITY_POSTGRES_SUITES = [{ id: 'reliability-postgres-
   'src/modules/line-ai/application/use-cases/erp-source-reliability.pg.spec.ts',
   'src/modules/line-ai/line-delivery-plan.pg.spec.ts',
   'src/modules/reimbursements/line-reimbursement-draft.pg.spec.ts',
+  // Advisor S1: every signature-queue gate translated to SQL (branch, self-approval, paper, correction).
+  'src/modules/expenses/substitute-receipt-signature-queue.pg.spec.ts',
  ] }];

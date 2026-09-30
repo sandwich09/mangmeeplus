@@ -1387,6 +1387,63 @@ export class PrismaExpenseRepository {
     return { rows, total };
   }
 
+  /** Advisor S1 (spec §5.2): one step of the caller's OWN signature queue, counted in the database. PAYER is
+   *  a digital receipt that names the caller as its payer; APPROVER is a payer-certified receipt, or a paper
+   *  copy already submitted and waiting to be accepted. Reads only the listed fields — never the payee's tax
+   *  id or address, a signature or a file. `branchIds` is the caller's own branch scope. */
+  async listSubstituteReceiptsAwaitingSignature(companyId: string, filter: {
+    step: 'PAYER' | 'APPROVER';
+    userId: string;
+    branchIds?: string[];
+    /** APPROVER: leave out what the caller paid themselves, and paper copies one person signed twice. */
+    excludeSelf?: boolean;
+    /** APPROVER: corrections that only the approver of the corrected receipt may sign. */
+    excludeEvidenceIds?: readonly string[];
+  }, take: number) {
+    const step: Prisma.ExpenseSubstituteReceiptEvidenceWhereInput = filter.step === 'PAYER'
+      ? { status: 'PREPARED', payerUserId: filter.userId }
+      : { OR: [
+        // Every payer-certified row names its payer (payer_certified_check), so `not` drops no row.
+        { status: 'PAYER_CERTIFIED', ...(filter.excludeSelf ? { payerUserId: { not: filter.userId } } : {}) },
+        // Paper submission writes the scan id and the signer names together (submitSubstitutePaper).
+        { status: 'PREPARED', signatureMode: 'PAPER', payerUserId: null, wetSignedScanAttachmentId: { not: null },
+          ...(filter.excludeSelf ? { NOT: { paperSubmissionJson: { path: ['samePerson'], equals: true } } } : {}) },
+      ] };
+    const where: Prisma.ExpenseSubstituteReceiptEvidenceWhereInput = { companyId, AND: [
+      branchScopeWhere({ branchIds: filter.branchIds }), step,
+      ...(filter.excludeEvidenceIds?.length ? [{ id: { notIn: [...filter.excludeEvidenceIds] } }] : []),
+    ] };
+    const [rows, count] = await this.prisma.client.$transaction([
+      this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
+        where,
+        select: {
+          documentNumber: true, payeeName: true, status: true, signatureMode: true, preparedAt: true,
+          expense: { select: { expenseDate: true, vendorNameSnapshot: true, currency: true, grandTotalAmount: true } },
+        },
+        orderBy: [{ preparedAt: 'asc' }, { id: 'asc' }],
+        take,
+      }),
+      this.prisma.client.expenseSubstituteReceiptEvidence.count({ where }),
+    ]);
+    return { rows, count };
+  }
+
+  /** Payer-certified corrections waiting for approval, each with the approver of the receipt it corrects —
+   *  the only person ApproveSubstituteReceiptUseCase lets sign it. */
+  async listPendingSubstituteCorrections(companyId: string, branchIds?: string[]): Promise<Array<{ id: string; originalApproverUserId: string | null }>> {
+    const corrections = await this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
+      where: { companyId, status: 'PAYER_CERTIFIED', correctionOfEvidenceId: { not: null }, AND: [branchScopeWhere({ branchIds })] },
+      select: { id: true, correctionOfEvidenceId: true },
+    });
+    if (corrections.length === 0) return [];
+    const originals = await this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
+      where: { companyId, id: { in: corrections.map((row) => row.correctionOfEvidenceId!) } },
+      select: { id: true, approverUserId: true },
+    });
+    const approverOf = new Map(originals.map((row) => [row.id, row.approverUserId]));
+    return corrections.map((row) => ({ id: row.id, originalApproverUserId: approverOf.get(row.correctionOfEvidenceId!) ?? null }));
+  }
+
   /** Run `work` on an injected transaction client when the caller owns one, otherwise open the
    *  method's own transaction. Nesting a `$transaction` inside a caller's transaction would open a
    *  SECOND connection that cannot roll back with it — and would block on this method's own

@@ -148,6 +148,16 @@ export function reimbursementStatusQuestion(text: string): boolean {
   return includesAny(text, REIMBURSEMENT_STATUS_WORDS_TH) && !includesAny(text, EXPENSE_LEDGER_WORDS_TH);
 }
 
+/** Advisor Q2 (owner 2026-09-30): "มีอะไรค้างที่ฉันต้องทำ", "งานค้างของฉัน" ask for the caller's OWN pending
+ *  work across queues — never Q1's one-day checklist ("วันนี้มีอะไรต้องทำ"), which stays on its fast lane. A
+ *  message naming one document ("ใบเบิกของฉันค้างที่ใคร", "ค้างจ่าย") asks about that document instead. */
+const MY_PENDING_WORK_PATTERN = /งานค้าง|(?:อะไร|งาน)[^\n]{0,12}(?:ค้าง|รอ)[^\n]{0,12}(?:ฉัน|ผม|หนู|ดิฉัน)|(?:ฉัน|ผม|หนู|ดิฉัน)[^\n]{0,12}ค้าง/u;
+const NAMED_DOCUMENT_WORDS_TH = ['ใบเบิก', 'เบิก', 'ค่าใช้จ่าย', 'รายจ่าย', 'ใบรับรอง', 'ใบแทน', 'บิล', 'ใบเสร็จ', 'จ่าย', 'ชำระ'];
+
+export function myPendingWorkQuestion(text: string): boolean {
+  return MY_PENDING_WORK_PATTERN.test(text) && !includesAny(text, NAMED_DOCUMENT_WORDS_TH);
+}
+
 /** Item 4 (spec row 14, eval T-107-b): line.explain_file_attempt explains a file/photo the customer
  *  says was sent in THIS chat. A "ทำไม"/category/spending question that names no file/photo/document
  *  at all has nothing to do with an upload attempt and must never route there. */

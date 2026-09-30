@@ -1,6 +1,7 @@
 import { EXPENSE_RECEIPT_SOURCE_TYPES, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Inject, Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
+  civilDate,
   hasCheckBillSubstituteRoutingResolution,
   isCivilDate,
   EXPENSE_PAYMENT_METHODS,
@@ -480,6 +481,73 @@ export class ListCompanySubstituteReceiptsUseCase {
       page,
       pageSize,
     };
+  }
+}
+
+export type SubstituteReceiptSignatureQueueStep = {
+  count: number;
+  items: Array<{ documentNumber: string; payeeName: string; amount: string; currency: string; expenseDate: string; preparedOn: string; stepLabel: string }>;
+};
+
+function signatureQueueStep(
+  page: Awaited<ReturnType<PrismaExpenseRepository['listSubstituteReceiptsAwaitingSignature']>>,
+  step: 'PAYER' | 'APPROVER',
+): SubstituteReceiptSignatureQueueStep {
+  return {
+    count: page.count,
+    items: page.rows.map((row) => ({
+      documentNumber: row.documentNumber,
+      payeeName: row.payeeName ?? row.expense.vendorNameSnapshot ?? '',
+      amount: expenseDecimalToString(row.expense.grandTotalAmount),
+      currency: row.expense.currency,
+      expenseDate: civilDate(row.expense.expenseDate),
+      preparedOn: civilDate(row.preparedAt),
+      // Plain Thai, the web hub's own wording (never the status enum): a PREPARED row in the approver
+      // step is a paper copy waiting to be accepted.
+      stepLabel: step === 'PAYER' ? 'รอคุณลงลายมือชื่อในฐานะผู้จ่ายเงิน'
+        : row.status === 'PREPARED' ? 'ฉบับกระดาษรอคุณตรวจรับ' : 'รอคุณอนุมัติ',
+    })),
+  };
+}
+
+/**
+ * Advisor S1 (spec §5.2): the substitute receipts waiting for THIS caller's own signature — as the named
+ * payer (what the web certify route lets them sign) or as an approver passing the same gates as
+ * ApproveSubstituteReceiptUseCase and PaperSubstituteReceiptUseCase.accept: policy mode, eligibility,
+ * branch, self-approval by real roles, and the original approver for a correction. Read-only, so no
+ * assertWeb: signing and approving keep their own web-only guards.
+ */
+@Injectable()
+export class ListMySubstituteReceiptSignaturesUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository) {}
+
+  async execute(ctx: RequestContext, input: { role?: 'payer' | 'approver'; limit: number }): Promise<{
+    asPayer?: SubstituteReceiptSignatureQueueStep; asApprover?: SubstituteReceiptSignatureQueueStep;
+  }> {
+    const none: SubstituteReceiptSignatureQueueStep = { count: 0, items: [] };
+    const branchIds = ctx.scopes?.branchIds;
+    const payerAllowed = ctx.permissions.includes('expense.read_related') || ctx.permissions.includes('expense.read_own');
+    return {
+      ...(input.role !== 'approver' ? { asPayer: payerAllowed ? signatureQueueStep(await this.repo.listSubstituteReceiptsAwaitingSignature(
+        ctx.companyId, { step: 'PAYER', userId: ctx.userId, branchIds }, input.limit), 'PAYER') : none } : {}),
+      ...(input.role !== 'payer' ? { asApprover: ctx.permissions.includes('expense.confirm') ? await this.approverStep(ctx, input.limit) : none } : {}),
+    };
+  }
+
+  private async approverStep(ctx: RequestContext, limit: number): Promise<SubstituteReceiptSignatureQueueStep> {
+    const policy = await this.repo.getSubstituteReceiptPolicy(ctx.companyId);
+    const approvalMode = policy?.approvalMode ?? 'OWNER_SELF';
+    // No branch here on purpose: the caller's own branch scope below is the same membership scope the
+    // per-branch eligibility list checks, so only "an active role with expense.confirm" is left to prove.
+    const eligible = new Set((await this.repo.listEligibleSubstituteReceiptApprovers(ctx.companyId)).map((approver) => approver.userId));
+    if (!isEligibleSubstituteReceiptApprover(ctx.userId, approvalMode, policy?.approverUserIds, eligible)) return { count: 0, items: [] };
+    const branchIds = ctx.scopes?.branchIds;
+    const corrections = await this.repo.listPendingSubstituteCorrections(ctx.companyId, branchIds);
+    return signatureQueueStep(await this.repo.listSubstituteReceiptsAwaitingSignature(ctx.companyId, {
+      step: 'APPROVER', userId: ctx.userId, branchIds,
+      excludeSelf: !selfApprovalPermitted(approvalMode, ctx.roles),
+      excludeEvidenceIds: corrections.filter((row) => row.originalApproverUserId !== ctx.userId).map((row) => row.id),
+    }, limit), 'APPROVER');
   }
 }
 

@@ -59,6 +59,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -272,6 +273,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -466,6 +468,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -677,6 +680,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -878,6 +882,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -1090,6 +1095,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -1301,6 +1307,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -1499,6 +1506,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -1831,6 +1839,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -2026,6 +2035,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -2219,6 +2229,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -2413,6 +2424,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -2614,6 +2626,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -2825,6 +2838,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -3034,6 +3048,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -3225,6 +3240,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -3434,6 +3450,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -3644,6 +3661,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -3851,6 +3869,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -4048,6 +4067,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -4248,6 +4268,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -4448,6 +4469,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -4647,6 +4669,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -4846,6 +4869,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -5043,6 +5067,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -5253,6 +5278,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -5452,6 +5478,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -5651,6 +5678,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -5861,6 +5889,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -6068,6 +6097,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -6265,6 +6295,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -6464,6 +6495,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -6661,6 +6693,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -6858,6 +6891,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -7056,6 +7090,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -7291,6 +7326,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -7521,6 +7557,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -7755,6 +7792,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -7985,6 +8023,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -8213,6 +8252,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -8452,6 +8492,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -8677,6 +8718,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -8983,6 +9025,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -9201,6 +9244,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -9418,6 +9462,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -9647,6 +9692,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -9881,6 +9927,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -10096,6 +10143,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -10330,6 +10378,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -10658,6 +10707,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -10874,6 +10924,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -11094,6 +11145,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -11308,6 +11360,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -11612,6 +11665,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -11829,6 +11883,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -12060,6 +12115,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -12277,6 +12333,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -12519,6 +12576,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -12750,6 +12808,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -12973,6 +13032,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -13199,6 +13259,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -13424,6 +13485,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -13652,6 +13714,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -13866,6 +13929,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -14083,6 +14147,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -14277,6 +14342,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -14471,6 +14537,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -14666,6 +14733,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -14860,6 +14928,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -15051,6 +15120,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -15243,6 +15313,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -15435,6 +15506,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -15628,6 +15700,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -15834,6 +15907,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -16032,6 +16106,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -16224,6 +16299,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -16416,6 +16492,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -16608,6 +16685,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -16800,6 +16878,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -16991,6 +17070,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -17183,6 +17263,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -17375,6 +17456,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -17567,6 +17649,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -17760,6 +17843,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -17953,6 +18037,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -18145,6 +18230,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -18337,6 +18423,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -18529,6 +18616,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -18721,6 +18809,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -18915,6 +19004,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -19125,6 +19215,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -19335,6 +19426,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -19539,6 +19631,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -19758,6 +19851,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -19952,6 +20046,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -20162,6 +20257,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -20355,6 +20451,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -20676,6 +20773,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -20876,6 +20974,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -21086,6 +21185,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -21280,6 +21380,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -21473,6 +21574,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -21665,6 +21767,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -21873,6 +21976,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -22077,6 +22181,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -22270,6 +22375,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -22463,6 +22569,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -22662,6 +22769,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -22856,6 +22964,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -23063,6 +23172,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -23257,6 +23367,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -23456,6 +23567,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -23649,6 +23761,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -23841,6 +23954,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -24044,6 +24158,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -24236,6 +24351,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -24431,6 +24547,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -24628,6 +24745,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -24910,6 +25028,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -25113,6 +25232,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -25316,6 +25436,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -25520,6 +25641,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -25723,6 +25845,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -25928,6 +26051,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -26132,6 +26256,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -26336,6 +26461,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -26540,6 +26666,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -26744,6 +26871,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -26947,6 +27075,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -27152,6 +27281,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -27356,6 +27486,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -27685,6 +27816,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -27890,6 +28022,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -28102,6 +28235,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -28294,6 +28428,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -28498,6 +28633,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -28700,6 +28836,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -28904,6 +29041,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -29107,6 +29245,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -29311,6 +29450,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -29515,6 +29655,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -29718,6 +29859,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -29922,6 +30064,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -30126,6 +30269,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -30319,6 +30463,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -30525,6 +30670,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -30729,6 +30875,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -30924,6 +31071,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -31137,6 +31285,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -31331,6 +31480,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -31542,6 +31692,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -31743,6 +31894,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -31955,6 +32107,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -32166,6 +32319,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -32364,6 +32518,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -32696,6 +32851,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -32891,6 +33047,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -33084,6 +33241,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -33278,6 +33436,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -33479,6 +33638,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -33690,6 +33850,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -33900,6 +34061,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -34135,6 +34297,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -34365,6 +34528,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -34599,6 +34763,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -34829,6 +34994,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -35057,6 +35223,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -35296,6 +35463,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -35521,6 +35689,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -35827,6 +35996,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -36045,6 +36215,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -36262,6 +36433,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -36491,6 +36663,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -36725,6 +36898,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -36940,6 +37114,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -37174,6 +37349,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -37502,6 +37678,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -37718,6 +37895,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -37938,6 +38116,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -38152,6 +38331,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -38456,6 +38636,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -38672,6 +38853,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -38865,6 +39047,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -39096,6 +39279,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -39301,6 +39485,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -39506,6 +39691,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -39699,6 +39885,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -39893,6 +40080,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -40087,6 +40275,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -40282,6 +40471,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -40476,6 +40666,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -40667,6 +40858,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -40859,6 +41051,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -41051,6 +41244,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -41244,6 +41438,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -41450,6 +41645,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -41648,6 +41844,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -41840,6 +42037,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -42032,6 +42230,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -42224,6 +42423,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -42416,6 +42616,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -42610,6 +42811,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -42820,6 +43022,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -43030,6 +43233,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -43234,6 +43438,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -43453,6 +43658,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -43647,6 +43853,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -43857,6 +44064,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -44050,6 +44258,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -44371,6 +44580,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -44572,6 +44782,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -44775,6 +44986,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -44978,6 +45190,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -45182,6 +45395,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -45385,6 +45599,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -45590,6 +45805,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -45794,6 +46010,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -45998,6 +46215,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -46202,6 +46420,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -46406,6 +46625,7 @@
           "crm.opportunity.read",
           "crm.report.read",
           "dashboard.read",
+          "expense.confirm",
           "expense.create",
           "expense.read",
           "expense.read_own",
@@ -47394,6 +47614,14 @@
             "model": "permission",
             "data": {
               "id": "w14-permission-024",
+              "key": "expense.confirm",
+              "description": "W14 synthetic permission expense.confirm"
+            }
+          },
+          {
+            "model": "permission",
+            "data": {
+              "id": "w14-permission-025",
               "key": "expense.create",
               "description": "W14 synthetic permission expense.create"
             }
@@ -47401,7 +47629,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-025",
+              "id": "w14-permission-026",
               "key": "expense.read",
               "description": "W14 synthetic permission expense.read"
             }
@@ -47409,7 +47637,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-026",
+              "id": "w14-permission-027",
               "key": "expense.read_own",
               "description": "W14 synthetic permission expense.read_own"
             }
@@ -47417,7 +47645,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-027",
+              "id": "w14-permission-028",
               "key": "expense.read_related",
               "description": "W14 synthetic permission expense.read_related"
             }
@@ -47425,7 +47653,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-028",
+              "id": "w14-permission-029",
               "key": "expense.receipt.line_upload",
               "description": "W14 synthetic permission expense.receipt.line_upload"
             }
@@ -47433,7 +47661,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-029",
+              "id": "w14-permission-030",
               "key": "expense.receipt.upload",
               "description": "W14 synthetic permission expense.receipt.upload"
             }
@@ -47441,7 +47669,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-030",
+              "id": "w14-permission-031",
               "key": "expense.review",
               "description": "W14 synthetic permission expense.review"
             }
@@ -47449,7 +47677,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-031",
+              "id": "w14-permission-032",
               "key": "expense.update",
               "description": "W14 synthetic permission expense.update"
             }
@@ -47457,7 +47685,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-032",
+              "id": "w14-permission-033",
               "key": "hr.leave.read",
               "description": "W14 synthetic permission hr.leave.read"
             }
@@ -47465,7 +47693,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-033",
+              "id": "w14-permission-034",
               "key": "inventory.movement.read",
               "description": "W14 synthetic permission inventory.movement.read"
             }
@@ -47473,7 +47701,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-034",
+              "id": "w14-permission-035",
               "key": "inventory.product.read",
               "description": "W14 synthetic permission inventory.product.read"
             }
@@ -47481,7 +47709,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-035",
+              "id": "w14-permission-036",
               "key": "inventory.report.read",
               "description": "W14 synthetic permission inventory.report.read"
             }
@@ -47489,7 +47717,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-036",
+              "id": "w14-permission-037",
               "key": "ledger.journal.read",
               "description": "W14 synthetic permission ledger.journal.read"
             }
@@ -47497,7 +47725,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-037",
+              "id": "w14-permission-038",
               "key": "ledger.period.read",
               "description": "W14 synthetic permission ledger.period.read"
             }
@@ -47505,7 +47733,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-038",
+              "id": "w14-permission-039",
               "key": "ledger.report.read",
               "description": "W14 synthetic permission ledger.report.read"
             }
@@ -47513,7 +47741,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-039",
+              "id": "w14-permission-040",
               "key": "line.ai.query",
               "description": "W14 synthetic permission line.ai.query"
             }
@@ -47521,7 +47749,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-040",
+              "id": "w14-permission-041",
               "key": "notification.read",
               "description": "W14 synthetic permission notification.read"
             }
@@ -47529,7 +47757,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-041",
+              "id": "w14-permission-042",
               "key": "procurement.ap.report",
               "description": "W14 synthetic permission procurement.ap.report"
             }
@@ -47537,7 +47765,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-042",
+              "id": "w14-permission-043",
               "key": "procurement.purchase_order.read",
               "description": "W14 synthetic permission procurement.purchase_order.read"
             }
@@ -47545,7 +47773,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-043",
+              "id": "w14-permission-044",
               "key": "procurement.purchase_order.read_related",
               "description": "W14 synthetic permission procurement.purchase_order.read_related"
             }
@@ -47553,7 +47781,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-044",
+              "id": "w14-permission-045",
               "key": "procurement.supplier.read",
               "description": "W14 synthetic permission procurement.supplier.read"
             }
@@ -47561,7 +47789,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-045",
+              "id": "w14-permission-046",
               "key": "reimbursement.approve",
               "description": "W14 synthetic permission reimbursement.approve"
             }
@@ -47569,7 +47797,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-046",
+              "id": "w14-permission-047",
               "key": "reimbursement.create",
               "description": "W14 synthetic permission reimbursement.create"
             }
@@ -47577,7 +47805,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-047",
+              "id": "w14-permission-048",
               "key": "reimbursement.finance_review",
               "description": "W14 synthetic permission reimbursement.finance_review"
             }
@@ -47585,7 +47813,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-048",
+              "id": "w14-permission-049",
               "key": "reimbursement.read",
               "description": "W14 synthetic permission reimbursement.read"
             }
@@ -47593,7 +47821,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-049",
+              "id": "w14-permission-050",
               "key": "reimbursement.read_own",
               "description": "W14 synthetic permission reimbursement.read_own"
             }
@@ -47601,7 +47829,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-050",
+              "id": "w14-permission-051",
               "key": "reimbursement.read_related",
               "description": "W14 synthetic permission reimbursement.read_related"
             }
@@ -47609,7 +47837,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-051",
+              "id": "w14-permission-052",
               "key": "reimbursement.update_own_draft",
               "description": "W14 synthetic permission reimbursement.update_own_draft"
             }
@@ -47617,7 +47845,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-052",
+              "id": "w14-permission-053",
               "key": "report.catalog.read",
               "description": "W14 synthetic permission report.catalog.read"
             }
@@ -47625,7 +47853,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-053",
+              "id": "w14-permission-054",
               "key": "report.dataset.read",
               "description": "W14 synthetic permission report.dataset.read"
             }
@@ -47633,7 +47861,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-054",
+              "id": "w14-permission-055",
               "key": "report.query.run",
               "description": "W14 synthetic permission report.query.run"
             }
@@ -47641,7 +47869,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-055",
+              "id": "w14-permission-056",
               "key": "tax.config.read",
               "description": "W14 synthetic permission tax.config.read"
             }
@@ -47649,7 +47877,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-056",
+              "id": "w14-permission-057",
               "key": "tax.event.read",
               "description": "W14 synthetic permission tax.event.read"
             }
@@ -47657,7 +47885,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-057",
+              "id": "w14-permission-058",
               "key": "tax.period.read",
               "description": "W14 synthetic permission tax.period.read"
             }
@@ -47665,7 +47893,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-058",
+              "id": "w14-permission-059",
               "key": "tax.profile.read",
               "description": "W14 synthetic permission tax.profile.read"
             }
@@ -47673,7 +47901,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-059",
+              "id": "w14-permission-060",
               "key": "tax.report.read",
               "description": "W14 synthetic permission tax.report.read"
             }
@@ -47681,7 +47909,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-060",
+              "id": "w14-permission-061",
               "key": "tax.review_issue.read",
               "description": "W14 synthetic permission tax.review_issue.read"
             }
@@ -47689,7 +47917,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-061",
+              "id": "w14-permission-062",
               "key": "workflow.rule.read",
               "description": "W14 synthetic permission workflow.rule.read"
             }
@@ -47697,7 +47925,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-062",
+              "id": "w14-permission-063",
               "key": "workflow.run.read",
               "description": "W14 synthetic permission workflow.run.read"
             }
@@ -47705,7 +47933,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-063",
+              "id": "w14-permission-064",
               "key": "workflow.task.read",
               "description": "W14 synthetic permission workflow.task.read"
             }
@@ -47909,6 +48137,9 @@
                   },
                   {
                     "permissionId": "w14-permission-063"
+                  },
+                  {
+                    "permissionId": "w14-permission-064"
                   }
                 ]
               }
@@ -49473,6 +49704,14 @@
             "model": "permission",
             "data": {
               "id": "w14-permission-024",
+              "key": "expense.confirm",
+              "description": "W14 synthetic permission expense.confirm"
+            }
+          },
+          {
+            "model": "permission",
+            "data": {
+              "id": "w14-permission-025",
               "key": "expense.create",
               "description": "W14 synthetic permission expense.create"
             }
@@ -49480,7 +49719,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-025",
+              "id": "w14-permission-026",
               "key": "expense.read",
               "description": "W14 synthetic permission expense.read"
             }
@@ -49488,7 +49727,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-026",
+              "id": "w14-permission-027",
               "key": "expense.read_own",
               "description": "W14 synthetic permission expense.read_own"
             }
@@ -49496,7 +49735,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-027",
+              "id": "w14-permission-028",
               "key": "expense.read_related",
               "description": "W14 synthetic permission expense.read_related"
             }
@@ -49504,7 +49743,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-028",
+              "id": "w14-permission-029",
               "key": "expense.receipt.line_upload",
               "description": "W14 synthetic permission expense.receipt.line_upload"
             }
@@ -49512,7 +49751,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-029",
+              "id": "w14-permission-030",
               "key": "expense.receipt.upload",
               "description": "W14 synthetic permission expense.receipt.upload"
             }
@@ -49520,7 +49759,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-030",
+              "id": "w14-permission-031",
               "key": "expense.review",
               "description": "W14 synthetic permission expense.review"
             }
@@ -49528,7 +49767,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-031",
+              "id": "w14-permission-032",
               "key": "expense.update",
               "description": "W14 synthetic permission expense.update"
             }
@@ -49536,7 +49775,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-032",
+              "id": "w14-permission-033",
               "key": "hr.leave.read",
               "description": "W14 synthetic permission hr.leave.read"
             }
@@ -49544,7 +49783,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-033",
+              "id": "w14-permission-034",
               "key": "inventory.movement.read",
               "description": "W14 synthetic permission inventory.movement.read"
             }
@@ -49552,7 +49791,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-034",
+              "id": "w14-permission-035",
               "key": "inventory.product.read",
               "description": "W14 synthetic permission inventory.product.read"
             }
@@ -49560,7 +49799,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-035",
+              "id": "w14-permission-036",
               "key": "inventory.report.read",
               "description": "W14 synthetic permission inventory.report.read"
             }
@@ -49568,7 +49807,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-036",
+              "id": "w14-permission-037",
               "key": "ledger.journal.read",
               "description": "W14 synthetic permission ledger.journal.read"
             }
@@ -49576,7 +49815,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-037",
+              "id": "w14-permission-038",
               "key": "ledger.period.read",
               "description": "W14 synthetic permission ledger.period.read"
             }
@@ -49584,7 +49823,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-038",
+              "id": "w14-permission-039",
               "key": "ledger.report.read",
               "description": "W14 synthetic permission ledger.report.read"
             }
@@ -49592,7 +49831,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-039",
+              "id": "w14-permission-040",
               "key": "line.ai.query",
               "description": "W14 synthetic permission line.ai.query"
             }
@@ -49600,7 +49839,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-040",
+              "id": "w14-permission-041",
               "key": "notification.read",
               "description": "W14 synthetic permission notification.read"
             }
@@ -49608,7 +49847,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-041",
+              "id": "w14-permission-042",
               "key": "procurement.ap.report",
               "description": "W14 synthetic permission procurement.ap.report"
             }
@@ -49616,7 +49855,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-042",
+              "id": "w14-permission-043",
               "key": "procurement.purchase_order.read",
               "description": "W14 synthetic permission procurement.purchase_order.read"
             }
@@ -49624,7 +49863,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-043",
+              "id": "w14-permission-044",
               "key": "procurement.purchase_order.read_related",
               "description": "W14 synthetic permission procurement.purchase_order.read_related"
             }
@@ -49632,7 +49871,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-044",
+              "id": "w14-permission-045",
               "key": "procurement.supplier.read",
               "description": "W14 synthetic permission procurement.supplier.read"
             }
@@ -49640,7 +49879,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-045",
+              "id": "w14-permission-046",
               "key": "reimbursement.approve",
               "description": "W14 synthetic permission reimbursement.approve"
             }
@@ -49648,7 +49887,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-046",
+              "id": "w14-permission-047",
               "key": "reimbursement.create",
               "description": "W14 synthetic permission reimbursement.create"
             }
@@ -49656,7 +49895,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-047",
+              "id": "w14-permission-048",
               "key": "reimbursement.finance_review",
               "description": "W14 synthetic permission reimbursement.finance_review"
             }
@@ -49664,7 +49903,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-048",
+              "id": "w14-permission-049",
               "key": "reimbursement.read",
               "description": "W14 synthetic permission reimbursement.read"
             }
@@ -49672,7 +49911,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-049",
+              "id": "w14-permission-050",
               "key": "reimbursement.read_own",
               "description": "W14 synthetic permission reimbursement.read_own"
             }
@@ -49680,7 +49919,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-050",
+              "id": "w14-permission-051",
               "key": "reimbursement.read_related",
               "description": "W14 synthetic permission reimbursement.read_related"
             }
@@ -49688,7 +49927,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-051",
+              "id": "w14-permission-052",
               "key": "reimbursement.update_own_draft",
               "description": "W14 synthetic permission reimbursement.update_own_draft"
             }
@@ -49696,7 +49935,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-052",
+              "id": "w14-permission-053",
               "key": "report.catalog.read",
               "description": "W14 synthetic permission report.catalog.read"
             }
@@ -49704,7 +49943,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-053",
+              "id": "w14-permission-054",
               "key": "report.dataset.read",
               "description": "W14 synthetic permission report.dataset.read"
             }
@@ -49712,7 +49951,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-054",
+              "id": "w14-permission-055",
               "key": "report.query.run",
               "description": "W14 synthetic permission report.query.run"
             }
@@ -49720,7 +49959,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-055",
+              "id": "w14-permission-056",
               "key": "tax.config.read",
               "description": "W14 synthetic permission tax.config.read"
             }
@@ -49728,7 +49967,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-056",
+              "id": "w14-permission-057",
               "key": "tax.event.read",
               "description": "W14 synthetic permission tax.event.read"
             }
@@ -49736,7 +49975,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-057",
+              "id": "w14-permission-058",
               "key": "tax.period.read",
               "description": "W14 synthetic permission tax.period.read"
             }
@@ -49744,7 +49983,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-058",
+              "id": "w14-permission-059",
               "key": "tax.profile.read",
               "description": "W14 synthetic permission tax.profile.read"
             }
@@ -49752,7 +49991,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-059",
+              "id": "w14-permission-060",
               "key": "tax.report.read",
               "description": "W14 synthetic permission tax.report.read"
             }
@@ -49760,7 +49999,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-060",
+              "id": "w14-permission-061",
               "key": "tax.review_issue.read",
               "description": "W14 synthetic permission tax.review_issue.read"
             }
@@ -49768,7 +50007,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-061",
+              "id": "w14-permission-062",
               "key": "workflow.rule.read",
               "description": "W14 synthetic permission workflow.rule.read"
             }
@@ -49776,7 +50015,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-062",
+              "id": "w14-permission-063",
               "key": "workflow.run.read",
               "description": "W14 synthetic permission workflow.run.read"
             }
@@ -49784,7 +50023,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-063",
+              "id": "w14-permission-064",
               "key": "workflow.task.read",
               "description": "W14 synthetic permission workflow.task.read"
             }
@@ -49988,6 +50227,9 @@
                   },
                   {
                     "permissionId": "w14-permission-063"
+                  },
+                  {
+                    "permissionId": "w14-permission-064"
                   }
                 ]
               }
@@ -51558,6 +51800,14 @@
             "model": "permission",
             "data": {
               "id": "w14-permission-024",
+              "key": "expense.confirm",
+              "description": "W14 synthetic permission expense.confirm"
+            }
+          },
+          {
+            "model": "permission",
+            "data": {
+              "id": "w14-permission-025",
               "key": "expense.create",
               "description": "W14 synthetic permission expense.create"
             }
@@ -51565,7 +51815,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-025",
+              "id": "w14-permission-026",
               "key": "expense.read",
               "description": "W14 synthetic permission expense.read"
             }
@@ -51573,7 +51823,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-026",
+              "id": "w14-permission-027",
               "key": "expense.read_own",
               "description": "W14 synthetic permission expense.read_own"
             }
@@ -51581,7 +51831,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-027",
+              "id": "w14-permission-028",
               "key": "expense.read_related",
               "description": "W14 synthetic permission expense.read_related"
             }
@@ -51589,7 +51839,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-028",
+              "id": "w14-permission-029",
               "key": "expense.receipt.line_upload",
               "description": "W14 synthetic permission expense.receipt.line_upload"
             }
@@ -51597,7 +51847,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-029",
+              "id": "w14-permission-030",
               "key": "expense.receipt.upload",
               "description": "W14 synthetic permission expense.receipt.upload"
             }
@@ -51605,7 +51855,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-030",
+              "id": "w14-permission-031",
               "key": "expense.review",
               "description": "W14 synthetic permission expense.review"
             }
@@ -51613,7 +51863,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-031",
+              "id": "w14-permission-032",
               "key": "expense.update",
               "description": "W14 synthetic permission expense.update"
             }
@@ -51621,7 +51871,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-032",
+              "id": "w14-permission-033",
               "key": "hr.leave.read",
               "description": "W14 synthetic permission hr.leave.read"
             }
@@ -51629,7 +51879,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-033",
+              "id": "w14-permission-034",
               "key": "inventory.movement.read",
               "description": "W14 synthetic permission inventory.movement.read"
             }
@@ -51637,7 +51887,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-034",
+              "id": "w14-permission-035",
               "key": "inventory.product.read",
               "description": "W14 synthetic permission inventory.product.read"
             }
@@ -51645,7 +51895,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-035",
+              "id": "w14-permission-036",
               "key": "inventory.report.read",
               "description": "W14 synthetic permission inventory.report.read"
             }
@@ -51653,7 +51903,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-036",
+              "id": "w14-permission-037",
               "key": "ledger.journal.read",
               "description": "W14 synthetic permission ledger.journal.read"
             }
@@ -51661,7 +51911,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-037",
+              "id": "w14-permission-038",
               "key": "ledger.period.read",
               "description": "W14 synthetic permission ledger.period.read"
             }
@@ -51669,7 +51919,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-038",
+              "id": "w14-permission-039",
               "key": "ledger.report.read",
               "description": "W14 synthetic permission ledger.report.read"
             }
@@ -51677,7 +51927,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-039",
+              "id": "w14-permission-040",
               "key": "line.ai.query",
               "description": "W14 synthetic permission line.ai.query"
             }
@@ -51685,7 +51935,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-040",
+              "id": "w14-permission-041",
               "key": "notification.read",
               "description": "W14 synthetic permission notification.read"
             }
@@ -51693,7 +51943,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-041",
+              "id": "w14-permission-042",
               "key": "procurement.ap.report",
               "description": "W14 synthetic permission procurement.ap.report"
             }
@@ -51701,7 +51951,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-042",
+              "id": "w14-permission-043",
               "key": "procurement.purchase_order.read",
               "description": "W14 synthetic permission procurement.purchase_order.read"
             }
@@ -51709,7 +51959,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-043",
+              "id": "w14-permission-044",
               "key": "procurement.purchase_order.read_related",
               "description": "W14 synthetic permission procurement.purchase_order.read_related"
             }
@@ -51717,7 +51967,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-044",
+              "id": "w14-permission-045",
               "key": "procurement.supplier.read",
               "description": "W14 synthetic permission procurement.supplier.read"
             }
@@ -51725,7 +51975,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-045",
+              "id": "w14-permission-046",
               "key": "reimbursement.approve",
               "description": "W14 synthetic permission reimbursement.approve"
             }
@@ -51733,7 +51983,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-046",
+              "id": "w14-permission-047",
               "key": "reimbursement.create",
               "description": "W14 synthetic permission reimbursement.create"
             }
@@ -51741,7 +51991,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-047",
+              "id": "w14-permission-048",
               "key": "reimbursement.finance_review",
               "description": "W14 synthetic permission reimbursement.finance_review"
             }
@@ -51749,7 +51999,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-048",
+              "id": "w14-permission-049",
               "key": "reimbursement.read",
               "description": "W14 synthetic permission reimbursement.read"
             }
@@ -51757,7 +52007,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-049",
+              "id": "w14-permission-050",
               "key": "reimbursement.read_own",
               "description": "W14 synthetic permission reimbursement.read_own"
             }
@@ -51765,7 +52015,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-050",
+              "id": "w14-permission-051",
               "key": "reimbursement.read_related",
               "description": "W14 synthetic permission reimbursement.read_related"
             }
@@ -51773,7 +52023,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-051",
+              "id": "w14-permission-052",
               "key": "reimbursement.update_own_draft",
               "description": "W14 synthetic permission reimbursement.update_own_draft"
             }
@@ -51781,7 +52031,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-052",
+              "id": "w14-permission-053",
               "key": "report.catalog.read",
               "description": "W14 synthetic permission report.catalog.read"
             }
@@ -51789,7 +52039,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-053",
+              "id": "w14-permission-054",
               "key": "report.dataset.read",
               "description": "W14 synthetic permission report.dataset.read"
             }
@@ -51797,7 +52047,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-054",
+              "id": "w14-permission-055",
               "key": "report.query.run",
               "description": "W14 synthetic permission report.query.run"
             }
@@ -51805,7 +52055,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-055",
+              "id": "w14-permission-056",
               "key": "tax.config.read",
               "description": "W14 synthetic permission tax.config.read"
             }
@@ -51813,7 +52063,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-056",
+              "id": "w14-permission-057",
               "key": "tax.event.read",
               "description": "W14 synthetic permission tax.event.read"
             }
@@ -51821,7 +52071,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-057",
+              "id": "w14-permission-058",
               "key": "tax.period.read",
               "description": "W14 synthetic permission tax.period.read"
             }
@@ -51829,7 +52079,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-058",
+              "id": "w14-permission-059",
               "key": "tax.profile.read",
               "description": "W14 synthetic permission tax.profile.read"
             }
@@ -51837,7 +52087,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-059",
+              "id": "w14-permission-060",
               "key": "tax.report.read",
               "description": "W14 synthetic permission tax.report.read"
             }
@@ -51845,7 +52095,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-060",
+              "id": "w14-permission-061",
               "key": "tax.review_issue.read",
               "description": "W14 synthetic permission tax.review_issue.read"
             }
@@ -51853,7 +52103,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-061",
+              "id": "w14-permission-062",
               "key": "workflow.rule.read",
               "description": "W14 synthetic permission workflow.rule.read"
             }
@@ -51861,7 +52111,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-062",
+              "id": "w14-permission-063",
               "key": "workflow.run.read",
               "description": "W14 synthetic permission workflow.run.read"
             }
@@ -51869,7 +52119,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-063",
+              "id": "w14-permission-064",
               "key": "workflow.task.read",
               "description": "W14 synthetic permission workflow.task.read"
             }
@@ -52073,6 +52323,9 @@
                   },
                   {
                     "permissionId": "w14-permission-063"
+                  },
+                  {
+                    "permissionId": "w14-permission-064"
                   }
                 ]
               }
@@ -53637,6 +53890,14 @@
             "model": "permission",
             "data": {
               "id": "w14-permission-024",
+              "key": "expense.confirm",
+              "description": "W14 synthetic permission expense.confirm"
+            }
+          },
+          {
+            "model": "permission",
+            "data": {
+              "id": "w14-permission-025",
               "key": "expense.create",
               "description": "W14 synthetic permission expense.create"
             }
@@ -53644,7 +53905,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-025",
+              "id": "w14-permission-026",
               "key": "expense.read",
               "description": "W14 synthetic permission expense.read"
             }
@@ -53652,7 +53913,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-026",
+              "id": "w14-permission-027",
               "key": "expense.read_own",
               "description": "W14 synthetic permission expense.read_own"
             }
@@ -53660,7 +53921,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-027",
+              "id": "w14-permission-028",
               "key": "expense.read_related",
               "description": "W14 synthetic permission expense.read_related"
             }
@@ -53668,7 +53929,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-028",
+              "id": "w14-permission-029",
               "key": "expense.receipt.line_upload",
               "description": "W14 synthetic permission expense.receipt.line_upload"
             }
@@ -53676,7 +53937,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-029",
+              "id": "w14-permission-030",
               "key": "expense.receipt.upload",
               "description": "W14 synthetic permission expense.receipt.upload"
             }
@@ -53684,7 +53945,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-030",
+              "id": "w14-permission-031",
               "key": "expense.review",
               "description": "W14 synthetic permission expense.review"
             }
@@ -53692,7 +53953,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-031",
+              "id": "w14-permission-032",
               "key": "expense.update",
               "description": "W14 synthetic permission expense.update"
             }
@@ -53700,7 +53961,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-032",
+              "id": "w14-permission-033",
               "key": "hr.leave.read",
               "description": "W14 synthetic permission hr.leave.read"
             }
@@ -53708,7 +53969,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-033",
+              "id": "w14-permission-034",
               "key": "inventory.movement.read",
               "description": "W14 synthetic permission inventory.movement.read"
             }
@@ -53716,7 +53977,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-034",
+              "id": "w14-permission-035",
               "key": "inventory.product.read",
               "description": "W14 synthetic permission inventory.product.read"
             }
@@ -53724,7 +53985,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-035",
+              "id": "w14-permission-036",
               "key": "inventory.report.read",
               "description": "W14 synthetic permission inventory.report.read"
             }
@@ -53732,7 +53993,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-036",
+              "id": "w14-permission-037",
               "key": "ledger.journal.read",
               "description": "W14 synthetic permission ledger.journal.read"
             }
@@ -53740,7 +54001,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-037",
+              "id": "w14-permission-038",
               "key": "ledger.period.read",
               "description": "W14 synthetic permission ledger.period.read"
             }
@@ -53748,7 +54009,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-038",
+              "id": "w14-permission-039",
               "key": "ledger.report.read",
               "description": "W14 synthetic permission ledger.report.read"
             }
@@ -53756,7 +54017,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-039",
+              "id": "w14-permission-040",
               "key": "line.ai.query",
               "description": "W14 synthetic permission line.ai.query"
             }
@@ -53764,7 +54025,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-040",
+              "id": "w14-permission-041",
               "key": "notification.read",
               "description": "W14 synthetic permission notification.read"
             }
@@ -53772,7 +54033,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-041",
+              "id": "w14-permission-042",
               "key": "procurement.ap.report",
               "description": "W14 synthetic permission procurement.ap.report"
             }
@@ -53780,7 +54041,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-042",
+              "id": "w14-permission-043",
               "key": "procurement.purchase_order.read",
               "description": "W14 synthetic permission procurement.purchase_order.read"
             }
@@ -53788,7 +54049,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-043",
+              "id": "w14-permission-044",
               "key": "procurement.purchase_order.read_related",
               "description": "W14 synthetic permission procurement.purchase_order.read_related"
             }
@@ -53796,7 +54057,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-044",
+              "id": "w14-permission-045",
               "key": "procurement.supplier.read",
               "description": "W14 synthetic permission procurement.supplier.read"
             }
@@ -53804,7 +54065,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-045",
+              "id": "w14-permission-046",
               "key": "reimbursement.approve",
               "description": "W14 synthetic permission reimbursement.approve"
             }
@@ -53812,7 +54073,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-046",
+              "id": "w14-permission-047",
               "key": "reimbursement.create",
               "description": "W14 synthetic permission reimbursement.create"
             }
@@ -53820,7 +54081,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-047",
+              "id": "w14-permission-048",
               "key": "reimbursement.finance_review",
               "description": "W14 synthetic permission reimbursement.finance_review"
             }
@@ -53828,7 +54089,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-048",
+              "id": "w14-permission-049",
               "key": "reimbursement.read",
               "description": "W14 synthetic permission reimbursement.read"
             }
@@ -53836,7 +54097,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-049",
+              "id": "w14-permission-050",
               "key": "reimbursement.read_own",
               "description": "W14 synthetic permission reimbursement.read_own"
             }
@@ -53844,7 +54105,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-050",
+              "id": "w14-permission-051",
               "key": "reimbursement.read_related",
               "description": "W14 synthetic permission reimbursement.read_related"
             }
@@ -53852,7 +54113,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-051",
+              "id": "w14-permission-052",
               "key": "reimbursement.update_own_draft",
               "description": "W14 synthetic permission reimbursement.update_own_draft"
             }
@@ -53860,7 +54121,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-052",
+              "id": "w14-permission-053",
               "key": "report.catalog.read",
               "description": "W14 synthetic permission report.catalog.read"
             }
@@ -53868,7 +54129,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-053",
+              "id": "w14-permission-054",
               "key": "report.dataset.read",
               "description": "W14 synthetic permission report.dataset.read"
             }
@@ -53876,7 +54137,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-054",
+              "id": "w14-permission-055",
               "key": "report.query.run",
               "description": "W14 synthetic permission report.query.run"
             }
@@ -53884,7 +54145,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-055",
+              "id": "w14-permission-056",
               "key": "tax.config.read",
               "description": "W14 synthetic permission tax.config.read"
             }
@@ -53892,7 +54153,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-056",
+              "id": "w14-permission-057",
               "key": "tax.event.read",
               "description": "W14 synthetic permission tax.event.read"
             }
@@ -53900,7 +54161,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-057",
+              "id": "w14-permission-058",
               "key": "tax.period.read",
               "description": "W14 synthetic permission tax.period.read"
             }
@@ -53908,7 +54169,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-058",
+              "id": "w14-permission-059",
               "key": "tax.profile.read",
               "description": "W14 synthetic permission tax.profile.read"
             }
@@ -53916,7 +54177,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-059",
+              "id": "w14-permission-060",
               "key": "tax.report.read",
               "description": "W14 synthetic permission tax.report.read"
             }
@@ -53924,7 +54185,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-060",
+              "id": "w14-permission-061",
               "key": "tax.review_issue.read",
               "description": "W14 synthetic permission tax.review_issue.read"
             }
@@ -53932,7 +54193,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-061",
+              "id": "w14-permission-062",
               "key": "workflow.rule.read",
               "description": "W14 synthetic permission workflow.rule.read"
             }
@@ -53940,7 +54201,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-062",
+              "id": "w14-permission-063",
               "key": "workflow.run.read",
               "description": "W14 synthetic permission workflow.run.read"
             }
@@ -53948,7 +54209,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-063",
+              "id": "w14-permission-064",
               "key": "workflow.task.read",
               "description": "W14 synthetic permission workflow.task.read"
             }
@@ -54152,6 +54413,9 @@
                   },
                   {
                     "permissionId": "w14-permission-063"
+                  },
+                  {
+                    "permissionId": "w14-permission-064"
                   }
                 ]
               }
@@ -55722,6 +55986,14 @@
             "model": "permission",
             "data": {
               "id": "w14-permission-024",
+              "key": "expense.confirm",
+              "description": "W14 synthetic permission expense.confirm"
+            }
+          },
+          {
+            "model": "permission",
+            "data": {
+              "id": "w14-permission-025",
               "key": "expense.create",
               "description": "W14 synthetic permission expense.create"
             }
@@ -55729,7 +56001,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-025",
+              "id": "w14-permission-026",
               "key": "expense.read",
               "description": "W14 synthetic permission expense.read"
             }
@@ -55737,7 +56009,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-026",
+              "id": "w14-permission-027",
               "key": "expense.read_own",
               "description": "W14 synthetic permission expense.read_own"
             }
@@ -55745,7 +56017,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-027",
+              "id": "w14-permission-028",
               "key": "expense.read_related",
               "description": "W14 synthetic permission expense.read_related"
             }
@@ -55753,7 +56025,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-028",
+              "id": "w14-permission-029",
               "key": "expense.receipt.line_upload",
               "description": "W14 synthetic permission expense.receipt.line_upload"
             }
@@ -55761,7 +56033,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-029",
+              "id": "w14-permission-030",
               "key": "expense.receipt.upload",
               "description": "W14 synthetic permission expense.receipt.upload"
             }
@@ -55769,7 +56041,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-030",
+              "id": "w14-permission-031",
               "key": "expense.review",
               "description": "W14 synthetic permission expense.review"
             }
@@ -55777,7 +56049,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-031",
+              "id": "w14-permission-032",
               "key": "expense.update",
               "description": "W14 synthetic permission expense.update"
             }
@@ -55785,7 +56057,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-032",
+              "id": "w14-permission-033",
               "key": "hr.leave.read",
               "description": "W14 synthetic permission hr.leave.read"
             }
@@ -55793,7 +56065,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-033",
+              "id": "w14-permission-034",
               "key": "inventory.movement.read",
               "description": "W14 synthetic permission inventory.movement.read"
             }
@@ -55801,7 +56073,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-034",
+              "id": "w14-permission-035",
               "key": "inventory.product.read",
               "description": "W14 synthetic permission inventory.product.read"
             }
@@ -55809,7 +56081,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-035",
+              "id": "w14-permission-036",
               "key": "inventory.report.read",
               "description": "W14 synthetic permission inventory.report.read"
             }
@@ -55817,7 +56089,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-036",
+              "id": "w14-permission-037",
               "key": "ledger.journal.read",
               "description": "W14 synthetic permission ledger.journal.read"
             }
@@ -55825,7 +56097,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-037",
+              "id": "w14-permission-038",
               "key": "ledger.period.read",
               "description": "W14 synthetic permission ledger.period.read"
             }
@@ -55833,7 +56105,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-038",
+              "id": "w14-permission-039",
               "key": "ledger.report.read",
               "description": "W14 synthetic permission ledger.report.read"
             }
@@ -55841,7 +56113,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-039",
+              "id": "w14-permission-040",
               "key": "line.ai.query",
               "description": "W14 synthetic permission line.ai.query"
             }
@@ -55849,7 +56121,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-040",
+              "id": "w14-permission-041",
               "key": "notification.read",
               "description": "W14 synthetic permission notification.read"
             }
@@ -55857,7 +56129,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-041",
+              "id": "w14-permission-042",
               "key": "procurement.ap.report",
               "description": "W14 synthetic permission procurement.ap.report"
             }
@@ -55865,7 +56137,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-042",
+              "id": "w14-permission-043",
               "key": "procurement.purchase_order.read",
               "description": "W14 synthetic permission procurement.purchase_order.read"
             }
@@ -55873,7 +56145,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-043",
+              "id": "w14-permission-044",
               "key": "procurement.purchase_order.read_related",
               "description": "W14 synthetic permission procurement.purchase_order.read_related"
             }
@@ -55881,7 +56153,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-044",
+              "id": "w14-permission-045",
               "key": "procurement.supplier.read",
               "description": "W14 synthetic permission procurement.supplier.read"
             }
@@ -55889,7 +56161,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-045",
+              "id": "w14-permission-046",
               "key": "reimbursement.approve",
               "description": "W14 synthetic permission reimbursement.approve"
             }
@@ -55897,7 +56169,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-046",
+              "id": "w14-permission-047",
               "key": "reimbursement.create",
               "description": "W14 synthetic permission reimbursement.create"
             }
@@ -55905,7 +56177,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-047",
+              "id": "w14-permission-048",
               "key": "reimbursement.finance_review",
               "description": "W14 synthetic permission reimbursement.finance_review"
             }
@@ -55913,7 +56185,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-048",
+              "id": "w14-permission-049",
               "key": "reimbursement.read",
               "description": "W14 synthetic permission reimbursement.read"
             }
@@ -55921,7 +56193,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-049",
+              "id": "w14-permission-050",
               "key": "reimbursement.read_own",
               "description": "W14 synthetic permission reimbursement.read_own"
             }
@@ -55929,7 +56201,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-050",
+              "id": "w14-permission-051",
               "key": "reimbursement.read_related",
               "description": "W14 synthetic permission reimbursement.read_related"
             }
@@ -55937,7 +56209,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-051",
+              "id": "w14-permission-052",
               "key": "reimbursement.update_own_draft",
               "description": "W14 synthetic permission reimbursement.update_own_draft"
             }
@@ -55945,7 +56217,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-052",
+              "id": "w14-permission-053",
               "key": "report.catalog.read",
               "description": "W14 synthetic permission report.catalog.read"
             }
@@ -55953,7 +56225,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-053",
+              "id": "w14-permission-054",
               "key": "report.dataset.read",
               "description": "W14 synthetic permission report.dataset.read"
             }
@@ -55961,7 +56233,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-054",
+              "id": "w14-permission-055",
               "key": "report.query.run",
               "description": "W14 synthetic permission report.query.run"
             }
@@ -55969,7 +56241,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-055",
+              "id": "w14-permission-056",
               "key": "tax.config.read",
               "description": "W14 synthetic permission tax.config.read"
             }
@@ -55977,7 +56249,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-056",
+              "id": "w14-permission-057",
               "key": "tax.event.read",
               "description": "W14 synthetic permission tax.event.read"
             }
@@ -55985,7 +56257,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-057",
+              "id": "w14-permission-058",
               "key": "tax.period.read",
               "description": "W14 synthetic permission tax.period.read"
             }
@@ -55993,7 +56265,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-058",
+              "id": "w14-permission-059",
               "key": "tax.profile.read",
               "description": "W14 synthetic permission tax.profile.read"
             }
@@ -56001,7 +56273,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-059",
+              "id": "w14-permission-060",
               "key": "tax.report.read",
               "description": "W14 synthetic permission tax.report.read"
             }
@@ -56009,7 +56281,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-060",
+              "id": "w14-permission-061",
               "key": "tax.review_issue.read",
               "description": "W14 synthetic permission tax.review_issue.read"
             }
@@ -56017,7 +56289,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-061",
+              "id": "w14-permission-062",
               "key": "workflow.rule.read",
               "description": "W14 synthetic permission workflow.rule.read"
             }
@@ -56025,7 +56297,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-062",
+              "id": "w14-permission-063",
               "key": "workflow.run.read",
               "description": "W14 synthetic permission workflow.run.read"
             }
@@ -56033,7 +56305,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-063",
+              "id": "w14-permission-064",
               "key": "workflow.task.read",
               "description": "W14 synthetic permission workflow.task.read"
             }
@@ -56237,6 +56509,9 @@
                   },
                   {
                     "permissionId": "w14-permission-063"
+                  },
+                  {
+                    "permissionId": "w14-permission-064"
                   }
                 ]
               }
@@ -57807,6 +58082,14 @@
             "model": "permission",
             "data": {
               "id": "w14-permission-024",
+              "key": "expense.confirm",
+              "description": "W14 synthetic permission expense.confirm"
+            }
+          },
+          {
+            "model": "permission",
+            "data": {
+              "id": "w14-permission-025",
               "key": "expense.create",
               "description": "W14 synthetic permission expense.create"
             }
@@ -57814,7 +58097,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-025",
+              "id": "w14-permission-026",
               "key": "expense.read",
               "description": "W14 synthetic permission expense.read"
             }
@@ -57822,7 +58105,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-026",
+              "id": "w14-permission-027",
               "key": "expense.read_own",
               "description": "W14 synthetic permission expense.read_own"
             }
@@ -57830,7 +58113,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-027",
+              "id": "w14-permission-028",
               "key": "expense.read_related",
               "description": "W14 synthetic permission expense.read_related"
             }
@@ -57838,7 +58121,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-028",
+              "id": "w14-permission-029",
               "key": "expense.receipt.line_upload",
               "description": "W14 synthetic permission expense.receipt.line_upload"
             }
@@ -57846,7 +58129,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-029",
+              "id": "w14-permission-030",
               "key": "expense.receipt.upload",
               "description": "W14 synthetic permission expense.receipt.upload"
             }
@@ -57854,7 +58137,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-030",
+              "id": "w14-permission-031",
               "key": "expense.review",
               "description": "W14 synthetic permission expense.review"
             }
@@ -57862,7 +58145,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-031",
+              "id": "w14-permission-032",
               "key": "expense.update",
               "description": "W14 synthetic permission expense.update"
             }
@@ -57870,7 +58153,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-032",
+              "id": "w14-permission-033",
               "key": "hr.leave.read",
               "description": "W14 synthetic permission hr.leave.read"
             }
@@ -57878,7 +58161,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-033",
+              "id": "w14-permission-034",
               "key": "inventory.movement.read",
               "description": "W14 synthetic permission inventory.movement.read"
             }
@@ -57886,7 +58169,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-034",
+              "id": "w14-permission-035",
               "key": "inventory.product.read",
               "description": "W14 synthetic permission inventory.product.read"
             }
@@ -57894,7 +58177,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-035",
+              "id": "w14-permission-036",
               "key": "inventory.report.read",
               "description": "W14 synthetic permission inventory.report.read"
             }
@@ -57902,7 +58185,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-036",
+              "id": "w14-permission-037",
               "key": "ledger.journal.read",
               "description": "W14 synthetic permission ledger.journal.read"
             }
@@ -57910,7 +58193,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-037",
+              "id": "w14-permission-038",
               "key": "ledger.period.read",
               "description": "W14 synthetic permission ledger.period.read"
             }
@@ -57918,7 +58201,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-038",
+              "id": "w14-permission-039",
               "key": "ledger.report.read",
               "description": "W14 synthetic permission ledger.report.read"
             }
@@ -57926,7 +58209,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-039",
+              "id": "w14-permission-040",
               "key": "line.ai.query",
               "description": "W14 synthetic permission line.ai.query"
             }
@@ -57934,7 +58217,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-040",
+              "id": "w14-permission-041",
               "key": "notification.read",
               "description": "W14 synthetic permission notification.read"
             }
@@ -57942,7 +58225,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-041",
+              "id": "w14-permission-042",
               "key": "procurement.ap.report",
               "description": "W14 synthetic permission procurement.ap.report"
             }
@@ -57950,7 +58233,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-042",
+              "id": "w14-permission-043",
               "key": "procurement.purchase_order.read",
               "description": "W14 synthetic permission procurement.purchase_order.read"
             }
@@ -57958,7 +58241,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-043",
+              "id": "w14-permission-044",
               "key": "procurement.purchase_order.read_related",
               "description": "W14 synthetic permission procurement.purchase_order.read_related"
             }
@@ -57966,7 +58249,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-044",
+              "id": "w14-permission-045",
               "key": "procurement.supplier.read",
               "description": "W14 synthetic permission procurement.supplier.read"
             }
@@ -57974,7 +58257,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-045",
+              "id": "w14-permission-046",
               "key": "reimbursement.approve",
               "description": "W14 synthetic permission reimbursement.approve"
             }
@@ -57982,7 +58265,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-046",
+              "id": "w14-permission-047",
               "key": "reimbursement.create",
               "description": "W14 synthetic permission reimbursement.create"
             }
@@ -57990,7 +58273,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-047",
+              "id": "w14-permission-048",
               "key": "reimbursement.finance_review",
               "description": "W14 synthetic permission reimbursement.finance_review"
             }
@@ -57998,7 +58281,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-048",
+              "id": "w14-permission-049",
               "key": "reimbursement.read",
               "description": "W14 synthetic permission reimbursement.read"
             }
@@ -58006,7 +58289,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-049",
+              "id": "w14-permission-050",
               "key": "reimbursement.read_own",
               "description": "W14 synthetic permission reimbursement.read_own"
             }
@@ -58014,7 +58297,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-050",
+              "id": "w14-permission-051",
               "key": "reimbursement.read_related",
               "description": "W14 synthetic permission reimbursement.read_related"
             }
@@ -58022,7 +58305,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-051",
+              "id": "w14-permission-052",
               "key": "reimbursement.update_own_draft",
               "description": "W14 synthetic permission reimbursement.update_own_draft"
             }
@@ -58030,7 +58313,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-052",
+              "id": "w14-permission-053",
               "key": "report.catalog.read",
               "description": "W14 synthetic permission report.catalog.read"
             }
@@ -58038,7 +58321,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-053",
+              "id": "w14-permission-054",
               "key": "report.dataset.read",
               "description": "W14 synthetic permission report.dataset.read"
             }
@@ -58046,7 +58329,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-054",
+              "id": "w14-permission-055",
               "key": "report.query.run",
               "description": "W14 synthetic permission report.query.run"
             }
@@ -58054,7 +58337,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-055",
+              "id": "w14-permission-056",
               "key": "tax.config.read",
               "description": "W14 synthetic permission tax.config.read"
             }
@@ -58062,7 +58345,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-056",
+              "id": "w14-permission-057",
               "key": "tax.event.read",
               "description": "W14 synthetic permission tax.event.read"
             }
@@ -58070,7 +58353,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-057",
+              "id": "w14-permission-058",
               "key": "tax.period.read",
               "description": "W14 synthetic permission tax.period.read"
             }
@@ -58078,7 +58361,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-058",
+              "id": "w14-permission-059",
               "key": "tax.profile.read",
               "description": "W14 synthetic permission tax.profile.read"
             }
@@ -58086,7 +58369,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-059",
+              "id": "w14-permission-060",
               "key": "tax.report.read",
               "description": "W14 synthetic permission tax.report.read"
             }
@@ -58094,7 +58377,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-060",
+              "id": "w14-permission-061",
               "key": "tax.review_issue.read",
               "description": "W14 synthetic permission tax.review_issue.read"
             }
@@ -58102,7 +58385,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-061",
+              "id": "w14-permission-062",
               "key": "workflow.rule.read",
               "description": "W14 synthetic permission workflow.rule.read"
             }
@@ -58110,7 +58393,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-062",
+              "id": "w14-permission-063",
               "key": "workflow.run.read",
               "description": "W14 synthetic permission workflow.run.read"
             }
@@ -58118,7 +58401,7 @@
           {
             "model": "permission",
             "data": {
-              "id": "w14-permission-063",
+              "id": "w14-permission-064",
               "key": "workflow.task.read",
               "description": "W14 synthetic permission workflow.task.read"
             }
@@ -58322,6 +58605,9 @@
                   },
                   {
                     "permissionId": "w14-permission-063"
+                  },
+                  {
+                    "permissionId": "w14-permission-064"
                   }
                 ]
               }
@@ -59085,12 +59371,12 @@
       }
     },
     "snapshotDigests": {
-      "w14-shared-active-no-assets": "d3fb0508d72b5950b69618a6d0cd65e0e1490c54ab48dede13ca476539160f25",
-      "w14-shared-active-receipt-clear": "24bb173c0a744acb83d7e47738d96d6d2ed49d72768d0e5b05284e87c1bf1e22",
-      "w14-shared-revoked-no-assets": "4cba727b65e9e0f95e31b40263d9bd9bc4cf1781fc95cef01f28e48e01d86033",
-      "w14-shared-active-document-unreadable": "629afe6c9095f18af99a80ee1ee1d738b68b52c12f12953a699a1de005db2abc",
-      "w14-shared-active-receipt-partial": "182cf9f3ee9f9c6f3265b51b2bbcdbdc830cfe85bbdc6738b0feb06cce4be39d",
-      "w14-shared-active-receipt-clear+receipt-partial": "bc7ada09f7006f45c2fb81e44e0c5b4f0629b7c9f97128ec56fc11904ace7d49"
+      "w14-shared-active-no-assets": "d4cb3cd42e9f6b8d9a88d7fa49eeaa43faa27880e3ed0251d3cb288417eea032",
+      "w14-shared-active-receipt-clear": "6a8f63676cdfba403f111df3d3dc78d35419fd27d4054a6995e627287c51a984",
+      "w14-shared-revoked-no-assets": "6d74827dea755834bb754ce685987204bf708f962767e87b9dd00199b0b12a58",
+      "w14-shared-active-document-unreadable": "969721dce324679deba722edfe01f13727c79ca6bc3d6bb9621136adcf43ec6e",
+      "w14-shared-active-receipt-partial": "c48fbb03586cc28f9a2d813748a2ab3902c141fb774071184a1b3330e4b55cb3",
+      "w14-shared-active-receipt-clear+receipt-partial": "ff91ec393cb50aa050c631d317d2787f1b05d2fb42579a268d606edf183861b4"
     }
   },
   "assetManifest": {
@@ -59126,5 +59412,5 @@
     }
   },
   "artifactDigestScope": "all_fields_except_artifactDigest",
-  "artifactDigest": "d1ca872dba0849ed7a8caa85597300c1719cc501c40ff23d0efb65950a986739"
+  "artifactDigest": "39eec2426d8f1c620737e1a5607d6d2f1dc45a888ac94939fc841a29ffd22edd"
 }

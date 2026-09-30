@@ -55,6 +55,7 @@ import { AccountingGetSummaryTool, AccountingListRecentDocumentsTool, Procuremen
 import { ExpenseGetDailyClosingTool } from '../../application/use-cases/erp-expense-daily-closing.use-case';
 import { ReportsMonthlySummaryTool } from '../../application/use-cases/erp-report-tools.use-case';
 import { ReimbursementListPendingApprovalsTool } from '../../application/use-cases/erp-reimbursement-tools.use-case';
+import { ExpenseListSubstituteReceiptsToSignTool } from '../../application/use-cases/erp-substitute-receipt-tools.use-case';
 import { CrmGetCustomerSummaryTool, CrmSearchCustomersTool, CrmGetCustomer360Tool } from '../../application/use-cases/erp-crm-tools.use-case';
 import {
   InventoryGetProductDetailTool,
@@ -211,6 +212,7 @@ export class InternalToolsController {
     private readonly expenseBreakdown: ExpenseGetBreakdownTool,
     private readonly expenseDailyClosing: ExpenseGetDailyClosingTool,
     private readonly reimbursementPendingApprovals: ReimbursementListPendingApprovalsTool,
+    private readonly substituteReceiptsToSign: ExpenseListSubstituteReceiptsToSignTool,
     private readonly customerSummary: CrmGetCustomerSummaryTool,
     private readonly customerSearch: CrmSearchCustomersTool,
     private readonly customer360: CrmGetCustomer360Tool,
@@ -285,6 +287,7 @@ export class InternalToolsController {
     this.toolMap.set('expense.get_breakdown', this.expenseBreakdown);
     this.toolMap.set('expense.get_daily_closing', this.expenseDailyClosing);
     this.toolMap.set('reimbursement.list_pending_approvals', this.reimbursementPendingApprovals);
+    this.toolMap.set('expense.list_substitute_receipts_to_sign', this.substituteReceiptsToSign);
     this.toolMap.set('reimbursement.get_summary', this.reimbursementSummary);
     this.toolMap.set('reimbursement.get_detail', this.reimbursementDetail);
     this.toolMap.set('accounting.get_document_detail', this.accountingDocumentDetail);
