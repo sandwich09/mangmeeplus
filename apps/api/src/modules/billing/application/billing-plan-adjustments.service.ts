@@ -12,7 +12,7 @@ import { Prisma, type BillingOperation, type BillingAccount } from '../../../gen
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
-import { PLATFORM_SEAT_EXEMPT_ROLE } from '../../system-partner-management/application/plan-term-limit';
+import { planCapacityUsed } from '../../system-partner-management/application/plan-term-limit';
 import { currentCapacityOverride, effectivePlanCapacity, type TemporaryPlanCapacity } from '../../system-partner-management/domain/logic/plan-capacity';
 import { BillingService } from './billing.service';
 import { BillingAdminService } from './billing-admin.service';
@@ -36,8 +36,8 @@ export class BillingPlanAdjustmentsService {
     const s=await this.admin.scopedCompany(context,companyId,tx);
     await this.admin.access(context,'system.billing.financial.read',tx);
     const [activeBranches,activeMembers]=await Promise.all([
-      tx.branch.count({where:{companyId,status:'ACTIVE'}}),
-      tx.companyMembership.count({where:{companyId,status:'ACTIVE',roles:{none:{role:PLATFORM_SEAT_EXEMPT_ROLE}}}}),
+      planCapacityUsed.branches(tx,companyId),
+      planCapacityUsed.members(tx,companyId),
     ]);
     return {...s,activeBranches,activeMembers};
   }

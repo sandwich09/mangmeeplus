@@ -1,4 +1,4 @@
-import type { SpecialistOutput } from '@watchdog-bms/contracts';
+import { formatThaiDate, mapThaiDigits, type SpecialistOutput, type ToolResult } from '@watchdog-bms/contracts';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -187,6 +187,34 @@ export function approvalBacklogStageWording(text: string, data: unknown): string
     (_match, verb: string, middle: string, number: string, unit: string) => `${verb}${middle.includes('อยู่') ? '' : 'อยู่'}${middle}${number}${unit}`);
 }
 
+// ─── billing.get_package_usage forbidden outcome (advisor spec §5.1, P8) ─────────────────────────
+// erp-package-tools.use-case.ts refuses a caller without `company.plan.manage` with this errorCode.
+// Owner decision 2026-09-30 (§10 item 2): that caller hears one fixed sentence, whatever the clause
+// asked (figures, an upgrade, a package change) — never a figure, never a package link, and never a
+// wrong reason such as "the package does not include this".
+export const PACKAGE_MANAGER_REQUIRED = 'PACKAGE_MANAGER_REQUIRED';
+
+export function packageManagerRequiredReplyText(english: boolean): string {
+  return english
+    ? 'For this shop\'s package and credit, please ask the shop owner or someone who manages the package.'
+    : 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ';
+}
+
+// Owner 2026-09-30 (no upsell): a package answer invites no purchase, change or upgrade the user did not
+// ask about. ANSWER_PROMPT says so, yet price and "พอไหม" answers kept closing with "หากต้องการเปลี่ยน
+// แพ็กเกจ ทำได้บนเว็บ…" (advisor eval r5, r6, r10), so that unasked invitation — from its "หาก/ถ้า …
+// ซื้อ/เปลี่ยน/อัปเกรด … แพ็กเกจ" to the end of its line — is dropped here. A clause that itself asks about
+// buying, changing, upgrading or renewing keeps its answer whole.
+export const PACKAGE_TOOL_NAMES: ReadonlySet<string> = new Set(['billing.get_package_usage', 'billing.get_package_catalog']);
+const PACKAGE_PURCHASE_ASKED = /ซื้อ|เปลี่ยน|อัป?เกรด|อัพเกรด|ต่ออายุ|upgrade|buy|change|renew/iu;
+const UNASKED_PURCHASE_INVITATION = /[ \t]*(?:และ[ \t]*)?(?:หาก|ถ้า)[ \t]*(?:ต้องการ|สนใจ|อยาก)[^\n]*?(?:ซื้อ|เปลี่ยน|อัป?เกรด|อัพเกรด)[^\n]*?แพ็?[กค]เกจ[^\n]*/gu;
+
+export function withoutUnaskedPackagePurchaseLine(text: string, clauseText: string): string {
+  if (PACKAGE_PURCHASE_ASKED.test(clauseText)) return text;
+  const kept = text.replace(UNASKED_PURCHASE_INVITATION, '').replace(/\n{3,}/gu, '\n\n').trim();
+  return kept || text;
+}
+
 // ─── A3 (batch5, T-084-b): reimbursement.list_pending_approvals has no code-computed total ───────
 // erp-reimbursement-tools.use-case.ts's ReimbursementListPendingApprovalsTool returns `total` (the
 // full count, never truncated) and `items` capped to the first 10 rows — no total AMOUNT at all.
@@ -301,6 +329,35 @@ function formatSignedPercent(percent: number | undefined): string | undefined {
 const THAI_MONTH_ABBR = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const ENGLISH_MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const CIVIL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
+const THAI_MONTH_FULL = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+
+/** True when `text` names this day of this month in any form an answer uses: "1 พ.ย.", "1 พย", "1 พฤศจิกายน",
+ *  "1/11" (Thai digits too), or "Nov 1". The year may be there or not. */
+function statesCivilDay(text: string, month: number, day: number): boolean {
+  const abbr = THAI_MONTH_ABBR[month - 1]!;
+  const thai = `(?<![\\d.])${day}\\s*(?:${abbr.replace(/\./gu, '\\.')}|${abbr.replace(/\./gu, '')}|${THAI_MONTH_FULL[month - 1]}|/\\s*0?${month}(?!\\d))`;
+  const english = `\\b${ENGLISH_MONTH_ABBR[month - 1]}[a-z]*\\.?\\s*${day}(?!\\d)`;
+  return new RegExp(`${thai}|${english}`, 'iu').test(mapThaiDigits(text));
+}
+
+/**
+ * Advisor S2a (eval r11 P-02, 2026-10-01): a monthly receipt allowance starts counting again on
+ * `receipts.resetsOn` from billing.get_package_usage, and an answer about receipts must say that day.
+ * The model gave only the month's range ("1–31 ต.ค.") although the tool returned the day, and the prompt
+ * rule alone failed before, so a receipt answer that does not name the day gets one line that does.
+ * No restart day in the data (a paid allowance, or a package that ends first) leaves the answer as is.
+ */
+export function withReceiptRestartDate(text: string, results: readonly ToolResult[], english: boolean): string {
+  const usage = results.find((result) => result.toolName === 'billing.get_package_usage' && result.status === 'ok');
+  const resetsOn = record(record(usage?.data)?.['receipts'])?.['resetsOn'];
+  const date = typeof resetsOn === 'string' ? CIVIL_DATE.exec(resetsOn) : null;
+  if (!date) return text;
+  const [year, month, day] = [Number(date[1]), Number(date[2]), Number(date[3])];
+  const aboutReceipts = english ? /receipt/iu.test(text) : /ใบเสร็จ|\d\s*ใบ/u.test(mapThaiDigits(text));
+  if (!aboutReceipts || statesCivilDay(text, month, day)) return text;
+  return `${text}\n${english ? `Receipts start counting again on ${ENGLISH_MONTH_ABBR[month - 1]} ${day}, ${year}.`
+    : `ใบเสร็จจะเริ่มนับใหม่ ${formatThaiDate({ day, month, yearBe: year + 543 })} ค่ะ`}`;
+}
 
 function lastDayOfMonthCe(yearCe: number, month: number): number {
   return new Date(Date.UTC(yearCe, month, 0)).getUTCDate();

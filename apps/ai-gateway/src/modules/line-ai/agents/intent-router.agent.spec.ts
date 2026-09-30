@@ -579,6 +579,25 @@ describe('IntentRouterAgent – conversation read memory (spec §4 R-M3/R-M4)', 
     assert.match(prompt, /copy that SAME period and its other filters .* from the newest matching conversationContext\.recentReads entry/);
   });
 
+  // Advisor S2a (spec §5.1): the shop's own package, an upgrade or a package change routes to the one
+  // permission-checked package read, so the API — never the model — decides who hears figures or a link.
+  it('routes a package question, an upgrade and a package change to billing.get_package_usage as a read', () => {
+    const prompt = intakeRouterSystemPrompt({}, false, true);
+    assert.match(prompt, /or about upgrading, changing or buying this shop's package \("อัปเกรด", "ขอเปลี่ยนแพ็กเกจ"\) is BUSINESS_READ_QUESTION with one kind "read" clause and tool billing\.get_package_usage/);
+    assert.match(prompt, /never MUTATION_REQUEST_REFUSAL, write, help or general/);
+    assert.ok(ROUTER_ENABLED_TOOLS.has('billing.get_package_usage'));
+    assert.doesNotMatch(intakeRouterSystemPrompt(), /billing\.get_package_usage/, 'the legacy prompt stays byte-exact');
+  });
+
+  // Owner 2026-09-30 (~16:00, spec §5.1a): anyone may ask package prices and contents, answered from the catalog read only.
+  it('routes a package price or contents question to billing.get_package_catalog as a read, whoever asks', () => {
+    const prompt = intakeRouterSystemPrompt({}, false, true);
+    assert.match(prompt, /is BUSINESS_READ_QUESTION with one kind "read" clause and tool billing\.get_package_catalog, whoever asks — never general or help/);
+    assert.match(prompt, /"แพ็กเกจเริ่มต้นราคาเท่าไหร่"/);
+    assert.ok(ROUTER_ENABLED_TOOLS.has('billing.get_package_catalog'));
+    assert.doesNotMatch(intakeRouterSystemPrompt(), /billing\.get_package_catalog/, 'the legacy prompt stays byte-exact');
+  });
+
   // N2 (tuning-8, T-107-b): reverses B4h (tuning-5b) — dropping categoryName/vendorName left the
   // router's own call an unfiltered ranking and nothing else, so "ทำไมค่าเดินทางเดือนนี้พุ่งขนาดนี้คะ"
   // never looked inside ค่าเดินทาง. semantic-turn-v2.ts's H2 already adds the unfiltered ranking sibling

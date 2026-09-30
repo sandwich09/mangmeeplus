@@ -92,6 +92,7 @@ import { ReportsMonthlySummaryTool } from './application/use-cases/erp-report-to
 import { ExpenseGetDailyClosingTool } from './application/use-cases/erp-expense-daily-closing.use-case';
 import { ReimbursementListPendingApprovalsTool, ReimbursementGetApprovalBacklogTool } from './application/use-cases/erp-reimbursement-tools.use-case';
 import { ExpenseListSubstituteReceiptsToSignTool } from './application/use-cases/erp-substitute-receipt-tools.use-case';
+import { BillingGetPackageCatalogTool, BillingGetPackageUsageTool } from './application/use-cases/erp-package-tools.use-case';
 import { CrmGetCustomerSummaryTool, CrmSearchCustomersTool, CrmGetCustomer360Tool } from './application/use-cases/erp-crm-tools.use-case';
 import {
   InventoryGetProductDetailTool,
@@ -218,6 +219,8 @@ const erpTools = [
   LedgerGetReportSummaryTool,
   BankGetAccountBalancesTool,
   BankGetReconciliationStatusTool,
+  BillingGetPackageUsageTool,
+  BillingGetPackageCatalogTool,
 ];
 
 @Module({

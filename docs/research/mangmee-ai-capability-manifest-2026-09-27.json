@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "eac26527abaa22b81243574c5dcb58d8a3322034",
+  "sourceRevision": "61141286fbcf75bab9920d8496ab3d586f47297f",
   "checkoutBranch": "claude/advisor-r1-integration-20261001",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -72,6 +72,10 @@
       "sha256": "dc8365b1baca1ab9d972845fc4377b621a06a89e452d35c62c4dd781d4722278"
     },
     {
+      "path": "apps/api/src/modules/line-ai/application/use-cases/erp-package-tools.use-case.ts",
+      "sha256": "a869005a686cf60cbbbad4d959d5b62b524261f835610782aad68754c99bc772"
+    },
+    {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-procurement-ledger-tools.use-case.ts",
       "sha256": "61e268177a6b9d8704ba426b2bec096e8ce3e517cd677b8e9c59545e06f2792f"
     },
@@ -125,7 +129,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
-      "sha256": "bc81a7e29169e838a1ea8c87221d613550d1c0dcb3db24db44fbf9ce55160b19"
+      "sha256": "ba95b92281b73bfb71f699cc91eb54528b115babb5185ab09bcc0be4c41608b8"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-ai-budget.controller.ts",
@@ -133,7 +137,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
-      "sha256": "ede23a97a551ef268f6d33a5a5799dfdc1f1c167542ebdfe1c138ba4ce7829d5"
+      "sha256": "d9d1c1fa511713cc1a3098204c81c4887339b5e1aefcee9df979351d5760d9b6"
     },
     {
       "path": "apps/api/src/modules/line-ai/presentation/http/line-ai-ledger-internal.controller.ts",
@@ -177,7 +181,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "207b5c436a210a40cb1aacbf8b4be411af381aa8d31315e6f8a7ee4e7b40fe87"
+      "sha256": "b4d49ab0da593517f891c00856d9d4f1eb046130c4241eaa74b0d9ca0839c6a7"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -189,7 +193,7 @@
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
-      "sha256": "2be3d0e99b63c917186345f50a2f90b47b2c0da51fac66a4d602053910dce3fb"
+      "sha256": "6660278dc22fa1d00177f7b5c437957a5bbe10be030e2bdc7bf52f13b934bb60"
     }
   ],
   "featureEntitlementKeys": [
@@ -365,6 +369,8 @@
       "accounting.list_recent_documents",
       "bank.get_account_balances",
       "bank.get_reconciliation_status",
+      "billing.get_package_catalog",
+      "billing.get_package_usage",
       "company.get_current_context",
       "company.get_employee_detail",
       "company.get_employee_summary",
@@ -4868,6 +4874,162 @@
       ]
     },
     {
+      "operation": "billing.get_package_usage",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [],
+        "optional": [],
+        "allowed": []
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [
+          "ai.tool.invoke"
+        ],
+        "anyOfPermissions": [],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "general"
+      ],
+      "questionKinds": [
+        "summary"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "billing",
+        "businessSubjects": [
+          "company",
+          "expense"
+        ],
+        "adapterClass": "BillingGetPackageUsageTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R1",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": true,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"billing.get_package_usage\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → BillingGetPackageUsageTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/BillingGetPackageUsageTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/use-cases/erp-package-tools.use-case.ts",
+          "symbol": "BillingGetPackageUsageTool"
+        }
+      ]
+    },
+    {
+      "operation": "billing.get_package_catalog",
+      "execution": "read_tool",
+      "implementation": "wired",
+      "apiIntakeRef": null,
+      "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
+      "supportedFields": {
+        "required": [],
+        "optional": [],
+        "allowed": []
+      },
+      "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
+      "authorization": {
+        "requiredPermissionsAllOf": [
+          "ai.tool.invoke"
+        ],
+        "anyOfPermissions": [],
+        "requiredRoles": [],
+        "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
+        "featureKeys": [],
+        "featureMatch": "any declared feature key; an empty list is ungated; entitlement null preserves legacy fail-open behavior",
+        "requiresErpPermissionCheck": true,
+        "actorDelegationRequired": true
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "channelPolicyEvidence": "LINE webhook carries these chat kinds; ToolMeta has no operation-specific channel allowlist, so per-operation channel authorization is unknown here.",
+      "supportedAgents": [
+        "accounting",
+        "general"
+      ],
+      "questionKinds": [
+        "list",
+        "summary"
+      ],
+      "runtimeFlagNames": [],
+      "defaultVisible": true,
+      "dataBasis": {
+        "sourceModule": "billing",
+        "businessSubjects": [
+          "company"
+        ],
+        "adapterClass": "BillingGetPackageCatalogTool",
+        "resultBasisVersion": "runtime ToolResult.basisVersion; not declared statically in ToolMeta",
+        "queryBasis": "API adapter result may provide queryApplied/dateBasis/statusBasis/dataset; this manifest proves wiring and permission boundary only, not database query or business-record completeness."
+      },
+      "runtimeContractVersion": 1,
+      "release": "R1",
+      "wiringEvidence": {
+        "controllerHandler": true,
+        "moduleProvider": true,
+        "evidenceRegistryInjected": true,
+        "evidenceRegistryFactoryMapped": true,
+        "evidenceRegistryExpected": true,
+        "nonReadyReason": null
+      },
+      "sourceReferences": [
+        {
+          "path": "packages/contracts/src/ai-tools.ts",
+          "symbol": "LINE_TOOL_REGISTRY[\"billing.get_package_catalog\"]"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts",
+          "symbol": "InternalToolsController.toolMap → BillingGetPackageCatalogTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
+          "symbol": "LineAiModule.providers/BillingGetPackageCatalogTool"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/use-cases/erp-package-tools.use-case.ts",
+          "symbol": "BillingGetPackageCatalogTool"
+        }
+      ]
+    },
+    {
       "operation": "bank.get_account_balances",
       "execution": "read_tool",
       "implementation": "wired",
@@ -8676,6 +8838,14 @@
         "provider": "ReimbursementGetApprovalBacklogTool"
       },
       {
+        "parameter": "packageUsage",
+        "provider": "BillingGetPackageUsageTool"
+      },
+      {
+        "parameter": "packageCatalog",
+        "provider": "BillingGetPackageCatalogTool"
+      },
+      {
         "parameter": "publicLookup",
         "provider": "PublicLookupAdmissionTool"
       },
@@ -8701,6 +8871,8 @@
       "AccountingListRecentDocumentsTool",
       "BankGetAccountBalancesTool",
       "BankGetReconciliationStatusTool",
+      "BillingGetPackageCatalogTool",
+      "BillingGetPackageUsageTool",
       "CompanyEmployeeDetailTool",
       "CompanyEmployeeSummaryTool",
       "CompanyGetCurrentContextTool",
@@ -8773,6 +8945,8 @@
       "accounting.list_recent_documents",
       "bank.get_account_balances",
       "bank.get_reconciliation_status",
+      "billing.get_package_catalog",
+      "billing.get_package_usage",
       "company.get_current_context",
       "company.get_employee_detail",
       "company.get_employee_summary",
@@ -8841,6 +9015,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T18:47:53.088Z",
-  "manifestDigest": "bf27659d420bad080ccd0d8d71de487ea270196db00269fb7a5974e0321bafea"
+  "generatedAt": "2026-09-30T18:49:53.442Z",
+  "manifestDigest": "359e4e63da9244349f554658d299ab6a5e2157442a03f22b5b7df0ad57cf5ef4"
 }

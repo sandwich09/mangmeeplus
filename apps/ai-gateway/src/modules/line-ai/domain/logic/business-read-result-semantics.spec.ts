@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { aggregateState, aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText,
   expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares,
-  reimbursementApprovalNotPermittedReplyText, reimbursementPendingApprovalsTotal } from './business-read-result-semantics';
+  reimbursementApprovalNotPermittedReplyText, packageManagerRequiredReplyText, reimbursementPendingApprovalsTotal,
+  withoutUnaskedPackagePurchaseLine, withReceiptRestartDate } from './business-read-result-semantics';
+import type { ToolResult } from '@watchdog-bms/contracts';
 
 describe('business read result semantics', () => {
   it('uses the API-applied period instead of the requested proposal', () => {
@@ -86,6 +88,61 @@ describe('reimbursement.list_pending_approvals forbidden outcome (REIMBURSEMENT_
     const en = reimbursementApprovalNotPermittedReplyText(true);
     assert.match(en, /does not have permission/);
     assert.match(en, /reimbursement claim/);
+  });
+});
+
+describe('billing.get_package_usage forbidden outcome (PACKAGE_MANAGER_REQUIRED, advisor spec P8)', () => {
+  it('sends the asker to the owner or a package manager, with no figure and no link, in Thai and English', () => {
+    assert.equal(packageManagerRequiredReplyText(false), 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ');
+    assert.match(packageManagerRequiredReplyText(true), /ask the shop owner or someone who manages the package/);
+    for (const text of [packageManagerRequiredReplyText(false), packageManagerRequiredReplyText(true)]) assert.doesNotMatch(text, /\d|https?:|\/companies\//u);
+  });
+});
+
+describe('package answers invite no unasked purchase (owner 2026-09-30, advisor eval r5/r6/r10)', () => {
+  it('drops the closing buy or change invitation unless the clause asked about buying, changing or upgrading', () => {
+    const prices = 'แพ็กเกจที่ใหญ่กว่ามีดังนี้ค่ะ\n\n• เติบโต — รายเดือน 499 บาท\n\nหมายเหตุ: ยังไม่มีข้อมูลว่าราคาเหล่านี้รวม VAT หรือไม่ค่ะ';
+    const question = 'แล้วแพ็กเกจที่ใหญ่กว่าราคาเท่าไหร่';
+    assert.equal(withoutUnaskedPackagePurchaseLine(`${prices}\n\nหากต้องการเปลี่ยนแพ็กเกจ ทำได้บนเว็บที่หน้าแพ็กเกจของร้านค่ะ`, question), prices);
+    // r5: the invitation rode the end of the VAT note on the same line.
+    assert.equal(withoutUnaskedPackagePurchaseLine('หมายเหตุ: ยังไม่มีข้อมูลว่าราคาข้างต้นรวม VAT หรือไม่ และหากต้องการเปลี่ยนหรือซื้อแพ็กเกจ สามารถทำได้บนเว็บที่หน้าแพ็กเกจของร้านค่ะ', question),
+      'หมายเหตุ: ยังไม่มีข้อมูลว่าราคาข้างต้นรวม VAT หรือไม่');
+    // Asked how to upgrade: the web-page answer is the answer.
+    const upgrade = 'การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ\nหากต้องการเปลี่ยนแพ็กเกจ กดลิงก์ด้านล่างได้เลยค่ะ';
+    assert.equal(withoutUnaskedPackagePurchaseLine(upgrade, 'อยากอัปเกรดแพ็กเกจต้องทำยังไง'), upgrade);
+    // A page pointer that invites no purchase, and "ยังไม่เปิดให้ซื้อ", stay.
+    for (const kept of ['ถ้าอยากติดตามใกล้ชิด ดูรายละเอียดได้ที่หน้าแพ็กเกจของร้านนะคะ', 'แพ็กเกจธุรกิจยังไม่เปิดให้ซื้อตอนนี้ค่ะ'])
+      assert.equal(withoutUnaskedPackagePurchaseLine(kept, question), kept);
+  });
+});
+
+describe('a monthly receipt answer names its restart day (advisor eval r11 P-02)', () => {
+  const usage = (receipts: Record<string, unknown>): ToolResult => ({ toolName: 'billing.get_package_usage', status: 'ok', sourceRefs: [],
+    asOf: '2026-10-01T03:00:00.000Z', data: { package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-11-10' },
+      receipts: { used: 37, limit: 100, remaining: 63, cadence: 'รายเดือน เริ่มนับใหม่ทุกต้นเดือน', periodStartOn: '2026-10-01', periodEndsOn: '2026-10-31', ...receipts } } });
+  const monthly = [usage({ resetsOn: '2026-11-01' })];
+
+  it('adds the day when the answer talks receipts without it', () => {
+    const r11 = 'แพ็กเกจมืออาชีพ (PRO) รอบเดือนนี้ (1–31 ต.ค. 2569) ใช้ไปแล้ว 37 ใบ เหลืออีก 63 ใบค่ะ';
+    assert.equal(withReceiptRestartDate(r11, monthly, false), `${r11}\nใบเสร็จจะเริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ`);
+    assert.equal(withReceiptRestartDate('You have 63 receipts left this month.', monthly, true),
+      'You have 63 receipts left this month.\nReceipts start counting again on Nov 1, 2026.');
+  });
+
+  it('leaves an answer that already names the day, in any form', () => {
+    for (const stated of ['เหลือ 63 ใบ เริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ', 'เหลือ 63 ใบ เริ่มนับใหม่ 1 พ.ย.', 'เหลือ 63 ใบ รอบใหม่เริ่มวันที่ 1 พฤศจิกายน',
+      'เหลือ ๖๓ ใบ เริ่มนับใหม่ ๑ พย', 'เหลือ 63 ใบ รีเซ็ต 1/11 ค่ะ']) assert.equal(withReceiptRestartDate(stated, monthly, false), stated);
+    assert.equal(withReceiptRestartDate('63 receipts left; the count restarts on November 1.', monthly, true), '63 receipts left; the count restarts on November 1.');
+  });
+
+  it('adds nothing without a restart day, a receipt topic or the usage read', () => {
+    const text = 'เหลืออีก 63 ใบค่ะ';
+    assert.equal(withReceiptRestartDate(text, [usage({ resetsOn: null })], false), text, 'a paid allowance or a package that ends first');
+    assert.equal(withReceiptRestartDate('เพิ่มสาขาได้อีก 1 สาขาค่ะ', monthly, false), 'เพิ่มสาขาได้อีก 1 สาขาค่ะ', 'a branch answer');
+    assert.equal(withReceiptRestartDate(text, [{ ...monthly[0]!, status: 'forbidden', data: undefined }], false), text);
+    assert.equal(withReceiptRestartDate(text, [], false), text);
+    // "1–31 ต.ค." is not the restart day of a month that restarts on 1 Oct either: the 1 of a range is not "1 ต.ค.".
+    assert.equal(withReceiptRestartDate('รอบ 1–31 ต.ค. เหลือ 63 ใบ', [usage({ resetsOn: '2026-10-01' })], false).endsWith('ใบเสร็จจะเริ่มนับใหม่ 1 ต.ค. 2569 ค่ะ'), true);
   });
 });
 

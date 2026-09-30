@@ -73,6 +73,7 @@ const EXAMPLES: Record<'th' | 'en', Record<LineCapabilityGroupId, string>> = {
     bookings: '• ถามคิวหรือนัดหมายวันนี้',
     procurement: '• ถามใบสั่งซื้อที่ยังค้างอยู่',
     alerts: '• ถามงานค้างและการแจ้งเตือนของคุณ',
+    package: '• ถาม “แพ็กเกจนี้พอไหม”',
   },
   en: {
     sales: '• Ask “What are today’s sales?”',
@@ -84,6 +85,7 @@ const EXAMPLES: Record<'th' | 'en', Record<LineCapabilityGroupId, string>> = {
     bookings: '• Ask about today’s bookings or queue',
     procurement: '• Ask which purchase orders are still open',
     alerts: '• Ask what pending work and alerts you have',
+    package: '• Ask “Is my package enough?”',
   },
 };
 
@@ -111,7 +113,7 @@ export function capabilityFollowUpReply(text: string, access?: CapabilityFollowU
   const permissions = access ? access.permissions ?? [] : undefined;
   const groups = permissions
     ? usableCapabilityGroupIds(permissions, entitled)
-    : [...LINE_CAPABILITY_GROUPS].map((group) => group.id);
+    : LINE_CAPABILITY_GROUPS.filter((group) => !('requiredPermissions' in group)).map((group) => group.id);
   const receipt = permissions ? canAdvertiseReceiptCapture(permissions, entitled) : true;
   const lines = [...groups.map((id) => EXAMPLES[language][id]), ...(receipt ? [copy.receipt] : [])];
   if (lines.length === 0) return copy.none;

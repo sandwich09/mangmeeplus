@@ -1,4 +1,4 @@
-import { ALL_FEATURE_ENTITLEMENT_KEYS } from './feature-entitlements.js';
+import { ALL_FEATURE_ENTITLEMENT_KEYS, FEATURE_CATALOG } from './feature-entitlements.js';
 import type { PlanTierKey } from './plan-term.js';
 
 export type MenuEntitlementBinding = {
@@ -506,3 +506,29 @@ export const SALES_DEAL_ALLOWED_FEATURE_KEYS: readonly string[] = [
   'wht_pnd53',
   'wht_50bis',
 ];
+
+/** The dedicated PND53 route is sold separately from the full Tax workspace. */
+const PACKAGE_MENU_LABELS: Record<string, string> = { pnd53: 'ออก ภ.ง.ด.53 ในระบบ' };
+/** The LINE assistant is the headline of the whole product and has no menu of its own — its only
+ *  binding is the contextual AI แนะนำ, which is a sub-item, not the feature. Named from the feature
+ *  catalog so the card, the console and the workspace all say the same Thai. */
+const AI_ASSISTANT_LABEL = FEATURE_CATALOG.find((feature) => feature.key === 'ai_line_assistant')?.labelTh ?? 'ผู้ช่วย AI ทาง LINE';
+
+/**
+ * The menus a deal or a catalog package grants, in nav order, worded as the customer reads them
+ * elsewhere. Same rule the เซลล์ sells by (`SALES_DEAL_MENU_BINDINGS`): a menu counts only when
+ * every entitlement key behind it is in the snapshot. One helper for the web package card and the
+ * LINE package catalog (`billing.get_package_catalog`, advisor S2a), so both name the same menus.
+ */
+export function packageMenuLabels(featureKeys: readonly string[] | null | undefined): string[] {
+  const keys = new Set(featureKeys ?? []);
+  const menus = MENU_ENTITLEMENT_BINDINGS
+    .filter((binding) => binding.status === 'ready' && binding.navigation !== 'contextual'
+      && binding.entitlementKeys.length > 0 && binding.entitlementKeys.every((key) => keys.has(key)))
+    .map((binding) => PACKAGE_MENU_LABELS[binding.navKey] ?? binding.labelTh);
+  return [
+    ...(keys.has('ai_line_assistant') ? [AI_ASSISTANT_LABEL] : []),
+    ...menus,
+    ...(keys.has('wht_50bis') ? ['ออกหนังสือรับรอง 50 ทวิในระบบ'] : []),
+  ];
+}

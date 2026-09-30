@@ -28,7 +28,8 @@ export function isMangmeeDiscountQuestion(messageText: string): boolean {
 
 const THAI_DATE = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric' });
 const day = (iso: string) => THAI_DATE.format(new Date(iso));
-const baht = (satang: number) => (satang / 100).toLocaleString('th-TH', { minimumFractionDigits: satang % 100 ? 2 : 0, maximumFractionDigits: 2 });
+/** Whole baht without decimals, satang with two, as LINE copy prints money. */
+export const baht = (satang: number) => (satang / 100).toLocaleString('th-TH', { minimumFractionDigits: satang % 100 ? 2 : 0, maximumFractionDigits: 2 });
 const usable = (ticket: BillingEventDiscountTicket) => ticket.state === 'AVAILABLE' && !ticket.batchSuspended;
 
 function ticketLine(ticket: BillingEventDiscountTicket): string {

@@ -237,12 +237,19 @@ export type ScopePolicyOverride = {
  * intake router files a question about the company's own figures in an unsold module as 'read' (an
  * issuing request as 'write'), which this check still blocks.
  */
+/** Advisor S2a (owner 2026-09-30 ~16:00): a clause routed to a package read that names a package or
+ *  MangmeePlus asks about MangmeePlus's own packages — "กำไรต่อแพ็กเกจ" is not this shop's P&L — so the
+ *  unsold-module reply must not answer it. Billing reads carry no shop-module data. */
+const PACKAGE_TOOL_HINTS: ReadonlySet<string> = new Set(['billing.get_package_catalog', 'billing.get_package_usage']);
+const PACKAGE_WORD = /แพ็?[กค]เกจ|มั่งมี/u;
+
 export function scopePolicyOverride(
   text: string,
   kind: LineAiSemanticSubrequestV2['kind'],
   permissions: readonly string[],
   entitledFeatureKeys: readonly string[] | null | undefined,
   language: ScopePolicyLanguage,
+  toolHint?: string,
 ): ScopePolicyOverride | undefined {
   const lineAction = lineActionBoundaryReplyText(text, permissions, language);
   if (lineAction) {
@@ -252,7 +259,8 @@ export function scopePolicyOverride(
   }
   const readOnly = readOnlyCaptureReplyText(text, permissions, language);
   if (readOnly) return { reasonCode: 'READONLY_ROLE_CANNOT_CREATE', text: readOnly };
-  if (kind !== 'help' && kind !== 'general') {
+  const packageQuestion = toolHint !== undefined && PACKAGE_TOOL_HINTS.has(toolHint) && PACKAGE_WORD.test(text);
+  if (kind !== 'help' && kind !== 'general' && !packageQuestion) {
     const topic = unsoldModuleTopicFor(text);
     if (topic && !moduleFeatureEnabled(topic.featureKey, entitledFeatureKeys)) {
       return { reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED', text: unsoldModuleReplyText(topic, language) };

@@ -4,7 +4,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { LINE_ALLOWED_TOOL_CATEGORIES, LINE_DRAFT_UPDATE_TOOLS, LINE_DRAFT_UPDATE_TOOL_CATEGORY, LINE_REIMBURSEMENT_DRAFT_TOOL_NAMES, LINE_TOOL_REGISTRY, hasToolFeature, toolFeatureKeys, type ToolMeta, type ToolResult } from '@watchdog-bms/contracts';
 
 /** Constructor arity of the controller's tool list. Bumped whenever a tool is wired. */
-const WIRED_TOOL_COUNT = 69;
+const WIRED_TOOL_COUNT = 71;
 function makeController(...args: any[]) {
   const controller = new (InternalToolsController as any)(...args);
   controller.readEvidence = { record: async () => 'synthetic-evidence' };

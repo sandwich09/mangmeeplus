@@ -378,6 +378,9 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'src/modules/employee-access/application/use-cases/role-management.use-case.spec.ts',
     'src/modules/line-ai/application/line-reimbursement-draft.service.spec.ts',
     'src/modules/line-ai/application/use-cases/erp-banking-tools.use-case.spec.ts',
+    // Advisor S2a: billing.get_package_usage (P8 refusal, package figures, pace) and its package-pace-v1 formula.
+    'src/modules/line-ai/application/use-cases/erp-package-tools.use-case.spec.ts',
+    'src/modules/line-ai/domain/logic/package-usage-pace.logic.spec.ts',
     'src/modules/line-ai/application/use-cases/erp-report-tools.use-case.spec.ts',
     'src/modules/line-ai/application/use-cases/line-public-general.spec.ts',
     'src/modules/line-ai/application/use-cases/process-line-document-qa.bridge.spec.ts',
@@ -568,6 +571,8 @@ export const LINE_AI_RELIABILITY_POSTGRES_SUITES = [{ id: 'reliability-postgres-
   'src/modules/line-ai/application/company-ai-budget-reservation.pg.spec.ts',
   // Add-ons PR C: AI credit funding of LINE v2 holds (spec §5.3, §8.3; A05/A07/A09/A30/A34/A36).
   'src/modules/line-ai/application/ai-credit-funding.pg.spec.ts',
+  // Advisor S2a: billing.get_package_usage over real receipt lots, OCR admissions and plan-limit counts.
+  'src/modules/line-ai/application/package-usage.pg.spec.ts',
   'src/modules/line-ai/application/line-capture-delivery.pg.spec.ts',
   'src/modules/line-ai/application/line-conversation-context.pg.spec.ts',
   'src/modules/line-ai/application/line-document-qa.pg.spec.ts',

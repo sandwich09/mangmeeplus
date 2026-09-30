@@ -21,7 +21,7 @@ import {
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AuditService } from '../../audit/application/audit.service';
-import { PLATFORM_SEAT_EXEMPT_ROLE } from '../../system-partner-management/application/plan-term-limit';
+import { planCapacityUsed } from '../../system-partner-management/application/plan-term-limit';
 import { DEAL_KIND, derivedDealStatus } from '../domain/sales-deal.logic';
 import { salesBadRequest, salesNotFound } from './sales-context';
 
@@ -106,11 +106,9 @@ export class SalesCompanySearchService {
   /** S31: the two counts the deal preview compares against the deal's limits. */
   async usage(companyId: string): Promise<{ branchCount: number; employeeCount: number }> {
     const [branchCount, employeeCount] = await Promise.all([
-      this.prisma.client.branch.count({ where: { companyId, status: 'ACTIVE' } }),
-      // Identical shape to assertEmployeeLimit, so the preview and the gate can never disagree.
-      this.prisma.client.companyMembership.count({
-        where: { companyId, status: 'ACTIVE', roles: { none: { role: PLATFORM_SEAT_EXEMPT_ROLE } } },
-      }),
+      // The helper assertBranchLimit/assertEmployeeLimit count with, so the preview and the gate can never disagree.
+      planCapacityUsed.branches(this.prisma.client, companyId),
+      planCapacityUsed.members(this.prisma.client, companyId),
     ]);
     return { branchCount, employeeCount };
   }
