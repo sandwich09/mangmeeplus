@@ -1325,7 +1325,7 @@ describe('list paging and hub buckets', () => {
     assert.deepEqual(hubBucketWhere('archived'), { OR: [] });
   });
 
-  it('keeps the counts inside the caller\'s scope, and answers an unknown bucket with an empty list', async () => {
+  it('keeps the counts inside the caller\'s scope', async () => {
     const { list } = database();
     // Own claims only: the cards count what this person may see, never the company.
     const own = await list.execute(ctx({ userId: 'staff-2', permissions: ['reimbursement.read_own'] }), { pageSize: 100 });
@@ -1333,12 +1333,30 @@ describe('list paging and hub buckets', () => {
     assert.ok(mine.length > 0 && mine.length < claims.length);
     assert.deepEqual([own.total, own.hub.counts.all, own.items.length], [mine.length, mine.length, mine.length]);
     assert.deepEqual(own.hub.counts, { all: mine.length, draft: 5, review: 0, payment: 5, paid: 0, closed: 0 });
-    const unknown = await list.execute(reader, { bucket: 'archived' as any });
-    assert.deepEqual([unknown.items.length, unknown.total, unknown.hub.counts.all], [0, 0, claims.length]);
     // An empty scope: zeros everywhere, and a total amount that is still a number.
     const empty = await database([]).list.execute(reader, {});
     assert.deepEqual(empty.hub, { counts: { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
     assert.deepEqual([empty.items.length, empty.total], [0, 0]);
+  });
+
+  // Review 2026-10-01: `bucket` went from the query string to the counts unread.
+  it('refuses a bucket it does not have with 400, before reading anything', async () => {
+    const { list, reads } = database();
+    // Before: `all` answered no rows under the whole scope's total, `constructor` answered a total that is a function
+    // (dropped from the JSON), and any other name an empty list that said nothing was wrong.
+    for (const bucket of ['all', 'constructor', 'toString', '__proto__', 'archived', 'DRAFT', ' draft', '']) {
+      await assert.rejects(() => list.execute(reader, { bucket: bucket as any }),
+        (error: any) => error.getStatus() === 400 && error.message === 'reimbursement_list_bucket_invalid', JSON.stringify(bucket));
+    }
+    assert.deepEqual(reads, []);
+    // Every bucket the hub has is taken, and so is no bucket at all; the total is always a number.
+    for (const bucket of [...BUCKETS, undefined]) {
+      const answer = await list.execute(reader, { bucket, pageSize: 1 });
+      assert.equal(typeof answer.total, 'number', String(bucket));
+      assert.equal(answer.total, answer.hub.counts[bucket ?? 'all'], String(bucket));
+    }
+    // A caller with no read right is refused for that, whatever bucket it names.
+    await assert.rejects(() => list.execute(ctx({ permissions: [] }), { bucket: 'constructor' as any }), (error: any) => error.getStatus() === 403);
   });
 });
 

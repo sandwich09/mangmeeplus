@@ -707,7 +707,7 @@ export type ListReimbursementsFilter = {
   status?: ReimbursementRequestStatus;
   paymentStatus?: ReimbursementPaymentStatus;
   requesterUserId?: string;
-  /** Only the claims of one hub bucket. An unknown bucket matches nothing. */
+  /** Only the claims of one hub bucket. Any other name is refused (400). */
   bucket?: ReimbursementHubBucket;
   page?: number;
   pageSize?: number;

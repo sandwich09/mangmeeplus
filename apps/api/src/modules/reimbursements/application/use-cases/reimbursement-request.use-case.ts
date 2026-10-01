@@ -5,6 +5,7 @@ import type {
   UpdateReimbursementDraftInput,
   ListReimbursementsFilter,
   ReimbursementLineInput,
+  ReimbursementHubBucket,
   ReimbursementHubSummary,
   PaginatedReimbursements,
   ReimbursementRequestSummary,
@@ -421,6 +422,9 @@ export function hubSummary(groups: readonly ReimbursementRequestGroup[]): Reimbu
   return { counts, totalAmount: decStr(totalAmount), blockedDraftCount };
 }
 
+/** The hub's buckets by name. Typed over every bucket, so one added later has to be named here to be asked for. */
+const HUB_BUCKETS: readonly string[] = Object.keys({ draft: true, review: true, payment: true, paid: true, closed: true } satisfies Record<ReimbursementHubBucket, true>);
+
 /** A page number or size from the query string: a whole number from 1 up, and small enough to be an OFFSET. */
 const wholeFrom1 = (value: number | undefined, fallback: number) =>
   (value !== undefined && Number.isFinite(value) && value >= 1 ? Math.min(Math.floor(value), 1_000_000) : fallback);
@@ -434,6 +438,9 @@ export class ListReimbursementsUseCase {
     const canReadOwn = ctx.permissions.includes('reimbursement.read_own');
     const canReadRelated = ctx.permissions.includes('reimbursement.read_related');
     if (!canReadAll && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read reimbursements');
+    // Only a bucket the hub has. The name came straight from the query string: `all` answered no rows under the
+    // whole scope's total, and a name every object carries (`constructor`) answered with no total at all.
+    if (filter.bucket !== undefined && !HUB_BUCKETS.includes(filter.bucket)) throw new BadRequestException('reimbursement_list_bucket_invalid');
 
     let requesterUserId: string | undefined;
     let relatedUserId: string | undefined;
@@ -484,7 +491,7 @@ export class ListReimbursementsUseCase {
         { ...row, approvalSteps: pendingSteps.filter((step) => step.reimbursementRequestId === row.id) },
         { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames },
       )),
-      total: filter.bucket === undefined ? hub.counts.all : hub.counts[filter.bucket] ?? 0,
+      total: hub.counts[filter.bucket ?? 'all'],
       page,
       pageSize,
       hub,
