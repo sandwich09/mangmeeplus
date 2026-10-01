@@ -404,7 +404,9 @@ describe('the hub search is asked of the API, and the cards count what it found 
 
   it('names what the search box finds, in plain Thai', () => {
     const html = hubTab('mine', hubClaims);
-    assert.match(html, /placeholder="ค้นหาเลขที่ ผู้ขอ เหตุผล หมวด หรือจำนวนเงิน"/u);
+    // Every column the API searches, and short enough to read whole in the field of a 390 px phone (measured with the
+    // app's fonts at the field's 16 px: 248 px of 265; the wording before this needed 291, the one before that 365).
+    assert.match(html, /placeholder="ค้นหาเลขที่ ผู้ขอ เหตุผล หมวด ยอดเงิน"/u);
     // Before: "ค้นหาทุกข้อมูลในตาราง เช่น … สถานะ". The status is what the chips filter, and the API does not search it.
     assert.doesNotMatch(html, /ค้นหาทุกข้อมูลในตาราง/u);
   });

@@ -337,8 +337,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                 {loading ? 'กำลังโหลดรายการ...' : hubListStatusText(shownTotal, summary.counts.all, statusFilter, searching)}
               </div>
               <div className="relative w-full sm:max-w-96">
+                {/* Short enough to read whole on a 390 px phone (248 px of the 265 the field leaves at its 16 px font). */}
                 <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
-                  placeholder="ค้นหาเลขที่ ผู้ขอ เหตุผล หมวด หรือจำนวนเงิน"
+                  placeholder="ค้นหาเลขที่ ผู้ขอ เหตุผล หมวด ยอดเงิน"
                   value={query} onChange={e => setQuery(e.target.value)} />
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
                   {ICON.search}
