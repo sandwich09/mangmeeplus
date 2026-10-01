@@ -17,7 +17,7 @@ import {
 import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, ListFinanceQueueUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere, hubSearchWhere } from '../../infrastructure/prisma-reimbursement.repository';
 import { isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket } from '@watchdog-bms/contracts';
-import { GetReimbursementApprovalBacklogUseCase } from './reimbursement-summary.use-case';
+import { GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, PAYOUT_CORRECTION_NOTE } from './reimbursement-summary.use-case';
 import { toRequestSummary } from '../dto/reimbursement.mapper';
 import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
@@ -746,6 +746,93 @@ describe('a claim the system holds reads the same on LINE and on the web', () =>
           `${status}/${financeReviewStatus}`);
       }
     }
+  });
+});
+
+// Payout spec §14.7, §17.3: a claim sent back to have its payout account corrected is PENDING_APPROVAL
+// with no step open. Read by its steps alone that is "decided, waiting for the system"; it is with its
+// requester, and LINE and the web say so in the same words.
+describe('a claim whose payout account is being corrected reads the same on LINE and on the web', () => {
+  const NOW = new Date('2026-10-01T03:00:00.000Z'); // 10:00 on 1 October in Bangkok
+  const row = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id, companyId: 'co-1', branchId: 'b1', requestNo: `RB-${id}`, requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'สมชาย',
+    reason: 'แท็กซี่', categoryKey: 'travel', amount: '100.0000', outstandingAmount: '100.0000', paymentTotalAmount: '0.0000', currency: 'THB',
+    incurredDate: NOW, status: 'PENDING_APPROVAL', financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_PAYABLE', duplicateStatus: 'NO_MATCH',
+    receiptRequirementStatus: 'ATTACHED', postingStatus: 'posted', submittedAt: new Date('2026-09-20T03:00:00.000Z'),
+    createdAt: new Date('2026-09-20T02:00:00.000Z'), updatedAt: NOW, ...overrides,
+  }) as any;
+  const pendingStep = (requestId: string) => ({ id: `step-${requestId}`, companyId: 'co-1', reimbursementRequestId: requestId, sequenceNo: 1,
+    status: 'PENDING', assignedApproverUserIds: ['mgr-1'], approverRoleSnapshot: 'MANAGER' }) as any;
+  const sentBack = { payoutCorrectionRequestedAt: new Date('2026-09-30T03:00:00.000Z'), payoutCorrectionRequestedByUserId: 'payer-1', payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG' };
+  const rows = [
+    row('sent-back', sentBack),                                                                   // phase A: with its requester
+    row('new-account', { ...sentBack, payoutCorrectionSubmittedAt: new Date('2026-10-01T02:00:00.000Z') }), // phase B: waiting for สมศรี again
+    row('waiting', { submittedAt: new Date('2026-09-29T03:00:00.000Z') }),                        // an ordinary claim waiting for สมศรี
+    row('sent-back-cancelling', { ...sentBack, cancellationPendingAt: NOW, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' }),
+  ];
+  const steps = [pendingStep('new-account'), pendingStep('waiting')];
+  const repo = {
+    listRequests: async () => rows,
+    findPolicy: async () => ({ ...NO_APPROVAL_POLICY, slaHours: 48 }),
+    findPendingApprovalSteps: async (_companyId: string, ids: string[]) => steps.filter((step) => ids.includes(step.reimbursementRequestId)),
+    findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+    getUserDisplayNames: async () => ({ 'mgr-1': 'สมศรี' }),
+  } as any;
+  const reader = ctx({ permissions: ['reimbursement.read'] });
+
+  it('says รอผู้เบิกแก้บัญชีรับเงิน on LINE where the web desk is the requester, and counts the claim for no approver', async () => {
+    const backlog = await new GetReimbursementApprovalBacklogUseCase(repo, noopAudit).execute(reader, {}, NOW);
+    const webDesk = Object.fromEntries(rows.map((claim) => [claim.id,
+      toRequestSummary({ ...claim, approvalSteps: steps.filter((step) => step.reimbursementRequestId === claim.id) }, { approverNames: { 'mgr-1': 'สมศรี' } }).currentDesk]));
+    assert.deepEqual(webDesk, {
+      'sent-back': { kind: 'REQUESTER' }, 'new-account': { kind: 'APPROVER', names: ['สมศรี'] }, waiting: { kind: 'APPROVER', names: ['สมศรี'] },
+      'sent-back-cancelling': { kind: 'SYSTEM' },
+    });
+    // Every claim, with the day its wait counts from: the send-back, the new account, or the day it was sent.
+    const byId = Object.fromEntries(backlog.items.map((item) => [item.id, item]));
+    assert.deepEqual(byId['sent-back'], {
+      id: 'sent-back', documentNumber: 'RB-sent-back', requesterName: 'สมชาย', amount: '100.00', currency: 'THB',
+      waitingOn: 'รอผู้เบิกแก้บัญชีรับเงิน', submittedOn: '2026-09-20', sentBackOn: '2026-09-30', waitDays: 1,
+    });
+    assert.deepEqual(byId['new-account'], {
+      id: 'new-account', documentNumber: 'RB-new-account', requesterName: 'สมชาย', amount: '100.00', currency: 'THB',
+      waitingOn: 'สมศรี', submittedOn: '2026-09-20', resubmittedOn: '2026-10-01', waitDays: 0,
+    });
+    assert.deepEqual([byId['waiting']!.waitingOn, byId['waiting']!.waitDays, byId['sent-back-cancelling']!.waitingOn], ['สมศรี', 2, REIMBURSEMENT_SYSTEM_WAIT_LABEL]);
+
+    // Its own desk, in the words of the claim page's badge, with what happens next. Not "waiting for the system".
+    assert.deepEqual(backlog.desks, [
+      { kind: 'status_pending', label: 'รอระบบปรับสถานะ', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-20', longestWaitDays: 11 },
+      {
+        kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
+        oldestSentBackOn: '2026-09-30', longestWaitDays: 1, note: PAYOUT_CORRECTION_NOTE,
+      },
+    ]);
+    assert.equal(PAYOUT_CORRECTION_NOTE, 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
+    // สมศรี has two claims to approve; the corrected account has waited for her since this morning, not for eleven days.
+    assert.deepEqual(backlog.byApprover, [{ name: 'สมศรี', count: 2, totalsByCurrency: [{ currency: 'THB', amount: '200.00' }], oldestSubmittedOn: '2026-09-29', longestWaitDays: 2 }]);
+    assert.deepEqual([backlog.total, backlog.awaitingApprovalCount], [4, 2]);
+    // Nothing of an account, and no code word, in what the assistant is handed.
+    assert.doesNotMatch(JSON.stringify(backlog), /ACCOUNT_NUMBER_WRONG|payer-1|AWAITING_|accountLast4|bankName|fingerprint/);
+  });
+
+  it('counts it as waiting for approval in the assistant summary only once the account is given, and as late only by that wait', async () => {
+    const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000);
+    // Each was first sent two weeks ago and sent back eighty hours ago; the company's deadline is 48 hours.
+    const round = (id: string, overrides: Record<string, unknown> = {}) => row(id, { submittedAt: hoursAgo(14 * 24), payoutCorrectionRequestedAt: hoursAgo(80), ...overrides });
+    const withRequester = round('with-requester');
+    const givenToday = round('given-today', { payoutCorrectionSubmittedAt: hoursAgo(3) });
+    const givenThreeDaysAgo = round('given-three-days-ago', { payoutCorrectionSubmittedAt: hoursAgo(72) });
+    const summary = async (claims: any[]) => {
+      const answer = await new GetReimbursementAiSummaryUseCase({ ...repo, listRequests: async () => claims }, noopAudit).execute(reader);
+      return [answer.pendingApprovalCount, answer.overdueApprovalCount];
+    };
+    assert.deepEqual(await summary([withRequester]), [0, 0], 'with its requester: no approver waits, none is late');
+    assert.deepEqual(await summary([givenToday]), [1, 0], 'the approver has had it for three hours, not two weeks');
+    assert.deepEqual(await summary([givenThreeDaysAgo]), [1, 1]);
+    assert.deepEqual(await summary([withRequester, givenToday, givenThreeDaysAgo]), [2, 1]);
+    // An ordinary claim is counted from the day it was sent, as before.
+    assert.deepEqual(await summary([row('ordinary', { submittedAt: hoursAgo(14 * 24) })]), [1, 1]);
   });
 });
 

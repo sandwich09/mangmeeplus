@@ -1,11 +1,12 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import {
-  civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, type RequestContext, type ReimbursementAiSummary,
+  civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL,
+  type RequestContext, type ReimbursementAiSummary,
 } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
-import { ageHours, isSlaRisk, d, decStr, currentDesk } from '../../domain/logic/reimbursement.logic';
+import { ageHours, isSlaRisk, d, decStr, currentDesk, approvalWaitStartedAt, payoutCorrectionPhase } from '../../domain/logic/reimbursement.logic';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 
 /**
@@ -39,10 +40,13 @@ export class GetReimbursementAiSummaryUseCase {
     let totalUnpaid = d('0');
 
     for (const r of all) {
-      if (r.status === 'PENDING_APPROVAL') {
+      // Sent back for its account to be corrected (spec §14) and still with its requester: it waits
+      // for no approver. Once the account is given, its approvers' wait counts from then.
+      if (r.status === 'PENDING_APPROVAL' && payoutCorrectionPhase(r) !== 'AWAITING_REQUESTER') {
         const policy = effectivePolicyForRequest(r, currentPolicy);
         pendingApproval++;
-        const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
+        const waitingSince = approvalWaitStartedAt(r);
+        const age = waitingSince ? ageHours(waitingSince, now) : 0;
         if (isSlaRisk(age, policy.slaHours)) overdueApproval++;
       }
       if ((r.status === 'FINANCE_REVIEW' || r.status === 'READY_FOR_PAYMENT' || r.status === 'PARTIALLY_PAID') && r.paymentStatus !== 'PAID') {
@@ -82,16 +86,34 @@ export const BACKLOG_DESK_LABELS = {
   no_active_approver: 'ไม่มีผู้อนุมัติที่ยังใช้งานอยู่',
   // The system's desk: the same words the claim page prints for the same claim.
   status_pending: REIMBURSEMENT_SYSTEM_WAIT_LABEL,
+  // Sent back for its account to be corrected (spec §14, §17.3): it is with its requester, in the
+  // words of the claim page's status badge. The answer says that and nothing of the account itself.
+  requester_correction: REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER,
 } as const;
 export const SHARED_PILE_LABEL = 'กองกลาง (อนุมัติได้หลายคน)';
 /** The recovery rule (`frozenApprovalAuthority` FALLBACK → `matchesApproverRole`), so the answer names the real next
  *  step instead of guessing one (eval 2026-09-30: "ติดต่อทีม HR", "จะค้างไม่มีกำหนด"). */
 export const NO_ACTIVE_APPROVER_NOTE = 'ผู้ที่ถูกกำหนดให้อนุมัติไม่อยู่หรือไม่ได้ดูแลสาขานี้แล้ว เจ้าของร้านหรือผู้มีบทบาทอนุมัติเดิมอนุมัติแทนได้บนเว็บ';
+/** What happens next to a claim that waits for its requester's account: the answer says this and guesses nothing else. */
+export const PAYOUT_CORRECTION_NOTE = 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้';
+const BACKLOG_DESK_NOTES: Partial<Record<keyof typeof BACKLOG_DESK_LABELS, string>> = {
+  no_active_approver: NO_ACTIVE_APPROVER_NOTE,
+  requester_correction: PAYOUT_CORRECTION_NOTE,
+};
 
 type BacklogDeskKind = keyof typeof BACKLOG_DESK_LABELS;
 type BacklogMoney = { currency: string; amount: string };
-/** Approval-stage waits count from `submittedAt`; finance and payment have no arrival time, so from `approvedAt`. */
-type BacklogGroup = { count: number; totalsByCurrency: BacklogMoney[]; oldestSubmittedOn?: string; oldestApprovedOn?: string; longestWaitDays: number };
+/**
+ * Approval-stage waits count from `submittedAt`; finance and payment have no arrival time, so from `approvedAt`.
+ * In an account correction round (spec §14) the wait is the round's own: since the claim was sent back while
+ * it is with its requester, since the account was given while it waits for its approvers.
+ */
+type BacklogGroup = {
+  count: number; totalsByCurrency: BacklogMoney[]; oldestSubmittedOn?: string; oldestApprovedOn?: string;
+  /** The desk of claims with their requester for the account: since when the oldest of them was sent back. */
+  oldestSentBackOn?: string;
+  longestWaitDays: number;
+};
 export type ReimbursementApprovalBacklog = {
   accessScope: 'company' | 'related' | 'own';
   /** Claims at every stage: approval, finance review and payment. */
@@ -106,7 +128,10 @@ export type ReimbursementApprovalBacklog = {
   desks: Array<{ kind: BacklogDeskKind; label: string; note?: string } & BacklogGroup>;
   /** Longest wait first, at most 10: the desk of each claim ("ใบของฉันค้างที่ใคร"). */
   items: Array<{ id: string; documentNumber: string | null; requesterName: string; amount: string; currency: string;
-    waitingOn: string; submittedOn: string; approvedOn?: string; waitDays: number }>;
+    waitingOn: string; submittedOn: string; approvedOn?: string;
+    /** In a correction round, the day `waitDays` counts from: sent back to its requester, or sent to its approvers again. */
+    sentBackOn?: string; resubmittedOn?: string;
+    waitDays: number }>;
   /** Only when the caller's own claims came back empty: none on record vs. none waiting (eval R-20). */
   hasOwnClaims?: boolean;
 };
@@ -168,6 +193,8 @@ export class GetReimbursementApprovalBacklogUseCase {
       if (row.status !== 'PENDING_APPROVAL') {
         return currentDesk({ status: row.status, financeReviewStatus: row.financeReviewStatus })?.kind === 'FINANCE' ? desk('finance') : desk('payment');
       }
+      // With its requester, and no step open by design: not a decided claim the system has yet to move on.
+      if (payoutCorrectionPhase(row) === 'AWAITING_REQUESTER') return desk('requester_correction');
       const step = stepOf.get(row.id);
       if (!step) return desk('status_pending'); // decided; the status has not moved on yet
       const ids = candidates(step);
@@ -192,7 +219,12 @@ export class GetReimbursementApprovalBacklogUseCase {
       const approved = entry.kind === 'finance' || entry.kind === 'payment';
       const submittedOn = civilDate(row.submittedAt ?? row.createdAt);
       const approvedOn = approved ? civilDate(row.approvedAt ?? row.submittedAt ?? row.createdAt) : undefined;
-      const since = approvedOn ?? submittedOn;
+      // A round's wait is its own: since the send-back while with the requester, since the new account for its
+      // approvers. The claim says which day that is, so its wait reads true beside the day it was first sent.
+      const phase = entry.kind === 'status_pending' ? undefined : payoutCorrectionPhase(row);
+      const round = phase === 'AWAITING_REQUESTER' && row.payoutCorrectionRequestedAt ? { sentBackOn: civilDate(row.payoutCorrectionRequestedAt) }
+        : phase === 'AWAITING_APPROVAL' && row.payoutCorrectionSubmittedAt ? { resubmittedOn: civilDate(row.payoutCorrectionSubmittedAt) } : undefined;
+      const since = approvedOn ?? round?.sentBackOn ?? round?.resubmittedOn ?? submittedOn;
       const label = entry.approverUserId ? names[entry.approverUserId] ?? REIMBURSEMENT_DESK_LABELS.APPROVER
         : entry.kind ? BACKLOG_DESK_LABELS[entry.kind] : SHARED_PILE_LABEL;
       const group = groups.get(entry.key) ?? { label, approver: !!entry.approverUserId, approved, count: 0, totals: new Map(), oldest: since };
@@ -203,10 +235,11 @@ export class GetReimbursementApprovalBacklogUseCase {
       groups.set(entry.key, group);
       return { id: row.id, documentNumber: row.requestNo ?? null, requesterName: row.requesterDisplayNameSnapshot,
         amount: d(row.outstandingAmount).toFixed(2), currency: row.currency, waitingOn: label, submittedOn,
-        ...(approvedOn ? { approvedOn } : {}), waitDays: waitDays(since) };
+        ...(approvedOn ? { approvedOn } : {}), ...round, waitDays: waitDays(since) };
     });
-    const summary = (group: Acc): BacklogGroup => ({ count: group.count, totalsByCurrency: moneyList(group.totals),
-      ...(group.approved ? { oldestApprovedOn: group.oldest } : { oldestSubmittedOn: group.oldest }), longestWaitDays: waitDays(group.oldest) });
+    const summary = (group: Acc, kind?: BacklogDeskKind): BacklogGroup => ({ count: group.count, totalsByCurrency: moneyList(group.totals),
+      ...(group.approved ? { oldestApprovedOn: group.oldest } : kind === 'requester_correction' ? { oldestSentBackOn: group.oldest } : { oldestSubmittedOn: group.oldest }),
+      longestWaitDays: waitDays(group.oldest) });
     const all = [...groups.values()];
     const shared = groups.get('pile');
     // Eval R-20: a manager with no claims heard "all of yours were processed"; nothing waiting and nothing on record differ.
@@ -229,7 +262,7 @@ export class GetReimbursementApprovalBacklogUseCase {
       sharedPile: shared ? { label: shared.label, ...summary(shared) } : null,
       desks: (Object.keys(BACKLOG_DESK_LABELS) as BacklogDeskKind[]).flatMap((kind) => {
         const group = groups.get(kind);
-        return group ? [{ kind, label: group.label, ...summary(group), ...(kind === 'no_active_approver' ? { note: NO_ACTIVE_APPROVER_NOTE } : {}) }] : [];
+        return group ? [{ kind, label: group.label, ...summary(group, kind), ...(BACKLOG_DESK_NOTES[kind] ? { note: BACKLOG_DESK_NOTES[kind] } : {}) }] : [];
       }),
       items: items.sort((a, b) => b.waitDays - a.waitDays || a.submittedOn.localeCompare(b.submittedOn)
         || (a.documentNumber ?? a.id).localeCompare(b.documentNumber ?? b.id)).slice(0, 10),
