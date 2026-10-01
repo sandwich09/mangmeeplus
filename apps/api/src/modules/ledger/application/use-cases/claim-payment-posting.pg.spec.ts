@@ -715,6 +715,9 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
       const payment = await client.reimbursementPayment.findFirstOrThrow({ where: { companyId: s.companyId } });
       assert.deepEqual([payment.status, payment.postingStatus, payment.paidAt.toISOString()], ['RECORDED', 'pending', '2026-08-20T03:00:00.000Z']);
       assert.equal(await client.outboxEvent.count({ where: { companyId: s.companyId, eventType: 'reimbursement.payment_recorded' } }), 1);
+      // Payout spec §17.3: that event, written in the payment transaction, tells the requester how the claim was paid.
+      const paidEvent = await client.outboxEvent.findFirstOrThrow({ where: { companyId: s.companyId, eventType: 'reimbursement.payment_recorded' } });
+      assert.equal((paidEvent.payloadJson as any).data.paidNotice, 'จ่ายเป็นเงินสด 75.00 บาท');
 
       assert.deepEqual(await drain.execute(), { companies: 1, candidates: 1, posted: 1, failed: 0 });
       assert.equal((await payoutJournals(s, payment.id))[0]!.periodId, august.id, 'the payout belongs to the month the money left');
