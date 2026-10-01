@@ -58,8 +58,10 @@ Follow-up branch head, 2026-10-01. Run:
 
 - Typecheck (native TypeScript, as CI): api, web and contracts pass.
 - Touched API unit specs, each run on its own: pass (finance, related-access, claim-signature, approval, request, void-reversal, payment-mirror, claim-form logic and use case, reimbursement logic, write-quiesce guard, attachment logic, attachment repository, and the specs of every other module that reaches the shared link check).
-- Real PostgreSQL 18.3 (throwaway container): `prisma-reimbursement.repository.draft-submit-race.spec.ts` 27 of 27, including slip exclusivity, the signed-copy race in both orders, the 409 answer for a lost race, and the bank-match void rule. Mutation check: with the row write in `linkSignedClaimFormCopy` removed, the race spec fails.
-- Web suite `pnpm --filter @watchdog-bms/web test`: see the lane report for the count at head.
+- Touched API unit specs at head: 22 files, 517 tests, 0 fail.
+- Real PostgreSQL 18.3 (throwaway container): the plan's gate `test:reimbursement-compatibility` 30 of 30 at head, of which `prisma-reimbursement.repository.draft-submit-race.spec.ts` is 27, including slip exclusivity, the signed-copy race in both orders, the 409 answer for a lost race, and the bank-match void rule. Mutation check: with the row write in `linkSignedClaimFormCopy` removed, the race spec fails.
+- Web suite `pnpm --filter @watchdog-bms/web test`: one full run, 2267 of 2268. The one failure was this lane's (the raw-error scanner on the form's refusal field); fixed, and that file with the two touched specs rerun: pass. The full suite was not run again after that fix.
+- Maintenance pins `--check`: current (no hash-pinned file touched in the follow-up). W00 manifest parity: 4 of 4, no regeneration. `prisma validate`: valid. No schema or migration change in the follow-up.
 - E2E spec: type-checked only.
 
 Not run: Playwright, a browser pass at 390 px, live HTTP, the LINE whole-chain acceptance (no AI text changed).
