@@ -328,6 +328,20 @@ describe('payment reminder candidates (audit B9)', () => {
     assert.deepEqual(items.map((item) => [item.sourceId, item.payload['ageHours']]), [['rb-passed-long-ago', 60]]);
   });
 
+  // Payout spec §14.4: a corrected payout account is approved again, which sets `approvedAt` anew. A
+  // claim finance passed long before became payable again only then.
+  it('starts the clock again when a corrected payout account is approved, also for a claim finance passed long before', async () => {
+    const { candidates } = provider([
+      claim({ id: 'rb-approved-again-recently', financeReviewedAt: hoursAgo(300), approvedAt: hoursAgo(10) }),
+      claim({ id: 'rb-approved-again-long-ago', financeReviewedAt: hoursAgo(300), approvedAt: hoursAgo(60) }),
+    ]);
+
+    const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+
+    assert.deepEqual(items.map((item) => [item.sourceId, item.payload['ageHours'], item.payload['notificationPeriodKey']]),
+      [['rb-approved-again-long-ago', 60, `payable:${hoursAgo(60).toISOString()}`]]);
+  });
+
   it('reminds for what is left to pay on a legacy part-paid claim', async () => {
     const { candidates } = provider([claim({ status: 'PARTIALLY_PAID', amount: '250', outstandingAmount: '100' })]);
 
@@ -406,5 +420,38 @@ describe('approval reminder period (review M1)', () => {
       ['rb-2', false, `round:${hoursAgo(1).toISOString()}`],
     ]);
     assert.deepEqual(items[0]!.payload['approverRecipientUserIds'], ['u_manager']);
+  });
+
+  // Payout spec §14.7: a claim sent back to have its payout account corrected is PENDING_APPROVAL. While
+  // it is with its requester no approver is late with it; once the account is given, its approvers have
+  // waited since then, not since the claim was first sent.
+  it('chases nobody for a claim that waits for its requester, and counts a corrected account from when it was given', async () => {
+    const setAside = { id: 'step-1', status: 'APPROVED', assignedApproverUserIds: ['u_manager'], approverRoleSnapshot: 'MANAGER', invalidatedAt: hoursAgo(100), invalidatedReason: 'payout_account_correction' };
+    const inRound = (id: string, payoutCorrectionSubmittedAt?: Date) => ({
+      id, requestNo: `RB-${id}`, status: 'PENDING_APPROVAL', amount: '250', currency: 'THB', requesterUserId: 'u_staff',
+      submittedAt: hoursAgo(200), payoutCorrectionRequestedAt: hoursAgo(100),
+      ...(payoutCorrectionSubmittedAt
+        ? { payoutCorrectionSubmittedAt, currentApprovalStepId: 'step-2', approvalSteps: [setAside, { id: 'step-2', status: 'PENDING', assignedApproverUserIds: ['u_manager'], approverRoleSnapshot: 'MANAGER' }] }
+        : { currentApprovalStepId: null, approvalSteps: [setAside] }),
+    });
+    const reimbursementRepo = {
+      findPolicy: async () => ({ slaHours: 48 }),
+      listRequests: async () => [inRound('rb-with-requester'), inRound('rb-given-recently', hoursAgo(3)), inRound('rb-given-long-ago', hoursAgo(60))],
+      findActiveApproverUserIds: async (_companyId: string, userIds: string[]) => new Set(userIds),
+    } as any;
+    const approverRoutes = {
+      resolveOwnerRecipientUserIds: async (_companyId: string, inputs: any[]) => inputs.map(() => ['u_owner']),
+      resolveSubmissionRoutesBestEffort: async () => [],
+    } as any;
+    const candidates = new WorkflowScanCandidatesProvider(reimbursementRepo, {} as any, {} as any, {} as any, {} as any, approverRoutes, {} as any);
+
+    const items = await candidates.forTemplate('approval_sla_breach', 'co-1', NOW);
+
+    assert.deepEqual(items.map((item) => [item.sourceId, item.payload['slaRisk'], item.payload['ageHours'], item.payload['notificationPeriodKey']]), [
+      ['rb-given-recently', false, 3, `round:${hoursAgo(3).toISOString()}`],
+      // Late by its own wait, and a reminder of its own: the period is the round, not the first submission.
+      ['rb-given-long-ago', true, 60, `round:${hoursAgo(60).toISOString()}`],
+    ]);
+    assert.deepEqual(items.map((item) => item.payload['approverRecipientUserIds']), [['u_manager'], ['u_manager']]);
   });
 });

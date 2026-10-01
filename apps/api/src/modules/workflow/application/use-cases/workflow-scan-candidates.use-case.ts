@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
-import { ageHours, isSlaRisk } from '../../../reimbursements/domain/logic/reimbursement.logic';
+import { ageHours, approvalWaitStartedAt, isSlaRisk, payoutCorrectionPhase } from '../../../reimbursements/domain/logic/reimbursement.logic';
 import { effectivePolicy, effectivePolicyForRequest, parseReimbursementPolicySnapshot } from '../../../reimbursements/domain/reimbursement.constants';
 import { ListReimbursementApproverOptionsUseCase } from '../../../reimbursements/application/use-cases/reimbursement-policy.use-case';
 import { PrismaCrmRepository } from '../../../crm/infrastructure/prisma-crm.repository';
@@ -80,7 +80,10 @@ export class WorkflowScanCandidatesProvider {
 
   private async approvalSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
     const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
-    const rows = await this.reimbursementRepo.listRequests({ companyId, status: 'PENDING_APPROVAL' });
+    // Not a claim sent back to have its payout account corrected and still with its requester (payout
+    // spec §14.7): it is PENDING_APPROVAL with no step open, and no approver is late with it.
+    const rows = (await this.reimbursementRepo.listRequests({ companyId, status: 'PENDING_APPROVAL' }))
+      .filter((request) => payoutCorrectionPhase(request) !== 'AWAITING_REQUESTER');
     const inputs = rows.map((request) => {
       const requestPolicy = effectivePolicyForRequest(request, currentPolicy);
       return {
@@ -128,7 +131,9 @@ export class WorkflowScanCandidatesProvider {
         : frozenRecipients.length > 0
           ? snapshot?.route?.effectiveTaskRole ?? step?.approverRoleSnapshot ?? inputs[index]!.roleKey
           : 'OWNER';
-      const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
+      // Since the claim was sent; for a corrected payout account, since that account was given.
+      const waitingSince = approvalWaitStartedAt(r);
+      const age = waitingSince ? ageHours(waitingSince, now) : 0;
       return {
         sourceType: 'reimbursement_request',
         sourceId: r.id,
@@ -140,8 +145,9 @@ export class WorkflowScanCandidatesProvider {
           ownerRecipientUserIds: ownerRecipients[index],
           approverTaskRole: taskRole,
           // One reminder per round the claim was sent in (review M1): the scan comes round every
-          // window and must not nag, and a claim sent again and late again is reminded again.
-          ...(r.submittedAt && { notificationPeriodKey: `round:${r.submittedAt.toISOString()}` }),
+          // window and must not nag, and a claim sent again and late again is reminded again. A
+          // corrected payout account waiting too long is a round of its own.
+          ...(waitingSince && { notificationPeriodKey: `round:${waitingSince.toISOString()}` }),
         },
       };
     });
@@ -149,7 +155,8 @@ export class WorkflowScanCandidatesProvider {
 
   // Audit B9: claims waiting for payment, held to the same policy deadline as approvals. The clock
   // starts when the claim became payable: the finance decision when there was one, else the
-  // approval, and again when a recorded payment is taken back.
+  // approval; again when a recorded payment is taken back; and again when a corrected payout
+  // account is approved, which is the later of the two dates.
   private async paymentSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
     const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
     const waiting = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] });
@@ -172,7 +179,8 @@ export class WorkflowScanCandidatesProvider {
     const lastVoids = await this.workflowRepo.findClaimLastPaymentVoids(companyId, ids);
     const candidates: ScanCandidate[] = [];
     for (const r of rows) {
-      const becamePayable = r.financeReviewedAt ?? r.approvedAt ?? r.submittedAt;
+      const becamePayable = [r.financeReviewedAt, r.approvedAt].filter((at): at is Date => !!at)
+        .sort((a, b) => b.getTime() - a.getTime())[0] ?? r.submittedAt;
       const lastVoid = lastVoids.get(r.id);
       const payableSince = lastVoid && (!becamePayable || lastVoid > becamePayable) ? lastVoid : becamePayable;
       const age = payableSince ? ageHours(payableSince, now) : 0;

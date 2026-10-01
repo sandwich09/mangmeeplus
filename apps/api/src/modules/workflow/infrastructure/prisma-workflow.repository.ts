@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { reimbursementPayoutCorrectionPhase } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type {
   WorkflowTemplateRecord,
@@ -522,16 +523,21 @@ export class PrismaWorkflowRepository {
 
     // ponytail: 1,000 ids per statement keeps the sweep under the bind-parameter limit.
     const chunks = <T>(items: T[]): T[][] => Array.from({ length: Math.ceil(items.length / 1000) }, (_, i) => items.slice(i * 1000, (i + 1) * 1000));
-    const statusOfClaim = new Map<string, string>();
+    const claimOf = new Map<string, { status: string; payoutCorrectionRequestedAt: Date | null; payoutCorrectionSubmittedAt: Date | null }>();
     if (!scope.supersede) {
       for (const ids of chunks([...new Set(tasks.map((task) => task.sourceId!))])) {
-        const claims = await this.prisma.client.reimbursementRequest.findMany({ where: { id: { in: ids } }, select: { id: true, companyId: true, status: true } });
-        for (const claim of claims) statusOfClaim.set(`${claim.companyId}:${claim.id}`, claim.status);
+        const claims = await this.prisma.client.reimbursementRequest.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, companyId: true, status: true, payoutCorrectionRequestedAt: true, payoutCorrectionSubmittedAt: true },
+        });
+        for (const claim of claims) claimOf.set(`${claim.companyId}:${claim.id}`, claim);
       }
     }
     const closing: Record<'DONE' | 'CANCELED', string[]> = { DONE: [], CANCELED: [] };
     for (const task of tasks) {
-      const outcome = scope.supersede ? 'CANCELED' : claimApprovalTaskOutcome(statusOfClaim.get(`${task.companyId}:${task.sourceId}`));
+      const claim = claimOf.get(`${task.companyId}:${task.sourceId}`);
+      const outcome = scope.supersede ? 'CANCELED'
+        : claimApprovalTaskOutcome(claim?.status, !!claim && reimbursementPayoutCorrectionPhase(claim) === 'AWAITING_REQUESTER');
       if (outcome) closing[outcome].push(task.id);
     }
     for (const ids of chunks(closing.DONE)) {

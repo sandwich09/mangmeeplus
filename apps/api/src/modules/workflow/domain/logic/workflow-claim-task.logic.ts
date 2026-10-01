@@ -9,10 +9,12 @@ const APPROVAL_DONE_STATUSES = ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT
 /**
  * What becomes of an open approval task once its claim has this status: nothing while the claim
  * still waits for approval, DONE when the approval happened, CANCELED when it never will (rejected,
- * cancelled, withdrawn or reopened to draft, voided, or the claim is gone).
+ * cancelled, withdrawn or reopened to draft, voided, or the claim is gone). A claim sent back to
+ * have its payout account corrected and still with its requester (`awaitingRequester`) is
+ * PENDING_APPROVAL with nothing to approve: a task that asks for its approval is CANCELED too.
  */
-export function claimApprovalTaskOutcome(claimStatus: string | undefined): 'DONE' | 'CANCELED' | null {
-  if (claimStatus === 'PENDING_APPROVAL') return null;
+export function claimApprovalTaskOutcome(claimStatus: string | undefined, awaitingRequester = false): 'DONE' | 'CANCELED' | null {
+  if (claimStatus === 'PENDING_APPROVAL') return awaitingRequester ? 'CANCELED' : null;
   return claimStatus !== undefined && APPROVAL_DONE_STATUSES.includes(claimStatus) ? 'DONE' : 'CANCELED';
 }
 
