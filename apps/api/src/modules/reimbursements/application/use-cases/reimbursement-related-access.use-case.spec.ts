@@ -156,6 +156,34 @@ describe('claim account number reveal: the requester, that claim approver, the p
     await assert.rejects(resent.reveal.execute(approver, 'reimbursement-1'), /payout_reveal_denied/);
   });
 
+  // "The claim's approver" has one definition: `isReimbursementClaimApprover` in contracts, with
+  // whoever may decide the step the claim waits on. The account number and the payment slip are two
+  // rules over it. For a viewer who is not the requester and holds neither the pay right nor the
+  // finance-review right, both come down to that one question, and so must give one answer.
+  it('names the same people as the claim approver for the account number, its button and the payment slip', async () => {
+    const pending = { status: 'PENDING_APPROVAL', approvedAt: undefined, currentApprovalStepId: 'step-1' };
+    const pendingStep = (extra: Record<string, unknown> = {}) => ({ id: 'step-1', sequenceNo: 1, approverRoleSnapshot: 'MANAGER', status: 'PENDING', assignedAt: sentAt, ...extra });
+    const approvalRight = ['reimbursement.read', 'reimbursement.approve'];
+    const cases: Array<[string, Record<string, unknown>, RequestContext, boolean]> = [
+      ['approved the round the claim is in', {}, approver, true],
+      ['approved a round the claim was sent again after', { submittedAt: new Date('2026-10-01T05:00:00.000Z') }, approver, false],
+      ['holds the approval right and was never sent this claim', {}, viewer('other-approver', approvalRight, { roles: ['MANAGER'] }), false],
+      ['is assigned the pending step and has no permission left', { ...pending, approvalSteps: [pendingStep({ assignedApproverUserIds: ['assignee-1'] })] }, viewer('assignee-1', []), true],
+      ['holds the role the pending step was routed to', { ...pending, approvalSteps: [pendingStep()] }, viewer('manager-2', approvalRight, { roles: ['MANAGER'] }), true],
+      ['holds the approval right under another role', { ...pending, approvalSteps: [pendingStep()] }, viewer('sales-1', approvalRight, { roles: ['SALES'] }), false],
+    ];
+    for (const [name, claim, who, isApprover] of cases) {
+      const { reveal, detail } = world(claim);
+      const shown = await detail.execute(who, 'reimbursement-1');
+      const revealed = await reveal.execute(who, 'reimbursement-1').then(() => true, () => false);
+      // The slip rule, asked with the facts of the very detail this viewer was given.
+      const slip = canOpenReimbursementPaymentSlip({ userId: who.userId, permissions: who.permissions }, {
+        requesterUserId: shown.requesterUserId, submittedAt: shown.submittedAt, approvalSteps: shown.approvalSteps, approvalActions: shown.approvalActions,
+      });
+      assert.deepEqual({ revealed, button: shown.payout?.canRevealAccountNumber, slip }, { revealed: isApprover, button: isApprover, slip: isApprover }, name);
+    }
+  });
+
   it('has nothing to reveal on a cash or a legacy claim, and keeps a draft to its requester', async () => {
     for (const noAccount of [{ payoutMethod: 'CASH', payoutDestinationVersion: undefined }, { payoutMethod: undefined, payoutDestinationVersion: undefined, payoutFingerprint: undefined }]) {
       const { reveal } = world(noAccount);

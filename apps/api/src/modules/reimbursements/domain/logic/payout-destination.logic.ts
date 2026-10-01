@@ -10,7 +10,6 @@ import {
   invalidPayoutDestinationField,
   normalizePayoutAccountNumber,
   type PayoutDestinationInput,
-  type ReimbursementApprovalStepStatus,
   type ReimbursementPayoutKind,
   type ReimbursementPayoutMethod,
   type ReimbursementPayoutNotReadyReason,
@@ -136,6 +135,11 @@ export type PayoutRevealGroup = 'REQUESTER' | 'APPROVER' | 'PAYER';
  * requester, that claim's approver, and whoever may record its payment. Everyone else gets the last
  * 4 digits. The reveal endpoint and the detail's `canRevealAccountNumber` flag both come from here, so a button is
  * never offered to someone the API would refuse.
+ *
+ * Who the three are is not decided here: the caller answers `isClaimApprover` from the one rule in
+ * contracts (`isReimbursementClaimApprover`, with whoever may decide the pending step: the same two
+ * facts `isReimbursementPayoutParty` reads for the payment slip). This adds what only the account
+ * number needs: there is an account to show, and a draft is its requester's alone.
  */
 export function payoutRevealGroup(input: {
   /** The claim carries its own account row (not cash, not legacy, not a draft still following the default). */
@@ -151,23 +155,6 @@ export function payoutRevealGroup(input: {
   if (input.isDraft) return null;
   if (input.isClaimApprover) return 'APPROVER';
   return input.canRecordPayment ? 'PAYER' : null;
-}
-
-/**
- * Whether this user approved the claim in its CURRENT round: an approval decided before the claim
- * was last sent (a finance correction sends it again) belongs to an account that may have changed.
- */
-export function isEffectiveClaimApprover(
-  claim: {
-    submittedAt?: Date;
-    approvalSteps?: readonly { status: ReimbursementApprovalStepStatus; decidedAt?: Date; decisionByUserId?: string; invalidatedAt?: Date }[];
-  },
-  userId: string,
-): boolean {
-  if (!claim.submittedAt) return false;
-  const submittedAt = claim.submittedAt.getTime();
-  return (claim.approvalSteps ?? []).some((step) => step.status === 'APPROVED' && !step.invalidatedAt
-    && step.decisionByUserId === userId && !!step.decidedAt && step.decidedAt.getTime() >= submittedAt);
 }
 
 // ---- The requester's default changed after the claim was sent ----

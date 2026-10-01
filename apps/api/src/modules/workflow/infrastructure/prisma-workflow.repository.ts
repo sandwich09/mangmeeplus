@@ -180,10 +180,14 @@ export class PrismaWorkflowRepository {
   }
 
   /**
-   * Who approved each claim in its current round: the decider of its latest APPROVED step that is
-   * still in force (not invalidated). The payout work names the same person the claim's own
-   * approver (`isReimbursementPayoutParty` in contracts); this is that rule, to be unified with it
-   * when both land.
+   * The decider of each claim's latest APPROVED step still in force (not invalidated), with when
+   * they decided. Half of the rule for "the claim's own approver", whose one definition is
+   * `isReimbursementClaimApprover` in contracts (it decides who may see a claim's account number and
+   * open its payment slip): an APPROVED step, not invalidated, decided at or after the claim was
+   * last submitted. A query cannot call that function, so its step conditions are restated in this
+   * filter, and its round test (`decidedAt` against the claim's `submittedAt`) by the one caller,
+   * `paymentSlaBreach` in the scan, which holds the claim. Change the three together.
+   * The contracts rule answers for every such decider; the reminder needs one name, the latest.
    */
   async findClaimApprovers(companyId: string, requestIds: string[]): Promise<Map<string, { userId: string; decidedAt: Date }>> {
     if (requestIds.length === 0) return new Map();

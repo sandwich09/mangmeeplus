@@ -13,7 +13,7 @@ import type {
   ReimbursementPolicySnapshotV1,
   ReimbursementSourceSnapshot,
 } from '@watchdog-bms/contracts';
-import { REIMBURSEMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_SEQUENCE_KEYS, isReimbursementClaimApprover } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository, hubBucketOfStatus, type ReimbursementRequestGroup } from '../../infrastructure/prisma-reimbursement.repository';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -33,7 +33,7 @@ import { approvalDecisionActions } from './reimbursement-approval.use-case';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import {
-  defaultChangedSinceSubmit, hasPayoutSnapshot, isEffectiveClaimApprover, payoutRevealGroup, payoutSubmitToken,
+  defaultChangedSinceSubmit, hasPayoutSnapshot, payoutRevealGroup, payoutSubmitToken,
   type PayoutRevealGroup, type SubmitPayoutColumns,
 } from '../../domain/logic/payout-destination.logic';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
@@ -1013,8 +1013,11 @@ export async function claimPayoutRevealGroup(
   return payoutRevealGroup({
     hasClaimAccount, isDraft, isRequester, canRecordPayment,
     // The approver this claim was sent to (pending step) or who approved it in this round — not
-    // every holder of the approval permission.
-    isClaimApprover: actions.canApprove || actions.canReject || isEffectiveClaimApprover(request, ctx.userId),
+    // every holder of the approval permission. The same two facts, from the same resolver and the
+    // same contracts rule, that `isReimbursementPayoutParty` reads for the payment slip: the reveal,
+    // the detail's flag and the slip cannot name different people as the claim's approver.
+    isClaimApprover: actions.canApprove || actions.canReject
+      || isReimbursementClaimApprover(ctx.userId, { submittedAt: request.submittedAt, approvalSteps: request.approvalSteps }),
   });
 }
 

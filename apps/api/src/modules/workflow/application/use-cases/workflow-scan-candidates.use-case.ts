@@ -167,7 +167,9 @@ export class WorkflowScanCandidatesProvider {
           // in. A claim that needed no approval names nobody, and the notice goes to everyone able.
           requesterUserId: r.requesterUserId,
           ...(r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && r.financeReviewedByUserId && { financeReviewerUserId: r.financeReviewedByUserId }),
-          ...(approver && (!r.submittedAt || approver.decidedAt >= r.submittedAt) && { approvedByUserId: approver.userId }),
+          // The round test of `isReimbursementClaimApprover` (contracts), over the steps that
+          // `findClaimApprovers` already held to its step conditions: no submission in force, no approver.
+          ...(approver && r.submittedAt && approver.decidedAt >= r.submittedAt && { approvedByUserId: approver.userId }),
         },
       };
     });
