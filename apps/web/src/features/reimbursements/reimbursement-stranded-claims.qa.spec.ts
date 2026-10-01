@@ -110,6 +110,37 @@ function withDialog(detail: object, viewer: { userId: string; permissions: reado
   throw new Error(`the claim page opened no dialog titled "${title}"`);
 }
 
+/**
+ * Presses a button of the claim page and returns what the page then asks of the API. The page's own handler
+ * runs: it is taken from the button the page renders, and the page's calls go to a fetch that answers with the claim.
+ */
+async function press(detail: object, viewer: { userId: string; permissions: readonly string[] }, label: string): Promise<Array<{ url: string; method: string; body: unknown }>> {
+  const realCreateElement = reactRuntime.createElement;
+  let onClick: (() => void) | undefined;
+  Reflect.set(reactRuntime, 'createElement', (type: unknown, props: { onClick?: () => void } | null, ...children: unknown[]) => {
+    if (type === 'button' && children[0] === label && typeof props?.onClick === 'function') onClick = props.onClick;
+    return (realCreateElement as (...args: unknown[]) => unknown)(type, props, ...children);
+  });
+  try { claimPage(detail, viewer); } finally { Reflect.set(reactRuntime, 'createElement', realCreateElement); }
+  assert.ok(onClick, `the page shows no pressable "${label}"`);
+  const calls: Array<{ url: string; method: string; body: unknown }> = [];
+  const realFetch = globalThis.fetch;
+  const realWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.assign(globalThis, { window: {} });
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(input), method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    return Response.json(detail);
+  }) as typeof fetch;
+  try {
+    onClick();
+    for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    globalThis.fetch = realFetch;
+    if (realWindow) Object.defineProperty(globalThis, 'window', realWindow); else Reflect.deleteProperty(globalThis, 'window');
+  }
+  return calls;
+}
+
 /** The button with this label inside a rendered page: whether it is there, and whether it can be pressed. */
 function button(html: string, label: string): { shown: boolean; disabled: boolean } {
   const match = [...html.matchAll(/<button\b([^>]*)>([^<]*)<\/button>/gu)].find(([, , text]) => text === label);
@@ -243,5 +274,131 @@ describe('a claim whose cancellation has not completed says so in the step card 
       ['done:ยื่นใบ', 'done:เริ่มยกเลิกคำขอ โดย พิม ใจดี', 'current:กำลังรอระบบปรับสถานะ']);
     assert.deepEqual(buildClaimTimeline(cancelling()).map((row) => `${row.state}:${row.label}`),
       ['done:ยื่นใบ', 'done:อนุมัติโดย สมศรี', 'done:เริ่มยกเลิกคำขอ โดย พิม ใจดี', 'current:กำลังรอระบบปรับสถานะ']);
+  });
+});
+
+// Audit B4: a claim whose decision is on record and was not carried out. Before: an approved claim sat at
+// "รออนุมัติ" with no button for anyone, and a claim nobody had to approve offered a บันทึกจ่าย the API refused.
+describe('a claim that was decided and has not moved on says so in the approval step and offers ดำเนินการต่อ to whoever the API takes it from', () => {
+  const requester = { userId: 'staff', permissions: STAFF };
+  const owner = { userId: 'owner', permissions: OWNER };
+  const approver = { userId: 'boss', permissions: APPROVER };
+  const transfer = { payoutMethod: 'BANK_TRANSFER', payout: { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย',
+    accountName: 'พิม ใจดี', accountLast4: '6789', version: 1, source: 'DEFAULT_ACCOUNT' } };
+  /** Approved by สมศรี, paid by transfer; the system has not carried the approval out. As the API answers it. */
+  const approved = (canResume: boolean, overrides: Record<string, unknown> = {}) => claim({
+    status: 'PENDING_APPROVAL', approvedAt: undefined, paymentStatus: 'NOT_PAYABLE', currentDesk: { kind: 'SYSTEM' },
+    approvalActions: { canApprove: false, canReject: false }, awaitingSystem: { kind: 'APPROVAL', canResume }, ...transfer, ...overrides,
+  });
+  /** Sent under a policy that asked for no approval; its expense records are not confirmed, so it cannot be paid. */
+  const noApprovalNeeded = (canResume: boolean, overrides: Record<string, unknown> = {}) => claim({
+    status: 'APPROVED', approvalSteps: [], currentDesk: { kind: 'PAYMENT' }, paymentDesk: { names: ['วราภรณ์', 'สมศรี'], moreCount: 0 },
+    awaitingSystem: { kind: 'NO_APPROVAL_NEEDED', canResume }, ...overrides,
+  });
+  const pressable = (html: string) => [...html.matchAll(/<button\b[^>]*>([^<]*)<\/button>/gu)].map((match) => match[1]!);
+  const NOT_READY = 'ระบบยังเตรียมรายการสำหรับจ่ายเงินของใบนี้ไม่เสร็จ จึงยังบันทึกจ่ายไม่ได้';
+
+  it('an approved claim: its approver reads that the system has it and gets ดำเนินการต่อ, with no second approval and no attestation asked', () => {
+    const html = claimPage(approved(true), approver);
+    const card = stepCard(html);
+    assert.deepEqual(card.buttons, ['ดำเนินการต่อ', 'พิมพ์ใบเบิก']);
+    assert.equal(card.note, `สมศรี อนุมัติแล้ว รอระบบปรับสถานะ · ${NOT_READY} · ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที หรือกดดำเนินการต่อได้เลย ไม่ต้องอนุมัติซ้ำ`);
+    assert.equal(activeJourneyStep(buildJourneySteps(approved(true), approver.permissions, approver.userId))!.key, 'approval');
+    // The decision is made. Nothing asks for it again: no อนุมัติ, no ปฏิเสธ, no "ตรวจบัญชีแล้ว" for the transfer, and no payment yet.
+    for (const refused of ['อนุมัติ', 'ปฏิเสธ', 'บันทึกจ่าย']) assert.equal(pressable(html).includes(refused), false, refused);
+    assert.equal(visible(html).includes('ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก'), false);
+    assert.equal(html.includes('type="checkbox"'), false);
+
+    // Whoever the server does not take it from reads the same state and who can press, and gets no button for it.
+    const other = stepCard(claimPage(approved(false), requester));
+    assert.deepEqual(other.buttons, ['ยกเลิกคำขอ', 'พิมพ์ใบเบิก'], 'no ดำเนินการต่อ, and no "แก้ไข (เปิดกลับเป็นร่าง)" for a claim that was decided');
+    assert.equal(other.note, `สมศรี อนุมัติแล้ว รอระบบปรับสถานะ · ${NOT_READY} · ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที ไม่ต้องอนุมัติซ้ำ ถ้ายังค้างอยู่ ผู้อนุมัติใบนี้กดดำเนินการต่อได้`);
+  });
+
+  it('a claim nobody had to approve stands at the approval step while it cannot be paid: no บันทึกจ่าย, and ดำเนินการต่อ for whoever may record the payment', () => {
+    const html = claimPage(noApprovalNeeded(true), owner);
+    const card = stepCard(html);
+    assert.deepEqual(card.buttons, ['ดำเนินการต่อ', 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก']);
+    assert.equal(card.note, `ใบนี้ไม่ต้องอนุมัติตามนโยบาย · ${NOT_READY} · ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที หรือกดดำเนินการต่อได้เลย`);
+    // The owner holds the pay right, and the API would refuse the payment: the page offers none, and no payment form.
+    assert.equal(pressable(html).includes('บันทึกจ่าย'), false);
+    assert.equal(visible(html).includes('วิธีจ่าย *'), false);
+    const steps = buildJourneySteps(noApprovalNeeded(true), owner.permissions, owner.userId);
+    assert.deepEqual(steps.map((step) => `${step.key}:${step.state}`), ['items:done', 'approval:current', 'payment:upcoming', 'document:upcoming']);
+
+    const other = stepCard(claimPage(noApprovalNeeded(false), requester));
+    assert.deepEqual(other.buttons, ['ยกเลิกคำขอ', 'พิมพ์ใบเบิก']);
+    assert.equal(other.note, `ใบนี้ไม่ต้องอนุมัติตามนโยบาย · ${NOT_READY} · ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที ถ้ายังค้างอยู่ วราภรณ์ หรือ สมศรี กดดำเนินการต่อได้`);
+
+    // Once the server no longer reports it, the same claim stands at the payment step and takes the payment.
+    const payable = stepCard(claimPage(noApprovalNeeded(true, { awaitingSystem: undefined }), owner));
+    assert.deepEqual(payable.buttons, ['บันทึกจ่าย', 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก']);
+  });
+
+  it('follows the server for ดำเนินการต่อ in both directions, whatever the viewer holds', () => {
+    for (const [kind, build] of [['approved', approved], ['nobody had to approve', noApprovalNeeded]] as const) {
+      for (const [who, viewer] of [['every right', owner], ['the approver', approver], ['the requester', requester], ['no right at all', { userId: 'guest', permissions: [] }]] as const) {
+        for (const canResume of [true, false]) {
+          const actions = activeJourneyStep(buildJourneySteps(build(canResume), viewer.permissions, viewer.userId))!.actions;
+          assert.equal(actions.includes('resume'), canResume, `${kind}, ${who}, server says ${canResume}`);
+          assert.equal(button(claimPage(build(canResume), viewer), 'ดำเนินการต่อ').shown, canResume, `${kind}, ${who}, server says ${canResume}`);
+          // And never the decisions or the payment the API refuses in this state.
+          for (const refused of ['approve', 'reject', 'pay', 'reopen'] as const) assert.equal(actions.includes(refused), false, `${kind}, ${who}: ${refused}`);
+        }
+      }
+    }
+  });
+
+  it('names one party on the อยู่ที่ line, in the step note and in the timeline for each state, as the LINE backlog does', () => {
+    // Approved: the claim is with the system, everywhere.
+    const decided = approved(false);
+    const decidedHtml = claimPage(decided, requester);
+    assert.deepEqual(deskLine(decidedHtml), [`อยู่ที่ ${REIMBURSEMENT_DESK_LABELS.SYSTEM}`]);
+    assert.ok(stepCard(decidedHtml).note.startsWith(`สมศรี อนุมัติแล้ว ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`));
+    assert.deepEqual(buildClaimTimeline(decided).map((row) => `${row.state}:${row.label}`),
+      ['done:ยื่นใบ', 'done:อนุมัติโดย สมศรี', `current:กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`, 'future:รอบันทึกจ่าย']);
+    assert.ok(visible(decidedHtml).includes(`กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`), 'the timeline row is on the page');
+    // Nobody is said to be waited on for an approval or a payment.
+    for (const text of [...deskLine(decidedHtml), ...buildClaimTimeline(decided).filter((row) => row.state === 'current').map((row) => row.label)]) {
+      assert.doesNotMatch(text, /สมศรี|วราภรณ์|ผู้มีสิทธิ์อนุมัติ|ผู้มีสิทธิ์บันทึกจ่าย|ฝ่ายการเงิน/u, text);
+    }
+
+    // Nobody had to approve it: it is with whoever may record its payment, everywhere, by name where the detail names them.
+    const waiting = noApprovalNeeded(false);
+    const waitingHtml = claimPage(waiting, requester);
+    assert.deepEqual(deskLine(waitingHtml), ['อยู่ที่ วราภรณ์ หรือ สมศรี']);
+    assert.match(stepCard(waitingHtml).note, /ถ้ายังค้างอยู่ วราภรณ์ หรือ สมศรี กดดำเนินการต่อได้$/u);
+    assert.deepEqual(buildClaimTimeline(waiting).map((row) => `${row.state}:${row.label}`),
+      ['done:ยื่นใบ', 'current:กำลังรอ วราภรณ์ หรือ สมศรี ดำเนินการต่อ', 'future:รอบันทึกจ่าย']);
+    // With nobody named, all three print the pool, in the words the LINE backlog uses for the same claim.
+    const pool = noApprovalNeeded(false, { paymentDesk: undefined });
+    const poolHtml = claimPage(pool, requester);
+    assert.deepEqual(deskLine(poolHtml), [`อยู่ที่ ${REIMBURSEMENT_DESK_LABELS.PAYMENT}`]);
+    assert.ok(stepCard(poolHtml).note.endsWith(`ถ้ายังค้างอยู่ ${REIMBURSEMENT_DESK_LABELS.PAYMENT} กดดำเนินการต่อได้`));
+    assert.deepEqual(buildClaimTimeline(pool).filter((row) => row.state === 'current').map((row) => row.label), [`กำลังรอ ${REIMBURSEMENT_DESK_LABELS.PAYMENT} ดำเนินการต่อ`]);
+
+    // Each of them reads in plain Thai.
+    for (const [detail, viewer] of [[approved(true), approver], [approved(false), requester], [noApprovalNeeded(true), owner], [noApprovalNeeded(false), requester], [pool, requester]] as const) {
+      const html = claimPage(detail, viewer);
+      assertPlainThai([stepCard(html).note, ...deskLine(html), ...buildClaimTimeline(detail).map((row) => row.label)], `${detail.status} for ${viewer.userId}`);
+    }
+  });
+
+  it('sends the resume call when ดำเนินการต่อ is pressed, and nothing that decides: no approval, no attestation', async () => {
+    for (const [detail, viewer] of [[approved(true), approver], [noApprovalNeeded(true), owner]] as const) {
+      const calls = await press(detail, viewer, 'ดำเนินการต่อ');
+      assert.deepEqual(calls[0], { url: '/api/v1/companies/company-1/reimbursements/claim-1/resume', method: 'POST', body: {} }, String(detail.status));
+      // Then the page reads the claim again, as after every action. No other write.
+      assert.deepEqual(calls.slice(1).map((call) => [call.method, call.url]), [['GET', '/api/v1/companies/company-1/reimbursements/claim-1']], String(detail.status));
+    }
+  });
+
+  it('says in plain Thai why a press was not taken', () => {
+    assert.equal(errorText(new Error('reimbursement_resume_in_progress')), 'ระบบกำลังดำเนินการใบนี้อยู่ กรุณาโหลดรายการใหม่อีกครั้ง');
+    assert.equal(errorText(new Error('reimbursement_resume_not_allowed')), 'ผู้ที่กดดำเนินการต่อได้คือผู้อนุมัติใบนี้ หรือผู้มีสิทธิ์บันทึกจ่ายสำหรับใบที่ไม่ต้องอนุมัติ');
+    assert.equal(errorText(new Error('stale_approval_snapshot')), 'คำขอถูกแก้ไขหลังส่งอนุมัติ กรุณาเปิดดูรายละเอียดใหม่ก่อนตัดสินใจ');
+    for (const code of ['reimbursement_resume_in_progress', 'reimbursement_resume_not_allowed', 'reimbursement_resume_unavailable']) {
+      assertPlainThai([errorText(new Error(code))], code);
+    }
   });
 });

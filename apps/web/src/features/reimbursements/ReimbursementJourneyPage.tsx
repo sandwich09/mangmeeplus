@@ -16,7 +16,7 @@ import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/Expen
 import {
   addReimbursementInternalNote, approveReimbursement, attachReimbursementPaymentSlip, cancelReimbursement, deleteReimbursementInternalNote,
   editReimbursementInternalNote, financeReviewReimbursement, getReimbursement, rejectReimbursement,
-  reopenReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadReimbursementPaymentSlip, uploadSignedClaimFormCopy,
+  reopenReimbursement, resumeReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadReimbursementPaymentSlip, uploadSignedClaimFormCopy,
   voidReimbursementPayment, withdrawReimbursementCancellation,
 } from './reimbursements.api';
 import { currentDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
@@ -38,7 +38,7 @@ const STEPPER_STATE: Record<JourneyStepState, ThemedStepState> = {
 const ACTION_LABELS: Record<JourneyAction, string> = {
   submit: 'ส่งอนุมัติ', edit: 'แก้ไขคำขอ', cancel: 'ยกเลิกคำขอ', reopen: 'แก้ไขและส่งใหม่',
   'resume-cancel': 'ดำเนินการยกเลิกต่อ', 'withdraw-cancel': 'ถอนการยกเลิก',
-  approve: 'อนุมัติ', reject: 'ปฏิเสธ', 'policy-settings': 'ไปที่ตั้งค่าเบิกจ่าย',
+  approve: 'อนุมัติ', reject: 'ปฏิเสธ', resume: 'ดำเนินการต่อ', 'policy-settings': 'ไปที่ตั้งค่าเบิกจ่าย',
   'finance-approve': 'อนุมัติจ่าย', 'finance-return': 'ส่งกลับให้แก้ไข', 'finance-block': 'ระงับการจ่าย',
   'resolve-duplicate': 'ปลดรายการซ้ำ', pay: 'บันทึกจ่าย', sign: 'ลงนามในใบเบิก', print: 'พิมพ์ใบเบิก',
   'attach-signed-copy': 'แนบสำเนาที่เซ็นแล้ว', 'void-payment': 'ยกเลิกการจ่าย',
@@ -304,6 +304,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     })(),
     approve: () => void approve(),
     reject: () => { setActionError(null); setRejecting(true); },
+    // Audit B4: the decision is on record; this has the system carry it out now. Nothing is approved or attested again.
+    resume: () => void act('resume', () => resumeReimbursement(companyId, requestId), 'ดำเนินการต่อเรียบร้อยแล้ว'),
     'finance-approve': () => void act('finance-approve', () => financeReviewReimbursement(companyId, requestId, {
       decision: 'APPROVED_FOR_PAYMENT',
       resolveDuplicate: detail.duplicateStatus === 'POSSIBLE_DUPLICATE',

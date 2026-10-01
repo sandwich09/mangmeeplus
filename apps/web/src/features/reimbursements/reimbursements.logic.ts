@@ -84,6 +84,33 @@ export function pendingCancellationNote(pending: any): string {
   ].filter(Boolean).join(' · ');
 }
 
+// ---- A claim that was decided and has not moved on (audit B4) ----
+
+const SYSTEM_WILL_CARRY_ON = 'ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที';
+
+/**
+ * The step note of a claim whose decision is on record and waits for the system to carry it out: what
+ * was decided, what is still missing, and who can press ดำเนินการต่อ. An approved claim is with the
+ * system (its "อยู่ที่" line and the LINE backlog say the same); a claim nobody had to approve waits at
+ * the payment desk, and whoever may record its payment is who can carry it on.
+ */
+export function awaitingSystemNote(detail: any, approvedBy?: string): string {
+  const waiting = detail?.awaitingSystem;
+  const notReady = 'ระบบยังเตรียมรายการสำหรับจ่ายเงินของใบนี้ไม่เสร็จ จึงยังบันทึกจ่ายไม่ได้';
+  if (waiting?.kind === 'NO_APPROVAL_NEEDED') {
+    const payers = paymentDeskText(detail?.paymentDesk) ?? CURRENT_DESK_LABELS.PAYMENT;
+    return [
+      'ใบนี้ไม่ต้องอนุมัติตามนโยบาย', notReady,
+      waiting.canResume === true ? `${SYSTEM_WILL_CARRY_ON} หรือกดดำเนินการต่อได้เลย` : `${SYSTEM_WILL_CARRY_ON} ถ้ายังค้างอยู่ ${payers} กดดำเนินการต่อได้`,
+    ].join(' · ');
+  }
+  return [
+    `${approvedBy ? `${approvedBy} อนุมัติแล้ว` : 'อนุมัติแล้ว'} ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`, notReady,
+    waiting?.canResume === true ? `${SYSTEM_WILL_CARRY_ON} หรือกดดำเนินการต่อได้เลย ไม่ต้องอนุมัติซ้ำ`
+      : `${SYSTEM_WILL_CARRY_ON} ไม่ต้องอนุมัติซ้ำ ถ้ายังค้างอยู่ ผู้อนุมัติใบนี้กดดำเนินการต่อได้`,
+  ].join(' · ');
+}
+
 /**
  * Object-aware variant for thrown fetch errors: a deny-by-default guard 403 carries only a
  * stable `code` (its message is the synthetic "API error 403"), so consult the code first,
@@ -618,6 +645,14 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
       { key: 'system', state: 'current', label: `กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}` }];
   }
 
+  // Decided, and the system has not carried it out yet (audit B4): that is what the claim waits for now. An
+  // approved claim is with the system; one nobody had to approve is with whoever may record its payment.
+  if (detail?.awaitingSystem) {
+    rows.push({ key: 'system', state: 'current', label: detail.awaitingSystem.kind === 'NO_APPROVAL_NEEDED'
+      ? `กำลังรอ ${paymentDeskText(detail?.paymentDesk) ?? CURRENT_DESK_LABELS.PAYMENT} ดำเนินการต่อ`
+      : `กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}` });
+  }
+
   // The row the claim waits at is the journey's own step, so the two never disagree; and the finance row
   // exists only for a claim that has that step (spec §18.3: no "ฝ่ายการเงิน" on a claim without one).
   const withFinance = claimHasFinanceStep(detail);
@@ -659,7 +694,7 @@ export type JourneyStepKey = 'items' | 'approval' | 'finance' | 'payment' | 'doc
 export type JourneyStepState = 'done' | 'current' | 'upcoming' | 'needs-fix' | 'ended';
 export type JourneyAction =
   | 'submit' | 'edit' | 'cancel' | 'reopen' | 'resume-cancel' | 'withdraw-cancel'
-  | 'approve' | 'reject' | 'policy-settings'
+  | 'approve' | 'reject' | 'resume' | 'policy-settings'
   | 'finance-approve' | 'finance-return' | 'finance-block'
   | 'resolve-duplicate' | 'pay' | 'sign' | 'print' | 'attach-signed-copy' | 'void-payment';
 export type JourneyStep = {
@@ -709,8 +744,10 @@ function journeyStepAt(detail: any, withFinance: boolean): JourneyStepKey {
     case 'DRAFT': return 'items';
     case 'PENDING_APPROVAL': case 'REJECTED': return 'approval';
     case 'FINANCE_REVIEW': return 'finance';
-    // Transient: approved, waiting for the projection to route it on (currentDesk FINANCE or PAYMENT).
-    case 'APPROVED': return detail.financeReviewStatus === 'PENDING' ? 'finance' : 'payment';
+    // Transient: approved, waiting for the projection to route it on (currentDesk FINANCE or PAYMENT). While
+    // the server says the claim cannot be paid yet (audit B4) it stands at the approval step, which then
+    // offers ดำเนินการต่อ; the payment step, and its button the API would refuse, come after it.
+    case 'APPROVED': return detail.awaitingSystem ? 'approval' : detail.financeReviewStatus === 'PENDING' ? 'finance' : 'payment';
     case 'READY_FOR_PAYMENT': case 'PARTIALLY_PAID': return 'payment';
     case 'PAID': return 'document';
   }
@@ -768,6 +805,11 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
     } else if (key === 'approval' && status === 'REJECTED') {
       note = `ปฏิเสธ${detail?.rejectionReason ? `: ${detail.rejectionReason}` : ''}`;
       if (own.canReopen) actions.push('reopen');
+    } else if (key === 'approval' && detail?.awaitingSystem) {
+      // Audit B4: the decision is on record and the system has not carried it out. Nothing is decided again:
+      // the one action is to have the system carry on, offered to whoever the server says it takes it from.
+      if (detail.awaitingSystem.canResume === true) actions.push('resume');
+      note = awaitingSystemNote(detail, approval?.decidedByName ?? approval?.approverName);
     } else if (key === 'approval') {
       if (detail?.approvalActions?.canApprove === true) actions.push('approve');
       if (detail?.approvalActions?.canReject === true) actions.push('reject');

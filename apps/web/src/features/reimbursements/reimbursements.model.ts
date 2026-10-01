@@ -244,6 +244,9 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   reimbursement_cancellation_not_pending: 'คำขอนี้ไม่มีการยกเลิกที่ค้างอยู่แล้ว กรุณาโหลดรายการใหม่',
   reimbursement_cancellation_partly_done: 'ระบบยกเลิกรายการค่าใช้จ่ายของใบนี้ไปบางส่วนแล้ว จึงถอนการยกเลิกไม่ได้ ต้องดำเนินการยกเลิกให้เสร็จ',
   reimbursement_cancellation_intent_changed: 'การยกเลิกคำขอนี้ถูกถอนไปแล้ว กรุณาโหลดรายการใหม่',
+  reimbursement_resume_in_progress: 'ระบบกำลังดำเนินการใบนี้อยู่ กรุณาโหลดรายการใหม่อีกครั้ง',
+  reimbursement_resume_not_allowed: 'ผู้ที่กดดำเนินการต่อได้คือผู้อนุมัติใบนี้ หรือผู้มีสิทธิ์บันทึกจ่ายสำหรับใบที่ไม่ต้องอนุมัติ',
+  reimbursement_resume_unavailable: 'ตอนนี้ยังดำเนินการต่อไม่ได้ กรุณาติดต่อผู้ดูแลระบบ',
   void_reason_required: 'กรุณาระบุเหตุผลที่ยกเลิกการจ่าย',
   reimbursement_payment_changed: 'ข้อมูลการจ่ายถูกเปลี่ยนแล้ว กรุณาโหลดรายการใหม่',
   // Audit H-18: the old wording read like a fixed rule of the system, so a company that wanted
