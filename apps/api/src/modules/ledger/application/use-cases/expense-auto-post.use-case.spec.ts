@@ -222,9 +222,10 @@ describe('DrainExpenseAutoPostUseCase — claim payouts', () => {
       updatePostingStatus: async (...args: any[]) => { expenseWrites.push(args); },
       updatePaymentPostingStatus: async (...args: any[]) => { expenseWrites.push(args); },
     } as any;
+    // A refused payout is settled in a transaction: stamp, then read the journal table.
+    prisma.client.$transaction = async (work: (tx: unknown) => Promise<unknown>) => work({ journalEntry: { findFirst: async () => null } });
     const reimbursementRepo = {
-      findPostedGeneratedJournalId: async () => null,
-      updatePaymentPostingStatus: async (...args: any[]) => { claimWrites.push(args); return true; },
+      updatePaymentPostingStatus: async (...args: any[]) => { claimWrites.push(args.slice(0, 3)); return true; },
     } as any;
     const logged: any[] = [];
     const drain = new DrainExpenseAutoPostUseCase(prisma, generator, expenseRepo, reimbursementRepo);
@@ -254,42 +255,55 @@ describe('DrainExpenseAutoPostUseCase — claim payouts', () => {
   // Review finding 2026-10-01: the worker's stamp was unguarded. Between reading the candidates and
   // generating, a void can commit, or an accountant (or a second pass) can post the same payout.
   function refusedPayout(repo: { journalId: string | null; recorded: boolean }) {
-    const stamps: any[] = [];
+    // What happened, in order: every stamp and the one read of the journal table.
+    const steps: string[] = [];
     const logged: any[] = [];
+    const tx = { journalEntry: { findFirst: async ({ where }: any) => {
+      assert.deepEqual(where, { companyId: 'co-1', sourceType: 'reimbursement.payment', sourceId: 'pay-1', entryType: 'GENERATED', status: 'POSTED' });
+      steps.push('read journal');
+      return repo.journalId ? { id: repo.journalId } : null;
+    } } };
     const prisma = {
       client: {
         company: { findMany: async () => [company(true)] },
         $queryRaw: async () => [{ sourceType: 'reimbursement.payment', sourceId: 'pay-1' }],
+        $transaction: async (work: (client: unknown) => Promise<unknown>) => work(tx),
       },
     } as any;
     const generator = { execute: async () => { throw new BadRequestException({ code: 'reimbursement_payment_not_recorded', message: 'x' }); } } as any;
     const reimbursementRepo = {
-      findPostedGeneratedJournalId: async () => repo.journalId,
       // The real stamp writes a RECORDED payment only and says whether it wrote.
-      updatePaymentPostingStatus: async (...args: any[]) => { stamps.push(args[2].postingStatus); return repo.recorded; },
+      updatePaymentPostingStatus: async (...args: any[]) => {
+        assert.equal(args[3], tx, 'the stamp is written inside the transaction that reads the journal');
+        steps.push(`stamp ${args[2].postingStatus}`);
+        return repo.recorded;
+      },
     } as any;
     const drain = new DrainExpenseAutoPostUseCase(prisma, generator, {} as any, reimbursementRepo);
     (drain as any).logger = { warn: (line: unknown) => { logged.push(line); } };
-    return { drain, stamps, logged };
+    return { drain, steps, logged };
   }
 
   it('a payout voided after the candidates were read is neither failed nor posted, and is not logged as a failure', async () => {
-    const { drain, logged } = refusedPayout({ journalId: null, recorded: false });
+    const { drain, steps, logged } = refusedPayout({ journalId: null, recorded: false });
     assert.deepEqual(await drain.execute(), { companies: 1, candidates: 1, posted: 0, failed: 0 });
+    assert.deepEqual(steps, ['stamp posting_error'], 'the guarded stamp wrote nothing, so there is nothing more to decide');
     assert.deepEqual(logged, []);
   });
 
-  it('a refused payout that already has a posted settlement is stamped posted, never posting_error', async () => {
-    const { drain, stamps, logged } = refusedPayout({ journalId: 'je-1', recorded: true });
+  it('a refused payout that already has a posted settlement ends posted, never posting_error', async () => {
+    const { drain, steps, logged } = refusedPayout({ journalId: 'je-1', recorded: true });
     assert.deepEqual(await drain.execute(), { companies: 1, candidates: 1, posted: 1, failed: 0 });
-    assert.deepEqual(stamps, ['posted']);
+    // Stamp first, read second: the stamp holds the payment row, so no settlement can commit
+    // behind the read. Reading first let a poster still in flight be overwritten with an error.
+    assert.deepEqual(steps, ['stamp posting_error', 'read journal', 'stamp posted']);
     assert.deepEqual(logged, []);
   });
 
   it('a refused payout with no settlement is stamped posting_error and its reason is logged', async () => {
-    const { drain, stamps, logged } = refusedPayout({ journalId: null, recorded: true });
+    const { drain, steps, logged } = refusedPayout({ journalId: null, recorded: true });
     assert.deepEqual(await drain.execute(), { companies: 1, candidates: 1, posted: 0, failed: 1 });
-    assert.deepEqual(stamps, ['posting_error']);
+    assert.deepEqual(steps, ['stamp posting_error', 'read journal']);
     assert.equal(logged[0].code, 'reimbursement_payment_not_recorded');
   });
 

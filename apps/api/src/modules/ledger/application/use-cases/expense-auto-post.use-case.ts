@@ -318,16 +318,31 @@ export class DrainExpenseAutoPostUseCase {
    * What a refused claim payout becomes. The journal table is the truth: a posted settlement means
    * another pass or an accountant got there first, or only the bookkeeping after the post failed,
    * so the row reads `posted`, never an error. Otherwise it goes to the accountant's worklist as
-   * `posting_error`. Either stamp lands on a RECORDED payment only; a payment voided since the
-   * candidates were read keeps the status its void gave it and is neither posted nor failed.
+   * `posting_error`.
+   *
+   * The stamp comes FIRST and the journal is read after it, in one transaction. The stamp takes
+   * the payment row, and a poster has to hold that row to write a settlement, so no settlement can
+   * commit behind the read. (Reading first left a gap: a poster still in flight was invisible,
+   * and the error stamp then landed on top of its committed `posted`.)
+   *
+   * Either stamp lands on a RECORDED payment only: a payment voided since the candidates were read
+   * keeps the status its void gave it and is neither posted nor failed.
    */
   private async settleRefusedClaimPayout(companyId: string, paymentId: string, error: unknown): Promise<'posted' | 'failed' | 'voided'> {
-    const settled = Boolean(await this.reimbursementRepo.findPostedGeneratedJournalId(companyId, paymentId));
-    const recorded = await this.reimbursementRepo.updatePaymentPostingStatus(companyId, paymentId, { postingStatus: settled ? 'posted' : 'posting_error' });
-    if (!recorded) return 'voided';
-    if (settled) return 'posted';
+    const outcome = await this.prisma.client.$transaction(async (tx) => {
+      const stamp = (postingStatus: 'posted' | 'posting_error') =>
+        this.reimbursementRepo.updatePaymentPostingStatus(companyId, paymentId, { postingStatus }, tx);
+      if (!await stamp('posting_error')) return 'voided' as const;
+      const settlement = await tx.journalEntry.findFirst({
+        where: { companyId, sourceType: 'reimbursement.payment', sourceId: paymentId, entryType: 'GENERATED', status: 'POSTED' },
+        select: { id: true },
+      });
+      if (!settlement) return 'failed' as const;
+      await stamp('posted');
+      return 'posted' as const;
+    });
     // The payment row has no postingError column, so this line is where the reason is kept.
-    this.logger.warn({ msg: 'ledger.auto_post.claim_payout_failed', companyId, paymentId, code: postingFailureCode(error) });
-    return 'failed';
+    if (outcome === 'failed') this.logger.warn({ msg: 'ledger.auto_post.claim_payout_failed', companyId, paymentId, code: postingFailureCode(error) });
+    return outcome;
   }
 }

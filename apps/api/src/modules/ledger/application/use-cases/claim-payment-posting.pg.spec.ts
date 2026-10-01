@@ -592,6 +592,40 @@ describe('claim payout posting (PostgreSQL)', { skip: !enabled }, () => {
     } finally { await retire(s); }
   });
 
+  it('the worker fails while an accountant\'s settlement is still in flight: the payout ends posted, never an error', async () => {
+    const s = await shop();
+    try {
+      const { payment } = await payable(s, '180.00');
+      const claimed = deferred(), goPost = deferred();
+      let held = false;
+      const restorePost = intercept(ledger, 'postJournalEntry', (original) => async (...args) => {
+        if (!held) { held = true; claimed.resolve(); await goPost.promise; }
+        return original(...args);
+      });
+      // The worker's own attempt fails for a reason of its own; the accountant's runs normally.
+      const restoreGenerate = intercept(generate, 'execute', (original) => async (ctx, ...rest) => {
+        if (ctx.authSubject === 'expense-auto-post-worker') throw new Error('the worker attempt failed');
+        return original(ctx, ...rest);
+      });
+      let accounting, draining;
+      try {
+        accounting = settle(post(s, 'reimbursement.payment', payment.id));
+        await claimed.promise;
+        // The settlement is uncommitted, so the worker still sees a pending payout with no journal.
+        draining = settle(drain.execute());
+        await untilPaymentRowIsAwaited();
+      } finally { goPost.resolve(); restorePost(); }
+      const drained = await draining!.finally(restoreGenerate);
+
+      assert.equal((await accounting!).error, undefined);
+      assert.equal(drained.error, undefined);
+      // The worker's stamp waited for the payment row, then read the journal table: posted.
+      assert.deepEqual(drained.value, { companies: 1, candidates: 1, posted: 1, failed: 0 });
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'posted', shape: 'GENERATED:POSTED' });
+      assert.equal(await client.reimbursementPayment.count({ where: { companyId: s.companyId, postingStatus: 'posting_error' } }), 0);
+    } finally { await retire(s); }
+  });
+
   it('a payout dated in a closed period is refused, marked for the accountant, and posts once the period is open again', async () => {
     const s = await shop();
     try {
