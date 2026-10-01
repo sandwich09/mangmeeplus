@@ -24,6 +24,8 @@ describe('reimbursement document preview lifecycle', () => {
   it('uses one latest-request gate for generated claim forms and authenticated attachments', () => {
     assert.match(source, /previewReimbursementClaimForm\(companyId, target\.reimbursementId\)/);
     assert.match(source, /fetchAttachmentPreviewBlob\(companyId, target\.attachmentId, target\.mimeType\)/);
+    // A payment slip shares the gate and the viewer, but its bytes come from the claim's own slip endpoint.
+    assert.match(source, /target\.kind === 'payment-slip'\s+\? await fetchReimbursementPaymentSlipBlob\(companyId, target\.reimbursementId, target\.paymentId, target\.attachmentId\)/);
     assert.match(source, /const requestId = \+\+previewRequestRef\.current/);
     assert.match(source, /if \(requestId !== previewRequestRef\.current\) return/);
     assert.match(source, /previewUrlRef\.current = url/);
@@ -36,7 +38,8 @@ describe('reimbursement document preview lifecycle', () => {
 
   it('keeps retries target-specific', () => {
     assert.match(source, /onRetry=\{previewTarget\?\.kind === 'claim-form' \? \(\) => loadDocumentPreview\(previewTarget\) : undefined\}/);
-    assert.match(source, /onRetry=\{previewTarget\?\.kind === 'attachment' \? \(\) => loadDocumentPreview\(previewTarget\) : undefined\}/);
+    // The file viewer retries an attachment or a slip, each by its own fetch path; never a claim form.
+    assert.match(source, /onRetry=\{previewTarget && previewTarget\.kind !== 'claim-form' \? \(\) => loadDocumentPreview\(previewTarget\) : undefined\}/);
     assert.match(source, /if \(requestId === claimFormSaveRequestRef\.current\) setClaimFormSaving\(false\)/);
   });
 });

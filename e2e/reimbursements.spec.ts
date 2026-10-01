@@ -156,9 +156,16 @@ test.describe('REIMB — reimbursements', () => {
 
       // authedPage is the seeded OWNER, exempt from the self-approval switch; approving own
       // request opens the inline payment form automatically (AC03) with the outstanding
-      // amount, cash, and today's date already filled in — nothing to type before submitting.
+      // amount and today's date filled in. The method is the payer's to choose (owner
+      // 2026-10-01): nothing is pre-selected, and saving without one is refused on the form.
       await authedPage.getByRole('button', { name: 'อนุมัติ', exact: true }).click();
       await expect(authedPage.getByText('จ่ายเต็มจำนวนคงค้าง')).toBeVisible();
+      const method = authedPage.getByRole('combobox', { name: 'วิธีจ่าย', exact: true });
+      await expect(method).toHaveText('เลือกวิธีจ่าย');
+      await authedPage.getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
+      await expect(authedPage.getByText('กรุณาเลือกวิธีจ่าย')).toBeVisible();
+      await method.click();
+      await authedPage.getByRole('option', { name: 'เงินสด', exact: true }).click();
       await authedPage.getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
 
       await expect(authedPage.getByText('จ่ายแล้ว').first()).toBeVisible();

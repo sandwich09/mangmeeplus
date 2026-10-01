@@ -111,7 +111,7 @@ const later = {
 const detailSections = (detail: object, userId: string, permissions: string[]) => renderToStaticMarkup(h(React.Fragment, null,
   h(sections.ClaimSummaryCard, { detail }),
   h(sections.ClaimDetailSections, { detail, userId, permissions, busy: false, onOpenAttachment: noop, onLineReceipt: noop, onSign: noop,
-    onUploadSignedCopy: noop, onRequestVoidPayment: noop })));
+    onUploadSignedCopy: noop, onRequestVoidPayment: noop, onOpenPaymentSlip: noop, onAttachPaymentSlip: noop, onUseSignedCopyAsSlip: noop })));
 
 function staleDialog(row: any, detail: any): string {
   const diff = diffApprovalFields(approvalComparable(row, row.lineCount ?? 1), approvalComparable(detail, detail.lines.length));

@@ -85,7 +85,7 @@ describe('validatePaymentForm', () => {
   });
   it('requires reference for bank transfer', () => {
     assert.ok(validatePaymentForm({ ...ok, paymentMethod: 'BANK_TRANSFER' }));
-    assert.equal(validatePaymentForm({ ...ok, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1' }), null);
+    assert.equal(validatePaymentForm({ ...ok, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1', hasSlip: true }), null);
   });
 });
 

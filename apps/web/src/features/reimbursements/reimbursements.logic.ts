@@ -1,6 +1,8 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
-import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import {
+  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
+} from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import {
@@ -104,13 +106,19 @@ export function paymentReferenceRequired(method: string): boolean {
   return method === 'BANK_TRANSFER' || method === 'CHEQUE';
 }
 
-/** Client-side validation of the full-payment form. Returns an error key or null. */
+/**
+ * Client-side validation of the full-payment form. Returns an error key or null.
+ * The method is never chosen for the payer, and the slip rule is the API's own
+ * (`reimbursementPaymentSlipRequired`), so the form and the server refuse the same payments.
+ */
 export function validatePaymentForm(input: {
   paidAmount: string;
   outstandingAmount: string;
   paymentMethod: string;
   paymentReference?: string;
+  hasSlip?: boolean;
 }): string | null {
+  if (!input.paymentMethod) return 'กรุณาเลือกวิธีจ่าย';
   const paid = Number(input.paidAmount);
   const outstanding = Number(input.outstandingAmount);
   if (!(paid > 0)) return 'จำนวนเงินต้องมากกว่า 0';
@@ -119,7 +127,71 @@ export function validatePaymentForm(input: {
   if (paymentReferenceRequired(input.paymentMethod) && (!input.paymentReference || input.paymentReference.trim() === '')) {
     return 'ต้องระบุเลขอ้างอิงสำหรับการโอนเงิน/เช็ค';
   }
+  // The API's own words for the same refusal, so the form and the server say one thing.
+  if (reimbursementPaymentSlipRequired(input.paymentMethod) && !input.hasSlip) return translateApiError('payment_slip_required');
   return null;
+}
+
+// ---- Payment slips (สลิปการจ่ายเงินคืน) ----
+
+/** A file already on the claim that can serve as the slip of a payment, without uploading it again. */
+export type PaymentSlipChoice = { attachmentId: string; label: string; kind: 'previous-slip' | 'signed-copy' };
+
+/**
+ * Files already attached to the claim that the payer may use as the slip: slips of payments since
+ * voided (the same transfer, recorded again), and files in ใบเบิกที่เซ็นแล้ว (a slip attached there
+ * by mistake). The API accepts exactly these two kinds beside a fresh slip upload.
+ */
+export function paymentSlipChoices(detail: any): PaymentSlipChoice[] {
+  const choices: PaymentSlipChoice[] = [];
+  const add = (choice: PaymentSlipChoice) => { if (!choices.some((row) => row.attachmentId === choice.attachmentId)) choices.push(choice); };
+  for (const payment of detail?.payments ?? []) {
+    if (payment.status !== 'VOIDED') continue;
+    const slips: any[] = payment.slips ?? [];
+    slips.forEach((slip, index) => add({
+      attachmentId: slip.attachmentId, kind: 'previous-slip',
+      label: `สลิปของการจ่ายที่ยกเลิกแล้ว ${payment.paymentNo ?? ''}`.trim() + (slips.length > 1 ? ` (ไฟล์ที่ ${index + 1})` : ''),
+    }));
+  }
+  for (const copy of detail?.signedCopies ?? []) {
+    add({ attachmentId: copy.attachmentId, kind: 'signed-copy', label: `${copy.fileName} · แนบไว้ที่ใบเบิกที่เซ็นแล้ว` });
+  }
+  return choices;
+}
+
+/** A recorded payment takes more slips, up to the limit, from someone who may record payments. Add-only: there is no remove. */
+export function canAttachPaymentSlip(payment: any, permissions: readonly string[]): boolean {
+  return payment?.status === 'RECORDED' && permissions.includes('reimbursement.payment.record')
+    && (payment.slips ?? []).length < REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES;
+}
+
+/** The payment a file moved out of ใบเบิกที่เซ็นแล้ว becomes the slip of: the one standing payment, when this viewer may add to it. */
+export function slipTargetPayment(detail: any, permissions: readonly string[]): any | undefined {
+  return (detail?.payments ?? []).filter((payment: any) => canAttachPaymentSlip(payment, permissions)).at(-1);
+}
+
+/**
+ * What the payer confirms before a file leaves ใบเบิกที่เซ็นแล้ว to become a payment's slip (spec §16.2):
+ * nothing is uploaded again, a "signed on paper" declaration made with that file is withdrawn, and
+ * the file is from then on opened only by the slip's own readers.
+ */
+export function signedCopyMoveConfirmText(copy: { fileName?: string; acknowledgedAt?: string }, payment: { paymentNo?: string }): string {
+  return [
+    `ไฟล์ ${copy.fileName ?? 'นี้'} จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นสลิปของการจ่าย${payment.paymentNo ? ` ${payment.paymentNo}` : 'นี้'} โดยไม่ต้องอัปโหลดใหม่`,
+    ...(copy.acknowledgedAt ? ['ไฟล์นี้เคยถูกยืนยันว่าเป็นใบเบิกที่ลงนามครบ ระบบจะถอนการยืนยันนั้น ใบเบิกจะไม่นับว่าลงนามบนกระดาษจากไฟล์นี้อีก'] : []),
+    'หลังย้ายแล้ว ไฟล์นี้เปิดดูได้เฉพาะผู้เบิก ผู้อนุมัติของใบนี้ ผู้ที่บันทึกจ่ายได้ และผู้ตรวจการเงิน',
+  ].join(' ');
+}
+
+/**
+ * What the payment form says when saving fails. An uploaded slip is not a recorded payment, and a
+ * payer who has already transferred the money must not be led to transfer it again (spec §12.2).
+ */
+export function paymentSaveErrorMessage(stage: 'slip-upload' | 'record', reason: string, slipKept: boolean): string {
+  if (stage === 'slip-upload') return `อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ${reason}`;
+  return slipKept
+    ? `แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ${reason} · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่`
+    : `ยังบันทึกจ่ายไม่สำเร็จ · ${reason}`;
 }
 
 export const MAX_CLAIM_LINES = 50;

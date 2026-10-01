@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { todayCivilDate } from '@watchdog-bms/contracts';
+import { reimbursementPaymentSlipRequired, todayCivilDate } from '@watchdog-bms/contracts';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -21,7 +21,10 @@ import {
   dateShort, ErrorBanner, InfoBanner, inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
 } from '../expenses/ExpensesUi';
 import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
-import { fetchAttachmentPreviewBlob, previewReimbursementClaimForm, recordReimbursementPayment } from './reimbursements.api';
+import {
+  fetchAttachmentPreviewBlob, fetchReimbursementPaymentSlipBlob, previewReimbursementClaimForm, recordReimbursementPayment,
+  uploadReimbursementPaymentSlip,
+} from './reimbursements.api';
 import {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
@@ -29,7 +32,10 @@ import {
   canUploadSignedCopy, canVoidRecordedPayment, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
 } from './reimbursements.model';
-import { buildClaimTimeline, categoryText, errorText, formatMoney, paperSignedLine, sumLineAmounts, validatePaymentForm, type ApprovalFieldDiff } from './reimbursements.logic';
+import {
+  buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSaveErrorMessage, paymentSlipChoices,
+  slipTargetPayment, sumLineAmounts, validatePaymentForm, type ApprovalFieldDiff,
+} from './reimbursements.logic';
 
 export function StatusBadge({ status }: { status: string }) {
   return <MangmeeBadge tone={REQUEST_STATUS_TONES[status] ?? 'slate'}>{REQUEST_STATUS_LABELS[status] ?? '—'}</MangmeeBadge>;
@@ -254,6 +260,12 @@ export function MissingSavedSignatureModal({ companyId, onClose }: {
 }
 
 /**
+ * Owner 2026-10-01: six transfer slips were attached here and declared as signed forms, because the
+ * payment step had nowhere to put a slip. It has now; this says so at the uploader and in its dialog.
+ */
+const SIGNED_COPY_NOT_FOR_SLIPS = 'ช่องนี้สำหรับใบเบิกที่มีลายเซ็นเท่านั้น ไม่ใช่ที่แนบสลิปโอนเงิน สลิปโอนเงินแนบที่ขั้นจ่ายเงินคืน ตอนกดบันทึกจ่าย';
+
+/**
  * A4: a scan counts as the signed record only after the attacher declares both signatures are on it for
  * THIS claim number. Without the declaration it is kept as an ordinary attachment that signs nothing.
  */
@@ -268,6 +280,7 @@ function SignedCopyDialog({ requestNo, fileName, onClose, onSend }: {
     <Modal open title="แนบใบเบิกที่เซ็นแล้ว" size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <div className="space-y-4">
         <p className="break-words text-sm text-gray-600">{fileName}</p>
+        <ErrorBanner message={SIGNED_COPY_NOT_FOR_SLIPS} />
         <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700">
           <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={declared} onChange={e => setDeclared(e.target.checked)} />
           <span>สำเนานี้มีลายเซ็นผู้เบิกและผู้อนุมัติครบ และตรงกับใบเบิกเลขที่ {requestNo}</span>
@@ -282,36 +295,89 @@ function SignedCopyDialog({ requestNo, fileName, onClose, onSend }: {
   );
 }
 
-/** Full payment only (MVP). A modal in the hub queue; inline in the journey card, never a modal on mobile. */
+/** The slip the payment will be recorded with: a file picked but not sent yet, or one the API already holds. */
+type FormSlip = { file: File } | { attachmentId: string; name: string };
+
+/**
+ * Full payment only (MVP). A modal in the hub queue; inline in the journey card, never a modal on mobile.
+ * `request` is the claim detail where the host has it: files already attached to the claim can serve as the slip.
+ */
 export function PaymentForm({ companyId, request, onCancel, onDone }: { companyId: string; request: any; onCancel: () => void; onDone: () => void }) {
   const toast = useToast();
-  const [form, setForm] = useState({ paidAmount: String(request.outstandingAmount), paymentMethod: 'CASH', paidAt: todayCivilDate(), paymentReference: '' });
+  // The payer states the method (owner 2026-10-01): a transfer saved under a pre-selected เงินสด is recorded
+  // wrongly and without its slip. Phase 1 seam: start from the claim's own payout method here, once a claim carries one.
+  const [form, setForm] = useState({ paidAmount: String(request.outstandingAmount), paymentMethod: '', paidAt: todayCivilDate(), paymentReference: '' });
+  const [slip, setSlip] = useState<FormSlip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // One key for this opened form: pressing บันทึกจ่าย again after a lost answer is the same payment, never a second one.
+  const idempotencyKey = useRef<string | null>(null);
+  const attached = paymentSlipChoices(request);
+  const slipRequired = reimbursementPaymentSlipRequired(form.paymentMethod);
+  const chosen = slip && 'attachmentId' in slip ? attached.find((choice) => choice.attachmentId === slip.attachmentId) : undefined;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const v = validatePaymentForm({ ...form, outstandingAmount: String(request.outstandingAmount) });
+    const v = validatePaymentForm({ ...form, outstandingAmount: String(request.outstandingAmount), hasSlip: slip !== null });
     if (v) { setError(v); return; }
     setBusy(true); setError(null);
+    let slipAttachmentId = slip && 'attachmentId' in slip ? slip.attachmentId : undefined;
     try {
-      await recordReimbursementPayment(companyId, request.id, { ...form, paidAt: new Date(form.paidAt).toISOString(), paymentReference: form.paymentReference || undefined });
+      if (slip && 'file' in slip) {
+        slipAttachmentId = await uploadReimbursementPaymentSlip(companyId, request.id, slip.file);
+        // Kept once uploaded: if saving fails below, the retry sends this same slip instead of uploading again.
+        setSlip({ attachmentId: slipAttachmentId, name: slip.file.name });
+      }
+    } catch (e2) { setError(paymentSaveErrorMessage('slip-upload', errorText(e2), false)); setBusy(false); return; }
+    try {
+      idempotencyKey.current ??= crypto.randomUUID();
+      // Phase 1 seam: the verified payout account's version and the payer's confirmation join this body.
+      await recordReimbursementPayment(companyId, request.id, {
+        ...form, paidAt: new Date(form.paidAt).toISOString(), paymentReference: form.paymentReference || undefined,
+        slipAttachmentId, idempotencyKey: idempotencyKey.current,
+      });
       onDone();
       toast.success('บันทึกจ่ายเรียบร้อยแล้ว');
-    } catch (e2) { setError(errorText(e2)); } finally { setBusy(false); }
+    } catch (e2) { setError(paymentSaveErrorMessage('record', errorText(e2), slipAttachmentId !== undefined)); } finally { setBusy(false); }
   };
 
   return (
     <form className="space-y-3" onSubmit={submit}>
       <p className="text-xs text-gray-500">จ่ายเต็มจำนวนคงค้าง {formatMoney(request.outstandingAmount, request.currency)}</p>
+      {/* Phase 1 seam: the verified payout account and the payer's confirmation render here, above the fields. */}
       <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">จำนวนเงิน *</label><input className={inputClass} type="number" step="0.01" required value={form.paidAmount} onChange={e => setForm(f => ({ ...f, paidAmount: e.target.value }))} /></div>
-      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วิธีจ่าย</label>
-        <ThemedSelect className={inputClass} value={form.paymentMethod} onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}>
+      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วิธีจ่าย *</label>
+        <ThemedSelect className={inputClass} aria-label="วิธีจ่าย" required value={form.paymentMethod} onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}>
+          <option value="" disabled>เลือกวิธีจ่าย</option>
           {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </ThemedSelect>
       </div>
       <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่จ่าย *</label><ThemedDate className={inputClass} required value={form.paidAt} onChange={e => setForm(f => ({ ...f, paidAt: e.target.value }))} /></div>
       <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">เลขอ้างอิง {(form.paymentMethod === 'BANK_TRANSFER' || form.paymentMethod === 'CHEQUE') && '*'}</label><input className={inputClass} value={form.paymentReference} onChange={e => setForm(f => ({ ...f, paymentReference: e.target.value }))} /></div>
+      <div data-testid="reimbursement-payment-slip">
+        <div className="mb-1.5 text-xs font-semibold text-gray-600">สลิปหรือหลักฐานการจ่าย {slipRequired && '*'}</div>
+        {/* No capture attribute, like the receipt upload: a phone offers its camera and its photo library. */}
+        <ThemedFile file={slip ? ('file' in slip ? slip.file : slip.name) : null} accept={RECEIPT_UPLOAD_ACCEPT} aria-label="สลิปหรือหลักฐานการจ่าย"
+          aria-required={slipRequired} disabled={busy} loading={busy && !!slip && 'file' in slip}
+          onChange={file => setSlip(file ? { file } : null)} />
+        <p className="mt-1 text-xs leading-5 text-gray-400">
+          {slipRequired ? 'จ่ายด้วยการโอนต้องแนบสลิป' : 'แนบได้ถ้ามี ไม่บังคับสำหรับวิธีจ่ายนี้'} · PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF ขนาดไม่เกิน 10 MB
+        </p>
+        {attached.length > 0 && (
+          <div className="mt-2">
+            <ThemedSelect className={inputClass} aria-label="เลือกจากไฟล์ที่แนบไว้ในใบนี้" disabled={busy} value={chosen?.attachmentId ?? ''}
+              onChange={e => { const choice = attached.find(row => row.attachmentId === e.target.value); setSlip(choice ? { attachmentId: choice.attachmentId, name: choice.label } : null); }}>
+              <option value="">เลือกจากไฟล์ที่แนบไว้ในใบนี้</option>
+              {attached.map(choice => <option key={choice.attachmentId} value={choice.attachmentId}>{choice.label}</option>)}
+            </ThemedSelect>
+            {chosen?.kind === 'signed-copy' && (
+              <p className="mt-1 text-xs leading-5 text-gray-500">
+                เมื่อบันทึกจ่าย ไฟล์นี้จะย้ายจากรายการใบเบิกที่เซ็นแล้วมาเป็นสลิปของการจ่ายนี้ ถ้าเคยยืนยันว่าไฟล์นี้คือใบเบิกที่ลงนามครบ ระบบจะถอนการยืนยันนั้น
+              </p>
+            )}
+          </div>
+        )}
+      </div>
       {error && <ErrorBanner message={error} />}
       <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button><button type="submit" className={btnClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกจ่าย'}</button></div>
     </form>
@@ -323,7 +389,9 @@ const attachmentPreviewMimeType = (fileName: string): 'application/pdf' | 'image
 );
 type ReimbursementDocumentPreviewTarget =
   | { kind: 'claim-form'; reimbursementId: string; name: string }
-  | { kind: 'attachment'; reimbursementId: string; attachmentId: string; fileName: string; mimeType: 'application/pdf' | 'image/png' | 'image/jpeg' };
+  | { kind: 'attachment'; reimbursementId: string; attachmentId: string; fileName: string; mimeType: 'application/pdf' | 'image/png' | 'image/jpeg' }
+  // A slip is fetched through the claim's own slip endpoint, never the generic attachment download.
+  | { kind: 'payment-slip'; reimbursementId: string; paymentId: string; attachmentId: string; name: string };
 
 /**
  * ใบเบิกค่าใช้จ่าย (rendered server-side as SVG, saved as PDF from the viewer) and authenticated
@@ -367,7 +435,7 @@ export function useClaimDocumentPreview(companyId: string, onError: (message: st
   const loadDocumentPreview = async (target: ReimbursementDocumentPreviewTarget) => {
     const requestId = ++previewRequestRef.current;
     claimFormSaveRequestRef.current += 1;
-    const loadingKey = target.kind === 'claim-form' ? `claim-form:${target.reimbursementId}` : `attachment:${target.attachmentId}`;
+    const loadingKey = target.kind === 'claim-form' ? `claim-form:${target.reimbursementId}` : `${target.kind}:${target.attachmentId}`;
     setPreviewLoadingKey(loadingKey);
     onError(null);
     try {
@@ -381,14 +449,16 @@ export function useClaimDocumentPreview(companyId: string, onError: (message: st
         const pages = nextPreview.pageSvgDataUrls?.length ? nextPreview.pageSvgDataUrls : [nextPreview.svgDataUrl];
         setClaimForm({ name: target.name, url: pages[0]!, pages });
       } else {
-        const blob = await fetchAttachmentPreviewBlob(companyId, target.attachmentId, target.mimeType);
+        const blob = target.kind === 'payment-slip'
+          ? await fetchReimbursementPaymentSlipBlob(companyId, target.reimbursementId, target.paymentId, target.attachmentId)
+          : await fetchAttachmentPreviewBlob(companyId, target.attachmentId, target.mimeType);
         if (requestId !== previewRequestRef.current) return;
         const url = URL.createObjectURL(blob);
         releaseAttachmentPreviewUrl();
         previewUrlRef.current = url;
         setClaimForm(null);
         setClaimFormError(null);
-        setAttachmentPreview({ name: target.fileName, mimeType: blob.type, url });
+        setAttachmentPreview({ name: target.kind === 'payment-slip' ? target.name : target.fileName, mimeType: blob.type, url });
       }
       setPreviewTarget(target);
     } catch (e) {
@@ -414,6 +484,15 @@ export function useClaimDocumentPreview(companyId: string, onError: (message: st
   const openAttachment = async (reimbursementId: string, attachmentId: string, fileName: string) => {
     try {
       await loadDocumentPreview({ kind: 'attachment', reimbursementId, attachmentId, fileName, mimeType: attachmentPreviewMimeType(fileName) });
+    } catch {
+      // The active request already reports its localized failure through onError.
+    }
+  };
+
+  /** The viewer names the slip by its payment, so no file name has to leave the API for people who cannot open it. */
+  const openPaymentSlip = async (reimbursementId: string, paymentId: string, attachmentId: string, name: string) => {
+    try {
+      await loadDocumentPreview({ kind: 'payment-slip', reimbursementId, paymentId, attachmentId, name });
     } catch {
       // The active request already reports its localized failure through onError.
     }
@@ -471,12 +550,12 @@ export function useClaimDocumentPreview(companyId: string, onError: (message: st
         retryLabel="ลองอีกครั้ง"
         openNewTabLabel="เปิดในแท็บใหม่"
         onClose={closeDocumentPreview}
-        onRetry={previewTarget?.kind === 'attachment' ? () => loadDocumentPreview(previewTarget) : undefined}
+        onRetry={previewTarget && previewTarget.kind !== 'claim-form' ? () => loadDocumentPreview(previewTarget) : undefined}
       />}
     </>
   );
 
-  return { previewLoadingKey, closeDocumentPreview, openClaimForm, openAttachment, previewModals };
+  return { previewLoadingKey, closeDocumentPreview, openClaimForm, openAttachment, openPaymentSlip, previewModals };
 }
 
 /** Who is paid back, why, and how much — the head of every claim view. */
@@ -509,12 +588,18 @@ function Row({ k, v }: { k: string; v: any }) {
  * Timeline, facts, lines with their evidence, signatures and signed copies, approval steps and
  * payments. Every write control repeats its own actor/permission/state check; the server re-checks.
  */
-export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenAttachment, onLineReceipt, onSign, onUploadSignedCopy, onRequestVoidPayment }: {
+export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenAttachment, onLineReceipt, onSign, onUploadSignedCopy, onRequestVoidPayment, onOpenPaymentSlip, onAttachPaymentSlip, onUseSignedCopyAsSlip }: {
   detail: any;
   userId: string;
   permissions: readonly string[];
   busy: boolean;
   onOpenAttachment: (attachmentId: string, fileName: string) => void;
+  /** Opens one slip of one payment; offered only to viewers the slip endpoint serves. */
+  onOpenPaymentSlip: (payment: any, attachmentId: string, name: string) => void;
+  /** Adds a slip to a payment already recorded (add-only). */
+  onAttachPaymentSlip: (payment: any, file: File) => void;
+  /** Moves a file out of ใบเบิกที่เซ็นแล้ว to be the slip of that payment (a slip attached there by mistake). */
+  onUseSignedCopyAsSlip: (copy: any, payment: any) => void;
   onLineReceipt: (lineNo: number, file: File | null) => void;
   /** Every block this viewer may sign, from one tap (spec §9). */
   onSign: (roles: ClaimSignatureRole[]) => void;
@@ -534,6 +619,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
   const paperSigned = detail.documentSignedVia === 'PAPER' || detail.documentSignedVia === 'BOTH';
   const paperCopy = signedCopies.find((copy: any) => copy.acknowledgedAt);
   const canAttachSignedCopy = canUploadSignedCopy(detail, userId, permissions);
+  const slipTarget = slipTargetPayment(detail, permissions);
   // One receipt block for the phone card and the table cell, so the upload rules live in one place.
   const lineReceipt = (l: any) => (
     <>
@@ -711,6 +797,13 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                       <div className="break-words text-gray-500">
                         {copy.acknowledgedAt ? paperSignedLine(copy) : `ไฟล์แนบทั่วไป · แนบเมื่อ ${dateShort(copy.uploadedAt)}`}
                       </div>
+                      {/* A slip attached here by mistake moves to the payment without being uploaded again (spec §16). */}
+                      {slipTarget && (
+                        <button type="button" className="mt-1 min-h-11 text-left text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"
+                          disabled={busy} aria-busy={Boolean(busy)} onClick={() => onUseSignedCopyAsSlip(copy, slipTarget)}>
+                          ใช้ไฟล์นี้เป็นสลิปการจ่าย
+                        </button>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -719,6 +812,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
               <div className="mt-3 block text-xs font-semibold text-gray-600">
                 แนบใบเบิกที่เซ็นแล้ว (PDF/JPG/PNG)
                 <ThemedFile className="mt-1.5" file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) setPendingCopy(file); }} />
+                <p className="mt-1.5 font-normal leading-5 text-gray-500">{SIGNED_COPY_NOT_FOR_SLIPS}</p>
               </div>
             )}
           </MangmeeCard>
@@ -757,14 +851,47 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <MangmeeCard className="p-4">
           <h4 className="mb-2 text-sm font-bold text-gray-900">การจ่ายเงิน</h4>
           <ul className="space-y-2">
-            {detail.payments.map((p: any) => (
-              <li key={p.id} className="rounded-xl border border-gray-200 px-3 py-2.5 text-xs text-gray-600">
+            {detail.payments.map((p: any) => {
+              // Every fact on this row comes from the one payment record; the slips are that record's own links.
+              const slips: any[] = p.slips ?? [];
+              // The API's own verdict for this viewer, from the rule its slip endpoint enforces: ดูสลิป is
+              // never worked out here from the session's permissions, so it cannot be offered and then refused.
+              const canOpenSlip = p.viewerCanOpenSlips === true;
+              const slipName = `${p.status === 'VOIDED' ? 'สลิปของการจ่ายที่ยกเลิกแล้ว' : 'สลิปการจ่าย'} ${p.paymentNo ?? ''}`.trim();
+              return (
+              <li key={p.id} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2.5 text-xs text-gray-600" data-testid="reimbursement-payment-row">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-mono font-semibold text-gray-700">{p.paymentNo}</span>
                   <span className="font-semibold tabular-nums text-gray-900">{formatMoney(p.paidAmount, p.currency)}</span>
                 </div>
                 <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? '—'} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : PAYMENT_STATUS_LABELS[p.status] ?? 'สถานะการจ่าย'}</div>
+                <div className="mt-1 break-words text-gray-500">{`วันที่จ่าย ${dateShort(p.paidAt)}${p.paymentReference ? ` · เลขอ้างอิง ${p.paymentReference}` : ''}`}</div>
                 {p.paidByName && <div className="mt-1 text-gray-500">จ่ายโดย {p.paidByName}</div>}
+                {slips.length > 0 ? (
+                  <div className="mt-1">
+                    <div className="text-gray-500">{p.status === 'VOIDED' ? 'สลิปของการจ่ายที่ยกเลิกแล้ว' : 'มีสลิปแนบ'} {slips.length} ไฟล์</div>
+                    {canOpenSlip && (
+                      <div className="flex flex-wrap gap-x-4">
+                        {slips.map((slip: any, index: number) => {
+                          const label = slips.length > 1 ? `ดูสลิป ${index + 1}` : 'ดูสลิป';
+                          return (
+                            <button key={slip.attachmentId} type="button" className="min-h-11 text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"
+                              disabled={busy} aria-busy={Boolean(busy)} onClick={() => onOpenPaymentSlip(p, slip.attachmentId, slips.length > 1 ? `${slipName} (${index + 1})` : slipName)}>
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ) : <div className="mt-1 text-gray-500">ไม่มีสลิปแนบ</div>}
+                {canAttachPaymentSlip(p, permissions) && (
+                  <div className="mt-2 font-semibold text-gray-600">
+                    {slips.length > 0 ? 'แนบสลิปเพิ่ม' : 'แนบสลิป'}
+                    <ThemedFile className="mt-1.5" file={null} accept={RECEIPT_UPLOAD_ACCEPT} aria-label={slips.length > 0 ? 'แนบสลิปเพิ่ม' : 'แนบสลิป'}
+                      disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onAttachPaymentSlip(p, file); }} />
+                  </div>
+                )}
                 {p.status === 'VOIDED' && p.voidReason && <div className="mt-1 text-error-700">เหตุผลที่ยกเลิก: {p.voidReason}</div>}
                 {canVoidRecordedPayment(p, permissions) && (
                   <button type="button" className="mt-2 min-h-11 text-error-700 underline underline-offset-4 disabled:opacity-50" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onRequestVoidPayment(p)}>
@@ -772,7 +899,8 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                   </button>
                 )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         </MangmeeCard>
       )}

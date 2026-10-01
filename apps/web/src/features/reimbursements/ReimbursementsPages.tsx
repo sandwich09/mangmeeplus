@@ -780,9 +780,17 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
 }
 
 function PaymentModal({ companyId, request, onClose, onDone }: { companyId: string; request: any; onClose: () => void; onDone: () => void }) {
+  // The queue row carries no attachments. The claim itself does, and its files can serve as the slip,
+  // so the form gets the claim once it loads; until then, and if that read fails, the row is enough to pay.
+  const [claim, setClaim] = useState<any>(request);
+  useEffect(() => {
+    let active = true;
+    getReimbursement(companyId, request.id).then((detail) => { if (active) setClaim(detail); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [companyId, request.id]);
   return (
     <Modal open title={`บันทึกการจ่ายเงิน — ${request.requestNo}`} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
-      <PaymentForm companyId={companyId} request={request} onCancel={onClose} onDone={onDone} />
+      <PaymentForm companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} />
     </Modal>
   );
 }
