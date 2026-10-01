@@ -77,3 +77,36 @@ Verification (2026-10-01, on the branch head):
 - Not run: Playwright e2e (the two claim helpers now choose cash so their flows still submit) and a browser pass at 390 px.
 
 Next: part B (pay step shows the claim's snapshot through `findClaimPayout` and `claimPayoutRevealGroup`; the payer's confirmation checks version and fingerprint under the payment lock; a legacy claim shows the member's current default with a label; export last 4). Phase 4 print uses the same reveal group.
+
+## Merged into the payout assembly (2026-10-01)
+
+Merged into `claude/reimb-payout-assembly-20261001` at `565b1727f` (assembly `ebe0bb988`: Phase 0, Phase 2, their follow-ups, the claim notification fixes and the claim payout posting; lane `503b2d85e`). The memory update `526a39f76` followed at `359b0ef0a`. Not pushed, no PR.
+
+Twelve content conflicts, both sides kept, no test dropped:
+
+- Contracts: an approval queue row carries `approvalActions` (assembly) and `approvalSnapshotHash` (this lane).
+- `reimbursement.mapper.ts`: `detailWithFileNames` keeps the required viewer and the slip facts, and adds the claim's masked payout snapshot.
+- Approval use case: queue rows come from `pendingApprovalActions` and name the claim hash the row showed.
+- Request use case: GET detail keeps `paymentDesk` and adds the draft's default account, the submit token, the default-changed hint and `canRevealAccountNumber`.
+- Repository, controller, DTOs and the four specs: import unions.
+- Hub page: the queue's approve button shows only where `approvalActions` allows it, and reads "ตรวจบัญชีและอนุมัติ" for a transfer claim.
+
+Six specs failed after the merge on fake repositories only (each side's detail and list paths now read through the other's repository calls); the fakes were completed and no assertion changed.
+
+What changed for this lane's own decisions:
+
+- `isEffectiveClaimApprover` is gone. The one definition of a claim's own approver is `isReimbursementClaimApprover` in contracts; `claimPayoutRevealGroup` asks it, with whoever may decide the pending step. `payoutRevealGroup` keeps its own conditions (there is an account, a draft is its requester's alone, branch scope, a payer must be able to read the claim). The payment reminder's query (`findClaimApprovers`) cannot call the rule: its round test now matches it exactly (no submission in force, no approver), and the three places point at each other.
+- `ALWAYS_DELIVERED_TRIGGER_KEYS` also holds `workflow.reimbursement_payment_voided` and `workflow.reimbursement_payment_sla_breach`. The spec pins the whole list.
+- The hub list the assembly rewrote (paged, lazy) carries `payoutMethod` on its rows, so the row rule (`draftRowSubmitsFromItsPage`) holds on it unchanged.
+- The permission matrix (`docs/specs/permission-matrix.md` §5.6) has the payout routes, who may set someone else's account and who may see a full number.
+- The approved help pack's pin on the claim guide did not move: the merge does not touch that file.
+
+Checks added where the two sides meet (all in spec files already registered): the reveal, its flag and the slip rule asked about the same viewers; the reminder's approver against the contracts rule; a transfer claim's queue row (API and rendered); the paged list row and the hub's send button; the payment form and the claim page for a claim with a frozen account; one submit that freezes the account and names the would-be approvers; one detail read as eight readers for the two viewer flags; the two payment notices past a saved preference list.
+
+Noticed and left alone:
+
+- An approver of the claim's current round who has lost every way to read the claim is refused the claim detail and the slip (their read gate comes first) and is still answered by the reveal endpoint, which asks for branch scope only. Spec §11.1 asks "can read the claim" of the payer alone. Needs a decision if the reveal should have the same gate.
+- The audit rows of a payment and of a slip opening carry the slip's attachment id (the slip lane's decision). An audit reader outside the slip group learns that id; no route serves the file to them.
+- Part B is unchanged: the payment form does not show the claim's account or start from its method, the export carries nothing of the account, and the printed form does not print it.
+
+Verification of the merge is in its hand-off report (unit suites, the real PostgreSQL gate, the 17-step CI-equivalent run). Not run: Playwright e2e (the merged spec files type-check), a browser pass at 390 px, live HTTP.

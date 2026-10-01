@@ -22,7 +22,7 @@ Decisions:
 - B10, paid event. Written inside `recordPaymentAtomic` through an `onPaymentPersisted` callback. The payment audit row is still written after commit.
 - Reimbursements module edits: (1) the void event also carries `requestNo` and `requesterUserId`; (2) going back to draft writes a new event `reimbursement.reopened` in the same transaction; (3) B10 as above; (4) the ready-to-pay event of a claim that needed no approval carries `approverRecipientUserIds`, from a new read-only method `resolveWouldBeApproverUserIds` on the approver route resolver, written by the live submit and by the projection reconciler alike.
 
-Integrator steps:
+Integrator steps (both done when the payout Phase 1 lane was merged into the assembly, 2026-10-01; see `reimbursement-payout-p1-default-account.md`, "Merged into the payout assembly"):
 
 - Add `workflow.reimbursement_payment_voided` and `workflow.reimbursement_payment_sla_breach` to `ALWAYS_DELIVERED_TRIGGER_KEYS` (decided by the owner side; the constant lives on the payout Phase 1 branch and its spec pins the list, so update that assertion too). Until then a user with a saved preference row gets these two only on the web bell, not on LINE.
 - Unify `PrismaWorkflowRepository.findClaimApprovers` with `isReimbursementPayoutParty` from the payout assembly: both mean the decider of the claim's latest APPROVED step still in force.
