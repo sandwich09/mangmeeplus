@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
-  AttachPaymentSlipDto, CompletePaymentSlipUploadDto, CreateReimbursementRequestDto, InitPaymentSlipUploadDto,
+  ApproveReimbursementDto, AttachPaymentSlipDto, CompletePaymentSlipUploadDto, CreateReimbursementRequestDto, InitPaymentSlipUploadDto,
   LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
-  ReimbursementInternalNoteDto, UpdateReimbursementDraftDto,
+  ReimbursementInternalNoteDto, SetMemberPayoutAccountDto, SubmitReimbursementDto, UpdateReimbursementDraftDto,
 } from './reimbursement.dtos';
 
 // The exact global-pipe configuration main.ts registers: this is the runtime gate
@@ -197,5 +197,73 @@ describe('LinkReimbursementSignedCopyDto', () => {
     await rejects(LinkReimbursementSignedCopyDto, { attachmentId: 'att-1', acknowledgedComplete: true, confirmedRequestNo: '' });
     await rejects(LinkReimbursementSignedCopyDto, { attachmentId: 'att-1', acknowledgedComplete: false, confirmedRequestNo: 'RB-1' });
     await rejects(LinkReimbursementSignedCopyDto, { attachmentId: 'att-1', acknowledgedComplete: 'yes', confirmedRequestNo: 'RB-1' });
+  });
+});
+
+describe('payout account bodies', () => {
+  const account = { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' };
+
+  it('carries the account number as text, so leading zeros survive the pipe', async () => {
+    const created = await pipe.transform({ ...validCreate, payout: { mode: 'SPECIFIED', saveAsDefault: true, ...account } }, { type: 'body', metatype: CreateReimbursementRequestDto });
+    assert.deepEqual({ ...created.payout }, { mode: 'SPECIFIED', saveAsDefault: true, ...account });
+    const updated = await pipe.transform({ payout: { mode: 'CASH' } }, { type: 'body', metatype: UpdateReimbursementDraftDto });
+    assert.equal(updated.payout?.mode, 'CASH');
+    const own = await pipe.transform({ payoutMethod: 'BANK_TRANSFER', ...account }, { type: 'body', metatype: SetMemberPayoutAccountDto });
+    assert.equal(own.accountNumber, '0123456789');
+    await pipe.transform({ payoutMethod: 'CASH' }, { type: 'body', metatype: SetMemberPayoutAccountDto });
+  });
+
+  it('rejects a numeric account number, unknown modes and methods, and every server-owned field', async () => {
+    for (const payout of [
+      { mode: 'SPECIFIED', ...account, accountNumber: 123456789 },
+      { mode: 'SPECIFIED', ...account, accountNumber: '1'.repeat(41) },
+      { mode: 'SPECIFIED', ...account, payoutKind: 'CRYPTO_WALLET' },
+      { mode: 'SPECIFIED', ...account, saveAsDefault: 'yes' },
+      { mode: 'EMPLOYEE_DEFAULT' },
+      { ...account },
+      // What only the server may decide: whose account it is, its version, its last 4, who verified it.
+      { mode: 'DEFAULT', userId: 'someone-else' },
+      { mode: 'SPECIFIED', ...account, accountLast4: '0000' },
+      { mode: 'SPECIFIED', ...account, version: 7 },
+      { mode: 'SPECIFIED', ...account, verifiedByUserId: 'approver-1' },
+      { mode: 'SPECIFIED', ...account, source: 'DEFAULT_ACCOUNT' },
+    ]) {
+      await rejects(CreateReimbursementRequestDto, { ...validCreate, payout });
+      await rejects(UpdateReimbursementDraftDto, { payout });
+    }
+    for (const poison of [{ payoutMethod: 'CRYPTO' }, { accountNumber: 123456789 }, { userId: 'someone-else' }, { companyId: 'other-tenant' }, { accountLast4: '0000' }, { version: 3 }]) {
+      await rejects(SetMemberPayoutAccountDto, { payoutMethod: 'BANK_TRANSFER', ...account, ...poison });
+    }
+    await rejects(SetMemberPayoutAccountDto, { ...account });
+    // The claim header itself never takes the snapshot columns from a client.
+    for (const poison of [{ payoutMethod: 'CASH' }, { payoutDestinationVersion: 2 }, { payoutFingerprint: 'forged' }]) {
+      await rejects(CreateReimbursementRequestDto, { ...validCreate, ...poison });
+      await rejects(UpdateReimbursementDraftDto, poison);
+    }
+  });
+});
+
+describe('submit and approve bodies', () => {
+  it('takes the token of the account the page showed, an empty body, and no body at all', async () => {
+    const token = 'a1b2c3d4'.repeat(4);
+    const out = await pipe.transform({ payoutSubmitToken: token }, { type: 'body', metatype: SubmitReimbursementDto });
+    assert.equal(out.payoutSubmitToken, token);
+    await pipe.transform({}, { type: 'body', metatype: SubmitReimbursementDto });
+    // A caller that posts nothing reaches the use case with no token, and is told to review the account there.
+    assert.equal((await pipe.transform(undefined, { type: 'body', metatype: SubmitReimbursementDto }))?.payoutSubmitToken, undefined);
+    for (const body of [{ payoutSubmitToken: 'not-a-token' }, { payoutSubmitToken: 1 }, { payoutSubmitToken: `${token}0` }, { payoutMethod: 'CASH' }, { payoutFingerprint: token }, { status: 'APPROVED' }]) {
+      await rejects(SubmitReimbursementDto, body);
+    }
+  });
+
+  it('takes the attested version as a whole number only, with the claim hash the approver saw', async () => {
+    const out = await pipe.transform({ comment: 'ตรวจแล้ว', approvalSnapshotHash: 'a'.repeat(32), payoutVerifiedVersion: 2 }, { type: 'body', metatype: ApproveReimbursementDto });
+    assert.deepEqual([out.comment, out.approvalSnapshotHash, out.payoutVerifiedVersion], ['ตรวจแล้ว', 'a'.repeat(32), 2]);
+    // A browser tab from before the release sends neither; the use case answers it, not the pipe.
+    await pipe.transform({ comment: 'ok' }, { type: 'body', metatype: ApproveReimbursementDto });
+    for (const body of [{ payoutVerifiedVersion: '2' }, { payoutVerifiedVersion: 0 }, { payoutVerifiedVersion: 1.5 }, { payoutVerifiedVersion: true },
+      { approvalSnapshotHash: 7 }, { comment: 'x'.repeat(2001) }, { verifiedByUserId: 'someone-else' }, { decisionByUserId: 'someone-else' }, { status: 'APPROVED' }]) {
+      await rejects(ApproveReimbursementDto, body);
+    }
   });
 });

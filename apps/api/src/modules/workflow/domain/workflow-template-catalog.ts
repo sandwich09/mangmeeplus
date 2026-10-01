@@ -32,7 +32,9 @@ export const WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG: Record<string, Record<str
   reimbursement_decision_requester: { eventTypes: ['reimbursement.approved', 'reimbursement.rejected'] },
   reimbursement_correction_requester: { eventType: 'reimbursement.correction_requested' },
   reimbursement_finance_review: { eventType: 'reimbursement.finance_review_updated' },
-  reimbursement_finance_review_pending: { eventType: 'reimbursement.approved' },
+  // Two ways a claim arrives at the finance desk: a person approved it, or it needed no approval
+  // and was sent straight there. The second wrote an event no rule listened to, so nobody was told.
+  reimbursement_finance_review_pending: { eventTypes: ['reimbursement.approved', 'reimbursement.finance_review_requested'] },
   reimbursement_ready_for_payment: { eventType: 'reimbursement.ready_for_payment' },
   reimbursement_payment_recorded: { eventType: 'reimbursement.payment_recorded' },
   reimbursement_payment_voided: { eventType: 'reimbursement.payment_voided' },
@@ -57,6 +59,15 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
   reimbursement_ready_for_payment: 0,
   reimbursement_payment_recorded: 0,
   reimbursement_payment_voided: 0,
+};
+
+// A template added next to one a company already has follows that one's switch: where the company
+// turned the older notice off, the new one is created switched off too. An admin who disabled "paid"
+// did not ask for "payment voided", and one who disabled the approval reminder did not ask for the
+// payment reminder. The admin can still enable it; nothing else about auto-enable changes.
+export const WORKFLOW_TEMPLATE_FOLLOWS_SIBLING: Record<string, string> = {
+  reimbursement_payment_voided: 'reimbursement_payment_recorded',
+  reimbursement_payment_sla_breach: 'approval_sla_breach',
 };
 
 // Step-journey spec §11/§13: every reimbursement notification links straight to that claim's
@@ -128,7 +139,10 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
-    defaultConditionJson: { field: 'requestId', op: 'EXISTS' },
+    // Only a claim that waits for a person. A claim below the approval threshold is submitted too,
+    // but has no approver: matching it retried the notice into a dead letter on every such claim
+    // and created an approval task for nobody.
+    defaultConditionJson: { field: 'status', op: 'EQ', value: 'PENDING_APPROVAL' },
     defaultActionJson: [
       {
         actionKey: 'notify_approver',
@@ -167,7 +181,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     defaultConditionJson: { field: 'slaRisk', op: 'EQ', value: true },
     defaultActionJson: [
       { actionKey: 'escalate_sla', actionType: 'SEND_NOTIFICATION', configJson: { triggerKey: 'workflow.approval_sla_breach', recipientPayloadKeys: ['approverRecipientUserIds', 'ownerRecipientUserIds'], severity: 'critical' } },
-      { actionKey: 'create_escalation_task', actionType: 'CREATE_WORKFLOW_TASK', configJson: { titleTemplate: 'อนุมัติเกิน SLA: {{requestNo}}', priority: 'CRITICAL', assigneeUserPayloadKey: 'approverTaskUserId', assigneeRolePayloadKey: 'approverTaskRole' } },
+      { actionKey: 'create_escalation_task', actionType: 'CREATE_WORKFLOW_TASK', configJson: { titleTemplate: 'ใบเบิกรออนุมัติเกินกำหนด: {{requestNo}}', priority: 'CRITICAL', assigneeUserPayloadKey: 'approverTaskUserId', assigneeRolePayloadKey: 'approverTaskRole' } },
     ],
     requiredPermissions: ['reimbursement.approve'],
     requiredSourceModules: ['reimbursements'],
@@ -194,11 +208,14 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           triggerKey: 'workflow.reimbursement_payment_sla_breach',
           recipientPermissions: ['reimbursement.payment.record'],
           // The same preference as the ready-to-pay notice, read from what the claim records: the
-          // finance reviewer who passed it, else whoever approved it, when they can record the
-          // payment. Never the requester alone. With no such person, everyone able to record it.
-          preferRecipientPayloadKeys: ['financeReviewerUserId', 'approvedByUserId'],
+          // finance reviewer who passed it, else whoever approved it, else (for a claim nobody had
+          // to approve) the people who would have, when they can record the payment. Never the
+          // requester alone. With no such person, everyone able to record it.
+          preferRecipientPayloadKeys: ['financeReviewerUserId', 'approvedByUserId', 'approverRecipientUserIds'],
           neverPreferRecipientPayloadKeys: ['requesterUserId'],
-          severity: 'critical',
+          // 'action', not 'critical': a critical notice is pushed through a person's quiet hours,
+          // and a claim that has waited two days can wait until morning.
+          severity: 'action',
           titleTemplate: 'ใบเบิกรอจ่ายเงินเกินกำหนด: {{requestNo}}',
           bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
@@ -378,9 +395,10 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           // Owner rule 2026-10-01: whose turn it is, not everyone who can pay (a shop owner holds
           // every right and was pushed for every claim). That is the actor of this event when they
           // can record the payment: the approver, the finance reviewer, or whoever filed on
-          // someone's behalf a claim that needed no approval. Next, for a claim nobody had to
-          // approve, the people who would have approved it. Never the requester alone. With no
-          // such person, everyone able to record the payment, as before.
+          // someone's behalf a claim that needed no approval. Next, the approvers the event
+          // names: the claim's own approver when finance passed it (a finance reviewer may not
+          // hold the pay right), or the people who would have approved a claim nobody had to
+          // approve. Never the requester alone. With no such person, everyone able to pay.
           preferRecipientPayloadKeys: ['actorUserId', 'approverRecipientUserIds'],
           neverPreferRecipientPayloadKeys: ['requesterUserId'],
           severity: 'action',
@@ -393,6 +411,9 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           // actor of this event approved the claim; paying it is a different step, and it is
           // theirs. Excluding them left the approver-payer with no notice at all for the pay
           // step, which is how approved claims sat unpaid in production.
+          // The actor gets it in the web bell only, though: a LINE push about what one has just
+          // done oneself is the annoyance AC11 exists to prevent. Anyone else is pushed as usual.
+          webOnlyRecipientPayloadKeys: ['actorUserId'],
         },
       },
     ],

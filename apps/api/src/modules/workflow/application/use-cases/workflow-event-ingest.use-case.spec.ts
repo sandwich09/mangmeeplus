@@ -71,6 +71,7 @@ describe('IngestWorkflowEventUseCase', () => {
       ['reimbursement_correction_requester', 'reimbursement.correction_requested'],
       ['reimbursement_finance_review', 'reimbursement.finance_review_updated'],
       ['reimbursement_finance_review_pending', 'reimbursement.approved'],
+      ['reimbursement_finance_review_pending', 'reimbursement.finance_review_requested'],
       ['reimbursement_ready_for_payment', 'reimbursement.ready_for_payment'],
       ['reimbursement_payment_recorded', 'reimbursement.payment_recorded'],
       ['reimbursement_payment_voided', 'reimbursement.payment_voided'],
@@ -166,6 +167,25 @@ describe('IngestWorkflowEventUseCase', () => {
     assert.deepEqual(cfg['recipientPermissions'], ['reimbursement.finance_review']);
     assert.equal(cfg['triggerKey'], 'workflow.reimbursement_finance_review');
     assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK);
+  });
+
+  // Review: a claim below the approval threshold in a company with finance review on wrote only
+  // `finance_review_requested`, which no rule listened to, so it reached the finance desk unannounced.
+  // And the pending-approval rule matched it, with no approver to tell: a dead letter per claim.
+  it('announces a claim that needed no approval to the finance desk, and asks nobody to approve it', () => {
+    const now = new Date('2026-10-01T00:00:00.000Z');
+    const arrival = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_finance_review_pending')!;
+    const pending = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_pending_approval')!;
+    // What submit writes on `request_submitted` and `finance_review_requested` for such a claim.
+    const sentToFinance = { requestId: 'rb-1', requestNo: 'RB-202610-00003', status: 'FINANCE_REVIEW', requesterUserId: 'staff-1', amount: '80', currency: 'THB' };
+
+    assert.equal(ruleMatchesEventType(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG['reimbursement_finance_review_pending'] ?? {}, 'reimbursement.finance_review_requested'), true);
+    assert.equal(evaluateCondition(arrival.defaultConditionJson, sentToFinance, now).matched, true);
+
+    assert.equal(evaluateCondition(pending.defaultConditionJson, sentToFinance, now).matched, false);
+    assert.equal(evaluateCondition(pending.defaultConditionJson, { ...sentToFinance, status: 'READY_FOR_PAYMENT' }, now).matched, false);
+    // A claim that does wait for a person is announced exactly as before.
+    assert.equal(evaluateCondition(pending.defaultConditionJson, { ...sentToFinance, status: 'PENDING_APPROVAL' }, now).matched, true);
   });
 
   it('routes the finance-review template to finance-review permission holders and stays out of the approve path', () => {
@@ -465,6 +485,19 @@ describe('claim approval tasks close when the claim moves on (audit B8)', () => 
     const before = JSON.stringify(tasks);
     assert.equal(await repo.closeSettledClaimTasks({}, new Date('2026-10-02T00:00:00.000Z')), 0);
     assert.equal(JSON.stringify(tasks), before);
+  });
+
+  // Review: superseding ignores the claim's status, so called without a claim it would have
+  // cancelled every open approval task of every company.
+  it('refuses to supersede without naming the claim, and closes nothing', async () => {
+    const tasks = [task('pending-claim'), task('other-company', { companyId: 'co-2', sourceId: 'req-9' })];
+    const { repo, writes } = store(tasks, [{ id: 'req-1', status: 'PENDING_APPROVAL' }]);
+
+    await assert.rejects(() => repo.closeSettledClaimTasks({ supersede: true }), /supersede needs the claim/);
+    await assert.rejects(() => repo.closeSettledClaimTasks({ companyId: 'co-1', supersede: true }), /supersede needs the claim/);
+
+    assert.deepEqual(statuses(tasks), { 'pending-claim': 'OPEN', 'other-company': 'OPEN' });
+    assert.deepEqual(writes, []);
   });
 
   it('decides the outcome from the claim status, and finds the claim an event is about', () => {

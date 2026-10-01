@@ -34,6 +34,7 @@ import {
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
 } from './ReimbursementDetailSections';
+import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage } from './reimbursement-payout.logic';
 import { type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
@@ -169,6 +170,10 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
       eyebrow="การเบิกจ่าย"
       title="การเบิกจ่ายและอนุมัติ"
       description={HUB_TAB_DESCRIPTIONS[tab]}
+      // Beside the page actions on every tab: whoever can file a claim sets where it is paid back.
+      meta={permissions.includes('reimbursement.create') ? (
+        <Link href={`/companies/${companyId}/reimbursements/payout-account`} className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')}>บัญชีรับเงินคืนของฉัน</Link>
+      ) : undefined}
       actions={permissions.includes('reimbursement.create') && tab === 'mine' ? (
         <Link href={`/companies/${companyId}/reimbursements/new`} className={cx(btnClass, 'min-h-11 w-full sm:w-auto')}>+ สร้างคำขอเบิก</Link>
       ) : undefined}
@@ -252,6 +257,11 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
     setBusy(id); setError(null);
     try { await fn(); setReload(n => n + 1); if (successMessage) toast.success(successMessage); } catch (e) { setError(approverNotReadyHelp(e, permissions)?.text ?? err(e)); } finally { setBusy(null); }
   };
+  // A draft paid into an account (the requester's default, or one typed into the claim) is sent from
+  // its own page: a row shows no account, and nobody sends a claim to an account they were not shown.
+  const submitRow = (r: any) => (draftRowSubmitsFromItsPage(r)
+    ? onOpenDetail(r.id)
+    : void action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'));
 
   const filteredData = useMemo(() => (searching ? rows.filter(r => matchesSearch([
     r.requestNo,
@@ -383,9 +393,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                             {reimbursementOwnActions(r, userId, permissions).canSubmit && <button
                               className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
                               title={reimbursementSubmitReadiness(r).message}
-                              onClick={e => { e.stopPropagation(); action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'); }}
+                              onClick={e => { e.stopPropagation(); submitRow(r); }}
                               disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
-                            >ส่งอนุมัติ</button>}
+                            >{draftRowSubmitsFromItsPage(r) ? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'}</button>}
                             {/* Cancelling now opens the journey page (Phase 6): its own "ยกเลิกคำขอ" action carries the confirm dialog. */}
                             {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                           </div>
@@ -424,9 +434,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                       {reimbursementOwnActions(r, userId, permissions).canSubmit && <button
                         className={cx(btnClass, 'min-h-11 w-full')}
                         title={reimbursementSubmitReadiness(r).message}
-                        onClick={() => action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}
+                        onClick={() => submitRow(r)}
                         disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
-                      >ส่งอนุมัติ</button>}
+                      >{draftRowSubmitsFromItsPage(r) ? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'}</button>}
                       {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 w-full')} onClick={() => onOpenDetail(r.id)} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                     </div>
                   )}
@@ -468,6 +478,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
     try { await fn(); await load(); if (successMessage) toast.success(successMessage); } catch (e) { setError(err(e)); } finally { setBusy(null); }
   };
   const approveRow = async (r: any) => {
+    // A claim paid by transfer is approved on its own page, where the approver sees and attests the account.
+    if (r.payoutMethod === 'BANK_TRANSFER') { onOpenDetail(r.id); return; }
     setBusy(r.id); setError(null);
     try {
       await approveReimbursement(companyId, r.id, undefined, r.approvalSnapshotHash);
@@ -567,7 +579,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
                             {/* The server says what this viewer may do with the row, as on the claim page: never guessed from a role or a tab. */}
-                            {r.approvalActions?.canApprove === true && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>}
+                            {r.approvalActions?.canApprove === true && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); approveRow(r); }}>{r.payoutMethod === 'BANK_TRANSFER' ? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ'}</button>}
                             {r.approvalActions?.canReject === true && <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>}
                           </div>
                         </td>
@@ -596,7 +608,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`/companies/${companyId}/reimbursements/${r.id}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-approvals-card">ดูรายละเอียด</Link>
-                    {r.approvalActions?.canApprove === true && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>อนุมัติ</button>}
+                    {r.approvalActions?.canApprove === true && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>{r.payoutMethod === 'BANK_TRANSFER' ? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ'}</button>}
                     {r.approvalActions?.canReject === true && <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>}
                   </div>
                 </MangmeeCard>
@@ -629,9 +641,12 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
         busy={busy === staleReview.row.id}
         error={error}
         onClose={() => setStaleReview(null)}
+        // Sent again as a transfer claim since the list loaded: its account is checked on its own page.
+        {...(claimNeedsPayoutAttestation(staleReview.detail) && { confirmLabel: 'เปิดใบเพื่อตรวจบัญชีรับเงิน' })}
         onConfirm={async () => {
           const review = staleReview;
           if (!review) return;
+          if (claimNeedsPayoutAttestation(review.detail)) { setStaleReview(null); onOpenDetail(review.row.id); return; }
           setBusy(review.row.id); setError(null);
           try {
             await approveReimbursement(companyId, review.row.id, undefined, review.detail.approvalSnapshotHash);

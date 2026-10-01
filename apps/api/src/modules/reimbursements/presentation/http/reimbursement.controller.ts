@@ -5,7 +5,6 @@ import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import type {
   ListReimbursementsFilter,
-  ApproveReimbursementInput,
   RejectReimbursementInput,
   FinanceReviewReimbursementInput,
   VoidReimbursementPaymentInput,
@@ -16,6 +15,7 @@ import type {
 import {
   AttachPaymentSlipDto,
   CompleteClaimSignatureUploadDto,
+  ApproveReimbursementDto,
   CompletePaymentSlipUploadDto,
   CreateReimbursementRequestDto,
   InitClaimSignatureUploadDto,
@@ -23,6 +23,7 @@ import {
   LinkReimbursementSignedCopyDto,
   RecordReimbursementPaymentDto,
   SignReimbursementClaimFormDto,
+  SubmitReimbursementDto,
   UpdateReimbursementDraftDto,
   ReimbursementInternalNoteDto,
   ReimbursementDraftActionControlDto,
@@ -249,8 +250,8 @@ export class ReimbursementController {
   @RequirePermissions('reimbursement.submit')
   @HttpCode(200)
   @ApiOperation({ summary: 'Submit reimbursement for approval' })
-  submitRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
-    return this.submit.execute(ctx, requestId);
+  submitRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: SubmitReimbursementDto) {
+    return this.submit.execute(ctx, requestId, body);
   }
 
   @Post(':requestId/reopen')
@@ -275,8 +276,8 @@ export class ReimbursementController {
   @RequirePermissions('account.session.read')
   @HttpCode(200)
   @ApiOperation({ summary: 'Approve reimbursement request (current permission or frozen assignment)' })
-  approveRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: ApproveReimbursementInput) {
-    return this.withAttachmentFileName(ctx, this.approve.execute(ctx, requestId, body?.comment, body?.approvalSnapshotHash));
+  approveRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: ApproveReimbursementDto) {
+    return this.withAttachmentFileName(ctx, this.approve.execute(ctx, requestId, body?.comment, body?.approvalSnapshotHash, body?.payoutVerifiedVersion));
   }
 
   @Post(':requestId/reject')

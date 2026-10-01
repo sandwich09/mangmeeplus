@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ReimbursementGetApprovalBacklogTool, ReimbursementListPendingApprovalsTool } from './erp-reimbursement-tools.use-case';
 
 const baseCtx = {
@@ -86,6 +88,23 @@ describe('ReimbursementListPendingApprovalsTool', () => {
     assert.deepEqual(captured.roles, ['MANAGER']);
     assert.deepEqual(captured.permissions, ['reimbursement.approve']);
     assert.deepEqual(captured.scopes, { branchIds: ['branch-1'], locationIds: undefined });
+  });
+
+  // Payout spec §11.2: an AI answer never carries a payout account, not even the masked one.
+  it('keeps the payout account out of the answer even when the queue row carries it', async () => {
+    const leaky = {
+      ...queueItem(0), payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'fingerprint',
+      payout: { payoutMethod: 'BANK_TRANSFER', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', accountNumber: '0123456789' },
+    };
+    const result = await new ReimbursementListPendingApprovalsTool({ execute: async () => [leaky] } as any).execute(baseCtx);
+
+    assert.deepEqual(Object.keys((result.data as any).items[0]).sort(),
+      ['amount', 'branch', 'currency', 'documentNumber', 'id', 'requesterDisplayName', 'status', 'submittedAt']);
+    assert.doesNotMatch(JSON.stringify(result), /payout|account|6789|กสิกร|สมชาย/i);
+    // The backlog and the AI summary shape their own rows too; none of the three reads payout data at all.
+    for (const file of ['erp-reimbursement-tools.use-case.ts', '../../../reimbursements/application/use-cases/reimbursement-summary.use-case.ts']) {
+      assert.doesNotMatch(readFileSync(join(__dirname, file), 'utf8'), /payout|accountNumber|accountLast4/i, file);
+    }
   });
 
   it('returns an empty summary when no approvals are pending', async () => {

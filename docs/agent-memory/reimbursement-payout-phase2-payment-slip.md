@@ -69,7 +69,7 @@ Not run: Playwright, a browser pass at 390 px, live HTTP, the LINE whole-chain a
 ## Next
 
 - Coordinator: integrate with Phase 1, then one PR for the round.
-- Phase 1 lane: reuse `isReimbursementPayoutParty` for the account-number flag; add the payer confirmation at the three seams.
+- Phase 1 lane: reuse `isReimbursementPayoutParty` for the account-number flag; add the payer confirmation at the three seams. (Part A is merged: the reveal group takes its approver answer from `isReimbursementClaimApprover`, the rule under `isReimbursementPayoutParty`, and keeps its own conditions. The three seams wait for part B.)
 - Phase 4: timeline and notification wording for method and slip; the rest of the user guide.
 - Decide on a sweeper for orphan slip uploads.
 - Release note: the slip rule applies to claims approved before the feature.

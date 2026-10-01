@@ -40,6 +40,7 @@ const outbox = { append: async () => undefined } as any;
 const sequence = { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202601-000001' }) } as any;
 const projections = { execute: async () => undefined } as any;
 const evidence = { validate: async () => undefined } as any;
+const noPayouts = {} as any;
 const voidExpense = { executeForReimbursement: async () => undefined } as any;
 const approverRoutes = { resolveSubmissionRoute: async () => assert.fail('branch guard must run before routing') } as any;
 
@@ -111,7 +112,7 @@ const WRITES = [
     name: 'edit the amount of a draft',
     permissions: ['reimbursement.finance_review'],
     claim: otherBranchClaim({ status: 'DRAFT' }),
-    run: (repo: any, ctx: any) => new UpdateReimbursementDraftUseCase(repo, audit, evidence)
+    run: (repo: any, ctx: any) => new UpdateReimbursementDraftUseCase(repo, audit, evidence, noPayouts)
       .execute(ctx, 'rb-1', { reason: 'แก้ไข' } as any),
   },
   {
@@ -163,7 +164,7 @@ describe('reimbursement branch ABAC (audit H-2)', () => {
   describe('creating a claim', () => {
     it('refuses a branch the requester cannot see', async () => {
       await assert.rejects(
-        () => new CreateReimbursementDraftUseCase(repoFor(null), audit, evidence).execute(
+        () => new CreateReimbursementDraftUseCase(repoFor(null), audit, evidence, noPayouts).execute(
           scopedTo(['branch-1'], ['reimbursement.create']),
           { branchId: 'branch-2', reason: 'ไปพบลูกค้า', lines: [] } as any,
         ),
@@ -184,7 +185,7 @@ describe('reimbursement branch ABAC (audit H-2)', () => {
         createRequest: async (data: any) => { written = data; return { ...data, id: 'rb-new', status: 'DRAFT', createdAt: new Date(), updatedAt: new Date() }; },
       } as any;
 
-      await new CreateReimbursementDraftUseCase(repo, audit, evidence).execute(
+      await new CreateReimbursementDraftUseCase(repo, audit, evidence, noPayouts).execute(
         scopedTo(['branch-1'], ['reimbursement.create']),
         {
           reason: 'ไปพบลูกค้า',
@@ -205,7 +206,7 @@ describe('reimbursement branch ABAC (audit H-2)', () => {
       } as any;
       const unrestricted = { ...scopedTo(['branch-1'], ['reimbursement.create']), scopes: {} };
 
-      await assert.rejects(() => new CreateReimbursementDraftUseCase(repo, audit, evidence).execute(unrestricted, {
+      await assert.rejects(() => new CreateReimbursementDraftUseCase(repo, audit, evidence, noPayouts).execute(unrestricted, {
         reason: 'ไปพบลูกค้า',
         lines: [{ lineNo: 1, incurredDate: '2026-01-05T00:00:00.000Z', description: 'แท็กซี่', categoryKey: 'travel', categoryLabel: 'เดินทาง', amount: '100.00', attachmentId: 'att-1' }],
       } as any), /เลือกสาขา/);
@@ -229,6 +230,9 @@ describe('reimbursement branch ABAC (audit H-2)', () => {
    *  - policy read/write is company-level (`findPolicy(companyId, null)`), it has no branch
    *  - the three signature steps are gated on being the recorded requester or approver of that
    *    exact claim, which is a narrower test than branch and is not weakened by adding one
+   *  - the account-number reveal is gated on that claim's reveal group (its requester, its approver,
+   *    whoever may record its payment); `claimPayoutRevealGroup` holds everyone but the requester to
+   *    the claim's branch, and the requester is reading their own account
    */
   const EXEMPT = new Set([
     'GetReimbursementPolicyUseCase',
@@ -237,6 +241,7 @@ describe('reimbursement branch ABAC (audit H-2)', () => {
     'InitClaimSignatureUploadUseCase',
     'CompleteClaimSignatureUploadUseCase',
     'SignClaimFormUseCase',
+    'RevealClaimPayoutUseCase',
   ]);
 
   it('leaves no use case in the module without branch handling or a recorded exemption', () => {

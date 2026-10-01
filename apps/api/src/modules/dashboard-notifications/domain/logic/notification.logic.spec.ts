@@ -13,7 +13,7 @@ import {
   resolveDeliveryOutcome,
   notificationSourceHref,
 } from './notification.logic';
-import { MAX_DELIVERY_ATTEMPTS, IMPLEMENTED_TRIGGER_KEYS } from '../models/notification.model';
+import { ALWAYS_DELIVERED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, IMPLEMENTED_TRIGGER_KEYS } from '../models/notification.model';
 import { WORKFLOW_TEMPLATE_CATALOG } from '../../../workflow/domain/workflow-template-catalog';
 
 describe('notification source links', () => {
@@ -38,6 +38,30 @@ describe('implemented-trigger gate (LINE preference suppression)', () => {
     for (const key of workflowTriggerKeys) {
       assert.equal(isImplementedTrigger(key), true, key);
     }
+  });
+
+  // Payout spec §8.5 (AC45): letting anyone else set a member's payout account is conditional on the
+  // account owner being told. A key outside the implemented list would be dropped before LINE.
+  it('delivers the notice that someone else set a member payout account', () => {
+    assert.equal(isImplementedTrigger('reimbursement.payout_account_set_by_other'), true);
+    // Not droppable by a preference list saved before the trigger existed; every such key is a real trigger.
+    assert.ok(ALWAYS_DELIVERED_TRIGGER_KEYS.includes('reimbursement.payout_account_set_by_other'));
+    assert.ok(ALWAYS_DELIVERED_TRIGGER_KEYS.every((key) => IMPLEMENTED_TRIGGER_KEYS.includes(key)));
+  });
+
+  // The list is short on purpose: every key on it overrides a person's saved trigger list. Adding one
+  // is a decision, so the whole list is pinned here.
+  it('always delivers exactly the three claim notices a saved preference list must not drop', () => {
+    assert.deepEqual(ALWAYS_DELIVERED_TRIGGER_KEYS, [
+      'reimbursement.payout_account_set_by_other',
+      // Audit B9: a voided payment (to the requester) and a claim waiting past the deadline (to whoever can pay).
+      'workflow.reimbursement_payment_voided',
+      'workflow.reimbursement_payment_sla_breach',
+    ]);
+    // Each workflow key on it is one an auto-enabled template's notice really carries.
+    const emitted = WORKFLOW_TEMPLATE_CATALOG.filter((template) => template.autoEnable)
+      .flatMap((template) => template.defaultActionJson).map((action) => String(action.configJson['triggerKey']));
+    for (const key of ALWAYS_DELIVERED_TRIGGER_KEYS.filter((entry) => entry.startsWith('workflow.'))) assert.ok(emitted.includes(key), key);
   });
 
   it('keeps the pre-existing implemented keys', () => {

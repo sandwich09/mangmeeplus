@@ -101,19 +101,20 @@ describe('ReimbursementProjectionReconcilerService replay of a claim that needed
     memberships: userIds.map((userId) => ({ membership: { userId, ...branchScope, roles: [{ role: { key, status: 'ACTIVE' } }] } })),
   });
 
-  function replay(kind: 'POLICY' | 'MANAGER', roles: any[], policy: Record<string, unknown> | null = null) {
+  function replay(kind: 'POLICY' | 'MANAGER' | 'FINANCE', roles: any[], policy: Record<string, unknown> | null = null, approvalSteps: any[] = [], submittedAt?: Date) {
     const request = {
       id: 'req-1', companyId: 'co-1', requestNo: 'RB-0001', requesterUserId: 'staff-1', branchId: 'br-1',
-      amount: '80.0000', currency: 'THB',
+      amount: '80.0000', currency: 'THB', approvalSteps, submittedAt,
     } as any;
     const outbox: any[] = [];
     const tx = { outboxEvent: { createMany: async ({ data }: any) => { outbox.push(...data); } } };
     const complete = async (input: any) => { await input.onReadyPersisted(tx); };
     const repo = {
-      listPendingProjectionIntents: async () => [{ request, kind, actorUserId: kind === 'POLICY' ? 'staff-1' : 'mgr-1', approvalStepId: 'step-1' }],
+      listPendingProjectionIntents: async () => [{ request, kind, actorUserId: kind === 'POLICY' ? 'staff-1' : kind === 'FINANCE' ? 'fin-1' : 'mgr-1', approvalStepId: 'step-1' }],
       listPendingCancellationIntents: async () => [],
       findPolicy: async () => policy,
       completeApprovalProjectionAtomic: complete,
+      completeFinanceProjectionAtomic: complete,
       completePolicyProjectionAtomic: complete,
     } as any;
     const prisma = {
@@ -165,5 +166,27 @@ describe('ReimbursementProjectionReconcilerService replay of a claim that needed
     const approved = replay('MANAGER', [approverRole('MANAGER', ['mgr-1', 'mgr-2'])]);
     await approved.service.execute();
     assert.equal(approved.ready().approverRecipientUserIds, undefined);
+  });
+
+  // Review: a finance reviewer may not hold the pay right. The live finance review names the
+  // claim's own approver on the event, and so does the replay.
+  it('names the claim approver when it replays a claim that finance passed', async () => {
+    const decided = (hour: number) => new Date(`2026-10-01T0${hour}:00:00.000Z`);
+    const steps = [
+      { status: 'APPROVED', decisionByUserId: 'mgr-earlier', decidedAt: decided(1), invalidatedAt: decided(2) },
+      { status: 'APPROVED', decisionByUserId: 'mgr-2', decidedAt: decided(3) },
+    ];
+    // Sent again at 02:00 and approved by mgr-2 at 03:00: the approver of the round the claim is in.
+    const finance = replay('FINANCE', [approverRole('MANAGER', ['mgr-1', 'mgr-2'])], null, steps, decided(2));
+
+    await finance.service.execute();
+
+    assert.deepEqual(finance.ready().approverRecipientUserIds, ['mgr-2']);
+
+    // The same rule as the live finance review (`isReimbursementClaimApprover` in contracts): sent again at
+    // 04:00 with no new approval, the claim has no approver of its own and the replay names nobody.
+    const resent = replay('FINANCE', [approverRole('MANAGER', ['mgr-1', 'mgr-2'])], null, steps, decided(4));
+    await resent.service.execute();
+    assert.equal(resent.ready().approverRecipientUserIds, undefined);
   });
 });

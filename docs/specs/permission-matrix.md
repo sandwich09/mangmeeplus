@@ -632,14 +632,71 @@ HR, other related readers and read-only platform accounts are told that a slip e
 nothing else: the claim detail gives them `slipCount` and no file id. The rule is one function,
 `canOpenReimbursementPaymentSlip` in `packages/contracts`, used by the download guard and to compute the
 detail's `viewerCanOpenSlips`, which is all the web's "ดูสลิป" button reads. The group that may see a full
-payout account number is narrower (`isReimbursementPayoutParty`: no finance reviewers) and is decided
-separately.
+payout account number is narrower (no finance reviewers) and is decided separately, with a flag of its
+own: see "Reimbursement payout accounts" below.
 
 The generic attachment paths never serve a slip. `GET attachments/:attachmentId/download-url` refuses a
 file that is linked as a slip or carries the slip upload tag, for everyone, the payer included.
 `DELETE attachments/:attachmentId` refuses a linked slip (`reimbursement_payment_slip_retained`). No link
 of any kind can be written onto a slip file, so it cannot become an expense receipt, a signed copy, or
 input to receipt reading. Every opening and every refusal is audited with ids only.
+
+#### Reimbursement payout accounts
+
+No new permission key. A payout account says where a member's reimbursements are paid back (owner
+decisions 2026-10-01): a default per member, and a copy frozen on each claim when it is sent. A list or
+queue row carries the receiving method only. A claim detail carries the bank, the account name and the
+last 4 digits, the same for every reader; a notice and an audit row carry the bank and the last 4 digits;
+the evidence export carries nothing of the account. The full number leaves through the two `reveal` calls
+only, each after its audit row is written. Routes sit under `/companies/:companyId/reimbursements`, in a
+controller registered ahead of the claim routes so `payout-accounts/…` is matched before `:requestId`.
+
+| Route | Route permission | Who may use it |
+|---|---|---|
+| `GET payout-accounts/me` | `reimbursement.create` | The member: their own default account, last 4 digits only |
+| `PUT payout-accounts/me` | `reimbursement.create` | The member: sets their own default, a transfer account or cash |
+| `DELETE payout-accounts/me` | `reimbursement.create` | The member: removes their own default. A claim already sent keeps its own copy |
+| `POST payout-accounts/me/reveal` | `reimbursement.create` | The account owner alone: their own full number. Nobody reveals another member's default |
+| `GET payout-accounts/members/:userId` | `access.employee.read` or `access.employee.update` | An employee-data reader: last 4 digits only, and whether this viewer may set it (`canEdit`) |
+| `PUT payout-accounts/members/:userId` | `access.employee.update` | Decided per member in the use case, see below. The member's own account goes by their own right |
+| `POST :requestId/payout-destination/reveal` | `account.session.read` | Decided per claim in the use case, see below |
+| `POST :requestId/submit` (existing) | `reimbursement.submit` | Takes `payoutSubmitToken`, the account the claim page showed. Refused without a receiving method (`payout_method_required`, `payout_destination_required`), and for every claim but cash the draft itself chose when the token is missing or the account changed since (`payout_destination_changed`) |
+| `POST :requestId/approve` (existing) | `account.session.read` | Requires `approvalSnapshotHash`, the claim content the approver saw. A claim paid by transfer also requires `payoutVerifiedVersion`, the account version attested (`payout_verification_required`, `payout_destination_changed`) |
+
+Who may set someone else's default account (`payoutAccountEditRefusal`), beyond holding
+`access.employee.update` in a company with the reimbursement entitlement:
+
+- the member must be ACTIVE and have an employee record. The business owner has none, so only the owner
+  sets the owner's account. A member who is not active is refused for everyone
+  (`payout_account_member_not_active`): the notice below would reach no one;
+- the product's own OWNER or ADMIN role may set any such member's account. The role is looked up on the
+  member, not read from the role key: a company role named "Admin", or a company's edited copy of the Admin
+  role, is held to the next rule;
+- any other holder may set it only for a member who does not manage people themselves, and only for a
+  member whose branches are all inside the editor's own.
+
+The account owner is told every time someone else sets their account, in the same transaction
+(`reimbursement.payout_account_set_by_other`, critical, never dropped by a saved preference list). The same
+notice goes to the requester when someone else types an account into a claim filed for them.
+
+Who may see a claim's full account number (`payoutRevealGroup`). The claim must carry an account of its
+own: a transfer claim sent with a payout snapshot, or a draft with an account typed into it. A cash claim
+and a claim sent before the field existed have none. Then:
+
+- the requester, on a draft too;
+- once the claim is sent, and only inside the viewer's branch scope:
+  - the claim's approver: whoever may decide the step it waits on, or whoever approved its current round.
+    This is the same definition the payment slip uses (`isReimbursementClaimApprover` in
+    `packages/contracts`);
+  - a holder of `reimbursement.payment.record` who can read the claim.
+
+Holding `reimbursement.approve` without being routed the claim is not enough, and neither is
+`reimbursement.finance_review`, `reimbursement.read`, `reimbursement.export` or `access.employee.update`.
+A finance reviewer without the pay right opens the payment slip and still sees the last 4 digits only. So
+do whoever prepared the claim for the requester, `AUDITOR_READONLY`, HR and other related readers. The
+reveal endpoint and the detail's `payout.canRevealAccountNumber`, which is all the web's "แสดงเลขบัญชี"
+button reads, come from this one decision. Every refusal answers `payout_reveal_denied` and is audited;
+an answer is given only after its audit row is written.
 
 ### Procurement related-document visibility
 

@@ -12,6 +12,7 @@ export default async function EditReimbursementPage({
     <ReimbursementCreatePage
       companyId={companyId}
       canPrepareForOthers={(session?.permissions ?? []).includes('reimbursement.finance_review')}
+      canEditEmployees={(session?.permissions ?? []).includes('access.employee.update')}
       userId={session?.userId ?? ''}
       requestId={requestId}
       canCreate={false}

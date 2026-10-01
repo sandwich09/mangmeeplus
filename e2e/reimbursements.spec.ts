@@ -43,6 +43,8 @@ async function createReimbursement(api: any, companyId: string, amounts: string[
       reason: unique('E2E reimbursement'), branchId,
       currency: 'THB',
       missingReceiptReason: 'E2E local run without receipt upload',
+      // A claim says how it is paid back before it can be sent; cash needs no account and no attestation.
+      payout: { mode: 'CASH' },
       lines: amounts.map((amount, index) => ({
         lineNo: index + 1,
         incurredDate: today(),

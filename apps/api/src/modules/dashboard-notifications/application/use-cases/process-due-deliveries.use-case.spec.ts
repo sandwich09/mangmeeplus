@@ -10,6 +10,13 @@ import {
   buildLineMessage,
 } from './notification.use-cases';
 import {
+  PrismaAlertStateRepository,
+  PrismaNotificationDeliveryRepository,
+  PrismaNotificationEventRepository,
+  PrismaNotificationRecipientRepository,
+  PrismaNotificationRuleRepository,
+} from '../../infrastructure/prisma-notification.repository';
+import {
 
   CreateDailyOwnerSummariesSweepUseCase,
   GenerateDashboardSnapshotsSweepUseCase,
@@ -129,6 +136,144 @@ describe('CreateOrUpdateNotificationEventUseCase recipients', () => {
     });
 
     assert.deepEqual(createdRecipients, ['active-user']);
+  });
+});
+
+/**
+ * Review M1: the store keeps ONE notice per trigger, record and period, and a workflow notice is
+ * never resolved. With no period a claim was notified once per person, ever. These run the real
+ * repositories over an in-memory store, so the dedup key, the deliveries and the resolving of the
+ * older notice are what is proven.
+ */
+describe('CreateOrUpdateNotificationEventUseCase periods', () => {
+  function noticeStore() {
+    const events: any[] = [];
+    const recipients: any[] = [];
+    const deliveries: any[] = [];
+    const alertStates = new Map<string, any>();
+    const client = {
+      notificationEvent: {
+        findFirst: async ({ where }: any) => events.find((row) => row.companyId === where.companyId && row.dedupKey === where.dedupKey) ?? null,
+        create: async ({ data }: any) => { const row = { id: `event-${events.length + 1}`, createdAt: new Date(), ...data }; events.push(row); return row; },
+        update: async ({ where, data }: any) => Object.assign(events.find((row) => row.id === where.id), data),
+        updateMany: async ({ where, data }: any) => {
+          const hits = events.filter((row) => Object.entries(where).every(([key, value]) => (
+            key === 'id' ? row.id !== (value as any).not : row[key] === value
+          )));
+          hits.forEach((row) => Object.assign(row, data));
+          return { count: hits.length };
+        },
+      },
+      notificationRule: { findFirst: async () => null },
+      alertState: {
+        findUnique: async ({ where }: any) => alertStates.get(where.companyId_dedupKey.dedupKey) ?? null,
+        upsert: async ({ where, create }: any) => { alertStates.set(where.companyId_dedupKey.dedupKey, { status: 'COOLING_DOWN', ...create }); return alertStates.get(where.companyId_dedupKey.dedupKey); },
+      },
+      companyMembership: { findMany: async ({ where }: any) => where.userId.in.map((userId: string) => ({ userId })) },
+      notificationRecipient: {
+        findUnique: async ({ where }: any) => recipients.find((row) => row.eventId === where.eventId_userId.eventId && row.userId === where.eventId_userId.userId) ?? null,
+        create: async ({ data }: any) => { const row = { id: `recipient-${recipients.length + 1}`, ...data }; recipients.push(row); return row; },
+      },
+      notificationDelivery: {
+        findFirst: async ({ where }: any) => deliveries.find((row) => row.recipientId === where.recipientId && row.channel === where.channel) ?? null,
+        create: async ({ data }: any) => { const row = { id: `delivery-${deliveries.length + 1}`, ...data }; deliveries.push(row); return row; },
+      },
+    };
+    const prisma = { client } as any;
+    const useCase = new CreateOrUpdateNotificationEventUseCase(
+      new PrismaNotificationEventRepository(prisma), new PrismaNotificationRecipientRepository(prisma),
+      new PrismaNotificationDeliveryRepository(prisma), new PrismaAlertStateRepository(prisma),
+      new PrismaNotificationRuleRepository(prisma), prisma,
+    );
+    const pushedTo = (eventId: string) => recipients
+      .filter((row) => row.eventId === eventId && deliveries.some((delivery) => delivery.recipientId === row.id && delivery.channel === 'LINE'))
+      .map((row) => row.userId);
+    return { useCase, events, recipients, deliveries, pushedTo };
+  }
+  const claimNotice = (extra: Record<string, unknown>) => ({
+    companyId: 'co-1', triggerKey: 'workflow.reimbursement_pending_approval', sourceModule: 'reimbursements',
+    sourceType: 'reimbursement_request', sourceId: 'rb-1', severity: 'action', title: 'อนุมัติเบิกจ่าย: RB-1',
+    body: 'รออนุมัติจากคุณ', deepLinkHref: '/companies/co-1/reimbursements/rb-1', recipientUserIds: ['mgr-1'],
+    supersedeEarlier: true, ...extra,
+  }) as any;
+
+  it('sends a claim sent again to its approver a second time, and the first notice stops being current', async () => {
+    const { useCase, events, deliveries, pushedTo } = noticeStore();
+
+    const round1 = await useCase.execute(claimNotice({ periodKey: 'run-1' }));
+    // The same run retried: nothing new, nobody pushed twice.
+    const retry = await useCase.execute(claimNotice({ periodKey: 'run-1' }));
+    assert.equal(retry.event.id, round1.event.id);
+    assert.equal(deliveries.length, 2);
+
+    const round2 = await useCase.execute(claimNotice({ periodKey: 'run-2' }));
+
+    assert.notEqual(round2.event.id, round1.event.id);
+    assert.deepEqual(pushedTo(round2.event.id), ['mgr-1']);
+    assert.deepEqual(events.map((row) => [row.id, row.status]), [['event-1', 'RESOLVED'], ['event-2', 'OPEN']]);
+    assert.ok(events[0].resolvedAt instanceof Date);
+  });
+
+  it('pushes "approved" after an earlier "rejected", with its own text, and retires the old one', async () => {
+    const { useCase, events, pushedTo } = noticeStore();
+    const decision = (periodKey: string, body: string) => useCase.execute(claimNotice({
+      triggerKey: 'workflow.reimbursement_decision_requester', recipientUserIds: ['staff-1'], periodKey, body,
+    }));
+
+    await decision('run-reject', 'ผลการพิจารณา: ไม่อนุมัติ');
+    const approved = await decision('run-approve', 'ผลการพิจารณา: อนุมัติ');
+
+    assert.deepEqual(pushedTo(approved.event.id), ['staff-1']);
+    assert.deepEqual(events.map((row) => [row.body, row.status]), [
+      ['ผลการพิจารณา: ไม่อนุมัติ', 'RESOLVED'], ['ผลการพิจารณา: อนุมัติ', 'OPEN'],
+    ]);
+  });
+
+  it('retires an older notice about the same claim even when each is filed under its own payment', async () => {
+    const { useCase, events } = noticeStore();
+    const paid = (paymentId: string) => useCase.execute(claimNotice({
+      triggerKey: 'workflow.reimbursement_payment_recorded', sourceType: 'reimbursement_payment', sourceId: paymentId,
+      recipientUserIds: ['staff-1'], periodKey: `run-${paymentId}`,
+    }));
+
+    await paid('pay-1');
+    await paid('pay-2');
+    // Another claim's notice of the same kind is left alone.
+    await useCase.execute(claimNotice({
+      triggerKey: 'workflow.reimbursement_payment_recorded', sourceType: 'reimbursement_payment', sourceId: 'pay-9',
+      deepLinkHref: '/companies/co-1/reimbursements/rb-other', recipientUserIds: ['staff-1'], periodKey: 'run-pay-9',
+    }));
+
+    assert.deepEqual(events.map((row) => [row.sourceId, row.status]), [['pay-1', 'RESOLVED'], ['pay-2', 'OPEN'], ['pay-9', 'OPEN']]);
+  });
+
+  // Owner rule: a push about one's own action is annoying, but the to-do item must still exist.
+  it('gives a web-only recipient the bell item and no LINE push, and everyone else both', async () => {
+    const { useCase, recipients, deliveries } = noticeStore();
+
+    await useCase.execute(claimNotice({
+      triggerKey: 'workflow.reimbursement_ready_for_payment', periodKey: 'run-1',
+      recipientUserIds: ['approver-1', 'admin-1'], webOnlyRecipientUserIds: ['approver-1'],
+    }));
+
+    const channelsOf = (userId: string) => deliveries
+      .filter((delivery) => delivery.recipientId === recipients.find((row) => row.userId === userId)!.id)
+      .map((delivery) => delivery.channel);
+    assert.deepEqual(channelsOf('approver-1'), ['WEB']);
+    assert.deepEqual(channelsOf('admin-1'), ['WEB', 'LINE']);
+  });
+
+  it('leaves the periods of a producer that did not ask for it open side by side', async () => {
+    const { useCase, events } = noticeStore();
+    const digest = (periodKey: string) => useCase.execute(claimNotice({
+      triggerKey: 'sales_deal_renewal_pending', sourceModule: 'sales', sourceType: 'deal', sourceId: 'deal-1',
+      deepLinkHref: '/companies/co-1/billing', periodKey, supersedeEarlier: undefined,
+    }));
+
+    await digest('2026-09');
+    await digest('2026-10');
+
+    assert.deepEqual(events.map((row) => row.status), ['OPEN', 'OPEN']);
   });
 });
 
@@ -651,6 +796,83 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     assert.equal(providerCalls, 1);
     assert.equal(persisted.status, 'SENT');
     assert.equal(persisted.attemptCount, 1);
+  });
+});
+
+// Payout impact audit M7: a preference row saves the list of triggers as it was that day, so every
+// trigger added later is missing from it. The notice that someone else set a member's payout account
+// is the owner's condition for allowing that at all, and must not be dropped that way.
+describe('ProcessQueuedDeliveryUseCase and a preference list saved before a trigger existed', () => {
+  async function deliver(triggerKey: string, preference: Record<string, unknown> | null, severity = 'CRITICAL') {
+    const event = { status: 'OPEN', triggerKey, severity, title: 'วิภา ตั้งบัญชีรับเงินคืนของคุณ', body: 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789', deepLinkHref: '/companies/co-1/reimbursements/payout-account' };
+    const delivery = { id: 'delivery-1', companyId: 'co-1', channel: 'LINE', status: 'QUEUED', attemptCount: 0, recipient: { userId: 'user-1', event } };
+    const updates: any[] = [];
+    const prisma = { client: {
+      notificationDelivery: { findFirst: async () => delivery },
+      notificationPreference: { findUnique: async () => preference },
+      externalIdentity: { findFirst: async () => ({ providerUserId: 'line-user-1' }) },
+    } } as any;
+    prisma.client.$transaction = async (run: any) => run({
+      notificationDelivery: {
+        findFirst: async () => delivery,
+        updateMany: async (query: any) => { updates.push(query.data); return { count: 1 }; },
+        update: async (query: any) => { updates.push(query.data); return query.data; },
+      },
+      $queryRaw: async () => [{ id: 'membership-1' }],
+    });
+    const deliveries = { update: async (_companyId: string, _deliveryId: string, data: any) => { updates.push(data); return data; } } as any;
+    const originalFetch = globalThis.fetch;
+    const pushes: any[] = [];
+    try {
+      globalThis.fetch = (async (_input: any, init: any) => {
+        pushes.push(JSON.parse(init.body));
+        return new Response(JSON.stringify({ sentMessages: [{ id: 'line-message-1' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }) as any;
+      const config = { lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any;
+      await new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture(config), prisma, deliveries, { log: async () => undefined } as any, config).execute('co-1', 'delivery-1');
+    } finally { globalThis.fetch = originalFetch; }
+    return { pushes, last: updates.at(-1) };
+  }
+  /** Saved before the payout trigger existed, with quiet hours that cover the whole day. */
+  const savedLong = { enabledChannelsJson: ['web', 'line'], enabledTriggerKeysJson: ['stock_low', 'daily_owner_summary'], quietHoursStart: '00:00', quietHoursEnd: '23:59', timezone: 'Asia/Bangkok' };
+
+  it('still pushes the payout-account notice, quiet hours included, with the last 4 digits only', async () => {
+    const { pushes, last } = await deliver('reimbursement.payout_account_set_by_other', savedLong);
+    assert.equal(pushes.length, 1);
+    assert.equal(last.status, 'SENT');
+    const text = JSON.stringify(pushes[0]);
+    assert.match(text, /วิภา ตั้งบัญชีรับเงินคืนของคุณ/);
+    assert.match(text, /ลงท้าย 6789/);
+    // Everything a person reads in the push (colours and sizes aside) has no run of digits longer than the last 4.
+    const shown = [...text.matchAll(/"(?:text|altText|label)":"([^"]*)"/g)].map((match) => match[1]!);
+    assert.ok(shown.length >= 3);
+    for (const line of shown) assert.doesNotMatch(line, /\d{5,}/, line);
+  });
+
+  it('keeps dropping any other trigger the saved list leaves out, and respects LINE switched off', async () => {
+    const other = await deliver('workflow.reimbursement_pending_approval', { ...savedLong, quietHoursStart: null, quietHoursEnd: null }, 'ACTION');
+    assert.deepEqual([other.pushes.length, other.last.status, other.last.errorCode], [0, 'suppressed', 'PREFERENCE_SUPPRESSED']);
+    const lineOff = await deliver('reimbursement.payout_account_set_by_other', { ...savedLong, enabledChannelsJson: ['web'] });
+    assert.deepEqual([lineOff.pushes.length, lineOff.last.status], [0, 'suppressed']);
+    // With no saved row at all the notice goes out like every implemented trigger.
+    assert.equal((await deliver('reimbursement.payout_account_set_by_other', null)).pushes.length, 1);
+  });
+
+  // Audit B9, added the same day as the payout notice: a requester whose payment was taken back, and
+  // whoever can pay a claim waiting past the deadline. A list saved earlier names neither.
+  it('still pushes the voided-payment notice and the payment reminder, and respects LINE switched off for them too', async () => {
+    const savedEarlier = { ...savedLong, quietHoursStart: null, quietHoursEnd: null };
+    for (const [triggerKey, severity] of [['workflow.reimbursement_payment_voided', 'INFO'], ['workflow.reimbursement_payment_sla_breach', 'ACTION']] as const) {
+      const sent = await deliver(triggerKey, savedEarlier, severity);
+      assert.deepEqual([sent.pushes.length, sent.last.status], [1, 'SENT'], triggerKey);
+      const lineOff = await deliver(triggerKey, { ...savedEarlier, enabledChannelsJson: ['web'] }, severity);
+      assert.deepEqual([lineOff.pushes.length, lineOff.last.status], [0, 'suppressed'], triggerKey);
+    }
+    // Quiet hours are a person's own choice and still hold a notice that is not critical: both of these.
+    for (const [triggerKey, severity] of [['workflow.reimbursement_payment_voided', 'INFO'], ['workflow.reimbursement_payment_sla_breach', 'ACTION']] as const) {
+      const quiet = await deliver(triggerKey, savedLong, severity);
+      assert.deepEqual([quiet.pushes.length, quiet.last.status], [0, 'suppressed'], triggerKey);
+    }
   });
 });
 

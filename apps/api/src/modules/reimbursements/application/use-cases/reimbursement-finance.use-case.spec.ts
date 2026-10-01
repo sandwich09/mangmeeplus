@@ -715,6 +715,39 @@ describe('FinanceReviewReimbursementUseCase', () => {
     );
   });
 
+  // Review: a finance reviewer may not hold the pay right, and the notice then went straight to
+  // everyone able to pay. The event names the claim's own approver, who is asked next.
+  it('names the claim approver on the ready_for_payment event that finance writes', async () => {
+    const at = (day: number) => new Date(`2026-01-0${day}T00:00:00.000Z`);
+    const readyAfterFinance = async (submittedAt: Date) => {
+      const req = financeReviewedRequest({
+        status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING', submittedAt,
+        approvalSteps: [
+          { id: 's1', sequenceNo: 1, assignedAt: at(1), status: 'APPROVED', decisionByUserId: 'mgr-old-round', decidedAt: at(1), invalidatedAt: at(2) },
+          { id: 's2', sequenceNo: 2, assignedAt: at(2), status: 'REJECTED', decisionByUserId: 'mgr-rejected', decidedAt: at(3) },
+          { id: 's3', sequenceNo: 3, assignedAt: at(3), status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: at(4) },
+        ],
+      });
+      const outboxRows: any[] = [];
+      const repo = fakeRepo(req, { outboxRows });
+      // The shared fake blanks the steps of a claim read with its relations; this claim keeps its own.
+      repo.findRequestById = async () => ({ ...req, payments: [], duplicateCandidates: [] });
+      await financeUC(repo).execute(ctx(['reimbursement.finance_review']), 'rb-1', { decision: 'APPROVED_FOR_PAYMENT' });
+      return outboxRows.find((row) => row.eventType === 'reimbursement.ready_for_payment');
+    };
+
+    // Sent again on the 3rd and approved by mgr-1 on the 4th: the approver of the round the claim is in.
+    const ready = await readyAfterFinance(at(3));
+    assert.deepEqual(ready?.payloadJson.data.approverRecipientUserIds, ['mgr-1']);
+    assert.equal(ready?.payloadJson.actorUserId, 'fin-1');
+    // The one rule for who that is (`isReimbursementClaimApprover` in contracts): corrected and sent again
+    // on the 5th with no new approval needed, the claim has no approver of its own, and the event names nobody
+    // rather than whoever approved what it was before.
+    const resent = await readyAfterFinance(at(5));
+    assert.equal(resent?.payloadJson.data.approverRecipientUserIds, undefined);
+    assert.equal(resent?.payloadJson.data.status, 'READY_FOR_PAYMENT');
+  });
+
   it('requires a reason before returning a claim for correction', async () => {
     const req = financeReviewedRequest({ status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' });
     await assert.rejects(

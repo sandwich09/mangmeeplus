@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   autoEnableWorkflowTemplatesForCompany,
+  closeSettledClaimTasksAtRelease,
   resyncWorkflowTemplateRulesForCompany,
   WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID,
 } from './workflow-template.use-case';
@@ -26,6 +27,11 @@ type SeedRule = {
   createdByUserId?: string; updatedByUserId?: string; cooldownSeconds?: number;
   /** Defaults to the template's own action definition, so only the named field is "stale". */
   actionJson?: unknown;
+  /**
+   * What the sync had pinned on the rule (its version 1), when the row no longer says the same:
+   * an admin's real edit. Left out, the row is exactly what was pinned.
+   */
+  pinned?: { cooldownSeconds?: number; actionJson?: unknown };
 };
 
 /** Stands in for PrismaWorkflowRepository over a real (or transaction) client. */
@@ -47,13 +53,16 @@ function fakeRepo(seedRules: SeedRule[] = []) {
       updatedByUserId: r.updatedByUserId, currentVersion: 1,
     };
   });
-  for (const rule of rules) {
+  rules.forEach((rule, index) => {
+    const pinned = seedRules[index]!.pinned;
     versions.push({
       ruleId: rule.id, companyId: rule.companyId, version: 1, status: rule.status,
-      cooldownSeconds: rule.cooldownSeconds, triggerSnapshotJson: rule.triggerConfigJson,
-      conditionSnapshotJson: rule.conditionJson, actionSnapshotJson: rule.actionJson,
+      cooldownSeconds: pinned?.cooldownSeconds ?? rule.cooldownSeconds, triggerSnapshotJson: rule.triggerConfigJson,
+      conditionSnapshotJson: rule.conditionJson, actionSnapshotJson: pinned?.actionJson ?? rule.actionJson,
+      // Mirrors toRuleVersion: whoever created the rule wrote its first version.
+      createdBy: rule.createdByUserId,
     });
-  }
+  });
   let nextId = 0;
 
   const repo = {
@@ -68,7 +77,8 @@ function fakeRepo(seedRules: SeedRule[] = []) {
       rules.push(rule);
       return rule;
     },
-    createRuleVersion: async (data: any) => { versions.push(data); return data; },
+    createRuleVersion: async (data: any) => { versions.push({ ...data, createdBy: data.createdByUserId }); return data; },
+    listRuleVersions: async (ruleId: string) => versions.filter((v) => v.ruleId === ruleId).sort((a, b) => a.version - b.version),
     findLatestRuleVersion: async (ruleId: string) => versions.filter((v) => v.ruleId === ruleId).sort((a, b) => b.version - a.version)[0] ?? null,
     updateRule: async (companyId: string, id: string, data: any) => {
       const rule = rules.find((r) => r.id === id && r.companyId === companyId)!;
@@ -123,6 +133,43 @@ describe('autoEnableWorkflowTemplatesForCompany', () => {
     assert.equal(preexisting.status, 'DISABLED');
     assert.equal(preexisting.createdByUserId, 'admin_1');
     assert.equal(repo.rules.filter((r: any) => r.templateId === preexisting.templateId).length, 1);
+  });
+
+  // Review: a rule added in a later release was created switched on even where the company had
+  // switched the notice next to it off.
+  it('creates a new notice switched off where the company switched off the one it sits next to', async () => {
+    const repo = fakeRepo([
+      { templateKey: 'reimbursement_payment_recorded', status: 'DISABLED' },
+      { templateKey: 'approval_sla_breach', status: 'DISABLED' },
+    ]);
+
+    const enabled = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');
+
+    const ruleOf = (key: string) => repo.rules.find((r: any) => r.templateId === repo.templates.find((t: any) => t.key === key).id && r.id.startsWith('rule_'));
+    for (const key of ['reimbursement_payment_voided', 'reimbursement_payment_sla_breach']) {
+      assert.equal(enabled.includes(key), false, key);
+      assert.equal(ruleOf(key).status, 'DISABLED', key);
+      assert.equal(ruleOf(key).createdByUserId, WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID, key);
+      // Not enabled, so no version: the admin's own enable snapshots it.
+      assert.equal(repo.versions.some((v: any) => v.ruleId === ruleOf(key).id), false, key);
+    }
+    // Everything else is switched on as usual, and a second run creates nothing more.
+    assert.equal(ruleOf('reimbursement_ready_for_payment').status, 'ENABLED');
+    assert.deepEqual(await autoEnableWorkflowTemplatesForCompany(repo, 'co_1'), []);
+  });
+
+  it('creates the new notices switched on where the one next to them is on, or was never there', async () => {
+    const withSiblingsOn = fakeRepo([
+      { templateKey: 'reimbursement_payment_recorded', status: 'ENABLED' },
+      { templateKey: 'approval_sla_breach', status: 'ENABLED' },
+    ]);
+    const fresh = fakeRepo();
+
+    for (const repo of [withSiblingsOn, fresh]) {
+      const enabled = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');
+      assert.ok(enabled.includes('reimbursement_payment_voided'));
+      assert.ok(enabled.includes('reimbursement_payment_sla_breach'));
+    }
   });
 
   it('leaves other companies alone', async () => {
@@ -199,7 +246,8 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
       configJson: { triggerKey: 'workflow.reimbursement_ready_for_payment', recipientPermissions: ['reimbursement.payment.record'], severity: 'action' },
     }];
     const readyRule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: 'reimbursement_ready_for_payment', cooldownSeconds: 0, actionJson: before, ...over });
-    const repo = fakeRepo([readyRule(), readyRule({ companyId: 'co_2', updatedByUserId: 'admin_1' })]);
+    const adminsOwn = [{ ...before[0]!, configJson: { ...before[0]!.configJson, recipientRoles: ['FINANCE'] } }];
+    const repo = fakeRepo([readyRule(), readyRule({ companyId: 'co_2', updatedByUserId: 'admin_1', actionJson: adminsOwn, pinned: { actionJson: before } })]);
 
     assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), ['reimbursement_ready_for_payment']);
     assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), []);
@@ -235,11 +283,44 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
   it('never touches an admin-created or admin-edited rule', async () => {
     const repo = fakeRepo([
       syncOwned({ createdByUserId: 'admin_1', updatedByUserId: 'admin_1' }),
-      syncOwned({ updatedByUserId: 'admin_1' }),
+      // The sync pinned cooldown 0; an admin has since set it to an hour.
+      syncOwned({ updatedByUserId: 'admin_1', pinned: { cooldownSeconds: 0 } }),
     ]);
 
     assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), []);
     assert.ok(repo.rules.every((r: any) => r.cooldownSeconds === 3600));
+  });
+
+  // Review: enable and disable stamp the admin's id on the rule without changing anything. Read as
+  // an edit, that stamp left such a company on the old definition for good.
+  it('re-pins a rule an admin only switched off and on, because nothing in it was edited', async () => {
+    const stale = [{ actionKey: 'notify_approver', actionType: 'SEND_NOTIFICATION', configJson: { recipientRoles: ['MANAGER'] } }];
+    const repo = fakeRepo([
+      // ENABLED again by the admin: their enable wrote version 2 with the very same content.
+      syncOwned({ cooldownSeconds: 0, actionJson: stale, updatedByUserId: 'admin_1' }),
+      // Switched off by the admin and left off.
+      syncOwned({ companyId: 'co_2', cooldownSeconds: 0, actionJson: stale, updatedByUserId: 'admin_1', status: 'DISABLED' }),
+    ]);
+    repo.versions.push({ ...repo.versions[0], version: 2, createdBy: 'admin_1' });
+
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), ['reimbursement_pending_approval']);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), ['reimbursement_pending_approval']);
+
+    const [toggled, switchedOff] = [repo.rules.find((r: any) => r.id === 'pre_0'), repo.rules.find((r: any) => r.id === 'pre_1')];
+    assert.deepEqual(toggled.actionJson, catalogActions('reimbursement_pending_approval'));
+    assert.equal(toggled.status, 'ENABLED');
+    assert.deepEqual(switchedOff.actionJson, catalogActions('reimbursement_pending_approval'));
+    // The admin's switch is respected: the definition is current, the rule stays off.
+    assert.equal(switchedOff.status, 'DISABLED');
+  });
+
+  it('leaves alone a rule whose action an admin really changed, however it was stamped', async () => {
+    const pinnedBySync = [{ actionKey: 'notify_approver', actionType: 'SEND_NOTIFICATION', configJson: { recipientRoles: ['MANAGER'] } }];
+    const adminsOwn = [{ actionKey: 'notify_approver', actionType: 'SEND_NOTIFICATION', configJson: { recipientRoles: ['OWNER'] } }];
+    const repo = fakeRepo([syncOwned({ cooldownSeconds: 0, actionJson: adminsOwn, updatedByUserId: 'admin_1', pinned: { actionJson: pinnedBySync } })]);
+
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), []);
+    assert.deepEqual(repo.rules[0].actionJson, adminsOwn);
   });
 
   it('updates a sync-owned DISABLED rule\'s row without re-enabling it', async () => {
@@ -257,5 +338,25 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
 
     assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), []);
     assert.equal(repo.rules.find((r: any) => r.id === 'pre_0').cooldownSeconds, 3600);
+  });
+});
+
+// Review: the sweep of stale approval tasks rides on the release's template sync. It is
+// housekeeping, and a failure in it must not fail that step and with it the release.
+describe('closeSettledClaimTasksAtRelease', () => {
+  it('returns how many tasks it closed', async () => {
+    assert.equal(await closeSettledClaimTasksAtRelease({ closeSettledClaimTasks: async () => 7 } as any), 7);
+  });
+
+  it('reports a failure and lets the release step go on', async () => {
+    const reported: any[] = [];
+    const repo = { closeSettledClaimTasks: async () => { throw new Error('relation "WorkflowTask" is locked'); } } as any;
+
+    const closed = await closeSettledClaimTasksAtRelease(repo, (message, error) => { reported.push([message, (error as Error).message]); });
+
+    assert.equal(closed, null);
+    assert.equal(reported.length, 1);
+    assert.match(reported[0][0], /the release continues/);
+    assert.equal(reported[0][1], 'relation "WorkflowTask" is locked');
   });
 });
