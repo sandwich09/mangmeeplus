@@ -150,10 +150,13 @@ describe('the reimbursement guide reads as the product does', () => {
       }
       return false;
     };
-    // ponytail: the screens of the payout account correction round are built on another branch, so the name of their
-    // button is the spec's (payout spec §14.2) and has no screen to be held against yet. The exception ends by itself
-    // once the claim screens read `payoutCorrectionActions`, the flags that button is shown from.
-    const notBuiltYet = claimScreens.includes('payoutCorrectionActions') ? [] : ['ส่งกลับให้แก้บัญชีรับเงิน'];
+    // ponytail: the screens of the payout account correction round are built on another branch, so the names of their
+    // buttons, card and label are the spec's (payout spec §14.2, §14.4, §14.6) and have no screen to be held against
+    // yet. The exception ends by itself once the claim screens read `payoutCorrectionActions`, the flags those buttons
+    // are shown from: from then on these five are checked like every other quote.
+    const notBuiltYet = claimScreens.includes('payoutCorrectionActions') ? [] : [
+      'ส่งกลับให้แก้บัญชีรับเงิน', 'แก้บัญชีรับเงิน', 'ส่งกลับให้แก้อีกครั้ง', 'สิ่งที่เปลี่ยน: บัญชีรับเงินคืน', 'สำเนาก่อนแก้บัญชีรับเงิน',
+    ];
     const quotes = [...new Set(read.flatMap((text) => [...text.matchAll(/“([^”]+)”/g)].map((match) => match[1]!)))];
     assert.ok(quotes.length > 50, 'the guide quotes the screens it describes');
     assert.deepEqual(quotes.filter((quote) => !isShown(quote) && !notBuiltYet.includes(quote)), []);
