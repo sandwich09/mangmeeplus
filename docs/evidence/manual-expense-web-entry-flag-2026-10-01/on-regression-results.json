@@ -1,0 +1,856 @@
+{
+  "config": {
+    "argv": [
+      "/opt/homebrew/Cellar/node@22/22.23.2/bin/node",
+      "/private/tmp/manual-flag-e2e-20261001/repo/node_modules/@playwright/test/cli.js",
+      "test",
+      "-c",
+      "playwright.on-regression.config.ts",
+      "--grep",
+      "EXP-INPUT|EXP-0[1-9]|numbered manual|upload staging"
+    ],
+    "configFile": "/private/tmp/manual-flag-e2e-20261001/repo/playwright.on-regression.config.ts",
+    "rootDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/(expenses|expense-number-save|substitute-editable-navigation|substitute-cancelled-view-only)\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "expense-number-save.spec.ts",
+      "file": "expense-number-save.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "numbered manual draft recovers a lost response with the same command",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 4221,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:56:26.727Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expense-number-save-number-115c1-ponse-with-the-same-command/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "fb793d72856881925cf9-494417454c3499085736",
+          "file": "expense-number-save.spec.ts",
+          "line": 8,
+          "column": 5
+        },
+        {
+          "title": "upload staging receives EXP only after deliberate date review and keeps it when OCR date is corrected",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 169,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:56:31.216Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expense-number-save-upload-8ba8c--when-OCR-date-is-corrected/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "fb793d72856881925cf9-a55e17bc4f342ac0857d",
+          "file": "expense-number-save.spec.ts",
+          "line": 52,
+          "column": 5
+        }
+      ]
+    },
+    {
+      "title": "expenses.spec.ts",
+      "file": "expenses.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "EXP — expenses + receipts",
+          "file": "expenses.spec.ts",
+          "line": 109,
+          "column": 6,
+          "specs": [
+            {
+              "title": "EXP-INPUT @smoke normalizes price and discount zeros while preserving four decimals",
+              "ok": true,
+              "tags": [
+                "smoke"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3101,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:56:31.417Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-ce948-le-preserving-four-decimals/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-9f314a1cc0dbac5e6821",
+              "file": "expenses.spec.ts",
+              "line": 110,
+              "column": 7
+            },
+            {
+              "title": "EXP-01 @smoke expenses list renders filters and table surface",
+              "ok": false,
+              "tags": [
+                "smoke"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 1272,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('button', { name: /ยืนยันแล้ว/ })\nExpected: visible\nError: strict mode violation: getByRole('button', { name: /ยืนยันแล้ว/ }) resolved to 2 elements:\n    1) <button type=\"button\" aria-haspopup=\"dialog\" class=\"mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50 self-start lg:ml-auto\">ส่งออกเอกสารยืนยันแล้ว</button> aka getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว' })\n    2) <button class=\"inline-flex min-h-11 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition sm:min-h-0 border-gray-200 bg-white text-gray-600 hover:border-brand-200\">…</button> aka getByRole('button', { name: 'ยืนยันแล้ว 5' })\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: /ยืนยันแล้ว/ })\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('button', { name: /ยืนยันแล้ว/ })\nExpected: visible\nError: strict mode violation: getByRole('button', { name: /ยืนยันแล้ว/ }) resolved to 2 elements:\n    1) <button type=\"button\" aria-haspopup=\"dialog\" class=\"mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50 self-start lg:ml-auto\">ส่งออกเอกสารยืนยันแล้ว</button> aka getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว' })\n    2) <button class=\"inline-flex min-h-11 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition sm:min-h-0 border-gray-200 bg-white text-gray-600 hover:border-brand-200\">…</button> aka getByRole('button', { name: 'ยืนยันแล้ว 5' })\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: /ยืนยันแล้ว/ })\u001b[22m\n\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts:160:74",
+                        "location": {
+                          "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                          "column": 74,
+                          "line": 160
+                        },
+                        "snippet": "  158 |     await expect(authedPage.getByRole('button', { name: /ฉบับร่าง/ })).toBeVisible();\n  159 |     await expect(authedPage.getByRole('button', { name: /รอตรวจสอบ/ })).toBeVisible();\n> 160 |     await expect(authedPage.getByRole('button', { name: /ยืนยันแล้ว/ })).toBeVisible();\n      |                                                                          ^\n  161 |   });\n  162 |\n  163 |   test('EXP-02 @p1 summary tiles render numeric values', async ({ authedPage, companyId }) => {"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                            "column": 74,
+                            "line": 160
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('button', { name: /ยืนยันแล้ว/ })\nExpected: visible\nError: strict mode violation: getByRole('button', { name: /ยืนยันแล้ว/ }) resolved to 2 elements:\n    1) <button type=\"button\" aria-haspopup=\"dialog\" class=\"mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50 self-start lg:ml-auto\">ส่งออกเอกสารยืนยันแล้ว</button> aka getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว' })\n    2) <button class=\"inline-flex min-h-11 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition sm:min-h-0 border-gray-200 bg-white text-gray-600 hover:border-brand-200\">…</button> aka getByRole('button', { name: 'ยืนยันแล้ว 5' })\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: /ยืนยันแล้ว/ })\u001b[22m\n\n\n  158 |     await expect(authedPage.getByRole('button', { name: /ฉบับร่าง/ })).toBeVisible();\n  159 |     await expect(authedPage.getByRole('button', { name: /รอตรวจสอบ/ })).toBeVisible();\n> 160 |     await expect(authedPage.getByRole('button', { name: /ยืนยันแล้ว/ })).toBeVisible();\n      |                                                                          ^\n  161 |   });\n  162 |\n  163 |   test('EXP-02 @p1 summary tiles render numeric values', async ({ authedPage, companyId }) => {\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts:160:74"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:56:34.614Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-5810d-s-filters-and-table-surface/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-5810d-s-filters-and-table-surface/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-5810d-s-filters-and-table-surface/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                        "column": 74,
+                        "line": 160
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-1b44ae599a7161cfe583",
+              "file": "expenses.spec.ts",
+              "line": 154,
+              "column": 7
+            },
+            {
+              "title": "EXP-02 @p1 summary tiles render numeric values",
+              "ok": false,
+              "tags": [
+                "p1"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 13265,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/ค่าใช้จ่ายรวม/)\nExpected: visible\nTimeout: 12000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/ค่าใช้จ่ายรวม/)\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/ค่าใช้จ่ายรวม/)\nExpected: visible\nTimeout: 12000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/ค่าใช้จ่ายรวม/)\u001b[22m\n\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts:166:49",
+                        "location": {
+                          "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                          "column": 49,
+                          "line": 166
+                        },
+                        "snippet": "  164 |     await gotoCompany(authedPage, companyId, '/expenses');\n  165 |     for (const label of [/ค่าใช้จ่ายรวม/, /ภาษีซื้อ \\(VAT\\)/, /ค้างจ่าย/, /เกินกำหนดชำระ/]) {\n> 166 |       await expect(authedPage.getByText(label)).toBeVisible();\n      |                                                 ^\n  167 |     }\n  168 |     await expect(authedPage.locator('main, #workspace-main').getByText(/฿|0|1|2|3|4|5|6|7|8|9/).first()).toBeVisible();\n  169 |   });"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                            "column": 49,
+                            "line": 166
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/ค่าใช้จ่ายรวม/)\nExpected: visible\nTimeout: 12000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByText(/ค่าใช้จ่ายรวม/)\u001b[22m\n\n\n  164 |     await gotoCompany(authedPage, companyId, '/expenses');\n  165 |     for (const label of [/ค่าใช้จ่ายรวม/, /ภาษีซื้อ \\(VAT\\)/, /ค้างจ่าย/, /เกินกำหนดชำระ/]) {\n> 166 |       await expect(authedPage.getByText(label)).toBeVisible();\n      |                                                 ^\n  167 |     }\n  168 |     await expect(authedPage.locator('main, #workspace-main').getByText(/฿|0|1|2|3|4|5|6|7|8|9/).first()).toBeVisible();\n  169 |   });\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts:166:49"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:56:36.243Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-16427-tiles-render-numeric-values/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-16427-tiles-render-numeric-values/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-16427-tiles-render-numeric-values/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                        "column": 49,
+                        "line": 166
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-d4bcb899438a525fbd55",
+              "file": "expenses.spec.ts",
+              "line": 163,
+              "column": 7
+            },
+            {
+              "title": "EXP-03 @smoke creates draft expense via API and verifies list truth",
+              "ok": true,
+              "tags": [
+                "smoke"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1862,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:56:49.986Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-41620-API-and-verifies-list-truth/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-71e9ab5241a417354a4f",
+              "file": "expenses.spec.ts",
+              "line": 171,
+              "column": 7
+            },
+            {
+              "title": "EXP-04 @p1 expense detail renders totals and transitions",
+              "ok": false,
+              "tags": [
+                "p1"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 13650,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText('ยอดก่อนหักส่วนลด', { exact: true })\nExpected: visible\nTimeout: 12000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByText('ยอดก่อนหักส่วนลด', { exact: true })\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText('ยอดก่อนหักส่วนลด', { exact: true })\nExpected: visible\nTimeout: 12000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByText('ยอดก่อนหักส่วนลด', { exact: true })\u001b[22m\n\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts:188:77",
+                        "location": {
+                          "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                          "column": 77,
+                          "line": 188
+                        },
+                        "snippet": "  186 |     await gotoCompany(authedPage, companyId, `/expenses?expenseId=${created.id}`);\n  187 |     // guided stepper opens on the vendor+items step, where the money summary lives\n> 188 |     await expect(authedPage.getByText('ยอดก่อนหักส่วนลด', { exact: true })).toBeVisible();\n      |                                                                             ^\n  189 |     // This fixture has no tax: a non-VAT company's SIMPLE capture deliberately hides VAT rows.\n  190 |     expect(['FULL', 'SIMPLE']).toContain(capturePolicy.mode);\n  191 |     const taxableBase = authedPage.getByText('ฐานภาษี (ยอดก่อน VAT)', { exact: true });"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                            "column": 77,
+                            "line": 188
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText('ยอดก่อนหักส่วนลด', { exact: true })\nExpected: visible\nTimeout: 12000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByText('ยอดก่อนหักส่วนลด', { exact: true })\u001b[22m\n\n\n  186 |     await gotoCompany(authedPage, companyId, `/expenses?expenseId=${created.id}`);\n  187 |     // guided stepper opens on the vendor+items step, where the money summary lives\n> 188 |     await expect(authedPage.getByText('ยอดก่อนหักส่วนลด', { exact: true })).toBeVisible();\n      |                                                                             ^\n  189 |     // This fixture has no tax: a non-VAT company's SIMPLE capture deliberately hides VAT rows.\n  190 |     expect(['FULL', 'SIMPLE']).toContain(capturePolicy.mode);\n  191 |     const taxableBase = authedPage.getByText('ฐานภาษี (ยอดก่อน VAT)', { exact: true });\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts:188:77"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:56:51.971Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-4d0e8-ders-totals-and-transitions/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-4d0e8-ders-totals-and-transitions/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-4d0e8-ders-totals-and-transitions/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                        "column": 77,
+                        "line": 188
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-77024e65ef9cfb7cbe47",
+              "file": "expenses.spec.ts",
+              "line": 180,
+              "column": 7
+            },
+            {
+              "title": "EXP-04B @smoke ส่งตรวจสอบ lands on the list with the row highlighted and its status shown",
+              "ok": true,
+              "tags": [
+                "smoke"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "own-expense",
+                      "description": "cmupf6dig00ikekk1tshsrmi3"
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2490,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:57:05.976Z",
+                      "annotations": [
+                        {
+                          "type": "own-expense",
+                          "description": "cmupf6dig00ikekk1tshsrmi3"
+                        }
+                      ],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-9c428-ighted-and-its-status-shown/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-c2c2bb95441de55eb7a7",
+              "file": "expenses.spec.ts",
+              "line": 205,
+              "column": 7
+            },
+            {
+              "title": "EXP-04A @p1 cancellation switches to deletion only after success",
+              "ok": true,
+              "tags": [
+                "p1"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2314,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:57:08.635Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-7962c-deletion-only-after-success/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-08210a7d40f10739a364",
+              "file": "expenses.spec.ts",
+              "line": 232,
+              "column": 7
+            },
+            {
+              "title": "EXP-05 @p1 moves draft through ready and confirmed with API truth",
+              "ok": true,
+              "tags": [
+                "p1"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "own-expense",
+                      "description": "cmupf6ha000jgekk1zmswm4qc"
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 428,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:57:11.039Z",
+                      "annotations": [
+                        {
+                          "type": "own-expense",
+                          "description": "cmupf6ha000jgekk1zmswm4qc"
+                        }
+                      ],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-17216-nd-confirmed-with-API-truth/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-41cbe715ad4cb05a2edc",
+              "file": "expenses.spec.ts",
+              "line": 388,
+              "column": 7
+            },
+            {
+              "title": "EXP-06 @p2 uploads receipt bytes and resolves the preview/download URL",
+              "ok": true,
+              "tags": [
+                "p2"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 189,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:57:11.480Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-05267-es-the-preview-download-URL/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-3df93ae3c389f6ae8e2b",
+              "file": "expenses.spec.ts",
+              "line": 405,
+              "column": 7
+            },
+            {
+              "title": "EXP-07 @p2 receipt extraction stays reviewable when OCR is not configured",
+              "ok": true,
+              "tags": [
+                "p2"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 190,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:57:11.680Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-76ee8--when-OCR-is-not-configured/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-ec95fb3f65e784cf6d0a",
+              "file": "expenses.spec.ts",
+              "line": 446,
+              "column": 7
+            },
+            {
+              "title": "EXP-08 @p1 recomputes edited line totals before confirming",
+              "ok": true,
+              "tags": [
+                "p1"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "own-expense",
+                      "description": "cmupf6hv800ktekk1t619ine5"
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 309,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:57:11.881Z",
+                      "annotations": [
+                        {
+                          "type": "own-expense",
+                          "description": "cmupf6hv800ktekk1t619ine5"
+                        }
+                      ],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-7a304-ne-totals-before-confirming/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-dc4e04b0c1c8396f8143",
+              "file": "expenses.spec.ts",
+              "line": 484,
+              "column": 7
+            },
+            {
+              "title": "EXP-09 @p2 confirmed chip filters without client error",
+              "ok": false,
+              "tags": [
+                "p2"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 1494,
+                      "error": {
+                        "message": "Error: locator.click: Error: strict mode violation: getByRole('button', { name: /ยืนยันแล้ว/ }) resolved to 2 elements:\n    1) <button type=\"button\" aria-haspopup=\"dialog\" class=\"mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50 self-start lg:ml-auto\">ส่งออกเอกสารยืนยันแล้ว</button> aka getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว' })\n    2) <button class=\"inline-flex min-h-11 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition sm:min-h-0 border-gray-200 bg-white text-gray-600 hover:border-brand-200\">…</button> aka getByRole('button', { name: 'ยืนยันแล้ว 7' })\n\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: /ยืนยันแล้ว/ })\u001b[22m\n",
+                        "stack": "Error: locator.click: Error: strict mode violation: getByRole('button', { name: /ยืนยันแล้ว/ }) resolved to 2 elements:\n    1) <button type=\"button\" aria-haspopup=\"dialog\" class=\"mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50 self-start lg:ml-auto\">ส่งออกเอกสารยืนยันแล้ว</button> aka getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว' })\n    2) <button class=\"inline-flex min-h-11 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition sm:min-h-0 border-gray-200 bg-white text-gray-600 hover:border-brand-200\">…</button> aka getByRole('button', { name: 'ยืนยันแล้ว 7' })\n\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: /ยืนยันแล้ว/ })\u001b[22m\n\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts:518:66",
+                        "location": {
+                          "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                          "column": 66,
+                          "line": 518
+                        },
+                        "snippet": "  516 |     await api.post(`companies/${companyId}/expenses/${created.id}/confirm`, { data: {} });\n  517 |     await gotoCompany(authedPage, companyId, '/expenses');\n> 518 |     await authedPage.getByRole('button', { name: /ยืนยันแล้ว/ }).click();\n      |                                                                  ^\n  519 |     await expect(authedPage.getByText(/ยืนยันแล้ว/).first()).toBeVisible();\n  520 |   });\n  521 | });"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                            "column": 66,
+                            "line": 518
+                          },
+                          "message": "Error: locator.click: Error: strict mode violation: getByRole('button', { name: /ยืนยันแล้ว/ }) resolved to 2 elements:\n    1) <button type=\"button\" aria-haspopup=\"dialog\" class=\"mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50 self-start lg:ml-auto\">ส่งออกเอกสารยืนยันแล้ว</button> aka getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว' })\n    2) <button class=\"inline-flex min-h-11 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition sm:min-h-0 border-gray-200 bg-white text-gray-600 hover:border-brand-200\">…</button> aka getByRole('button', { name: 'ยืนยันแล้ว 7' })\n\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: /ยืนยันแล้ว/ })\u001b[22m\n\n\n  516 |     await api.post(`companies/${companyId}/expenses/${created.id}/confirm`, { data: {} });\n  517 |     await gotoCompany(authedPage, companyId, '/expenses');\n> 518 |     await authedPage.getByRole('button', { name: /ยืนยันแล้ว/ }).click();\n      |                                                                  ^\n  519 |     await expect(authedPage.getByText(/ยืนยันแล้ว/).first()).toBeVisible();\n  520 |   });\n  521 | });\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts:518:66"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:57:12.201Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-65543-ilters-without-client-error/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-65543-ilters-without-client-error/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-65543-ilters-without-client-error/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/expenses.spec.ts",
+                        "column": 66,
+                        "line": 518
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-0c486ad81677b9ab5e8e",
+              "file": "expenses.spec.ts",
+              "line": 513,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-01T10:56:26.345Z",
+    "duration": 47436.337999999996,
+    "expected": 10,
+    "skipped": 0,
+    "unexpected": 4,
+    "flaky": 0
+  }
+}

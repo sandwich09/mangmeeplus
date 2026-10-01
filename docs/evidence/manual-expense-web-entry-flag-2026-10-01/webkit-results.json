@@ -1,0 +1,329 @@
+{
+  "config": {
+    "argv": [
+      "/opt/homebrew/Cellar/node@22/22.23.2/bin/node",
+      "/private/tmp/manual-flag-e2e-20261001/repo/node_modules/@playwright/test/cli.js",
+      "test",
+      "-c",
+      "playwright.webkit.config.ts",
+      "--grep",
+      "ON manual create|OFF closes direct|OFF upload image"
+    ],
+    "configFile": "/private/tmp/manual-flag-e2e-20261001/repo/playwright.webkit.config.ts",
+    "rootDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "manual-flag-simulation.spec.ts"
+        ],
+        "timeout": 90000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/tmp/manual-flag-e2e-20261001/evidence/webkit-results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "manual-flag-simulation.spec.ts",
+      "file": "manual-flag-simulation.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "Browser 1440: ON manual create persists and survives reload",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 4064,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:57:57.676Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-67f2a-ersists-and-survives-reload/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-43a16c9eaff85ee11354",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 58,
+          "column": 6
+        },
+        {
+          "title": "Browser 1440: OFF closes direct URL and legacy alias",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2368,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:58:03.474Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-3a7f0-direct-URL-and-legacy-alias/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-407aac6ba21e6fc291dc",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 59,
+          "column": 6
+        },
+        {
+          "title": "Browser 1440: OFF upload image still creates a readable draft",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1700,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:58:05.881Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-75f5a-ll-creates-a-readable-draft/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-7849447469229d583819",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 60,
+          "column": 6
+        },
+        {
+          "title": "Browser 390: ON manual create persists and survives reload",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2282,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:58:07.617Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-24b8e-ersists-and-survives-reload/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-89483e73a01183f5ca71",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 58,
+          "column": 6
+        },
+        {
+          "title": "Browser 390: OFF closes direct URL and legacy alias",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1725,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:58:09.938Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-dc2f3-direct-URL-and-legacy-alias/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-a9aa5726a7e65540b4fc",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 59,
+          "column": 6
+        },
+        {
+          "title": "Browser 390: OFF upload image still creates a readable draft",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1680,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:58:11.695Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-82b8c-ll-creates-a-readable-draft/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-203df786141234f51995",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 60,
+          "column": 6
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-01T10:57:57.378Z",
+    "duration": 16066.436,
+    "expected": 6,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}
