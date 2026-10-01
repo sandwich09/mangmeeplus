@@ -16,6 +16,9 @@ import {
 import { resolvePublicPolicyAnswer } from './line-public-policy.logic';
 import { buildContactCard, STAFF_OA_URL } from './line-staff-menu.logic';
 import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-manager.logic';
+import { receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
+import * as cardBuilders from './line-business-card.logic';
+import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 
 const response = (cards?: NonNullable<LineAiTurnResponse['presentation']>['cards']): LineAiTurnResponse => ({
   requestId: 'r1', replyText: cards?.map(card => card.text).join('\n\n') ?? 'fallback', sourceRefs: [], sourceLabels: [], webLinks: [],
@@ -478,6 +481,17 @@ describe('reimbursement intake cards — server-owned, never rendered from model
     const spaced = bubbleOf(buildReimbursementHandoffMessage('https://app.example.com', 'c 1')).footer.contents[0].action.uri;
     assert.equal(spaced, 'https://app.example.com/companies/c%201/reimbursements/new');
   });
+
+  it('carries the words each card shows as canonical text, and the handoff button as a link line', () => {
+    const payer = buildReimbursementPayerClarificationMessage() as any;
+    assert.equal(payer.canonicalText, bubbleOf(payer).body.contents[0].text);
+    const handoff = buildReimbursementHandoffMessage('https://app.example.com', 'c1') as any;
+    assert.equal(handoff.canonicalText,
+      `${bubbleOf(handoff).body.contents[1].text}\nเปิดกรอกใบเบิกคืนในเว็บ: https://app.example.com/companies/c1/reimbursements/new`);
+    // No button, no link line: the text never names a page the card itself would not open.
+    const noButton = buildReimbursementHandoffMessage(undefined, 'c1') as any;
+    assert.equal(noButton.canonicalText, bubbleOf(noButton).body.contents[1].text);
+  });
 });
 
 describe('receipt quota card (P10-L §3.7/§7)', () => {
@@ -510,7 +524,36 @@ describe('receipt quota card (P10-L §3.7/§7)', () => {
     assert.equal((message as { altText: string }).altText, text);
     assert.equal((message as { contents: any }).contents.body.contents[1].text, text);
   });
+
+  // Production 2026-10-01: with no canonicalText the delivery plan of a bound chat refused this card
+  // (LINE_PLAN_CANONICAL_TEXT_REQUIRED) and a shop at its limit was answered with silence. The text form
+  // is the sentence the caller built for THIS reader, so it keeps the §2.2 rule: every wording of the
+  // wall names who to ask, and never a purchase, for a reader who may not buy.
+  it('carries the same sentence as canonical text, the form a delivery plan sends', () => {
+    for (const canManagePlan of [true, false]) {
+      for (const [limit, tierKey, cadence, gift] of [[15, 'FREE_TRIAL_15', undefined, false], [30, 'STARTER_249', undefined, false],
+        [null, 'STARTER_249', undefined, false], [20, null, 'PAID_GRANTS', false], [30, 'STARTER_249', undefined, true]] as const) {
+        const text = receiptQuotaExceededTextTh(limit, tierKey, cadence, gift, canManagePlan);
+        const message = buildReceiptQuotaExceededMessage(text, canManagePlan) as any;
+        assert.equal(message.canonicalText, text);
+        assert.equal(message.canonicalText, message.contents.body.contents[1].text, 'the words the card shows, nothing added');
+        if (!canManagePlan) {
+          assert.ok(message.canonicalText.endsWith(ASK_PLAN_MANAGER_TH), text);
+          assert.doesNotMatch(message.canonicalText, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|แพ็กเกจที่ใหญ่ขึ้น|ซื้อ|โปรโมชั่น/);
+        }
+      }
+    }
+  });
 });
+
+/** Every refusal `buildAiBudgetExceededMessage` words differently; `undefined` is the legacy TOTAL-exhausted card. */
+const BUDGET_REFUSALS = [
+  undefined,
+  { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' as const },
+  { budgetErrorCode: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'TOTAL' as const },
+  { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' as const },
+  { budgetErrorCode: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'CHAT' as const },
+];
 
 describe('CHAT budget refusal card', () => {
   it('does not suggest a package change as a same-month chat-credit refill', () => {
@@ -548,6 +591,21 @@ describe('CHAT budget refusal card', () => {
       }
     }
   });
+
+  // The same gap as the quota card: every wording of this card now carries its own sentence, so the
+  // text a delivery plan sends follows the same §2.2 rule as the card.
+  it('carries the sentence the card shows as canonical text, for every refusal and either reader', () => {
+    for (const canManagePlan of [true, false]) {
+      for (const trialTier of [true, false]) {
+        for (const refusal of BUDGET_REFUSALS) {
+          const message = buildAiBudgetExceededMessage(trialTier, refusal, canManagePlan) as any;
+          assert.equal(message.canonicalText, message.contents.body.contents[1].text, JSON.stringify({ trialTier, refusal, canManagePlan }));
+          assert.match(message.canonicalText, /^เครดิต AI/);
+          if (!canManagePlan) assert.doesNotMatch(message.canonicalText, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|ซื้อ|โปรโมชั่น/);
+        }
+      }
+    }
+  });
 });
 
 // Owner 2026-09-30 (advisor spec §2.2): a public policy question gets the staff door, never the
@@ -571,5 +629,49 @@ describe('public policy card', () => {
     const contact = (buildContactCard() as any).contents.footer.contents.map((button: any) => button.action);
     assert.ok(contact.some((action: any) => action.type === 'uri' && action.label === 'ติดต่อเจ้าหน้าที่' && action.uri === STAFF_OA_URL));
     assert.equal(STAFF_OA_URL, 'https://lin.ee/UU9pbOI');
+  });
+});
+
+// Production 2026-10-01: a bound private chat sends every reply through the v2 delivery plan, and the
+// plan refuses a Flex message with no canonicalText (LINE_PLAN_CANONICAL_TEXT_REQUIRED). The quota card
+// had none. Every builder exported here must now either carry its text or be named below with the
+// reason it never meets a delivery plan — a new builder fails this test until someone decides which.
+describe('delivery plan guard: every card carries its text, or says why it never needs one', () => {
+  const WEB = 'https://app.example.com';
+  const carriesText: Record<string, () => LineReplyMessage[]> = {
+    buildPublicPolicyCardMessage: () => [buildPublicPolicyCardMessage({ topic: 'trial', title: 'หัวข้อ', text: 'คำตอบ' })],
+    buildLineAssistantTextCardMessage: () => [buildLineAssistantTextCardMessage('คำตอบ', WEB, 'c1')],
+    buildExpenseDraftCardMessage: () => [buildExpenseDraftCardMessage('ร่างค่าใช้จ่าย', { expenseId: 'e1', amount: '100.00' }, WEB, 'c1')],
+    buildReimbursementPayerClarificationMessage: () => [buildReimbursementPayerClarificationMessage()],
+    buildReimbursementHandoffMessage: () => [buildReimbursementHandoffMessage(WEB, 'c1'), buildReimbursementHandoffMessage(undefined, 'c1')],
+    buildAiBudgetExceededMessage: () => [true, false].flatMap((canManagePlan) => [true, false].flatMap((trialTier) =>
+      BUDGET_REFUSALS.map((refusal) => buildAiBudgetExceededMessage(trialTier, refusal, canManagePlan)))),
+    buildPackageRequiredMessage: () => [buildPackageRequiredMessage({ lockReason: 'no_package', companyId: 'c1' })],
+    buildReceiptQuotaExceededMessage: () => [true, false].map((canManagePlan) => buildReceiptQuotaExceededMessage('ตอนนี้ครบแล้วค่ะ', canManagePlan)),
+    buildLineBusinessAnswerMessage: () => [
+      buildLineBusinessAnswerMessage(response(), 'fallback', WEB, 'c1'),
+      buildLineBusinessAnswerMessage(response([{ text: 'คำตอบ' }]), 'fallback', WEB, 'c1'),
+    ],
+  };
+  /** Traced callers (process-line-webhook.use-case.ts unless named). None of these is sent on a bound chat. */
+  const neverPlanned: Record<string, string> = {
+    buildLegalAcceptanceRequiredMessage: 'refusePendingLegalAcceptance runs before bindConversation in both lanes; the message buffer sends it through the reply adapter',
+    buildSignupDoorCard: 'entryDoorMessages answers a LINE user with no account, who has no company or membership to bind',
+    buildSignupStatusCard: 'entryDoorMessages answers a LINE user with no account, who has no company or membership to bind',
+    buildProfileGuardNudgeCard: 'pushed by the signup outbox (line-signup-notify.service.ts) exactly as built — see the last assertion',
+  };
+
+  it('covers every exported builder exactly once', () => {
+    const exported = Object.entries(cardBuilders)
+      .filter(([name, value]) => typeof value === 'function' && name.startsWith('build')).map(([name]) => name).sort();
+    assert.deepEqual([...Object.keys(carriesText), ...Object.keys(neverPlanned)].sort(), exported);
+    for (const [name, sample] of Object.entries(carriesText)) {
+      for (const message of sample()) {
+        assert.ok(message.type === 'text' ? message.text.length > 0 : message.type === 'flex' && !!message.canonicalText, name);
+      }
+    }
+    // `pushLineMessages` posts the object as written; only the reply adapter and a frozen plan strip
+    // the internal field. This card must stay without one for as long as the outbox is its sender.
+    assert.equal('canonicalText' in cardBuilders.buildProfileGuardNudgeCard(), false);
   });
 });

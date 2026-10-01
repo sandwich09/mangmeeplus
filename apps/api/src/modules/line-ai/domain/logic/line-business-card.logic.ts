@@ -344,6 +344,7 @@ export function buildReimbursementPayerClarificationMessage(): LineReplyMessage 
   return {
     type: 'flex',
     altText: preview(text, 400),
+    canonicalText: text,
     contents: bubble({ title: 'น้องมั่งมีขอถามเพิ่ม', text }, undefined, '', []),
   };
 }
@@ -356,14 +357,18 @@ export function buildReimbursementHandoffMessage(webBaseUrl: string | undefined,
   const text = 'น้องมั่งมียังไม่ได้สร้างรายการเบิกคืนให้นะคะ '
     + 'กรุณาเปิดหน้าเว็บเพื่อตรวจสอบและกรอกรายละเอียดการเบิกคืนด้วยตนเอง '
     + 'ระบบจะสร้างรายการเมื่อกดบันทึกในเว็บเท่านั้นค่ะ';
+  const webLink = { label: 'เปิดกรอกใบเบิกคืนในเว็บ', path: `/companies/${encodeURIComponent(companyId)}/reimbursements/new` };
+  const link = safeTenantLink(webBaseUrl, companyId, webLink.path);
   return {
     type: 'flex',
     altText: preview(text, 400),
+    // The button as a line, like the expense draft card: a text delivery still carries the way in.
+    canonicalText: link ? `${text}\n${webLink.label}: ${link}` : text,
     contents: bubble({
       title: 'เบิกคืนค่าใช้จ่าย',
       badge: '📝 ยังไม่ได้สร้างรายการ',
       text,
-      webLink: { label: 'เปิดกรอกใบเบิกคืนในเว็บ', path: `/companies/${encodeURIComponent(companyId)}/reimbursements/new` },
+      webLink,
     }, webBaseUrl, companyId),
   };
 }
@@ -531,6 +536,7 @@ export function buildAiBudgetExceededMessage(
   return {
     type: 'flex',
     altText: preview(text, 400),
+    canonicalText: text,
       contents: bubble(
       insufficient
         ? { title: chatOnly ? 'เครดิต AI ส่วนแชตที่เหลือไม่พอ' : 'เครดิต AI เดือนนี้เหลือไม่พอ',
@@ -641,6 +647,8 @@ export function buildReceiptQuotaExceededMessage(text: string, canManagePlan: bo
   return {
     type: 'flex',
     altText: preview(text, 400),
+    // Required on a bound chat: its delivery plan refuses a card with no text form, and sends this one.
+    canonicalText: text,
     contents: bubble(
       { title: 'โควตาให้ AI อ่านรูปเดือนนี้ครบแล้ว', badge: '📄 ครบโควตาเดือนนี้', text },
       undefined,

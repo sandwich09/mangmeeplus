@@ -4,7 +4,11 @@ import { Prisma } from '../../../../generated/prisma/client';
 import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
 import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.service';
 import { deliveryHash, parseLineDeliveryPlan, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
-import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, inheritCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
+import { withLineExternalBrowserText } from '@watchdog-bms/contracts';
+import { buildAiBudgetExceededMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage,
+  buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, inheritCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
+import { buildPendingApprovalCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffMainMenu } from '../../domain/logic/line-staff-menu.logic';
+import { receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 
 it('answers an admitted private general/help turn without private ERP prefetch or touching four waiting tasks', async () => {
   const event: any = { webhookEventId: 'evt', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'ทำไมท้องฟ้าเป็นสีฟ้า', inputEvidence: { joinedSha256: 'digest' } };
@@ -314,4 +318,35 @@ it('a text answer finished after its foreground deadline is delivered, never dro
   const created = new Date();
   await mediaResultFlow(created, onTime).sendMessagesV2({ ...lateText, webhookEventId: 'on-time-text' }, [{ type: 'text', text: 'ทันเวลา' }]);
   assert.equal(onTime.saved!.firstDispatchDeadlineAt, new Date(created.getTime() + 40_000).toISOString());
+});
+
+// Production 2026-10-01: a shop over its receipt quota sent a photo and heard nothing. The quota card
+// carried no canonicalText, so this seam threw LINE_PLAN_CANONICAL_TEXT_REQUIRED before a plan was saved;
+// "เมนูหลัก" and the other deterministic cards of a bound chat failed the same way. Each now freezes into
+// a plan as its own words, with its quick reply. (A card is sent as itself only with the business
+// renderer's completeness proof; these carry none, so the text is what reaches the customer.)
+const STAFF_MENU = { displayName: 'พิม', roleLabel: 'เจ้าของ', branchScopeLabel: 'ทุกสาขา', companyId: 'company', webBaseUrl: 'https://app.example.com',
+  permissions: ['reimbursement.approve', 'expense.read', 'expense.receipt.line_upload'], entitledFeatureKeys: null };
+const TOTAL_EXCEEDED = { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' } as const;
+for (const [name, card] of [
+  ['receipt quota', buildReceiptQuotaExceededMessage(receiptQuotaExceededTextTh(30, 'STARTER_249', undefined, false, true), true)],
+  ['receipt quota (reader who may not buy)', buildReceiptQuotaExceededMessage(receiptQuotaExceededTextTh(30, 'STARTER_249', undefined, false, false), false)],
+  ['AI credit', buildAiBudgetExceededMessage(false, TOTAL_EXCEEDED, true)],
+  ['AI credit (reader who may not buy)', buildAiBudgetExceededMessage(false, TOTAL_EXCEEDED, false)],
+  ['main menu', buildStaffMainMenu(STAFF_MENU)],
+  ['services', buildServiceEntitlementMessage(null)],
+  ['receipt prompt', buildReceiptCapturePrompt(STAFF_MENU)],
+  ['pending approvals', buildPendingApprovalCard(STAFF_MENU, { reimbursement: { total: 1, items: ['RB-1 · 100.00 บาท'] } })],
+  ['reimbursement payer question', buildReimbursementPayerClarificationMessage()],
+  ['reimbursement handoff', buildReimbursementHandoffMessage('https://app.example.com', 'company')],
+] as const) it(`freezes the ${name} card of a bound chat as its own words, never LINE_PLAN_CANONICAL_TEXT_REQUIRED`, async () => {
+  assert.equal(card.type, 'flex');
+  const capture: { saved?: DeliveryPlanV2 } = {};
+  assert.equal(await mediaResultFlow(new Date(), capture).sendMessagesV2({ ...SECOND_PHOTO, webhookEventId: `card-${name}` }, [card]), 'ok');
+  assert.ok(capture.saved && parseLineDeliveryPlan(capture.saved), 'the plan validates');
+  const sent = capture.saved!.batches.flatMap(batch => batch.primary.messages);
+  assert.deepEqual(sent, [{ type: 'text',
+    text: withLineExternalBrowserText((card as any).canonicalText, Number.POSITIVE_INFINITY), ...(card.quickReply ? { quickReply: card.quickReply } : {}) }]);
+  // Advisor spec §2.2: what a reader who may not buy receives never points at a purchase.
+  if (name.endsWith('(reader who may not buy)')) assert.doesNotMatch(JSON.stringify(sent), /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|แพ็กเกจที่ใหญ่ขึ้น|ซื้อ|โปรโมชั่น/);
 });
