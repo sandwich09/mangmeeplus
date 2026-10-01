@@ -994,6 +994,22 @@ describe('the approval of a round: the comparison, the attestation of the NEW ac
     assert.ok(page.changes.some((change) => change.initial === null && !!(change.value as { before?: unknown; detail?: unknown } | null)?.detail));
   });
 
+  // A lost race: another approver sent the new account back, or the claim was cancelled, while this page was open.
+  it('offers nothing to approve again when the claim moved on meanwhile: the page shows where it stands and says so', async () => {
+    for (const movedTo of [phaseA(), ready({ status: 'CANCELLED', paymentStatus: 'NOT_PAYABLE', currentDesk: undefined })]) {
+      const page = tickedFor(2)!;
+      toasts.length = 0;
+      const calls = await withApi((url, method) => (method === 'POST'
+        ? { status: 409, body: { statusCode: 409, message: 'stale_approval_snapshot' } } : { status: 200, body: asAnswered(movedTo) }), () => page.handlers.approve.onClick());
+      assert.deepEqual(calls.map((call) => call.method), ['POST', 'GET']);
+      assert.deepEqual(toasts, []);
+      // No dialog offering "อนุมัติด้วยข้อมูลล่าสุด", which the API would refuse: the sentence, and the claim as read again.
+      assert.equal(page.changes.some((change) => !!(change.value as { before?: unknown } | null)?.before), false, String(movedTo.status));
+      assert.ok(page.changes.some((change) => change.value === 'ยังไม่ได้อนุมัติ เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ'));
+      assert.ok(page.changes.some((change) => (change.value as { status?: string } | null)?.status === movedTo.status));
+    }
+  });
+
   it('needs no tick for a claim changed to cash, and still shows what changed', () => {
     const toCash = asApprover({ payoutMethod: 'CASH', payout: { payoutMethod: 'CASH' } });
     const card = stepCard(claimPage(toCash, approver).html);

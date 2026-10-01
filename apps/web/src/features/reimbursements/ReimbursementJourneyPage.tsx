@@ -48,6 +48,9 @@ const ACTION_LABELS: Record<JourneyAction, string> = {
   'send-back': PAYOUT_CORRECTION_SEND_BACK_LABEL, 'correct-payout': PAYOUT_CORRECTION_FIX_LABEL,
 };
 
+/** An approval that arrived after the claim had moved on, where nothing is left for this viewer to approve. */
+const STALE_APPROVAL_NOTHING_TO_APPROVE = 'ยังไม่ได้อนุมัติ เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ';
+
 type ReasonAction = 'cancel' | 'resume-cancel' | 'finance-return' | 'finance-block' | 'resolve-duplicate';
 const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string; confirmLabel: string; success: string; danger?: boolean; minLength?: number }> = {
   cancel: {
@@ -221,7 +224,14 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       target.payoutCorrectionPhase ? 'อนุมัติบัญชีรับเงินใหม่แล้ว ใบกลับไปรอจ่ายเงินคืน' : 'อนุมัติคำขอเรียบร้อยแล้ว',
       (e) => { stale = !review && isStaleApprovalError(e); return stale; },
     );
-    if (stale) { setStaleReview({ before, detail: latest }); return; }
+    if (stale) {
+      // Changed since this page read it. Where this viewer may still approve the claim as it is now, they compare
+      // and decide again. Where they may not (someone else decided it, sent it back for its payout account or
+      // cancelled it meanwhile) there is nothing left to approve: the page already shows where the claim stands.
+      if (activeJourneyStep(buildJourneySteps(latest, permissions, userId))?.actions.includes('approve')) setStaleReview({ before, detail: latest });
+      else setActionError(STALE_APPROVAL_NOTHING_TO_APPROVE);
+      return;
+    }
     if (!ok) return;
     setStaleReview(null);
     // AC03: an approver who may also pay gets the form at once; everyone else just sees the next step.
