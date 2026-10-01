@@ -3224,7 +3224,8 @@ export class PrismaReimbursementRepository {
       where: {
         companyId,
         status: 'RECORDED',
-        postingStatus: 'pending' as any,
+        // A failed attempt (posting_error) still needs posting, and a retry is how it clears.
+        postingStatus: { in: ['pending', 'posting_error'] as any },
         request: { is: branchScopeWhere(scopes) },
       },
       orderBy: { paidAt: 'asc' },
