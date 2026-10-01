@@ -27,6 +27,7 @@ import { SalesAgentsService } from './application/sales-agents.service';
 import { SalesCompanySearchService } from './application/sales-company-search.service';
 import { SalesDealsService } from './application/sales-deals.service';
 import { SalesReferralService } from './application/sales-referral.service';
+import { SalesReportsService } from './application/sales-reports.service';
 import { PLATFORM_TENANT_ID } from './application/sales-context';
 import { SalesSelfProfileDto, SalesTeamCreateDto } from './presentation/http/sales.controller';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../common/pipes/validation-pipe.options';
@@ -609,6 +610,41 @@ describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
       await h.client.$transaction((tx) => recordReferralAttribution(tx, { companyId: discountedShop,
         invoiceId: discounted.id, offer: { interval: 'month', intervalCount: 1 }, paidAt }));
       assert.equal((await h.client.salesAttribution.findUniqueOrThrow({ where: { companyId: discountedShop } })).amountSatang, 29900);
+    } finally { await h.teardown(); }
+  });
+
+  it('reports a deduction in the month it was recorded and leaves the month of the payment alone', async () => {
+    const h = await harness();
+    try {
+      const reports = new SalesReportsService({ client: h.client } as never, { log: async () => {} } as never);
+      const attribution = await h.client.salesAttribution.create({ data: { companyId: h.shopId, salesUserId: h.agentId,
+        source: 'REFERRAL', amountSatang: 49900, months: 1, interval: 'month', paidAt: new Date('2026-09-20T03:00:00Z'),
+        sourceInvoiceId: `${h.tag}-invoice` } });
+      const range = { from: '2026-09', to: '2026-10' };
+      const figures = async (ctx: RequestContext, query: Record<string, string> = range) =>
+        (await reports.summary(ctx, query)).months.map((month) => [month.monthKey,
+          month.rows.filter((row) => row.salesUserId === h.agentId).map((row) => row.amountSatang)]);
+      assert.deepEqual(await figures(h.agent), [['2026-09', [49900]]]);
+
+      const occurredAt = new Date('2026-10-05T02:00:00Z');
+      await h.client.salesAttributionDeduction.create({ data: { attributionId: attribution.id, kind: 'REFUND',
+        providerRef: `re_${h.tag}`, amountSatang: 49900, occurredAt, createdAt: new Date('2026-10-05T02:03:00Z') } });
+      assert.deepEqual(await figures(h.agent), [['2026-10', [-49900]], ['2026-09', [49900]]]);
+      const [october] = (await reports.summary(h.agent, range)).months;
+      assert.deepEqual(october!.deductions, [{ salesUserId: h.agentId, kind: 'REFUND', companyName: `ร้านทดสอบ ${h.tag}`,
+        paidMonthKey: '2026-09', amountSatang: 49900, occurredAt: occurredAt.toISOString() }]);
+      // Asked for October alone, the deduction is still there although its payment is outside the range.
+      assert.deepEqual(await figures(h.agent, { from: '2026-10', to: '2026-10' }), [['2026-10', [-49900]]]);
+
+      // R11: another agent sees none of it; a lead narrowing to this agent sees exactly the same.
+      assert.deepEqual((await reports.summary(h.other, range)).months, []);
+      assert.deepEqual(await figures(h.lead, { ...range, salesUserId: h.agentId }), [['2026-10', [-49900]], ['2026-09', [49900]]]);
+
+      // The database itself refuses a second row for the same provider id, a kind it does not know and a zero.
+      const again = { attributionId: attribution.id, kind: 'REFUND', amountSatang: 100, occurredAt };
+      await assert.rejects(h.client.salesAttributionDeduction.create({ data: { ...again, providerRef: `re_${h.tag}` } }));
+      await assert.rejects(h.client.salesAttributionDeduction.create({ data: { ...again, providerRef: `x_${h.tag}`, kind: 'CHARGEBACK' } }));
+      await assert.rejects(h.client.salesAttributionDeduction.create({ data: { ...again, providerRef: `y_${h.tag}`, amountSatang: 0 } }));
     } finally { await h.teardown(); }
   });
 });

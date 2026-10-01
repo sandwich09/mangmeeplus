@@ -218,8 +218,14 @@ export const SALES_ATTRIBUTION_FLAGS = ['self_referral', 'repeat_owner', 'referr
 export type SalesAttributionFlag = typeof SALES_ATTRIBUTION_FLAGS[number];
 /** The referral window (§17.1, Owner round 3): paid within 14 days of the shop opening, or nobody. */
 export const SALES_REFERRAL_WINDOW_DAYS = 14;
-/** Refund/dispute deducted from the agent's total when it lands inside this window (§17.1). */
+/**
+ * A refund or a lost payment dispute takes the credit back when it happens within this many days
+ * of the payment, counted to the provider's own time of it, never to the time this system noticed
+ * (§17.1, owner 2026-10-02).
+ */
 export const SALES_ATTRIBUTION_REFUND_WINDOW_DAYS = 60;
+/** What takes sales credit back: a refund, or a payment dispute the shop's bank won. */
+export type SalesDeductionKind = 'REFUND' | 'DISPUTE';
 /** One sales code attributing more than this many shops in a Bangkok day is an anomaly (§17.1). */
 export const SALES_REFERRAL_DAILY_ANOMALY_LIMIT = 20;
 
@@ -230,11 +236,25 @@ export type SalesReportRow = {
   teamLeadDisplayName: string | null;
   /** Shops opened by a deal this agent wrote, and by a signup that named their code. */
   dealActivations: number; referralActivations: number;
-  /** Net of refunds; flagged rows contribute 0 until reviewed. */
+  /** This month's credit less this month's `deductions`, so it may be negative; flagged rows contribute 0 until reviewed. */
   amountSatang: number;
   flaggedCount: number;
 };
-export type SalesReportMonth = { monthKey: string; rows: SalesReportRow[] };
+/**
+ * One deduction, shown as its own line in the Bangkok month it was recorded in — the month of the
+ * payment keeps its figure (§17.1, owner 2026-10-02). A shop name and a month, no document (S21).
+ */
+export type SalesReportDeduction = {
+  salesUserId: string; kind: SalesDeductionKind; companyName: string;
+  /** Bangkok month of the payment whose credit this takes back. */
+  paidMonthKey: string;
+  /** Positive satang; the agent's row for this month already has it taken off. */
+  amountSatang: number;
+  /** The provider's time: the refund, or the dispute being opened. */
+  occurredAt: string;
+};
+/** `deductions` is absent only on an answer that predates the field. */
+export type SalesReportMonth = { monthKey: string; rows: SalesReportRow[]; deductions?: SalesReportDeduction[] };
 export type SalesReportSummary = { months: SalesReportMonth[]; from: string; to: string };
 /**
  * `GET /v1/sales/events/report` (sales-event spec §10): event → batch → เซลล์, over tickets ISSUED in

@@ -12,6 +12,7 @@ import {
   withinReferralWindow,
   withinRefundWindow,
   type AttributionFacts,
+  type AttributionReportDeduction,
   type AttributionReportRow,
 } from './sales-attribution.logic';
 
@@ -134,7 +135,7 @@ describe('report aggregation (§17.2 — per agent per Bangkok month)', () => {
   const agent = (id: string) => ({ displayName: id.toUpperCase(), teamLeadUserId: 'lead-1', teamLeadDisplayName: 'LEAD-1' });
 
   it('splits deal and referral activations and sums the money', () => {
-    const [month] = aggregateReport([row({}), row({ source: 'REFERRAL', amountSatang: 49_900 })], agent);
+    const [month] = aggregateReport([row({}), row({ source: 'REFERRAL', amountSatang: 49_900 })], [], agent);
     assert.equal(month!.monthKey, '2026-09');
     assert.deepEqual(month!.rows, [{
       salesUserId: 'agent-1', displayName: 'AGENT-1', teamLeadUserId: 'lead-1', teamLeadDisplayName: 'LEAD-1',
@@ -143,7 +144,7 @@ describe('report aggregation (§17.2 — per agent per Bangkok month)', () => {
   });
 
   it('withholds a flagged row from the total but still reports it as flagged', () => {
-    const [month] = aggregateReport([row({ flags: ['repeat_owner'] }), row({ amountSatang: 20_000 })], agent);
+    const [month] = aggregateReport([row({ flags: ['repeat_owner'] }), row({ amountSatang: 20_000 })], [], agent);
     assert.equal(month!.rows[0]!.amountSatang, 20_000);
     assert.equal(month!.rows[0]!.flaggedCount, 1);
     assert.equal(month!.rows[0]!.dealActivations, 2);
@@ -153,8 +154,82 @@ describe('report aggregation (§17.2 — per agent per Bangkok month)', () => {
     const months = aggregateReport([
       row({ paidAt: new Date('2026-08-15T00:00:00Z') }),
       row({ paidAt: new Date('2026-09-30T17:30:00Z') }),
-    ], agent);
+    ], [], agent);
     assert.deepEqual(months.map((month) => month.monthKey), ['2026-10', '2026-08']);
+  });
+
+  // ── owner 2026-10-02: a deduction is its own line, in the month it was recorded ──
+
+  const paid = row({ source: 'REFERRAL', amountSatang: 49_900, paidAt: new Date('2026-09-20T03:00:00Z') });
+  const taken = (over: Partial<AttributionReportDeduction> = {}): AttributionReportDeduction => ({
+    kind: 'REFUND', amountSatang: 49_900, occurredAt: new Date('2026-10-05T02:00:00Z'),
+    recordedAt: new Date('2026-10-05T02:03:00Z'), companyName: 'ร้านกาแฟดี', row: paid, ...over,
+  });
+
+  it('leaves the month of the payment as it was and makes the month of the refund negative', () => {
+    const before = aggregateReport([paid], [], agent);
+    const after = aggregateReport([paid], [taken()], agent);
+    assert.deepEqual(after.map((month) => month.monthKey), ['2026-10', '2026-09']);
+    assert.deepEqual(after[1], before[0], 'September reads exactly what it read before the refund');
+    assert.deepEqual(after[0]!.rows, [{
+      salesUserId: 'agent-1', displayName: 'AGENT-1', teamLeadUserId: 'lead-1', teamLeadDisplayName: 'LEAD-1',
+      dealActivations: 0, referralActivations: 0, amountSatang: -49_900, flaggedCount: 0,
+    }]);
+    assert.deepEqual(after[0]!.deductions, [{
+      salesUserId: 'agent-1', kind: 'REFUND', companyName: 'ร้านกาแฟดี', paidMonthKey: '2026-09',
+      amountSatang: 49_900, occurredAt: '2026-10-05T02:00:00.000Z',
+    }]);
+  });
+
+  it('nets a deduction against the same month\'s credit and names a lost dispute as its own kind', () => {
+    const october = row({ amountSatang: 100_000, paidAt: new Date('2026-10-02T03:00:00Z') });
+    const [month] = aggregateReport([october], [taken({ kind: 'DISPUTE', amountSatang: 30_000 })], agent);
+    assert.equal(month!.monthKey, '2026-10');
+    assert.equal(month!.rows[0]!.amountSatang, 70_000);
+    assert.equal(month!.rows[0]!.dealActivations, 1);
+    assert.deepEqual(month!.deductions!.map((line) => [line.kind, line.amountSatang, line.paidMonthKey]), [['DISPUTE', 30_000, '2026-09']]);
+  });
+
+  it('deducts in the month it was recorded, so a refund noticed after its month ended moves no month that is over', () => {
+    // The provider dates the refund 30 Sep; the system records it on 2 Oct.
+    const late = taken({ occurredAt: new Date('2026-09-30T05:00:00Z'), recordedAt: new Date('2026-10-02T05:00:00Z') });
+    const months = aggregateReport([paid], [late], agent);
+    assert.equal(months.find((month) => month.monthKey === '2026-09')!.rows[0]!.amountSatang, 49_900);
+    assert.equal(months.find((month) => month.monthKey === '2026-10')!.rows[0]!.amountSatang, -49_900);
+    // The line still tells the reader when the money really went back.
+    assert.equal(months[0]!.deductions![0]!.occurredAt, '2026-09-30T05:00:00.000Z');
+  });
+
+  it('splits two deductions at Bangkok midnight, not at midnight UTC', () => {
+    const months = aggregateReport([], [
+      taken({ amountSatang: 10_000, recordedAt: new Date('2026-09-30T16:59:59.999Z') }),
+      taken({ amountSatang: 20_000, recordedAt: new Date('2026-09-30T17:00:00.000Z') }),
+    ], agent);
+    assert.deepEqual(months.map((month) => [month.monthKey, month.rows[0]!.amountSatang]), [['2026-10', -20_000], ['2026-09', -10_000]]);
+  });
+
+  it('keeps giving an older row, refunded before deductions were dated, the figure it gave before', () => {
+    // Cumulative refund, no dated record: deducted in the payment month, no line.
+    const old = row({ amountSatang: 100_000, refundedSatang: 30_000 });
+    const [alone] = aggregateReport([old], [], agent);
+    assert.equal(alone!.rows[0]!.amountSatang, 70_000);
+    assert.deepEqual(alone!.deductions, []);
+    // A later, dated refund on that same row goes to its own month and leaves September at 70,000.
+    const months = aggregateReport([old], [taken({ amountSatang: 20_000, row: old })], agent);
+    assert.deepEqual(months.map((month) => [month.monthKey, month.rows[0]!.amountSatang]), [['2026-10', -20_000], ['2026-09', 70_000]]);
+  });
+
+  it('counts nothing for a flagged row nobody reviewed — neither its credit nor what was taken back', () => {
+    const flagged = row({ flags: ['self_referral'] });
+    const months = aggregateReport([flagged], [taken({ row: flagged })], agent);
+    assert.deepEqual(months.map((month) => month.monthKey), ['2026-09']);
+    assert.equal(months[0]!.rows[0]!.amountSatang, 0);
+    assert.equal(months[0]!.rows[0]!.flaggedCount, 1);
+    assert.deepEqual(months[0]!.deductions, []);
+    // Once reviewed, the credit and the deduction both count, each in its own month.
+    const reviewed = { ...flagged, flags: [], flagReviewedAt: new Date('2026-10-06T00:00:00Z') };
+    const after = aggregateReport([reviewed], [taken({ row: reviewed })], agent);
+    assert.deepEqual(after.map((month) => [month.monthKey, month.rows[0]!.amountSatang]), [['2026-10', -49_900], ['2026-09', 100_000]]);
   });
 });
 
