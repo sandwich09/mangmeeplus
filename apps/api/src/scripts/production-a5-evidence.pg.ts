@@ -72,6 +72,9 @@ type PendingReimbursementHeader = {
   payoutMethod?: string | null;
   payoutDestinationVersion?: number | null;
   payoutFingerprint?: string | null;
+  // Present from the payout-correction migration on: set while the claim is sent back for its account.
+  payoutCorrectionRequestedAt?: Date | string | null;
+  payoutCorrectionSubmittedAt?: Date | string | null;
   currentApprovalStepId: string | null;
   currentStepStatus: string | null;
   currentStepDecidedAt: Date | string | null;
@@ -179,7 +182,12 @@ export function classifyProductionA5ReimbursementApprovalSnapshots(
     const hasDecisionActor = typeof header.currentStepDecisionByUserId === 'string'
       && header.currentStepDecisionByUserId.trim() !== '';
     const hasDecisionTime = header.currentStepDecidedAt !== null;
-    if (header.currentApprovalStepId === null || header.currentStepStatus === null) {
+    if (header.currentApprovalStepId === null && header.payoutCorrectionRequestedAt && !header.payoutCorrectionSubmittedAt) {
+      // Sent back to have its payout account corrected and waiting for its requester (payout spec
+      // §14.2): it has no current step by design. Nothing about it is decided, so it is counted with
+      // the claims that wait undecided, not as one whose step is missing.
+      result.currentStepPending += 1;
+    } else if (header.currentApprovalStepId === null || header.currentStepStatus === null) {
       result.invalidCurrentStep += 1;
     } else if (header.currentStepStatus === 'PENDING'
       && !hasDecisionActor && !hasDecisionTime
@@ -238,6 +246,8 @@ export async function readProductionA5ReimbursementApprovalSnapshots(
            to_jsonb(request)->>'payoutMethod' AS "payoutMethod",
            (to_jsonb(request)->>'payoutDestinationVersion')::int AS "payoutDestinationVersion",
            to_jsonb(request)->>'payoutFingerprint' AS "payoutFingerprint",
+           to_jsonb(request)->>'payoutCorrectionRequestedAt' AS "payoutCorrectionRequestedAt",
+           to_jsonb(request)->>'payoutCorrectionSubmittedAt' AS "payoutCorrectionSubmittedAt",
            step.status::text AS "currentStepStatus", step."decidedAt" AS "currentStepDecidedAt",
            step."decisionByUserId" AS "currentStepDecisionByUserId",
            step.comment AS "currentStepComment", step."rejectionReason" AS "currentStepRejectionReason"

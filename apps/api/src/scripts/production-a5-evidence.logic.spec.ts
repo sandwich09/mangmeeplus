@@ -848,9 +848,34 @@ describe('production A5 pending claims sent with a receiving method', () => {
     await readProductionA5ReimbursementApprovalSnapshots({
       $queryRawUnsafe: (async (sql: string) => { queries.push(sql); return []; }) as any,
     }, 'POST_MIGRATION');
-    for (const column of ['payoutMethod', 'payoutDestinationVersion', 'payoutFingerprint']) {
+    for (const column of ['payoutMethod', 'payoutDestinationVersion', 'payoutFingerprint', 'payoutCorrectionRequestedAt', 'payoutCorrectionSubmittedAt']) {
       assert.ok(queries.some((sql) => sql.includes(`to_jsonb(request)->>'${column}'`)), column);
       assert.ok(queries.every((sql) => !sql.includes(`request."${column}"`)), column);
     }
+  });
+
+  // Payout spec §14.2, §14.7: a claim sent back to have its payout account corrected is PENDING_APPROVAL
+  // with no current step while its requester gives the account. That is the round as designed, not a
+  // claim whose step went missing, which is what this gate counts as an anomaly.
+  it('counts a claim that waits for its requester to correct the payout account as waiting, not as a claim with a broken step', () => {
+    const transfer = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'fingerprint-secret' };
+    const noStep = { currentApprovalStepId: null, currentStepStatus: null };
+    const sentBackAt = '2026-10-02T03:00:00.000Z';
+    const steps = (columns: Record<string, unknown>) => {
+      const result = classify(hashOf(transfer), { ...transfer, ...columns });
+      return [result.currentStepPending, result.invalidCurrentStep, result.v2Valid, result.invalid];
+    };
+    // Phase A, as the database returns the column (text) and as a client returns it (a date).
+    assert.deepEqual(steps({ ...noStep, payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: null }), [1, 0, 1, 0]);
+    assert.deepEqual(steps({ ...noStep, payoutCorrectionRequestedAt: new Date(sentBackAt) }), [1, 0, 1, 0]);
+    // No step and no round, on a database from before the columns or after them: still the anomaly it was.
+    assert.deepEqual(steps(noStep), [0, 1, 1, 0]);
+    assert.deepEqual(steps({ ...noStep, payoutCorrectionRequestedAt: null, payoutCorrectionSubmittedAt: null }), [0, 1, 1, 0]);
+    // The account was given: the claim must stand on a step again, and one without it is broken.
+    assert.deepEqual(steps({ ...noStep, payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: '2026-10-02T05:00:00.000Z' }), [0, 1, 1, 0]);
+    // Phase B is an ordinary waiting step, hashed with the account version the round froze.
+    const given = { ...transfer, payoutDestinationVersion: 2 };
+    const phaseB = classify(hashOf(given), { ...given, payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: '2026-10-02T05:00:00.000Z' });
+    assert.deepEqual([phaseB.currentStepPending, phaseB.invalidCurrentStep, phaseB.v2Valid, phaseB.invalid], [1, 0, 1, 0]);
   });
 });
