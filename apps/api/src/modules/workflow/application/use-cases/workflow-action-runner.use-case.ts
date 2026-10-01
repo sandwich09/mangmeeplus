@@ -373,6 +373,15 @@ export class ExecuteWorkflowActionUseCase {
     const existing = await this.repo.findTaskByActionRunId(context.companyId, actionRun.id);
     if (existing) return { resultJson: { alreadyExisted: true }, targetType: 'workflow_task', targetId: existing.id };
 
+    // A scan comes round every window, and while its record still matched, every window's run asked for a task
+    // of its own: a claim a day overdue had twenty-four identical reminders in the task list. One open task of
+    // the rule for the record is enough. Nothing more is created until that one is done or cancelled; a claim
+    // sent again cancels its tasks (closeSettledClaimTasks), so each submission round still gets its own.
+    if (context.triggerType && SCAN_TRIGGER_TYPES.includes(context.triggerType) && context.sourceType && context.sourceId) {
+      const open = await this.repo.findOpenTaskOfRuleForSource(context.companyId, actionRun.workflowRunId, context.sourceType, context.sourceId);
+      if (open) return { resultJson: { skipped: true, reason: 'open_task_exists' }, targetType: 'workflow_task', targetId: open.id };
+    }
+
     const titleTemplate = typeof cfg['titleTemplate'] === 'string' ? cfg['titleTemplate'] : context.ruleName;
     const title = renderTemplate(titleTemplate, context.payload);
     const assigneeUserPayloadKey = typeof cfg['assigneeUserPayloadKey'] === 'string' ? cfg['assigneeUserPayloadKey'] : undefined;

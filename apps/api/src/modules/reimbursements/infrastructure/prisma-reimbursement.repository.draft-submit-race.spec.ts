@@ -20,6 +20,11 @@ import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifica
 import { VoidReimbursementPaymentUseCase } from '../application/use-cases/reimbursement-finance.use-case';
 import { ListReimbursementsUseCase } from '../application/use-cases/reimbursement-request.use-case';
 import { LineReimbursementDraftAdapterService } from '../../line-ai/application/line-reimbursement-draft-adapter.service';
+import { PrismaWorkflowRepository } from '../../workflow/infrastructure/prisma-workflow.repository';
+import { RunWorkflowRuleUseCase } from '../../workflow/application/use-cases/workflow-runner.use-case';
+import { ExecuteWorkflowActionUseCase } from '../../workflow/application/use-cases/workflow-action-runner.use-case';
+import { WORKFLOW_TEMPLATE_CATALOG } from '../../workflow/domain/workflow-template-catalog';
+import { buildRunDedupKey } from '../../workflow/domain/logic/workflow-idempotency.logic';
 import { PrismaBankingRepository } from '../../banking/infrastructure/prisma-banking.repository';
 import { PrismaMatchSourceQuery } from '../../banking/infrastructure/prisma-match-source.query';
 import { ConfirmMatchUseCase, ListMatchCandidatesUseCase } from '../../banking/application/use-cases/matching.use-case';
@@ -1635,6 +1640,81 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     // Before: all six, the three slips included.
     assert.deepEqual(offered, ['receipt-line.jpg', 'receipt-plain.jpg', 'receipt-web.jpg'].map((name) => `${token}-${name}`));
     assert.deepEqual(options.pages.attachment, { returned: 3, hasMore: false });
+  });
+
+  // ---- The overdue-approval reminder (review 2026-10-01) ----
+  // The reminder is a scan. Every scan window ran the rule again for a claim still overdue, and every run made a
+  // task. The real rule runner and the real task query are asked here: which tasks are "of the same rule" is a
+  // join only the database can answer.
+
+  it('keeps one open reminder task for a claim while it stays overdue, and gives a claim sent again a task of its own', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const workflow = new PrismaWorkflowRepository({ client: db } as any);
+    const seed = WORKFLOW_TEMPLATE_CATALOG.find((template) => template.key === 'approval_sla_breach')!;
+    const taskActions = seed.defaultActionJson.filter((action) => action.actionType === 'CREATE_WORKFLOW_TASK');
+    assert.equal(taskActions.length, 1);
+    // The template row is global: a synced database has it already, a bare one gets it for this test alone.
+    const synced = await db.workflowTemplate.findUnique({ where: { key: seed.key } });
+    const template = synced ?? await db.workflowTemplate.create({ data: {
+      key: seed.key, name: seed.name, description: seed.description, category: seed.category, sourceModule: seed.sourceModule, triggerType: seed.triggerType,
+      defaultConditionJson: seed.defaultConditionJson as any, defaultActionJson: seed.defaultActionJson as any, status: 'AVAILABLE',
+    } });
+    try {
+      // The company's reminder rule as the template sync creates it, with the task action alone: the notice beside it
+      // has its own once-per-round rule and its own spec.
+      const drafted = await workflow.createRule({
+        companyId, templateId: template.id, name: seed.name, triggerType: seed.triggerType, triggerConfigJson: {}, conditionJson: seed.defaultConditionJson,
+        actionJson: taskActions, recipientConfigJson: {}, cooldownSeconds: 0, timezone: 'Asia/Bangkok', createdByUserId: `${TAG}-finance`,
+      });
+      await workflow.createRuleVersion({
+        ruleId: drafted.id, companyId, version: 1, status: 'ENABLED', triggerSnapshotJson: {}, conditionSnapshotJson: seed.defaultConditionJson,
+        actionSnapshotJson: taskActions, recipientSnapshotJson: {}, cooldownSeconds: 0, createdByUserId: `${TAG}-finance`,
+      });
+      const rule = await workflow.updateRule(companyId, drafted.id, { status: 'ENABLED' });
+      const runner = new RunWorkflowRuleUseCase(workflow, quiet,
+        new ExecuteWorkflowActionUseCase(workflow, quiet, {} as any, null as never, null as never, null as never, null as never));
+      /** One scan window that finds the claim overdue, handed to the runner the way the scan hands it. */
+      const window = (claimId: string, hour: string) => runner.execute({
+        rule, triggerType: 'SLA_SCAN', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: claimId,
+        dedupKey: buildRunDedupKey({ triggerType: 'SLA_SCAN', periodKey: hour, sourceType: 'reimbursement_request', sourceId: claimId }),
+        payload: { requestId: claimId, requestNo: 'RB-202610-00007', slaRisk: true, approverTaskRole: 'MANAGER' }, now: new Date(),
+      });
+      const tasksOf = async (claimId: string) => (await db.workflowTask.findMany({ where: { companyId, sourceType: 'reimbursement_request', sourceId: claimId }, orderBy: { createdAt: 'asc' } }))
+        .map((task) => task.status);
+      const waiting = async (reason: string) => {
+        const draft = await createDraft(reason);
+        await repos[0]!.submitDraftAtomic(submitInput(draft));
+        return draft.id;
+      };
+      const [claim, other] = [await waiting('overdue-reminder'), await waiting('overdue-reminder-other')];
+
+      // Three hours overdue, three scan windows.
+      for (const hour of ['2026-10-01T01', '2026-10-01T02', '2026-10-01T03']) assert.equal((await window(claim, hour)).status, 'SUCCEEDED', hour);
+      // Before: three open tasks, and one more for every further hour.
+      assert.deepEqual(await tasksOf(claim), ['OPEN']);
+      const results = (await db.workflowActionRun.findMany({ where: { companyId, actionType: 'CREATE_WORKFLOW_TASK' }, orderBy: { createdAt: 'asc' } }))
+        .map((run) => [run.status, run.resultJson]);
+      assert.deepEqual(results, [['SUCCEEDED', { created: true }], ['SUCCEEDED', { skipped: true, reason: 'open_task_exists' }], ['SUCCEEDED', { skipped: true, reason: 'open_task_exists' }]]);
+      assert.deepEqual((await db.workflowTask.findFirstOrThrow({ where: { companyId, sourceId: claim } })).title, 'ใบเบิกรออนุมัติเกินกำหนด: RB-202610-00007');
+      // Another overdue claim is reminded for itself.
+      await window(other, '2026-10-01T03');
+      assert.deepEqual([await tasksOf(claim), await tasksOf(other)], [['OPEN'], ['OPEN']]);
+
+      // The claim is corrected and sent again: its open tasks are closed the way that event closes them, and the
+      // new round, overdue in its turn, gets one task of its own however many windows pass.
+      assert.equal(await workflow.closeSettledClaimTasks({ companyId, requestId: claim, supersede: true }), 1);
+      for (const hour of ['2026-10-02T01', '2026-10-02T02']) await window(claim, hour);
+      assert.deepEqual([await tasksOf(claim), await tasksOf(other)], [['CANCELED', 'OPEN'], ['OPEN']]);
+      // A task the approver snoozed is still their one reminder.
+      await db.workflowTask.updateMany({ where: { companyId, sourceId: claim, status: 'OPEN' }, data: { status: 'SNOOZED' } });
+      await window(claim, '2026-10-02T03');
+      assert.deepEqual(await tasksOf(claim), ['CANCELED', 'SNOOZED']);
+    } finally {
+      await db.workflowTask.deleteMany({ where: { companyId } });
+      await db.workflowRule.deleteMany({ where: { companyId } });
+      if (!synced) await db.workflowTemplate.deleteMany({ where: { id: template.id } });
+    }
   });
 
 });
