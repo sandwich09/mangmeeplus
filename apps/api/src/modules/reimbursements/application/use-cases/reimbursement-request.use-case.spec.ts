@@ -173,6 +173,8 @@ function fakeRepo(options: RepoOptions = {}) {
     getUserDisplayNames: async () => ({}),
     // Lane F: the detail path also lists uploaded scans of the signed claim form.
     listSignedClaimFormCopies: async () => [],
+    // Payout Phase 0: the detail of a claim waiting for payment names who can record it.
+    listPaymentRecorderNames: async () => [],
     createRequest: async (data: any, payout?: any) => {
       request = {
         id: 'rb-1', status: options.status ?? 'DRAFT', requesterUserId: data.requesterUserId,
@@ -1121,6 +1123,8 @@ describe('claim detail paymentDesk', () => {
       findRequestById: async () => claim, findPolicy: async () => null, findActiveApproverUserIds: async () => new Set(),
       getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
       listPaymentRecorderNames: async (companyId: string, branchId: unknown) => { asked.push([companyId, branchId]); return names; },
+      // Payout Phase 1: a draft's detail also reads the account it would be sent with. This requester has set none.
+      findDraftDefaultPayout: async () => undefined, planSubmitPayout: async () => ({ error: 'payout_method_required' }),
     }) as any;
     const read = (claim: any, names: string[]) => new GetReimbursementDetailUseCase(repoFor(claim, names), detailEvidence)
       .execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
@@ -2379,7 +2383,7 @@ describe('payout: lists carry the receiving method and nothing of the account', 
     await world.payouts.setOwn(ctx(), KBANK);
     const draft = await world.create.execute(ctx(), claimInput());
     await world.send(ctx(), draft.id);
-    Object.assign(world.state.repo, { listRequests: async () => [world.state.request], findPendingApprovalSteps: async () => [] });
+    Object.assign(world.state.repo, { listRequestPage: async () => ({ rows: [world.state.request], groups: [] }), findPendingApprovalSteps: async () => [] });
     const page = await new ListReimbursementsUseCase(world.state.repo).execute(ctx(), {});
     assert.equal(page.items[0]!.payoutMethod, 'BANK_TRANSFER');
     assert.ok(!/payout(?!Method)|bankName|accountName|accountLast4|accountNumber|fingerprint/i.test(JSON.stringify(page)));
@@ -2498,7 +2502,7 @@ describe('payout: a legacy claim is one thing everywhere', () => {
     assert.deepEqual([request.payoutMethod, request.payoutDestinationVersion, request.payoutFingerprint ?? null], ['BANK_TRANSFER', 1, null]);
 
     assert.equal((await world.detail.execute(ctx(), draft.id)).payout, undefined, 'no account is shown for the claim');
-    Object.assign(world.state.repo, { listRequests: async () => [request], findPendingApprovalSteps: async () => [] });
+    Object.assign(world.state.repo, { listRequestPage: async () => ({ rows: [request], groups: [] }), findPendingApprovalSteps: async () => [] });
     assert.equal((await new ListReimbursementsUseCase(world.state.repo).execute(ctx(), {})).items[0]!.payoutMethod, undefined);
     await assert.rejects(world.reveal.execute(ctx(), draft.id), /payout_reveal_denied/);
     // The live approval check recomputes exactly what the older build stored, and asks for no attestation.
@@ -2547,7 +2551,7 @@ describe('payout: nothing but the two reveal calls carries the number', () => {
     out.push(draft, await world.detail.execute(ctx(), draft.id));
     out.push(await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } }), await world.detail.execute(ctx(), draft.id));
     out.push(await world.send(ctx(), draft.id), await world.detail.execute(ctx(), draft.id));
-    Object.assign(world.state.repo, { listRequests: async () => [world.state.request], findPendingApprovalSteps: async () => [] });
+    Object.assign(world.state.repo, { listRequestPage: async () => ({ rows: [world.state.request], groups: [] }), findPendingApprovalSteps: async () => [] });
     out.push(await new ListReimbursementsUseCase(world.state.repo).execute(ctx(), {}));
     out.push(await new ExportReimbursementEvidenceUseCase(world.state.repo, { log: async (entry: any) => { world.audits.push(entry); } } as any)
       .execute(ctx({ permissions: ['reimbursement.export', 'reimbursement.read'] }), draft.id));

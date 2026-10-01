@@ -83,6 +83,8 @@ describe('claim account number reveal: the requester, that claim approver, the p
       getUserDisplayNames: async () => ({}),
       listSignedClaimFormCopies: async () => [],
       listInternalNotes: async () => [],
+      // The claim waits at the payment desk, so its detail also names who can pay it.
+      listPaymentRecorderNames: async () => [],
       findClaimPayout: (row: any) => readClaimPayout(tables.client, row),
       findDraftDefaultPayout: (row: any) => readDraftDefaultPayout(tables.client, row),
       // The requester's own detail compares the claim with their default as it is now (§22 hint).
