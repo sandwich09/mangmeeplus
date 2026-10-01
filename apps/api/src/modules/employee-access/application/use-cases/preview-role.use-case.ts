@@ -1,8 +1,9 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { RolePreviewInput, RolePreviewResult } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 import { compileRole, summarizeCapabilities, toEffectivePermissions } from '../../domain/logic/capability.logic';
-import { ownerGatedGrantViolation } from '../../domain/logic/employee-access.logic';
+import { ownerGatedGrantViolation, platformOnlyRoleRefused } from '../../domain/logic/employee-access.logic';
 import { loadEntitledFeatureKeys } from '../entitlement.helper';
 
 export type PreviewRoleCommand = RolePreviewInput & {
@@ -21,6 +22,8 @@ export class PreviewRoleUseCase {
       where: { id: cmd.roleId, OR: [{ scopeKey: 'system' }, { scopeKey: cmd.companyId }] },
       include: { permissions: { select: { permission: { select: { key: true } } } } },
     }) : null;
+    // RB-34: the diff below would hand a shop the permission set of a platform-only role.
+    if (role && platformOnlyRoleRefused(role.key, cmd.companyId === PLATFORM_TENANT_ID)) throw new NotFoundException('Role not found');
     const granterScope = cmd.isOwner ? null : new Set(cmd.granterPermissionKeys);
     // Match update-role: an existing company-role grant may be retained even when the editor could
     // not grant it anew. Otherwise preview would claim a revoke that save does not perform.

@@ -938,10 +938,10 @@ describe('submission route when the requester is the only approver', () => {
   const APPROVE = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];
   type Holder = { userId: string; branchScopeMode?: string; branchIds?: string[] };
   /** Just enough Prisma for routing: approve-capable roles with their holders, no entitlement rows (all on). */
-  function resolver(roles: Record<string, Holder[]>, named: unknown = null) {
+  function resolver(roles: Record<string, Holder[]>, named: unknown = null, scopeKey = 'system') {
     return new ListReimbursementApproverOptionsUseCase({ client: {
       role: { findMany: async () => Object.entries(roles).map(([key, holders]) => ({
-        key, name: key, scopeKey: 'system', status: 'ACTIVE',
+        key, name: key, scopeKey, status: 'ACTIVE',
         permissions: APPROVE.map((permission) => ({ permission: { key: permission } })),
         memberships: holders.map((holder) => ({ membership: {
           userId: holder.userId, branchScopeMode: holder.branchScopeMode ?? 'ALL_BRANCHES', defaultBranchId: null,
@@ -998,6 +998,16 @@ describe('submission route when the requester is the only approver', () => {
     assert.deepEqual((await resolver(roles).load(PLATFORM_TENANT_ID)).map((option) => option.key).sort(), ['MANAGER', 'MANGMEE_SALES', 'MANGMEE_SALES_LEAD']);
     // Not offered also means not routable: a shop policy cannot send a claim to a platform-only role.
     await assert.rejects(() => resolver(roles).resolveSubmissionRoute({ ...input, roleKey: 'MANGMEE_SALES_LEAD' }), /approver_role_not_eligible/);
+  });
+
+  it('does not offer a shop its own copy of a platform-only role either (RB-34)', async () => {
+    // Editing a system role by id forked it into a company role with the same key. That copy is
+    // scoped to the shop, and the filter above dropped only the system row.
+    const roles = { MANAGER: [{ userId: 'mgr-1' }], MANGMEE_SALES_LEAD: [{ userId: 'lead-1' }], MANGMEE_SALES: [{ userId: 'sales-1' }] };
+    assert.deepEqual((await resolver(roles, null, 'co-1').load('co-1')).map((option) => option.key), ['MANAGER']);
+    await assert.rejects(() => resolver(roles, null, 'co-1').resolveSubmissionRoute({ ...input, roleKey: 'MANGMEE_SALES' }), /approver_role_not_eligible/);
+    // The platform company's own override of one is an ordinary role there.
+    assert.deepEqual((await resolver(roles, null, PLATFORM_TENANT_ID).load(PLATFORM_TENANT_ID)).map((option) => option.key).sort(), ['MANAGER', 'MANGMEE_SALES', 'MANGMEE_SALES_LEAD']);
   });
 
   it('is decided at submit only: a background re-read never routes a claim to its requester', async () => {
