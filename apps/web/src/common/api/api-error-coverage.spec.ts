@@ -149,6 +149,30 @@ describe('Thai coverage for default-open feature error codes', () => {
 // Review 2026-10-01 (claim hub, bank match and void): each refusal added there is something a shop owner or a
 // finance person reads in the middle of a job, so it has to be plain Thai that says what to do next. The two bank
 // codes come from the banking module, which the discovery above does not walk, so they are named here.
+// `note_contains_account_number` answers for two texts people type on a claim: finance's note (shown on the
+// claim and copied into the requester's notice) and the reason a payment was made another way than asked
+// (shown on the payment row, and in no notice). One label serves both, so it may say only what is true of both.
+describe('the refusal of a text that carries an account number is true wherever the API gives it', () => {
+  it('says the text is shown to everyone who opens the claim, and nothing about a notice', () => {
+    const thai = translateApiError('note_contains_account_number')!;
+    assert.match(thai, /^อย่าพิมพ์เลขบัญชีในช่องนี้ เพราะข้อความนี้แสดงให้ทุกคนที่เปิดใบเบิกเห็น /);
+    assert.doesNotMatch(thai, /แจ้งเตือน/, 'the payment reason is in no notice');
+    assert.match(thai, /4 ตัวท้าย/, 'what to write instead');
+    assert.doesNotMatch(thai, /[A-Za-z]/);
+    // The places the API answers with it. A third place has to be read against the sentence above before it is listed here.
+    const uses = sourceFiles(join(API_MODULES, 'reimbursements'))
+      .filter((file) => readFileSync(file, 'utf8').includes("'note_contains_account_number'"))
+      .map((file) => file.slice(join(API_MODULES, 'reimbursements').length + 1)).sort();
+    assert.deepEqual(uses, [
+      // Finance's note on a claim: `FinanceReviewReimbursementUseCase`.
+      'application/use-cases/reimbursement-finance.use-case.ts',
+      // The reason a payment was made by another method than the requester asked for: `planPaymentPayout`, and how it is thrown.
+      'domain/logic/payout-destination.logic.ts',
+      'infrastructure/reimbursement-payout.ts',
+    ]);
+  });
+});
+
 describe('the refusals added with the claim hub and bank-match fixes are plain Thai that says what to do', () => {
   it('names the next step, with no id, code word, enum word or currency code in the text', () => {
     for (const [code, nextStep] of [
