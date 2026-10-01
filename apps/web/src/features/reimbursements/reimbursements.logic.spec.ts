@@ -945,13 +945,13 @@ describe('who a claim waits for is the same on every surface', () => {
 
 // Spec §13.3 F2 (Phase 0.7): the policy screen warns, and never blocks, when a chosen approver role cannot pay.
 describe('approverPaymentWarning', () => {
-  const manager = { label: 'ผู้จัดการ', canRecordPayment: true };
-  const checker = { label: 'ผู้ตรวจ', canRecordPayment: false };
+  const manager = { label: 'ผู้จัดการ', selectable: true, canRecordPayment: true };
+  const checker = { label: 'ผู้ตรวจ', selectable: true, canRecordPayment: false };
 
   it('names the chosen roles that approve but cannot record payment while finance review is off', () => {
     assert.equal(approverPaymentWarning([manager, checker], false),
       'บทบาท ผู้ตรวจ อนุมัติได้ แต่บันทึกจ่ายไม่ได้ ใบที่อนุมัติแล้วจะรอผู้ที่มีสิทธิ์บันทึกจ่าย ถ้าต้องการให้ผู้อนุมัติจ่ายเองได้ ให้เพิ่มสิทธิ์บันทึกจ่ายให้บทบาทนี้ในหน้าบทบาทและสิทธิ์');
-    assert.match(approverPaymentWarning([checker, { label: 'หัวหน้าสาขา', canRecordPayment: false }], false) ?? '', /^บทบาท ผู้ตรวจ และ หัวหน้าสาขา อนุมัติได้ แต่บันทึกจ่ายไม่ได้/);
+    assert.match(approverPaymentWarning([checker, { label: 'หัวหน้าสาขา', selectable: true, canRecordPayment: false }], false) ?? '', /^บทบาท ผู้ตรวจ และ หัวหน้าสาขา อนุมัติได้ แต่บันทึกจ่ายไม่ได้/);
   });
 
   it('says nothing when every chosen role can pay, when finance review pays, or when the answer is unknown', () => {
@@ -960,7 +960,15 @@ describe('approverPaymentWarning', () => {
     // A company with a finance desk may split the two duties on purpose.
     assert.equal(approverPaymentWarning([checker], true), null);
     // An older API response without the field must not raise a false alarm.
-    assert.equal(approverPaymentWarning([{ label: 'ผู้ตรวจ' }], false), null);
+    assert.equal(approverPaymentWarning([{ label: 'ผู้ตรวจ', selectable: true }], false), null);
+  });
+
+  // Before: a ticked role that had lost its approve right or its last member was still said to "อนุมัติได้".
+  it('never says อนุมัติได้ of a chosen role that can no longer approve', () => {
+    const notReady = { label: 'หัวหน้าสาขา', selectable: false, canRecordPayment: false };
+    assert.equal(approverPaymentWarning([notReady], false), null);
+    assert.equal(approverPaymentWarning([manager, notReady], false), null);
+    assert.match(approverPaymentWarning([checker, notReady], false) ?? '', /^บทบาท ผู้ตรวจ อนุมัติได้ แต่บันทึกจ่ายไม่ได้/);
   });
 });
 

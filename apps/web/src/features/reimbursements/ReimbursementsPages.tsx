@@ -864,7 +864,7 @@ export function PolicySettings({ companyId }: { companyId: string }) {
     || (selectedRoles.length > 0 && (form.status !== 'ACTIVE' || !rolesNotReady));
   const roleLabel = selectedOptions.map(approverRoleName).join(' หรือ ');
   const paymentWarning = approverPaymentWarning(
-    selectedOptions.map((option) => ({ label: approverRoleName(option), canRecordPayment: option.canRecordPayment })),
+    selectedOptions.map((option) => ({ label: approverRoleName(option), selectable: option.selectable, canRecordPayment: option.canRecordPayment })),
     !!form.financeReviewRequired,
   );
   const ownerRoute = selectedRoles.includes('OWNER');

@@ -297,8 +297,8 @@ describe('ตั้งค่านโยบาย warns about an approver role t
   const policy = { id: 'policy-1', updatedAt: '2026-10-01T03:00:00.000Z', status: 'ACTIVE', approvalRequiredFromAmount: '1.00', approverMode: 'CUSTOM_ROLE',
     defaultApproverRoles: ['MANAGER', 'CHECKER'], allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy: 'WARN',
     financeReviewRequired: false, slaHours: null };
-  const option = (key: string, name: string, canRecordPayment: boolean) => ({ key, name, optionLabel: name, eligibleApproverCount: 1, coverage: 'COMPLETE',
-    uncoveredBranchNames: [], selectable: true, canRecordPayment });
+  const option = (key: string, name: string, canRecordPayment: boolean, selectable = true) => ({ key, name, optionLabel: name, eligibleApproverCount: 1, coverage: 'COMPLETE',
+    uncoveredBranchNames: [], selectable, canRecordPayment });
   /** The settings form with the policy and the role options already loaded: the form is the component's first state. */
   const settings = (loaded: object, options: object[]) => {
     let formLoaded = false;
@@ -321,6 +321,17 @@ describe('ตั้งค่านโยบาย warns about an approver role t
       assert.equal(quiet.some((text) => text.includes('บันทึกจ่ายไม่ได้')), false);
       assert.ok(quiet.includes('ส่งใบเบิกให้ใครอนุมัติ?'), 'the form rendered');
     }
+  });
+
+  // Before: the warning named every ticked role, so a role that could no longer approve was said to "อนุมัติได้".
+  it('leaves a ticked role that can no longer approve out of the warning; the form already says it is not ready', () => {
+    const texts = settings(policy, [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', false, false)]);
+    assert.equal(texts.some((text) => text.includes('อนุมัติได้ แต่บันทึกจ่ายไม่ได้')), false);
+    assert.ok(texts.includes('บางบทบาทที่เลือกยังไม่มีคนพร้อมอนุมัติ กรุณาเอาออกหรือเลือกบทบาทอื่น'));
+    // Two ticked roles lack the pay right; only the one that can still approve is named.
+    const both = settings({ ...policy, defaultApproverRoles: ['MANAGER', 'CHECKER', 'LEAD'] },
+      [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', false), option('LEAD', 'หัวหน้าสาขา', false, false)]);
+    assert.ok(both.includes(warning), both.filter((text) => text.includes('บันทึกจ่าย')).join(' | '));
   });
 });
 
