@@ -860,8 +860,9 @@ export type RejectReimbursementInput = {
   idempotencyKey?: string;
   /**
    * Only for a claim whose payout account is being corrected: refusing its new account sends it back
-   * to the requester again, never to REJECTED. This names why, from the fixed list; `reason` is then the
-   * optional note. Without it the reason is OTHER.
+   * to the requester again, never to REJECTED. This names why, from the fixed list, and `reason` (still
+   * required here, and held to the note's rules) becomes the round's note. Without it the reason is
+   * OTHER. `POST :requestId/payout-correction` does the same with an optional note.
    */
   payoutCorrectionReasonCode?: ReimbursementPayoutCorrectionReason;
 };
