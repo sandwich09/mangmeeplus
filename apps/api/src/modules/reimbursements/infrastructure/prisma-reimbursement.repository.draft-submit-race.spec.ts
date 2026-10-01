@@ -7,7 +7,7 @@ import { reimbursementHubBucket, reimbursementPaidNotice } from '@watchdog-bms/c
 import { PrismaClient } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { MaterializeClaimExpensesService } from '../application/services/materialize-claim-expenses.service';
-import { claimSnapshotFields, computeLegacySnapshotHashV1, computeSnapshotHash } from '../domain/logic/reimbursement.logic';
+import { claimSignatureAckHash, claimSnapshotFields, computeLegacySnapshotHashV1, computeSnapshotHash } from '../domain/logic/reimbursement.logic';
 import { PrismaReimbursementRepository } from './prisma-reimbursement.repository';
 import { readReimbursementSource, resolveReimbursementSourceLines, assertReimbursementSources, assertProjectionSource } from './reimbursement-source';
 import { expenseTaxSourceChecksum } from '../../expenses/domain/logic/expense-status.logic';
@@ -51,7 +51,7 @@ import { ListFinanceQueueUseCase } from '../application/use-cases/reimbursement-
 import { toRequestSummary } from '../application/dto/reimbursement.mapper';
 import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from '../application/use-cases/reimbursement-approval.use-case';
 import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from '../application/use-cases/reimbursement-payout-correction.use-case';
-import { eligibleClaimSignatureRoles } from '../application/use-cases/reimbursement-claim-signature.use-case';
+import { eligibleClaimSignatureRoles, SignClaimFormUseCase } from '../application/use-cases/reimbursement-claim-signature.use-case';
 
 const TAG = `reimbursement-draft-race-${process.pid}`;
 const periodKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -3956,8 +3956,9 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const db = clients[0]!;
     const claim = await approvedTransferClaim();
     const signaturesOf = () => db.reimbursementClaimSignature.findMany({ where: { reimbursementRequestId: claim.requestId }, orderBy: { role: 'asc' } });
-    const sign = (role: 'REQUESTER' | 'APPROVER', userId: string) => repos[0]!.upsertClaimSignature({
-      companyId, reimbursementRequestId: claim.requestId, role, signatureAttachmentId: `${S}-signature-${userId}`, signedByUserId: userId, signedAt: new Date() });
+    const sign = async (role: 'REQUESTER' | 'APPROVER', userId: string) => repos[0]!.upsertClaimSignature({
+      companyId, reimbursementRequestId: claim.requestId, role, signatureAttachmentId: `${S}-signature-${userId}`, signedByUserId: userId, signedAt: new Date(),
+      seen: (await repos[0]!.findRequestById(companyId, claim.requestId))! });
     let scans = 0;
     const scan = async () => (await db.attachmentObject.create({ data: {
       companyId, branchId, storageProvider: 'LOCAL', bucket: 'test', objectKey: `${S}/signed-scan-${claim.requestId}-${++scans}`, originalFileName: `signed-${scans}.pdf`,
@@ -4008,6 +4009,98 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.deepEqual([(await copies()).filter(([, acknowledged]) => acknowledged).map(([id]) => id), await signedVia()], [[during], 'PAPER']);
     const stored = await db.attachmentObject.findUniqueOrThrow({ where: { id: during } });
     assert.equal((stored.metadataJson as any).reimbursementSignedCopyAck.payoutDestinationVersion, 2);
+  });
+
+  // Final review S1: a signature is written under the claim's lock, onto the claim its signer was shown.
+  it('never leaves a signature on a claim sent back or withdrawn while it was being signed, whichever of the two commits first', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const PNG = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from('signature')]);
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 400));
+    const signaturesOf = (requestId: string) => db.reimbursementClaimSignature.count({ where: { reimbursementRequestId: requestId } });
+    let images = 0;
+    const image = async (requestId: string, role: 'REQUESTER' | 'APPROVER', userId: string) => (await db.attachmentObject.create({ data: {
+      companyId, branchId, storageProvider: 'LOCAL', bucket: 'test', objectKey: `${S}/signature-${requestId}-${++images}`, originalFileName: 'signature.png',
+      mimeType: 'image/png', byteSize: PNG.length, uploadedByUserId: userId, status: 'ACTIVE', metadataJson: { generatedFor: 'reimbursement_claim_signature', requestId, role },
+    } })).id;
+    /** The sign call as the web makes it. `during` runs while the signature image is fetched: after every check, before the write. */
+    const signWhile = async (ctx: any, requestId: string, role: 'REQUESTER' | 'APPROVER', during: () => Promise<unknown>) => {
+      const shown = (await repos[0]!.findRequestById(companyId, requestId, true))!;
+      const storage = { getObject: async () => { await during(); return { bytes: PNG }; } } as any;
+      return new SignClaimFormUseCase(repos[0]!, storage, { log: async () => undefined } as any)
+        .execute(ctx, requestId, { role, signatureAttachmentId: await image(requestId, role, ctx.userId), snapshotHash: claimSignatureAckHash(shown) });
+    };
+    /** The signature row alone, written on `repo` for a claim read just now. */
+    const write = async (repo: PrismaReimbursementRepository, requestId: string) => repo.upsertClaimSignature({
+      companyId, reimbursementRequestId: requestId, role: 'REQUESTER', signatureAttachmentId: `${S}-signature-${requestId}`, signedByUserId: STAFF, signedAt: new Date(),
+      seen: (await repos[0]!.findRequestById(companyId, requestId))! });
+    /** A repository whose next transaction runs `between` right after its first statement: while it holds the lock that statement took. */
+    const holdingItsLock = (between: () => Promise<unknown>) => new PrismaReimbursementRepository({ client: new Proxy(clients[0]!, { get(target, property) {
+      if (property !== '$transaction') return Reflect.get(target, property);
+      return (work: (tx: any) => Promise<unknown>, options: any) => target.$transaction((tx: any) => {
+        let fired = false;
+        return work(new Proxy(tx, { get(inner, name) {
+          const value = Reflect.get(inner, name);
+          if (name !== '$executeRaw') return typeof value === 'function' ? value.bind(inner) : value;
+          return async (...args: unknown[]) => {
+            const result = await value.apply(inner, args);
+            if (!fired) { fired = true; await between(); }
+            return result;
+          };
+        } }));
+      }, { ...options, timeout: 20_000 });
+    } }) } as any, new PrismaDocumentSequenceRepository({ client: clients[0]! } as any));
+
+    // The send-back commits while the signature is being made: the requester's, and the approver's, are both refused.
+    for (const [role, signer] of [['REQUESTER', requester()], ['APPROVER', manager()]] as const) {
+      const claim = await approvedTransferClaim();
+      await assert.rejects(() => signWhile(signer, claim.requestId, role,
+        () => round(1).sendBack.execute(finance(), claim.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' })), conflict('stale_claim_snapshot'), role);
+      assert.deepEqual([await signaturesOf(claim.requestId), (await claimRow(claim.requestId)).payoutCorrectionRequestedAt !== null], [0, true], role);
+    }
+
+    // The send-back holds the claim's lock when the signature arrives: the signature waits for it, then finds another claim.
+    const sentBackFirst = await approvedTransferClaim();
+    const before = (await repos[1]!.findRequestById(companyId, sentBackFirst.requestId))!;
+    let late!: Promise<unknown>;
+    let lateSettled = false;
+    await repos[1]!.requestPayoutCorrectionAtomic({
+      companyId, requestId: sentBackFirst.requestId, expectedUpdatedAt: before.updatedAt, actorUserId: FIN, actorRoles: ['FINANCE'], scopes: {}, allowSelfApproval: false,
+      requestedAt: new Date(), reasonCode: 'ACCOUNT_NUMBER_WRONG',
+      onPersisted: async () => {
+        late = write(repos[0]!, sentBackFirst.requestId).finally(() => { lateSettled = true; });
+        late.catch(() => undefined);
+        await pause();
+        assert.equal(lateSettled, false, 'the signature waits on the lock the send-back holds, it does not write beside it');
+      },
+    });
+    await assert.rejects(late, conflict('stale_claim_snapshot'));
+    assert.equal(await signaturesOf(sentBackFirst.requestId), 0);
+
+    // The signature holds the claim's lock when the send-back arrives: the send-back waits for it, then removes it.
+    const signedFirst = await approvedTransferClaim();
+    let sendBack: Promise<unknown> | undefined;
+    let sendBackSettled = false;
+    await write(holdingItsLock(async () => {
+      sendBack = round(1).sendBack.execute(finance(), signedFirst.requestId, { reasonCode: 'BANK_WRONG' }).finally(() => { sendBackSettled = true; });
+      sendBack.catch(() => undefined);
+      await pause();
+      assert.equal(sendBackSettled, false, 'the send-back waits on the lock the signature holds');
+    }), signedFirst.requestId);
+    assert.ok(sendBack, 'the signature was written inside a transaction that took the claim lock');
+    await sendBack;
+    assert.deepEqual([await signaturesOf(signedFirst.requestId), (await claimRow(signedFirst.requestId)).payoutCorrectionRequestedAt !== null], [0, true]);
+
+    // The same against a withdrawal to draft, which removes the claim's signatures too.
+    const withdrawn = await waitingClaim();
+    await assert.rejects(() => signWhile(requester(), withdrawn.id, 'REQUESTER',
+      () => repos[1]!.reopenRejectedRequest(companyId, withdrawn.id, withdrawn.updatedAt, STAFF, 'PENDING_APPROVAL')), conflict('stale_claim_snapshot'));
+    assert.deepEqual([await signaturesOf(withdrawn.id), (await claimRow(withdrawn.id)).status], [0, 'DRAFT']);
+    const signedThenWithdrawn = await waitingClaim();
+    assert.equal((await signWhile(requester(), signedThenWithdrawn.id, 'REQUESTER', async () => undefined)).role, 'REQUESTER');
+    assert.equal(await signaturesOf(signedThenWithdrawn.id), 1);
+    await repos[1]!.reopenRejectedRequest(companyId, signedThenWithdrawn.id, signedThenWithdrawn.updatedAt, STAFF, 'PENDING_APPROVAL');
+    assert.deepEqual([await signaturesOf(signedThenWithdrawn.id), (await claimRow(signedThenWithdrawn.id)).status], [0, 'DRAFT']);
   });
 
   it('still cancels a claim in a round by the rule every claim is cancelled by: its records are voided and it closes', async (t) => {

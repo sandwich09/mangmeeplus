@@ -4121,6 +4121,11 @@ export class PrismaReimbursementRepository {
   /**
    * Re-signing replaces the signer's own row — an upsert on the (request, role)
    * unique, never create-then-catch-P2002 (Prisma 7 aborts the transaction).
+   *
+   * Written under the claim's lock, and only onto the claim its signer was shown: `seen` is the claim
+   * the caller checked the signer's role and acknowledgement on. A send-back for the payout account
+   * and a return to draft both delete the claim's signatures under this lock, so a signature that
+   * passed its checks before either of them committed is refused here instead of landing after it.
    */
   async upsertClaimSignature(data: {
     companyId: string;
@@ -4129,29 +4134,43 @@ export class PrismaReimbursementRepository {
     signatureAttachmentId: string;
     signedByUserId: string;
     signedAt: Date;
+    seen: Pick<ReimbursementRequestRecord, 'status' | 'updatedAt' | 'payoutCorrectionRequestedAt' | 'payoutCorrectionSubmittedAt'>;
   }): Promise<ReimbursementClaimSignatureRecord> {
-    const row = await this.prisma.client.reimbursementClaimSignature.upsert({
-      where: {
-        reimbursementRequestId_role: {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await this.lockRequest(tx, data.companyId, data.reimbursementRequestId);
+      const claim = await tx.reimbursementRequest.findFirst({
+        where: { id: data.reimbursementRequestId, companyId: data.companyId },
+        select: { status: true, updatedAt: true, payoutCorrectionRequestedAt: true, payoutCorrectionSubmittedAt: true },
+      });
+      const at = (value?: Date | null) => value?.getTime() ?? null;
+      if (!claim || claim.status !== data.seen.status || at(claim.updatedAt) !== at(data.seen.updatedAt)
+        || at(claim.payoutCorrectionRequestedAt) !== at(data.seen.payoutCorrectionRequestedAt)
+        || at(claim.payoutCorrectionSubmittedAt) !== at(data.seen.payoutCorrectionSubmittedAt)) {
+        throw new ConflictException('stale_claim_snapshot');
+      }
+      const row = await tx.reimbursementClaimSignature.upsert({
+        where: {
+          reimbursementRequestId_role: {
+            reimbursementRequestId: data.reimbursementRequestId,
+            role: data.role as any,
+          },
+        },
+        create: {
+          companyId: data.companyId,
           reimbursementRequestId: data.reimbursementRequestId,
           role: data.role as any,
+          signatureAttachmentId: data.signatureAttachmentId,
+          signedByUserId: data.signedByUserId,
+          signedAt: data.signedAt,
         },
-      },
-      create: {
-        companyId: data.companyId,
-        reimbursementRequestId: data.reimbursementRequestId,
-        role: data.role as any,
-        signatureAttachmentId: data.signatureAttachmentId,
-        signedByUserId: data.signedByUserId,
-        signedAt: data.signedAt,
-      },
-      update: {
-        signatureAttachmentId: data.signatureAttachmentId,
-        signedByUserId: data.signedByUserId,
-        signedAt: data.signedAt,
-      },
+        update: {
+          signatureAttachmentId: data.signatureAttachmentId,
+          signedByUserId: data.signedByUserId,
+          signedAt: data.signedAt,
+        },
+      });
+      return this.toClaimSignature(row);
     });
-    return this.toClaimSignature(row);
   }
 
   async listClaimSignatures(companyId: string, requestId: string): Promise<ReimbursementClaimSignatureRecord[]> {
