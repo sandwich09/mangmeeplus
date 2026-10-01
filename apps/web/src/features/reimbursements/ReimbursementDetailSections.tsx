@@ -84,13 +84,15 @@ export function RejectDialog({ requestNo, busy, error, onClose, onConfirm }: {
   );
 }
 
-export function ReasonDialog({ title, description, confirmLabel, busy, error, danger = false, onClose, onConfirm }: {
+export function ReasonDialog({ title, description, confirmLabel, busy, error, danger = false, minLength = 1, onClose, onConfirm }: {
   title: string;
   description: string;
   confirmLabel: string;
   busy?: boolean;
   error?: string | null;
   danger?: boolean;
+  /** The shortest reason the API takes for this action; the confirm button stays off below it. */
+  minLength?: number;
   onClose: () => void;
   onConfirm: (reason: string) => void;
 }) {
@@ -106,10 +108,13 @@ export function ReasonDialog({ title, description, confirmLabel, busy, error, da
         <textarea ref={reasonRef} className={cx(inputClass, 'min-h-24 resize-y')} value={reason}
           onChange={e => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH}
           placeholder="ระบุเหตุผลให้ชัดเจน" />
-        <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
+        <div className="flex justify-between gap-3 text-xs text-gray-400">
+          <span>{minLength > 1 ? `อย่างน้อย ${minLength} ตัวอักษร` : ''}</span>
+          <span className="tabular-nums">{reason.length}/500</span>
+        </div>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="button" className={danger ? dangerClass : btnClass} disabled={busy || !trimmed} aria-busy={Boolean(busy)}
+          <button type="button" className={danger ? dangerClass : btnClass} disabled={busy || trimmed.length < minLength} aria-busy={Boolean(busy)}
             onClick={() => onConfirm(trimmed)}>{confirmLabel}</button>
         </div>
       </div>

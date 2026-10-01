@@ -101,6 +101,12 @@ export class SubmitReimbursementDto implements SubmitReimbursementRequestInput {
   @Matches(/^[0-9a-f]{32}$/) @IsOptional() payoutSubmitToken?: string;
 }
 
+export class CancelReimbursementDto {
+  // The transport bound only. Whether the reason is long enough is the expense void's own rule
+  // (`isExpenseVoidReason`), asked in the use case before anything is written.
+  @IsString() @IsOptional() @MaxLength(500) reason?: string;
+}
+
 export class ApproveReimbursementDto implements ApproveReimbursementInput {
   @IsString() @IsOptional() @MaxLength(2000) comment?: string;
   @IsString() @IsOptional() @MaxLength(128) approvalSnapshotHash?: string;

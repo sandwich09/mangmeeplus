@@ -13,7 +13,7 @@ import type {
   ReimbursementPolicySnapshotV1,
   ReimbursementSourceSnapshot,
 } from '@watchdog-bms/contracts';
-import { REIMBURSEMENT_SEQUENCE_KEYS, isReimbursementClaimApprover } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_SEQUENCE_KEYS, isExpenseVoidReason, isReimbursementClaimApprover } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository, hubBucketOfStatus, type ReimbursementRequestGroup } from '../../infrastructure/prisma-reimbursement.repository';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -873,6 +873,9 @@ export class CancelReimbursementUseCase {
     assertReimbursementBranchInScope(ctx, req.branchId);
 
     const cancellationReason = reason?.trim() || 'ยกเลิกคำขอเบิกค่าใช้จ่าย';
+    // Audit B3: voiding the claim's expense records takes this reason and refuses a short one. Asked
+    // here, before the intent is written: a claim never holds a cancellation its own reason stops.
+    if (!isExpenseVoidReason(cancellationReason)) throw new BadRequestException('cancellation_reason_too_short');
     const startedAt = new Date();
     const intent = await this.repo.beginCancellationAtomic({
       companyId: ctx.companyId,

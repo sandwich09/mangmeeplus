@@ -54,7 +54,7 @@ import { CommitDocumentNumberUseCase } from '../../../data-model-core/applicatio
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
 import { LEDGER_SEQUENCE_KEY, civilDateToUtcDate, coerceCivilDate, utcDateToCivilDate } from '@watchdog-bms/contracts';
-import { canVoidExpenseFinancialState, civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { canVoidExpenseFinancialState, civilPeriodKey, isExpenseVoidReason, todayCivilDate } from '@watchdog-bms/contracts';
 import type { AuditLogEntry } from '../../../audit/domain/models/audit-log.model';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
@@ -1550,7 +1550,7 @@ export class VoidExpenseUseCase {
       systemReconcile?: boolean;
     },
   ): Promise<ExpenseRecord> {
-    if (!reason || reason.trim().length < 3) throw new BadRequestException('Void reason must be at least 3 characters');
+    if (!isExpenseVoidReason(reason)) throw new BadRequestException('Void reason must be at least 3 characters');
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     if (authority) {

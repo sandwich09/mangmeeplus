@@ -1664,6 +1664,16 @@ export type CompleteExpenseReceiptUploadInput = {
   operationId?: string;
 };
 
+/**
+ * The shortest reason a void takes. Cancelling a reimbursement claim voids its expense records with
+ * the claim's own reason, so the claim asks this of the reason before it starts: one rule, or a
+ * reason the claim accepted is refused halfway through the cancellation.
+ */
+export const EXPENSE_VOID_REASON_MIN_LENGTH = 3;
+export function isExpenseVoidReason(reason: string | null | undefined): boolean {
+  return !!reason && reason.trim().length >= EXPENSE_VOID_REASON_MIN_LENGTH;
+}
+
 /** A recorded payment can precede expense confirmation (e.g. issuing a substitute receipt). */
 export function canVoidExpenseFinancialState(expense: {
   status: string; paidAmount?: { toString(): string }; journalEntryId?: string | null;

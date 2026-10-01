@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { EXPENSE_VOID_REASON_MIN_LENGTH } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedSteps, type ThemedStepState } from '@/common/components/steps/ThemedSteps';
@@ -43,10 +44,12 @@ const ACTION_LABELS: Record<JourneyAction, string> = {
 };
 
 type ReasonAction = 'cancel' | 'finance-return' | 'finance-block' | 'resolve-duplicate';
-const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string; confirmLabel: string; success: string; danger?: boolean }> = {
+const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string; confirmLabel: string; success: string; danger?: boolean; minLength?: number }> = {
   cancel: {
     title: 'ยกเลิกคำขอ', confirmLabel: 'ยืนยันยกเลิกคำขอ', success: 'ยกเลิกคำขอเรียบร้อยแล้ว', danger: true,
     description: 'ระบุเหตุผล ระบบจะปิดคำขอและยกเลิกรายการที่เกี่ยวข้อง คำขอนี้จะนำกลับมาใช้ต่อไม่ได้',
+    // The reason also voids the claim's expense records, which take no shorter one: the API refuses it too.
+    minLength: EXPENSE_VOID_REASON_MIN_LENGTH,
   },
   'finance-return': {
     title: 'ส่งกลับให้แก้ไข', confirmLabel: 'ส่งกลับให้แก้ไข', success: 'ส่งใบเบิกกลับให้แก้ไขแล้ว',
@@ -471,6 +474,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
         description={reasonDialog.description}
         confirmLabel={reasonDialog.confirmLabel}
         danger={reasonDialog.danger}
+        minLength={reasonDialog.minLength}
         busy={busyAction === reasonAction}
         error={actionError}
         onClose={() => setReasonAction(null)}

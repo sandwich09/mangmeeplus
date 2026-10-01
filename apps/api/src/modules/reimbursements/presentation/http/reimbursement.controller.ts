@@ -16,6 +16,7 @@ import {
   AttachPaymentSlipDto,
   CompleteClaimSignatureUploadDto,
   ApproveReimbursementDto,
+  CancelReimbursementDto,
   CompletePaymentSlipUploadDto,
   CreateReimbursementRequestDto,
   InitClaimSignatureUploadDto,
@@ -266,7 +267,7 @@ export class ReimbursementController {
   @RequireAnyPermission('reimbursement.cancel_own', 'reimbursement.finance_review')
   @HttpCode(200)
   @ApiOperation({ summary: 'Cancel reimbursement request' })
-  cancelRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: { reason?: string }) {
+  cancelRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: CancelReimbursementDto) {
     return this.cancel.execute(ctx, requestId, body?.reason);
   }
 

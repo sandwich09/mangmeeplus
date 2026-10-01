@@ -236,6 +236,7 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   duplicate_company_policy: 'พบนโยบายบริษัทซ้ำ ระบบยังไม่บันทึก กรุณาติดต่อผู้ดูแลระบบ',
   invalid_reimbursement_policy_snapshot: 'ข้อมูลนโยบายของใบเบิกนี้ไม่สมบูรณ์ ระบบจึงหยุดรายการไว้เพื่อความปลอดภัย กรุณาติดต่อผู้ดูแลระบบ',
   finance_approval_already_decided: 'คำขอนี้ถูกอนุมัติจ่ายโดยผู้ตรวจการเงินคนอื่นแล้ว ให้ผู้ที่อนุมัติเป็นผู้กด "ดำเนินการต่อ"',
+  cancellation_reason_too_short: 'เหตุผลที่ยกเลิกคำขอต้องยาวอย่างน้อย 3 ตัวอักษร',
   void_reason_required: 'กรุณาระบุเหตุผลที่ยกเลิกการจ่าย',
   reimbursement_payment_changed: 'ข้อมูลการจ่ายถูกเปลี่ยนแล้ว กรุณาโหลดรายการใหม่',
   // Audit H-18: the old wording read like a fixed rule of the system, so a company that wanted

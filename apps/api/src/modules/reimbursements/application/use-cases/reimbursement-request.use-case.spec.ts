@@ -35,6 +35,7 @@ import {
 import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
+import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import {
   applyDraftPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit, readClaimPayout, readClaimPayoutSecret,
   readDraftDefaultPayout, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan, writeMemberPayoutAccount,
@@ -605,6 +606,35 @@ describe('CancelReimbursementUseCase', () => {
     );
     assert.notEqual(state.request.status, 'CANCELLED');
     assert.ok(state.request.cancellationPendingAt, 'the intent stays pending so a retry can finish it');
+  });
+
+  // Audit B3. Before: a reason of one or two characters was taken, the intent was committed, and the
+  // first expense void then refused the reason. Nothing could finish or replace that cancellation.
+  it('refuses a reason the expense void would refuse, before any intent is written', async () => {
+    const state = fakeRepo({ claimProjections: [{ id: 'exp-1', sourceReimbursementLineId: 'rbl-1' }] });
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    // The real void: its reason rule is the one a cancellation has to satisfy. Nothing else of it is reached.
+    const realVoid = new VoidExpenseUseCase({} as any, noopAudit, noopOutbox, {} as any, {} as any, {} as any);
+    const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, realVoid);
+    const requester = ctx({ permissions: ['reimbursement.cancel_own'] });
+
+    for (const reason of ['ก', 'ab', '  x  ']) {
+      await assert.rejects(() => cancel.execute(requester, 'rb-1', reason), (error: any) => {
+        assert.equal(error.getStatus?.(), 400, reason);
+        assert.match(error.message, /cancellation_reason_too_short/);
+        return true;
+      });
+    }
+    assert.equal(state.request.cancellationPendingAt, undefined, 'no intent was written');
+    assert.equal(state.request.status, 'DRAFT');
+    assert.deepEqual(state.calls.outbox, []);
+
+    // The shortest reason the void takes cancels the claim, and no reason at all still takes the default one.
+    assert.equal((await new CancelReimbursementUseCase(state.repo, noopAudit, state.voidExpense).execute(requester, 'rb-1', 'abc')).status, 'CANCELLED');
+    const blank = fakeRepo();
+    await useCases(blank).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    assert.equal((await new CancelReimbursementUseCase(blank.repo, noopAudit, realVoid).execute(requester, 'rb-1', '   ')).status, 'CANCELLED');
+    assert.equal(blank.request.rejectionReason, 'ยกเลิกคำขอเบิกค่าใช้จ่าย');
   });
 });
 
