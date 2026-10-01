@@ -848,7 +848,7 @@ function PaymentModal({ companyId, userId, permissions, request, onClose, onDone
       {claim ? (
         blocked ? (
           <div className="space-y-3">
-            <ErrorBanner message={`ใบนี้ยังบันทึกจ่ายไม่ได้ในตอนนี้ · ${blocked}`} />
+            <ErrorBanner message={blocked} />
             <div className="flex justify-end">
               <Link href={`${claimPath}/${request.id}`} className={btnClass}>เปิดหน้าใบเบิก</Link>
             </div>

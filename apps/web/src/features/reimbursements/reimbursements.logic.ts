@@ -450,15 +450,16 @@ export function queueRowOffersFinanceReview(row: { status?: string; cancellation
 }
 
 /**
- * Why the quick-pay dialog shows no payment form for a claim it has just read, or null when it may show
- * one. The queue row the press came from can be older than the claim: cancelled meanwhile, paid by someone
- * else, or no longer at its payment step. The dialog asks the claim's own page rule, so it never offers a
- * payment that page would not, and says what that page says.
+ * What the quick-pay dialog says instead of a payment form for a claim it has just read, or null when it
+ * may show the form. The queue row the press came from can be older than the claim: cancelled meanwhile,
+ * paid by someone else, or no longer at its payment step. The dialog asks the claim's own page rule, so it
+ * never offers a payment that page would not, and says what that page says. The words hold for a claim
+ * that is finished too, so nothing here promises a payment later.
  */
 export function quickPayBlockedNote(claim: any, permissions: readonly string[], userId: string): string | null {
   const step = activeJourneyStep(buildJourneySteps(claim, permissions, userId));
   if (step?.actions.includes('pay')) return null;
-  return step?.note ?? 'ใบนี้ยังบันทึกจ่ายไม่ได้ในตอนนี้';
+  return ['บันทึกจ่ายใบนี้ไม่ได้', step?.note].filter(Boolean).join(' · ');
 }
 
 /** The claim page opens its payment form on arrival only when the link asked for it and this viewer's current step offers it. */

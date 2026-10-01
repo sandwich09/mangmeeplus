@@ -321,17 +321,25 @@ describe('the hub offers nothing the API refuses on a claim that is being cancel
     assert.equal(quickPayBlockedNote(claim(), owner.permissions, owner.userId), null, 'a claim waiting for payment');
     const cancelling = claim({ currentDesk: { kind: 'SYSTEM' }, cancellationPending: true,
       pendingCancellation: { startedAt: '2026-10-01T02:00:00.000Z', startedByName: 'พิม ใจดี', reason: 'ซื้อซ้ำกับใบก่อน', canResume: true, canWithdraw: true } });
-    assert.match(quickPayBlockedNote(cancelling, owner.permissions, owner.userId)!, /^กำลังยกเลิกคำขอ รอระบบปรับสถานะ/u);
+    assert.match(quickPayBlockedNote(cancelling, owner.permissions, owner.userId)!, /^บันทึกจ่ายใบนี้ไม่ได้ · กำลังยกเลิกคำขอ รอระบบปรับสถานะ/u);
     const waiting = claim({ status: 'APPROVED', approvalSteps: [], awaitingSystem: { kind: 'NO_APPROVAL_NEEDED', canResume: true } });
-    assert.match(quickPayBlockedNote(waiting, owner.permissions, owner.userId)!, /^ใบนี้ไม่ต้องอนุมัติตามนโยบาย · ระบบยังเตรียมรายการสำหรับจ่ายเงินของใบนี้ไม่เสร็จ/u);
-    // Paid by someone else meanwhile, or a viewer the payment is not taken from: no form either.
+    assert.match(quickPayBlockedNote(waiting, owner.permissions, owner.userId)!, /^บันทึกจ่ายใบนี้ไม่ได้ · ใบนี้ไม่ต้องอนุมัติตามนโยบาย · ระบบยังเตรียมรายการสำหรับจ่ายเงินของใบนี้ไม่เสร็จ/u);
+    // Paid by someone else meanwhile, cancelled meanwhile, or a viewer the payment is not taken from: no form
+    // either, and no word of a payment "not yet" for a claim that will never take one.
     const paid = claim({ status: 'PAID', paymentStatus: 'PAID', currentDesk: undefined, payments: [{ id: 'p1', status: 'RECORDED', paidAt: '2026-10-01T05:00:00.000Z' }] });
-    assert.ok(quickPayBlockedNote(paid, owner.permissions, owner.userId));
+    assert.match(quickPayBlockedNote(paid, owner.permissions, owner.userId)!, /^บันทึกจ่ายใบนี้ไม่ได้ · จ่ายเงินคืนแล้ว/u);
+    const cancelled = claim({ status: 'CANCELLED', currentDesk: undefined });
+    assert.equal(quickPayBlockedNote(cancelled, owner.permissions, owner.userId), 'บันทึกจ่ายใบนี้ไม่ได้ · ยกเลิกคำขอแล้ว');
     assert.ok(quickPayBlockedNote(claim(), ['reimbursement.read'], 'reader'));
-    for (const note of [quickPayBlockedNote(cancelling, owner.permissions, owner.userId)!, quickPayBlockedNote(waiting, owner.permissions, owner.userId)!]) assertPlainThai([note], 'quick pay');
-    // The dialog asks that rule before it mounts the form, with the viewer's own rights.
+    for (const stale of [cancelling, waiting, paid, cancelled]) {
+      const note = quickPayBlockedNote(stale, owner.permissions, owner.userId)!;
+      assertPlainThai([note], 'quick pay');
+      assert.doesNotMatch(note, /ยังบันทึกจ่ายไม่ได้ในตอนนี้/u);
+      assert.equal(new Set(note.split(' · ')).size, note.split(' · ').length, `nothing is said twice: ${note}`);
+    }
+    // The dialog asks that rule before it mounts the form, with the viewer's own rights, and shows its words as they are.
     assert.match(hub, /const blocked = claim \? quickPayBlockedNote\(claim, permissions, userId\) : null;/);
-    assert.match(hub, /\{claim \? \(\s+blocked \? \(\s+<div[^>]*>\s+<ErrorBanner message=\{`ใบนี้ยังบันทึกจ่ายไม่ได้ในตอนนี้ · \$\{blocked\}`\} \/>/);
+    assert.match(hub, /\{claim \? \(\s+blocked \? \(\s+<div[^>]*>\s+<ErrorBanner message=\{blocked\} \/>/);
     assert.match(hub, /\) : \(\s+<div className="space-y-3">[\s\S]{0,400}?<PaymentForm /, 'the form sits in the branch that is not blocked');
     assert.match(hub, /<PaymentModal\s+companyId=\{companyId\}\s+userId=\{userId\}\s+permissions=\{permissions\}/);
   });
