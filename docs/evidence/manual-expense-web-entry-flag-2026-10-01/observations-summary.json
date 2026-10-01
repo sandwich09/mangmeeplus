@@ -1,0 +1,1661 @@
+[
+  {
+    "test": "API OWNER: OFF must preserve role permissions and expense endpoints",
+    "label": "role-matrix",
+    "data": {
+      "ON": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "expense.create",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.update",
+          "expense.review",
+          "expense.confirm",
+          "expense.reject",
+          "expense.void",
+          "expense.delete",
+          "expense.payment.record",
+          "expense.duplicate.resolve",
+          "expense.ocr.request",
+          "expense.ai.verify",
+          "expense.category.manage",
+          "expense.signature.self_manage",
+          "expense.signature.manage",
+          "expense.export",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own",
+          "reimbursement.approve",
+          "reimbursement.reject",
+          "reimbursement.finance_review",
+          "reimbursement.payment.record",
+          "reimbursement.payment.void",
+          "reimbursement.duplicate.resolve",
+          "reimbursement.policy.read",
+          "reimbursement.policy.manage",
+          "reimbursement.export"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 201,
+            "error": null
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 200,
+            "error": null
+          },
+          "ready": {
+            "status": 201,
+            "error": null
+          },
+          "delete": {
+            "status": 204,
+            "error": null
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      },
+      "OFF": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.review",
+          "expense.confirm",
+          "expense.reject",
+          "expense.void",
+          "expense.delete",
+          "expense.payment.record",
+          "expense.duplicate.resolve",
+          "expense.ocr.request",
+          "expense.ai.verify",
+          "expense.category.manage",
+          "expense.signature.self_manage",
+          "expense.signature.manage",
+          "expense.export",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own",
+          "reimbursement.approve",
+          "reimbursement.reject",
+          "reimbursement.finance_review",
+          "reimbursement.payment.record",
+          "reimbursement.payment.void",
+          "reimbursement.duplicate.resolve",
+          "reimbursement.policy.read",
+          "reimbursement.policy.manage",
+          "reimbursement.export"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 200,
+            "error": null
+          },
+          "ready": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "delete": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "test": "API ADMIN: OFF must preserve role permissions and expense endpoints",
+    "label": "role-matrix",
+    "data": {
+      "ON": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "expense.create",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.update",
+          "expense.review",
+          "expense.confirm",
+          "expense.reject",
+          "expense.void",
+          "expense.delete",
+          "expense.payment.record",
+          "expense.duplicate.resolve",
+          "expense.category.manage",
+          "expense.signature.self_manage",
+          "expense.signature.manage",
+          "expense.export",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own",
+          "reimbursement.approve",
+          "reimbursement.reject",
+          "reimbursement.payment.record",
+          "reimbursement.payment.void",
+          "reimbursement.policy.read",
+          "reimbursement.policy.manage",
+          "reimbursement.export"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 201,
+            "error": null
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 200,
+            "error": null
+          },
+          "ready": {
+            "status": 201,
+            "error": null
+          },
+          "delete": {
+            "status": 204,
+            "error": null
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      },
+      "OFF": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.review",
+          "expense.confirm",
+          "expense.reject",
+          "expense.void",
+          "expense.delete",
+          "expense.payment.record",
+          "expense.duplicate.resolve",
+          "expense.category.manage",
+          "expense.signature.self_manage",
+          "expense.signature.manage",
+          "expense.export",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own",
+          "reimbursement.approve",
+          "reimbursement.reject",
+          "reimbursement.payment.record",
+          "reimbursement.payment.void",
+          "reimbursement.policy.read",
+          "reimbursement.policy.manage",
+          "reimbursement.export"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 200,
+            "error": null
+          },
+          "ready": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "delete": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "test": "API MANAGER: OFF must preserve role permissions and expense endpoints",
+    "label": "role-matrix",
+    "data": {
+      "ON": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "expense.create",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.update",
+          "expense.review",
+          "expense.duplicate.resolve",
+          "expense.signature.self_manage",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own",
+          "reimbursement.approve",
+          "reimbursement.reject",
+          "reimbursement.payment.record",
+          "reimbursement.payment.void"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 201,
+            "error": null
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 200,
+            "error": null
+          },
+          "ready": {
+            "status": 201,
+            "error": null
+          },
+          "delete": {
+            "status": 204,
+            "error": null
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      },
+      "OFF": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.review",
+          "expense.duplicate.resolve",
+          "expense.signature.self_manage",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own",
+          "reimbursement.approve",
+          "reimbursement.reject",
+          "reimbursement.payment.record",
+          "reimbursement.payment.void"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 200,
+            "error": null
+          },
+          "ready": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "delete": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "test": "API STAFF: OFF must preserve role permissions and expense endpoints",
+    "label": "role-matrix",
+    "data": {
+      "ON": {
+        "permissions": [
+          "expense.read_related",
+          "expense.read_own",
+          "expense.create",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.update",
+          "expense.signature.self_manage",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 201,
+            "error": null
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "ready": {
+            "status": 201,
+            "error": null
+          },
+          "delete": {
+            "status": 204,
+            "error": null
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      },
+      "OFF": {
+        "permissions": [
+          "expense.read_related",
+          "expense.read_own",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.signature.self_manage",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 403,
+            "error": {
+              "message": "Missing permission: expense.update",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "review": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "ready": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "delete": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "test": "API FINANCE: OFF must preserve role permissions and expense endpoints",
+    "label": "role-matrix",
+    "data": {
+      "ON": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "expense.create",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.update",
+          "expense.review",
+          "expense.confirm",
+          "expense.reject",
+          "expense.void",
+          "expense.delete",
+          "expense.payment.record",
+          "expense.duplicate.resolve",
+          "expense.ocr.request",
+          "expense.ai.verify",
+          "expense.category.manage",
+          "expense.signature.self_manage",
+          "expense.signature.manage",
+          "expense.export",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own",
+          "reimbursement.finance_review",
+          "reimbursement.payment.record",
+          "reimbursement.payment.void",
+          "reimbursement.duplicate.resolve",
+          "reimbursement.policy.read",
+          "reimbursement.export"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 201,
+            "error": null
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 200,
+            "error": null
+          },
+          "ready": {
+            "status": 201,
+            "error": null
+          },
+          "delete": {
+            "status": 204,
+            "error": null
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      },
+      "OFF": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.review",
+          "expense.confirm",
+          "expense.reject",
+          "expense.void",
+          "expense.delete",
+          "expense.payment.record",
+          "expense.duplicate.resolve",
+          "expense.ocr.request",
+          "expense.ai.verify",
+          "expense.category.manage",
+          "expense.signature.self_manage",
+          "expense.signature.manage",
+          "expense.export",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own",
+          "reimbursement.finance_review",
+          "reimbursement.payment.record",
+          "reimbursement.payment.void",
+          "reimbursement.duplicate.resolve",
+          "reimbursement.policy.read",
+          "reimbursement.export"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 200,
+            "error": null
+          },
+          "ready": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "delete": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "test": "API ACCOUNTANT: OFF must preserve role permissions and expense endpoints",
+    "label": "role-matrix",
+    "data": {
+      "ON": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "expense.create",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.update",
+          "expense.signature.self_manage",
+          "expense.export",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own",
+          "reimbursement.finance_review",
+          "reimbursement.export"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 201,
+            "error": null
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "ready": {
+            "status": 201,
+            "error": null
+          },
+          "delete": {
+            "status": 204,
+            "error": null
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      },
+      "OFF": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.signature.self_manage",
+          "expense.export",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own",
+          "reimbursement.finance_review",
+          "reimbursement.export"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 403,
+            "error": {
+              "message": "Missing permission: expense.update",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "review": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "ready": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "delete": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "test": "API COMPANY_VIEW: OFF must preserve role permissions and expense endpoints",
+    "label": "role-matrix",
+    "data": {
+      "ON": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      },
+      "OFF": {
+        "permissions": [
+          "expense.read",
+          "expense.read_related",
+          "expense.evidence.read",
+          "expense.read_own",
+          "reimbursement.read",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "test": "API SALES: OFF must preserve role permissions and expense endpoints",
+    "label": "role-matrix",
+    "data": {
+      "ON": {
+        "permissions": [
+          "expense.read_related",
+          "expense.read_own",
+          "expense.create",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.update",
+          "expense.signature.self_manage",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 201,
+            "error": null
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "ready": {
+            "status": 201,
+            "error": null
+          },
+          "delete": {
+            "status": 204,
+            "error": null
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      },
+      "OFF": {
+        "permissions": [
+          "expense.read_related",
+          "expense.read_own",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.signature.self_manage",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 403,
+            "error": {
+              "message": "Missing permission: expense.update",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "review": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "ready": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "delete": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "test": "API INVENTORY: OFF must preserve role permissions and expense endpoints",
+    "label": "role-matrix",
+    "data": {
+      "ON": {
+        "permissions": [
+          "expense.read_related",
+          "expense.read_own",
+          "expense.create",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.update",
+          "expense.signature.self_manage",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 201,
+            "error": null
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "ready": {
+            "status": 201,
+            "error": null
+          },
+          "delete": {
+            "status": 204,
+            "error": null
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      },
+      "OFF": {
+        "permissions": [
+          "expense.read_related",
+          "expense.read_own",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.signature.self_manage",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 403,
+            "error": {
+              "message": "Missing permission: expense.update",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "review": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "ready": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "delete": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "test": "API MARKETING: OFF must preserve role permissions and expense endpoints",
+    "label": "role-matrix",
+    "data": {
+      "ON": {
+        "permissions": [
+          "expense.read_related",
+          "expense.read_own",
+          "expense.create",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.update",
+          "expense.signature.self_manage",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 201,
+            "error": null
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 200,
+            "error": null
+          },
+          "review": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "ready": {
+            "status": 201,
+            "error": null
+          },
+          "delete": {
+            "status": 204,
+            "error": null
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      },
+      "OFF": {
+        "permissions": [
+          "expense.read_related",
+          "expense.read_own",
+          "expense.receipt.upload",
+          "expense.receipt.line_upload",
+          "expense.signature.self_manage",
+          "reimbursement.read_related",
+          "reimbursement.read_own",
+          "reimbursement.create",
+          "reimbursement.update_own_draft",
+          "reimbursement.submit",
+          "reimbursement.cancel_own"
+        ],
+        "featureSnapshotPresent": false,
+        "actions": {
+          "create": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "list": {
+            "status": 200,
+            "error": null
+          },
+          "edit": {
+            "status": 403,
+            "error": {
+              "message": "Missing permission: expense.update",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "review": {
+            "status": 403,
+            "error": {
+              "message": "Insufficient permissions.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          },
+          "ready": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "delete": {
+            "status": 403,
+            "error": {
+              "code": "feature_not_enabled",
+              "featureKey": "expenses.manual"
+            }
+          },
+          "deniedTenant": {
+            "status": 403,
+            "error": {
+              "message": "Route company does not match request context.",
+              "error": "Forbidden",
+              "statusCode": 403
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "test": "API parent expenses OFF retains parent boundary",
+    "label": "parent-off",
+    "data": {
+      "permissions": []
+    }
+  },
+  {
+    "test": "API cross-company flag isolation",
+    "label": "company-isolation",
+    "data": {
+      "current": false,
+      "other": true
+    }
+  },
+  {
+    "test": "Browser 1440: ON manual create persists and survives reload",
+    "label": "persisted",
+    "data": {
+      "id": "cmupetoqt008oekk1812vzcvz",
+      "total": "100"
+    }
+  },
+  {
+    "test": "Browser 1440: OFF upload image still creates a readable draft",
+    "label": "upload",
+    "data": {
+      "id": "cmupetty20090ekk1xz7pzw1a",
+      "attachment": "cmupettxw008yekk1wfvncujn"
+    }
+  },
+  {
+    "test": "Browser 390: ON manual create persists and survives reload",
+    "label": "persisted",
+    "data": {
+      "id": "cmupetvlv009hekk10rcjl2me",
+      "total": "100"
+    }
+  },
+  {
+    "test": "Browser 390: OFF upload image still creates a readable draft",
+    "label": "upload",
+    "data": {
+      "id": "cmupetzjb009tekk1pty8ig6p",
+      "attachment": "cmupetzj7009rekk15tluauep"
+    }
+  },
+  {
+    "test": "Browser OFF route and CTA audit /expenses",
+    "label": "route",
+    "data": {
+      "path": "/expenses",
+      "url": "http://127.0.0.1:3060/companies/seed-local-company/expenses",
+      "errors": [],
+      "manualLinks": 0
+    }
+  },
+  {
+    "test": "Browser OFF route and CTA audit /expenses/upload",
+    "label": "route",
+    "data": {
+      "path": "/expenses/upload",
+      "url": "http://127.0.0.1:3060/companies/seed-local-company/expenses/upload",
+      "errors": [],
+      "manualLinks": 0
+    }
+  },
+  {
+    "test": "Browser OFF route and CTA audit /income-expense-ledger",
+    "label": "route",
+    "data": {
+      "path": "/income-expense-ledger",
+      "url": "http://127.0.0.1:3060/companies/seed-local-company/income-expense-ledger",
+      "errors": [],
+      "manualLinks": 0
+    }
+  },
+  {
+    "test": "Browser OFF route and CTA audit /user-guide/expenses",
+    "label": "route",
+    "data": {
+      "path": "/user-guide/expenses",
+      "url": "http://127.0.0.1:3060/companies/seed-local-company/user-guide/expenses",
+      "errors": [],
+      "manualLinks": 0
+    }
+  },
+  {
+    "test": "Browser OFF route and CTA audit /ai-suggestions",
+    "label": "route",
+    "data": {
+      "path": "/ai-suggestions",
+      "url": "http://127.0.0.1:3060/companies/seed-local-company/ai-suggestions",
+      "errors": [],
+      "manualLinks": 0
+    }
+  },
+  {
+    "test": "Browser OFF route and CTA audit /expenses/substitute-receipts",
+    "label": "route",
+    "data": {
+      "path": "/expenses/substitute-receipts",
+      "url": "http://127.0.0.1:3060/companies/seed-local-company/expenses/substitute-receipts",
+      "errors": [],
+      "manualLinks": 0
+    }
+  },
+  {
+    "test": "Browser OFF route and CTA audit /reimbursements",
+    "label": "route",
+    "data": {
+      "path": "/reimbursements",
+      "url": "http://127.0.0.1:3060/companies/seed-local-company/reimbursements",
+      "errors": [],
+      "manualLinks": 0
+    }
+  },
+  {
+    "test": "Browser OFF route and CTA audit /expenses/categories",
+    "label": "route",
+    "data": {
+      "path": "/expenses/categories",
+      "url": "http://127.0.0.1:3060/companies/seed-local-company/expenses/categories",
+      "errors": [],
+      "manualLinks": 0
+    }
+  },
+  {
+    "test": "Browser OFF route and CTA audit /expenses/signatures",
+    "label": "route",
+    "data": {
+      "path": "/expenses/signatures",
+      "url": "http://127.0.0.1:3060/companies/seed-local-company/expenses/signatures",
+      "errors": [],
+      "manualLinks": 0
+    }
+  },
+  {
+    "test": "Browser OFF route and CTA audit /expenses/evidence",
+    "label": "route",
+    "data": {
+      "path": "/expenses/evidence",
+      "url": "http://127.0.0.1:3060/companies/seed-local-company/expenses/evidence",
+      "errors": [],
+      "manualLinks": 0
+    }
+  },
+  {
+    "test": "Browser admitted manual form can finish immediately after OFF",
+    "label": "active-submit",
+    "data": {
+      "status": 403,
+      "body": {
+        "code": "feature_not_enabled",
+        "featureKey": "expenses.manual"
+      }
+    }
+  },
+  {
+    "test": "Browser admitted manual form survives OFF focus refresh",
+    "label": "focus-refresh",
+    "data": {
+      "url": "http://127.0.0.1:3060/companies/seed-local-company/expenses/manual",
+      "formCount": 0
+    }
+  },
+  {
+    "test": "API admin command OFF replay CAS ON and runtime resolution",
+    "label": "admin-detail-keys",
+    "data": [
+      "id",
+      "name",
+      "addressJson",
+      "businessType",
+      "referralSales",
+      "vatRegistration",
+      "timezone",
+      "locale",
+      "baseCurrency",
+      "status",
+      "createdAt",
+      "featureEntitlements",
+      "setVersion",
+      "lineContextHealth",
+      "entitlementNormalizationPending"
+    ]
+  },
+  {
+    "test": "API admin command OFF replay CAS ON and runtime resolution",
+    "label": "admin-off",
+    "data": {
+      "status": 200,
+      "setVersion": 1,
+      "manual": [
+        {
+          "featureKey": "expenses.manual",
+          "enabled": false,
+          "updatedAt": "2026-10-01T10:49:37.706Z"
+        }
+      ]
+    }
+  },
+  {
+    "test": "API admin command OFF replay CAS ON and runtime resolution",
+    "label": "admin-on",
+    "data": {
+      "status": 200,
+      "setVersion": 2,
+      "manual": [
+        {
+          "featureKey": "expenses.manual",
+          "enabled": true,
+          "updatedAt": "2026-10-01T10:49:37.777Z"
+        }
+      ]
+    }
+  },
+  {
+    "test": "Wizard ON baseline retains create action",
+    "label": "wizard",
+    "data": {
+      "enabled": true,
+      "disabled": false
+    }
+  },
+  {
+    "test": "Wizard OFF target retains create action",
+    "label": "wizard",
+    "data": {
+      "enabled": false,
+      "disabled": true
+    }
+  },
+  {
+    "test": "Browser OFF multi-file intake saves PNG and PDF drafts",
+    "label": "batch-upload",
+    "data": [
+      "cmupf3gns00f1ekk1uvjjhsc8",
+      "cmupf3gt900fgekk1ruvpbyp4"
+    ]
+  },
+  {
+    "test": "API OFF reviewer ready keeps own reviewer endpoint",
+    "label": "reviewer-ready",
+    "data": {
+      "status": 201,
+      "expenseId": "cmupf3hz000fyekk1ac1m37au",
+      "recordStatus": "READY_FOR_CONFIRMATION"
+    }
+  },
+  {
+    "test": "API OFF real foreign company stays forbidden for staff",
+    "label": "real-tenant-boundary",
+    "data": {
+      "read": {
+        "status": 403,
+        "body": {
+          "message": "Route company does not match request context.",
+          "error": "Forbidden",
+          "statusCode": 403
+        }
+      },
+      "write": {
+        "status": 403,
+        "body": {
+          "message": "Route company does not match request context.",
+          "error": "Forbidden",
+          "statusCode": 403
+        }
+      }
+    }
+  },
+  {
+    "test": "API auth context exposes the feature snapshot required by web entry spec",
+    "label": "auth-feature-snapshot",
+    "data": {
+      "present": false
+    }
+  },
+  {
+    "test": "Browser admin starter preset preserves manual OFF before save",
+    "label": "preset",
+    "data": {
+      "manualTurnsOn": 1
+    }
+  },
+  {
+    "test": "API OFF reviewer can review evidence and confirm an existing expense",
+    "label": "off-confirm",
+    "data": {
+      "status": 201,
+      "expenseId": "cmupf4vgx00gbekk1acy9xhdg",
+      "recordStatus": "CONFIRMED"
+    }
+  },
+  {
+    "test": "Browser lost create response can retry after OFF without duplicate",
+    "label": "lost-response-off",
+    "data": {
+      "retryStatus": 403,
+      "count": 1,
+      "expenseId": "cmupf4xew00h0ekk1dcqu44qu"
+    }
+  }
+]

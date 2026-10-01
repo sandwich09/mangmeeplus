@@ -1,0 +1,396 @@
+{
+  "config": {
+    "argv": [
+      "/opt/homebrew/Cellar/node@22/22.23.2/bin/node",
+      "/private/tmp/manual-flag-e2e-20261001/repo/node_modules/@playwright/test/cli.js",
+      "test",
+      "-c",
+      "playwright.off-regression.config.ts",
+      "--grep",
+      "REIMB-0[1-5]|originating upload-only"
+    ],
+    "configFile": "/private/tmp/manual-flag-e2e-20261001/repo/playwright.off-regression.config.ts",
+    "rootDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/(reimbursements|receipt-draft-continuity)\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/tmp/manual-flag-e2e-20261001/evidence/off-regression-results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "receipt-draft-continuity.spec.ts",
+      "file": "receipt-draft-continuity.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "originating upload-only user can save source facts without acquiring finance authority",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3703,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:51:22.888Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/receipt-draft-continuity-o-b2c37-acquiring-finance-authority/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "d61298f776d31e1285ae-71ba7bb6788e66ebcaed",
+          "file": "receipt-draft-continuity.spec.ts",
+          "line": 357,
+          "column": 5
+        },
+        {
+          "title": "originating upload-only user can add an unreadable item and save source facts without acquiring finance authority",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2586,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:51:27.665Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/receipt-draft-continuity-o-2616e-acquiring-finance-authority/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "d61298f776d31e1285ae-715ce6affab826d89ec4",
+          "file": "receipt-draft-continuity.spec.ts",
+          "line": 357,
+          "column": 5
+        }
+      ]
+    },
+    {
+      "title": "reimbursements.spec.ts",
+      "file": "reimbursements.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "REIMB — reimbursements",
+          "file": "reimbursements.spec.ts",
+          "line": 59,
+          "column": 6,
+          "specs": [
+            {
+              "title": "REIMB-01 @smoke reimbursements list renders",
+              "ok": true,
+              "tags": [
+                "smoke"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2391,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:51:30.299Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/reimbursements-REIMB-—-rei-dbb4c-reimbursements-list-renders/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "1513f0eb24c4ed536af8-5f57cf0ea0dd261160a9",
+              "file": "reimbursements.spec.ts",
+              "line": 75,
+              "column": 7
+            },
+            {
+              "title": "REIMB-02 @p1 creates and submits a reimbursement request",
+              "ok": true,
+              "tags": [
+                "p1"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1276,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:51:32.724Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/reimbursements-REIMB-—-rei-c8072-its-a-reimbursement-request/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "1513f0eb24c4ed536af8-9c3e8cd55d1be9a25fc3",
+              "file": "reimbursements.spec.ts",
+              "line": 83,
+              "column": 7
+            },
+            {
+              "title": "REIMB-04 @p1 rolls a multi-line claim up into the header total",
+              "ok": true,
+              "tags": [
+                "p1"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 170,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:51:34.032Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/reimbursements-REIMB-—-rei-1647e-im-up-into-the-header-total/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "1513f0eb24c4ed536af8-b20ea64db4ffa2074c6f",
+              "file": "reimbursements.spec.ts",
+              "line": 94,
+              "column": 7
+            },
+            {
+              "title": "REIMB-05 @p2 rejects a claim with no lines",
+              "ok": true,
+              "tags": [
+                "p2"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 32,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:51:34.212Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/reimbursements-REIMB-—-rei-4ab9d-jects-a-claim-with-no-lines/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "1513f0eb24c4ed536af8-2fb16bb4026aab10b2f6",
+              "file": "reimbursements.spec.ts",
+              "line": 113,
+              "column": 7
+            },
+            {
+              "title": "REIMB-03 @p1 manager approves, owner finance-reviews, and pays throwaway request",
+              "ok": true,
+              "tags": [
+                "p1"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 358,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:51:34.250Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/reimbursements-REIMB-—-rei-ec738--and-pays-throwaway-request/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "1513f0eb24c4ed536af8-081ed95a328ea399388b",
+              "file": "reimbursements.spec.ts",
+              "line": 120,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-01T10:51:22.559Z",
+    "duration": 12104.768,
+    "expected": 7,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}
