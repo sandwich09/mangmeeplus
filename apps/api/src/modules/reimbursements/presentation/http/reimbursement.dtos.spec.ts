@@ -6,6 +6,7 @@ import {
   ApproveReimbursementDto, AttachPaymentSlipDto, CancelReimbursementDto, CompletePaymentSlipUploadDto, CreateReimbursementRequestDto, InitPaymentSlipUploadDto,
   LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
   ReimbursementInternalNoteDto, SetMemberPayoutAccountDto, SubmitReimbursementDto, UpdateReimbursementDraftDto,
+  RequestPayoutCorrectionDto, SubmitPayoutCorrectionDto,
 } from './reimbursement.dtos';
 
 // The exact global-pipe configuration main.ts registers: this is the runtime gate
@@ -298,6 +299,43 @@ describe('submit and approve bodies', () => {
     for (const body of [{ payoutVerifiedVersion: '2' }, { payoutVerifiedVersion: 0 }, { payoutVerifiedVersion: 1.5 }, { payoutVerifiedVersion: true },
       { approvalSnapshotHash: 7 }, { comment: 'x'.repeat(2001) }, { verifiedByUserId: 'someone-else' }, { decisionByUserId: 'someone-else' }, { status: 'APPROVED' }]) {
       await rejects(ApproveReimbursementDto, body);
+    }
+  });
+});
+
+// Payout spec §14: the two calls of a payout account correction round.
+describe('payout correction DTOs', () => {
+  const body = (metatype: any, value: Record<string, unknown>) => pipe.transform(value, { type: 'body', metatype });
+
+  it('takes a reason and a note for a send-back, and leaves which reasons exist to the use case', async () => {
+    assert.deepEqual({ ...(await body(RequestPayoutCorrectionDto, { reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าบัญชีปิด' })) },
+      { reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าบัญชีปิด' });
+    // Reaches the use case, which answers with a code the screen has words for (payout_correction_reason_required,
+    // payout_correction_note_too_long), not with the validator's own English sentence.
+    await body(RequestPayoutCorrectionDto, {});
+    await body(RequestPayoutCorrectionDto, { reasonCode: 'NOT_A_REASON', note: 'x'.repeat(501) });
+    // Nothing of the claim can be sent along, and nothing that is not text.
+    await rejects(RequestPayoutCorrectionDto, { reasonCode: 'OTHER', status: 'PENDING_APPROVAL' });
+    await rejects(RequestPayoutCorrectionDto, { reasonCode: 'OTHER', requestedByUserId: 'someone-else' });
+    await rejects(RequestPayoutCorrectionDto, { reasonCode: 7 });
+    await rejects(RequestPayoutCorrectionDto, { reasonCode: 'OTHER', note: ['x'] });
+    await rejects(RequestPayoutCorrectionDto, { reasonCode: 'OTHER', note: 'x'.repeat(2001) });
+  });
+
+  it('takes the three choices a draft has for the account, the token of the default the form showed, and nothing of the snapshot', async () => {
+    await body(SubmitPayoutCorrectionDto, { mode: 'CASH' });
+    await body(SubmitPayoutCorrectionDto, { mode: 'DEFAULT', defaultToken: 'a'.repeat(32) });
+    const typed = await body(SubmitPayoutCorrectionDto, {
+      mode: 'SPECIFIED', saveAsDefault: true, payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789',
+    });
+    assert.equal(typed.accountNumber, '0123456789', 'a string: the leading zero survives');
+    await rejects(SubmitPayoutCorrectionDto, {});
+    await rejects(SubmitPayoutCorrectionDto, { mode: 'TRANSFER' });
+    await rejects(SubmitPayoutCorrectionDto, { mode: 'DEFAULT', defaultToken: 'not-a-token' });
+    await rejects(SubmitPayoutCorrectionDto, { mode: 'SPECIFIED', accountNumber: 123456789 });
+    // The version, the fingerprint, the method column and the requester are the server's to write.
+    for (const forged of [{ payoutDestinationVersion: 1 }, { payoutFingerprint: 'f'.repeat(64) }, { payoutMethod: 'CASH' }, { requesterUserId: 'someone-else' }, { status: 'READY_FOR_PAYMENT' }]) {
+      await rejects(SubmitPayoutCorrectionDto, { mode: 'CASH', ...forged });
     }
   });
 });

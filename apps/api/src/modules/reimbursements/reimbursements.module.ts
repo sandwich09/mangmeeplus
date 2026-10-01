@@ -49,6 +49,7 @@ import { ReimbursementController } from './presentation/http/reimbursement.contr
 import { ReimbursementPayoutController } from './presentation/http/reimbursement-payout.controller';
 import { MemberPayoutAccountUseCase } from './application/use-cases/reimbursement-payout.use-case';
 import { RevealClaimPayoutUseCase } from './application/use-cases/reimbursement-payout-reveal.use-case';
+import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from './application/use-cases/reimbursement-payout-correction.use-case';
 import { ReimbursementPolicyController } from './presentation/http/reimbursement-policy.controller';
 import { ReimbursementReconcileInternalController } from './presentation/http/reimbursement-reconcile-internal.controller';
 import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursement-write-quiesce.guard';
@@ -62,6 +63,8 @@ import { LineReimbursementDraftUseCase } from './application/use-cases/line-reim
     PrismaReimbursementRepository,
     MemberPayoutAccountUseCase,
     RevealClaimPayoutUseCase,
+    RequestPayoutCorrectionUseCase,
+    SubmitPayoutCorrectionUseCase,
     ReimbursementEvidenceService,
     MaterializeClaimExpensesService,
     ReimbursementProjectionOrchestratorService,

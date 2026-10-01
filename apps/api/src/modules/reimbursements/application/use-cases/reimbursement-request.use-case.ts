@@ -12,6 +12,8 @@ import type {
   ReimbursementRequestDetail,
   ReimbursementInternalNote,
   ReimbursementPendingCancellation,
+  ReimbursementPayoutCorrectionActions,
+  ReimbursementPayoutCorrectionEvent,
   ReimbursementPolicySnapshotV1,
   ReimbursementSourceSnapshot,
 } from '@watchdog-bms/contracts';
@@ -36,7 +38,7 @@ import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './
 import { approvalDecisionActions, awaitingSystemOf } from './reimbursement-approval.use-case';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import {
-  defaultChangedSinceSubmit, hasPayoutSnapshot, payoutRevealGroup, payoutSubmitToken,
+  defaultChangedSinceSubmit, hasPayoutSnapshot, payoutDefaultToken, payoutRevealGroup, payoutSubmitToken,
   type PayoutRevealGroup, type SubmitPayoutColumns,
 } from '../../domain/logic/payout-destination.logic';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
@@ -57,6 +59,7 @@ import {
   normalizeReimbursementAmount,
   PAYMENT_RECORDING_STATUSES,
   paymentTurnUserIds,
+  payoutCorrectionPhase,
   d,
   decStr,
 } from '../../domain/logic/reimbursement.logic';
@@ -281,6 +284,10 @@ export class ReopenRejectedReimbursementUseCase {
     if ((req.status !== 'REJECTED' && !withdraw) || !canTransition(req.status, 'DRAFT')) {
       throw new UnprocessableEntityException(`Cannot reopen from status ${req.status}`);
     }
+    // A claim sent back to have its payout account corrected was approved and has its expense records:
+    // only its account changes, so it never returns to a draft (payout spec §14.7). The repository
+    // refuses the same under the claim's lock, and any claim whose expense records still stand.
+    if (payoutCorrectionPhase(req)) throw new ConflictException('payout_correction_in_progress');
 
     const updated = await this.repo.reopenRejectedRequest(ctx.companyId, id, req.updatedAt, ctx.userId, withdraw ? 'PENDING_APPROVAL' : 'REJECTED');
     void this.audit.log({
@@ -342,10 +349,16 @@ export class GetReimbursementDetailUseCase {
     const payoutVersions = req.requestNo ? await this.repo.listClaimPayoutVersions(req) : [];
     const payoutVersionNames = payoutVersions.length > 0 ? await this.repo.getUserDisplayNames(ctx.companyId,
       payoutVersions.flatMap((version) => [version.enteredByUserId ?? '', version.verifiedByUserId ?? ''])) : {};
+    // Payout spec §14: whether this viewer may send the claim back for its account, or give that
+    // account, as the two endpoints decide it; and what the claim's rounds were, for its timeline.
+    const payoutCorrectionActions = await payoutCorrectionActionsOf(ctx, req, this.repo, approvalActions);
+    const payoutCorrectionHistory = await payoutCorrectionHistoryOf(req, this.repo);
     return {
       ...detail,
       ...(pendingCancellation && { pendingCancellation }),
       ...(awaitingSystem && { awaitingSystem }),
+      ...(payoutCorrectionActions && { payoutCorrectionActions }),
+      ...(payoutCorrectionHistory && { payoutCorrectionHistory }),
       // The button is offered exactly when the reveal endpoint would answer.
       ...(payout && { payout: {
         ...payout, ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
@@ -1244,6 +1257,76 @@ export async function claimPayoutRevealGroup(
     isClaimApprover: actions.canApprove || actions.canReject
       || isReimbursementClaimApprover(ctx.userId, { submittedAt: request.submittedAt, approvalSteps: request.approvalSteps }),
   });
+}
+
+// ---- Payout account correction round (payout spec §14): who may do what ----
+
+/**
+ * Who a viewer is to a claim that waits for payment, for sending it back (§14.3): whoever may record
+ * its payment, the approver the claim stands on (also without the pay right), or its requester asking
+ * for their own account to be changed. Nobody else. The claim's branch is theirs to act in, as for
+ * every other decision on a claim.
+ */
+export function payoutCorrectionSender(ctx: RequestContext, req: ReimbursementRequestRecord): 'PAYER' | 'APPROVER' | 'REQUESTER' | null {
+  if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) return null;
+  if (ctx.permissions.includes('reimbursement.payment.record')) return 'PAYER';
+  if (isReimbursementClaimApprover(ctx.userId, { submittedAt: req.submittedAt, approvalSteps: req.approvalSteps })) return 'APPROVER';
+  return req.requesterUserId === ctx.userId && ctx.permissions.includes('reimbursement.update_own_draft') ? 'REQUESTER' : null;
+}
+
+/** Whether the viewer may give the account of a claim in a round (§14.5): its requester, or a finance reviewer on their behalf, as for a draft. */
+export function mayGivePayoutAccount(ctx: RequestContext, req: ReimbursementRequestRecord): boolean {
+  return isBranchInScope(ctx.scopes ?? {}, req.branchId)
+    && ((req.requesterUserId === ctx.userId && ctx.permissions.includes('reimbursement.update_own_draft'))
+      || ctx.permissions.includes('reimbursement.finance_review'));
+}
+
+/**
+ * What this viewer may do about the payout account of an approved claim, as the claim detail reports
+ * it. The two endpoints decide by the same functions, so a button is never offered to someone its
+ * endpoint refuses, nor withheld from someone it takes. Needs the claim loaded with its approval steps
+ * and payments, and the viewer's authority over the step it waits on.
+ */
+export async function payoutCorrectionActionsOf(
+  ctx: RequestContext,
+  req: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+  approvalActions: { canApprove: boolean; canReject: boolean },
+): Promise<ReimbursementPayoutCorrectionActions | undefined> {
+  const phase = payoutCorrectionPhase(req);
+  // Nothing is decided on a claim being cancelled, and only a claim at the pay step or in a round has either action.
+  if (req.cancellationPendingAt || (!phase && req.status !== 'READY_FOR_PAYMENT')) return undefined;
+  const canRequest = phase === 'AWAITING_APPROVAL' ? approvalActions.canReject
+    : !phase && !(req.payments ?? []).some((payment) => payment.status === 'RECORDED') && payoutCorrectionSender(ctx, req) !== null;
+  const canSubmit = !!phase && mayGivePayoutAccount(ctx, req);
+  if (!canRequest && !canSubmit) return undefined;
+  // What "use the default account" would copy, for whoever fills the form: the requester's default as it is now.
+  const account = canSubmit ? await repo.findMemberPayoutAccount(req.companyId, req.requesterUserId) : null;
+  const token = payoutDefaultToken(req.id, account);
+  return {
+    canRequest,
+    canSubmit,
+    ...(account && token && { requesterDefault: {
+      payoutMethod: account.payoutMethod,
+      ...(account.payoutKind && { payoutKind: account.payoutKind }),
+      ...(account.bankName && { bankName: account.bankName }),
+      ...(account.accountName && { accountName: account.accountName }),
+      ...(account.accountLast4 && { accountLast4: account.accountLast4 }),
+      token,
+    } }),
+  };
+}
+
+/** The claim's rounds as its timeline reads them (spec §17.2), oldest first, with the people named. Undefined: it was never in one. */
+export async function payoutCorrectionHistoryOf(
+  req: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+): Promise<ReimbursementPayoutCorrectionEvent[] | undefined> {
+  const log = req.payoutCorrectionLog ?? [];
+  if (log.length === 0) return undefined;
+  const names = await repo.getUserDisplayNames(req.companyId, log.map((entry) => entry.byUserId));
+  // `approved` is what the round started from: the detail says it once, as `payoutCorrection.previous`.
+  return log.map(({ approved: _approved, ...entry }) => ({ ...entry, ...(names[entry.byUserId] && { byName: names[entry.byUserId] }) }));
 }
 
 /**

@@ -384,7 +384,7 @@ describe('claim account number reveal: the requester, that claim approver, the p
   it('exposes the payout routes with the narrowest permission each, and no way to reveal another member default account', () => {
     const prototype = ReimbursementPayoutController.prototype;
     assert.deepEqual(Object.getOwnPropertyNames(prototype).filter((name) => name !== 'constructor').sort(),
-      ['deleteOwn', 'getForMember', 'getOwn', 'revealForClaim', 'revealOwn', 'setForMember', 'setOwn']);
+      ['deleteOwn', 'getForMember', 'getOwn', 'requestPayoutCorrection', 'revealForClaim', 'revealOwn', 'setForMember', 'setOwn', 'submitPayoutCorrection']);
     for (const handler of ['getOwn', 'setOwn', 'deleteOwn', 'revealOwn'] as const) {
       assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype[handler]), ['reimbursement.create'], handler);
     }
@@ -392,6 +392,10 @@ describe('claim account number reveal: the requester, that claim approver, the p
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.setForMember), ['access.employee.update']);
     // Like the claim detail: the session permission opens the route, the claim's own reveal group decides.
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.revealForClaim), ['account.session.read']);
+    // Payout spec §14.3: who may send a claim back is who they are to that claim (payer, its approver,
+    // its requester), which the use case decides. Giving the account is the draft edit's own right.
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.requestPayoutCorrection), ['account.session.read']);
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype.submitPayoutCorrection), ['reimbursement.update_own_draft', 'reimbursement.finance_review']);
   });
 });
 

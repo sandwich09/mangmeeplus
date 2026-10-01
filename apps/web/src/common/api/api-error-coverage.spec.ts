@@ -168,6 +168,9 @@ describe('the refusal of a text that carries an account number is true wherever 
       .filter((file) => readFileSync(file, 'utf8').includes("'note_contains_account_number'"))
       .map((file) => file.slice(join(API_MODULES, 'reimbursements').length + 1)).sort();
     assert.deepEqual(uses, [
+      // The note that goes with sending a claim back for its payout account: `sendBackForPayoutCorrection`.
+      // It is shown on the claim page; the requester's notice carries the reason from the fixed list only.
+      'application/use-cases/reimbursement-approval.use-case.ts',
       // Finance's note on a claim: `FinanceReviewReimbursementUseCase`.
       'application/use-cases/reimbursement-finance.use-case.ts',
       // The reason a payment was made by another method than the requester asked for: `planPaymentPayout`, and how it is thrown.

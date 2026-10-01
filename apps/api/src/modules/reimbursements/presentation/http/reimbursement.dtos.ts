@@ -71,6 +71,24 @@ export class SetMemberPayoutAccountDto extends PayoutDestinationFieldsDto {
   @IsIn(PAYOUT_METHODS) payoutMethod!: ReimbursementPayoutMethod;
 }
 
+// ---- Payout account correction round (payout spec §14) ----
+
+/**
+ * Send an approved claim back to have its payout account corrected: a reason from the fixed list, and
+ * a note at most. Only the shape is held here. Which reasons exist, how long the note may be and what
+ * it may not carry are the use case's own refusals, each with a code the screen has words for
+ * (`payout_correction_reason_required`, `payout_correction_note_too_long`, `note_contains_account_number`).
+ */
+export class RequestPayoutCorrectionDto {
+  @IsString() @IsOptional() @MaxLength(40) reasonCode?: string;
+  @IsString() @IsOptional() @MaxLength(2000) note?: string;
+}
+
+/** The account a claim in a round is given: a draft's three choices, and for "use the default account" the token of the default the form showed. */
+export class SubmitPayoutCorrectionDto extends ReimbursementPayoutDto {
+  @Matches(/^[0-9a-f]{32}$/) @IsOptional() defaultToken?: string;
+}
+
 export class CreateReimbursementRequestDto implements CreateReimbursementRequestInput {
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) requesterUserId?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) branchId?: string;

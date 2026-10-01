@@ -301,7 +301,7 @@ export class ReimbursementController {
   @HttpCode(200)
   @ApiOperation({ summary: 'Reject reimbursement request (current permission or frozen assignment)' })
   rejectRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: RejectReimbursementInput) {
-    return this.withAttachmentFileName(ctx, this.reject.execute(ctx, requestId, body?.reason));
+    return this.withAttachmentFileName(ctx, this.reject.execute(ctx, requestId, body?.reason, body?.payoutCorrectionReasonCode));
   }
 
   @Post(':requestId/resume')
