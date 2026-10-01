@@ -8,7 +8,7 @@ import {
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import {
-  CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
+  CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS, PAYMENT_METHOD_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
   type ClaimSignatureRole,
 } from './reimbursements.model';
@@ -618,9 +618,26 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
 
   const paid = (detail?.payments ?? []).find((p: any) => p.status === 'RECORDED');
   rows.push(paid
-    ? { key: 'payment', state: 'done', label: paid.paidByName ? `จ่ายแล้ว โดย ${paid.paidByName}` : 'จ่ายแล้ว', date: paid.paidAt }
+    ? { key: 'payment', state: 'done', label: [paid.paidByName ? `จ่ายแล้ว โดย ${paid.paidByName}` : 'จ่ายแล้ว', paymentFactsText(paid)].filter(Boolean).join(' · '), date: paid.paidAt }
     : { key: 'payment', state: at === 'payment' ? 'current' : 'future', label: at === 'payment' ? `กำลัง${waitingForPayer(detail)}` : 'รอบันทึกจ่าย' });
   return rows;
+}
+
+/**
+ * A payment in one phrase: how it was paid — for a transfer the payer confirmed, the last 4 digits of
+ * the account it went into — whether a slip is attached, and whether the method is not the one the
+ * requester asked for. The timeline says it in these words and the payment row shows the same facts
+ * (invariant I4), both from the one payment record.
+ */
+export function paymentFactsText(payment: any): string {
+  const destination = payment?.payoutDestination;
+  return [
+    destination
+      ? `โอนเข้า${destination.payoutKind === 'PROMPTPAY_PHONE' ? 'พร้อมเพย์เบอร์' : 'บัญชี'}${maskedPayoutAccountNumber(destination.accountLast4)}`
+      : PAYMENT_METHOD_LABELS[payment?.paymentMethod],
+    paymentSlipCount(payment) > 0 && 'มีสลิป',
+    payment?.methodMismatchReason && PAID_DIFFERENTLY_LABEL,
+  ].filter(Boolean).join(' · ');
 }
 
 // Who a claim waits for, in the words of its desk: the timeline row and the step note print the same sentence,

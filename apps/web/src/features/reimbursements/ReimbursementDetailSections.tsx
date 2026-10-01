@@ -887,6 +887,19 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                 </div>
                 <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? '—'} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : PAYMENT_STATUS_LABELS[p.status] ?? 'สถานะการจ่าย'}</div>
                 <div className="mt-1 break-words text-gray-500">{`วันที่จ่าย ${dateShort(p.paidAt)}${p.paymentReference ? ` · เลขอ้างอิง ${p.paymentReference}` : ''}`}</div>
+                {/* Where the money went, as the payer confirmed it: masked for everyone, and when they confirmed.
+                    A transfer with no account confirmed says so (a legacy claim, or a claim that asked for cash). */}
+                {paymentDestinationText(p) ? (
+                  <div className="mt-1 break-words text-gray-500">
+                    {`โอนเข้า ${paymentDestinationText(p)}${p.payoutConfirmedAt ? ` · ยืนยันเมื่อ ${formatThaiDateTime(p.payoutConfirmedAt)}` : ''}`}
+                  </div>
+                ) : p.paymentMethod === 'BANK_TRANSFER' && <div className="mt-1 text-gray-500">{PAYMENT_NO_CLAIM_ACCOUNT}</div>}
+                {p.methodMismatchReason && (
+                  <div className="mt-1 break-words text-gray-600">
+                    <MangmeeBadge tone="amber">{PAID_DIFFERENTLY_LABEL}</MangmeeBadge>
+                    <span className="ml-2">เหตุผล: {p.methodMismatchReason}</span>
+                  </div>
+                )}
                 {p.paidByName && <div className="mt-1 text-gray-500">จ่ายโดย {p.paidByName}</div>}
                 {slipCount > 0 ? (
                   <div className="mt-1">
