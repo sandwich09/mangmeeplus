@@ -407,6 +407,11 @@ describe('"บัญชีรับเงินคืนของฉัน" and 
     assert.match(screen, /own \? 'บันทึกบัญชีรับเงินคืนแล้ว' : 'บันทึกบัญชีรับเงินคืนแล้ว ระบบแจ้งเจ้าของบัญชีให้ตรวจ'/);
     // Only the account owner removes a default account.
     assert.match(screen, /\{own && account && <button[^>]*onClick=\{\(\) => void remove\(\)\}>ลบบัญชี<\/button>\}/);
+    // Whose account an editor may set is the server's rule (a manager may not set a peer's, an admin's
+    // or another branch's): the button follows the server's answer, never a guess made on the page.
+    assert.match(screen, /setMayEdit\(response\.canEdit === true\)/);
+    assert.match(screen, /\{canEdit && mayEdit \? \(/);
+    assert.match(screen, /บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี เจ้าของกิจการ หรือผู้ดูแลบริษัท ส่วนผู้จัดการและฝ่ายบุคคลตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล/);
 
     const employee = read('../employee-access/AddEmployeePrototypePage.tsx');
     // The viewer's own employee page uses their own path; anyone else's goes through the employee-edit path.

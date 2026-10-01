@@ -651,7 +651,11 @@ export type MemberPayoutAccountSummary = {
   setByOtherName?: string;
 };
 
-export type MemberPayoutAccountResponse = { account: MemberPayoutAccountSummary | null };
+export type MemberPayoutAccountResponse = {
+  account: MemberPayoutAccountSummary | null;
+  /** Whether THIS viewer may set or change the account; the same rule the write call enforces. */
+  canEdit?: boolean;
+};
 
 export type SetMemberPayoutAccountInput =
   | { payoutMethod: 'CASH' }

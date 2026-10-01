@@ -153,6 +153,9 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
   const toast = useToast();
   const { confirm, confirmDialog } = useConfirm();
   const [account, setAccount] = useState<MemberPayoutAccountSummary | null>(null);
+  // The server's own answer to "may this viewer set this account": the button follows it, so it is
+  // never offered to someone the save would refuse (a manager on a peer's or another branch's account).
+  const [mayEdit, setMayEdit] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -167,7 +170,7 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
     let active = true;
     setLoaded(false); setLoadError(null);
     (memberUserId ? getMemberPayoutAccount(companyId, memberUserId) : getMyPayoutAccount(companyId))
-      .then((response) => { if (active) { setAccount(response.account); setLoaded(true); } })
+      .then((response) => { if (active) { setAccount(response.account); setMayEdit(response.canEdit === true); setLoaded(true); } })
       .catch((e) => { if (active) setLoadError(e); });
     return () => { active = false; };
   }, [companyId, memberUserId, reloadKey]);
@@ -251,12 +254,12 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
               )}
               {setBy && <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{setBy} ตรวจว่าเป็นบัญชีของ{own ? 'คุณ' : 'พนักงาน'}</p>}
               {error && <ErrorBanner message={error} />}
-              {canEdit ? (
+              {canEdit && mayEdit ? (
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} onClick={startEdit}>{account ? 'แก้ไขบัญชี' : 'ตั้งบัญชีรับเงินคืน'}</button>
                   {own && account && <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={() => void remove()}>ลบบัญชี</button>}
                 </div>
-              ) : <p className="text-xs text-gray-500">บัญชีนี้แก้ไขได้โดยเจ้าของบัญชี หรือผู้ที่ดูแลข้อมูลพนักงานในสาขาเดียวกัน</p>}
+              ) : <p className="text-xs text-gray-500">บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี เจ้าของกิจการ หรือผู้ดูแลบริษัท ส่วนผู้จัดการและฝ่ายบุคคลตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล</p>}
             </>
           )}
       {confirmDialog}

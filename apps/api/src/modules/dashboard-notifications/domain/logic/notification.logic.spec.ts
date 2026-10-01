@@ -13,7 +13,7 @@ import {
   resolveDeliveryOutcome,
   notificationSourceHref,
 } from './notification.logic';
-import { MAX_DELIVERY_ATTEMPTS, IMPLEMENTED_TRIGGER_KEYS } from '../models/notification.model';
+import { ALWAYS_DELIVERED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, IMPLEMENTED_TRIGGER_KEYS } from '../models/notification.model';
 import { WORKFLOW_TEMPLATE_CATALOG } from '../../../workflow/domain/workflow-template-catalog';
 
 describe('notification source links', () => {
@@ -44,6 +44,9 @@ describe('implemented-trigger gate (LINE preference suppression)', () => {
   // account owner being told. A key outside the implemented list would be dropped before LINE.
   it('delivers the notice that someone else set a member payout account', () => {
     assert.equal(isImplementedTrigger('reimbursement.payout_account_set_by_other'), true);
+    // Not droppable by a preference list saved before the trigger existed; every such key is a real trigger.
+    assert.deepEqual(ALWAYS_DELIVERED_TRIGGER_KEYS, ['reimbursement.payout_account_set_by_other']);
+    assert.ok(ALWAYS_DELIVERED_TRIGGER_KEYS.every((key) => IMPLEMENTED_TRIGGER_KEYS.includes(key)));
   });
 
   it('keeps the pre-existing implemented keys', () => {

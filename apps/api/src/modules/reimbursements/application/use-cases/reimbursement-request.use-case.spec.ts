@@ -137,7 +137,7 @@ type RepoOptions = {
   /** Payout: by default the fixture claim asks for cash, so a test about something else needs no account; this leaves it with no choice. */
   noDefaultPayout?: boolean;
   /** Payout: members an employee-data editor can look up (`findPayoutMember`). */
-  payoutMembers?: Record<string, { displayName: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[] }>;
+  payoutMembers?: Record<string, { displayName: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[]; managesPeople: boolean }>;
 };
 
 /** Captures the outbox rows a two-phase repository method writes inside its transaction. */
@@ -1203,7 +1203,7 @@ const financeCtx = () => ctx({
 const managerCtx = (overrides: Partial<any> = {}) => ctx({
   userId: 'manager-1', roles: ['MANAGER'], permissions: ['access.employee.read', 'access.employee.update', 'reimbursement.create'], ...overrides,
 });
-const EMPLOYEE = { displayName: 'สมชาย', hasEmployeeProfile: true, allBranches: false, branchIds: ['branch-1'] };
+const EMPLOYEE = { displayName: 'สมชาย', hasEmployeeProfile: true, allBranches: false, branchIds: ['branch-1'], managesPeople: false };
 
 describe('payout: a member sets their own default account', () => {
   it('works for every self-service role and for an owner who has no employee record', async () => {
@@ -1217,7 +1217,7 @@ describe('payout: a member sets their own default account', () => {
       assert.equal((await world.payouts.revealOwn(me)).accountNumber, '0123456789', role);
       assert.equal((await world.payouts.setOwn(me, { payoutMethod: 'CASH' })).account?.payoutMethod, 'CASH', role);
       assert.deepEqual(await world.payouts.deleteOwn(me), { account: null });
-      assert.deepEqual(await world.payouts.getOwn(me), { account: null });
+      assert.deepEqual(await world.payouts.getOwn(me), { account: null, canEdit: true });
     }
   });
 
@@ -1291,6 +1291,8 @@ describe('payout: someone else sets a member account (owner decision 2026-10-01)
     assert.match(notice.body, /^ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 ตั้งเมื่อ .+ ถ้าไม่ใช่บัญชีของคุณ เปิดดูแล้วแก้ได้ทันที$/);
     assert.equal(notice.deepLinkHref, '/companies/co-1/reimbursements/payout-account');
     assert.equal(notice.triggerKey, 'reimbursement.payout_account_set_by_other');
+    // Where a person's money goes: not held back by quiet hours, and a failed push is recorded.
+    assert.equal(notice.severity, 'critical');
     assert.equal(leaksNumber(notice), false);
 
     // The account owner sees who set it until they save it themselves; the editor still cannot read the number.
@@ -1307,11 +1309,24 @@ describe('payout: someone else sets a member account (owner decision 2026-10-01)
     await world.payouts.setForMember(managerCtx(), 'staff-1', PROMPTPAY);
     await world.payouts.setForMember(managerCtx(), 'staff-1', { payoutMethod: 'CASH' });
     assert.equal(world.notifications.length, 3);
-    // One notification per change: the dedup period is the account version.
-    assert.deepEqual(world.notifications.map((notice) => notice.periodKey), ['v1', 'v2', 'v3']);
+    // One notification per change: the dedup period is the change itself (its version and its moment).
+    assert.deepEqual(world.notifications.map((notice) => notice.periodKey.split(':')[0]), ['v1', 'v2', 'v3']);
+    assert.equal(new Set(world.notifications.map((notice) => notice.periodKey)).size, 3);
     assert.match(world.notifications[1].body, /^พร้อมเพย์เบอร์ลงท้าย 5678 ตั้งเมื่อ /);
     assert.match(world.notifications[2].body, /^ตั้งให้คุณรับเงินคืนเป็นเงินสด เมื่อ .+ ถ้าไม่ถูกต้อง เปิดดูแล้วแก้ได้ทันที$/);
     assert.equal(leaksNumber(world.notifications), false);
+  });
+
+  // The version starts again at 1 after the member deletes the account. A period made of the version
+  // alone would fold the second notice into the first, and the member would not be told.
+  it('tells the member again when someone sets the account after the member deleted it', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    await world.payouts.setForMember(managerCtx(), 'staff-1', KBANK);
+    await world.payouts.deleteOwn(ctx());
+    await world.payouts.setForMember(managerCtx(), 'staff-1', SCB);
+    assert.deepEqual(world.notifications.map((notice) => notice.periodKey.split(':')[0]), ['v1', 'v1']);
+    assert.notEqual(world.notifications[0].periodKey, world.notifications[1].periodKey);
+    assert.match(world.notifications[1].body, /^ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 ตั้งเมื่อ /);
   });
 
   it('sends nothing when the account owner edits their own account', async () => {
@@ -1332,7 +1347,7 @@ describe('payout: someone else sets a member account (owner decision 2026-10-01)
   it('refuses another company, an owner with no employee record, another branch, and a company without reimbursements', async () => {
     const world = payoutWorld({ payoutMembers: {
       'staff-1': EMPLOYEE,
-      'owner-1': { displayName: 'เจ้าของร้าน', hasEmployeeProfile: false, allBranches: true, branchIds: [] },
+      'owner-1': { displayName: 'เจ้าของร้าน', hasEmployeeProfile: false, allBranches: true, branchIds: [], managesPeople: true },
       'staff-b2': { ...EMPLOYEE, branchIds: ['branch-2'] },
       'staff-both': { ...EMPLOYEE, branchIds: ['branch-1', 'branch-2'] },
       'admin-1': { ...EMPLOYEE, allBranches: true, branchIds: [] },
@@ -1359,6 +1374,96 @@ describe('payout: someone else sets a member account (owner decision 2026-10-01)
     // Nothing refused left a row or a notification behind.
     assert.deepEqual(world.state.payoutTables.accounts.map((row) => row.userId).sort(), ['staff-1', 'staff-b2']);
     assert.equal(world.notifications.length, 2);
+  });
+});
+
+// Owner direction 2026-10-01 (security): the employee-edit right reaches the whole company, so on its
+// own it would let a manager point a peer's, an admin's or another branch's reimbursements at any
+// account. Whose account an editor may set is its own rule.
+describe('payout: whose account an editor may set (payment-redirection guard)', () => {
+  const members = {
+    'staff-1': EMPLOYEE,
+    'staff-b2': { ...EMPLOYEE, displayName: 'พนักงานสาขาสอง', branchIds: ['branch-2'] },
+    'finance-1': { ...EMPLOYEE, displayName: 'อรทัย', allBranches: true, branchIds: [] },
+    'manager-2': { ...EMPLOYEE, displayName: 'ผู้จัดการอีกคน', managesPeople: true },
+    'hr-1': { ...EMPLOYEE, displayName: 'ฝ่ายบุคคล', managesPeople: true, allBranches: true, branchIds: [] },
+    'admin-1': { ...EMPLOYEE, displayName: 'ผู้ดูแลบริษัท', managesPeople: true, allBranches: true, branchIds: [] },
+    'owner-1': { displayName: 'เจ้าของร้าน', hasEmployeeProfile: false, managesPeople: true, allBranches: true, branchIds: [] },
+  };
+  const editRights = ['access.employee.read', 'access.employee.update', 'reimbursement.create'];
+  const editors = {
+    owner: ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: editRights }),
+    admin: ctx({ userId: 'admin-1', roles: ['ADMIN'], permissions: editRights }),
+    manager: ctx({ userId: 'manager-1', roles: ['MANAGER'], permissions: editRights }),
+    branchManager: ctx({ userId: 'manager-1', roles: ['MANAGER'], permissions: editRights, scopes: { branchIds: ['branch-1'] } }),
+    hr: ctx({ userId: 'hr-1', roles: ['HR'], permissions: editRights }),
+    customRole: ctx({ userId: 'custom-1', roles: ['SHIFT_LEAD'], permissions: editRights, scopes: { branchIds: ['branch-1'] } }),
+  };
+
+  it('lets an owner or an admin set any employee account, and tells the account owner each time', async () => {
+    for (const editor of [editors.owner, editors.admin]) {
+      const world = payoutWorld({ payoutMembers: members });
+      for (const target of ['staff-1', 'staff-b2', 'finance-1', 'manager-2', 'hr-1'].filter((id) => id !== editor.userId)) {
+        assert.equal((await world.payouts.getForMember(editor, target)).canEdit, true, `${editor.roles[0]} → ${target}`);
+        assert.equal((await world.payouts.setForMember(editor, target, KBANK)).account?.accountLast4, '6789', `${editor.roles[0]} → ${target}`);
+      }
+      // Nobody but the member sets the member's own account without the notice: one per change, to that member.
+      assert.deepEqual(world.notifications.map((notice) => notice.recipientUserIds[0]), ['staff-1', 'staff-b2', 'finance-1', 'manager-2', 'hr-1']);
+      assert.equal(world.audits.filter((row) => row.result === 'DENIED').length, 0);
+    }
+    // The business owner has no employee record: not even an admin sets the owner's account.
+    const world = payoutWorld({ payoutMembers: members });
+    await assert.rejects(world.payouts.setForMember(editors.admin, 'owner-1', KBANK), /payout_member_not_found/);
+  });
+
+  it('holds everyone else to their own people: no peer, no superior, no other branch', async () => {
+    const refusals: Array<[keyof typeof editors, string, string]> = [
+      // A manager and a peer manager, the admin, and HR (who edit employee data themselves).
+      ['manager', 'manager-2', 'target_manages_people'], ['manager', 'admin-1', 'target_manages_people'], ['manager', 'hr-1', 'target_manages_people'],
+      // HR and a custom role with the employee-edit right are held to the same rule.
+      ['hr', 'manager-2', 'target_manages_people'], ['hr', 'admin-1', 'target_manages_people'], ['customRole', 'manager-2', 'target_manages_people'],
+      // A branch-limited editor: another branch, and a member who works across every branch.
+      ['branchManager', 'staff-b2', 'outside_editor_branch_scope'], ['branchManager', 'finance-1', 'outside_editor_branch_scope'],
+      ['customRole', 'staff-b2', 'outside_editor_branch_scope'],
+      // The peer rule comes first: a peer in the editor's own branch is still a peer.
+      ['branchManager', 'manager-2', 'target_manages_people'],
+    ];
+    for (const [editor, target, reason] of refusals) {
+      const world = payoutWorld({ payoutMembers: members });
+      assert.equal((await world.payouts.getForMember(editors[editor], target)).canEdit, false, `${editor} → ${target}: no button`);
+      await assert.rejects(world.payouts.setForMember(editors[editor], target, KBANK), (error: any) => {
+        assert.equal(error.getStatus(), 403);
+        assert.match(error.message, /payout_account_edit_denied/);
+        return true;
+      }, `${editor} → ${target}`);
+      // The attempt is on record with its reason; nothing was written and nobody was notified.
+      assert.deepEqual(world.audits.map((row) => [row.action, row.result, row.riskLevel, row.actorUserId, row.targetId, row.metadataJson.reason]),
+        [['reimbursement.payout_account.set', 'DENIED', 'HIGH', editors[editor].userId, target, reason]], `${editor} → ${target}`);
+      assert.deepEqual([world.state.payoutTables.accounts.length, world.notifications.length], [0, 0]);
+      // The same refusal through "save as the requester's default" on a claim filed on their behalf.
+      const preparer = ctx({ ...editors[editor], permissions: [...editRights, 'reimbursement.finance_review', 'reimbursement.update_own_draft'] });
+      await assert.rejects(world.create.execute(preparer, claimInput({ requesterUserId: target, lines: [inputLine()], payout: { mode: 'SPECIFIED', ...KBANK, saveAsDefault: true } })), /payout_account_edit_denied/);
+      assert.equal(world.state.payoutTables.accounts.length, 0);
+    }
+  });
+
+  it('lets a manager, HR and a custom role set the account of their own people', async () => {
+    for (const [editor, targets] of [['manager', ['staff-1', 'staff-b2', 'finance-1']], ['branchManager', ['staff-1']], ['hr', ['staff-1', 'staff-b2', 'finance-1']], ['customRole', ['staff-1']]] as const) {
+      const world = payoutWorld({ payoutMembers: members });
+      for (const target of targets) {
+        assert.equal((await world.payouts.getForMember(editors[editor], target)).canEdit, true, `${editor} → ${target}`);
+        assert.equal((await world.payouts.setForMember(editors[editor], target, KBANK)).canEdit, true, `${editor} → ${target}`);
+      }
+      assert.equal(world.notifications.length, targets.length);
+    }
+  });
+
+  it('never needs the rule for a member own account, whichever screen it is saved from', async () => {
+    const world = payoutWorld({ payoutMembers: members });
+    // A manager manages people, so nobody but an owner or admin could set theirs; they still set their own.
+    assert.equal((await world.payouts.setForMember(editors.manager, 'manager-1', KBANK)).account?.setByOtherName, undefined);
+    assert.equal((await world.payouts.getOwn(editors.manager)).canEdit, true);
+    assert.deepEqual([world.notifications.length, world.audits[0].metadataJson.byOwner], [0, true]);
   });
 });
 

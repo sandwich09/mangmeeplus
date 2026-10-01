@@ -89,6 +89,37 @@ export function isBlankPayoutDestination(input: Partial<PayoutDestinationInput> 
   return !input?.accountName?.trim() && !normalizePayoutAccountNumber(input?.accountNumber) && !input?.bankName?.trim();
 }
 
+// ---- Who may set someone else's default account ----
+
+/** Roles that manage people by name; a custom role counts when it carries a people-managing grant. */
+export const PAYOUT_PEOPLE_MANAGER_ROLE_KEYS: readonly string[] = ['OWNER', 'SYSTEM_ADMIN', 'COMPANY_VIEW', 'ADMIN', 'MANAGER'];
+
+export type PayoutAccountEditRefusal = 'target_manages_people' | 'outside_editor_branch_scope';
+
+/**
+ * Whether an employee-data editor may set SOMEONE ELSE's default payout account (owner direction
+ * 2026-10-01). The account decides where a person's money goes, and the employee-edit right reaches
+ * the whole company, so on its own it would let a manager redirect a peer's, an admin's or another
+ * branch's reimbursements. Hence:
+ *  - an owner or an admin may set any employee's;
+ *  - any other holder of the right (a manager, HR, a custom role) may set it only for members who do
+ *    not manage people themselves, and only for members wholly inside the editor's own branches.
+ * Null means allowed. The account owner is told of every such change (see the use case).
+ */
+export function payoutAccountEditRefusal(input: {
+  editorRoles: readonly string[];
+  /** Undefined: the editor holds every branch. */
+  editorBranchIds?: readonly string[];
+  target: { managesPeople: boolean; allBranches: boolean; branchIds: readonly string[] };
+}): PayoutAccountEditRefusal | null {
+  if (input.editorRoles.some((role) => role === 'OWNER' || role === 'ADMIN')) return null;
+  if (input.target.managesPeople) return 'target_manages_people';
+  const branches = input.editorBranchIds;
+  const outside = branches !== undefined
+    && (input.target.allBranches || input.target.branchIds.length === 0 || input.target.branchIds.some((branchId) => !branches.includes(branchId)));
+  return outside ? 'outside_editor_branch_scope' : null;
+}
+
 // ---- Who may see the full number ----
 
 export type PayoutRevealGroup = 'REQUESTER' | 'APPROVER' | 'PAYER';

@@ -155,6 +155,18 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   'sales_deal_ending',
 ];
 
+/**
+ * Notices the product owes a person, which a saved preference list therefore cannot drop. That list
+ * is frozen the first time a preference row is saved, so every trigger added afterwards is missing
+ * from it and its LINE push would be suppressed without anyone having chosen that. A recipient who
+ * turned the LINE channel off altogether is still respected.
+ */
+export const ALWAYS_DELIVERED_TRIGGER_KEYS: string[] = [
+  // Where a member's reimbursements are paid: telling them is the owner's condition for letting
+  // anyone else set the account.
+  'reimbursement.payout_account_set_by_other',
+];
+
 // Future triggers — disabled until source module exists
 export const FUTURE_TRIGGER_KEYS: string[] = [
   'stockout_risk',

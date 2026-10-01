@@ -25,6 +25,9 @@ function pick(row: Record<string, unknown>, select?: Record<string, boolean>): a
 export function fakePayoutTables() {
   const accounts: Record<string, any>[] = [];
   const destinations: Record<string, any>[] = [];
+  // `@updatedAt`: every write of a row is later than the one before, also within one millisecond of a test.
+  let clock = 0;
+  const now = () => new Date(clock = Math.max(Date.now(), clock + 1));
 
   /** The frozen-snapshot trigger: after `frozenAt` is set, only the attestation columns may change. */
   function change(row: Record<string, any>, data: Record<string, unknown>): void {
@@ -45,12 +48,12 @@ export function fakePayoutTables() {
       upsert: async ({ where, create, update, select }: any) => {
         const row = accounts.find((candidate) => matches(candidate, where.companyId_userId));
         if (!row) {
-          const created = { version: 1, updatedAt: new Date(), ...create };
+          const created = { version: 1, updatedAt: now(), ...create };
           accounts.push(created);
           return pick(created, select);
         }
         const { version, ...columns } = update;
-        Object.assign(row, columns, { version: row.version + (version?.increment ?? 0), updatedAt: new Date() });
+        Object.assign(row, columns, { version: row.version + (version?.increment ?? 0), updatedAt: now() });
         return pick(row, select);
       },
       deleteMany: async ({ where }: any) => {

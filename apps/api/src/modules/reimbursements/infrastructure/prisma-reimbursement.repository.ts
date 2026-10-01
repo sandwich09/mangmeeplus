@@ -1,6 +1,6 @@
 import { serializableTransaction } from '../../../common/database/serializable-transaction';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
-import { civilPeriodKey, todayCivilDate, LEDGER_SEQUENCE_KEY } from '@watchdog-bms/contracts';
+import { civilPeriodKey, hasPrivilegedGrant, todayCivilDate, LEDGER_SEQUENCE_KEY } from '@watchdog-bms/contracts';
 import { expenseDraftNumberingEnabled, expenseNumberInTransaction } from '../../expenses/infrastructure/expense-number';
 import { resolveReimbursementSourceLines, assertReimbursementSources, readReimbursementSource, sourceError, type SourceLine } from './reimbursement-source';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
@@ -59,7 +59,10 @@ import {
   computeReceiptRequirement,
 } from '../domain/logic/reimbursement.logic';
 import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
-import type { FrozenPayoutPlan, SealedPayoutDestination, SubmitPayoutColumns, SubmitPayoutPlan } from '../domain/logic/payout-destination.logic';
+import {
+  PAYOUT_PEOPLE_MANAGER_ROLE_KEYS,
+  type FrozenPayoutPlan, type SealedPayoutDestination, type SubmitPayoutColumns, type SubmitPayoutPlan,
+} from '../domain/logic/payout-destination.logic';
 import {
   applyDraftPayout, attestClaimPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit,
   readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan,
@@ -1137,21 +1140,29 @@ export class PrismaReimbursementRepository {
     });
   }
 
-  /** Whose default account an employee-data editor may set: the member, whether they have an employee record, and their branches. */
+  /**
+   * Whose default account an employee-data editor may set: the member, whether they have an employee
+   * record, their branches, and whether they manage people themselves (a manager may not set a
+   * peer's or a superior's account).
+   */
   async findPayoutMember(companyId: string, userId: string): Promise<{
-    displayName: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[];
+    displayName: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[]; managesPeople: boolean;
   } | null> {
     const row = await this.prisma.client.companyMembership.findFirst({
       where: { companyId, userId },
       select: {
         branchScopeMode: true, defaultBranchId: true, branchScopes: { select: { branchId: true } },
         employeeAccessProfile: { select: { id: true } }, user: { select: { displayName: true } },
+        roles: { select: { role: { select: { key: true, permissions: { select: { permission: { select: { key: true } } } } } } } },
       },
     });
     if (!row) return null;
     return {
       displayName: row.user.displayName,
       hasEmployeeProfile: !!row.employeeAccessProfile,
+      // The same reading of "people-managing role" as suspending or deleting an employee uses.
+      managesPeople: row.roles.some(({ role }) => PAYOUT_PEOPLE_MANAGER_ROLE_KEYS.includes(role.key)
+        || hasPrivilegedGrant(role.permissions.map((entry) => entry.permission.key))),
       allBranches: row.branchScopeMode === 'ALL_BRANCHES',
       branchIds: [...new Set([...row.branchScopes.map((scope) => scope.branchId), ...(row.defaultBranchId ? [row.defaultBranchId] : [])])],
     };

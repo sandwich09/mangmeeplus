@@ -227,6 +227,11 @@ export class AccountMergeUseCase {
           data: { userId: row.existingUserId },
         });
       }
+      // A member's default payout account is keyed by (companyId, userId) on the membership itself
+      // (ON UPDATE CASCADE), so it rode along with the move above. What does not is who last set it:
+      // left on the emptied account, an account the person set themselves would read "set by someone
+      // else" on their own page, and one they set for an employee would name an account that is gone.
+      await tx.memberPayoutAccount.updateMany({ where: { updatedByUserId: userId }, data: { updatedByUserId: row.existingUserId } });
 
       // Spec §4F "ย้าย email". Both addresses are re-read inside the transaction so a concurrent
       // email change cannot make this decision on a stale value. User.email is unique, so the

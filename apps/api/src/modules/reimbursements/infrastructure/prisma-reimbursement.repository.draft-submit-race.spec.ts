@@ -13,6 +13,7 @@ import { ConfirmExpenseUseCase } from '../../expenses/application/use-cases/expe
 import { PrismaAttachmentRepository } from '../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { ReimbursementEvidenceService } from '../application/services/reimbursement-evidence.service';
 import { PrismaExpenseRepository } from '../../expenses/infrastructure/prisma-expense.repository';
+import { DeleteEmployeeDraftUseCase } from '../../employee-access/application/use-cases/delete-employee-draft.use-case';
 import {
   CASH_PAYOUT_FINGERPRINT, openPayoutAccountNumber, payoutFingerprint, payoutSubmitToken, sealPayoutDestination, type SubmitPayoutColumns,
 } from '../domain/logic/payout-destination.logic';
@@ -836,6 +837,7 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
   const approver = `${PAYOUT_TAG}-approver`;
   const merged = `${PAYOUT_TAG}-merged`;
   const outsider = `${PAYOUT_TAG}-outsider`;
+  const draftEmployee = `${PAYOUT_TAG}-draft-employee`;
   let clients: PrismaClient[] = [];
   let repos: PrismaReimbursementRepository[] = [];
   let companyId = '';
@@ -868,7 +870,7 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     }
     reachable = true;
     const db = clients[0]!;
-    await db.user.createMany({ data: [requester, approver, merged, outsider].map((id) => ({ id, displayName: id })) });
+    await db.user.createMany({ data: [requester, approver, merged, outsider, draftEmployee].map((id) => ({ id, displayName: id })) });
     companyId = (await db.company.create({ data: { name: PAYOUT_TAG, status: 'ACTIVE' }, select: { id: true } })).id;
     otherCompanyId = (await db.company.create({ data: { name: `${PAYOUT_TAG}-other`, status: 'ACTIVE' }, select: { id: true } })).id;
     await db.companyMembership.createMany({ data: [
@@ -881,8 +883,10 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
 
   after(async () => {
     if (reachable) {
+      await clients[0]!.auditLog.deleteMany({ where: { companyId: { in: [companyId, otherCompanyId] } } });
+      await clients[0]!.role.deleteMany({ where: { scopeKey: companyId } });
       await clients[0]!.company.deleteMany({ where: { id: { in: [companyId, otherCompanyId] } } });
-      await clients[0]!.user.deleteMany({ where: { id: { in: [requester, approver, merged, outsider] } } });
+      await clients[0]!.user.deleteMany({ where: { id: { in: [requester, approver, merged, outsider, draftEmployee] } } });
     }
     await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
   });
@@ -1259,6 +1263,56 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     const untouched = await clients[0]!.reimbursementRequest.findUniqueOrThrow({ where: { id: second.pending.id }, include: { approvalSteps: { where: { status: 'PENDING' } } } });
     assert.deepEqual([untouched.status, untouched.approvalSteps.length], ['PENDING_APPROVAL', 1]);
     await repos[0]!.beginApprovalDecisionAtomic(approval(second.pending));
+  });
+
+  // Payout impact audit M6: an account can be set for an employee who is still a draft, and
+  // "ลบพนักงานที่ยังกรอกไม่เสร็จ" hard-deletes the membership. The account must go with it, not block it.
+  it('lets a draft employee be deleted together with the payout account set for them', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const membership = await db.companyMembership.create({ data: { companyId, userId: draftEmployee, status: 'DRAFT' }, select: { id: true } });
+    const profile = await db.employeeAccessProfile.create({ data: {
+      companyId, userId: draftEmployee, membershipId: membership.id, displayName: 'พนักงานใหม่', identityType: 'THAI_NATIONAL_ID',
+      identityLast4: '0001', identityHash: `${PAYOUT_TAG}-identity`, identityEncryptedRef: 'sealed', phoneNumber: `${PAYOUT_TAG}-phone`,
+      status: 'DRAFT', createdByUserId: approver,
+    }, select: { id: true } });
+    await repos[0]!.setMemberPayoutAccount({ companyId, userId: draftEmployee, actorUserId: approver, payoutMethod: 'BANK_TRANSFER', destination: seal(KBANK) }, async () => undefined);
+    assert.equal((await repos[0]!.findMemberPayoutAccount(companyId, draftEmployee))?.updatedByUserId, approver);
+
+    await new DeleteEmployeeDraftUseCase({ client: db } as any).execute({
+      companyId, employeeId: profile.id, requestingUserId: approver, requesterPermissions: ['access.employee.disable'], requestId: `${PAYOUT_TAG}-delete-draft`,
+    });
+    assert.deepEqual([
+      await db.companyMembership.count({ where: { id: membership.id } }),
+      await db.employeeAccessProfile.count({ where: { id: profile.id } }),
+      await db.memberPayoutAccount.count({ where: { companyId, userId: draftEmployee } }),
+    ], [0, 0, 0]);
+    // The shared user row itself is untouched, as before.
+    assert.equal(await db.user.count({ where: { id: draftEmployee } }), 1);
+  });
+
+  it('knows from their roles whether a member manages people, for the rule about whose account an editor may set', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    assert.deepEqual(await repos[0]!.findPayoutMember(companyId, requester), {
+      displayName: requester, hasEmployeeProfile: false, managesPeople: false, allBranches: true, branchIds: [],
+    });
+    assert.equal(await repos[0]!.findPayoutMember(companyId, outsider), null, 'not a member of this company');
+    const approverMembership = await db.companyMembership.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: approver } }, select: { id: true } });
+    // A plain custom role does not manage people; one that carries the employee-edit grant does, whatever it is called.
+    const permission = await db.permission.upsert({ where: { key: 'access.employee.update' }, update: {}, create: { key: 'access.employee.update', description: 'Update employee access profile/role' } });
+    const plain = await db.role.create({ data: { companyId, scopeKey: companyId, key: `${PAYOUT_TAG}-cashier`, name: 'แคชเชียร์' } });
+    await db.membershipRole.create({ data: { membershipId: approverMembership.id, roleId: plain.id } });
+    assert.equal((await repos[0]!.findPayoutMember(companyId, approver))?.managesPeople, false);
+    const lead = await db.role.create({ data: { companyId, scopeKey: companyId, key: `${PAYOUT_TAG}-shift-lead`, name: 'หัวหน้ากะ', permissions: { create: [{ permissionId: permission.id }] } } });
+    await db.membershipRole.create({ data: { membershipId: approverMembership.id, roleId: lead.id } });
+    assert.equal((await repos[0]!.findPayoutMember(companyId, approver))?.managesPeople, true);
+    // A role named like the system manager counts by its key alone.
+    await db.membershipRole.deleteMany({ where: { membershipId: approverMembership.id } });
+    const manager = await db.role.create({ data: { companyId, scopeKey: companyId, key: 'MANAGER', name: 'ผู้จัดการ' } });
+    await db.membershipRole.create({ data: { membershipId: approverMembership.id, roleId: manager.id } });
+    assert.equal((await repos[0]!.findPayoutMember(companyId, approver))?.managesPeople, true);
+    await db.membershipRole.deleteMany({ where: { membershipId: approverMembership.id } });
   });
 
   it('keeps every snapshot row inside its own claim and company', async (t) => {
