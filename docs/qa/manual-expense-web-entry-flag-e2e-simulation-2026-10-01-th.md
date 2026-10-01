@@ -2,6 +2,22 @@
 
 วันที่ 2026-10-01 · Baseline HEAD `4a5817b42` พร้อม existing dirty source · **ไม่มี application implementation change**
 
+## หมายเหตุกำกับ 2026-10-01 (เพิ่มหลังรีวิวอิสระ) — อ่านก่อนใช้เอกสารนี้
+
+เนื้อหาใต้หมายเหตุนี้คงไว้ตามที่เขียนเดิมเพื่อเป็นประวัติ ไม่ได้ถูกแก้ แหล่งอ้างอิงปัจจุบันคือ [spec v3.0](../specs/manual-expense-web-entry-flag-spec-th.md) และ[รีวิวอิสระ](../research/manual-expense-web-entry-flag-review-2026-10-01-th.md)
+
+- **รายงานนี้เป็นหลักฐานของ key เดิมเท่านั้น**: ทุก case สลับ `expenses.manual` ไม่มี case ใดทดสอบสวิตช์ทางเข้าตัวใหม่ ไม่ว่าแบบ v2 หรือ v3.0 จึงห้ามใช้รับรอง acceptance ข้อใดของ spec v3.0
+- **ฐานที่รัน**: `4a5817b42` พร้อม dirty source ฐานนี้ **ไม่ใช่บรรพบุรุษของ `origin/develop`** โดย develop (`ae13970b0`) มี commit ที่ฐานนี้ไม่มี 842 รายการ และไฟล์ 3,728 ไฟล์ที่เก็บ hash ไว้ต่างจาก develop 596 ไฟล์ ผู้รีวิวอ่านโค้ดที่ develop แล้วพบว่ากลไกของ key เดิมที่รายงานนี้แสดงยังเหมือนเดิม แต่ไม่ได้รัน E2E ซ้ำ
+- **ข้อความที่ไม่เป็นจริงแล้วบน develop**
+  1. E09 / F03 และย่อหน้า “PostgreSQL integration ของ LINE note: 4 attempts … 400”: บั๊ก key ของ LINE ถูกแก้ใน `6fddca795` (2026-09-29) ผล 400 ทั้งสี่ครั้งเป็นของฐานเก่า ห้ามใช้เป็นค่าคาดหวัง
+  2. คอลัมน์ “ใช้กับ v2 อย่างไร” และตาราง “Coverage ที่ยังต้องทำกับ v2 candidate”: v2 ถูกแทนด้วย v3.0 โดย E07 (ต้อง forward feature snapshot) กลายเป็น boolean ค่าเดียว และ E06 (รักษาค่าของ key ใหม่เมื่อใช้ preset) ไม่เกี่ยวแล้ว เพราะค่าตั้งใหม่ไม่อยู่ในชุดสิทธิ์ รายการที่ต้องทดสอบจริงอยู่ใน plan §5
+  3. ข้อความว่าการปิด key เดิม “ไม่ใช่ control ที่เหมาะ” ยังถูกต้อง แต่ข้อสรุปว่าให้เพิ่ม key ใหม่ใน catalog ไม่ใช่ข้อเสนอปัจจุบัน
+- **ข้อจำกัดของหลักฐานที่ผู้รีวิวพบ**
+  1. ตารางบทบาทไม่มี HR ซึ่งถือ `expense.create` และ `expense.update` ที่ develop จึงเป็นการยืนยัน 9 จาก 10 บทบาท
+  2. ภาพ `admin-preset.png` ถูกถ่ายก่อนหน้าจอวาดเสร็จ หลักฐานที่ใช้ได้ของข้อนั้นคือค่า `manualTurnsOn: 1` ใน `observations-summary.json`
+  3. harness ใน `docs/evidence` รันจาก repo ไม่ได้ และยืนยันเป้าหมาย v1 ที่ถูกยกเลิก
+- **ที่ตรวจแล้วว่าตรง**: ตัวเลข 72 case, ผ่าน 55, ไม่ผ่าน 17 และการแยกตามชุด ตรงกับ `case-results.json`
+
 [Spec v2](../specs/manual-expense-web-entry-flag-spec-th.md) · [Plan](../plans/manual-expense-web-entry-flag-plan-th.md) · [Audit](../research/manual-expense-web-entry-flag-audit-2026-10-01-th.md) · [Case results](../evidence/manual-expense-web-entry-flag-2026-10-01/case-results.json)
 
 ## ข้อสรุปและ owner update

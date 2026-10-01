@@ -1,5 +1,52 @@
 # Agent Memory: manual-expense-web-entry-flag
 
+## Update 2026-10-01 — independent review and spec v3.0 (current state)
+
+Status: PROPOSAL. Spec v3.0 and its plan wait for the owner to confirm eight decisions (D1–D8 in spec §1.2). Implementation NOT STARTED and still unauthorized. Everything under "History" below is kept unchanged and describes the state before the review; where it disagrees with this section, this section wins.
+
+Owner: thawatchai / Claude (review and v3.0 amendments); earlier work by Codex.
+
+What the independent review found (docs/research/manual-expense-web-entry-flag-review-2026-10-01-th.md, 25 findings RM-01..RM-25):
+- The audit and the E2E simulation ran on 4a5817b42 plus uncommitted work. That commit is NOT an ancestor of origin/develop (develop ae13970b0 has 842 commits it lacks; 596 of the 3,728 hashed evidence files differ). Every finding must be re-verified at the commit where implementation starts.
+- F03 (LINE draft idempotency key) was already fixed on develop in 6fddca795 (2026-09-29). It is not an open bug. The v2 proposal to change the key formula is withdrawn.
+- A new key in FEATURE_CATALOG is treated as authority everywhere: billing rejects existing 60/62-row companies when the catalog grows, onboarding/billing/presets/deals would write the new key as false, the admin screen blocks disabling a key that has no stored row, the entitlement command wipes LINE conversation state and bumps setVersion (which holds a paid invoice). All run-verified in memory against real code.
+- F02 (delete guard) is real but affects only roles built from the four finance templates, not the built-in roles.
+
+Decisions written into spec v3.0 as PROPOSALS awaiting the owner (each with the alternative and its cost):
+- D1 storage: a per-company screen setting (the CompanyAiConfiguration.ocrEnabled precedent), not a catalog entitlement key; still shown under "บันทึกด้วยมือ" on the same admin page. Appendix B of the spec lists what a catalog key would additionally require.
+- D2 defaults: shown for every existing and new company; purchases, upgrades, presets and deals never change it.
+- D3 purpose: hide the entry only; not access control. The admin wording says so.
+- D4 guide and LINE text: the web guide hides the button and shows a note on the manual section; the LINE help card is left as is this round. (Narrower than the review's first suggestion of removing the whole section, because the guide refers to section numbers and to "8 submenus".)
+- D5 unreadable value: show the menu.
+- D6 phone reload after switch-off loses re-entry: accepted, with an admin warning.
+- D7 switching off while upload is also off: allowed, with a warning.
+- D8 delete bug: fix separately.
+
+Open questions:
+- The eight owner decisions above.
+- Whether any production company uses a finance-template role (B1) or has a deal that stores only the parent menu (B3). No database was inspected.
+- How new API spec files reach CI without editing package.json (plan §4). Needs a ruling.
+
+Artifacts added or changed on 2026-10-01 (branch claude/spec-reviews-20261001, not pushed):
+- docs/research/manual-expense-web-entry-flag-review-2026-10-01-th.md (review)
+- docs/research/manual-expense-current-code-bugs-2026-10-01-th.md (B1, B3, B4; nothing fixed)
+- docs/specs/manual-expense-web-entry-flag-spec-th.md (v3.0)
+- docs/plans/manual-expense-web-entry-flag-plan-th.md (rewritten for v3.0)
+- Reviewer notes added at the top of the audit, the QA report and the evidence README. Their original text is unchanged.
+
+Verification (review session, no file edits to application code, no database, no browser, no AI calls):
+- In-memory simulation of the v2 catalog key against the real evaluator, permission filter, billingFeaturePlan, normalizer plan, admin-console logic and SetPartnerFeaturesUseCase.
+- Baseline suites at ae13970b0 are green: API 133 + 109 + 89 tests on the plan's three command lines, web 227, ai-gateway approved-knowledge 9.
+- node infra/security/sync-production-maintenance-release-pins.mjs --check reports status=current.
+- Not done: Playwright, PostgreSQL specs, production/UAT, real LINE or AI.
+
+Next:
+- Owner answers D1–D8. If any answer differs from the proposal, edit the spec sections named in the D-table first, then the plan.
+- Only after that and an explicit instruction: implement plan P0–P6 from the latest develop.
+- B1, B3 and B4 are separate work and do not wait for this feature.
+
+## History — state before the independent review (kept unchanged)
+
 Status: SPEC v2 + PLAN + AUDIT + LOCAL E2E SIMULATION COMPLETE (2026-10-01); implementation NOT STARTED. Authorized work: spec, isolated testing, and documentation-only merge to main/develop. Application implementation remains unauthorized.
 
 Owner: thawatchai / Codex
