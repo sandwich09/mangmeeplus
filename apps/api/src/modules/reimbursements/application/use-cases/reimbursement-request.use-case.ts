@@ -364,9 +364,13 @@ export async function assertCanReadRequestOrAssignment(ctx: RequestContext, req:
   try {
     await assertCanReadRequest(ctx, req, repo);
   } catch (error) {
-    // A frozen assignment permits this exact claim even after a role change.
-    if (!(error instanceof ForbiddenException)
-      || (!approvalActions.canApprove && !approvalActions.canReject)) throw error;
+    if (!(error instanceof ForbiddenException)) throw error;
+    // A frozen assignment permits this exact claim even after a role change. It still does while the claim
+    // is being cancelled: the step is theirs to read, though nothing can be decided on it meanwhile.
+    const held = req.cancellationPendingAt
+      ? await approvalDecisionActions(ctx, { ...req, cancellationPendingAt: undefined }, repo)
+      : approvalActions;
+    if (!held.canApprove && !held.canReject) throw error;
   }
   return approvalActions;
 }

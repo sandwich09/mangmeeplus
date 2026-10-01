@@ -183,8 +183,8 @@ describe('a claim whose cancellation has not completed says so in the step card 
     claim({ currentDesk: { kind: 'SYSTEM' }, pendingCancellation: pending(cancellation), ...overrides });
   const atApproval = (cancellation: Record<string, unknown> = {}) => cancelling({ status: 'PENDING_APPROVAL', approvedAt: undefined,
     approvalSteps: [{ id: 'step-1', sequenceNo: 1, status: 'PENDING', approverName: 'สมศรี' }],
-    // The assignee keeps the authority over the step; the approve endpoint refuses it while the cancellation is pending.
-    approvalActions: { canApprove: true, canReject: true } }, cancellation);
+    // The server answers no decision for a claim being cancelled; the page asks for none either way.
+    approvalActions: { canApprove: false, canReject: false } }, cancellation);
 
   it('shows who started it, when and why, hides every decision the API refuses, and offers ดำเนินการยกเลิกต่อ and ถอนการยกเลิก to whoever may cancel', () => {
     const html = claimPage(cancelling(), owner);

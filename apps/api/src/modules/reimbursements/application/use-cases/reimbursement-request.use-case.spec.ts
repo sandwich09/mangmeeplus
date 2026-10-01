@@ -1037,6 +1037,27 @@ describe('a decided claim that has not moved on is visible and can be carried on
     assert.equal((await (await claimWorld('waiting-for-approver')).detail(approver())).awaitingSystem, undefined);
   });
 
+  // The server's own flags (the page no longer has to hide what the detail offers).
+  it('offers no approval on the detail of a claim being cancelled, to its approver or to an assignee who can still open it', async () => {
+    const cancelling = { cancellationPendingAt: decidedAt, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' };
+    const claim = await claimWorld('waiting-for-approver', { frozenOnStep: ['mgr-1'] });
+    const assigneeWithNoRights = approver({ roles: ['STAFF'], permissions: [] });
+    // Waiting for its approver: both hold the step and are offered the decision.
+    for (const viewer of [approver(), assigneeWithNoRights]) {
+      assert.deepEqual((await claim.detail(viewer)).approvalActions, { canApprove: true, canReject: true });
+    }
+
+    Object.assign(claim.state.request, cancelling);
+
+    for (const viewer of [approver(), assigneeWithNoRights]) {
+      const detail = await claim.detail(viewer);
+      assert.deepEqual(detail.approvalActions, { canApprove: false, canReject: false });
+      assert.equal(detail.pendingCancellation?.startedByUserId, 'staff-1', 'and they can still read why');
+    }
+    // Someone with no right and no place on the step still cannot open it.
+    await assert.rejects(() => claim.detail(ctx({ userId: 'stranger-1', permissions: [] })), ForbiddenException);
+  });
+
   it('says only that it is being cancelled when a cancellation was started on it: the cancellation comes first', async () => {
     const claim = await claimWorld('approved');
     Object.assign(claim.state.request, { cancellationPendingAt: decidedAt, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' });

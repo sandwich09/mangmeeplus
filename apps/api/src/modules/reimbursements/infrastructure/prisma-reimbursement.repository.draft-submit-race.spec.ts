@@ -3152,6 +3152,34 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     }
   });
 
+  it('offers no approval on a claim being cancelled, as the approve and reject calls refuse it, and offers both again once it is withdrawn', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const waiting = await waitingClaim();
+    const approve = (claim: { id: string; updatedAt: Date; approvalSnapshotHash?: string }) => repos[0]!.beginApprovalDecisionAtomic({
+      companyId, requestId: claim.id, expectedUpdatedAt: claim.updatedAt, expectedApprovalSnapshotHash: claim.approvalSnapshotHash,
+      actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, financeReviewRequired: false,
+      decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => undefined,
+    });
+    const reject = (claim: { id: string; updatedAt: Date }) => repos[0]!.rejectRequestAtomic({
+      companyId, requestId: claim.id, expectedUpdatedAt: claim.updatedAt, actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false,
+      decidedAt: new Date(), rejectionReason: 'ไม่ผ่าน', request: { status: 'REJECTED' }, onRejectedPersisted: async () => undefined,
+    } as any);
+    assert.deepEqual((await on(0).detail.execute(manager(), waiting.id)).approvalActions, { canApprove: true, canReject: true });
+
+    await strand({ requestId: waiting.id }, 'ซื้อซ้ำกับใบก่อน');
+
+    const cancelling = await on(0).detail.execute(manager(), waiting.id);
+    assert.deepEqual([cancelling.approvalActions, cancelling.currentDesk, !!cancelling.pendingCancellation], [{ canApprove: false, canReject: false }, { kind: 'SYSTEM' }, true]);
+    // What the flags say is what the two calls answer.
+    const now = (await repos[0]!.findRequestById(companyId, waiting.id))!;
+    await assert.rejects(() => approve(now), /reimbursement_cancellation_pending/);
+    await assert.rejects(() => reject(now), /reimbursement_cancellation_pending/);
+
+    await on(0).withdraw.execute(requester(), waiting.id);
+    assert.deepEqual((await on(0).detail.execute(manager(), waiting.id)).approvalActions, { canApprove: true, canReject: true });
+    assert.equal((await approve((await repos[0]!.findRequestById(companyId, waiting.id))!)).resumed, false);
+  });
+
   // ---- A claim's expense record ends with its claim ----
 
   it('refuses to void, reject or delete a standing claim\'s expense record from the expense screen, and the claim goes on as if nobody had asked', async (t) => {

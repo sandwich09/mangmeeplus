@@ -125,6 +125,9 @@ export function pendingApprovalActions(
   allowSelfApproval: boolean,
 ): { canApprove: boolean; canReject: boolean; selfApprovalBlocked?: boolean } {
   if (request.status !== 'PENDING_APPROVAL' || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) return NO_APPROVAL_ACTIONS;
+  // A claim being cancelled takes no decision until that is finished or withdrawn (audit B3): the approve
+  // and reject endpoints refuse it, so neither is offered, on the claim detail or as a queue row.
+  if (request.cancellationPendingAt) return NO_APPROVAL_ACTIONS;
   const step = currentApprovalStep(request);
   const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
   const eligible = isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers);
@@ -235,13 +238,11 @@ export class ListApprovalQueueUseCase {
     const approverNames = await this.repo.getUserDisplayNames(ctx.companyId, [...assignedIdsByBranch.values()].flat());
     const now = new Date();
     return rows.flatMap((request) => {
-      // A claim being cancelled takes no decision until that is finished or withdrawn (audit B3): both
-      // endpoints refuse it, so it is no row of anybody's queue.
-      if (request.cancellationPendingAt) return [];
       const policy = effectivePolicyForRequest(request, currentPolicy);
       // Audit H-18 and B20: a row is listed only for a decision this viewer can make, and it says which. The
       // queue used to list the viewer's own claims and to offer อนุมัติ to a reject-only viewer; both answered
-      // 403. These are the detail's own actions, on the same submitted policy the approve gate reads.
+      // 403. These are the detail's own actions, on the same submitted policy the approve gate reads. A claim
+      // being cancelled has none (audit B3), so it is no row of anybody's queue.
       const { canApprove, canReject } = pendingApprovalActions(
         ctx, request, activeApproversByBranch.get(request.branchId ?? '') ?? new Set<string>(), policy.allowSelfApproval,
       );
