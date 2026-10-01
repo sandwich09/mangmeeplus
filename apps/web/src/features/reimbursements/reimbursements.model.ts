@@ -203,12 +203,12 @@ export function canVoidRecordedPayment(payment: any, permissions: readonly strin
   return payment?.status === 'RECORDED' && permissions.includes('reimbursement.payment.void');
 }
 
-/** Related visibility never implies a write. Every requester action repeats actor, permission and state. */
 /** Whether a claim, as a list row or as its detail, says a cancellation of it was started and has not completed. */
 export function claimIsBeingCancelled(claim: { cancellationPending?: boolean; pendingCancellation?: unknown } | null | undefined): boolean {
   return claim?.cancellationPending === true || Boolean(claim?.pendingCancellation);
 }
 
+/** Related visibility never implies a write. Every requester action repeats actor, permission and state. */
 export function reimbursementOwnActions(detail: any, userId: string, permissions: readonly string[]) {
   const isRequester = detail?.requesterUserId === userId;
   // A claim being cancelled takes no edit, submit or second cancel: the API refuses them until the
