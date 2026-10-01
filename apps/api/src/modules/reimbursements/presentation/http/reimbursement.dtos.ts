@@ -14,6 +14,9 @@ import type {
   ReimbursementClaimSignatureRole,
   ReimbursementLineInput,
   ReimbursementPaymentMethod,
+  ReimbursementPayoutInput,
+  ReimbursementPayoutKind,
+  ReimbursementPayoutMethod,
   SignReimbursementClaimFormInput,
   UpdateReimbursementDraftInput,
   UpdateReimbursementPolicyInput,
@@ -40,6 +43,31 @@ export class ReimbursementLineDto implements ReimbursementLineInput {
   @IsDateString({ strict: true }) @IsOptional() sourceExpenseUpdatedAt?: string;
 }
 
+// ---- Payout account ----
+//
+// Types and transport bounds only. Whether an account is complete and well formed is decided by the
+// one shared rule in contracts (`invalidPayoutDestinationField`), so the API and the web cannot drift.
+
+const PAYOUT_KINDS: ReimbursementPayoutKind[] = ['BANK_ACCOUNT', 'PROMPTPAY_PHONE'];
+const PAYOUT_METHODS: ReimbursementPayoutMethod[] = ['BANK_TRANSFER', 'CASH'];
+
+class PayoutDestinationFieldsDto {
+  @IsIn(PAYOUT_KINDS) @IsOptional() payoutKind?: ReimbursementPayoutKind;
+  @IsString() @IsOptional() @MaxLength(120) bankName?: string;
+  @IsString() @IsOptional() @MaxLength(200) accountName?: string;
+  // A string on purpose: leading zeros survive, and no client can send a number.
+  @IsString() @IsOptional() @MaxLength(40) accountNumber?: string;
+}
+
+export class ReimbursementPayoutDto extends PayoutDestinationFieldsDto {
+  @IsIn(['DEFAULT', 'CASH', 'SPECIFIED']) mode!: ReimbursementPayoutInput['mode'];
+  @IsBoolean() @IsOptional() saveAsDefault?: boolean;
+}
+
+export class SetMemberPayoutAccountDto extends PayoutDestinationFieldsDto {
+  @IsIn(PAYOUT_METHODS) payoutMethod!: ReimbursementPayoutMethod;
+}
+
 export class CreateReimbursementRequestDto implements CreateReimbursementRequestInput {
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) requesterUserId?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) branchId?: string;
@@ -47,6 +75,7 @@ export class CreateReimbursementRequestDto implements CreateReimbursementRequest
   @IsString() @IsNotEmpty() @MaxLength(1000) reason!: string;
   @IsString() @IsOptional() @MaxLength(3) currency?: string;
   @IsString() @IsOptional() @MaxLength(500) missingReceiptReason?: string;
+  @ValidateNested() @Type(() => ReimbursementPayoutDto) @IsOptional() payout?: ReimbursementPayoutInput;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(REIMBURSEMENT_MAX_LINES)
   @ValidateNested({ each: true }) @Type(() => ReimbursementLineDto)
   lines!: ReimbursementLineDto[];
@@ -57,6 +86,7 @@ export class UpdateReimbursementDraftDto implements UpdateReimbursementDraftInpu
   @IsString() @unlessNullish @IsNotEmpty() @MaxLength(1000) reason?: string;
   @IsString() @unlessNullish @IsNotEmpty() @MaxLength(3) currency?: string;
   @IsString() @unlessNullish @MaxLength(500) missingReceiptReason?: string | null;
+  @ValidateNested() @Type(() => ReimbursementPayoutDto) @IsOptional() payout?: ReimbursementPayoutInput;
   @IsArray() @IsOptional() @ArrayMinSize(1) @ArrayMaxSize(REIMBURSEMENT_MAX_LINES)
   @ValidateNested({ each: true }) @Type(() => ReimbursementLineDto)
   lines?: ReimbursementLineDto[];

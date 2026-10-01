@@ -8,6 +8,7 @@ import type {
   ReimbursementLineSummary,
   ReimbursementClaimSignatureSummary,
   ReimbursementDocumentSignedVia,
+  ReimbursementPayoutSummary,
   ReimbursementSignedCopySummary,
 } from '@watchdog-bms/contracts';
 import type {
@@ -23,6 +24,7 @@ import { claimSignatureAckHash, computeReceiptRequirement, currentDesk } from '.
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import type { ClaimPayoutRecord } from '../../infrastructure/reimbursement-payout';
 import type { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 
 const iso = (d?: Date): string | undefined => (d ? d.toISOString() : undefined);
@@ -87,6 +89,8 @@ export function toRequestSummary(
       ? { allowMissingReceiptWithReason: options.allowMissingReceiptWithReason }
       : {}),
     postingStatus: r.postingStatus,
+    // The method only: no list or queue row carries an account.
+    ...(r.payoutMethod ? { payoutMethod: r.payoutMethod } : {}),
     paymentTotalAmount: r.paymentTotalAmount,
     outstandingAmount: r.outstandingAmount,
     lineCount: r.lineCount ?? r.lines?.length ?? 0,
@@ -203,6 +207,20 @@ export function toSignedCopySummaries(
   });
 }
 
+/** The masked payout block of a detail: bank, account name and last 4 digits, the same for every viewer. */
+export function toPayoutSummary(payout: ClaimPayoutRecord | undefined, names: Record<string, string> = {}): ReimbursementPayoutSummary | undefined {
+  if (!payout) return undefined;
+  const { enteredByUserId, verifiedAt, ...shown } = payout;
+  return {
+    ...shown,
+    ...(enteredByUserId && names[enteredByUserId] && { enteredByName: names[enteredByUserId] }),
+    ...(verifiedAt && {
+      verifiedAt: verifiedAt.toISOString(),
+      ...(payout.verifiedByUserId && names[payout.verifiedByUserId] && { verifiedByName: names[payout.verifiedByUserId] }),
+    }),
+  };
+}
+
 export function toRequestDetail(
   r: ReimbursementRequestRecord,
   primaryAttachmentFileName?: string,
@@ -217,6 +235,7 @@ export function toRequestDetail(
     financeReviewRequired?: boolean;
     allowMissingReceiptWithReason?: boolean;
     duplicateBlocksPayment?: boolean;
+    payout?: ReimbursementPayoutSummary;
   } = {},
 ): ReimbursementRequestDetail {
   return {
@@ -243,6 +262,7 @@ export function toRequestDetail(
     documentSignedVia: extras.documentSignedVia,
     financeReviewRequired: extras.financeReviewRequired,
     missingReceiptReason: r.missingReceiptReason,
+    ...(extras.payout && { payout: extras.payout }),
     approvalSteps: (r.approvalSteps ?? []).map((s) => toStepSummary(s, displayNames)),
     payments: (r.payments ?? []).map((p) => toPaymentSummary(p, displayNames)),
     duplicateCandidates: (r.duplicateCandidates ?? []).map(toDuplicateSummary),
@@ -267,15 +287,20 @@ export async function detailWithFileNames(
   req: ReimbursementRequestRecord,
 ): Promise<ReimbursementRequestDetail> {
   const signedCopiesRead = repo.listSignedClaimFormCopies(companyId, req.id);
-  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy] = await Promise.all([
+  // The claim's own snapshot only. A legacy claim has none, and nothing here can reach a member's
+  // default account: a draft that still follows the default gets its preview on the detail read alone.
+  const payoutRead = req.payoutMethod ? repo.findClaimPayout(req) : Promise.resolve(undefined);
+  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy, payout] = await Promise.all([
     evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
     evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
-    // Whoever declared a paper-signed scan is named in the same batch, so the lookup follows the copies.
-    signedCopiesRead.then((copies) => repo.getUserDisplayNames(companyId, [
+    // Whoever declared a paper-signed scan, typed the account or attested it is named in the same batch.
+    Promise.all([signedCopiesRead, payoutRead]).then(([copies, claimPayout]) => repo.getUserDisplayNames(companyId, [
       ...detailUserIds(req), ...copies.map((copy) => copy.acknowledgedByUserId ?? ''),
+      claimPayout?.enteredByUserId ?? '', claimPayout?.verifiedByUserId ?? '',
     ])),
     signedCopiesRead,
     repo.findPolicy(companyId, null).then(effectivePolicy),
+    payoutRead,
   ]);
   const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
   const receiptRequirementStatus = req.status === 'DRAFT'
@@ -299,5 +324,6 @@ export async function detailWithFileNames(
     // once projections run, that field carries the expense-level result, not these candidates.
     duplicateBlocksPayment: requestPolicy.duplicatePolicy === 'BLOCK_PAYMENT'
       && (req.duplicateCandidates ?? []).some((candidate) => candidate.status === 'OPEN'),
+    payout: toPayoutSummary(payout, displayNames),
   });
 }

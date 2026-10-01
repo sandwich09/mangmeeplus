@@ -22,6 +22,12 @@ import {
   type ApproverRoleCandidate,
 } from './reimbursement-policy.use-case';
 import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
+import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
+import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
+import {
+  applyDraftPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezeSubmitPayout, readClaimPayout, readClaimPayoutSecret,
+  readDraftDefaultPayout, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan, writeMemberPayoutAccount,
+} from '../../infrastructure/reimbursement-payout';
 
 // Lane C: one claim, many lines. The header total, category and date are a
 // server-side rollup of the lines — a client never sends them.
@@ -122,6 +128,10 @@ type RepoOptions = {
   supersededApprovalStepCount?: number;
   /** Expense projections a cancellation has to void before the claim may close. */
   claimProjections?: Array<{ id: string; sourceReimbursementLineId: string; status?: string }>;
+  /** Payout: by default a requester already keeps "cash" as their default account, as claims before this feature assumed. */
+  noDefaultPayout?: boolean;
+  /** Payout: members an employee-data editor can look up (`findPayoutMember`). */
+  payoutMembers?: Record<string, { displayName: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[] }>;
 };
 
 /** Captures the outbox rows a two-phase repository method writes inside its transaction. */
@@ -131,6 +141,9 @@ function fakeTx(rows: any[]) {
 
 function fakeRepo(options: RepoOptions = {}) {
   let request: any = null;
+  // The payout tables are in memory, but every read and write below is the production function.
+  const payoutTables = fakePayoutTables();
+  const payoutDb = payoutTables.client;
   const projections = (options.claimProjections ?? []).map((projection) => ({ status: 'CONFIRMED', ...projection }));
   const calls = {
     claimQueries: [] as any[], duplicates: [] as any[], audits: [] as any[], outbox: [] as any[],
@@ -146,7 +159,7 @@ function fakeRepo(options: RepoOptions = {}) {
     getUserDisplayNames: async () => ({}),
     // Lane F: the detail path also lists uploaded scans of the signed claim form.
     listSignedClaimFormCopies: async () => [],
-    createRequest: async (data: any) => {
+    createRequest: async (data: any, payout?: any) => {
       request = {
         id: 'rb-1', status: options.status ?? 'DRAFT', requesterUserId: data.requesterUserId,
         paymentTotalAmount: '0.0000', outstandingAmount: data.amount, duplicateStatus: 'NOT_CHECKED',
@@ -155,10 +168,21 @@ function fakeRepo(options: RepoOptions = {}) {
         ...data,
         lines: data.lines.map((line: any, index: number) => ({ ...line, id: `rbl-${index + 1}`, companyId: data.companyId, reimbursementRequestId: 'rb-1' })),
       };
+      if (!options.noDefaultPayout && !await readMemberPayoutAccount(payoutDb, data.companyId, data.requesterUserId)) {
+        await writeMemberPayoutAccount(payoutDb, { companyId: data.companyId, userId: data.requesterUserId, actorUserId: data.requesterUserId, payoutMethod: 'CASH' });
+      }
+      if (payout) {
+        Object.assign(request, await applyDraftPayout(payoutDb, data.companyId, request.id, payout.write));
+        await payout.onPersisted?.(fakeTx(calls.outbox));
+      }
       return request;
     },
-    updateDraftRequest: async (companyId: string, id: string, expectedUpdatedAt: Date, data: any, lines?: any[]) => {
+    updateDraftRequest: async (companyId: string, id: string, expectedUpdatedAt: Date, data: any, lines?: any[], payout?: any) => {
       assert.equal(expectedUpdatedAt, request.updatedAt);
+      if (payout) {
+        Object.assign(request, await applyDraftPayout(payoutDb, companyId, id, payout.write));
+        await payout.onPersisted?.(fakeTx(calls.outbox));
+      }
       Object.assign(request, data, { updatedAt: new Date(request.updatedAt.getTime() + 1) });
       if (lines) request.lines = lines.map((line: any, index: number) => ({
         ...line, id: `rbl-${index + 1}`, companyId, reimbursementRequestId: id,
@@ -176,7 +200,7 @@ function fakeRepo(options: RepoOptions = {}) {
         throw new Error('reimbursement_changed');
       }
       if (expectedStatus === 'PENDING_APPROVAL') Object.assign(current ?? {}, { status: 'CANCELLED', invalidatedReason: 'withdrawn_by_requester' });
-      Object.assign(request, {
+      Object.assign(request, await draftPayoutAfterReopen(payoutDb, request), {
         status: 'DRAFT', rejectedAt: null, rejectionReason: null, approvalSnapshotHash: null, approvalPolicySnapshotJson: null,
         currentApprovalStepId: null, updatedByUserId: actorUserId, updatedAt: new Date(request.updatedAt.getTime() + 1),
       });
@@ -226,9 +250,11 @@ function fakeRepo(options: RepoOptions = {}) {
     findDuplicateCandidates: async () => options.duplicateCandidates ?? [],
     createDuplicateCandidate: async (data: any) => { calls.duplicates.push(data); },
     createApprovalStep: async () => ({ id: 'step-1' }),
-    submitDraftAtomic: async ({ expectedUpdatedAt, request: data, duplicateCandidates, approvalStep, onSubmittedPersisted }: any) => {
+    submitDraftAtomic: async ({ expectedUpdatedAt, request: data, duplicateCandidates, approvalStep, payout, onSubmittedPersisted }: any) => {
       if (options.submitError) throw options.submitError;
       assert.equal(expectedUpdatedAt, request.updatedAt);
+      // The freeze runs against the draft as it was read, exactly like the repository transaction.
+      if (payout) await freezeSubmitPayout(payoutDb, { ...request }, payout.plan, payout.actorUserId, payout.frozenAt);
       const step = approvalStep ? {
         id: `step-${calls.approvalSteps.length + 1}`, ...approvalStep,
         assignedApproverUserIds: approvalStep.assignedApproverUserIdsJson,
@@ -262,6 +288,24 @@ function fakeRepo(options: RepoOptions = {}) {
       await data.onReadyPersisted(fakeTx(calls.outbox));
       return request;
     },
+    // ---- Payout: thin wrappers, like the repository's own ----
+    findMemberPayoutAccount: (companyId: string, userId: string) => readMemberPayoutAccount(payoutDb, companyId, userId),
+    findMemberPayoutSecret: (companyId: string, userId: string) => readMemberPayoutSecret(payoutDb, companyId, userId),
+    setMemberPayoutAccount: async (data: any, onPersisted: any) => {
+      const change = await writeMemberPayoutAccount(payoutDb, data);
+      await onPersisted(fakeTx(calls.outbox), change);
+      return change.after;
+    },
+    removeMemberPayoutAccount: async (companyId: string, userId: string, onPersisted: any) => {
+      const before = await deleteMemberPayoutAccount(payoutDb, companyId, userId);
+      if (before) await onPersisted(fakeTx(calls.outbox), before);
+      return !!before;
+    },
+    findPayoutMember: async (_companyId: string, userId: string) => options.payoutMembers?.[userId] ?? null,
+    findClaimPayout: (claim: any) => readClaimPayout(payoutDb, claim),
+    findDraftDefaultPayout: (claim: any) => readDraftDefaultPayout(payoutDb, claim),
+    findClaimPayoutSecret: (companyId: string, requestId: string, version: number) => readClaimPayoutSecret(payoutDb, companyId, requestId, version),
+    planSubmitPayout: (claim: any) => readSubmitPayoutPlan(payoutDb, claim),
   } as any;
   // Voiding a projection is what makes it safe to close the claim, so the fake really flips it.
   const voidExpense = {
@@ -271,7 +315,16 @@ function fakeRepo(options: RepoOptions = {}) {
       if (projection) projection.status = 'VOIDED';
     },
   } as any;
-  return { repo, calls, voidExpense, projections, get request() { return request; } };
+  return { repo, calls, voidExpense, projections, payoutTables, get request() { return request; } };
+}
+
+/** The real payout use case over the fake repository; its key never leaves this process. */
+const PAYOUT_KEY = Buffer.alloc(32, 7);
+function payoutUseCase(repo: any, audit: any = noopAudit, notifications: any[] = []) {
+  return new MemberPayoutAccountUseCase(
+    repo, audit, { credentialEncryptionKey: PAYOUT_KEY } as any,
+    { executeInTransaction: async (input: any) => { notifications.push(input); } } as any,
+  );
 }
 
 function useCases(state: { repo: any; calls?: { audits: any[] } }) {
@@ -279,9 +332,11 @@ function useCases(state: { repo: any; calls?: { audits: any[] } }) {
   const audit = state.calls
     ? { log: async (data: any) => { state.calls!.audits.push(data); } } as any
     : noopAudit;
+  const payouts = payoutUseCase(state.repo, audit);
   return {
-    create: new CreateReimbursementDraftUseCase(state.repo, audit, evidence),
-    update: new UpdateReimbursementDraftUseCase(state.repo, audit, evidence),
+    payouts,
+    create: new CreateReimbursementDraftUseCase(state.repo, audit, evidence, payouts),
+    update: new UpdateReimbursementDraftUseCase(state.repo, audit, evidence, payouts),
     submit: new SubmitReimbursementUseCase(
       state.repo, audit, noopOutbox, evidence, readyApproverRoutes,
       { execute: async (...args: any[]) => { (state.calls as any)?.projections?.push(args); } } as any,

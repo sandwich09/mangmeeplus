@@ -79,7 +79,7 @@ export type PayoutRevealGroup = 'REQUESTER' | 'APPROVER' | 'PAYER';
 /**
  * The single decision of who may see a claim's full account number (owner decision D2): the
  * requester, that claim's approver, and whoever may record its payment. Everyone else gets the last
- * 4 digits. The reveal endpoint and the detail's `canReveal` flag both come from here, so a button is
+ * 4 digits. The reveal endpoint and the detail's `canRevealAccountNumber` flag both come from here, so a button is
  * never offered to someone the API would refuse.
  */
 export function payoutRevealGroup(input: {

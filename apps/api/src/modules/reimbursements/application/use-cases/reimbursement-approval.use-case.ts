@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import type { RequestContext, ReimbursementApprovalQueueItem, ReimbursementRequestDetail } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -18,6 +18,7 @@ import {
   ageHours,
   isSlaRisk,
 } from '../../domain/logic/reimbursement.logic';
+import { payoutAttestationError } from '../../domain/logic/payout-destination.logic';
 
 function currentApprovalStep(request: ReimbursementRequestRecord): ReimbursementApprovalStepRecord | undefined {
   return request.approvalSteps?.find((step) => step.id === request.currentApprovalStepId);
@@ -213,7 +214,8 @@ export class ApproveReimbursementUseCase {
     private readonly evidence: ReimbursementEvidenceService,
   ) {}
 
-  async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string): Promise<ReimbursementRequestDetail> {
+  /** `payoutVerifiedVersion`: the approver's "ตรวจบัญชีแล้ว" for the account version they looked at. */
+  async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string, payoutVerifiedVersion?: unknown): Promise<ReimbursementRequestDetail> {
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot approve from status ${req.status}`);
@@ -240,6 +242,14 @@ export class ApproveReimbursementUseCase {
     if (!canResumeApprovedDecision(step, ctx.userId, ctx.roles, activeApprovers)) {
       throw new ForbiddenException('not_eligible_approver');
     }
+    // Human verification (owner decision P1): a claim paid by transfer is approved only with the
+    // approver's attestation of the exact account version on the claim. The repository repeats this
+    // under the request lock; a decision already made is only resumed, never attested twice.
+    if (step?.status === 'PENDING') {
+      const payoutError = payoutAttestationError(req, payoutVerifiedVersion);
+      if (payoutError === 'payout_verification_required') throw new UnprocessableEntityException(payoutError);
+      if (payoutError) throw new ConflictException(payoutError);
+    }
 
     const now = new Date();
     const decision = await this.repo.beginApprovalDecisionAtomic({
@@ -254,6 +264,7 @@ export class ApproveReimbursementUseCase {
       financeReviewRequired: policy.financeReviewRequired,
       decidedAt: now,
       comment,
+      payoutVerifiedVersion,
       financeRequestPatch: {
         status: 'FINANCE_REVIEW',
         approvedAt: now,
@@ -298,6 +309,15 @@ export class ApproveReimbursementUseCase {
               : {}),
           },
         }, tx);
+        if (req.payoutMethod === 'BANK_TRANSFER') {
+          // Who attested which account version, in the decision's own transaction. The requester
+          // approving their own claim is recorded as exactly that.
+          await this.audit.log({
+            companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payout.verify',
+            targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+            metadataJson: { version: req.payoutDestinationVersion, via: 'APPROVAL', approvalStepId: step!.id, byRequester: req.requesterUserId === ctx.userId },
+          }, tx);
+        }
         const eventType = policy.financeReviewRequired
           ? 'reimbursement.approved'
           : 'reimbursement.approval_projection_started';

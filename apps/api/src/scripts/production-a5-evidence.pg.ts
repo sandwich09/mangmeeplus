@@ -67,6 +67,10 @@ type PendingReimbursementHeader = {
   linkedExpenseId: string | null;
   approvalSnapshotHash: string | null;
   approvalPolicySnapshotJson?: LegacyV1FallbackSnapshotFields['approvalPolicySnapshotJson'] | null;
+  // Present from the payout-account migration on; a claim sent with a receiving method hashes it.
+  payoutMethod?: string | null;
+  payoutDestinationVersion?: number | null;
+  payoutFingerprint?: string | null;
   currentApprovalStepId: string | null;
   currentStepStatus: string | null;
   currentStepDecidedAt: Date | string | null;
@@ -122,6 +126,10 @@ function snapshotFields(
     primaryAttachmentId: header.primaryAttachmentId,
     linkedExpenseId: header.linkedExpenseId,
     approvalPolicySnapshotJson: header.approvalPolicySnapshotJson ?? undefined,
+    // Same fields as the live approval check, or a new pending claim would be classified as invalid.
+    payoutMethod: header.payoutMethod,
+    payoutDestinationVersion: header.payoutDestinationVersion,
+    payoutFingerprint: header.payoutFingerprint,
     lines: lines.map((line) => ({
       id: line.id,
       companyId: line.companyId,
@@ -223,6 +231,9 @@ export async function readProductionA5ReimbursementApprovalSnapshots(
            request."incurredDate", request."primaryAttachmentId", request."linkedExpenseId",
            request."approvalSnapshotHash", request."currentApprovalStepId",
            to_jsonb(request)->'approvalPolicySnapshotJson' AS "approvalPolicySnapshotJson",
+           to_jsonb(request)->>'payoutMethod' AS "payoutMethod",
+           (to_jsonb(request)->>'payoutDestinationVersion')::int AS "payoutDestinationVersion",
+           to_jsonb(request)->>'payoutFingerprint' AS "payoutFingerprint",
            step.status::text AS "currentStepStatus", step."decidedAt" AS "currentStepDecidedAt",
            step."decisionByUserId" AS "currentStepDecisionByUserId",
            step.comment AS "currentStepComment", step."rejectionReason" AS "currentStepRejectionReason"

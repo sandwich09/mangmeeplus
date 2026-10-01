@@ -19,6 +19,8 @@ const fakeDetailEvidence = { getAttachmentFileName: async () => undefined, getAt
 
 const noopAudit = { log: async () => undefined } as any;
 const noopOutbox = { append: async () => undefined } as any;
+// These drafts carry no payout choice of their own, so the payout use case is never reached.
+const noPayouts = {} as any;
 const readyApproverRoutes = {
   resolveNamedSubmissionRoute: async () => null,
   resolveSubmissionRoute: async ({ roleKey }: any) => ({
@@ -80,6 +82,8 @@ function fakeRepo(req: any, policy: any = FINANCE_REVIEW_ON, events: any[] = [],
     findPolicy: async () => policy,
     getUserDisplayNames: async () => ({}),
     listSignedClaimFormCopies: async () => [],
+    // The claim's own masked snapshot, as the repository reads it.
+    findClaimPayout: async (claim: any) => (claim.payoutMethod ? { payoutMethod: claim.payoutMethod, ...claim.payoutSnapshot } : undefined),
     beginApprovalDecisionAtomic: async (data: any) => {
       const step = req.approvalSteps[0];
       step.status = 'APPROVED'; step.decisionByUserId = data.actorUserId; step.decidedAt = data.decidedAt;
@@ -377,6 +381,9 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
       return request;
     },
     findDuplicateCandidates: async () => [],
+    // The requester's default account is cash: the claim follows it and needs no attestation.
+    planSubmitPayout: async () => ({ payoutMethod: 'CASH', followsDefault: true }),
+    findClaimPayout: async (claim: any) => (claim.payoutMethod ? { payoutMethod: claim.payoutMethod } : undefined),
     submitDraftAtomic: async ({ expectedUpdatedAt, request: data, approvalStep, onSubmittedPersisted }: any) => {
       assert.equal(expectedUpdatedAt, request.updatedAt);
       const step = approvalStep ? { id: 'step-1' } : undefined;
@@ -418,7 +425,7 @@ describe('Reimbursement request evidence validation', () => {
   for (const [name, record] of invalidAttachments) {
     it(`rejects ${name} attachment at create`, async () => {
       const state = requestRepo();
-      const uc = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(record));
+      const uc = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(record), noPayouts);
       await assert.rejects(() => uc.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] }), /invalid_primary_attachment/);
     });
 
@@ -432,7 +439,7 @@ describe('Reimbursement request evidence validation', () => {
   for (const [name, record] of invalidExpenses) {
     it(`rejects ${name} expense at create`, async () => {
       const state = requestRepo();
-      const uc = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null, record));
+      const uc = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null, record), noPayouts);
       await assert.rejects(() => uc.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ linkedExpenseId: 'exp-1' })] }), /invalid_linked_expense/);
     });
 
@@ -445,12 +452,12 @@ describe('Reimbursement request evidence validation', () => {
 
   it('validates attachment and expense ids supplied by PATCH', async () => {
     const state = requestRepo(draftRequest());
-    const updateAttachment = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null));
+    const updateAttachment = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null), noPayouts);
     await assert.rejects(
       () => updateAttachment.execute(requesterCtx(), 'rb-1', { lines: [inputLine({ attachmentId: 'missing' })] }),
       /invalid_primary_attachment/,
     );
-    const updateExpense = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null, null));
+    const updateExpense = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null, null), noPayouts);
     await assert.rejects(
       () => updateExpense.execute(requesterCtx(), 'rb-1', { lines: [inputLine({ linkedExpenseId: 'missing' })] }),
       /invalid_linked_expense/,
@@ -460,7 +467,7 @@ describe('Reimbursement request evidence validation', () => {
   it('passes create to submit with a valid active attachment and returns its file name on the line', async () => {
     const state = requestRepo();
     const evidence = evidenceService(attachment());
-    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence);
+    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence, noPayouts);
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
     const events: any[] = [];
     const outbox = { append: async (...args: any[]) => { events.push(args); } } as any;
@@ -477,7 +484,7 @@ describe('Reimbursement request evidence validation', () => {
   it('finance submits on the requester\'s behalf with the REQUESTER\'s attachment', async () => {
     const state = requestRepo();
     const evidence = evidenceService(attachment()); // uploadedByUserId: staff-1 = requester
-    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence);
+    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence, noPayouts);
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
     const financeCtx = ctx({ userId: 'finance-1', roles: ['FINANCE'], permissions: ['reimbursement.submit', 'reimbursement.finance_review'] });
     const submit = submitUseCase(state.repo, noopAudit, noopOutbox, evidence);
@@ -487,12 +494,12 @@ describe('Reimbursement request evidence validation', () => {
 
   it('accepts finance’s own upload on behalf of the requester but rejects a third person’s file', async () => {
     const state = requestRepo();
-    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment()));
+    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment()), noPayouts);
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
     const financeCtx = ctx({ userId: 'finance-1', roles: ['FINANCE'], permissions: ['reimbursement.finance_review'] });
-    const update = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment({ uploadedByUserId: 'finance-1' })));
+    const update = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment({ uploadedByUserId: 'finance-1' })), noPayouts);
     await update.execute(financeCtx, created.id, { lines: [inputLine({ attachmentId: 'att-2' })] });
-    const thirdParty = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment({ uploadedByUserId: 'other-person' })));
+    const thirdParty = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment({ uploadedByUserId: 'other-person' })), noPayouts);
     await assert.rejects(
       () => thirdParty.execute(financeCtx, created.id, { lines: [inputLine({ attachmentId: 'att-3' })] }),
       /invalid_primary_attachment/,
@@ -502,9 +509,9 @@ describe('Reimbursement request evidence validation', () => {
   it('rejects submit after PATCH clears the only receipt evidence under requireReceipt', async () => {
     const state = requestRepo();
     const evidence = evidenceService(attachment());
-    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence);
+    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence, noPayouts);
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
-    const update = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidence);
+    const update = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidence, noPayouts);
     await update.execute(requesterCtx(), created.id, { lines: [inputLine({ attachmentId: null })] });
     const submit = submitUseCase(state.repo, noopAudit, noopOutbox, evidence);
     await assert.rejects(
@@ -767,7 +774,7 @@ describe('solo requester on a custom role (owner order 2026-09-21)', () => {
     const submitAtomic = state.repo.submitDraftAtomic;
     state.repo.submitDraftAtomic = async (data: any) => { frozenStep = data.approvalStep; return submitAtomic(data); };
     const evidence = evidenceService();
-    const created = await new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence)
+    const created = await new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence, noPayouts)
       .execute(solo, { ...requestInput, missingReceiptReason: 'ใบเสร็จหาย' });
     await new SubmitReimbursementUseCase(state.repo, noopAudit, noopOutbox, evidence, approverRoutes, noopSubmitProjections).execute(solo, created.id);
     assert.deepEqual(frozenStep.assignedApproverUserIdsJson, ['solo-1']);
