@@ -1,0 +1,768 @@
+{
+  "basis": "Unmodified baseline; old expenses.manual toggle. Version 1 target assertions superseded by version 2 additive entry flag.",
+  "cases": [
+    {
+      "run": "main",
+      "title": "API OWNER: OFF must preserve role permissions and expense endpoints",
+      "status": "failed",
+      "durationMs": 620,
+      "failure": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m  ",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c2268-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c2268-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c2268-sions-and-expense-endpoints/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API ADMIN: OFF must preserve role permissions and expense endpoints",
+      "status": "failed",
+      "durationMs": 441,
+      "failure": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m  ",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-67d0e-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-67d0e-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-67d0e-sions-and-expense-endpoints/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API MANAGER: OFF must preserve role permissions and expense endpoints",
+      "status": "failed",
+      "durationMs": 378,
+      "failure": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.duplicate.resolve\",\u001b[22m\n\u001b[2m    \"expense.signature.",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-f03fe-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-f03fe-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-f03fe-sions-and-expense-endpoints/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API STAFF: OFF must preserve role permissions and expense endpoints",
+      "status": "failed",
+      "durationMs": 348,
+      "failure": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-fe660-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-fe660-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-fe660-sions-and-expense-endpoints/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API FINANCE: OFF must preserve role permissions and expense endpoints",
+      "status": "failed",
+      "durationMs": 396,
+      "failure": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m  ",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-db613-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-db613-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-db613-sions-and-expense-endpoints/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API ACCOUNTANT: OFF must preserve role permissions and expense endpoints",
+      "status": "failed",
+      "durationMs": 380,
+      "failure": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"expense.export\",\u001b[22m\n\u001b[2m    \"reimbursement.",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c222e-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c222e-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c222e-sions-and-expense-endpoints/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API COMPANY_VIEW: OFF must preserve role permissions and expense endpoints",
+      "status": "passed",
+      "durationMs": 151,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-cb542-sions-and-expense-endpoints/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API SALES: OFF must preserve role permissions and expense endpoints",
+      "status": "failed",
+      "durationMs": 351,
+      "failure": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-bc092-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-bc092-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-bc092-sions-and-expense-endpoints/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API INVENTORY: OFF must preserve role permissions and expense endpoints",
+      "status": "failed",
+      "durationMs": 404,
+      "failure": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-667ef-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-667ef-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-667ef-sions-and-expense-endpoints/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API MARKETING: OFF must preserve role permissions and expense endpoints",
+      "status": "failed",
+      "durationMs": 356,
+      "failure": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-5285f-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-5285f-sions-and-expense-endpoints/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-5285f-sions-and-expense-endpoints/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API parent expenses OFF retains parent boundary",
+      "status": "passed",
+      "durationMs": 63,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-30512-OFF-retains-parent-boundary/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API cross-company flag isolation",
+      "status": "passed",
+      "durationMs": 47,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-cross-company-flag-isolation/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API flag ON again restores create without relogin",
+      "status": "passed",
+      "durationMs": 66,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-bf1bd-ores-create-without-relogin/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser 1440: ON manual create persists and survives reload",
+      "status": "passed",
+      "durationMs": 3099,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-67f2a-ersists-and-survives-reload/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser 1440: OFF closes direct URL and legacy alias",
+      "status": "passed",
+      "durationMs": 3073,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-3a7f0-direct-URL-and-legacy-alias/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser 1440: OFF upload image still creates a readable draft",
+      "status": "passed",
+      "durationMs": 2802,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-75f5a-ll-creates-a-readable-draft/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser 390: ON manual create persists and survives reload",
+      "status": "passed",
+      "durationMs": 2684,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-24b8e-ersists-and-survives-reload/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser 390: OFF closes direct URL and legacy alias",
+      "status": "passed",
+      "durationMs": 2306,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-dc2f3-direct-URL-and-legacy-alias/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser 390: OFF upload image still creates a readable draft",
+      "status": "passed",
+      "durationMs": 1887,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-82b8c-ll-creates-a-readable-draft/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser OFF route and CTA audit /expenses",
+      "status": "passed",
+      "durationMs": 1189,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-14c04-oute-and-CTA-audit-expenses/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser OFF route and CTA audit /expenses/upload",
+      "status": "passed",
+      "durationMs": 1216,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-31ac4-d-CTA-audit-expenses-upload/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser OFF route and CTA audit /income-expense-ledger",
+      "status": "passed",
+      "durationMs": 1843,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-cc4ab-audit-income-expense-ledger/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser OFF route and CTA audit /user-guide/expenses",
+      "status": "passed",
+      "durationMs": 1658,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-f62e8-A-audit-user-guide-expenses/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser OFF route and CTA audit /ai-suggestions",
+      "status": "passed",
+      "durationMs": 1700,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-8b05d-nd-CTA-audit-ai-suggestions/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser OFF route and CTA audit /expenses/substitute-receipts",
+      "status": "passed",
+      "durationMs": 2552,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-e6dc7-xpenses-substitute-receipts/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser OFF route and CTA audit /reimbursements",
+      "status": "passed",
+      "durationMs": 1939,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-5ba79-nd-CTA-audit-reimbursements/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser OFF route and CTA audit /expenses/categories",
+      "status": "passed",
+      "durationMs": 1976,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-b6f45-A-audit-expenses-categories/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser OFF route and CTA audit /expenses/signatures",
+      "status": "passed",
+      "durationMs": 1891,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-7ba5a-A-audit-expenses-signatures/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser OFF route and CTA audit /expenses/evidence",
+      "status": "passed",
+      "durationMs": 2059,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-e61dc-CTA-audit-expenses-evidence/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser admitted manual form can finish immediately after OFF",
+      "status": "failed",
+      "durationMs": 1963,
+      "failure": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  65 |\n  66 | test('Browser OFF preserves manual creation inside substitute wizard',async({authedPage:page,api})=>{await flag(false);await page.goto(`/companies/${company}/expenses/substitute-receipts/new`);await page.getByRole('button',{name:'เพิ่มรายการค่าใช้จ่ายใหม่',exact:true}).first().click();const branch=await firstActiveBranch(api,company);await chooseThemedOption(page,page.getByRole('combobox',{name:'สาขาของรายการ',exact:true}),branchOptionName(branch));await screenshot",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-ccdf9-inish-immediately-after-OFF/test-failed-1.png",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-ccdf9-inish-immediately-after-OFF/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-ccdf9-inish-immediately-after-OFF/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-ccdf9-inish-immediately-after-OFF/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser admitted manual form survives OFF focus refresh",
+      "status": "failed",
+      "durationMs": 13698,
+      "failure": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveValue\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true })\nExpected: \u001b[32m\"Unsaved manual flag E2E\"\u001b[39m\nTimeout: 12000ms\nError: element(s) not found\n\n",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-6a074--survives-OFF-focus-refresh/test-failed-1.png",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-6a074--survives-OFF-focus-refresh/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-6a074--survives-OFF-focus-refresh/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-6a074--survives-OFF-focus-refresh/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "Browser permission-negative reader cannot enter manual ON or OFF",
+      "status": "passed",
+      "durationMs": 2957,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-e83b8-nnot-enter-manual-ON-or-OFF/trace.zip"
+      ]
+    },
+    {
+      "run": "main",
+      "title": "API admin command OFF replay CAS ON and runtime resolution",
+      "status": "passed",
+      "durationMs": 208,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-085b3-S-ON-and-runtime-resolution/trace.zip"
+      ]
+    },
+    {
+      "run": "extended",
+      "title": "Wizard ON baseline retains create action",
+      "status": "passed",
+      "durationMs": 2764,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Wizar-9011f-eline-retains-create-action/trace.zip"
+      ]
+    },
+    {
+      "run": "extended",
+      "title": "Wizard OFF target retains create action",
+      "status": "failed",
+      "durationMs": 15302,
+      "failure": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeEnabled\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('button', { name: 'สร้างฉบับร่างและใช้รายการนี้', exact: true })\nExpected: enabled\nReceived: disabled\nTimeout:  12000ms\n\n",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Wizard-OFF-target-retains-create-action/test-failed-1.png",
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Wizard-OFF-target-retains-create-action/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Wizard-OFF-target-retains-create-action/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Wizard-OFF-target-retains-create-action/trace.zip"
+      ]
+    },
+    {
+      "run": "extended",
+      "title": "Browser OFF new tab of existing session cannot enter manual",
+      "status": "passed",
+      "durationMs": 2818,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-f20c4-session-cannot-enter-manual/trace.zip"
+      ]
+    },
+    {
+      "run": "extended",
+      "title": "Browser restored ON focus permits a new manual visit without login",
+      "status": "passed",
+      "durationMs": 3480,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-0d61c--manual-visit-without-login/trace.zip"
+      ]
+    },
+    {
+      "run": "extended",
+      "title": "Browser manual route requires authentication",
+      "status": "passed",
+      "durationMs": 1500,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-a5b3b-ute-requires-authentication/trace.zip"
+      ]
+    },
+    {
+      "run": "extended",
+      "title": "Browser OFF multi-file intake saves PNG and PDF drafts",
+      "status": "passed",
+      "durationMs": 3542,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-16598-ke-saves-PNG-and-PDF-drafts/trace.zip"
+      ]
+    },
+    {
+      "run": "extended",
+      "title": "API OFF reviewer ready keeps own reviewer endpoint",
+      "status": "passed",
+      "durationMs": 110,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-API-O-ee326-keeps-own-reviewer-endpoint/trace.zip"
+      ]
+    },
+    {
+      "run": "extended",
+      "title": "API OFF real foreign company stays forbidden for staff",
+      "status": "passed",
+      "durationMs": 59,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-API-O-b0219-y-stays-forbidden-for-staff/trace.zip"
+      ]
+    },
+    {
+      "run": "extended",
+      "title": "API auth context exposes the feature snapshot required by web entry spec",
+      "status": "failed",
+      "durationMs": 34,
+      "failure": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoHaveProperty\u001b[2m(\u001b[22m\u001b[32mpath\u001b[39m\u001b[2m)\u001b[22m\n\nExpected path: \u001b[32m\"entitledFeatureKeys\"\u001b[39m\nReceived path: \u001b[31m[]\u001b[39m\n\nReceived value: \u001b[31m{\"authProvider\": \"watchdog\", \"canSkipCurrentPassword\": false, \"companyId\": \"seed-local-company\", \"displayName\": \"Local Owner\", \"legalAcceptanceRequired\": false, \"membershipId\": \"cmupela0v00b14dk1uysjsepy\", \"mustChangePassword\": false, \"permissions\": [\"procurement.supplier_payment.release\", \"account.session.read\", \"account.password.change\", \"account.identity.link\", \"account.identity.unlink\", \"company.setup.read\", \"company.setup.manage\", \"company.pl",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-API-a-63e88--required-by-web-entry-spec/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-API-a-63e88--required-by-web-entry-spec/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-API-a-63e88--required-by-web-entry-spec/trace.zip"
+      ]
+    },
+    {
+      "run": "recheck",
+      "title": "Browser admin starter preset preserves manual OFF before save",
+      "status": "failed",
+      "durationMs": 14371,
+      "failure": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('switch', { name: 'เปิดเมนู บันทึกด้วยมือ', exact: true })\nExpected: \u001b[32m\"false\"\u001b[39m\nTimeout: 12000ms\nError: element(s) not found\n\n",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/recheck-tests/manual-flag-extended-Brows-ae1ea-rves-manual-OFF-before-save/test-failed-1.png",
+        "/tmp/manual-flag-e2e-20261001/evidence/recheck-tests/manual-flag-extended-Brows-ae1ea-rves-manual-OFF-before-save/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/recheck-tests/manual-flag-extended-Brows-ae1ea-rves-manual-OFF-before-save/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/recheck-tests/manual-flag-extended-Brows-ae1ea-rves-manual-OFF-before-save/trace.zip"
+      ]
+    },
+    {
+      "run": "recheck",
+      "title": "API OFF reviewer can review evidence and confirm an existing expense",
+      "status": "passed",
+      "durationMs": 381,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/recheck-tests/manual-flag-extended-API-O-48449-confirm-an-existing-expense/trace.zip"
+      ]
+    },
+    {
+      "run": "recheck",
+      "title": "Browser lost create response can retry after OFF without duplicate",
+      "status": "failed",
+      "durationMs": 2557,
+      "failure": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  50 | test('API OFF reviewer can review evidence and confirm an existing expense',async({api,request})=>{const row=await json<any>(await api.post(base,{data:{...input(),vendorNameSnapshot:'Synthetic office supplier'}}));const intent=await json<any>(await api.post(`companies/${company}/attachments/upload-intent`,{data:{originalFileName:'manual-flag-'+randomUUID()+'.png',mimeType:'image/png',byteSize:PNG.length,visibility:'INTERNAL'}}));const uploaded=await request.put(intent.upl",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/recheck-tests/manual-flag-extended-Brows-047ce-after-OFF-without-duplicate/test-failed-1.png",
+        "/tmp/manual-flag-e2e-20261001/evidence/recheck-tests/manual-flag-extended-Brows-047ce-after-OFF-without-duplicate/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/recheck-tests/manual-flag-extended-Brows-047ce-after-OFF-without-duplicate/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/recheck-tests/manual-flag-extended-Brows-047ce-after-OFF-without-duplicate/trace.zip"
+      ]
+    },
+    {
+      "run": "OFF regression",
+      "title": "originating upload-only user can save source facts without acquiring finance authority",
+      "status": "passed",
+      "durationMs": 3703,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/receipt-draft-continuity-o-b2c37-acquiring-finance-authority/trace.zip"
+      ]
+    },
+    {
+      "run": "OFF regression",
+      "title": "originating upload-only user can add an unreadable item and save source facts without acquiring finance authority",
+      "status": "passed",
+      "durationMs": 2586,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/receipt-draft-continuity-o-2616e-acquiring-finance-authority/trace.zip"
+      ]
+    },
+    {
+      "run": "OFF regression",
+      "title": "REIMB-01 @smoke reimbursements list renders",
+      "status": "passed",
+      "durationMs": 2391,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/reimbursements-REIMB-—-rei-dbb4c-reimbursements-list-renders/trace.zip"
+      ]
+    },
+    {
+      "run": "OFF regression",
+      "title": "REIMB-02 @p1 creates and submits a reimbursement request",
+      "status": "passed",
+      "durationMs": 1276,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/reimbursements-REIMB-—-rei-c8072-its-a-reimbursement-request/trace.zip"
+      ]
+    },
+    {
+      "run": "OFF regression",
+      "title": "REIMB-04 @p1 rolls a multi-line claim up into the header total",
+      "status": "passed",
+      "durationMs": 170,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/reimbursements-REIMB-—-rei-1647e-im-up-into-the-header-total/trace.zip"
+      ]
+    },
+    {
+      "run": "OFF regression",
+      "title": "REIMB-05 @p2 rejects a claim with no lines",
+      "status": "passed",
+      "durationMs": 32,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/reimbursements-REIMB-—-rei-4ab9d-jects-a-claim-with-no-lines/trace.zip"
+      ]
+    },
+    {
+      "run": "OFF regression",
+      "title": "REIMB-03 @p1 manager approves, owner finance-reviews, and pays throwaway request",
+      "status": "passed",
+      "durationMs": 358,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/off-regression-tests/reimbursements-REIMB-—-rei-ec738--and-pays-throwaway-request/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "numbered manual draft recovers a lost response with the same command",
+      "status": "passed",
+      "durationMs": 4221,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expense-number-save-number-115c1-ponse-with-the-same-command/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "upload staging receives EXP only after deliberate date review and keeps it when OCR date is corrected",
+      "status": "passed",
+      "durationMs": 169,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expense-number-save-upload-8ba8c--when-OCR-date-is-corrected/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "EXP-INPUT @smoke normalizes price and discount zeros while preserving four decimals",
+      "status": "passed",
+      "durationMs": 3101,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-ce948-le-preserving-four-decimals/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "EXP-02 @p1 summary tiles render numeric values",
+      "status": "failed",
+      "durationMs": 13265,
+      "failure": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText(/ค่าใช้จ่ายรวม/)\nExpected: visible\nTimeout: 12000ms\nError: element(s) not found\n\n",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-16427-tiles-render-numeric-values/test-failed-1.png",
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-16427-tiles-render-numeric-values/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-16427-tiles-render-numeric-values/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "EXP-03 @smoke creates draft expense via API and verifies list truth",
+      "status": "passed",
+      "durationMs": 1862,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-41620-API-and-verifies-list-truth/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "EXP-04 @p1 expense detail renders totals and transitions",
+      "status": "failed",
+      "durationMs": 13650,
+      "failure": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByText('ยอดก่อนหักส่วนลด', { exact: true })\nExpected: visible\nTimeout: 12000ms\nError: element(s) not found\n\n",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-4d0e8-ders-totals-and-transitions/test-failed-1.png",
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-4d0e8-ders-totals-and-transitions/error-context.md",
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-4d0e8-ders-totals-and-transitions/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "EXP-04B @smoke ส่งตรวจสอบ lands on the list with the row highlighted and its status shown",
+      "status": "passed",
+      "durationMs": 2490,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-9c428-ighted-and-its-status-shown/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "EXP-04A @p1 cancellation switches to deletion only after success",
+      "status": "passed",
+      "durationMs": 2314,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-7962c-deletion-only-after-success/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "EXP-05 @p1 moves draft through ready and confirmed with API truth",
+      "status": "passed",
+      "durationMs": 428,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-17216-nd-confirmed-with-API-truth/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "EXP-06 @p2 uploads receipt bytes and resolves the preview/download URL",
+      "status": "passed",
+      "durationMs": 189,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-05267-es-the-preview-download-URL/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "EXP-07 @p2 receipt extraction stays reviewable when OCR is not configured",
+      "status": "passed",
+      "durationMs": 190,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-76ee8--when-OCR-is-not-configured/trace.zip"
+      ]
+    },
+    {
+      "run": "ON regression",
+      "title": "EXP-08 @p1 recomputes edited line totals before confirming",
+      "status": "passed",
+      "durationMs": 309,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/on-regression-tests/expenses-EXP-—-expenses-re-7a304-ne-totals-before-confirming/trace.zip"
+      ]
+    },
+    {
+      "run": "baseline selector recheck",
+      "title": "EXP-01 @smoke expenses list renders filters and table surface",
+      "status": "passed",
+      "durationMs": 1492,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/baseline-recheck-tests/expenses-EXP-—-expenses-re-5810d-s-filters-and-table-surface/trace.zip"
+      ]
+    },
+    {
+      "run": "baseline selector recheck",
+      "title": "EXP-09 @p2 confirmed chip filters without client error",
+      "status": "passed",
+      "durationMs": 1447,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/baseline-recheck-tests/expenses-EXP-—-expenses-re-65543-ilters-without-client-error/trace.zip"
+      ]
+    },
+    {
+      "run": "WebKit",
+      "title": "Browser 1440: ON manual create persists and survives reload",
+      "status": "passed",
+      "durationMs": 4064,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-67f2a-ersists-and-survives-reload/trace.zip"
+      ]
+    },
+    {
+      "run": "WebKit",
+      "title": "Browser 1440: OFF closes direct URL and legacy alias",
+      "status": "passed",
+      "durationMs": 2368,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-3a7f0-direct-URL-and-legacy-alias/trace.zip"
+      ]
+    },
+    {
+      "run": "WebKit",
+      "title": "Browser 1440: OFF upload image still creates a readable draft",
+      "status": "passed",
+      "durationMs": 1700,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-75f5a-ll-creates-a-readable-draft/trace.zip"
+      ]
+    },
+    {
+      "run": "WebKit",
+      "title": "Browser 390: ON manual create persists and survives reload",
+      "status": "passed",
+      "durationMs": 2282,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-24b8e-ersists-and-survives-reload/trace.zip"
+      ]
+    },
+    {
+      "run": "WebKit",
+      "title": "Browser 390: OFF closes direct URL and legacy alias",
+      "status": "passed",
+      "durationMs": 1725,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-dc2f3-direct-URL-and-legacy-alias/trace.zip"
+      ]
+    },
+    {
+      "run": "WebKit",
+      "title": "Browser 390: OFF upload image still creates a readable draft",
+      "status": "passed",
+      "durationMs": 1680,
+      "failure": "",
+      "attachments": [
+        "/tmp/manual-flag-e2e-20261001/evidence/webkit-tests/manual-flag-simulation-Bro-82b8c-ll-creates-a-readable-draft/trace.zip"
+      ]
+    }
+  ],
+  "counts": {
+    "failed": 17,
+    "passed": 55
+  }
+}

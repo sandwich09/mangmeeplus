@@ -1,0 +1,58 @@
+[
+  {
+    "enabled": true,
+    "attempt": 1,
+    "status": 400,
+    "message": "Invalid draft idempotency key",
+    "permissions": [
+      "expense.read_related",
+      "expense.read_own",
+      "expense.create",
+      "expense.receipt.upload",
+      "expense.receipt.line_upload",
+      "expense.update",
+      "expense.signature.self_manage"
+    ]
+  },
+  {
+    "enabled": true,
+    "attempt": 2,
+    "status": 400,
+    "message": "Invalid draft idempotency key",
+    "permissions": [
+      "expense.read_related",
+      "expense.read_own",
+      "expense.create",
+      "expense.receipt.upload",
+      "expense.receipt.line_upload",
+      "expense.update",
+      "expense.signature.self_manage"
+    ]
+  },
+  {
+    "enabled": false,
+    "attempt": 1,
+    "status": 400,
+    "message": "Invalid draft idempotency key",
+    "permissions": [
+      "expense.read_related",
+      "expense.read_own",
+      "expense.receipt.upload",
+      "expense.receipt.line_upload",
+      "expense.signature.self_manage"
+    ]
+  },
+  {
+    "enabled": false,
+    "attempt": 2,
+    "status": 400,
+    "message": "Invalid draft idempotency key",
+    "permissions": [
+      "expense.read_related",
+      "expense.read_own",
+      "expense.receipt.upload",
+      "expense.receipt.line_upload",
+      "expense.signature.self_manage"
+    ]
+  }
+]
