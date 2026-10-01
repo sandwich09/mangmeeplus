@@ -607,16 +607,51 @@ describe('decision responses are as hydrated as a GET', () => {
   });
 });
 
-describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
-  function queueRepo(request: any, policy: any = null) {
-    return {
-      findPolicy: async () => policy,
-      listRequests: async () => [request],
-      findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids),
-      getUserDisplayNames: async (_c: string, ids: string[]) => Object.fromEntries(ids.map((id) => [id, `คุณ ${id}`])),
-    } as any;
+function queueRepo(request: any, policy: any = null) {
+  return {
+    findPolicy: async () => policy,
+    listRequests: async () => [request],
+    findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids),
+    getUserDisplayNames: async (_c: string, ids: string[]) => Object.fromEntries(ids.map((id) => [id, `คุณ ${id}`])),
+  } as any;
+}
+
+// Audit B20: a viewer who may only reject was shown อนุมัติ on every queue row and got 403. A row now says what
+// its viewer can do, with the claim detail's own answer, so the hub offers a button only where the endpoint agrees.
+describe('approval queue rows carry what the viewer may do (audit B20)', () => {
+  const frozen = () => baseRequest({ approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['approver-1'] }] });
+  const viewers: Array<[string, () => any, any, { canApprove: boolean; canReject: boolean }]> = [
+    ['holds approve and reject', baseRequest, ctx(), { canApprove: true, canReject: true }],
+    ['holds reject only', baseRequest, ctx({ permissions: ['reimbursement.reject'] }), { canApprove: false, canReject: true }],
+    ['holds approve only', baseRequest, ctx({ permissions: ['reimbursement.approve'] }), { canApprove: true, canReject: false }],
+    // The frozen assignment is the capability: a later role change takes neither button away.
+    ['was assigned the step, then lost both rights', frozen, ctx({ roles: ['STAFF'], permissions: [] }), { canApprove: true, canReject: true }],
+  ];
+
+  for (const [who, claim, viewer, expected] of viewers) {
+    it(`a viewer who ${who} gets exactly the buttons the endpoints accept`, async () => {
+      const rows = await new ListApprovalQueueUseCase(queueRepo(claim())).execute(viewer);
+      assert.deepEqual(rows.map((row) => row.approvalActions), [expected]);
+      // The claim detail answers the same for the same person.
+      assert.deepEqual(await approvalDecisionActions(viewer, claim(), fakeRepo(null)), expected);
+      // Each button the row offers works, and each one it withholds is refused.
+      const approve = approveUC(fakeRepo(claim())).execute(viewer, 'rb-1');
+      if (expected.canApprove) assert.equal((await approve).status, 'FINANCE_REVIEW');
+      else await assert.rejects(approve, /Missing permission: reimbursement\.approve/);
+      const reject = new RejectReimbursementUseCase(fakeRepo(claim()), noopAudit, fakeDetailEvidence as any).execute(viewer, 'rb-1', 'เอกสารไม่ครบ');
+      if (expected.canReject) assert.equal((await reject).status, 'REJECTED');
+      else await assert.rejects(reject, /Missing permission: reimbursement\.reject/);
+    });
   }
 
+  it('lists no row for a viewer who can do neither', async () => {
+    const reader = ctx({ permissions: ['reimbursement.read'] });
+    assert.deepEqual(await new ListApprovalQueueUseCase(queueRepo(baseRequest())).execute(reader), []);
+    assert.deepEqual(await approvalDecisionActions(reader, baseRequest(), fakeRepo(null)), { canApprove: false, canReject: false });
+  });
+});
+
+describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
   it('keeps frozen work in the assignee queue after their role permissions are removed', async () => {
     const assigned = baseRequest({
       approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['approver-1'] }],

@@ -544,8 +544,9 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>
-                            <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>
+                            {/* The server says what this viewer may do with the row, as on the claim page: never guessed from a role or a tab. */}
+                            {r.approvalActions?.canApprove === true && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>}
+                            {r.approvalActions?.canReject === true && <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>}
                           </div>
                         </td>
                       </tr>
@@ -573,8 +574,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`/companies/${companyId}/reimbursements/${r.id}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-approvals-card">ดูรายละเอียด</Link>
-                    <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>อนุมัติ</button>
-                    <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>
+                    {r.approvalActions?.canApprove === true && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>อนุมัติ</button>}
+                    {r.approvalActions?.canReject === true && <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>}
                   </div>
                 </MangmeeCard>
               ))}

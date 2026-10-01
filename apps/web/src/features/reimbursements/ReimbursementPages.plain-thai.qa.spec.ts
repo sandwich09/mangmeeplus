@@ -275,6 +275,24 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
   });
 });
 
+// Audit B20: a viewer who may only reject was offered อนุมัติ on every queue row, and the API answered 403.
+describe('the approval queue offers only what the server says this viewer can do', () => {
+  const row = (approvalActions?: { canApprove: boolean; canReject: boolean }) => ({ ...queueRow, status: 'PENDING_APPROVAL', approvalActions });
+  /** The decision buttons of one queue row: once in the table, once on the phone card. */
+  const decisions = (html: string) => visible(html).filter((text) => text === 'อนุมัติ' || text === 'ปฏิเสธ');
+
+  it('shows อนุมัติ and ปฏิเสธ from the row\'s own approvalActions, never from the viewer\'s role or permissions', () => {
+    assert.deepEqual(decisions(hubTab('approvals', [row({ canApprove: true, canReject: true })])), ['อนุมัติ', 'ปฏิเสธ', 'อนุมัติ', 'ปฏิเสธ']);
+    assert.deepEqual(decisions(hubTab('approvals', [row({ canApprove: false, canReject: true })])), ['ปฏิเสธ', 'ปฏิเสธ']);
+    assert.deepEqual(decisions(hubTab('approvals', [row({ canApprove: true, canReject: false })])), ['อนุมัติ', 'อนุมัติ']);
+    // The viewer here is an OWNER holding reimbursement.approve: a row that says nothing still offers nothing.
+    assert.ok(hubPermissions.includes('reimbursement.approve'));
+    assert.deepEqual(decisions(hubTab('approvals', [row()])), []);
+    // The row stays readable either way.
+    assert.ok(visible(hubTab('approvals', [row({ canApprove: false, canReject: true })])).includes('ดูรายละเอียด'));
+  });
+});
+
 describe('ตั้งค่านโยบาย warns about an approver role that cannot record payment (spec §13.3 F2)', () => {
   const policy = { id: 'policy-1', updatedAt: '2026-10-01T03:00:00.000Z', status: 'ACTIVE', approvalRequiredFromAmount: '1.00', approverMode: 'CUSTOM_ROLE',
     defaultApproverRoles: ['MANAGER', 'CHECKER'], allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy: 'WARN',

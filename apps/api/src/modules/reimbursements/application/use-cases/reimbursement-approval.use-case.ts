@@ -108,40 +108,58 @@ export async function activeStepApprovers(
   ], branchId);
 }
 
+const NO_APPROVAL_ACTIONS = { canApprove: false, canReject: false };
+
+/**
+ * What this viewer may do with the step a claim waits on, from facts the caller has already loaded: which
+ * of the step's named approvers can still act, and whether the claim's policy lets a requester decide their
+ * own claim. The claim detail and every approval-queue row answer through here, so a queue row offers
+ * exactly what the detail, and the approve and reject endpoints, allow.
+ */
+export function pendingApprovalActions(
+  ctx: RequestContext,
+  request: ReimbursementRequestRecord,
+  activeApprovers: Set<string>,
+  allowSelfApproval: boolean,
+): { canApprove: boolean; canReject: boolean; selfApprovalBlocked?: boolean } {
+  if (request.status !== 'PENDING_APPROVAL' || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) return NO_APPROVAL_ACTIONS;
+  const step = currentApprovalStep(request);
+  const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
+  const eligible = isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers);
+  // Assignment resolution already applied the submitted self-approval rule and role exemptions.
+  // Re-evaluating it from a later role would hide a still-actionable task.
+  if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, ctx.userId, allowSelfApproval, ctx.roles)) {
+    // They hold the approval this step waits on, so only the switch stands in the way.
+    const blockedOnlyBySwitch = step?.status === 'PENDING'
+      && ctx.permissions.includes('reimbursement.approve')
+      && (eligible || matchesApproverRole(step.approverRoleSnapshot, ctx.roles));
+    return { ...NO_APPROVAL_ACTIONS, ...(blockedOnlyBySwitch && { selfApprovalBlocked: true }) };
+  }
+  if (!eligible) return NO_APPROVAL_ACTIONS;
+  return {
+    canApprove: assignedBySnapshot || ctx.permissions.includes('reimbursement.approve'),
+    canReject: assignedBySnapshot || ctx.permissions.includes('reimbursement.reject'),
+  };
+}
+
 export async function approvalDecisionActions(
   ctx: RequestContext,
   request: ReimbursementRequestRecord,
   repo: PrismaReimbursementRepository,
 ): Promise<{ canApprove: boolean; canReject: boolean; selfApprovalBlocked?: boolean }> {
-  if (request.status !== 'PENDING_APPROVAL' || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) {
-    return { canApprove: false, canReject: false };
-  }
+  if (request.status !== 'PENDING_APPROVAL' || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) return NO_APPROVAL_ACTIONS;
   const step = currentApprovalStep(request);
   const activeApprovers = await activeStepApprovers(repo, ctx.companyId, step, request.branchId);
-  const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
-  const eligible = isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers);
   // The requester is read on past eligibility: routing leaves them off their own step when
   // self-approval is off, which is exactly the case the journey page has to explain (spec §15).
-  if (!eligible && request.requesterUserId !== ctx.userId) {
-    return { canApprove: false, canReject: false };
+  if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers) && request.requesterUserId !== ctx.userId) {
+    return NO_APPROVAL_ACTIONS;
   }
   const policy = effectivePolicyForRequest(
     request,
     effectivePolicy(await repo.findPolicy(ctx.companyId, null)),
   );
-  if (!assignedBySnapshot
-    && isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
-    // They hold the approval this step waits on, so only the switch stands in the way.
-    const blockedOnlyBySwitch = step?.status === 'PENDING'
-      && ctx.permissions.includes('reimbursement.approve')
-      && (eligible || matchesApproverRole(step.approverRoleSnapshot, ctx.roles));
-    return { canApprove: false, canReject: false, ...(blockedOnlyBySwitch && { selfApprovalBlocked: true }) };
-  }
-  if (!eligible) return { canApprove: false, canReject: false };
-  return {
-    canApprove: assignedBySnapshot || ctx.permissions.includes('reimbursement.approve'),
-    canReject: assignedBySnapshot || ctx.permissions.includes('reimbursement.reject'),
-  };
+  return pendingApprovalActions(ctx, request, activeApprovers, policy.allowSelfApproval);
 }
 
 @Injectable()
@@ -149,7 +167,6 @@ export class ListApprovalQueueUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
 
   async execute(ctx: RequestContext): Promise<ReimbursementApprovalQueueItem[]> {
-    const hasCurrentDecisionPermission = ctx.permissions.some((permission) => permission === 'reimbursement.approve' || permission === 'reimbursement.reject');
     const currentPolicy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
     const rows = await this.repo.listRequests({
       companyId: ctx.companyId,
@@ -178,28 +195,20 @@ export class ListApprovalQueueUseCase {
     // collected above — one names lookup for the whole queue, no per-row query.
     const approverNames = await this.repo.getUserDisplayNames(ctx.companyId, [...assignedIdsByBranch.values()].flat());
     const now = new Date();
-    return rows.filter((request) => {
-      const step = currentApprovalStep(request);
+    return rows.flatMap((request) => {
       const policy = effectivePolicyForRequest(request, currentPolicy);
-      const activeApprovers = activeApproversByBranch.get(request.branchId ?? '') ?? new Set<string>();
-      const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
-      return isBranchInScope(ctx.scopes ?? {}, request.branchId)
-        && (hasCurrentDecisionPermission || assignedBySnapshot)
-        && isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers)
-        // Audit H-18: the queue used to list the viewer's own claims, so the approve button was
-        // offered on a request that answers `self_approval_denied` — and the pending-approval
-        // notification pushed a deep link straight to it. Same predicate and same company-level
-        // policy the approve gate uses, so the two can never disagree about what is offered and
-        // what is allowed; when allowSelfApproval is on, isSelfApproval returns false and nothing
-        // is filtered.
-        // Assignment resolution already applied the submitted self-approval rule and role
-        // exemptions. Re-evaluating it from a later role would hide a still-actionable task.
-        && (assignedBySnapshot
-          || !isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles));
-    }).map((r) => {
-      const policy = effectivePolicyForRequest(r, currentPolicy);
-      const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
-      return { ...toRequestSummary(r, { approverNames }), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours) };
+      // Audit H-18 and B20: a row is listed only for a decision this viewer can make, and it says which. The
+      // queue used to list the viewer's own claims and to offer อนุมัติ to a reject-only viewer; both answered
+      // 403. These are the detail's own actions, on the same submitted policy the approve gate reads.
+      const { canApprove, canReject } = pendingApprovalActions(
+        ctx, request, activeApproversByBranch.get(request.branchId ?? '') ?? new Set<string>(), policy.allowSelfApproval,
+      );
+      if (!canApprove && !canReject) return [];
+      const age = request.submittedAt ? ageHours(request.submittedAt, now) : 0;
+      return [{
+        ...toRequestSummary(request, { approverNames }), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours),
+        approvalActions: { canApprove, canReject },
+      }];
     });
   }
 }

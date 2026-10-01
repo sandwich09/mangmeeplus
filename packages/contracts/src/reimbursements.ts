@@ -624,6 +624,11 @@ export type PaginatedReimbursements = {
 export type ReimbursementApprovalQueueItem = ReimbursementRequestSummary & {
   ageHours: number;
   slaRisk: boolean;
+  /**
+   * What this viewer may do with the row, resolved by the server as on the claim detail: the current
+   * permission, or a frozen assignment. A row is listed only when at least one is true.
+   */
+  approvalActions: { canApprove: boolean; canReject: boolean };
 };
 
 export type ReimbursementFinanceQueueItem = ReimbursementRequestSummary & {
