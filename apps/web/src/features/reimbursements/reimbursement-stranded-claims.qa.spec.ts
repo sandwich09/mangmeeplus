@@ -20,7 +20,7 @@ const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as ty
 const {
   activeJourneyStep, buildClaimTimeline, buildJourneySteps, errorText, queueRowOffersFinanceReview, queueRowOffersPayment, quickPayBlockedNote,
 } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
-const { claimIsBeingCancelled, currentDeskText, reimbursementOwnActions } = require('./reimbursements.model') as typeof import('./reimbursements.model');
+const { claimIsBeingCancelled, claimStatusBadge, currentDeskText, reimbursementOwnActions } = require('./reimbursements.model') as typeof import('./reimbursements.model');
 const reactRuntime = require('react') as typeof React;
 
 const h = React.createElement;
@@ -460,5 +460,58 @@ describe('a claim that was decided and has not moved on says so in the approval 
     for (const code of ['reimbursement_resume_in_progress', 'reimbursement_resume_not_allowed', 'reimbursement_resume_unavailable']) {
       assertPlainThai([errorText(new Error(code))], code);
     }
+  });
+});
+
+// The status badge. A claim the system holds has not left its status yet, and the badge printed that status:
+// "รออนุมัติ" on a claim already approved, "พร้อมจ่าย" on one being cancelled, beside an "อยู่ที่ ระบบ" line and
+// a step note that said otherwise.
+describe('the status badge of a claim the system holds reads รอระบบปรับสถานะ, like its อยู่ที่ line, its step note and LINE', () => {
+  const hub = readFileSync(new URL('./ReimbursementsPages.tsx', import.meta.url), 'utf8');
+  const approver = { userId: 'boss', permissions: APPROVER };
+  const requester = { userId: 'staff', permissions: STAFF };
+  const approvedWaiting = claim({ status: 'PENDING_APPROVAL', approvedAt: undefined, paymentStatus: 'NOT_PAYABLE', currentDesk: { kind: 'SYSTEM' },
+    approvalActions: { canApprove: false, canReject: false }, awaitingSystem: { kind: 'APPROVAL', canResume: true } });
+  const pending = { startedAt: '2026-10-01T02:00:00.000Z', startedByUserId: 'staff', startedByName: 'พิม ใจดี', reason: 'ซื้อซ้ำกับใบก่อน', canResume: true, canWithdraw: true };
+  const cancellingAtPayment = claim({ currentDesk: { kind: 'SYSTEM' }, cancellationPending: true, pendingCancellation: pending });
+  /** Every text on the page that is exactly this label: the badges, never a sentence that merely contains the words. */
+  const exactly = (html: string, label: string) => visible(html).filter((text) => text === label).length;
+
+  it('on the claim page: the header badge and the status row say what the อยู่ที่ line, the step note and the timeline say', () => {
+    for (const viewer of [approver, requester]) {
+      const html = claimPage(approvedWaiting, viewer);
+      assert.equal(exactly(html, 'รออนุมัติ'), 0, 'approved already: nothing on the page says it waits for approval');
+      assert.equal(exactly(html, REIMBURSEMENT_SYSTEM_WAIT_LABEL), 2, 'the header badge and the status row');
+      // One state, in the shared words, in all four places.
+      assert.deepEqual(deskLine(html), [`อยู่ที่ ${REIMBURSEMENT_DESK_LABELS.SYSTEM}`]);
+      assert.ok(stepCard(html).note.includes(REIMBURSEMENT_SYSTEM_WAIT_LABEL));
+      assert.equal(exactly(html, `กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`), 1, 'the timeline row');
+    }
+    const cancelling = claimPage(cancellingAtPayment, requester);
+    assert.deepEqual([exactly(cancelling, 'พร้อมจ่าย'), exactly(cancelling, REIMBURSEMENT_SYSTEM_WAIT_LABEL)], [0, 2]);
+    assert.ok(stepCard(cancelling).note.startsWith(`กำลังยกเลิกคำขอ ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`));
+  });
+
+  it('keeps the status words of every claim that is with a person', () => {
+    const waiting = claim({ status: 'PENDING_APPROVAL', approvedAt: undefined, currentDesk: { kind: 'APPROVER', names: ['สมศรี'] },
+      approvalSteps: [{ id: 'step-1', sequenceNo: 1, status: 'PENDING', approverName: 'สมศรี' }] });
+    assert.deepEqual([exactly(claimPage(waiting, requester), 'รออนุมัติ'), exactly(claimPage(waiting, requester), REIMBURSEMENT_SYSTEM_WAIT_LABEL)], [2, 0]);
+    assert.equal(exactly(claimPage(claim(), requester), 'พร้อมจ่าย'), 2);
+    // Nobody had to approve it and it cannot be paid yet: it is with whoever may record its payment, and keeps its status.
+    const noApproval = claim({ status: 'APPROVED', approvalSteps: [], currentDesk: { kind: 'PAYMENT' }, awaitingSystem: { kind: 'NO_APPROVAL_NEEDED', canResume: false } });
+    assert.deepEqual([exactly(claimPage(noApproval, requester), 'อนุมัติแล้ว'), exactly(claimPage(noApproval, requester), REIMBURSEMENT_SYSTEM_WAIT_LABEL)], [2, 0]);
+    for (const [status, label] of [['DRAFT', 'ร่าง'], ['PENDING_APPROVAL', 'รออนุมัติ'], ['FINANCE_REVIEW', 'รอตรวจสอบการเงิน'], ['READY_FOR_PAYMENT', 'พร้อมจ่าย'], ['PAID', 'จ่ายแล้ว'], ['CANCELLED', 'ยกเลิก']] as const) {
+      assert.equal(claimStatusBadge({ status }).label, label);
+      assert.equal(claimStatusBadge({ status, currentDesk: { kind: 'PAYMENT' } }).label, label);
+    }
+  });
+
+  it('on every list and queue row: the badge reads the row\'s own desk, and the finance queue searches by the words it shows', () => {
+    for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT']) {
+      assert.deepEqual(claimStatusBadge({ status, currentDesk: { kind: 'SYSTEM' } }), { label: REIMBURSEMENT_SYSTEM_WAIT_LABEL, tone: 'amber' }, status);
+    }
+    assert.equal(hub.match(/<StatusBadge status=\{r\.status\} desk=\{r\.currentDesk\} \/>/g)?.length, 5, 'the list, its cards, the approval cards, the finance table and its cards');
+    assert.equal(hub.includes('<StatusBadge status={r.status} />'), false);
+    assert.match(hub, /claimStatusBadge\(r\)\.label,\s+FINANCE_REVIEW_LABELS\[r\.financeReviewStatus\]/);
   });
 });

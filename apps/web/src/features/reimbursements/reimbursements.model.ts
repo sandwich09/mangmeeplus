@@ -1,5 +1,5 @@
 import type { MangmeeTone } from '@/common/components/mangmee';
-import { REIMBURSEMENT_DESK_LABELS, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 
 export const REIMBURSEMENT_CREATE_UNAVAILABLE = 'ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อผู้ดูแลบริษัทเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์';
@@ -52,6 +52,20 @@ export const REQUEST_STATUS_TONES: Record<string, MangmeeTone> = {
   PAID: 'brand',
   VOIDED: 'danger',
 } satisfies Record<string, MangmeeTone>;
+
+/**
+ * The words and colour of a claim's status badge, on a list or queue row and on the claim page alike.
+ *
+ * A claim the system holds has not left its status yet: its approval is decided and not carried out, or it
+ * is being cancelled. The badge used to print that status ("รออนุมัติ" on a claim already approved,
+ * "พร้อมจ่าย" on one being cancelled) beside an "อยู่ที่ ระบบ" line and a step note that said otherwise. It
+ * reads "รอระบบปรับสถานะ" for such a claim: the words of that line, that note and the LINE backlog.
+ */
+export function claimStatusBadge(claim: { status?: string; currentDesk?: { kind?: string } | null } | null | undefined): { label: string; tone: MangmeeTone } {
+  if (claim?.currentDesk?.kind === 'SYSTEM') return { label: REIMBURSEMENT_SYSTEM_WAIT_LABEL, tone: 'amber' };
+  const status = String(claim?.status ?? '');
+  return { label: REQUEST_STATUS_LABELS[status] ?? '—', tone: REQUEST_STATUS_TONES[status] ?? 'slate' };
+}
 
 export const PAYMENT_STATUS_TONES: Record<string, MangmeeTone> = {
   NOT_PAYABLE: 'slate',

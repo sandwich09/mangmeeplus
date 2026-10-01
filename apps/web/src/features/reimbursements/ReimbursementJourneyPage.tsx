@@ -353,7 +353,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       eyebrow={back}
       title={detail.requestNo ?? 'คำขอเบิกฉบับร่าง'}
       description={desk ? `อยู่ที่ ${desk}` : undefined}
-      meta={<StatusBadge status={detail.status} />}
+      meta={<StatusBadge status={detail.status} desk={detail.currentDesk} />}
     >
       <ClaimSummaryCard detail={detail} />
 

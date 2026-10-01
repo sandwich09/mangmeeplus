@@ -27,11 +27,12 @@ import {
   uploadReimbursementPaymentSlip,
 } from './reimbursements.api';
 import {
-  REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
+  PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
   APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
+  claimStatusBadge,
 } from './reimbursements.model';
 import {
   buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
@@ -42,8 +43,10 @@ import {
   PAID_DIFFERENTLY_LABEL, PAYMENT_NO_CLAIM_ACCOUNT, paymentDestinationText, paymentFormPayout, requestedPayout,
 } from './reimbursement-payout.logic';
 
-export function StatusBadge({ status }: { status: string }) {
-  return <MangmeeBadge tone={REQUEST_STATUS_TONES[status] ?? 'slate'}>{REQUEST_STATUS_LABELS[status] ?? '—'}</MangmeeBadge>;
+/** `desk`: the claim's `currentDesk`. A claim the system holds reads "รอระบบปรับสถานะ", not the status it has not left yet. */
+export function StatusBadge({ status, desk }: { status: string; desk?: { kind?: string } | null }) {
+  const badge = claimStatusBadge({ status, currentDesk: desk });
+  return <MangmeeBadge tone={badge.tone}>{badge.label}</MangmeeBadge>;
 }
 export function PaymentBadge({ status }: { status: string }) {
   return <MangmeeBadge tone={PAYMENT_STATUS_TONES[status] ?? 'slate'}>{PAYMENT_STATUS_LABELS[status] ?? '—'}</MangmeeBadge>;
@@ -689,7 +692,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <h4 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h4>
         <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           <Row k="หมวดหมู่" v={categoryText(detail.categoryLabelSnapshot)} />
-          <Row k="สถานะ" v={<StatusBadge status={detail.status} />} />
+          <Row k="สถานะ" v={<StatusBadge status={detail.status} desk={detail.currentDesk} />} />
           <Row k="ตรวจสอบการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus]} />
           {detail.financeReviewedByName && <Row k="ผู้ตรวจการเงิน" v={detail.financeReviewedByName} />}
           <Row k="การจ่าย" v={<PaymentBadge status={detail.paymentStatus} />} />
