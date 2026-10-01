@@ -161,7 +161,7 @@ const WEB_ADDRESS = new RegExp([
   String.raw`(?:\s*(?:ที่|ทาง|ผ่าน))?\s*(?:https?:\/\/|www\.)[^\s)]+`,
   String.raw`(?:\s*(?:ที่|ทาง|ผ่าน))?\s*(?<![@\w.-])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:go\.th|or\.th|co\.th|ac\.th|in\.th|com|org|net)\b(?:\/[^\s)]*)?`,
 ].join('|'), 'giu');
-const NON_BUSINESS_LINE_CHARS = 160;
+const NON_BUSINESS_CHARS = 300;
 
 /** The one line back to the shop (spec §2.1 ง, plan S0 G-06): it names only what this user can do here. */
 export function steerBackLine(permissions: readonly string[], english: boolean): string {
@@ -179,8 +179,8 @@ export function closesWithShopLine(text: string): boolean {
 /**
  * A general answer never keeps the composer's own shop line or a web address. A non-business one is also cut to two
  * short lines with no list, whatever was asked for, and then gets the shop line from code.
- * ponytail: the cut keeps the first two lines that are not a list's heading; a model that follows the two-line rule
- * is never cut, so this only bounds the shape of one that did not.
+ * ponytail: the cut keeps the first two lines that are not a list's heading, within 300 characters; a model that
+ * follows the two-line rule is never cut, so this only bounds the shape of one that did not.
  */
 export function shapeGeneralAnswer(text: string, nonBusiness: boolean, permissions: readonly string[], english: boolean): string {
   const lines = text.replace(WEB_ADDRESS, '').split('\n').map((line) => line.replace(/[ \t]{2,}/gu, ' ').trim());
@@ -190,7 +190,8 @@ export function shapeGeneralAnswer(text: string, nonBusiness: boolean, permissio
   const content = lines.filter(Boolean);
   // A line right before a list item is that list's heading or lead-in ("วัตถุดิบหลัก"); the items carry the answer.
   const kept = content.filter((line, index) => LIST_MARKER.test(line) || !LIST_MARKER.test(content[index + 1] ?? ''));
-  const short = (kept.length ? kept : content).slice(0, 2).map((line) => line.replace(LIST_MARKER, ''))
-    .map((line) => (line.length <= NON_BUSINESS_LINE_CHARS ? line : `${line.slice(0, NON_BUSINESS_LINE_CHARS).replace(/\s+\S*$/u, '')}…`));
-  return [...short, '', steerBackLine(permissions, english)].join('\n');
+  const short = (kept.length ? kept : content).slice(0, 2).map((line) => line.replace(LIST_MARKER, '')).join('\n');
+  const body = short.length <= NON_BUSINESS_CHARS ? short
+    : `${short.slice(0, NON_BUSINESS_CHARS).replace(/\s+\S*$/u, '').replace(/[\s—–,:;(-]+$/u, '')}…`;
+  return `${body}\n\n${steerBackLine(permissions, english)}`;
 }

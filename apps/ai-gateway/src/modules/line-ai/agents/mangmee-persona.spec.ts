@@ -211,8 +211,12 @@ describe('advisor S0: the shape of a general answer', () => {
     const shaped = shapeGeneralAnswer(capital, true, STAFF, false);
     assert.equal(shaped, `${capital}\n\n${STEER}`);
     assert.equal(shapeGeneralAnswer(shaped, true, STAFF, false), shaped);
-    const long = shapeGeneralAnswer(`${'คำตอบยาว '.repeat(40)}`, true, STAFF, false).split('\n')[0]!;
-    assert.ok(long.length <= 161 && long.endsWith('…'), long);
+    // Smoke run 2026-10-01: one sentence of 185 characters naming three films is two short lines on a phone — kept whole.
+    const films = 'แนะนำไม่กี่เรื่องที่สนุกมากนะคะ เช่น Inception (ความฝันซ้อนความฝัน), The Grand Budapest Hotel (ตลกดีมีสไตล์), หรือ Parasite (เกาหลีที่ได้ออสการ์) — แต่ละเรื่องดูได้หลายรอบเลยค่ะ 😊';
+    assert.equal(shapeGeneralAnswer(films, true, STAFF, false), `${films}\n\n${STEER}`);
+    // Longer than that is cut at a word, and never left hanging on a dash.
+    const long = shapeGeneralAnswer(`${'คำตอบยาวมาก '.repeat(24)}— ${'x'.repeat(200)}`, true, STAFF, false).split('\n')[0]!;
+    assert.ok(long.length <= 301 && long.endsWith('คำตอบยาวมาก…'), long);
   });
 
   // G-04, G-11, G-23: the line back to the shop closed business-knowledge answers too.
