@@ -204,7 +204,9 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           // requester alone. With no such person, everyone able to record it.
           preferRecipientPayloadKeys: ['financeReviewerUserId', 'approvedByUserId', 'approverRecipientUserIds'],
           neverPreferRecipientPayloadKeys: ['requesterUserId'],
-          severity: 'critical',
+          // 'action', not 'critical': a critical notice is pushed through a person's quiet hours,
+          // and a claim that has waited two days can wait until morning.
+          severity: 'action',
           titleTemplate: 'ใบเบิกรอจ่ายเงินเกินกำหนด: {{requestNo}}',
           bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,

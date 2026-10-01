@@ -546,7 +546,8 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       const sent = (notify.execute.mock.calls[0] as any).arguments[0];
       assert.deepEqual(sent.recipientUserIds, ['u_approver', 'u_finance']);
       assert.equal(sent.triggerKey, 'workflow.reimbursement_payment_sla_breach');
-      assert.equal(sent.severity, 'critical');
+      // Not 'critical': that severity is pushed through a person's quiet hours.
+      assert.equal(sent.severity, 'action');
       assert.equal(sent.title, 'ใบเบิกรอจ่ายเงินเกินกำหนด: RB-202610-00007');
       assert.equal(sent.body, 'ยอด 250 THB · รอคุณบันทึกการจ่ายเงิน');
       assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements/rb_1');
