@@ -565,6 +565,21 @@ describe('claim form payout line', () => {
     assert.doesNotMatch(renderReimbursementClaimFormSvg(snapshot({ payout: bank })).toString(), /ผู้ตรวจบัญชี/);
   });
 
+  // Spec §10.2: a requester who attested their own account has confirmed it, not checked it. The form
+  // says so in the claim page's words, and does not name them as the account's checker.
+  it('says the requester confirmed their own account instead of naming them as its checker', () => {
+    for (const payout of [bank, promptPay]) {
+      const [account] = payoutBlocks(renderReimbursementClaimFormSvg(snapshot({ payout })).toString())[0]!.lines;
+      for (const artifact of bothRenderings(snapshot({ payout: { ...payout, verifier: { byRequester: true, at: verifier.at } } }))) {
+        assert.deepEqual(payoutBlocks(artifact)[0]!.lines, [account, 'ผู้เบิกยืนยันบัญชีของตนเอง วันที่ 21 ก.ค. 2569']);
+        assert.doesNotMatch(artifact, /ผู้ตรวจบัญชี/);
+      }
+    }
+    // The same Thai day rule as every other date on the form.
+    const late = renderReimbursementClaimFormSvg(snapshot({ payout: { ...bank, verifier: { byRequester: true, at: '2026-07-21T18:30:00.000Z' } } })).toString();
+    assert.equal(payoutBlocks(late)[0]!.lines[1], 'ผู้เบิกยืนยันบัญชีของตนเอง วันที่ 22 ก.ค. 2569');
+  });
+
   it('sits under the requester name and pushes the table down by its own height, leaving the foot of the sheet alone', () => {
     const [plainSingle, plainPages] = bothRenderings(snapshot()) as [string, string];
     for (const [payout, lines] of [[{ method: 'CASH' }, 1], [bank, 1], [{ ...bank, verifier }, 2]] as Array<[ClaimFormPayout, number]>) {

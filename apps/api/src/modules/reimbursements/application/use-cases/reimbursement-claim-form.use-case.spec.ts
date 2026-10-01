@@ -601,6 +601,22 @@ describe('the receiving account on the printed claim form', () => {
     assert.doesNotMatch(svgOf(await world({}, { attested: false }).print(auditor)), /ผู้ตรวจบัญชี/);
   });
 
+  // Spec §10.2: the requester approved their own claim, so the attestation on the account is their own.
+  // The paper must not read as if someone else checked it: it prints the claim page's sentence.
+  it('says the requester confirmed their own account when the attestation is theirs, to every reader', async () => {
+    const ownApproval = { approvalSteps: [{ id: 'st-1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'staff-1', decidedAt, assignedAt: sentAt }] };
+    for (const who of [requester, payer, auditor]) {
+      const own = world(ownApproval);
+      Object.assign(own.tables.destinations[0]!, { verifiedByUserId: 'staff-1' });
+      for (const image of imagesOf(await own.print(who))) {
+        assert.equal(count(image, '>ผู้เบิกยืนยันบัญชีของตนเอง วันที่ 21 ก.ค. 2569<'), 1, who.userId);
+        assert.doesNotMatch(image, /ผู้ตรวจบัญชี/, who.userId);
+      }
+    }
+    // The same account attested by anyone else is a check by that person, named as before.
+    assert.match(svgOf(await world(ownApproval).print(auditor)), />ผู้ตรวจบัญชี มานี ผู้จัดการ วันที่ 21 ก\.ค\. 2569</);
+  });
+
   it('prints the claim own frozen account, never the default account the requester has now', async () => {
     const { print, tables, repo } = world();
     // The requester changed their default after sending the claim.

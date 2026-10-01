@@ -39,7 +39,10 @@ export class PreviewReimbursementClaimFormUseCase {
   async execute(ctx: RequestContext, requestId: string): Promise<ReimbursementClaimFormPreview> {
     const req = await this.repo.findRequestById(ctx.companyId, requestId, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
-    // Same read guard as GET detail — printing exposes nothing the drawer does not.
+    // The claim's branch must be in the reader's scope, and the reader must hold `reimbursement.read`,
+    // or `reimbursement.read_own` on their own claim, or `reimbursement.read_related` and be related to
+    // it. Narrower than GET detail in one case: the detail also admits whoever the pending approval
+    // step waits on after they lost every read permission; the print, like its route, does not.
     await assertCanReadRequest(ctx, req, this.repo);
     // The document number is what makes this a document. A draft never has one,
     // and neither does a claim cancelled straight out of DRAFT — printing either
@@ -124,7 +127,7 @@ export class PreviewReimbursementClaimFormUseCase {
       // The account that payment was confirmed into, from the version the payment itself stored.
       paidIntoVersion === undefined ? undefined : this.repo.listPaymentPayoutDestinations(companyId, req.id, [paidIntoVersion]),
     ]);
-    const payout = claimFormPayout(claimPayout, names);
+    const payout = claimFormPayout(claimPayout, names, req.requesterUserId);
     const paidInto = paidIntoVersion === undefined ? undefined : paymentDestinations?.[paidIntoVersion];
     const signer = (userId: string | undefined, at: Date | undefined, role: ReimbursementClaimSignatureRole): ClaimFormSigner | null =>
       (userId && at
@@ -227,15 +230,18 @@ export class PreviewReimbursementClaimFormUseCase {
 }
 
 /** The claim's masked payout record in the form's terms. Nothing it is given carries the full number. */
-function claimFormPayout(payout: ClaimPayoutRecord | undefined, names: Record<string, string>): ClaimFormPayout | undefined {
+function claimFormPayout(payout: ClaimPayoutRecord | undefined, names: Record<string, string>, requesterUserId: string): ClaimFormPayout | undefined {
   if (payout?.payoutMethod === 'CASH') return { method: 'CASH' };
   // A sent claim paid by transfer always has its frozen row; without one there is no line to print.
   if (payout?.payoutMethod !== 'BANK_TRANSFER' || !payout.payoutKind || !payout.accountName || !payout.accountLast4) return undefined;
+  const at = payout.verifiedAt?.toISOString();
   return {
     method: 'BANK_TRANSFER', kind: payout.payoutKind, bankName: payout.bankName ?? null,
     accountName: payout.accountName, accountLast4: payout.accountLast4,
-    verifier: payout.verifiedByUserId && payout.verifiedAt
-      ? { name: names[payout.verifiedByUserId] ?? payout.verifiedByUserId, at: payout.verifiedAt.toISOString() }
-      : null,
+    // The same test the claim page makes: an attestation by the requester is their own confirmation
+    // (spec §10.2), not a check by someone else, and is printed as such.
+    verifier: !payout.verifiedByUserId || !at ? null
+      : payout.verifiedByUserId === requesterUserId ? { byRequester: true, at }
+        : { name: names[payout.verifiedByUserId] ?? payout.verifiedByUserId, at },
   };
 }
