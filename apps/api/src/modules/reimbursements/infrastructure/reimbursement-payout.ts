@@ -11,7 +11,7 @@
  *    exception is a legacy claim, which froze no account: its payer is shown the requester's current
  *    default (`readLegacyPayoutDefault`) and a payment into it keeps a copy (`confirmPaymentPayout`).
  */
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, type HttpException } from '@nestjs/common';
 import type {
   ReimbursementLegacyPayoutDefault,
   ReimbursementPayoutKind,
@@ -30,6 +30,7 @@ import {
   planSubmitPayout,
   submitPayoutColumns,
   type FrozenPayoutPlan,
+  type PaymentPayoutError,
   type PaymentPayoutPlan,
   type PayoutDestinationVersionRow,
   type SealedPayoutDestination,
@@ -344,6 +345,16 @@ export type PaymentPayoutDestinationRecord = {
   accountName: string;
   accountLast4: string;
 };
+
+/**
+ * How a payer's statement that the claim does not accept is answered. 409, like the payout refusals
+ * of submit and approve: a page opened before the release has no words for these codes, and its text
+ * for a conflict is "load the latest and try again". The guard on the reason is the 400 it is on
+ * every other note that may not carry an account number.
+ */
+export function paymentPayoutRefusal(error: PaymentPayoutError): HttpException {
+  return error === 'note_contains_account_number' ? new BadRequestException(error) : new ConflictException(error);
+}
 
 /** What recording a payment did about its account, for the audit row. Never the number. */
 export type ConfirmedPaymentPayout = {

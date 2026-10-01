@@ -769,7 +769,7 @@ describe('pay step: the payer confirms the account the claim froze', () => {
     for (const methodMismatchReason of ['โอนเข้า 0045671234 แทน', 'บัญชี 004-5-67123-4 ปิดแล้ว', 'พร้อมเพย์ 081 234 5678']) {
       const { req, tables } = transferClaim();
       const repo = fakeRepo(req, { payout: tables });
-      await assert.rejects(() => payStep(repo).uc.execute(ctx(perms), 'rb-1', { ...cash, methodMismatchReason }), refusal('note_contains_account_number'), methodMismatchReason);
+      await assert.rejects(() => payStep(repo).uc.execute(ctx(perms), 'rb-1', { ...cash, methodMismatchReason }), refusal('note_contains_account_number', 400), methodMismatchReason);
       assert.equal(repo.payments.length, 0);
     }
     // The product's own document numbers and an amount in baht are not account numbers.
@@ -2342,7 +2342,7 @@ describe('PrismaReimbursementRepository pay step under the payment lock', () => 
   it('asks a reason for a method the requester did not ask for, and keeps it with the payment alone', async () => {
     const { h } = transferHarness();
     await assert.rejects(() => h.repo.recordPaymentAtomic(atomicPaymentInput), conflict('payment_method_mismatch_reason_required'));
-    await assert.rejects(() => h.repo.recordPaymentAtomic({ ...atomicPaymentInput, payout: { methodMismatchReason: 'โอนเข้า 004-5-67123-4 ไม่ได้' } }), conflict('note_contains_account_number'));
+    await assert.rejects(() => h.repo.recordPaymentAtomic({ ...atomicPaymentInput, payout: { methodMismatchReason: 'โอนเข้า 004-5-67123-4 ไม่ได้' } }), (error: any) => error.getStatus() === 400 && error.message === 'note_contains_account_number');
     nothingWritten(h, 'cash without a usable reason');
 
     const paid = await h.repo.recordPaymentAtomic({ ...atomicPaymentInput, payout: { methodMismatchReason: ' ผู้เบิกมารับเงินสดเอง ', payoutDestinationVersion: 2 } });

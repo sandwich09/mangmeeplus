@@ -88,7 +88,7 @@ import {
 // The payment step's side of the payout (kept as its own imports, apart from the block above).
 import { planPaymentPayout, type PaymentPayoutPlan, type PaymentPayoutStatement } from '../domain/logic/payout-destination.logic';
 import {
-  assertPaymentPayoutUsable, confirmPaymentPayout, readLegacyPayoutDefault, readPaymentPayoutDestinations, readRecordedPaymentPayout,
+  assertPaymentPayoutUsable, confirmPaymentPayout, paymentPayoutRefusal, readLegacyPayoutDefault, readPaymentPayoutDestinations, readRecordedPaymentPayout,
   type ConfirmedPaymentPayout,
 } from './reimbursement-payout';
 import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
@@ -2825,10 +2825,9 @@ export class PrismaReimbursementRepository {
       // Spec §12.3, §12.4, §12.6: the account version the payer was shown is the claim's version NOW,
       // a transfer into the claim's account is confirmed, and a method other than the one asked for
       // has its reason. Decided here, from the row read under the lock, so no account change that
-      // committed before this transaction can slip between the check and the payment. 409 like every
-      // payout refusal: a page opened before the release then says "load the latest".
+      // committed before this transaction can slip between the check and the payment.
       const payoutPlan = planPaymentPayout(request, statement);
-      if ('error' in payoutPlan) throw new ConflictException(payoutPlan.error);
+      if ('error' in payoutPlan) throw paymentPayoutRefusal(payoutPlan.error);
       const slip = data.slipAttachmentId
         ? await this.resolvePaymentSlipLocked(tx, {
           companyId: data.companyId, requestId: data.reimbursementRequestId,

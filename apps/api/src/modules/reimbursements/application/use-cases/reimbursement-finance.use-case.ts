@@ -29,6 +29,7 @@ import {
   redactPayload,
 } from '../../domain/logic/reimbursement.logic';
 import { planPaymentPayout } from '../../domain/logic/payout-destination.logic';
+import { paymentPayoutRefusal } from '../../infrastructure/reimbursement-payout';
 import { paymentSlipAuditMetadata } from './reimbursement-payment-slip.use-case';
 
 async function appendReimbursementOutboxWithinTx(tx: any, input: {
@@ -427,10 +428,8 @@ export class RecordReimbursementPaymentUseCase {
     if (error) throw new UnprocessableEntityException(error);
     // Everything that can refuse the payment is checked before a payment number is reserved: a
     // refusal after that point would burn a number that only a retry with the same key reuses.
-    // The payer's statement about the account is one of them. 409, like the payout refusals of
-    // submit and approve: a page opened before the release has no words for these codes, and its
-    // text for a conflict is "load the latest and try again".
-    if ('error' in payoutPlan) throw new ConflictException(payoutPlan.error);
+    // The payer's statement about the account is one of them.
+    if ('error' in payoutPlan) throw paymentPayoutRefusal(payoutPlan.error);
     if (payoutPlan.payoutDestinationVersion !== undefined || payoutPlan.payoutDefaultToken !== undefined) {
       await this.repo.assertPaymentPayoutUsable(req, payoutPlan);
     }
