@@ -5,7 +5,7 @@ import {
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
-  approverNotReadyHelp, approverPaymentWarning, hubCardFilter, hubList, hubNextPage, NO_HUB_LIST, QUEUE_PAGE_SIZE, withHubPage,
+  approverNotReadyHelp, approverPaymentWarning, hubCardFilter, hubList, hubListStatusText, hubNextPage, NO_HUB_LIST, QUEUE_PAGE_SIZE, withHubPage,
   type HubFilter,
 } from './reimbursements.logic';
 import { currentDeskText } from './reimbursements.model';
@@ -389,6 +389,21 @@ describe('hub buckets', () => {
     for (const row of rows) {
       assert.equal(reimbursementHubBucket({ status: row.status, financeReviewStatus: row.currentDesk?.kind === 'FINANCE' ? 'PENDING' : 'NOT_REQUIRED' }),
         reimbursementHubBucket(row), row.id);
+    }
+  });
+});
+
+// Review 2026-10-01: with a search the server's counts are of what the search found, and the hub says so.
+describe('the line above the hub list', () => {
+  it('says what the numbers count, with a search and without one, in plain Thai', () => {
+    assert.equal(hubListStatusText(54, 54, 'all', false), 'ทั้งหมด 54 รายการ');
+    assert.equal(hubListStatusText(6, 54, 'payment', false), 'พบ 6 จาก 54 รายการ');
+    const hint = 'ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น';
+    assert.equal(hubListStatusText(12, 12, 'all', true), `พบ 12 รายการที่ตรงกับคำค้น · ${hint}`);
+    assert.equal(hubListStatusText(3, 12, 'payment', true), `พบ 3 จาก 12 รายการที่ตรงกับคำค้น · ${hint}`);
+    assert.equal(hubListStatusText(0, 0, 'all', true), `พบ 0 รายการที่ตรงกับคำค้น · ${hint}`);
+    for (const filter of ['all', 'draft', 'review', 'payment', 'paid', 'closed'] as const) {
+      for (const searching of [true, false]) assert.doesNotMatch(hubListStatusText(1, 2, filter, searching), /[A-Za-z]/, `${filter} ${searching}`);
     }
   });
 });
