@@ -185,6 +185,21 @@ jobs:
             src/modules/expenses/expense-capture-handoff.pg.spec.ts
           pnpm --filter @watchdog-bms/api exec tsx --test \
             src/modules/expenses/expense-capture-certificate.pg.spec.ts
+      # The claim (reimbursement) proofs that only a real database can give: an edit and a submit that cannot
+      # both commit, the payment slip's exclusivity and its races, a void against a bank match in both orders,
+      # the hub's counts over every page and scope, the slip-free receipt picker, the one reminder task.
+      # The unit job in ci.yml has no database, so every case of
+      # `prisma-reimbursement.repository.draft-submit-race.spec.ts` skips there (the `pretest` script lists it).
+      # Here the gate is REQUIRED: with no database to reach the run fails instead of skipping.
+      - name: Reimbursement claim proofs against PostgreSQL
+        env:
+          PGPASSWORD: watchdog_ci
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_reimbursement_ci
+          REIMBURSEMENT_PG_GATE_REQUIRED: 'true'
+        run: |
+          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_reimbursement_ci'
+          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
+          pnpm --filter @watchdog-bms/api run test:reimbursement-compatibility
 
   billing-integration:
     name: Billing Integration (${{ matrix.suite }})

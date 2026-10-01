@@ -360,6 +360,10 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
 
   it('a stale submit rolls back candidates and numbering, then retry uses the unconsumed number', async (t) => {
     if (!reachable) return t.skip('no database reachable');
+    // The number sequence row exists once a submit has committed. The race test above usually leaves one, but not
+    // when the edit won every one of its rounds, and this test then failed on the read below. One claim is sent
+    // here first, so the test stands on its own now that CI runs this file against a database.
+    await repos[0]!.submitDraftAtomic(submitInput(await createDraft('stale-number-seed')));
     const initial = await createDraft('stale-number');
     const sequenceBefore = await clients[0]!.documentSequence.findUniqueOrThrow({
       where: { companyId_branchScopeKey_documentType_periodKey: {
