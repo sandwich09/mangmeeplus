@@ -1,171 +1,224 @@
 # Plan: สวิตช์ทางเข้า manual expense บนเว็บ
 
-วันที่: 2026-10-01
+วันที่: 2026-10-01 · แก้ตาม spec v3.0
 
-Status: **READY FOR IMPLEMENTATION — ยังไม่เริ่มแก้โค้ด**
+Status: **PROPOSAL — รอเจ้าของยืนยันข้อเสนอ D1–D8 ใน spec §1.2; ยังไม่เริ่มแก้โค้ด**
 
-Source of truth: [Spec v2.0](../specs/manual-expense-web-entry-flag-spec-th.md) · [Audit](../research/manual-expense-web-entry-flag-audit-2026-10-01-th.md) · [Memory](../agent-memory/manual-expense-web-entry-flag.md)
+Source of truth: [Spec v3.0](../specs/manual-expense-web-entry-flag-spec-th.md) · [รีวิวอิสระ](../research/manual-expense-web-entry-flag-review-2026-10-01-th.md) · [Memory](../agent-memory/manual-expense-web-entry-flag.md) · [บั๊กที่แก้แยก](../research/manual-expense-current-code-bugs-2026-10-01-th.md)
+
+แผนนี้เขียนตามข้อเสนอ D1–D8 ถ้าเจ้าของเลือกทางเลือกข้อใด ให้แก้ spec ตามคอลัมน์ “หัวข้อที่ต้องแก้” ก่อน แล้วจึงแก้แผนนี้ ถ้าเลือกทางเลือกของ D1 (เป็น key ใน catalog) แผนนี้ใช้ไม่ได้ทั้งฉบับ ต้องเขียนใหม่จาก spec ภาคผนวก B
 
 ## 1. Scope lock ก่อนเริ่ม
 
-Owner decision ล่าสุด: เพิ่ม flag ย่อยใต้บันทึกด้วยมือ ซ่อนทางเข้า menu และให้เบื้องหลังทำงานเหมือนเดิม
-
-- เปลี่ยนเฉพาะการรับเข้าหน้า `/expenses/manual` และลิงก์ที่พาไปหน้านี้
-- **อย่า implement ข้อเสนอ audit เก่าที่ตัด `expense.create`, ปิด API หรือปิด wizard**
-- เพิ่ม `expenses.manual.web_entry` (permissionKeys ว่าง); คง `expenses.manual` และ mapping create/update เดิมทุกประการ
-- ไม่รวมการแก้ delete/LINE หลังบ้านใน switch diff; เก็บ F02/F03 เป็น follow-up แยกตาม spec §11–12
-- ไม่แก้ `package.json`, ไม่เพิ่ม dependency, ไม่เปลี่ยน flag ใน environment ระหว่างพัฒนา
+- เริ่มได้เมื่อเจ้าของยืนยัน D1–D8 และบันทึกวันที่ยืนยันใน memory แล้วเท่านั้น
+- เปลี่ยนเฉพาะสี่กลุ่ม: ที่เก็บค่าตั้งรายร้านกับ command ของผู้ดูแล, field เดียวใน `/auth/me`, helper/gate/ทางเข้าฝั่งเว็บ และสวิตช์ในหน้าผู้ดูแล
+- **ห้ามแก้** `packages/contracts/src/feature-entitlements.ts`, `menu-entitlements.ts`, `SetPartnerFeaturesUseCase`, โมดูล billing, onboarding, `normalize-entitlements`, โมดูล LINE, `apps/ai-gateway`, expense guards และ expense use cases ถ้าพบว่าจำเป็นต้องแก้ไฟล์กลุ่มนี้ ให้หยุดและถามก่อน เพราะแปลว่าออกนอก spec
+- ไม่รวมการแก้บั๊ก B1, B3, B4 ใน[เอกสารบั๊กแยก](../research/manual-expense-current-code-bugs-2026-10-01-th.md)
+- ไม่เพิ่ม environment switch, permission, pack, SKU หรือ entitlement key
+- ไม่แก้ `package.json` เว้นแต่เป็นการเปลี่ยน dependency (งานนี้ไม่มี) ดูข้อยกเว้นเรื่องการลงทะเบียน spec ใน §4
 - ก่อน code edits อ่าน ponytail full จาก `.agents/skills/ponytail/SKILL.md` ใน checkout นี้ (path `/Users/spare058/WatchDog-BMS/...` ใน instructions เก่าเป็น stale path)
-- `apps/web/AGENTS.md` กำหนดให้อ่าน Next.js docs ที่ติดตั้งจริงก่อนเขียน web code
+- `apps/web/AGENTS.md` กำหนดให้อ่าน Next.js docs ที่ติดตั้งจริงก่อนเขียน web code หัวข้อที่เกี่ยวคือ `use-router` (router.refresh), client cache และ `staleTimes`
 - ไม่มี requirement ให้ใช้ legacy role agents หรือ legacy role-gate templates
 
 ## 2. File/change inventory
 
 | กลุ่ม | Files / symbols หลัก | งาน |
 | --- | --- | --- |
-| Contracts | `packages/contracts/src/feature-entitlements.ts`, `index.ts` | New entry leaf + approved key, preserve old manual permission mapping, additive context field |
-| Parent permission tests | `apps/api/src/modules/employee-access/domain/logic/feature-gate.logic.spec.ts`, `menu-entitlement-binding.spec.ts` | Assert permission invariance for NEW key; old manual and parent still gate |
-| Auth propagation | `auth/domain/models/request-context.model.ts`, `application/use-cases/resolve-request-context.use-case.ts`, `presentation/auth.controller.ts` | ส่ง resolver field ถึง auth/me |
-| Web context | `common/models/web-session.model.ts`, `features/web-core-workspace/workspace-scope.api.ts`, `WorkspaceLayout.tsx` | Type, fingerprint, feature-only revalidation และไม่ทิ้ง admitted form |
-| Manual entry helper/gate | `features/expenses/` และ `app/(workspace)/companies/[companyId]/expenses/manual/page.tsx` | Helper เล็ก, dedicated admission; preserve mounted state |
-| Nav/list | `web-core-workspace.logic.ts`, `ExpensesPages.tsx`, route page prop chains | Gate entry; keep caps.canCreate authority semantics |
-| Adjacent links | `IncomeExpenseLedgerPage.tsx`, `expenses-guide.content.ts`, `ai-suggestions.logic.ts`, callers, `TransactionTaxLineSelector.tsx` | ใช้ availability เดียวกัน; direct-return route ผ่าน gate |
-| Admin | `PartnerDetailPage.tsx`, `system-partners.logic.ts` | Nested child switch, no extra nav node; preserve new entry choice in preset/billing/parent transitions |
-| Separate follow-up only | `expenses/presentation/http/expense.controller.ts` | F02; no controller edits in entry-switch diff |
-| Separate follow-up only | `expenses/application/use-cases/expense-document.use-case.ts` + tests | F03; no LINE key change in entry-switch diff |
-| Regression only by default | billing/reimbursements/capture/ledger/tax/LINE edit modules | ไม่แก้ production source ถ้า focused checks ไม่ชี้ defect ใน scope |
+| Schema | `apps/api/prisma/schema.prisma`, migration ใหม่หนึ่งรายการใต้ `apps/api/prisma/migrations/` | model ค่าตั้งรายร้าน (spec §5.1) `CREATE TABLE` อย่างเดียว |
+| Contracts | `packages/contracts/src/partner-management.ts` | DTO ของค่าตั้งใน `PartnerCompanyDetailDto` และ body/result ของ command |
+| Admin API | use case ใหม่ข้าง `set-partner-ocr-config.use-case.ts`, `presentation/http/partner.controller.ts`, `get-partner-detail.use-case.ts`, `system-partner-management.module.ts` | command ตาม spec §5.3 และคืนค่าในรายละเอียดร้าน |
+| Auth | `auth/presentation/auth.controller.ts` (`me`) | เพิ่ม `manualExpenseWebEntry` อ่านผ่าน `PrismaService` ที่ controller มีอยู่แล้ว ไม่แก้ `auth.module.ts`, `auth.guard.ts`, resolver หรือ `RequestContext` |
+| Web session | `common/models/web-session.model.ts`, `features/web-core-workspace/workspace-scope.api.ts` | type ของ field และ fingerprint |
+| Helper / gate | ไฟล์ใหม่ใน `features/expenses/` (ชื่อเสนอ `manual-expense-entry.logic.ts` และ gate component), `app/(workspace)/companies/[companyId]/expenses/manual/page.tsx`, `ExpensesPages.tsx` | predicate เดียว และ admission ตาม spec §7 |
+| ทางเข้า | `web-core-workspace.logic.ts` (`buildNavItems`), `WorkspaceLayout.tsx`, `ExpensesPages.tsx` (`ExpenseListPage`), `IncomeExpenseLedgerPage.tsx`, `ai-suggestions.logic.ts` กับ page ที่เรียก | ใช้ helper เดียวกันตาม spec §9.1 |
+| คู่มือ | ไฟล์ใหม่ใน `features/user-guide/` สำหรับแปลงผลลัพธ์, `app/(workspace)/companies/[companyId]/user-guide/expenses/page.tsx` | ซ่อนปุ่มและใส่หมายเหตุ โดยไม่แก้ `expenses-guide.content.ts` |
+| หน้าผู้ดูแล | `features/system-partners/PartnerDetailPage.tsx`, `system-partners.api.ts` | สวิตช์ย่อยใต้แถว “บันทึกด้วยมือ” บันทึกแยกจากชุดสิทธิ์ |
+| ข้อความ | `common/i18n/workspace-dictionary.ts` (ถ้าใช้ dictionary) | ข้อความตาม spec §8 ทั้งไทยและอังกฤษถ้าคีย์ข้างเคียงมีสองภาษา |
 
 ทุก path กลุ่ม API ที่ย่อเริ่มจาก `apps/api/src/modules/`; web เริ่มจาก `apps/web/src/` ยกเว้น `app/` ซึ่งอยู่ที่ `apps/web/app/`
 
+ไฟล์ที่ไม่ต้องแก้ และมีขั้นตอนเพิ่มถ้าถูกแก้
+
+| ไฟล์ | เหตุผล | ถ้าจำเป็นต้องแก้ |
+| --- | --- | --- |
+| `apps/web/src/common/auth/server-session.ts`, `session-gate.logic.ts`, `apps/web/app/(workspace)/companies/[companyId]/layout.tsx`, `apps/api/src/modules/auth/presentation/auth.guard.ts`, `auth.module.ts` | ถูกตรึงโดย `infra/security/validate-production-maintenance-release.sh` และงานนี้ไม่ต้องใช้ (`fetchServerSession` ส่ง JSON ของ `/auth/me` ผ่านอยู่แล้ว) | ทำตาม §4 แถว “ไฟล์ที่ถูกตรึงสำหรับ maintenance” |
+| `apps/web/src/features/user-guide/expenses-guide.content.ts` | ถูกตรึง hash โดยชุดคำตอบ LINE | ทำตาม §4 แถว “ไฟล์คู่มือ” |
+| `packages/contracts/src/feature-entitlements.ts`, `menu-entitlements.ts` และไฟล์ LINE | อยู่ใน W00 manifest และงานนี้ห้ามแก้ | หยุดและถามก่อน (§1) |
+
 ## 3. Implementation sequence และ checkpoint
 
-### P0 — ตรวจ candidate และบันทึกฐาน
+### P0 — เริ่มจาก develop ล่าสุดและตรวจซ้ำ
 
-- [ ] อ่าน spec ทั้งฉบับและ task memory
-- [ ] ตรวจ working tree; มี unrelated in-progress changes ให้เก็บไว้ ไม่ revert/format ทับ
-- [ ] ตรวจ callers ของ `CreateExpenseDraftUseCase`, `applyPreset`, `buildNavItems`, session fingerprint และทุกลิงก์ manual อีกครั้ง
-- [ ] บันทึก candidate SHA, dirty-file scope, baseline command/results
-- [ ] ยืนยัน source/dist ของ contracts ตรงกันก่อนใช้ web test results; build contracts ผ่าน script เดิมหากจำเป็น
+- [ ] ยืนยันว่าเจ้าของตอบ D1–D8 แล้ว และ spec/plan/memory สะท้อนคำตอบ
+- [ ] สร้าง worktree ใหม่จาก `origin/develop` ล่าสุด ไม่ใช้ checkout ร่วม บันทึก SHA
+- [ ] ตรวจ F01–F13 ใน spec §3 ซ้ำที่ SHA นั้นทีละข้อด้วยชื่อ symbol ถ้าข้อใดไม่ตรง ให้แก้ spec และ plan ก่อนเขียนโค้ด
+- [ ] ตรวจทางเข้าใน spec §9 ซ้ำด้วยการค้น `expenses/manual` ทั้ง `apps/web` ถ้าพบจุดใหม่ให้เพิ่มใน spec ก่อน
+- [ ] รัน baseline ใน §4 และบันทึกจำนวน test ที่ผ่าน
+- [ ] ยืนยันสามสถานะฐาน: `node infra/security/sync-production-maintenance-release-pins.mjs --check` ได้ `status=current`, `approved-knowledge.spec.ts` เขียว, `line-ai-capability-manifest.spec.ts` เขียว
+- [ ] ยืนยัน source/dist ของ contracts ตรงกันก่อนใช้ผล web test
 
-Exit: ขอบเขตและ baseline ตรวจซ้ำได้ ไม่มี code edit นอก inventory โดยไม่มีเหตุ
+Exit: ขอบเขตและ baseline ตรวจซ้ำได้ที่ commit เริ่มงาน ไม่มีข้อค้นพบใดอ้างฐานเก่า
 
-### P1 — New key และ session contract
+### P1 — ที่เก็บ, command และรายละเอียดร้าน
 
-- [ ] เพิ่ม flat catalog leaf `expenses.manual.web_entry` โดยคง definition ของ `expenses.manual`; ไม่มี owned permissions/pack/SKU/nav node ใหม่
-- [ ] ตรวจ approved keys, absent-row inheritance, onboarding/preset default และไม่สร้าง recursive feature engine
-- [ ] Forward `ResolvedAccess.entitledFeatureKeys` ผ่าน API/shared RequestContext และ `/auth/me`
-- [ ] Update WebSession/MyContext/fixtures อย่างชัดเจน; array/null/unknown semantics ตาม spec §6
-- [ ] Add one pure manual-entry helper; `expense.create` เป็นเงื่อนไขจำเป็น แต่ไม่เพียงพอ
-- [ ] Include normalized feature snapshot ใน access fingerprint; ทดสอบ feature-only diff, reordered array, null/absent และ tenant switch
-- [ ] ไม่เพิ่ม query ต่อ menu/CTA, ไม่แตะ JWT/localStorage authority
+- [ ] เพิ่ม model และ migration แบบ additive ตรวจด้วย `prisma validate` และ generate client
+- [ ] เขียน use case ตามรูปแบบ `SetPartnerOcrConfigUseCase`: ค่าเท่าเดิมเป็น no-op, version ไม่ตรงได้ 409, ร้านที่ล็อกถูกปฏิเสธ, upsert พร้อม audit ใน transaction เดียว
+- [ ] เพิ่ม endpoint ใต้ partner controller ด้วย `system.partner_feature.manage`
+- [ ] `get-partner-detail` คืนค่าและ version เสมอ ร้านไม่มีแถวได้ค่าแสดงกับ version 0
+- [ ] ไม่ import หรือเรียกสิ่งใดจากโมดูล entitlement, billing หรือ LINE ใน use case ใหม่
 
-Exit: key/field/helper ถูกต้อง; old permission mapping คงเดิมและจะไม่ถูกถอนใน phase ใด
+Exit: ผู้ดูแลตั้งค่าได้ผ่าน API ไม่มีตาราง entitlement ใดถูกเขียน
 
-### P2 — Web admission, all entry points และฟอร์มที่เปิดอยู่
+### P2 — `/auth/me` และ session ฝั่งเว็บ
 
-- [ ] ต่อ nav/list/ledger/guide/AI guidance กับ helper และ prop chain ที่มีอยู่
-- [ ] Dedicated route/hub manual gate รองรับ direct URL, query alias และ tax return
-- [ ] Gate state keyed user/company/mount; OFF ใหม่ไม่ unmount form ที่รับเข้าแล้ว
-- [ ] Revalidation ใช้ poll/focus เดิม; ทดสอบ `router.refresh` ไม่ reset form/file/save key
-- [ ] ลด stale prefetch ที่ dedicated links; Back/Forward ก่อน admission ต้องตรวจ context ล่าสุด
-- [ ] ไม่มีการเอา entry bool ไปทับ `caps.canCreate` หรือ gate wizard/upload/shared API
-- [ ] Thai copy + accessibility + mobile และ retry/error states
+- [ ] `me()` คืน `manualExpenseWebEntry` ของบริษัทใน context ร้านไม่มีแถวได้ true
+- [ ] เพิ่ม field ใน `WebSession` และ `MyContext` แบบ optional
+- [ ] เพิ่ม helper `canOpenManualWeb` ตาม spec §6.2 ค่าหายถือว่าแสดง
+- [ ] เพิ่ม boolean ใน `accessContextFingerprint` เท่านั้น
+- [ ] ไม่แตะ JWT, localStorage, resolver หรือ `RequestContext`
 
-Exit: OFF admission ปิดครบ ข้อมูลที่ผู้ใช้กำลังกรอกยังอยู่ และ ON กลับเข้าหน้าได้โดยไม่ต้อง relogin
+Exit: เว็บรู้ค่าของร้าน และแท็บที่เปิดค้างปรับเมนูในรอบ focus/poll เดิม
 
-### P3 — Admin child switch, presets และ billing
+### P3 — Gate, ทางเข้า และคู่มือ
 
-- [ ] Render switch ใหม่ใต้ manual row เดิม; ไม่เพิ่ม sibling navigation item/route/menu card
-- [ ] Parent/manual OFF แสดง stored entry choice แบบ disabled; ไม่ overwrite preference
-- [ ] Admin preview/copy ระบุทางเข้าเว็บ; key เดิมยังมี semantics เดิม
-- [ ] `applyPreset`, bulk/group toggles, parent off/on รักษา explicit/pending new-key choice
-- [ ] Billing renewal/conversion รักษา adminOverrideKeys สำหรับ key ใหม่; missing default ไม่ถูกเขียน false จาก preset list เก่า
-- [ ] Onboarding/default package มี new key ON ตาม compatibility; existing absent row ไม่ต้อง backfill
-- [ ] Command/CAS/replay/payload conflict/audit/normalization/inactive controls ยังครบ
+- [ ] gate ครอบเฉพาะ `ManualExpensePanel` ตามกติกา spec §7.1: รับเข้าแล้วจำผล ไม่ถอนเมื่อ prop เปลี่ยน
+- [ ] server page ส่งผลของ helper เป็น prop และ render gate กับฟอร์มเสมอ
+- [ ] ต่อ nav, ปุ่มหน้ารายการ, ledger (ปุ่ม, การ์ด, empty state), AI แนะนำ กับ helper ตาม prop chain ที่มีอยู่
+- [ ] แปลงผลลัพธ์ของ `buildExpensesGuide` ในไฟล์ใหม่: ตัดปุ่มของหัวข้อ `manual` และเพิ่มหมายเหตุ ไม่แก้ไฟล์ที่ถูกตรึง
+- [ ] ข้อความตาม spec §8 รวมสถานะที่ไม่มีปุ่มให้แสดง, accessibility และ 390px
+- [ ] ไม่เอาผลของ helper ไปทับ `caps.canCreate` หรือ gate wizard/upload/shared API
 
-Exit: admin ปิดเฉพาะ entry ได้ ไม่มี permission/feature อื่นเปลี่ยนโดยแฝง
+Exit: ซ่อนแล้วทางเข้าใน spec §9.1 หายครบ ฟอร์มที่กรอกค้างยังอยู่ และแสดงกลับได้โดยไม่ต้อง login ใหม่
 
-### P4 — Regression boundaries และ known backend bugs
+### P4 — หน้าผู้ดูแล
 
-- [ ] เทียบ full permission set ทุกบทบาทเมื่อ NEW key ON/OFF/ON โดยตรึง key เดิมไว้
-- [ ] ทดสอบ old manual OFF และ parent OFF ว่ายังถอน authority เดิม; new key ON ไม่คืนสิทธิ์
-- [ ] API create/update/delete/reviewer-ready, OCR/source draft, wizard และ reimbursement ให้ผลเดิมก่อน/หลัง new-key toggle
-- [ ] เก็บ F02 DELETE mismatch และ F03 LINE invalid key เป็น known baseline แยก; ไม่แก้หลังบ้านใน switch diff
-- [ ] ห้ามนับ LINE mock-success เป็น proof; real composed LINE flow ปัจจุบันต้องบันทึก 400 ตามที่เกิดจริง
-- [ ] หากแยกงานแก้ F02/F03 ภายหลัง ให้ใช้ spec §11–12 และหลักฐาน E2E รอบนี้เป็น red→green; ไม่ปิด issue จากงาน visibility
+- [ ] แสดงสวิตช์ใต้แถว “บันทึกด้วยมือ” ไม่เพิ่มแถวเมนู, route หรือ navigation item
+- [ ] บันทึกผ่าน command ใหม่ทันทีหลังยืนยัน ไม่อยู่ใน pending ของชุดสิทธิ์ ไม่ผ่าน `toggleSubmenu`, `applyPreset` หรือปุ่ม “ตรวจสอบและบันทึก”
+- [ ] กดไม่ได้เมื่อ `expenses` หรือ `expenses.manual` ที่บันทึกแล้วปิดอยู่ แสดงค่าที่เก็บไว้
+- [ ] ข้อความยืนยันก่อนซ่อน และคำเตือนเพิ่มเมื่อ `expenses.upload` ของร้านปิดอยู่
+- [ ] 409 แสดงข้อความให้โหลดใหม่ และโหลดรายละเอียดร้านใหม่
 
-Exit: switch ไม่สร้าง backend regression และรายงาน known bugs ตรงไปตรงมา
+Exit: ผู้ดูแลซ่อนและแสดงเมนูให้ร้านเดิมได้ โดยรายการเปลี่ยนแปลงของชุดสิทธิ์ไม่ขยับ
 
-### P5 — Integration/browser/database evidence
+### P5 — Invariants และ regression
 
-- [ ] ทำ acceptance matrix ด้านล่างใน test tenant/local database ที่ตั้งไว้สำหรับทดสอบ
-- [ ] ตรวจ duplicate prevention/transaction replay ด้วย PostgreSQL suite เดิมที่เกี่ยวข้อง
-- [ ] Browser desktop/mobile; admin session แยกจาก staff/reviewer เพื่อพิสูจน์ refresh หลังเปลี่ยน flag
-- [ ] Capture groups, substitute wizard, reimbursement projections, upload-without-OCR, ledger/tax/report effects ครบ
-- [ ] บันทึก commands/results และข้อจำกัดจริงใน memory; no silent skip
-- [ ] Update canonical docs ที่ยังอธิบาย permission mapping เดิมหลัง implementation ผ่าน
+- [ ] `git diff --stat` เทียบ commit เริ่มงาน: ไม่มีไฟล์ในรายการห้ามแก้ของ §1 และ §2
+- [ ] permissions และ `entitledFeatureKeys` ของ `/auth/me` เท่าเดิมก่อนและหลังสลับค่า สำหรับทุกบทบาทใน `ROLE_GRANTS` และทุกเทมเพลตใน `ROLE_TEMPLATES`
+- [ ] สลับค่าแล้ว `CompanyEntitlementSet.setVersion` และ `billingFeaturePlan().plan.sourceHash` ของร้านไม่เปลี่ยน
+- [ ] สลับค่าแล้วแถว `AiConversation`, `AiTurn`, `LineIntakePendingMedia`, `LineDeliveryPlan` ของร้านไม่เปลี่ยน
+- [ ] สร้างร้านใหม่ผ่าน onboarding แล้วไม่มีแถวค่าตั้ง และ `/auth/me` คืน true
+- [ ] API create/update/delete/mark-ready, OCR/source draft, wizard และ reimbursement ให้ผลเดิมก่อนและหลังสลับค่า
+- [ ] e2e เดิมที่เปิดหน้า manual ผ่านโดยไม่แก้
+- [ ] ตรวจสามสถานะฐานของ P0 ซ้ำ ต้องยังเขียวและ `status=current`
 
-Exit: AC01–AC20 มี evidence mapping; ยังไม่ถือว่า live release สำเร็จจนผ่าน deployment protocol
+Exit: งานนี้ไม่สร้าง regression นอกหน้าจอ และพิสูจน์ได้ว่าไม่แตะเงิน สิทธิ์ และ LINE
 
-## 4. Focused verification commands
+### P6 — Integration/browser/database evidence และ release handoff
 
-คำสั่งต่อไปนี้เป็น **แผนสำหรับ implementation candidate** ไม่ใช่ผลรันงานเอกสาร และไม่ต้องเพิ่ม script ใน package.json
+- [ ] ทำ acceptance matrix ใน §5 ใน test tenant/local database ที่ตั้งไว้สำหรับทดสอบ
+- [ ] Browser desktop และ 390px โดย session ของผู้ดูแลแยกจากพนักงาน เพื่อพิสูจน์ refresh หลังสลับค่า
+- [ ] บันทึก commands/results และข้อจำกัดจริงใน memory ไม่มี silent skip
+- [ ] เขียน e2e ใหม่ใต้ `e2e/` โดยสลับค่าตั้งใหม่ ไม่นำ harness ใน `docs/evidence` มาใช้
+- [ ] ปรับเอกสารหลักที่อ้างพฤติกรรมนี้ (§6)
 
-API จาก `apps/api`:
+Exit: AC01–AC20 มี evidence mapping ยังไม่ถือว่า live release สำเร็จจนผ่าน deployment protocol
+
+## 4. Verification และขั้นตอนเพิ่มเมื่อแตะไฟล์บางกลุ่ม
+
+คำสั่งต่อไปนี้เป็น **แผนสำหรับ implementation candidate** ไม่ใช่ผลรันงานเอกสาร
+
+Baseline และ regression จาก `apps/api`:
 
 ```sh
-pnpm exec tsx --test src/modules/employee-access/domain/logic/feature-gate.logic.spec.ts src/modules/employee-access/domain/logic/menu-entitlement-binding.spec.ts src/modules/employee-access/application/entitlement.helper.spec.ts src/modules/access-control/permission-resolver.spec.ts src/modules/auth/presentation/auth.controller.spec.ts
-pnpm exec tsx --test src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.spec.ts src/modules/billing/application/billing-feature-entitlements.spec.ts
-pnpm exec tsx --test src/modules/expenses/application/use-cases/delete-expense.use-case.spec.ts src/modules/expenses/application/use-cases/expense-document.use-case.spec.ts src/modules/expenses/application/use-cases/expense-draft-concurrency.use-case.spec.ts src/modules/expenses/application/expense-launch-gate.spec.ts
-pnpm exec tsx --test src/modules/expenses/application/use-cases/line-correction.use-case.spec.ts src/modules/expenses/application/use-cases/line-draft-update.security.spec.ts src/modules/expenses/application/use-cases/expense-capture-handoff.use-case.spec.ts src/modules/reimbursements/application/services/materialize-claim-expenses.service.spec.ts
+pnpm exec tsx --test src/modules/auth/presentation/auth.controller.spec.ts src/modules/system-partner-management/presentation/http/partner.controller.spec.ts src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.spec.ts src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.spec.ts
+pnpm exec tsx --test src/modules/employee-access/domain/logic/feature-gate.logic.spec.ts src/modules/employee-access/domain/logic/menu-entitlement-binding.spec.ts src/modules/employee-access/application/entitlement.helper.spec.ts src/modules/billing/application/billing-feature-entitlements.spec.ts src/modules/system-onboarding/application/use-cases/create-company-onboarding.spec.ts
+pnpm exec tsx --test src/modules/expenses/application/use-cases/delete-expense.use-case.spec.ts src/modules/expenses/application/use-cases/expense-document.use-case.spec.ts src/modules/expenses/application/expense-launch-gate.spec.ts src/modules/line-ai/line-ai-capability-manifest.spec.ts
 ```
 
-Web จาก `apps/web`:
+จาก `apps/web`:
 
 ```sh
 pnpm exec tsx --test src/features/system-partners/system-partners.logic.spec.ts src/features/web-core-workspace/web-core-workspace.spec.ts src/features/expenses/expenses.model.spec.ts src/features/user-guide/user-guide.content.spec.ts src/features/ai-suggestions/ai-suggestions.logic.spec.ts
 ```
 
-เพิ่ม focused tests ของ session fingerprint, manual entry helper, existing-controller regression และ composed LINE baseline ในตำแหน่งใกล้ implementation และรันด้วย `pnpm exec tsx --test <exact-path>` พร้อมบันทึกชื่อจริงใน memory ไม่สร้าง test framework ใหม่
+จาก `apps/ai-gateway` (ยืนยันว่าไฟล์คู่มือไม่ถูกแตะ):
 
-Typecheck/build ใช้ scripts เดิมของ contracts/API/web เฉพาะ workspace ที่แตะ; อ่าน Next docs ก่อน web edits ต้องบันทึก failures ของ unrelated working tree แยกจาก regression ที่เปลี่ยนนี้สร้าง
+```sh
+pnpm exec tsx --test src/modules/line-ai/agents/approved-knowledge.spec.ts
+```
 
-PG/browser: อ่าน fixture/setup ของ `apps/api/src/modules/expenses/expense-capture-handoff.pg.spec.ts`, `line-draft-update.pg.spec.ts`, `apps/api/src/modules/billing/application/billing-feature-entitlements.pg.spec.ts` และ `e2e/expenses.spec.ts` ก่อนรัน ใช้เฉพาะ test database/environment ที่ยืนยันแล้ว อย่าเดา DATABASE_URL หรือใช้ shared live tenant จาก local env โดยไม่ตรวจ
+ตัวเลขฐานที่ผู้รีวิวรันที่ `ae13970b0` (ใช้เทียบใน P0 เท่านั้น ไม่ใช่หลักฐานของงาน): API สามบรรทัดผ่าน 133, 109 และ 89 ข้อ, web 227 ข้อ, ai-gateway 9 ข้อ ไม่มีข้อที่แดง
+
+Typecheck ใช้ script ของแต่ละ package (`typecheck` ของ API ตั้ง heap ไว้ให้แล้ว อย่ารัน `tsc --noEmit` ตรง ๆ) และอ่านค่า exit code จริง ต้องบันทึก failures ของ working tree ที่ไม่เกี่ยวแยกจาก regression ที่งานนี้สร้าง
+
+Test ใหม่ที่ต้องเขียน
+
+| เรื่อง | ตำแหน่งที่เสนอ | สิ่งที่ยืนยัน |
+| --- | --- | --- |
+| command ของผู้ดูแล | spec ข้าง use case ใหม่ | no-op, เปลี่ยนจริง, 409, ร้านล็อก, audit หนึ่งแถว, ไม่เรียกตาราง entitlement หรือ LINE |
+| รายละเอียดร้าน | `get-partner-detail.use-case.spec.ts` | ร้านไม่มีแถวได้ค่าแสดงและ version 0 |
+| `/auth/me` | `auth.controller.spec.ts` | true เมื่อไม่มีแถว, false เมื่อซ่อน, ไม่ปนข้ามบริษัท |
+| helper | spec ข้าง helper | ตารางค่าใน spec §6.1–6.2 รวมค่าหาย |
+| fingerprint | `web-core-workspace.spec.ts` หรือ spec ข้าง `workspace-scope.api.ts` | เปลี่ยนเมื่อค่านี้เปลี่ยน ไม่เปลี่ยนเมื่อไม่เกี่ยว |
+| gate | spec ของ logic ที่แยกจาก component | รับเข้าแล้วไม่ถอน, ซ่อนแล้วไม่รับเข้า, กลับเป็นแสดงแล้วรับเข้า |
+| ทางเข้า | `web-core-workspace.spec.ts`, `ai-suggestions.logic.spec.ts`, spec ของ ledger ถ้ามี logic แยก | ซ่อนครบตาม spec §9.1 และไม่มีการ์ดเปล่า |
+| คู่มือ | spec ข้างไฟล์แปลงผลลัพธ์ | ปุ่มหาย มีหมายเหตุ หัวข้ออื่นไม่เปลี่ยน |
+| หน้าผู้ดูแล | `system-partners.logic.spec.ts` | `applyPreset`, เปิดปิดกลุ่ม และ `changedEntitlements` ไม่มี key หรือค่าของสวิตช์ใหม่ |
+| invariants | PostgreSQL spec ใหม่หนึ่งไฟล์ | รายการใน P5 ข้อ 2–5 |
+
+spec ใหม่ฝั่ง API ต้องมีที่ที่ CI รัน: script `test` ของ `apps/api/package.json` ระบุไฟล์ทีละไฟล์ และ `.github/workflows/ci.yml` มีรายการของตัวเองบางขั้น ให้เลือกหนึ่งทาง (ก) เขียน test ลงในไฟล์ spec ที่ CI รันอยู่แล้ว หรือ (ข) ขอข้อยกเว้นจากเจ้าของเพื่อเพิ่มไฟล์ในรายการ `test` ซึ่งเป็นการแก้ `package.json` ที่ไม่ใช่ dependency (มีตัวอย่างใน commit `de6439ea2`) ห้ามปล่อย spec ใหม่ไว้โดยไม่มีที่รัน ฝั่งเว็บใช้ glob จึงไม่ต้องลงทะเบียน
+
+ขั้นตอนเพิ่มเมื่อ diff แตะไฟล์บางกลุ่ม (งานนี้ไม่ควรแตะ ถ้าแตะให้ทำครบ)
+
+| ถ้า diff แตะ | ต้องทำ |
+| --- | --- |
+| ไฟล์ที่อยู่ใน `sourceHashes` ของ `docs/research/mangmee-ai-capability-manifest-2026-09-27.json` (เช่น `feature-entitlements.ts`, `menu-entitlements.ts`, `line-conversation-context.service.ts`) | รัน `line-ai-capability-manifest.spec.ts` ด้วย `UPDATE_LINE_AI_CAPABILITY_MANIFEST=1` เพื่อสร้าง manifest ใหม่ แล้วรันซ้ำโดยไม่ตั้งค่า จากนั้นรัน `node scripts/run-line-ai-whole-chain-acceptance.mjs` |
+| รายการ key ใน `ALL_FEATURE_ENTITLEMENT_KEYS` | สร้าง corpus ใหม่ด้วย `scripts/line-ai-reliability-corpus.ts --write` แล้วรัน `scripts/line-ai-reliability-corpus.spec.ts` และ whole-chain |
+| ไฟล์คู่มือที่ชุดคำตอบ LINE ตรึงไว้ (`expenses-guide.content.ts`, `reimbursement-guide.content.ts`, `substitute-receipt-guide.content.ts`, `reports-guide.content.ts`) | อัปเดต hash ใน `sources` ของ `apps/ai-gateway/src/modules/line-ai/agents/approved-product-help.ts`, ทบทวนว่าการ์ดที่อ้างไฟล์นั้นยังถูกต้อง, รัน `approved-knowledge.spec.ts` และแจ้งว่ามีการเปลี่ยนใน `apps/ai-gateway` ซึ่งต้อง deploy ผู้ช่วยด้วย |
+| ไฟล์ที่ถูกตรึงสำหรับ maintenance (รายการใน `infra/security/validate-production-maintenance-release.sh`) | รัน `node infra/security/sync-production-maintenance-release-pins.mjs` ซึ่งแก้ทั้ง validator และ `.github/workflows/deploy-production.yml` commit ทั้งสองไฟล์ แล้วตรวจด้วย `--check` |
+| `apps/api/prisma/schema.prisma` | migration แบบ additive, `prisma validate`, generate และปล่อยตามแถว “Application, Dockerfile, dependency, migration” ของ deployment protocol คือ PR/CI → UAT `all` → Passport ใหม่ → READY → Production |
+| `package.json` ใดก็ตาม | ทำได้เฉพาะการเปลี่ยน dependency นอกนั้นต้องได้รับอนุญาตจากเจ้าของก่อน |
+
+PG/browser: อ่าน fixture/setup ของ PostgreSQL spec ที่มีอยู่ในโมดูลใกล้เคียงและ `e2e/expenses.spec.ts` ก่อนรัน ใช้เฉพาะ test database/environment ที่ยืนยันแล้ว อย่าเดา DATABASE_URL หรือใช้ shared live tenant จาก local env โดยไม่ตรวจ
 
 ## 5. Acceptance matrix สำหรับ integration
 
 | Scenario | Actor / setup | Expected / AC |
 | --- | --- | --- |
-| NEW key ON→OFF→ON | Parent + old manual ON, role create/update | Permissions equal ทุกสถานะ; only web entry changes (01–04) |
-| Parent หรือ old manual OFF + NEW key ON | OWNER/ADMIN/custom | Old authority gate wins; ไม่คืนสิทธิ์ (02,08,09) |
-| Child row absent / legacy null / missing field | แยกสาม fixture | inherited ON / legacy ON / unknown retry ตามลำดับ (03) |
-| Direct URL / query alias / back / tax return | Fresh staff session | OFF ไม่รับเข้า manual ใหม่ (05) |
-| Open form → admin OFF → focus/poll | มี input/file/save key | คงฟอร์มและบันทึกได้ครั้งเดียว; new tab denied (06,07) |
-| Feature-only refresh | Permissions unchanged | nav/CTA เปลี่ยน; ไม่มี refresh loop (07) |
-| Company A OFF → company B ON | ผู้ใช้มีสอง membership | snapshot/admission ไม่ปนกัน (08) |
-| API create ON/OFF | create holder / read-only | holder success, read-only denied ทั้งสองสถานะ (09) |
-| OCR failed/quota full | Existing WEB_UPLOAD draft | owner edit/mark-ready ได้ตามเดิม (10) |
-| Wizard manual create และ existing-source link | Reviewer + existing create | OFF ไม่ปิด wizard; retained signatures/locks (11) |
-| LINE real create + duplicate replay | Linked actor; real composed use cases | NEW key ไม่เปลี่ยนผล; known F03 400 รายงานแยก (12) |
-| LINE edit/continuation/correction | Own mutable / other / confirmed | เดิมยังผ่าน/deny ตาม authority/state (14) |
-| Delete / update own/other | Existing controller + use case | NEW key ไม่เปลี่ยนผล; F02 mismatch บันทึกแยก (15) |
-| Capture / reimburse / finance | Upload, handoff, projection, confirm | ไม่มี manual web flag ใน source/financial decision (16) |
-| Preset / billing renewal / CAS retry | Explicit OFF/ON + stale version | choice preserved, honest conflict/idempotent replay (17,19) |
-| Keyboard / 390px / desktop / unavailable | UI loading/error states | ไม่มี hidden focus target/blank loop/false copy (18) |
+| แสดง→ซ่อน→แสดง | ร้านที่ `expenses` และ `expenses.manual` เปิด, บทบาทมี create/update | permissions และ `entitledFeatureKeys` เท่ากันทุกสถานะ มีเพียงทางเข้าที่เปลี่ยน (01, 02, 04) |
+| ร้านไม่มีแถวค่าตั้ง | ร้านเดิม และร้านที่เพิ่งสร้าง | `/auth/me` ได้ true เมนูแสดง (01, 03, 13) |
+| API เก่าหรือ field หาย | จำลอง response ที่ไม่มี field | เว็บแสดงเมนู (03) |
+| URL ตรง / alias / ลิงก์กลับจากภาษี / deep link ผ่าน login | พนักงาน session ใหม่ ร้านซ่อนเมนู | ไม่เปิดฟอร์ม ได้สถานะตาม spec §8 ไม่มี 403 หรือ redirect (05) |
+| ฟอร์มเปิดค้าง → ผู้ดูแลซ่อน → focus/poll | มี input, ไฟล์ และ save key | ฟอร์มอยู่ บันทึกครั้งเดียวได้ โหลดใหม่แล้วไม่เปิดฟอร์ม (06, 07) |
+| สลับค่าที่ไม่กระทบ permissions | ผู้ดูแลเปลี่ยนชุดสิทธิ์อื่นของร้าน | fingerprint ไม่เปลี่ยนเพราะค่านี้ ไม่มี refresh loop (07) |
+| บริษัท A ซ่อน, บริษัท B แสดง | ผู้ใช้มีสอง membership | ค่าและผลรับเข้าไม่ปนกัน (08) |
+| API create ทั้งสองสถานะ | ผู้ถือ create และ read-only | ผู้ถือสำเร็จ read-only ถูกปฏิเสธ ทั้งสองสถานะ (09) |
+| OCR failed / quota full / wizard / reimbursement | draft `WEB_UPLOAD`, reviewer, ผู้เบิก | ทำได้ตามเดิม (10) |
+| LINE ระหว่างสลับค่า | มีบทสนทนา, รูปที่รอคำตอบ, คำตอบที่รอส่ง | ทุกอย่างคงอยู่และคำตอบถูกส่ง (11) |
+| ชำระเงินระหว่างสลับค่า | plan ถูก pin แล้วผู้ดูแลสลับค่า | `sourceHash` เท่าเดิม apply ได้ invoice ไม่ HELD (12) |
+| ซื้อ อัปเกรด ดีล ชุดสำเร็จรูป | ร้านที่ตั้งค่าซ่อนไว้ | ค่ายังซ่อนหลังเหตุการณ์ทุกแบบ (13) |
+| ผู้ดูแลกับร้านเดิม | ร้านมีแถวสิทธิ์ครบ, ร้านไม่มีแถวสิทธิ์, ร้านที่ฟีเจอร์แม่ปิด | สองแบบแรกสลับได้ แบบสุดท้ายกดไม่ได้และค่าที่เก็บไม่เปลี่ยน (14) |
+| command | กดซ้ำ, ผู้ดูแลสองคน, ร้านล็อก | no-op, 409, ปฏิเสธ, audit หนึ่งแถวต่อการเปลี่ยนจริง (15) |
+| ข้อความ | ร้านที่ `expenses.upload` ปิด | มีคำเตือนเพิ่ม ไม่มีคำว่าไม่มีสิทธิ์หรือระบบถูกปิด (16) |
+| คู่มือ | ร้านซ่อนเมนู | ปุ่มหาย มีหมายเหตุ ไฟล์ที่ถูกตรึงไม่เปลี่ยน (17) |
+| Keyboard / 390px / desktop | loading และ error states | ไม่มี focus target ที่ซ่อนอยู่ ไม่มี blank loop (18) |
+| Migration และถอยรุ่น | ฐานข้อมูลทดสอบ | additive, ถอย image แล้วเมนูกลับมา ค่าที่ตั้งไว้ยังอยู่ (19) |
 
 ## 6. Rollout / rollback / final handoff
 
-- [ ] อ่าน cloud/deployment runbooks ก่อนทำ operation ที่อยู่ใน scope ของ runbook; งาน spec นี้ไม่ dispatch deploy
-- [ ] API รู้จัก key ใหม่ + field พร้อม → web consumer/admin gate พร้อม → จึงอนุญาตใช้งาน switch ใหม่; mapping เดิมคงเดิมตลอด
-- [ ] บันทึก source SHA, UAT/READY/Production run IDs ตาม protocol; ไม่ยิง duplicate run เพื่อหาข้อผิดพลาดถัดไป
-- [ ] ไม่แก้ stored flag, role grants, invoice, expense หรือ tax data เพื่อทำให้ test ผ่าน
-- [ ] บันทึก rollback limitation: web เก่าอาจแสดง entry กลับเพราะไม่อ่าน key ใหม่; ไม่เปลี่ยน authority/mapping
+- [ ] อ่าน cloud/deployment runbooks ก่อนทำ operation ที่อยู่ใน scope ของ runbook งานเอกสารนี้ไม่ dispatch deploy
+- [ ] งานนี้เป็น application change ที่มี migration จึงใช้เส้นทาง PR/CI → UAT `all` → Passport ใหม่ → READY → Production ตาม protocol บันทึก source SHA และ UAT/READY/Production run IDs ไม่ยิง duplicate run เพื่อหาข้อผิดพลาดถัดไป
+- [ ] migration, API และ web ออกใน release เดียวกัน (web และ API อยู่ image เดียว)
+- [ ] ไม่แก้ค่าตั้งของร้าน, role grants, invoice, expense หรือ tax data เพื่อทำให้ test ผ่าน
+- [ ] บันทึกข้อจำกัดของ rollback ตาม spec §15 ข้อ 4: ถอย image แล้วทุกร้านเห็นเมนู ตารางใหม่ถูกปล่อยไว้
 - [ ] Release handoff ระบุ implementation tests, PG/browser evidence และ live signed/customer OPEN evidence แยกกัน
 
-Canonical documents ที่ต้อง reconcile เมื่อ implementation เสร็จ: `feature-entitlement-submenu-plan.md` (เพิ่ม visibility child โดยคง mapping เดิม), `feature-entitlement-decoupling-spec.md` (exception สำหรับ visibility-only child), `expense-receipt-upload-spec.md` (web entry); เอกสาร LINE/delete เปลี่ยนใน separate backend fix เท่านั้น
+เอกสารหลักที่ต้องปรับเมื่อ implementation เสร็จ: `expense-receipt-upload-spec.md` (ทางเข้าหน้า manual ขึ้นกับค่าตั้งของร้าน) และ `docs/runbooks/cloud-environment-operations.md` ถ้ามี inventory ของตาราง `feature-entitlement-submenu-plan.md` และ `feature-entitlement-decoupling-spec.md` **ไม่ต้องแก้** เพราะงานนี้ไม่เพิ่ม key และไม่ทำ nav-only gating ในชุดสิทธิ์
 
-## 7. Current task completion
+## 7. สถานะงานเอกสาร
 
-2026-10-01: [Local E2E report](../qa/manual-expense-web-entry-flag-e2e-simulation-2026-10-01-th.md) เป็นผลปิด OLD key บน baseline ก่อน v2; ห้าม tick P1–P5 หรืออ้าง acceptance ของ key ใหม่จากผลนั้น
+2026-10-01: [Local E2E report](../qa/manual-expense-web-entry-flag-e2e-simulation-2026-10-01-th.md) เป็นผลปิด key เดิม `expenses.manual` บนฐานโค้ดเก่า ห้าม tick P1–P6 หรืออ้าง acceptance จากผลนั้น
 
-งานปัจจุบันเสร็จเมื่อ spec/plan/audit/memory เขียนครบ, links/source references ตรวจผ่าน และ diff เป็น documentation only ไม่ทำเครื่องหมาย implementation checklist ข้างบนว่าเสร็จจากผล baseline audit
+2026-10-01 (รีวิวอิสระและฉบับแก้): spec ปรับเป็น v3.0 และแผนนี้ถูกเขียนใหม่ตาม[รีวิวอิสระ](../research/manual-expense-web-entry-flag-review-2026-10-01-th.md) สิ่งที่แผนฉบับ v2 ขาดและฉบับนี้เพิ่ม: เริ่มจาก develop ล่าสุดและตรวจซ้ำ (RM-01), ลำดับที่ไม่ทิ้งช่วงให้ระบบชำระเงินพัง (RM-03, RM-19), W00 manifest กับ reliability corpus (RM-09), ไฟล์คู่มือที่ถูกตรึง (RM-10), ไฟล์ที่ถูกตรึงสำหรับ maintenance และการลงทะเบียน spec (RM-19)
+
+งานเอกสารรอบนี้เสร็จเมื่อ spec/plan/audit/QA/memory สอดคล้องกัน, links ตรวจผ่าน และ diff เป็น documentation only ไม่ทำเครื่องหมาย implementation checklist ข้างบนว่าเสร็จ
