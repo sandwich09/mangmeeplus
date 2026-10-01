@@ -194,19 +194,18 @@ describe('a claim whose payout account is being corrected, as the assistant read
   } as any;
   const approver = { ...baseCtx, permissions: ['reimbursement.approve', 'reimbursement.reject', 'reimbursement.read'] };
 
-  it('lists it for approval only once the account is given: the approver has nothing to decide before that', async () => {
-    const result = await new ReimbursementListPendingApprovalsTool(new ListApprovalQueueUseCase(repo)).execute(approver);
-    assert.deepEqual(result.data, {
+  it('says it waits for its requester to correct the payout account, counts it for no approver, and lists it for approval once the account is given', async () => {
+    // The approver's own queue: nothing to decide while the claim is with its requester, the claim again once the account is given.
+    const queue = await new ReimbursementListPendingApprovalsTool(new ListApprovalQueueUseCase(repo)).execute(approver);
+    assert.deepEqual(queue.data, {
       total: 1,
       items: [{
         id: '000002', documentNumber: 'RB-202609-000002', requesterDisplayName: 'สมชาย', amount: '580.5000', currency: 'THB',
         submittedAt: '2026-09-20T03:00:00.000Z', status: 'PENDING_APPROVAL', branch: 'branch-1',
       }],
     });
-    assert.doesNotMatch(JSON.stringify(result), /payout|account|ffff/i);
-  });
+    assert.doesNotMatch(JSON.stringify(queue), /payout|account|ffff/i);
 
-  it('says it waits for its requester to correct the payout account, counts it for no approver, and names the approver once the account is given', async () => {
     const backlog = new GetReimbursementApprovalBacklogUseCase(repo, { log: async () => undefined } as any);
     const tool = new ReimbursementGetApprovalBacklogTool({ execute: (ctx: any, input: any) => backlog.execute(ctx, input, NOW) } as any);
     const result = await tool.execute(approver);

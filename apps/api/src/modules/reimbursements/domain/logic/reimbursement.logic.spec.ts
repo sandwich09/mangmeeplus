@@ -1006,6 +1006,18 @@ describe('payout: a claim with no receiving method keeps its hashes (legacy clai
       assert.equal(claimSignatureAckHash(claim), computeSnapshotHash(claimSnapshotFields(claim)), kind);
       assert.notEqual(claimSignatureAckHash(claim), atSubmit, kind);
     }
+
+    // The fourth call site: a payout account correction (payout spec §14.5) hashes the same claim with the
+    // account it was given. Another account, the same account confirmed as a new version, and cash are
+    // each another hash, so the approval the claim stood on never covers what it is given next.
+    const corrected = (payout: Record<string, unknown>) => computeSnapshotHash(claimSnapshotFields({ ...record, ...payout }, policy));
+    const approvedWith = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'a'.repeat(64) };
+    const answers = [approvedWith, { ...approvedWith, payoutDestinationVersion: 2 }, { ...approvedWith, payoutDestinationVersion: 2, payoutFingerprint: 'b'.repeat(64) },
+      submitPayoutColumns({ payoutMethod: 'CASH', followsDefault: false })];
+    assert.equal(new Set(answers.map(corrected)).size, answers.length);
+    // A legacy claim has no account part; given an account in a round, it has one from then on.
+    assert.equal(corrected({}), 'e8a0a0d5832da0361ee0442a28534235');
+    for (const answer of answers) assert.notEqual(corrected(answer), corrected({}));
   });
 });
 
@@ -1430,25 +1442,6 @@ describe('payout account correction round', () => {
     const now = new Date('2026-10-02T06:00:00.000Z');
     const age = ageHours(approvalWaitStartedAt({ submittedAt, payoutCorrectionSubmittedAt: accountGivenAt })!, now);
     assert.deepEqual([age, isSlaRisk(age, 48), isSlaRisk(ageHours(submittedAt, now), 48)], [1, false, true]);
-  });
-
-  it('hashes the same claim with its new account: only the account part moves, and a legacy claim gains one', () => {
-    const claim = {
-      amount: '580.5000', currency: 'THB', categoryKey: 'travel', incurredDate: new Date('2026-09-18T00:00:00.000Z'), reason: 'เบิกค่าเดินทาง', primaryAttachmentId: null,
-      lines: [{ lineNo: 1, incurredDate: new Date('2026-09-18T00:00:00.000Z'), description: 'ค่าแท็กซี่', purpose: null, categoryKey: 'travel', amount: '580.5000', attachmentId: 'att-1', linkedExpenseId: null }],
-      approvalPolicySnapshotJson: null,
-    } as any;
-    const hash = (payout: Record<string, unknown>) => computeSnapshotHash(claimSnapshotFields({ ...claim, ...payout }, claim.approvalPolicySnapshotJson));
-    const approvedWith = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'a'.repeat(64) };
-    // The same account confirmed again is a new version, so a new hash: the earlier approval never covers it.
-    const answers = [approvedWith, { ...approvedWith, payoutDestinationVersion: 2 }, { ...approvedWith, payoutDestinationVersion: 2, payoutFingerprint: 'b'.repeat(64) },
-      submitPayoutColumns({ payoutMethod: 'CASH', followsDefault: false })];
-    assert.equal(new Set(answers.map(hash)).size, answers.length);
-    // A legacy claim has no account part. Given an account in a round, it has one from then on.
-    const legacy = hash({});
-    assert.equal(legacy, hash({ payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null }));
-    assert.notEqual(hash(approvedWith), legacy);
-    assert.notEqual(hash(submitPayoutColumns({ payoutMethod: 'CASH', followsDefault: false })), legacy);
   });
 
   it('holds "use the default account" to the default the page showed', () => {

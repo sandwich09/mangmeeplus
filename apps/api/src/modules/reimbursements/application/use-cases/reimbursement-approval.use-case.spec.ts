@@ -1335,8 +1335,9 @@ describe('a claim whose payout account is being corrected', () => {
     const entries: any[] = [];
     const allowed = roundRepo(own(), { ...REIMBURSEMENT_POLICY_DEFAULTS, allowSelfApproval: true });
     await approveUC(allowed.repo, undefined, recordingAudit(entries)).execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1', undefined, SEEN_HASH, 2);
-    assert.equal(allowed.ran[0]![1].allowSelfApproval, true);
-    assert.deepEqual(entries[0].metadataJson.selfApproval, { approvedOwnRequest: true, via: 'company_policy', actorRoles: [] });
+    assert.deepEqual([allowed.ran.map(([name]) => name), allowed.ran[0]![1].allowSelfApproval], [['approvePayoutCorrectionAtomic'], true]);
+    assert.deepEqual([entries[0].action, entries[0].metadataJson.selfApproval],
+      ['reimbursement.payout_correction.approve', { approvedOwnRequest: true, via: 'company_policy', actorRoles: [] }]);
     assert.equal(entries[1].metadataJson.byRequester, true);
   });
 
