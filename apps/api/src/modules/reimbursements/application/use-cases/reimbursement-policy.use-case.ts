@@ -4,7 +4,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
-import { PLATFORM_ONLY_ROLE_KEYS } from '../../../employee-access/domain/logic/employee-access.logic';
+import { platformOnlyRoleRefused } from '../../../employee-access/domain/logic/employee-access.logic';
 import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
 import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 import { toPolicySummary } from '../dto/reimbursement.mapper';
@@ -330,13 +330,14 @@ export class ListReimbursementApproverOptionsUseCase {
       loadEntitledFeatureKeys(this.prisma, companyId),
     ]);
     const overriddenKeys = new Set(rows.filter((role) => role.scopeKey === companyId).map((role) => role.key));
-    // RB-34: the same test as ListRolesUseCase. A shop is not shown the platform-only system roles,
-    // so its approver picker must not offer them and no route of its claims can name them.
+    // RB-34: the same test as ListRolesUseCase. A shop is not shown a platform-only role (the system
+    // row or its own copy of one), so its approver picker must not offer it and no route of its
+    // claims can name it.
     const platformTenant = companyId === PLATFORM_TENANT_ID;
     return {
       roles: rows
-        .filter((role) => !(role.scopeKey === 'system'
-          && (overriddenKeys.has(role.key) || (!platformTenant && PLATFORM_ONLY_ROLE_KEYS.includes(role.key)))))
+        .filter((role) => !platformOnlyRoleRefused(role.key, platformTenant)
+          && !(role.scopeKey === 'system' && overriddenKeys.has(role.key)))
         .map((role) => ({
           key: role.key,
           name: role.name,

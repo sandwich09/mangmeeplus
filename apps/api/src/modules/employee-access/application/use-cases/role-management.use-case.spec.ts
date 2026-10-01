@@ -1,9 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ForbiddenException } from '@nestjs/common';
-import { NON_EDITABLE_ROLE_KEYS } from '@watchdog-bms/contracts';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { NON_EDITABLE_ROLE_KEYS, SALES_ROLE_KEYS } from '@watchdog-bms/contracts';
 import { CreateRoleUseCase } from './create-role.use-case';
+import { GetRoleUseCase } from './get-role.use-case';
 import { ListRolesUseCase } from './list-roles.use-case';
+import { PreviewRoleUseCase } from './preview-role.use-case';
 import { UpdateRoleUseCase } from './update-role.use-case';
 import { DisableRoleUseCase } from './disable-role.use-case';
 import { compileRole } from '../../domain/logic/capability.logic';
@@ -321,6 +323,101 @@ describe('ListRolesUseCase assignableByCurrentUser', () => {
     // The access matrix reads the same list without a requester.
     assert.deepEqual(Object.keys(await listed(COMPANY_ID)), ['SALES']);
     assert.deepEqual(await listed(PLATFORM_TENANT_ID, owner), { SALES: true, MANGMEE_SALES_LEAD: true, MANGMEE_SALES: true });
+  });
+
+  it('does not list a copy of a platform-only role a shop made before the by-id routes refused it (RB-34)', async () => {
+    // PATCH roles/:id used to fork one into a company role with the same key. That copy is scoped to
+    // the shop, so a filter that drops only the system row put it straight back in the role list.
+    for (const key of SALES_ROLE_KEYS) {
+      const rows = (scope: string) => [
+        { id: 'system-sales', scopeKey: 'system', key: 'SALES', name: 'Sales', description: null, isSystem: true, status: 'ACTIVE', permissions: [] },
+        { id: 'system-platform-only', scopeKey: 'system', key, name: key, description: null, isSystem: true, status: 'ACTIVE', permissions: [] },
+        { id: 'copy-platform-only', scopeKey: scope, key, name: `${key} (copy)`, description: null, isSystem: false, status: 'ACTIVE', permissions: [] },
+      ];
+      const list = (companyId: string) => new ListRolesUseCase({ client: {
+        role: { findMany: async () => rows(companyId) },
+        companyFeatureEntitlement: { findMany: async () => [] },
+      } } as any).execute(companyId, { permissions: [], isOwner: true });
+
+      assert.deepEqual((await list(COMPANY_ID)).map((role) => role.id), ['system-sales'], key);
+      // Inside the platform company the copy is an ordinary override of the system row.
+      assert.deepEqual((await list(PLATFORM_TENANT_ID)).map((role) => role.id), ['system-sales', 'copy-platform-only'], key);
+    }
+  });
+});
+
+describe('a platform-only role reached by its id (RB-34)', () => {
+  // The first RB-34 fix took these roles out of a shop's role LIST and refused to ASSIGN them. The
+  // three routes that take a role id still answered: a shop that knew the id could read the role,
+  // preview it and fork it into a company role carrying the same key.
+  const SYSTEM_ID = 'role-system-platform-only';
+  const COPY_ID = 'role-copy-platform-only';
+  const SOURCE_PERMISSIONS = [
+    { roleId: SYSTEM_ID, permissionId: 'perm-sales.console.read' },
+    { roleId: SYSTEM_ID, permissionId: 'perm-sales.deal.create' },
+  ];
+  const fixture = (key: string, companyId = COMPANY_ID) => {
+    const made = makePrisma({
+      role: { id: SYSTEM_ID, companyId: null, scopeKey: 'system', key, name: key, isSystem: true },
+      rolePermissions: SOURCE_PERMISSIONS.map((row) => ({ ...row })),
+      membershipRoles: [{ membershipId: 'membership-1', roleId: SYSTEM_ID, companyId }],
+    });
+    made.prisma.client.companyFeatureEntitlement = { findMany: async () => [] };
+    return made;
+  };
+  /** The same company with the copy an earlier PATCH left behind. */
+  const fixtureWithCopy = (key: string) => {
+    const made = fixture(key);
+    made.state.roles.push({ id: COPY_ID, companyId: COMPANY_ID, scopeKey: COMPANY_ID, key, name: `${key} (copy)`, description: null, status: 'ACTIVE', isSystem: false });
+    made.state.rolePermissions.push({ roleId: COPY_ID, permissionId: `perm-${REAL_PERMISSION}` });
+    return made;
+  };
+  const notFound = (error: unknown) => error instanceof NotFoundException && error.message === 'Role not found';
+
+  it('answers "not found" to a shop that reads one, and still reads it inside the platform company', async () => {
+    for (const key of SALES_ROLE_KEYS) {
+      await assert.rejects(() => new GetRoleUseCase(fixture(key).prisma).execute(COMPANY_ID, SYSTEM_ID), notFound, key);
+      await assert.rejects(() => new GetRoleUseCase(fixtureWithCopy(key).prisma).execute(COMPANY_ID, COPY_ID), notFound, `${key} copy`);
+      const read = await new GetRoleUseCase(fixture(key, PLATFORM_TENANT_ID).prisma).execute(PLATFORM_TENANT_ID, SYSTEM_ID);
+      assert.deepEqual([read.key, read.permissionKeys], [key, ['sales.console.read', 'sales.deal.create']], key);
+    }
+    // Every other role is read as before.
+    const sales = makePrisma({ role: { id: 'role-sales', scopeKey: 'system', key: 'SALES', name: 'Sales', isSystem: true } });
+    assert.equal((await new GetRoleUseCase(sales.prisma).execute(COMPANY_ID, 'role-sales')).key, 'SALES');
+  });
+
+  it('does not preview one for a shop: the diff would hand over its permission set', async () => {
+    const preview = (prisma: any, companyId: string, roleId: string) => new PreviewRoleUseCase(prisma).execute({
+      companyId, roleId, permissionKeys: [REAL_PERMISSION], granterPermissionKeys: [], isOwner: true,
+    });
+    for (const key of SALES_ROLE_KEYS) {
+      await assert.rejects(() => preview(fixture(key).prisma, COMPANY_ID, SYSTEM_ID), notFound, key);
+      await assert.rejects(() => preview(fixtureWithCopy(key).prisma, COMPANY_ID, COPY_ID), notFound, `${key} copy`);
+      const inPlatform = await preview(fixture(key, PLATFORM_TENANT_ID).prisma, PLATFORM_TENANT_ID, SYSTEM_ID);
+      assert.deepEqual(inPlatform.removedVsCurrent, ['sales.console.read', 'sales.deal.create'], key);
+    }
+  });
+
+  it('does not let a shop copy one into its own roles, or edit a copy it already has', async () => {
+    const rename = (prisma: any, companyId: string, roleId: string) => new UpdateRoleUseCase(prisma).execute({
+      companyId, roleId, name: 'ทีมขายของร้าน', requestingUserId: 'owner-1', requestId: 'req-fork', isOwner: true,
+    });
+    for (const key of SALES_ROLE_KEYS) {
+      const shop = fixture(key);
+      await assert.rejects(() => rename(shop.prisma, COMPANY_ID, SYSTEM_ID), notFound, key);
+      assert.deepEqual(shop.state.roles.map((role) => role.id), [SYSTEM_ID], `${key}: nothing was copied`);
+      assert.deepEqual(shop.state.membershipRoles, [{ membershipId: 'membership-1', roleId: SYSTEM_ID }], `${key}: no holder was moved`);
+      assert.deepEqual(shop.state.auditLogs, [], key);
+
+      const withCopy = fixtureWithCopy(key);
+      await assert.rejects(() => rename(withCopy.prisma, COMPANY_ID, COPY_ID), notFound, `${key} copy`);
+      assert.equal(withCopy.state.roles.find((role) => role.id === COPY_ID)?.name, `${key} (copy)`);
+
+      // The platform company manages its own roles as before.
+      const platform = fixture(key, PLATFORM_TENANT_ID);
+      const forked = await rename(platform.prisma, PLATFORM_TENANT_ID, SYSTEM_ID);
+      assert.deepEqual([forked.key, forked.isSystem, forked.name], [key, false, 'ทีมขายของร้าน'], key);
+    }
   });
 });
 

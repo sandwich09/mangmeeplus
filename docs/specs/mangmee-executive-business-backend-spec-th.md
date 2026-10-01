@@ -689,6 +689,9 @@ email/invite เมื่อ Q01 ตกลงต้องใช้ durable outbo
 
 เสนอ permission names `system.executive.read`, `system.executive_user.manage` และ role
 `MANGMEE_EXECUTIVE` เป็น platform-only; ยังไม่เพิ่มจริงใน registry
+เมื่อเพิ่มจริง ให้ใส่ key ลงใน `PLATFORM_ONLY_ROLE_KEYS` (`apps/api/src/modules/auth/permission-registry.ts`) ที่เดียว:
+ร้านค้าจะไม่เห็น ไม่อ่าน ไม่คัดลอก และไม่มอบบทบาทนี้ได้ โดยไม่ต้องแก้จุดอื่น
+(กติกา R9 ใน [company-role-override-spec](company-role-override-spec.md))
 manager role ไม่สามารถ grant SYSTEM_ADMIN, arbitrary permission หรือให้สิทธิ์ที่ตนจัดการไม่ได้
 reuse User/CompanyMembership/Role/MembershipRole ใน platform tenant เดิม;
 ต้องตรวจ active system-owned role (`isSystem`, `scopeKey=system`, `companyId=null`) จากฐานจริง

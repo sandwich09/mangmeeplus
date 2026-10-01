@@ -65,6 +65,32 @@ feature.
   permission"), unknown-key rejection, and `ownerGatedGrantViolation` all still apply to the
   resulting key set.
 
+### Platform-only roles (added 2026-10-02, RB-34)
+
+Copy-on-write keeps the system role's `key`, and several checks compare role keys, so one more
+rule bounds what a company may copy.
+
+- **R9.** A platform-only role does not exist for a company other than the platform company.
+  The list is `PLATFORM_ONLY_ROLE_KEYS` in `apps/api/src/modules/auth/permission-registry.ts`
+  (today the two Mangmee sales roles) and the single test is `platformOnlyRoleRefused(roleKey,
+  platformTenant)` in `employee-access.logic.ts`. It is asked by key, so it covers the system row
+  and a company copy that kept the key. A shop therefore cannot:
+  - list it (`ListRolesUseCase`, which the access matrix also reads);
+  - read it, preview it or edit it by id (`GetRoleUseCase`, `PreviewRoleUseCase`,
+    `UpdateRoleUseCase` answer `404 Role not found`, the same answer as an unknown id);
+  - assign it (`roleGrantViolation`, employee create and update);
+  - pick it as a reimbursement approver or route a claim to it
+    (`ListReimbursementApproverOptionsUseCase`).
+
+  A copy a shop made before the by-id routes refused it stays in the database and stays with any
+  employee who holds it, but it is no longer listed, editable, assignable or offered as an approver;
+  its `sales.*` permissions never did anything outside the platform company. It can still be
+  disabled by id. Inside the platform company nothing changes.
+
+  A new platform-only role (the executive-report role is the planned one) is defined like any system
+  role in `SYSTEM_ROLES` and `ROLE_GRANTS`, and its key is added to `PLATFORM_ONLY_ROLE_KEYS`. That
+  one list also feeds `PLATFORM_ROLE_KEYS`, so no other code changes.
+
 ### Deployment interaction
 
 `sync-permissions.ts` re-syncs system roles on every deploy. Overrides are company-scoped, so a
