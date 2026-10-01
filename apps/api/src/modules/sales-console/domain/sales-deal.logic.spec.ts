@@ -103,7 +103,9 @@ describe('deal snapshot validation', () => {
     assert.equal(snapshot.cadence, null);
     assert.equal(snapshot.cycles, null);
     assert.equal(snapshot.base, 'BASIC_499');
-    assert.deepEqual(snapshot.featureKeys, ['expenses']);
+    // B3: the parent named alone is frozen together with its submenus, each key once.
+    assert.deepEqual(snapshot.featureKeys, ['expenses', 'expenses.list', 'expenses.upload', 'expenses.manual',
+      'expenses.categories', 'expenses.evidence', 'expenses.signatures']);
     assert.deepEqual(buildDealSnapshot({ ...draft, featureKeys: ['wht_pnd53', 'wht_50bis'] }).featureKeys,
       ['wht_pnd53', 'wht_50bis']);
     assert.throws(() => buildDealSnapshot({ ...draft, featureKeys: ['thai_tax'] }), SalesSnapshotError);

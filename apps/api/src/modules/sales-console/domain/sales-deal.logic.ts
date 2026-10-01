@@ -17,6 +17,7 @@ import {
   SALES_DEAL_BASE_TIERS,
   SALES_DEAL_REASON_MAX,
   SALES_DEAL_ALLOWED_FEATURE_KEYS,
+  salesDealFeatureKeys,
   type SalesDealBaseTier,
   type SalesDealCadence,
   type SalesDealSnapshot,
@@ -177,7 +178,9 @@ export function buildDealSnapshot(draft: SnapshotDraft, snapshotVersion: 2 | 3 |
     branchLimit: positiveInt(draft.branchLimit, 'branchLimit', 10_000),
     employeeLimit: positiveInt(draft.employeeLimit, 'employeeLimit', 10_000),
     monthlySlipLimit: positiveInt(draft.monthlySlipLimit, 'monthlySlipLimit', 1_000_000),
-    featureKeys: [...new Set(draft.featureKeys as string[])],
+    // B3: a parent menu named alone means its submenus too. Billing reads every stored deal back
+    // through this function, so a deal saved before the rule is paid by the same rule.
+    featureKeys: salesDealFeatureKeys(draft.featureKeys as string[]),
     aiMonthlyBudgetSatang: aiBudget as number | null,
     description,
     autoRenew,

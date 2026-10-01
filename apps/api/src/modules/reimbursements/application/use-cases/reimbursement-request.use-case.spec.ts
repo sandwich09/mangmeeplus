@@ -32,6 +32,7 @@ import {
   UpdateReimbursementPolicyUseCase,
   type ApproverRoleCandidate,
 } from './reimbursement-policy.use-case';
+import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
@@ -1608,6 +1609,16 @@ describe('submission route when the requester is the only approver', () => {
     await assert.rejects(() => resolver({ MANAGER: [], OWNER: [] }).resolveSubmissionRoute({ ...input, roleKey: 'MANAGER' }), /reimbursement_approver_not_ready/);
     // …or a holder who does not cover the claim's branch.
     await assert.rejects(() => resolver({ CUSTOM_SOLO: [{ userId: 'solo-1', ...otherBranch }], OWNER: [] }).resolveSubmissionRoute(input), /reimbursement_approver_not_ready/);
+  });
+
+  it('does not offer a shop the Mangmee sales roles as approvers, and still lists them inside the platform company (RB-34)', async () => {
+    // The picker ran its own role query, so the two platform-only system roles stayed in a shop's
+    // approver list after the role list and the employee form had stopped showing them.
+    const roles = { MANAGER: [{ userId: 'mgr-1' }], MANGMEE_SALES_LEAD: [{ userId: 'lead-1' }], MANGMEE_SALES: [] };
+    assert.deepEqual((await resolver(roles).load('co-1')).map((option) => option.key), ['MANAGER']);
+    assert.deepEqual((await resolver(roles).load(PLATFORM_TENANT_ID)).map((option) => option.key).sort(), ['MANAGER', 'MANGMEE_SALES', 'MANGMEE_SALES_LEAD']);
+    // Not offered also means not routable: a shop policy cannot send a claim to a platform-only role.
+    await assert.rejects(() => resolver(roles).resolveSubmissionRoute({ ...input, roleKey: 'MANGMEE_SALES_LEAD' }), /approver_role_not_eligible/);
   });
 
   it('is decided at submit only: a background re-read never routes a claim to its requester', async () => {

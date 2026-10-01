@@ -5,7 +5,7 @@
  * permission answers "may this role do it", `assertPlatformTenant` answers "is this caller
  * actually มั่งมี staff and not a company-scoped role that happens to be named the same".
  */
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiResponse, PickType } from '@nestjs/swagger';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Max, Min, MaxLength, ValidateIf, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -34,7 +34,7 @@ import { SalesAgentsService } from '../../application/sales-agents.service';
 import { SalesCompanySearchService } from '../../application/sales-company-search.service';
 import { SalesDealsService } from '../../application/sales-deals.service';
 import { SalesReportsService } from '../../application/sales-reports.service';
-import { assertPlatformTenant } from '../../application/sales-context';
+import { assertPlatformTenant, SalesAgentActiveGuard } from '../../application/sales-context';
 import { SalesAgentProfileDtoIn } from './system-sales-agents.controller';
 
 export class SalesDealSaveDto {
@@ -92,6 +92,7 @@ export class SalesSelfProfileDto extends PickType(SalesAgentProfileDtoIn, [
 ] as const) {}
 
 @Controller('sales')
+@UseGuards(SalesAgentActiveGuard)
 export class SalesController {
   constructor(
     private readonly deals: SalesDealsService,

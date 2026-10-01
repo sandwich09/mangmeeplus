@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import qrcode from 'qrcode-generator';
-import { FINANCIAL_ROLE_KEYS, HR_ASSIGNABLE_ROLE_KEYS } from '@watchdog-bms/contracts';
+import { FINANCIAL_ROLE_KEYS, HR_ASSIGNABLE_ROLE_KEYS, SALES_ROLE_KEYS } from '@watchdog-bms/contracts';
 import { hashPassword } from '../../../auth/domain/logic/password-credential.logic';
 
 const TEMP_PASSWORD_TTL_MS = 72 * 60 * 60 * 1000;
@@ -8,6 +8,13 @@ const LINE_LINK_TOKEN_TTL_MS = 15 * 60 * 1000;
 
 /** Protected owner and platform-view roles are never assignable through employee provisioning. */
 export const NON_ASSIGNABLE_ROLE_KEYS = ['OWNER', 'SYSTEM_ADMIN', 'COMPANY_VIEW'];
+/**
+ * RB-34: มั่งมี's own sales roles. They are system roles, so every company's role query finds them,
+ * but they carry `sales.*` and mean something only inside the platform company. A shop neither sees
+ * nor grants them: the employee would land in a sales console that refuses everything and could not
+ * open their own shop. Assignments that already exist are left alone.
+ */
+export const PLATFORM_ONLY_ROLE_KEYS: readonly string[] = SALES_ROLE_KEYS;
 // Role-key lists shared with the web employee form — canonical copies live in contracts, beside
 // NON_EDITABLE_ROLE_KEYS. ALL_BRANCH_ROLE_KEYS is composed from FINANCIAL_ROLE_KEYS there.
 export { FINANCIAL_ROLE_KEYS, ALL_BRANCH_ROLE_KEYS, HR_ASSIGNABLE_ROLE_KEYS } from '@watchdog-bms/contracts';
@@ -43,6 +50,8 @@ export function roleGrantViolation(
   requesterPermissions: readonly string[],
   requesterEntitlementDeniedPermissions: Readonly<Record<string, string>> | undefined,
   requesterIsOwner = false,
+  /** The company the role is granted in is the platform company. Defaults to the refusing answer. */
+  platformTenant = false,
 ): string | undefined {
   // RequestContext permissions are effective (feature-filtered). Restore only permissions the
   // resolver proves this requester owns but the company's current entitlements suppress, so the
@@ -53,6 +62,10 @@ export function roleGrantViolation(
   ]);
   if (roles.some((role) => NON_ASSIGNABLE_ROLE_KEYS.includes(role.key))) {
     return 'Owner and platform access cannot be granted through employee provisioning.';
+  }
+  // Before the owner shortcut below: a shop OWNER grants every COMPANY permission, not these.
+  if (!platformTenant && roles.some((role) => PLATFORM_ONLY_ROLE_KEYS.includes(role.key))) {
+    return 'Mangmee sales roles can be assigned only inside the platform company.';
   }
   if (roles.some((role) => role.permissionKeys.includes('company.plan.manage')) && !requesterIsOwner) {
     return 'Assigning a role with company package management requires the company owner.';

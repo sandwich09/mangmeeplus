@@ -71,4 +71,19 @@ describe('ReserveDocumentNumberUseCase', () => {
     assert.equal((audit.log.mock.calls as any[]).length, 1);
     assert.equal(((audit.log.mock.calls as any[])[0]?.arguments[0] as any).action, 'document.number.reserve');
   });
+
+  // `reservedByUserId` is a plain column, so a worker reserves under its own id ('system'). That id
+  // is no User row: as a USER actor the audit insert fails the FK and the row is lost.
+  it('audits a worker reservation as SYSTEM like commit/void/cancel, and a person as the USER actor', async () => {
+    const audit = makeAudit();
+    const uc = new ReserveDocumentNumberUseCase(makeRepo(newRecord) as any, audit as any);
+    await uc.execute(makeInput({ reservedByUserId: 'system' }));
+    await uc.execute(makeInput());
+    const [worker, person] = (audit.log.mock.calls as any[]).map((call) => call.arguments[0]);
+    assert.equal(worker.actorType, 'SYSTEM');
+    assert.equal(worker.actorRefId, 'document-number');
+    assert.equal(worker.actorUserId, undefined);
+    assert.equal(person.actorUserId, 'user-1');
+    assert.equal(person.actorType, undefined);
+  });
 });

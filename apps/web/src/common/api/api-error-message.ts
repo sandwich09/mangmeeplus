@@ -815,7 +815,8 @@ const CODE_LABELS: Record<string, string> = {
   SALES_CODE_UNKNOWN: 'ไม่พบรหัสเซลล์นี้ ตรวจสอบกับเซลล์ของคุณ',
   SALES_CODE_TAKEN: 'รหัสเซลล์นี้มีผู้ใช้แล้ว กรุณาตั้งรหัสอื่น',
   SALES_CODE_INVALID: 'รหัสเซลล์ต้องเป็นตัวอักษรอังกฤษตัวใหญ่หรือตัวเลข 3–6 ตัว',
-  SALES_AGENT_SUSPENDED: 'บัญชีเซลล์นี้ถูกระงับอยู่ กรุณาติดต่อผู้ดูแลระบบให้เปิดใช้งานก่อน',
+  // RB-36: every sales route answers this to the suspended account itself, lead or เซลล์.
+  SALES_AGENT_SUSPENDED: 'บัญชีทีมขายถูกระงับ กรุณาติดต่อหัวหน้าทีมหรือผู้ดูแลระบบให้เปิดใช้งานอีกครั้ง',
   SALES_AGENT_NOT_FOUND: 'ไม่พบบัญชีเซลล์นี้แล้ว กรุณาโหลดรายชื่อทีมใหม่',
   SALES_TEAM_LEAD_INVALID: 'หัวหน้าทีมที่เลือกใช้ไม่ได้ กรุณาเลือกหัวหน้าทีมจากรายการอีกครั้ง',
   SALES_AGENT_USERNAME_TAKEN: 'ชื่อผู้ใช้นี้มีคนใช้แล้ว กรุณาตั้งชื่อผู้ใช้อื่น',

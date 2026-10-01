@@ -1,6 +1,7 @@
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaLedgerRepository } from '../../infrastructure/prisma-ledger.repository';
 import { AuditService } from '../../../audit/application/audit.service';
+import { auditActorOf } from '../../../audit/domain/logic/audit-actor.logic';
 import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
@@ -587,7 +588,8 @@ export class GenerateJournalFromSourceUseCase {
         await this.markSource(ctx, source, 'posting_error', undefined, bound.error);
         await this.audit.log({
           companyId: ctx.companyId,
-          actorUserId: ctx.userId,
+          // The auto-post worker runs this under `systemWorkerContext`; its id is no User row.
+          ...auditActorOf(ctx.userId, ctx.authSubject),
           action: 'ledger.journal.generate',
           targetType: 'journal_entry',
           targetId: source.sourceId,
@@ -638,7 +640,7 @@ export class GenerateJournalFromSourceUseCase {
         : baseLines;
     if (!lines) {
       await this.markSource(ctx, source, 'posting_error', undefined, 'posting_rule_missing');
-      await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'ledger.journal.generate', targetType: 'journal_entry', targetId: source.sourceId, requestId: ctx.requestId, result: 'FAILED', riskLevel: 'HIGH', metadataJson: { sourceType: source.sourceType, sourceId: source.sourceId, error: 'posting_rule_missing' } });
+      await this.audit.log({ companyId: ctx.companyId, ...auditActorOf(ctx.userId, ctx.authSubject), action: 'ledger.journal.generate', targetType: 'journal_entry', targetId: source.sourceId, requestId: ctx.requestId, result: 'FAILED', riskLevel: 'HIGH', metadataJson: { sourceType: source.sourceType, sourceId: source.sourceId, error: 'posting_rule_missing' } });
       throw new BadRequestException({ code: 'posting_rule_missing', sourceType: source.sourceType, eventType: source.sourceEventType, message: 'ไม่พบกฎการลงบัญชีสำหรับเอกสารนี้ กรุณาติดต่อผู้ดูแลระบบเพื่อกำหนดกฎการลงบัญชี' });
     }
 
@@ -704,7 +706,7 @@ export class GenerateJournalFromSourceUseCase {
       await this.markSource(ctx, source, 'posted', entry);
     }
 
-    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'ledger.journal.generate', targetType: 'journal_entry', targetId: entry.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { sourceType: source.sourceType, sourceId: source.sourceId, entryNumber: entry.entryNumber, totalDebit: bal.totalDebit } });
+    await this.audit.log({ companyId: ctx.companyId, ...auditActorOf(ctx.userId, ctx.authSubject), action: 'ledger.journal.generate', targetType: 'journal_entry', targetId: entry.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { sourceType: source.sourceType, sourceId: source.sourceId, entryNumber: entry.entryNumber, totalDebit: bal.totalDebit } });
     void this.outbox.append('journal.generated', 'journal_entry', entry.id, { companyId: ctx.companyId, aggregateType: 'journal_entry', aggregateId: entry.id, occurredAt: new Date().toISOString(), data: { sourceType: source.sourceType, sourceId: source.sourceId, entryNumber: entry.entryNumber, periodKey } });
     return toSummary(entry);
   }
