@@ -40,6 +40,17 @@ const ISSUE_VERB_TH = ['ออก', 'ทำ', 'สร้าง', 'จัดท�
 const SUPPLIER_WORD_PATTERN = /ซัพพลายเออร์|ผู้ขาย|supplier/i;
 const PURCHASE_ORDER_EN_PATTERN = /\bPO\b|purchase\s*order/i;
 
+// Advisor S0 (R1 integrated G run 2026-10-01, G-09/G-16/G-24): "ของอะไรใกล้หมดบ้าง", "ร้านเรามีของเหลือเท่าไหร่" and the
+// typo "สต๊อก" asked for stock without the exact word, and got a planner sentence or the dead-end line instead of the
+// fixed reply. Goods words only: "เหลือ" and "ใกล้หมด" alone also describe a receipt quota, a credit or a budget
+// ("ใบเสร็จเหลือกี่ใบ", "โควตาของร้านใกล้หมด"), which stay with their own tools; "เจ้าของ" and "เหลือง" are other words.
+const STOCK_PATTERN = new RegExp([
+  'สต[็๊้]?อ[กค]', 'stock',
+  '(?:(?<!เจ้า)ของ|สินค้า(?:ที่)?)(?:คง)?เหลือ(?!ง)',
+  '(?:(?<!เจ้า)ของ|สินค้า)(?:อะไร|ไหน|ตัวไหน|ชิ้นไหน|รายการไหน)?(?:ที่)?(?:ใกล้|จวน)(?:จะ)?หมด',
+  'เหลือ(?:อีก|อยู่)?กี่(?:ชิ้น|กล่อง|ลัง|แพ็ค|แพ็ก|ขวด|ถุง|ตัว|อัน)',
+].join('|'), 'iu');
+
 const UNSOLD_MODULE_TOPICS: ReadonlyArray<UnsoldModuleTopic & { test: (text: string) => boolean }> = [
   {
     featureKey: 'sales_documents', topicLabelTh: 'ยอดขายและรายได้', topicLabelEn: 'sales and revenue',
@@ -60,7 +71,7 @@ const UNSOLD_MODULE_TOPICS: ReadonlyArray<UnsoldModuleTopic & { test: (text: str
   },
   {
     featureKey: 'inventory', topicLabelTh: 'สต็อกสินค้าคงเหลือ', topicLabelEn: 'inventory stock',
-    test: (text) => includesAny(text, ['สต็อก', 'สินค้าคงเหลือ', 'stock']),
+    test: (text) => STOCK_PATTERN.test(text),
   },
   {
     // No `payroll` feature exists anywhere in the product's own feature catalog (packages/contracts

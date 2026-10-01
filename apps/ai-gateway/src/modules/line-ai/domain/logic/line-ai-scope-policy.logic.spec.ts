@@ -332,3 +332,32 @@ describe('advisor S1: signing or approving a substitute receipt from LINE', () =
     assert.equal(scopePolicyOverride('ช่วยเซ็นใบเบิกให้หน่อย', 'write', APPROVER, ['expenses'], 'th'), undefined);
   });
 });
+
+// Advisor S0 (R1 integrated G run 2026-10-01, G-09/G-16/G-24): stock asked without the exact word got a planner
+// sentence or the dead-end line. The fixed reply and its wording are unchanged; only what counts as stock widened.
+describe('advisor S0: stock asked without the exact word still gets the fixed unsold-module reply', () => {
+  const FIXED = 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องสต็อกสินค้าคงเหลือค่ะ ตอนนี้น้องมั่งมีช่วยเรื่องรายจ่ายและใบเบิกได้ค่ะ เช่น ลองถามว่า "ค่าใช้จ่ายเดือนนี้เท่าไหร่" หรือ "ใบเบิกที่รออนุมัติมีกี่รายการ" ได้เลยค่ะ';
+
+  for (const text of ['ของอะไรใกล้หมดบ้าง', 'ร้านเรามีของเหลือเท่าไหร่', 'สต๊อกเหลือเท่าไหร่อะ', 'สินค้าคงเหลือมีเท่าไหร่',
+    'น้ำปลาเหลือกี่ขวด', 'เหลือกี่ชิ้น', 'เช็คสตอกต่ำที', 'สินค้าที่เหลือมีอะไรบ้าง', 'ของใกล้จะหมดมีอะไรบ้าง', 'Stock เหลือเท่าไหร่']) {
+    it(`reads "${text}" as a stock question`, () => {
+      assert.equal(unsoldModuleTopicFor(text)?.featureKey, 'inventory');
+      assert.equal(scopePolicyOverride(text, 'read', [], ['expenses', 'reimbursement'], 'th')?.text, FIXED);
+    });
+  }
+
+  // "เหลือ" and "ใกล้หมด" also describe a receipt quota, a credit, a budget or what is left to pay; "เจ้าของ" and
+  // "เหลือง" only contain the letters.
+  for (const text of ['ใบเสร็จเหลือกี่ใบ', 'เหลือใบเสร็จอีกกี่ใบคะ', 'โควตาใบเสร็จของร้านใกล้หมดหรือยัง', 'แพ็กเกจของเราใกล้หมดอายุหรือยัง',
+    'เครดิตเหลือเท่าไหร่', 'ใบเสร็จของเหลืองทองบันทึกหรือยัง', 'เงินสำรองเจ้าของเหลือเท่าไหร่', 'งบของเดือนนี้เหลือเท่าไหร่',
+    'ซื้อของหมดไปเท่าไหร่', 'ใบเบิกเหลือค้างกี่ใบ', 'ค่าเช่าคลังสินค้าเดือนนี้เท่าไหร่', 'ส่วนที่เหลือจ่ายพรุ่งนี้']) {
+    it(`never reads "${text}" as a stock question`, () => {
+      assert.equal(unsoldModuleTopicFor(text), undefined);
+    });
+  }
+
+  it('still answers general knowledge about stock, and a shop that has the module', () => {
+    assert.equal(scopePolicyOverride('ของเหลือควรนับบ่อยแค่ไหน', 'general', [], ['expenses'], 'th'), undefined);
+    assert.equal(scopePolicyOverride('ของอะไรใกล้หมดบ้าง', 'read', [], ['expenses', 'inventory'], 'th'), undefined);
+  });
+});
