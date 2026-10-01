@@ -95,7 +95,7 @@ export class SubmitPayoutCorrectionUseCase {
     // The same seam as a draft's receiving choice: the account is sealed here, "save as my default" sets
     // the REQUESTER's default in the same transaction, and an account typed by someone else tells the
     // requester in that transaction too.
-    const { defaultToken, ...payout } = input as SubmitReimbursementPayoutCorrectionInput & { defaultToken?: unknown };
+    const { defaultToken, expectedUpdatedAt, ...payout } = input as SubmitReimbursementPayoutCorrectionInput & { defaultToken?: unknown };
     // "The account the claim had" (final review W6): nobody types an account for anyone, so the rules
     // about typing one do not come into it, the one about a requester who is no longer active included.
     const change: CorrectionPayoutChange = payout.mode === 'PREVIOUS'
@@ -113,7 +113,10 @@ export class SubmitPayoutCorrectionUseCase {
     await this.repo.submitPayoutCorrectionAtomic({
       companyId: ctx.companyId,
       requestId: id,
-      expectedUpdatedAt: req.updatedAt,
+      // The claim the form was opened on, when the form says which (final review W8); else the claim as
+      // just read. The repository holds the write to it under the claim's lock, so a second press that
+      // arrives after the first was taken answers "it changed" and freezes nothing.
+      expectedUpdatedAt: expectedUpdatedAt === undefined ? req.updatedAt : new Date(expectedUpdatedAt),
       actorUserId: ctx.userId,
       scopes: ctx.scopes ?? {},
       submittedAt,

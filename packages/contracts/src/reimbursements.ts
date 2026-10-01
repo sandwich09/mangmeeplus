@@ -934,7 +934,7 @@ export type RequestReimbursementPayoutCorrectionInput = {
  * choices of a draft, and one a draft has no use for: the account the claim had. Whatever is chosen is
  * frozen as a new version and approved again.
  */
-export type SubmitReimbursementPayoutCorrectionInput =
+export type SubmitReimbursementPayoutCorrectionInput = (
   | { mode: 'CASH' }
   | {
     mode: 'DEFAULT';
@@ -952,7 +952,17 @@ export type SubmitReimbursementPayoutCorrectionInput =
     mode: 'SPECIFIED';
     /** Also make it the requester's default account. */
     saveAsDefault?: boolean;
-  } & PayoutDestinationInput);
+  } & PayoutDestinationInput)
+) & {
+  /**
+   * `updatedAt` of the claim detail the form was opened on. The account is taken only while the claim
+   * is still that one; otherwise the answer is `reimbursement_changed` (409) and the page reads the
+   * claim again. So a second press that arrives after the first was taken freezes no further version
+   * and sends no further notice. A form should always send it: without it the call is held only to
+   * the claim as the server reads it at that moment, which a late second press passes.
+   */
+  expectedUpdatedAt?: string;
+};
 
 /** A receiving method and account, masked: what a claim was to be paid into at some point. */
 export type ReimbursementPayoutCorrectionAccount = {

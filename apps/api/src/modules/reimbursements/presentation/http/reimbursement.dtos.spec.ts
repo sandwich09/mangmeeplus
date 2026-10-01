@@ -344,6 +344,15 @@ describe('payout correction DTOs', () => {
     await rejects(RequestPayoutCorrectionDto, { reasonCode: 'OTHER', note: 'x'.repeat(2001) });
   });
 
+  // Final review W8: the form says which claim it was opened on, as a timestamp and nothing else.
+  it('takes the version of the claim the form was opened on, for a round only', async () => {
+    const at = '2026-10-02T03:04:05.678Z';
+    assert.equal((await body(SubmitPayoutCorrectionDto, { mode: 'CASH', expectedUpdatedAt: at })).expectedUpdatedAt, at);
+    await body(SubmitPayoutCorrectionDto, { mode: 'CASH' });
+    for (const expectedUpdatedAt of ['yesterday', '2026-10-02', 1790000000000, { $gt: '' }]) await rejects(SubmitPayoutCorrectionDto, { mode: 'CASH', expectedUpdatedAt });
+    await rejects(UpdateReimbursementDraftDto, { payout: { mode: 'CASH', expectedUpdatedAt: at } });
+  });
+
   // Final review W6: "the account the claim had" is a choice of a round only; a draft has no such account.
   it('takes "the account the claim had" for a round, and not for a draft', async () => {
     assert.equal((await body(SubmitPayoutCorrectionDto, { mode: 'PREVIOUS' })).mode, 'PREVIOUS');

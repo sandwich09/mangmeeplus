@@ -96,6 +96,8 @@ export class SubmitPayoutCorrectionDto extends PayoutDestinationFieldsDto {
   @IsIn(['DEFAULT', 'CASH', 'SPECIFIED', 'PREVIOUS']) mode!: SubmitReimbursementPayoutCorrectionInput['mode'];
   @IsBoolean() @IsOptional() saveAsDefault?: boolean;
   @Matches(/^[0-9a-f]{32}$/) @IsOptional() defaultToken?: string;
+  // `updatedAt` of the claim the form was opened on: a full timestamp, as the detail carries it.
+  @IsDateString({ strict: true }) @Matches(/T/) @IsOptional() expectedUpdatedAt?: string;
 }
 
 export class CreateReimbursementRequestDto implements CreateReimbursementRequestInput {

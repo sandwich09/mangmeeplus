@@ -4108,6 +4108,30 @@ describe('payout correction: the requester gives the account and it is approved 
     assert.equal(legacy.claim().payoutCorrectionSubmittedAt, undefined);
   });
 
+  // Final review W8. A second press that arrived after the first was taken froze another version, opened
+  // another step and sent another notice: the call compared against its own read, not against the page's.
+  it('refuses a second press of the same form once the first was taken, and still takes another account from the page of the waiting step', async () => {
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    // What the form was opened on.
+    const shown = (await world.detail.execute(ctx(), id)).updatedAt;
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB, expectedUpdatedAt: shown });
+    const standing = () => [world.state.payoutTables.destinations.length, world.steps.map((step) => [step.id, step.status]), world.events().length, world.claim().payoutDestinationVersion];
+    const taken = standing();
+    assert.deepEqual(taken, [2, [['step-1', 'APPROVED'], ['step-2', 'PENDING']], 1, 2]);
+
+    for (const late of [{ mode: 'SPECIFIED', ...SCB }, { mode: 'CASH' }, { mode: 'PREVIOUS' }] as const) {
+      await assert.rejects(() => world.giveAccount.execute(ctx(), id, { ...late, expectedUpdatedAt: shown } as any),
+        (error: any) => error.getStatus() === 409 && ((error.getResponse() as any).code ?? error.message) === 'reimbursement_changed', late.mode);
+    }
+    assert.deepEqual(standing(), taken, 'no version frozen, no step opened, nobody told');
+
+    // The requester reads the claim again and gives another account while it waits: the page they read is the claim as it stands.
+    const waiting = (await world.detail.execute(ctx(), id)).updatedAt;
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...PROMPTPAY, expectedUpdatedAt: waiting });
+    assert.deepEqual(standing(), [3, [['step-1', 'APPROVED'], ['step-2', 'CANCELLED'], ['step-3', 'PENDING']], 2, 3]);
+  });
+
   it('replaces the step that waits when the requester gives another account before it is approved', async () => {
     const world = correctionWorld();
     const id = await sentBack(world);

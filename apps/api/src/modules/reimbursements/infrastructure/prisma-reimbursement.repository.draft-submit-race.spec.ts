@@ -4302,6 +4302,36 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     }
   });
 
+  // Final review W8: the page says which claim it read, and the write is held to that under the claim's lock.
+  it('takes the account of a round once per page: a late second press freezes nothing and tells nobody', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await approvedTransferClaim();
+    await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    const shown = (await on(0).detail.execute(requesterWhoEdits(), claim.requestId)).updatedAt;
+    const standing = async () => [
+      (await accountVersionsOf(claim.requestId)).map((account) => account.version),
+      (await stepsOf(claim.requestId)).map((step) => step.status),
+      (await eventsOf(claim.requestId)).filter((event) => event.eventType === 'reimbursement.payout_correction_submitted').length,
+      ((await claimRow(claim.requestId)).payoutCorrectionLogJson as any[]).map((entry) => entry.kind),
+    ];
+
+    await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT, expectedUpdatedAt: shown });
+    const taken = await standing();
+    assert.deepEqual(taken, [[1, 2], ['APPROVED', 'PENDING'], 1, ['SENT_BACK', 'ACCOUNT_SUBMITTED']]);
+
+    // The same form pressed again, on either connection, after the first was taken.
+    for (const index of [0, 1]) {
+      await assert.rejects(() => round(index).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT, expectedUpdatedAt: shown }), conflict('reimbursement_changed'));
+    }
+    assert.deepEqual(await standing(), taken);
+    // Two presses at the same instant: one is taken, whichever it is.
+    const fresh = (await on(0).detail.execute(requesterWhoEdits(), claim.requestId)).updatedAt;
+    const both = await Promise.allSettled([0, 1].map((index) => round(index).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'CASH', expectedUpdatedAt: fresh })));
+    assert.deepEqual(both.map((result) => result.status).sort(), ['fulfilled', 'rejected']);
+    assert.ok(conflict('reimbursement_changed')((both.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason));
+    assert.deepEqual((await standing()).slice(1), [['APPROVED', 'CANCELLED', 'PENDING'], 2, ['SENT_BACK', 'ACCOUNT_SUBMITTED', 'ACCOUNT_SUBMITTED']]);
+  });
+
   // Final review W6: the requester left after the claim was approved, and the claim was sent back by mistake.
   it('gives a claim the account it had back for a requester who is no longer active: the same sealed account as a new version, approved again', async (t) => {
     if (!reachable) return t.skip('no database reachable');
