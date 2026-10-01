@@ -597,6 +597,12 @@ const CODE_LABELS: Record<string, string> = {
   reimbursement_payment_changed: 'การจ่ายเงินถูกเปลี่ยนระหว่างทำรายการ กรุณาโหลดรายการใหม่แล้วลองอีกครั้ง',
   reimbursement_payment_state_changed: 'การจ่ายเงินถูกเปลี่ยนระหว่างทำรายการ กรุณาโหลดรายการใหม่แล้วลองอีกครั้ง',
   reimbursement_payment_number_conflict: 'เลขที่ใบจ่ายไม่ตรงกับที่จองไว้ กรุณาลองใหม่อีกครั้ง',
+  // สลิปการจ่ายเงินคืน
+  payment_slip_required: 'จ่ายด้วยการโอนต้องแนบสลิป',
+  payment_slip_invalid: 'ไฟล์สลิปใช้ไม่ได้ เลือกไฟล์ PDF หรือรูปภาพ ขนาดไม่เกิน 10 MB แล้วลองใหม่',
+  payment_slip_limit_reached: 'การจ่ายหนึ่งครั้งแนบสลิปได้ไม่เกิน 5 ไฟล์',
+  payment_slip_access_denied: 'คุณไม่มีสิทธิ์เปิดสลิปของใบเบิกนี้',
+  reimbursement_payment_slip_retained: 'ไฟล์นี้เป็นสลิปการจ่ายเงินคืน จึงลบไม่ได้',
   reimbursement_document_number_unavailable: 'ขอเลขที่เอกสารไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
   void_reason_required: 'กรุณาระบุเหตุผลการยกเลิกการจ่ายเงิน',
   // ลำดับงานจริง: ต้องลงบัญชีตั้งหนี้ก่อน แล้วจึงจ่าย — บอกลำดับ ไม่ใช่แค่บอกว่าทำไม่ได้

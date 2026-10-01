@@ -361,6 +361,22 @@ describe('reimbursement claim form', () => {
     assert.equal(pieces.join(''), word, 'no character is dropped by the split');
   });
 
+  // One payment record, one truth: the box follows the slip the claim page shows on that payment.
+  it('ticks หลักฐานการชำระเงิน when the printed payment has a slip, on the two-signer form only', () => {
+    const ticked = (input: ReimbursementClaimFormSnapshot) => bothRenderings(input).map((artifact) => (artifact.match(/<path d="M/g) ?? []).length);
+    assert.deepEqual(ticked(snapshot()), [1, 1], 'no slip: only ใบเสร็จรับเงิน');
+    assert.deepEqual(ticked(snapshot({ hasPaymentEvidence: false })), [1, 1]);
+    assert.deepEqual(ticked(snapshot({ hasPaymentEvidence: true })), [2, 2], 'receipt and payment evidence');
+    assert.deepEqual(ticked(snapshot({ hasPaymentEvidence: true, hasReceiptEvidence: false })), [1, 1]);
+    for (const artifact of bothRenderings(snapshot({ hasPaymentEvidence: true }))) {
+      // The tick sits in the หลักฐานการชำระเงิน box (x=392), not in ใบกำกับภาษี or อื่น ๆ.
+      assert.match(artifact, /<path d="M395 \d+ l3 4 l6 -8"[^>]*\/><text x="414" y="\d+">หลักฐานการชำระเงิน<\/text>/);
+    }
+    // The legacy four-block form reprints byte for byte, slip or no slip.
+    const legacy = snapshot({ layout: 'LEGACY_FOUR_SIGNERS' });
+    assert.deepEqual(bothRenderings({ ...legacy, hasPaymentEvidence: true }), bothRenderings(legacy));
+  });
+
   it('draws a stored signature above the ลงชื่อ line and leaves unsigned roles ruled (lane F)', () => {
     const artifact = renderReimbursementClaimFormSvg(snapshot({
       layout: 'LEGACY_FOUR_SIGNERS',

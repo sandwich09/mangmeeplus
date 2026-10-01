@@ -13,15 +13,15 @@ import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
 import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/ExpensesUi';
 import {
-  addReimbursementInternalNote, approveReimbursement, cancelReimbursement, deleteReimbursementInternalNote,
+  addReimbursementInternalNote, approveReimbursement, attachReimbursementPaymentSlip, cancelReimbursement, deleteReimbursementInternalNote,
   editReimbursementInternalNote, financeReviewReimbursement, getReimbursement, rejectReimbursement,
-  reopenReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadSignedClaimFormCopy,
+  reopenReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadReimbursementPaymentSlip, uploadSignedClaimFormCopy,
   voidReimbursementPayment,
 } from './reimbursements.api';
 import { currentDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
   activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, errorText, isMissingSavedSignatureError,
-  isStaleApprovalError, type JourneyAction, type JourneyStepState,
+  isStaleApprovalError, signedCopyMoveConfirmText, type JourneyAction, type JourneyStepState,
 } from './reimbursements.logic';
 import {
   ClaimDetailSections, ClaimSummaryCard, MissingSavedSignatureModal, PaymentForm, ReasonDialog, RejectDialog,
@@ -89,7 +89,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const [noteBusy, setNoteBusy] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
   const cardRef = useRef<HTMLElement>(null);
-  const { previewLoadingKey, openClaimForm, openAttachment, previewModals } = useClaimDocumentPreview(companyId, setActionError);
+  const { previewLoadingKey, openClaimForm, openAttachment, openPaymentSlip, previewModals } = useClaimDocumentPreview(companyId, setActionError);
 
   const saveNote = async () => {
     if (!noteBody.trim() || noteBusy) return;
@@ -393,6 +393,18 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           () => uploadSignedClaimFormCopy(companyId, requestId, file, detail.branchId, confirmedRequestNo),
           confirmedRequestNo ? 'แนบสำเนาใบเบิกที่ลงนามครบเรียบร้อยแล้ว' : 'แนบไฟล์เรียบร้อยแล้ว')}
         onRequestVoidPayment={(payment) => { setActionError(null); setVoidingPayment(payment); }}
+        onOpenPaymentSlip={(payment, attachmentId, name) => void openPaymentSlip(detail.id, payment.id, attachmentId, name)}
+        onAttachPaymentSlip={(payment, file) => void act('attach-slip', async () => attachReimbursementPaymentSlip(
+          companyId, requestId, payment.id, await uploadReimbursementPaymentSlip(companyId, requestId, file),
+        ), 'แนบสลิปเรียบร้อยแล้ว')}
+        onUseSignedCopyAsSlip={(copy, payment) => void (async () => {
+          // The file changes hands and a paper-signature declaration may go with it, so it asks first.
+          if (!(await confirm({
+            title: 'ใช้ไฟล์นี้เป็นสลิปการจ่าย', message: signedCopyMoveConfirmText(copy, payment),
+            confirmLabel: 'ย้ายเป็นสลิปการจ่าย', cancelLabel: 'กลับ', variant: 'primary',
+          }))) return;
+          await act('move-slip', () => attachReimbursementPaymentSlip(companyId, requestId, payment.id, copy.attachmentId), 'ย้ายไฟล์ไปเป็นสลิปการจ่ายแล้ว');
+        })()}
       />
 
       {previewModals}

@@ -140,7 +140,7 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
     const tx = {
       $executeRaw: mock.fn(async () => 1),
       expenseSubstituteReceiptEvidence: { findFirst: mock.fn(async () => null) },
-      attachmentLink: { findMany: mock.fn(async () => []) },
+      attachmentLink: { findMany: mock.fn(async () => []), findFirst: mock.fn(async () => null) },
       expenseRecord: { findFirst: mock.fn(async () => null) },
       reimbursementLine: { findFirst: mock.fn(async () => null) },
       attachmentObject: {
@@ -169,12 +169,48 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
     // wet-signed scan, then the artifact/signature hold, then the snapshot hold — all on the tx.
     assert.equal(tx.expenseSubstituteReceiptEvidence.findFirst.mock.callCount(), 3);
     assert.equal(tx.attachmentLink.findMany.mock.callCount(), 2);
+    // The payment-slip hold is checked on the same transaction, after the retention lock is taken.
+    assert.equal(tx.attachmentLink.findFirst.mock.callCount(), 1);
     assert.deepEqual((tx.attachmentObject.updateMany.mock.calls as any[])[0]?.arguments[0].where, {
       id: 'att-1',
       companyId: 'co-1',
       status: { not: 'DELETED' },
     });
     assert.equal(result.status, 'DELETED');
+  });
+});
+
+describe('PrismaAttachmentRepository reimbursement payment slips', () => {
+  it('recognises a slip by its payment link alone, tenant-scoped', async () => {
+    const attachmentLink = { findFirst: mock.fn(async (): Promise<{ id: string } | null> => ({ id: 'link-1' })) };
+    const repo = new PrismaAttachmentRepository({ client: { attachmentLink } } as any);
+
+    assert.equal(await repo.isReimbursementPaymentSlip({ id: 'att-1', companyId: 'co-1' }), true);
+    assert.deepEqual((attachmentLink.findFirst.mock.calls as any[])[0].arguments[0].where, {
+      companyId: 'co-1', attachmentId: 'att-1', targetType: 'reimbursement_payment', purpose: 'reimbursement.payment.slip',
+    });
+
+    attachmentLink.findFirst = mock.fn(async () => null);
+    assert.equal(await repo.isReimbursementPaymentSlip({ id: 'att-receipt', companyId: 'co-1' }), false);
+  });
+
+  it('refuses to delete a slip inside the delete transaction, before anything is written', async () => {
+    const tx = {
+      $executeRaw: mock.fn(async () => 1),
+      reimbursementLine: { findFirst: mock.fn(async () => null) },
+      attachmentLink: { findFirst: mock.fn(async () => ({ id: 'link-1' })), findMany: mock.fn(async () => []) },
+      expenseSubstituteReceiptEvidence: { findFirst: mock.fn(async () => null) },
+      attachmentObject: { updateMany: mock.fn(async () => ({ count: 1 })) },
+    };
+    const repo = new PrismaAttachmentRepository({ client: {} } as any);
+
+    await assert.rejects(
+      () => repo.markDeleted({ companyId: 'co-1', id: 'att-slip' }, tx as any),
+      (error: any) => error.getStatus() === 409 && error.getResponse().code === 'reimbursement_payment_slip_retained',
+    );
+    assert.equal(tx.attachmentObject.updateMany.mock.callCount(), 0);
+    // Checked under the retention lock, which the slip link is written under as well.
+    assert.equal(tx.$executeRaw.mock.callCount(), 2);
   });
 });
 

@@ -1,7 +1,17 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { RecordReimbursementPaymentUseCase, FinanceReviewReimbursementUseCase, ExportReimbursementEvidenceUseCase } from './reimbursement-finance.use-case';
+import { ValidationPipe } from '@nestjs/common';
+import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
+import {
+  RecordReimbursementPaymentUseCase, FinanceReviewReimbursementUseCase, ExportReimbursementEvidenceUseCase, VoidReimbursementPaymentUseCase,
+} from './reimbursement-finance.use-case';
+import {
+  AttachPaymentSlipUseCase, CompletePaymentSlipUploadUseCase, InitPaymentSlipUploadUseCase,
+} from './reimbursement-payment-slip.use-case';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import { ReimbursementController } from '../../presentation/http/reimbursement.controller';
+import { withPaymentSlipAccess } from '../dto/reimbursement.mapper';
+import { RecordReimbursementPaymentDto } from '../../presentation/http/reimbursement.dtos';
 
 // Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
 // detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
@@ -50,12 +60,43 @@ function fakeRepo(req: any, opts: {
   outboxRows?: any[];
   /** The company's stored policy row; null = defaults (finance review OFF since 2026-09-21). */
   policy?: Record<string, unknown> | null;
+  /** The repository's slip proof verdict; it throws for a file that is not this claim's slip. */
+  slipError?: Error;
+  /** How the repository says the slip came to be one (default: the payer's own upload). */
+  slipSource?: 'UPLOAD' | 'PREVIOUS_SLIP' | 'SIGNED_COPY';
 } = {}) {
   const payments: any[] = [];
   const outboxRows = opts.outboxRows ?? [];
+  /** Slip links per payment: what the claim page, the export and the print all read. */
+  const slips: Record<string, { attachmentId: string; attachedAt: Date }[]> = {};
+  const linkSlip = (paymentId: string, attachmentId: string, actorUserId: string) => {
+    (slips[paymentId] ??= []).push({ attachmentId, attachedAt: new Date('2026-02-01T00:00:00.000Z') });
+    return { attachmentId, source: opts.slipSource ?? 'UPLOAD', uploadedByUserId: actorUserId, declarationWithdrawn: opts.slipSource === 'SIGNED_COPY' };
+  };
   const repo = {
     lastPayment: undefined as any,
     lastResolve: undefined as any,
+    slipChecks: [] as any[],
+    slips,
+    payments,
+    assertPaymentSlipUsable: async (input: any) => {
+      repo.slipChecks.push(input);
+      if (opts.slipError) throw opts.slipError;
+    },
+    listPaymentSlips: async (_c: string, ids: string[]) => Object.fromEntries(ids.filter((id) => slips[id]).map((id) => [id, slips[id]])),
+    findPaymentById: async (_c: string, id: string) => payments.find((payment) => payment.id === id) ?? null,
+    // The real void reverses the journal too; here only what the claim shows afterwards matters.
+    voidPaymentTrueReversal: async (_c: string, _requestId: string, paymentId: string, actorUserId: string, reason: string) => {
+      const payment = payments.find((row) => row.id === paymentId);
+      Object.assign(payment, { status: 'VOIDED', voidedAt: new Date('2026-02-02T00:00:00.000Z'), voidReason: reason, voidedByUserId: actorUserId });
+      Object.assign(req, { status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', paymentTotalAmount: '0.0000', outstandingAmount: req.amount });
+      return { request: { ...req, approvalSteps: [], payments, duplicateCandidates: [] }, payment, reversalEntryId: null };
+    },
+    attachPaymentSlipAtomic: async (data: any) => {
+      if (opts.slipError) throw opts.slipError;
+      if ((slips[data.paymentId] ?? []).some((slip) => slip.attachmentId === data.attachmentId)) return { created: false };
+      return { created: true, slip: linkSlip(data.paymentId, data.attachmentId, data.actorUserId) };
+    },
     findRequestById: async (_c: string, _id: string, withRel?: boolean) => (withRel ? { ...req, approvalSteps: [], payments, duplicateCandidates: [] } : req),
     findPolicy: async () => opts.policy ?? null,
     getUserDisplayNames: async () => ({}),
@@ -121,9 +162,10 @@ function fakeRepo(req: any, opts: {
     listSignedClaimFormCopies: async () => (opts.signedCopies ?? []),
     listOpenDuplicateCandidates: async () => (opts.openDuplicates ? Array.from({ length: opts.openDuplicates }, (_v, i) => ({ id: `d${i}` })) : []),
     recordPaymentAtomic: async (data: any) => {
+      const id = `pay-${payments.length + 1}`;
       const payment = {
-        id: 'pay-1', ...data,
-        sourcePaymentRef: JSON.stringify({ sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: 'pay-1', direction: 'PAID' }),
+        id, ...data,
+        sourcePaymentRef: JSON.stringify({ sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: id, direction: 'PAID' }),
         status: 'RECORDED', postingStatus: 'pending', createdAt: new Date(), updatedAt: new Date(),
       };
       repo.lastPayment = payment;
@@ -133,6 +175,7 @@ function fakeRepo(req: any, opts: {
         request: { ...req, approvalSteps: [], payments, duplicateCandidates: [] },
         payment,
         created: true,
+        ...(data.slipAttachmentId && { slip: linkSlip(id, data.slipAttachmentId, data.paidByUserId) }),
       };
     },
     updateRequest: async (_c: string, _id: string, data: any) => { Object.assign(req, data); return req; },
@@ -280,6 +323,316 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
     const req = financeReviewedRequest();
     const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx([]), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' }), /permission/i);
+  });
+});
+
+// Owner decisions 2026-10-01: a slip is required to record a bank transfer and optional for every
+// other method, the API enforces it, a replay compares the slip, and voiding keeps it as history.
+describe('payment slip at the payment step', () => {
+  const perms = ['reimbursement.payment.record'];
+  const paidAt = '2026-02-01T00:00:00.000Z';
+  const transfer = { paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER' as const, paidAt, paymentReference: 'TXN-1' };
+  const recordUC = (repo: any, audit: any = noopAudit, outbox: any = noopOutbox) =>
+    new RecordReimbursementPaymentUseCase(repo, audit, outbox, reserve, commit, fakeDetailEvidence as any);
+  /** Document numbering that remembers what it committed, as a replay finds it. */
+  function replayableUC(repo: any) {
+    const reservations = new Map<string, any>();
+    const reserving = { execute: async (input: any) => {
+      const reservation = reservations.get(input.idempotencyKey)
+        ?? { id: `seq-${reservations.size + 1}`, documentNumber: `RBPAY-202602-00000${reservations.size + 1}`, status: 'RESERVED' };
+      reservations.set(input.idempotencyKey, reservation);
+      return { ...reservation };
+    } } as any;
+    const committing = { execute: async (input: any) => {
+      const reservation = [...reservations.values()].find((row) => row.id === input.id);
+      Object.assign(reservation, { status: 'COMMITTED', ownerType: input.ownerType, ownerId: input.ownerId });
+    } } as any;
+    return new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserving, committing, fakeDetailEvidence as any);
+  }
+
+  // The web form refuses this too, but the rule is the API's: this is the request a script or an
+  // old browser tab would send, through the same validation pipe and controller a real call takes.
+  it('refuses a transfer posted straight to the API without a slip', async () => {
+    const req = financeReviewedRequest();
+    const repo = fakeRepo(req);
+    const controller: ReimbursementController = Object.assign(Object.create(ReimbursementController.prototype), {
+      recordPayment: recordUC(repo), evidence: fakeDetailEvidence,
+    });
+    const body = await new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS).transform(
+      { ...transfer, idempotencyKey: 'form-1' }, { type: 'body', metatype: RecordReimbursementPaymentDto },
+    );
+
+    await assert.rejects(
+      () => controller.createPayment(ctx(perms), 'rb-1', body),
+      (error: any) => error.getStatus() === 422 && error.message === 'payment_slip_required',
+    );
+    assert.equal(repo.lastPayment, undefined, 'nothing is recorded');
+    assert.equal(req.status, 'READY_FOR_PAYMENT');
+    assert.equal(req.outstandingAmount, '500.0000');
+
+    // The same request with its slip is recorded, and the answer already tells the payer they may open it.
+    const withSlip = await new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS).transform(
+      { ...transfer, idempotencyKey: 'form-1', slipAttachmentId: 'att-slip-1' }, { type: 'body', metatype: RecordReimbursementPaymentDto },
+    );
+    const paid = await controller.createPayment(ctx(perms), 'rb-1', withSlip);
+    assert.equal(paid.status, 'PAID');
+    assert.deepEqual(paid.payments.map((row: any) => [row.slips.map((slip: any) => slip.attachmentId), row.viewerCanOpenSlips]), [[['att-slip-1'], true]]);
+  });
+
+  it('answers every action with the slip verdict of the person who acted, not of the claim', async () => {
+    const req = financeReviewedRequest();
+    const repo = fakeRepo(req);
+    const controller: ReimbursementController = Object.assign(Object.create(ReimbursementController.prototype), {
+      recordPayment: recordUC(repo), voidPayment: new VoidReimbursementPaymentUseCase(repo, fakeDetailEvidence as any), evidence: fakeDetailEvidence,
+    });
+    await controller.createPayment(ctx(perms), 'rb-1', { ...transfer, slipAttachmentId: 'att-slip-1' } as any);
+    // Voiding is its own right: someone who holds only that one is not among the slip's readers.
+    const voidOnly = { ...ctx(['reimbursement.payment.void']), userId: 'voider-1' };
+    const voided = await controller.voidRequestPayment(voidOnly, 'rb-1', 'pay-1', { reason: 'บันทึกเลขอ้างอิงผิด' });
+    assert.deepEqual(voided.payments.map((row: any) => [row.status, row.slips.length, row.viewerCanOpenSlips]), [['VOIDED', 1, false]]);
+    // The requester voiding nothing, just reading the same shape: theirs is true.
+    const asRequester = withPaymentSlipAccess(voided, { userId: 'staff-1', permissions: [] });
+    assert.equal(asRequester.payments[0]!.viewerCanOpenSlips, true);
+  });
+
+  it('records a transfer with its slip, and the claim shows the slip on that payment', async () => {
+    const req = financeReviewedRequest();
+    const repo = fakeRepo(req);
+    const audits: any[] = [];
+    const events: any[] = [];
+    const detail = await recordUC(repo, { log: async (entry: any) => { audits.push(entry); } }, { append: async (...args: any[]) => { events.push(args); } })
+      .execute(ctx(perms), 'rb-1', { ...transfer, slipAttachmentId: 'att-slip-1' });
+
+    assert.deepEqual(repo.slipChecks, [{ companyId: 'co-1', requestId: 'rb-1', attachmentId: 'att-slip-1', actorUserId: 'fin-1' }]);
+    assert.equal(repo.lastPayment.slipAttachmentId, 'att-slip-1');
+    assert.equal(detail.status, 'PAID');
+    // Method, date, reference, amount and the slip all come from the one payment record.
+    assert.deepEqual(
+      detail.payments.map((row) => [row.paymentMethod, row.paidAt, row.paymentReference, row.paidAmount, row.slips.map((slip) => slip.attachmentId)]),
+      [['BANK_TRANSFER', paidAt, 'TXN-1', '500.0000', ['att-slip-1']]],
+    );
+    const recorded = audits.find((entry) => entry.action === 'reimbursement.payment.record');
+    assert.deepEqual(recorded.metadataJson, {
+      paymentNo: 'RBPAY-202601-000001', paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER', requestId: 'rb-1',
+      slipAttachmentId: 'att-slip-1', slipSource: 'UPLOAD',
+    });
+    // Nothing that opens or locates the file leaves through the audit row or the notification payload.
+    assert.doesNotMatch(JSON.stringify([audits, events]), /https?:|objectKey|bucket|fileName/i);
+    assert.equal(JSON.stringify(events).includes('att-slip-1'), false, 'the event payload carries no slip file id');
+  });
+
+  it('asks no slip of cash, cheque or another method, and still takes one when given', async () => {
+    for (const [paymentMethod, paymentReference] of [['CASH', undefined], ['CHEQUE', 'CHQ-9'], ['OTHER', undefined]] as const) {
+      const bare = financeReviewedRequest();
+      const bareRepo = fakeRepo(bare);
+      const withoutSlip = await recordUC(bareRepo).execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod, paidAt, paymentReference });
+      assert.equal(bare.status, 'PAID', `${paymentMethod} without a slip`);
+      assert.deepEqual(withoutSlip.payments[0]!.slips, [], `${paymentMethod}: no slip is reported`);
+      assert.deepEqual(bareRepo.slipChecks, []);
+
+      const evidenced = financeReviewedRequest();
+      const evidencedRepo = fakeRepo(evidenced);
+      const withSlip = await recordUC(evidencedRepo).execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod, paidAt, paymentReference, slipAttachmentId: 'att-proof' });
+      assert.deepEqual(withSlip.payments[0]!.slips.map((slip) => slip.attachmentId), ['att-proof'], `${paymentMethod} with a slip`);
+      assert.equal(evidencedRepo.slipChecks.length, 1, 'an optional slip is proven like a required one');
+    }
+  });
+
+  it('refuses a file that is not this claim\'s slip before a payment number is reserved', async () => {
+    const req = financeReviewedRequest();
+    const repo = fakeRepo(req, { slipError: Object.assign(new Error('payment_slip_invalid'), { code: 'payment_slip_invalid' }) });
+    let reservations = 0;
+    const countingReserve = { execute: async () => { reservations += 1; return { id: 'seq-1', documentNumber: 'RBPAY-202601-000001' }; } } as any;
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, countingReserve, commit, fakeDetailEvidence as any);
+    for (const paymentMethod of ['BANK_TRANSFER', 'CASH'] as const) {
+      await assert.rejects(
+        () => uc.execute(ctx(perms), 'rb-1', { ...transfer, paymentMethod, slipAttachmentId: 'att-of-another-claim' }),
+        /payment_slip_invalid/,
+      );
+    }
+    assert.equal(reservations, 0);
+    assert.equal(repo.lastPayment, undefined);
+    assert.equal(req.status, 'READY_FOR_PAYMENT');
+  });
+
+  // Claims approved before the slip existed stay payable, under the same rule.
+  it('pays a claim approved before the feature: a transfer with its slip, cash without one', async () => {
+    const legacy = () => financeReviewedRequest({
+      approvedAt: new Date('2026-09-20T03:00:00.000Z'), financeReviewStatus: 'NOT_REQUIRED', approvalPolicySnapshotJson: undefined,
+    });
+    await assert.rejects(() => recordUC(fakeRepo(legacy())).execute(ctx(perms), 'rb-1', transfer), /payment_slip_required/);
+
+    const byTransfer = legacy();
+    await recordUC(fakeRepo(byTransfer)).execute(ctx(perms), 'rb-1', { ...transfer, slipAttachmentId: 'att-slip-1' });
+    assert.equal(byTransfer.status, 'PAID');
+
+    const byCash = legacy();
+    await recordUC(fakeRepo(byCash)).execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt });
+    assert.equal(byCash.status, 'PAID');
+  });
+
+  it('replays the same payment as itself, and refuses one that differs in the slip', async () => {
+    const req = financeReviewedRequest();
+    const repo = fakeRepo(req);
+    const uc = replayableUC(repo);
+    const input = { ...transfer, slipAttachmentId: 'att-slip-1', idempotencyKey: 'form-1' };
+    await uc.execute(ctx(perms), 'rb-1', input);
+
+    const replayed = await uc.execute(ctx(perms), 'rb-1', input);
+    assert.equal(replayed.status, 'PAID');
+    assert.equal(repo.payments.length, 1, 'no second payment');
+    assert.deepEqual(replayed.payments[0]!.slips.map((slip) => slip.attachmentId), ['att-slip-1']);
+
+    for (const slipAttachmentId of ['att-slip-2', undefined]) {
+      await assert.rejects(
+        () => uc.execute(ctx(perms), 'rb-1', { ...input, slipAttachmentId }),
+        (error: any) => error.getStatus() === 409 && error.message === 'reimbursement_payment_already_recorded',
+        `a replay with ${slipAttachmentId ?? 'no slip'} is never a success`,
+      );
+    }
+    // A cash payment replayed with a slip it never had is refused the same way.
+    const cash = financeReviewedRequest();
+    const cashUC = replayableUC(fakeRepo(cash));
+    const cashInput = { paidAmount: '500.0000', paymentMethod: 'CASH' as const, paidAt };
+    await cashUC.execute(ctx(perms), 'rb-1', cashInput);
+    await assert.rejects(() => cashUC.execute(ctx(perms), 'rb-1', { ...cashInput, slipAttachmentId: 'att-late' }), /reimbursement_payment_already_recorded/);
+    assert.equal(repo.payments.length, 1);
+  });
+
+  it('keeps the slip with a voided payment, and a new payment needs a slip of its own', async () => {
+    const req = financeReviewedRequest();
+    const repo = fakeRepo(req);
+    const voidUC = new VoidReimbursementPaymentUseCase(repo, fakeDetailEvidence as any);
+    await recordUC(repo).execute(ctx(perms), 'rb-1', { ...transfer, slipAttachmentId: 'att-slip-1', idempotencyKey: 'form-1' });
+
+    const voided = await voidUC.execute(ctx(['reimbursement.payment.void']), 'rb-1', 'pay-1', { reason: 'บันทึกเลขอ้างอิงผิด' });
+    // The claim is payable again, and the record that was voided still shows what it was paid with.
+    assert.deepEqual([voided.status, voided.paymentStatus, voided.outstandingAmount, voided.paymentTotalAmount], ['READY_FOR_PAYMENT', 'UNPAID', '500.0000', '0.0000']);
+    assert.deepEqual(voided.payments.map((row) => [row.id, row.status, row.paymentMethod, row.paymentReference, row.slips.map((slip) => slip.attachmentId)]),
+      [['pay-1', 'VOIDED', 'BANK_TRANSFER', 'TXN-1', ['att-slip-1']]]);
+
+    // The old slip does not carry over on its own: the new transfer is refused until it names a slip.
+    await assert.rejects(() => recordUC(repo).execute(ctx(perms), 'rb-1', { ...transfer, paymentReference: 'TXN-2', idempotencyKey: 'form-2' }), /payment_slip_required/);
+    assert.equal(req.status, 'READY_FOR_PAYMENT');
+
+    const repaid = await recordUC(repo).execute(ctx(perms), 'rb-1', { ...transfer, paymentReference: 'TXN-2', slipAttachmentId: 'att-slip-2', idempotencyKey: 'form-2' });
+    assert.deepEqual([repaid.status, repaid.paymentStatus, repaid.outstandingAmount, repaid.paymentTotalAmount], ['PAID', 'PAID', '0.0000', '500.0000']);
+    assert.deepEqual(repaid.payments.map((row) => [row.id, row.status, row.paymentReference, row.slips.map((slip) => slip.attachmentId)]), [
+      ['pay-1', 'VOIDED', 'TXN-1', ['att-slip-1']],
+      ['pay-2', 'RECORDED', 'TXN-2', ['att-slip-2']],
+    ]);
+    // Replaying the voided payment's own request is not a way back to "paid".
+    await assert.rejects(
+      () => recordUC(repo).execute(ctx(perms), 'rb-1', { ...transfer, slipAttachmentId: 'att-slip-1', idempotencyKey: 'form-1' }),
+      /reimbursement_payment_already_recorded/,
+    );
+  });
+
+  it('exports each payment with its reference and how many slips it carries, never which files', async () => {
+    const req = financeReviewedRequest({ lines: [] });
+    const repo = fakeRepo(req);
+    await recordUC(repo).execute(ctx(perms), 'rb-1', { ...transfer, slipAttachmentId: 'att-slip-1' });
+    const out: any = await new ExportReimbursementEvidenceUseCase(repo, noopAudit).execute(ctx(['reimbursement.export']), 'rb-1');
+    assert.deepEqual(out.payments, [{
+      paymentNo: 'RBPAY-202601-000001', paidAmount: '500.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
+      paidAt, paymentReference: 'TXN-1', status: 'RECORDED', slipCount: 1,
+    }]);
+    assert.equal(JSON.stringify(out).includes('att-slip-1'), false);
+  });
+});
+
+describe('payment slip upload and later attachment', () => {
+  const perms = ['reimbursement.payment.record'];
+  const slipFile = { originalFileName: 'slip.jpg', mimeType: 'image/jpeg', byteSize: 250_000 };
+
+  it('tags a slip upload with its claim, in the claim\'s branch, and borrows the upload grant', async () => {
+    const calls: any[] = [];
+    const createUpload = { execute: async (uploadCtx: any, command: any) => { calls.push([uploadCtx, command]); return { attachmentId: 'att-new' }; } } as any;
+    const result = await new InitPaymentSlipUploadUseCase(fakeRepo(financeReviewedRequest()), createUpload).execute(ctx(perms), 'rb-1', slipFile);
+
+    assert.deepEqual(result, { attachmentId: 'att-new' });
+    assert.deepEqual(calls[0][1], {
+      ...slipFile, visibility: 'INTERNAL', branchId: 'branch-1',
+      metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' },
+    });
+    assert.ok(calls[0][0].permissions.includes('attachment.create'));
+  });
+
+  it('accepts PDF, JPG and PNG up to 10 MB and refuses everything else with one stable code', async () => {
+    const createUpload = { execute: async () => ({ attachmentId: 'att-new' }) } as any;
+    const uc = new InitPaymentSlipUploadUseCase(fakeRepo(financeReviewedRequest()), createUpload);
+    for (const mimeType of ['application/pdf', 'image/png', 'image/jpeg']) {
+      await uc.execute(ctx(perms), 'rb-1', { ...slipFile, mimeType, byteSize: 10 * 1024 * 1024 });
+    }
+    for (const bad of [
+      { mimeType: 'image/heic' }, { mimeType: 'text/html' }, { byteSize: 10 * 1024 * 1024 + 1 }, { byteSize: 0 }, { byteSize: 1.5 },
+    ]) {
+      await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { ...slipFile, ...bad }), /payment_slip_invalid/, JSON.stringify(bad));
+    }
+  });
+
+  it('leaves slip uploads to payment-record holders inside the claim\'s branch', async () => {
+    const createUpload = { execute: async () => assert.fail('a refused upload must not start') } as any;
+    const uc = new InitPaymentSlipUploadUseCase(fakeRepo(financeReviewedRequest()), createUpload);
+    await assert.rejects(() => uc.execute(ctx(['reimbursement.finance_review']), 'rb-1', slipFile), /Missing permission: reimbursement\.payment\.record/);
+    await assert.rejects(() => uc.execute({ ...ctx(perms), scopes: { branchIds: ['branch-9'] } }, 'rb-1', slipFile), /outside your assigned branch scope/);
+  });
+
+  it('completes only the payer\'s own pending slip upload for this claim', async () => {
+    const completed: any[] = [];
+    const completeUpload = { execute: async (_ctx: any, command: any) => { completed.push(command); return { id: command.attachmentId, objectKey: 'evidence/co-1/x' }; } } as any;
+    const lookups: any[] = [];
+    const repoWith = (upload: any) => Object.assign(fakeRepo(financeReviewedRequest()), {
+      findPaymentSlipUpload: async (...args: any[]) => { lookups.push(args); return upload; },
+    });
+
+    const done = await new CompletePaymentSlipUploadUseCase(repoWith({ id: 'att-new', status: 'PENDING_UPLOAD' }), completeUpload)
+      .execute(ctx(perms), 'rb-1', 'att-new', { byteSize: 250_000 });
+    assert.deepEqual(done, { attachmentId: 'att-new' }, 'only the id comes back, never the storage record');
+    assert.deepEqual(lookups[0], ['co-1', 'att-new', 'fin-1', 'rb-1']);
+    assert.deepEqual(completed, [{ attachmentId: 'att-new', byteSize: 250_000 }]);
+
+    for (const upload of [null, { id: 'att-new', status: 'ACTIVE' }]) {
+      await assert.rejects(
+        () => new CompletePaymentSlipUploadUseCase(repoWith(upload), completeUpload).execute(ctx(perms), 'rb-1', 'att-new', {}),
+        /payment_slip_invalid/,
+      );
+    }
+    assert.equal(completed.length, 1);
+  });
+
+  it('attaches a slip to a recorded payment and audits a moved signed copy with what was withdrawn', async () => {
+    const req = financeReviewedRequest();
+    const repo = fakeRepo(req, { slipSource: 'SIGNED_COPY' });
+    await new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any)
+      .execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
+    const audits: any[] = [];
+    const uc = new AttachPaymentSlipUseCase(repo, { log: async (entry: any) => { audits.push(entry); } } as any, fakeDetailEvidence as any);
+
+    const detail = await uc.execute(ctx(perms), 'rb-1', 'pay-1', { attachmentId: 'att-misfiled' });
+    assert.deepEqual(detail.payments[0]!.slips.map((slip) => slip.attachmentId), ['att-misfiled']);
+    assert.deepEqual(audits.map((entry) => [entry.action, entry.targetId, entry.riskLevel, entry.metadataJson]), [[
+      'reimbursement.payment.slip.attach', 'pay-1', 'HIGH',
+      { requestId: 'rb-1', slipAttachmentId: 'att-misfiled', slipSource: 'SIGNED_COPY',
+        movedFromPurpose: 'reimbursement.claim_form.signed', originalUploaderUserId: 'fin-1', paperDeclarationWithdrawn: true },
+    ]]);
+
+    // The same file again changes nothing and writes no second audit row.
+    await uc.execute(ctx(perms), 'rb-1', 'pay-1', { attachmentId: 'att-misfiled' });
+    assert.equal(repo.slips['pay-1'].length, 1);
+    assert.equal(audits.length, 1);
+  });
+
+  it('refuses to attach a slip without the payment-record right, outside the branch, or to another claim\'s payment', async () => {
+    const req = financeReviewedRequest();
+    const repo = fakeRepo(req);
+    await new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any)
+      .execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
+    const uc = new AttachPaymentSlipUseCase(repo, noopAudit, fakeDetailEvidence as any);
+    await assert.rejects(() => uc.execute(ctx(['reimbursement.finance_review']), 'rb-1', 'pay-1', { attachmentId: 'att-1' }), /Missing permission: reimbursement\.payment\.record/);
+    await assert.rejects(() => uc.execute({ ...ctx(perms), scopes: { branchIds: ['branch-9'] } }, 'rb-1', 'pay-1', { attachmentId: 'att-1' }), /outside your assigned branch scope/);
+    await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', 'pay-of-another-claim', { attachmentId: 'att-1' }), /Payment not found/);
+    assert.deepEqual(repo.slips, {});
   });
 });
 
@@ -706,7 +1059,16 @@ describe('PrismaReimbursementRepository correction transitions', () => {
   });
 });
 
-type AtomicFault = 'create' | 'source-ref' | 'cas' | 'cas-conflict' | 'readback';
+type AtomicFault = 'create' | 'source-ref' | 'cas' | 'cas-conflict' | 'readback' | 'slip-link';
+
+/** Enough of a Prisma `where` for the slip queries: equality, `{ in: [...] }` and `OR`. */
+function rowMatches(row: any, where: any): boolean {
+  return Object.entries(where).every(([key, value]: [string, any]) => {
+    if (key === 'OR') return value.some((alternative: any) => rowMatches(row, alternative));
+    if (value && typeof value === 'object' && 'in' in value) return value.in.includes(row[key]);
+    return row[key] === value;
+  });
+}
 
 /** Since d1d3b23e a claim may only be paid once every line has a confirmed expense projection —
  *  the repository proves that under the payment lock. The harness therefore needs a line and its
@@ -732,6 +1094,9 @@ function claimProjection(overrides: Partial<any> = {}) {
 function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = false, projections: any[] = [claimProjection()]) {
   let request = financeReviewedRequest({ lines: [claimLine()] });
   let payments: any[] = [];
+  // Attachment rows and their links: what a slip is proven against and written to.
+  let files: any[] = [];
+  let links: any[] = [];
   let fault = initialFault;
   let timeoutPending = ambiguousTimeout;
   let transactionTail = Promise.resolve();
@@ -750,8 +1115,28 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
         && row.sourceReimbursementRequestId === where.sourceReimbursementRequestId
         && (where.sourceReimbursementLineId?.in ?? []).includes(row.sourceReimbursementLineId)),
     },
+    attachmentObject: {
+      findFirst: async ({ where }: any) => files.find((file) => rowMatches(file, where)) ?? null,
+      update: async ({ where, data }: any) => Object.assign(files.find((file) => file.id === where.id)!, data),
+    },
+    attachmentLink: {
+      findMany: async ({ where }: any) => links.filter((link) => rowMatches(link, where)),
+      create: async ({ data }: any) => {
+        if (fault === 'slip-link') throw new Error('fault:slip-link');
+        const link = { id: `link-${links.length + 1}-${data.purpose}`, createdAt: new Date('2026-02-01T00:00:00.000Z'), ...data };
+        links.push(link);
+        return link;
+      },
+      deleteMany: async ({ where }: any) => {
+        const kept = links.filter((link) => !rowMatches(link, where));
+        const count = links.length - kept.length;
+        links = kept;
+        return { count };
+      },
+    },
     reimbursementPayment: {
-      findFirst: async ({ where }: any) => payments.find((payment) => payment.companyId === where.companyId && payment.idempotencyKey === where.idempotencyKey) ?? null,
+      findFirst: async ({ where }: any) => payments.find((payment) => rowMatches(payment, where)) ?? null,
+      count: async ({ where }: any) => payments.filter((payment) => rowMatches(payment, where)).length,
       create: async ({ data }: any) => {
         writes.paymentCreates += 1;
         if (fault === 'create') throw new Error('fault:create');
@@ -790,6 +1175,8 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
   };
 
   const client: any = {
+    // The slip preflight reads outside a transaction, from the same rows.
+    attachmentObject: tx.attachmentObject, attachmentLink: tx.attachmentLink, reimbursementPayment: tx.reimbursementPayment,
     $transaction: async (work: (transaction: any) => Promise<any>, options: any) => {
       const previous = transactionTail;
       let release!: () => void;
@@ -798,6 +1185,8 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
       writes.isolationLevels.push(options?.isolationLevel);
       const requestBefore = structuredClone(request);
       const paymentsBefore = structuredClone(payments);
+      const filesBefore = structuredClone(files);
+      const linksBefore = structuredClone(links);
       let committed = false;
       try {
         const result = await work(tx);
@@ -811,6 +1200,8 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
         if (!committed) {
           request = requestBefore;
           payments = paymentsBefore;
+          files = filesBefore;
+          links = linksBefore;
         }
         throw error;
       } finally {
@@ -823,9 +1214,36 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
     repo: new PrismaReimbursementRepository({ client } as any, {} as any),
     writes,
     setFault: (next?: AtomicFault) => { fault = next; },
-    state: () => ({ request, payments }),
+    state: () => ({ request, payments, files, links }),
+    addFile: (file: any) => { files.push(file); return file; },
+    addLink: (link: any) => { links.push({ companyId: 'co-1', createdAt: new Date('2026-01-20T00:00:00.000Z'), ...link }); },
+    addPayment: (payment: any) => { payments.push(payment); },
   };
 }
+
+/** The payer's own slip upload for rb-1, as the slip upload endpoint leaves it once completed. */
+function slipUpload(overrides: Partial<any> = {}) {
+  return {
+    id: 'att-slip-1', companyId: 'co-1', status: 'ACTIVE', mimeType: 'image/jpeg', byteSize: 250_000,
+    checksumSha256: 'a'.repeat(64), uploadedByUserId: 'fin-1',
+    metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' },
+    ...overrides,
+  };
+}
+
+/** A file attached through the "ใบเบิกที่เซ็นแล้ว" uploader with the paper declaration: the misfiled slip. */
+function misfiledSignedCopy(h: ReturnType<typeof atomicPaymentHarness>, declared = true) {
+  h.addLink({ id: 'link-copy', attachmentId: 'att-misfiled', targetType: 'reimbursement_request', targetId: 'rb-1', purpose: 'reimbursement.claim_form.signed', linkedByUserId: 'staff-1' });
+  return h.addFile({
+    id: 'att-misfiled', companyId: 'co-1', status: 'ACTIVE', mimeType: 'application/pdf', byteSize: 12_000_000,
+    checksumSha256: 'c'.repeat(64), uploadedByUserId: 'staff-1',
+    metadataJson: { source: 'web', ...(declared && { reimbursementSignedCopyAck: { requestId: 'rb-1', requestNo: 'RB-202601-000001', acknowledgedByUserId: 'staff-1', acknowledgedAt: '2026-01-20T00:00:00.000Z', checksumSha256: 'c'.repeat(64), linkId: 'link-copy' } }) },
+  });
+}
+
+const slipLinksOf = (h: ReturnType<typeof atomicPaymentHarness>) => h.state().links
+  .filter((link) => link.purpose === 'reimbursement.payment.slip')
+  .map((link) => [link.attachmentId, link.targetType, link.targetId, link.linkedByUserId]);
 
 const atomicPaymentInput = {
   companyId: 'co-1',
@@ -894,5 +1312,192 @@ describe('PrismaReimbursementRepository.recordPaymentAtomic (H-06)', () => {
     const unconfirmed = atomicPaymentHarness(undefined, false, [claimProjection({ status: 'DRAFT' })]);
     await assert.rejects(() => unconfirmed.repo.recordPaymentAtomic(atomicPaymentInput), /reimbursement_projection_not_ready/);
     assert.equal(unconfirmed.state().payments.length, 0);
+  });
+});
+
+const atomicTransferInput = { ...atomicPaymentInput, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1' };
+
+describe('PrismaReimbursementRepository payment slips', () => {
+  it('refuses a transfer without a slip under the payment lock, whatever the caller checked', async () => {
+    const h = atomicPaymentHarness();
+    await assert.rejects(
+      () => h.repo.recordPaymentAtomic(atomicTransferInput),
+      (error: any) => error.getStatus() === 422 && error.message === 'payment_slip_required',
+    );
+    assert.equal(h.state().payments.length, 0);
+    assert.equal(h.state().request.paymentStatus, 'UNPAID');
+  });
+
+  it('writes the payment and its slip link together, with the checksum the slip had', async () => {
+    const h = atomicPaymentHarness();
+    h.addFile(slipUpload());
+    const result = await h.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-slip-1' });
+
+    assert.equal(result.created, true);
+    assert.deepEqual(result.slip, { attachmentId: 'att-slip-1', source: 'UPLOAD', uploadedByUserId: 'fin-1', declarationWithdrawn: false });
+    assert.deepEqual(
+      [result.payment.slipAttachmentId, result.payment.slipChecksumSha256, result.payment.paymentMethod, result.payment.paymentReference],
+      ['att-slip-1', 'a'.repeat(64), 'BANK_TRANSFER', 'TXN-1'],
+    );
+    assert.deepEqual(slipLinksOf(h), [['att-slip-1', 'reimbursement_payment', 'pay-1', 'fin-1']]);
+    // After the two payment locks: the key generic deletion takes before it looks for holds, then the
+    // file's own row (its id is that statement's first value), so a delete can race neither way.
+    assert.deepEqual(h.writes.lockKeys, ['co-1:rb-1:reimbursement-payment', 'co-1:rb-1:reimbursement-request', 'co-1:att-slip-1:attachment-retention', 'att-slip-1']);
+  });
+
+  it('rolls the payment back when the slip link cannot be written, and the retry writes both once', async () => {
+    const h = atomicPaymentHarness('slip-link');
+    h.addFile(slipUpload());
+    const input = { ...atomicTransferInput, slipAttachmentId: 'att-slip-1' };
+    await assert.rejects(() => h.repo.recordPaymentAtomic(input), /fault:slip-link/);
+    assert.equal(h.state().payments.length, 0, 'no payment without its slip');
+    assert.equal(h.state().request.paymentStatus, 'UNPAID');
+    assert.deepEqual(slipLinksOf(h), []);
+
+    h.setFault();
+    assert.equal((await h.repo.recordPaymentAtomic(input)).created, true);
+    assert.equal(h.state().payments.length, 1);
+    assert.equal(slipLinksOf(h).length, 1);
+  });
+
+  it('gives two racing requests one payment and one slip link', async () => {
+    const h = atomicPaymentHarness();
+    h.addFile(slipUpload());
+    const input = { ...atomicTransferInput, slipAttachmentId: 'att-slip-1' };
+    const results = await Promise.all([h.repo.recordPaymentAtomic(input), h.repo.recordPaymentAtomic(input)]);
+    assert.deepEqual(results.map((result) => result.created).sort(), [false, true]);
+    assert.equal(h.state().payments.length, 1);
+    assert.equal(slipLinksOf(h).length, 1);
+  });
+
+  it('refuses a replayed key that names a different slip, no slip, or a payment since voided', async () => {
+    const h = atomicPaymentHarness();
+    h.addFile(slipUpload());
+    h.addFile(slipUpload({ id: 'att-slip-2' }));
+    const input = { ...atomicTransferInput, slipAttachmentId: 'att-slip-1' };
+    await h.repo.recordPaymentAtomic(input);
+    for (const slipAttachmentId of ['att-slip-2', undefined]) {
+      await assert.rejects(
+        () => h.repo.recordPaymentAtomic({ ...input, slipAttachmentId }),
+        (error: any) => error.getStatus() === 409 && error.message === 'reimbursement_payment_idempotency_conflict',
+      );
+    }
+    assert.equal(h.state().payments.length, 1);
+    assert.equal(slipLinksOf(h).length, 1);
+
+    // Voided: the same key and the same facts no longer describe a payment that stands.
+    Object.assign(h.state().payments[0], { status: 'VOIDED' });
+    await assert.rejects(() => h.repo.recordPaymentAtomic(input), /reimbursement_payment_idempotency_conflict/);
+  });
+
+  it('accepts only this claim\'s own slip: the payer\'s upload, an attached signed copy, or an earlier slip of the claim', async () => {
+    const refused: [string, (h: ReturnType<typeof atomicPaymentHarness>) => void][] = [
+      ['no such file', () => undefined],
+      ['an upload still pending', (h) => h.addFile(slipUpload({ status: 'PENDING_UPLOAD' }))],
+      ['a deleted file', (h) => h.addFile(slipUpload({ status: 'DELETED' }))],
+      ['another company\'s file', (h) => h.addFile(slipUpload({ companyId: 'co-2' }))],
+      ['a slip uploaded for another claim', (h) => h.addFile(slipUpload({ metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-2' } }))],
+      ['another person\'s slip upload', (h) => h.addFile(slipUpload({ uploadedByUserId: 'someone-else' }))],
+      ['a file type that is not PDF, JPG or PNG', (h) => h.addFile(slipUpload({ mimeType: 'text/html' }))],
+      ['a slip upload over 10 MB', (h) => h.addFile(slipUpload({ byteSize: 10 * 1024 * 1024 + 1 }))],
+      ['an ordinary upload, such as a receipt', (h) => h.addFile(slipUpload({ metadataJson: null }))],
+      ['a signed copy of another claim', (h) => {
+        h.addFile(slipUpload({ metadataJson: null }));
+        h.addLink({ id: 'link-other', attachmentId: 'att-slip-1', targetType: 'reimbursement_request', targetId: 'rb-2', purpose: 'reimbursement.claim_form.signed' });
+      }],
+      ['the slip of another claim\'s payment', (h) => {
+        h.addFile(slipUpload());
+        h.addLink({ id: 'link-other', attachmentId: 'att-slip-1', targetType: 'reimbursement_payment', targetId: 'pay-of-rb-2', purpose: 'reimbursement.payment.slip' });
+      }],
+    ];
+    for (const [label, arrange] of refused) {
+      const h = atomicPaymentHarness();
+      arrange(h);
+      await assert.rejects(
+        () => h.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-slip-1' }),
+        (error: any) => error.getStatus() === 422 && error.message === 'payment_slip_invalid',
+        label,
+      );
+      assert.equal(h.state().payments.length, 0, label);
+      // The friendly preflight gives the same verdict as the check under the lock.
+      await assert.rejects(() => h.repo.assertPaymentSlipUsable({ companyId: 'co-1', requestId: 'rb-1', attachmentId: 'att-slip-1', actorUserId: 'fin-1' }), /payment_slip_invalid/, label);
+    }
+
+    // A slip of an earlier, voided payment of this claim serves the new payment: each record has its own link.
+    const reuse = atomicPaymentHarness();
+    reuse.addFile(slipUpload({ uploadedByUserId: 'another-payer' }));
+    reuse.addPayment({ id: 'pay-old', companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'old', status: 'VOIDED', slipAttachmentId: 'att-slip-1' });
+    reuse.addLink({ id: 'link-old', attachmentId: 'att-slip-1', targetType: 'reimbursement_payment', targetId: 'pay-old', purpose: 'reimbursement.payment.slip', linkedByUserId: 'another-payer' });
+    const repaid = await reuse.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-slip-1' });
+    assert.equal(repaid.slip?.source, 'PREVIOUS_SLIP');
+    assert.deepEqual(slipLinksOf(reuse).map(([, , paymentId]) => paymentId), ['pay-old', repaid.payment.id], 'the voided record keeps its slip');
+  });
+
+  it('moves a misfiled signed copy to be the slip: the copy link and its paper declaration go, the file stays', async () => {
+    const h = atomicPaymentHarness();
+    misfiledSignedCopy(h);
+    const result = await h.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-misfiled' });
+
+    // No size limit on a file already stored: the 10 MB cap is on new slip uploads.
+    assert.deepEqual(result.slip, { attachmentId: 'att-misfiled', source: 'SIGNED_COPY', uploadedByUserId: 'staff-1', declarationWithdrawn: true });
+    assert.deepEqual(h.state().links.map((link) => [link.attachmentId, link.purpose, link.targetId]), [['att-misfiled', 'reimbursement.payment.slip', 'pay-1']]);
+    const file = h.state().files[0];
+    assert.equal(file.status, 'ACTIVE');
+    assert.deepEqual(file.metadataJson, { source: 'web' }, 'the stored declaration is removed, other metadata kept');
+  });
+
+  it('attaches the misfiled copy to a payment already recorded, and an undeclared copy withdraws nothing', async () => {
+    for (const declared of [true, false]) {
+      const h = atomicPaymentHarness();
+      await h.repo.recordPaymentAtomic(atomicPaymentInput); // cash, recorded before the slip existed
+      misfiledSignedCopy(h, declared);
+      const attached = await h.repo.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1' });
+      assert.deepEqual(attached, { created: true, slip: { attachmentId: 'att-misfiled', source: 'SIGNED_COPY', uploadedByUserId: 'staff-1', declarationWithdrawn: declared } });
+      assert.deepEqual(h.state().links.map((link) => [link.purpose, link.targetId, link.linkedByUserId]), [['reimbursement.payment.slip', 'pay-1', 'fin-1']]);
+      assert.deepEqual(h.state().files[0].metadataJson, { source: 'web' });
+      // The payment row is history: attaching later never rewrites what it was recorded with.
+      assert.equal(h.state().payments[0].slipAttachmentId, undefined);
+
+      // Again: nothing changes.
+      assert.deepEqual(await h.repo.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1' }), { created: false });
+      assert.equal(h.state().links.length, 1);
+    }
+  });
+
+  it('adds slips to a recorded payment only: five at most, none to a voided or foreign payment', async () => {
+    const h = atomicPaymentHarness();
+    await h.repo.recordPaymentAtomic(atomicPaymentInput);
+    const attach = (attachmentId: string, paymentId = 'pay-1') => h.repo.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId, attachmentId, actorUserId: 'fin-1' });
+    for (let index = 1; index <= 6; index += 1) h.addFile(slipUpload({ id: `att-slip-${index}` }));
+    for (let index = 1; index <= 5; index += 1) assert.equal((await attach(`att-slip-${index}`)).created, true);
+    await assert.rejects(() => attach('att-slip-6'), (error: any) => error.getStatus() === 422 && error.message === 'payment_slip_limit_reached');
+    assert.equal(slipLinksOf(h).length, 5);
+
+    await assert.rejects(() => attach('att-slip-6', 'pay-of-another-claim'), /Payment not found/);
+    Object.assign(h.state().payments[0], { status: 'VOIDED' });
+    await assert.rejects(() => attach('att-slip-6'), (error: any) => error.getResponse().code === 'reimbursement_payment_changed');
+    assert.equal(slipLinksOf(h).length, 5, 'a voided payment keeps its slips and takes no more');
+  });
+
+  it('lists slips per payment from the links, oldest first, on live files only', async () => {
+    let where: any;
+    let orderBy: any;
+    const client = { attachmentLink: { findMany: async (args: any) => {
+      where = args.where; orderBy = args.orderBy;
+      return [
+        { attachmentId: 'att-a', targetId: 'pay-1', createdAt: new Date('2026-02-01T00:00:00.000Z') },
+        { attachmentId: 'att-b', targetId: 'pay-2', createdAt: new Date('2026-02-02T00:00:00.000Z') },
+        { attachmentId: 'att-c', targetId: 'pay-1', createdAt: new Date('2026-02-03T00:00:00.000Z') },
+      ];
+    } } };
+    const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    const slips = await repo.listPaymentSlips('co-1', ['pay-1', 'pay-2']);
+    assert.deepEqual(Object.fromEntries(Object.entries(slips).map(([id, rows]) => [id, rows.map((row) => row.attachmentId)])), { 'pay-1': ['att-a', 'att-c'], 'pay-2': ['att-b'] });
+    assert.deepEqual(where, {
+      companyId: 'co-1', targetType: 'reimbursement_payment', targetId: { in: ['pay-1', 'pay-2'] },
+      purpose: 'reimbursement.payment.slip', attachment: { status: 'ACTIVE' },
+    });
+    assert.deepEqual(orderBy, [{ createdAt: 'asc' }, { id: 'asc' }]);
+    assert.deepEqual(await new PrismaReimbursementRepository({ client: {} } as any, {} as any).listPaymentSlips('co-1', []), {}, 'no payment, no query');
   });
 });

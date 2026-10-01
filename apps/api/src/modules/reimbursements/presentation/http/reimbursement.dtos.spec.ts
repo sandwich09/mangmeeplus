@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
-  CreateReimbursementRequestDto, LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
+  AttachPaymentSlipDto, CompletePaymentSlipUploadDto, CreateReimbursementRequestDto, InitPaymentSlipUploadDto,
+  LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
   ReimbursementInternalNoteDto, UpdateReimbursementDraftDto,
 } from './reimbursement.dtos';
 
@@ -140,6 +141,42 @@ describe('RecordReimbursementPaymentDto', () => {
     await rejects(RecordReimbursementPaymentDto, { ...validPayment, paidAt: 'yesterday' });
     await rejects(RecordReimbursementPaymentDto, { ...validPayment, paidByUserId: 'someone-else' });
     await rejects(RecordReimbursementPaymentDto, { ...validPayment, status: 'VOIDED' });
+  });
+
+  it('carries the slip as an attachment id, and nothing a client could use to place the slip itself', async () => {
+    const out = await pipe.transform(
+      { ...validPayment, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1', slipAttachmentId: 'att-slip-1' },
+      { type: 'body', metatype: RecordReimbursementPaymentDto },
+    );
+    assert.equal(out.slipAttachmentId, 'att-slip-1');
+    // The method is the payer's to state: there is no default to fall back on.
+    await rejects(RecordReimbursementPaymentDto, { paidAmount: '500.00', paidAt: validPayment.paidAt });
+    await rejects(RecordReimbursementPaymentDto, { ...validPayment, paymentMethod: '' });
+    for (const slipAttachmentId of ['', 42, 'x'.repeat(65), ['att-1']]) {
+      await rejects(RecordReimbursementPaymentDto, { ...validPayment, slipAttachmentId });
+    }
+    for (const forged of [{ slipChecksumSha256: 'a'.repeat(64) }, { slipUrl: 'https://example.com/slip.jpg' }, { slips: ['att-1'] }]) {
+      await rejects(RecordReimbursementPaymentDto, { ...validPayment, ...forged });
+    }
+  });
+});
+
+describe('payment slip DTOs', () => {
+  it('accept a slip upload, its completion and a later attachment, and reject forged fields', async () => {
+    const upload = { originalFileName: 'slip.jpg', mimeType: 'image/jpeg', byteSize: 250_000 };
+    assert.equal((await pipe.transform(upload, { type: 'body', metatype: InitPaymentSlipUploadDto })).byteSize, 250_000);
+    await pipe.transform({}, { type: 'body', metatype: CompletePaymentSlipUploadDto });
+    await pipe.transform({ checksumSha256: 'a'.repeat(64), byteSize: 250_000 }, { type: 'body', metatype: CompletePaymentSlipUploadDto });
+    assert.equal((await pipe.transform({ attachmentId: 'att-1' }, { type: 'body', metatype: AttachPaymentSlipDto })).attachmentId, 'att-1');
+
+    // The claim and the uploader come from the route and the session, never from the body.
+    await rejects(InitPaymentSlipUploadDto, { ...upload, metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-9' } });
+    await rejects(InitPaymentSlipUploadDto, { ...upload, branchId: 'branch-9' });
+    await rejects(InitPaymentSlipUploadDto, { ...upload, byteSize: 0 });
+    await rejects(InitPaymentSlipUploadDto, { ...upload, originalFileName: '' });
+    await rejects(CompletePaymentSlipUploadDto, { checksumSha256: 'not-a-checksum' });
+    await rejects(AttachPaymentSlipDto, {});
+    await rejects(AttachPaymentSlipDto, { attachmentId: 'att-1', paymentId: 'pay-9' });
   });
 });
 

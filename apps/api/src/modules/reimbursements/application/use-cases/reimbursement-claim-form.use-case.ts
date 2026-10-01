@@ -65,7 +65,7 @@ export class PreviewReimbursementClaimFormUseCase {
       : undefined;
     const policySnapshot = parseReimbursementPolicySnapshot(req.approvalPolicySnapshotJson);
 
-    const [company, names, signatureImages] = await Promise.all([
+    const [company, names, signatureImages, paymentSlips] = await Promise.all([
       this.repo.getClaimFormCompanyContext(companyId, req.branchId ?? null),
       this.repo.getUserDisplayNames(companyId, [
         approvedStep?.decisionByUserId,
@@ -73,6 +73,8 @@ export class PreviewReimbursementClaimFormUseCase {
         payment?.paidByUserId,
       ].filter((id): id is string => !!id)),
       this.loadSignatureImages(companyId, req.id, req.claimSignatures ?? []),
+      // The slips of the payment the form prints, read the way the claim page reads them.
+      payment ? this.repo.listPaymentSlips(companyId, [payment.id]) : undefined,
     ]);
     const signer = (userId: string | undefined, at: Date | undefined, role: ReimbursementClaimSignatureRole): ClaimFormSigner | null =>
       (userId && at
@@ -115,6 +117,7 @@ export class PreviewReimbursementClaimFormUseCase {
             recordedByName: names[payment.paidByUserId] ?? payment.paidByUserId,
           }
         : null,
+      hasPaymentEvidence: !!payment && (paymentSlips?.[payment.id]?.length ?? 0) > 0,
       selfApproved: approvedStep?.decisionByUserId === req.requesterUserId,
       ...(req.status === 'CANCELLED' ? { cancellation: { reason: req.rejectionReason ?? null } } : {}),
       signers: {

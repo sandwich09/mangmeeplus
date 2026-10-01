@@ -16,6 +16,17 @@ export const REIMBURSEMENT_SIGNED_COPY_PURPOSE = 'reimbursement.claim_form.signe
  */
 export const REIMBURSEMENT_SIGNED_COPY_ACK_KEY = 'reimbursementSignedCopyAck';
 
+/**
+ * AttachmentLink coordinates of a payment slip (spec §12.5). Payment evidence with a purpose of its
+ * own: never an expense receipt, never a signed claim copy, and opened only through the claim's slip
+ * endpoint, by the people `canOpenReimbursementPaymentSlip` names.
+ */
+export const REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE = 'reimbursement_payment';
+export const REIMBURSEMENT_PAYMENT_SLIP_PURPOSE = 'reimbursement.payment.slip';
+/** `generatedFor` tag of a slip upload intent: it binds the file to one claim, as the signature tag does. */
+export const REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG = 'reimbursement_payment_slip';
+export const REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
+
 /** Decision-relevant policy fields, resolved from a DB policy or company defaults. */
 export type EffectivePolicy = {
   currency: string;

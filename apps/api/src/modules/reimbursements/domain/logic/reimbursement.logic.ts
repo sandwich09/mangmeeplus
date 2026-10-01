@@ -5,7 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { Decimal } from 'decimal.js';
-import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import { reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate } from '@watchdog-bms/contracts';
 import type {
   ReimbursementRequestStatus,
   ReimbursementApprovalStepStatus,
@@ -445,6 +445,8 @@ export type PaymentEligibilityInput = {
   paidAmount: string;
   paymentMethod: ReimbursementPaymentMethod;
   paymentReference?: string;
+  /** A slip comes with this payment. Whether the file itself is acceptable is proven separately. */
+  hasSlip: boolean;
 };
 
 /** Returns a stable error code, or null if payment is allowed. Enforces MVP full-payment. */
@@ -467,7 +469,35 @@ export function validatePaymentRecording(input: PaymentEligibilityInput): string
   if (outstanding.sub(paid).gte(SETTLE_EPSILON)) return 'partial_payment_not_allowed';
 
   if (!validatePaymentReference(input.paymentMethod, input.paymentReference)) return 'payment_reference_required';
+  // Owner decision D3: a transfer is recorded with its slip. Claims approved before the slip
+  // existed are paid under the same rule, so nothing here reads the claim's age.
+  if (reimbursementPaymentSlipRequired(input.paymentMethod) && !input.hasSlip) return 'payment_slip_required';
   return null;
+}
+
+/**
+ * Whether a request repeats an already recorded payment (spec §12.7). One list of facts for the
+ * shortcut before the payment lock and the check under it: a replay that differs in any of them,
+ * the slip included, is a conflict and never a success.
+ */
+export function isSamePaymentRequest(
+  recorded: {
+    paidAmount: unknown; currency: string; paymentMethod: string; paidAt: Date;
+    paymentReference?: string | null; bankAccountId?: string | null; slipAttachmentId?: string | null;
+  },
+  requested: {
+    paidAmount: string; currency: string; paymentMethod: string; paidAt: Date;
+    paymentReference?: string; bankAccountId?: string; slipAttachmentId?: string;
+  },
+): boolean {
+  const same = (left?: string | null, right?: string | null) => (left ?? undefined) === (right ?? undefined);
+  return d(String(recorded.paidAmount)).eq(d(requested.paidAmount))
+    && recorded.currency === requested.currency
+    && recorded.paymentMethod === requested.paymentMethod
+    && recorded.paidAt.getTime() === requested.paidAt.getTime()
+    && same(recorded.paymentReference, requested.paymentReference)
+    && same(recorded.bankAccountId, requested.bankAccountId)
+    && same(recorded.slipAttachmentId, requested.slipAttachmentId);
 }
 
 export function validatePaymentReference(method: ReimbursementPaymentMethod, reference?: string): boolean {

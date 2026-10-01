@@ -36,6 +36,12 @@ import {
   LinkSignedClaimFormCopyUseCase,
   SignClaimFormUseCase,
 } from './application/use-cases/reimbursement-claim-signature.use-case';
+import {
+  AttachPaymentSlipUseCase,
+  CompletePaymentSlipUploadUseCase,
+  CreatePaymentSlipDownloadUrlUseCase,
+  InitPaymentSlipUploadUseCase,
+} from './application/use-cases/reimbursement-payment-slip.use-case';
 import { ReimbursementController } from './presentation/http/reimbursement.controller';
 import { ReimbursementPolicyController } from './presentation/http/reimbursement-policy.controller';
 import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursement-write-quiesce.guard';
@@ -80,6 +86,10 @@ import { LineReimbursementDraftUseCase } from './application/use-cases/line-reim
     CompleteClaimSignatureUploadUseCase,
     SignClaimFormUseCase,
     LinkSignedClaimFormCopyUseCase,
+    InitPaymentSlipUploadUseCase,
+    CompletePaymentSlipUploadUseCase,
+    AttachPaymentSlipUseCase,
+    CreatePaymentSlipDownloadUrlUseCase,
   ],
   exports: [PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, ListReimbursementApproverOptionsUseCase, GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase, LineReimbursementDraftUseCase],
 })
