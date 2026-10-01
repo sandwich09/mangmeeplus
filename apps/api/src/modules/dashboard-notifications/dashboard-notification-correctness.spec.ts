@@ -158,6 +158,37 @@ describe('cursor pagination keys', () => {
   });
 });
 
+// Audit B15: notices stored before decisions were rendered in Thai still hold the code word. The
+// list repairs the two notices that print a decision and leaves every other body as it was typed.
+describe('decision code words in notices stored before the fix', () => {
+  it('reads the requester result and the finance hold in plain Thai, and nothing else is rewritten', async () => {
+    const row = (id: string, triggerKey: string, body: string) => ({
+      id, companyId: COMPANY, triggerKey, severity: 'INFO', status: 'OPEN', title: 't', body,
+      payloadJson: {}, sourceRefsJson: {}, recipients: [],
+    });
+    const prisma = {
+      client: {
+        notificationEvent: {
+          // The first read (a `select`) is the still-to-do projection; the second is the page.
+          findMany: async (args: any) => (args.select ? [] : [
+            row('n1', 'workflow.reimbursement_decision_requester', 'ผลการพิจารณา: BELOW_APPROVAL_THRESHOLD · ยอด 125 THB'),
+            row('n2', 'workflow.reimbursement_finance_review', 'ผลตรวจสอบ: BLOCKED · ยอด 125 THB'),
+            row('n3', 'workflow.reimbursement_correction_requester', 'ใบเสร็จเขียนว่า APPROVED · ยอด 125 THB'),
+          ]),
+        },
+      },
+    } as any;
+
+    const { items } = await new PrismaNotificationEventRepository(prisma).list(COMPANY, 'u1', { pageSize: 10 } as any);
+
+    assert.deepEqual(items.map((item) => item.body), [
+      'ผลการพิจารณา: ไม่ต้องอนุมัติตามนโยบาย · ยอด 125 THB',
+      'ผลตรวจสอบ: ระงับ · ยอด 125 THB',
+      'ใบเสร็จเขียนว่า APPROVED · ยอด 125 THB',
+    ]);
+  });
+});
+
 describe('unread badge counting', () => {
   it('counts in the database instead of transferring the backlog', async () => {
     const captured: Record<string, any> = {};

@@ -20,3 +20,13 @@ it('resolves completed source work, retains active work and can reopen after a p
   assert.deepEqual(await completedDocumentNotificationIds(db, 'co1', 'u1'), ['signed']);
   assert.equal(localizeReimbursementDecision('ผลการพิจารณา: REJECTED · 125 THB'), 'ผลการพิจารณา: ไม่อนุมัติ · 125 THB');
 });
+it('repairs every decision code word a notice stored before the fix can still carry (audit B15)', () => {
+  assert.equal(localizeReimbursementDecision('ผลการพิจารณา: APPROVED · ยอด 125 THB'), 'ผลการพิจารณา: อนุมัติ · ยอด 125 THB');
+  assert.equal(
+    localizeReimbursementDecision('ผลการพิจารณา: BELOW_APPROVAL_THRESHOLD · ยอด 125 THB'),
+    'ผลการพิจารณา: ไม่ต้องอนุมัติตามนโยบาย · ยอด 125 THB',
+  );
+  assert.equal(localizeReimbursementDecision('ผลตรวจสอบ: BLOCKED · ยอด 125 THB'), 'ผลตรวจสอบ: ระงับ · ยอด 125 THB');
+  // Already in Thai (rendered at creation since the fix): nothing left to repair.
+  assert.equal(localizeReimbursementDecision('ผลการพิจารณา: อนุมัติ · ยอด 125 THB'), 'ผลการพิจารณา: อนุมัติ · ยอด 125 THB');
+});

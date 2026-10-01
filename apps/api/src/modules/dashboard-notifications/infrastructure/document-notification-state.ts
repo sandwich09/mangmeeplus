@@ -32,6 +32,20 @@ export async function completedDocumentNotificationIds(db: PrismaService['client
   }).map(event => event.id);
 }
 
+/**
+ * The decision code words a claim event carries, in the words the claim page uses. Workflow notices
+ * are rendered through this map when they are created, so the stored text (and the LINE push,
+ * which sends the stored text as it is) never carries a code word (audit B15).
+ */
+export const REIMBURSEMENT_DECISION_WORDS: Record<string, string> = {
+  APPROVED: 'อนุมัติ',
+  REJECTED: 'ไม่อนุมัติ',
+  BELOW_APPROVAL_THRESHOLD: 'ไม่ต้องอนุมัติตามนโยบาย',
+  BLOCKED: 'ระงับ',
+};
+const DECISION_CODE_WORD = new RegExp(`\\b(${Object.keys(REIMBURSEMENT_DECISION_WORDS).join('|')})\\b`, 'g');
+
+/** Read-time repair for notices stored before the words were rendered at creation. */
 export function localizeReimbursementDecision(body: string): string {
-  return body.replace(/\bREJECTED\b/g, 'ไม่อนุมัติ').replace(/\bAPPROVED\b/g, 'อนุมัติ');
+  return body.replace(DECISION_CODE_WORD, (code) => REIMBURSEMENT_DECISION_WORDS[code]!);
 }

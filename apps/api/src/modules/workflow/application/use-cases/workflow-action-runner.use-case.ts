@@ -7,6 +7,7 @@ import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.lo
 import { AuditService } from '../../../audit/application/audit.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
+import { REIMBURSEMENT_DECISION_WORDS } from '../../../dashboard-notifications/infrastructure/document-notification-state';
 import { CreateDraftRequestUseCase } from '../../../ai-draft/application/use-cases/create-draft-request.use-case';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
@@ -46,6 +47,18 @@ export function buildActionRunContext(run: WorkflowRunRecord): ActionRunContext 
 
 class RetryableActionError extends Error {}
 class FinalActionError extends Error {}
+
+/**
+ * The payload as a person reads it (audit B15): a claim's `decision` code word becomes the words
+ * the claim page uses. Done here rather than in each template so that no rule snapshot, however
+ * old or admin-edited, can put a raw code word in a notice. Conditions and links keep the raw payload.
+ */
+function readablePayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const decision = payload['decision'];
+  return typeof decision === 'string' && Object.hasOwn(REIMBURSEMENT_DECISION_WORDS, decision)
+    ? { ...payload, decision: REIMBURSEMENT_DECISION_WORDS[decision] }
+    : payload;
+}
 
 function findTitleTemplate(actionKey: string, configJson: Record<string, unknown>, siblings: WorkflowActionDefinition[]): string | undefined {
   if (typeof configJson['titleTemplate'] === 'string') return configJson['titleTemplate'];
@@ -219,12 +232,13 @@ export class ExecuteWorkflowActionUseCase {
       }
       throw new RetryableActionError('No active recipients resolved for configured recipientRoles, recipientPermissions, or recipientPayloadKeys (after exclusions)');
     }
+    const readable = readablePayload(context.payload);
     const titleTemplate = findTitleTemplate(actionRun.actionKey, cfg, context.siblingActions);
-    const title = titleTemplate ? renderTemplate(titleTemplate, context.payload) : `${context.ruleName} — WatchDog Workflow`;
+    const title = titleTemplate ? renderTemplate(titleTemplate, readable) : `${context.ruleName} — WatchDog Workflow`;
     // Own config only (no sibling fallback like the title): a body borrowed from a sibling action
     // is how the notification ended up printing its own title twice.
     const bodyTemplate = typeof cfg['bodyTemplate'] === 'string' ? (cfg['bodyTemplate'] as string) : undefined;
-    const body = bodyTemplate ? renderTemplate(bodyTemplate, context.payload) : title;
+    const body = bodyTemplate ? renderTemplate(bodyTemplate, readable) : title;
     const webPath = resolveDeepLink(actionRun.actionKey, cfg, context);
 
     try {

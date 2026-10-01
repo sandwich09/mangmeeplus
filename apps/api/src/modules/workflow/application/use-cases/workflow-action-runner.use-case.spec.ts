@@ -245,6 +245,51 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     });
   });
 
+  // Audit B15: `decision` is a code word in the event payload. A notice says it in the words the
+  // claim page uses, whatever the rule snapshot holds, because LINE pushes the stored text as it is.
+  describe('claim notices never print a decision code word (audit B15)', () => {
+    const notice = async (templateKey: string, decision: string) => {
+      const template = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === templateKey)!;
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_finance']);
+      await make().execute(actionRun(template.defaultActionJson[0]!.configJson), {
+        companyId: 'co_1', ruleName: template.name, sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: {
+          requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', decision,
+          requesterUserId: 'u_requester', actorUserId: 'u_filer',
+        },
+        siblingActions: [],
+      } as any);
+      return (notify.execute.mock.calls.at(-1) as any).arguments[0];
+    };
+
+    it('tells the requester of a below-threshold claim filed on their behalf in plain Thai', async () => {
+      const sent = await notice('reimbursement_decision_requester', 'BELOW_APPROVAL_THRESHOLD');
+
+      assert.deepEqual(sent.recipientUserIds, ['u_requester']);
+      assert.equal(sent.title, 'ผลอนุมัติเบิกจ่าย: RB-1');
+      assert.equal(sent.body, 'ผลการพิจารณา: ไม่ต้องอนุมัติตามนโยบาย · ยอด 250 THB');
+    });
+
+    it('says every decision a shipped claim notice can carry in Thai', async () => {
+      for (const [templateKey, decision, words] of [
+        ['reimbursement_decision_requester', 'APPROVED', 'อนุมัติ'],
+        ['reimbursement_decision_requester', 'REJECTED', 'ไม่อนุมัติ'],
+        ['reimbursement_decision_requester', 'BELOW_APPROVAL_THRESHOLD', 'ไม่ต้องอนุมัติตามนโยบาย'],
+        ['reimbursement_finance_review', 'BLOCKED', 'ระงับ'],
+      ] as const) {
+        const sent = await notice(templateKey, decision);
+        assert.ok(sent.body.includes(`: ${words} ·`), `${templateKey} ${decision}: ${sent.body}`);
+        assert.doesNotMatch(`${sent.title} ${sent.body}`, /[A-Z]{2,}_[A-Z_]+|APPROVED|REJECTED|BLOCKED/, decision);
+      }
+    });
+
+    it('prints a value it has no words for as it came, never a JavaScript internal', async () => {
+      const sent = await notice('reimbursement_decision_requester', 'constructor');
+      assert.equal(sent.body, 'ผลการพิจารณา: constructor · ยอด 250 THB');
+    });
+  });
+
   // F16: `body: title` made every LINE push repeat itself. bodyTemplate is read from the action's
   // OWN config (no sibling fallback), so the pending-approval alert can borrow the task's title and
   // still say something new in the body.

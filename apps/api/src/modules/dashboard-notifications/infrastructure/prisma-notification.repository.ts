@@ -48,13 +48,16 @@ function toRule(r: any): NotificationRule {
   };
 }
 
+/** The two claim notices whose body prints a decision: the requester's result and finance's hold. */
+const DECISION_NOTICE_TRIGGER_KEYS = ['workflow.reimbursement_decision_requester', 'workflow.reimbursement_finance_review'];
+
 function toEvent(r: any): NotificationEvent {
   const recipient = r.recipients?.[0];
   return {
     ...r,
     severity: r.severity.toLowerCase(),
     status: r.status.toLowerCase(),
-    body: r.triggerKey === 'workflow.reimbursement_decision_requester' ? localizeReimbursementDecision(r.body) : r.body,
+    body: DECISION_NOTICE_TRIGGER_KEYS.includes(r.triggerKey) ? localizeReimbursementDecision(r.body) : r.body,
     payloadJson: r.payloadJson as Record<string, unknown>,
     sourceRefsJson: r.sourceRefsJson as Record<string, unknown>,
     readAt: recipient?.readAt,
