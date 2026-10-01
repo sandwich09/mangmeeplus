@@ -35,6 +35,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG: Record<string, Record<str
   reimbursement_finance_review_pending: { eventType: 'reimbursement.approved' },
   reimbursement_ready_for_payment: { eventType: 'reimbursement.ready_for_payment' },
   reimbursement_payment_recorded: { eventType: 'reimbursement.payment_recorded' },
+  reimbursement_payment_voided: { eventType: 'reimbursement.payment_voided' },
   vendor_bill_pending_approval: { eventType: 'vendor_bill.submitted' },
   vendor_bill_second_approval: { eventType: 'vendor_bill.approval_recorded' },
   ai_draft_requested: { eventType: 'ai.draft_requested' },
@@ -55,6 +56,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
   reimbursement_finance_review_pending: 0,
   reimbursement_ready_for_payment: 0,
   reimbursement_payment_recorded: 0,
+  reimbursement_payment_voided: 0,
 };
 
 // Step-journey spec §11/§13: every reimbursement notification links straight to that claim's
@@ -371,6 +373,45 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           titleTemplate: 'จ่ายเงินเบิกแล้ว: {{requestNo}}',
           // paidAmount, not amount: this event carries the payment's own figures.
           bodyTemplate: 'จ่ายแล้ว {{paidAmount}} {{currency}} · เลขที่จ่าย {{paymentNo}}',
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
+          // own action — a solo owner submitting/approving/paying their own claim gets none of
+          // these pushes. An owner-only company excluding the sole recipient is expected, not a
+          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
+          excludeRecipientPayloadKeys: ['actorUserId'],
+          skipWhenAllRecipientsExcluded: true,
+        },
+      },
+    ],
+    requiredPermissions: ['reimbursement.read_own'],
+    requiredSourceModules: ['reimbursements'],
+    defaultEnabled: false,
+    autoEnable: true,
+    status: 'AVAILABLE',
+  },
+  {
+    // Audit B9: a requester told "paid" was never told when that payment was taken back.
+    key: 'reimbursement_payment_voided',
+    name: 'Reimbursement payment voided',
+    description: 'Notify the requester when a recorded payment of their reimbursement is voided.',
+    category: 'finance',
+    sourceModule: 'reimbursements',
+    triggerType: 'EVENT',
+    // The requester, not just the claim: a void event written before its payload named the
+    // requester has nobody to tell, and must skip rather than retry into a dead letter.
+    defaultConditionJson: { field: 'requesterUserId', op: 'EXISTS' },
+    defaultActionJson: [
+      {
+        actionKey: 'notify_requester_payment_voided',
+        actionType: 'SEND_NOTIFICATION',
+        configJson: {
+          triggerKey: 'workflow.reimbursement_payment_voided',
+          recipientPayloadKeys: ['requesterUserId'],
+          severity: 'info',
+          titleTemplate: 'ยกเลิกการจ่ายเงินเบิก: {{requestNo}}',
+          // No figure and no reason on purpose: the reason is free text typed by the person who
+          // voided, and a notice must never be able to carry an account number.
+          bodyTemplate: 'การจ่ายเงินที่บันทึกไว้ถูกยกเลิก ใบเบิกกลับไปรอจ่าย',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
           // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
           // own action — a solo owner submitting/approving/paying their own claim gets none of

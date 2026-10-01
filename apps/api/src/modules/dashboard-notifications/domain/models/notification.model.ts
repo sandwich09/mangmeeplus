@@ -121,6 +121,8 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   'crm_booking_reminder',
   'workflow.reimbursement_pending_approval',
   'workflow.approval_sla_breach',
+  // Audit B9: the requester is told when a recorded payment of their claim is taken back.
+  'workflow.reimbursement_payment_voided',
   'workflow.reimbursement_decision_requester',
   'workflow.reimbursement_correction_requester',
   'workflow.reimbursement_finance_review',

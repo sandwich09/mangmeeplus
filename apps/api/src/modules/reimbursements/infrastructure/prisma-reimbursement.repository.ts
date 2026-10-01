@@ -2829,7 +2829,7 @@ export class PrismaReimbursementRepository {
         await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.payment_voided',
           aggregateType: 'reimbursement_payment', aggregateId: paymentId, eventKey: `reimbursement.payment_voided:${paymentId}`,
           payloadJson: { companyId, actorUserId, requestId: auditRequestId, aggregateType: 'reimbursement_payment', aggregateId: paymentId,
-            occurredAt: new Date().toISOString(), data: { requestId, paymentStatus, reversalEntryId: reversal.reversalEntryId } },
+            occurredAt: new Date().toISOString(), data: { requestId, requestNo: updated.requestNo, requesterUserId: updated.requesterUserId, paymentStatus, reversalEntryId: reversal.reversalEntryId } },
           priority: 'NORMAL', status: 'PENDING' } });
       }
       return { request: this.toRequest(updated), payment: this.toPayment(payment), reversalEntryId: reversal.reversalEntryId };

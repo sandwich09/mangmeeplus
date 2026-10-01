@@ -6,6 +6,7 @@ import { PermissionResolverService } from '../../../access-control/application/p
 import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { WORKFLOW_TEMPLATE_CATALOG, WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG } from '../../domain/workflow-template-catalog';
 import { ruleMatchesEventType } from '../../domain/logic/workflow-event-match.logic';
+import { evaluateCondition } from '../../domain/logic/workflow-condition.logic';
 
 // H-07 follow-up: vendor_bill.approval_recorded → notify the remaining eligible
 // approvers (permission-resolved), never the submitter or the first approver.
@@ -242,6 +243,53 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
       assert.equal(finalUpdate.resultJson.skipped, true);
       assert.equal(finalUpdate.resultJson.reason, 'all_recipients_excluded');
+    });
+  });
+
+  // Audit B9: a requester told "paid" was never told when that payment was taken back.
+  describe('payment voided notice to the requester (audit B9)', () => {
+    const voided = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_voided')!;
+    // What the void transaction writes: the source is the PAYMENT, the claim rides the payload.
+    const runVoided = (payload: Record<string, unknown>) => make().execute(
+      { ...actionRun(voided().defaultActionJson[0]!.configJson), actionKey: voided().defaultActionJson[0]!.actionKey },
+      {
+        companyId: 'co_1', ruleName: voided().name, sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_payment', sourceId: 'pay_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', paymentStatus: 'UNPAID', reversalEntryId: null, ...payload },
+        siblingActions: voided().defaultActionJson,
+      } as any,
+    );
+
+    it('tells the requester in plain Thai, with the link to the claim and no figure', async () => {
+      await runVoided({ actorUserId: 'u_payer' });
+
+      const sent = (notify.execute.mock.calls[0] as any).arguments[0];
+      assert.deepEqual(sent.recipientUserIds, ['u_requester']);
+      assert.equal(sent.triggerKey, 'workflow.reimbursement_payment_voided');
+      assert.equal(sent.title, 'ยกเลิกการจ่ายเงินเบิก: RB-202610-00007');
+      assert.equal(sent.body, 'การจ่ายเงินที่บันทึกไว้ถูกยกเลิก ใบเบิกกลับไปรอจ่าย');
+      // The claim page, not a payment id: the source of this event is the payment row.
+      assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements/rb_1');
+      // The claim number is the only figure anywhere in the notice: no amount, no account, no id.
+      assert.doesNotMatch(sent.body, /\d/);
+      assert.doesNotMatch(`${sent.title} ${sent.body}`, /https?:|[A-Z]{2,}_[A-Z_]+|UNPAID|pay_1|rb_1/);
+    });
+
+    it('does not tell a requester who voided their own payment', async () => {
+      await runVoided({ actorUserId: 'u_requester' });
+
+      assert.equal(notify.execute.mock.callCount(), 0);
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.equal(finalUpdate.status, 'SUCCEEDED');
+      assert.equal(finalUpdate.resultJson.reason, 'all_recipients_excluded');
+    });
+
+    it('subscribes to the void event and skips one written before the payload named the requester', () => {
+      assert.equal(voided().autoEnable, true);
+      assert.ok(ruleMatchesEventType(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG['reimbursement_payment_voided']!, 'reimbursement.payment_voided'));
+      const now = new Date('2026-10-01T00:00:00.000Z');
+      assert.equal(evaluateCondition(voided().defaultConditionJson, { requestId: 'rb_1', paymentStatus: 'UNPAID' }, now).matched, false);
+      assert.equal(evaluateCondition(voided().defaultConditionJson, { requestId: 'rb_1', requesterUserId: 'u_requester' }, now).matched, true);
     });
   });
 

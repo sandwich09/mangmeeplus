@@ -54,6 +54,7 @@ describe('IngestWorkflowEventUseCase', () => {
       'reimbursement_finance_review',
       'reimbursement_finance_review_pending',
       'reimbursement_payment_recorded',
+      'reimbursement_payment_voided',
       'reimbursement_pending_approval',
       'reimbursement_ready_for_payment',
     ]);
@@ -69,6 +70,7 @@ describe('IngestWorkflowEventUseCase', () => {
       ['reimbursement_finance_review_pending', 'reimbursement.approved'],
       ['reimbursement_ready_for_payment', 'reimbursement.ready_for_payment'],
       ['reimbursement_payment_recorded', 'reimbursement.payment_recorded'],
+      ['reimbursement_payment_voided', 'reimbursement.payment_voided'],
     ] as const) {
       assert.equal(ruleMatchesEventType(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG[key] ?? {}, eventType), true, key);
     }
@@ -123,12 +125,13 @@ describe('IngestWorkflowEventUseCase', () => {
       .filter((entry) => entry.sourceModule === 'reimbursements' && entry.triggerType === 'EVENT')
       .map((entry) => ({ key: entry.key, cfg: entry.defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')?.configJson ?? {} }));
 
-    assert.equal(notifications.length, 7);
+    assert.equal(notifications.length, 8);
     for (const { key, cfg } of notifications) {
       assert.equal(typeof cfg['bodyTemplate'], 'string', key);
       assert.notEqual(cfg['bodyTemplate'], cfg['titleTemplate'], key);
-      // A body worth pushing carries the figures the title does not.
-      assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
+      // A body worth pushing carries the figures the title does not. The void notice is the one
+      // that carries none: it says what happened to the claim, and the claim page has the rest.
+      if (key !== 'reimbursement_payment_voided') assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
       assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK, key);
       if (key === 'reimbursement_ready_for_payment') {
         assert.equal(cfg['excludeRecipientPayloadKeys'], undefined, key);
