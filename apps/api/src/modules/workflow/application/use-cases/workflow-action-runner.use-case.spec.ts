@@ -1,8 +1,12 @@
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { ExecuteWorkflowActionUseCase } from './workflow-action-runner.use-case';
+import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
+import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
+import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { WORKFLOW_TEMPLATE_CATALOG, WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG } from '../../domain/workflow-template-catalog';
 import { ruleMatchesEventType } from '../../domain/logic/workflow-event-match.logic';
+import { evaluateCondition } from '../../domain/logic/workflow-condition.logic';
 
 // H-07 follow-up: vendor_bill.approval_recorded → notify the remaining eligible
 // approvers (permission-resolved), never the submitter or the first approver.
@@ -56,6 +60,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       updateActionRun: mock.fn(async () => undefined),
       findUserIdsByRoles: mock.fn(async () => []),
       findUserIdsByPermissions: mock.fn(async () => ['u_submitter', 'u_first_approver', 'u_second', 'u_third']),
+      findSourceBranchId: mock.fn(async () => null),
     };
     notify = { execute: mock.fn(async () => ({ skipped: false, event: { id: 'ne_1' } })) };
   });
@@ -63,7 +68,14 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
   // Shadow probe double: SEND_NOTIFICATION never reaches the CALL_WEBHOOK sweep, so a probe that
   // is never touched is the faithful stand-in here.
   const shadow = { startSweep: () => { throw new Error('no shadow sweep on this action type'); } } as any;
-  const make = () => new ExecuteWorkflowActionUseCase(repo, {} as any, {} as any, notify, {} as any, shadow);
+  // Every holder in these tests can act; who cannot is the subject of the B12 block below.
+  const access = {
+    resolveAccess: async () => ({
+      permissions: ['procurement.vendor_bill.approve', 'reimbursement.payment.record', 'reimbursement.finance_review'],
+      scopes: {},
+    }),
+  } as any;
+  const make = () => new ExecuteWorkflowActionUseCase(repo, {} as any, {} as any, notify, {} as any, shadow, access);
 
   it('notifies permission holders minus the submitter and recorded approvers (catalog config)', async () => {
     const cfg = secondApprovalTemplate.defaultActionJson[0]!.configJson;
@@ -172,20 +184,93 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     });
   });
 
-  // AC11: the same actor-exclusion rule for the other two named self-notification cases — the
-  // approver who just approved does not hear "ready for payment" about their own approval, and the
-  // payer who just recorded a payment does not hear "paid" about their own payment. Both templates
-  // resolve recipients differently (permission-based vs payload-based), so each gets its own check.
-  describe('reimbursement notification actor exclusion for payment events (spec §11 / AC11)', () => {
-    it('ready_for_payment: excludes the approver/actor but still notifies another payment.record holder', async () => {
+  // AC11 says the actor of an event is not told about their own action: the payer who just
+  // recorded a payment does not hear "paid". "Ready for payment" is the exception (audit B9, owner
+  // rule 2026-10-01): its actor approved the claim, and the notice is about the NEXT step, which
+  // is theirs when they hold the pay right. Leaving them out is how approved claims sat unpaid.
+  describe('reimbursement payment notices and the actor of the event (spec §11 / AC11, audit B9)', () => {
+    const runReady = (payload: Record<string, unknown>) => {
       const ready = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_ready_for_payment')!;
-      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_finance']);
-      await make().execute(actionRun(ready.defaultActionJson[0]!.configJson), {
+      return make().execute(actionRun(ready.defaultActionJson[0]!.configJson), {
         companyId: 'co_1', ruleName: 'Reimbursement ready for payment', sourceModule: 'reimbursements',
         sourceType: 'reimbursement_request', sourceId: 'rb_1',
-        payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', actorUserId: 'u_owner' },
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', ...payload },
         siblingActions: [],
       } as any);
+    };
+
+    it('ready_for_payment: the approver who can record the payment is told, as their own next step', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_approver', 'u_finance']);
+      await runReady({ actorUserId: 'u_approver', requesterUserId: 'u_staff' });
+
+      const sent = (notify.execute.mock.calls[0] as any).arguments[0];
+      assert.deepEqual(sent.recipientUserIds, ['u_approver']);
+      assert.equal(sent.body, 'ยอด 250 THB · รอคุณบันทึกการจ่ายเงิน');
+    });
+
+    // Owner, 2026-10-01: "แจ้งเตือนไปเจ้าของตลอดแบบนี้น่ารำคาญ". The shop owner holds every right, so
+    // "everyone who can pay" pushed the owner for every approved claim. It is the approver's turn.
+    it('ready_for_payment: a manager approves where the owner, an admin and a second manager can all pay, and only that manager is told', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin', 'u_manager', 'u_manager_2']);
+      await runReady({ actorUserId: 'u_manager', requesterUserId: 'u_staff' });
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_manager']);
+    });
+
+    it('ready_for_payment: the finance reviewer who passed the claim is the one told, when they can pay', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_finance', 'u_manager']);
+      await runReady({ actorUserId: 'u_finance', requesterUserId: 'u_staff', decision: 'APPROVED_FOR_PAYMENT' });
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_finance']);
+    });
+
+    it('ready_for_payment: a claim that needed no approval, filed on someone else\'s behalf, goes to whoever filed it', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_preparer']);
+      await runReady({ actorUserId: 'u_preparer', requesterUserId: 'u_staff', decision: 'BELOW_APPROVAL_THRESHOLD' });
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_preparer']);
+    });
+
+    // The requester filed it and nobody approved it: the actor IS the requester, who is never the
+    // one told alone to pay their own claim, so the notice goes to everyone who can.
+    it('ready_for_payment: a claim that needed no approval, filed by its requester, does not go to the requester alone', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_manager', 'u_requester']);
+      await runReady({ actorUserId: 'u_requester', requesterUserId: 'u_requester', decision: 'BELOW_APPROVAL_THRESHOLD' });
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_owner', 'u_manager', 'u_requester']);
+    });
+
+    // ...unless the event names who would have approved it: they are asked before everyone else.
+    it('ready_for_payment: a claim that needed no approval goes to the people who would have approved it, when they can pay', async () => {
+      const filedByRequester = { actorUserId: 'u_requester', requesterUserId: 'u_requester', decision: 'BELOW_APPROVAL_THRESHOLD' };
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_manager', 'u_manager_2', 'u_requester']);
+      await runReady({ ...filedByRequester, approverRecipientUserIds: ['u_manager', 'u_manager_2', 'u_requester'] });
+      assert.deepEqual((notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds, ['u_manager', 'u_manager_2']);
+
+      // None of them can record the payment: everyone who can is told.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin']);
+      await runReady({ ...filedByRequester, approverRecipientUserIds: ['u_manager'] });
+      assert.deepEqual((notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds, ['u_owner', 'u_admin']);
+
+      // Filed on someone's behalf: whoever filed it still comes first.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_manager', 'u_preparer']);
+      await runReady({ actorUserId: 'u_preparer', requesterUserId: 'u_staff', approverRecipientUserIds: ['u_manager'] });
+      assert.deepEqual((notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds, ['u_preparer']);
+    });
+
+    it('ready_for_payment: a solo owner who approved their own claim gets the one notice to pay it', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner']);
+      await runReady({ requesterUserId: 'u_owner', actorUserId: 'u_owner' });
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_owner']);
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.equal(finalUpdate.status, 'SUCCEEDED');
+      assert.notEqual(finalUpdate.resultJson.skipped, true);
+    });
+
+    it('ready_for_payment: an approver without the pay right is not told to pay', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_finance']);
+      await runReady({ actorUserId: 'u_approver' });
 
       assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_finance']);
     });
@@ -211,6 +296,240 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     });
   });
 
+  // Owner rule 2026-10-01: an action notice goes to the person whose turn it is, not to everyone
+  // who holds the right. The mechanism is generic; the claim templates that use it follow below.
+  describe('preferRecipientPayloadKeys narrows permission recipients to whose turn it is', () => {
+    const send = async (cfg: Record<string, unknown>, payload: Record<string, unknown>) => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin', 'u_mgr_1', 'u_mgr_2']);
+      await make().execute(
+        actionRun({ triggerKey: 'workflow.test', severity: 'action', recipientPermissions: ['reimbursement.payment.record'], ...cfg }),
+        { companyId: 'co_1', ruleName: 'r', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1', payload, siblingActions: [] } as any,
+      );
+      return (notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds;
+    };
+    const prefer = { preferRecipientPayloadKeys: ['firstChoice', 'secondChoice'], neverPreferRecipientPayloadKeys: ['requesterUserId'] };
+
+    it('takes the first payload group that names somebody able to act', async () => {
+      assert.deepEqual(await send(prefer, { firstChoice: 'u_mgr_1', secondChoice: ['u_admin'] }), ['u_mgr_1']);
+      // A list is a group: everyone in it who can act, and nobody else.
+      assert.deepEqual(await send(prefer, { firstChoice: ['u_mgr_2', 'u_mgr_1', 'u_gone'] }), ['u_mgr_1', 'u_mgr_2']);
+    });
+
+    it('moves to the next group when the first names nobody able, or only someone never preferred', async () => {
+      assert.deepEqual(await send(prefer, { firstChoice: 'u_cannot_act', secondChoice: ['u_admin', 'u_mgr_2'] }), ['u_admin', 'u_mgr_2']);
+      assert.deepEqual(await send(prefer, { firstChoice: 'u_mgr_1', secondChoice: 'u_admin', requesterUserId: 'u_mgr_1' }), ['u_admin']);
+    });
+
+    it('keeps the whole group when no preferred group has anyone able to act', async () => {
+      const everyone = ['u_owner', 'u_admin', 'u_mgr_1', 'u_mgr_2'];
+      assert.deepEqual(await send(prefer, {}), everyone);
+      assert.deepEqual(await send(prefer, { firstChoice: 'u_cannot_act', secondChoice: [] }), everyone);
+      // Never preferred is not excluded: with nobody else to prefer, they are still in the whole group.
+      assert.deepEqual(await send(prefer, { firstChoice: 'u_owner', requesterUserId: 'u_owner' }), everyone);
+    });
+
+    it('leaves a rule snapshot without the key exactly as it was: everyone able to act', async () => {
+      const everyone = ['u_owner', 'u_admin', 'u_mgr_1', 'u_mgr_2'];
+      assert.deepEqual(await send({}, { firstChoice: 'u_mgr_1', actorUserId: 'u_mgr_1', requesterUserId: 'u_staff' }), everyone);
+      // The pre-preference ready-to-pay snapshot, as rules pinned before this change still hold it.
+      assert.deepEqual(await send({
+        triggerKey: 'workflow.reimbursement_ready_for_payment', titleTemplate: 'พร้อมจ่ายเบิกจ่าย: {{requestNo}}',
+        bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน',
+      }, { requestNo: 'RB-1', amount: '250', currency: 'THB', actorUserId: 'u_mgr_1', requesterUserId: 'u_staff' }), everyone);
+    });
+
+    it('narrows only the permission group, never role or payload recipients', async () => {
+      repo.findUserIdsByRoles = mock.fn(async () => ['u_auditor']);
+      assert.deepEqual(
+        await send({ ...prefer, recipientRoles: ['AUDITOR_READONLY'], recipientPayloadKeys: ['watcherUserId'] }, { firstChoice: 'u_mgr_1', watcherUserId: 'u_watcher' }),
+        ['u_auditor', 'u_mgr_1', 'u_watcher'],
+      );
+    });
+  });
+
+  // Audit B9: a requester told "paid" was never told when that payment was taken back.
+  describe('payment voided notice to the requester (audit B9)', () => {
+    const voided = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_voided')!;
+    // What the void transaction writes: the source is the PAYMENT, the claim rides the payload.
+    const runVoided = (payload: Record<string, unknown>) => make().execute(
+      { ...actionRun(voided().defaultActionJson[0]!.configJson), actionKey: voided().defaultActionJson[0]!.actionKey },
+      {
+        companyId: 'co_1', ruleName: voided().name, sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_payment', sourceId: 'pay_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', paymentStatus: 'UNPAID', reversalEntryId: null, ...payload },
+        siblingActions: voided().defaultActionJson,
+      } as any,
+    );
+
+    it('tells the requester in plain Thai, with the link to the claim and no figure', async () => {
+      await runVoided({ actorUserId: 'u_payer' });
+
+      const sent = (notify.execute.mock.calls[0] as any).arguments[0];
+      assert.deepEqual(sent.recipientUserIds, ['u_requester']);
+      assert.equal(sent.triggerKey, 'workflow.reimbursement_payment_voided');
+      assert.equal(sent.title, 'ยกเลิกการจ่ายเงินเบิก: RB-202610-00007');
+      assert.equal(sent.body, 'การจ่ายเงินที่บันทึกไว้ถูกยกเลิก ใบเบิกกลับไปรอจ่าย');
+      // The claim page, not a payment id: the source of this event is the payment row.
+      assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements/rb_1');
+      // The claim number is the only figure anywhere in the notice: no amount, no account, no id.
+      assert.doesNotMatch(sent.body, /\d/);
+      assert.doesNotMatch(`${sent.title} ${sent.body}`, /https?:|[A-Z]{2,}_[A-Z_]+|UNPAID|pay_1|rb_1/);
+    });
+
+    it('does not tell a requester who voided their own payment', async () => {
+      await runVoided({ actorUserId: 'u_requester' });
+
+      assert.equal(notify.execute.mock.callCount(), 0);
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.equal(finalUpdate.status, 'SUCCEEDED');
+      assert.equal(finalUpdate.resultJson.reason, 'all_recipients_excluded');
+    });
+
+    it('subscribes to the void event and skips one written before the payload named the requester', () => {
+      assert.equal(voided().autoEnable, true);
+      assert.ok(ruleMatchesEventType(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG['reimbursement_payment_voided']!, 'reimbursement.payment_voided'));
+      const now = new Date('2026-10-01T00:00:00.000Z');
+      assert.equal(evaluateCondition(voided().defaultConditionJson, { requestId: 'rb_1', paymentStatus: 'UNPAID' }, now).matched, false);
+      assert.equal(evaluateCondition(voided().defaultConditionJson, { requestId: 'rb_1', requesterUserId: 'u_requester' }, now).matched, true);
+    });
+  });
+
+  // Audit B9: nothing reminded anyone that a claim was waiting for payment.
+  describe('payment reminder notice (audit B9)', () => {
+    const reminder = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_sla_breach')!;
+    const runReminder = (payload: Record<string, unknown> = {}) => make().execute(
+      { ...actionRun(reminder().defaultActionJson[0]!.configJson), actionKey: reminder().defaultActionJson[0]!.actionKey },
+      {
+        companyId: 'co_1', ruleName: reminder().name, sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-202610-00007', ageHours: 80, slaRisk: true, amount: '250', currency: 'THB', ...payload },
+        siblingActions: reminder().defaultActionJson,
+      } as any,
+    );
+    const reminded = () => (notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds;
+
+    // Owner rule 2026-10-01: the reminder goes to whose turn it is, like the ready-to-pay notice.
+    it('reminds only the manager who approved, where the owner, an admin and a second manager can all pay', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin', 'u_manager', 'u_manager_2']);
+      await runReminder({ requesterUserId: 'u_staff', approvedByUserId: 'u_manager' });
+
+      assert.deepEqual(reminded(), ['u_manager']);
+    });
+
+    it('reminds the finance reviewer who passed the claim before its approver, when they can pay', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_finance', 'u_manager']);
+      await runReminder({ requesterUserId: 'u_staff', financeReviewerUserId: 'u_finance', approvedByUserId: 'u_manager' });
+      assert.deepEqual(reminded(), ['u_finance']);
+
+      // A finance reviewer without the pay right: the approver is next in line.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_manager']);
+      await runReminder({ requesterUserId: 'u_staff', financeReviewerUserId: 'u_finance', approvedByUserId: 'u_manager' });
+      assert.deepEqual(reminded(), ['u_manager']);
+    });
+
+    it('reminds everyone who can pay when the approver cannot, has left, or the claim needed no approval', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin']);
+      await runReminder({ requesterUserId: 'u_staff', approvedByUserId: 'u_manager_without_pay_right' });
+      assert.deepEqual(reminded(), ['u_owner', 'u_admin']);
+
+      await runReminder({ requesterUserId: 'u_staff' });
+      assert.deepEqual(reminded(), ['u_owner', 'u_admin']);
+    });
+
+    it('still reminds a solo owner who filed and approved their own claim', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner']);
+      await runReminder({ requesterUserId: 'u_owner', approvedByUserId: 'u_owner' });
+
+      assert.deepEqual(reminded(), ['u_owner']);
+    });
+
+    it('never reminds a requester alone to pay their own claim when others can', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_manager']);
+      await runReminder({ requesterUserId: 'u_manager', approvedByUserId: 'u_manager' });
+
+      assert.deepEqual(reminded(), ['u_owner', 'u_manager']);
+    });
+
+    it('reminds everyone who can record the payment, in plain Thai, with the link to the claim', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_approver', 'u_finance']);
+      await runReminder();
+
+      assert.deepEqual((repo.findUserIdsByPermissions.mock.calls[0] as any).arguments, ['co_1', ['reimbursement.payment.record']]);
+      const sent = (notify.execute.mock.calls[0] as any).arguments[0];
+      assert.deepEqual(sent.recipientUserIds, ['u_approver', 'u_finance']);
+      assert.equal(sent.triggerKey, 'workflow.reimbursement_payment_sla_breach');
+      assert.equal(sent.severity, 'critical');
+      assert.equal(sent.title, 'ใบเบิกรอจ่ายเงินเกินกำหนด: RB-202610-00007');
+      assert.equal(sent.body, 'ยอด 250 THB · รอคุณบันทึกการจ่ายเงิน');
+      assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements/rb_1');
+      assert.doesNotMatch(`${sent.title} ${sent.body}`, /SLA|[A-Z]{2,}_[A-Z_]+|rb_1/);
+    });
+
+    // The scan comes round again every window. Retrying into a dead letter each time (a suspended
+    // company, nobody covering the branch) would bury the dead-letter list; an EVENT still retries.
+    it('skips quietly when nobody can record the payment right now, instead of dead-lettering every scan', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => []);
+      await runReminder();
+
+      assert.equal(notify.execute.mock.callCount(), 0);
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.equal(finalUpdate.status, 'SUCCEEDED');
+      assert.deepEqual(finalUpdate.resultJson, { skipped: true, reason: 'no_recipients' });
+
+      const ready = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_ready_for_payment')!;
+      await make().execute(actionRun(ready.defaultActionJson[0]!.configJson), {
+        companyId: 'co_1', ruleName: ready.name, sourceModule: 'reimbursements', sourceType: 'reimbursement_request',
+        sourceId: 'rb_1', payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB' }, siblingActions: [],
+      } as any);
+      assert.equal((repo.updateActionRun.mock.calls.at(-1) as any).arguments[1].status, 'FAILED_RETRYABLE');
+    });
+  });
+
+  // Audit B15: `decision` is a code word in the event payload. A notice says it in the words the
+  // claim page uses, whatever the rule snapshot holds, because LINE pushes the stored text as it is.
+  describe('claim notices never print a decision code word (audit B15)', () => {
+    const notice = async (templateKey: string, decision: string) => {
+      const template = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === templateKey)!;
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_finance']);
+      await make().execute(actionRun(template.defaultActionJson[0]!.configJson), {
+        companyId: 'co_1', ruleName: template.name, sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: {
+          requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', decision,
+          requesterUserId: 'u_requester', actorUserId: 'u_filer',
+        },
+        siblingActions: [],
+      } as any);
+      return (notify.execute.mock.calls.at(-1) as any).arguments[0];
+    };
+
+    it('tells the requester of a below-threshold claim filed on their behalf in plain Thai', async () => {
+      const sent = await notice('reimbursement_decision_requester', 'BELOW_APPROVAL_THRESHOLD');
+
+      assert.deepEqual(sent.recipientUserIds, ['u_requester']);
+      assert.equal(sent.title, 'ผลอนุมัติเบิกจ่าย: RB-1');
+      assert.equal(sent.body, 'ผลการพิจารณา: ไม่ต้องอนุมัติตามนโยบาย · ยอด 250 THB');
+    });
+
+    it('says every decision a shipped claim notice can carry in Thai', async () => {
+      for (const [templateKey, decision, words] of [
+        ['reimbursement_decision_requester', 'APPROVED', 'อนุมัติ'],
+        ['reimbursement_decision_requester', 'REJECTED', 'ไม่อนุมัติ'],
+        ['reimbursement_decision_requester', 'BELOW_APPROVAL_THRESHOLD', 'ไม่ต้องอนุมัติตามนโยบาย'],
+        ['reimbursement_finance_review', 'BLOCKED', 'ระงับ'],
+      ] as const) {
+        const sent = await notice(templateKey, decision);
+        assert.ok(sent.body.includes(`: ${words} ·`), `${templateKey} ${decision}: ${sent.body}`);
+        assert.doesNotMatch(`${sent.title} ${sent.body}`, /[A-Z]{2,}_[A-Z_]+|APPROVED|REJECTED|BLOCKED/, decision);
+      }
+    });
+
+    it('prints a value it has no words for as it came, never a JavaScript internal', async () => {
+      const sent = await notice('reimbursement_decision_requester', 'constructor');
+      assert.equal(sent.body, 'ผลการพิจารณา: constructor · ยอด 250 THB');
+    });
+  });
+
   // F16: `body: title` made every LINE push repeat itself. bodyTemplate is read from the action's
   // OWN config (no sibling fallback), so the pending-approval alert can borrow the task's title and
   // still say something new in the body.
@@ -229,7 +548,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 
     const sent = (notify.execute.mock.calls[0] as any).arguments[0];
     assert.equal(sent.title, 'พร้อมจ่ายเบิกจ่าย: RB-202608-00021');
-    assert.equal(sent.body, 'ยอด 250 THB · รอบันทึกการจ่ายเงิน');
+    assert.equal(sent.body, 'ยอด 250 THB · รอคุณบันทึกการจ่ายเงิน');
   });
 
   it('keeps the sibling-borrowed title but not the body on the pending-approval alert', async () => {
@@ -293,6 +612,180 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 });
 
 /**
+ * Audit B12: a recipient picked by permission must be able to act on THIS record, or the notice is
+ * a link that answers 403. The REAL permission resolver decides here (over membership fixtures),
+ * so the three rules it applies (ACTIVE role, entitlement filter, branch scope) are the three
+ * rules these tests prove, not a restatement of them.
+ */
+describe('SEND_NOTIFICATION recipients picked by permission can act on the record (audit B12)', () => {
+  const PAY = 'reimbursement.payment.record';
+  const APPROVE_BILL = 'procurement.vendor_bill.approve';
+  const role = (status: string, permission: string) => ({
+    role: { key: 'CUSTOM_PAYER', status, permissions: [{ permission: { key: permission } }] },
+  });
+  const member = (extra: Record<string, unknown> = {}) => ({
+    id: 'm', companyId: 'co_1', branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null,
+    roles: [role('ACTIVE', PAY)], branchScopes: [], company: { status: 'ACTIVE' }, ...extra,
+  });
+
+  function harness(opts: {
+    memberships: Record<string, unknown>;
+    sourceBranchId?: string | null;
+    entitlements?: Array<{ featureKey: string; enabled: boolean }>;
+  }) {
+    const updates: any[] = [];
+    const sent: any[] = [];
+    const repo = {
+      updateActionRun: async (_id: string, data: any) => { updates.push(data); },
+      findUserIdsByRoles: async () => [],
+      // The query's own rule: every active member holding the right through ANY role.
+      findUserIdsByPermissions: async () => Object.keys(opts.memberships),
+      findSourceBranchId: mock.fn(async () => opts.sourceBranchId ?? null),
+    } as any;
+    const prisma = {
+      client: {
+        companyMembership: { findFirst: async ({ where }: any) => opts.memberships[where.userId] ?? null },
+        // Every branch named in a scope is ACTIVE here; a closed branch is the resolver's own spec.
+        branch: { findMany: async ({ where }: any) => (where.id.in as string[]).map((id) => ({ id })) },
+        companyFeatureEntitlement: { findMany: async () => opts.entitlements ?? [] },
+      },
+    } as any;
+    const access = new PermissionResolverService(new PrismaPermissionResolverRepository(prisma));
+    const notify = { execute: async (input: any) => { sent.push(input); return { skipped: false, event: { id: 'ne_1' } }; } } as any;
+    const shadow = { startSweep: () => { throw new Error('no shadow sweep on this action type'); } } as any;
+    return {
+      useCase: new ExecuteWorkflowActionUseCase(repo, {} as any, {} as any, notify, {} as any, shadow, access),
+      repo, sent, updates,
+    };
+  }
+
+  const readyToPay = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_ready_for_payment')!;
+  const claimContext = (): any => ({
+    companyId: 'co_1', ruleName: 'Reimbursement ready for payment', sourceModule: 'reimbursements',
+    sourceType: 'reimbursement_request', sourceId: 'rb_1',
+    payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', actorUserId: 'u_someone_else' },
+    siblingActions: [],
+  });
+
+  it('notifies neither a member outside the claim branch nor a member whose paying role is inactive', async () => {
+    const h = harness({
+      sourceBranchId: 'br_claim',
+      memberships: {
+        u_all_branches: member(),
+        u_claim_branch_only: member({ branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'br_claim' }),
+        u_other_branch: member({ branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'br_other' }] }),
+        u_inactive_role: member({ roles: [role('DISABLED', PAY)] }),
+      },
+    });
+
+    await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), claimContext());
+
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_all_branches', 'u_claim_branch_only']);
+    assert.deepEqual((h.repo.findSourceBranchId.mock.calls[0] as any).arguments, ['co_1', 'reimbursement_request', 'rb_1']);
+    assert.equal(h.updates.at(-1)?.status, 'SUCCEEDED');
+  });
+
+  // Whose turn it is only counts when that person can act: an approver who holds the pay right
+  // for another branch cannot record this payment, so everyone who can is told instead.
+  it('tells everyone who can pay when the approver cannot record the payment for the claim branch', async () => {
+    const h = harness({
+      sourceBranchId: 'br_claim',
+      memberships: {
+        u_owner: member(),
+        u_admin: member(),
+        u_approver: member({ branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'br_other' }] }),
+      },
+    });
+    const context = claimContext();
+    context.payload = { ...context.payload, actorUserId: 'u_approver', requesterUserId: 'u_staff' };
+
+    await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), context);
+
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_owner', 'u_admin']);
+  });
+
+  it('tells only the approver when they can record the payment for the claim branch', async () => {
+    const h = harness({
+      sourceBranchId: 'br_claim',
+      memberships: {
+        u_owner: member(),
+        u_approver: member({ branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'br_claim' }),
+      },
+    });
+    const context = claimContext();
+    context.payload = { ...context.payload, actorUserId: 'u_approver', requesterUserId: 'u_staff' };
+
+    await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), context);
+
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_approver']);
+  });
+
+  it('keeps a branch-limited payer for a company-central claim, exactly as the pay endpoint does', async () => {
+    const h = harness({
+      sourceBranchId: null,
+      memberships: { u_other_branch: member({ branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'br_other' }] }) },
+    });
+
+    await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), claimContext());
+
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_other_branch']);
+  });
+
+  it('drops a holder whose right is switched off by the company entitlement', async () => {
+    const billContext = context(approvalRecordedPayload);
+    const cfg = secondApprovalTemplate.defaultActionJson[0]!.configJson;
+    const memberships = { u_second: member({ roles: [role('ACTIVE', APPROVE_BILL)] }) };
+
+    // No entitlement rows at all is the legacy fail-open company: the right stands.
+    const open = harness({ memberships });
+    await open.useCase.execute(actionRun(cfg), billContext);
+    assert.deepEqual(open.sent[0]?.recipientUserIds, ['u_second']);
+
+    // Rows exist and procurement is not among them: the resolver strips the right, so nobody is
+    // left to tell. Nothing resolving at all stays the retryable failure it always was.
+    const closed = harness({ memberships, entitlements: [{ featureKey: 'expenses', enabled: true }] });
+    await closed.useCase.execute(actionRun(cfg), billContext);
+    assert.equal(closed.sent.length, 0);
+    assert.equal(closed.updates.at(-1)?.status, 'FAILED_RETRYABLE');
+  });
+
+  it('drops a holder the resolver refuses outright without failing the others', async () => {
+    const h = harness({
+      memberships: {
+        u_payer: member(),
+        // SELECTED_BRANCHES with no branch left: the resolver answers 403 for this member.
+        u_no_branch_left: member({ branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [] }),
+        u_suspended_company: member({ company: { status: 'SUSPENDED' } }),
+      },
+    });
+
+    await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), claimContext());
+
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_payer']);
+  });
+
+  it('reads the branch from the claim or the vendor bill, and from nothing else', async () => {
+    const queries: any[] = [];
+    const table = (name: string, branchId: string | null) => ({
+      findFirst: async (query: any) => { queries.push({ name, ...query }); return { branchId }; },
+    });
+    const repository = new PrismaWorkflowRepository({
+      client: { reimbursementRequest: table('claim', 'br_claim'), vendorBill: table('bill', null) },
+    } as any);
+
+    assert.equal(await repository.findSourceBranchId('co_1', 'reimbursement_request', 'rb_1'), 'br_claim');
+    assert.equal(await repository.findSourceBranchId('co_1', 'vendor_bill', 'bill_1'), null);
+    assert.equal(await repository.findSourceBranchId('co_1', 'stock_balance', 'p_1'), null);
+    assert.equal(await repository.findSourceBranchId('co_1', 'reimbursement_request', undefined), null);
+    // Tenant-bound: the record is looked up inside the run's own company, never by id alone.
+    assert.deepEqual(queries, [
+      { name: 'claim', where: { id: 'rb_1', companyId: 'co_1' }, select: { branchId: true } },
+      { name: 'bill', where: { id: 'bill_1', companyId: 'co_1' }, select: { branchId: true } },
+    ]);
+  });
+});
+
+/**
  * Shadow coverage for the OUTBOUND webhook row of the F0 async inventory (piece 5).
  *
  * `callWebhook` is the one seam every dispatch path converges on — retry sweep, synchronous rule
@@ -326,7 +819,7 @@ describe('CALL_WEBHOOK shadow coverage', () => {
     } as any;
     const audit = { log: async () => undefined } as any;
     return {
-      useCase: new ExecuteWorkflowActionUseCase(repo, audit, {} as any, {} as any, {} as any, shadow),
+      useCase: new ExecuteWorkflowActionUseCase(repo, audit, {} as any, {} as any, {} as any, shadow, {} as any),
       shadowRecords, flushes, updates,
     };
   }

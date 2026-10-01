@@ -7,6 +7,7 @@ import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expe
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { ReimbursementProjectionOrchestratorService } from './reimbursement-projection-orchestrator.service';
+import { ListReimbursementApproverOptionsUseCase } from '../use-cases/reimbursement-policy.use-case';
 
 @Injectable()
 export class ReimbursementProjectionReconcilerService {
@@ -16,6 +17,7 @@ export class ReimbursementProjectionReconcilerService {
     private readonly audit: AuditService,
     private readonly voidExpense: VoidExpenseUseCase,
     private readonly prisma: PrismaService,
+    private readonly approverRoutes: ListReimbursementApproverOptionsUseCase,
   ) {}
 
   /**
@@ -56,10 +58,13 @@ export class ReimbursementProjectionReconcilerService {
         authProvider: 'system',
       };
       try {
-        const policy = effectivePolicyForRequest(
-          intent.request,
-          effectivePolicy(await this.repo.findPolicy(intent.request.companyId, null)),
-        );
+        const currentPolicy = effectivePolicy(await this.repo.findPolicy(intent.request.companyId, null));
+        const policy = effectivePolicyForRequest(intent.request, currentPolicy);
+        // The same field the live submit writes for a claim that needed no approval, so a replayed
+        // ready-to-pay event asks the same people first (owner rule 2026-10-01).
+        const approverRecipientUserIds = intent.kind === 'POLICY'
+          ? await this.approverRoutes.resolveWouldBeApproverUserIds(intent.request.companyId, currentPolicy, intent.request).catch(() => [])
+          : [];
         await this.projections.execute(ctx, intent.request, {
           kind: intent.kind,
           actorUserId: intent.actorUserId,
@@ -120,6 +125,7 @@ export class ReimbursementProjectionReconcilerService {
                     decision: 'APPROVED',
                     amount: intent.request.amount,
                     currency: intent.request.currency,
+                    ...(approverRecipientUserIds.length > 0 && { approverRecipientUserIds }),
                   },
                 },
                 priority: 'NORMAL',

@@ -34,7 +34,7 @@ describe('implemented-trigger gate (LINE preference suppression)', () => {
       .filter((action) => action.actionType === 'SEND_NOTIFICATION')
       .map((action) => String(action.configJson['triggerKey']));
 
-    assert.equal(workflowTriggerKeys.length, 8);
+    assert.equal(workflowTriggerKeys.length, 10);
     for (const key of workflowTriggerKeys) {
       assert.equal(isImplementedTrigger(key), true, key);
     }

@@ -32,6 +32,7 @@ import { paymentSlipAuditMetadata } from './reimbursement-payment-slip.use-case'
 async function appendReimbursementOutboxWithinTx(tx: any, input: {
   companyId: string;
   eventType: string;
+  aggregateType?: string;
   aggregateId: string;
   eventKey: string;
   payloadJson: Record<string, unknown>;
@@ -40,7 +41,7 @@ async function appendReimbursementOutboxWithinTx(tx: any, input: {
     data: [{
       companyId: input.companyId,
       eventType: input.eventType,
-      aggregateType: 'reimbursement_request',
+      aggregateType: input.aggregateType ?? 'reimbursement_request',
       aggregateId: input.aggregateId,
       eventKey: input.eventKey,
       payloadJson: input.payloadJson,
@@ -421,6 +422,17 @@ export class RecordReimbursementPaymentUseCase {
     const now = new Date();
     const result = await this.repo.recordPaymentAtomic({
       companyId: ctx.companyId,
+      // Audit B10: written in the payment transaction, so the requester's "paid" notice cannot be
+      // lost between the commit and a later append. One event per payment row.
+      onPaymentPersisted: (tx, payment, paymentStatus) => appendReimbursementOutboxWithinTx(tx, {
+        companyId: ctx.companyId, eventType: 'reimbursement.payment_recorded', aggregateType: 'reimbursement_payment',
+        aggregateId: payment.id, eventKey: `reimbursement.payment_recorded:reimbursement_payment:${payment.id}`,
+        payloadJson: {
+          companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
+          aggregateType: 'reimbursement_payment', aggregateId: payment.id, occurredAt: now.toISOString(),
+          data: redactPayload({ requestId: id, requestNo: req.requestNo, requesterUserId: req.requesterUserId, paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, currency: input.currency ?? req.currency, sourceType: 'REIMBURSEMENT_PAYMENT', paymentStatus }),
+        },
+      }),
       reimbursementRequestId: id,
       idempotencyKey: paymentAttemptKey,
       paymentNo: reservation.paymentNo,
@@ -434,11 +446,6 @@ export class RecordReimbursementPaymentUseCase {
         paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, paymentMethod: input.paymentMethod, requestId: id,
         ...(result.slip && paymentSlipAuditMetadata(result.slip)),
       },
-    });
-    if (result.created) void this.outbox.append('reimbursement.payment_recorded', 'reimbursement_payment', result.payment.id, {
-      companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
-      aggregateType: 'reimbursement_payment', aggregateId: result.payment.id, occurredAt: now.toISOString(),
-      data: redactPayload({ requestId: id, requestNo: req.requestNo, requesterUserId: req.requesterUserId, paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, currency: input.currency ?? req.currency, sourceType: 'REIMBURSEMENT_PAYMENT', paymentStatus: result.request.paymentStatus }),
     });
     if (result.created && reservation.reservedId) {
       await this.commitNumber.execute({

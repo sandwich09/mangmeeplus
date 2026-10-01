@@ -713,6 +713,36 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.ready_for_payment'));
   });
 
+  // Owner rule 2026-10-01: a claim nobody had to approve has no approver of its own to hand the
+  // payment to, so its ready-to-pay event names the people who would have approved it.
+  it('names the would-be approvers on the ready-to-pay event of a claim that needed no approval', async () => {
+    const submitBelowThreshold = async () => {
+      const state = fakeRepo({ policy: { ...noReceiptNeeded, approvalRequiredFromAmount: '100.00', financeReviewRequired: false } });
+      await draftWith(state, [inputLine({ amount: '99.99' })], withReason);
+      await useCases(state).submit.execute(ctx(), 'rb-1');
+      return state;
+    };
+    const readyData = (state: any) => state.calls.outbox.find((event: any) => event.eventType === 'reimbursement.ready_for_payment').payloadJson.data;
+
+    const asked: any[] = [];
+    readyApproverRoutes.resolveWouldBeApproverUserIds = async (...args: any[]) => { asked.push(args); return ['approver-1', 'approver-2']; };
+    try {
+      const state = await submitBelowThreshold();
+      assert.deepEqual(readyData(state).approverRecipientUserIds, ['approver-1', 'approver-2']);
+      assert.equal(readyData(state).decision, 'BELOW_APPROVAL_THRESHOLD');
+      assert.equal(asked[0][0], 'co-1');
+      assert.equal(asked[0][2].requesterUserId, 'staff-1');
+
+      // Best effort: failing to name them never fails the submission, and the event simply names nobody.
+      readyApproverRoutes.resolveWouldBeApproverUserIds = async () => { throw new Error('lookup failed'); };
+      const unresolved = await submitBelowThreshold();
+      assert.equal(unresolved.request.status, 'READY_FOR_PAYMENT');
+      assert.equal(readyData(unresolved).approverRecipientUserIds, undefined);
+    } finally {
+      delete readyApproverRoutes.resolveWouldBeApproverUserIds;
+    }
+  });
+
   it('blocks INACTIVE policy before submit mutation', async () => {
     const state = fakeRepo({ policy: { ...noReceiptNeeded, status: 'INACTIVE' } });
     await draftWith(state, [inputLine()], withReason);

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ReimbursementProjectionReconcilerService } from './reimbursement-projection-reconciler.service';
+import { ListReimbursementApproverOptionsUseCase } from '../use-cases/reimbursement-policy.use-case';
 
 /**
  * Freeze in place (owner decision 2026-08-04). This reconciler selects intents across ALL tenants
@@ -35,7 +36,7 @@ function makeService(entitlements: Array<{ featureKey: string; enabled: boolean 
     client: { companyFeatureEntitlement: { findMany: async () => entitlements } },
   } as any;
   return {
-    service: new ReimbursementProjectionReconcilerService(repo, projections, audit, voidExpense, prisma),
+    service: new ReimbursementProjectionReconcilerService(repo, projections, audit, voidExpense, prisma, {} as any),
     calls,
   };
 }
@@ -83,5 +84,86 @@ describe('ReimbursementProjectionReconcilerService — freeze in place', () => {
     const { service, calls } = makeService([]);
     await service.execute();
     assert.ok(calls.includes('projections.execute'));
+  });
+});
+
+/**
+ * Owner rule 2026-10-01: the ready-to-pay notice of a claim nobody had to approve asks first the
+ * people who would have approved it. The live submit names them on the event; a replay must name
+ * the same people, or the same claim would notify differently depending on who finished it. The
+ * REAL route resolver runs here over role fixtures.
+ */
+describe('ReimbursementProjectionReconcilerService replay of a claim that needed no approval', () => {
+  const permissions = (...keys: string[]) => keys.map((key) => ({ permission: { key } }));
+  const approverRole = (key: string, userIds: string[], branchScope: Record<string, unknown> = { branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null, branchScopes: [] }) => ({
+    key, name: key, scopeKey: 'system', status: 'ACTIVE',
+    permissions: permissions('reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'),
+    memberships: userIds.map((userId) => ({ membership: { userId, ...branchScope, roles: [{ role: { key, status: 'ACTIVE' } }] } })),
+  });
+
+  function replay(kind: 'POLICY' | 'MANAGER', roles: any[], policy: Record<string, unknown> | null = null) {
+    const request = {
+      id: 'req-1', companyId: 'co-1', requestNo: 'RB-0001', requesterUserId: 'staff-1', branchId: 'br-1',
+      amount: '80.0000', currency: 'THB',
+    } as any;
+    const outbox: any[] = [];
+    const tx = { outboxEvent: { createMany: async ({ data }: any) => { outbox.push(...data); } } };
+    const complete = async (input: any) => { await input.onReadyPersisted(tx); };
+    const repo = {
+      listPendingProjectionIntents: async () => [{ request, kind, actorUserId: kind === 'POLICY' ? 'staff-1' : 'mgr-1', approvalStepId: 'step-1' }],
+      listPendingCancellationIntents: async () => [],
+      findPolicy: async () => policy,
+      completeApprovalProjectionAtomic: complete,
+      completePolicyProjectionAtomic: complete,
+    } as any;
+    const prisma = {
+      client: {
+        companyFeatureEntitlement: { findMany: async () => [] },
+        role: { findMany: async () => roles },
+        branch: { findMany: async () => [{ id: 'br-1', name: 'สาขาหลัก' }] },
+      },
+    } as any;
+    const service = new ReimbursementProjectionReconcilerService(
+      repo, { execute: async () => undefined } as any, { log: async () => undefined } as any, {} as any, prisma,
+      new ListReimbursementApproverOptionsUseCase(prisma),
+    );
+    return { service, ready: () => outbox.find((row) => row.eventType === 'reimbursement.ready_for_payment')?.payloadJson.data };
+  }
+
+  it('names the holders of the policy role who cover the claim branch', async () => {
+    const { service, ready } = replay('POLICY', [
+      approverRole('MANAGER', ['mgr-1', 'staff-1']),
+      approverRole('OWNER', ['owner-1']),
+    ]);
+
+    assert.deepEqual((await service.execute()).completed, ['req-1']);
+
+    // staff-1 is the requester and a manager, and a manager may approve their own claim, so the
+    // route keeps them. The notice is what never asks a requester alone (neverPreferRecipientPayloadKeys),
+    // which is why the event carries the requester next to this list.
+    assert.deepEqual(ready().approverRecipientUserIds, ['mgr-1', 'staff-1']);
+    assert.equal(ready().requesterUserId, 'staff-1');
+  });
+
+  it('falls back to the owner when no holder of the policy role covers the branch, as submission does', async () => {
+    const { service, ready } = replay('POLICY', [
+      approverRole('MANAGER', ['mgr-other-branch'], { branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'br-2', branchScopes: [] }),
+      approverRole('OWNER', ['owner-1']),
+    ]);
+
+    await service.execute();
+
+    assert.deepEqual(ready().approverRecipientUserIds, ['owner-1']);
+  });
+
+  it('names nobody when nobody could approve, and never for a claim a person did approve', async () => {
+    const nobody = replay('POLICY', []);
+    assert.deepEqual((await nobody.service.execute()).completed, ['req-1']);
+    assert.equal(nobody.ready().approverRecipientUserIds, undefined);
+
+    // An approved claim has its own approver: the actor of the event. No fallback group is added.
+    const approved = replay('MANAGER', [approverRole('MANAGER', ['mgr-1', 'mgr-2'])]);
+    await approved.service.execute();
+    assert.equal(approved.ready().approverRecipientUserIds, undefined);
   });
 });

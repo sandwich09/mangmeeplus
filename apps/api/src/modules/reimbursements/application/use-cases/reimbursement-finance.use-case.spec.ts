@@ -808,15 +808,66 @@ describe('FinanceReviewReimbursementUseCase', () => {
 describe('reimbursement.payment_recorded event payload', () => {
   it('carries requestNo + requesterUserId (so the requester is notified) and survives redaction', async () => {
     const req = financeReviewedRequest();
-    const events: any[] = [];
-    const outbox = { append: async (...args: any[]) => { events.push(args); } } as any;
-    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, outbox, reserve, commit, fakeDetailEvidence as any);
+    // The repository runs the callback inside its transaction; this stands in for that.
+    const rows: any[] = [];
+    const repo = fakeRepo(req);
+    const record = repo.recordPaymentAtomic.bind(repo);
+    repo.recordPaymentAtomic = async (data: any) => {
+      const result = await record(data);
+      await data.onPaymentPersisted(fakeTx(rows), result.payment, result.request.paymentStatus);
+      return result;
+    };
+    const afterCommit: any[] = [];
+    const outbox = { append: async (...args: any[]) => { afterCommit.push(args); } } as any;
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, outbox, reserve, commit, fakeDetailEvidence as any);
     await uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
 
-    const paid = events.find((e) => e[0] === 'reimbursement.payment_recorded');
-    assert.equal(paid?.[3].data.requestId, 'rb-1');
-    assert.equal(paid?.[3].data.requestNo, 'RB-202601-000001');
-    assert.equal(paid?.[3].data.requesterUserId, 'staff-1');
+    const paid = rows.find((row) => row.eventType === 'reimbursement.payment_recorded');
+    assert.equal(paid?.payloadJson.data.requestId, 'rb-1');
+    assert.equal(paid?.payloadJson.data.requestNo, 'RB-202601-000001');
+    assert.equal(paid?.payloadJson.data.requesterUserId, 'staff-1');
+    assert.equal(paid?.payloadJson.data.paymentStatus, 'PAID');
+    // The source of the notice stays the payment row, one event per payment.
+    assert.deepEqual([paid?.aggregateType, paid?.aggregateId, paid?.eventKey], [
+      'reimbursement_payment', 'pay-1', 'reimbursement.payment_recorded:reimbursement_payment:pay-1',
+    ]);
+    // Audit B10: nothing is appended after the commit any more; that append was the one that got lost.
+    assert.equal(rows.length, 1);
+    assert.deepEqual(afterCommit, []);
+  });
+
+  // Audit B10: the event used to be appended after the commit and not awaited, so a failure there
+  // lost the requester's "paid" notice with no retry. It now commits or rolls back with the payment.
+  it('is written inside the payment transaction: a failed event write takes the payment back with it', async () => {
+    const h = atomicPaymentHarness();
+    await assert.rejects(
+      () => h.repo.recordPaymentAtomic({ ...atomicPaymentInput, onPaymentPersisted: async () => { throw new Error('event_write_failed'); } }),
+      /event_write_failed/,
+    );
+    assert.equal(h.state().payments.length, 0);
+    assert.notEqual(h.state().request.status, 'PAID');
+
+    // The retry of the same attempt then records the payment and its event together.
+    const seen: any[] = [];
+    const retried = await h.repo.recordPaymentAtomic({
+      ...atomicPaymentInput,
+      onPaymentPersisted: async (_tx: any, payment: any, paymentStatus: string) => { seen.push([payment.id, payment.status, paymentStatus]); },
+    });
+    assert.equal(retried.created, true);
+    assert.deepEqual(seen, [[retried.payment.id, 'RECORDED', 'PAID']]);
+    assert.equal(h.state().request.status, 'PAID');
+  });
+
+  it('writes one event per payment and none for an idempotent replay', async () => {
+    const h = atomicPaymentHarness();
+    let events = 0;
+    const input = { ...atomicPaymentInput, onPaymentPersisted: async () => { events += 1; } };
+
+    assert.equal((await h.repo.recordPaymentAtomic(input)).created, true);
+    assert.equal((await h.repo.recordPaymentAtomic(input)).created, false);
+
+    assert.equal(events, 1);
+    assert.equal(h.state().payments.length, 1);
   });
 });
 
@@ -909,6 +960,7 @@ function correctionRepositoryHarness(input: {
     lines: [],
   });
   const deleted = { signatures: 0, signedCopies: 0 };
+  const outbox: any[] = [];
   const steps: any[] = [{ id: 'step-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', status: input.stepStatus ?? 'PENDING' }];
   const candidates: any[] = input.candidates ?? [];
   const updateWhere = (rows: any[]) => async ({ where, data }: any) => {
@@ -919,6 +971,7 @@ function correctionRepositoryHarness(input: {
   const tx: any = {
     $executeRaw: async () => 1,
     reimbursementApprovalStep: { updateMany: updateWhere(steps) },
+    outboxEvent: { create: async ({ data }: any) => { outbox.push(data); return data; } },
     reimbursementDuplicateCandidate: { updateMany: updateWhere(candidates) },
     reimbursementPayment: { count: async () => input.recordedPayments ?? 0 },
     expenseRecord: { count: async () => input.liveProjections ?? 0 },
@@ -941,6 +994,7 @@ function correctionRepositoryHarness(input: {
     request,
     expectedUpdatedAt,
     deleted,
+    outbox,
     steps,
     candidates,
   };
@@ -995,6 +1049,10 @@ describe('PrismaReimbursementRepository correction transitions', () => {
     assert.equal(h.request.approvalSnapshotHash, null);
     assert.deepEqual(h.deleted, { signatures: 1, signedCopies: 1 });
     assert.equal(h.steps[0].status, 'PENDING', 'reopening a refusal runs no approval-step write');
+    // Audit B8: going back to draft is an event now, so the workflow module can close the approval task.
+    assert.deepEqual(h.outbox.map((row) => [row.eventType, row.aggregateType, row.aggregateId, row.payloadJson.data]), [
+      ['reimbursement.reopened', 'reimbursement_request', 'rb-1', { requestId: 'rb-1', status: 'DRAFT', previousStatus: 'REJECTED' }],
+    ]);
   });
 
   it('withdraws an undecided claim to a draft under the same number and cancels its pending step', async () => {
@@ -1013,6 +1071,13 @@ describe('PrismaReimbursementRepository correction transitions', () => {
     assert.equal(h.steps[0].invalidatedReason, 'withdrawn_by_requester');
     assert.ok(h.steps[0].invalidatedAt instanceof Date);
     assert.deepEqual(h.deleted, { signatures: 1, signedCopies: 1 });
+    // Audit B8: written in the same transaction as the withdrawal, keyed by the claim's new version
+    // so a second withdrawal of the same claim is a second event.
+    assert.equal(h.outbox.length, 1);
+    assert.equal(h.outbox[0].eventType, 'reimbursement.reopened');
+    assert.equal(h.outbox[0].payloadJson.actorUserId, 'staff-1');
+    assert.equal(h.outbox[0].payloadJson.data.previousStatus, 'PENDING_APPROVAL');
+    assert.equal(h.outbox[0].eventKey, `reimbursement.reopened:reimbursement_request:rb-1:${h.request.updatedAt.toISOString()}`);
   });
 
   it('refuses to withdraw once an approver has decided, and leaves the claim as it was', async () => {
@@ -1024,6 +1089,7 @@ describe('PrismaReimbursementRepository correction transitions', () => {
     assert.equal(h.request.status, 'PENDING_APPROVAL');
     assert.equal(h.steps[0].status, 'APPROVED');
     assert.deepEqual(h.deleted, { signatures: 0, signedCopies: 0 });
+    assert.equal(h.outbox.length, 0, 'a refused withdrawal announces nothing');
   });
 
   it('clears open duplicate candidates at the payment step under the request lock and version check', async () => {

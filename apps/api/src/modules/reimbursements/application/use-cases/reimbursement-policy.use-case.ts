@@ -177,6 +177,30 @@ export class ListReimbursementApproverOptionsUseCase {
     });
   }
 
+  /**
+   * Who would approve this claim under the policy. A claim that needed no approval has no approver
+   * of its own, so these are the people asked to record its payment (owner rule 2026-10-01).
+   * Read-only and best effort like the scans above: nobody is an answer here, never an error.
+   */
+  async resolveWouldBeApproverUserIds(
+    companyId: string,
+    policy: { approverMode?: string; defaultApproverUserId?: string; defaultApproverRole?: string; defaultApproverRoles?: string[]; allowSelfApproval: boolean },
+    claim: { branchId?: string | null; requesterUserId: string },
+  ): Promise<string[]> {
+    const input = { ...(claim.branchId && { branchId: claim.branchId }), requesterUserId: claim.requesterUserId, allowSelfApproval: policy.allowSelfApproval };
+    const roleKey = policy.defaultApproverRole ?? 'MANAGER';
+    try {
+      const named = policy.approverMode === 'CUSTOM_USER' && policy.defaultApproverUserId
+        ? await this.resolveNamedSubmissionRoute({ companyId, userId: policy.defaultApproverUserId, fallbackRole: roleKey, ...input })
+        : null;
+      const [route] = named ? [named] : await this.resolveSubmissionRoutesBestEffort(companyId, [{ roleKey, roleKeys: policy.defaultApproverRoles, ...input }]);
+      return route?.recipientUserIds ?? [];
+    } catch (error) {
+      if (error instanceof BadRequestException) return [];
+      throw error;
+    }
+  }
+
   async resolveOwnerRecipientUserIds(
     companyId: string,
     inputs: Omit<ReimbursementSubmissionRouteInput, 'roleKey'>[],

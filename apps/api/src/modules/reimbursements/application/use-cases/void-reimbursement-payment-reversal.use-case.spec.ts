@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { UnprocessableEntityException } from '@nestjs/common';
 import { VoidReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import { WORKFLOW_TEMPLATE_CATALOG } from '../../../workflow/domain/workflow-template-catalog';
 
 // Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
 // detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
@@ -139,5 +140,64 @@ describe('PrismaReimbursementRepository.voidPaymentTrueReversal: confirmed bank 
     await assert.rejects(() => repo.voidPaymentTrueReversal('co-1', 'rb-1', 'pay-1', 'fin-1', 'โอนผิดบัญชี'),
       (error: any) => error.getStatus() === 409 && error.message === 'reimbursement_payment_state_changed');
     assert.equal(attempts, 5, 'the shared helper retried the conflict before giving up');
+  });
+});
+
+// Audit B9: the void notice is rendered from this event and nothing else, so the event has to
+// carry whatever the notice reads. Producer and consumer are checked against each other here.
+describe('reimbursement.payment_voided event feeds the requester notice', () => {
+  it('carries the claim number and the requester, and every field the void notice reads', async () => {
+    const at = new Date('2026-08-10T01:00:00.000Z');
+    const request: any = {
+      id: 'rb-1', companyId: 'co-1', requestNo: 'RB-202608-00021', requesterUserId: 'staff-1', status: 'PAID',
+      amount: '289.0000', paymentTotalAmount: '289.0000', outstandingAmount: '0.0000', paymentStatus: 'PAID',
+      requesterDisplayNameSnapshot: 'sandwich', lines: [], approvalSteps: [], payments: [], duplicateCandidates: [],
+      claimSignatures: [], createdAt: at, updatedAt: at, duplicateStatus: 'NO_MATCH', receiptRequirementStatus: 'ATTACHED',
+      postingStatus: 'not_required', financeReviewStatus: 'APPROVED_FOR_PAYMENT', reason: 'r', categoryKey: 'other',
+      currency: 'THB', incurredDate: at, createdByUserId: 'staff-1',
+    };
+    const outbox: any[] = [];
+    const tx: any = {
+      $executeRaw: async () => 0,
+      reimbursementPayment: {
+        findFirst: async () => ({ id: 'pay-1', status: 'RECORDED' }),
+        updateMany: async () => ({ count: 1 }),
+        findFirstOrThrow: async () => ({
+          id: 'pay-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', paidAmount: '289.0000', currency: 'THB',
+          paymentMethod: 'BANK_TRANSFER', paidAt: at, status: 'VOIDED', postingStatus: 'pending',
+          paidByUserId: 'finance-1', createdAt: at, updatedAt: at,
+        }),
+        update: async ({ data }: any) => data,
+      },
+      journalEntry: { findFirst: async () => null },
+      bankReconciliationMatch: { findFirst: async () => null },
+      reimbursementRequest: {
+        findFirstOrThrow: async () => request,
+        update: async ({ data }: any) => { Object.assign(request, data); return request; },
+      },
+      expenseRecord: { findMany: async () => [], update: async () => ({}) },
+      auditLog: { create: async () => ({}) },
+      outboxEvent: { create: async ({ data }: any) => { outbox.push(data); return data; } },
+    };
+    const client: any = { $transaction: async (work: (t: any) => Promise<unknown>) => work(tx) };
+    const realRepo = new PrismaReimbursementRepository({ client } as any, {} as any);
+
+    await realRepo.voidPaymentTrueReversal('co-1', 'rb-1', 'pay-1', 'finance-1', 'โอนผิดบัญชี', undefined, 'http-req-1');
+
+    assert.equal(outbox.length, 1);
+    assert.equal(outbox[0].eventType, 'reimbursement.payment_voided');
+    const data = outbox[0].payloadJson.data;
+    assert.equal(data.requestId, 'rb-1');
+    assert.equal(data.requestNo, 'RB-202608-00021');
+    assert.equal(data.requesterUserId, 'staff-1');
+    // The reason is free text typed by whoever voided; it stays in the audit row, out of the event.
+    assert.equal(JSON.stringify(outbox[0].payloadJson).includes('โอนผิดบัญชี'), false);
+
+    const cfg = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_voided')!.defaultActionJson[0]!.configJson;
+    const texts = [cfg['titleTemplate'], cfg['bodyTemplate'], cfg['deepLinkPathTemplate']].join(' ');
+    const read = [...texts.matchAll(/\{\{\s*([\w.]+)\s*\}\}/g)].map((match) => match[1]!).filter((field) => field !== 'companyId');
+    for (const field of [...read, ...(cfg['recipientPayloadKeys'] as string[])]) {
+      assert.ok(data[field], `the void notice reads "${field}", which the event does not carry`);
+    }
   });
 });

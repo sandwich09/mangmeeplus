@@ -2472,6 +2472,12 @@ export class PrismaReimbursementRepository {
         where: { id, companyId },
         include: { _count: { select: { lines: true } } },
       });
+      // Going back to draft had no event at all, so the workflow module could not close the approval task (audit B8).
+      await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.reopened',
+        aggregateType: 'reimbursement_request', aggregateId: id, eventKey: `reimbursement.reopened:reimbursement_request:${id}:${row.updatedAt.toISOString()}`,
+        payloadJson: { companyId, actorUserId, aggregateType: 'reimbursement_request', aggregateId: id,
+          occurredAt: row.updatedAt.toISOString(), data: { requestId: id, status: 'DRAFT', previousStatus: expectedStatus } },
+        priority: 'NORMAL', status: 'PENDING' } });
       return this.toRequest(row);
     });
   }
@@ -2550,6 +2556,8 @@ export class PrismaReimbursementRepository {
 
   async recordPaymentAtomic(data: {
     companyId: string;
+    /** Runs inside the payment transaction, once the payment and the claim totals are written. */
+    onPaymentPersisted?: (tx: any, payment: ReimbursementPaymentRecord, paymentStatus: string) => Promise<void>;
     reimbursementRequestId: string;
     idempotencyKey: string;
     paymentNo?: string;
@@ -2681,6 +2689,9 @@ export class PrismaReimbursementRepository {
         },
       });
       if (changed.count !== 1) throw new ConflictException('reimbursement_payment_state_changed');
+      // Audit B10: the "paid" event commits with the payment. Appended after commit it was lost,
+      // with no retry, whenever that append failed, and the requester was never told.
+      await data.onPaymentPersisted?.(tx, this.toPayment(payment), paymentStatus);
 
       if (paymentStatus === 'PAID') {
         // Mirror the payout onto the claim's CONFIRMED expense projections (owner decision
@@ -3196,7 +3207,7 @@ export class PrismaReimbursementRepository {
         await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.payment_voided',
           aggregateType: 'reimbursement_payment', aggregateId: paymentId, eventKey: `reimbursement.payment_voided:${paymentId}`,
           payloadJson: { companyId, actorUserId, requestId: auditRequestId, aggregateType: 'reimbursement_payment', aggregateId: paymentId,
-            occurredAt: new Date().toISOString(), data: { requestId, paymentStatus, reversalEntryId: reversal.reversalEntryId } },
+            occurredAt: new Date().toISOString(), data: { requestId, requestNo: updated.requestNo, requesterUserId: updated.requesterUserId, paymentStatus, reversalEntryId: reversal.reversalEntryId } },
           priority: 'NORMAL', status: 'PENDING' } });
       }
       return { request: this.toRequest(updated), payment: this.toPayment(payment), reversalEntryId: reversal.reversalEntryId };

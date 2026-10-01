@@ -734,6 +734,12 @@ export class SubmitReimbursementUseCase {
         kind: 'POLICY', actorUserId: req.requesterUserId,
         allowMissingReceiptWithReason: policySnapshot.allowMissingReceiptWithReason,
       });
+      // Nobody had to approve this claim, so the people who would have are the ones the ready-to-pay
+      // notice asks first (owner rule 2026-10-01). Best effort: a notice never fails a submission.
+      let approverRecipientUserIds: string[] = [];
+      try {
+        approverRecipientUserIds = await this.approverRoutes.resolveWouldBeApproverUserIds(ctx.companyId, policy, req);
+      } catch { /* the notice then goes to everyone able to record the payment */ }
       const readyAt = new Date();
       await this.repo.completePolicyProjectionAtomic({
         companyId: ctx.companyId, requestId: id, actorUserId: req.requesterUserId,
@@ -748,6 +754,7 @@ export class SubmitReimbursementUseCase {
                 requestId: id, requestNo, requesterUserId: req.requesterUserId,
                 status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD',
                 amount: req.amount, currency: req.currency,
+                ...(approverRecipientUserIds.length > 0 && { approverRecipientUserIds }),
               },
             });
           }

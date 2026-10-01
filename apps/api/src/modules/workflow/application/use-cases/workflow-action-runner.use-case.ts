@@ -1,10 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
 import type { WorkflowActionDefinition } from '@watchdog-bms/contracts';
 import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
+import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
+import { REIMBURSEMENT_DECISION_WORDS } from '../../../dashboard-notifications/infrastructure/document-notification-state';
 import { CreateDraftRequestUseCase } from '../../../ai-draft/application/use-cases/create-draft-request.use-case';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
@@ -44,6 +47,49 @@ export function buildActionRunContext(run: WorkflowRunRecord): ActionRunContext 
 
 class RetryableActionError extends Error {}
 class FinalActionError extends Error {}
+
+/**
+ * The payload as a person reads it (audit B15): a claim's `decision` code word becomes the words
+ * the claim page uses. Done here rather than in each template so that no rule snapshot, however
+ * old or admin-edited, can put a raw code word in a notice. Conditions and links keep the raw payload.
+ */
+function readablePayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const decision = payload['decision'];
+  return typeof decision === 'string' && Object.hasOwn(REIMBURSEMENT_DECISION_WORDS, decision)
+    ? { ...payload, decision: REIMBURSEMENT_DECISION_WORDS[decision] }
+    : payload;
+}
+
+/** The user ids that the named payload fields hold: each field is one id or a list of them. */
+function payloadUserIds(keys: unknown, payload: Record<string, unknown>): string[] {
+  if (!Array.isArray(keys)) return [];
+  return keys.flatMap((key) => {
+    const value = typeof key === 'string' ? payload[key] : undefined;
+    if (typeof value === 'string' && value.length > 0) return [value];
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id.length > 0) : [];
+  });
+}
+
+/**
+ * Owner rule 2026-10-01: an action notice goes to the person whose turn it is, not to everyone
+ * who holds the right (a shop owner holds every right and was pushed for every claim in every
+ * branch). `preferRecipientPayloadKeys` names payload fields in order of preference. The first one
+ * that names somebody ABLE to act narrows the group to those people; when none does, the whole
+ * group stands, which keeps a solo owner, an approver without the right and one who has since left.
+ * `neverPreferRecipientPayloadKeys` names people who are never the preferred ones (a requester is
+ * not told alone to pay their own claim) though they stay in the whole group.
+ * A rule snapshot without the key keeps the whole group, exactly as before.
+ */
+function narrowToPreferred(able: string[], cfg: Record<string, unknown>, payload: Record<string, unknown>): string[] {
+  const preferKeys = Array.isArray(cfg['preferRecipientPayloadKeys']) ? cfg['preferRecipientPayloadKeys'] : [];
+  const never = new Set(payloadUserIds(cfg['neverPreferRecipientPayloadKeys'], payload));
+  for (const key of preferKeys) {
+    const named = new Set(payloadUserIds([key], payload));
+    const preferred = able.filter((userId) => named.has(userId) && !never.has(userId));
+    if (preferred.length > 0) return preferred;
+  }
+  return able;
+}
 
 function findTitleTemplate(actionKey: string, configJson: Record<string, unknown>, siblings: WorkflowActionDefinition[]): string | undefined {
   if (typeof configJson['titleTemplate'] === 'string') return configJson['titleTemplate'];
@@ -89,6 +135,7 @@ export class ExecuteWorkflowActionUseCase {
     private readonly notify: CreateOrUpdateNotificationEventUseCase,
     private readonly aiDraft: CreateDraftRequestUseCase,
     private readonly shadow: LaunchShadowProbe,
+    private readonly access: PermissionResolverService,
   ) {}
 
   // Idempotent per actionRun row: SUCCEEDED runs are never re-passed here by the caller,
@@ -175,7 +222,7 @@ export class ExecuteWorkflowActionUseCase {
     const recipientPermissions = Array.isArray(cfg['recipientPermissions'])
       ? (cfg['recipientPermissions'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];
-    const permissionRecipientUserIds = await this.repo.findUserIdsByPermissions(context.companyId, recipientPermissions);
+    const permissionRecipientUserIds = narrowToPreferred(await this.membersAbleToAct(context, recipientPermissions), cfg, context.payload);
     const recipientPayloadKeys = Array.isArray(cfg['recipientPayloadKeys'])
       ? (cfg['recipientPayloadKeys'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];
@@ -214,14 +261,20 @@ export class ExecuteWorkflowActionUseCase {
       if (resolvedUserIds.length > 0 && cfg['skipWhenAllRecipientsExcluded'] === true) {
         return { resultJson: { skipped: true, reason: 'all_recipients_excluded' }, targetType: 'notification_event' };
       }
+      // A scan-driven reminder is retried by the next scan window, so it opts out of the retry and
+      // dead letter an event gets: an event happens once, a scan would dead-letter every window.
+      if (cfg['skipWhenNoRecipients'] === true) {
+        return { resultJson: { skipped: true, reason: 'no_recipients' }, targetType: 'notification_event' };
+      }
       throw new RetryableActionError('No active recipients resolved for configured recipientRoles, recipientPermissions, or recipientPayloadKeys (after exclusions)');
     }
+    const readable = readablePayload(context.payload);
     const titleTemplate = findTitleTemplate(actionRun.actionKey, cfg, context.siblingActions);
-    const title = titleTemplate ? renderTemplate(titleTemplate, context.payload) : `${context.ruleName} — WatchDog Workflow`;
+    const title = titleTemplate ? renderTemplate(titleTemplate, readable) : `${context.ruleName} — WatchDog Workflow`;
     // Own config only (no sibling fallback like the title): a body borrowed from a sibling action
     // is how the notification ended up printing its own title twice.
     const bodyTemplate = typeof cfg['bodyTemplate'] === 'string' ? (cfg['bodyTemplate'] as string) : undefined;
-    const body = bodyTemplate ? renderTemplate(bodyTemplate, context.payload) : title;
+    const body = bodyTemplate ? renderTemplate(bodyTemplate, readable) : title;
     const webPath = resolveDeepLink(actionRun.actionKey, cfg, context);
 
     try {
@@ -242,6 +295,30 @@ export class ExecuteWorkflowActionUseCase {
     } catch (err) {
       throw new RetryableActionError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /**
+   * Audit B12: a recipient picked by permission must be able to ACT on this record, or the notice
+   * is a link that answers 403. "Able to act" has one definition, the permission resolver (ACTIVE
+   * role, entitlement filter, branch scope), so each holder is put through it instead of a second
+   * copy of those rules living in the recipient query.
+   * ponytail: one resolver round-trip per holder; batch it if a company ever has hundreds of them.
+   */
+  private async membersAbleToAct(context: ActionRunContext, permissionKeys: string[]): Promise<string[]> {
+    const holders = await this.repo.findUserIdsByPermissions(context.companyId, permissionKeys);
+    if (holders.length === 0) return [];
+    const branchId = await this.repo.findSourceBranchId(context.companyId, context.sourceType, context.sourceId);
+    const able = await Promise.all(holders.map(async (userId) => {
+      try {
+        const access = await this.access.resolveAccess(userId, context.companyId);
+        return permissionKeys.some((key) => access.permissions.includes(key)) && isBranchInScope(access.scopes, branchId);
+      } catch (err) {
+        // The resolver refuses outright a member it would not let into this company at all.
+        if (err instanceof ForbiddenException) return false;
+        throw err;
+      }
+    }));
+    return holders.filter((_, index) => able[index]);
   }
 
   private async createTask(actionRun: WorkflowActionRunRecord, context: ActionRunContext, cfg: Record<string, unknown>, isApprovalReview: boolean) {
