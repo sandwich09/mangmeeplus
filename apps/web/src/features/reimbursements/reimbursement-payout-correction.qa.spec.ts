@@ -336,6 +336,8 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
       assert.ok(texts.includes(text), text);
     }
     assert.doesNotMatch(html, /role="dialog"/);
+    // Its heading can take focus when the form opens: the button that opened it is gone by then.
+    assert.match(html, /<h3 tabindex="-1" class="[^"]*outline-none">ส่งกลับให้แก้บัญชีรับเงิน<\/h3>/);
     // Both buttons span the card on a phone and sit side by side from sm.
     assert.equal(html.match(/class="mangmee-btn [^"]*w-full sm:w-auto"/g)?.length, 2);
     assertPlainThai(texts, 'the send-back form');
@@ -862,6 +864,9 @@ describe('the round\'s forms open inside the step card, never in a dialog', () =
     assert.deepEqual(primary(claimPage(phaseA({ payoutCorrectionActions: GIVE }), requester).html), ['แก้บัญชีรับเงิน']);
     assert.deepEqual(primary(withForm(phaseA({ payoutCorrectionActions: GIVE }), requester, 'correct-payout')!.html), ['บันทึกบัญชีรับเงิน']);
     assert.deepEqual(primary(claimPage(ready({ payoutCorrectionActions: SEND }), payer).html), ['บันทึกจ่าย']);
+    // While the new account waits for its approvers, giving it again is allowed and is not the thing to do next.
+    assert.deepEqual(primary(claimPage(phaseB({ payoutCorrectionActions: GIVE }), requester).html), []);
+    assert.deepEqual(primary(claimPage(phaseB({ approvalActions: DECIDE, payoutCorrectionActions: SEND }), approver).html), ['อนุมัติ']);
     assert.deepEqual(primary(withForm(ready({ payoutCorrectionActions: SEND }), requester, 'send-back')!.html), ['ยืนยันส่งกลับ']);
     assert.deepEqual(primary(withForm(phaseB({ approvalActions: DECIDE, payoutCorrectionActions: SEND }), approver, 'send-back')!.html), ['ยืนยันส่งกลับ']);
   });

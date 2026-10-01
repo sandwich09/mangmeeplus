@@ -388,7 +388,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   // A form replaces its own button while it is open: the payment form, and the two of a correction round.
   const cardActions = (step?.actions ?? []).filter((action) => !(action === 'pay' && payOpen) && action !== openCorrectionForm);
   const formOpen = openCorrectionForm !== null || (payOpen && Boolean(step?.actions.includes('pay')));
-  const primaryAction = formOpen ? undefined : step?.actions[0];
+  // Giving the account again while it already waits for its approvers is allowed, and is not what the claim waits
+  // for: it starts the approvers' wait over, so it is offered without the look of the thing to do next.
+  const givingAgain = step?.actions[0] === 'correct-payout' && detail.payoutCorrectionPhase === 'AWAITING_APPROVAL';
+  const primaryAction = formOpen || givingAgain ? undefined : step?.actions[0];
   const reasonDialog = reasonAction ? REASON_DIALOGS[reasonAction] : null;
 
   return (

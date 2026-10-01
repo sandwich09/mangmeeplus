@@ -21,6 +21,17 @@ import {
 } from './reimbursement-payout.logic';
 
 /**
+ * The heading of a form that has just opened inside the step card takes focus. The button that opened the form
+ * is gone by then, so a keyboard or a screen reader would otherwise be left nowhere, and on a phone the focus
+ * brings the form into view.
+ */
+function useFocusOnOpen() {
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { heading.current?.focus(); }, []);
+  return heading;
+}
+
+/**
  * "ส่งกลับให้แก้บัญชีรับเงิน": a reason from the fixed list and an optional note (spec §14.3). The same form
  * sends a claim back again from the step a round waits on, which is how its approvers refuse a new account.
  */
@@ -37,6 +48,7 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
   const [busy, setBusy] = useState(false);
   // A second press before the first has answered does nothing: one send-back, one request.
   const sending = useRef(false);
+  const heading = useFocusOnOpen();
   const again = detail.payoutCorrectionPhase === 'AWAITING_APPROVAL';
 
   const submit = async (event: React.FormEvent) => {
@@ -56,7 +68,7 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
   return (
     <form className="space-y-3 [overflow-wrap:anywhere]" onSubmit={submit} noValidate data-testid="reimbursement-payout-correction-request">
       <div>
-        <h3 className="text-sm font-bold text-gray-900">{again ? PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL : PAYOUT_CORRECTION_SEND_BACK_LABEL}</h3>
+        <h3 ref={heading} tabIndex={-1} className="text-sm font-bold text-gray-900 outline-none">{again ? PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL : PAYOUT_CORRECTION_SEND_BACK_LABEL}</h3>
         <ul className="mt-1 space-y-1 text-sm text-gray-600">
           {payoutCorrectionSendBackNotes(detail).map((line) => <li key={line}>{line}</li>)}
         </ul>
@@ -116,6 +128,7 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
   const [invalidField, setInvalidField] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const sending = useRef(false);
+  const heading = useFocusOnOpen();
   // The requester's default account as it is now, masked, with the token that names it. Cash as a default is
   // the cash choice below, so only a default that is an account is offered as one.
   const requesterDefault = detail.payoutCorrectionActions?.requesterDefault;
@@ -163,7 +176,7 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
   return (
     <form className="space-y-3 [overflow-wrap:anywhere]" onSubmit={submit} noValidate data-testid="reimbursement-payout-correction-account">
       <div>
-        <h3 className="text-sm font-bold text-gray-900">{forSelf ? PAYOUT_CORRECTION_FIX_LABEL : `${PAYOUT_CORRECTION_FIX_LABEL}แทนผู้เบิก`}</h3>
+        <h3 ref={heading} tabIndex={-1} className="text-sm font-bold text-gray-900 outline-none">{forSelf ? PAYOUT_CORRECTION_FIX_LABEL : `${PAYOUT_CORRECTION_FIX_LABEL}แทนผู้เบิก`}</h3>
         <p className="mt-1 text-sm text-gray-600">เลือกวิธีรับเงินคืนของใบนี้ใหม่ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน</p>
       </div>
       <div role="radiogroup" aria-label="รับเงินคืนทาง" aria-required className="space-y-2">
