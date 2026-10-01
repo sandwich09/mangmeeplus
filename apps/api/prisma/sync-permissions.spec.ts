@@ -151,7 +151,7 @@ it('adds the pay and void rights to company roles that approve reimbursements, a
       recordPaymentAtomic: async (data: any) => ({ created: true, payment: { id: 'pay-1', ...data, status: 'RECORDED', postingStatus: 'pending' },
         request: { ...claim, status: 'PAID', paymentStatus: 'PAID' } }),
     };
-    const paid = await new RecordReimbursementPaymentUseCase(repo as any, { log: async () => undefined } as any, { append: async () => undefined } as any,
+    const paid = await new RecordReimbursementPaymentUseCase(repo as any, { log: async () => undefined } as any,
       { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202610-000001' }) } as any, { execute: async () => undefined } as any,
       { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any,
     ).execute({ requestId: 'req-1', authSubject: 's', authProvider: 'dev', userId: 'approver-1', ...access } as any, 'rb-1',

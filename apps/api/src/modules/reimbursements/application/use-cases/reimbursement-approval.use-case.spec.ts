@@ -946,7 +946,7 @@ describe('solo requester on a custom role (owner order 2026-09-21)', () => {
     } as any;
     assert.equal((await approveUC(repo).execute(solo, created.id)).status, 'READY_FOR_PAYMENT');
     const paid = await new RecordReimbursementPaymentUseCase(
-      repo, noopAudit, noopOutbox,
+      repo, noopAudit,
       { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202601-000001' }) } as any,
       { execute: async () => undefined } as any,
       fakeDetailEvidence as any,

@@ -12,7 +12,6 @@ import { civilDate, civilPeriodKey, looksLikeAccountNumber, reimbursementPaidNot
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
-import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
@@ -352,7 +351,6 @@ export class RecordReimbursementPaymentUseCase {
   constructor(
     private readonly repo: PrismaReimbursementRepository,
     private readonly audit: AuditService,
-    private readonly outbox: OutboxAppendService,
     private readonly reserveNumber: ReserveDocumentNumberUseCase,
     private readonly commitNumber: CommitDocumentNumberUseCase,
     private readonly evidence: ReimbursementEvidenceService,

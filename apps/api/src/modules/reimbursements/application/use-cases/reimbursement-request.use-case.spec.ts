@@ -1709,7 +1709,7 @@ describe('claim detail paymentDesk', () => {
       recordPaymentAtomic: async (data: any) => ({ created: true, payment: { id: 'pay-1', ...data, status: 'RECORDED', postingStatus: 'pending' },
         request: { ...claim, status: 'PAID', paymentStatus: 'PAID' } }),
     } as any;
-    const useCase = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox,
+    const useCase = new RecordReimbursementPaymentUseCase(repo, noopAudit,
       { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202610-000001' }) } as any, { execute: async () => undefined } as any, detailEvidence);
     try {
       const access = await new PrismaPermissionResolverRepository(prisma).resolveForUser({ userId, companyId: 'co-1' });
@@ -3906,7 +3906,7 @@ describe('payout correction: what the claim says and allows while it is in a rou
     assert.deepEqual(await new ListFinanceQueueUseCase(world.state.repo).execute(financeCtx()), []);
 
     // Not payable, by its status and by name.
-    const pay = new RecordReimbursementPaymentUseCase(world.state.repo, noopAudit, noopOutbox,
+    const pay = new RecordReimbursementPaymentUseCase(world.state.repo, noopAudit,
       { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-1' }) } as any, { execute: async () => undefined } as any, evidenceService());
     await assert.rejects(() => pay.execute(payerCtx(), id, { paidAmount: claim.amount, paymentMethod: 'CASH', paidAt: new Date().toISOString() } as any),
       (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_in_progress');

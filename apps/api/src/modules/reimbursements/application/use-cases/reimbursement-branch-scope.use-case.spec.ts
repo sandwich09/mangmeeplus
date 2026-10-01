@@ -83,7 +83,7 @@ const WRITES = [
     name: 'record a payment',
     permissions: ['reimbursement.payment.record'],
     claim: otherBranchClaim(),
-    run: (repo: any, ctx: any) => new RecordReimbursementPaymentUseCase(repo, audit, outbox, sequence, sequence, fakeDetailEvidence as any)
+    run: (repo: any, ctx: any) => new RecordReimbursementPaymentUseCase(repo, audit, sequence, sequence, fakeDetailEvidence as any)
       .execute(ctx, 'rb-1', {
         paidAmount: '500.00', paymentMethod: 'TRANSFER', paidAt: '2026-01-02T00:00:00.000Z',
       } as any),

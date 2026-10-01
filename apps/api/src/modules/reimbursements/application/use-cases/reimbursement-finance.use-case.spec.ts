@@ -27,7 +27,6 @@ const fakeDetailEvidence = { getAttachmentFileName: async () => undefined, getAt
 
 
 const noopAudit = { log: async () => undefined } as any;
-const noopOutbox = { append: async () => undefined } as any;
 const reserve = { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202601-000001' }) } as any;
 const commit = { execute: async () => undefined } as any;
 
@@ -223,7 +222,7 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
 
   it('records a full payment and marks the request PAID', async () => {
     const req = financeReviewedRequest();
-    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, reserve, commit, fakeDetailEvidence as any);
     const detail = await uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
     assert.equal(req.status, 'PAID');
     assert.equal(req.paymentStatus, 'PAID');
@@ -238,7 +237,7 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
       reservedPeriod = input.periodKey;
       return { id: 'seq-1', documentNumber: 'RBPAY-202609-000001' };
     } } as any;
-    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, capturingReserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, capturingReserve, commit, fakeDetailEvidence as any);
 
     await uc.execute(ctx(perms), 'rb-1', {
       paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-08-31T19:00:00.000Z',
@@ -250,7 +249,7 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
   it('stores a source ref carrying the real payment id for item 13', async () => {
     const req = financeReviewedRequest();
     const repo = fakeRepo(req);
-    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, reserve, commit, fakeDetailEvidence as any);
     await uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
     const parsed = JSON.parse(repo.lastPayment.sourcePaymentRef);
     assert.equal(parsed.sourceType, 'REIMBURSEMENT_PAYMENT');
@@ -260,38 +259,38 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
 
   it('rejects underpayment (partial not allowed)', async () => {
     const req = financeReviewedRequest();
-    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, reserve, commit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '250.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' }), /partial_payment_not_allowed/);
   });
 
   it('rejects overpayment', async () => {
     const req = financeReviewedRequest();
-    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, reserve, commit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '600.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' }), /payment_over_approved_amount/);
   });
 
   it('rejects payment before finance review', async () => {
     const req = financeReviewedRequest({ status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' });
     // Finance review is OFF by default since the step-journey change, so this company turns it on.
-    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req, { policy: { financeReviewRequired: true } }), noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req, { policy: { financeReviewRequired: true } }), noopAudit, reserve, commit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' }), /finance_review_required/);
   });
 
   it('rejects payment for a rejected request', async () => {
     const req = financeReviewedRequest({ status: 'REJECTED' });
-    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, reserve, commit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' }), /invalid_status_transition/);
   });
 
   it('blocks payment when duplicates are unresolved and policy blocks payment', async () => {
     const req = financeReviewedRequest();
-    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req, { openDuplicates: 1 }), noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req, { openDuplicates: 1 }), noopAudit, reserve, commit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' }), /duplicate_unresolved/);
   });
 
   it('requires reference for bank transfer', async () => {
     const req = financeReviewedRequest();
-    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, reserve, commit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER', paidAt: '2026-02-01T00:00:00.000Z' }), /payment_reference_required/);
   });
 
@@ -311,7 +310,7 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
     } } as any;
     let commits = 0;
     const commitOnce = { execute: async () => { commits += 1; } } as any;
-    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserveOnce, commitOnce, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, reserveOnce, commitOnce, fakeDetailEvidence as any);
     const input = { paidAmount: '500.0000', paymentMethod: 'CASH' as const, paidAt: '2026-02-01T00:00:00.000Z' };
 
     await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', input), /transaction_fault/);
@@ -333,7 +332,7 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
       reservation = { ...reservation, status: 'COMMITTED', ownerType: input.ownerType, ownerId: input.ownerId };
       throw new Error('commit_timeout');
     } } as any;
-    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, retryingReserve, timeoutCommit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, retryingReserve, timeoutCommit, fakeDetailEvidence as any);
     const input = { paidAmount: '500.0000', paymentMethod: 'CASH' as const, paidAt: '2026-02-01T00:00:00.000Z' };
 
     await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', input), /commit_timeout/);
@@ -346,7 +345,7 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
 
   it('rejects without permission', async () => {
     const req = financeReviewedRequest();
-    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, reserve, commit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx([]), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' }), /permission/i);
   });
 });
@@ -357,8 +356,8 @@ describe('payment slip at the payment step', () => {
   const perms = ['reimbursement.payment.record'];
   const paidAt = '2026-02-01T00:00:00.000Z';
   const transfer = { paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER' as const, paidAt, paymentReference: 'TXN-1' };
-  const recordUC = (repo: any, audit: any = noopAudit, outbox: any = noopOutbox) =>
-    new RecordReimbursementPaymentUseCase(repo, audit, outbox, reserve, commit, fakeDetailEvidence as any);
+  const recordUC = (repo: any, audit: any = noopAudit) =>
+    new RecordReimbursementPaymentUseCase(repo, audit, reserve, commit, fakeDetailEvidence as any);
   /** Document numbering that remembers what it committed, as a replay finds it. */
   function replayableUC(repo: any) {
     const reservations = new Map<string, any>();
@@ -372,7 +371,7 @@ describe('payment slip at the payment step', () => {
       const reservation = [...reservations.values()].find((row) => row.id === input.id);
       Object.assign(reservation, { status: 'COMMITTED', ownerType: input.ownerType, ownerId: input.ownerId });
     } } as any;
-    return new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserving, committing, fakeDetailEvidence as any);
+    return new RecordReimbursementPaymentUseCase(repo, noopAudit, reserving, committing, fakeDetailEvidence as any);
   }
 
   // The web form refuses this too, but the rule is the API's: this is the request a script or an
@@ -426,8 +425,15 @@ describe('payment slip at the payment step', () => {
     const req = financeReviewedRequest();
     const repo = fakeRepo(req);
     const audits: any[] = [];
+    // The "paid" event is written inside the payment transaction; this stands in for the repository running that callback.
     const events: any[] = [];
-    const detail = await recordUC(repo, { log: async (entry: any) => { audits.push(entry); } }, { append: async (...args: any[]) => { events.push(args); } })
+    const record = repo.recordPaymentAtomic.bind(repo);
+    repo.recordPaymentAtomic = async (data: any) => {
+      const result = await record(data);
+      await data.onPaymentPersisted(fakeTx(events), result.payment, result.request.paymentStatus, result.payout);
+      return result;
+    };
+    const detail = await recordUC(repo, { log: async (entry: any) => { audits.push(entry); } })
       .execute(ctx(perms), 'rb-1', { ...transfer, slipAttachmentId: 'att-slip-1' });
 
     assert.deepEqual(repo.slipChecks, [{ companyId: 'co-1', requestId: 'rb-1', attachmentId: 'att-slip-1', actorUserId: 'fin-1' }]);
@@ -444,6 +450,7 @@ describe('payment slip at the payment step', () => {
       slipAttachmentId: 'att-slip-1', slipSource: 'UPLOAD',
     });
     // Nothing that opens or locates the file leaves through the audit row or the notification payload.
+    assert.deepEqual(events.map((row) => row.eventType), ['reimbursement.payment_recorded']);
     assert.doesNotMatch(JSON.stringify([audits, events]), /https?:|objectKey|bucket|fileName/i);
     assert.equal(JSON.stringify(events).includes('att-slip-1'), false, 'the event payload carries no slip file id');
   });
@@ -470,7 +477,7 @@ describe('payment slip at the payment step', () => {
     const repo = fakeRepo(req, { slipError: Object.assign(new Error('payment_slip_invalid'), { code: 'payment_slip_invalid' }) });
     let reservations = 0;
     const countingReserve = { execute: async () => { reservations += 1; return { id: 'seq-1', documentNumber: 'RBPAY-202601-000001' }; } } as any;
-    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, countingReserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, countingReserve, commit, fakeDetailEvidence as any);
     for (const paymentMethod of ['BANK_TRANSFER', 'CASH'] as const) {
       await assert.rejects(
         () => uc.execute(ctx(perms), 'rb-1', { ...transfer, paymentMethod, slipAttachmentId: 'att-of-another-claim' }),
@@ -648,7 +655,7 @@ describe('pay step: the payer confirms the account the claim froze', () => {
       Object.assign([...reservations.values()].find((row) => row.id === input.id), { status: 'COMMITTED', ownerType: input.ownerType, ownerId: input.ownerId });
     } } as any;
     return {
-      uc: new RecordReimbursementPaymentUseCase(repo, audit, noopOutbox, reserving, committing, fakeDetailEvidence as any),
+      uc: new RecordReimbursementPaymentUseCase(repo, audit, reserving, committing, fakeDetailEvidence as any),
       reserved: () => reservations.size,
     };
   }
@@ -1021,7 +1028,7 @@ describe('pay step: a claim sent before claims carried an account', () => {
   const perms = ['reimbursement.payment.record'];
   const paidAt = '2026-02-01T00:00:00.000Z';
   const transfer = { paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER' as const, paidAt, paymentReference: 'TXN-1', slipAttachmentId: 'att-slip-1' };
-  const recordUC = (repo: any, audit: any = noopAudit) => new RecordReimbursementPaymentUseCase(repo, audit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+  const recordUC = (repo: any, audit: any = noopAudit) => new RecordReimbursementPaymentUseCase(repo, audit, reserve, commit, fakeDetailEvidence as any);
   const hashes = (claim: any) => [claimSignatureAckHash(claim), computeSnapshotHash(claimSnapshotFields(claim))];
 
   // Spec §15 (AC35): the payer who transferred into the requester's default account says so, and a
@@ -1077,7 +1084,7 @@ describe('pay step: a claim sent before claims carried an account', () => {
       const { req, tables } = legacyClaimWithDefault();
       arrange(tables);
       const repo = fakeRepo(req, { payout: tables });
-      const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, countingReserve, commit, fakeDetailEvidence as any);
+      const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, countingReserve, commit, fakeDetailEvidence as any);
       await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { ...transfer, ...statement }), (error: any) => error.getStatus() === 409 && error.message === code, name);
       assert.deepEqual([repo.payments.length, tables.destinations.length, req.status], [0, 0, 'READY_FOR_PAYMENT'], name);
     };
@@ -1105,7 +1112,7 @@ describe('pay step: a claim sent before claims carried an account', () => {
       return { ...reservation };
     } } as any;
     const committing = { execute: async (input: any) => { Object.assign([...reservations.values()].find((row) => row.id === input.id), { status: 'COMMITTED', ownerType: input.ownerType, ownerId: input.ownerId }); } } as any;
-    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserving, committing, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, reserving, committing, fakeDetailEvidence as any);
     const input = { ...transfer, payoutConfirmed: true, payoutDefaultToken: token, idempotencyKey: 'form-1' };
     await uc.execute(ctx(perms), 'rb-1', input);
 
@@ -1187,7 +1194,7 @@ describe('payment slip upload and later attachment', () => {
   it('attaches a slip to a recorded payment and audits a moved signed copy with what was withdrawn', async () => {
     const req = financeReviewedRequest();
     const repo = fakeRepo(req, { slipSource: 'SIGNED_COPY' });
-    await new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any)
+    await new RecordReimbursementPaymentUseCase(repo, noopAudit, reserve, commit, fakeDetailEvidence as any)
       .execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
     const audits: any[] = [];
     const uc = new AttachPaymentSlipUseCase(repo, { log: async (entry: any) => { audits.push(entry); } } as any, fakeDetailEvidence as any);
@@ -1209,7 +1216,7 @@ describe('payment slip upload and later attachment', () => {
   it('refuses to attach a slip without the payment-record right, outside the branch, or to another claim\'s payment', async () => {
     const req = financeReviewedRequest();
     const repo = fakeRepo(req);
-    await new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any)
+    await new RecordReimbursementPaymentUseCase(repo, noopAudit, reserve, commit, fakeDetailEvidence as any)
       .execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
     const uc = new AttachPaymentSlipUseCase(repo, noopAudit, fakeDetailEvidence as any);
     await assert.rejects(() => uc.execute(ctx(['reimbursement.finance_review']), 'rb-1', 'pay-1', { attachmentId: 'att-1' }), /Missing permission: reimbursement\.payment\.record/);
@@ -1428,9 +1435,7 @@ describe('reimbursement.payment_recorded event payload', () => {
       await data.onPaymentPersisted(fakeTx(rows), result.payment, result.request.paymentStatus, result.payout);
       return result;
     };
-    const afterCommit: any[] = [];
-    const outbox = { append: async (...args: any[]) => { afterCommit.push(args); } } as any;
-    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, outbox, reserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, reserve, commit, fakeDetailEvidence as any);
     await uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
 
     const paid = rows.find((row) => row.eventType === 'reimbursement.payment_recorded');
@@ -1443,8 +1448,8 @@ describe('reimbursement.payment_recorded event payload', () => {
       'reimbursement_payment', 'pay-1', 'reimbursement.payment_recorded:reimbursement_payment:pay-1',
     ]);
     // Audit B10: nothing is appended after the commit any more; that append was the one that got lost.
+    // The use case no longer holds an outbox service to append through: the event has this one way out.
     assert.equal(rows.length, 1);
-    assert.deepEqual(afterCommit, []);
   });
 
   // Audit B10: the event used to be appended after the commit and not awaited, so a failure there
@@ -1556,7 +1561,7 @@ describe('ExportReimbursementEvidenceUseCase (multi-line)', () => {
 describe('ExportReimbursementEvidenceUseCase: the payout account', () => {
   const paidAt = '2026-02-01T00:00:00.000Z';
   const transfer = { paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER' as const, paidAt, paymentReference: 'TXN-1', slipAttachmentId: 'att-slip-1' };
-  const pay = (repo: any, input: any) => new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any)
+  const pay = (repo: any, input: any) => new RecordReimbursementPaymentUseCase(repo, noopAudit, reserve, commit, fakeDetailEvidence as any)
     .execute(ctx(['reimbursement.payment.record']), 'rb-1', input);
 
   // Plan 1.11 and invariant I4: the export says of the account, and of each payment, what the claim
@@ -1613,7 +1618,7 @@ describe('one payment reads the same in the claim detail, the requester\'s notic
       await data.onPaymentPersisted(fakeTx(events), result.payment, result.request.paymentStatus, result.payout);
       return result;
     };
-    const detail = await new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any).execute(payer, 'rb-1', input as any);
+    const detail = await new RecordReimbursementPaymentUseCase(repo, noopAudit, reserve, commit, fakeDetailEvidence as any).execute(payer, 'rb-1', input as any);
     const exported = async () => ((await new ExportReimbursementEvidenceUseCase(repo, noopAudit).execute(payer, 'rb-1')) as any).payments.at(-1);
     return { repo, row: detail.payments.at(-1)!, notice: events[0].payloadJson.data.paidNotice as string, exported };
   }
@@ -2637,7 +2642,7 @@ describe('PrismaReimbursementRepository: sending a claim back for its payout acc
       const req = financeReviewedRequest({ status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', ...round });
       let reserved = 0;
       const counting = { execute: async () => { reserved += 1; return { id: 'seq-1', documentNumber: 'RBPAY-202602-000001' }; } } as any;
-      const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, counting, commit, fakeDetailEvidence as any);
+      const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, counting, commit, fakeDetailEvidence as any);
       await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T05:00:00.000Z' }), conflict('payout_correction_in_progress'));
       assert.equal(reserved, 0, 'no payment number is spent on it');
 

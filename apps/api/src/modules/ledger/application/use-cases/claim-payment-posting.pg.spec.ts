@@ -53,7 +53,7 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
   // The payer's own entry point, for the one rule that lives there: the date a payout may carry.
   // File names are the only thing its answer reads from outside the database.
   const recordPayment = new RecordReimbursementPaymentUseCase(
-    claims, silent, silent, reserveNumber, commitNumber,
+    claims, silent, reserveNumber, commitNumber,
     { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any,
   );
   const companyIds: string[] = [];
