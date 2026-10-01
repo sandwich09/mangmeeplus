@@ -84,6 +84,10 @@ const NOT_USER_FACING = new Set([
   // cancelForWeb) catch them and answer with a status the page renders through its own Thai copy.
   'reimbursement_action_changed', 'reimbursement_action_identity_conflict', 'reimbursement_active_action_exists',
   'reimbursement_target_missing', 'state_not_editable',
+  // What stands in the way of a claim's cancellation (`expense-void-blocker.ts`, `pendingCancellationOf`):
+  // the `blocker` of the claim detail, never an HTTP answer by itself. The claim page words it through
+  // `cancellationBlockerText`; a cancel refused for the same reason answers `reimbursement_cancellation_<code>`.
+  'expense_not_voidable', 'posting_unresolved', 'reason_too_short',
 ]);
 
 describe('Thai coverage for default-open feature error codes', () => {
