@@ -6407,7 +6407,7 @@
   },
   {
    "featureKey": "expenses",
-   "featureKeyRaw": "expenses+expenses.manual & expenses",
+   "featureKeyRaw": "expenses|expenses.manual & expenses",
    "requiredFeatures": [
     "expenses",
     "expenses.manual"
@@ -6417,11 +6417,12 @@
    "surfaceId": "DELETE /v1/companies/:companyId/expenses/:expenseId",
    "mutationClass": "ROOT_MUTATION",
    "permissionKeys": [
+    "expense.delete",
     "expense.update"
    ],
    "currentEnforcement": "PERMISSION_STRIP",
    "twoStep": false,
-   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:191",
+   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:254",
    "runoffPolicy": "BLOCK_NEW_ROOT",
    "friendlyFallback": "ยังไม่ได้เปิดฟีเจอร์นี้ สร้างรายการใหม่ไม่ได้",
    "compensationOwner": "FIN",

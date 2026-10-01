@@ -249,9 +249,11 @@ export class ExpenseController {
     return this.initUpload.execute(ctx, body);
   }
 
+  // Either authority reaches the use case, which owns the real rule: `expense.delete` deletes in
+  // scope, `expense.update` only the caller's own draft. Finance-template roles hold the first alone.
   @Delete(':expenseId')
   @HttpCode(204)
-  @RequirePermissions('expense.update')
+  @RequireAnyPermission('expense.delete', 'expense.update')
   async removeExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string): Promise<void> {
     await this.deleteExpense.execute(ctx, expenseId);
   }
