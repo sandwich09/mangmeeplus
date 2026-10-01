@@ -21,6 +21,7 @@ import {
 } from './reimbursement-payout.logic';
 // The payout account correction round (payout spec §14): its own imports, apart from the blocks above.
 import { payoutCorrectionAccountText, payoutCorrectionSentBackText, payoutCorrectionSubmittedText } from './reimbursement-payout.logic';
+import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS } from '@watchdog-bms/contracts';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
@@ -834,7 +835,9 @@ export type JourneyAction =
   | 'submit' | 'edit' | 'cancel' | 'reopen' | 'resume-cancel' | 'withdraw-cancel'
   | 'approve' | 'reject' | 'resume' | 'policy-settings'
   | 'finance-approve' | 'finance-return' | 'finance-block'
-  | 'resolve-duplicate' | 'pay' | 'sign' | 'print' | 'attach-signed-copy' | 'void-payment';
+  | 'resolve-duplicate' | 'pay' | 'sign' | 'print' | 'attach-signed-copy' | 'void-payment'
+  // A payout account correction round (payout spec §14): send the claim back for its account, and give that account.
+  | 'send-back' | 'correct-payout';
 export type JourneyStep = {
   key: JourneyStepKey;
   label: string;
@@ -896,6 +899,49 @@ function journeyStepAt(detail: any, withFinance: boolean): JourneyStepKey {
 }
 
 /**
+ * The round a claim is in, from its detail: the phase, and who sent it back and why. Null for a claim in none,
+ * and for a phase this build does not know (the claim then reads as any claim waiting for approval).
+ */
+function payoutCorrectionRound(detail: any): { phase: 'AWAITING_REQUESTER' | 'AWAITING_APPROVAL'; requestedByName?: string; reasonCode?: unknown; note?: string } | null {
+  const phase = detail?.payoutCorrection?.phase ?? detail?.payoutCorrectionPhase;
+  if (detail?.status !== 'PENDING_APPROVAL' || (phase !== 'AWAITING_REQUESTER' && phase !== 'AWAITING_APPROVAL')) return null;
+  return { ...detail.payoutCorrection, phase };
+}
+
+/** "รอ สมศรี อนุมัติบัญชีรับเงินใหม่": the step note and the timeline row of a round's waiting step name the same people. */
+function waitingForCorrectionApproval(detail: any): string {
+  return `รอ ${currentDeskText(detail?.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER} อนุมัติบัญชีรับเงินใหม่`;
+}
+
+/**
+ * The step note of a claim in a correction round (spec §14.2). While it waits for its requester: who sent it
+ * back and why, then whom it waits for, in the words of its badge. While its new account waits for approval:
+ * who approves it. The viewer the server lets act reads what to do instead.
+ */
+function payoutCorrectionStepNote(
+  detail: any, round: NonNullable<ReturnType<typeof payoutCorrectionRound>>,
+  viewer: { canApprove: boolean; canSubmit: boolean; isRequester: boolean },
+): string {
+  if (round.phase === 'AWAITING_REQUESTER') {
+    return [
+      payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode }),
+      round.note && `หมายเหตุ: ${round.note}`,
+      viewer.canSubmit && viewer.isRequester ? 'รอคุณแก้บัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินที่ถูกต้อง'
+        : viewer.canSubmit ? `${REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER} คุณแก้แทนผู้เบิกได้`
+          : REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER,
+    ].filter(Boolean).join(' · ');
+  }
+  const waiting = waitingForCorrectionApproval(detail);
+  return [
+    viewer.canApprove ? 'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน' : waiting,
+    // The requester holds the approval this account waits on and the company's switch refuses them (spec §15).
+    detail?.approvalActions?.selfApprovalBlocked === true && `ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด ${SELF_APPROVAL_SWITCH} คุณจึงอนุมัติบัญชีใหม่เองไม่ได้`,
+    !viewer.canApprove && viewer.canSubmit && (viewer.isRequester
+      ? 'ถ้าบัญชีที่ส่งไปยังไม่ถูกต้อง กดแก้บัญชีรับเงินอีกครั้งได้' : 'ถ้าบัญชีที่ส่งไปยังไม่ถูกต้อง คุณแก้แทนผู้เบิกได้'),
+  ].filter(Boolean).join(' · ');
+}
+
+/**
  * The claim as 4 or 5 steps with the actions open to this viewer. A projection of the existing
  * statuses: nothing is stored, every action still goes through its own endpoint, and the buttons
  * follow real permissions and server-resolved task authority — never role names (spec §6).
@@ -919,6 +965,10 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
   const payment = (detail?.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
   const duplicate = ['POSSIBLE_DUPLICATE', 'CONFIRMED_DUPLICATE'].includes(detail?.duplicateStatus)
     ? DUPLICATE_STATUS_LABELS[detail.duplicateStatus] : undefined;
+  // Payout spec §14: the claim's place in a correction round, and what the server says THIS viewer may do about
+  // its payout account. Both buttons of a round come from those flags alone, never from a permission or a role.
+  const round = payoutCorrectionRound(detail);
+  const correction = detail?.payoutCorrectionActions;
 
   const activeStep = (key: JourneyStepKey): Pick<JourneyStep, 'note' | 'actions'> => {
     const actions: JourneyAction[] = [];
@@ -951,6 +1001,16 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       // the one action is to have the system carry on, offered to whoever the server says it takes it from.
       if (detail.awaitingSystem.canResume === true) actions.push('resume');
       note = awaitingSystemNote(detail, approval?.decidedByName ?? approval?.approverName);
+    } else if (key === 'approval' && round) {
+      // Sent back from the pay step for its payout account. The account alone is decided again: the step offers no
+      // refusal of the claim and no return to a draft, which the API takes from nobody while a round is open. Its
+      // approvers send it back once more instead, with the same call that opened the round.
+      if (round.phase === 'AWAITING_APPROVAL' && detail?.approvalActions?.canApprove === true) actions.push('approve');
+      if (correction?.canSubmit === true) actions.push('correct-payout');
+      if (correction?.canRequest === true) actions.push('send-back');
+      note = payoutCorrectionStepNote(detail, round, {
+        canApprove: actions.includes('approve'), canSubmit: actions.includes('correct-payout'), isRequester: detail?.requesterUserId === userId,
+      });
     } else if (key === 'approval') {
       if (detail?.approvalActions?.canApprove === true) actions.push('approve');
       if (detail?.approvalActions?.canReject === true) actions.push('reject');
@@ -1030,6 +1090,13 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         actions.includes('sign') && 'คุณยังไม่ได้ลงนาม กดลงนามในใบเบิก',
       ].filter(Boolean).join(' · ');
     }
+    // Spec §14.3: a claim that waits for its payment is sent back for its account by whoever the server says may:
+    // whoever may record its payment, the approver it stands on, or its requester. Said to them, because a wrong
+    // account is found here, by the payer reading the bank's own screen, and must not be paid into.
+    if (!ended && key === 'payment' && !round && correction?.canRequest === true) {
+      actions.push('send-back');
+      note = [note, 'ถ้าวิธีรับเงินหรือบัญชีรับเงินไม่ถูกต้อง กดส่งกลับให้แก้บัญชีรับเงินก่อนมีการจ่าย'].filter(Boolean).join(' · ');
+    }
     if (!ended && own.canCancel) actions.push('cancel');
     // No requestNo, no document: drafts and claims cancelled out of DRAFT never got one.
     if (detail?.requestNo && status !== 'DRAFT') actions.push('print');
@@ -1048,9 +1115,17 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         : { ...base, state: 'done', actions: [] };
     }
     // A document signed before payment stays upcoming (§15): the journey still waits at จ่ายเงินคืน.
-    if (index > atIndex) return { ...base, state: 'upcoming', actions: [] };
+    if (index > atIndex) {
+      // Spec §14.2: a round takes the claim back to its approval step with the same number of steps. The finance
+      // review it passed stands and is not done again, so that step still reads as passed.
+      return key === 'finance' && round && review === 'APPROVED_FOR_PAYMENT'
+        ? { ...base, state: 'done', note: 'ตรวจแล้ว ไม่ต้องตรวจซ้ำ', actions: [] }
+        : { ...base, state: 'upcoming', actions: [] };
+    }
     const signedDocument = key === 'document' && !!detail?.documentSignedVia;
-    return { ...base, state: ended ? 'ended' : status === 'REJECTED' ? 'needs-fix' : signedDocument ? 'done' : 'current', ...activeStep(key) };
+    // Waiting for its requester to give the account again is a step to put right, like a refusal (spec §14.2).
+    const toFix = status === 'REJECTED' || (round?.phase === 'AWAITING_REQUESTER' && !detail?.pendingCancellation);
+    return { ...base, state: ended ? 'ended' : toFix ? 'needs-fix' : signedDocument ? 'done' : 'current', ...activeStep(key) };
   });
 }
 

@@ -28,12 +28,16 @@ require.extensions['.svg'] = (module) => { module.exports = () => null; };
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const correctionUi = require('./ReimbursementPayoutCorrection') as typeof import('./ReimbursementPayoutCorrection');
 const logic = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+const model = require('./reimbursements.model') as typeof import('./reimbursements.model');
+const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as typeof import('./ReimbursementJourneyPage');
 const reactRuntime = require('react') as typeof React;
 
 const h = React.createElement;
 const noop = () => undefined;
 const router = { back: noop, forward: noop, refresh: noop, push: noop, replace: noop, prefetch: noop, bfcacheId: 'test' };
-const toast = { success: noop, warning: noop, error: noop };
+/** What the page said had been done: the success toasts, in order. Emptied by whoever reads them. */
+const toasts: string[] = [];
+const toast = { success: (message: string) => { toasts.push(message); }, warning: noop, error: noop };
 
 /** What the person reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
 const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map((match) => match[1]!),
@@ -538,5 +542,501 @@ describe('the card a round\'s approvers compare (spec §14.6)', () => {
       assert.equal(logic.payoutCorrectionComparison(detail), null);
       assert.equal(card(detail).html, '');
     }
+  });
+});
+
+// ---- The claim page, as each viewer sees it (the hand-off note's table "Who may do what") ----
+
+type Viewer = { userId: string; permissions: readonly string[] };
+const STAFF = ['reimbursement.read_own', 'reimbursement.create', 'reimbursement.submit', 'reimbursement.update_own_draft', 'reimbursement.cancel_own'];
+const requester: Viewer = { userId: 'staff', permissions: STAFF };
+/** The approver the claim stands on. Holds no pay right, so everything they are offered at the pay step comes from the server. */
+const approver: Viewer = { userId: 'boss', permissions: ['reimbursement.read_related', 'reimbursement.approve', 'reimbursement.reject'] };
+const payer: Viewer = { userId: 'finance', permissions: ['reimbursement.read', 'reimbursement.payment.record', 'reimbursement.payment.void'] };
+const financeReviewer: Viewer = { userId: 'accountant', permissions: ['reimbursement.read', 'reimbursement.finance_review'] };
+const auditor: Viewer = { userId: 'auditor', permissions: ['reimbursement.read'] };
+/** Holds every right, so nothing here is withheld by a permission: what this viewer is offered is the server's flags. */
+const EVERYTHING = [...STAFF, 'reimbursement.read', 'reimbursement.approve', 'reimbursement.reject', 'reimbursement.finance_review',
+  'reimbursement.payment.record', 'reimbursement.payment.void', 'reimbursement.duplicate.resolve', 'access.employee.update'];
+
+const SEND = { canRequest: true, canSubmit: false };
+const GIVE = { canRequest: false, canSubmit: true };
+const DECIDE = { canApprove: true, canReject: true };
+/**
+ * What the API answers each viewer at each point, by the hand-off note's table: `payoutCorrectionActions`
+ * (absent means neither) and, for the round's approver while the new account waits, `approvalActions`.
+ */
+const AS_ANSWERED: Record<'ready' | 'phaseA' | 'phaseB', Array<[name: string, viewer: Viewer, flags: Record<string, unknown>, buttons: string[]]>> = {
+  ready: [
+    ['the requester', requester, { payoutCorrectionActions: SEND }, ['ส่งกลับให้แก้บัญชีรับเงิน', 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก']],
+    ['the approver the claim stands on', approver, { payoutCorrectionActions: SEND }, ['ส่งกลับให้แก้บัญชีรับเงิน', 'พิมพ์ใบเบิก']],
+    ['a payer', payer, { payoutCorrectionActions: SEND }, ['บันทึกจ่าย', 'ส่งกลับให้แก้บัญชีรับเงิน', 'พิมพ์ใบเบิก']],
+    ['a finance reviewer', financeReviewer, {}, ['ยกเลิกคำขอ', 'พิมพ์ใบเบิก']],
+    ['a read-only auditor', auditor, {}, ['พิมพ์ใบเบิก']],
+  ],
+  phaseA: [
+    ['the requester', requester, { payoutCorrectionActions: GIVE }, ['แก้บัญชีรับเงิน', 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก']],
+    ['the approver of the approval set aside', approver, {}, ['พิมพ์ใบเบิก']],
+    ['a payer', payer, {}, ['พิมพ์ใบเบิก']],
+    ['a finance reviewer', financeReviewer, { payoutCorrectionActions: GIVE }, ['แก้บัญชีรับเงินแทนผู้เบิก', 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก']],
+    ['a read-only auditor', auditor, {}, ['พิมพ์ใบเบิก']],
+  ],
+  phaseB: [
+    ['the requester', requester, { payoutCorrectionActions: GIVE }, ['แก้บัญชีรับเงินอีกครั้ง', 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก']],
+    ['the round\'s approver', approver, { approvalActions: DECIDE, payoutCorrectionActions: SEND }, ['อนุมัติ', 'ส่งกลับให้แก้อีกครั้ง', 'พิมพ์ใบเบิก']],
+    ['a payer', payer, {}, ['พิมพ์ใบเบิก']],
+    ['a finance reviewer', financeReviewer, { payoutCorrectionActions: GIVE }, ['แก้บัญชีรับเงินแทนผู้เบิก', 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก']],
+    ['a read-only auditor', auditor, {}, ['พิมพ์ใบเบิก']],
+  ],
+};
+const CLAIM_AT = { ready, phaseA, phaseB };
+
+/**
+ * The claim page as `viewer` sees it with `detail` loaded: the claim is the page's second null state, after the
+ * confirm dialog's. `open` puts a value into one later null state, which is how the page keeps what is open.
+ */
+function claimPage(detail: object, viewer: Viewer, open?: { nullState: number; value: unknown }, grab?: Parameters<typeof render>[2]) {
+  let nulls = 0;
+  return render(h(ReimbursementJourneyPage, { companyId: 'company-1', requestId: 'claim-1', userId: viewer.userId, permissions: viewer.permissions }), (start) => {
+    if (start !== null) return undefined;
+    nulls += 1;
+    return nulls === 2 ? detail : open && nulls === open.nullState ? open.value : undefined;
+  }, grab);
+}
+/** The page with one of the round's two forms open, found by the form itself and not by the position of the page's state hook. */
+function withForm(detail: object, viewer: Viewer, which: 'send-back' | 'correct-payout', grab?: Parameters<typeof render>[2]) {
+  const testId = which === 'send-back' ? 'reimbursement-payout-correction-request' : 'reimbursement-payout-correction-account';
+  for (let nullState = 3; nullState < 30; nullState += 1) {
+    const page = opened(detail, viewer, { nullState, value: which }, grab);
+    if (page?.html.includes(`data-testid="${testId}"`)) return page;
+  }
+  return null;
+}
+/** The page with a value put into one of its null states, or null where that state cannot hold such a value (another dialog's claim, say). */
+function opened(detail: object, viewer: Viewer, open: { nullState: number; value: unknown }, grab?: Parameters<typeof render>[2]) {
+  try { return claimPage(detail, viewer, open, grab); } catch { return null; }
+}
+/** The step card of a rendered claim page: its note, and its buttons and links in order. */
+function stepCard(html: string) {
+  const card = html.slice(html.indexOf('aria-labelledby="journey-step-title"'));
+  const section = card.slice(0, card.indexOf('</section>'));
+  return {
+    html: section,
+    title: /<h2[^>]*>([^<]*)<\/h2>/u.exec(section)?.[1] ?? '',
+    note: visible(section.slice(section.indexOf('</h2>')))[0] ?? '',
+    buttons: [...section.matchAll(/<(?:button|a)\b[^>]*>([^<]+)<\/(?:button|a)>/gu)].map((match) => match[1]!),
+  };
+}
+const deskLine = (html: string) => visible(html).filter((text) => text.startsWith('อยู่ที่'));
+/** How often one exact text is on the page. */
+const exactly = (html: string, text: string) => visible(html).filter((shown) => shown === text).length;
+/** The step strip: each step with its state, as the page draws it. */
+const strip = (detail: object, viewer: Viewer = auditor) => logic.buildJourneySteps(detail, viewer.permissions, viewer.userId).map((step) => `${step.key}:${step.state}`);
+const active = (detail: object, viewer: Viewer) => logic.activeJourneyStep(logic.buildJourneySteps(detail, viewer.permissions, viewer.userId))!;
+
+describe('the buttons of a correction round are what the server says, for every viewer and at every point (AC29, AC31)', () => {
+  for (const [point, rows] of Object.entries(AS_ANSWERED) as Array<[keyof typeof AS_ANSWERED, typeof AS_ANSWERED['ready']]>) {
+    it(`${point}: each viewer is offered exactly what the API takes from them`, () => {
+      for (const [name, viewer, flags, buttons] of rows) {
+        const detail = CLAIM_AT[point](flags);
+        const { html } = claimPage(detail, viewer);
+        assert.deepEqual(stepCard(html).buttons, buttons, `${point}, ${name}`);
+        // The whole page, not only the step card: nothing a round refuses is offered anywhere on it.
+        const pressable = [...html.matchAll(/<button\b[^>]*>([^<]*)<\/button>/gu)].map((match) => match[1]!);
+        if (point !== 'ready') {
+          for (const refused of ['ปฏิเสธ', 'บันทึกจ่าย', 'แก้ไข (เปิดกลับเป็นร่าง)', 'แก้ไขและส่งใหม่', 'ดำเนินการต่อ']) {
+            assert.equal(pressable.includes(refused), false, `${point}, ${name}: ${refused}`);
+          }
+        }
+      }
+    });
+  }
+
+  it('offers the round\'s buttons from the server\'s flags alone, in both directions, whatever the viewer holds', () => {
+    const everything: Viewer = { userId: 'someone', permissions: EVERYTHING };
+    const nothing: Viewer = { userId: 'someone', permissions: [] };
+    const offered = (detail: object, viewer: Viewer) => active(detail, viewer).actions.filter((action) => ['send-back', 'correct-payout', 'approve', 'reject', 'reopen'].includes(action));
+    for (const [point, at] of Object.entries(CLAIM_AT)) {
+      // Every right and no flag: nothing of the round. No right and the flags: the buttons.
+      assert.deepEqual(offered(at(), everything), [], `${point}: no flag`);
+      assert.deepEqual(offered(at({ payoutCorrectionActions: { canRequest: false, canSubmit: false } }), everything), [], `${point}: both false`);
+      assert.deepEqual(offered(at({ payoutCorrectionActions: SEND }), nothing), ['send-back'], `${point}: canRequest`);
+    }
+    for (const at of [phaseA, phaseB]) {
+      assert.deepEqual(offered(at({ payoutCorrectionActions: GIVE }), nothing), ['correct-payout']);
+      // The requester themselves is offered no way back to a draft, which the API refuses in a round.
+      assert.deepEqual(offered(at({ payoutCorrectionActions: GIVE }), { userId: 'staff', permissions: EVERYTHING }), ['correct-payout']);
+    }
+    // Giving the account is no action of a claim at its pay step: the server never says so there, and a flag that did would open no form.
+    assert.deepEqual(offered(ready({ payoutCorrectionActions: { canRequest: false, canSubmit: true } }), everything), []);
+    // The new account is approved by whoever the server says decides the waiting step, and by nobody while there is none.
+    assert.deepEqual(offered(phaseB({ approvalActions: DECIDE, payoutCorrectionActions: SEND }), nothing), ['approve', 'send-back']);
+    assert.deepEqual(offered(phaseB({ approvalActions: { canApprove: true, canReject: false } }), nothing), ['approve']);
+    assert.deepEqual(offered(phaseA({ approvalActions: DECIDE }), everything), [], 'a claim with its requester has no step to decide');
+    // A round never offers "ปฏิเสธ": refusing the new account is the send-back, from the server's own flag.
+    assert.deepEqual(offered(phaseB({ approvalActions: { canApprove: false, canReject: true } }), everything), []);
+    assert.deepEqual(offered(phaseB({ approvalActions: { canApprove: false, canReject: true }, payoutCorrectionActions: SEND }), everything), ['send-back']);
+  });
+
+  it('offers the send-back at the pay step beside บันทึกจ่าย, also on a claim a duplicate blocks, and never on a claim being cancelled', () => {
+    assert.deepEqual(active(ready({ payoutCorrectionActions: SEND }), payer).actions, ['pay', 'send-back', 'print']);
+    const blocked = ready({ payoutCorrectionActions: SEND, duplicateBlocksPayment: true, duplicateStatus: 'POSSIBLE_DUPLICATE',
+      duplicateCandidates: [{ id: 'd1', candidateType: 'ATTACHMENT_CHECKSUM', status: 'OPEN', score: 80 }] });
+    assert.deepEqual(active(blocked, payer).actions, ['resolve-duplicate', 'send-back', 'print']);
+    // The server answers no flags for a claim being cancelled; the page offers only the cancellation's own two.
+    const cancelling = ready({ currentDesk: { kind: 'SYSTEM' }, pendingCancellation: { startedAt: AT.sentBack, reason: 'ซื้อซ้ำกับใบก่อน', canResume: true, canWithdraw: true } });
+    assert.deepEqual(active(cancelling, { userId: 'staff', permissions: EVERYTHING }).actions, ['resume-cancel', 'withdraw-cancel', 'print']);
+    // Paid: no send-back (the payment is voided first), whatever a flag says.
+    const paid = ready({ status: 'PAID', paymentStatus: 'PAID', currentDesk: undefined, payments: [{ id: 'p1', status: 'RECORDED', paidAt: AT.reapproved }] });
+    assert.equal(active(paid, payer).actions.includes('send-back'), false);
+  });
+
+  it('tells whoever may send the claim back that a wrong account is sent back before it is paid', () => {
+    assert.equal(stepCard(claimPage(ready({ payoutCorrectionActions: SEND }), payer).html).note,
+      'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง · ถ้าวิธีรับเงินหรือบัญชีรับเงินไม่ถูกต้อง กดส่งกลับให้แก้บัญชีรับเงินก่อนมีการจ่าย');
+    assert.equal(stepCard(claimPage(ready({ payoutCorrectionActions: SEND }), requester).html).note,
+      'รอ วราภรณ์ การเงิน บันทึกจ่าย · ถ้าวิธีรับเงินหรือบัญชีรับเงินไม่ถูกต้อง กดส่งกลับให้แก้บัญชีรับเงินก่อนมีการจ่าย');
+    // A viewer the server does not let send it back reads the note as before.
+    assert.equal(stepCard(claimPage(ready(), auditor).html).note, 'รอ วราภรณ์ การเงิน บันทึกจ่าย');
+  });
+
+  it('shows a reader from another branch no claim at all: the API refuses them the detail', () => {
+    let nulls = 0;
+    const { html, texts } = render(h(ReimbursementJourneyPage, { companyId: 'company-1', requestId: 'claim-1', userId: 'elsewhere', permissions: EVERYTHING }),
+      (start) => (start === null && ++nulls === 3 ? Object.assign(new Error('Branch is out of scope'), { status: 403 }) : undefined));
+    assert.ok(texts.some((text) => text.includes('ไม่มีสิทธิ์')), texts.join(' | '));
+    assert.doesNotMatch(html, /journey-step-title|<form/);
+  });
+});
+
+describe('the step strip and the status of a claim in a round (spec §14.2)', () => {
+  it('goes back to อนุมัติ with the same number of steps: to put right while it waits for its requester, then current', () => {
+    assert.deepEqual(strip(ready()), ['items:done', 'approval:done', 'payment:current', 'document:upcoming']);
+    assert.deepEqual(strip(phaseA()), ['items:done', 'approval:needs-fix', 'payment:upcoming', 'document:upcoming']);
+    assert.deepEqual(strip(phaseB()), ['items:done', 'approval:current', 'payment:upcoming', 'document:upcoming']);
+    assert.deepEqual(strip(reapproved()), strip(ready()));
+    for (const at of [phaseA, phaseB]) {
+      const page = claimPage(at(), auditor);
+      assert.ok(page.texts.includes('ขั้นตอน 2 จาก 4'));
+      assert.deepEqual([stepCard(page.html).title, active(at(), auditor).key], ['อนุมัติ', 'approval']);
+    }
+    // A claim being cancelled in a round is the system's: its step is no step to put right.
+    const cancelling = phaseA({ currentDesk: { kind: 'SYSTEM' }, pendingCancellation: { startedAt: AT.given, reason: 'ซื้อซ้ำกับใบก่อน', canResume: false, canWithdraw: false } });
+    assert.deepEqual(strip(cancelling), ['items:done', 'approval:current', 'payment:upcoming', 'document:upcoming']);
+  });
+
+  // Plan 3.11: the finance result is kept and not asked again.
+  it('still shows ตรวจการเงิน as passed for a claim that passed finance review, and five steps', () => {
+    const reviewed = { financeReviewRequired: true, financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByName: NAMES.payer, financeReviewedAt: '2026-10-01T03:30:00.000Z' };
+    assert.deepEqual(strip(ready(reviewed)), ['items:done', 'approval:done', 'finance:done', 'payment:current', 'document:upcoming']);
+    for (const at of [phaseA, phaseB]) {
+      const steps = logic.buildJourneySteps(at(reviewed), [], 'someone');
+      assert.deepEqual(steps.map((step) => `${step.key}:${step.state}`),
+        ['items:done', at === phaseA ? 'approval:needs-fix' : 'approval:current', 'finance:done', 'payment:upcoming', 'document:upcoming']);
+      assert.equal(steps[2]!.note, 'ตรวจแล้ว ไม่ต้องตรวจซ้ำ');
+      assert.deepEqual(steps[2]!.actions, []);
+      // The step the card is about is still the approval, not the finance step behind it.
+      assert.equal(logic.activeJourneyStep(steps)!.key, 'approval');
+      const page = claimPage(at(reviewed), { userId: 'accountant', permissions: EVERYTHING });
+      assert.ok(page.texts.includes('ขั้นตอน 2 จาก 5') && page.texts.includes('ตรวจแล้ว ไม่ต้องตรวจซ้ำ'));
+      // No finance decision is offered again, to a holder of every right.
+      for (const again of ['อนุมัติจ่าย', 'ส่งกลับให้แก้ไข', 'ระงับการจ่าย']) assert.equal(stepCard(page.html).buttons.includes(again), false, again);
+    }
+    assert.deepEqual(strip(reapproved(reviewed)), strip(ready(reviewed)));
+  });
+
+  it('reads the phase on the badge and in the status row, never รออนุมัติ', () => {
+    for (const [at, label] of [[phaseA, 'รอผู้เบิกแก้บัญชีรับเงิน'], [phaseB, 'รออนุมัติบัญชีรับเงินใหม่']] as const) {
+      const { html } = claimPage(at(), auditor);
+      assert.deepEqual([exactly(html, label), exactly(html, 'รออนุมัติ')], [2, 0], label);
+    }
+    assert.equal(exactly(claimPage(reapproved(), auditor).html, 'พร้อมจ่าย'), 2);
+  });
+});
+
+describe('the header line, the step note and the badge name the same party in each phase', () => {
+  it('while it waits for its requester: ผู้เบิก in all of them, with who sent it back and why', () => {
+    const detail = phaseA();
+    const { html } = claimPage(detail, auditor);
+    assert.deepEqual(deskLine(html), ['อยู่ที่ ผู้เบิก']);
+    assert.equal(stepCard(html).note, 'ส่งกลับให้แก้บัญชีรับเงินโดย วราภรณ์ การเงิน : เลขบัญชีไม่ถูกต้อง · หมายเหตุ: ธนาคารแจ้งว่าไม่พบบัญชีนี้ · รอผู้เบิกแก้บัญชีรับเงิน');
+    assert.equal(model.claimStatusBadge(detail).label, 'รอผู้เบิกแก้บัญชีรับเงิน');
+    // Nobody else is said to be waited for: not the approver whose approval was set aside, not a payer.
+    for (const text of [...deskLine(html), stepCard(html).note.split(' · ').at(-1)!]) {
+      assert.doesNotMatch(text, /สมศรี|ผู้มีสิทธิ์อนุมัติ|ผู้มีสิทธิ์บันทึกจ่าย|ผู้ยื่น|ฝ่ายการเงิน/u, text);
+    }
+    // The requester reads that it is theirs to do; a finance reviewer that they may do it for the requester.
+    assert.equal(stepCard(claimPage(phaseA({ payoutCorrectionActions: GIVE }), requester).html).note.split(' · ').at(-1), 'รอคุณแก้บัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินที่ถูกต้อง');
+    assert.equal(stepCard(claimPage(phaseA({ payoutCorrectionActions: GIVE }), financeReviewer).html).note.split(' · ').at(-1), 'รอผู้เบิกแก้บัญชีรับเงิน คุณแก้แทนผู้เบิกได้');
+    // No note was added, or nobody can be named: the sentence is still whole.
+    const bare = phaseA({ payoutCorrection: { phase: 'AWAITING_REQUESTER', requestedAt: AT.sentBack, reasonCode: 'REQUESTER_ASKED' } });
+    assert.equal(active(bare, auditor).note, 'ส่งกลับให้แก้บัญชีรับเงิน : ผู้เบิกขอเปลี่ยนบัญชี · รอผู้เบิกแก้บัญชีรับเงิน');
+  });
+
+  it('while its new account waits for approval: the approvers by name in the header and the note', () => {
+    const detail = phaseB();
+    const { html } = claimPage(detail, auditor);
+    assert.deepEqual(deskLine(html), ['อยู่ที่ สมศรี ผู้จัดการ']);
+    assert.equal(stepCard(html).note, 'รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่');
+    assert.equal(model.claimStatusBadge(detail).label, 'รออนุมัติบัญชีรับเงินใหม่');
+    // Several approvers, or none the server could name.
+    const two = phaseB({ currentDesk: { kind: 'APPROVER', names: ['สมศรี ผู้จัดการ', 'วิชัย'] } });
+    assert.deepEqual([deskLine(claimPage(two, auditor).html)[0], active(two, auditor).note],
+      ['อยู่ที่ สมศรี ผู้จัดการ หรือ วิชัย', 'รอ สมศรี ผู้จัดการ หรือ วิชัย อนุมัติบัญชีรับเงินใหม่']);
+    const pool = phaseB({ currentDesk: { kind: 'APPROVER' } });
+    assert.equal(active(pool, auditor).note, 'รอ ผู้มีสิทธิ์อนุมัติ อนุมัติบัญชีรับเงินใหม่');
+    // Whoever is to act reads what to do; the header and the timeline still say who.
+    assert.equal(active(phaseB({ approvalActions: DECIDE, payoutCorrectionActions: SEND }), approver).note,
+      'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน');
+    assert.equal(active(phaseB({ payoutCorrectionActions: GIVE }), requester).note, 'รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่ · ถ้าบัญชีที่ส่งไปยังไม่ถูกต้อง กดแก้บัญชีรับเงินอีกครั้งได้');
+    assert.equal(active(phaseB({ payoutCorrectionActions: GIVE }), financeReviewer).note, 'รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่ · ถ้าบัญชีที่ส่งไปยังไม่ถูกต้อง คุณแก้แทนผู้เบิกได้');
+    // The requester who would approve their own new account but for the company's switch is told so, with no way back to a draft.
+    const blocked = active(phaseB({ payoutCorrectionActions: GIVE, approvalActions: { canApprove: false, canReject: false, selfApprovalBlocked: true } }), { userId: 'staff', permissions: EVERYTHING });
+    assert.match(blocked.note!, /^รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่ · ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด "ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้" คุณจึงอนุมัติบัญชีใหม่เองไม่ได้ · /u);
+    assert.doesNotMatch(blocked.note!, /เปิดคำขอกลับเป็นร่าง/u);
+    assert.deepEqual(blocked.actions, ['correct-payout', 'cancel', 'print']);
+  });
+
+  it('after the approval: whoever pays, as on any claim waiting for its payment', () => {
+    const detail = reapproved();
+    const { html } = claimPage(detail, auditor);
+    assert.deepEqual([deskLine(html)[0], stepCard(html).note, model.claimStatusBadge(detail).label],
+      ['อยู่ที่ วราภรณ์ การเงิน', 'รอ วราภรณ์ การเงิน บันทึกจ่าย', 'พร้อมจ่าย']);
+  });
+});
+
+describe('the round\'s forms open inside the step card, never in a dialog', () => {
+  it('opens the send-back form in the pay step card for whoever is offered it, and replaces its button', () => {
+    const page = withForm(ready({ payoutCorrectionActions: SEND }), payer, 'send-back');
+    assert.ok(page, 'the form opened');
+    const card = stepCard(page.html);
+    assert.match(card.html, /data-testid="reimbursement-payout-correction-request"/);
+    assert.doesNotMatch(page.html, /role="dialog"/);
+    assert.deepEqual(card.buttons, ['บันทึกจ่าย', 'พิมพ์ใบเบิก', 'ยกเลิก', 'ยืนยันส่งกลับ']);
+    // Never both forms at once: sending back closes a payment form left open.
+    assert.equal(card.html.includes('วิธีจ่าย *'), false);
+    // From the step a round waits on: the same form, in the approval step card, under its other name.
+    const again = withForm(phaseB({ approvalActions: DECIDE, payoutCorrectionActions: SEND }), approver, 'send-back')!;
+    assert.equal(heading(again.html.slice(again.html.indexOf('data-testid="reimbursement-payout-correction-request"'))), 'ส่งกลับให้แก้อีกครั้ง');
+    assert.deepEqual(stepCard(again.html).buttons, ['อนุมัติ', 'พิมพ์ใบเบิก', 'ยกเลิก', 'ยืนยันส่งกลับ']);
+  });
+
+  it('opens the account form in the approval step card for whoever is offered it', () => {
+    const page = withForm(phaseA({ payoutCorrectionActions: GIVE }), requester, 'correct-payout')!;
+    const card = stepCard(page.html);
+    assert.match(card.html, /data-testid="reimbursement-payout-correction-account"/);
+    assert.doesNotMatch(page.html, /role="dialog"/);
+    assert.deepEqual(card.buttons, ['ยกเลิกคำขอ', 'พิมพ์ใบเบิก', 'ยกเลิก', 'บันทึกบัญชีรับเงิน']);
+    assert.equal(heading(card.html), 'แก้บัญชีรับเงิน');
+    assert.equal(heading(stepCard(withForm(phaseA({ payoutCorrectionActions: GIVE }), financeReviewer, 'correct-payout')!.html).html), 'แก้บัญชีรับเงินแทนผู้เบิก');
+  });
+
+  it('opens neither form for a viewer the server does not offer it to, whatever the page was told to open', () => {
+    assert.equal(withForm(ready(), { userId: 'someone', permissions: EVERYTHING }, 'send-back'), null);
+    assert.equal(withForm(phaseA(), { userId: 'staff', permissions: EVERYTHING }, 'correct-payout'), null);
+    assert.equal(withForm(phaseA({ payoutCorrectionActions: GIVE }), requester, 'send-back'), null, 'nobody sends a claim back while it is with its requester');
+    assert.equal(withForm(ready({ payoutCorrectionActions: SEND }), payer, 'correct-payout'), null);
+  });
+
+  /**
+   * The page with a round's form open and filled: the page's own states come first (its note box is the first ''),
+   * then the form's, so `typed` fills the form's '' states in the order it declares them.
+   */
+  function filled(detail: object, viewer: Viewer, which: 'send-back' | 'correct-payout', typed: { blanks?: string[]; picked?: Partial<PayoutCorrectionForm> }) {
+    const testId = which === 'send-back' ? 'reimbursement-payout-correction-request' : 'reimbursement-payout-correction-account';
+    for (let nullState = 3; nullState < 30; nullState += 1) {
+      let nulls = 0;
+      let blanks = 0;
+      try {
+        const page = render(h(ReimbursementJourneyPage, { companyId: 'company-1', requestId: 'claim-1', userId: viewer.userId, permissions: viewer.permissions }), (start) => {
+          if (start === null) { nulls += 1; return nulls === 2 ? detail : nulls === nullState ? which : undefined; }
+          if (start === '') { blanks += 1; return blanks === 1 ? undefined : typed.blanks?.[blanks - 2]; }
+          return start && typeof start === 'object' && 'saveAsDefault' in start ? { ...start, ...typed.picked } : undefined;
+        }, grabForm(testId));
+        if (page.handlers.form) return page;
+      } catch { /* that state holds another dialog's claim */ }
+    }
+    throw new Error(`the page opened no ${which} form`);
+  }
+
+  it('sends the claim back from the page, says so, reads the claim again and closes the form', async () => {
+    const sentBack = asAnswered(phaseA());
+    const page = filled(ready({ payoutCorrectionActions: SEND }), payer, 'send-back', { blanks: ['ACCOUNT_UNUSABLE', 'ธนาคารแจ้งว่าบัญชีปิดแล้ว'] });
+    toasts.length = 0;
+    const calls = await withApi(() => ({ status: 200, body: sentBack }), () => page.handlers.form.onSubmit(submitEvent));
+    assert.deepEqual(calls, [
+      { url: '/api/v1/companies/company-1/reimbursements/claim-1/payout-correction', method: 'POST', body: { reasonCode: 'ACCOUNT_UNUSABLE', note: 'ธนาคารแจ้งว่าบัญชีปิดแล้ว' } },
+      // The answer carries no flags of this viewer: the claim is read again.
+      { url: '/api/v1/companies/company-1/reimbursements/claim-1', method: 'GET', body: undefined },
+    ]);
+    assert.deepEqual(toasts, ['ส่งกลับให้ผู้เบิกแก้บัญชีรับเงินแล้ว']);
+    assert.ok(page.changes.some((change) => change.initial === null && (change.value as { status?: string } | null)?.status === 'PENDING_APPROVAL'), 'the page shows the claim as read again');
+    assert.ok(page.changes.some((change) => change.initial === null && change.value === null), 'the form is closed');
+  });
+
+  it('keeps the page and the form as they are when the send-back is refused: no reload, no toast, the sentence in the form', async () => {
+    const page = filled(ready({ payoutCorrectionActions: SEND }), payer, 'send-back', { blanks: ['ACCOUNT_UNUSABLE', 'ธนาคารแจ้งว่าบัญชีปิดแล้ว'] });
+    toasts.length = 0;
+    const calls = await withApi(() => ({ status: 409, body: { statusCode: 409, message: 'reimbursement_changed' } }), () => page.handlers.form.onSubmit(submitEvent));
+    assert.equal(calls.length, 1, 'the claim is not read again, so the form and what was typed stay on the screen');
+    assert.deepEqual(toasts, []);
+    assert.ok(page.changes.some((change) => change.value === 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง'));
+    assert.equal(page.changes.some((change) => (change.value as { status?: string } | null)?.status !== undefined), false, 'the claim on the page is not replaced');
+  });
+
+  it('gives the account from the page and says where the claim went: to its approvers, or straight back to the pay step', async () => {
+    for (const [answer, said] of [
+      [asAnswered(phaseB()), 'บันทึกบัญชีรับเงินแล้ว รอผู้อนุมัติอนุมัติบัญชีใหม่'],
+      // Plan 3.12: a claim nobody has to approve is ready for payment in the same call.
+      [asAnswered(ready({ approvalSteps: [], payout: { payoutMethod: 'CASH' } })), 'บันทึกบัญชีรับเงินแล้ว ใบกลับไปรอจ่ายเงินคืน'],
+    ] as const) {
+      const page = filled(phaseA({ payoutCorrectionActions: GIVE }), requester, 'correct-payout', { picked: { mode: 'CASH' } });
+      toasts.length = 0;
+      const calls = await withApi(() => ({ status: 200, body: answer }), () => page.handlers.form.onSubmit(submitEvent));
+      assert.deepEqual(calls.map((call) => `${call.method} ${call.url.split('/claim-1')[1]}`), ['PUT /payout-destination', 'GET ']);
+      assert.deepEqual(calls[0]!.body, { mode: 'CASH' });
+      assert.deepEqual(toasts, [said]);
+    }
+  });
+});
+
+describe('the approval of a round: the comparison, the attestation of the NEW account, and no refusal (spec §14.6, AC31)', () => {
+  const asApprover = (overrides: Record<string, unknown> = {}) => phaseB({ approvalActions: DECIDE, payoutCorrectionActions: SEND, ...overrides });
+
+  it('shows the comparison card in the approval step card, above the attestation tick and the two buttons', () => {
+    const { html } = claimPage(asApprover(), approver);
+    const card = stepCard(html);
+    const order = ['สิ่งที่เปลี่ยน: บัญชีรับเงินคืน</h3>', 'ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก</span>', 'อนุมัติ</button>', 'ส่งกลับให้แก้อีกครั้ง</button>']
+      .map((text) => card.html.indexOf(`>${text}`));
+    assert.ok(order.every((at) => at >= 0) && order.join() === [...order].sort((a, b) => a - b).join(), order.join());
+    assert.ok(visible(card.html).includes('รายการและยอดเงิน 1,614.50 บาท เท่ากับที่อนุมัติไว้เมื่อ 1 ต.ค. 2569 10:00 น. การอนุมัติครั้งนี้ตรวจเฉพาะบัญชีรับเงินคืน'));
+    // Every reader of the claim sees what changed; only whoever decides it gets the tick and the buttons.
+    for (const viewer of [requester, payer, auditor]) {
+      const other = stepCard(claimPage(phaseB(), viewer).html);
+      assert.match(other.html, /data-testid="reimbursement-payout-correction-comparison"/);
+      assert.equal(visible(other.html).includes('ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก'), false);
+    }
+    // No card while the claim waits for its requester, nor once the round is over.
+    for (const detail of [phaseA(), reapproved(), ready()]) assert.doesNotMatch(claimPage(detail, approver).html, /reimbursement-payout-correction-comparison/);
+  });
+
+  const grabApprove = (type: unknown, _props: unknown, children: unknown[]) => (type === 'button' && children[0] === 'อนุมัติ' ? 'approve' : undefined);
+  /** The approver's page with a tick already given for one account version (the page keeps it in a null state), or null when that is no tick. */
+  const tickedFor = (version: number, detail: object = asApprover()) => {
+    for (let nullState = 3; nullState < 30; nullState += 1) {
+      const page = opened(detail, approver, { nullState, value: version }, grabApprove);
+      if (page && /<input type="checkbox"[^>]*checked=""/u.test(stepCard(page.html).html)) return page;
+    }
+    return null;
+  };
+
+  it('keeps อนุมัติ off until the new account version is ticked, and a tick given for the old version is no tick', () => {
+    const button = (html: string) => /<button\b([^>]*)>อนุมัติ<\/button>/u.exec(html)![1]!;
+    const untouched = claimPage(asApprover(), approver).html;
+    assert.match(button(untouched), /disabled=""/);
+    assert.match(button(untouched), /title="ติ๊กยืนยันว่าตรวจบัญชีรับเงินแล้วก่อนอนุมัติ"/);
+    const ticked = tickedFor(2);
+    assert.ok(ticked, 'a tick for version 2 is a tick');
+    assert.doesNotMatch(button(ticked.html), /disabled=""/);
+    assert.equal(tickedFor(1), null, 'the tick the first approval was given with attests nothing of the new account');
+  });
+
+  it('approves with the hash and the account version the card showed, through the approval endpoint, and says the claim is back at its pay step', async () => {
+    const backAtPayStep = asAnswered(reapproved());
+    const page = tickedFor(2)!;
+    toasts.length = 0;
+    const calls = await withApi(() => ({ status: 200, body: backAtPayStep }), () => page.handlers.approve.onClick());
+    assert.deepEqual(calls, [
+      { url: '/api/v1/companies/company-1/reimbursements/claim-1/approve', method: 'POST', body: { approvalSnapshotHash: 'hash-of-version-2', payoutVerifiedVersion: 2 } },
+      { url: '/api/v1/companies/company-1/reimbursements/claim-1', method: 'GET', body: undefined },
+    ]);
+    assert.deepEqual(toasts, ['อนุมัติบัญชีรับเงินใหม่แล้ว ใบกลับไปรอจ่ายเงินคืน']);
+    // Without the tick the press asks nothing of the API and says why.
+    const unticked = claimPage(asApprover(), approver, undefined, grabApprove);
+    const refused = await withApi(() => ({ status: 200, body: backAtPayStep }), () => unticked.handlers.approve.onClick());
+    assert.deepEqual(refused, []);
+    assert.ok(unticked.changes.some((change) => change.value === 'ติ๊กยืนยันว่าตรวจบัญชีรับเงินแล้วก่อนอนุมัติ'));
+  });
+
+  it('tells the approver to look again when the requester gave another account meanwhile, and approves nothing unseen', async () => {
+    const page = tickedFor(2)!;
+    const calls = await withApi((url, method) => (method === 'POST'
+      ? { status: 409, body: { statusCode: 409, message: 'stale_approval_snapshot' } }
+      : { status: 200, body: asAnswered(asApprover({ approvalSnapshotHash: 'hash-of-version-3', payout: { ...SCB, accountLast4: '9990', version: 3, source: 'REQUESTER' } })) }),
+    () => page.handlers.approve.onClick());
+    assert.deepEqual(calls.map((call) => call.method), ['POST', 'GET'], 'refused, then the claim is read again');
+    // The dialog that compares what was seen with what the claim is now opens; nothing was approved.
+    assert.ok(page.changes.some((change) => change.initial === null && !!(change.value as { before?: unknown; detail?: unknown } | null)?.detail));
+  });
+
+  it('needs no tick for a claim changed to cash, and still shows what changed', () => {
+    const toCash = asApprover({ payoutMethod: 'CASH', payout: { payoutMethod: 'CASH' } });
+    const card = stepCard(claimPage(toCash, approver).html);
+    assert.equal(visible(card.html).includes('ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก'), false);
+    assert.doesNotMatch(/<button\b([^>]*)>อนุมัติ<\/button>/u.exec(card.html)![1]!, /disabled=""/);
+    assert.ok(visible(card.html).includes('รับเป็นเงินสด'));
+  });
+});
+
+describe('after the approval the claim is back at its pay step with the new account (AC31)', () => {
+  it('shows the new account in the box "โอนเข้าบัญชีนี้" with who attested it, and offers the payment and a new send-back', () => {
+    const { html, texts } = claimPage(reapproved({ payoutCorrectionActions: SEND }), payer);
+    assert.deepEqual(stepCard(html).buttons, ['บันทึกจ่าย', 'ส่งกลับให้แก้บัญชีรับเงิน', 'พิมพ์ใบเบิก']);
+    for (const text of ['โอนเข้าบัญชีนี้', 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112', 'ผู้เบิกระบุบัญชีนี้สำหรับใบนี้', 'ตรวจบัญชีแล้วโดย สมศรี ผู้จัดการ เมื่อ 1 ต.ค. 2569 13:00 น.']) {
+      assert.ok(texts.includes(text), text);
+    }
+    // The account it had before stays in the card's history, and is not the one in use.
+    const history = html.slice(html.indexOf('data-testid="reimbursement-payout-history"'));
+    assert.ok(visible(history).includes('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678 · ชื่อบัญชี นาย สมชาย ใจดี'));
+    assert.equal(visible(history).filter((text) => text === 'ใช้อยู่ตอนนี้').length, 1);
+    assert.doesNotMatch(html, /reimbursement-payout-correction-note/);
+  });
+
+  // Plan 3.12: nobody approves it, so whoever pays it is the one to check the account.
+  it('a claim nobody has to approve: no approval of the round, and the payer is told they are the one to check the account', () => {
+    const noApproval = ready({ approvalSteps: [], approvedAt: AT.given, payout: { ...SCB, source: 'REQUESTER' }, payoutHistory: [version2],
+      payoutCorrectionHistory: [SENT_BACK, GIVEN], payoutCorrectionActions: SEND });
+    assert.deepEqual(strip(noApproval), ['items:done', 'approval:done', 'payment:current', 'document:upcoming']);
+    assert.equal(logic.buildJourneySteps(noApproval, [], 'someone')[1]!.note, 'ไม่ต้องอนุมัติตามนโยบาย');
+    const { texts } = claimPage(noApproval, payer);
+    assert.ok(texts.includes('ยังไม่มีผู้ตรวจบัญชีนี้'));
+    // While it waited for its requester, nobody was offered an approval and no step waited.
+    const waiting = phaseA({ approvalSteps: [], payoutCorrectionActions: GIVE });
+    assert.deepEqual(stepCard(claimPage(waiting, requester).html).buttons, ['แก้บัญชีรับเงิน', 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก']);
+  });
+});
+
+describe('the card "การรับเงินคืน" in a round', () => {
+  it('says which account it is showing: the one in question, then the new one nobody approved yet', () => {
+    const a = claimPage(phaseA(), auditor).texts;
+    assert.ok(a.includes('ใบนี้ถูกส่งกลับให้แก้บัญชีรับเงิน ด้านล่างคือวิธีรับเงินเดิมของใบ ระหว่างนี้ยังบันทึกจ่ายไม่ได้'));
+    assert.ok(a.includes('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678'));
+    const b = claimPage(phaseB(), auditor).texts;
+    assert.ok(b.includes('ด้านล่างคือวิธีรับเงินใหม่ที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้'));
+    assert.ok(b.includes('ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112') && b.includes('ยังไม่มีผู้ตรวจบัญชีนี้'));
+    // Never "โอนเข้าบัญชีนี้" in a round: nobody is offered the payment.
+    for (const texts of [a, b]) assert.equal(texts.includes('โอนเข้าบัญชีนี้'), false);
+  });
+
+  // Plan 3.13: a claim sent before claims carried an account gets one through the same path.
+  it('a claim sent before claims carried an account: says it is to be given one, then shows the account it was given', () => {
+    const legacy = { payoutMethod: undefined, payout: undefined, payoutHistory: undefined };
+    const a = claimPage(phaseA({ ...legacy, payoutCorrection: { phase: 'AWAITING_REQUESTER', ...round, previous: undefined } }), auditor).texts;
+    assert.ok(a.includes('ใบนี้ถูกส่งกลับให้ระบุบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้'));
+    assert.ok(a.includes('ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีบัญชีที่ผ่านการอนุมัติในใบ'));
+    const given = phaseB({ payoutHistory: [{ ...version2, version: 1 }], payout: { ...SCB, version: 1, source: 'REQUESTER' },
+      payoutCorrection: { phase: 'AWAITING_APPROVAL', ...round, previous: undefined, submittedAt: AT.given } });
+    const b = stepCard(claimPage(given, auditor).html);
+    assert.ok(visible(b.html).includes('ไม่มี ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน'));
+    assert.ok(visible(b.html).includes('ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112 · ชื่อบัญชี นาย สมชาย ใจดี'));
+  });
+
+  it('tells a requester whose default account changed how to take it onto the claim, where the server lets them', () => {
+    const changed = (overrides: Record<string, unknown>) => ({ payout: { ...KBANK, source: 'DEFAULT_ACCOUNT', defaultAccountChanged: true as const }, ...overrides });
+    const hint = (detail: object) => claimPage(detail, requester).texts.find((text) => text.startsWith('บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว'))!;
+    assert.match(hint(ready(changed({ payoutCorrectionActions: SEND }))), /ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดส่งกลับให้แก้บัญชีรับเงินในขั้นจ่ายเงินคืน ก่อนมีการโอน$/u);
+    assert.match(hint(phaseA(changed({ payoutCorrectionActions: GIVE }))), /ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดแก้บัญชีรับเงินในขั้นอนุมัติ แล้วเลือกใช้บัญชีประจำ$/u);
+    // No flag from the server: the hint says what it said before.
+    assert.match(hint(ready(changed({}))), /แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน$/u);
   });
 });

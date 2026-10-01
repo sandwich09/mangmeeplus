@@ -22,7 +22,7 @@ import {
 import {
   BANK_OPTIONS, LEGACY_ASK_REQUESTER_NOTE, LEGACY_DEFAULT_LABEL, OTHER_BANK, PAYER_CONFIRMATION_TEXT, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT,
   chooseClaimPayoutMode, claimPayoutHistory, claimPayoutView, emptyPayoutAccountForm,
-  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutDefaultChangedHint, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
+  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutCorrectionCardNote, payoutDefaultChangedHint, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
   type ClaimPayoutForm, type PaymentFormConfirmation, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
 
@@ -387,6 +387,8 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
   // Spec §17.2: every account this claim has been sent with. Masked like the one above, and no reveal here.
   const history = claimPayoutHistory(detail);
   const defaultChanged = payoutDefaultChangedHint(detail, canWithdraw);
+  // Payout spec §14: in a correction round the account below is the one in question, or a new one nobody approved yet.
+  const correctionNote = payoutCorrectionCardNote(detail);
   // A draft whose payout block was not loaded (an action response): say nothing rather than guess.
   if (view.state === 'unknown') return null;
   const isRequester = detail.requesterUserId === userId;
@@ -407,6 +409,7 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
         <h2 className="font-bold text-gray-900">{payStep && view.state === 'transfer' ? 'โอนเข้าบัญชีนี้' : 'การรับเงินคืน'}</h2>
         {payout?.payoutMethod && <MangmeeBadge tone={payout.payoutMethod === 'CASH' ? 'slate' : 'teal'}>{PAYOUT_METHOD_TEXT[payout.payoutMethod]}</MangmeeBadge>}
       </div>
+      {correctionNote && <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800" data-testid="reimbursement-payout-correction-note">{correctionNote}</p>}
       {view.state === 'legacy' && (
         <>
           <p className="text-sm text-gray-600">{view.line}</p>

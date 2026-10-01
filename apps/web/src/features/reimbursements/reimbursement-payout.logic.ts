@@ -274,11 +274,18 @@ export function claimPayoutHistory(detail: {
  * keeps the account it was sent with; this says so, and how to change it while that is still theirs
  * to do (taking the claim back to a draft and sending it again). Null when the server said nothing.
  */
-export function payoutDefaultChangedHint(detail: { payout?: ReimbursementPayoutSummary | null }, canWithdraw: boolean): string | null {
+export function payoutDefaultChangedHint(
+  detail: { payout?: ReimbursementPayoutSummary | null; payoutCorrectionActions?: { canRequest?: boolean; canSubmit?: boolean } | null },
+  canWithdraw: boolean,
+): string | null {
   if (detail.payout?.defaultAccountChanged !== true) return null;
-  return `บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ${canWithdraw
-    ? 'ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดปุ่มแก้ไข (เปิดกลับเป็นร่าง) ในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง'
-    : 'ตอนนี้คุณเปิดใบนี้กลับเป็นร่างเองไม่ได้แล้ว ถ้าต้องการเปลี่ยนบัญชี แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน'}`;
+  // After approval the requester no longer takes the claim back to a draft. Where the server lets them, the way to
+  // the new account is the correction round (spec §14.3): give the account now, or send the claim back for it.
+  const how = canWithdraw ? 'ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดปุ่มแก้ไข (เปิดกลับเป็นร่าง) ในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง'
+    : detail.payoutCorrectionActions?.canSubmit === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${PAYOUT_CORRECTION_FIX_LABEL}ในขั้นอนุมัติ แล้วเลือกใช้บัญชีประจำ`
+      : detail.payoutCorrectionActions?.canRequest === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${PAYOUT_CORRECTION_SEND_BACK_LABEL}ในขั้นจ่ายเงินคืน ก่อนมีการโอน`
+        : 'ตอนนี้คุณเปิดใบนี้กลับเป็นร่างเองไม่ได้แล้ว ถ้าต้องการเปลี่ยนบัญชี แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน';
+  return `บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ${how}`;
 }
 
 /**
