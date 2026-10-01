@@ -7,8 +7,7 @@
  *  - the ciphertext is selected only by the two `…Secret` readers, which serve the audited reveal;
  *  - once a claim is submitted, nothing reads the member's default account for it again.
  */
-import { isDeepStrictEqual } from 'node:util';
-import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException } from '@nestjs/common';
 import type {
   ReimbursementPayoutKind,
   ReimbursementPayoutMethod,
@@ -18,10 +17,15 @@ import type {
 } from '@watchdog-bms/contracts';
 import {
   draftFollowsDefaultAfterReopen,
+  hasPayoutSnapshot,
   payoutAttestationError,
+  payoutSubmitToken,
   planSubmitPayout,
+  submitPayoutColumns,
+  type FrozenPayoutPlan,
   type PayoutDestinationVersionRow,
   type SealedPayoutDestination,
+  type SubmitPayoutColumns,
   type SubmitPayoutPlan,
 } from '../domain/logic/payout-destination.logic';
 
@@ -69,6 +73,7 @@ type ClaimPayoutPointer = {
   status: ReimbursementRequestStatus;
   payoutMethod?: ReimbursementPayoutMethod | null;
   payoutDestinationVersion?: number | null;
+  payoutFingerprint?: string | null;
 };
 
 const opt = <T>(value: T | null | undefined): T | undefined => (value == null ? undefined : value);
@@ -136,10 +141,11 @@ export async function deleteMemberPayoutAccount(tx: any, companyId: string, user
 /**
  * The claim's OWN receiving method and account: its columns and its own version row, nothing else.
  * This is what every detail path shows, what the approver attests and what a reveal decrypts, so it
- * has no way to reach the member's default account. Undefined when the claim carries no method: a
- * legacy claim (sent before the field existed) or a draft still following the default.
+ * has no way to reach the member's default account. Undefined for a legacy claim (sent without a
+ * payout snapshot, see `hasPayoutSnapshot`) and for a draft still following the default.
  */
 export async function readClaimPayout(client: any, claim: ClaimPayoutPointer): Promise<ClaimPayoutRecord | undefined> {
+  if (claim.status !== 'DRAFT' && !hasPayoutSnapshot(claim)) return undefined;
   if (claim.payoutMethod === 'CASH') return { payoutMethod: 'CASH' };
   if (claim.payoutMethod !== 'BANK_TRANSFER') return undefined;
   const row = claim.payoutDestinationVersion == null ? null : await client.reimbursementPayoutDestination.findFirst({
@@ -226,50 +232,71 @@ export async function readSubmitPayoutPlan(client: any, claim: ClaimPayoutPointe
 }
 
 /**
- * Freezes the claim's own snapshot inside the submit transaction. The plan was made (and hashed)
- * before the transaction; it is made again here under the request lock, and a default account or a
- * draft that changed in between refuses the submit instead of freezing something nobody hashed.
+ * The payout side of a submit, wholly inside the submit transaction and under the request lock.
+ * Nothing about the account is read before the transaction: here the requester's default row is
+ * locked (when the draft follows it), what to freeze is decided, it is checked against what the
+ * submitter was shown, the claim's own copy is frozen, and the columns the claim's hash is made from
+ * are returned. So the stored hash, the claim's fingerprint and the frozen row are one decision.
  */
-export async function freezeSubmitPayout(tx: any, claim: ClaimPayoutPointer, plan: SubmitPayoutPlan, actorUserId: string, frozenAt: Date): Promise<void> {
-  if (!isDeepStrictEqual(await readSubmitPayoutPlan(tx, claim), plan)) throw new ConflictException('payout_destination_changed');
-  if ('error' in plan) throw new UnprocessableEntityException(plan.error);
-  if (plan.payoutMethod === 'CASH') return;
-  const where = { companyId: claim.companyId, reimbursementRequestId: claim.id, version: plan.version };
-  if (plan.action === 'COPY_DEFAULT') {
-    const account = await tx.memberPayoutAccount.findFirst({ where: { companyId: claim.companyId, userId: claim.requesterUserId } });
-    if (!account?.accountNumberEncrypted || account.fingerprint !== plan.fingerprint) throw new ConflictException('payout_destination_changed');
-    // The sealed columns are copied as one unit, so the copy's last 4 still match its ciphertext.
-    await tx.reimbursementPayoutDestination.create({ data: {
-      ...where, payoutKind: account.payoutKind, bankName: account.bankName, accountName: account.accountName,
-      accountNumberEncrypted: account.accountNumberEncrypted, accountLast4: account.accountLast4, fingerprint: account.fingerprint,
-      source: 'DEFAULT_ACCOUNT', createdByUserId: actorUserId, frozenAt,
-    } });
-    return;
+export async function freezePayoutAtSubmit(tx: any, claim: ClaimPayoutPointer, input: {
+  actorUserId: string;
+  frozenAt: Date;
+  /** `payout.submitToken` of the detail the submitter was looking at. */
+  seenToken?: unknown;
+}): Promise<{ plan: FrozenPayoutPlan; columns: SubmitPayoutColumns }> {
+  // A default-account edit waits for this submit to commit, and this submit waits for one already
+  // under way: the account copied below is the account planned from.
+  if (!claim.payoutMethod) {
+    await tx.$queryRaw`SELECT 1 FROM "MemberPayoutAccount" WHERE "companyId" = ${claim.companyId} AND "userId" = ${claim.requesterUserId} FOR UPDATE`;
   }
-  const changed = plan.action === 'FREEZE'
-    ? await tx.reimbursementPayoutDestination.updateMany({ where: { ...where, frozenAt: null }, data: { frozenAt } })
-    // The same account sent again: an attestation made in an earlier round no longer counts.
-    : await tx.reimbursementPayoutDestination.updateMany({
-      where: { ...where, frozenAt: { not: null } },
-      data: { verifiedByUserId: null, verifiedAt: null, verifiedVia: null, approvalStepId: null },
-    });
-  if (changed.count !== 1) throw new ConflictException('payout_destination_changed');
+  const plan = await readSubmitPayoutPlan(tx, claim);
+  // Every payout refusal on submit and approve is a 409: a browser tab opened before the release
+  // has no words for these codes, and its text for a conflict is "load the latest and try again".
+  if ('error' in plan) throw new ConflictException(plan.error);
+  // Show before freeze: an account taken from the default must be the one the submitter saw. A
+  // draft's own choice (cash, an account typed for this claim) only has to match when a token is sent.
+  if ((plan.followsDefault || input.seenToken != null) && input.seenToken !== payoutSubmitToken(claim.id, plan)) {
+    throw new ConflictException('payout_destination_changed');
+  }
+  if (plan.payoutMethod === 'BANK_TRANSFER') {
+    const where = { companyId: claim.companyId, reimbursementRequestId: claim.id, version: plan.version };
+    if (plan.action === 'COPY_DEFAULT') {
+      const account = await tx.memberPayoutAccount.findFirst({ where: { companyId: claim.companyId, userId: claim.requesterUserId } });
+      if (!account?.accountNumberEncrypted || account.fingerprint !== plan.fingerprint) throw new ConflictException('payout_destination_changed');
+      // The sealed columns are copied as one unit, so the copy's last 4 still match its ciphertext.
+      await tx.reimbursementPayoutDestination.create({ data: {
+        ...where, payoutKind: account.payoutKind, bankName: account.bankName, accountName: account.accountName,
+        accountNumberEncrypted: account.accountNumberEncrypted, accountLast4: account.accountLast4, fingerprint: account.fingerprint,
+        source: 'DEFAULT_ACCOUNT', createdByUserId: input.actorUserId, frozenAt: input.frozenAt,
+      } });
+    } else {
+      const changed = plan.action === 'FREEZE'
+        ? await tx.reimbursementPayoutDestination.updateMany({ where: { ...where, frozenAt: null }, data: { frozenAt: input.frozenAt } })
+        // The same account sent again: an attestation made in an earlier round no longer counts.
+        : await tx.reimbursementPayoutDestination.updateMany({
+          where: { ...where, frozenAt: { not: null } },
+          data: { verifiedByUserId: null, verifiedAt: null, verifiedVia: null, approvalStepId: null },
+        });
+      if (changed.count !== 1) throw new ConflictException('payout_destination_changed');
+    }
+  }
+  return { plan, columns: submitPayoutColumns(plan) };
 }
 
 /**
  * Records "ตรวจบัญชีแล้ว" on the exact version the approver named, inside the approval transaction.
  * A claim paid by transfer is not approved without it; cash and legacy claims pass untouched.
  */
-export async function attestClaimPayout(tx: any, claim: ClaimPayoutPointer & { payoutFingerprint?: string | null }, attestation: {
+export async function attestClaimPayout(tx: any, claim: ClaimPayoutPointer, attestation: {
   verifiedVersion?: unknown;
   actorUserId: string;
   verifiedAt: Date;
   approvalStepId: string;
 }): Promise<void> {
   const error = payoutAttestationError(claim, attestation.verifiedVersion);
-  if (error === 'payout_verification_required') throw new UnprocessableEntityException(error);
   if (error) throw new ConflictException(error);
-  if (claim.payoutMethod !== 'BANK_TRANSFER') return;
+  // Nothing to attest: cash, or a legacy claim (sent without a snapshot, whatever its draft chose).
+  if (claim.payoutMethod !== 'BANK_TRANSFER' || !hasPayoutSnapshot(claim)) return;
   const changed = await tx.reimbursementPayoutDestination.updateMany({
     where: {
       companyId: claim.companyId, reimbursementRequestId: claim.id, version: claim.payoutDestinationVersion,
@@ -285,7 +312,9 @@ export async function attestClaimPayout(tx: any, claim: ClaimPayoutPointer & { p
 
 /** The request columns of a claim going back to draft: see `draftFollowsDefaultAfterReopen`. */
 export async function draftPayoutAfterReopen(tx: any, claim: ClaimPayoutPointer): Promise<Record<string, unknown>> {
-  if (claim.payoutMethod !== 'BANK_TRANSFER') return {};
+  if (!claim.payoutMethod) return {};
+  // A draft never carries the fingerprint: only the next submit writes it again.
+  if (claim.payoutMethod !== 'BANK_TRANSFER') return { payoutFingerprint: null };
   const versions = await listVersions(tx, claim.companyId, claim.id);
   return draftFollowsDefaultAfterReopen(claim, versions)
     ? { payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null }

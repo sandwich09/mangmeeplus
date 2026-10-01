@@ -466,10 +466,17 @@ export type UpdateReimbursementDraftInput = {
 
 export type SubmitReimbursementRequestInput = {
   idempotencyKey?: string;
+  /**
+   * `payout.submitToken` of the detail the submitter was looking at. Required when the claim's
+   * account comes from the requester's default: a submit that would freeze anything else than what
+   * was shown is refused with `payout_destination_changed`.
+   */
+  payoutSubmitToken?: string;
 };
 
 export type ApproveReimbursementInput = {
   comment?: string;
+  /** The hash of the claim the approver was looking at. Required: nothing is approved unseen. */
   approvalSnapshotHash?: string;
   idempotencyKey?: string;
   /**
@@ -532,6 +539,8 @@ export type PaginatedReimbursements = {
 export type ReimbursementApprovalQueueItem = ReimbursementRequestSummary & {
   ageHours: number;
   slaRisk: boolean;
+  /** What this row showed. An approval from the queue sends it back, so a claim sent again since is not approved unseen. */
+  approvalSnapshotHash?: string;
 };
 
 export type ReimbursementFinanceQueueItem = ReimbursementRequestSummary & {
@@ -687,6 +696,11 @@ export type ReimbursementPayoutSummary = {
   verifiedAt?: string;
   /** Draft only: why submit would be refused. */
   notReadyReason?: ReimbursementPayoutNotReadyReason;
+  /**
+   * Draft only, on the detail read: what "ส่งอนุมัติ" would freeze right now, as an opaque token. The
+   * page sends it back as `payoutSubmitToken`, so the claim is sent with the account it showed.
+   */
+  submitToken?: string;
   /**
    * Whether THIS viewer may call "แสดงเลขบัญชี". Set on the detail read only; absent means no.
    * About the account number alone: who may open a payment slip is a different group and a different flag.

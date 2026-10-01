@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
-  CreateReimbursementRequestDto, LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
-  ReimbursementInternalNoteDto, SetMemberPayoutAccountDto, UpdateReimbursementDraftDto,
+  ApproveReimbursementDto, CreateReimbursementRequestDto, LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
+  ReimbursementInternalNoteDto, SetMemberPayoutAccountDto, SubmitReimbursementDto, UpdateReimbursementDraftDto,
 } from './reimbursement.dtos';
 
 // The exact global-pipe configuration main.ts registers: this is the runtime gate
@@ -202,6 +202,31 @@ describe('payout account bodies', () => {
     for (const poison of [{ payoutMethod: 'CASH' }, { payoutDestinationVersion: 2 }, { payoutFingerprint: 'forged' }]) {
       await rejects(CreateReimbursementRequestDto, { ...validCreate, ...poison });
       await rejects(UpdateReimbursementDraftDto, poison);
+    }
+  });
+});
+
+describe('submit and approve bodies', () => {
+  it('takes the token of the account the page showed, an empty body, and no body at all', async () => {
+    const token = 'a1b2c3d4'.repeat(4);
+    const out = await pipe.transform({ payoutSubmitToken: token }, { type: 'body', metatype: SubmitReimbursementDto });
+    assert.equal(out.payoutSubmitToken, token);
+    await pipe.transform({}, { type: 'body', metatype: SubmitReimbursementDto });
+    // A caller that posts nothing reaches the use case with no token, and is told to review the account there.
+    assert.equal((await pipe.transform(undefined, { type: 'body', metatype: SubmitReimbursementDto }))?.payoutSubmitToken, undefined);
+    for (const body of [{ payoutSubmitToken: 'not-a-token' }, { payoutSubmitToken: 1 }, { payoutSubmitToken: `${token}0` }, { payoutMethod: 'CASH' }, { payoutFingerprint: token }, { status: 'APPROVED' }]) {
+      await rejects(SubmitReimbursementDto, body);
+    }
+  });
+
+  it('takes the attested version as a whole number only, with the claim hash the approver saw', async () => {
+    const out = await pipe.transform({ comment: 'ตรวจแล้ว', approvalSnapshotHash: 'a'.repeat(32), payoutVerifiedVersion: 2 }, { type: 'body', metatype: ApproveReimbursementDto });
+    assert.deepEqual([out.comment, out.approvalSnapshotHash, out.payoutVerifiedVersion], ['ตรวจแล้ว', 'a'.repeat(32), 2]);
+    // A browser tab from before the release sends neither; the use case answers it, not the pipe.
+    await pipe.transform({ comment: 'ok' }, { type: 'body', metatype: ApproveReimbursementDto });
+    for (const body of [{ payoutVerifiedVersion: '2' }, { payoutVerifiedVersion: 0 }, { payoutVerifiedVersion: 1.5 }, { payoutVerifiedVersion: true },
+      { approvalSnapshotHash: 7 }, { comment: 'x'.repeat(2001) }, { verifiedByUserId: 'someone-else' }, { decisionByUserId: 'someone-else' }, { status: 'APPROVED' }]) {
+      await rejects(ApproveReimbursementDto, body);
     }
   });
 });

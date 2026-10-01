@@ -25,6 +25,7 @@ import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-for
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import type { ClaimPayoutRecord } from '../../infrastructure/reimbursement-payout';
+import { hasPayoutSnapshot } from '../../domain/logic/payout-destination.logic';
 import type { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 
 const iso = (d?: Date): string | undefined => (d ? d.toISOString() : undefined);
@@ -89,8 +90,9 @@ export function toRequestSummary(
       ? { allowMissingReceiptWithReason: options.allowMissingReceiptWithReason }
       : {}),
     postingStatus: r.postingStatus,
-    // The method only: no list or queue row carries an account.
-    ...(r.payoutMethod ? { payoutMethod: r.payoutMethod } : {}),
+    // The method only: no list or queue row carries an account. On a sent claim it is the method
+    // of its own snapshot; a legacy claim has none, whatever a draft once chose.
+    ...(r.payoutMethod && (r.status === 'DRAFT' || hasPayoutSnapshot(r)) ? { payoutMethod: r.payoutMethod } : {}),
     paymentTotalAmount: r.paymentTotalAmount,
     outstandingAmount: r.outstandingAmount,
     lineCount: r.lineCount ?? r.lines?.length ?? 0,

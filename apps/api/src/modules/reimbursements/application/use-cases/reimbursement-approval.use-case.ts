@@ -18,7 +18,7 @@ import {
   ageHours,
   isSlaRisk,
 } from '../../domain/logic/reimbursement.logic';
-import { payoutAttestationError } from '../../domain/logic/payout-destination.logic';
+import { hasPayoutSnapshot, payoutAttestationError } from '../../domain/logic/payout-destination.logic';
 
 function currentApprovalStep(request: ReimbursementRequestRecord): ReimbursementApprovalStepRecord | undefined {
   return request.approvalSteps?.find((step) => step.id === request.currentApprovalStepId);
@@ -200,7 +200,12 @@ export class ListApprovalQueueUseCase {
     }).map((r) => {
       const policy = effectivePolicyForRequest(r, currentPolicy);
       const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
-      return { ...toRequestSummary(r, { approverNames }), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours) };
+      return {
+        ...toRequestSummary(r, { approverNames }), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours),
+        // What this row shows. The quick approve sends it back, so a claim withdrawn, edited and sent
+        // again while the list was open is not approved with content nobody looked at.
+        ...(r.approvalSnapshotHash && { approvalSnapshotHash: r.approvalSnapshotHash }),
+      };
     });
   }
 }
@@ -242,12 +247,16 @@ export class ApproveReimbursementUseCase {
     if (!canResumeApprovedDecision(step, ctx.userId, ctx.roles, activeApprovers)) {
       throw new ForbiddenException('not_eligible_approver');
     }
+    // Nothing is approved unseen: the approver names the claim content they were looking at — the
+    // queue row and the claim page both carry it. A call that names none is answered like a stale
+    // one, so the screen loads the claim as it is now and asks again.
+    if (!expectedHash) throw new ConflictException('stale_approval_snapshot');
     // Human verification (owner decision P1): a claim paid by transfer is approved only with the
     // approver's attestation of the exact account version on the claim. The repository repeats this
     // under the request lock; a decision already made is only resumed, never attested twice.
     if (step?.status === 'PENDING') {
       const payoutError = payoutAttestationError(req, payoutVerifiedVersion);
-      if (payoutError === 'payout_verification_required') throw new UnprocessableEntityException(payoutError);
+      // 409 for both: a tab opened before the release then says "load the latest and try again".
       if (payoutError) throw new ConflictException(payoutError);
     }
 
@@ -309,7 +318,7 @@ export class ApproveReimbursementUseCase {
               : {}),
           },
         }, tx);
-        if (req.payoutMethod === 'BANK_TRANSFER') {
+        if (req.payoutMethod === 'BANK_TRANSFER' && hasPayoutSnapshot(req)) {
           // Who attested which account version, in the decision's own transaction. The requester
           // approving their own claim is recorded as exactly that.
           await this.audit.log({

@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { ConflictException } from '@nestjs/common';
 import { ApproveReimbursementUseCase, ListApprovalQueueUseCase, RejectReimbursementUseCase, approvalDecisionActions } from './reimbursement-approval.use-case';
 import {
   CreateReimbursementDraftUseCase,
@@ -13,9 +14,12 @@ import { REIMBURSEMENT_POLICY_DEFAULTS } from '../../domain/reimbursement.consta
 import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
 import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
 import {
-  applyDraftPayout, attestClaimPayout, draftPayoutAfterReopen, freezeSubmitPayout, readClaimPayout, readSubmitPayoutPlan, writeMemberPayoutAccount,
+  applyDraftPayout, attestClaimPayout, draftPayoutAfterReopen, freezePayoutAtSubmit, readClaimPayout, readSubmitPayoutPlan, writeMemberPayoutAccount,
 } from '../../infrastructure/reimbursement-payout';
-import { sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
+import { payoutSubmitToken, sealPayoutDestination, submitPayoutColumns } from '../../domain/logic/payout-destination.logic';
+
+/** What a submit freezes for the fixture claims below: the claim asks for cash. */
+const cashPlan = { payoutMethod: 'CASH', followsDefault: false } as const;
 
 // Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
 // detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
@@ -39,8 +43,18 @@ function submitUseCase(repo: any, audit: any, outbox: any, evidence: any) {
   return new SubmitReimbursementUseCase(repo, audit, outbox, evidence, readyApproverRoutes, noopSubmitProjections);
 }
 
+/** The claim content the fixture approver was looking at. An approval that names none is its own test below. */
+const SEEN_HASH = 'hash-the-approver-saw';
+
 function approveUC(repo: any, projections: any = { execute: async () => undefined }, audit: any = noopAudit) {
-  return new ApproveReimbursementUseCase(repo, audit, projections, fakeDetailEvidence as any);
+  const useCase = new ApproveReimbursementUseCase(repo, audit, projections, fakeDetailEvidence as any);
+  return {
+    // Every approval names what it saw; a test about anything else approves what the fixture showed.
+    execute: (context: any, id: string, comment?: string, seenHash: string | undefined = SEEN_HASH, payoutVerifiedVersion?: unknown) =>
+      useCase.execute(context, id, comment, seenHash, payoutVerifiedVersion),
+    /** The use case itself, for the calls that send no hash. */
+    useCase,
+  };
 }
 
 function ctx(overrides: Partial<any> = {}) {
@@ -386,14 +400,18 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
       return request;
     },
     findDuplicateCandidates: async () => [],
-    // The requester's default account is cash: the claim follows it and needs no attestation.
-    planSubmitPayout: async () => ({ payoutMethod: 'CASH', followsDefault: true }),
+    // The claim asks for cash: it needs no account and no attestation.
+    planSubmitPayout: async () => cashPlan,
     findClaimPayout: async (claim: any) => (claim.payoutMethod ? { payoutMethod: claim.payoutMethod } : undefined),
-    submitDraftAtomic: async ({ expectedUpdatedAt, request: data, approvalStep, onSubmittedPersisted }: any) => {
+    submitDraftAtomic: async ({ expectedUpdatedAt, request: data, approvalStep, payout, onSubmittedPersisted }: any) => {
       assert.equal(expectedUpdatedAt, request.updatedAt);
+      // As in the repository transaction: the payout columns are decided here and the hash is made from them.
+      const columns = submitPayoutColumns(cashPlan);
+      const snapshotHash = payout.snapshotHash(columns);
       const step = approvalStep ? { id: 'step-1' } : undefined;
       const documentNumber = { id: 'num-1', documentNumber: 'RB-202601-000001' };
-      Object.assign(request, data, {
+      Object.assign(request, data, columns, {
+        approvalSnapshotHash: snapshotHash,
         requestNo: documentNumber.documentNumber,
         currentApprovalStepId: step?.id ?? null,
         updatedAt: new Date(request.updatedAt.getTime() + 1),
@@ -401,6 +419,7 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
       await onSubmittedPersisted(fakeTx(events), {
         step, documentNumber, documentNumberReused: false,
         supersededDuplicateCandidateCount: 0, supersededApprovalStepCount: 0,
+        payout: { plan: cashPlan, columns },
       });
       return {
         step,
@@ -553,7 +572,7 @@ describe('self-approval role exemption (audit H-17)', () => {
 
   it('lets an owner approve their own claim without the policy being opened', async () => {
     const { uc } = auditingUC(baseRequest({ requesterUserId: 'approver-1' }));
-    const result = await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
+    const result = await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1', undefined, SEEN_HASH);
     assert.equal(result.status, 'FINANCE_REVIEW');
   });
 
@@ -566,7 +585,7 @@ describe('self-approval role exemption (audit H-17)', () => {
         approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: role }],
       });
       const { uc } = auditingUC(mine);
-      const result = await uc.execute(ctx({ roles: [role] }), 'rb-1');
+      const result = await uc.execute(ctx({ roles: [role] }), 'rb-1', undefined, SEEN_HASH);
       assert.equal(result.status, 'FINANCE_REVIEW');
     });
   }
@@ -580,7 +599,7 @@ describe('self-approval role exemption (audit H-17)', () => {
   it('records who self-approved and that a role stood in for the policy', async () => {
     const { uc, entries } = auditingUC(baseRequest({ requesterUserId: 'approver-1' }));
 
-    await uc.execute(ctx({ roles: ['OWNER', 'ACCOUNTANT'] }), 'rb-1');
+    await uc.execute(ctx({ roles: ['OWNER', 'ACCOUNTANT'] }), 'rb-1', undefined, SEEN_HASH);
 
     const entry = auditOf(entries);
     assert.equal(entry.actorUserId, 'approver-1');
@@ -594,7 +613,7 @@ describe('self-approval role exemption (audit H-17)', () => {
 
   it('does not attach a self-approval note when approving someone else\u2019s claim', async () => {
     const { uc, entries } = auditingUC(baseRequest({ requesterUserId: 'staff-1' }));
-    await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
+    await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1', undefined, SEEN_HASH);
     assert.equal(auditOf(entries).metadataJson.selfApproval, undefined);
   });
 });
@@ -610,7 +629,7 @@ describe('decision responses are as hydrated as a GET', () => {
       getUserDisplayNames: async (_c: string, ids: string[]) => Object.fromEntries(ids.map((id) => [id, `คุณ ${id}`])),
     } as any;
     const uc = new ApproveReimbursementUseCase(repo, noopAudit, { runApprovalProjection: async () => undefined } as any, fakeDetailEvidence as any);
-    const detail = await uc.execute(ctx(), 'rb-1');
+    const detail = await uc.execute(ctx(), 'rb-1', undefined, SEEN_HASH);
     const actor = req.approvalSteps[0].decisionByUserId;
     assert.equal(detail.approvalSteps[0]?.decidedByName, `คุณ ${actor}`);
   });
@@ -904,6 +923,65 @@ describe('approving a claim that is paid by transfer needs the approver attestat
   });
 });
 
+// Audit B2: the quick "อนุมัติ" in the queue named no claim content, and the server compared the hash
+// only when one was sent. A claim withdrawn, edited and sent again while the list was open was
+// approved with content nobody had looked at.
+describe('nothing is approved unseen: an approval names the claim content it saw', () => {
+  const queueRepo = (request: any) => ({
+    findPolicy: async () => null, listRequests: async () => [request],
+    findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids), getUserDisplayNames: async () => ({}),
+  }) as any;
+  /** Like the repository transaction: the hash the approver names must be the claim's stored hash. */
+  function comparing(req: any) {
+    const repo = fakeRepo(req);
+    const decisions: any[] = [];
+    const begin = repo.beginApprovalDecisionAtomic;
+    repo.beginApprovalDecisionAtomic = async (data: any) => {
+      if (data.expectedApprovalSnapshotHash !== req.approvalSnapshotHash) throw new ConflictException('stale_approval_snapshot');
+      decisions.push(data);
+      return begin(data);
+    };
+    return { repo, decisions };
+  }
+
+  it('carries the claim hash on every queue row, and still no account', async () => {
+    const [row] = await new ListApprovalQueueUseCase(queueRepo(baseRequest({ approvalSnapshotHash: 'hash-as-listed' }))).execute(ctx());
+    assert.equal(row?.approvalSnapshotHash, 'hash-as-listed');
+    const [transfer] = await new ListApprovalQueueUseCase(queueRepo(baseRequest({
+      approvalSnapshotHash: 'hash-as-listed', payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'fp-1',
+    }))).execute(ctx());
+    assert.deepEqual([transfer?.approvalSnapshotHash, transfer?.payoutMethod], ['hash-as-listed', 'BANK_TRANSFER']);
+    assert.ok(!/fp-1|payoutFingerprint|payoutDestinationVersion|accountLast4|bankName/.test(JSON.stringify(transfer)));
+  });
+
+  it('refuses an approval that names no hash, with the code that makes the screen load the claim again', async () => {
+    const { repo, decisions } = comparing(baseRequest({ approvalSnapshotHash: 'hash-1' }));
+    for (const noHash of [undefined, '']) {
+      await assert.rejects(() => approveUC(repo).useCase.execute(ctx(), 'rb-1', undefined, noHash), (error: any) => {
+        assert.equal(error.getStatus?.(), 409);
+        assert.match(error.message, /stale_approval_snapshot/);
+        return true;
+      });
+    }
+    assert.equal(decisions.length, 0, 'nothing was decided');
+    // Who may not approve at all is still told so, not asked to reload.
+    await assert.rejects(() => approveUC(repo).useCase.execute(ctx({ permissions: [] }), 'rb-1'), /permission/i);
+  });
+
+  it('refuses the hash of the claim as the list showed it, once the claim was withdrawn, edited and sent again', async () => {
+    const claim = baseRequest({ approvalSnapshotHash: 'hash-as-listed' });
+    const { repo, decisions } = comparing(claim);
+    const [row] = await new ListApprovalQueueUseCase(queueRepo(claim)).execute(ctx());
+    // While the approver's list is open, the requester withdraws, edits and sends the claim again.
+    Object.assign(claim, { reason: 'a different claim now', amount: '9000.0000', approvalSnapshotHash: 'hash-after-resend' });
+    await assert.rejects(() => approveUC(repo).useCase.execute(ctx(), 'rb-1', undefined, row!.approvalSnapshotHash), /stale_approval_snapshot/);
+    assert.deepEqual([decisions.length, claim.status, claim.approvalSteps[0].status], [0, 'PENDING_APPROVAL', 'PENDING']);
+    // Having looked at the claim as it is now, the approver approves that.
+    assert.equal((await approveUC(repo).useCase.execute(ctx(), 'rb-1', undefined, 'hash-after-resend')).status, 'FINANCE_REVIEW');
+    assert.equal(decisions[0].expectedApprovalSnapshotHash, 'hash-after-resend');
+  });
+});
+
 describe('the stored attestation names one snapshot version (attestation binding)', () => {
   const key = Buffer.alloc(32, 5);
   const kbank = sealPayoutDestination({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' }, key)!;
@@ -919,11 +997,10 @@ describe('the stored attestation names one snapshot version (attestation binding
       tables, db, claim,
       setDefault: (destination: typeof kbank) => writeMemberPayoutAccount(db, { companyId: 'co-1', userId: 'staff-1', actorUserId: 'staff-1', payoutMethod: 'BANK_TRANSFER', destination }),
       async send() {
-        const plan = await readSubmitPayoutPlan(db, claim);
-        if ('error' in plan) throw new Error(plan.error);
-        await freezeSubmitPayout(db, { ...claim }, plan, 'staff-1', when);
-        Object.assign(claim, { status: 'PENDING_APPROVAL', payoutMethod: plan.payoutMethod },
-          plan.payoutMethod === 'BANK_TRANSFER' ? { payoutDestinationVersion: plan.version, payoutFingerprint: plan.fingerprint } : {});
+        // The page reads what would be frozen, and the submit transaction freezes exactly that.
+        const seenToken = payoutSubmitToken(claim.id, await readSubmitPayoutPlan(db, claim));
+        const { columns } = await freezePayoutAtSubmit(db, { ...claim }, { actorUserId: 'staff-1', frozenAt: when, seenToken });
+        Object.assign(claim, { status: 'PENDING_APPROVAL' }, columns);
       },
       attest: (verifiedVersion: unknown, approvalStepId = 'step-1') => attestClaimPayout(db, claim, { verifiedVersion, actorUserId: 'approver-1', verifiedAt: when, approvalStepId }),
       async backToDraft() { Object.assign(claim, await draftPayoutAfterReopen(db, claim), { status: 'DRAFT' }); },

@@ -43,6 +43,7 @@ import {
 import { effectivePolicy, effectivePolicyForRequest } from '../domain/reimbursement.constants';
 import {
   buildPaymentSourceRef,
+  claimSnapshotFields,
   computeSnapshotHash,
   computeOutstanding,
   computePaymentStatus,
@@ -58,9 +59,9 @@ import {
   computeReceiptRequirement,
 } from '../domain/logic/reimbursement.logic';
 import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
-import type { SealedPayoutDestination, SubmitPayoutPlan } from '../domain/logic/payout-destination.logic';
+import type { FrozenPayoutPlan, SealedPayoutDestination, SubmitPayoutColumns, SubmitPayoutPlan } from '../domain/logic/payout-destination.logic';
 import {
-  applyDraftPayout, attestClaimPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezeSubmitPayout,
+  applyDraftPayout, attestClaimPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit,
   readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan,
   writeMemberPayoutAccount, type DraftPayoutWrite, type MemberPayoutAccountRecord,
 } from './reimbursement-payout';
@@ -766,7 +767,8 @@ export class PrismaReimbursementRepository {
       approverUserId?: string;
       approverRoleSnapshot?: string;
       assignedApproverUserIdsJson?: string[];
-      requestSnapshotHash: string;
+      /** Left out when `payout` is given: the hash is then made inside this transaction. */
+      requestSnapshotHash?: string;
     };
     duplicateCandidates: ReimbursementDuplicateCandidateWriteData[];
     evidence: { attachmentIds: string[]; expenseIds: string[] };
@@ -778,14 +780,24 @@ export class PrismaReimbursementRepository {
       reservedByUserId: string;
     };
     request: Record<string, unknown>;
-    /** The claim's own account snapshot to freeze; the caller hashed exactly this plan. */
-    payout?: { plan: SubmitPayoutPlan; actorUserId: string; frozenAt: Date };
+    /**
+     * The claim's payout snapshot. Decided, checked against what the submitter was shown, frozen and
+     * hashed inside this transaction: `snapshotHash` is asked for the claim's hash once the payout
+     * columns are known, and that hash is what the step and the claim store.
+     */
+    payout?: {
+      actorUserId: string;
+      frozenAt: Date;
+      seenToken?: unknown;
+      snapshotHash: (columns: SubmitPayoutColumns) => string;
+    };
     onSubmittedPersisted?: (tx: any, result: {
       step?: ReimbursementApprovalStepRecord;
       documentNumber: ReservedDocumentNumberRecord;
       documentNumberReused: boolean;
       supersededDuplicateCandidateCount: number;
       supersededApprovalStepCount: number;
+      payout?: { plan: FrozenPayoutPlan; columns: SubmitPayoutColumns };
     }) => Promise<void>;
   }): Promise<{
     step?: ReimbursementApprovalStepRecord;
@@ -793,6 +805,7 @@ export class PrismaReimbursementRepository {
     documentNumberReused: boolean;
     supersededDuplicateCandidateCount: number;
     supersededApprovalStepCount: number;
+    payout?: { plan: FrozenPayoutPlan; columns: SubmitPayoutColumns };
   }> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
@@ -802,6 +815,9 @@ export class PrismaReimbursementRepository {
       const sourceRequest = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId: data.companyId, id: data.requestId }, include: { lines: true } });
       const draft = this.toRequest(sourceRequest);
       await assertReimbursementSources(tx, draft);
+      // Before anything is written: what this submit freezes, and the hash that binds it.
+      const payout = data.payout ? await freezePayoutAtSubmit(tx, draft, data.payout) : undefined;
+      const snapshotHash = payout ? data.payout!.snapshotHash(payout.columns) : data.approvalStep?.requestSnapshotHash;
 
       const reserved = await this.documentNumbers.reserveNumberInTransaction(tx, {
         companyId: data.companyId,
@@ -851,12 +867,14 @@ export class PrismaReimbursementRepository {
           })),
         });
       }
+      if (data.approvalStep && !snapshotHash) throw new Error('reimbursement_submit_snapshot_hash_missing');
       const step = data.approvalStep
         ? await tx.reimbursementApprovalStep.create({
           data: {
             companyId: data.companyId,
             reimbursementRequestId: data.requestId,
             ...data.approvalStep,
+            requestSnapshotHash: snapshotHash,
           },
         })
         : undefined;
@@ -869,13 +887,14 @@ export class PrismaReimbursementRepository {
         },
         data: {
           ...data.request,
+          // The payout columns and the hash made from them, written by this submit and nothing else.
+          ...(payout && { ...payout.columns, approvalSnapshotHash: snapshotHash }),
           requestNo: reserved.documentNumber,
           currentApprovalStepId: step?.id ?? null,
           updatedAt: this.nextVersion(data.expectedUpdatedAt),
         },
       });
       if (changed.count !== 1) throw this.draftChanged();
-      if (data.payout) await freezeSubmitPayout(tx, draft, data.payout.plan, data.payout.actorUserId, data.payout.frozenAt);
       const documentNumber = documentNumberReused
         ? reserved
         : await this.documentNumbers.commitNumberInTransaction(tx, {
@@ -890,6 +909,7 @@ export class PrismaReimbursementRepository {
         documentNumberReused,
         supersededDuplicateCandidateCount: supersededCandidates.count,
         supersededApprovalStepCount: supersededApprovalSteps.count,
+        payout,
       });
       return {
         step: step ? this.toStep(step) : undefined,
@@ -897,6 +917,7 @@ export class PrismaReimbursementRepository {
         documentNumberReused,
         supersededDuplicateCandidateCount: supersededCandidates.count,
         supersededApprovalStepCount: supersededApprovalSteps.count,
+        payout,
       };
     });
   }
@@ -1285,20 +1306,9 @@ export class PrismaReimbursementRepository {
   ): string {
     const storedHash = request.approvalSnapshotHash;
     if (!storedHash || !request.lines?.length) throw new ConflictException('stale_approval_snapshot');
-    const liveHash = computeSnapshotHash({
-      amount: request.amount,
-      currency: request.currency,
-      categoryKey: request.categoryKey,
-      incurredDate: request.incurredDate.toISOString(),
-      reason: request.reason,
-      primaryAttachmentId: request.primaryAttachmentId,
-      lines: request.lines,
-      approvalPolicySnapshotJson: request.approvalPolicySnapshotJson,
-      // A claim that carries a receiving method was hashed with it; a legacy claim has none.
-      payoutMethod: request.payoutMethod,
-      payoutDestinationVersion: request.payoutDestinationVersion,
-      payoutFingerprint: request.payoutFingerprint,
-    });
+    // Same builder as the submit that stored the hash: a claim sent with a payout snapshot is
+    // checked with it, a legacy claim without.
+    const liveHash = computeSnapshotHash(claimSnapshotFields(request, request.approvalPolicySnapshotJson));
     const legacyV1Compatible = isExactLegacyV1FallbackSnapshot({
       requestId: request.id,
       companyId: request.companyId,

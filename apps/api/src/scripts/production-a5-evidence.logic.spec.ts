@@ -823,7 +823,7 @@ describe('production A5 pending claims sent with a receiving method', () => {
 
   it('classifies a transfer claim, a cash claim and a legacy claim as valid, each by its own columns', () => {
     const transfer = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'fingerprint-secret' };
-    const cash = { payoutMethod: 'CASH', payoutDestinationVersion: null, payoutFingerprint: null };
+    const cash = { payoutMethod: 'CASH', payoutDestinationVersion: null, payoutFingerprint: 'cash' };
     const legacy = { payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null };
     for (const columns of [transfer, cash, legacy]) {
       const result = classify(hashOf(columns), columns);
@@ -837,6 +837,10 @@ describe('production A5 pending claims sent with a receiving method', () => {
     assert.equal(classify(hashOf(transfer), { ...transfer, payoutDestinationVersion: 2 }).invalid, 1);
     assert.equal(classify(hashOf(transfer), { ...transfer, payoutFingerprint: 'another-account' }).invalid, 1);
     assert.equal(classify(hashOf(transfer), legacy).invalid, 1);
+    // A draft's choice that an older build sent without a snapshot (no fingerprint) is a legacy claim here too.
+    const leftByADraft = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: null };
+    assert.equal(hashOf(leftByADraft), hashOf(legacy));
+    assert.equal(classify(hashOf(legacy), leftByADraft).v2Valid, 1);
   });
 
   it('reads the payout columns in a way a database from before the migration can still answer', async () => {

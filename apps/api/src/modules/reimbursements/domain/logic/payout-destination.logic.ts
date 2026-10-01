@@ -5,7 +5,7 @@
  * and decides — in one place each — who may see the full number, when an approval is attested and
  * which snapshot version a submit freezes.
  */
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import {
   invalidPayoutDestinationField,
   normalizePayoutAccountNumber,
@@ -60,6 +60,23 @@ export function payoutFingerprint(
   return createHmac('sha256', key)
     .update(JSON.stringify(['reimbursement-payout-destination:v1', destination.payoutKind, destination.bankName ?? '', destination.accountName, destination.accountNumber]))
     .digest('hex');
+}
+
+/**
+ * What the submit writes into `payoutFingerprint` for a cash claim, which has no account to
+ * fingerprint. With it, every claim sent by the payout-aware submit carries a fingerprint.
+ */
+export const CASH_PAYOUT_FINGERPRINT = 'cash';
+
+/**
+ * Whether a SENT claim carries its own payout snapshot. Decided by `payoutFingerprint`, the one value
+ * only the payout-aware submit writes (a draft never has it; going back to draft clears it) — not by
+ * the method column, which a draft's choice fills. So a claim sent before the field existed, or sent
+ * by an older build while a release was rolled back, is a legacy claim everywhere at once: no payout
+ * part in its hash, nothing to attest, nothing to reveal, no account shown.
+ */
+export function hasPayoutSnapshot(claim: { payoutFingerprint?: string | null }): boolean {
+  return !!claim.payoutFingerprint;
 }
 
 /** The full number, for the audited reveal call only. */
@@ -123,10 +140,10 @@ export function isEffectiveClaimApprover(
  * refused. Cash claims and legacy claims have no account to attest. Null means the approval may go on.
  */
 export function payoutAttestationError(
-  claim: { payoutMethod?: string | null; payoutDestinationVersion?: number | null },
+  claim: { payoutMethod?: string | null; payoutDestinationVersion?: number | null; payoutFingerprint?: string | null },
   verifiedVersion: unknown,
 ): 'payout_verification_required' | 'payout_destination_changed' | null {
-  if (claim.payoutMethod !== 'BANK_TRANSFER') return null;
+  if (claim.payoutMethod !== 'BANK_TRANSFER' || !hasPayoutSnapshot(claim)) return null;
   if (verifiedVersion === undefined || verifiedVersion === null) return 'payout_verification_required';
   return verifiedVersion === claim.payoutDestinationVersion ? null : 'payout_destination_changed';
 }
@@ -180,6 +197,36 @@ export function planSubmitPayout(
   return { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: own.version, fingerprint: own.fingerprint, action: own.frozenAt ? 'REUSE' : 'FREEZE' };
 }
 
+export type FrozenPayoutPlan = Exclude<SubmitPayoutPlan, { error: unknown }>;
+
+/** The request columns a submit writes for its payout snapshot. */
+export type SubmitPayoutColumns = {
+  payoutMethod: ReimbursementPayoutMethod;
+  payoutDestinationVersion: number | null;
+  payoutFingerprint: string;
+};
+
+/** The one place the claim's payout columns, fingerprint included, are derived from a plan. */
+export function submitPayoutColumns(plan: FrozenPayoutPlan): SubmitPayoutColumns {
+  return plan.payoutMethod === 'CASH'
+    ? { payoutMethod: 'CASH', payoutDestinationVersion: null, payoutFingerprint: CASH_PAYOUT_FINGERPRINT }
+    : { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: plan.version, payoutFingerprint: plan.fingerprint };
+}
+
+/**
+ * What a draft's page shows next to "ส่งอนุมัติ", as an opaque token: the method and the account a
+ * submit would freeze right now. The submitter sends it back, and a submit whose own answer differs
+ * (the default account was changed or removed in between) is refused, so nobody sends a claim to an
+ * account they were not shown. Bound to the claim, so two claims never share a token, and derived
+ * from the keyed fingerprint, so it says nothing about the number.
+ */
+export function payoutSubmitToken(claimId: string, plan: SubmitPayoutPlan): string | undefined {
+  if ('error' in plan) return undefined;
+  return createHash('sha256')
+    .update(JSON.stringify(['reimbursement-payout-submit:v1', claimId, plan.payoutMethod, plan.followsDefault, plan.payoutMethod === 'BANK_TRANSFER' ? plan.fingerprint : '']))
+    .digest('hex').slice(0, 32);
+}
+
 /**
  * A claim going back to draft (rejected, withdrawn, sent back by finance) follows the default again
  * when its frozen account was a copy of the default, so the next submit takes the latest one. An
@@ -187,7 +234,8 @@ export function planSubmitPayout(
  */
 // ponytail: a cash claim stays cash here, because cash has no version row to say whether it was
 // chosen or followed a cash default; the draft shows it above the submit button. Add a source column
-// on the request if owners need a cash default to re-follow.
+// on the request if owners need a cash default to re-follow. Either way the caller clears the
+// fingerprint: a draft never carries one.
 export function draftFollowsDefaultAfterReopen(
   claim: { payoutMethod?: string | null; payoutDestinationVersion?: number | null },
   versions: readonly Pick<PayoutDestinationVersionRow, 'version' | 'source'>[],

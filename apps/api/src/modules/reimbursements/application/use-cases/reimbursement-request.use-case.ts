@@ -30,7 +30,10 @@ import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './
 import { approvalDecisionActions } from './reimbursement-approval.use-case';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
-import { isEffectiveClaimApprover, payoutRevealGroup, type PayoutRevealGroup } from '../../domain/logic/payout-destination.logic';
+import {
+  hasPayoutSnapshot, isEffectiveClaimApprover, payoutRevealGroup, payoutSubmitToken,
+  type PayoutRevealGroup, type SubmitPayoutColumns,
+} from '../../domain/logic/payout-destination.logic';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
 import {
   validateRequestFields,
@@ -38,6 +41,7 @@ import {
   requiresApproval,
   computeReceiptRequirement,
   isLineEvidenced,
+  claimSnapshotFields,
   computeSnapshotHash,
   canTransition,
   deriveHeaderFromLines,
@@ -295,10 +299,16 @@ export class GetReimbursementDetailUseCase {
       draftDefault,
       draftDefault?.enteredByUserId ? await this.repo.getUserDisplayNames(ctx.companyId, [draftDefault.enteredByUserId]) : {},
     );
+    // What "ส่งอนุมัติ" would freeze right now. The page sends this back with the submit, and a
+    // submit whose own answer differs is refused: nobody sends a claim to an account they did not see.
+    const submitToken = req.status === 'DRAFT' ? payoutSubmitToken(req.id, await this.repo.planSubmitPayout(req)) : undefined;
     return {
       ...detail,
       // The button is offered exactly when the reveal endpoint would answer.
-      ...(payout && { payout: { ...payout, canRevealAccountNumber: await claimPayoutRevealGroup(ctx, req, this.repo, approvalActions) !== null } }),
+      ...(payout && { payout: {
+        ...payout, ...(submitToken && { submitToken }),
+        canRevealAccountNumber: await claimPayoutRevealGroup(ctx, req, this.repo, approvalActions) !== null,
+      } }),
       approvalActions,
       internalNotes: notes.map(note => ({
         id: note.id,
@@ -446,7 +456,8 @@ export class SubmitReimbursementUseCase {
     private readonly projections: ReimbursementProjectionOrchestratorService,
   ) {}
 
-  async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestDetail> {
+  /** `payoutSubmitToken`: the `payout.submitToken` of the detail the submitter was looking at. */
+  async execute(ctx: RequestContext, id: string, input?: { payoutSubmitToken?: unknown } | null): Promise<ReimbursementRequestDetail> {
     if (!ctx.permissions.includes('reimbursement.submit')) throw new ForbiddenException('Missing permission: reimbursement.submit');
 
     const req = await this.repo.findRequestById(ctx.companyId, id);
@@ -485,17 +496,6 @@ export class SubmitReimbursementUseCase {
     if (!req.missingReceiptReason?.trim() && lines.some((line) => !isLineEvidenced(line))) {
       throw new BadRequestException('missing_receipt_reason_required');
     }
-
-    // Payout gate: a claim is sent with a receiving method, and a transfer with a complete account.
-    // A draft that names none follows the requester's default as it is right now; nothing is picked
-    // for a requester who has not chosen, so a claim meant for a transfer is never sent as cash.
-    const payoutPlan = await this.repo.planSubmitPayout(req);
-    if ('error' in payoutPlan) throw new UnprocessableEntityException(payoutPlan.error);
-    const payoutColumns = {
-      payoutMethod: payoutPlan.payoutMethod,
-      payoutDestinationVersion: payoutPlan.payoutMethod === 'BANK_TRANSFER' ? payoutPlan.version : null,
-      payoutFingerprint: payoutPlan.payoutMethod === 'BANK_TRANSFER' ? payoutPlan.fingerprint : null,
-    };
 
     // Double-claim guard: no receipt/expense may be claimed on two live claims.
     await this.assertEvidenceNotClaimedElsewhere(ctx.companyId, id, lines);
@@ -555,17 +555,13 @@ export class SubmitReimbursementUseCase {
       financeReviewRequired: policy.financeReviewRequired,
       ...(policy.slaHours !== undefined && { slaHours: policy.slaHours }),
     };
-    const snapshotHash = computeSnapshotHash({
-      amount: req.amount,
-      currency: req.currency,
-      categoryKey: req.categoryKey,
-      incurredDate: req.incurredDate.toISOString(),
-      reason: req.reason,
-      primaryAttachmentId: req.primaryAttachmentId,
-      lines,
-      approvalPolicySnapshotJson: policySnapshot,
-      ...payoutColumns,
-    });
+    // Payout gate: a claim is sent with a receiving method, and a transfer with a complete account.
+    // A draft that names none follows the requester's default; nothing is picked for a requester who
+    // has not chosen, so a claim meant for a transfer is never sent as cash. All of it — what is
+    // frozen, its fingerprint and version, and the hash that binds them — is decided inside the
+    // submit transaction, which asks this for the hash once the payout columns are known.
+    const snapshotHash = (payoutColumns: SubmitPayoutColumns) =>
+      computeSnapshotHash(claimSnapshotFields({ ...req, lines, ...payoutColumns }, policySnapshot));
 
     const periodKey = reimbursementPeriodKey(now);
     // A corrected request may be submitted again under the same unchanged policy and even with
@@ -600,17 +596,14 @@ export class SubmitReimbursementUseCase {
         approverUserId,
         approverRoleSnapshot: submissionRoute!.responsibilityRole,
         assignedApproverUserIdsJson: submissionRoute!.recipientUserIds,
-        requestSnapshotHash: snapshotHash,
       } }),
       // The claim's own copy is frozen in this transaction; from here on nothing reads the default.
-      payout: { plan: payoutPlan, actorUserId: ctx.userId, frozenAt: now },
+      payout: { actorUserId: ctx.userId, frozenAt: now, seenToken: input?.payoutSubmitToken, snapshotHash },
       request: {
-        ...payoutColumns,
         status: initialStatus,
         submittedAt: now,
         submittedByUserId: ctx.userId,
         currentApproverUserId: humanApprovalRequired ? approverUserId : null,
-        approvalSnapshotHash: snapshotHash,
         approvalPolicySnapshotJson: policySnapshot,
         // A corrected draft may carry NEEDS_INFO while the requester works. Once it is
         // resubmitted, that decision is historical; finance starts again only after the new approval.
@@ -652,7 +645,7 @@ export class SubmitReimbursementUseCase {
             soloSelfApproval: submissionRoute?.soloSelfApproval ?? false,
             branchId: req.branchId,
             // Which snapshot was frozen. Version and origin only: no account detail belongs here.
-            payout: { method: payoutPlan.payoutMethod, version: payoutColumns.payoutDestinationVersion, followsDefault: payoutPlan.followsDefault },
+            payout: { method: persisted.payout!.plan.payoutMethod, version: persisted.payout!.columns.payoutDestinationVersion, followsDefault: persisted.payout!.plan.followsDefault },
             legacyRecovery: {
               documentNumberReused: persisted.documentNumberReused,
               supersededDuplicateCandidateCount: persisted.supersededDuplicateCandidateCount,
@@ -951,9 +944,11 @@ export async function claimPayoutRevealGroup(
   repo: PrismaReimbursementRepository,
   approvalActions?: { canApprove: boolean; canReject: boolean },
 ): Promise<PayoutRevealGroup | null> {
-  const hasClaimAccount = request.payoutMethod === 'BANK_TRANSFER' && request.payoutDestinationVersion != null;
   const isRequester = request.requesterUserId === ctx.userId;
   const isDraft = request.status === 'DRAFT';
+  // A draft's own account, or the snapshot a sent claim froze. A legacy claim has neither.
+  const hasClaimAccount = request.payoutMethod === 'BANK_TRANSFER' && request.payoutDestinationVersion != null
+    && (isDraft || hasPayoutSnapshot(request));
   // Everyone but the requester must hold the claim's branch, and has no business with a draft.
   if (!hasClaimAccount || isRequester || isDraft || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) {
     return payoutRevealGroup({ hasClaimAccount, isDraft, isRequester, isClaimApprover: false, canRecordPayment: false });

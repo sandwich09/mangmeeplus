@@ -5,7 +5,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { MaterializeClaimExpensesService } from '../application/services/materialize-claim-expenses.service';
-import { computeLegacySnapshotHashV1, computeSnapshotHash } from '../domain/logic/reimbursement.logic';
+import { claimSnapshotFields, computeLegacySnapshotHashV1, computeSnapshotHash } from '../domain/logic/reimbursement.logic';
 import { PrismaReimbursementRepository } from './prisma-reimbursement.repository';
 import { readReimbursementSource, resolveReimbursementSourceLines, assertReimbursementSources, assertProjectionSource } from './reimbursement-source';
 import { expenseTaxSourceChecksum } from '../../expenses/domain/logic/expense-status.logic';
@@ -13,7 +13,9 @@ import { ConfirmExpenseUseCase } from '../../expenses/application/use-cases/expe
 import { PrismaAttachmentRepository } from '../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { ReimbursementEvidenceService } from '../application/services/reimbursement-evidence.service';
 import { PrismaExpenseRepository } from '../../expenses/infrastructure/prisma-expense.repository';
-import { openPayoutAccountNumber, payoutFingerprint, sealPayoutDestination } from '../domain/logic/payout-destination.logic';
+import {
+  CASH_PAYOUT_FINGERPRINT, openPayoutAccountNumber, payoutFingerprint, payoutSubmitToken, sealPayoutDestination, type SubmitPayoutColumns,
+} from '../domain/logic/payout-destination.logic';
 
 const TAG = `reimbursement-draft-race-${process.pid}`;
 const periodKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -911,34 +913,33 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     }, payout);
   }
 
-  /** The submit the use case makes: plan first, hash the plan's columns, freeze the same plan in the transaction. */
-  async function submitArguments(request: NonNullable<Awaited<ReturnType<PrismaReimbursementRepository['findRequestById']>>>) {
-    const plan = await repos[0]!.planSubmitPayout(request);
-    assert.ok(!('error' in plan), JSON.stringify(plan));
-    const payoutColumns = plan.payoutMethod === 'CASH'
-      ? { payoutMethod: 'CASH' as const, payoutDestinationVersion: null, payoutFingerprint: null }
-      : { payoutMethod: 'BANK_TRANSFER' as const, payoutDestinationVersion: plan.version, payoutFingerprint: plan.fingerprint };
-    const hash = computeSnapshotHash({
-      amount: request.amount, currency: request.currency, categoryKey: request.categoryKey, incurredDate: request.incurredDate.toISOString(),
-      reason: request.reason, primaryAttachmentId: request.primaryAttachmentId, lines: request.lines, ...payoutColumns,
-    });
-    return { plan, hash, input: {
+  type Claim = NonNullable<Awaited<ReturnType<PrismaReimbursementRepository['findRequestById']>>>;
+
+  /** What the claim page shows next to "ส่งอนุมัติ": the token of the account a submit would freeze now. */
+  const shownToken = async (request: Claim) => payoutSubmitToken(request.id, await repos[0]!.planSubmitPayout(request));
+
+  /**
+   * The submit the use case makes. Nothing about the payout is decided here: the transaction decides
+   * what to freeze, checks it against `seenToken`, and asks `snapshotHash` for the claim's hash.
+   */
+  function submitInput(request: Claim, seenToken?: unknown) {
+    return {
       companyId, requestId: request.id, expectedUpdatedAt: request.updatedAt, duplicateCandidates: [],
       evidence: { attachmentIds: [], expenseIds: [] },
       documentNumber: { documentType: 'reimbursement.request', periodKey, idempotencyKey: `reimb-submit:${request.id}`, reservedByUserId: requester },
-      approvalStep: { sequenceNo: 1, approverUserId: approver, approverRoleSnapshot: 'MANAGER', requestSnapshotHash: hash },
-      request: {
-        status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: requester, approvalSnapshotHash: hash,
-        outstandingAmount: request.amount, updatedByUserId: requester, ...payoutColumns,
+      approvalStep: { sequenceNo: 1, approverUserId: approver, approverRoleSnapshot: 'MANAGER' },
+      request: { status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: requester, outstandingAmount: request.amount, updatedByUserId: requester },
+      payout: {
+        actorUserId: requester, frozenAt: new Date(), seenToken,
+        snapshotHash: (columns: SubmitPayoutColumns) => computeSnapshotHash(claimSnapshotFields({ ...request, ...columns })),
       },
-      payout: { plan, actorUserId: requester, frozenAt: new Date() },
-    } as any };
+    } as any;
   }
 
-  async function submit(request: NonNullable<Awaited<ReturnType<PrismaReimbursementRepository['findRequestById']>>>) {
-    const { input, plan } = await submitArguments(request);
-    await repos[0]!.submitDraftAtomic(input);
-    return { plan, pending: (await repos[0]!.findRequestById(companyId, request.id))! };
+  /** Read the page, then send what it showed. */
+  async function submit(request: Claim) {
+    const result = await repos[0]!.submitDraftAtomic(submitInput(request, await shownToken(request)));
+    return { plan: result.payout!.plan, pending: (await repos[0]!.findRequestById(companyId, request.id))! };
   }
 
   const approval = (pending: NonNullable<Awaited<ReturnType<PrismaReimbursementRepository['findRequestById']>>>, payoutVerifiedVersion?: unknown) => ({
@@ -1047,6 +1048,11 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     assert.equal(openPayoutAccountNumber((await repos[0]!.findClaimPayoutSecret(companyId, created.id, 1))!.accountNumberEncrypted, key), before.number);
     assert.deepEqual([after.payoutDestinationVersion, after.payoutFingerprint, after.approvalSnapshotHash], [1, fingerprintOf(KBANK), pending.approvalSnapshotHash]);
     assert.equal((await destinationsOf(created.id)).length, 1);
+    // One decision, three places: the fingerprint on the claim, on its row, and of the row's own
+    // decrypted fields are the same value, and the stored hash is made of exactly that.
+    assert.equal(payoutFingerprint({ payoutKind: frozen!.payoutKind, bankName: frozen!.bankName, accountName: frozen!.accountName, accountNumber: before.number }, key), after.payoutFingerprint);
+    assert.equal(after.approvalSnapshotHash, computeSnapshotHash(claimSnapshotFields({ ...after, payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: frozen!.fingerprint })));
+    assert.notEqual(after.approvalSnapshotHash, computeSnapshotHash(claimSnapshotFields({ ...after, payoutFingerprint: undefined })), 'the payout part is in the hash');
 
     // Not even a direct write moves a frozen account.
     const other = seal(SCB);
@@ -1065,38 +1071,52 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     assert.deepEqual(await repos[0]!.findClaimPayout(after), before.shown);
   });
 
-  it('never freezes an account nobody hashed: a default that changes between the plan and the transaction refuses the submit', async (t) => {
+  it('sends the claim with the account its page showed: a default changed, removed or never shown refuses the submit', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     await setDefault(KBANK);
     const stale = await draft('default changed before submit');
-    const { input } = await submitArguments(stale);
+    const seen = await shownToken(stale);
+    assert.match(String(seen), /^[0-9a-f]{32}$/);
+    // Nothing shown (a list-row submit, an old browser tab), or a token that is not this claim's.
+    for (const token of [undefined, null, 'f'.repeat(32), fingerprintOf(KBANK)]) {
+      await refusedBy(() => repos[0]!.submitDraftAtomic(submitInput(stale, token)), /payout_destination_changed/, `token ${String(token)}`);
+    }
+    // Someone changes the default after the page was read (a manager may, by the owner's decision).
     await setDefault(SCB, 1);
-    await refusedBy(() => repos[0]!.submitDraftAtomic(input), /payout_destination_changed/);
+    await refusedBy(() => repos[0]!.submitDraftAtomic(submitInput(stale, seen)), /payout_destination_changed/);
     const untouched = (await repos[0]!.findRequestById(companyId, stale.id))!;
-    assert.deepEqual([untouched.status, untouched.payoutMethod, untouched.requestNo, (await destinationsOf(stale.id)).length], ['DRAFT', undefined, undefined, 0]);
-    // The same happens when the default is removed, or becomes cash, after the plan.
+    assert.deepEqual([untouched.status, untouched.payoutMethod, untouched.payoutFingerprint, untouched.requestNo, (await destinationsOf(stale.id)).length],
+      ['DRAFT', undefined, undefined, undefined, 0]);
+    // The same when the default is removed after the page was read: there is nothing to send.
+    const seenScb = await shownToken(untouched);
     await repos[1]!.removeMemberPayoutAccount(companyId, requester, async () => undefined);
-    const removed = await submitArguments(untouched).then(() => 'planned', (error) => String(error?.message ?? error));
-    assert.match(removed, /payout_method_required/, 'no default and no choice: there is nothing to send');
+    await refusedBy(() => repos[0]!.submitDraftAtomic(submitInput(untouched, seenScb)), /payout_method_required/);
+    assert.equal(await shownToken(untouched), undefined);
 
     // Racing for real: whoever wins, the claim is either still a draft with nothing frozen, or sent
-    // with one frozen row whose every column belongs to the account the hash was made from.
-    for (let round = 0; round < 6; round += 1) {
+    // with one frozen row whose every column belongs to the account the page showed and the hash holds.
+    const outcomes: string[] = [];
+    for (let round = 0; round < 8; round += 1) {
       await setDefault(KBANK);
       const racing = await draft(`race ${round}`);
-      const { input: raced } = await submitArguments(racing);
-      const [sent] = await Promise.allSettled([repos[0]!.submitDraftAtomic(raced), setDefault(round % 2 ? SCB : PROMPTPAY, 1)]);
+      const input = submitInput(racing, await shownToken(racing));
+      const [sent] = await Promise.allSettled([repos[0]!.submitDraftAtomic(input), setDefault(round % 2 ? SCB : PROMPTPAY, 1)]);
       const claim = (await repos[0]!.findRequestById(companyId, racing.id))!;
       const rows = await destinationsOf(racing.id);
+      outcomes.push(sent.status);
       if (sent.status === 'rejected') {
         assert.match(String((sent.reason as any)?.message), /payout_destination_changed/);
-        assert.deepEqual([claim.status, claim.payoutMethod, rows.length], ['DRAFT', undefined, 0]);
+        assert.deepEqual([claim.status, claim.payoutMethod, claim.payoutFingerprint, rows.length], ['DRAFT', undefined, undefined, 0]);
       } else {
         assert.deepEqual([claim.status, claim.payoutDestinationVersion, claim.payoutFingerprint, rows.length], ['PENDING_APPROVAL', 1, fingerprintOf(KBANK), 1]);
         assert.deepEqual([rows[0]!.fingerprint, rows[0]!.accountLast4, rows[0]!.bankName, openPayoutAccountNumber(rows[0]!.accountNumberEncrypted, key)],
           [fingerprintOf(KBANK), '5678', KBANK.bankName, KBANK.accountNumber]);
+        assert.equal(claim.approvalSnapshotHash, computeSnapshotHash(claimSnapshotFields(claim)));
       }
+      // Either way the default edit itself went through: it waited for the submit, it was not lost.
+      assert.notEqual((await repos[0]!.findMemberPayoutAccount(companyId, requester))?.fingerprint, fingerprintOf(KBANK));
     }
+    assert.equal(outcomes.length, 8);
   });
 
   it('keeps an account typed for one claim editable until it is sent, then gives a changed account the next version', async (t) => {
@@ -1112,7 +1132,7 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     assert.equal(openPayoutAccountNumber(rows[0]!.accountNumberEncrypted, key), PROMPTPAY.accountNumber);
 
     // An edit and a submit of the same draft: one wins, and what is frozen is what was hashed.
-    const { input } = await submitArguments(edited);
+    const input = submitInput(edited, await shownToken(edited));
     const [sent, saved] = await Promise.allSettled([
       repos[0]!.submitDraftAtomic(input),
       repos[1]!.updateDraftRequest(companyId, created.id, edited.updatedAt, {}, undefined, typed(SCB)),
@@ -1180,26 +1200,65 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     await refusedBy(() => db.$executeRaw`UPDATE "ReimbursementPayoutDestination" SET "verifiedByUserId" = ${approver}, "verifiedAt" = now(), "verifiedVia" = 'APPROVAL' WHERE "reimbursementRequestId" = ${working.id}`,
       /ReimbursementPayoutDestination_verification_check/, 'an attestation of a draft account');
 
-    // A cash claim and a claim from before the field existed are approved without any attestation.
+    // A cash claim is approved without any attestation. It still carries the marker only this submit
+    // writes, so it is hashed as a cash claim and cannot quietly become a transfer.
     const cash = await submit(await draft('cash', { write: { mode: 'CASH' } }));
-    assert.deepEqual([cash.plan, cash.pending.payoutMethod, cash.pending.payoutDestinationVersion, (await destinationsOf(cash.pending.id)).length], [{ payoutMethod: 'CASH', followsDefault: false }, 'CASH', undefined, 0]);
+    assert.deepEqual([cash.plan, cash.pending.payoutMethod, cash.pending.payoutDestinationVersion, cash.pending.payoutFingerprint, (await destinationsOf(cash.pending.id)).length],
+      [{ payoutMethod: 'CASH', followsDefault: false }, 'CASH', undefined, CASH_PAYOUT_FINGERPRINT, 0]);
     await repos[0]!.beginApprovalDecisionAtomic(approval(cash.pending));
-    const legacyDraft = await draft('legacy');
-    const legacyHash = computeSnapshotHash({
-      amount: legacyDraft.amount, currency: legacyDraft.currency, categoryKey: legacyDraft.categoryKey, incurredDate: legacyDraft.incurredDate.toISOString(),
-      reason: legacyDraft.reason, primaryAttachmentId: legacyDraft.primaryAttachmentId, lines: legacyDraft.lines,
-    });
-    const { input } = await submitArguments(await draft('unused', { write: { mode: 'CASH' } }));
-    await repos[0]!.submitDraftAtomic({
-      ...input, requestId: legacyDraft.id, expectedUpdatedAt: legacyDraft.updatedAt, payout: undefined,
-      documentNumber: { ...input.documentNumber, idempotencyKey: `reimb-submit:${legacyDraft.id}` },
-      approvalStep: { ...input.approvalStep, requestSnapshotHash: legacyHash },
-      request: { ...input.request, approvalSnapshotHash: legacyHash, payoutMethod: undefined, payoutDestinationVersion: undefined, payoutFingerprint: undefined },
-    });
-    const legacy = (await repos[0]!.findRequestById(companyId, legacyDraft.id))!;
-    assert.deepEqual([legacy.payoutMethod, legacy.payoutDestinationVersion, legacy.payoutFingerprint, await repos[0]!.findClaimPayout(legacy)], [undefined, undefined, undefined, undefined]);
-    await repos[0]!.beginApprovalDecisionAtomic(approval(legacy));
-    assert.equal((await db.reimbursementApprovalStep.findFirstOrThrow({ where: { reimbursementRequestId: legacy.id } })).status, 'APPROVED');
+
+    // Legacy claims: sent before the field existed, or — during a rollback — sent by an older build
+    // from a draft that had already chosen its method under this one. The older build writes no
+    // fingerprint and hashes no payout part; all three stay approvable, with nothing to attest.
+    const sentByAnOlderBuild = async (claimDraft: Claim) => {
+      const hash = computeSnapshotHash(claimSnapshotFields({ ...claimDraft, payoutFingerprint: undefined }));
+      const input = submitInput(claimDraft);
+      await repos[0]!.submitDraftAtomic({ ...input, payout: undefined, approvalStep: { ...input.approvalStep, requestSnapshotHash: hash }, request: { ...input.request, approvalSnapshotHash: hash } });
+      return (await repos[0]!.findRequestById(companyId, claimDraft.id))!;
+    };
+    for (const [label, legacyDraft, method] of [
+      ['before the field existed', await draft('legacy'), undefined],
+      ['a draft that chose an account', await draft('rollback transfer', { write: { mode: 'SPECIFIED', destination: seal(KBANK), source: 'REQUESTER', actorUserId: requester } }), 'BANK_TRANSFER'],
+      ['a draft that chose cash', await draft('rollback cash', { write: { mode: 'CASH' } }), 'CASH'],
+    ] as const) {
+      const legacy = await sentByAnOlderBuild(legacyDraft);
+      assert.deepEqual([legacy.status, legacy.payoutMethod, legacy.payoutFingerprint, await repos[0]!.findClaimPayout(legacy)], ['PENDING_APPROVAL', method, undefined, undefined], label);
+      await repos[0]!.beginApprovalDecisionAtomic(approval(legacy));
+      assert.equal((await db.reimbursementApprovalStep.findFirstOrThrow({ where: { reimbursementRequestId: legacy.id } })).status, 'APPROVED', label);
+      // Nothing was attested on the draft's leftover row, and it was never frozen.
+      assert.deepEqual((await destinationsOf(legacy.id)).map((entry) => [entry.frozenAt, entry.verifiedAt]), method === 'BANK_TRANSFER' ? [[null, null]] : [], label);
+    }
+  });
+
+  it('counts versions per claim, not per member: the default at its third change freezes as the claim first', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    // Two counters start at 1 — the member default's and the claim's. They are made to differ here,
+    // so an attestation that named the wrong one cannot pass by coincidence.
+    await repos[0]!.removeMemberPayoutAccount(companyId, requester, async () => undefined);
+    await setDefault(SCB);
+    await setDefault(PROMPTPAY);
+    assert.equal((await setDefault(KBANK)).version, 3);
+    const { pending } = await submit(await draft('default at version 3'));
+    assert.equal(pending.payoutDestinationVersion, 1);
+    await refusedBy(() => repos[0]!.beginApprovalDecisionAtomic(approval(pending, 3)), /payout_destination_changed/, 'the default account version is not the claim version');
+    await repos[0]!.beginApprovalDecisionAtomic(approval(pending, 1));
+    assert.equal((await destinationsOf(pending.id))[0]!.verifiedByUserId, approver);
+  });
+
+  it('refuses an approval that names the claim as it was before it was withdrawn, edited and sent again', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const first = await submit(await draft('queue row', { write: { mode: 'CASH' } }));
+    // The approver's list was loaded here: its row carries this hash.
+    const hashOnTheQueueRow = first.pending.approvalSnapshotHash;
+    const reopened = await repos[0]!.reopenRejectedRequest(companyId, first.pending.id, first.pending.updatedAt, requester, 'PENDING_APPROVAL');
+    assert.equal(reopened.payoutFingerprint, undefined, 'back in draft the claim carries no snapshot marker');
+    const edited = await repos[0]!.updateDraftRequest(companyId, reopened.id, reopened.updatedAt, { reason: 'a different claim now' });
+    const second = await submit(edited);
+    assert.notEqual(second.pending.approvalSnapshotHash, hashOnTheQueueRow);
+    await refusedBy(() => repos[0]!.beginApprovalDecisionAtomic({ ...approval(second.pending), expectedApprovalSnapshotHash: hashOnTheQueueRow ?? undefined }), /stale_approval_snapshot/);
+    const untouched = await clients[0]!.reimbursementRequest.findUniqueOrThrow({ where: { id: second.pending.id }, include: { approvalSteps: { where: { status: 'PENDING' } } } });
+    assert.deepEqual([untouched.status, untouched.approvalSteps.length], ['PENDING_APPROVAL', 1]);
+    await repos[0]!.beginApprovalDecisionAtomic(approval(second.pending));
   });
 
   it('keeps every snapshot row inside its own claim and company', async (t) => {

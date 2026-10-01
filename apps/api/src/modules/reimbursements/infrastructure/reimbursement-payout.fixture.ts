@@ -35,6 +35,8 @@ export function fakePayoutTables() {
   }
 
   const client = {
+    // `SELECT … FOR UPDATE` on the default account: nothing runs concurrently in memory.
+    $queryRaw: async () => [],
     memberPayoutAccount: {
       findFirst: async ({ where, select }: any) => {
         const row = accounts.find((candidate) => matches(candidate, where));

@@ -167,13 +167,52 @@ export type ApprovalSnapshotFields = {
   approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1;
   /**
    * The claim's receiving method and its own account snapshot. Folded into the hash only when the
-   * claim carries a method, so a claim sent before the field existed keeps the hash it was approved
-   * and signed under.
+   * claim carries `payoutFingerprint` — the one value nothing but the payout-aware submit writes — so
+   * a claim sent before the field existed, or sent by an older build during a rollback, keeps the
+   * hash it was approved and signed under whatever a draft had chosen.
    */
   payoutMethod?: string | null;
   payoutDestinationVersion?: number | null;
   payoutFingerprint?: string | null;
 };
+
+/** A claim as its hash reads it: the record itself, or the same columns read by the production gate. */
+export type ClaimSnapshotSource = {
+  amount: string;
+  currency: string;
+  categoryKey: string;
+  incurredDate: Date | string;
+  reason: string;
+  primaryAttachmentId?: string | null;
+  lines?: ApprovalSnapshotFields['lines'];
+  payoutMethod?: string | null;
+  payoutDestinationVersion?: number | null;
+  payoutFingerprint?: string | null;
+};
+
+/**
+ * The ONE mapping from a claim to the fields its hash is made of. Submit, the live approval check,
+ * the signature acknowledgement (preview and sign) and the production gate all hash through it, so
+ * the payout part cannot be folded into one and left out of another.
+ */
+export function claimSnapshotFields(
+  claim: ClaimSnapshotSource,
+  approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1 | null,
+): ApprovalSnapshotFields {
+  return {
+    amount: claim.amount,
+    currency: claim.currency,
+    categoryKey: claim.categoryKey,
+    incurredDate: isoOf(claim.incurredDate),
+    reason: claim.reason,
+    primaryAttachmentId: claim.primaryAttachmentId,
+    lines: claim.lines ?? [],
+    ...(approvalPolicySnapshotJson && { approvalPolicySnapshotJson }),
+    payoutMethod: claim.payoutMethod,
+    payoutDestinationVersion: claim.payoutDestinationVersion,
+    payoutFingerprint: claim.payoutFingerprint,
+  };
+}
 
 export type LegacyV1FallbackSnapshotFields = ApprovalSnapshotFields & {
   requestId: string;
@@ -217,30 +256,8 @@ export function computeLegacySnapshotHashV1(fields: ApprovalSnapshotFields): str
  * it without an application-layer import cycle; structural param keeps this file
  * free of model/Prisma imports.
  */
-export function claimSignatureAckHash(req: {
-  amount: ApprovalSnapshotFields['amount'];
-  currency: string;
-  categoryKey: string;
-  incurredDate: Date;
-  reason: string;
-  primaryAttachmentId?: string | null;
-  lines?: ApprovalSnapshotFields['lines'];
-  payoutMethod?: string | null;
-  payoutDestinationVersion?: number | null;
-  payoutFingerprint?: string | null;
-}): string {
-  return computeSnapshotHash({
-    amount: req.amount,
-    currency: req.currency,
-    categoryKey: req.categoryKey,
-    incurredDate: req.incurredDate.toISOString(),
-    reason: req.reason,
-    primaryAttachmentId: req.primaryAttachmentId,
-    lines: req.lines ?? [],
-    payoutMethod: req.payoutMethod,
-    payoutDestinationVersion: req.payoutDestinationVersion,
-    payoutFingerprint: req.payoutFingerprint,
-  });
+export function claimSignatureAckHash(req: ClaimSnapshotSource): string {
+  return computeSnapshotHash(claimSnapshotFields(req));
 }
 
 /**
@@ -254,11 +271,11 @@ export function computeSnapshotHash(fields: ApprovalSnapshotFields): string {
     ...(fields.approvalPolicySnapshotJson
       ? [`policy:${stableJson(fields.approvalPolicySnapshotJson)}`]
       : []),
-    // Cash is hashed too (no version, no fingerprint): switching cash to a transfer after approval
-    // has to invalidate that approval. The attestation itself is not hashed, so ticking it never
-    // changes what was signed.
-    ...(fields.payoutMethod
-      ? [`payout:${fields.payoutMethod}:${fields.payoutDestinationVersion ?? ''}:${fields.payoutFingerprint ?? ''}`]
+    // Cash is hashed too (no version; its fingerprint is the fixed cash marker): switching cash to a
+    // transfer after approval has to invalidate that approval. The attestation itself is not hashed,
+    // so ticking it never changes what was signed.
+    ...(fields.payoutFingerprint
+      ? [`payout:${fields.payoutMethod ?? ''}:${fields.payoutDestinationVersion ?? ''}:${fields.payoutFingerprint}`]
       : []),
     ...byLineNo(fields.lines ?? []).map((line) => [
       line.lineNo,

@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   requiresApproval,
   validateRequestFields,
@@ -26,12 +28,15 @@ import {
   frozenApprovalAuthority,
   currentDesk,
   claimSignatureAckHash,
+  claimSnapshotFields,
   type CurrentDeskStepFields,
 } from './reimbursement.logic';
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
 import { invalidPayoutDestinationField, maskedPayoutAccount, maskedPayoutAccountNumber, normalizePayoutAccountNumber } from '@watchdog-bms/contracts';
 import {
+  CASH_PAYOUT_FINGERPRINT,
   draftFollowsDefaultAfterReopen,
+  hasPayoutSnapshot,
   isBlankPayoutDestination,
   isEffectiveClaimApprover,
   openPayoutAccountNumber,
@@ -39,8 +44,12 @@ import {
   payoutFingerprint,
   payoutRevealGroup,
   planSubmitPayout,
+  payoutSubmitToken,
   sealPayoutDestination,
+  submitPayoutColumns,
 } from './payout-destination.logic';
+
+const read = (file: string) => readFileSync(join(__dirname, file), 'utf8');
 
 /** A minimal valid line; overrides shape each case. */
 function line(overrides: Partial<Parameters<typeof computeClaimTotal>[0][number]> & Record<string, unknown> = {}): any {
@@ -588,19 +597,64 @@ describe('payout: a claim with no receiving method keeps its hashes (legacy clai
     }
   });
 
-  it('a claim that carries a method hashes it: method, snapshot version and fingerprint each move the hash', () => {
+  it('a claim sent with a payout snapshot hashes it: method, snapshot version and fingerprint each move the hash', () => {
     const transfer = { ...approvalFields, payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'f'.repeat(64) };
+    const cash = submitPayoutColumns({ payoutMethod: 'CASH', followsDefault: false });
+    assert.deepEqual(cash, { payoutMethod: 'CASH', payoutDestinationVersion: null, payoutFingerprint: CASH_PAYOUT_FINGERPRINT });
     const hashes = [
       computeSnapshotHash(approvalFields),
       computeSnapshotHash(transfer),
       computeSnapshotHash({ ...transfer, payoutDestinationVersion: 2 }),
       computeSnapshotHash({ ...transfer, payoutFingerprint: 'e'.repeat(64) }),
       // Cash is hashed too, so cash cannot quietly become a transfer after approval.
-      computeSnapshotHash({ ...approvalFields, payoutMethod: 'CASH' }),
+      computeSnapshotHash({ ...approvalFields, ...cash }),
     ];
     assert.equal(new Set(hashes).size, hashes.length);
     assert.equal(computeSnapshotHash(transfer), computeSnapshotHash({ ...transfer }));
-    assert.notEqual(claimSignatureAckHash({ ...header, lines, payoutMethod: 'CASH' }), '0c87de6573bfb6150d6cd23c1f29fa01');
+    assert.notEqual(claimSignatureAckHash({ ...header, lines, ...cash }), '0c87de6573bfb6150d6cd23c1f29fa01');
+  });
+
+  // The rollback window: a draft chose its method under the new build, an older build sent it (it
+  // knows nothing of the payout columns, so the method stays and no fingerprint is written), and the
+  // new build comes back. Deciding "legacy" by the method would recompute a hash the claim was never
+  // stored with and refuse its approval for ever.
+  it('is decided by the fingerprint only the payout-aware submit writes, not by what a draft chose', () => {
+    for (const leftByADraft of [{ payoutMethod: 'CASH' }, { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 },
+      { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: null }, { payoutMethod: 'CASH', payoutFingerprint: '' }]) {
+      assert.equal(hasPayoutSnapshot(leftByADraft), false);
+      assert.equal(computeSnapshotHash({ ...approvalFields, ...leftByADraft }), 'e8a0a0d5832da0361ee0442a28534235', JSON.stringify(leftByADraft));
+      assert.equal(claimSignatureAckHash({ ...header, lines, ...leftByADraft }), '0c87de6573bfb6150d6cd23c1f29fa01', JSON.stringify(leftByADraft));
+      assert.equal(payoutAttestationError(leftByADraft, undefined), null, 'nothing to attest');
+    }
+    assert.equal(hasPayoutSnapshot({ payoutFingerprint: CASH_PAYOUT_FINGERPRINT }), true);
+    assert.equal(hasPayoutSnapshot({ payoutFingerprint: 'f'.repeat(64) }), true);
+  });
+
+  // Submit, the live approval check, the signature acknowledgement and the production gate all hash
+  // through `claimSnapshotFields`. One record, three kinds of claim, one answer each.
+  it('gives the same hash whichever call site builds it, for a legacy, a cash and a transfer claim', () => {
+    const sources = [read('../../application/use-cases/reimbursement-request.use-case.ts'), read('../../infrastructure/prisma-reimbursement.repository.ts'),
+      read('./reimbursement.logic.ts'), read('../../../../scripts/production-a5-evidence.pg.ts')].join('\n');
+    // No call site folds the fields by hand any more: every computeSnapshotHash call goes through the builder.
+    assert.deepEqual([...sources.matchAll(/computeSnapshotHash\((?!fields)[^)]{0,40}/g)].map((match) => match[0]).filter((call) => !call.startsWith('computeSnapshotHash(claimSnapshotFields(')), []);
+    assert.equal([...sources.matchAll(/computeSnapshotHash\(claimSnapshotFields\(/g)].length, 3, 'submit, the live approval check, the signature acknowledgement');
+    assert.match(sources, /\.\.\.claimSnapshotFields\(\{\s+amount: decimal\(header\.amount\)/, 'the production gate');
+
+    const record = { ...header, lines };
+    for (const [kind, payout, golden] of [
+      ['legacy', {}, 'e8a0a0d5832da0361ee0442a28534235'],
+      ['cash', submitPayoutColumns({ payoutMethod: 'CASH', followsDefault: true }), undefined],
+      ['transfer', submitPayoutColumns({ payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 3, fingerprint: 'a'.repeat(64), action: 'COPY_DEFAULT' }), undefined],
+    ] as const) {
+      const claim = { ...record, ...payout };
+      const atSubmit = computeSnapshotHash(claimSnapshotFields(claim, policy));
+      const atApproval = computeSnapshotHash(claimSnapshotFields({ ...claim, incurredDate: claim.incurredDate.toISOString() }, policy));
+      assert.equal(atSubmit, atApproval, kind);
+      if (golden) assert.equal(atSubmit, golden);
+      // The signature acknowledgement is the same claim without the approval policy.
+      assert.equal(claimSignatureAckHash(claim), computeSnapshotHash(claimSnapshotFields(claim)), kind);
+      assert.notEqual(claimSignatureAckHash(claim), atSubmit, kind);
+    }
   });
 });
 
@@ -717,7 +771,7 @@ describe('payout: who may see the full number (one decision for the endpoint and
 });
 
 describe('payout: attestation binds to one snapshot version', () => {
-  const transfer = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2 };
+  const transfer = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: 'f'.repeat(64) };
 
   it('refuses a transfer claim without it, and with any version but the current one', () => {
     assert.equal(payoutAttestationError(transfer, undefined), 'payout_verification_required');
@@ -729,10 +783,40 @@ describe('payout: attestation binds to one snapshot version', () => {
   });
 
   it('asks nothing of a cash claim or a legacy claim', () => {
-    for (const claim of [{ payoutMethod: 'CASH' }, {}, { payoutMethod: null, payoutDestinationVersion: null }]) {
+    for (const claim of [{ payoutMethod: 'CASH', payoutFingerprint: CASH_PAYOUT_FINGERPRINT }, {}, { payoutMethod: null, payoutDestinationVersion: null }]) {
       assert.equal(payoutAttestationError(claim, undefined), null);
       assert.equal(payoutAttestationError(claim, 7), null);
     }
+  });
+});
+
+describe('payout: the claim is sent with the account its page showed', () => {
+  const copy = { payoutMethod: 'BANK_TRANSFER' as const, followsDefault: true, version: 1, fingerprint: 'a'.repeat(64), action: 'COPY_DEFAULT' as const };
+
+  it('names what a submit would freeze as an opaque token, and nothing when nothing can be sent', () => {
+    const token = payoutSubmitToken('claim-1', copy)!;
+    assert.match(token, /^[0-9a-f]{32}$/);
+    assert.equal(payoutSubmitToken('claim-1', { ...copy }), token);
+    assert.equal(payoutSubmitToken('claim-1', { error: 'payout_method_required' }), undefined);
+    assert.equal(payoutSubmitToken('claim-1', { error: 'payout_destination_required' }), undefined);
+    // It says nothing about the account: it is not the fingerprint and does not contain it.
+    assert.ok(!token.includes(copy.fingerprint.slice(0, 8)));
+  });
+
+  it('changes when the account, the method or its origin changes, and is never shared by two claims', () => {
+    const tokens = [
+      payoutSubmitToken('claim-1', copy),
+      payoutSubmitToken('claim-1', { ...copy, fingerprint: 'b'.repeat(64) }),
+      payoutSubmitToken('claim-1', { ...copy, followsDefault: false, action: 'FREEZE' }),
+      payoutSubmitToken('claim-1', { payoutMethod: 'CASH', followsDefault: true }),
+      payoutSubmitToken('claim-1', { payoutMethod: 'CASH', followsDefault: false }),
+      // The same default account on another claim: a reader of both learns nothing from the tokens.
+      payoutSubmitToken('claim-2', copy),
+    ];
+    assert.equal(new Set(tokens).size, tokens.length);
+    // The version and the freeze action are bookkeeping, not what the page showed: the same account
+    // sent again after a withdraw keeps its token.
+    assert.equal(payoutSubmitToken('claim-1', { ...copy, version: 2, action: 'REUSE' }), tokens[0]);
   });
 });
 

@@ -8,6 +8,7 @@ import {
   IsString, Matches, Max, MaxLength, Min, ValidateIf, ValidateNested,
 } from 'class-validator';
 import type {
+  ApproveReimbursementInput,
   CreateReimbursementRequestInput,
   LinkReimbursementSignedCopyInput,
   RecordReimbursementPaymentInput,
@@ -18,6 +19,7 @@ import type {
   ReimbursementPayoutKind,
   ReimbursementPayoutMethod,
   SignReimbursementClaimFormInput,
+  SubmitReimbursementRequestInput,
   UpdateReimbursementDraftInput,
   UpdateReimbursementPolicyInput,
 } from '@watchdog-bms/contracts';
@@ -90,6 +92,20 @@ export class UpdateReimbursementDraftDto implements UpdateReimbursementDraftInpu
   @IsArray() @IsOptional() @ArrayMinSize(1) @ArrayMaxSize(REIMBURSEMENT_MAX_LINES)
   @ValidateNested({ each: true }) @Type(() => ReimbursementLineDto)
   lines?: ReimbursementLineDto[];
+}
+
+export class SubmitReimbursementDto implements SubmitReimbursementRequestInput {
+  @IsString() @IsOptional() @MaxLength(200) idempotencyKey?: string;
+  // What the draft's page showed as the account to be frozen (payout.submitToken).
+  @Matches(/^[0-9a-f]{32}$/) @IsOptional() payoutSubmitToken?: string;
+}
+
+export class ApproveReimbursementDto implements ApproveReimbursementInput {
+  @IsString() @IsOptional() @MaxLength(2000) comment?: string;
+  @IsString() @IsOptional() @MaxLength(128) approvalSnapshotHash?: string;
+  @IsString() @IsOptional() @MaxLength(200) idempotencyKey?: string;
+  // "ตรวจบัญชีแล้ว": a whole version number, never a string that happens to look like one.
+  @IsInt() @Min(1) @IsOptional() payoutVerifiedVersion?: number;
 }
 
 export class ReimbursementDraftActionControlDto {
