@@ -12,6 +12,7 @@ import {
   buildReimbursementHandoffMessage,
   buildReimbursementPayerClarificationMessage,
   buildPublicPolicyCardMessage,
+  isCompleteLineBusinessAnswerPresentation,
 } from './line-business-card.logic';
 import { resolvePublicPolicyAnswer } from './line-public-policy.logic';
 import { buildContactCard, STAFF_OA_URL } from './line-staff-menu.logic';
@@ -529,7 +530,7 @@ describe('receipt quota card (P10-L §3.7/§7)', () => {
   // (LINE_PLAN_CANONICAL_TEXT_REQUIRED) and a shop at its limit was answered with silence. The text form
   // is the sentence the caller built for THIS reader, so it keeps the §2.2 rule: every wording of the
   // wall names who to ask, and never a purchase, for a reader who may not buy.
-  it('carries the same sentence as canonical text, the form a delivery plan sends', () => {
+  it('carries the same sentence as canonical text, which a delivery plan requires', () => {
     for (const canManagePlan of [true, false]) {
       for (const [limit, tierKey, cadence, gift] of [[15, 'FREE_TRIAL_15', undefined, false], [30, 'STARTER_249', undefined, false],
         [null, 'STARTER_249', undefined, false], [20, null, 'PAID_GRANTS', false], [30, 'STARTER_249', undefined, true]] as const) {
@@ -542,6 +543,16 @@ describe('receipt quota card (P10-L §3.7/§7)', () => {
           assert.doesNotMatch(message.canonicalText, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|แพ็กเกจที่ใหญ่ขึ้น|ซื้อ|โปรโมชั่น/);
         }
       }
+    }
+  });
+
+  // The buttons are the point of this card, so a delivery plan must send the card itself — with them
+  // for a reader who may buy, without them for anyone else. It may only when the bubble holds the whole
+  // sentence; one the body would cut is sent as its full text instead.
+  it('is a complete presentation of its sentence, unless the bubble body would cut it', () => {
+    for (const canManagePlan of [true, false]) {
+      assert.equal(isCompleteLineBusinessAnswerPresentation(buildReceiptQuotaExceededMessage('ตอนนี้ครบแล้วค่ะ', canManagePlan)), true);
+      assert.equal(isCompleteLineBusinessAnswerPresentation(buildReceiptQuotaExceededMessage('ก'.repeat(1_201), canManagePlan)), false);
     }
   });
 });
@@ -601,6 +612,7 @@ describe('CHAT budget refusal card', () => {
           const message = buildAiBudgetExceededMessage(trialTier, refusal, canManagePlan) as any;
           assert.equal(message.canonicalText, message.contents.body.contents[1].text, JSON.stringify({ trialTier, refusal, canManagePlan }));
           assert.match(message.canonicalText, /^เครดิต AI/);
+          assert.equal(isCompleteLineBusinessAnswerPresentation(message), true, 'so a delivery plan sends the card itself');
           if (!canManagePlan) assert.doesNotMatch(message.canonicalText, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|ซื้อ|โปรโมชั่น/);
         }
       }

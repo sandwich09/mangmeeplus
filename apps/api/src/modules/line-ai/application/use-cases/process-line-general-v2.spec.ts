@@ -9,6 +9,7 @@ import { buildAiBudgetExceededMessage, buildLineAssistantTextCardMessage, buildL
   buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, inheritCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
 import { buildPendingApprovalCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffMainMenu } from '../../domain/logic/line-staff-menu.logic';
 import { receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
+import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-manager.logic';
 
 it('answers an admitted private general/help turn without private ERP prefetch or touching four waiting tasks', async () => {
   const event: any = { webhookEventId: 'evt', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'ทำไมท้องฟ้าเป็นสีฟ้า', inputEvidence: { joinedSha256: 'digest' } };
@@ -324,15 +325,11 @@ it('a text answer finished after its foreground deadline is delivered, never dro
 // carried no canonicalText, so this seam threw LINE_PLAN_CANONICAL_TEXT_REQUIRED before a plan was saved;
 // "เมนูหลัก" and the other deterministic cards of a bound chat failed the same way. Each now freezes into
 // a plan as its own words, with its quick reply. (A card is sent as itself only with the business
-// renderer's completeness proof; these carry none, so the text is what reaches the customer.)
+// renderer's completeness proof; these carry none, so the text is what reaches the customer. The two
+// limit cards carry it — see below.)
 const STAFF_MENU = { displayName: 'พิม', roleLabel: 'เจ้าของ', branchScopeLabel: 'ทุกสาขา', companyId: 'company', webBaseUrl: 'https://app.example.com',
   permissions: ['reimbursement.approve', 'expense.read', 'expense.receipt.line_upload'], entitledFeatureKeys: null };
-const TOTAL_EXCEEDED = { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' } as const;
 for (const [name, card] of [
-  ['receipt quota', buildReceiptQuotaExceededMessage(receiptQuotaExceededTextTh(30, 'STARTER_249', undefined, false, true), true)],
-  ['receipt quota (reader who may not buy)', buildReceiptQuotaExceededMessage(receiptQuotaExceededTextTh(30, 'STARTER_249', undefined, false, false), false)],
-  ['AI credit', buildAiBudgetExceededMessage(false, TOTAL_EXCEEDED, true)],
-  ['AI credit (reader who may not buy)', buildAiBudgetExceededMessage(false, TOTAL_EXCEEDED, false)],
   ['main menu', buildStaffMainMenu(STAFF_MENU)],
   ['services', buildServiceEntitlementMessage(null)],
   ['receipt prompt', buildReceiptCapturePrompt(STAFF_MENU)],
@@ -344,9 +341,34 @@ for (const [name, card] of [
   const capture: { saved?: DeliveryPlanV2 } = {};
   assert.equal(await mediaResultFlow(new Date(), capture).sendMessagesV2({ ...SECOND_PHOTO, webhookEventId: `card-${name}` }, [card]), 'ok');
   assert.ok(capture.saved && parseLineDeliveryPlan(capture.saved), 'the plan validates');
-  const sent = capture.saved!.batches.flatMap(batch => batch.primary.messages);
-  assert.deepEqual(sent, [{ type: 'text',
+  assert.deepEqual(capture.saved!.batches.flatMap(batch => batch.primary.messages), [{ type: 'text',
     text: withLineExternalBrowserText((card as any).canonicalText, Number.POSITIVE_INFINITY), ...(card.quickReply ? { quickReply: card.quickReply } : {}) }]);
-  // Advisor spec §2.2: what a reader who may not buy receives never points at a purchase.
-  if (name.endsWith('(reader who may not buy)')) assert.doesNotMatch(JSON.stringify(sent), /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|แพ็กเกจที่ใหญ่ขึ้น|ซื้อ|โปรโมชั่น/);
+});
+
+// A limit card exists for its buttons — "ดูแพ็กเกจ / ขอเปลี่ยนแพ็กเกจ" at the moment the limit is hit — so
+// the plan sends the card itself, exactly as the builder made it, and keeps its sentence as the fallback
+// LINE gets if it refuses the Flex body. Advisor spec §2.2 holds in both forms: the buttons are for a
+// reader who may manage the package; anyone else gets no button and is told who to ask.
+const TOTAL_EXCEEDED = { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' } as const;
+const PACKAGE_BUTTONS = ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ'];
+for (const [name, card, buttons] of [
+  ['receipt quota (owner)', buildReceiptQuotaExceededMessage(receiptQuotaExceededTextTh(30, 'STARTER_249', undefined, false, true), true), PACKAGE_BUTTONS],
+  ['receipt quota (staff)', buildReceiptQuotaExceededMessage(receiptQuotaExceededTextTh(30, 'STARTER_249', undefined, false, false), false), []],
+  ['AI credit (owner)', buildAiBudgetExceededMessage(false, TOTAL_EXCEEDED, true), PACKAGE_BUTTONS],
+  ['AI credit (staff)', buildAiBudgetExceededMessage(false, TOTAL_EXCEEDED, false), []],
+  ['AI credit, not enough left (owner)', buildAiBudgetExceededMessage(true, { budgetErrorCode: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'TOTAL' }, true), PACKAGE_BUTTONS],
+  ['chat credit (staff)', buildAiBudgetExceededMessage(false, { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' }, false), ['ติดต่อเจ้าหน้าที่']],
+] as const) it(`sends the ${name} card of a bound chat as the card itself`, async () => {
+  const capture: { saved?: DeliveryPlanV2 } = {};
+  assert.equal(await mediaResultFlow(new Date(), capture).sendMessagesV2({ ...SECOND_PHOTO, webhookEventId: `limit-card-${name}` }, [card]), 'ok');
+  assert.ok(capture.saved && parseLineDeliveryPlan(capture.saved), 'the plan validates');
+  const { canonicalText, ...wire } = card as any;
+  assert.deepEqual(capture.saved!.batches.map(batch => batch.primary.messages), [[wire]], 'the plan item is the Flex card, byte for byte');
+  assert.deepEqual((wire.contents.footer?.contents ?? []).map((button: any) => button.action.label), buttons);
+  assert.deepEqual(capture.saved!.batches[0]!.fallback?.messages, [{ type: 'text', text: canonicalText }]);
+  assert.equal(capture.saved!.answer.items[0]!.text, canonicalText);
+  if (name.endsWith('(staff)') && buttons.length === 0) {
+    assert.ok(canonicalText.endsWith(ASK_PLAN_MANAGER_TH), canonicalText);
+    assert.doesNotMatch(JSON.stringify(capture.saved!.batches), /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|แพ็กเกจที่ใหญ่ขึ้น|ซื้อ|โปรโมชั่น/);
+  }
 });
