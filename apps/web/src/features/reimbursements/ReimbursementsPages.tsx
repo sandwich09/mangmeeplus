@@ -29,7 +29,7 @@ import {
   type HubFilter, approverPaymentWarning,
   NO_HUB_LIST, QUEUE_PAGE_SIZE, HUB_SEARCH_DELAY_MS, hubCardFilter, hubList, hubListKey, hubListStatusText, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
   queueRowOffersFinanceReview, queueRowOffersPayment, quickPayBlockedNote, quickPayTarget,
-  approvalRowOffers, financeQueueWords, rowHasFinanceReview,
+  approvalRowOffers, financeQueueWords, rowHasFinanceReview, rowMayBeDuplicate,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
@@ -54,6 +54,8 @@ const HUB_TAB_DESCRIPTIONS: Record<NamedHubTab, string> = {
 };
 /** A claim that has waited longer than the company's deadline, in the words of the notice the server sends for it. */
 const OVERDUE_LABEL = 'เกินกำหนด';
+/** The mark of a claim that may repeat another one, on a row of either queue. */
+const MAY_BE_DUPLICATE_LABEL = 'อาจซ้ำ';
 /** The deadline itself: how long a claim may wait for its approval, and then for its payment. */
 const DEADLINE_LABEL = 'กำหนดเวลาอนุมัติและจ่าย';
 const APPROVER_ROLE_LABELS: Record<string, string> = {
@@ -533,6 +535,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
     r.currency,
     r.ageHours,
     r.slaRisk ? OVERDUE_LABEL : '',
+    rowMayBeDuplicate(r) ? MAY_BE_DUPLICATE_LABEL : '',
     currentDeskText(r.currentDesk),
   ], query)), [data, query]);
   const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
@@ -598,6 +601,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                           <div className="flex flex-wrap items-center justify-end gap-2">
                             <span className="tabular-nums">{r.ageHours} ชม.</span>
                             {r.slaRisk && <MangmeeBadge tone="danger">{OVERDUE_LABEL}</MangmeeBadge>}
+                            {/* Said here, before the approver decides: the claim page said it only after the row was opened. */}
+                            {rowMayBeDuplicate(r) && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}
                             {/* The table has no status column: a row of a correction round says what it waits for here. */}
                             {r.payoutCorrectionPhase && <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />}
                           </div>
@@ -634,6 +639,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />
                       {r.slaRisk && <MangmeeBadge tone="danger">{OVERDUE_LABEL}</MangmeeBadge>}
+                      {rowMayBeDuplicate(r) && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>
                   </div>
@@ -744,7 +750,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
     r.currency,
     claimStatusBadge(r).label,
     FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? r.financeReviewStatus,
-    r.hasDuplicateBlocker ? 'อาจซ้ำ' : '',
+    r.hasDuplicateBlocker ? MAY_BE_DUPLICATE_LABEL : '',
     currentDeskText(r.currentDesk),
   ], query)), [data, query]);
   const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
@@ -798,7 +804,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                         <td>{r.requesterDisplayNameSnapshot}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
-                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">อาจซ้ำ</MangmeeBadge>}</div></td>
+                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}</div></td>
                         {withReview && <td className="text-xs text-gray-500">{FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—'}</td>}
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
@@ -829,7 +835,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />
-                      {r.hasDuplicateBlocker && <MangmeeBadge tone="amber">อาจซ้ำ</MangmeeBadge>}
+                      {r.hasDuplicateBlocker && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>
                   </div>

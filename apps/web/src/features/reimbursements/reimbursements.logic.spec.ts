@@ -8,7 +8,7 @@ import {
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
   approverNotReadyHelp, approverPaymentWarning, hubCardFilter, hubList, hubListStatusText, hubNextPage, NO_HUB_LIST, QUEUE_PAGE_SIZE, withHubPage,
-  financeQueueWords, rowHasFinanceReview,
+  financeQueueWords, rowHasFinanceReview, rowMayBeDuplicate,
   type HubFilter,
 } from './reimbursements.logic';
 import { currentDeskText } from './reimbursements.model';
@@ -42,6 +42,15 @@ describe('financeQueueWords', () => {
   it('knows a row that goes or went through the review from the row itself', () => {
     for (const status of ['PENDING', 'NEEDS_INFO', 'APPROVED_FOR_PAYMENT', 'BLOCKED']) assert.equal(rowHasFinanceReview({ financeReviewStatus: status }), true, status);
     for (const row of [{ financeReviewStatus: 'NOT_REQUIRED' }, {}, null, undefined]) assert.equal(rowHasFinanceReview(row), false);
+  });
+});
+
+describe('rowMayBeDuplicate', () => {
+  it('warns of a possible or a confirmed duplicate from the row\'s own status, as the finance queue does', () => {
+    for (const status of ['POSSIBLE_DUPLICATE', 'CONFIRMED_DUPLICATE']) assert.equal(rowMayBeDuplicate({ duplicateStatus: status }), true, status);
+    for (const row of [{ duplicateStatus: 'NO_MATCH' }, { duplicateStatus: 'NOT_CHECKED' }, { duplicateStatus: 'OVERRIDDEN' }, {}, null, undefined]) {
+      assert.equal(rowMayBeDuplicate(row), false);
+    }
   });
 });
 

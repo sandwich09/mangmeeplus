@@ -469,6 +469,13 @@ describe('the approval queue offers only what the server says this viewer can do
     assert.ok(visible(hubTab('approvals', [row({ canApprove: false, canReject: true })])).includes('ดูรายละเอียด'));
   });
 
+  // Before: the mark was on finance-queue rows alone, so an approver first met it on the claim page.
+  it('marks a claim that may repeat another one อาจซ้ำ on its row, in the table and on the phone card', () => {
+    const marks = (duplicateStatus: string) => visible(hubTab('approvals', [{ ...row({ canApprove: true, canReject: true }), duplicateStatus }])).filter((text) => text === 'อาจซ้ำ').length;
+    assert.deepEqual([marks('POSSIBLE_DUPLICATE'), marks('CONFIRMED_DUPLICATE')], [2, 2]);
+    assert.deepEqual([marks('NO_MATCH'), marks('NOT_CHECKED'), marks('OVERRIDDEN')], [0, 0, 0]);
+  });
+
   // Payout Phase 1 on the same rows: a claim paid by transfer is approved on its own page, where the account is
   // shown and attested, and its button says so. It is still offered only where the row allows approving.
   it('names the approve button of a transfer claim for what it does, and offers it under the same rule', () => {

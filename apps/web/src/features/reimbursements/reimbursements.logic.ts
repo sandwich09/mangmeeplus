@@ -598,6 +598,14 @@ export function financeQueueWords(financeStep: boolean): { tab: string; descript
       emptyTitle: 'ไม่มีใบรอจ่าย', emptyDescription: 'คำขอที่อนุมัติแล้วและรอจ่ายเงินคืนจะแสดงที่นี่' };
 }
 
+/**
+ * Whether a row's claim may repeat another claim. Every list and queue row carries `duplicateStatus`, and this is the
+ * test the server makes the finance queue's `hasDuplicateBlocker` with, so an approval row warns by the same rule.
+ */
+export function rowMayBeDuplicate(row: { duplicateStatus?: string | null } | null | undefined): boolean {
+  return row?.duplicateStatus === 'POSSIBLE_DUPLICATE' || row?.duplicateStatus === 'CONFIRMED_DUPLICATE';
+}
+
 /** A queue row that goes, or went, through the finance review: its claim was sent while the company had that step. */
 export function rowHasFinanceReview(row: { financeReviewStatus?: string | null } | null | undefined): boolean {
   return !!row?.financeReviewStatus && row.financeReviewStatus !== 'NOT_REQUIRED';
