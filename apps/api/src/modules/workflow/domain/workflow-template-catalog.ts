@@ -321,7 +321,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'reimbursement_ready_for_payment',
     name: 'Reimbursement ready for payment',
-    description: 'Notify everyone who can record a reimbursement payment when a claim clears finance review.',
+    description: 'Notify everyone who can record this reimbursement payment, the person who approved it included, when a claim is ready for payment.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -335,14 +335,14 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           recipientPermissions: ['reimbursement.payment.record'],
           severity: 'action',
           titleTemplate: 'พร้อมจ่ายเบิกจ่าย: {{requestNo}}',
-          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอบันทึกการจ่ายเงิน',
+          // Worded as the reader's own next step: every recipient is someone who can record it.
+          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
-          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
-          // own action — a solo owner submitting/approving/paying their own claim gets none of
-          // these pushes. An owner-only company excluding the sole recipient is expected, not a
-          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
-          excludeRecipientPayloadKeys: ['actorUserId'],
-          skipWhenAllRecipientsExcluded: true,
+          // NO actor exclusion, unlike every other claim notice (audit B9, owner rule 2026-10-01:
+          // a claim has a requester and an approver, and the approver records the payment). The
+          // actor of this event approved the claim; paying it is a different step, and it is
+          // theirs. Excluding them left the approver-payer with no notice at all for the pay
+          // step, which is how approved claims sat unpaid in production.
         },
       },
     ],

@@ -116,7 +116,8 @@ describe('IngestWorkflowEventUseCase', () => {
   // Step-journey spec §11/§13 (AC10/AC11): every one of these also links straight to the claim's
   // journey page and excludes the event's own actor from its recipients, with a graceful skip
   // (never a dead-lettered retry) when that exclusion empties the recipient list — the exact
-  // shape of an owner-only company acting on its own claim.
+  // shape of an owner-only company acting on its own claim. "Ready for payment" is the one notice
+  // that keeps its actor (audit B9): they approved, and recording the payment is their next step.
   it('gives every reimbursement notification a body distinct from its title, the journey-page link, and actor exclusion', () => {
     const notifications = WORKFLOW_TEMPLATE_CATALOG
       .filter((entry) => entry.sourceModule === 'reimbursements' && entry.triggerType === 'EVENT')
@@ -129,6 +130,10 @@ describe('IngestWorkflowEventUseCase', () => {
       // A body worth pushing carries the figures the title does not.
       assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
       assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK, key);
+      if (key === 'reimbursement_ready_for_payment') {
+        assert.equal(cfg['excludeRecipientPayloadKeys'], undefined, key);
+        continue;
+      }
       assert.deepEqual(cfg['excludeRecipientPayloadKeys'], ['actorUserId'], key);
       assert.equal(cfg['skipWhenAllRecipientsExcluded'], true, key);
     }

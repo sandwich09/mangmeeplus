@@ -183,20 +183,43 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     });
   });
 
-  // AC11: the same actor-exclusion rule for the other two named self-notification cases — the
-  // approver who just approved does not hear "ready for payment" about their own approval, and the
-  // payer who just recorded a payment does not hear "paid" about their own payment. Both templates
-  // resolve recipients differently (permission-based vs payload-based), so each gets its own check.
-  describe('reimbursement notification actor exclusion for payment events (spec §11 / AC11)', () => {
-    it('ready_for_payment: excludes the approver/actor but still notifies another payment.record holder', async () => {
+  // AC11 says the actor of an event is not told about their own action: the payer who just
+  // recorded a payment does not hear "paid". "Ready for payment" is the exception (audit B9, owner
+  // rule 2026-10-01): its actor approved the claim, and the notice is about the NEXT step, which
+  // is theirs when they hold the pay right. Leaving them out is how approved claims sat unpaid.
+  describe('reimbursement payment notices and the actor of the event (spec §11 / AC11, audit B9)', () => {
+    const runReady = (payload: Record<string, unknown>) => {
       const ready = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_ready_for_payment')!;
-      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_finance']);
-      await make().execute(actionRun(ready.defaultActionJson[0]!.configJson), {
+      return make().execute(actionRun(ready.defaultActionJson[0]!.configJson), {
         companyId: 'co_1', ruleName: 'Reimbursement ready for payment', sourceModule: 'reimbursements',
         sourceType: 'reimbursement_request', sourceId: 'rb_1',
-        payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', actorUserId: 'u_owner' },
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', ...payload },
         siblingActions: [],
       } as any);
+    };
+
+    it('ready_for_payment: the approver who can record the payment is told, as their own next step', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_approver', 'u_finance']);
+      await runReady({ actorUserId: 'u_approver' });
+
+      const sent = (notify.execute.mock.calls[0] as any).arguments[0];
+      assert.deepEqual(sent.recipientUserIds, ['u_approver', 'u_finance']);
+      assert.equal(sent.body, 'ยอด 250 THB · รอคุณบันทึกการจ่ายเงิน');
+    });
+
+    it('ready_for_payment: a solo owner who approved their own claim gets the one notice to pay it', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner']);
+      await runReady({ requesterUserId: 'u_owner', actorUserId: 'u_owner' });
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_owner']);
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.equal(finalUpdate.status, 'SUCCEEDED');
+      assert.notEqual(finalUpdate.resultJson.skipped, true);
+    });
+
+    it('ready_for_payment: an approver without the pay right is not told to pay', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_finance']);
+      await runReady({ actorUserId: 'u_approver' });
 
       assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_finance']);
     });
@@ -240,7 +263,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 
     const sent = (notify.execute.mock.calls[0] as any).arguments[0];
     assert.equal(sent.title, 'พร้อมจ่ายเบิกจ่าย: RB-202608-00021');
-    assert.equal(sent.body, 'ยอด 250 THB · รอบันทึกการจ่ายเงิน');
+    assert.equal(sent.body, 'ยอด 250 THB · รอคุณบันทึกการจ่ายเงิน');
   });
 
   it('keeps the sibling-borrowed title but not the body on the pending-approval alert', async () => {
