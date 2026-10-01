@@ -359,6 +359,42 @@ export function withReceiptRestartDate(text: string, results: readonly ToolResul
     : `ใบเสร็จจะเริ่มนับใหม่ ${formatThaiDate({ day, month, yearBe: year + 543 })} ค่ะ`}`;
 }
 
+// ─── Advisor S1: expense.list_substitute_receipts_to_sign — the side the question names leads ──────
+// R1 integrated eval (2026-10-01, S-09): "มีใบรับรองรอฉันอนุมัติไหม" reached the tool with no role, so both sides came
+// back and the reply opened with their total ("ทั้งหมด 4 ฉบับ"), never the 3 waiting for approval. The side is read
+// from the question here, not left to the model: อนุมัติ/ตรวจรับ is the approver side, ผู้จ่าย the payer side.
+// เซ็น, ลงนาม, ลงลายมือชื่อ and ลงชื่อ name no side — people say them for approving too — and
+// beside อนุมัติ they may be the payer's step ("เซ็นหรืออนุมัติ"), so that question is left alone as well.
+// Only a reply whose first line does not already state that side's count gets one line that does; the rest
+// stays. A question naming neither side or both, a read that carried a role (one side returned) and an answer
+// that also reads another tool are left as they are.
+// ponytail: "already states it" is the count with its unit in the first line, whichever side that line names —
+// equal counts on both sides read as stated; match the side's wording too if that ever misleads.
+const SUBSTITUTE_QUEUE_TOOL = 'expense.list_substitute_receipts_to_sign';
+const APPROVER_SIDE_ASKED = /อนุมัติ|ตรวจรับ|\bapprov/iu;
+const PAYER_SIDE_ASKED = /ผู้จ่าย|\bpayer/iu;
+const SIGN_VERB_ASKED = /(?<!เปอร์)เซ็น|ลงนาม|ลงลายมือชื่อ|ลงชื่อ|\bsign/iu;
+
+export function withAskedSubstituteQueueSideLead(text: string, results: readonly ToolResult[], clauseText: string, english: boolean): string {
+  if (results.length === 0 || results.some((result) => result.toolName !== SUBSTITUTE_QUEUE_TOOL || result.status !== 'ok')) return text;
+  const queue = record(results[0]!.data);
+  const payer = record(queue?.['asPayer'])?.['count'], approver = record(queue?.['asApprover'])?.['count'];
+  if (typeof payer !== 'number' || typeof approver !== 'number') return text;
+  const question = clauseText.normalize('NFC');
+  const asksApprover = APPROVER_SIDE_ASKED.test(question);
+  if (asksApprover === PAYER_SIDE_ASKED.test(question) || (asksApprover && SIGN_VERB_ASKED.test(question))) return text;
+  const count = asksApprover ? approver : payer;
+  const firstLine = mapThaiDigits(text).split('\n').find((line) => line.trim()) ?? '';
+  const stated = count === 0 ? /ไม่มี|\bno\b|\bnone\b|(?<![\d,.])0\s*(?:ใบ|ฉบับ|รายการ)/iu
+    : new RegExp(`(?<![\\d,.])${count}${english ? '(?![\\d,.])' : '\\s*(?:ใบ|ฉบับ|รายการ)'}`, 'u');
+  if (stated.test(firstLine)) return text;
+  const side = asksApprover ? (english ? 'your approval' : 'รอคุณอนุมัติ') : (english ? 'your signature as the payer' : 'รอคุณลงลายมือชื่อในฐานะผู้จ่ายเงิน');
+  const lead = english
+    ? (count === 0 ? `No substitute receipt is waiting for ${side}.` : `${count} substitute receipt${count === 1 ? ' is' : 's are'} waiting for ${side}.`)
+    : (count === 0 ? `ไม่มีใบรับรองแทนใบเสร็จที่${side}ค่ะ` : `ใบรับรองแทนใบเสร็จที่${side}มี ${count} ใบค่ะ`);
+  return `${lead}\n${text}`;
+}
+
 function lastDayOfMonthCe(yearCe: number, month: number): number {
   return new Date(Date.UTC(yearCe, month, 0)).getUTCDate();
 }

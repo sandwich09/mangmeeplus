@@ -598,6 +598,19 @@ describe('IntentRouterAgent – conversation read memory (spec §4 R-M3/R-M4)', 
     assert.doesNotMatch(intakeRouterSystemPrompt(), /billing\.get_package_catalog/, 'the legacy prompt stays byte-exact');
   });
 
+  // Advisor R1 integrated eval (2026-10-01, S-09): next to S3's "these reads take no filter" rule the router sent
+  // "มีใบรับรองรอฉันอนุมัติไหม" to the substitute-receipt queue with no role on 3 of 4 approval questions. S3's rule
+  // keeps its own three tools; the queue tool's side filter is named right after it.
+  it('keeps the substitute-receipt queue\'s side filter apart from the reimbursement reads\' no-filter rule', () => {
+    const prompt = intakeRouterSystemPrompt({}, false, true);
+    assert.match(prompt, /reimbursement\.get_summary, reimbursement\.list_pending_approvals and reimbursement\.get_approval_backlog take no status, payment or name filter — the states they report are built in — so a state or a person in the question \(อนุมัติแล้ว, ยังไม่จ่าย, รอจ่าย, ที่รอสมศรี\) is never a filter on them; their only filter is requester "me" on reimbursement\.get_approval_backlog, when the user asks about their OWN claims \(ของฉัน, ที่ฉันขอ, ที่ฉันยื่น\)\. That no-filter rule covers those three reimbursement tools only: expense\.list_substitute_receipts_to_sign keeps its own role filter — payer or approver when the question names just that one side/);
+    assert.match(prompt, /"ใบรับรองรอฉันอนุมัติ", "มีใบรับรองให้ฉันอนุมัติไหม" are role approver; "ที่ฉันต้องเซ็นในฐานะผู้จ่ายเงิน" is role payer/);
+    // People say เซ็น for approving too: in the same run the router sent role payer on 3 of 8 bare-เซ็น questions,
+    // which hides the approver side from someone who only approves.
+    assert.match(prompt, /is role payer\)\. A bare sign verb \(เซ็น, ลงนาม, ลงลายมือชื่อ, ลงชื่อ\) names no side — people say it for approving too — so it carries no role and neither is passed: role approver is passed only for อนุมัติ\/ตรวจรับ, role payer only for ผู้จ่าย\. A ทำไม\/อธิบาย question/);
+    assert.doesNotMatch(intakeRouterSystemPrompt(), /keeps its own role filter|A bare sign verb/, 'the legacy prompt stays byte-exact');
+  });
+
   // N2 (tuning-8, T-107-b): reverses B4h (tuning-5b) — dropping categoryName/vendorName left the
   // router's own call an unfiltered ranking and nothing else, so "ทำไมค่าเดินทางเดือนนี้พุ่งขนาดนี้คะ"
   // never looked inside ค่าเดินทาง. semantic-turn-v2.ts's H2 already adds the unfiltered ranking sibling

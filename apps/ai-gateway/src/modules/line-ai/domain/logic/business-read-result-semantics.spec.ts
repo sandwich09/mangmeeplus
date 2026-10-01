@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { aggregateState, aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText,
   expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares,
   reimbursementApprovalNotPermittedReplyText, packageManagerRequiredReplyText, reimbursementPendingApprovalsTotal,
-  withoutUnaskedPackagePurchaseLine, withReceiptRestartDate } from './business-read-result-semantics';
+  withoutUnaskedPackagePurchaseLine, withReceiptRestartDate, withAskedSubstituteQueueSideLead } from './business-read-result-semantics';
 import type { ToolResult } from '@watchdog-bms/contracts';
 
 describe('business read result semantics', () => {
@@ -143,6 +143,70 @@ describe('a monthly receipt answer names its restart day (advisor eval r11 P-02)
     assert.equal(withReceiptRestartDate(text, [], false), text);
     // "1–31 ต.ค." is not the restart day of a month that restarts on 1 Oct either: the 1 of a range is not "1 ต.ค.".
     assert.equal(withReceiptRestartDate('รอบ 1–31 ต.ค. เหลือ 63 ใบ', [usage({ resetsOn: '2026-10-01' })], false).endsWith('ใบเสร็จจะเริ่มนับใหม่ 1 ต.ค. 2569 ค่ะ'), true);
+  });
+});
+
+describe('a substitute-receipt queue answer leads with the side the question names (advisor R1 integrated eval S-09)', () => {
+  const queue = (data: Record<string, unknown>): ToolResult => ({ toolName: 'expense.list_substitute_receipts_to_sign', status: 'ok', sourceRefs: [],
+    asOf: '2026-10-01T03:00:00.000Z', data: { accessScope: 'own', ...data } });
+  // S-09: shop B's owner — 1 to sign as the payer, 3 to approve (2 certified + 1 paper copy to accept).
+  const both = [queue({ total: 4, asPayer: { count: 1, items: [] },
+    asApprover: { count: 3, byStep: [{ stepLabel: 'รอคุณอนุมัติ', count: 2 }, { stepLabel: 'ฉบับกระดาษรอคุณตรวจรับ', count: 1 }], items: [] } })];
+  const s09 = 'มีใบรับรองแทนใบเสร็จรอคุณดำเนินการทั้งหมด 4 ฉบับค่ะ\n\nรอลงลายมือชื่อในฐานะผู้จ่ายเงิน (1 ฉบับ)\n• SRC-202610-00035 — ร้านถ่ายเอกสาร 420 บาท\n\n'
+    + 'รอคุณอนุมัติ (2 ฉบับ)\n• SRC-202610-00031 — ร้านวัสดุก่อสร้าง 1,500 บาท\n• SRC-202610-00032 — ร้านอะไหล่ 900 บาท\n\nฉบับกระดาษรอคุณตรวจรับ (1 ฉบับ)\n• SRC-202610-00033 — ร้านน้ำดื่ม 640 บาท';
+
+  it('S-09: both sides came back and the question names approval — the reply leads with the approval count and keeps the rest', () => {
+    for (const question of ['มีใบรับรองรอฉันอนุมัติไหม', 'มีใบรับรองให้ฉันอนุมัติไหมคะ', 'ใบรับรองแทนใบเสร็จที่รอฉันตรวจรับมีกี่ใบ']) {
+      assert.equal(withAskedSubstituteQueueSideLead(s09, both, question, false), `ใบรับรองแทนใบเสร็จที่รอคุณอนุมัติมี 3 ใบค่ะ\n${s09}`, question);
+    }
+    assert.equal(withAskedSubstituteQueueSideLead('4 substitute receipts are waiting for you.', both, 'Any substitute receipts waiting for my approval?', true),
+      '3 substitute receipts are waiting for your approval.\n4 substitute receipts are waiting for you.');
+  });
+
+  it('only a question that says ผู้จ่าย leads with the payer count', () => {
+    for (const question of ['มีใบรับรองที่ฉันต้องเซ็นในฐานะผู้จ่ายเงินไหม', 'ใบรับรองที่รอฉันในฐานะผู้จ่ายมีกี่ใบ', 'มีใบรับรองที่ฉันต้องลงนามในฐานะผู้จ่ายเงินไหม']) {
+      assert.equal(withAskedSubstituteQueueSideLead(s09, both, question, false), `ใบรับรองแทนใบเสร็จที่รอคุณลงลายมือชื่อในฐานะผู้จ่ายเงินมี 1 ใบค่ะ\n${s09}`, question);
+    }
+    assert.equal(withAskedSubstituteQueueSideLead('4 substitute receipts are waiting for you.', both, 'Which ones wait for me as the payer?', true),
+      '1 substitute receipt is waiting for your signature as the payer.\n4 substitute receipts are waiting for you.');
+  });
+
+  // People say เซ็น for approving too, so a sign verb names no side — S-04 "ต้องเซ็นอะไรบ้าง" keeps its both-sides answer.
+  it('a bare sign verb names no side: เซ็น, ลงนาม, ลงลายมือชื่อ and ลงชื่อ keep today\'s answer', () => {
+    for (const question of ['ต้องเซ็นอะไรบ้าง', 'ใบรับรองใบเสร็จกี่ใบที่ฉันต้องเซ็น', 'มีใบรับรองแทนใบเสร็จรอฉันเซ็นกี่ใบ', 'มีใบรับรองรอฉันลงนามไหม',
+      'ใบรับรองที่รอฉันลงลายมือชื่อมีกี่ใบ', 'มีใบรับรองให้ฉันลงชื่อไหม', 'Any substitute receipts for me to sign?']) {
+      assert.equal(withAskedSubstituteQueueSideLead(s09, both, question, question.startsWith('Any')), s09, question);
+    }
+  });
+
+  it('says so when nothing waits on the side asked about, even though the other side has some', () => {
+    const payerOnly = [queue({ total: 2, asPayer: { count: 2, items: [] }, asApprover: { count: 0, items: [] } })];
+    const text = 'มีใบรับรองแทนใบเสร็จรอคุณเซ็น 2 ใบค่ะ';
+    assert.equal(withAskedSubstituteQueueSideLead(text, payerOnly, 'มีใบรับรองรอฉันอนุมัติไหม', false), `ไม่มีใบรับรองแทนใบเสร็จที่รอคุณอนุมัติค่ะ\n${text}`);
+    const none = 'ตอนนี้ไม่มีใบรับรองแทนใบเสร็จที่รอคุณอนุมัติเลยค่ะ';
+    assert.equal(withAskedSubstituteQueueSideLead(none, payerOnly, 'มีใบรับรองรอฉันอนุมัติไหม', false), none, 'already says none first');
+  });
+
+  it('leaves a reply whose first line already states that side\'s count, in any unit or Thai digits', () => {
+    for (const stated of ['มีใบรับรองแทนใบเสร็จรอคุณอนุมัติ 3 ฉบับค่ะ\n• …', 'รอคุณอนุมัติอยู่ 3 ใบ และรอคุณเซ็น 1 ใบค่ะ', 'รอคุณอนุมัติ ๓ รายการค่ะ']) {
+      assert.equal(withAskedSubstituteQueueSideLead(stated, both, 'มีใบรับรองรอฉันอนุมัติไหม', false), stated);
+    }
+    // A 3 inside another number or a date is not the count: "13 ใบ", "3 ต.ค.".
+    assert.ok(withAskedSubstituteQueueSideLead('รวม 13 ใบ ณ 3 ต.ค. 2569', both, 'มีใบรับรองรอฉันอนุมัติไหม', false).startsWith('ใบรับรองแทนใบเสร็จที่รอคุณอนุมัติมี 3 ใบค่ะ\n'));
+  });
+
+  it('keeps today\'s answer when the question names neither side or both, the read carried a role, or another tool is in the answer', () => {
+    for (const question of ['ใบรับรองรอฉันกี่ใบ', 'มีอะไรค้างที่ฉันต้องทำบ้าง', 'คิดเป็นกี่เปอร์เซ็นต์ของทั้งหมด',
+      // Both sides named; and a sign verb beside อนุมัติ may be the payer's step, so the side is not clear.
+      'ใบรับรองที่รอฉันในฐานะผู้จ่ายหรือผู้อนุมัติมีกี่ใบ', 'มีใบรับรองที่ฉันต้องเซ็นหรืออนุมัติไหม', 'มีใบรับรองรอฉันเซ็นอนุมัติไหม']) {
+      assert.equal(withAskedSubstituteQueueSideLead(s09, both, question, false), s09, question);
+    }
+    const approverOnly = [queue({ total: 3, asApprover: { count: 3, items: [] } })];
+    assert.equal(withAskedSubstituteQueueSideLead(s09, approverOnly, 'มีใบรับรองรอฉันอนุมัติไหม', false), s09, 'the router already passed role approver');
+    const closing: ToolResult = { toolName: 'expense.get_daily_closing', status: 'ok', sourceRefs: [], asOf: '2026-10-01T03:00:00.000Z', data: {} };
+    assert.equal(withAskedSubstituteQueueSideLead(s09, [...both, closing], 'มีใบรับรองรอฉันอนุมัติไหม', false), s09);
+    assert.equal(withAskedSubstituteQueueSideLead(s09, [{ ...both[0]!, status: 'forbidden', data: undefined }], 'มีใบรับรองรอฉันอนุมัติไหม', false), s09);
+    assert.equal(withAskedSubstituteQueueSideLead(s09, [], 'มีใบรับรองรอฉันอนุมัติไหม', false), s09);
   });
 });
 

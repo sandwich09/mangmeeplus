@@ -24,6 +24,12 @@ Decisions:
   - Scope rule 2 covers substitute receipts: noun + sign/approve verb; a bare sign verb when no claim or expense is named; a verb-first imperative for these rules only.
   - The reply gives the reason and links `/expenses/substitute-receipts` on the sole-item path.
 - Page names: `expenses/substitute-receipts` → "หน้าใบรับรองแทนใบเสร็จบนเว็บ", `expenses/signatures` → "หน้าลายเซ็นของฉันบนเว็บ".
+- The side a queue question names (R1 integrated measurement, S-09; fix on `claude/advisor-r1-integration-fixes-20261001`):
+  - Router: S3's no-filter rule covers its three reimbursement reads only. One sentence after it says the queue tool keeps its `role` filter when the question names just one side.
+  - Router: a second sentence says a bare sign verb carries no role. A role is passed only for อนุมัติ/ตรวจรับ (approver) or ผู้จ่าย (payer).
+  - Backstop in code (`withAskedSubstituteQueueSideLead`): when the read carried no role and both sides came back, the reply leads with the count of the side the question names. อนุมัติ/ตรวจรับ is the approver side; only ผู้จ่าย is the payer side.
+  - เซ็น, ลงนาม, ลงลายมือชื่อ and ลงชื่อ name no side, because people say them for approving too. Beside อนุมัติ they may be the payer's step ("เซ็นหรืออนุมัติ"), so that question is left alone as well.
+  - Unchanged: a question naming neither side or both, a read that carried a role, an answer that also reads another tool, and a reply whose first line already states that count.
 Open questions:
 - Spec §4.2 says Q2 shows one clickable link. The card path appends every distinct source link as a button, so Q2 can show up to three (daily closing, substitute receipts, claims). Left for the owner/controller to decide.
 - Q2's substitute-receipt part sometimes still lists the documents despite the short-answer rule. Every figure is still grounded.
@@ -61,4 +67,11 @@ Verification:
   | run6 | 0f18c001 | 23/23 | 22.06 |
   | run7 | 0f18c001 | 23/23 | 21.48 |
 
-Next: controller review and integration; owner decision on Q2's link count.
+- R1 integrated measurement on 93302f09 (develop + S1 + S3 + S2a), same harness and scorer: int-s1-run1 22/23, 22.73 THB.
+  - S-09 missed: the router passed no role on 3 of 4 approval questions (3 of 20 in slice runs 3–7), so the reply opened with the total 4 and never stated the 3 to approve. Every figure in it was correct.
+  - Pass 2 was not run (no fix-and-rerun). Tools, Q1 fast lane and Q2 reads matched the slice runs; no timeouts or stock lines.
+- S-09 fix (code only, no model calls) on the fixes branch:
+  - Gateway typecheck clean; gateway suite 1529/0; touched and related specs 221/0; capability manifest unchanged.
+  - Every router prompt variant equals 93302f09 byte for byte apart from the two inserted sentences. The planner and compose prompts are untouched.
+  - A model-free replay over the 162 recorded answers changes 1: S-09. "ต้องเซ็นอะไรบ้าง" (S-04) keeps its answer.
+Next: controller decides on a second integrated pass with the fix; owner decision on Q2's link count.

@@ -22,7 +22,7 @@ import { expenseNameResolutionIssue, expenseNameResolutionReplyText, type Expens
   reimbursementPendingApprovalsTotal, emptyApprovalBacklogReplyText, approvalBacklogStageWording,
   REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText,
   PACKAGE_MANAGER_REQUIRED, packageManagerRequiredReplyText, PACKAGE_TOOL_NAMES, withoutUnaskedPackagePurchaseLine,
-  withReceiptRestartDate } from '../domain/logic/business-read-result-semantics';
+  withReceiptRestartDate, withAskedSubstituteQueueSideLead } from '../domain/logic/business-read-result-semantics';
 import { scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic';
 import { completeReimbursementDraftInput } from './reimbursement-draft-input';
 
@@ -1240,6 +1240,11 @@ export async function runSemanticTurnV2(input: {
       answer.text = withoutUnaskedPackagePurchaseLine(answer.text, itemText.get(item.index) ?? req.messageText);
       // Eval r11 P-02: a receipt answer on a monthly allowance always names the day the count starts again.
       if (answer.status === 'handled') answer.text = withReceiptRestartDate(answer.text, good, language === 'en');
+    }
+    // Advisor S1 (R1 integrated eval, S-09): a queue question that names one side leads with that side's count even
+    // when the read carried no role and both sides came back.
+    if (modelComposed && answer.status === 'handled') {
+      answer.text = withAskedSubstituteQueueSideLead(answer.text, good, itemText.get(item.index) ?? req.messageText, language === 'en');
     }
     // E6 (tuning-6a, T-148-b): a composed answer built from an own/related-scoped result must say
     // so — never silently, and never with the model's own (possibly wrong) description of the
