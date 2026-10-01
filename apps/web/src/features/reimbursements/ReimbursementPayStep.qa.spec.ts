@@ -712,3 +712,33 @@ describe('pay step: plain Thai on a 390 px phone (Owner rule 2026-09-27/29)', ()
     assert.match(rows, /<div className="mt-1 break-words text-gray-600">\s+<MangmeeBadge tone="amber">\{PAID_DIFFERENTLY_LABEL\}<\/MangmeeBadge>/);
   });
 });
+
+// Spec §12.8: voiding a payment also undoes its match to a bank statement line, in the same transaction. The
+// dialog said what happens to the journal and to the claim, and nothing of the bank match.
+describe('the void dialog says everything a void undoes', () => {
+  const dialog = () => {
+    Object.assign(globalThis, { document: { body: {} } }); // Modal's portal target; never touched by a server render
+    try {
+      return renderWithState(h(sections.VoidPaymentDialog, { payment: { id: ids.payment, paymentNo: 'RBPAY-202610-00001' }, onClose: noop, onConfirm: noop }), () => undefined);
+    } finally { Reflect.deleteProperty(globalThis, 'document'); }
+  };
+
+  it('names the journal, the claim going back to wait for payment, and the bank match', () => {
+    const texts = visible(dialog());
+    const warning = texts.find((text) => text.includes('ระบบจะกลับรายการจ่าย'));
+    assert.ok(warning, texts.join(' | '));
+    assert.ok(warning.endsWith('ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ใบเบิกจะกลับไปสถานะรอจ่าย ถ้าการจ่ายนี้จับคู่กับรายการเดินบัญชีธนาคารไว้แล้ว ระบบจะยกเลิกการจับคู่นั้นให้ด้วย'), warning);
+    // The words of the bank page's own control for the same act.
+    assert.match(read('../banking/MatchingPanel.tsx'), /ยกเลิกการจับคู่/);
+    for (const text of ['ยกเลิกการจ่าย RBPAY-202610-00001', 'เหตุผล *', 'ยืนยันว่าได้ตรวจสอบและจัดการรายการเงินจริงกับธนาคาร/ผู้รับเงินแล้ว', 'ยืนยันยกเลิกการจ่าย']) assert.ok(texts.includes(text), text);
+  });
+
+  it('is plain Thai, and still asks for a reason and the acknowledgement before it can be confirmed', () => {
+    const html = dialog();
+    for (const raw of visible(html)) {
+      const shown = raw.replace('RBPAY-202610-00001', '');
+      for (const [name, pattern] of MACHINE_TOKENS) assert.doesNotMatch(shown, pattern, `${name}: ${raw}`);
+    }
+    assert.match(html, /<button type="button" class="[^"]*" disabled="" aria-busy="false">ยืนยันยกเลิกการจ่าย<\/button>/);
+  });
+});

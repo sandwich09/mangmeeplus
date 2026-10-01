@@ -135,7 +135,8 @@ export function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: 
   return (
     <Modal open title={`ยกเลิกการจ่าย ${payment.paymentNo ?? ''}`.trim()} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <div className="space-y-4">
-        <ErrorBanner message="ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ใบเบิกจะกลับไปสถานะรอจ่าย" />
+        {/* Spec §12.8: a void also undoes the payment's match to a bank statement line, in the same transaction. */}
+        <ErrorBanner message="ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ใบเบิกจะกลับไปสถานะรอจ่าย ถ้าการจ่ายนี้จับคู่กับรายการเดินบัญชีธนาคารไว้แล้ว ระบบจะยกเลิกการจับคู่นั้นให้ด้วย" />
         {error && <ErrorBanner message={error} />}
         <div>
           <label className="mb-1.5 block text-xs font-semibold text-gray-600">เหตุผล *</label>
