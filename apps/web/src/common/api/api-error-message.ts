@@ -1094,6 +1094,8 @@ const MESSAGE_LABELS: Record<string, string> = {
   'Insufficient permissions.': CODE_LABELS['insufficient_permissions']!,
   'Access denied': CODE_LABELS['insufficient_permissions']!,
   'Branch is outside your assigned branch scope.': 'รายการนี้อยู่นอกสาขาที่คุณได้รับมอบหมาย',
+  // หน้าพนักงานล็อกตัวเลือกสาขาไว้ให้แล้ว ข้อความนี้มีไว้สำหรับหน้าที่เปิดค้างก่อนข้อมูลเปลี่ยน
+  "Cannot assign access outside the requester's branch scope.": 'เปลี่ยนสาขาของพนักงานคนนี้ไม่ได้ เพราะพนักงานอยู่ในสาขาที่บัญชีของคุณเข้าไม่ถึง หรือสาขาที่เลือกอยู่นอกสาขาของคุณ กรุณาติดต่อเจ้าของร้าน',
   'Expense requires a receipt attachment or a missing receipt reason.':
     'ต้องแนบไฟล์ใบเสร็จ หรือระบุเหตุผลที่ไม่มีใบเสร็จ ก่อนยืนยันลงบัญชี',
   'Every VAT-bearing expense line requires a server-resolved Tax Code snapshot before confirmation.':
