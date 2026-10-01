@@ -369,6 +369,18 @@ export function payoutSubmitToken(claimId: string, plan: SubmitPayoutPlan): stri
 }
 
 /**
+ * Names the requester's default account as a correction form shows it (payout spec §14.5), by the
+ * token a draft's page gets for the same account: choosing "use the default account" sends it back, and
+ * a default that is no longer that account refuses the correction. Undefined: there is no default to use.
+ */
+export function payoutDefaultToken(
+  claimId: string,
+  defaultAccount: { payoutMethod: ReimbursementPayoutMethod; fingerprint?: string | null } | null | undefined,
+): string | undefined {
+  return payoutSubmitToken(claimId, planSubmitPayout({ payoutMethod: null }, [], defaultAccount));
+}
+
+/**
  * A claim going back to draft (rejected, withdrawn, sent back by finance) follows the default again
  * when its frozen account was a copy of the default, so the next submit takes the latest one. An
  * account named for this claim stays the draft's choice.

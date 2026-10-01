@@ -6845,6 +6845,18 @@ model ReimbursementRequest {
   /// The claim's own account snapshot (ReimbursementPayoutDestination.version); NULL for cash.
   payoutDestinationVersion     Int?
   payoutFingerprint            String?
+  /// A payout account correction round (payout spec §14): a claim sent back from the pay step waits,
+  /// as PENDING_APPROVAL, for its requester to give the account and for its approvers to approve it.
+  /// These five are set while it does and NULL again once it is ready for payment.
+  payoutCorrectionRequestedAt       DateTime?
+  payoutCorrectionRequestedByUserId String?
+  payoutCorrectionReasonCode        String?
+  payoutCorrectionNote              String?
+  /// When the account was given again. NULL while the claim still waits for its requester.
+  payoutCorrectionSubmittedAt       DateTime?
+  /// What happened in every correction round of the claim, oldest first (sent back by whom and why,
+  /// account given, approved again). Kept when the five columns above are cleared.
+  payoutCorrectionLogJson           Json?
   paymentTotalAmount           Decimal                               @default(0) @db.Decimal(18, 4)
   outstandingAmount            Decimal                               @default(0) @db.Decimal(18, 4)
   idempotencyKey               String?

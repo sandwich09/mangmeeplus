@@ -15,6 +15,7 @@ import type {
   ReimbursementClaimSignatureRole,
   ReimbursementPaymentMethod,
   ReimbursementPayoutMethod,
+  ReimbursementPayoutCorrectionReason,
   ReimbursementApproverMode,
   ReimbursementDuplicatePolicy,
   ReimbursementPolicyStatus,
@@ -166,6 +167,34 @@ export type ReimbursementSignedCopyAck = {
   acknowledgedByUserId: string;
   acknowledgedAt: string;
   checksumSha256: string | null;
+  /**
+   * The account version the claim carried when the scan was declared (payout spec §19): null for cash
+   * and for a legacy claim, absent on a declaration made before this was kept.
+   */
+  payoutDestinationVersion?: number | null;
+};
+
+/**
+ * One step of a payout account correction round, as the claim keeps it (`payoutCorrectionLogJson`).
+ * Ids and codes only: the note is the one free text, and it is refused when it carries an account number.
+ */
+export type ReimbursementPayoutCorrectionLogEntry = {
+  kind: 'SENT_BACK' | 'ACCOUNT_SUBMITTED' | 'REAPPROVED';
+  at: string;
+  byUserId: string;
+  /** SENT_BACK. */
+  reasonCode?: ReimbursementPayoutCorrectionReason;
+  note?: string;
+  /**
+   * SENT_BACK from the pay step, which opens a round: what the claim was approved with and when. A
+   * claim sent back again while its new account waits carries none; the round is still that one.
+   */
+  approved?: { payoutMethod?: ReimbursementPayoutMethod; payoutVersion?: number; at?: string };
+  /** ACCOUNT_SUBMITTED: what the claim was given. */
+  payoutMethod?: ReimbursementPayoutMethod;
+  payoutVersion?: number;
+  /** REAPPROVED: the step that approved the account. */
+  approvalStepId?: string;
 };
 
 export type ReimbursementRequestRecord = {
@@ -212,6 +241,18 @@ export type ReimbursementRequestRecord = {
   /** The claim's own account snapshot version; undefined for cash. */
   payoutDestinationVersion?: number;
   payoutFingerprint?: string;
+  /**
+   * A payout account correction round (payout spec §14). Set from the moment the claim is sent back
+   * from the pay step until it is ready for payment again; `payoutCorrectionPhase` reads them.
+   */
+  payoutCorrectionRequestedAt?: Date;
+  payoutCorrectionRequestedByUserId?: string;
+  payoutCorrectionReasonCode?: string;
+  payoutCorrectionNote?: string;
+  /** Set once the requester has given the account again: a new approval step waits from here. */
+  payoutCorrectionSubmittedAt?: Date;
+  /** Every step of every round, oldest first. Outlives the round. */
+  payoutCorrectionLog?: ReimbursementPayoutCorrectionLogEntry[];
   paymentTotalAmount: string;
   outstandingAmount: string;
   idempotencyKey?: string;

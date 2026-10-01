@@ -900,6 +900,22 @@ export const REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH = 500;
  */
 export type ReimbursementPayoutCorrectionPhase = 'AWAITING_REQUESTER' | 'AWAITING_APPROVAL';
 
+/**
+ * Whether a claim is in a correction round, and whom it waits for, from the claim's own columns. A
+ * claim in a round is PENDING_APPROVAL, so every reader of that status asks this before it treats
+ * the claim as waiting for its approver: sent back and still without its account it waits for its
+ * requester, with no approval step open at all. The one definition for the API's modules; a list
+ * row and a claim detail carry the answer as `payoutCorrectionPhase`.
+ */
+export function reimbursementPayoutCorrectionPhase(claim: {
+  status?: string;
+  payoutCorrectionRequestedAt?: unknown;
+  payoutCorrectionSubmittedAt?: unknown;
+}): ReimbursementPayoutCorrectionPhase | undefined {
+  if (claim.status !== 'PENDING_APPROVAL' || !claim.payoutCorrectionRequestedAt) return undefined;
+  return claim.payoutCorrectionSubmittedAt ? 'AWAITING_APPROVAL' : 'AWAITING_REQUESTER';
+}
+
 /** What a claim in a round is said to wait for: the status badge of the web and the LINE backlog answer use these words. */
 export const REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS: Record<ReimbursementPayoutCorrectionPhase, string> = {
   AWAITING_REQUESTER: 'รอผู้เบิกแก้บัญชีรับเงิน',

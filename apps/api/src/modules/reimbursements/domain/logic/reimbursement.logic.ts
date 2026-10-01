@@ -5,7 +5,9 @@
 
 import { createHash } from 'node:crypto';
 import { Decimal } from 'decimal.js';
-import { isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate } from '@watchdog-bms/contracts';
+import {
+  isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, reimbursementPayoutCorrectionPhase, todayCivilDate,
+} from '@watchdog-bms/contracts';
 import type {
   ReimbursementRequestStatus,
   ReimbursementApprovalStepStatus,
@@ -13,6 +15,7 @@ import type {
   ReimbursementFinanceReviewStatus,
   ReimbursementPaymentMethod,
   ReimbursementPaymentSourceRef,
+  ReimbursementPayoutCorrectionPhase,
   ReimbursementReceiptRequirementStatus,
   ReimbursementPolicySnapshotV1,
 } from '@watchdog-bms/contracts';
@@ -382,14 +385,63 @@ export function isSelfApproval(
  * rule of each decider and takes the latest. The workflow reminder scan reads the same person with a
  * query (`findClaimApprovers`), which restates the rule because it cannot call it.
  */
-export function claimApproverUserId(claim: {
+export function claimApproverUserId(claim: Parameters<typeof claimApprovalStep>[0]): string | undefined {
+  return claimApprovalStep(claim)?.decisionByUserId ?? undefined;
+}
+
+/**
+ * The approval the claim stands on: the step that same rule answers for, the latest when there are
+ * several. The printed form's ผู้อนุมัติ block and the right to sign it read this step, so the paper,
+ * the signature and the page name one person. A claim whose approval was invalidated (its payout
+ * account is being corrected, payout spec §14) or was given before the claim was last sent has none.
+ */
+export function claimApprovalStep<Step extends { status: string; decisionByUserId?: string | null; decidedAt?: Date | null; invalidatedAt?: Date | null }>(claim: {
   submittedAt?: Date | null;
-  approvalSteps?: ReadonlyArray<{ status: string; decisionByUserId?: string | null; decidedAt?: Date | null; invalidatedAt?: Date | null }>;
-}): string | undefined {
+  approvalSteps?: readonly Step[];
+}): Step | undefined {
   return (claim.approvalSteps ?? [])
     .filter((step) => !!step.decisionByUserId
       && isReimbursementClaimApprover(step.decisionByUserId, { submittedAt: claim.submittedAt, approvalSteps: [step] }))
-    .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0]?.decisionByUserId ?? undefined;
+    .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0];
+}
+
+// ---- Payout account correction round (payout spec §14) ----
+
+/** `invalidatedReason` of every approval step a correction round sets aside: the approval it replaces, and each step of the round that did not end in approval. */
+export const PAYOUT_CORRECTION_STEP_REASON = 'payout_account_correction';
+
+/** Whether a claim is in a correction round, and whom it waits for: the contracts rule, under the name this module calls it by. */
+export const payoutCorrectionPhase = reimbursementPayoutCorrectionPhase;
+
+/**
+ * The approval step a round's new step takes its approvers from (payout spec §14.5): the one still
+ * waiting when the account is given a second time, else the one the round last set aside when the
+ * claim was sent back. The new step copies who it names, so the same people approve the account,
+ * and the step's own recovery rule (its recorded role, or the owner) applies when none of them can
+ * act any more. None: nobody had to approve this claim, and it needs no approval now.
+ */
+export function payoutCorrectionSourceStep<Step extends { id: string; status: string; invalidatedAt?: Date | null; invalidatedReason?: string | null }>(claim: {
+  currentApprovalStepId?: string | null;
+  payoutCorrectionRequestedAt?: Date | null;
+  approvalSteps?: readonly Step[];
+}): Step | undefined {
+  const steps = claim.approvalSteps ?? [];
+  const waiting = steps.find((step) => step.id === claim.currentApprovalStepId && step.status === 'PENDING');
+  if (waiting) return waiting;
+  const since = claim.payoutCorrectionRequestedAt?.getTime();
+  if (since === undefined) return undefined;
+  return steps
+    .filter((step) => step.invalidatedReason === PAYOUT_CORRECTION_STEP_REASON && !!step.invalidatedAt && step.invalidatedAt.getTime() >= since)
+    .sort((a, b) => b.invalidatedAt!.getTime() - a.invalidatedAt!.getTime())[0];
+}
+
+/**
+ * Since when a claim waits for its approvers: the day it was sent, or, in a correction round, the
+ * moment its new account was given. The approval queue's age, the deadline reminder and the LINE
+ * backlog count from here, so a round's approvers are not held to a wait that was not theirs.
+ */
+export function approvalWaitStartedAt(claim: { submittedAt?: Date | null; payoutCorrectionSubmittedAt?: Date | null }): Date | undefined {
+  return claim.payoutCorrectionSubmittedAt ?? claim.submittedAt ?? undefined;
 }
 
 /**
@@ -410,10 +462,12 @@ export function paymentTurnUserIds(claim: Parameters<typeof claimApproverUserId>
 
 const ALLOWED_TRANSITIONS: Record<ReimbursementRequestStatus, ReimbursementRequestStatus[]> = {
   DRAFT: ['PENDING_APPROVAL', 'CANCELLED'],
-  PENDING_APPROVAL: ['APPROVED', 'REJECTED', 'CANCELLED', 'DRAFT'],
+  // READY_FOR_PAYMENT: only out of a payout account correction round, whose approval moves the claim on in one step.
+  PENDING_APPROVAL: ['APPROVED', 'REJECTED', 'CANCELLED', 'DRAFT', 'READY_FOR_PAYMENT'],
   APPROVED: ['FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'CANCELLED', 'VOIDED'],
   FINANCE_REVIEW: ['READY_FOR_PAYMENT', 'APPROVED', 'CANCELLED', 'VOIDED'],
-  READY_FOR_PAYMENT: ['PAID', 'PARTIALLY_PAID', 'FINANCE_REVIEW', 'CANCELLED', 'VOIDED'],
+  // PENDING_APPROVAL: sent back to have its payout account corrected.
+  READY_FOR_PAYMENT: ['PAID', 'PARTIALLY_PAID', 'FINANCE_REVIEW', 'CANCELLED', 'VOIDED', 'PENDING_APPROVAL'],
   PARTIALLY_PAID: ['PAID', 'VOIDED'],
   REJECTED: ['DRAFT'],
   CANCELLED: [],
@@ -451,6 +505,7 @@ export function pendingProjectionIntent(request: {
   financeReviewedByUserId?: string | null;
   currentApprovalStepId?: string | null;
   cancellationPendingAt?: Date | null;
+  payoutCorrectionRequestedAt?: Date | null;
   requesterUserId: string;
   submittedByUserId?: string | null;
   approvalPolicySnapshotJson?: unknown;
@@ -458,6 +513,9 @@ export function pendingProjectionIntent(request: {
 }): PendingProjectionIntent | undefined {
   if (request.cancellationPendingAt) return undefined;
   if (request.status === 'PENDING_APPROVAL') {
+    // A claim in a payout account correction round holds no decision to carry out: its expense records
+    // stand, and its approval moves it on in the approval's own transaction (payout spec §14.6).
+    if (request.payoutCorrectionRequestedAt) return undefined;
     const step = request.approvalSteps?.find((candidate) => candidate.id === request.currentApprovalStepId);
     return step?.status === 'APPROVED' && step.decisionByUserId
       ? { kind: 'MANAGER', actorUserId: step.decisionByUserId, approvalStepId: step.id } : undefined;
@@ -501,6 +559,8 @@ export function currentDesk(input: {
   names?: Record<string, string>;
   /** A cancellation was started and has not completed. */
   cancellationPending?: boolean;
+  /** The claim's place in a payout account correction round (`payoutCorrectionPhase`), when it is in one. */
+  payoutCorrectionPhase?: ReimbursementPayoutCorrectionPhase;
 }): ReimbursementCurrentDesk | undefined {
   // A claim being cancelled is with the system whatever its status: nobody approves or pays it meanwhile
   // (audit B3). A finished claim keeps having no desk.
@@ -516,6 +576,10 @@ export function currentDesk(input: {
     default: return undefined;
   }
   if (input.cancellationPending) return { kind: 'SYSTEM' };
+  // Sent back to have its payout account corrected (payout spec §14.2): no step is open, and that is
+  // not a decision waiting for the system. The claim is with its requester until they give the account;
+  // after that the new step below names its approvers like any other.
+  if (input.payoutCorrectionPhase === 'AWAITING_REQUESTER') return { kind: 'REQUESTER' };
   const step = [...(input.steps ?? [])]
     .filter((s) => s.status === 'PENDING' && !s.invalidatedAt)
     .sort((a, b) => a.sequenceNo - b.sequenceNo)[0];
