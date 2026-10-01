@@ -533,6 +533,8 @@ describe('the receiving account on the printed claim form', () => {
     const second = await print(auditor);
     const third = await print(requester);
 
+    // Who asks and which claim: the use case takes nothing else, so nothing a caller sends picks the variant.
+    assert.equal(PreviewReimbursementClaimFormUseCase.prototype.execute.length, 2);
     assert.ok(imagesOf(first).every((image) => image.includes(NUMBER)));
     assert.ok(imagesOf(second).every((image) => !image.includes(NUMBER)), 'a print for one reader is never handed to another');
     assert.deepEqual(third, first, 'the same reader gets the same print again');
