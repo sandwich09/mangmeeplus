@@ -3,8 +3,8 @@
  * `reimbursement-payout.ts` calls. Use-case specs run the real payout functions over it, so they
  * exercise the same code as production instead of a hand-written imitation of it.
  *
- * It keeps the two database rules that matter to those specs: one row per (claim, version), and a
- * frozen version whose account can no longer change (the migration's trigger).
+ * It keeps the database rules that matter to those specs: one row per (claim, version), and a frozen
+ * version whose account can no longer change or be deleted (the migrations' triggers).
  */
 const ATTESTATION_COLUMNS = new Set(['verifiedByUserId', 'verifiedAt', 'verifiedVia', 'approvalStepId']);
 
@@ -92,6 +92,8 @@ export function fakePayoutTables() {
         return { count: rows.length };
       },
       deleteMany: async ({ where }: any) => {
+        // The delete guard: a frozen snapshot is never removed on its own.
+        if (destinations.some((row) => matches(row, where) && row.frozenAt)) throw new Error('reimbursement_payout_destination_frozen');
         const kept = destinations.filter((row) => !matches(row, where));
         const count = destinations.length - kept.length;
         destinations.splice(0, destinations.length, ...kept);

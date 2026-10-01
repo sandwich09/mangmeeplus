@@ -1075,6 +1075,34 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     assert.deepEqual(await repos[0]!.findClaimPayout(after), before.shown);
   });
 
+  // A frozen snapshot is history: what an approver attested and what a payment went to. It is never
+  // removed on its own, by any code. It goes only together with its claim.
+  it('refuses deleting a frozen snapshot on its own, and still lets it go with its claim', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    await setDefault(KBANK);
+    const { pending } = await submit(await draft('frozen snapshot is not deleted'));
+    const [frozen] = await destinationsOf(pending.id);
+    assert.ok(frozen!.frozenAt);
+    for (const [label, run] of Object.entries({
+      'by id': () => db.reimbursementPayoutDestination.delete({ where: { id: frozen!.id } }),
+      'by claim': () => db.reimbursementPayoutDestination.deleteMany({ where: { reimbursementRequestId: pending.id } }),
+      'in SQL': () => db.$executeRaw`DELETE FROM "ReimbursementPayoutDestination" WHERE "id" = ${frozen!.id}`,
+    })) await refusedBy(run, /reimbursement_payout_destination_frozen/, label);
+    assert.equal((await destinationsOf(pending.id)).length, 1);
+    // Withdrawn to a draft again, an account typed for the claim is a working row beside the history:
+    // the working row is replaced or dropped freely, the frozen one stays.
+    const reopened = await repos[0]!.reopenRejectedRequest(companyId, pending.id, pending.updatedAt, requester, 'PENDING_APPROVAL');
+    const typed = await repos[0]!.updateDraftRequest(companyId, pending.id, reopened.updatedAt, {}, undefined,
+      { write: { mode: 'SPECIFIED', destination: seal(SCB), source: 'REQUESTER', actorUserId: requester } });
+    assert.deepEqual((await destinationsOf(pending.id)).map((row) => [row.version, row.frozenAt !== null]), [[1, true], [2, false]]);
+    await repos[0]!.updateDraftRequest(companyId, pending.id, typed.updatedAt, {}, undefined, { write: { mode: 'CASH' } });
+    assert.deepEqual((await destinationsOf(pending.id)).map((row) => [row.version, row.frozenAt !== null]), [[1, true]]);
+    // The claim itself deleted (a company or a claim removed outright): its snapshots go with it.
+    await db.reimbursementRequest.delete({ where: { id: pending.id } });
+    assert.equal((await destinationsOf(pending.id)).length, 0);
+  });
+
   it('sends the claim with the account its page showed: a default changed, removed or never shown refuses the submit', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     await setDefault(KBANK);

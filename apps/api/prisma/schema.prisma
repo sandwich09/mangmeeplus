@@ -7086,8 +7086,8 @@ model MemberPayoutAccount {
 }
 
 /// The claim's own copy of the account it is paid into, one row per version (payout spec §9). A row
-/// with `frozenAt` set is what the approver attests and the payer pays; the migration's trigger lets
-/// only the verification columns change after that.
+/// with `frozenAt` set is what the approver attests and the payer pays; the migrations' triggers let
+/// only the verification columns change after that, and refuse deleting it while its claim exists.
 model ReimbursementPayoutDestination {
   id                     String               @id @default(cuid())
   companyId              String
