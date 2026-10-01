@@ -544,7 +544,8 @@ export class PrismaReimbursementRepository {
       await this.lockRequest(tx, companyId, requestId);
       const payoutColumns = payout ? await applyDraftPayout(tx, companyId, requestId, payout.write) : {};
       const changed = await tx.reimbursementRequest.updateMany({
-        where: { id: requestId, companyId, status: 'DRAFT', updatedAt: expectedUpdatedAt },
+        // Not while the draft is being cancelled (audit B3): answered like any other change under the editor.
+        where: { id: requestId, companyId, status: 'DRAFT', updatedAt: expectedUpdatedAt, cancellationPendingAt: null },
         data: { ...data, ...payoutColumns, updatedAt: this.nextVersion(expectedUpdatedAt) },
       });
       if (changed.count !== 1) throw this.draftChanged();
@@ -917,6 +918,7 @@ export class PrismaReimbursementRepository {
       await this.assertEvidenceAvailable(tx, data.companyId, data.requestId, data.evidence);
       const sourceRequest = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId: data.companyId, id: data.requestId }, include: { lines: true } });
       const draft = this.toRequest(sourceRequest);
+      this.assertNotBeingCancelled(draft);
       await assertReimbursementSources(tx, draft);
       // Before anything is written: what this submit freezes, and the hash that binds it.
       const payout = data.payout ? await freezePayoutAtSubmit(tx, draft, data.payout) : undefined;
@@ -1407,6 +1409,15 @@ export class PrismaReimbursementRepository {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${requestId}:reimbursement-request`}))`;
   }
 
+  /**
+   * A claim being cancelled takes no other decision until that cancellation is finished or
+   * withdrawn (audit B3). A decision taken in between could leave it in a status the cancellation
+   * cannot complete from, or build expense records the cancellation then has to void.
+   */
+  private assertNotBeingCancelled(row: { cancellationPendingAt?: Date | null }): void {
+    if (row.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
+  }
+
   private assertDecisionBranch(
     branchId: string | null | undefined,
     scopes: { branchIds?: string[] },
@@ -1735,6 +1746,7 @@ export class PrismaReimbursementRepository {
       if (row.status !== 'FINANCE_REVIEW') {
         throw new UnprocessableEntityException(`Cannot finance-review from status ${row.status}`);
       }
+      this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('stale_finance_review_snapshot');
       }
@@ -1805,6 +1817,7 @@ export class PrismaReimbursementRepository {
       if (!['APPROVED', 'READY_FOR_PAYMENT'].includes(row.status)) {
         throw new UnprocessableEntityException(`Cannot resolve duplicates from status ${row.status}`);
       }
+      this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) throw this.requestChanged();
       this.assertDecisionBranch(row.branchId, data.scopes);
       await this.overrideOpenDuplicates(tx, data.companyId, data.requestId, data.actorUserId, data.resolvedAt, data.reason);
@@ -1851,6 +1864,7 @@ export class PrismaReimbursementRepository {
       if (row.status !== 'FINANCE_REVIEW') {
         throw new UnprocessableEntityException(`Cannot finance-review from status ${row.status}`);
       }
+      this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('stale_finance_review_snapshot');
       }
@@ -1949,6 +1963,8 @@ export class PrismaReimbursementRepository {
       if (!row) throw new NotFoundException('Reimbursement request not found');
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes, data.systemReconcile, data.expectedBranchId);
+      // No expense record is built for a claim that is being cancelled: the cancellation would have to void it.
+      this.assertNotBeingCancelled(request);
       if (data.decisionKind === 'MANAGER') {
         if (request.status !== 'PENDING_APPROVAL' || request.currentApprovalStepId !== data.approvalStepId) {
           throw new ConflictException('reimbursement_projection_decision_changed');
@@ -2428,6 +2444,7 @@ export class PrismaReimbursementRepository {
       if (row.status !== 'PENDING_APPROVAL') {
         throw new UnprocessableEntityException(`Cannot reject from status ${row.status}`);
       }
+      this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('stale_approval_snapshot');
       }

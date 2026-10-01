@@ -2243,6 +2243,61 @@ describe('a claim is never left half cancelled (real PostgreSQL)', () => {
     assert.deepEqual([(await stored(claim)).expenses, (await stored(claim)).reversals, (await stored(claim)).cancelledEvents], [['VOIDED', 'VOIDED'], 2, 1]);
   });
 
+  // Before: only approval and payment were refused. A rejection, a finance decision or a submit taken while
+  // a cancellation was pending moved the claim to a status the cancellation could not complete from.
+  it('takes no other decision on a claim while its cancellation is pending, and takes them again once it is withdrawn', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const noop = async () => undefined;
+    /** A claim put in `status` the short way: the guard under test sits right after each transaction's status check. */
+    const claimIn = async (status: string, extra: Record<string, unknown> = {}) => {
+      const index = ++sequence;
+      const request = await repos[0]!.createRequest({
+        companyId, branchId, requesterUserId: STAFF, requesterDisplayNameSnapshot: 'สมชาย พนักงาน', reason: `guard-${index}`, categoryKey: 'travel',
+        amount: '100.0000', currency: 'THB', incurredDate: day, receiptRequirementStatus: 'WAIVED_BY_POLICY', createdByUserId: STAFF,
+        lines: [{ lineNo: 1, incurredDate: day, description: 'รายการ', categoryKey: 'travel', amount: '100.0000' }],
+      });
+      if (status !== 'DRAFT') await db.reimbursementRequest.update({ where: { id: request.id }, data: { status: status as any, submittedAt: day, ...extra } });
+      return (await repos[0]!.findRequestById(companyId, request.id))!;
+    };
+    const decision = (request: { id: string; updatedAt: Date }) => ({ companyId, requestId: request.id, expectedUpdatedAt: request.updatedAt, actorUserId: FIN, scopes: {} });
+    const cases: Array<[string, Record<string, unknown>, (request: any) => Promise<unknown>]> = [
+      ['DRAFT', {}, (request) => repos[0]!.updateDraftRequest(companyId, request.id, request.updatedAt, { reason: 'แก้ไข', updatedByUserId: STAFF })],
+      ['DRAFT', {}, (request) => repos[0]!.submitDraftAtomic({
+        companyId, requestId: request.id, expectedUpdatedAt: request.updatedAt, duplicateCandidates: [], evidence: { attachmentIds: [], expenseIds: [] },
+        documentNumber: { documentType: 'reimbursement.request', periodKey, idempotencyKey: `reimb-submit:${request.id}`, reservedByUserId: STAFF },
+        approvalStep: { sequenceNo: 1, approverRoleSnapshot: 'MANAGER', requestSnapshotHash: 'a'.repeat(32) },
+        request: { status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: STAFF, approvalSnapshotHash: 'a'.repeat(32), outstandingAmount: '100.0000', updatedByUserId: STAFF },
+      } as any)],
+      ['PENDING_APPROVAL', {}, (request) => repos[0]!.rejectRequestAtomic({ ...decision(request), actorRoles: ['OWNER'], allowSelfApproval: false, decidedAt: new Date(),
+        rejectionReason: 'ไม่อนุมัติ', request: { status: 'REJECTED' }, onRejectedPersisted: noop })],
+      ['PENDING_APPROVAL', {}, (request) => repos[0]!.beginApprovalDecisionAtomic({ ...decision(request), expectedApprovalSnapshotHash: 'a'.repeat(32), actorRoles: ['OWNER'],
+        allowSelfApproval: false, financeReviewRequired: false, decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: noop })],
+      ['FINANCE_REVIEW', { financeReviewStatus: 'PENDING' }, (request) => repos[0]!.beginFinanceApprovalAtomic({ ...decision(request), reviewedAt: new Date(), onDecisionPersisted: noop })],
+      ['FINANCE_REVIEW', { financeReviewStatus: 'PENDING' }, (request) => repos[0]!.recordFinanceReviewAtomic({ ...decision(request), reviewedAt: new Date(), decision: 'BLOCKED', onDecisionPersisted: noop })],
+      ['READY_FOR_PAYMENT', {}, (request) => repos[0]!.resolvePaymentDuplicatesAtomic({ ...decision(request), resolvedAt: new Date(), reason: 'ไม่ซ้ำ', onResolvedPersisted: noop })],
+      ['FINANCE_REVIEW', { financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: FIN }, (request) => repos[0]!.prepareClaimProjections({
+        companyId, requestId: request.id, decisionKind: 'FINANCE', decisionActorUserId: FIN, scopes: {}, items: new MaterializeClaimExpensesService().buildItems(request) })],
+      ['READY_FOR_PAYMENT', {}, (request) => repos[0]!.assertClaimPaymentReady(companyId, request.id)],
+    ];
+    const refusedForCancellation = (error: unknown) => errorMessage(error) === 'reimbursement_cancellation_pending' || errorCode(error) === 'reimbursement_draft_changed';
+
+    for (const [status, extra, act] of cases) {
+      const before = await claimIn(status, extra);
+      await strand({ requestId: before.id }, 'ซื้อซ้ำกับใบก่อน');
+      const pending = (await repos[0]!.findRequestById(companyId, before.id))!;
+      await assert.rejects(() => act(pending), refusedForCancellation, `${status}: refused while the cancellation is pending`);
+      const untouched = await db.reimbursementRequest.findUniqueOrThrow({ where: { id: before.id } });
+      assert.deepEqual([untouched.status, untouched.updatedAt.getTime()], [status, pending.updatedAt.getTime()], `${status}: nothing changed`);
+
+      // Withdrawn: the same call is no longer refused for that reason (it may still be refused for its own).
+      await repos[0]!.withdrawCancellationAtomic({ companyId, requestId: before.id, actorUserId: FIN, scopes: {}, onWithdrawnPersisted: noop });
+      const live = (await repos[0]!.findRequestById(companyId, before.id))!;
+      const again = await act(live).then(() => undefined, (error: unknown) => error ?? new Error('rejected with nothing'));
+      assert.ok(!again || !refusedForCancellation(again), `${status}: still refused for the cancellation after it was withdrawn`);
+    }
+  });
+
   // The fence. A continue reads the claim, then voids each record in a transaction of its own. A
   // withdrawal that lands in between must stop those voids, or the claim goes on with a voided record.
   it('never voids for a cancellation withdrawn while it was being continued, even when the void was already waiting behind the withdrawal', async (t) => {
