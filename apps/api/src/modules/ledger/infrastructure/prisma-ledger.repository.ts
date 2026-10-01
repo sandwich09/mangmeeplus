@@ -1,10 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
+import type { Prisma } from '../../../generated/prisma/client';
 import { resolveTransactionBranchId } from '../../data-model-core/application/services/transaction-branch';
 import type { AccountRecord, PeriodRecord, JournalEntryRecord, JournalLineRecord, CreateJournalEntryInput } from '../domain/models/ledger.model';
 import type { LedgerJournalLineInput, UpdateChartOfAccountInput } from '@watchdog-bms/contracts';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
 import { selectPostingRuleCandidate } from '../domain/logic/posting-engine.logic.js';
+
+/** The pool, or the transaction a caller is already in. */
+type LedgerDb = PrismaService['client'] | Prisma.TransactionClient;
 
 function journalBranchScopeWhere(branchIds?: string[]): Record<string, unknown> {
   if (!branchIds) return {};
@@ -208,13 +212,15 @@ export class PrismaLedgerRepository {
     return mapEntry(r);
   }
 
-  async findGeneratedJournal(companyId: string, sourceType: string, sourceId: string): Promise<JournalEntryRecord | null> {
-    const r = await this.prisma.client.journalEntry.findFirst({ where: { companyId, sourceType, sourceId, entryType: 'GENERATED' } });
+  // `db` lets a caller read and write a journal inside its own transaction (the claim payout
+  // settlement is created and posted under a claim on its payment row); it defaults to the pool.
+  async findGeneratedJournal(companyId: string, sourceType: string, sourceId: string, db: LedgerDb = this.prisma.client): Promise<JournalEntryRecord | null> {
+    const r = await db.journalEntry.findFirst({ where: { companyId, sourceType, sourceId, entryType: 'GENERATED' } });
     return r ? mapEntry(r) : null;
   }
 
-  async createJournalEntry(input: CreateJournalEntryInput & { entryNumber: string }): Promise<JournalEntryRecord> {
-    const r = await this.prisma.client.journalEntry.create({
+  async createJournalEntry(input: CreateJournalEntryInput & { entryNumber: string }, db: LedgerDb = this.prisma.client): Promise<JournalEntryRecord> {
+    const r = await db.journalEntry.create({
       data: {
         companyId: input.companyId, periodId: input.periodId, entryNumber: input.entryNumber,
         entryType: input.entryType as any, sourceType: input.sourceType, sourceId: input.sourceId,
@@ -269,8 +275,8 @@ export class PrismaLedgerRepository {
     return mapEntry(r);
   }
 
-  async postJournalEntry(id: string, userId: string): Promise<JournalEntryRecord> {
-    const r = await this.prisma.client.journalEntry.update({
+  async postJournalEntry(id: string, userId: string, db: LedgerDb = this.prisma.client): Promise<JournalEntryRecord> {
+    const r = await db.journalEntry.update({
       where: { id }, data: { status: 'POSTED', postedAt: new Date(), postedByUserId: userId },
     });
     return mapEntry(r);

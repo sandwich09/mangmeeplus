@@ -3014,12 +3014,15 @@ export class PrismaReimbursementRepository {
   // the status changes here.
   // RECORDED only, and it says whether it wrote: a void owns the posting status of a voided payment
   // (`reversed` / `not_required`), so a late stamp from the generator or the worker must not land.
+  // Inside a transaction (`db`) the write holds the payment row, which is what makes the generator's
+  // settlement and the void's own update of that row take turns.
   async updatePaymentPostingStatus(
     companyId: string,
     id: string,
     data: { postingStatus: 'pending' | 'posted' | 'posting_error' | 'reversed' },
+    db: any = this.prisma.client,
   ): Promise<boolean> {
-    const stamped = await this.prisma.client.reimbursementPayment.updateMany({
+    const stamped = await db.reimbursementPayment.updateMany({
       where: { id, companyId, status: 'RECORDED' },
       data: { postingStatus: data.postingStatus as any },
     });

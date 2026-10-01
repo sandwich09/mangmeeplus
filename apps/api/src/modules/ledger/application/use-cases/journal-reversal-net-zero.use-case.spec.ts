@@ -83,8 +83,9 @@ function ledgerStore() {
 }
 
 const audit = { log: async () => undefined } as any;
-const reserve = { execute: async () => ({ id: 'reservation-1', documentNumber: 'JV-R-1' }) } as any;
-const commit = { execute: async () => undefined } as any;
+const reservation = async () => ({ id: 'reservation-1', documentNumber: 'JV-R-1' });
+const reserve = { execute: reservation, executeInTransaction: reservation } as any;
+const commit = { execute: async () => undefined, executeInTransaction: async () => undefined } as any;
 const outbox = { append: async () => undefined } as any;
 
 describe('ReverseJournalUseCase net-zero regression', () => {
@@ -325,6 +326,7 @@ describe('claim payout: the claim, its expense records and the ledger agree', ()
         Object.assign(projections.find((projection) => projection.id === id), { postingStatus: data.postingStatus });
       },
     };
+    const hooks: { beforeClaim?: () => Promise<unknown> } = {};
     const ledgerRepo = {
       ...store.repo,
       findGeneratedJournal: async (companyId: string, sourceType: string, sourceId: string) =>
@@ -332,11 +334,19 @@ describe('claim payout: the claim, its expense records and the ledger agree', ()
           && entry.sourceType === sourceType && entry.sourceId === sourceId) ?? null,
       findPeriod: async () => ({ id: 'period-1', status: 'OPEN' }),
       findActivePostingRule: async () => null,
-      findAccountByCode: async (_companyId: string, code: string) => ({ id: code, status: 'ACTIVE', isPosting: true, companyId: 'company-1', isSystem: false }),
+      // Resolving the accounts is the generator's last read before it claims the payment row, so
+      // a hook here is "something else committed after the payment was read as RECORDED".
+      findAccountByCode: async (_companyId: string, code: string) => {
+        const hook = hooks.beforeClaim;
+        hooks.beforeClaim = undefined;
+        await hook?.();
+        return { id: code, status: 'ACTIVE', isPosting: true, companyId: 'company-1', isSystem: false };
+      },
     };
+    // The generator settles a payout inside a transaction of this same store.
+    db.company = { findUnique: async () => ({ baseCurrency: 'THB' }) };
     const generate = new GenerateJournalFromSourceUseCase(
-      ledgerRepo as any, audit, reserve, commit, outbox, {} as any, expenseRepo as any, {} as any, claims,
-      { client: { company: { findUnique: async () => ({ baseCurrency: 'THB' }) } } } as any,
+      ledgerRepo as any, audit, reserve, commit, outbox, {} as any, expenseRepo as any, {} as any, claims, { client: db } as any,
     );
 
     const sum = (values: Array<string | number>) => values.reduce<Decimal>((total, value) => total.add(value), new Decimal(0)).toFixed(4);
@@ -350,7 +360,7 @@ describe('claim payout: the claim, its expense records and the ledger agree', ()
       paidAmount: '500.50', currency: 'THB', paymentMethod: 'CASH', paidAt: AT, paidByUserId: 'finance-1',
     });
     const post = (sourceType: string, sourceId: string) => generate.execute(postCtx, { sourceType, sourceId } as any);
-    return { store, request, lines, projections, payments, claims, sum, net, journalsOf, pay, post };
+    return { store, request, lines, projections, payments, claims, hooks, sum, net, journalsOf, pay, post };
   }
 
   async function accrued() {
@@ -472,6 +482,58 @@ describe('claim payout: the claim, its expense records and the ledger agree', ()
     assert.equal(f.payments[0].postingStatus, 'not_required');
     assert.equal(f.net('2130-01'), '-500.5000');
     assert.equal(f.request.paymentTotalAmount, '0.0000');
+  });
+
+  // Review finding 2026-10-01: the generator read the payment as RECORDED and posted many queries
+  // later with no lock, so a void committing in between left a POSTED settlement on a VOIDED payment
+  // with no reversal, and paying again posted a second one. Each order of events, with this store
+  // standing in for the database (the row locking itself is proved in the PostgreSQL spec).
+  it('void first, after the generator read the payment as RECORDED: the post is refused and writes nothing', async () => {
+    const f = await accrued();
+    const { payment } = await f.pay('k-1');
+    f.hooks.beforeClaim = () => f.claims.voidPaymentTrueReversal('company-1', 'rb-1', payment.id, 'finance-1', 'โอนผิดบัญชี');
+
+    await assert.rejects(() => f.post('reimbursement.payment', payment.id), (error: any) => error.getResponse?.().code === 'reimbursement_payment_not_recorded');
+
+    assert.equal(f.journalsOf('reimbursement.payment', payment.id).length, 0, 'no settlement exists, posted or draft');
+    assert.deepEqual([f.payments[0].status, f.payments[0].postingStatus], ['VOIDED', 'not_required']);
+    assert.equal(f.net('2130-01'), '-500.5000');
+    assert.equal(f.net('1110-01'), '0.0000');
+    assert.equal(f.request.status, 'READY_FOR_PAYMENT');
+    // Paying again posts ONE settlement, where the bug posted a second.
+    const again = (await f.pay('k-2')).payment;
+    await f.post('reimbursement.payment', again.id);
+    assert.deepEqual(f.store.entries.filter((entry) => entry.sourceType === 'reimbursement.payment').map((entry) => [entry.sourceId, entry.entryType, entry.status]), [[again.id, 'GENERATED', 'POSTED']]);
+    assert.equal(f.net('2130-01'), '0.0000');
+    assert.equal(f.net('1110-01'), '-500.5000');
+  });
+
+  it('post first: the void finds the posted settlement and reverses it', async () => {
+    const f = await accrued();
+    const { payment } = await f.pay('k-1');
+    await f.post('reimbursement.payment', payment.id);
+    // The claim stamped the payment in the same step as the journal: never POSTED with a stale flag.
+    assert.equal(f.payments[0].postingStatus, 'posted');
+
+    await f.claims.voidPaymentTrueReversal('company-1', 'rb-1', payment.id, 'finance-1', 'โอนผิดบัญชี');
+
+    assert.deepEqual(f.journalsOf('reimbursement.payment', payment.id).map((entry) => [entry.entryType, entry.status]), [['GENERATED', 'POSTED'], ['REVERSAL', 'POSTED']]);
+    assert.deepEqual([f.payments[0].status, f.payments[0].postingStatus], ['VOIDED', 'reversed']);
+    assert.equal(f.net('1110-01'), '0.0000');
+  });
+
+  it('another poster first, after the early idempotency check: the second returns that journal and writes nothing', async () => {
+    const f = await accrued();
+    const { payment } = await f.pay('k-1');
+    let first: any;
+    f.hooks.beforeClaim = async () => { first = await f.post('reimbursement.payment', payment.id); };
+
+    const second = await f.post('reimbursement.payment', payment.id);
+
+    assert.equal(second.id, first.id);
+    assert.equal(f.journalsOf('reimbursement.payment', payment.id).length, 1);
+    assert.equal(f.payments[0].postingStatus, 'posted');
+    assert.equal(f.net('2130-01'), '0.0000');
   });
 
   it('a late posting stamp never lands on a voided payment', async () => {

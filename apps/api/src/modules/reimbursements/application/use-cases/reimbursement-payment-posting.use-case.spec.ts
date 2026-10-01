@@ -93,11 +93,14 @@ describe('GenerateJournalFromSourceUseCase — reimbursement.payment', () => {
         if (settlementError) throw settlementError;
         return { branchId: 'br-1' };
       },
-      updatePaymentPostingStatus: mock.fn(async (_c: string, id: string, data: any) => { flips.push({ id, postingStatus: data.postingStatus }); }),
+      // The stamp writes a RECORDED payment only and says whether it wrote; the generator posts the
+      // settlement under that claim, inside one transaction.
+      updatePaymentPostingStatus: mock.fn(async (_c: string, id: string, data: any) => { flips.push({ id, postingStatus: data.postingStatus }); return true; }),
     } as any;
-    const reserve = { execute: async () => ({ id: 'seq-1', documentNumber: 'JV-1' }) } as any;
-    const commit = { execute: async () => undefined } as any;
-    const prisma = { client: { company: { findUnique: async () => ({ baseCurrency: 'THB' }) } } } as any;
+    // The journal number is reserved and committed inside that same transaction.
+    const reserve = { executeInTransaction: async () => ({ id: 'seq-1', documentNumber: 'JV-1' }) } as any;
+    const commit = { executeInTransaction: async () => undefined } as any;
+    const prisma = { client: { company: { findUnique: async () => ({ baseCurrency: 'THB' }) }, $transaction: async (work: (tx: unknown) => Promise<unknown>) => work({}) } } as any;
     const uc = new GenerateJournalFromSourceUseCase(ledgerRepo, noopAudit, reserve, commit, noopOutbox, {} as any, {} as any, {} as any, reimbursementRepo, prisma);
     return { uc, created, flips, reimbursementRepo };
   }
