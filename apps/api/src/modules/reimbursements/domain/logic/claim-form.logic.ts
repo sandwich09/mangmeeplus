@@ -67,8 +67,11 @@ export type ClaimFormPayout =
     accountLast4: string;
     /** Handed in only for a print whose requester may see it. Printed as stored: no grouping, leading zeros kept. */
     accountNumber?: string;
-    /** Whoever attested this account version ("ตรวจบัญชีแล้ว"); null until someone has. */
-    verifier: { name: string; at: string } | null;
+    /**
+     * Whoever attested this account version ("ตรวจบัญชีแล้ว"); null until someone has. A requester who
+     * attested their own account is not named as its checker: the form says they confirmed it themself.
+     */
+    verifier: { name: string; at: string } | { byRequester: true; at: string } | null;
   };
 
 export type ReimbursementClaimFormSnapshot = {
@@ -309,10 +312,13 @@ function payoutLines(snapshot: ReimbursementClaimFormSnapshot): string[] {
   const account = payout.kind === 'PROMPTPAY_PHONE'
     ? `พร้อมเพย์เบอร์${number} ชื่อบัญชี ${payout.accountName}`
     : ['โอนเข้าบัญชี', payout.bankName, 'ชื่อบัญชี', payout.accountName, `เลขบัญชี${number}`].filter(Boolean).join(' ');
-  return [
-    ...wrapText(`รับเงินคืนทาง: ${account}`, SHEET_WIDTH),
-    ...(payout.verifier ? wrapText(`ผู้ตรวจบัญชี ${payout.verifier.name} วันที่ ${formatDate(payout.verifier.at)}`, SHEET_WIDTH) : []),
-  ];
+  const { verifier } = payout;
+  // A requester's own attestation is printed in the claim page's words, so the paper never reads as
+  // if someone else had checked the account.
+  const attestation = verifier
+    ? wrapText(`${'byRequester' in verifier ? 'ผู้เบิกยืนยันบัญชีของตนเอง' : `ผู้ตรวจบัญชี ${verifier.name}`} วันที่ ${formatDate(verifier.at)}`, SHEET_WIDTH)
+    : [];
+  return [...wrapText(`รับเงินคืนทาง: ${account}`, SHEET_WIDTH), ...attestation];
 }
 
 /** Fixed A4 pages for preview, printing and PDF export. The legacy tall SVG above remains in the
