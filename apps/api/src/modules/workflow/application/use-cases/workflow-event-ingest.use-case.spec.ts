@@ -269,7 +269,7 @@ describe('IngestWorkflowEventUseCase', () => {
  */
 describe('claim approval tasks close when the claim moves on (audit B8)', () => {
   const NOW = new Date('2026-10-01T05:00:00.000Z');
-  const task = (id: string, extra: Record<string, unknown> = {}) => ({
+  const task = (id: string, extra: Record<string, unknown> = {}): any => ({
     id, companyId: 'co-1', sourceType: 'reimbursement_request', sourceId: 'req-1', status: 'OPEN',
     templateKey: 'reimbursement_pending_approval', ...extra,
   });
