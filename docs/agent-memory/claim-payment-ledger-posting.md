@@ -1,8 +1,10 @@
 # Agent Memory: claim-payment-ledger-posting
 
 Status: Code complete on `claude/claim-payment-ledger-posting-20261001`, including the fixes an
-independent review asked for on 2026-10-01 (section "Review follow-up"). The branch now contains
-`claude/reimb-payout-assembly-20261001` (merged in at `3d0bbb713`). Not pushed, no PR. Two existing
+independent review asked for on 2026-10-01 (section "Review follow-up"). The branch contains
+`claude/reimb-payout-assembly-20261001`: merged in at `3d0bbb713` before the fixes, and again at
+`72b449454` after them (assembly tip `1d3a6dc16`; the only conflict was two import lines of the
+reimbursement repository, both sides kept). Not pushed, no PR. Two existing
 gates still stand between this and a real shop: the accounting screens are closed for this launch,
 and a shop on the standard chart has no reviewed account mapping for a claim payout. Both need an
 owner or accountant decision (see Open questions).
@@ -234,6 +236,11 @@ refused with `period_closed` until that period is reopened; it stays on the work
 - Layout: the worklist rendered in every state with the app's compiled CSS in headless Chromium at
   320, 360, 390, 768 and 1280 px: no horizontal scroll, the claim link 44 px tall, loading and empty
   cards the same height.
+- After the second assembly merge (`72b449454`, Prisma client regenerated, contracts rebuilt): API
+  and web typecheck rc 0; web suite 2344/2344; ledger and reimbursement API specs 879 tests, 835
+  pass, 44 skipped, 0 fail; boot smoke, manifest parity and the pending-button audit pass; the
+  PostgreSQL spec 16/16 with the assembly's two new migrations applied, and 16/16 from an empty
+  database; the lane's registered claim race spec 44/44 on the same PostgreSQL.
 - Not run: the full API fixed list, Playwright e2e, a live browser session (the section is hidden
   by `ACCOUNTING_UI_HIDDEN`, and no seeded stack was started). The GitHub workflow itself has not
   run: nothing was pushed.
