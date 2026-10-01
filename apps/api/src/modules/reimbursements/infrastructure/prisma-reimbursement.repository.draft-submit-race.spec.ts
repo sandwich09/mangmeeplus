@@ -1,5 +1,6 @@
 /** Real PostgreSQL proof that an edit and submit cannot both commit. */
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { reimbursementHubBucket } from '@watchdog-bms/contracts';
@@ -18,6 +19,7 @@ import { DeleteEmployeeDraftUseCase } from '../../employee-access/application/us
 import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { VoidReimbursementPaymentUseCase } from '../application/use-cases/reimbursement-finance.use-case';
 import { ListReimbursementsUseCase } from '../application/use-cases/reimbursement-request.use-case';
+import { LineReimbursementDraftAdapterService } from '../../line-ai/application/line-reimbursement-draft-adapter.service';
 import { PrismaBankingRepository } from '../../banking/infrastructure/prisma-banking.repository';
 import { PrismaMatchSourceQuery } from '../../banking/infrastructure/prisma-match-source.query';
 import { ConfirmMatchUseCase, ListMatchCandidatesUseCase } from '../../banking/application/use-cases/matching.use-case';
@@ -1595,6 +1597,44 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     } finally {
       await db.company.deleteMany({ where: { id: hub } });
     }
+  });
+
+  // ---- The LINE claim-draft receipt picker (review 2026-10-01) ----
+  // The picker listed every active upload of the requester, and of the caller when they review finance. Whoever
+  // records payments has payment slips among their uploads: they were offered as receipts, and picking one was
+  // refused when the line was saved. Asked of the real database, because the "not a slip" query has to keep the
+  // files that carry no metadata at all, which only PostgreSQL's NULL logic decides.
+
+  it('offers a claim draft the uploader\'s own receipts to pick, and none of their payment slips', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const token = `${TAG}-pick`;
+    const claim = await payableClaim();
+    const file = (name: string, overrides: Record<string, unknown> = {}) => slipUpload(claim.requestId, { originalFileName: `${token}-${name}`, ...overrides });
+    // Receipts as they are stored: a web upload with no metadata, one with other metadata, a photo staged from LINE.
+    await file('receipt-plain.jpg', { metadataJson: undefined });
+    await file('receipt-web.jpg', { metadataJson: { source: 'web' } });
+    await file('receipt-line.jpg', { metadataJson: { lineReimbursementOwner: { userId: `${TAG}-finance` }, lineReimbursementEpoch: 1 } });
+    // Slips: one uploaded and never recorded (the tag alone), one a transfer carries (tag and link), and one attached
+    // as a signed copy by mistake and moved to the payment (the link alone).
+    await file('slip-not-recorded.jpg');
+    const recorded = await file('slip-recorded.jpg');
+    const paid = await repos[0]!.recordPaymentAtomic(transfer(claim.requestId, 'pick-paid', recorded.id));
+    const moved = await file('slip-moved.pdf', { metadataJson: { source: 'web' }, mimeType: 'application/pdf' });
+    await repos[0]!.linkSignedClaimFormCopy(companyId, claim.requestId, moved.id, `${TAG}-finance`);
+    await moveToSlip(claim.requestId, paid.payment.id, moved.id);
+    assert.equal(await db.attachmentObject.count({ where: { companyId, originalFileName: { startsWith: token }, status: 'ACTIVE', uploadedByUserId: `${TAG}-finance`, branchId } }), 6);
+
+    // The picker itself, with the search a person types to narrow the files.
+    const adapter = new LineReimbursementDraftAdapterService({ client: db } as any, repos[0]!, null as never, null as never, null as never);
+    const viewer = { companyId, userId: `${TAG}-finance`, requestId: `${TAG}-pick`, roles: [], scopes: {}, authProvider: 'line',
+      permissions: ['reimbursement.create', 'reimbursement.finance_review'] };
+    const options = await (adapter as any).buildOptions(viewer, { actionId: randomUUID(), taskId: randomUUID(), actionOrdinal: 1, operation: 'CREATE' }, 1,
+      { operation: 'CREATE', subrequestIndex: 0, query: { family: 'attachment', text: token } }, undefined);
+    const offered = options.choices.filter((choice: any) => choice.kind === 'ATTACHMENT').map((choice: any) => choice.label).sort();
+    // Before: all six, the three slips included.
+    assert.deepEqual(offered, ['receipt-line.jpg', 'receipt-plain.jpg', 'receipt-web.jpg'].map((name) => `${token}-${name}`));
+    assert.deepEqual(options.pages.attachment, { returned: 3, hasMore: false });
   });
 
 });
