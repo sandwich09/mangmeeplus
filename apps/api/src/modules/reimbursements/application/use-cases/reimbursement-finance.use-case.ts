@@ -23,6 +23,7 @@ import { ReimbursementProjectionOrchestratorService } from '../services/reimburs
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import {
   validatePaymentRecording,
+  payoutCorrectionPhase,
   claimApproverUserId,
   isSamePaymentRequest,
   ageHours,
@@ -403,6 +404,10 @@ export class RecordReimbursementPaymentUseCase {
       }
       return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     }
+
+    // Sent back to have its payout account corrected (payout spec §14.7, §22): its status refuses the
+    // payment below anyway; this tells a payer whose form was open what happened, in their own words.
+    if (payoutCorrectionPhase(req)) throw new ConflictException('payout_correction_in_progress');
 
     // Friendly preflight before reserving a payment number; the repository
     // repeats the same proof under the payment lock to close the race.

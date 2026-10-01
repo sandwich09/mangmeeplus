@@ -1905,6 +1905,16 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
   const writes = { paymentCreates: 0, requestUpdates: 0, locks: 0, lockKeys: [] as string[], isolationLevels: [] as string[], rowLocks: [] as string[] };
   // The claim's account versions and the members' default accounts: part of the same transaction.
   const payout = fakePayoutTables();
+  // The claim's approval steps and in-system signatures: what a payout account correction sets aside.
+  let steps: any[] = [];
+  let signatures: any[] = [];
+  const stepMatches = (step: any, where: any): boolean => Object.entries(where).every(([key, value]: [string, any]) => {
+    if (value && typeof value === 'object' && !(value instanceof Date)) {
+      if ('in' in value) return value.in.includes(step[key]);
+      if ('gte' in value) return step[key] instanceof Date && step[key].getTime() >= value.gte.getTime();
+    }
+    return (step[key] ?? null) === (value ?? null);
+  });
 
   const tx: any = {
     ...payout.client,
@@ -1931,8 +1941,27 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
       update: async ({ where, data }: any) => Object.assign(files.find((file) => file.id === where.id)!, data),
     },
     reimbursementLine: { count: async ({ where }: any) => receiptLines.filter((line) => rowMatches(line, where)).length },
+    reimbursementApprovalStep: {
+      findFirst: async ({ where }: any) => steps.find((step) => stepMatches(step, where)) ?? null,
+      findMany: async ({ where }: any) => steps.filter((step) => stepMatches(step, where)),
+      updateMany: async ({ where, data }: any) => {
+        const found = steps.filter((step) => stepMatches(step, where));
+        for (const step of found) Object.assign(step, data);
+        return { count: found.length };
+      },
+    },
+    reimbursementClaimSignature: {
+      deleteMany: async ({ where }: any) => {
+        const kept = signatures.filter((signature) => !rowMatches(signature, where));
+        const count = signatures.length - kept.length;
+        signatures = kept;
+        return { count };
+      },
+    },
     attachmentLink: {
-      findMany: async ({ where }: any) => links.filter((link) => rowMatches(link, where)),
+      // With the file it links when the query asks for it (`select.attachment`), as the join returns it.
+      findMany: async ({ where, select }: any) => links.filter((link) => rowMatches(link, where))
+        .map((link) => (select?.attachment ? { ...link, attachment: files.find((file) => file.id === link.attachmentId) } : link)),
       create: async ({ data }: any) => {
         if (fault === 'slip-link') throw new Error('fault:slip-link');
         const link = { id: `link-${links.length + 1}-${data.purpose}`, createdAt: new Date('2026-02-01T00:00:00.000Z'), ...data };
@@ -2003,6 +2032,8 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
       const filesBefore = structuredClone(files);
       const linksBefore = structuredClone(links);
       const destinationsBefore = structuredClone(payout.destinations);
+      const stepsBefore = structuredClone(steps);
+      const signaturesBefore = structuredClone(signatures);
       let committed = false;
       try {
         const result = await work(tx);
@@ -2020,6 +2051,8 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
           files = filesBefore;
           links = linksBefore;
           payout.destinations.splice(0, payout.destinations.length, ...destinationsBefore);
+          steps = stepsBefore;
+          signatures = signaturesBefore;
         }
         throw error;
       } finally {
@@ -2032,8 +2065,10 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
     repo: new PrismaReimbursementRepository({ client } as any, {} as any),
     writes,
     setFault: (next?: AtomicFault) => { fault = next; },
-    state: () => ({ request, payments, files, links }),
+    state: () => ({ request, payments, files, links, steps, signatures }),
     payout,
+    addStep: (step: any) => { steps.push({ companyId: 'co-1', reimbursementRequestId: 'rb-1', ...step }); },
+    addSignature: (signature: any) => { signatures.push({ companyId: 'co-1', reimbursementRequestId: 'rb-1', ...signature }); },
     addFile: (file: any) => { files.push(file); return file; },
     addLink: (link: any) => { links.push({ companyId: 'co-1', createdAt: new Date('2026-01-20T00:00:00.000Z'), ...link }); },
     addPayment: (payment: any) => { payments.push(payment); },
@@ -2570,5 +2605,129 @@ describe('PrismaReimbursementRepository pay step under the payment lock', () => 
       await assert.rejects(() => h.repo.recordPaymentAtomic({ ...transferWithSlip, payout }), conflict('reimbursement_payment_idempotency_conflict'), JSON.stringify(payout));
     }
     assert.equal(h.payout.destinations.length, 1, 'one copy for the one payment');
+  });
+});
+
+// Payout spec §14.3, §14.4, §14.7 (AC25, AC29, AC30, AC32). The same transactions against a real
+// PostgreSQL, racing for real, are in prisma-reimbursement.repository.draft-submit-race.spec.ts.
+describe('PrismaReimbursementRepository: sending a claim back for its payout account, against its payment', () => {
+  const approvedAt = new Date('2026-01-12T00:00:00.000Z');
+  const sentBackAt = new Date('2026-02-01T03:00:00.000Z');
+  const conflict = (code: string) => (error: any) => error.getStatus() === 409 && (error.getResponse()?.code ?? error.message) === code;
+  /** The harness claim as it waits for payment: sent on the 10th, approved by its manager on the 12th. */
+  function readyHarness() {
+    const h = atomicPaymentHarness();
+    Object.assign(h.state().request, { submittedAt: new Date('2026-01-10T00:00:00.000Z'), approvedAt, payoutMethod: 'CASH', payoutFingerprint: 'cash' });
+    h.addStep({ id: 'step-1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: approvedAt, invalidatedAt: null, assignedApproverUserIdsJson: ['mgr-1'] });
+    return h;
+  }
+  const sendBack = (h: ReturnType<typeof atomicPaymentHarness>, overrides: Partial<any> = {}) => ({
+    companyId: 'co-1', requestId: 'rb-1', expectedUpdatedAt: h.state().request.updatedAt, actorUserId: 'fin-1', actorRoles: ['FINANCE'], scopes: {},
+    allowSelfApproval: false, requestedAt: sentBackAt, reasonCode: 'ACCOUNT_NUMBER_WRONG' as const, onPersisted: async () => undefined, ...overrides,
+  });
+
+  it('refuses a payment for a claim that was sent back while the pay form was open: by the use case, and again under the lock', async () => {
+    const perms = ['reimbursement.payment.record'];
+    for (const round of [{ payoutCorrectionRequestedAt: sentBackAt }, { payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: new Date('2026-02-01T04:00:00.000Z') }]) {
+      const req = financeReviewedRequest({ status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', ...round });
+      let reserved = 0;
+      const counting = { execute: async () => { reserved += 1; return { id: 'seq-1', documentNumber: 'RBPAY-202602-000001' }; } } as any;
+      const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, counting, commit, fakeDetailEvidence as any);
+      await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T05:00:00.000Z' }), conflict('payout_correction_in_progress'));
+      assert.equal(reserved, 0, 'no payment number is spent on it');
+
+      // A caller that read the claim before it was sent back reaches the transaction: the claim it reads there decides.
+      const h = readyHarness();
+      Object.assign(h.state().request, { status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', approvedAt: null, ...round });
+      await assert.rejects(() => h.repo.recordPaymentAtomic(atomicPaymentInput), conflict('payout_correction_in_progress'));
+      assert.deepEqual([h.state().payments.length, h.writes.requestUpdates, h.state().request.status], [0, 0, 'PENDING_APPROVAL']);
+    }
+  });
+
+  it('takes the two locks a payment takes, in the same order, so the first of the two to run leaves the other a claim that changed', async () => {
+    // The payment first: the send-back that read the claim before it finds it changed.
+    const paidFirst = readyHarness();
+    const [paid, lateSendBack] = await Promise.allSettled([
+      paidFirst.repo.recordPaymentAtomic(atomicPaymentInput),
+      paidFirst.repo.requestPayoutCorrectionAtomic(sendBack(paidFirst)),
+    ]);
+    assert.equal(paid.status, 'fulfilled');
+    assert.ok(lateSendBack.status === 'rejected' && conflict('reimbursement_changed')(lateSendBack.reason));
+    assert.deepEqual([paidFirst.state().request.status, paidFirst.state().payments.length, paidFirst.state().steps[0].invalidatedAt], ['PAID', 1, null]);
+    // A send-back that reads the claim after the payment is told why, not that it changed.
+    await assert.rejects(() => paidFirst.repo.requestPayoutCorrectionAtomic(sendBack(paidFirst)), conflict('payout_correction_not_allowed'));
+
+    // The send-back first: the payment finds a claim whose account is being corrected.
+    const sentBackFirst = readyHarness();
+    const [sent, latePayment] = await Promise.allSettled([
+      sentBackFirst.repo.requestPayoutCorrectionAtomic(sendBack(sentBackFirst)),
+      sentBackFirst.repo.recordPaymentAtomic(atomicPaymentInput),
+    ]);
+    assert.equal(sent.status, 'fulfilled');
+    assert.ok(latePayment.status === 'rejected' && conflict('payout_correction_in_progress')(latePayment.reason));
+    assert.deepEqual([sentBackFirst.state().request.status, sentBackFirst.state().payments.length], ['PENDING_APPROVAL', 0]);
+
+    const key = (name: string) => `co-1:rb-1:reimbursement-${name}`;
+    assert.deepEqual(sentBackFirst.writes.lockKeys.slice(0, 2), [key('payment'), key('request')], 'the send-back');
+    assert.deepEqual(sentBackFirst.writes.lockKeys.slice(2, 4), [key('payment'), key('request')], 'the payment');
+  });
+
+  it('sets the approval aside and nothing else of the claim, removes the signatures and stops counting the declared scan', async () => {
+    const h = readyHarness();
+    h.addSignature({ id: 'sig-1', role: 'REQUESTER', signerUserId: 'staff-1' });
+    h.addSignature({ id: 'sig-2', role: 'APPROVER', signerUserId: 'mgr-1' });
+    misfiledSignedCopy(h, true, 'att-declared');
+    h.addLink({ id: 'link-archive', attachmentId: 'att-archive', targetType: 'reimbursement_request', targetId: 'rb-1', purpose: 'reimbursement.claim_form.signed', linkedByUserId: 'staff-1' });
+    h.addFile({ id: 'att-archive', companyId: 'co-1', status: 'ACTIVE', metadataJson: { source: 'web' } });
+    // An approval of the round before the claim was last sent stays what it is: history.
+    h.addStep({ id: 'step-0', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-0', decidedAt: new Date('2026-01-05T00:00:00.000Z'), invalidatedAt: null });
+    const before = { ...h.state().request };
+    const seen: any[] = [];
+
+    const sent = await h.repo.requestPayoutCorrectionAtomic(sendBack(h, { note: 'ธนาคารแจ้งว่าบัญชีปิดแล้ว', onPersisted: async (_tx: any, result: any) => { seen.push(result); } }));
+    const claim = h.state().request;
+    assert.deepEqual(seen, [{ again: false, setAsideStepIds: ['step-1'], signaturesRemoved: 2, declarationsSetAside: 1 }]);
+    assert.deepEqual([claim.status, claim.approvedAt, claim.paymentStatus, claim.currentApprovalStepId, claim.payoutCorrectionRequestedAt, claim.payoutCorrectionRequestedByUserId,
+      claim.payoutCorrectionReasonCode, claim.payoutCorrectionNote, claim.payoutCorrectionSubmittedAt],
+    ['PENDING_APPROVAL', null, 'NOT_PAYABLE', null, sentBackAt, 'fin-1', 'ACCOUNT_NUMBER_WRONG', 'ธนาคารแจ้งว่าบัญชีปิดแล้ว', null]);
+    assert.equal(sent.status, 'PENDING_APPROVAL');
+    // What the round started from is kept with the send-back, for the comparison its approvers are shown.
+    assert.deepEqual(claim.payoutCorrectionLogJson, [{
+      kind: 'SENT_BACK', at: sentBackAt.toISOString(), byUserId: 'fin-1', reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าบัญชีปิดแล้ว',
+      approved: { payoutMethod: 'CASH', at: approvedAt.toISOString() },
+    }]);
+    for (const field of ['requestNo', 'amount', 'outstandingAmount', 'paymentTotalAmount', 'duplicateStatus', 'financeReviewStatus', 'payoutMethod', 'payoutFingerprint', 'submittedAt', 'lines']) {
+      assert.deepEqual(claim[field], before[field], field);
+    }
+    assert.deepEqual(h.state().steps.map((step) => [step.id, step.status, step.invalidatedAt, step.invalidatedReason ?? null]),
+      [['step-1', 'APPROVED', sentBackAt, 'payout_account_correction'], ['step-0', 'APPROVED', null, null]]);
+    assert.deepEqual(h.state().signatures, []);
+    const ackOf = (id: string) => h.state().files.find((file) => file.id === id).metadataJson.reimbursementSignedCopyAck;
+    assert.equal(ackOf('att-declared').supersededAt, sentBackAt.toISOString());
+    assert.equal(ackOf('att-archive'), undefined);
+    // The scan is still filed with the claim; only its declaration stopped counting.
+    assert.deepEqual(h.state().links.map((link) => link.attachmentId).sort(), ['att-archive', 'att-declared']);
+    assert.deepEqual([h.state().payments.length, h.writes.paymentCreates], [0, 0]);
+  });
+
+  it('refuses a claim with a payment that stands, a claim being cancelled, and a claim someone changed since it was read', async () => {
+    const withPayment = readyHarness();
+    withPayment.addPayment({ id: 'pay-old', companyId: 'co-1', reimbursementRequestId: 'rb-1', status: 'RECORDED' });
+    await assert.rejects(() => withPayment.repo.requestPayoutCorrectionAtomic(sendBack(withPayment)), conflict('payout_correction_not_allowed'));
+    // A voided payment is history: the claim is at the pay step again.
+    withPayment.state().payments[0].status = 'VOIDED';
+    await withPayment.repo.requestPayoutCorrectionAtomic(sendBack(withPayment));
+
+    const cancelling = readyHarness();
+    Object.assign(cancelling.state().request, { cancellationPendingAt: new Date('2026-02-01T02:00:00.000Z') });
+    await assert.rejects(() => cancelling.repo.requestPayoutCorrectionAtomic(sendBack(cancelling)), conflict('reimbursement_cancellation_pending'));
+
+    const stale = readyHarness();
+    await assert.rejects(() => stale.repo.requestPayoutCorrectionAtomic(sendBack(stale, { expectedUpdatedAt: new Date('2025-12-31T00:00:00.000Z') })), conflict('reimbursement_changed'));
+    for (const h of [cancelling, stale]) {
+      assert.deepEqual([h.state().request.status, h.state().steps[0].invalidatedAt, h.state().request.payoutCorrectionRequestedAt], ['READY_FOR_PAYMENT', null, undefined]);
+    }
+    // Already with its requester: nothing is set aside twice.
+    await assert.rejects(() => withPayment.repo.requestPayoutCorrectionAtomic(sendBack(withPayment)), conflict('payout_correction_in_progress'));
   });
 });
