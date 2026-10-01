@@ -256,8 +256,8 @@ export type ReimbursementPayoutViewerClaim = {
  * Whether this person approved the claim as it stands: they decided an approval that is still in
  * force and belongs to the current round, that is, decided at or after the claim was last
  * submitted. An approval from before a correction and resubmission is history: the claim has since
- * been routed again, and its earlier approver has no say over what it became. The same test the
- * claim page uses for "approved by a person" (`buildJourneySteps`).
+ * been routed again, and its earlier approver has no say over what it became. The claim page asks
+ * this rule too, for "approved by a person" (`buildJourneySteps`); it no longer keeps a copy.
  *
  * The one definition of a claim's own approver. The account-number reveal and its
  * `canRevealAccountNumber` flag (`claimPayoutRevealGroup` in the API), the payment slip

@@ -1,7 +1,7 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
+  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
@@ -699,9 +699,12 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
   const ended = status === 'CANCELLED' || status === 'VOIDED';
   const atIndex = keys.indexOf(journeyStepAt(detail, withFinance));
   const own = reimbursementOwnActions(detail, userId, permissions);
-  // A step approved in an earlier round (before a finance correction) is history, not this round's approval.
-  const approval = (detail?.approvalSteps ?? []).filter((step: any) => step.status === 'APPROVED' && !step.invalidatedAt
-    && String(step.decidedAt ?? '') >= String(detail?.submittedAt ?? '')).at(-1);
+  // This round's approval, by the one rule for a claim's approver (`isReimbursementClaimApprover` in contracts, the
+  // API's own): still in force, and decided at or after the claim was last submitted. A step approved in an earlier
+  // round (before a finance correction) is history. The copy of the rule that stood here compared the two dates as
+  // text and, on a claim with no submission date, counted every approved step.
+  const approval = (detail?.approvalSteps ?? []).filter((step: any) => !!step.decisionByUserId
+    && isReimbursementClaimApprover(step.decisionByUserId, { submittedAt: detail?.submittedAt, approvalSteps: [step] })).at(-1);
   const humanApproved = !!approval;
   const signed = new Set((detail?.signatures ?? []).map((row: any) => row.role));
   const payment = (detail?.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);

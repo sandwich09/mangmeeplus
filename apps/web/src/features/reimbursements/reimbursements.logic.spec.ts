@@ -9,7 +9,7 @@ import {
   type HubFilter,
 } from './reimbursements.logic';
 import { currentDeskText } from './reimbursements.model';
-import { REIMBURSEMENT_DESK_LABELS, reimbursementHubBucket } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DESK_LABELS, isReimbursementClaimApprover, reimbursementHubBucket } from '@watchdog-bms/contracts';
 
 const line = (overrides: Record<string, unknown> = {}) => ({
   incurredDate: '2026-01-01', description: 'แท็กซี่', categoryKey: 'travel', amount: '100', hasReceipt: true, ...overrides,
@@ -791,6 +791,42 @@ describe('buildJourneySteps', () => {
     assert.equal(buildJourneySteps(resubmittedAuto, [], 'x').find(step => step.key === 'approval')!.note, 'ไม่ต้องอนุมัติตามนโยบาย');
   });
 
+  // Review 2026-10-01: the page kept its own copy of "this round's approval". It compared the two dates as text and,
+  // on a claim with no submission date, counted every approved step. It now asks the contracts rule the API asks.
+  it('takes this round\'s approval from the one rule for a claim\'s approver, so the page and the API name the same person', () => {
+    const step = approved.approvalSteps[0]!;
+    const approvalNote = (detail: any) => buildJourneySteps(detail, [], 'x').find((item) => item.key === 'approval')!.note;
+    /** Whether the payment step tells this viewer, who cannot pay, that they are the claim's approver. */
+    const toldTheyApproved = (detail: any, userId: string) => /^คุณอนุมัติใบนี้แล้ว/.test(active(detail, APPROVER, userId).note ?? '');
+    /** The contracts rule's answer for the same claim detail the page was given. */
+    const approverByRule = (userId: string, detail: any) => isReimbursementClaimApprover(userId, detail);
+
+    // No submission date on the claim: nobody is its approver, whatever steps it carries.
+    const noRound = claim({ approvedAt: '2026-09-20T04:00:00.000Z', status: 'READY_FOR_PAYMENT', approvalSteps: [step] });
+    assert.equal(approverByRule('boss', noRound), false);
+    // Before: the old step counted, so the approval read as a person's and 'boss' was told "คุณอนุมัติใบนี้แล้ว".
+    assert.equal(approvalNote(noRound), 'ไม่ต้องอนุมัติตามนโยบาย');
+    assert.equal(toldTheyApproved(noRound, 'boss'), false);
+
+    // Decided at the very instant the claim was sent, the two dates written differently: the same instant counts.
+    const sameInstant = claim({ submittedAt: '2026-09-20T04:00:00Z', approvedAt: '2026-09-20T04:00:00.000Z', status: 'READY_FOR_PAYMENT', approvalSteps: [step] });
+    assert.equal(approverByRule('boss', sameInstant), true);
+    // Before: "…04:00:00.000Z" sorted below "…04:00:00Z" as text, so the approval was taken for an earlier round's.
+    assert.equal(approvalNote(sameInstant), undefined);
+    assert.equal(toldTheyApproved(sameInstant, 'boss'), true);
+
+    // On every shape of claim the page says "you approved this" to exactly the person the rule names.
+    const resubmitted = claim({ submittedAt: '2026-09-21T03:00:00.000Z', approvedAt: '2026-09-21T03:00:00.000Z', status: 'READY_FOR_PAYMENT', approvalSteps: [step] });
+    const withdrawn = claim({ ...approved, status: 'READY_FOR_PAYMENT', approvalSteps: [{ ...step, invalidatedAt: '2026-09-20T05:00:00.000Z' }] });
+    const undecided = claim({ ...approved, status: 'READY_FOR_PAYMENT', approvalSteps: [{ ...step, decisionByUserId: undefined }] });
+    for (const [name, detail] of Object.entries({ noRound, sameInstant, resubmitted, withdrawn, undecided, thisRound: claim({ ...approved, status: 'READY_FOR_PAYMENT' }) })) {
+      for (const userId of ['boss', 'someone-else']) {
+        assert.equal(toldTheyApproved(detail, userId), approverByRule(userId, detail), `${name} ${userId}`);
+      }
+    }
+    assert.equal(toldTheyApproved(claim({ ...approved, status: 'READY_FOR_PAYMENT' }), 'boss'), true, 'the plain case is still told');
+  });
+
   it('offers the solo owner submit, approve, then pay on the same page', () => {
     assert.deepEqual(active(claim({ requesterUserId: 'owner', requestNo: undefined }), OWNER, 'owner').actions, ['submit', 'edit', 'cancel']);
     const pending = claim({ ...submitted, requesterUserId: 'owner', status: 'PENDING_APPROVAL',
@@ -910,7 +946,8 @@ describe('buildJourneySteps', () => {
     assert.deepEqual(step.actions, ['reopen', 'cancel', 'print']);
     assert.equal(step.note, 'รอ คุณสมชาย อนุมัติ');
     // Decided (the claim stays PENDING_APPROVAL while an approval's projection runs): nothing to withdraw.
-    const decided = { ...waiting, approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decidedAt: '2026-09-20T04:00:00.000Z' }] };
+    // The step as the API answers it: a decided step always names who decided it, which the approver rule reads.
+    const decided = { ...waiting, approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'boss', decidedAt: '2026-09-20T04:00:00.000Z' }] };
     assert.deepEqual(active(decided, STAFF, 'staff').actions, ['cancel', 'print']);
     // Only the requester, and only with the draft permission.
     assert.deepEqual(active(waiting, [...STAFF, 'reimbursement.finance_review'], 'fin').actions, ['cancel', 'print']);
