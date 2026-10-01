@@ -13,6 +13,7 @@ import {
   reimbursementSubmitReadiness,
   DUPLICATE_STATUS_LABELS,
   eligibleSignatureRoles,
+  paymentDeskText,
   PAYMENT_STATUS_LABELS,
   PAYMENT_STATUS_TONES,
   RECEIPT_REQUIREMENT_LABELS,
@@ -278,8 +279,23 @@ describe('currentDeskText', () => {
     assert.equal(currentDeskText({ kind: 'APPROVER' }), 'ผู้มีสิทธิ์อนุมัติ');
     assert.equal(currentDeskText({ kind: 'REQUESTER' }), 'ผู้ยื่น');
     assert.equal(currentDeskText({ kind: 'FINANCE' }), 'ฝ่ายการเงิน');
-    assert.equal(currentDeskText({ kind: 'PAYMENT' }), 'ฝ่ายการเงิน (รอบันทึกจ่าย)');
+    // Before: "ฝ่ายการเงิน (รอบันทึกจ่าย)", also for a shop with no finance desk (spec §18.3).
+    assert.equal(currentDeskText({ kind: 'PAYMENT' }), 'ผู้มีสิทธิ์บันทึกจ่าย');
     assert.equal(currentDeskText(undefined), null);
     assert.equal(currentDeskText({ kind: 'SOMETHING_NEW' }), null);
+  });
+
+  it('names who can record the payment when the claim detail lists them', () => {
+    const payment = { kind: 'PAYMENT' };
+    assert.equal(currentDeskText(payment, { names: ['สมศรี'], moreCount: 0 }), 'สมศรี');
+    assert.equal(currentDeskText(payment, { names: ['สมศรี', 'วิชัย'], moreCount: 2 }), 'สมศรี หรือ วิชัย และอีก 2 คน');
+    assert.equal(paymentDeskText({ names: ['สมศรี', 'วิชัย'], moreCount: 0 }), 'สมศรี หรือ วิชัย');
+    // Nobody listed, or a list row that carries no names: the pool.
+    assert.equal(currentDeskText(payment, { names: [], moreCount: 0 }), 'ผู้มีสิทธิ์บันทึกจ่าย');
+    assert.equal(paymentDeskText({ names: [], moreCount: 0 }), null);
+    assert.equal(paymentDeskText(undefined), null);
+    // The payers belong to the payment desk only.
+    assert.equal(currentDeskText({ kind: 'APPROVER', names: ['คุณยุนกิ'] }, { names: ['สมศรี'], moreCount: 0 }), 'คุณยุนกิ');
+    assert.equal(currentDeskText({ kind: 'FINANCE' }, { names: ['สมศรี'], moreCount: 0 }), 'ฝ่ายการเงิน');
   });
 });

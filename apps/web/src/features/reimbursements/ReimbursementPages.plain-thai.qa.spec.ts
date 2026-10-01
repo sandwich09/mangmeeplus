@@ -19,7 +19,7 @@ require.extensions['.svg'] = (module) => { module.exports = () => null; };
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const sections = require('./ReimbursementDetailSections') as typeof import('./ReimbursementDetailSections');
 const { ReimbursementCreatePage } = require('./ReimbursementCreatePage') as typeof import('./ReimbursementCreatePage');
-const { ReimbursementsHubPage } = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
+const { ReimbursementsHubPage, PolicySettings } = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
 const { ReimbursementSourceFacts } = require('./ReimbursementSourceFacts') as typeof import('./ReimbursementSourceFacts');
 const { approvalComparable, diffApprovalFields } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
 const reactRuntime = require('react') as typeof React;
@@ -159,13 +159,19 @@ const queueRow = { ...draft, requestNo: 'RB-202609-00007', status: 'FINANCE_REVI
   currentDesk: { kind: 'APPROVER', names: ['สมชาย', 'สมศรี การเงิน'] } };
 const hubPermissions = ['reimbursement.read', 'reimbursement.create', 'reimbursement.submit', 'reimbursement.approve', 'reimbursement.finance_review',
   'reimbursement.payment.record'];
-/** One hub tab, its queue loaded with the row (each queue starts as an empty list, loading). */
-const hubTab = (tab: string) => renderWithState(
+/** One hub tab, its queue loaded with the rows (each queue starts as an empty list, loading); `filter` = a card or chip already tapped. */
+const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string) => renderWithState(
   h(AppRouterContext.Provider, { value: router }, h(SearchParamsContext.Provider, { value: new URLSearchParams(`tab=${tab}`) },
     h(ToastContext.Provider, { value: toast },
       h(ReimbursementsHubPage, { companyId: 'company-1', userId: ids.requester, roles: ['OWNER'], permissions: hubPermissions })))),
-  (initial) => (Array.isArray(initial) && initial.length === 0 ? [queueRow] : initial === true ? false : undefined),
+  (initial) => (Array.isArray(initial) && initial.length === 0 ? rows : initial === true ? false : initial === 'all' ? filter : undefined),
 );
+// One claim per state the hub has to place: the desk is what the list API answers, and finished claims have none.
+const hubClaims = ([
+  ['DRAFT', 'REQUESTER'], ['PENDING_APPROVAL', 'APPROVER'], ['READY_FOR_PAYMENT', 'PAYMENT'], ['READY_FOR_PAYMENT', 'PAYMENT'],
+  ['PAID', null], ['REJECTED', null], ['CANCELLED', null],
+] as const).map(([status, kind], index) => ({ ...draft, id: `${ids.request}${index}`, requestNo: kind === 'REQUESTER' ? undefined : 'RB-202609-00007',
+  status, amount: '100.0000', currentDesk: kind && { kind } }));
 
 /** What the customer reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
 const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map(match => match[1]!),
@@ -219,6 +225,107 @@ describe('the claim lines fit a 390 px phone (Owner, 2026-09-30)', () => {
   });
 });
 
+describe('the hub cards and chips count what their filter shows (spec §18.1, AC38)', () => {
+  /** The markup inside the element marked `from`, up to the tag that carries `to`. */
+  const between = (html: string, from: string, to: string) => html.slice(html.indexOf('>', html.indexOf(from)) + 1, html.lastIndexOf('<', html.indexOf(to)));
+  const cardsOf = (html: string) => between(html, 'data-testid="reimbursements-mine-summary"', 'data-testid="reimbursements-mine-filters"');
+  const chipsOf = (html: string) => between(html, 'data-testid="reimbursements-mine-filters"', 'type="search"');
+  /** Label → the number on it, one entry per card (the number comes first) or per chip (the number comes last). */
+  const numbers = (html: string, numberFirst: boolean) => Object.fromEntries([...html.matchAll(/<button\b[^>]*>(.*?)<\/button>/gsu)].map(([, inner]) => {
+    const texts = visible(inner!);
+    return numberFirst ? [texts.slice(1).join(''), texts[0]!] : [texts.slice(0, -1).join(''), texts.at(-1)!];
+  }));
+  const rowsShown = (html: string) => html.match(/data-testid="reimbursements-mine-card"/gu)?.length ?? 0;
+
+  it('splits claims waiting for payment from those waiting for approval, and every number is its list', () => {
+    const html = hubTab('mine', hubClaims);
+    // Before: คำขอทั้งหมด 7 and รออนุมัติ/ตรวจสอบ 3 (the two approved claims counted as waiting for approval).
+    assert.deepEqual(numbers(cardsOf(html), true),
+      { 'ร่างรอส่ง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่ายเงินคืน': '2', 'ยอดรวมที่ขอเบิก': '฿700' });
+    const chips = numbers(chipsOf(html), false);
+    assert.deepEqual(chips, { 'ทั้งหมด': '7', 'ร่าง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่าย': '2', 'จ่ายแล้ว': '1', 'ปฏิเสธ/ยกเลิก': '2' });
+    assert.equal(rowsShown(html), 7);
+    // Tapping a card or its chip shows exactly the claims it counted.
+    for (const [filter, card, chip] of [['draft', 'ร่างรอส่ง', 'ร่าง'], ['review', 'รออนุมัติ/ตรวจสอบ', 'รออนุมัติ/ตรวจสอบ'],
+      ['payment', 'รอจ่ายเงินคืน', 'รอจ่าย'], ['paid', null, 'จ่ายแล้ว'], ['closed', null, 'ปฏิเสธ/ยกเลิก']] as const) {
+      const filtered = hubTab('mine', hubClaims, filter);
+      assert.equal(String(rowsShown(filtered)), chips[chip], filter);
+      if (card) assert.equal(numbers(cardsOf(filtered), true)[card], chips[chip], filter);
+      assert.ok(visible(filtered).includes(`พบ ${chips[chip]} จาก 7 รายการ`), filter);
+    }
+    assert.equal(Object.entries(chips).reduce((sum, [label, count]) => sum + (label === 'ทั้งหมด' ? 0 : Number(count)), 0), 7);
+  });
+
+  it('keeps the four cards two by two on a 390 px phone, each one a button that filters', () => {
+    const cards = cardsOf(hubTab('mine', hubClaims, 'payment'));
+    assert.ok(hubTab('mine', hubClaims).includes('<div class="grid grid-cols-2 gap-3 xl:grid-cols-4" data-testid="reimbursements-mine-summary">'));
+    const buttons = [...cards.matchAll(/<button type="button" aria-pressed="(true|false)" class="([^"]*)"/gu)];
+    assert.deepEqual(buttons.map(([, pressed]) => pressed), ['false', 'false', 'true', 'false'], 'รอจ่ายเงินคืน is the open filter');
+    // Nothing with a fixed width: a card is as wide as its grid column and its text wraps inside it.
+    for (const [, , className] of buttons) assert.match(className!, /^h-full w-full min-w-0 rounded-2xl text-left/u);
+    assert.doesNotMatch(cards, /\b(?:min-)?w-\[|whitespace-nowrap/u);
+    // The chips: two columns on a phone, three from sm, and no chip that refuses to wrap.
+    const html = hubTab('mine', hubClaims);
+    assert.ok(html.includes('<div class="grid w-full grid-cols-2 gap-2 sm:grid-cols-3" data-testid="reimbursements-mine-filters">'));
+    const chipClasses = [...chipsOf(html).matchAll(/<button type="button" aria-pressed="(?:true|false)" class="([^"]*)"/gu)].map(([, className]) => className!);
+    assert.equal(chipClasses.length, 6);
+    for (const className of chipClasses) assert.doesNotMatch(className, /\b(?:min-)?w-\[|whitespace-nowrap/u);
+    // A label wider than a 390 px chip (measured in a browser: 143 px needed, 132 there) breaks at its slash, never inside a Thai word.
+    assert.ok(chipsOf(html).includes('<span class="min-w-0"><span class="whitespace-nowrap">รออนุมัติ/</span><span class="whitespace-nowrap">ตรวจสอบ</span></span>'));
+  });
+});
+
+describe('ตั้งค่านโยบาย warns about an approver role that cannot record payment (spec §13.3 F2)', () => {
+  const policy = { id: 'policy-1', updatedAt: '2026-10-01T03:00:00.000Z', status: 'ACTIVE', approvalRequiredFromAmount: '1.00', approverMode: 'CUSTOM_ROLE',
+    defaultApproverRoles: ['MANAGER', 'CHECKER'], allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy: 'WARN',
+    financeReviewRequired: false, slaHours: null };
+  const option = (key: string, name: string, canRecordPayment: boolean) => ({ key, name, optionLabel: name, eligibleApproverCount: 1, coverage: 'COMPLETE',
+    uncoveredBranchNames: [], selectable: true, canRecordPayment });
+  /** The settings form with the policy and the role options already loaded: the form is the component's first state. */
+  const settings = (loaded: object, options: object[]) => {
+    let formLoaded = false;
+    return visible(renderWithState(h(ToastContext.Provider, { value: toast }, h(PolicySettings, { companyId: 'company-1' })), (initial) => {
+      if (initial === null && !formLoaded) { formLoaded = true; return loaded; }
+      return Array.isArray(initial) && initial.length === 0 ? options : initial === true ? false : undefined;
+    }));
+  };
+  const warning = 'บทบาท ผู้ตรวจ อนุมัติได้ แต่บันทึกจ่ายไม่ได้ ใบที่อนุมัติแล้วจะรอผู้ที่มีสิทธิ์บันทึกจ่าย ถ้าต้องการให้ผู้อนุมัติจ่ายเองได้ ให้เพิ่มสิทธิ์บันทึกจ่ายให้บทบาทนี้ในหน้าบทบาทและสิทธิ์';
+
+  it('names the chosen role under the role list while finance review is off, and saving stays possible', () => {
+    const options = [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', false)];
+    const texts = settings(policy, options);
+    assert.ok(texts.includes(warning), texts.filter((text) => text.includes('บันทึกจ่าย')).join(' | '));
+    assert.ok(texts.includes('บันทึกนโยบาย'));
+    for (const [name, pattern] of MACHINE_TOKENS) assert.doesNotMatch(warning, pattern, name);
+    // Nothing to say once finance review pays, once the role is unticked, or when every chosen role can pay.
+    for (const quiet of [settings({ ...policy, financeReviewRequired: true }, options), settings({ ...policy, defaultApproverRoles: ['MANAGER'] }, options),
+      settings(policy, [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', true)])]) {
+      assert.equal(quiet.some((text) => text.includes('บันทึกจ่ายไม่ได้')), false);
+      assert.ok(quiet.includes('ส่งใบเบิกให้ใครอนุมัติ?'), 'the form rendered');
+    }
+  });
+});
+
+// The same claim as `paid`, on the default route: approved, then paid by whoever holds the pay right.
+const noFinance = { ...paid, financeReviewStatus: 'NOT_REQUIRED', financeReviewRequired: false, financeReviewedByName: undefined, financeReviewedAt: undefined };
+const waiting = { ...noFinance, status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', documentSignedVia: null, payments: [], signatures: [], signedCopies: [],
+  currentDesk: { kind: 'PAYMENT' }, paymentDesk: { names: ['สมชาย', 'วิชัย'], moreCount: 0 } };
+
+describe('a claim with no finance-review step never says ฝ่ายการเงิน (spec §18.3, AC39)', () => {
+  it('names who records the payment in the claim timeline instead', () => {
+    const texts = visible(detailSections(waiting, ids.requester, []));
+    // Before: "กำลังรอฝ่ายการเงินบันทึกจ่าย", in a shop that has no finance desk.
+    assert.ok(texts.includes('กำลังรอ สมชาย หรือ วิชัย บันทึกจ่าย'));
+    assert.ok(visible(detailSections({ ...waiting, paymentDesk: undefined }, ids.requester, [])).includes('กำลังรอผู้มีสิทธิ์บันทึกจ่าย'));
+    for (const [state, detail] of [['draft', { ...draft, financeReviewRequired: false }], ['waiting for payment', waiting], ['paid', noFinance]] as const) {
+      for (const text of visible(detailSections(detail, ids.requester, []))) assert.doesNotMatch(text, /ฝ่ายการเงิน/u, state);
+    }
+    // A claim that does pass finance review keeps its finance rows.
+    assert.ok(visible(detailSections(paid, ids.requester, [])).includes('ฝ่ายการเงินตรวจแล้ว โดย สมศรี การเงิน'));
+    assert.ok(visible(detailSections({ ...draft, financeReviewRequired: true }, ids.requester, [])).includes('รอฝ่ายการเงินตรวจ'));
+  });
+});
+
 const MACHINE_TOKENS: Array<[string, RegExp]> = [ // ReimbursementDraftActionPage.qa.spec.ts's set
   ['cuid/uuid/hash-like id', /\b[a-z0-9]{20,}\b|[0-9a-f]{8}-[0-9a-f]{4}-/iu], ['enum or code', /[A-Z_]{4,}/u],
   ['field path', /\w+\.\d+\.\w+|\b[a-zA-Z]\w*\.(?:\d|[a-z]\w*\b)/u], ['camelCase key', /\b[a-z]+[A-Z]\w*\b/u], ['snake_case code', /\b[a-z]+_[a-z_]+\b/u],
@@ -234,12 +341,14 @@ describe('no customer-visible claim page text carries a machine token (Owner rul
       ['detail: LINE-made draft', detailSections(draft, ids.requester, ['reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own'])],
       ['detail: paid, signed on paper', detailSections(paid, ids.requester, ['reimbursement.payment.void', 'reimbursement.finance_review'])],
       ['detail: enums added later', detailSections(later, ids.approver, [])],
+      ['detail: waiting for payment, payers named', detailSections(waiting, ids.approver, [])],
       ['stale-approval dialog', staleDialog({ ...draft, status: 'PENDING_APPROVAL', amount: '1234.5000', lineCount: 1 }, { ...paid, status: 'PENDING_APPROVAL' })],
       ['stale-approval dialog: enums added later, LINE-made lines', staleDialog({ ...later, lineCount: 1 }, { ...later, lines: draft.lines })],
       ['create form: new claim', renderToStaticMarkup(createPage())],
       ['create form: source picked, rows folded', filledCreatePage()],
       ['create form: rows bound to bills that were refused', filledCreatePage(refusedForm)],
       ...['mine', 'approvals', 'finance'].map((tab): [string, string] => [`hub: ${tab}`, hubTab(tab)]),
+      ['hub: mine, a claim in every state', hubTab('mine', hubClaims)],
     ];
     let checked = 0;
     for (const [page, html] of pages) {

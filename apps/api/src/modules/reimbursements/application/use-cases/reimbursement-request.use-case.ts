@@ -279,9 +279,15 @@ export class GetReimbursementDetailUseCase {
     const approvalActions = await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     const notes = await this.repo.listInternalNotes(ctx.companyId, id);
     const names = await this.repo.getUserDisplayNames(ctx.companyId, notes.map(note => note.authorUserId));
+    const detail = await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req);
+    // Who can record the payment (spec §18.3): read only while the claim waits there, and only on this
+    // read. The page re-reads the claim after every action, like `approvalActions`.
+    const payers = detail.currentDesk?.kind === 'PAYMENT'
+      ? await this.repo.listPaymentRecorderNames(ctx.companyId, req.branchId) : undefined;
     return {
-      ...await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req),
+      ...detail,
       approvalActions,
+      ...(payers && { paymentDesk: { names: payers.slice(0, 5), moreCount: Math.max(payers.length - 5, 0) } }),
       internalNotes: notes.map(note => ({
         id: note.id,
         authorUserId: note.authorUserId,

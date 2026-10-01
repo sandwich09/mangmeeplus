@@ -1,5 +1,5 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
-import { civilDate, civilDateToUtcDate, type RequestContext, type ReimbursementAiSummary } from '@watchdog-bms/contracts';
+import { civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, type RequestContext, type ReimbursementAiSummary } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
@@ -71,11 +71,12 @@ export class GetReimbursementAiSummaryUseCase {
 /** Claims still waiting on someone. APPROVED is the transient hand-off to finance or payment. */
 const BACKLOG_STATUSES = ['PENDING_APPROVAL', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'APPROVED'];
 
-/** The web's desk words (`CURRENT_DESK_LABELS` in reimbursements.model.ts) plus the two waits only this view names.
- *  Finance says which of its two waits it is (eval 2026-09-30: a bare "ฝ่ายการเงิน" came back as "(รออนุมัติ)"). */
+/** The web's desk words (`REIMBURSEMENT_DESK_LABELS`, the one source both read) plus the two waits only this view names.
+ *  Finance says what it waits for (eval 2026-09-30: a bare "ฝ่ายการเงิน" came back as "(รออนุมัติ)"). Payment is whoever
+ *  holds the pay right, never "ฝ่ายการเงิน": a claim with no finance-review step has no finance desk (spec §18.3). */
 export const BACKLOG_DESK_LABELS = {
-  finance: 'ฝ่ายการเงิน (รอตรวจสอบ)',
-  payment: 'ฝ่ายการเงิน (รอบันทึกจ่าย)',
+  finance: `${REIMBURSEMENT_DESK_LABELS.FINANCE} (รอตรวจสอบ)`,
+  payment: REIMBURSEMENT_DESK_LABELS.PAYMENT,
   no_active_approver: 'ไม่มีผู้อนุมัติที่ยังใช้งานอยู่',
   status_pending: 'รอระบบปรับสถานะ',
 } as const;
@@ -186,7 +187,7 @@ export class GetReimbursementApprovalBacklogUseCase {
       const submittedOn = civilDate(row.submittedAt ?? row.createdAt);
       const approvedOn = approved ? civilDate(row.approvedAt ?? row.submittedAt ?? row.createdAt) : undefined;
       const since = approvedOn ?? submittedOn;
-      const label = entry.approverUserId ? names[entry.approverUserId] ?? 'ผู้มีสิทธิ์อนุมัติ'
+      const label = entry.approverUserId ? names[entry.approverUserId] ?? REIMBURSEMENT_DESK_LABELS.APPROVER
         : entry.kind ? BACKLOG_DESK_LABELS[entry.kind] : SHARED_PILE_LABEL;
       const group = groups.get(entry.key) ?? { label, approver: !!entry.approverUserId, approved, count: 0, totals: new Map(), oldest: since };
       group.count += 1;

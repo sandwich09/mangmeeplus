@@ -555,6 +555,25 @@ to a custom role built from it). `reimbursement.finance_review`, `reimbursement.
 and `reimbursement.policy.manage` are not widened — those stay FINANCE/OWNER-only, unchanged. FINANCE
 keeps its existing grants.
 
+Owner decision 2026-10-01 (payout-account spec §13.3 F1): company roles that already hold
+`reimbursement.approve` — custom roles, and system roles a company has edited — receive
+`reimbursement.payment.record` and `reimbursement.payment.void` through `COMPANY_ROLE_BACKFILLS`. A role
+saved before `pack.reimbursement.approve` carried the two keys could approve a claim and not pay it, which
+left approved claims waiting at the payment step.
+
+- Applied by `prisma/sync-permissions.ts` on every deploy; no migration.
+- Additive and idempotent: a role that already holds a key is skipped, and nothing is ever revoked.
+- Anchored on `reimbursement.approve`: a role without it is never widened (finance reviewers, auditors and
+  plain members keep exactly what they had).
+- Audited: each key added to a role writes one `access.role.update` audit row with actor `SYSTEM` in that
+  role's company (`metadataJson.source = sync-permissions`, the added key and the anchor).
+- Consequence: a company role that keeps `reimbursement.approve` gets the two keys back on the next deploy
+  if they are removed by hand.
+- Between deploys a role created or edited without the pay right can still be chosen as approver (routing
+  needs only read, approve and reject). The approver-role option carries `canRecordPayment`, and ตั้งค่านโยบาย
+  warns that such a role approves but cannot record payment while finance review is off. It never blocks
+  the save: a company with a finance desk may split the two on purpose.
+
 The employee baseline is active only while the `reimbursement` entitlement is ON. Safe-OFF continues to strip create, draft update, submit and cancel while retaining the existing runoff permissions for claims already in flight. Company custom roles opt in through `pack.reimbursement.self`; they are never widened solely because the feature is enabled.
 
 `reimbursement.read_related` returns only records in the caller's tenant and branch scope where the caller is persisted as

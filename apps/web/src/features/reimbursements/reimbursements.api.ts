@@ -49,6 +49,21 @@ export function getReimbursementSourceOptions(companyId: string, params: { branc
 export function listReimbursements(companyId: string, params?: Record<string, unknown>) {
   return apiFetch<any>(`${base(companyId)}${qs(params)}`);
 }
+/**
+ * Every claim the session may see, newest first. The hub counts, filters and searches what it has loaded,
+ * and the list endpoint answers 20 rows unless asked, so one unpaged call hid every older claim from the
+ * cards — a claim still waiting for payment included.
+ * ponytail: pages on the client, 100 a call; count and filter on the server once a shop has thousands of claims.
+ */
+export async function listAllReimbursements(companyId: string, params?: Record<string, unknown>): Promise<any[]> {
+  const byId = new Map<string, any>();
+  for (let page = 1; ; page += 1) {
+    const result = await listReimbursements(companyId, { ...params, page, pageSize: 100 });
+    // Keyed by id: a claim filed between two calls shifts the pages and would otherwise repeat a row.
+    for (const item of result.items ?? []) byId.set(item.id, item);
+    if (!result.items?.length || page * 100 >= result.total) return [...byId.values()];
+  }
+}
 export function getReimbursement(companyId: string, id: string) {
   return apiFetch<any>(`${base(companyId)}/${id}`);
 }

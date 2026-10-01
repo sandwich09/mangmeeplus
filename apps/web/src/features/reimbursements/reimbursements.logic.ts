@@ -4,8 +4,9 @@ import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/co
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import {
-  CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
-  canUploadSignedCopy, canVoidRecordedPayment, eligibleSignatureRoles, reimbursementOwnActions,
+  CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
+  canUploadSignedCopy, canVoidRecordedPayment, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
+  type ClaimSignatureRole,
 } from './reimbursements.model';
 
 /**
@@ -258,6 +259,36 @@ export function parseHubTab(value: string | null | undefined, visible: readonly 
   return visible.includes(value as HubTab) ? (value as HubTab) : (visible[0] ?? 'mine');
 }
 
+// ---- หน้ารวม: summary cards and filter chips (spec §18.1) ----
+
+/** Every claim sits in exactly one of these, so the chips add up to "ทั้งหมด". */
+export const HUB_FILTERS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
+export type HubFilter = 'all' | (typeof HUB_FILTERS)[number];
+
+/**
+ * Read off the desk the server resolved, the one the row prints as "อยู่ที่ …": waiting on an approver
+ * or on finance review is รออนุมัติ/ตรวจสอบ, waiting on whoever records the payment is รอจ่าย. A claim
+ * with no desk is finished: paid, or refused/cancelled.
+ */
+export function hubFilterOf(row: { status?: string; currentDesk?: { kind?: string } | null }): (typeof HUB_FILTERS)[number] {
+  switch (row.currentDesk?.kind) {
+    case 'REQUESTER': return 'draft';
+    case 'APPROVER': case 'FINANCE': return 'review';
+    case 'PAYMENT': return 'payment';
+  }
+  return row.status === 'PAID' ? 'paid' : 'closed';
+}
+
+/** The rows a card or a chip shows. */
+export function hubRows<T extends Parameters<typeof hubFilterOf>[0]>(rows: readonly T[], filter: HubFilter): T[] {
+  return filter === 'all' ? [...rows] : rows.filter((row) => hubFilterOf(row) === filter);
+}
+
+/** Counted with `hubRows` itself, so a number can never disagree with the list its filter shows. */
+export function hubFilterCounts(rows: readonly Parameters<typeof hubFilterOf>[0][]): Record<HubFilter, number> {
+  return Object.fromEntries((['all', ...HUB_FILTERS] as const).map((filter) => [filter, hubRows(rows, filter).length])) as Record<HubFilter, number>;
+}
+
 // ---- Claim timeline (เส้นทางของใบเบิก) ----
 
 export type ClaimTimelineRow = {
@@ -298,11 +329,11 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
     return [...rows, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
   }
 
+  // The row the claim waits at is the journey's own step, so the two never disagree; and the finance row
+  // exists only for a claim that has that step (spec §18.3: no "ฝ่ายการเงิน" on a claim without one).
+  const withFinance = claimHasFinanceStep(detail);
+  const at = journeyStepAt(detail, withFinance);
   const financeDone = detail?.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && !!detail?.financeReviewedAt;
-  const waitingFinance = status === 'FINANCE_REVIEW';
-  // NOT_REQUIRED on a claim already past approval means the policy path went straight to payment.
-  const financeSkipped = detail?.financeReviewStatus === 'NOT_REQUIRED'
-    && ['READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID'].includes(status);
   if (financeDone) {
     rows.push({
       key: 'finance',
@@ -310,16 +341,24 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
       label: detail.financeReviewedByName ? `ฝ่ายการเงินตรวจแล้ว โดย ${detail.financeReviewedByName}` : 'ฝ่ายการเงินตรวจแล้ว',
       date: detail.financeReviewedAt,
     });
-  } else if (!financeSkipped) {
-    rows.push({ key: 'finance', state: waitingFinance ? 'current' : 'future', label: waitingFinance ? 'กำลังรอฝ่ายการเงินตรวจ' : 'รอฝ่ายการเงินตรวจ' });
+  } else if (withFinance) {
+    rows.push({ key: 'finance', state: at === 'finance' ? 'current' : 'future', label: at === 'finance' ? `กำลัง${WAITING_FOR_FINANCE}` : WAITING_FOR_FINANCE });
   }
 
   const paid = (detail?.payments ?? []).find((p: any) => p.status === 'RECORDED');
-  const waitingPayment = status === 'READY_FOR_PAYMENT' || status === 'PARTIALLY_PAID';
   rows.push(paid
     ? { key: 'payment', state: 'done', label: paid.paidByName ? `จ่ายแล้ว โดย ${paid.paidByName}` : 'จ่ายแล้ว', date: paid.paidAt }
-    : { key: 'payment', state: waitingPayment ? 'current' : 'future', label: waitingPayment ? 'กำลังรอฝ่ายการเงินบันทึกจ่าย' : 'รอบันทึกจ่าย' });
+    : { key: 'payment', state: at === 'payment' ? 'current' : 'future', label: at === 'payment' ? `กำลัง${waitingForPayer(detail)}` : 'รอบันทึกจ่าย' });
   return rows;
+}
+
+// Who a claim waits for, in the words of its desk: the timeline row and the step note print the same sentence,
+// built from the pool label the "อยู่ที่ …" line and the LINE backlog answer use.
+const WAITING_FOR_FINANCE = `รอ${CURRENT_DESK_LABELS.FINANCE}ตรวจ`;
+/** "รอ สมศรี หรือ วิชัย บันทึกจ่าย" when the detail names who can pay; otherwise the pool, which already says it. */
+function waitingForPayer(detail: any): string {
+  const payers = paymentDeskText(detail?.paymentDesk);
+  return payers ? `รอ ${payers} บันทึกจ่าย` : `รอ${CURRENT_DESK_LABELS.PAYMENT}`;
 }
 
 // ---- Journey steps (หน้า journey ต่อคำขอเบิกหนึ่งใบ — spec §5, §6) ----
@@ -404,8 +443,9 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
   const atIndex = keys.indexOf(journeyStepAt(detail, withFinance));
   const own = reimbursementOwnActions(detail, userId, permissions);
   // A step approved in an earlier round (before a finance correction) is history, not this round's approval.
-  const humanApproved = (detail?.approvalSteps ?? []).some((step: any) => step.status === 'APPROVED' && !step.invalidatedAt
-    && String(step.decidedAt ?? '') >= String(detail?.submittedAt ?? ''));
+  const approval = (detail?.approvalSteps ?? []).filter((step: any) => step.status === 'APPROVED' && !step.invalidatedAt
+    && String(step.decidedAt ?? '') >= String(detail?.submittedAt ?? '')).at(-1);
+  const humanApproved = !!approval;
   const signed = new Set((detail?.signatures ?? []).map((row: any) => row.role));
   const payment = (detail?.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
   const duplicate = ['POSSIBLE_DUPLICATE', 'CONFIRMED_DUPLICATE'].includes(detail?.duplicateStatus)
@@ -455,7 +495,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       }
       note = review === 'BLOCKED'
         ? `ฝ่ายการเงินระงับการจ่าย${detail?.financeReviewNote ? `: ${detail.financeReviewNote}` : ''}`
-        : actions.length > 0 ? 'ตรวจใบเสร็จและรายการซ้ำ แล้วอนุมัติจ่ายหรือส่งกลับให้แก้ไข' : 'รอฝ่ายการเงินตรวจ';
+        : actions.length > 0 ? 'ตรวจใบเสร็จและรายการซ้ำ แล้วอนุมัติจ่ายหรือส่งกลับให้แก้ไข' : WAITING_FOR_FINANCE;
     } else if (key === 'payment') {
       // APPROVED here is the no-finance claim waiting for its projection; the API accepts payment then.
       const payable = ['READY_FOR_PAYMENT', 'APPROVED'].includes(status);
@@ -469,9 +509,16 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
           ? 'ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล จึงจะบันทึกจ่ายได้'
           : 'รอผู้บันทึกจ่ายตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้'}`;
       } else {
-        if (payable && permissions.includes('reimbursement.payment.record')) actions.push('pay');
-        note = [actions.length > 0 ? 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง' : 'รอผู้มีสิทธิ์บันทึกจ่าย', duplicate]
-          .filter(Boolean).join(' · ');
+        const canPay = permissions.includes('reimbursement.payment.record');
+        if (payable && canPay) actions.push('pay');
+        // Spec §18.3 and §13.4: whoever cannot pay reads who can, and the approver of this claim is told so plainly.
+        const payers = paymentDeskText(detail?.paymentDesk);
+        const waiting = detail?.paymentDesk && !payers
+          ? 'ยังไม่มีผู้ที่บันทึกจ่ายใบของสาขานี้ได้ ขอให้เจ้าของกิจการบันทึกจ่ายหรือเพิ่มสิทธิ์'
+          : !canPay && approval?.decisionByUserId === userId
+            ? `คุณอนุมัติใบนี้แล้ว แต่บัญชีของคุณยังไม่มีสิทธิ์บันทึกจ่าย ${payers ? `ผู้ที่บันทึกจ่ายได้: ${payers} ` : ''}ถ้าต้องการจ่ายเอง ขอให้เจ้าของกิจการเพิ่มสิทธิ์บันทึกจ่ายให้บทบาทของคุณ`
+            : waitingForPayer(detail);
+        note = [actions.length > 0 ? 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง' : waiting, duplicate].filter(Boolean).join(' · ');
       }
     } else if (key === 'document' && detail?.documentSignedVia) {
       // Done in the system or on paper (A4); the latest declared scan names who attached it and when.
@@ -479,9 +526,19 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         : paperSignedLine((detail.signedCopies ?? []).find((copy: any) => copy.acknowledgedAt));
     } else if (key === 'document') {
       if (eligibleSignatureRoles(detail, userId).some((role) => !signed.has(role))) actions.push('sign');
-      note = actions.length > 0 || canUploadSignedCopy(detail, userId, permissions)
-        ? 'จ่ายเงินคืนแล้ว ลงนามในใบเบิก พิมพ์เก็บไว้ หรือแนบสำเนาที่เซ็นแล้ว'
-        : 'จ่ายเงินคืนแล้ว พิมพ์ใบเบิกเก็บไว้ได้';
+      // §18.2: name who the document still waits for. The blocks the form needs are the server's own
+      // (`documentSignedVia`): ผู้อนุมัติ only when a person approved, ฝ่ายบัญชี only when finance reviewed.
+      const signers: Record<ClaimSignatureRole, string | undefined> = {
+        REQUESTER: detail?.requesterDisplayNameSnapshot, APPROVER: approval?.decidedByName ?? approval?.approverName,
+        FINANCE_REVIEW: detail?.financeReviewedByName, PAYER: payment?.paidByName,
+      };
+      const unsigned = claimSignatureSlots(detail)
+        .filter((role) => !signed.has(role) && (role !== 'APPROVER' || humanApproved) && (role !== 'FINANCE_REVIEW' || review !== 'NOT_REQUIRED'))
+        .map((role) => `${CLAIM_SIGNATURE_ROLE_LABELS[role]}${signers[role] ? ` (${signers[role]})` : ''}`);
+      note = [
+        unsigned.length > 0 ? `จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ${unsigned.join(' และ')}` : 'จ่ายเงินคืนแล้ว พิมพ์ใบเบิกเก็บไว้ได้',
+        actions.includes('sign') && 'คุณยังไม่ได้ลงนาม กดลงนามในใบเบิก',
+      ].filter(Boolean).join(' · ');
     }
     if (!ended && own.canCancel) actions.push('cancel');
     // No requestNo, no document: drafts and claims cancelled out of DRAFT never got one.
@@ -540,6 +597,20 @@ export function policyDecisionPreview(input: {
     { title: `ยอดตั้งแต่ ${amount} บาท`, path: `${input.ownerRoute ? approver : `${approver} (ถ้าไม่มี เจ้าของกิจการ)`} → ${payout}` },
     { title: `ยอดต่ำกว่า ${amount} บาท`, path: `ไม่ต้องรอผู้อนุมัติ → ${payout}` },
   ];
+}
+
+/**
+ * Spec §13.3 F2: with finance review off the approver is the one expected to pay, so a chosen approver role
+ * that cannot record payment leaves approved claims waiting for someone else. Saving is still allowed (a
+ * company may want that), so this only warns. Null when there is nothing to say.
+ */
+export function approverPaymentWarning(
+  selectedRoles: readonly { label: string; canRecordPayment?: boolean }[],
+  financeReviewRequired: boolean,
+): string | null {
+  const labels = selectedRoles.filter((role) => role.canRecordPayment === false).map((role) => role.label);
+  if (financeReviewRequired || labels.length === 0) return null;
+  return `บทบาท ${labels.join(' และ ')} อนุมัติได้ แต่บันทึกจ่ายไม่ได้ ใบที่อนุมัติแล้วจะรอผู้ที่มีสิทธิ์บันทึกจ่าย ถ้าต้องการให้ผู้อนุมัติจ่ายเองได้ ให้เพิ่มสิทธิ์บันทึกจ่ายให้บทบาทนี้ในหน้าบทบาทและสิทธิ์`;
 }
 
 export function formatMoney(v: unknown, currency?: string): string {

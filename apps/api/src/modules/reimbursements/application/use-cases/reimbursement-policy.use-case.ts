@@ -112,6 +112,8 @@ export function buildReimbursementApproverRoleOptions(
         uncoveredBranchNames: uncovered.map((branch) => branch.name),
         selectable,
         ...(unavailableReason && { unavailableReason }),
+        // After the same entitlement cut as the approve keys above: what a holder of this role can do at the payment step.
+        canRecordPayment: role.permissionKeys.includes('reimbursement.payment.record'),
       };
     })
     .sort((a, b) => Number(b.selectable) - Number(a.selectable) || a.name.localeCompare(b.name));

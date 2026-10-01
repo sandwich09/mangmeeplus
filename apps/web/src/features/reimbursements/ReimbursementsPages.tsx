@@ -9,7 +9,7 @@ import { Modal } from '@/common/components/modal';
 import { EmptyState } from '@/common/components/state/EmptyState';
 import { LoadingState } from '@/common/components/state/LoadingState';
 import {
-  listReimbursements, submitReimbursement, getReimbursement,
+  listAllReimbursements, submitReimbursement, getReimbursement,
   listApprovalQueue, approveReimbursement, rejectReimbursement,
   listFinanceQueue, financeReviewReimbursement,
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
@@ -27,6 +27,7 @@ import {
   summariseQueue, matchesSearch, pageBounds,
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
+  hubFilterCounts, hubRows, type HubFilter, approverPaymentWarning,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
@@ -210,17 +211,13 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'pending' | 'approved' | 'paid'>('all');
+  const [statusFilter, setStatusFilter] = useState<HubFilter>('all');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try {
-      const scope = reimbursementListScope(permissions);
-      const r = await listReimbursements(companyId, { scope });
-      setData(r.items ?? []);
-    }
+    try { setData(await listAllReimbursements(companyId, { scope: reimbursementListScope(permissions) })); }
     catch (e) { setError(err(e)); } finally { setLoading(false); }
   }, [companyId, permissions]);
   useEffect(() => { load(); }, [load, refreshKey]);
@@ -236,20 +233,10 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
     () => data.filter(row => reimbursementSubmitReadiness(row).blocked).length,
     [data],
   );
-  const statusCounts = useMemo(() => ({
-    all: data.length,
-    draft: data.filter(r => r.status === 'DRAFT').length,
-    pending: data.filter(r => r.status === 'PENDING_APPROVAL').length,
-    approved: data.filter(r => ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(r.status)).length,
-    paid: data.filter(r => r.status === 'PAID').length,
-    review: data.filter(r => ['PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(r.status)).length,
-  }), [data]);
+  // The cards, the chips and the list all go through hubRows, so a count always equals the rows its filter shows.
+  const statusCounts = useMemo(() => hubFilterCounts(data), [data]);
   const filteredData = useMemo(() => {
-    return data.filter(r => {
-      if (statusFilter === 'draft' && r.status !== 'DRAFT') return false;
-      if (statusFilter === 'pending' && r.status !== 'PENDING_APPROVAL') return false;
-      if (statusFilter === 'approved' && !['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(r.status)) return false;
-      if (statusFilter === 'paid' && r.status !== 'PAID') return false;
+    return hubRows(data, statusFilter).filter(r => {
       return matchesSearch([
         r.requestNo,
         r.requesterDisplayNameSnapshot,
@@ -267,13 +254,21 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
   const pagedData = useMemo(() => filteredData.slice(bounds.start, bounds.end), [filteredData, bounds]);
   useEffect(() => { setPage(1); }, [query, statusFilter]);
-  const statusChips: Array<{ key: typeof statusFilter; label: string }> = [
+  const statusChips: Array<{ key: HubFilter; label: string }> = [
     { key: 'all', label: 'ทั้งหมด' },
     { key: 'draft', label: 'ร่าง' },
-    { key: 'pending', label: 'รออนุมัติ' },
-    { key: 'approved', label: 'อนุมัติแล้ว' },
+    { key: 'review', label: 'รออนุมัติ/ตรวจสอบ' },
+    { key: 'payment', label: 'รอจ่าย' },
     { key: 'paid', label: 'จ่ายแล้ว' },
+    { key: 'closed', label: 'ปฏิเสธ/ยกเลิก' },
   ];
+  // Each card is the same filter as its chip; tapping the open one goes back to ทั้งหมด.
+  const statusCards = [
+    { key: 'draft', icon: ICON.edit, label: 'ร่างรอส่ง', value: statusCounts.draft, tone: KPI.amber },
+    { key: 'review', icon: ICON.clock, label: 'รออนุมัติ/ตรวจสอบ', value: statusCounts.review, tone: KPI.purple },
+    { key: 'payment', icon: ICON.wallet, label: 'รอจ่ายเงินคืน', value: statusCounts.payment, tone: KPI.sky },
+    { key: 'all', icon: ICON.doc, label: 'ยอดรวมที่ขอเบิก', value: baht0(summary.totalAmount), tone: KPI.brand },
+  ] as const;
 
   return (
     <div className="space-y-4">
@@ -283,26 +278,33 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
           {blockedDraftCount > 0 && (
             <ErrorBanner message={`มีคำขอร่าง ${blockedDraftCount} รายการที่ยังส่งไม่ได้ตามนโยบายใบเสร็จ กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ`} />
           )}
-          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <StatCard icon={ICON.doc} label="คำขอทั้งหมด" value={summary.count} sub="จำนวนใบ" {...KPI.sky} />
-            <StatCard icon={ICON.edit} label="ร่างรอส่ง" value={statusCounts.draft} {...KPI.amber} />
-            <StatCard icon={ICON.clock} label="รออนุมัติ/ตรวจสอบ" value={statusCounts.review} {...KPI.purple} />
-            <StatCard icon={ICON.wallet} label="ยอดรวมที่ขอเบิก" value={baht0(summary.totalAmount)} {...KPI.brand} />
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" data-testid="reimbursements-mine-summary">
+            {statusCards.map(card => (
+              <button key={card.key} type="button" aria-pressed={statusFilter === card.key}
+                onClick={() => setStatusFilter(statusFilter === card.key ? 'all' : card.key)}
+                className={cx('h-full w-full min-w-0 rounded-2xl text-left', card.key !== 'all' && statusFilter === card.key && 'ring-2 ring-brand-500 ring-offset-2')}>
+                <StatCard icon={card.icon} label={card.label} value={card.value} {...card.tone} />
+              </button>
+            ))}
           </div>
           <MangmeeCard className="p-4">
-            <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            {/* Three rows of two on a phone, two rows of three from sm. A label too long for a 390 px chip wraps
+                at its slash, never inside a Thai word (measured: "รออนุมัติ/ตรวจสอบ" needs 143 px of the 132 there). */}
+            <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3" data-testid="reimbursements-mine-filters">
               {statusChips.map(chip => (
-                <button key={chip.key} onClick={() => setStatusFilter(chip.key)}
-                  className={cx('inline-flex min-h-11 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition sm:min-h-0',
+                <button key={chip.key} type="button" aria-pressed={statusFilter === chip.key} onClick={() => setStatusFilter(chip.key)}
+                  className={cx('inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center text-sm font-semibold transition sm:min-h-0',
                     statusFilter === chip.key ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
-                  {chip.label}
-                  <span className={cx('tabular-nums inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', statusFilter === chip.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{statusCounts[chip.key]}</span>
+                  <span className="min-w-0">{chip.label.split('/').map((part, index, parts) => (
+                    <span key={part} className="whitespace-nowrap">{part}{index < parts.length - 1 && '/'}</span>
+                  ))}</span>
+                  <span className={cx('tabular-nums inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', statusFilter === chip.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{statusCounts[chip.key]}</span>
                 </button>
               ))}
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm text-gray-500 tabular-nums">
-                {query.trim() ? `พบ ${filteredData.length} จาก ${data.length} รายการ` : `ทั้งหมด ${data.length} รายการ`}
+                {query.trim() || statusFilter !== 'all' ? `พบ ${filteredData.length} จาก ${data.length} รายการ` : `ทั้งหมด ${data.length} รายการ`}
               </div>
               <div className="relative w-full sm:max-w-96">
                 <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
@@ -788,7 +790,8 @@ function PaymentModal({ companyId, request, onClose, onDone }: { companyId: stri
 }
 
 // ── Policy Settings ───────────────────────────────────────────────────────────
-function PolicySettings({ companyId }: { companyId: string }) {
+// Exported for the QA spec, which renders the form with a policy already loaded.
+export function PolicySettings({ companyId }: { companyId: string }) {
   const toast = useToast();
   const [form, setForm] = useState<any | null>(null);
   const [approverOptions, setApproverOptions] = useState<ReimbursementApproverRoleOption[]>([]);
@@ -851,6 +854,10 @@ function PolicySettings({ companyId }: { companyId: string }) {
   const routeReady = !(roleBasedRoute || approverChanged)
     || (selectedRoles.length > 0 && (form.status !== 'ACTIVE' || !rolesNotReady));
   const roleLabel = selectedOptions.map(approverRoleName).join(' หรือ ');
+  const paymentWarning = approverPaymentWarning(
+    selectedOptions.map((option) => ({ label: approverRoleName(option), canRecordPayment: option.canRecordPayment })),
+    !!form.financeReviewRequired,
+  );
   const ownerRoute = selectedRoles.includes('OWNER');
   const toggleRole = (key: string) => {
     setApproverChanged(true);
@@ -904,6 +911,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
                 <p className="mt-1 text-xs text-gray-500">เลือกอย่างน้อย 1 บทบาท</p>
               ) : null}
               {!ownerRoute && <p className="mt-1 text-xs text-gray-500">ถ้ายังไม่มีคนในบทบาทที่เลือก เจ้าของกิจการเป็นผู้อนุมัติ</p>}
+              {paymentWarning && <p role="status" className="mt-1 text-xs text-warning-700" data-testid="reimbursement-approver-payment-warning">{paymentWarning}</p>}
             </fieldset>
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
               <span className="min-w-0">

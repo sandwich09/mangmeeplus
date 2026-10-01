@@ -5,8 +5,10 @@ import {
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
-  approverNotReadyHelp,
+  approverNotReadyHelp, HUB_FILTERS, hubFilterCounts, hubFilterOf, hubRows, approverPaymentWarning,
 } from './reimbursements.logic';
+import { currentDeskText } from './reimbursements.model';
+import { REIMBURSEMENT_DESK_LABELS } from '@watchdog-bms/contracts';
 
 const line = (overrides: Record<string, unknown> = {}) => ({
   incurredDate: '2026-01-01', description: 'แท็กซี่', categoryKey: 'travel', amount: '100', hasReceipt: true, ...overrides,
@@ -325,6 +327,47 @@ describe('parseHubTab against the visible set', () => {
   });
 });
 
+// Spec §18.1 (AC38) and the owner's consistency rule 2026-10-01: a card count is the number of rows its
+// filter shows, and the chips add up to ทั้งหมด.
+describe('hub cards and filter chips', () => {
+  // Each row carries the desk the list API answers with (terminal claims have none).
+  const rows = [
+    { id: 'draft', status: 'DRAFT', currentDesk: { kind: 'REQUESTER' } },
+    { id: 'pending', status: 'PENDING_APPROVAL', currentDesk: { kind: 'APPROVER', names: ['คุณสมชาย'] } },
+    { id: 'finance', status: 'FINANCE_REVIEW', currentDesk: { kind: 'FINANCE' } },
+    { id: 'to-finance', status: 'APPROVED', currentDesk: { kind: 'FINANCE' } },
+    { id: 'ready', status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' } },
+    { id: 'ready-2', status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' } },
+    { id: 'to-payment', status: 'APPROVED', currentDesk: { kind: 'PAYMENT' } },
+    { id: 'part-paid', status: 'PARTIALLY_PAID', currentDesk: { kind: 'PAYMENT' } },
+    { id: 'paid', status: 'PAID' },
+    { id: 'rejected', status: 'REJECTED' },
+    { id: 'cancelled', status: 'CANCELLED', currentDesk: null },
+    { id: 'voided', status: 'VOIDED' },
+  ];
+  const ids = (filter: Parameters<typeof hubRows>[1]) => hubRows(rows, filter).map((row) => row.id);
+
+  it('keeps a claim approved and waiting for payment out of รออนุมัติ/ตรวจสอบ', () => {
+    // Before: the card counted every status from PENDING_APPROVAL to READY_FOR_PAYMENT, 7 of these rows.
+    assert.deepEqual(ids('review'), ['pending', 'finance', 'to-finance']);
+    assert.deepEqual(ids('payment'), ['ready', 'ready-2', 'to-payment', 'part-paid']);
+    assert.deepEqual(ids('draft'), ['draft']);
+    assert.deepEqual(ids('paid'), ['paid']);
+    assert.deepEqual(ids('closed'), ['rejected', 'cancelled', 'voided']);
+    assert.equal(hubFilterOf({ status: 'A_STATE_ADDED_LATER' }), 'closed');
+  });
+
+  it('counts every card and chip as the rows its filter shows, and the chips add up to ทั้งหมด', () => {
+    const counts = hubFilterCounts(rows);
+    assert.deepEqual(counts, { all: 12, draft: 1, review: 3, payment: 4, paid: 1, closed: 3 });
+    for (const filter of ['all', ...HUB_FILTERS] as const) assert.equal(counts[filter], hubRows(rows, filter).length, filter);
+    assert.equal(HUB_FILTERS.reduce((sum, filter) => sum + counts[filter], 0), counts.all);
+    // No claim sits in two buckets.
+    assert.deepEqual(HUB_FILTERS.flatMap(ids).sort(), rows.map((row) => row.id).sort());
+    assert.deepEqual(hubFilterCounts([]), { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 });
+  });
+});
+
 describe('errorMessage', () => {
   it('translates the API error codes the banners actually surface', () => {
     assert.match(errorMessage('missing_receipt'), /ใบเสร็จ/);
@@ -380,7 +423,6 @@ describe('buildClaimTimeline', () => {
   it('waits on the requester while the claim is still a draft', () => {
     assert.deepEqual(labels({ status: 'DRAFT', currentDesk: { kind: 'REQUESTER' } }), [
       'current:รอผู้ยื่นส่งคำขอ',
-      'future:รอฝ่ายการเงินตรวจ',
       'future:รอบันทึกจ่าย',
     ]);
   });
@@ -399,7 +441,6 @@ describe('buildClaimTimeline', () => {
       'done:ยื่นใบ',
       'done:อนุมัติโดย คุณสมชาย',
       'current:กำลังรอ คุณยุนกิ หรือ คุณสมชาย อนุมัติ',
-      'future:รอฝ่ายการเงินตรวจ',
       'future:รอบันทึกจ่าย',
     ]);
     assert.equal(rows[0]?.date, '2026-08-20T03:00:00.000Z');
@@ -437,7 +478,7 @@ describe('buildClaimTimeline', () => {
       submittedAt: '2026-08-20T03:00:00.000Z',
       financeReviewStatus: 'NOT_REQUIRED',
       approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decidedByName: 'คุณสมชาย' }],
-    }), ['done:ยื่นใบ', 'done:อนุมัติโดย คุณสมชาย', 'current:กำลังรอฝ่ายการเงินบันทึกจ่าย']);
+    }), ['done:ยื่นใบ', 'done:อนุมัติโดย คุณสมชาย', 'current:กำลังรอผู้มีสิทธิ์บันทึกจ่าย']);
   });
 
   it('closes both finance and payment rows on a paid claim', () => {
@@ -449,6 +490,22 @@ describe('buildClaimTimeline', () => {
       financeReviewedByName: 'คุณมานี',
       payments: [{ status: 'RECORDED', paidByName: 'คุณมานี', paidAt: '2026-08-23T03:00:00.000Z' }],
     }), ['done:ยื่นใบ', 'done:ฝ่ายการเงินตรวจแล้ว โดย คุณมานี', 'done:จ่ายแล้ว โดย คุณมานี']);
+  });
+
+  // Spec §18.3 (AC39). Before: every claim not yet approved carried "รอฝ่ายการเงินตรวจ", finance step or not.
+  it('shows the finance row only on a claim that has a finance-review step', () => {
+    assert.deepEqual(labels({ status: 'DRAFT', financeReviewRequired: true }), ['current:รอผู้ยื่นส่งคำขอ', 'future:รอฝ่ายการเงินตรวจ', 'future:รอบันทึกจ่าย']);
+    assert.deepEqual(labels({ status: 'DRAFT', financeReviewRequired: false }), ['current:รอผู้ยื่นส่งคำขอ', 'future:รอบันทึกจ่าย']);
+    const approved = { submittedAt: '2026-08-20T03:00:00.000Z', approvedAt: '2026-08-21T03:00:00.000Z' };
+    // Approved and still being routed on: the row the claim waits at is the journey's own step.
+    assert.deepEqual(labels({ ...approved, status: 'APPROVED', financeReviewStatus: 'PENDING' }), ['done:ยื่นใบ', 'current:กำลังรอฝ่ายการเงินตรวจ', 'future:รอบันทึกจ่าย']);
+    assert.deepEqual(labels({ ...approved, status: 'APPROVED', financeReviewStatus: 'NOT_REQUIRED' }), ['done:ยื่นใบ', 'current:กำลังรอผู้มีสิทธิ์บันทึกจ่าย']);
+    // The detail names who can record the payment; a list row or an action response does not.
+    assert.deepEqual(labels({ ...approved, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', paymentDesk: { names: ['สมศรี', 'วิชัย'], moreCount: 1 } }),
+      ['done:ยื่นใบ', 'current:กำลังรอ สมศรี หรือ วิชัย และอีก 1 คน บันทึกจ่าย']);
+    // A claim finance reviewed is paid by whoever holds the pay right, like any other.
+    assert.deepEqual(labels({ ...approved, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedAt: '2026-08-22T03:00:00.000Z' }),
+      ['done:ยื่นใบ', 'done:ฝ่ายการเงินตรวจแล้ว', 'current:กำลังรอผู้มีสิทธิ์บันทึกจ่าย']);
   });
 });
 
@@ -463,7 +520,7 @@ describe('buildClaimTimeline after a reopen', () => {
         { id: 's2', sequenceNo: 1, status: 'APPROVED', decidedByName: 'คุณสมชาย', decidedAt: '2026-08-26T03:00:00.000Z' },
       ],
     }).map(row => `${row.state}:${row.label}`), [
-      'done:ยื่นใบ', 'done:ปฏิเสธโดย คุณสมชาย', 'done:อนุมัติโดย คุณสมชาย', 'current:กำลังรอฝ่ายการเงินบันทึกจ่าย',
+      'done:ยื่นใบ', 'done:ปฏิเสธโดย คุณสมชาย', 'done:อนุมัติโดย คุณสมชาย', 'current:กำลังรอผู้มีสิทธิ์บันทึกจ่าย',
     ]);
   });
 });
@@ -563,6 +620,36 @@ describe('buildJourneySteps', () => {
     assert.equal(active({ ...paid, documentSignedVia: 'DIGITAL' }, OWNER, 'owner').note, 'ลงนามในระบบครบแล้ว');
   });
 
+  // Spec §18.2 (AC39). Before: "ลงนามในใบเบิก พิมพ์เก็บไว้ หรือแนบสำเนาที่เซ็นแล้ว", which named nobody.
+  it('names who has not signed the document, and tells a viewer who can sign to sign', () => {
+    const paid = claim({ ...approved, status: 'PAID', requesterDisplayNameSnapshot: 'สมชาย',
+      approvalSteps: [{ ...approved.approvalSteps[0], decidedByName: 'สมศรี' }],
+      payments: [{ id: 'p1', status: 'RECORDED', paidByUserId: 'fin', paidByName: 'วราภรณ์', paidAt: '2026-09-20T06:00:00.000Z' }] });
+    const waiting = 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้เบิก (สมชาย) และผู้อนุมัติ (สมศรี)';
+    // The payer signs nothing on the two-block form: they read who is awaited.
+    const payer = active(paid, FINANCE, 'fin');
+    assert.deepEqual([payer.note, payer.actions.includes('sign')], [waiting, false]);
+    // The requester and the approver each read the same list, and are told to sign.
+    for (const [permissions, userId] of [[STAFF, 'staff'], [APPROVER, 'boss']] as const) {
+      const signer = active(paid, [...permissions], userId);
+      assert.deepEqual([signer.note, signer.actions[0]], [`${waiting} · คุณยังไม่ได้ลงนาม กดลงนามในใบเบิก`, 'sign']);
+    }
+    // Once the requester has signed, only the approver is named, and the requester is not asked again.
+    const requesterSigned = { ...paid, signatures: [{ role: 'REQUESTER' }] };
+    assert.equal(active(requesterSigned, STAFF, 'staff').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้อนุมัติ (สมศรี)');
+    assert.equal(active(requesterSigned, APPROVER, 'boss').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้อนุมัติ (สมศรี) · คุณยังไม่ได้ลงนาม กดลงนามในใบเบิก');
+    // Policy needed no approval: the form waits for the requester alone.
+    const auto = claim({ ...submitted, approvedAt: submitted.submittedAt, status: 'PAID', requesterDisplayNameSnapshot: 'สมชาย', payments: paid.payments });
+    assert.equal(active(auto, FINANCE, 'fin').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้เบิก (สมชาย)');
+    // A name the detail does not carry leaves the block's own label, never an id.
+    assert.equal(active(claim({ ...approved, status: 'PAID', payments: paid.payments }), FINANCE, 'fin').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้เบิก และผู้อนุมัติ');
+    // A claim already signed in the old accounting and payer blocks keeps all four.
+    const legacy = { ...paid, claimFormLayout: 'LEGACY_FOUR_SIGNERS', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByName: 'มานี',
+      signatures: [{ role: 'REQUESTER' }, { role: 'APPROVER' }] };
+    assert.equal(active(legacy, STAFF, 'staff').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ฝ่ายบัญชี (มานี) และฝ่ายการเงิน (วราภรณ์)');
+    assert.equal(active({ ...legacy, financeReviewStatus: 'NOT_REQUIRED' }, STAFF, 'staff').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ฝ่ายการเงิน (วราภรณ์)');
+  });
+
   it('leaves a document signed before payment upcoming while the claim waits at payment (§15)', () => {
     const ready = claim({ ...approved, status: 'READY_FOR_PAYMENT', documentSignedVia: 'PAPER' });
     assert.deepEqual(shape(ready, OWNER, 'owner'), ['items:done', 'approval:done', 'payment:current', 'document:upcoming']);
@@ -657,12 +744,49 @@ describe('buildJourneySteps', () => {
     const ready = claim({ ...approved, status: 'READY_FOR_PAYMENT' });
     const withPay = active(ready, [...APPROVER, 'reimbursement.payment.record'], 'boss');
     assert.deepEqual(withPay.actions, ['pay', 'print']);
+    // The approver who cannot pay is told so plainly (spec §13.4, AC27); before: "รอผู้มีสิทธิ์บันทึกจ่าย", as for anyone.
     const withoutPay = active(ready, APPROVER, 'boss');
-    assert.deepEqual(withoutPay.actions, ['print']);
-    assert.equal(withoutPay.note, 'รอผู้มีสิทธิ์บันทึกจ่าย');
+    assert.deepEqual(withoutPay.actions, ['print'], 'no payment form');
+    assert.equal(withoutPay.note, 'คุณอนุมัติใบนี้แล้ว แต่บัญชีของคุณยังไม่มีสิทธิ์บันทึกจ่าย ถ้าต้องการจ่ายเอง ขอให้เจ้าของกิจการเพิ่มสิทธิ์บันทึกจ่ายให้บทบาทของคุณ');
     assert.match(active({ ...ready, duplicateStatus: 'POSSIBLE_DUPLICATE' }, APPROVER, 'boss').note ?? '', /อาจเป็นรายการซ้ำ/);
     // A legacy partial payment cannot be topped up through this endpoint.
-    assert.deepEqual(active(claim({ ...approved, status: 'PARTIALLY_PAID' }), OWNER, 'owner').actions, ['print']);
+    const partial = active(claim({ ...approved, status: 'PARTIALLY_PAID' }), OWNER, 'owner');
+    assert.deepEqual([partial.actions, partial.note], [['print'], 'รอผู้มีสิทธิ์บันทึกจ่าย']);
+  });
+
+  // Spec §18.3 (AC27, AC39). Before: everyone who could not pay read "รอผู้มีสิทธิ์บันทึกจ่าย", with no name.
+  it('names who can record the payment for a viewer who cannot', () => {
+    const ready = claim({ ...approved, status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' } });
+    const two = { ...ready, paymentDesk: { names: ['สมศรี', 'วิชัย'], moreCount: 0 } };
+    assert.equal(active(two, STAFF, 'staff').note, 'รอ สมศรี หรือ วิชัย บันทึกจ่าย');
+    assert.equal(active({ ...ready, paymentDesk: { names: ['สมศรี', 'วิชัย'], moreCount: 3 } }, STAFF, 'staff').note, 'รอ สมศรี หรือ วิชัย และอีก 3 คน บันทึกจ่าย');
+    // The approver of this claim, without the pay right: who can pay, and how to pay it themselves.
+    assert.equal(active(two, APPROVER, 'boss').note,
+      'คุณอนุมัติใบนี้แล้ว แต่บัญชีของคุณยังไม่มีสิทธิ์บันทึกจ่าย ผู้ที่บันทึกจ่ายได้: สมศรี หรือ วิชัย ถ้าต้องการจ่ายเอง ขอให้เจ้าของกิจการเพิ่มสิทธิ์บันทึกจ่ายให้บทบาทของคุณ');
+    // Someone who holds approve but did not decide this claim is not "คุณอนุมัติใบนี้แล้ว".
+    assert.equal(active(two, APPROVER, 'another-approver').note, 'รอ สมศรี หรือ วิชัย บันทึกจ่าย');
+    // Nobody covers the claim's branch: say so, to the approver as well.
+    const nobody = { ...ready, paymentDesk: { names: [], moreCount: 0 } };
+    for (const [permissions, userId] of [[STAFF, 'staff'], [APPROVER, 'boss']] as const) {
+      assert.equal(active(nobody, [...permissions], userId).note, 'ยังไม่มีผู้ที่บันทึกจ่ายใบของสาขานี้ได้ ขอให้เจ้าของกิจการบันทึกจ่ายหรือเพิ่มสิทธิ์');
+    }
+    // Whoever can pay keeps the form and its own instruction, named payers or not.
+    const payer = active(two, [...APPROVER, 'reimbursement.payment.record'], 'boss');
+    assert.deepEqual([payer.actions, payer.note], [['pay', 'print'], 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง']);
+  });
+
+  // Phase 0.6 (spec §13.3 F1): the deploy-time back-fill gives a company role that approves the two pay keys, and
+  // apps/api/prisma/sync-permissions.spec.ts proves the API then takes that role's payment. The page reads the same
+  // keys, so the same person gets the button: before the back-fill neither side lets them pay, after it both do.
+  it('offers บันทึกจ่าย and ยกเลิกการจ่าย to an approver role once it holds the pay rights', () => {
+    const beforeBackfill = ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.reject'];
+    const afterBackfill = [...beforeBackfill, 'reimbursement.payment.record', 'reimbursement.payment.void'];
+    const ready = claim({ ...approved, status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' }, paymentDesk: { names: ['เจ้าของ'], moreCount: 0 } });
+    assert.deepEqual(active(ready, beforeBackfill, 'boss').actions, ['print']);
+    assert.deepEqual(active(ready, afterBackfill, 'boss').actions, ['pay', 'print']);
+    const paid = claim({ ...approved, status: 'PAID', payments: [{ id: 'p1', status: 'RECORDED', paidByUserId: 'boss', paidAt: '2026-09-20T06:00:00.000Z' }] });
+    assert.equal(active(paid, beforeBackfill, 'boss').actions.includes('void-payment'), false);
+    assert.equal(active(paid, afterBackfill, 'boss').actions.includes('void-payment'), true);
   });
 
   it('gives a staff requester only requester actions at every step (AC12)', () => {
@@ -755,6 +879,88 @@ describe('buildJourneySteps', () => {
     assert.match(member.note ?? '', /ขอให้เจ้าของกิจการเปิดในตั้งค่าเบิกจ่าย/);
     // No server flag, no hint: an ordinary wait reads as before.
     assert.equal(active({ ...own, approvalActions: { canApprove: false, canReject: false } }, custom, 'solo').note, 'รอ เจ้าของ อนุมัติ');
+  });
+});
+
+// Owner rule 2026-10-01: for one claim state, the "อยู่ที่ …" line, the step note, the timeline row and the LINE
+// backlog label name the same party. The three web surfaces are checked here; the backlog builds its labels from
+// the same REIMBURSEMENT_DESK_LABELS (reimbursement-approval-backlog.use-case.spec.ts checks that side).
+describe('who a claim waits for is the same on every surface', () => {
+  const submitted = { submittedAt: '2026-09-20T03:00:00.000Z' };
+  const approved = { ...submitted, approvedAt: '2026-09-20T04:00:00.000Z',
+    approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'boss', decidedByName: 'สมศรี', decidedAt: '2026-09-20T04:00:00.000Z' }] };
+  const claim = (overrides: Record<string, unknown>): any => ({ id: 'r1', requestNo: 'RB-1', requesterUserId: 'staff', financeReviewStatus: 'NOT_REQUIRED',
+    approvalSteps: [], payments: [], signatures: [], ...overrides });
+  /** What a viewer with no part in the claim reads in the three places. */
+  const surfaces = (detail: any) => ({
+    desk: currentDeskText(detail.currentDesk, detail.paymentDesk)!,
+    note: activeJourneyStep(buildJourneySteps(detail, [], 'someone'))!.note!,
+    timeline: buildClaimTimeline(detail).find((row) => row.state === 'current')!.label,
+  });
+  const pending = { ...submitted, status: 'PENDING_APPROVAL', currentDesk: { kind: 'APPROVER', names: ['สมศรี'] },
+    approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'PENDING' }] };
+
+  it('names one party for a claim with no finance step, and never ฝ่ายการเงิน', () => {
+    const noFinance = { financeReviewRequired: false };
+    assert.deepEqual(surfaces(claim({ ...noFinance, ...pending })),
+      { desk: 'สมศรี', note: 'รอ สมศรี อนุมัติ', timeline: 'กำลังรอ สมศรี อนุมัติ' });
+    // Waiting for payment, as a list row or an action response knows it: the pool, in the backlog's words.
+    for (const status of ['READY_FOR_PAYMENT', 'APPROVED']) {
+      assert.deepEqual(surfaces(claim({ ...noFinance, ...approved, status, currentDesk: { kind: 'PAYMENT' } })),
+        { desk: REIMBURSEMENT_DESK_LABELS.PAYMENT, note: `รอ${REIMBURSEMENT_DESK_LABELS.PAYMENT}`, timeline: `กำลังรอ${REIMBURSEMENT_DESK_LABELS.PAYMENT}` });
+    }
+    // The claim page knows who: the same names in all three.
+    const named = surfaces(claim({ ...noFinance, ...approved, status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' },
+      paymentDesk: { names: ['สมศรี', 'วิชัย'], moreCount: 0 } }));
+    assert.deepEqual(named, { desk: 'สมศรี หรือ วิชัย', note: 'รอ สมศรี หรือ วิชัย บันทึกจ่าย', timeline: 'กำลังรอ สมศรี หรือ วิชัย บันทึกจ่าย' });
+    // AC39: no surface of a claim without a finance step says ฝ่ายการเงิน, at any state.
+    for (const state of [{ status: 'DRAFT', currentDesk: { kind: 'REQUESTER' } }, pending,
+      { ...approved, status: 'APPROVED', currentDesk: { kind: 'PAYMENT' } }, { ...approved, status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' } },
+      { ...approved, status: 'PAID', payments: [{ id: 'p1', status: 'RECORDED', paidByName: 'วิชัย', paidAt: '2026-09-20T06:00:00.000Z' }] }]) {
+      const detail = claim({ ...noFinance, ...state });
+      const texts = [currentDeskText(detail.currentDesk), ...buildJourneySteps(detail, [], 'someone').map((step) => `${step.label} ${step.note ?? ''}`),
+        ...buildClaimTimeline(detail).map((row) => row.label)].join(' | ');
+      assert.doesNotMatch(texts, /การเงิน/u, String(state.status));
+    }
+  });
+
+  it('names the finance desk while finance reviews, then the same payment desk', () => {
+    const withFinance = { financeReviewRequired: true };
+    assert.deepEqual(surfaces(claim({ ...withFinance, ...pending })),
+      { desk: 'สมศรี', note: 'รอ สมศรี อนุมัติ', timeline: 'กำลังรอ สมศรี อนุมัติ' });
+    // Under review, or approved and still being handed to finance: the same desk the backlog calls "ฝ่ายการเงิน (รอตรวจสอบ)".
+    for (const status of ['FINANCE_REVIEW', 'APPROVED']) {
+      const reviewing = surfaces(claim({ ...withFinance, ...approved, status, financeReviewStatus: 'PENDING', currentDesk: { kind: 'FINANCE' } }));
+      assert.deepEqual(reviewing, { desk: REIMBURSEMENT_DESK_LABELS.FINANCE, note: `รอ${REIMBURSEMENT_DESK_LABELS.FINANCE}ตรวจ`, timeline: `กำลังรอ${REIMBURSEMENT_DESK_LABELS.FINANCE}ตรวจ` });
+    }
+    // Reviewed: whoever holds the pay right, exactly as on a claim that skipped finance.
+    const reviewed = { ...withFinance, ...approved, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'APPROVED_FOR_PAYMENT',
+      financeReviewedAt: '2026-09-20T05:00:00.000Z', currentDesk: { kind: 'PAYMENT' } };
+    assert.deepEqual(surfaces(claim(reviewed)),
+      { desk: REIMBURSEMENT_DESK_LABELS.PAYMENT, note: `รอ${REIMBURSEMENT_DESK_LABELS.PAYMENT}`, timeline: `กำลังรอ${REIMBURSEMENT_DESK_LABELS.PAYMENT}` });
+    assert.deepEqual(surfaces(claim({ ...reviewed, paymentDesk: { names: ['วราภรณ์'], moreCount: 0 } })),
+      { desk: 'วราภรณ์', note: 'รอ วราภรณ์ บันทึกจ่าย', timeline: 'กำลังรอ วราภรณ์ บันทึกจ่าย' });
+  });
+});
+
+// Spec §13.3 F2 (Phase 0.7): the policy screen warns, and never blocks, when a chosen approver role cannot pay.
+describe('approverPaymentWarning', () => {
+  const manager = { label: 'ผู้จัดการ', canRecordPayment: true };
+  const checker = { label: 'ผู้ตรวจ', canRecordPayment: false };
+
+  it('names the chosen roles that approve but cannot record payment while finance review is off', () => {
+    assert.equal(approverPaymentWarning([manager, checker], false),
+      'บทบาท ผู้ตรวจ อนุมัติได้ แต่บันทึกจ่ายไม่ได้ ใบที่อนุมัติแล้วจะรอผู้ที่มีสิทธิ์บันทึกจ่าย ถ้าต้องการให้ผู้อนุมัติจ่ายเองได้ ให้เพิ่มสิทธิ์บันทึกจ่ายให้บทบาทนี้ในหน้าบทบาทและสิทธิ์');
+    assert.match(approverPaymentWarning([checker, { label: 'หัวหน้าสาขา', canRecordPayment: false }], false) ?? '', /^บทบาท ผู้ตรวจ และ หัวหน้าสาขา อนุมัติได้ แต่บันทึกจ่ายไม่ได้/);
+  });
+
+  it('says nothing when every chosen role can pay, when finance review pays, or when the answer is unknown', () => {
+    assert.equal(approverPaymentWarning([manager], false), null);
+    assert.equal(approverPaymentWarning([], false), null);
+    // A company with a finance desk may split the two duties on purpose.
+    assert.equal(approverPaymentWarning([checker], true), null);
+    // An older API response without the field must not raise a false alarm.
+    assert.equal(approverPaymentWarning([{ label: 'ผู้ตรวจ' }], false), null);
   });
 });
 
