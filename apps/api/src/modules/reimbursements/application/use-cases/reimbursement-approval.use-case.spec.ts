@@ -1184,3 +1184,193 @@ describe('the stored attestation names one snapshot version (attestation binding
     await assert.rejects(draft.attest(1), /payout_destination_changed/);
   });
 });
+
+// Payout spec §14 (AC29-AC32): a claim approved with a wrong payout account is sent back, on the same
+// claim, to have that account corrected, and is approved again for the account alone.
+describe('a claim whose payout account is being corrected', () => {
+  const sentBackAt = new Date('2026-10-02T03:00:00.000Z');
+  const accountGivenAt = new Date('2026-10-02T05:00:00.000Z');
+  const firstStep = baseRequest().approvalSteps[0];
+  /** The approval the claim stood on, set aside by the send-back. */
+  const setAside = () => ({
+    ...firstStep, status: 'APPROVED', decisionByUserId: 'approver-1', decidedAt: new Date('2026-01-02T00:00:00.000Z'),
+    invalidatedAt: sentBackAt, invalidatedReason: 'payout_account_correction',
+  });
+  /** Phase A: with its requester, no step waits. */
+  const withRequester = (overrides: Partial<any> = {}) => baseRequest({
+    submittedAt: new Date('2026-01-01T00:00:00.000Z'), currentApprovalStepId: null, approvalSnapshotHash: SEEN_HASH,
+    payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionRequestedByUserId: 'payer-1', payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG',
+    approvalSteps: [setAside()], ...overrides,
+  });
+  /** Phase B: the requester gave a new account (version 2), which waits for the claim's approvers. */
+  const withApprovers = (overrides: Partial<any> = {}) => withRequester({
+    currentApprovalStepId: 'step-2', payoutCorrectionSubmittedAt: accountGivenAt,
+    payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: 'fp-2',
+    payoutSnapshot: { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountLast4: '9012', version: 2, source: 'REQUESTER' },
+    approvalSteps: [setAside(), { ...firstStep, id: 'step-2', assignedAt: accountGivenAt, requestSnapshotHash: SEEN_HASH }],
+    ...overrides,
+  });
+
+  /** The round's transactions beside the ordinary ones, each recording that it ran. */
+  function roundRepo(req: any, policy: any = null) {
+    const events: any[] = [];
+    const ran: Array<[string, any]> = [];
+    const base = fakeRepo(req, policy, events);
+    const ordinary = Object.fromEntries(['beginApprovalDecisionAtomic', 'completeApprovalProjectionAtomic', 'rejectRequestAtomic']
+      .map((name) => [name, async (data: any) => { ran.push([name, data]); return base[name](data); }]));
+    const repo = {
+      ...base, ...ordinary,
+      listPaymentPayoutDestinations: async () => ({}),
+      approvePayoutCorrectionAtomic: async (data: any) => {
+        ran.push(['approvePayoutCorrectionAtomic', data]);
+        const step = req.approvalSteps.find((candidate: any) => candidate.id === req.currentApprovalStepId);
+        Object.assign(step, { status: 'APPROVED', decisionByUserId: data.actorUserId, decidedAt: data.decidedAt });
+        Object.assign(req, {
+          status: 'READY_FOR_PAYMENT', approvedAt: data.decidedAt, paymentStatus: 'UNPAID', currentApprovalStepId: null,
+          payoutCorrectionRequestedAt: undefined, payoutCorrectionSubmittedAt: undefined, payoutCorrectionReasonCode: undefined,
+        });
+        await data.onApprovedPersisted(fakeTx(events), step.id);
+        return req;
+      },
+      requestPayoutCorrectionAtomic: async (data: any) => {
+        ran.push(['requestPayoutCorrectionAtomic', data]);
+        const waiting = req.approvalSteps.find((candidate: any) => candidate.id === req.currentApprovalStepId);
+        Object.assign(waiting, { status: 'CANCELLED', invalidatedAt: data.requestedAt, invalidatedReason: 'payout_account_correction' });
+        Object.assign(req, {
+          currentApprovalStepId: null, payoutCorrectionRequestedAt: data.requestedAt, payoutCorrectionRequestedByUserId: data.actorUserId,
+          payoutCorrectionReasonCode: data.reasonCode, payoutCorrectionNote: data.note, payoutCorrectionSubmittedAt: undefined,
+        });
+        await data.onPersisted(fakeTx(events), { again: true, setAsideStepIds: [waiting.id], signaturesRemoved: 0, declarationsSetAside: 0 });
+        return req;
+      },
+    } as any;
+    return { repo, events, ran };
+  }
+  const recordingAudit = (entries: any[]) => ({ log: async (entry: any, tx: any) => { entries.push({ ...entry, inTransaction: !!tx }); } });
+  const rejectUC = (repo: any, audit: any = noopAudit) => new RejectReimbursementUseCase(repo, audit, fakeDetailEvidence as any);
+
+  it('offers no decision while it waits for its requester: approve and reject answer that the account is being corrected', async () => {
+    const { repo, ran } = roundRepo(withRequester());
+    // Also to someone who holds every right: there is no account to approve yet.
+    const owner = ctx({ roles: ['OWNER'], permissions: ['reimbursement.approve', 'reimbursement.reject'] });
+    for (const decide of [() => approveUC(repo).execute(owner, 'rb-1'), () => rejectUC(repo).execute(owner, 'rb-1', 'บัญชีไม่ถูกต้อง')]) {
+      await assert.rejects(decide, (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_in_progress');
+    }
+    assert.equal(ran.length, 0, 'refused before any write');
+    assert.deepEqual(await approvalDecisionActions(owner, withRequester(), fakeRepo(null)), { canApprove: false, canReject: false });
+  });
+
+  it('is in the approval queue only once the new account waits for approval, and its wait is counted from then', async () => {
+    const now = Date.now();
+    const hoursAgo = (hours: number) => new Date(now - hours * 3_600_000);
+    assert.deepEqual(await new ListApprovalQueueUseCase(queueRepo(withRequester())).execute(ctx()), [], 'with its requester: in nobody\'s queue');
+    // Sent ten days ago, the new account given three hours ago: these approvers have waited three hours.
+    const waiting = withApprovers({ submittedAt: hoursAgo(240), payoutCorrectionRequestedAt: hoursAgo(5), payoutCorrectionSubmittedAt: hoursAgo(3) });
+    const [row] = await new ListApprovalQueueUseCase(queueRepo(waiting)).execute(ctx());
+    assert.deepEqual([row!.id, row!.ageHours, row!.slaRisk, row!.payoutCorrectionPhase, row!.approvalActions],
+      ['rb-1', 3, false, 'AWAITING_APPROVAL', { canApprove: true, canReject: true }]);
+    assert.ok(!/9012|ไทยพาณิชย์|สมชาย ใจดี|fp-2/.test(JSON.stringify(row)), 'no account on a queue row');
+  });
+
+  it('is approved in one transaction that makes it ready for payment, with the ready-to-pay notice and nothing else', async () => {
+    const entries: any[] = [];
+    const projected: any[] = [];
+    const { repo, events, ran } = roundRepo(withApprovers());
+    const projections = { execute: async (...args: any[]) => { projected.push(args); } };
+    // The same rules as any approval: the permission, the turn, the hash that was seen, the account that was checked.
+    await assert.rejects(() => approveUC(repo, projections).execute(ctx({ permissions: [] }), 'rb-1', undefined, SEEN_HASH, 2), /Missing permission: reimbursement\.approve/);
+    await assert.rejects(() => approveUC(repo, projections).execute(ctx({ roles: ['STAFF'] }), 'rb-1', undefined, SEEN_HASH, 2), /not_eligible_approver/);
+    await assert.rejects(() => approveUC(repo, projections).useCase.execute(ctx(), 'rb-1', undefined, undefined, 2), /stale_approval_snapshot/);
+    await assert.rejects(() => approveUC(repo, projections).execute(ctx(), 'rb-1'), /payout_verification_required/);
+    // "ตรวจบัญชีแล้ว" for the account the claim was approved with before is not one for the account it has now.
+    await assert.rejects(() => approveUC(repo, projections).execute(ctx(), 'rb-1', undefined, SEEN_HASH, 1), /payout_destination_changed/);
+    assert.equal(ran.length, 0);
+
+    const detail = await approveUC(repo, projections, recordingAudit(entries)).execute(ctx(), 'rb-1', 'บัญชีถูกต้อง', SEEN_HASH, 2);
+    assert.deepEqual(ran.map(([name]) => name), ['approvePayoutCorrectionAtomic'], 'one transaction: not the decide-then-project pair');
+    assert.deepEqual(projected, [], 'the claim\'s expense records stand: nothing is built and nothing waits for the reconciler');
+    const [, handed] = ran[0]!;
+    assert.deepEqual([handed.payoutVerifiedVersion, handed.expectedApprovalSnapshotHash, handed.actorUserId, handed.comment], [2, SEEN_HASH, 'approver-1', 'บัญชีถูกต้อง']);
+    assert.deepEqual([detail.status, detail.payoutCorrection, detail.payoutCorrectionPhase], ['READY_FOR_PAYMENT', undefined, undefined]);
+    assert.deepEqual(detail.approvalSteps.map((step) => [step.id, step.status]), [['step-1', 'APPROVED'], ['step-2', 'APPROVED']]);
+
+    // The notice the claim's ordinary approval sends, to the same people; no second "approved" notice for the requester.
+    assert.deepEqual(events.map((event) => [event.eventType, event.eventKey]),
+      [['reimbursement.ready_for_payment', 'reimbursement.ready_for_payment:reimbursement_request:rb-1:step-2']]);
+    assert.deepEqual(events[0].payloadJson.data, {
+      requestId: 'rb-1', requestNo: 'RB-202601-000001', status: 'READY_FOR_PAYMENT', decision: 'APPROVED',
+      requesterUserId: 'staff-1', amount: '500.0000', currency: 'THB',
+    });
+    assert.equal(events[0].payloadJson.actorUserId, 'approver-1');
+    // Who approved which account version, inside the transaction, and nothing of the account.
+    assert.deepEqual(entries.map((entry) => [entry.action, entry.result, entry.inTransaction]), [
+      ['reimbursement.payout_correction.approve', 'SUCCESS', true], ['reimbursement.payout.verify', 'SUCCESS', true],
+    ]);
+    assert.deepEqual(entries[1].metadataJson, { version: 2, via: 'APPROVAL', approvalStepId: 'step-2', byRequester: false });
+    assert.deepEqual([entries[0].metadataJson.payoutMethod, entries[0].metadataJson.payoutVersion, entries[0].metadataJson.approvalStepId], ['BANK_TRANSFER', 2, 'step-2']);
+    assert.ok(!/9012|ไทยพาณิชย์|สมชาย ใจดี|fp-2|\d{8,}/.test(JSON.stringify([entries.map((entry) => entry.metadataJson), events])));
+  });
+
+  it('keeps the finance reviewer who passed the claim first in line for the ready-to-pay notice, and asks nothing of a cash account', async () => {
+    // Finance passed this claim before the round; the round does not send it through finance again.
+    const cash = withApprovers({
+      payoutMethod: 'CASH', payoutDestinationVersion: undefined, payoutFingerprint: 'cash', payoutSnapshot: undefined,
+      financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: 'fin-1',
+    });
+    const entries: any[] = [];
+    const { repo, events, ran } = roundRepo(cash, FINANCE_REVIEW_ON);
+    const detail = await approveUC(repo, undefined, recordingAudit(entries)).execute(ctx(), 'rb-1');
+    assert.deepEqual([detail.status, ran.map(([name]) => name)], ['READY_FOR_PAYMENT', ['approvePayoutCorrectionAtomic']]);
+    assert.deepEqual(events.map((event) => event.eventType), ['reimbursement.ready_for_payment']);
+    assert.deepEqual(events[0].payloadJson.data.approverRecipientUserIds, ['fin-1']);
+    assert.deepEqual(entries.map((entry) => entry.action), ['reimbursement.payout_correction.approve'], 'cash has no account to attest');
+  });
+
+  it('holds its requester to the self-approval rule when the new account comes to them to approve', async () => {
+    const own = () => withApprovers({ requesterUserId: 'approver-1', approvalSteps: [setAside(), { ...firstStep, id: 'step-2', approverRoleSnapshot: 'ACCOUNTANT', requestSnapshotHash: SEEN_HASH }] });
+    const refused = roundRepo(own());
+    await assert.rejects(() => approveUC(refused.repo).execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1', undefined, SEEN_HASH, 2), /self_approval_denied/);
+    assert.equal(refused.ran.length, 0);
+    // Where the company lets people approve their own claims, the audit says so, as for any approval.
+    const entries: any[] = [];
+    const allowed = roundRepo(own(), { ...REIMBURSEMENT_POLICY_DEFAULTS, allowSelfApproval: true });
+    await approveUC(allowed.repo, undefined, recordingAudit(entries)).execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1', undefined, SEEN_HASH, 2);
+    assert.equal(allowed.ran[0]![1].allowSelfApproval, true);
+    assert.deepEqual(entries[0].metadataJson.selfApproval, { approvedOwnRequest: true, via: 'company_policy', actorRoles: [] });
+    assert.equal(entries[1].metadataJson.byRequester, true);
+  });
+
+  it('is sent back to its requester again when the new account is refused, and is never REJECTED', async () => {
+    const entries: any[] = [];
+    const { repo, events, ran } = roundRepo(withApprovers());
+    // A note that carries the account is refused, like every note on a claim; so is a reason outside the list.
+    await assert.rejects(() => rejectUC(repo).execute(ctx(), 'rb-1', 'โอนเข้า 0123456789 แทน', 'ACCOUNT_NUMBER_WRONG'),
+      (error: any) => error.getStatus() === 400 && error.message === 'note_contains_account_number');
+    await assert.rejects(() => rejectUC(repo).execute(ctx(), 'rb-1', 'ชื่อบัญชีไม่ตรง', 'WRONG'),
+      (error: any) => error.getStatus() === 400 && error.message === 'payout_correction_reason_required');
+    await assert.rejects(() => rejectUC(repo).execute(ctx({ permissions: ['reimbursement.approve'] }), 'rb-1', 'ชื่อบัญชีไม่ตรง'), /Missing permission: reimbursement\.reject/);
+    assert.equal(ran.length, 0);
+
+    const detail = await rejectUC(repo, recordingAudit(entries)).execute(ctx(), 'rb-1', 'ชื่อบัญชีไม่ตรงกับบัตรประชาชน', 'ACCOUNT_NAME_MISMATCH');
+    assert.deepEqual(ran.map(([name]) => name), ['requestPayoutCorrectionAtomic'], 'the reject transaction is not used: REJECTED would release the claim\'s receipts');
+    const [, handed] = ran[0]!;
+    assert.deepEqual([handed.reasonCode, handed.note, handed.actorUserId], ['ACCOUNT_NAME_MISMATCH', 'ชื่อบัญชีไม่ตรงกับบัตรประชาชน', 'approver-1']);
+    assert.deepEqual([detail.status, detail.payoutCorrection?.phase, detail.payoutCorrection?.reasonCode, detail.payoutCorrection?.note],
+      ['PENDING_APPROVAL', 'AWAITING_REQUESTER', 'ACCOUNT_NAME_MISMATCH', 'ชื่อบัญชีไม่ตรงกับบัตรประชาชน']);
+    // One notice, to the requester alone, with the reason in the list's own words and nothing that was typed.
+    assert.deepEqual(events.map((event) => event.eventType), ['reimbursement.payout_correction_requested']);
+    assert.deepEqual(events[0].payloadJson.data, {
+      requestId: 'rb-1', requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', status: 'PENDING_APPROVAL',
+      payoutCorrectionNotice: 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน',
+    });
+    assert.deepEqual(entries.map((entry) => [entry.action, entry.inTransaction]), [['reimbursement.payout_correction.request', true]]);
+    assert.deepEqual([entries[0].metadataJson.reasonCode, entries[0].metadataJson.hasNote, entries[0].metadataJson.sentBackBy, entries[0].metadataJson.again],
+      ['ACCOUNT_NAME_MISMATCH', true, 'STEP_APPROVER', true]);
+    assert.ok(!JSON.stringify([entries, events]).includes('บัตรประชาชน'), 'what was typed stays on the claim');
+    // A screen that sends only the words, as the reject dialog does today, files them under "อื่น ๆ".
+    const plain = roundRepo(withApprovers());
+    await rejectUC(plain.repo).execute(ctx(), 'rb-1', 'บัญชีผิด');
+    assert.deepEqual([plain.ran[0]![1].reasonCode, plain.events[0].payloadJson.data.payoutCorrectionNotice],
+      ['OTHER', 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน']);
+  });
+});

@@ -1,5 +1,9 @@
 import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import type { RequestContext, ReimbursementApprovalQueueItem, ReimbursementAwaitingSystem, ReimbursementRequestDetail } from '@watchdog-bms/contracts';
+import {
+  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber,
+  REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
+} from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
@@ -18,6 +22,8 @@ import {
   ageHours,
   isSlaRisk,
   pendingProjectionIntent,
+  approvalWaitStartedAt,
+  payoutCorrectionPhase,
 } from '../../domain/logic/reimbursement.logic';
 import { hasPayoutSnapshot, payoutAttestationError } from '../../domain/logic/payout-destination.logic';
 
@@ -204,6 +210,75 @@ export async function awaitingSystemOf(
   return undefined;
 }
 
+/**
+ * Sends a claim back to have its payout account corrected (payout spec §14.3): from the pay step, or,
+ * by whoever decides the step its new account waits on, back again to its requester. The caller has
+ * established who the actor is to the claim (`sentBackBy`); this is the one write behind both doors,
+ * `POST :requestId/payout-correction` and the reject call on a claim in a round.
+ *
+ * The reason is one of a fixed list, because it goes into the requester's notice. The note is for
+ * the claim page and may not carry an account number.
+ */
+export async function sendBackForPayoutCorrection(
+  deps: { repo: PrismaReimbursementRepository; audit: AuditService; evidence: ReimbursementEvidenceService },
+  ctx: RequestContext,
+  req: ReimbursementRequestRecord,
+  sentBackBy: 'PAYER' | 'APPROVER' | 'REQUESTER' | 'STEP_APPROVER',
+  input: { reasonCode?: unknown; note?: unknown },
+): Promise<ReimbursementRequestDetail> {
+  if (!isReimbursementPayoutCorrectionReason(input.reasonCode)) throw new BadRequestException('payout_correction_reason_required');
+  const reasonCode = input.reasonCode;
+  const note = typeof input.note === 'string' ? input.note.trim() : '';
+  if (note.length > REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH) throw new BadRequestException('payout_correction_note_too_long');
+  if (looksLikeAccountNumber(note)) throw new BadRequestException('note_contains_account_number');
+
+  const policy = effectivePolicyForRequest(req, effectivePolicy(await deps.repo.findPolicy(ctx.companyId, null)));
+  const requestedAt = new Date();
+  await deps.repo.requestPayoutCorrectionAtomic({
+    companyId: ctx.companyId,
+    requestId: req.id,
+    expectedUpdatedAt: req.updatedAt,
+    actorUserId: ctx.userId,
+    actorRoles: ctx.roles,
+    scopes: ctx.scopes ?? {},
+    allowSelfApproval: policy.allowSelfApproval,
+    requestedAt,
+    reasonCode,
+    ...(note && { note }),
+    onPersisted: async (tx, result) => {
+      await deps.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payout_correction.request',
+        targetType: 'reimbursement_request', targetId: req.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+        // Who, why (the code) and what was set aside. The note is free text and stays on the claim; of
+        // the account only its method and version.
+        metadataJson: {
+          requestNo: req.requestNo, reasonCode, hasNote: !!note, sentBackBy, again: result.again,
+          payoutMethod: req.payoutMethod ?? null, payoutVersion: req.payoutDestinationVersion ?? null,
+          setAsideStepIds: result.setAsideStepIds, signaturesRemoved: result.signaturesRemoved, declarationsSetAside: result.declarationsSetAside,
+        },
+      }, tx);
+      await appendOutboxWithinTx(tx, {
+        companyId: ctx.companyId,
+        eventType: 'reimbursement.payout_correction_requested',
+        aggregateId: req.id,
+        eventKey: `reimbursement.payout_correction_requested:reimbursement_request:${req.id}:${requestedAt.toISOString()}`,
+        payloadJson: {
+          companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
+          aggregateType: 'reimbursement_request', aggregateId: req.id, occurredAt: requestedAt.toISOString(),
+          // To the requester alone. The reason is the fixed list's own Thai words in a finished sentence:
+          // no template assembles it, so no rule can print a code or anything a person typed.
+          data: {
+            requestId: req.id, requestNo: req.requestNo, requesterUserId: req.requesterUserId, status: 'PENDING_APPROVAL',
+            payoutCorrectionNotice: `เหตุผล: ${REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[reasonCode]} · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน`,
+          },
+        },
+      });
+    },
+  });
+  const detail = await deps.repo.findRequestById(ctx.companyId, req.id, true);
+  return detailWithFileNames(deps.repo, deps.evidence, ctx.companyId, detail!, ctx);
+}
+
 @Injectable()
 export class ListApprovalQueueUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
@@ -247,7 +322,9 @@ export class ListApprovalQueueUseCase {
         ctx, request, activeApproversByBranch.get(request.branchId ?? '') ?? new Set<string>(), policy.allowSelfApproval,
       );
       if (!canApprove && !canReject) return [];
-      const age = request.submittedAt ? ageHours(request.submittedAt, now) : 0;
+      // A claim whose payout account was corrected waits for these approvers since the account was given, not since it was first sent.
+      const waitingSince = approvalWaitStartedAt(request);
+      const age = waitingSince ? ageHours(waitingSince, now) : 0;
       return [{
         ...toRequestSummary(request, { approverNames }), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours),
         approvalActions: { canApprove, canReject },
@@ -273,6 +350,10 @@ export class ApproveReimbursementUseCase {
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot approve from status ${req.status}`);
+    // Sent back to have its payout account corrected, and the requester has not given it yet: there is
+    // nothing to approve, and the approver who presses it has an old page (payout spec §14.2).
+    const correction = payoutCorrectionPhase(req);
+    if (correction === 'AWAITING_REQUESTER') throw new ConflictException('payout_correction_in_progress');
 
     const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
     // Owner order 2026-09-21: submit found nobody but the requester and assigned the step to them.
@@ -310,6 +391,68 @@ export class ApproveReimbursementUseCase {
     }
 
     const now = new Date();
+    if (correction === 'AWAITING_APPROVAL') {
+      // The same button and endpoint, the same permission, eligibility, self-approval and attestation
+      // rules as above; what differs is what approving means. Only the account is approved, the claim's
+      // expense records already stand, so the claim is ready for payment in this one transaction
+      // (payout spec §14.6) and nothing waits for the reconciler.
+      const selfApproval = req.requesterUserId === ctx.userId ? {
+        approvedOwnRequest: true,
+        via: soloAtSubmission ? 'no_other_approver' : policy.allowSelfApproval ? 'company_policy' : 'role_exemption',
+        actorRoles: soloAtSubmission ? ctx.roles : ctx.roles.filter((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role)),
+      } : undefined;
+      await this.repo.approvePayoutCorrectionAtomic({
+        companyId: ctx.companyId,
+        requestId: id,
+        expectedUpdatedAt: req.updatedAt,
+        expectedApprovalSnapshotHash: expectedHash,
+        actorUserId: ctx.userId,
+        actorRoles: ctx.roles,
+        scopes: ctx.scopes ?? {},
+        allowSelfApproval: policy.allowSelfApproval,
+        decidedAt: now,
+        comment,
+        payoutVerifiedVersion,
+        onApprovedPersisted: async (tx, approvalStepId) => {
+          await this.audit.log({
+            companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payout_correction.approve',
+            targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+            metadataJson: {
+              requestNo: req.requestNo, amount: req.amount, currency: req.currency, comment, approvalStepId,
+              payoutMethod: req.payoutMethod ?? null, payoutVersion: req.payoutDestinationVersion ?? null,
+              ...(selfApproval && { selfApproval }),
+            },
+          }, tx);
+          if (req.payoutMethod === 'BANK_TRANSFER' && hasPayoutSnapshot(req)) {
+            await this.audit.log({
+              companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payout.verify',
+              targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+              metadataJson: { version: req.payoutDestinationVersion, via: 'APPROVAL', approvalStepId, byRequester: req.requesterUserId === ctx.userId },
+            }, tx);
+          }
+          // The existing ready-to-pay notice, unchanged: its actor is the approver, whose turn it now is.
+          // After them it asks the finance reviewer who passed the claim, when there was one.
+          const financeReviewer = req.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? req.financeReviewedByUserId : undefined;
+          await appendOutboxWithinTx(tx, {
+            companyId: ctx.companyId,
+            eventType: 'reimbursement.ready_for_payment',
+            aggregateId: id,
+            eventKey: `reimbursement.ready_for_payment:reimbursement_request:${id}:${approvalStepId}`,
+            payloadJson: {
+              companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
+              aggregateType: 'reimbursement_request', aggregateId: id, occurredAt: now.toISOString(),
+              data: {
+                requestId: id, requestNo: req.requestNo, status: 'READY_FOR_PAYMENT', decision: 'APPROVED',
+                requesterUserId: req.requesterUserId, amount: req.amount, currency: req.currency,
+                ...(financeReviewer && { approverRecipientUserIds: [financeReviewer] }),
+              },
+            },
+          });
+        },
+      });
+      const approved = await this.repo.findRequestById(ctx.companyId, id, true);
+      return detailWithFileNames(this.repo, this.evidence, ctx.companyId, approved!, ctx);
+    }
     const decision = await this.repo.beginApprovalDecisionAtomic({
       companyId: ctx.companyId,
       requestId: id,
@@ -474,12 +617,15 @@ export class RejectReimbursementUseCase {
     private readonly evidence: ReimbursementEvidenceService,
   ) {}
 
-  async execute(ctx: RequestContext, id: string, reason: string): Promise<ReimbursementRequestDetail> {
+  /** `payoutCorrectionReasonCode`: only read for a claim whose payout account is being corrected. */
+  async execute(ctx: RequestContext, id: string, reason: string, payoutCorrectionReasonCode?: unknown): Promise<ReimbursementRequestDetail> {
     if (!validateRejectionReason(reason)) throw new BadRequestException('rejection_reason_required');
 
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot reject from status ${req.status}`);
+    const correction = payoutCorrectionPhase(req);
+    if (correction === 'AWAITING_REQUESTER') throw new ConflictException('payout_correction_in_progress');
 
     const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
     const step = currentApprovalStep(req);
@@ -494,6 +640,13 @@ export class RejectReimbursementUseCase {
     if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers)) {
       throw new ForbiddenException('not_eligible_approver');
+    }
+    // Refusing the account a correction round gave the claim sends it back to its requester again
+    // (payout spec §14.6). Never REJECTED: that status releases the claim's receipts to other claims,
+    // and this claim's expense records stand. The words typed here become the round's note.
+    if (correction) {
+      return sendBackForPayoutCorrection({ repo: this.repo, audit: this.audit, evidence: this.evidence }, ctx, req, 'STEP_APPROVER',
+        { reasonCode: payoutCorrectionReasonCode ?? 'OTHER', note: reason });
     }
     if (!canTransition(req.status, 'REJECTED')) throw new UnprocessableEntityException('invalid_status_transition');
 
