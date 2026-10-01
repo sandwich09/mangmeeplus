@@ -2926,7 +2926,7 @@ export class PrismaReimbursementRepository {
     const signedCopyLinkIds = links
       .filter((link) => link.targetType === REIMBURSEMENT_ATTACHMENT_TARGET_TYPE && link.targetId === input.requestId && link.purpose === REIMBURSEMENT_SIGNED_COPY_PURPOSE)
       .map((link) => link.id);
-    if (await db.reimbursementLine.count({ where: { companyId: input.companyId, attachmentId: input.attachmentId } }) > 0) throw invalid();
+    const alsoReceipt = await db.reimbursementLine.count({ where: { companyId: input.companyId, attachmentId: input.attachmentId } }) > 0;
     const metadataJson = (file.metadataJson ?? null) as Record<string, unknown> | null;
 
     let source: ReimbursementPaymentSlipSource;
@@ -2935,15 +2935,17 @@ export class PrismaReimbursementRepository {
       const ofThisClaim = await db.reimbursementPayment.count({
         where: { companyId: input.companyId, reimbursementRequestId: input.requestId, id: { in: slipPaymentIds } },
       });
-      if (links.length !== slipPaymentIds.length || ofThisClaim !== new Set(slipPaymentIds).size) throw invalid();
+      if (alsoReceipt || links.length !== slipPaymentIds.length || ofThisClaim !== new Set(slipPaymentIds).size) throw invalid();
       source = 'PREVIOUS_SLIP';
     } else if (metadataJson?.['generatedFor'] === REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG) {
-      if (links.length !== 0 || metadataJson['requestId'] !== input.requestId || file.uploadedByUserId !== input.actorUserId
+      if (alsoReceipt || links.length !== 0 || metadataJson['requestId'] !== input.requestId || file.uploadedByUserId !== input.actorUserId
         || file.byteSize > REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES) throw invalid();
       source = 'UPLOAD';
     } else if (signedCopyLinkIds.length > 0) {
-      // Only this claim's signed copy: the same file on another claim, or as a receipt, stays what it is there.
-      if (links.length !== signedCopyLinkIds.length) throw invalid();
+      // Only this claim's signed copy: the same file on another claim, or as a receipt, stays what it
+      // is there. Said as its own refusal: nothing is wrong with the file's type or size, and the
+      // payer can do something about it (attach the slip as a new file).
+      if (alsoReceipt || links.length !== signedCopyLinkIds.length) throw new UnprocessableEntityException('payment_slip_in_use_elsewhere');
       source = 'SIGNED_COPY';
     } else {
       throw invalid();

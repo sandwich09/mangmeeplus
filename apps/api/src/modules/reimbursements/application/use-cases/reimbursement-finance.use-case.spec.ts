@@ -1526,7 +1526,11 @@ describe('PrismaReimbursementRepository payment slips', () => {
   });
 
   it('accepts only this claim\'s own slip: the payer\'s upload, an attached signed copy, or an earlier slip of the claim', async () => {
-    const refused: [string, (h: ReturnType<typeof atomicPaymentHarness>) => void][] = [
+    // A file of the wrong kind, or not this claim's and this payer's, is `payment_slip_invalid`. A signed
+    // copy of this claim that is also something else's evidence is a sound file the payer picked from the
+    // claim's own list: it gets its own answer, so the screen does not talk about file type and size.
+    const IN_USE = 'payment_slip_in_use_elsewhere';
+    const refused: [string, (h: ReturnType<typeof atomicPaymentHarness>) => void, string?][] = [
       ['no such file', () => undefined],
       ['an upload still pending', (h) => h.addFile(slipUpload({ status: 'PENDING_UPLOAD' }))],
       ['a deleted file', (h) => h.addFile(slipUpload({ status: 'DELETED' }))],
@@ -1556,15 +1560,15 @@ describe('PrismaReimbursementRepository payment slips', () => {
       ['this claim\'s signed copy that is also a signed copy of another claim', (h) => {
         misfiledSignedCopy(h, false, 'att-slip-1');
         h.addLink({ id: 'link-other', attachmentId: 'att-slip-1', targetType: 'reimbursement_request', targetId: 'rb-2', purpose: 'reimbursement.claim_form.signed' });
-      }],
+      }, IN_USE],
       ['this claim\'s signed copy that is also an expense receipt', (h) => {
         misfiledSignedCopy(h, false, 'att-slip-1');
         h.addLink({ id: 'link-receipt', attachmentId: 'att-slip-1', targetType: 'expense.record', targetId: 'exp-9', purpose: 'expense.receipt.supporting' });
-      }],
+      }, IN_USE],
       ['this claim\'s signed copy that is also the receipt of one of its own lines', (h) => {
         misfiledSignedCopy(h, false, 'att-slip-1');
         h.addReceiptLine({ id: 'rbl-1', reimbursementRequestId: 'rb-1', attachmentId: 'att-slip-1' });
-      }],
+      }, IN_USE],
       ['an earlier slip of this claim that has since been linked to something else', (h) => {
         h.addFile(slipUpload({ uploadedByUserId: 'another-payer' }));
         h.addPayment({ id: 'pay-old', companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'old', status: 'VOIDED', slipAttachmentId: 'att-slip-1' });
@@ -1572,18 +1576,18 @@ describe('PrismaReimbursementRepository payment slips', () => {
         h.addLink({ id: 'link-receipt', attachmentId: 'att-slip-1', targetType: 'expense.record', targetId: 'exp-9', purpose: 'expense.receipt.primary' });
       }],
     ];
-    for (const [label, arrange] of refused) {
+    for (const [label, arrange, code = 'payment_slip_invalid'] of refused) {
       const h = atomicPaymentHarness();
       arrange(h);
       await assert.rejects(
         () => h.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-slip-1' }),
-        (error: any) => error.getStatus() === 422 && error.message === 'payment_slip_invalid',
+        (error: any) => error.getStatus() === 422 && error.message === code,
         label,
       );
       assert.equal(h.state().payments.filter((payment) => payment.status !== 'VOIDED').length, 0, label);
       assert.deepEqual(h.state().links.filter((link) => link.id.startsWith('link-') && link.id.endsWith('reimbursement.payment.slip')), [], `${label}: no slip link written`);
       // The friendly preflight gives the same verdict as the check under the lock.
-      await assert.rejects(() => h.repo.assertPaymentSlipUsable({ companyId: 'co-1', requestId: 'rb-1', attachmentId: 'att-slip-1', actorUserId: 'fin-1' }), /payment_slip_invalid/, label);
+      await assert.rejects(() => h.repo.assertPaymentSlipUsable({ companyId: 'co-1', requestId: 'rb-1', attachmentId: 'att-slip-1', actorUserId: 'fin-1' }), new RegExp(`${code}$`), label);
     }
 
     // A slip of an earlier, voided payment of this claim serves the new payment: each record has its own link.
