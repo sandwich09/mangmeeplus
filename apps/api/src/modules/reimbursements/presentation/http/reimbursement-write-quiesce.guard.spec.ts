@@ -150,3 +150,18 @@ describe('ReimbursementController payment slip routes', () => {
     assert.ok((Reflect.getMetadata(GUARDS_METADATA, ReimbursementController) as unknown[]).includes(ReimbursementWriteQuiesceGuard));
   });
 });
+
+// ---- Carrying a decided claim on (audit B4) ----
+
+describe('carrying a decided claim on: the web call', () => {
+  it('declares ดำเนินการต่อ as a claim route that asks only for a session, like approve: the use case decides who', () => {
+    const routes = claimRoutes();
+    const resume = routes.find((route) => route.handler === 'resumeRequest');
+    assert.deepEqual({ method: resume?.method, path: resume?.path, all: resume?.all, any: resume?.any },
+      { method: 'POST', path: ':requestId/resume', all: ['account.session.read'], any: undefined });
+    assert.deepEqual(routes.filter((route) => answers(route, 'POST', 'rb-1/resume')).map((route) => route.handler), ['resumeRequest']);
+    // It writes, so the maintenance bridge holds it with every other claim write.
+    const guard = new ReimbursementWriteQuiesceGuard({ reimbursementWriteQuiesce: true } as any);
+    assert.throws(() => guard.canActivate(context('POST', '/companies/c1/reimbursements/rb-1/resume').ctx));
+  });
+});

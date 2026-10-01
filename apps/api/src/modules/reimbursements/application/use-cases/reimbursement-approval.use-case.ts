@@ -1,5 +1,5 @@
 import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
-import type { RequestContext, ReimbursementApprovalQueueItem, ReimbursementRequestDetail } from '@watchdog-bms/contracts';
+import type { RequestContext, ReimbursementApprovalQueueItem, ReimbursementAwaitingSystem, ReimbursementRequestDetail } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
@@ -17,6 +17,7 @@ import {
   canTransition,
   ageHours,
   isSlaRisk,
+  pendingProjectionIntent,
 } from '../../domain/logic/reimbursement.logic';
 import { hasPayoutSnapshot, payoutAttestationError } from '../../domain/logic/payout-destination.logic';
 
@@ -161,6 +162,43 @@ export async function approvalDecisionActions(
     effectivePolicy(await repo.findPolicy(ctx.companyId, null)),
   );
   return pendingApprovalActions(ctx, request, activeApprovers, policy.allowSelfApproval);
+}
+
+/**
+ * A claim whose decision is on record and waits for the system to carry it out (audit B4), as the
+ * claim detail reports it, with whether this viewer may tell the system to carry on now. The resume
+ * endpoint asks this same function, so "ดำเนินการต่อ" is offered to exactly the people it takes.
+ *
+ * APPROVAL: the approver who decided, while they still hold what approving asks of them: the
+ * claim's branch in their scope, and the approve right or their place on the step. Their roles are
+ * not read again; the decision was checked against them when it was made, and nothing is decided now.
+ * NO_APPROVAL_NEEDED: whoever may record the claim's payment, the people it waits for.
+ * A claim finance passed keeps its own "ดำเนินการต่อ" on the finance step and is not reported here.
+ *
+ * Needs the claim loaded with its lines and approval steps.
+ */
+export async function awaitingSystemOf(
+  ctx: RequestContext,
+  request: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+): Promise<ReimbursementAwaitingSystem | undefined> {
+  const intent = pendingProjectionIntent(request);
+  const inScope = isBranchInScope(ctx.scopes ?? {}, request.branchId);
+  if (intent?.kind === 'MANAGER') {
+    const step = currentApprovalStep(request);
+    const decidedIt = inScope && intent.actorUserId === ctx.userId;
+    return {
+      kind: 'APPROVAL',
+      canResume: decidedIt && (ctx.permissions.includes('reimbursement.approve')
+        || hasFrozenAssignment(step, ctx.userId, await activeStepApprovers(repo, ctx.companyId, step, request.branchId))),
+    };
+  }
+  // Nobody had to approve it: it can be paid as soon as its expense records are confirmed, so it
+  // waits for the system only while they are not (the payment endpoint refuses it until then).
+  if (intent?.kind === 'POLICY' && !(await repo.areClaimProjectionsReady(request))) {
+    return { kind: 'NO_APPROVAL_NEEDED', canResume: inScope && ctx.permissions.includes('reimbursement.payment.record') };
+  }
+  return undefined;
 }
 
 @Injectable()

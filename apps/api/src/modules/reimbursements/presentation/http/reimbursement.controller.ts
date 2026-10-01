@@ -40,6 +40,7 @@ import {
   CancelReimbursementUseCase,
   WithdrawReimbursementCancellationUseCase,
   ReopenRejectedReimbursementUseCase,
+  ResumeReimbursementUseCase,
 } from '../../application/use-cases/reimbursement-request.use-case';
 import { ListApprovalQueueUseCase, ApproveReimbursementUseCase, RejectReimbursementUseCase } from '../../application/use-cases/reimbursement-approval.use-case';
 import {
@@ -104,6 +105,7 @@ export class ReimbursementController {
     private readonly attachSlip: AttachPaymentSlipUseCase,
     private readonly slipDownloadUrl: CreatePaymentSlipDownloadUrlUseCase,
     private readonly withdrawCancel: WithdrawReimbursementCancellationUseCase,
+    private readonly resumeClaim: ResumeReimbursementUseCase,
   ) {}
 
   /** Decisions/payments return the same detail shape the drawer reads, receipt names included. */
@@ -297,6 +299,14 @@ export class ReimbursementController {
   @ApiOperation({ summary: 'Reject reimbursement request (current permission or frozen assignment)' })
   rejectRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: RejectReimbursementInput) {
     return this.withAttachmentFileName(ctx, this.reject.execute(ctx, requestId, body?.reason));
+  }
+
+  @Post(':requestId/resume')
+  @RequirePermissions('account.session.read')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Carry out now the decision the claim already holds (its approver, or whoever may record the payment of a claim nobody had to approve)' })
+  resumeRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
+    return this.resumeClaim.execute(ctx, requestId);
   }
 
   // ---- Finance and payment ----

@@ -31,7 +31,7 @@ import type {
 import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames, toPayoutSummary } from '../dto/reimbursement.mapper';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
-import { approvalDecisionActions } from './reimbursement-approval.use-case';
+import { approvalDecisionActions, awaitingSystemOf } from './reimbursement-approval.use-case';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import {
@@ -39,7 +39,7 @@ import {
   type PayoutRevealGroup, type SubmitPayoutColumns,
 } from '../../domain/logic/payout-destination.logic';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
-import { lostWriteRace } from '../services/reimbursement-projection-reconciler.service';
+import { lostWriteRace, ReimbursementProjectionReconcilerService } from '../services/reimbursement-projection-reconciler.service';
 import {
   validateRequestFields,
   validateLines,
@@ -328,9 +328,12 @@ export class GetReimbursementDetailUseCase {
       && defaultChangedSinceSubmit(req, detail.payout.source, await this.repo.findMemberPayoutAccount(ctx.companyId, req.requesterUserId));
     // Audit B3: a cancellation that was started and has not completed appeared in no response.
     const pendingCancellation = await pendingCancellationOf(ctx, req, this.repo);
+    // Audit B4: a claim that was decided and has not moved on said nothing of it either.
+    const awaitingSystem = await awaitingSystemOf(ctx, req, this.repo);
     return {
       ...detail,
       ...(pendingCancellation && { pendingCancellation }),
+      ...(awaitingSystem && { awaitingSystem }),
       // The button is offered exactly when the reveal endpoint would answer.
       ...(payout && { payout: {
         ...payout, ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
@@ -1124,6 +1127,45 @@ export class WithdrawReimbursementCancellationUseCase {
       },
     });
     return toRequestSummary(updated);
+  }
+}
+
+/**
+ * "ดำเนินการต่อ" (audit B4): has the system carry out now the decision a claim already holds. Nothing
+ * is decided here, so nothing is attested again, and what was approved is carried out only while
+ * the claim is still what was approved. The scheduled run does the same for every such claim; this
+ * is that step for one claim, asked for by a person the claim detail offered it to.
+ */
+@Injectable()
+export class ResumeReimbursementUseCase {
+  constructor(
+    private readonly repo: PrismaReimbursementRepository,
+    private readonly audit: AuditService,
+    private readonly reconciler: ReimbursementProjectionReconcilerService,
+    private readonly evidence: ReimbursementEvidenceService,
+  ) {}
+
+  async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestDetail> {
+    const req = await this.repo.findRequestById(ctx.companyId, id, true);
+    if (!req) throw new NotFoundException('Reimbursement request not found');
+    const waiting = await awaitingSystemOf(ctx, req, this.repo);
+    if (!waiting) {
+      // Nothing waits any more (pressed twice, or the scheduled run got there first). That is what
+      // was asked for, so the answer is the claim as it stands, to whoever may read it.
+      await assertCanReadRequestOrAssignment(ctx, req, this.repo);
+      return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
+    }
+    if (!waiting.canResume) throw new ForbiddenException('reimbursement_resume_not_allowed');
+    if (await this.reconciler.repair(ctx.companyId, id)) {
+      // The repair's own audit row is the system's; this one names the person who asked for it.
+      await this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.projection.resume',
+        targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: { requestNo: req.requestNo, waitingFor: waiting.kind },
+      });
+    }
+    const latest = await this.repo.findRequestById(ctx.companyId, id, true);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, latest ?? req, ctx);
   }
 }
 

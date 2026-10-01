@@ -586,6 +586,21 @@ export type ReimbursementPendingCancellation = {
   canWithdraw: boolean;
 };
 
+/**
+ * A claim whose decision is made and on record, waiting for the system to carry it out: build and
+ * confirm its expense records and move it on to payment. The decision is committed first and the
+ * rest follows it, so a claim can sit between the two; a scheduled run picks it up, and this says
+ * who may also tell the system to carry on now.
+ *
+ * APPROVAL: its approver approved it. NO_APPROVAL_NEEDED: nobody had to approve it, and it cannot be
+ * paid until its expense records are confirmed.
+ */
+export type ReimbursementAwaitingSystem = {
+  kind: 'APPROVAL' | 'NO_APPROVAL_NEEDED';
+  /** The resume endpoint takes this viewer ("ดำเนินการต่อ"). Nothing is decided or attested again. */
+  canResume: boolean;
+};
+
 export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   createdByName?: string;
   currentApproverUserId?: string;
@@ -629,6 +644,8 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   paymentDesk?: { names: string[]; moreCount: number };
   /** Present while a cancellation was started and has not completed. GET detail only, like `approvalActions`. */
   pendingCancellation?: ReimbursementPendingCancellation;
+  /** Present while the claim's decision waits for the system to carry it out. GET detail only. Never together with `pendingCancellation`. */
+  awaitingSystem?: ReimbursementAwaitingSystem;
   missingReceiptReason?: string;
   /** Where the money goes back to, masked. Absent on a legacy claim: one sent before claims carried a receiving method. */
   payout?: ReimbursementPayoutSummary;
