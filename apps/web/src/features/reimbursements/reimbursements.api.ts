@@ -6,6 +6,7 @@ import { prepareAttachmentUpload, withGenericUploadError } from '@/common/files/
 import {
   REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES,
   type ReimbursementApproverRoleOption, type ReimbursementInternalNote, type ReimbursementPolicySummary, type ReimbursementSourceOptions,
+  type RequestReimbursementPayoutCorrectionInput, type SubmitReimbursementPayoutCorrectionInput,
 } from '@watchdog-bms/contracts';
 import { HUB_PAGE_SIZE, type HubFilter } from './reimbursements.logic';
 
@@ -186,6 +187,23 @@ export function rejectReimbursement(companyId: string, id: string, reason: strin
 /** "ดำเนินการต่อ": has the system carry out now the decision the claim already holds. It decides nothing, so it sends nothing. */
 export function resumeReimbursement(companyId: string, id: string) {
   return apiFetch<any>(`${base(companyId)}/${id}/resume`, { method: 'POST', body: '{}' });
+}
+
+// ---- Correcting the payout account after approval (payout spec §14) ----
+//
+// No global error toast on either call: the form that makes it says the refusal in its own banner, and keeps
+// what was typed. Both answer the claim detail without the viewer's flags, so the page reads the claim again.
+
+/**
+ * Sends a claim that waits for payment back to have its payout account corrected. From whoever decides the
+ * step a round waits on, the same call sends it back to its requester once more: it never rejects the claim.
+ */
+export function requestReimbursementPayoutCorrection(companyId: string, id: string, input: RequestReimbursementPayoutCorrectionInput) {
+  return apiFetch<any>(`${base(companyId)}/${id}/payout-correction`, { method: 'POST', body: JSON.stringify(input), suppressErrorToast: true });
+}
+/** Gives the account a claim in a round is to be paid into. The claim then waits for its approvers, or is ready for payment at once. */
+export function submitReimbursementPayoutCorrection(companyId: string, id: string, input: SubmitReimbursementPayoutCorrectionInput) {
+  return apiFetch<any>(`${base(companyId)}/${id}/payout-destination`, { method: 'PUT', body: JSON.stringify(input), suppressErrorToast: true });
 }
 
 // ---- Finance & payment ----

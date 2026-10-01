@@ -19,6 +19,14 @@ import {
   type SetMemberPayoutAccountInput,
 } from '@watchdog-bms/contracts';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
+// The correction round of payout spec §14 (its own imports, apart from the blocks above).
+import {
+  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH,
+  REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
+  type ReimbursementPayoutCorrectionAccount, type ReimbursementPayoutCorrectionReason,
+  type RequestReimbursementPayoutCorrectionInput, type SubmitReimbursementPayoutCorrectionInput,
+} from '@watchdog-bms/contracts';
+import { translateApiError } from '@/common/api/api-error-message';
 
 export const PAYOUT_METHOD_TEXT: Record<string, string> = { BANK_TRANSFER: 'โอนเข้าบัญชี', CASH: 'รับเป็นเงินสด' };
 export const PAYOUT_KIND_TEXT: Record<string, string> = { BANK_ACCOUNT: 'บัญชีธนาคาร', PROMPTPAY_PHONE: 'พร้อมเพย์ (เบอร์มือถือ)' };
@@ -386,3 +394,116 @@ export function paymentDestinationText(payment: { payoutDestination?: Reimbursem
 }
 
 export const BANK_OPTIONS: readonly string[] = THAI_BANK_NAMES;
+
+// ---- Correcting the payout account after approval (payout spec §14) ----
+//
+// A wrong account found after approval is fixed on the same claim: it is sent back from the pay step, its
+// requester gives the account again and its approvers approve that account alone. Who may do which is the
+// server's answer (`payoutCorrectionActions`, `approvalActions`); nothing here decides it.
+
+export const PAYOUT_CORRECTION_SEND_BACK_LABEL = 'ส่งกลับให้แก้บัญชีรับเงิน';
+/** The same send-back from whoever decides the round's waiting step: it is never a refusal of the claim. */
+export const PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL = 'ส่งกลับให้แก้อีกครั้ง';
+export const PAYOUT_CORRECTION_FIX_LABEL = 'แก้บัญชีรับเงิน';
+/** A scan declared as signed before the round (spec §14.4): it stays in the list and no longer counts. */
+export const SIGNED_COPY_BEFORE_CORRECTION_LABEL = 'สำเนาก่อนแก้บัญชีรับเงิน';
+
+/** The fixed reasons, in the order the form lists them. */
+export const PAYOUT_CORRECTION_REASONS = Object.entries(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS) as ReadonlyArray<[ReimbursementPayoutCorrectionReason, string]>;
+
+/** A reason in words. Empty for a reason this build has no words for: a code is never printed. */
+export function payoutCorrectionReasonText(reasonCode: unknown): string {
+  return isReimbursementPayoutCorrectionReason(reasonCode) ? REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[reasonCode] : '';
+}
+
+/**
+ * "ส่งกลับให้แก้บัญชีรับเงินโดย … : เหตุผล" (spec §14.2, §17.2). One sentence for the step note of a claim that
+ * waits for its requester, for the timeline row and for the card its approvers read, so they cannot tell it differently.
+ */
+export function payoutCorrectionSentBackText(sentBack: { byName?: string | null; reasonCode?: unknown } | null | undefined): string {
+  const reason = payoutCorrectionReasonText(sentBack?.reasonCode);
+  return `${PAYOUT_CORRECTION_SEND_BACK_LABEL}${sentBack?.byName ? `โดย ${sentBack.byName}` : ''}${reason ? ` : ${reason}` : ''}`;
+}
+
+/**
+ * What the send-back form refuses before it asks the API, in the API's own words for the same refusals: a reason
+ * from the list, a note of at most 500 characters, and no account number in a note every reader of the claim sees.
+ */
+export function payoutCorrectionRequestError(reasonCode: string, note: string): string | null {
+  if (!isReimbursementPayoutCorrectionReason(reasonCode)) return translateApiError('payout_correction_reason_required');
+  if (note.trim().length > REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH) return translateApiError('payout_correction_note_too_long');
+  if (looksLikeAccountNumber(note)) return translateApiError('note_contains_account_number');
+  return null;
+}
+
+/** The body of `POST :requestId/payout-correction`. An empty note is not sent. */
+export function payoutCorrectionRequestInput(reasonCode: ReimbursementPayoutCorrectionReason, note: string): RequestReimbursementPayoutCorrectionInput {
+  return { reasonCode, ...(note.trim() && { note: note.trim() }) };
+}
+
+/** What whoever sends a claim back is told before they confirm (spec §14.1, §14.4): what changes, and what is lost. */
+export function payoutCorrectionSendBackNotes(detail: {
+  payoutCorrectionPhase?: string | null; payout?: ReimbursementPayoutSummary | null;
+  signatures?: readonly unknown[] | null; signedCopies?: readonly { acknowledgedAt?: string }[] | null;
+}): string[] {
+  // From the round's waiting step: the account goes back to the requester once more. Nothing is signed in a round.
+  if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') {
+    return ['ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงินอีกครั้ง ใบไม่ถูกปฏิเสธ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน'];
+  }
+  return [
+    'ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน',
+    'เมื่อผู้เบิกแก้แล้ว ผู้อนุมัติชุดเดิมอนุมัติบัญชีใหม่ก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที',
+    // A claim sent before claims carried an account gets one through this same path (spec §15).
+    ...(!detail.payout ? [`${LEGACY_PAYOUT_NOTE} หลังส่งกลับ ผู้เบิกจะระบุบัญชีรับเงินของใบนี้ได้`] : []),
+    ...((detail.signatures ?? []).length > 0 ? ['ลายเซ็นในระบบที่ลงไว้ในใบนี้จะถูกลบ ต้องลงนามใหม่หลังบัญชีใหม่ได้รับอนุมัติ'] : []),
+    ...((detail.signedCopies ?? []).some((copy) => copy.acknowledgedAt)
+      ? ['สำเนาใบเบิกที่ลงนามบนกระดาษยังเปิดดูได้ แต่จะไม่นับว่าลงนามแล้ว ต้องแนบสำเนาใหม่หลังบัญชีใหม่ได้รับอนุมัติ'] : []),
+  ];
+}
+
+/** What the requester picks for a claim in a round. Nothing is picked for them: the account in question may be their default. */
+export type PayoutCorrectionForm = { mode: '' | 'DEFAULT' | 'SPECIFIED' | 'CASH'; account: PayoutAccountForm; saveAsDefault: boolean };
+
+export function emptyPayoutCorrectionForm(): PayoutCorrectionForm {
+  return { mode: '', account: emptyPayoutAccountForm(), saveAsDefault: false };
+}
+
+/** Why the account form cannot be sent yet, with the field to mark; null when it can. The account rule is the API's own. */
+export function payoutCorrectionFormError(form: PayoutCorrectionForm): { text: string; field?: PayoutDestinationField } | null {
+  if (!form.mode) return { text: 'กรุณาเลือกวิธีรับเงินคืนของใบนี้' };
+  return form.mode === 'SPECIFIED' ? payoutAccountFormError(form.account) : null;
+}
+
+/**
+ * The body of `PUT :requestId/payout-destination`. "Use the default account" names the default the page showed
+ * (`payoutCorrectionActions.requesterDefault.token`), so the claim never takes an account nobody was shown. A
+ * tick to save as the default is sent only where the server said this viewer may (`canSaveAsDefault`).
+ */
+export function payoutCorrectionInput(form: PayoutCorrectionForm, defaultToken: string | undefined, canSaveAsDefault: boolean): SubmitReimbursementPayoutCorrectionInput | null {
+  if (form.mode === 'CASH') return { mode: 'CASH' };
+  if (form.mode === 'DEFAULT') return defaultToken ? { mode: 'DEFAULT', defaultToken } : null;
+  if (form.mode !== 'SPECIFIED') return null;
+  return { mode: 'SPECIFIED', ...payoutDestinationInput(form.account), ...(form.saveAsDefault && canSaveAsDefault && { saveAsDefault: true }) };
+}
+
+/** A receiving method and account of a round, masked, in one line: what the claim was approved with, or what it has now. */
+export function payoutCorrectionAccountText(account: ReimbursementPayoutCorrectionAccount | ReimbursementPayoutSummary | null | undefined): string {
+  // No method at all: the claim was sent before claims carried one.
+  if (!account?.payoutMethod) return 'ไม่มีบัญชีในใบ';
+  if (account.payoutMethod === 'CASH') return PAYOUT_METHOD_TEXT.CASH!;
+  return account.accountLast4 ? payoutAccountWithName(account) : PAYOUT_METHOD_TEXT.BANK_TRANSFER!;
+}
+
+/**
+ * What the card "การรับเงินคืน" says of the account it shows while the claim is in a round: in phase A that
+ * account is the one in question, in phase B it is the new one and nobody has approved it yet. Null: no round.
+ */
+export function payoutCorrectionCardNote(detail: { payoutCorrectionPhase?: string | null; payout?: ReimbursementPayoutSummary | null }): string | null {
+  if (detail.payoutCorrectionPhase === 'AWAITING_REQUESTER') {
+    return detail.payout
+      ? 'ใบนี้ถูกส่งกลับให้แก้บัญชีรับเงิน ด้านล่างคือวิธีรับเงินเดิมของใบ ระหว่างนี้ยังบันทึกจ่ายไม่ได้'
+      : 'ใบนี้ถูกส่งกลับให้ระบุบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้';
+  }
+  if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') return 'ด้านล่างคือวิธีรับเงินใหม่ที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้';
+  return null;
+}

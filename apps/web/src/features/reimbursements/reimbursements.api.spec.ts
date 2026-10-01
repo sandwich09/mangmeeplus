@@ -5,7 +5,9 @@ import {
   confirmReimbursementDraftAction,
   getReimbursementDraftAction,
   loadHubPage,
+  requestReimbursementPayoutCorrection,
   submitReimbursement,
+  submitReimbursementPayoutCorrection,
   uploadReceiptFile,
   uploadSignedClaimFormCopy,
 } from './reimbursements.api';
@@ -373,6 +375,70 @@ describe('loadHubPage and the hub list it fills', () => {
       loadHubPage('co-1', { filter: 'all', page: 1 }, { onPage: () => { throw new Error('unreadable page'); }, onError: resolve });
     });
     assert.match(String(reported), /unreadable page/);
+  });
+});
+
+// Payout spec §14: sending a claim back for its payout account, and giving that account. Both are made from a form
+// inside the claim's step card, which shows the refusal in its own banner beside what the person typed.
+describe('the two calls of a payout account correction round', () => {
+  const answering = (status: number, body: unknown) => {
+    const requests: Array<{ url: string; method?: string; body: unknown }> = [];
+    (globalThis as Record<string, unknown>)['window'] = {};
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(input), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    return requests;
+  };
+
+  it('sends the reason and note to the send-back endpoint, and the receiving choice to the account endpoint', async () => {
+    const requests = answering(200, { id: 'rb-1', status: 'PENDING_APPROVAL' });
+    await requestReimbursementPayoutCorrection('co-1', 'rb-1', { reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าไม่พบบัญชีนี้' });
+    await submitReimbursementPayoutCorrection('co-1', 'rb-1', { mode: 'DEFAULT', defaultToken: 'a1b2c3' });
+    await submitReimbursementPayoutCorrection('co-1', 'rb-1', { mode: 'CASH' });
+    assert.deepEqual(requests, [
+      { url: '/api/v1/companies/co-1/reimbursements/rb-1/payout-correction', method: 'POST', body: { reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าไม่พบบัญชีนี้' } },
+      { url: '/api/v1/companies/co-1/reimbursements/rb-1/payout-destination', method: 'PUT', body: { mode: 'DEFAULT', defaultToken: 'a1b2c3' } },
+      { url: '/api/v1/companies/co-1/reimbursements/rb-1/payout-destination', method: 'PUT', body: { mode: 'CASH' } },
+    ]);
+  });
+
+  // Every refusal of the hand-off table: the form's banner reads the Thai sentence, and no second, global toast says it again.
+  it('answers every refusal of a round with its Thai sentence and raises no global toast', async () => {
+    const events: ToastEvent[] = [];
+    const unsubscribe = subscribeToastBus((event) => events.push(event));
+    try {
+      for (const [status, code, sentence] of [
+        [409, 'payout_correction_in_progress', 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน'],
+        [409, 'payout_correction_not_allowed', 'ใบนี้ส่งกลับแก้บัญชีไม่ได้ในสถานะปัจจุบัน'],
+        [403, 'payout_correction_denied', 'คุณไม่มีสิทธิ์ทำรายการแก้บัญชีรับเงินของใบนี้'],
+        [409, 'payout_correction_not_requested', 'ใบนี้ไม่ได้ถูกส่งกลับให้แก้บัญชีรับเงิน กรุณาเปิดใบใหม่เพื่อดูสถานะล่าสุด'],
+        [400, 'payout_correction_reason_required', 'กรุณาเลือกเหตุผลที่ส่งกลับให้แก้บัญชีรับเงิน'],
+        [400, 'payout_correction_note_too_long', 'หมายเหตุต้องไม่เกิน 500 ตัวอักษร'],
+        [409, 'reimbursement_changed', 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง'],
+      ] as const) {
+        for (const call of [
+          () => requestReimbursementPayoutCorrection('co-1', 'rb-1', { reasonCode: 'OTHER' }),
+          () => submitReimbursementPayoutCorrection('co-1', 'rb-1', { mode: 'CASH' }),
+        ]) {
+          const requests = answering(status, { statusCode: status, message: code });
+          await assert.rejects(call, (error: Error & { status?: number }) => {
+            assert.equal(error.status, status);
+            assert.equal(errorText(error), sentence, code);
+            return true;
+          });
+          assert.equal(requests.length, 1, `${code}: a refusal is not retried`);
+        }
+      }
+      // The other refusals these two calls can meet read as sentences too, never as the fallback or a code.
+      for (const code of ['note_contains_account_number', 'reimbursement_cancellation_pending', 'payout_method_required', 'payout_destination_changed',
+        'payout_destination_invalid', 'payout_account_member_not_active', 'self_approval_denied']) {
+        const sentence = errorText(Object.assign(new Error(code), { status: 409 }));
+        assert.notEqual(sentence, 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง', code);
+        assert.doesNotMatch(sentence, /[a-z]_[a-z]/, code);
+      }
+      assert.deepEqual(events, []);
+    } finally { unsubscribe(); }
   });
 });
 
