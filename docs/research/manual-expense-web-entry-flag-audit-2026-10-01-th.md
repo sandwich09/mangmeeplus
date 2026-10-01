@@ -4,6 +4,25 @@
 
 Status: **AUDIT + LOCAL E2E COMPLETE; v2 CHILD FLAG IMPLEMENTATION NOT STARTED**
 
+## หมายเหตุกำกับ 2026-10-01 (เพิ่มหลังรีวิวอิสระ) — อ่านก่อนใช้เอกสารนี้
+
+เนื้อหาใต้หมายเหตุนี้คงไว้ตามที่เขียนเดิมเพื่อเป็นประวัติ ไม่ได้ถูกแก้ แหล่งอ้างอิงปัจจุบันคือ [spec v3.0](../specs/manual-expense-web-entry-flag-spec-th.md) และ[รีวิวอิสระ](manual-expense-web-entry-flag-review-2026-10-01-th.md)
+
+- **ฐานที่ตรวจ**: `4a5817b42` พร้อมไฟล์ที่ยังไม่ commit ใน working tree ร่วม ฐานนี้ **ไม่ใช่บรรพบุรุษของ `origin/develop`** โดย develop (`ae13970b0`) มี commit ที่ฐานนี้ไม่มี 842 รายการ และไฟล์ 3,728 ไฟล์ที่ evidence เก็บ hash ไว้ต่างจาก develop 596 ไฟล์
+- **ข้อความที่ไม่เป็นจริงแล้วบน develop**
+  1. F03 ทุกจุด (สองแถวของ F03 ใน §2, ย่อหน้าใต้ตาราง §2, §4.2 API ข้อ 8–9 และ recipe F03 ใน §4.3): บั๊ก key ของ LINE ถูกแก้ใน `6fddca795` (2026-09-29) การสร้าง draft จากข้อความ LINE สำเร็จแล้ว ไม่มีงานค้าง และห้ามเปลี่ยนสูตร key อีก
+  2. F09: มี unit test ยืนยันรูป key แล้วใน `expense-document.use-case.spec.ts`
+  3. §1: แนวทาง key `expenses.manual.web_entry` ถูกแทนด้วยค่าตั้งรายร้านใน spec v3.0 ซึ่งตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ)
+  4. §3 แถว “System partner command/controller/UI”: ที่ develop command นี้เรียก `invalidateLineConversationState` เมื่อค่าสิทธิ์ที่มีผลเปลี่ยน (เพิ่มเมื่อ 2026-09-27) จึงมีผลต่อ LINE ซึ่งเอกสารนี้ไม่ได้กล่าวถึง
+  5. §3 แถว “Billing”: ที่ develop `billingFeaturePlan` บังคับว่าชุดแถวสิทธิ์ของร้านต้องตรง catalog ทุกแถว การเพิ่ม key เข้า catalog จึงกระทบการชำระเงิน ซึ่งเอกสารนี้ไม่ได้กล่าวถึง
+  6. ข้อความของแนวทาง v1 ที่ค้างอยู่: §3 แถว “Expense list/review/manual” (“ถอด visibility flag ออกจากทั้ง create/update”), แถว “System partner…” (“เพิ่ม copy และ preset preservation เท่านั้น”) และ §4.2 API ข้อ 4 (“ผลกระทบที่ต้องหายไป”) ภายใต้ v3.0 การปิด `expenses.manual` ยังตัดสิทธิ์ตามเดิมทุกประการ
+  7. ขอบเขตของ F02: ผู้ได้รับผลคือบทบาทที่สร้างจากเทมเพลตการเงินสี่แบบ ไม่ใช่บทบาท FINANCE ในระบบ รายละเอียดอยู่ใน[เอกสารบั๊ก B1](manual-expense-current-code-bugs-2026-10-01-th.md)
+  8. F05: fingerprint มี `roleNames` ด้วย ไม่ได้มีเพียง roles, permissions และ scopes
+  9. จำนวน key ใน catalog: ฐานนี้มี 60 ตัว ส่วน develop มี 62 ตัว
+  10. เลขบรรทัดทุกจุดเป็นของฐานเก่า
+- **ข้อความที่ตรวจซ้ำที่ `ae13970b0` แล้วยังจริง**: กลไกของ F01, F02, F04, F05, F07 และ F08
+- **ผลทดสอบใน §4**: 359 tests และ 19 assertions รันบนฐานเก่า ใช้เป็นประวัติเท่านั้น
+
 เอกสารนี้บันทึกสิ่งที่ตรวจพบ ไม่ใช่รายงานว่า target spec implement แล้ว
 
 - [Target spec](../specs/manual-expense-web-entry-flag-spec-th.md)
