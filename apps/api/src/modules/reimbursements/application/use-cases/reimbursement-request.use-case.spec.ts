@@ -47,7 +47,7 @@ import {
 } from '../../infrastructure/reimbursement-payout';
 import { attestClaimPayout, confirmPaymentPayout, readClaimPayoutVersions } from '../../infrastructure/reimbursement-payout';
 import { freezePayoutCorrection, readPaymentPayoutDestinations } from '../../infrastructure/reimbursement-payout';
-import { payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
+import { payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
 import { payoutDefaultToken } from '../../domain/logic/payout-destination.logic';
 import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
 import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from './reimbursement-payout-correction.use-case';
@@ -3704,6 +3704,7 @@ function correctionWorld(options: RepoOptions = {}) {
       await data.payout.onPersisted?.(fakeTx(calls.outbox), request.id);
       const columns = await freezePayoutCorrection(db, request, {
         write: data.payout.write, frozenAt: data.submittedAt, seenDefaultToken: data.seenDefaultToken, defaultSetInThisTransaction: data.defaultSetInThisTransaction,
+        previous: payoutCorrectionRoundStart(request),
       });
       const approvalSnapshotHash = computeSnapshotHash(claimSnapshotFields({ ...request, ...columns }, request.approvalPolicySnapshotJson));
       const source: any = payoutCorrectionSourceStep<any>({ ...request, approvalSteps: steps });
@@ -4053,6 +4054,58 @@ describe('payout correction: the requester gives the account and it is approved 
       [[['staff-1'], 'reimbursement.payout_account_set_by_other', 'อรทัย ระบุบัญชีรับเงินคืนในใบเบิกของคุณ']]);
     assert.match(world.notifications[0].body, /^ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 /);
     assert.equal(leaksNumber([world.notifications, world.events(), world.audits]), false);
+  });
+
+  // Final review W6. A claim sent back by mistake, whose account was typed for that claim, could not get it
+  // back once its requester had left: only the stored default or cash could be given for them.
+  it('lets a finance reviewer keep the account the claim had for a requester who is no longer active, and still refuses typing one for them', async () => {
+    const world = correctionWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus: 'DISABLED' } } });
+    const id = await sentBack(world, { setDefault: null, payout: { mode: 'SPECIFIED', ...KBANK } });
+    const hashBefore = world.claim().approvalSnapshotHash;
+    // Typing a new account for someone no notice can reach stays refused, and nothing is written.
+    await assert.rejects(() => world.giveAccount.execute(financeCtx(), id, { mode: 'SPECIFIED', ...SCB }), (error: any) => error.getStatus() === 409 && error.message === 'payout_account_member_not_active');
+    assert.deepEqual([world.state.payoutTables.destinations.length, world.claim().payoutCorrectionSubmittedAt], [1, undefined]);
+
+    const given = await world.giveAccount.execute(financeCtx(), id, { mode: 'PREVIOUS' });
+    // The same account as a new frozen version, with who entered it as it was: nobody typed anything.
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.accountLast4, row.source, row.createdByUserId, row.frozenAt !== null, row.verifiedByUserId ?? null]),
+      [[1, '6789', 'REQUESTER', 'staff-1', true, 'manager-1'], [2, '6789', 'REQUESTER', 'staff-1', true, null]]);
+    assert.equal(world.state.payoutTables.destinations[1]!.accountNumberEncrypted, world.state.payoutTables.destinations[0]!.accountNumberEncrypted, 'the sealed number moved as it is');
+    assert.deepEqual([given.payoutCorrection?.phase, given.payout?.version, given.payout?.accountLast4, world.claim().currentApprovalStepId], ['AWAITING_APPROVAL', 2, '6789', 'step-2']);
+    // Approved again like any other answer: a new hash, a new step, a notice to its approver, and none to the requester.
+    assert.notEqual(world.claim().approvalSnapshotHash, hashBefore);
+    assert.deepEqual([world.events().map((event) => event.eventType), world.notifications], [['reimbursement.payout_correction_submitted'], []]);
+    const entry = world.audits.find((row) => row.result === 'SUCCESS');
+    assert.deepEqual([entry.metadataJson.payout, entry.metadataJson.onBehalfOfRequester, entry.metadataJson.previousVersion], [{ mode: 'PREVIOUS', method: 'BANK_TRANSFER', version: 2 }, true, 1]);
+    const waiting = await world.detail.execute(approverCtx(), id);
+    assert.equal((await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, 2)).status, 'READY_FOR_PAYMENT');
+    assert.equal(leaksNumber([given, world.events(), world.audits]), false);
+  });
+
+  it('keeps the account the claim was approved with, not one refused since: cash stays cash, and a claim that had none has nothing to keep', async () => {
+    // Another account was given and refused: "the account it had" is still the one it was approved with.
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    await world.sendBack.execute(approverCtx(), id, { reasonCode: 'ACCOUNT_NAME_MISMATCH' });
+    assert.deepEqual([world.claim().payoutDestinationVersion, (await world.detail.execute(ctx(), id)).payoutCorrection?.previous?.version], [2, 1]);
+    await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.accountLast4, row.source]),
+      [[1, '6789', 'DEFAULT_ACCOUNT'], [2, '9012', 'REQUESTER'], [3, '6789', 'DEFAULT_ACCOUNT']]);
+    assert.equal(world.claim().payoutDestinationVersion, 3);
+
+    const cash = correctionWorld();
+    const cashId = await sentBack(cash, { setDefault: null, payout: { mode: 'CASH' } });
+    await cash.giveAccount.execute(ctx(), cashId, { mode: 'PREVIOUS' });
+    assert.deepEqual([cash.claim().payoutMethod, cash.claim().payoutDestinationVersion, cash.state.payoutTables.destinations.length], ['CASH', null, 0]);
+
+    // Sent before claims carried a receiving method: there is no account of its own to keep.
+    const legacy = correctionWorld();
+    const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
+    Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
+    await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'OTHER' });
+    await assert.rejects(() => legacy.giveAccount.execute(ctx(), legacyId, { mode: 'PREVIOUS' }), (error: any) => error.getStatus() === 409 && error.message === 'payout_destination_required');
+    assert.equal(legacy.claim().payoutCorrectionSubmittedAt, undefined);
   });
 
   it('replaces the step that waits when the requester gives another account before it is approved', async () => {

@@ -344,6 +344,14 @@ describe('payout correction DTOs', () => {
     await rejects(RequestPayoutCorrectionDto, { reasonCode: 'OTHER', note: 'x'.repeat(2001) });
   });
 
+  // Final review W6: "the account the claim had" is a choice of a round only; a draft has no such account.
+  it('takes "the account the claim had" for a round, and not for a draft', async () => {
+    assert.equal((await body(SubmitPayoutCorrectionDto, { mode: 'PREVIOUS' })).mode, 'PREVIOUS');
+    await rejects(SubmitPayoutCorrectionDto, { mode: 'PREVIOUS', payoutDestinationVersion: 1 });
+    await rejects(CreateReimbursementRequestDto, { ...validCreate, payout: { mode: 'PREVIOUS' } });
+    await rejects(UpdateReimbursementDraftDto, { payout: { mode: 'PREVIOUS' } });
+  });
+
   it('takes the three choices a draft has for the account, the token of the default the form showed, and nothing of the snapshot', async () => {
     await body(SubmitPayoutCorrectionDto, { mode: 'CASH' });
     await body(SubmitPayoutCorrectionDto, { mode: 'DEFAULT', defaultToken: 'a'.repeat(32) });

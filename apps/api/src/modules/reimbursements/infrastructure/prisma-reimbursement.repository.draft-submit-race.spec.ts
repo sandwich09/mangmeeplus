@@ -4276,6 +4276,39 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     }
   });
 
+  // Final review W6: the requester left after the claim was approved, and the claim was sent back by mistake.
+  it('gives a claim the account it had back for a requester who is no longer active: the same sealed account as a new version, approved again', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const claim = await approvedTransferClaim();
+    await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'OTHER', note: 'ส่งกลับผิดใบ' });
+    const membership = { companyId_userId: { companyId, userId: STAFF } };
+    await db.companyMembership.update({ where: membership, data: { status: 'DISABLED' } });
+    try {
+      // Nobody types an account for a member no notice can reach, in a round as on a draft.
+      await assert.rejects(() => round(0).giveAccount.execute(finance(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT }), conflict('payout_account_member_not_active'));
+      assert.deepEqual([(await accountVersionsOf(claim.requestId)).length, (await claimRow(claim.requestId)).payoutCorrectionSubmittedAt], [1, null]);
+
+      const given = await round(0).giveAccount.execute(finance(), claim.requestId, { mode: 'PREVIOUS' });
+      assert.deepEqual([given.payoutCorrection?.phase, given.payout?.version, given.payout?.accountLast4], ['AWAITING_APPROVAL', 2, '5678']);
+      const [first, second] = await accountVersionsOf(claim.requestId);
+      // The sealed columns moved as one unit into a frozen version of its own; the first is as it was.
+      assert.deepEqual([second!.version, second!.accountNumberEncrypted, second!.accountLast4, second!.fingerprint, second!.source, second!.createdByUserId, second!.frozenAt !== null, second!.verifiedByUserId],
+        [2, first!.accountNumberEncrypted, first!.accountLast4, first!.fingerprint, first!.source, first!.createdByUserId, true, null]);
+      assert.equal(openPayoutAccountNumber(second!.accountNumberEncrypted, roundKey), '0012345678');
+      assert.deepEqual([first!.version, first!.verifiedByUserId], [1, MGR]);
+      const row = await claimRow(claim.requestId);
+      assert.deepEqual([row.payoutMethod, row.payoutDestinationVersion, row.payoutFingerprint], ['BANK_TRANSFER', 2, first!.fingerprint]);
+
+      // Approved again like any other answer, by the approver who checks version 2.
+      const shown = await on(0).detail.execute(manager(), claim.requestId);
+      assert.equal((await round(0).approve.execute(manager(), claim.requestId, undefined, shown.approvalSnapshotHash, 2)).status, 'READY_FOR_PAYMENT');
+      assert.deepEqual((await accountVersionsOf(claim.requestId)).map((account) => [account.version, account.verifiedByUserId]), [[1, MGR], [2, MGR]]);
+    } finally {
+      await db.companyMembership.update({ where: membership, data: { status: 'ACTIVE' } });
+    }
+  });
+
   it('still cancels a claim in a round by the rule every claim is cancelled by: its records are voided and it closes', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     for (const phase of ['with its requester', 'with its approver'] as const) {

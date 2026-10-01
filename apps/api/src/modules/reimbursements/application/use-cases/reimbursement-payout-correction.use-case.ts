@@ -8,9 +8,13 @@ import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimb
 import { detailWithFileNames } from '../dto/reimbursement.mapper';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { sendBackForPayoutCorrection } from './reimbursement-approval.use-case';
-import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
+import { MemberPayoutAccountUseCase, type DraftPayoutAudit } from './reimbursement-payout.use-case';
 import { ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
 import { assertCanReadRequestOrAssignment, mayGivePayoutAccount, payoutCorrectionSender } from './reimbursement-request.use-case';
+
+/** What a round's answer commits and what its audit row says of it: a draft's receiving choice, or the account the claim had. */
+type CorrectionPayoutChange = Parameters<PrismaReimbursementRepository['submitPayoutCorrectionAtomic']>[0]['payout']
+  & { audit: Omit<DraftPayoutAudit, 'mode'> & { mode: DraftPayoutAudit['mode'] | 'PREVIOUS' } };
 
 /** A cancellation that was started and has not completed. A cancelled claim keeps the columns of its own, and is refused for what it is. */
 function beingCancelled(req: ReimbursementRequestRecord): boolean {
@@ -92,7 +96,11 @@ export class SubmitPayoutCorrectionUseCase {
     // the REQUESTER's default in the same transaction, and an account typed by someone else tells the
     // requester in that transaction too.
     const { defaultToken, ...payout } = input as SubmitReimbursementPayoutCorrectionInput & { defaultToken?: unknown };
-    const change = await this.payouts.draftPayoutChange(ctx, req.requesterUserId, payout as ReimbursementPayoutInput);
+    // "The account the claim had" (final review W6): nobody types an account for anyone, so the rules
+    // about typing one do not come into it, the one about a requester who is no longer active included.
+    const change: CorrectionPayoutChange = payout.mode === 'PREVIOUS'
+      ? { write: { mode: 'PREVIOUS' }, audit: { mode: 'PREVIOUS' } }
+      : await this.payouts.draftPayoutChange(ctx, req.requesterUserId, payout as ReimbursementPayoutInput);
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
     const source = payoutCorrectionSourceStep(req);
     // Who may stay on the new step, and whom its notice asks when it names nobody (final review S2).

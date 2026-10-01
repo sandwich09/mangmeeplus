@@ -99,9 +99,9 @@ import {
 // The claim page's account history (its own import too, for the same reason).
 import { readClaimPayoutVersions } from './reimbursement-payout';
 // The payout account correction round (payout spec §14).
-import { PAYOUT_CORRECTION_STEP_REASON, payoutCorrectionPhase, payoutCorrectionSourceStep } from '../domain/logic/reimbursement.logic';
+import { PAYOUT_CORRECTION_STEP_REASON, payoutCorrectionPhase, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../domain/logic/reimbursement.logic';
 import { hasPayoutSnapshot } from '../domain/logic/payout-destination.logic';
-import { freezePayoutCorrection } from './reimbursement-payout';
+import { freezePayoutCorrection, type CorrectionPayoutWrite } from './reimbursement-payout';
 import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
 
 function dec(v: unknown): string {
@@ -2766,8 +2766,8 @@ export class PrismaReimbursementRepository {
     actorUserId: string;
     scopes: { branchIds?: string[] };
     submittedAt: Date;
-    /** The receiving choice with whatever must commit with it, as for a draft (`draftPayoutChange`). */
-    payout: DraftPayoutChange;
+    /** The receiving choice with whatever must commit with it, as for a draft (`draftPayoutChange`), or the account the claim had. */
+    payout: { write: CorrectionPayoutWrite; onPersisted?: DraftPayoutChange['onPersisted'] };
     /** For "use the default account": the token of the default the page showed. */
     seenDefaultToken?: unknown;
     /** The default account is set by `payout.onPersisted` in this transaction: what was typed is what is copied. */
@@ -2797,6 +2797,7 @@ export class PrismaReimbursementRepository {
       const columns = await freezePayoutCorrection(tx, request, {
         write: data.payout.write, frozenAt: data.submittedAt,
         seenDefaultToken: data.seenDefaultToken, defaultSetInThisTransaction: data.defaultSetInThisTransaction,
+        previous: payoutCorrectionRoundStart(request),
       });
       // The same claim with the account it has now: nothing else of it moved, so nothing else of the hash does.
       const snapshotHash = computeSnapshotHash(claimSnapshotFields({ ...request, ...columns }, request.approvalPolicySnapshotJson));

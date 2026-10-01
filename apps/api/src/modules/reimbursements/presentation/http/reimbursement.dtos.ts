@@ -22,6 +22,7 @@ import type {
   ReimbursementPayoutKind,
   ReimbursementPayoutMethod,
   SignReimbursementClaimFormInput,
+  SubmitReimbursementPayoutCorrectionInput,
   SubmitReimbursementRequestInput,
   UpdateReimbursementDraftInput,
   UpdateReimbursementPolicyInput,
@@ -87,8 +88,13 @@ export class RequestPayoutCorrectionDto {
   @IsString() @IsOptional() @MaxLength(2000) note?: string;
 }
 
-/** The account a claim in a round is given: a draft's three choices, and for "use the default account" the token of the default the form showed. */
-export class SubmitPayoutCorrectionDto extends ReimbursementPayoutDto {
+/**
+ * The account a claim in a round is given: a draft's three choices or the account the claim had, and
+ * for "use the default account" the token of the default the form showed.
+ */
+export class SubmitPayoutCorrectionDto extends PayoutDestinationFieldsDto {
+  @IsIn(['DEFAULT', 'CASH', 'SPECIFIED', 'PREVIOUS']) mode!: SubmitReimbursementPayoutCorrectionInput['mode'];
+  @IsBoolean() @IsOptional() saveAsDefault?: boolean;
   @Matches(/^[0-9a-f]{32}$/) @IsOptional() defaultToken?: string;
 }
 

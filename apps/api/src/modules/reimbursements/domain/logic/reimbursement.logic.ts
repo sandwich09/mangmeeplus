@@ -436,6 +436,17 @@ export function payoutCorrectionSourceStep<Step extends { id: string; status: st
 }
 
 /**
+ * What the claim was approved with when its current round began: kept by the send-back that opened
+ * the round (a send-back from the round's own step keeps none). The detail's "previous account" and
+ * the choice to keep that account read it. A legacy claim had no method; cash has no version.
+ */
+export function payoutCorrectionRoundStart<Approved extends { payoutMethod?: string; payoutVersion?: number; at?: string }>(claim: {
+  payoutCorrectionLog?: readonly { kind: string; approved?: Approved }[] | null;
+}): Approved | undefined {
+  return [...(claim.payoutCorrectionLog ?? [])].reverse().find((entry) => entry.kind === 'SENT_BACK' && !!entry.approved)?.approved;
+}
+
+/**
  * Since when a claim waits for its approvers: the day it was sent, or, in a correction round, the
  * moment its new account was given. The approval queue's age, the deadline reminder and the LINE
  * backlog count from here, so a round's approvers are not held to a wait that was not theirs.

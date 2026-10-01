@@ -25,7 +25,7 @@ import type {
   ReimbursementLineRecord,
   ReimbursementClaimSignatureRecord,
 } from '../../domain/models/reimbursement.model';
-import { claimSignatureAckHash, computeReceiptRequirement, currentDesk, payoutCorrectionPhase } from '../../domain/logic/reimbursement.logic';
+import { claimSignatureAckHash, computeReceiptRequirement, currentDesk, payoutCorrectionPhase, payoutCorrectionRoundStart } from '../../domain/logic/reimbursement.logic';
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
@@ -275,11 +275,6 @@ export function toPayoutCorrection(
     } }),
     ...(approved?.at && { previouslyApprovedAt: approved.at }),
   };
-}
-
-/** What the claim was approved with when its current round began: kept by the send-back that opened the round. */
-export function payoutCorrectionRoundStart(r: ReimbursementRequestRecord) {
-  return [...(r.payoutCorrectionLog ?? [])].reverse().find((entry) => entry.kind === 'SENT_BACK' && !!entry.approved)?.approved;
 }
 
 /** The masked payout block of a detail: bank, account name and last 4 digits, the same for every viewer. */
