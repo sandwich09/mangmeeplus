@@ -46,7 +46,7 @@ const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placehold
   .map((text) => text.replace(/&quot;/gu, '"').replace(/&#x27;/gu, "'").replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&amp;/gu, '&').trim()).filter(Boolean);
 
 /** One state a rendered screen was asked to change after it was rendered: the state's starting value, and what it was set to. */
-type StateChange = { initial: unknown; value: unknown };
+type StateChange = { initial: unknown; shown: unknown; value: unknown };
 
 /**
  * Renders with some useState starting values swapped in, picked by the component's own initial value, and
@@ -64,7 +64,7 @@ function render(element: React.ReactElement, pick: (initial: any) => unknown = n
     const start = typeof initial === 'function' ? (initial as () => unknown)() : initial;
     const picked = pick(start);
     const shown = picked === undefined ? value : picked;
-    return [shown, (next: unknown) => { changes.push({ initial: start, value: typeof next === 'function' ? (next as (current: unknown) => unknown)(shown) : next }); set(next); }];
+    return [shown, (next: unknown) => { changes.push({ initial: start, shown, value: typeof next === 'function' ? (next as (current: unknown) => unknown)(shown) : next }); set(next); }];
   });
   Reflect.set(reactRuntime, 'createElement', (type: unknown, props: any, ...children: unknown[]) => {
     const name = grab?.(type, props, children);
@@ -374,7 +374,7 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
       const { handlers, changes } = form(ready(), state, (claim) => done.push(claim));
       const calls = await withApi(() => ({ status: 200, body: {} }), () => handlers.form.onSubmit(submitEvent));
       assert.deepEqual([calls, done], [[], []]);
-      assert.deepEqual(changes, [{ initial: null, value: sentence }]);
+      assert.deepEqual(changes.map(({ initial, value }) => ({ initial, value })), [{ initial: null, value: sentence }]);
     }
   });
 
@@ -392,7 +392,10 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
       assert.equal(calls.length, 1, code);
       assert.deepEqual(done, [], `${code}: the page is not told the claim moved`);
       // Busy on, banner cleared, the sentence, busy off: the reason ('') and the note ('') states are never set.
-      assert.deepEqual(changes, [{ initial: false, value: true }, { initial: null, value: null }, { initial: null, value: sentence }, { initial: false, value: false }], code);
+      assert.deepEqual(changes.map(({ initial, value }) => ({ initial, value })),
+        [{ initial: false, value: true }, { initial: null, value: null }, { initial: null, value: sentence }, { initial: false, value: false }], code);
+      // Neither the reason nor the note was touched: both are still what the person chose and typed.
+      assert.equal(changes.some((change) => change.shown === 'BANK_WRONG' || change.shown === 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว'), false, code);
     }
     // What the person then sees: their reason still chosen, their note still in the box, and the sentence.
     const { html, texts } = form(ready(), { reasonCode: 'BANK_WRONG', note: 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว', error: 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน' });
@@ -996,6 +999,30 @@ describe('the approval of a round: the comparison, the attestation of the NEW ac
     const refused = await withApi(() => ({ status: 200, body: backAtPayStep }), () => unticked.handlers.approve.onClick());
     assert.deepEqual(refused, []);
     assert.ok(unticked.changes.some((change) => change.value === 'ติ๊กยืนยันว่าตรวจบัญชีรับเงินแล้วก่อนอนุมัติ'));
+  });
+
+  // Seen in review: the approver opened "ส่งกลับให้แก้อีกครั้ง", then approved instead. The claim went to its pay step,
+  // where the same viewer may send it back, and the form they had left open was open again there.
+  it('closes a send-back form left open once the claim is approved, so it is not open again at the pay step', async () => {
+    let found: ReturnType<typeof render> | null = null;
+    for (let tick = 3; tick < 30 && !found; tick += 1) {
+      for (let form = tick + 1; form < 31 && !found; form += 1) {
+        let nulls = 0;
+        try {
+          const page = render(h(ReimbursementJourneyPage, { companyId: 'company-1', requestId: 'claim-1', userId: approver.userId, permissions: approver.permissions }), (start) => {
+            if (start !== null) return undefined;
+            nulls += 1;
+            return nulls === 2 ? asApprover() : nulls === tick ? 2 : nulls === form ? 'send-back' : undefined;
+          }, grabApprove);
+          const card = stepCard(page.html).html;
+          if (/<input type="checkbox"[^>]*checked=""/u.test(card) && card.includes('data-testid="reimbursement-payout-correction-request"')) found = page;
+        } catch { /* that state holds another dialog's claim */ }
+      }
+    }
+    assert.ok(found, 'the page with the tick given and the send-back form open');
+    const calls = await withApi(() => ({ status: 200, body: asAnswered(reapproved({ payoutCorrectionActions: SEND })) }), () => found!.handlers.approve.onClick());
+    assert.deepEqual(calls.map((call) => call.method), ['POST', 'GET']);
+    assert.ok(found.changes.some((change) => change.shown === 'send-back' && change.value === null), 'the form the approver left open is closed');
   });
 
   it('tells the approver to look again when the requester gave another account meanwhile, and approves nothing unseen', async () => {

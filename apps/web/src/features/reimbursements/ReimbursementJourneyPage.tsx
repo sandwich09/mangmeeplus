@@ -193,6 +193,9 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       const result = await fn();
       if (Array.isArray(result?.lines)) latest = result;
       ok = true;
+      // The claim moved on: a form of the correction round left open is for the claim as it was. Without this, a
+      // send-back form opened beside "อนุมัติ" was open again at the pay step the approval led to.
+      setCorrectionForm(null);
       toast.success(success);
     } catch (e) {
       dialogOpened = handled?.(e) ?? false;
