@@ -74,7 +74,7 @@ import {
   computeReceiptRequirement,
   currentDesk,
 } from '../domain/logic/reimbursement.logic';
-import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { CLAIM_PAYOUT_WORKLIST_LIMIT, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
 
 function dec(v: unknown): string {
@@ -3246,6 +3246,7 @@ export class PrismaReimbursementRepository {
         request: { is: branchScopeWhere(scopes) },
       },
       orderBy: { paidAt: 'asc' },
+      take: CLAIM_PAYOUT_WORKLIST_LIMIT,
       include: { request: { select: { requestNo: true, requesterDisplayNameSnapshot: true } } },
     });
     return rows.map((row: any) => ({

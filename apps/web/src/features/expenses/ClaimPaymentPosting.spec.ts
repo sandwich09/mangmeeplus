@@ -19,12 +19,19 @@ const failed: UnpostedClaimPayment = {
   requesterDisplayNameSnapshot: 'วิไล', paymentNo: 'RBPAY-202602-000002', paidAmount: '1289', postingStatus: 'posting_error',
 };
 
-async function render(props: Partial<{ rows: UnpostedClaimPayment[]; postingId: string | null; error: string | null }> = {}): Promise<string> {
-  const { ClaimPaymentPostingList } = await import('./ClaimPaymentPosting');
+async function render(props: Partial<{ rows: UnpostedClaimPayment[]; visible: number; postingId: string | null; error: string | null }> = {}): Promise<string> {
+  const { ClaimPaymentPostingList, CLAIM_PAYOUT_PAGE_SIZE } = await import('./ClaimPaymentPosting');
   return renderToStaticMarkup(React.createElement(ClaimPaymentPostingList, {
-    companyId: 'company-1', rows: [pending, failed], postingId: null, error: null, onPost: () => undefined, ...props,
+    companyId: 'company-1', rows: [pending, failed], visible: CLAIM_PAYOUT_PAGE_SIZE, postingId: null, error: null,
+    onPost: () => undefined, onShowMore: () => undefined, ...props,
   }));
 }
+
+/** `count` waiting payouts, oldest first, each with its own number. */
+const many = (count: number): UnpostedClaimPayment[] => Array.from({ length: count }, (_, index) => ({
+  ...pending, paymentId: `cmpayment${index}`, reimbursementRequestId: `cmrequest${index}`, requestNo: `RB-${String(index + 1).padStart(4, '0')}`,
+}));
+const drawnRows = (html: string) => (html.match(/<li /g) ?? []).length;
 
 /** The words a person reads: markup stripped, so an id inside an href does not count as shown. */
 const visibleText = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
@@ -103,6 +110,43 @@ test('reads top to bottom on a 390px phone: stacked cards, amount in view, full-
   assert.equal((html.match(/<button[^>]*class="[^"]*mangmee-btn[^"]*w-full sm:w-auto/g) ?? []).length, 2);
   assert.match(html, /class="[^"]*truncate[^"]*"[^>]*href=/, 'a long claim number cannot push the amount off screen');
   assert.match(html, /break-words/);
+});
+
+// Review finding: the list was unbounded and every row was drawn. Where nothing can post yet it
+// only grows.
+test('draws the first ten and offers the rest ten at a time', async () => {
+  const first = await render({ rows: many(25) });
+  assert.equal(drawnRows(first), 10);
+  assert.match(visibleText(first), /\(25 รายการ\)/, 'the heading still counts them all');
+  assert.match(first, /<button[^>]*class="[^"]*w-full[^"]*"[^>]*>แสดงเพิ่ม \(อีก 15 รายการ\)<\/button>/);
+  assert.match(visibleText(first), /RB-0010/);
+  assert.doesNotMatch(visibleText(first), /RB-0011/);
+
+  const second = await render({ rows: many(25), visible: 20 });
+  assert.equal(drawnRows(second), 20);
+  assert.match(visibleText(second), /แสดงเพิ่ม \(อีก 5 รายการ\)/);
+
+  const all = await render({ rows: many(25), visible: 30 });
+  assert.equal(drawnRows(all), 25);
+  assert.doesNotMatch(visibleText(all), /แสดงเพิ่ม/);
+  assert.doesNotMatch(visibleText(await render()), /แสดงเพิ่ม/, 'a short list has nothing more to show');
+});
+
+test('at the server limit it says these are the first ones, not a total', async () => {
+  const { CLAIM_PAYOUT_WORKLIST_LIMIT } = await import('@watchdog-bms/contracts');
+  const capped = visibleText(await render({ rows: many(CLAIM_PAYOUT_WORKLIST_LIMIT) }));
+  assert.match(capped, /\(200 รายการแรก\)/);
+  assert.match(capped, /แสดงเฉพาะ 200 รายการที่จ่ายก่อน เมื่อลงบัญชีรายการด้านบนแล้ว รายการถัดไปจะแสดงให้เอง/);
+  const under = visibleText(await render({ rows: many(CLAIM_PAYOUT_WORKLIST_LIMIT - 1) }));
+  assert.match(under, /\(199 รายการ\)/);
+  assert.doesNotMatch(under, /รายการแรก|แสดงเฉพาะ/);
+});
+
+test('each "แสดงเพิ่ม" adds one page, and the list asks the server for the bounded worklist only', () => {
+  const section = read('./ClaimPaymentPosting.tsx');
+  assert.match(section, /useState\(CLAIM_PAYOUT_PAGE_SIZE\)/);
+  assert.match(section, /onShowMore=\{\(\) => setVisible\(\(count\) => count \+ CLAIM_PAYOUT_PAGE_SIZE\)\}/);
+  assert.match(section, /export const CLAIM_PAYOUT_PAGE_SIZE = 10;/);
 });
 
 test('posts through the existing generator and worklist endpoint, and follows the same switch as the other posting buttons', () => {

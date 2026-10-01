@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { CLAIM_PAYOUT_WORKLIST_LIMIT } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import {
   AUTO_POST_REQUIRED_FEATURES,
@@ -430,6 +431,9 @@ describe('claim payout worklist query', () => {
       request: { is: {} },
     });
     assert.deepEqual(args.orderBy, { paidAt: 'asc' });
+    // Bounded: where nothing can post the list only grows, and every row used to be read and drawn.
+    assert.equal(args.take, CLAIM_PAYOUT_WORKLIST_LIMIT);
+    assert.equal(CLAIM_PAYOUT_WORKLIST_LIMIT, 200);
     assert.deepEqual(rows, [{
       paymentId: 'pay-1', reimbursementRequestId: 'rb-1', requestNo: 'RB-1', requesterDisplayNameSnapshot: 'สมชาย', paymentNo: 'RBPAY-1',
       paidAmount: '500.5000', currency: 'THB', paidAt: new Date('2026-02-01T00:00:00.000Z'), postingStatus: 'posting_error',

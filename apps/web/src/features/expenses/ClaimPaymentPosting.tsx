@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { CLAIM_PAYOUT_WORKLIST_LIMIT } from '@watchdog-bms/contracts';
 import { MangmeeBadge, MangmeeCard, cx } from '@/common/components/mangmee';
 import { useToast } from '@/common/components/toast';
 import { generateSourceJournal, listUnpostedClaimPayments, type UnpostedClaimPayment } from '../ledger/ledger.api';
@@ -11,29 +12,41 @@ const amountText = (row: Pick<UnpostedClaimPayment, 'paidAmount' | 'currency'>) 
   ? baht(row.paidAmount)
   : `${Number(row.paidAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${row.currency}`);
 
+/** Rows drawn at first, and added by each "แสดงเพิ่ม". */
+export const CLAIM_PAYOUT_PAGE_SIZE = 10;
+
 /**
  * The rows and their actions, apart from the loader so every state can be rendered directly.
  * One stacked card per payout at every width: a phone (390px) reads it top to bottom and the
  * action is a full-width button; from `sm` up the same card puts the amount and action on the right.
+ *
+ * Only the first `visible` rows are drawn. Where nothing can post yet the list only grows, so the
+ * server sends at most CLAIM_PAYOUT_WORKLIST_LIMIT (oldest first) and the page draws ten at a time.
  */
-export function ClaimPaymentPostingList({ companyId, rows, postingId, error, onPost }: {
+export function ClaimPaymentPostingList({ companyId, rows, visible, postingId, error, onPost, onShowMore }: {
   companyId: string;
   rows: UnpostedClaimPayment[];
+  visible: number;
   postingId: string | null;
   error: string | null;
   onPost: (paymentId: string) => void;
+  onShowMore: () => void;
 }) {
   // Nothing waiting and nothing to report: the worklist takes no room on the screen.
   if (rows.length === 0 && !error) return null;
+  // The server stopped at its limit, so the true total is not known: say "first", not a total.
+  const capped = rows.length >= CLAIM_PAYOUT_WORKLIST_LIMIT;
+  const hidden = Math.max(0, rows.length - visible);
   return (
     <MangmeeCard className="space-y-3 p-4">
       <div>
-        <h2 className="text-sm font-bold text-gray-900">การจ่ายเงินคืนใบเบิกที่ยังไม่ลงบัญชี <span className="font-semibold text-gray-500">({rows.length} รายการ)</span></h2>
+        <h2 className="text-sm font-bold text-gray-900">การจ่ายเงินคืนใบเบิกที่ยังไม่ลงบัญชี <span className="font-semibold text-gray-500">({rows.length} รายการ{capped ? 'แรก' : ''})</span></h2>
         <p className="mt-1 text-xs leading-relaxed text-gray-500">เงินที่จ่ายคืนพนักงานแล้ว แต่ยังไม่ได้ลงสมุดรายวัน ต้องลงให้ครบก่อนจึงจะปิดงวดได้</p>
+        {capped && <p className="mt-1 text-xs leading-relaxed text-gray-500">แสดงเฉพาะ {rows.length} รายการที่จ่ายก่อน เมื่อลงบัญชีรายการด้านบนแล้ว รายการถัดไปจะแสดงให้เอง</p>}
       </div>
       {error && <ErrorBanner message={error} />}
       <ul className="space-y-2" data-testid="claim-payment-posting-list">
-        {rows.map((row) => {
+        {rows.slice(0, visible).map((row) => {
           const failed = row.postingStatus === 'posting_error';
           const busy = postingId === row.paymentId;
           return (
@@ -65,6 +78,11 @@ export function ClaimPaymentPostingList({ companyId, rows, postingId, error, onP
           );
         })}
       </ul>
+      {hidden > 0 && (
+        <button type="button" className={cx(ghostClass, 'w-full')} onClick={onShowMore}>
+          แสดงเพิ่ม (อีก {hidden} รายการ)
+        </button>
+      )}
     </MangmeeCard>
   );
 }
@@ -78,6 +96,7 @@ export function ClaimPaymentPostingList({ companyId, rows, postingId, error, onP
 export function ClaimPaymentPosting({ companyId }: { companyId: string }) {
   const toast = useToast();
   const [rows, setRows] = useState<UnpostedClaimPayment[]>([]);
+  const [visible, setVisible] = useState(CLAIM_PAYOUT_PAGE_SIZE);
   const [postingId, setPostingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -98,5 +117,8 @@ export function ClaimPaymentPosting({ companyId }: { companyId: string }) {
     setPostingId(null);
   };
 
-  return <ClaimPaymentPostingList companyId={companyId} rows={rows} postingId={postingId} error={error} onPost={(paymentId) => void post(paymentId)} />;
+  return (
+    <ClaimPaymentPostingList companyId={companyId} rows={rows} visible={visible} postingId={postingId} error={error}
+      onPost={(paymentId) => void post(paymentId)} onShowMore={() => setVisible((count) => count + CLAIM_PAYOUT_PAGE_SIZE)} />
+  );
 }
