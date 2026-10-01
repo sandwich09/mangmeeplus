@@ -332,13 +332,43 @@ describe('the receiving choice on the claim form', () => {
     assert.doesNotMatch(html, /payout-account/, 'and nothing links to the preparer own account page');
 
     const page = read('./ReimbursementCreatePage.tsx');
-    // The preview of a default is the person's own; another member's default is never fetched into the form.
-    assert.match(page, /if \(!userId \|\| requesterUserId !== userId \|\| \(editing \? !canUpdate : !canCreate\)\) return;/);
+    // The preview of a default is the person's own; another member's default is never put into the form.
+    assert.match(page, /if \(forSelf\) setMyPayoutAccount\(response\.account\);/);
+    assert.equal(page.match(/setMyPayoutAccount\(/g)?.length, 2, 'the own default, and its absence when the read fails');
     assert.match(page, /forSelf=\{requesterUserId === userId\}\s+defaultAccount=\{requesterUserId === userId \? myPayoutAccount : null\}/);
-    assert.match(page, /canSaveAsDefault=\{requesterUserId === userId \|\| canEditEmployees\}/);
     // Choosing another requester starts the receiving choice over.
     assert.match(page, /setRequesterUserId\(event\.target\.value\);[^\n]*setPayout\(emptyClaimPayoutForm\(\)\);/);
     assert.equal(page.match(/\.\.\.\(payoutInput && \{ payout: payoutInput \}\)/g)?.length, 2, 'create and update both carry the choice');
+  });
+
+  // Security review nit: the tick box was offered by a guess made on the page (the viewer holds the
+  // employee-edit right), while the server also looks at whose account it is: a peer's, another
+  // branch's, a member who is not active. The save was then refused after the form was filled in.
+  it('offers "บันทึกเป็นบัญชีประจำ" exactly where the server would take it', () => {
+    const page = read('./ReimbursementCreatePage.tsx');
+    // The server's own answer for this viewer and this requester, asked again when the requester changes.
+    assert.match(page, /void \(forSelf \? getMyPayoutAccount\(companyId\) : getMemberPayoutAccount\(companyId, requesterUserId\)\)/);
+    assert.match(page, /setMaySaveAsDefault\(response\.canEdit === true\);/);
+    assert.match(page, /useEffect\(\(\) => \{\s+setMaySaveAsDefault\(false\);/);
+    assert.match(page, /if \(!forSelf && !canEditEmployees\) return;/);
+    assert.match(page, /canSaveAsDefault=\{maySaveAsDefault\}/);
+    assert.match(page, /const payoutInput = claimPayoutInput\(payout, maySaveAsDefault\);/);
+    assert.doesNotMatch(page, /canSaveAsDefault=\{requesterUserId === userId/);
+
+    // Not offered: no box, no tick made for the person, and a tick left over from before is not sent.
+    const typing = { mode: 'SPECIFIED' as const, account: form(), saveAsDefault: true };
+    assert.ok(!visible(section({ canSaveAsDefault: false, value: typing })).some((text) => text.startsWith('บันทึกเป็นบัญชีประจำ')));
+    assert.equal('saveAsDefault' in logic.claimPayoutInput(typing, false)!, false);
+    assert.deepEqual(logic.claimPayoutInput(typing, true), { mode: 'SPECIFIED', ...logic.payoutDestinationInput(form()), saveAsDefault: true });
+    const base = logic.emptyClaimPayoutForm();
+    const pick = (offer: { canSaveAsDefault: boolean; forSelf: boolean; hasNoDefault: boolean }) => logic.chooseClaimPayoutMode(base, 'SPECIFIED', offer).saveAsDefault;
+    assert.equal(pick({ canSaveAsDefault: true, forSelf: true, hasNoDefault: true }), true, 'ticked for a requester with no default yet');
+    assert.equal(pick({ canSaveAsDefault: false, forSelf: true, hasNoDefault: true }), false, 'never ticked where it is not offered');
+    assert.equal(pick({ canSaveAsDefault: true, forSelf: false, hasNoDefault: true }), false, 'never ticked on behalf of someone');
+    assert.equal(pick({ canSaveAsDefault: true, forSelf: true, hasNoDefault: false }), false, 'a default already exists');
+    // Picking again keeps what the person chose; leaving for cash and coming back starts over.
+    assert.equal(logic.chooseClaimPayoutMode({ ...base, mode: 'SPECIFIED', saveAsDefault: false }, 'SPECIFIED', { canSaveAsDefault: true, forSelf: true, hasNoDefault: true }).saveAsDefault, false);
+    assert.match(read('./ReimbursementPayout.tsx'), /onChange\(chooseClaimPayoutMode\(value, mode, \{ canSaveAsDefault, forSelf, hasNoDefault: defaultAccount === null \}\)\)/);
   });
 
   it('keeps an existing draft account unless a new one is typed', () => {

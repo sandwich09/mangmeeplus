@@ -20,7 +20,7 @@ import {
   setMemberPayoutAccount, setMyPayoutAccount,
 } from './reimbursement-payout.api';
 import {
-  BANK_OPTIONS, OTHER_BANK, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT, claimPayoutView, emptyPayoutAccountForm,
+  BANK_OPTIONS, OTHER_BANK, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT, chooseClaimPayoutMode, claimPayoutView, emptyPayoutAccountForm,
   memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutDefaultChangedHint, setByOtherLine, shownAccountNumber,
   type ClaimPayoutForm, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
@@ -300,16 +300,13 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
   defaultAccount?: MemberPayoutAccountSummary | null;
   /** An existing draft's account for this claim, masked. */
   current?: ReimbursementPayoutSummary | null;
+  /** The server's answer: this viewer may save a typed account as the requester's default. */
   canSaveAsDefault: boolean;
   payoutAccountHref: string;
   invalidField?: string;
 }) {
   const hasOwnAccount = !!current && !current.followsDefault && current.payoutMethod === 'BANK_TRANSFER';
-  const choose = (mode: ClaimPayoutForm['mode']) => onChange({
-    ...value, mode,
-    // Ticked for a requester with no default yet, so the next claim needs no typing.
-    saveAsDefault: mode === 'SPECIFIED' && value.mode !== 'SPECIFIED' ? forSelf && defaultAccount === null : value.saveAsDefault,
-  });
+  const choose = (mode: ClaimPayoutForm['mode']) => onChange(chooseClaimPayoutMode(value, mode, { canSaveAsDefault, forSelf, hasNoDefault: defaultAccount === null }));
   const defaultHint = !forSelf
     ? 'ระบบใช้บัญชีรับเงินคืนประจำของผู้เบิกที่เลือกไว้ และแสดงบัญชีนั้นให้ตรวจในหน้าใบเบิกก่อนกดส่งอนุมัติ'
     : defaultAccount === undefined ? 'กำลังโหลดบัญชีประจำของคุณ...'

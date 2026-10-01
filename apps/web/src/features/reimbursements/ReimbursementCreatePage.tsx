@@ -19,7 +19,7 @@ import { TransactionBranchField, useTransactionCreateBranchId } from '../web-cor
 import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
 import { REIMBURSEMENT_CREATE_UNAVAILABLE } from './reimbursements.model';
 import { ClaimPayoutFormSection } from './ReimbursementPayout';
-import { getMyPayoutAccount } from './reimbursement-payout.api';
+import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
 import { claimPayoutFormError, claimPayoutFormOf, claimPayoutInput, emptyClaimPayoutForm, type ClaimPayoutForm } from './reimbursement-payout.logic';
 
 const CATEGORY_OPTIONS: { value: string; label: string }[] = [
@@ -62,7 +62,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   requestId?: string;
   canUpdate?: boolean;
   canPrepareForOthers?: boolean;
-  /** May set an employee's default payout account, so "save as the requester's default" is offered when preparing for someone else. */
+  /** Holds the employee-edit right, so the server is asked whether "save as the requester's default" may be offered when preparing for someone else. */
   canEditEmployees?: boolean;
   /** `?expenseId=` — the source "เตรียมใบเบิก" was pressed on (capture appendix §13.4/§12.3). */
   sourceExpenseId?: string;
@@ -77,6 +77,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   const [payout, setPayout] = useState<ClaimPayoutForm>(emptyClaimPayoutForm);
   const [currentPayout, setCurrentPayout] = useState<ReimbursementPayoutSummary | null>(null);
   const [myPayoutAccount, setMyPayoutAccount] = useState<MemberPayoutAccountSummary | null | undefined>(undefined);
+  const [maySaveAsDefault, setMaySaveAsDefault] = useState(false);
   const [sourceOptions, setSourceOptions] = useState<ReimbursementSourceOptions>({ requesters: [], items: [] });
   const [sourceSearch, setSourceSearch] = useState('');
   const [sourcesLoading, setSourcesLoading] = useState(false);
@@ -138,15 +139,25 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   }, [canUpdate, canPrepareForOthers, companyId, requestId, userId]);
 
   // The form previews the default only for the person's own claim; another member's is theirs to see.
+  // Either way the server says whether THIS viewer may save a typed account as the requester's default
+  // (its own answer to "would the save go through"), and the tick box is offered exactly then.
   useEffect(() => {
-    if (!userId || requesterUserId !== userId || (editing ? !canUpdate : !canCreate)) return;
+    setMaySaveAsDefault(false);
+    if (!userId || !requesterUserId || (editing ? !canUpdate : !canCreate)) return;
+    const forSelf = requesterUserId === userId;
+    if (!forSelf && !canEditEmployees) return;
     let active = true;
-    void getMyPayoutAccount(companyId)
-      .then((response) => { if (active) setMyPayoutAccount(response.account); })
+    void (forSelf ? getMyPayoutAccount(companyId) : getMemberPayoutAccount(companyId, requesterUserId))
+      .then((response) => {
+        if (!active) return;
+        // Only the person's own default is put into the form.
+        if (forSelf) setMyPayoutAccount(response.account);
+        setMaySaveAsDefault(response.canEdit === true);
+      })
       // Without the preview the choice still works: the server reads the default at submit.
-      .catch(() => { if (active) setMyPayoutAccount(null); });
+      .catch(() => { if (active && forSelf) setMyPayoutAccount(null); });
     return () => { active = false; };
-  }, [canCreate, canUpdate, companyId, editing, requesterUserId, userId]);
+  }, [canCreate, canEditEmployees, canUpdate, companyId, editing, requesterUserId, userId]);
 
   useEffect(() => {
     if (!editing && previousBranchRef.current !== branchId) {
@@ -262,7 +273,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     const payoutError = claimPayoutFormError(payout);
     if (payoutError) { setError(payoutError); return; }
     // Undefined leaves an existing draft's receiving choice as it is.
-    const payoutInput = claimPayoutInput(payout);
+    const payoutInput = claimPayoutInput(payout, maySaveAsDefault);
     setBusy(true);
     let createdId: string | null = null;
     let receiptFailureMessage: string | null = null;
@@ -410,7 +421,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
             forSelf={requesterUserId === userId}
             defaultAccount={requesterUserId === userId ? myPayoutAccount : null}
             current={currentPayout}
-            canSaveAsDefault={requesterUserId === userId || canEditEmployees}
+            canSaveAsDefault={maySaveAsDefault}
             payoutAccountHref={`${hubHref}/payout-account`}
           />
 

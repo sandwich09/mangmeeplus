@@ -86,11 +86,30 @@ export function claimPayoutFormError(form: ClaimPayoutForm): string | null {
   return form.mode === 'SPECIFIED' ? payoutAccountFormError(form.account)?.text ?? null : null;
 }
 
-/** The `payout` field of a create or update call; undefined leaves the draft's choice untouched. */
-export function claimPayoutInput(form: ClaimPayoutForm): ReimbursementPayoutInput | undefined {
+/**
+ * The form after a receiving choice is picked. "บันทึกเป็นบัญชีประจำ" starts ticked for a requester
+ * with no default yet, so their next claim needs no typing — but only where that save is allowed.
+ */
+export function chooseClaimPayoutMode(
+  form: ClaimPayoutForm,
+  mode: ClaimPayoutMode,
+  offer: { canSaveAsDefault: boolean; forSelf: boolean; hasNoDefault: boolean },
+): ClaimPayoutForm {
+  return {
+    ...form, mode,
+    saveAsDefault: mode === 'SPECIFIED' && form.mode !== 'SPECIFIED' ? offer.canSaveAsDefault && offer.forSelf && offer.hasNoDefault : form.saveAsDefault,
+  };
+}
+
+/**
+ * The `payout` field of a create or update call; undefined leaves the draft's choice untouched.
+ * `canSaveAsDefault` is the server's answer for this viewer and this requester: a tick the page did
+ * not offer (or no longer offers) is never sent, so the save is not refused for it.
+ */
+export function claimPayoutInput(form: ClaimPayoutForm, canSaveAsDefault = true): ReimbursementPayoutInput | undefined {
   if (form.mode === 'KEEP') return undefined;
   if (form.mode !== 'SPECIFIED') return { mode: form.mode };
-  return { mode: 'SPECIFIED', ...payoutDestinationInput(form.account), ...(form.saveAsDefault && { saveAsDefault: true }) };
+  return { mode: 'SPECIFIED', ...payoutDestinationInput(form.account), ...(form.saveAsDefault && canSaveAsDefault && { saveAsDefault: true }) };
 }
 
 // ---- Display ----
