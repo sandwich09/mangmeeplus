@@ -5,6 +5,7 @@ import { RequestMethod, type ExecutionContext } from '@nestjs/common';
 import { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
 import { ReimbursementController } from './reimbursement.controller';
 import { ReimbursementPolicyController } from './reimbursement-policy.controller';
+import { ReimbursementReconcileInternalController } from './reimbursement-reconcile-internal.controller';
 import {
   REIMBURSEMENT_UPGRADE_ERROR_CODE,
   REIMBURSEMENT_UPGRADE_MESSAGE,
@@ -153,7 +154,7 @@ describe('ReimbursementController payment slip routes', () => {
 
 // ---- Carrying a decided claim on (audit B4) ----
 
-describe('carrying a decided claim on: the web call', () => {
+describe('carrying a decided claim on: the web call and the scheduled run', () => {
   it('declares ดำเนินการต่อ as a claim route that asks only for a session, like approve: the use case decides who', () => {
     const routes = claimRoutes();
     const resume = routes.find((route) => route.handler === 'resumeRequest');
@@ -163,5 +164,41 @@ describe('carrying a decided claim on: the web call', () => {
     // It writes, so the maintenance bridge holds it with every other claim write.
     const guard = new ReimbursementWriteQuiesceGuard({ reimbursementWriteQuiesce: true } as any);
     assert.throws(() => guard.canActivate(context('POST', '/companies/c1/reimbursements/rb-1/resume').ctx));
+  });
+
+  describe('the scheduled run', () => {
+    const TOKEN = 'worker-token-for-this-spec';
+    const run = (quiesced: boolean) => {
+      const calls: unknown[][] = [];
+      const reconciler = { execute: async (...args: unknown[]) => { calls.push(args); return { completed: ['a', 'b'], failed: [{ requestId: 'c', error: 'x' }], blocked: ['d'] }; } };
+      return { calls, controller: new ReimbursementReconcileInternalController(reconciler as any, { reimbursementWriteQuiesce: quiesced } as any) };
+    };
+    const withToken = async <T>(work: () => Promise<T>): Promise<T> => {
+      const before = process.env['WORKER_INTERNAL_TOKEN'];
+      process.env['WORKER_INTERNAL_TOKEN'] = TOKEN;
+      try { return await work(); } finally {
+        if (before === undefined) delete process.env['WORKER_INTERNAL_TOKEN']; else process.env['WORKER_INTERNAL_TOKEN'] = before;
+      }
+    };
+
+    it('runs one bounded pass for the workers and answers with counts only', async () => {
+      const { controller, calls } = run(false);
+      assert.deepEqual(await withToken(() => controller.execute(TOKEN)), { completed: 2, failed: 1, blocked: 1 });
+      assert.deepEqual(calls, [[]], 'the bound of a run is the reconciler\'s own, never a number the caller sends');
+    });
+
+    it('takes nobody without the worker token', async () => {
+      const { controller, calls } = run(false);
+      for (const token of [undefined, '', 'wrong']) {
+        await withToken(() => assert.rejects(() => controller.execute(token), /Invalid worker token/));
+      }
+      assert.deepEqual(calls, []);
+    });
+
+    it('writes nothing while reimbursement writes are held, and says it skipped instead of failing the job', async () => {
+      const { controller, calls } = run(true);
+      assert.deepEqual(await withToken(() => controller.execute(TOKEN)), { skipped: 'reimbursement_write_quiesce' });
+      assert.deepEqual(calls, []);
+    });
   });
 });
