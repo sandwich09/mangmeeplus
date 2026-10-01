@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import {
   AUTO_POST_REQUIRED_FEATURES,
   DrainExpenseAutoPostUseCase,
@@ -176,6 +177,68 @@ describe('DrainExpenseAutoPostUseCase — claim payouts', () => {
     assert.match(claim, /2 AS "sortOrder"/);
   });
 
+  // CI runs this file without PostgreSQL, so the text of the claim branch is pinned whole: every
+  // predicate in it is load-bearing, and a regex per predicate let three mutants through (the
+  // "claim has a line" guard, the company predicate of the accrual sub-select, a dropped join).
+  // Changing this text is a change to what the worker posts: re-run claim-payment-posting.pg.spec.ts.
+  it('the claim branch is exactly this SQL, bound to this company and this activation boundary', () => {
+    const activationAt = new Date('2026-07-29T00:00:00.000Z');
+    const query = expenseAutoPostCandidateSql('co-1', activationAt, 20);
+    const normalize = (text: string) => text.replace(/\s+/g, ' ').trim();
+    const sql = sqlText(query);
+    const claim = sql.slice(sql.indexOf('UNION ALL', sql.indexOf(`'expense.payment'::text`)), sql.indexOf(') AS candidate'));
+    assert.equal(normalize(claim), normalize(`
+      UNION ALL
+      SELECT 'reimbursement.payment'::text AS "sourceType", payment."id" AS "sourceId",
+        payment."createdAt" AS "eventAt", 2 AS "sortOrder"
+      FROM "ReimbursementPayment" AS payment
+      WHERE payment."companyId" = ?
+        AND payment."status"::text = 'RECORDED'
+        AND payment."postingStatus"::text = 'pending'
+        AND payment."createdAt" >= ?
+        AND EXISTS (
+          SELECT 1 FROM "ReimbursementLine" AS line
+          WHERE line."companyId" = payment."companyId"
+            AND line."reimbursementRequestId" = payment."reimbursementRequestId"
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "ReimbursementLine" AS line
+          WHERE line."companyId" = payment."companyId"
+            AND line."reimbursementRequestId" = payment."reimbursementRequestId"
+            AND NOT EXISTS (
+              SELECT 1 FROM "ExpenseRecord" AS projection
+              WHERE projection."companyId" = line."companyId"
+                AND projection."sourceReimbursementRequestId" = line."reimbursementRequestId"
+                AND projection."sourceReimbursementLineId" = line."id"
+                AND (
+                  ( projection."duplicateStatus"::text = 'CONFIRMED_DUPLICATE'
+                    AND projection."postingStatus"::text = 'not_required' )
+                  OR
+                  ( projection."duplicateStatus"::text NOT IN ('POSSIBLE_DUPLICATE', 'CONFIRMED_DUPLICATE')
+                    AND projection."status"::text = 'CONFIRMED'
+                    AND EXISTS (
+                      SELECT 1 FROM "JournalEntry" AS accrual
+                      WHERE accrual."companyId" = projection."companyId"
+                        AND accrual."sourceType" = 'expense.record'
+                        AND accrual."sourceId" = projection."id"
+                        AND accrual."entryType"::text = 'GENERATED'
+                        AND accrual."status"::text = 'POSTED'
+                    ) )
+                )
+            )
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "JournalEntry" AS journal
+          WHERE journal."companyId" = payment."companyId"
+            AND journal."sourceType" = 'reimbursement.payment'
+            AND journal."sourceId" = payment."id"
+            AND journal."entryType"::text = 'GENERATED'
+        )
+    `));
+    // Three branches, each bound to the company and the boundary, then the limit. Nothing else.
+    assert.deepEqual(query.values, ['co-1', activationAt, 'co-1', activationAt, 'co-1', activationAt, 20]);
+  });
+
   it('leaves the claim branch out entirely when the reimbursement family is frozen', () => {
     const sql = sqlText(expenseAutoPostCandidateSql('co-1', new Date('2026-07-29T00:00:00.000Z'), 20, false));
     assert.doesNotMatch(sql, /ReimbursementPayment|reimbursement\.payment/);
@@ -335,4 +398,46 @@ describe('DrainExpenseAutoPostUseCase — claim payouts', () => {
       assert.deepEqual(result, { companies: 1, candidates: 1, posted: 1, failed: 0 });
     });
   }
+});
+
+// The screen's half of the same job. CI runs this without PostgreSQL, so the query the worklist
+// sends is pinned here against the real repository.
+describe('claim payout worklist query', () => {
+  async function worklist(scopes?: { branchIds?: string[] }) {
+    const calls: any[] = [];
+    const client = { reimbursementPayment: { findMany: async (args: any) => {
+      calls.push(args);
+      return [{
+        id: 'pay-1', reimbursementRequestId: 'rb-1', paymentNo: 'RBPAY-1', paidAmount: '500.5000', currency: 'THB',
+        paidAt: new Date('2026-02-01T00:00:00.000Z'), postingStatus: 'posting_error',
+        request: { requestNo: 'RB-1', requesterDisplayNameSnapshot: 'สมชาย' },
+      }];
+    } } };
+    const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    const rows = await (scopes ? repo.listUnpostedReimbursementPayments('co-1', scopes) : repo.listUnpostedReimbursementPayments('co-1'));
+    return { args: calls[0], rows };
+  }
+
+  it('lists recorded payouts of this company that are still unposted or whose last attempt failed, oldest first', async () => {
+    const { args, rows } = await worklist();
+    assert.deepEqual(args.where, {
+      companyId: 'co-1',
+      // Never a voided payout: its void already settled what the ledger says.
+      status: 'RECORDED',
+      // Failed ones included. Without them the first refused attempt made the row vanish from
+      // the screen while it still blocked period close.
+      postingStatus: { in: ['pending', 'posting_error'] },
+      request: { is: {} },
+    });
+    assert.deepEqual(args.orderBy, { paidAt: 'asc' });
+    assert.deepEqual(rows, [{
+      paymentId: 'pay-1', reimbursementRequestId: 'rb-1', requestNo: 'RB-1', requesterDisplayNameSnapshot: 'สมชาย', paymentNo: 'RBPAY-1',
+      paidAmount: '500.5000', currency: 'THB', paidAt: new Date('2026-02-01T00:00:00.000Z'), postingStatus: 'posting_error',
+    }]);
+  });
+
+  it('keeps a branch-restricted reader to their branches and to company-central claims', async () => {
+    const { args } = await worklist({ branchIds: ['br-1', 'br-2'] });
+    assert.deepEqual(args.where.request, { is: { OR: [{ branchId: { in: ['br-1', 'br-2'] } }, { branchId: null }] } });
+  });
 });

@@ -1,13 +1,17 @@
 /**
- * Real PostgreSQL proof that a claim payout reaches the ledger and that the claim, its expense
- * records and the books then say the same number. Opt-in; every row is test-owned.
+ * Real PostgreSQL proof that a claim payout reaches the ledger, that the claim, its expense records
+ * and the books then say the same number, and that a post and a void of one payout take turns.
+ * A release gate: it is the only place the candidate SQL and the row locking actually run.
  *
- *   CLAIM_PAYMENT_POSTING_PG_TEST=1 DATABASE_URL=postgresql://…@127.0.0.1:<port>/<throwaway db> \
+ *   CLAIM_PAYMENT_POSTING_TEST_DATABASE_URL='postgresql://…@127.0.0.1:5432/watchdog_claim_posting_ci' \
  *     pnpm --filter @watchdog-bms/api exec tsx --test src/modules/ledger/application/use-cases/claim-payment-posting.pg.spec.ts
  *
- * The drain reads every ACTIVE company, so point it at a throwaway database only. The repositories,
- * the candidate SQL, the journal generator, the posting engine and the numbering are all real; only
- * the audit/outbox side channels are stubbed, and the confirm saga is shortcut by a fixture update.
+ * It needs a database OF ITS OWN (migrated, otherwise empty): the auto-post drain reads every
+ * ACTIVE company, so in a shared database it would also drain companies other specs left behind,
+ * and their rows would change the counts asserted here. Every row it writes is test-owned.
+ * The repositories, the candidate SQL, the journal generator, the posting engine and the numbering
+ * are all real; only the audit/outbox side channels are stubbed, and the confirm saga is shortcut
+ * by a fixture update.
  */
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
@@ -26,12 +30,12 @@ import { PrismaLedgerRepository } from '../../infrastructure/prisma-ledger.repos
 import { DrainExpenseAutoPostUseCase, expenseAutoPostCandidateSql } from './expense-auto-post.use-case';
 import { GenerateJournalFromSourceUseCase } from './journal.use-case';
 
-const url = process.env.DATABASE_URL;
-const enabled = process.env.CLAIM_PAYMENT_POSTING_PG_TEST === '1';
+const databaseUrl = process.env.CLAIM_PAYMENT_POSTING_TEST_DATABASE_URL;
 
-describe('claim payout posting (PostgreSQL)', { skip: !enabled }, () => {
-  assert.ok(url && ['localhost', '127.0.0.1'].includes(new URL(url).hostname), 'Use a local isolated DB');
-  const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) });
+describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
+  const url = new URL(databaseUrl!);
+  assert.ok(['localhost', '127.0.0.1'].includes(url.hostname) && url.pathname.endsWith('_ci'), 'only a disposable local *_ci database of its own');
+  const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
   const prisma = { client } as any;
   const allocator = new PrismaDocumentSequenceRepository(prisma);
   const claims = new PrismaReimbursementRepository(prisma, allocator);
