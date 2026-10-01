@@ -2456,6 +2456,21 @@ describe('PrismaReimbursementRepository pay step under the payment lock', () => 
     assert.deepEqual([h.state().request.payoutMethod, h.state().request.payoutDestinationVersion], ['BANK_TRANSFER', 2]);
   });
 
+  // Payout spec §17.3: the repository hands the "paid" callback the account it has just confirmed under the
+  // lock, so the event written in the same transaction can say where a transfer went.
+  it('hands the payment callback the account it confirmed, and none for a payment that confirmed none', async () => {
+    const seen: any[] = [];
+    const onPaymentPersisted = async (_tx: any, payment: any, paymentStatus: string, payout: any) => { seen.push([payment.paymentMethod, payment.slipAttachmentId, paymentStatus, payout]); };
+    const { h } = transferHarness();
+    const paid = await h.repo.recordPaymentAtomic({ ...transferWithSlip, payout: confirmed, onPaymentPersisted });
+    assert.deepEqual(seen, [['BANK_TRANSFER', 'att-slip-1', 'PAID', paid.payout]]);
+    assert.deepEqual([paid.payout?.accountLast4, paid.payout?.payoutKind], ['1234', 'BANK_ACCOUNT']);
+    // Cash for the same claim: a reason, and no account to hand over.
+    const inCash = transferHarness();
+    await inCash.h.repo.recordPaymentAtomic({ ...atomicPaymentInput, payout: { methodMismatchReason: 'ผู้เบิกมารับเงินสดเอง' }, onPaymentPersisted });
+    assert.deepEqual(seen[1], ['CASH', undefined, 'PAID', undefined]);
+  });
+
   it('asks a reason for a method the requester did not ask for, and keeps it with the payment alone', async () => {
     const { h } = transferHarness();
     await assert.rejects(() => h.repo.recordPaymentAtomic(atomicPaymentInput), conflict('payment_method_mismatch_reason_required'));
