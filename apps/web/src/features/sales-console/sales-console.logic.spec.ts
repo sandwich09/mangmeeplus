@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { PLAN_TIER_PRESETS, planTermStateLabel, SALES_ERROR_CODES, type SalesDealStatus, type SalesDealView, type SalesMyWorkItem, type SalesMyWorkKind, type SalesDealCadence, type SalesDealSnapshot, type SalesReportMonth, type SalesReportRow } from '@watchdog-bms/contracts';
+import { parentFeatureKey, PLAN_TIER_PRESETS, planTermStateLabel, SALES_ERROR_CODES, salesDealFeatureKeys, type SalesDealStatus, type SalesDealView, type SalesMyWorkItem, type SalesMyWorkKind, type SalesDealCadence, type SalesDealSnapshot, type SalesReportMonth, type SalesReportRow } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
   agentStatusMeta, baseTierDefaults, companyReferral, dealAutoRenew, dealBadges, dealFormFromView, dealInputFromForm,
@@ -240,6 +240,26 @@ describe('menus a deal may grant', () => {
     assert.ok(afterOff.includes(parent), 'sibling menu lost the parent feature that carries it');
     // ...and the parent does go when the last menu behind it does.
     assert.equal(toggleMenuSelection(afterOff, second, false).includes(parent), false);
+  });
+
+  it('picks a menu together with its submenus after "ล้างทั้งหมด", and clears them with it (B3)', () => {
+    // Paying a deal writes every key that is not in the list as OFF. The parent key alone used to
+    // be all a tap added, so the shop paid and found every expense submenu switched off.
+    const expenses = SALES_DEAL_MENU_BINDINGS.find((binding) => binding.navKey === 'expenses')!;
+    assert.deepEqual(toggleMenuSelection([], expenses, true), ['expenses', 'expenses.list', 'expenses.upload',
+      'expenses.manual', 'expenses.categories', 'expenses.evidence', 'expenses.signatures']);
+
+    for (const binding of SALES_DEAL_MENU_BINDINGS) {
+      const picked = toggleMenuSelection([], binding, true);
+      // The same rule the server saves by: nothing it would add is missing from what the form sends.
+      assert.deepEqual(picked, salesDealFeatureKeys(picked), `${binding.navKey}: a parent was sent without its submenus`);
+      // A menu that IS its parent feature brought the submenus, so switching it off takes them back.
+      if (binding.entitlementKeys.includes(binding.parentFeatureKey!)) {
+        assert.deepEqual(toggleMenuSelection(picked, binding, false), [], `${binding.navKey}: part of the menu stayed behind`);
+      }
+    }
+    // Switching the menu off in a deal that started from the full preset leaves no orphan submenu.
+    assert.deepEqual(toggleMenuSelection(emptyDealForm().featureKeys, expenses, false).filter((key) => parentFeatureKey(key) === 'expenses'), []);
   });
 });
 

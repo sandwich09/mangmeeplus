@@ -14,6 +14,7 @@ import {
   OWNER_LINE_LINK_TOKEN_TTL_MS,
   roleGrantViolation,
 } from './employee-access.logic';
+import { ROLE_GRANTS } from '../../../auth/permission-registry';
 
 const KEY = Buffer.from('a'.repeat(64), 'hex');
 
@@ -144,6 +145,19 @@ describe('employee-access.logic', () => {
       ['access.role.manage'],
       { 'crm.customer.read': 'crm' },
     ) ?? '', /does not hold/);
+  });
+
+  it('keeps the Mangmee sales roles inside the platform company, whoever asks (RB-34)', () => {
+    for (const key of ['MANGMEE_SALES_LEAD', 'MANGMEE_SALES']) {
+      const role = { key, isSystem: true, permissionKeys: ROLE_GRANTS[key]! };
+      // A shop OWNER may grant every company permission, and these are not company permissions.
+      assert.match(roleGrantViolation([role], [], undefined, true) ?? '', /platform company/, key);
+      assert.match(roleGrantViolation([role], ROLE_GRANTS[key]!, undefined) ?? '', /platform company/, key);
+      // The platform company itself is unchanged: its owner still assigns its own sales roles.
+      assert.equal(roleGrantViolation([role], [], undefined, true, true), undefined, key);
+    }
+    // A shop role with the tenant key SALES is a different thing and stays assignable.
+    assert.equal(roleGrantViolation([{ key: 'SALES', isSystem: true, permissionKeys: ['crm.customer.read'] }], [], undefined, true), undefined);
   });
 
   it('lets HR assign only the explicit operational role allowlist', () => {

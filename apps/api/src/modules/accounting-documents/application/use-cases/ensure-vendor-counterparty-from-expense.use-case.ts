@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { BuyerEntityKind, VendorCounterpartyAutoSaveResult } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
+import { auditActorOf } from '../../../audit/domain/logic/audit-actor.logic';
 import { PrismaAccountingRepository } from '../../infrastructure/prisma-accounting.repository';
 import type { CounterpartyRecord } from '../../domain/models/accounting.model';
 import {
@@ -242,7 +243,8 @@ export class EnsureVendorCounterpartyFromExpenseUseCase {
   private log(ctx: VendorAutoSaveContext, action: 'create' | 'update', counterpartyId: string, expenseId: string, addressChanged: boolean): void {
     void this.audit.log({
       companyId: ctx.companyId,
-      actorUserId: ctx.userId,
+      // A capture read applies the document as `userId: 'system'`, which is no User row.
+      ...auditActorOf(ctx.userId, 'vendor-counterparty-auto-save'),
       action: `accounting.counterparty.${action}`,
       targetType: 'accounting_counterparty',
       targetId: counterpartyId,

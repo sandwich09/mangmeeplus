@@ -1,3 +1,5 @@
+import { FEATURE_CATALOG } from './feature-entitlements.js';
+import { SALES_DEAL_ALLOWED_FEATURE_KEYS } from './menu-entitlements.js';
 import type { PlanTierKey } from './plan-term.js';
 
 /**
@@ -32,6 +34,27 @@ export type SalesDealBaseTier = Exclude<PlanTierKey, 'FREE_TRIAL_15'>;
 /** Runtime companion of `SalesDealBaseTier` — the paid tiers a deal may be built on (R3). */
 export const SALES_DEAL_BASE_TIERS: readonly SalesDealBaseTier[] =
   ['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'];
+
+/**
+ * What a deal's menu list means (B3). A parent menu named with NONE of its submenus sells every
+ * submenu of it a deal may sell; a parent named with some of them sells exactly those.
+ *
+ * Paying a package writes every catalog key that is not in the list as OFF, so a deal built one
+ * menu at a time, which carried `expenses` alone, switched every expense submenu off. One rule for
+ * the deal builder, the save and the hand-off to billing, so all three agree on any deal, old or new.
+ * Order is kept and nothing is added to a list the rule does not change.
+ */
+export function salesDealFeatureKeys(
+  featureKeys: readonly string[],
+  sellable: readonly string[] = SALES_DEAL_ALLOWED_FEATURE_KEYS,
+): string[] {
+  const keys = new Set(featureKeys);
+  for (const feature of FEATURE_CATALOG) {
+    if (!keys.has(feature.key) || feature.submenus.some((submenu) => keys.has(submenu.key))) continue;
+    for (const submenu of feature.submenus) if (sellable.includes(submenu.key)) keys.add(submenu.key);
+  }
+  return [...keys];
+}
 
 /** D-P5-1: an auto-renewing deal bills every month or every year — the only two Stripe recurring
  *  intervals `assertStripePrice` and `paidInvoiceEvidence` accept. */

@@ -2,10 +2,17 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ALL_FEATURE_ENTITLEMENT_KEYS,
+  FEATURE_CATALOG,
   FEATURE_PACKAGE_PRESETS,
   MENU_ENTITLEMENT_BINDINGS,
+  SALES_DEAL_ALLOWED_FEATURE_KEYS,
+  salesDealFeatureKeys,
 } from '@watchdog-bms/contracts';
+import { billingFeaturePlan } from '../../../billing/application/billing-feature-entitlements';
+import { dealOffer, dealSnapshot } from '../../../billing/domain/deal-offer';
+import { buildDealSnapshot } from '../../../sales-console/domain/sales-deal.logic';
 import { loadEntitledFeatureKeys } from '../../application/entitlement.helper';
+import { NORMALIZER_VERSION } from '../../application/normalize-entitlements';
 import { filterPermissionsByEntitlement } from './feature-gate.logic';
 
 const ALL_ENTITLEMENTS = new Set(ALL_FEATURE_ENTITLEMENT_KEYS);
@@ -184,4 +191,62 @@ describe('FEATURE_PACKAGE_PRESETS menu parity', () => {
       }
     });
   }
+});
+
+// B3. Paying a package writes every catalog key that is not in its menu list as OFF. A deal built
+// one menu at a time carried the parent key alone, so the shop paid and lost every submenu of it.
+describe('a sales deal that names a parent menu without its submenus (B3)', () => {
+  const EXPENSE_KEYS = ALL_FEATURE_ENTITLEMENT_KEYS.filter((key) => key === 'expenses' || key.startsWith('expenses.'));
+  // What the deal builder sent after "ล้างทั้งหมด" and two taps, and what an older deal has stored.
+  const draft = {
+    base: 'STARTER_249', priceSatang: 249_000, months: 12, branchLimit: 1, employeeLimit: 3, monthlySlipLimit: 100,
+    featureKeys: ['expenses', 'dashboard_notifications'], aiMonthlyBudgetSatang: null, description: 'ข้อเสนอสำหรับร้านเปิดใหม่',
+  };
+
+  /** A shop on the complete catalog with the starter menus on: the state a paying shop is in. */
+  function starterShop() {
+    const starter = new Set<string>(FEATURE_PACKAGE_PRESETS.starter.featureKeys);
+    const rows = [...ALL_FEATURE_ENTITLEMENT_KEYS].sort().map((featureKey) => (
+      { featureKey, enabled: starter.has(featureKey), epoch: 0, lastSeq: 0, grantOrigin: null }));
+    return {
+      companyFeatureEntitlement: { findMany: async () => rows.map((row) => ({ ...row })) },
+      companyEntitlementSet: { findUnique: async () => ({ setVersion: 0 }) },
+      companyEntitlementNormalization: { findUnique: async () => ({ status: 'COMPLETED', normalizerVersion: NORMALIZER_VERSION, cohortKind: 'EXPLICIT' }) },
+      entitlementTransition: { findMany: async () => [], count: async () => 0 },
+    } as unknown as Parameters<typeof billingFeaturePlan>[0];
+  }
+
+  it('means every submenu for every parent menu, and exactly the named ones when some are named', () => {
+    const parents = FEATURE_CATALOG.filter((feature) => feature.submenus.length > 0);
+    assert.ok(parents.length >= 5, 'expected the catalog parents that carry submenus');
+    for (const feature of parents) {
+      const submenus = feature.submenus.map((submenu) => submenu.key);
+      assert.deepEqual(salesDealFeatureKeys([feature.key], ALL_FEATURE_ENTITLEMENT_KEYS), [feature.key, ...submenus], feature.key);
+      assert.deepEqual(salesDealFeatureKeys([feature.key, submenus[0]!], ALL_FEATURE_ENTITLEMENT_KEYS), [feature.key, submenus[0]!], feature.key);
+      // A deal implies only what a deal may sell, so the list it saves can be saved again.
+      assert.deepEqual(salesDealFeatureKeys([feature.key]),
+        [feature.key, ...submenus.filter((key) => SALES_DEAL_ALLOWED_FEATURE_KEYS.includes(key))], feature.key);
+    }
+    // The preset every deal starts from is already complete, so the rule leaves it exactly as it is.
+    assert.deepEqual(salesDealFeatureKeys(FEATURE_PACKAGE_PRESETS.starter.featureKeys), [...FEATURE_PACKAGE_PRESETS.starter.featureKeys]);
+  });
+
+  it('is saved with the submenus, and a list that names some submenus is saved as sent', () => {
+    assert.deepEqual(buildDealSnapshot(draft).featureKeys,
+      ['expenses', 'dashboard_notifications', ...EXPENSE_KEYS.filter((key) => key !== 'expenses')]);
+    assert.deepEqual(buildDealSnapshot({ ...draft, featureKeys: ['expenses', 'expenses.upload'] }).featureKeys, ['expenses', 'expenses.upload']);
+  });
+
+  it('pays into working expense menus even when the deal was stored before the rule existed', async () => {
+    // The row as an earlier release wrote it: the parent alone. Billing reads it through dealSnapshot.
+    const deal = dealSnapshot({ ...draft, version: 4, autoRenew: false, cadence: null, cycles: null });
+    assert.deepEqual(dealOffer(deal).featureKeys, deal.featureKeys, 'the offer card and the plan must name the same menus');
+
+    const { plan, impact } = await billingFeaturePlan(starterShop(), 'company', deal.featureKeys);
+    const on = new Set(plan.rows.filter((row) => row.enabled).map((row) => row.featureKey));
+    assert.deepEqual(EXPENSE_KEYS.filter((key) => !on.has(key)), [], 'paying the deal must not switch an expense submenu off');
+    // The checkout page lists `impact.removed` as the menus that will stop.
+    assert.deepEqual(impact.removed.map((item) => item.featureKey).filter((key) => key.startsWith('expenses')), []);
+    assert.ok(impact.removed.some((item) => item.featureKey === 'reimbursement'), 'a menu the deal really leaves out is still listed');
+  });
 });
