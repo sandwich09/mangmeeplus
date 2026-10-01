@@ -6,6 +6,7 @@
  * substitute-receipt renderer on purpose — the two documents live in different
  * modules and must not import each other's domain logic.
  */
+import { civilDate } from '@watchdog-bms/contracts';
 import type {
   ReimbursementClaimFormLayout,
   ReimbursementClaimSignatureRole,
@@ -485,8 +486,15 @@ function money(value: string): string {
   return Number.isFinite(amount) ? amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : xml(value);
 }
 
+/**
+ * The day a date falls on in Thailand, as every screen shows it. The submit date and each signer's
+ * date are instants, and the UTC calendar day is the day before for anything done between midnight
+ * and 07:00 Thai time. A date-only value is stored at UTC midnight, 07:00 of the same Thai day, so
+ * it prints unchanged.
+ */
 function formatDate(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  const instant = new Date(value);
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(Number.isNaN(instant.getTime()) ? value : civilDate(instant));
   if (!match) return value || '-';
   const [, year, month, day] = match;
   const monthLabel = THAI_MONTHS[Number(month) - 1];
