@@ -95,7 +95,7 @@ Six specs failed after the merge on fake repositories only (each side's detail a
 
 What changed for this lane's own decisions:
 
-- `isEffectiveClaimApprover` is gone. The one definition of a claim's own approver is `isReimbursementClaimApprover` in contracts; `claimPayoutRevealGroup` asks it, with whoever may decide the pending step. `payoutRevealGroup` keeps its own conditions (there is an account, a draft is its requester's alone, branch scope, a payer must be able to read the claim). The payment reminder's query (`findClaimApprovers`) cannot call the rule: its round test now matches it exactly (no submission in force, no approver), and the three places point at each other.
+- `isEffectiveClaimApprover` is gone. The one definition of a claim's own approver is `isReimbursementClaimApprover` in contracts; `claimPayoutRevealGroup` asks it, with whoever may decide the pending step. `payoutRevealGroup` keeps its own conditions (there is an account, a draft is its requester's alone, branch scope, a payer must be able to read the claim). The payment reminder's query (`findClaimApprovers`) cannot call the rule: its round test now matches it exactly (no submission in force, no approver), and the three places point at each other. The approver a ready-to-pay notice asks after finance (`claimApproverUserId`, from the notification review fixes) asks the same rule since `6a203e826`; before, it took the latest approval of any round.
 - `ALWAYS_DELIVERED_TRIGGER_KEYS` also holds `workflow.reimbursement_payment_voided` and `workflow.reimbursement_payment_sla_breach`. The spec pins the whole list.
 - The hub list the assembly rewrote (paged, lazy) carries `payoutMethod` on its rows, so the row rule (`draftRowSubmitsFromItsPage`) holds on it unchanged.
 - The permission matrix (`docs/specs/permission-matrix.md` §5.6) has the payout routes, who may set someone else's account and who may see a full number.
@@ -108,5 +108,7 @@ Noticed and left alone:
 - An approver of the claim's current round who has lost every way to read the claim is refused the claim detail and the slip (their read gate comes first) and is still answered by the reveal endpoint, which asks for branch scope only. Spec §11.1 asks "can read the claim" of the payer alone. Needs a decision if the reveal should have the same gate.
 - The audit rows of a payment and of a slip opening carry the slip's attachment id (the slip lane's decision). An audit reader outside the slip group learns that id; no route serves the file to them.
 - Part B is unchanged: the payment form does not show the claim's account or start from its method, the export carries nothing of the account, and the printed form does not print it.
+
+The notification lane's review fixes (`claude/claim-notification-fixes-20261001` at `23da6998e`, built on this assembly at `6711ebf1c`) were merged after it at `7bbcbed77`. One conflict, in that lane's memory note; both texts kept.
 
 Verification of the merge is in its hand-off report (unit suites, the real PostgreSQL gate, the 17-step CI-equivalent run). Not run: Playwright e2e (the merged spec files type-check), a browser pass at 390 px, live HTTP.

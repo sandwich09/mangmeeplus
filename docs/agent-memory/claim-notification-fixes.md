@@ -35,7 +35,7 @@ Review round (independent review of `4bc531ce2`), one commit per finding:
 - Plain Thai: money as "1,234.50 บาท" in every claim notice (done where `decision` is translated, so old rule snapshots get it), the approval reminder title without "SLA", task titles without the English tag.
 - Safety: `closeSettledClaimTasks` refuses `supersede` without a claim; the release-time sweep cannot fail the template sync.
 
-Done by the assembly, not by this lane: the two new trigger keys are in `ALWAYS_DELIVERED_TRIGGER_KEYS` (`6711ebf1c`), and the claim-approver rule is unified with contracts (`a49449aea`). These were this lane's two integrator steps; both were done when the payout Phase 1 lane was merged into the assembly, 2026-10-01 (see `reimbursement-payout-p1-default-account.md`, "Merged into the payout assembly").
+Done by the assembly, not by this lane: the two new trigger keys are in `ALWAYS_DELIVERED_TRIGGER_KEYS` (`6711ebf1c`), and the claim-approver rule is unified with contracts (`a49449aea`). These were this lane's two integrator steps; both were done when the payout Phase 1 lane was merged into the assembly, 2026-10-01 (see `reimbursement-payout-p1-default-account.md`, "Merged into the payout assembly"). At the merge of this review round into the assembly, `claimApproverUserId` (the "Finance path" item above) was put on the same rule (`6a203e826`): it names the latest approver of the round the claim was last sent in, and nobody when that round had no approval. Before, it named the latest approval of any round.
 
 Open questions:
 
