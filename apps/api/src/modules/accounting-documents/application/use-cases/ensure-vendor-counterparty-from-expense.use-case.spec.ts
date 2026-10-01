@@ -335,6 +335,22 @@ describe('the rules that keep this from hurting anything else', () => {
       'the audit sanitizer only redacts token/password/body/content — an address it would carry straight through');
   });
 
+  // A capture read applies a document as `{ companyId, userId: 'system' }`. That id is no User row:
+  // as a USER actor the insert fails the FK and the record of an automatic vendor save is lost.
+  it('audits a save made by a capture read as a SYSTEM actor, and a person as the USER actor', async () => {
+    const capture = harness();
+    await capture.useCase.execute({ companyId: 'co-1', userId: 'system' }, vendor);
+    assert.equal(capture.audits[0].action, 'accounting.counterparty.create');
+    assert.equal(capture.audits[0].actorType, 'SYSTEM');
+    assert.equal(capture.audits[0].actorRefId, 'vendor-counterparty-auto-save');
+    assert.equal(capture.audits[0].actorUserId, undefined);
+
+    const person = harness();
+    await person.useCase.execute(ctx, vendor);
+    assert.equal(person.audits[0].actorUserId, 'u-1');
+    assert.equal(person.audits[0].actorType, undefined);
+  });
+
   it('§8/AC06: a registry failure is reported, never thrown at the expense', async () => {
     const repo = {
       findCounterpartyByVendorKey: async () => { throw new Error('deadlock detected'); },

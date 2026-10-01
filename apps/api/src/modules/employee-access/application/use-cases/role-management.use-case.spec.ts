@@ -7,6 +7,7 @@ import { ListRolesUseCase } from './list-roles.use-case';
 import { UpdateRoleUseCase } from './update-role.use-case';
 import { DisableRoleUseCase } from './disable-role.use-case';
 import { compileRole } from '../../domain/logic/capability.logic';
+import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 
 const COMPANY_ID = 'company-1';
 const REAL_PERMISSION = 'crm.customer.read';
@@ -304,6 +305,22 @@ describe('ListRolesUseCase assignableByCurrentUser', () => {
   it('omits the flag entirely without requester context (access matrix read)', async () => {
     const result = await new ListRolesUseCase(grantFixturePrisma()).execute(COMPANY_ID);
     assert.ok(result.every((role) => !('assignableByCurrentUser' in role)));
+  });
+
+  it('does not show a shop the Mangmee sales roles, and still offers them inside the platform company (RB-34)', async () => {
+    const fixture = [
+      { key: 'SALES', permissionKeys: ['crm.customer.read'] },
+      { key: 'MANGMEE_SALES_LEAD', permissionKeys: ['sales.console.read', 'sales.deal.approve'] },
+      { key: 'MANGMEE_SALES', permissionKeys: ['sales.console.read'] },
+    ];
+    const owner = { permissions: [], isOwner: true };
+    const listed = async (companyId: string, requester?: typeof owner) => Object.fromEntries(
+      (await new ListRolesUseCase(grantFixturePrisma(fixture)).execute(companyId, requester)).map((role) => [role.key, role.assignableByCurrentUser]));
+
+    assert.deepEqual(await listed(COMPANY_ID, owner), { SALES: true });
+    // The access matrix reads the same list without a requester.
+    assert.deepEqual(Object.keys(await listed(COMPANY_ID)), ['SALES']);
+    assert.deepEqual(await listed(PLATFORM_TENANT_ID, owner), { SALES: true, MANGMEE_SALES_LEAD: true, MANGMEE_SALES: true });
   });
 });
 

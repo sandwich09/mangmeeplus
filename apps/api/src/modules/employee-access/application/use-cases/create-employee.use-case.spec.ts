@@ -6,6 +6,7 @@ import { IssueEmployeeLineLinkTokenUseCase } from './issue-employee-line-link-to
 import { ListEmployeesUseCase } from './list-employees.use-case';
 import { GetEmployeeUseCase } from './get-employee.use-case';
 import { verifyPassword } from '../../../auth/domain/logic/password-credential.logic';
+import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 
 const KEY = Buffer.from('a'.repeat(64), 'hex');
 const COMPANY_ID = 'company-1';
@@ -314,6 +315,21 @@ describe('CreateEmployeeUseCase', () => {
       () => useCase.execute({ ...baseCommand, roleIds: ['role-sysadmin'] }),
       /cannot be granted/,
     );
+  });
+
+  it('refuses a shop owner who gives staff a Mangmee sales role, and leaves the platform company able to (RB-34)', async () => {
+    // The employee would land in a sales console that refuses everything and lose their own shop.
+    const roles = [{ id: 'role-mangmee-sales', key: 'MANGMEE_SALES', permissions: [{ permission: { key: 'sales.console.read' } }] }];
+    const asOwner = { ...baseCommand, roleIds: ['role-mangmee-sales'], requesterRoles: ['OWNER'] };
+
+    const shop = makeUseCase({ roles });
+    await assert.rejects(() => shop.useCase.execute(asOwner), /platform company/);
+    assert.equal(shop.state.membershipRoles.length, 0);
+    assert.equal(shop.state.auditLogs.at(-1).result, 'DENIED');
+
+    const platform = makeUseCase({ roles });
+    await platform.useCase.execute({ ...asOwner, companyId: PLATFORM_TENANT_ID });
+    assert.equal(platform.state.membershipRoles[0].roleId, 'role-mangmee-sales');
   });
 
   it('rejects granting permissions the requester does not hold', async () => {

@@ -6,8 +6,11 @@
  * principle be named the same thing inside a customer company, and that must not become platform
  * authority (the same reasoning as PLATFORM_SEAT_EXEMPT_ROLE in plan-term-limit.ts).
  */
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException, CanActivate, ConflictException, ExecutionContext, ForbiddenException, Injectable, NotFoundException,
+} from '@nestjs/common';
 import type { SalesErrorCode } from '@watchdog-bms/contracts';
+import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 
 /**
@@ -49,4 +52,28 @@ export function canSeeAllDeals(ctx: RequestContext): boolean {
 
 export function isSystemAdmin(ctx: RequestContext): boolean {
   return ctx.roles.includes(SYSTEM_ADMIN_ROLE);
+}
+
+/**
+ * RB-36: suspending an agent keeps the membership and the role (the lead still reads that agent's
+ * deals) and only revokes the sessions of that moment, so a fresh login walked straight back in.
+ * This is the one place the status refuses the console: on every sales controller, read per
+ * request, so reactivating restores access with nothing to re-grant.
+ *
+ * A caller with no agent profile (the Owner, a lead created outside the console) passes.
+ * SYSTEM_ADMIN is exempt outright: the console that lifts a suspension must not be lockable by one.
+ */
+@Injectable()
+export class SalesAgentActiveGuard implements CanActivate {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const ctx = context.switchToHttp().getRequest<{ context: RequestContext }>().context;
+    if (isSystemAdmin(ctx)) return true;
+    const profile = await this.prisma.client.salesAgentProfile.findUnique({
+      where: { userId: ctx.userId }, select: { status: true },
+    });
+    if (profile && profile.status !== 'ACTIVE') throw salesForbidden('SALES_AGENT_SUSPENDED', 'บัญชีทีมขายถูกระงับ');
+    return true;
+  }
 }

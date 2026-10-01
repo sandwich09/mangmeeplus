@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
+import { PLATFORM_TENANT_ID } from '../../sales-console/application/sales-context';
+import { PLATFORM_AUDIT_ACTION_PREFIXES, TENANT_BILLING_AUDIT_ACTION_PREFIXES } from '../domain/models/audit-action';
 import type { AuditActorType, AuditLogEntry, AuditLogRecord, AuditResult, AuditRiskLevel } from '../domain/models/audit-log.model';
 import { normalizeAuditActor } from '../domain/logic/audit-actor.logic';
 import type { AuditTransactionClient, IAuditRepository } from '../domain/ports/audit-repository.port';
@@ -8,6 +10,41 @@ import type { AuditTransactionClient, IAuditRepository } from '../domain/ports/a
 function isMissingTypedActorColumn(error: unknown): boolean {
   const prismaError = error as { code?: unknown; message?: unknown };
   return prismaError.code === 'P2022' && /actorType|actorRefId/.test(String(prismaError.message));
+}
+
+/**
+ * RB-38 — a company's audit list is its OWN trail. Platform code also writes rows carrying the
+ * company's id (a flag review of its sales credit, a referral repair, a refund billing observed),
+ * and the list used to hand those, with platform staff ids, to the shop's OWNER and auditor.
+ *
+ * Three rules, each written so a row with no user (`actorUserId` NULL) is decided by an explicit
+ * branch and never by how SQL treats NULL:
+ *  1. never a platform-side action, whoever did it;
+ *  2. of `billing.`, only what one of the company's own people did;
+ *  3. never a person who acts from the platform company and holds no membership here. Membership
+ *     of any status counts, and an account with no membership anywhere stays visible: an account
+ *     merge moves the membership to the surviving account and leaves the old id on its audit rows.
+ *
+ * Rows the system wrote about the company's own work (a scheduled job, an automatic approval) pass
+ * all three. The platform company itself is not filtered.
+ *
+ * ponytail: `startsWith` is a SQL LIKE, so `_` in a prefix matches any one character. No action
+ * name differs from another by one character in that position; escape it if one ever does.
+ */
+function ownTrailOnly(companyId: string) {
+  const startsWith = (prefix: string) => ({ action: { startsWith: prefix } });
+  return {
+    AND: [
+      { NOT: { OR: PLATFORM_AUDIT_ACTION_PREFIXES.map(startsWith) } },
+      { OR: [{ NOT: startsWith('billing.') }, { actorUserId: { not: null }, OR: TENANT_BILLING_AUDIT_ACTION_PREFIXES.map(startsWith) }] },
+      {
+        OR: [
+          { actorUserId: null },
+          { actor: { is: { OR: [{ memberships: { some: { companyId } } }, { memberships: { none: { companyId: PLATFORM_TENANT_ID } } }] } } },
+        ],
+      },
+    ],
+  };
 }
 
 @Injectable()
@@ -75,6 +112,7 @@ export class PrismaAuditRepository implements IAuditRepository {
         ? { OR: categoryPrefixes.map((prefix) => ({ action: { startsWith: prefix } })) }
         : {}),
       ...((from ?? to) ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+      ...(companyId === PLATFORM_TENANT_ID ? {} : ownTrailOnly(companyId)),
     };
 
     const [rows, total] = await Promise.all([

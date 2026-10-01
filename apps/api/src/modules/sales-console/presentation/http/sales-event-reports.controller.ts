@@ -5,16 +5,17 @@
  * owner's file. Same guard shape as `reports/summary`: `sales.report.read` (a lead and SYSTEM_ADMIN;
  * never a plain เซลล์, spec §9) plus a platform-tenant membership.
  */
-import { Controller, Get, Header, Query, Req } from '@nestjs/common';
+import { Controller, Get, Header, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 import type { SalesEventReport } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { SalesEventReportsService } from '../../application/sales-event-reports.service';
-import { assertPlatformTenant } from '../../application/sales-context';
+import { assertPlatformTenant, SalesAgentActiveGuard } from '../../application/sales-context';
 
 @Controller('sales/events/report')
+@UseGuards(SalesAgentActiveGuard)
 export class SalesEventReportsController {
   constructor(private readonly reports: SalesEventReportsService) {}
 
