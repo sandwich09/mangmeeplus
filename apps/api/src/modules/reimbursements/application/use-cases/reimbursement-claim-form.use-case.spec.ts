@@ -2,6 +2,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { PreviewReimbursementClaimFormUseCase } from './reimbursement-claim-form.use-case';
+import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
+import { claimSignatureAckHash } from '../../domain/logic/reimbursement.logic';
+import { sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
+import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
+import {
+  readClaimPayout, readClaimPayoutSecret, readMemberPayoutAccount, readMemberPayoutSecret, readPaymentPayoutDestinations,
+} from '../../infrastructure/reimbursement-payout';
 
 // Lane D: snapshot building + guards. The rendered bytes are asserted in
 // claim-form.logic.spec.ts; here we care about who may print, when, and that
@@ -74,8 +81,18 @@ function fakeStorage(bytes: Buffer = PNG_BYTES) {
   return { getObject: async () => ({ bytes, mimeType: 'image/png' }) } as any;
 }
 
-function previewUseCase(repo: any, storage: any = fakeStorage()) {
-  return new PreviewReimbursementClaimFormUseCase(repo, storage);
+/**
+ * A claim that carries no receiving account prints without an audit row and without the encryption
+ * key (payout spec §15): every test below that does not hand these two in proves it, by not failing.
+ */
+const NO_AUDIT = {
+  log: async () => { throw new Error('this print must not write an audit row'); },
+  logOrThrow: async () => { throw new Error('this print must not write an audit row'); },
+} as any;
+const NO_KEY = { get credentialEncryptionKey(): Buffer { throw new Error('this print must not read the encryption key'); } } as any;
+
+function previewUseCase(repo: any, storage: any = fakeStorage(), audit: any = NO_AUDIT, config: any = NO_KEY) {
+  return new PreviewReimbursementClaimFormUseCase(repo, storage, audit, config);
 }
 
 function svgOf(result: { svgDataUrl: string }): string {
@@ -84,6 +101,22 @@ function svgOf(result: { svgDataUrl: string }): string {
 }
 
 describe('PreviewReimbursementClaimFormUseCase', () => {
+  // Payout spec §15, §17.1: a claim sent before claims carried a receiving account prints as it
+  // always did, on either layout. The digests are of the answer BEFORE the payout line was added
+  // (committed on their own, against the untouched use case), so they pin the old print.
+  it('answers a legacy claim with the same bytes as before the payout line, on both layouts', async () => {
+    const answer = async (row: any) => {
+      const result = await previewUseCase(fakeRepo(row).repo).execute(ctx(), 'rb-1');
+      // The endpoint's answer keeps its shape: two renderings of the form and the checksum of the first.
+      assert.deepEqual(Object.keys(result), ['svgDataUrl', 'pageSvgDataUrls', 'checksumSha256']);
+      assert.equal(result.checksumSha256, createHash('sha256').update(svgOf(result)).digest('hex'));
+      return [result.checksumSha256, createHash('sha256').update(result.pageSvgDataUrls!.join('\n')).digest('hex')];
+    };
+    assert.deepEqual(await answer(request()), ['02422d0511230c547357f416f85bdf4c36336544b56d2b158f4a9c55139c0d3c', '619a3e83bfae529daecaef1c831f432b7be5098aded35d6cf067af19155c1112']);
+    // Signed in the payer block: the four-block form, with both stored signatures drawn.
+    assert.deepEqual(await answer(request({ claimSignatures: [signatureRow('REQUESTER', 'staff-1'), signatureRow('PAYER', 'fin-1')] })), ['63993c6c49e5c0aeed166eeb3959e06a42f973c5b652a14a897fc54a7b3bda0d', '09341ab7212936d7cfea723e83d5041a7e426ebbe6b4afa24fcbb53f59fe1ba8']);
+  });
+
   // The payment line and the payment-evidence box are read from the same recorded payment the
   // claim page shows, so paper and screen cannot disagree about the method, the reference or the slip.
   it('ticks หลักฐานการชำระเงิน for a slip on the recorded payment, and not for one left on a voided payment', async () => {
@@ -360,5 +393,360 @@ describe('PreviewReimbursementClaimFormUseCase', () => {
       reason: 'storage_unreadable',
     });
     assert.equal(JSON.stringify(error.getResponse()).includes('Invalid version id'), false);
+  });
+});
+
+// ---- Payout spec §17.1, AC36 and the print part of AC17 ----
+//
+// The printed form is the second and last way a claim's full account number leaves the system. The
+// API decides for whoever asked for THIS print, with the function the "แสดงเลขบัญชี" command uses.
+describe('the receiving account on the printed claim form', () => {
+  const key = Buffer.alloc(32, 7);
+  /** The number as the requester typed it, and as it is stored and printed. */
+  const TYPED = '004-5-67123-4';
+  const NUMBER = '0045671234';
+  const sentAt = new Date('2026-07-20T00:00:00.000Z');
+  const decidedAt = new Date('2026-07-21T00:00:00.000Z');
+  const count = (text: string, needle: string) => text.split(needle).length - 1;
+  /** Every image of an answer, decoded: the one tall image first, then each A4 page. */
+  const imagesOf = (result: { svgDataUrl: string; pageSvgDataUrls?: string[] }) =>
+    [result.svgDataUrl, ...(result.pageSvgDataUrls ?? [])].map((url) => svgOf({ svgDataUrl: url }));
+
+  type Account = { payoutKind: 'BANK_ACCOUNT' | 'PROMPTPAY_PHONE'; bankName?: string; accountName: string; accountNumber: string };
+  const KBANK: Account = { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: TYPED };
+
+  /**
+   * One claim paid by transfer, approved and attested by mgr-1 and not paid yet, over the real payout
+   * readers and an in-memory copy of the payout tables. No reader of a member's default account is
+   * given to the print: reaching for one fails the test.
+   */
+  function world(overrides: Record<string, unknown> = {}, options: { account?: Account; attested?: boolean; slips?: Record<string, { attachmentId: string; attachedAt: Date }[]> } = {}) {
+    const tables = fakePayoutTables();
+    const sealed = sealPayoutDestination(options.account ?? KBANK, key)!;
+    tables.destinations.push({
+      id: 'destination-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', version: 1, ...sealed,
+      source: 'DEFAULT_ACCOUNT', createdByUserId: 'staff-1', frozenAt: sentAt,
+      ...(options.attested !== false && { verifiedByUserId: 'mgr-1', verifiedAt: decidedAt, verifiedVia: 'APPROVAL', approvalStepId: 'st-1' }),
+    });
+    const claim = request({
+      status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', paymentTotalAmount: '0.0000', outstandingAmount: '750.0000',
+      submittedAt: sentAt, financeReviewStatus: 'NOT_REQUIRED', financeReviewedByUserId: undefined, financeReviewedAt: undefined,
+      approvalSteps: [{ id: 'st-1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt, assignedAt: sentAt }],
+      payments: [], claimSignatures: [],
+      payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: sealed.fingerprint,
+      ...overrides,
+    });
+    const { repo, calls } = fakeRepo(claim, options.slips);
+    const reads = { payout: 0, secret: 0, paidInto: [] as number[][] };
+    Object.assign(repo, {
+      findRequestById: async (companyId: string, id: string) => (companyId === claim.companyId && id === claim.id ? claim : null),
+      isUserRelatedToRequest: async (_companyId: string, _requestId: string, userId: string) => userId === 'related-1',
+      findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+      findPolicy: async () => null,
+      findClaimPayout: (row: any) => { reads.payout += 1; return readClaimPayout(tables.client, row); },
+      findClaimPayoutSecret: (companyId: string, requestId: string, version: number) => { reads.secret += 1; return readClaimPayoutSecret(tables.client, companyId, requestId, version); },
+      listPaymentPayoutDestinations: (companyId: string, requestId: string, versions: number[]) => {
+        reads.paidInto.push([...versions]);
+        return readPaymentPayoutDestinations(tables.client, companyId, requestId, versions);
+      },
+    });
+    const audits: any[] = [];
+    /** What happened, in order: the audit write, then the key read that precedes the decrypt. */
+    const events: string[] = [];
+    const audit = { log: async (entry: any) => { audits.push(entry); }, logOrThrow: async (entry: any) => { events.push('audit'); audits.push(entry); } } as any;
+    const config = { get credentialEncryptionKey() { events.push('key'); return key; } } as any;
+    return {
+      claim, tables, repo, calls, reads, audits, events, sealed,
+      print: (viewer: any) => new PreviewReimbursementClaimFormUseCase(repo, fakeStorage(), audit, config).execute(viewer, 'rb-1'),
+      /** The "แสดงเลขบัญชี" command over the same claim: whether it answers, and the rows it writes on a trail of its own. */
+      reveal: async (viewer: any) => {
+        const rows: any[] = [];
+        const trail = { log: async (entry: any) => { rows.push(entry); }, logOrThrow: async (entry: any) => { rows.push(entry); } } as any;
+        const answered = await new RevealClaimPayoutUseCase(repo, trail, { credentialEncryptionKey: key } as any).execute(viewer, 'rb-1').then(() => true, () => false);
+        return { answered, rows };
+      },
+    };
+  }
+
+  const viewer = (userId: string, permissions: string[], overrides: Partial<any> = {}) => ctx({ userId, authSubject: userId, permissions, ...overrides });
+  const requester = viewer('staff-1', ['reimbursement.read_own', 'reimbursement.create']);
+  const approver = viewer('mgr-1', ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject']);
+  const payer = viewer('payer-1', ['reimbursement.read', 'reimbursement.payment.record']);
+  const inGroup: Array<[string, any]> = [['REQUESTER', requester], ['APPROVER', approver], ['PAYER', payer]];
+  const financeReviewer = viewer('acct-1', ['reimbursement.read', 'reimbursement.finance_review']);
+  const auditor = viewer('auditor-1', ['reimbursement.read', 'reimbursement.export']);
+  const outsideGroup: Array<[string, any]> = [
+    ['finance reviewer without the payment right', financeReviewer],
+    ['auditor (read only)', auditor],
+    ['another related reader', viewer('related-1', ['reimbursement.read_related'])],
+    ['holder of the approval right who was never sent this claim', viewer('mgr-2', ['reimbursement.read', 'reimbursement.approve'], { roles: ['MANAGER'] })],
+  ];
+  const FULL = 'รับเงินคืนทาง: โอนเข้าบัญชี ธนาคารกสิกรไทย ชื่อบัญชี นาย สมชาย ใจดี เลขบัญชี 0045671234';
+  const LAST4 = 'รับเงินคืนทาง: โอนเข้าบัญชี ธนาคารกสิกรไทย ชื่อบัญชี นาย สมชาย ใจดี เลขบัญชีลงท้าย 1234';
+
+  it('prints the full number for the requester, the claim approver and a payment recorder, with one audit row each', async () => {
+    for (const [group, who] of inGroup) {
+      const { print, reveal, audits, events, reads } = world();
+      for (const image of imagesOf(await print(who))) {
+        assert.equal(count(image, `>${FULL}<`), 1, group);
+        assert.equal(count(image, NUMBER), 1, `${group}: on that line and nowhere else`);
+        assert.doesNotMatch(image, /ลงท้าย/, group);
+      }
+      // One row, the kind a reveal writes, saying the channel was the printed form. No number in it.
+      assert.deepEqual(audits, [{
+        companyId: 'co-1', actorUserId: who.userId, action: 'reimbursement.payout.reveal',
+        targetType: 'reimbursement_request', targetId: 'rb-1', requestId: 'req-1', riskLevel: 'HIGH', result: 'SUCCESS',
+        metadataJson: { group, channel: 'CLAIM_FORM_PRINT', version: 1, payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountLast4: '1234' },
+      }], group);
+      assert.ok(!JSON.stringify(audits).includes(NUMBER) && !JSON.stringify(audits).includes(TYPED), group);
+      // Written before the key is read to decrypt, as the reveal does, and the secret is read once.
+      assert.deepEqual([events, reads.secret], [['audit', 'key'], 1], group);
+      // The command answers the same person, and its own row is this one without the channel.
+      const command = await reveal(who);
+      const { channel: _channel, ...asRevealed } = audits[0].metadataJson;
+      assert.deepEqual([command.answered, command.rows], [true, [{ ...audits[0], metadataJson: asRevealed }]], group);
+    }
+  });
+
+  it('prints the last 4 digits for anyone else who may open the claim: not refused, no audit row, nothing decrypted', async () => {
+    for (const [name, who] of outsideGroup) {
+      const { print, reveal, audits, events, reads } = world();
+      for (const image of imagesOf(await print(who))) {
+        assert.equal(count(image, `>${LAST4}<`), 1, name);
+        assert.ok(!image.includes(NUMBER), name);
+      }
+      assert.deepEqual([audits, events, reads.secret], [[], [], 0], name);
+      assert.equal((await reveal(who)).answered, false, `${name}: the reveal command refuses the same person`);
+    }
+    // Someone who may not open the claim is refused the print as before, and leaves no row either.
+    const { print, audits } = world();
+    await assert.rejects(print(viewer('stranger-1', ['reimbursement.read_related'])), /Cannot read this reimbursement/);
+    await assert.rejects(print(viewer('payer-2', ['reimbursement.read', 'reimbursement.payment.record'], { companyId: 'co-2' })), /not found/i);
+    assert.deepEqual(audits, []);
+  });
+
+  it('gives two readers with different rights each their own print of one claim, and keeps nothing between them', async () => {
+    const { print, audits, claim } = world();
+    const before = structuredClone(claim);
+    const ackHash = claimSignatureAckHash(claim);
+    const first = await print(requester);
+    const second = await print(auditor);
+    const third = await print(requester);
+
+    // Who asks and which claim: the use case takes nothing else, so nothing a caller sends picks the variant.
+    assert.equal(PreviewReimbursementClaimFormUseCase.prototype.execute.length, 2);
+    assert.ok(imagesOf(first).every((image) => image.includes(NUMBER)));
+    assert.ok(imagesOf(second).every((image) => !image.includes(NUMBER)), 'a print for one reader is never handed to another');
+    assert.deepEqual(third, first, 'the same reader gets the same print again');
+    assert.deepEqual(audits.map((row) => [row.actorUserId, row.metadataJson.channel]), [['staff-1', 'CLAIM_FORM_PRINT'], ['staff-1', 'CLAIM_FORM_PRINT']], 'a row for every full-number print, none for the other');
+    // The two variants differ in how the number is shown and in nothing else.
+    assert.deepEqual(imagesOf(first).map((image) => image.replace('เลขบัญชี 0045671234', 'เลขบัญชีลงท้าย 1234')), imagesOf(second));
+    assert.notEqual(first.checksumSha256, second.checksumSha256);
+    // What signers acknowledge is made from the claim's data, which no print changes: one value for both variants.
+    assert.deepEqual(claim, before);
+    assert.equal(claimSignatureAckHash(claim), ackHash);
+  });
+
+  // AC17: serialise the whole answer and look for the number as typed and as stored.
+  it('carries the number only inside the rendered image of the full-number print, and never grouped', async () => {
+    const { print } = world();
+    const full = await print(payer);
+    const masked = await print(financeReviewer);
+    for (const [name, result] of [['full', full], ['last 4', masked]] as const) {
+      assert.deepEqual(Object.keys(result), ['svgDataUrl', 'pageSvgDataUrls', 'checksumSha256'], `${name}: no field was added to the answer`);
+      const serialised = JSON.stringify(result);
+      assert.ok(!serialised.includes(NUMBER) && !serialised.includes(TYPED), `${name}: not in the serialised answer`);
+      // What is not an image is the checksum of one, and nothing else.
+      assert.match(result.checksumSha256, /^[0-9a-f]{64}$/, name);
+      assert.doesNotMatch(serialised, /accountNumber|fingerprint/i, `${name}: no field is even named after the number`);
+      assert.ok(imagesOf(result).every((image) => !image.includes(TYPED) && !/accountNumber|fingerprint/i.test(image)), `${name}: never as typed, never as a field`);
+    }
+    assert.deepEqual(imagesOf(full).map((image) => count(image, NUMBER)), imagesOf(full).map(() => 1));
+    assert.deepEqual(imagesOf(masked).map((image) => count(image, NUMBER)), imagesOf(masked).map(() => 0));
+    assert.ok(imagesOf(masked).every((image) => count(image, 'ลงท้าย 1234') === 1));
+  });
+
+  it('follows the same rule for a PromptPay number', async () => {
+    const { print, audits } = world({}, { account: { payoutKind: 'PROMPTPAY_PHONE', accountName: 'นาย สมชาย ใจดี', accountNumber: '081-000-5678' } });
+    assert.match(svgOf(await print(requester)), />รับเงินคืนทาง: พร้อมเพย์เบอร์ 0810005678 ชื่อบัญชี นาย สมชาย ใจดี</);
+    assert.match(svgOf(await print(auditor)), />รับเงินคืนทาง: พร้อมเพย์เบอร์ลงท้าย 5678 ชื่อบัญชี นาย สมชาย ใจดี</);
+    assert.deepEqual(audits.map((row) => row.metadataJson), [{ group: 'REQUESTER', channel: 'CLAIM_FORM_PRINT', version: 1, payoutKind: 'PROMPTPAY_PHONE', bankName: null, accountLast4: '5678' }]);
+  });
+
+  it('answers the approver a pending claim waits on, who has to check the account before approving', async () => {
+    const pending = {
+      status: 'PENDING_APPROVAL', currentApprovalStepId: 'st-1',
+      approvalSteps: [{ id: 'st-1', sequenceNo: 1, approverRoleSnapshot: 'MANAGER', assignedApproverUserIds: ['mgr-1'], status: 'PENDING', assignedAt: sentAt }],
+    };
+    const { print, audits } = world(pending, { attested: false });
+    const svg = svgOf(await print(approver));
+    assert.equal(count(svg, `>${FULL}<`), 1);
+    assert.doesNotMatch(svg, /ผู้ตรวจบัญชี/, 'nobody has attested the account yet');
+    assert.equal((svg.match(/\(\s+\.{20}\s+\)/g) ?? []).length, 1, 'and the approver block is still blank');
+    assert.deepEqual(audits.map((row) => row.metadataJson.group), ['APPROVER']);
+    // Someone else with the approval right, whom this step does not wait on, gets the last 4 digits.
+    const other = world(pending, { attested: false });
+    assert.equal(count(svgOf(await other.print(viewer('mgr-2', ['reimbursement.read', 'reimbursement.approve'], { roles: ['SALES'] }))), `>${LAST4}<`), 1);
+    assert.deepEqual(other.audits, []);
+  });
+
+  it('names whoever attested this account version, in the one name lookup', async () => {
+    const attested = world();
+    assert.match(svgOf(await attested.print(auditor)), />ผู้ตรวจบัญชี มานี ผู้จัดการ วันที่ 21 ก\.ค\. 2569</);
+    assert.equal(attested.calls.nameLookups.length, 1);
+    // The payer checked it because nobody but the requester had (spec §10.2): the row names the payer.
+    const byPayer = world();
+    Object.assign(byPayer.tables.destinations[0]!, { verifiedByUserId: 'fin-1', verifiedAt: new Date('2026-07-23T00:00:00.000Z'), verifiedVia: 'PAYMENT', approvalStepId: null });
+    assert.match(svgOf(await byPayer.print(auditor)), />ผู้ตรวจบัญชี สุดา การเงิน วันที่ 23 ก\.ค\. 2569</);
+    assert.doesNotMatch(svgOf(await world({}, { attested: false }).print(auditor)), /ผู้ตรวจบัญชี/);
+  });
+
+  it('prints the claim own frozen account, never the default account the requester has now', async () => {
+    const { print, tables, repo } = world();
+    // The requester changed their default after sending the claim.
+    const now = sealPayoutDestination({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'สมชาย บัญชีใหม่', accountNumber: '4090001112' }, key)!;
+    tables.accounts.push({ id: 'account-1', companyId: 'co-1', userId: 'staff-1', payoutMethod: 'BANK_TRANSFER', ...now, version: 4, updatedByUserId: 'staff-1', updatedAt: decidedAt });
+    assert.deepEqual([typeof repo.findMemberPayoutAccount, typeof repo.findMemberPayoutSecret], ['undefined', 'undefined'], 'the print has no reader of a default account');
+    for (const who of [requester, payer, auditor]) {
+      for (const image of imagesOf(await print(who))) {
+        assert.match(image, /โอนเข้าบัญชี ธนาคารกสิกรไทย ชื่อบัญชี นาย สมชาย ใจดี/);
+        assert.doesNotMatch(image, /ไทยพาณิชย์|บัญชีใหม่|4090001112|1112/);
+      }
+    }
+  });
+
+  describe('the payment line', () => {
+    const paidAt = new Date('2026-07-23T00:00:00.000Z');
+    const transfer = { id: 'pay-1', status: 'RECORDED', paidByUserId: 'fin-1', paidAt, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-9', payoutDestinationVersion: 1, payoutConfirmedAt: paidAt };
+    const paid = (payment: Record<string, unknown>) => ({ status: 'PAID', paymentStatus: 'PAID', payments: [{ id: 'pay-void', status: 'VOIDED', paidByUserId: 'ghost-1', paidAt: new Date('2026-07-24T00:00:00.000Z'), payoutDestinationVersion: 1 }, payment] });
+
+    it('says which account a confirmed transfer went into with the last 4 digits, for every reader', async () => {
+      for (const who of [requester, approver, payer, financeReviewer, auditor]) {
+        const { print, reads } = world(paid(transfer), { slips: { 'pay-1': [{ attachmentId: 'att-slip', attachedAt: paidAt }] } });
+        for (const image of imagesOf(await print(who))) {
+          assert.match(image, /การจ่ายเงินคืน: จ่ายเมื่อ 23 ก\.ค\. 2569 วิธี โอนเงิน เข้าบัญชีลงท้าย 1234 เลขอ้างอิง TXN-9 บันทึกโดย สุดา การเงิน/, who.userId);
+          assert.doesNotMatch(image.slice(image.indexOf('การจ่ายเงินคืน:')), new RegExp(NUMBER), 'the full number is never on the payment line');
+          assert.equal(count(image, '<path d="M'), 2, 'the receipt and, for the slip, หลักฐานการชำระเงิน');
+        }
+        // Asked of the payment the form prints and of the version that payment stored, never of the voided one.
+        assert.deepEqual(reads.paidInto, [[1]]);
+      }
+    });
+
+    it('reads the version the payment stored, also when the claim has since moved to another account', async () => {
+      const moved = sealPayoutDestination({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกรุงเทพ', accountName: 'นาย สมชาย ใจดี', accountNumber: '9998885555' }, key)!;
+      const { print, tables } = world({ ...paid(transfer), payoutDestinationVersion: 2, payoutFingerprint: moved.fingerprint });
+      tables.destinations.push({ id: 'destination-2', companyId: 'co-1', reimbursementRequestId: 'rb-1', version: 2, ...moved, source: 'REQUESTER', createdByUserId: 'staff-1', frozenAt: paidAt });
+      const svg = svgOf(await print(auditor));
+      assert.match(svg, />รับเงินคืนทาง: โอนเข้าบัญชี ธนาคารกรุงเทพ ชื่อบัญชี นาย สมชาย ใจดี เลขบัญชีลงท้าย 5555</);
+      assert.match(svg, /วิธี โอนเงิน เข้าบัญชีลงท้าย 1234 เลขอ้างอิง TXN-9/);
+    });
+
+    it('says nothing of an account when none was confirmed: another method, or no payment yet', async () => {
+      const cashPaid = world(paid({ ...transfer, paymentMethod: 'CASH', paymentReference: undefined, payoutDestinationVersion: undefined, payoutConfirmedAt: undefined, methodMismatchReason: 'ผู้เบิกขอรับเป็นเงินสดแทน' }));
+      const svg = svgOf(await cashPaid.print(auditor));
+      assert.match(svg, /การจ่ายเงินคืน: จ่ายเมื่อ 23 ก\.ค\. 2569 วิธี เงินสด เลขอ้างอิง - บันทึกโดย สุดา การเงิน/);
+      assert.doesNotMatch(svg, /ผู้เบิกขอรับเป็นเงินสดแทน/, 'the payer reason is not a fact of the form');
+      assert.deepEqual(cashPaid.reads.paidInto, []);
+      assert.equal(count(svg, '<path d="M'), 1, 'no slip: the payment evidence box stays empty');
+
+      const unpaid = world();
+      assert.match(svgOf(await unpaid.print(auditor)), /การจ่ายเงินคืน: ยังไม่จ่าย/);
+      assert.deepEqual(unpaid.reads.paidInto, []);
+    });
+  });
+
+  describe('claims that have no account to print', () => {
+    it('prints รับเป็นเงินสด for a cash claim, to everyone alike, and never decrypts or writes a row', async () => {
+      for (const who of [requester, approver, payer, auditor]) {
+        const { print, audits, events, reads, tables } = world({ payoutMethod: 'CASH', payoutDestinationVersion: undefined, payoutFingerprint: 'cash' });
+        tables.destinations.splice(0);
+        for (const image of imagesOf(await print(who))) {
+          assert.equal(count(image, '>รับเงินคืนทาง: รับเป็นเงินสด<'), 1);
+          assert.doesNotMatch(image, /ผู้ตรวจบัญชี|เลขบัญชี|ลงท้าย/);
+        }
+        assert.deepEqual([audits, events, reads.secret], [[], [], 0], who.userId);
+      }
+    });
+
+    // Spec §15. The reveal command answers a legacy claim's payer with the requester's default account
+    // as it is now; the printed form never does.
+    it('prints a legacy claim as it always did, also for its payer and also when its payment kept a copy of the default', async () => {
+      const paidAt = new Date('2026-07-23T00:00:00.000Z');
+      const legacy = { payoutMethod: undefined, payoutDestinationVersion: undefined, payoutFingerprint: undefined };
+      for (const state of [
+        { status: 'READY_FOR_PAYMENT' },
+        { status: 'PAID', paymentStatus: 'PAID', payments: [{ id: 'pay-1', status: 'RECORDED', paidByUserId: 'fin-1', paidAt, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-9', payoutDestinationVersion: 1, payoutConfirmedAt: paidAt }] },
+      ]) {
+        for (const who of [requester, approver, payer]) {
+          const w = world({ ...legacy, ...state });
+          // The claim's own table holds only the copy a payment of the default made (§15), and the requester has a default.
+          Object.assign(w.tables.destinations[0]!, { source: 'LEGACY_PAYMENT', verifiedByUserId: 'fin-1', verifiedVia: 'PAYMENT' });
+          w.tables.accounts.push({ id: 'account-1', companyId: 'co-1', userId: 'staff-1', payoutMethod: 'BANK_TRANSFER', ...w.sealed, version: 4, updatedByUserId: 'staff-1', updatedAt: decidedAt });
+          const defaultReads: string[] = [];
+          Object.assign(w.repo, {
+            findMemberPayoutAccount: (companyId: string, userId: string) => { defaultReads.push('account'); return readMemberPayoutAccount(w.tables.client, companyId, userId); },
+            findMemberPayoutSecret: (companyId: string, userId: string) => { defaultReads.push('secret'); return readMemberPayoutSecret(w.tables.client, companyId, userId); },
+          });
+          const result = await w.print(who);
+          for (const image of imagesOf(result)) {
+            assert.doesNotMatch(image, /รับเงินคืนทาง|ผู้ตรวจบัญชี|ลงท้าย|กสิกรไทย/, who.userId);
+            assert.ok(!image.includes(NUMBER), who.userId);
+          }
+          assert.deepEqual([w.audits, w.events, w.reads, defaultReads], [[], [], { payout: 0, secret: 0, paidInto: [] }, []], who.userId);
+          // Exactly the bytes the same claim prints when nothing about payouts exists around it.
+          const plain = await previewUseCase(fakeRepo(w.claim).repo).execute(who, 'rb-1');
+          assert.deepEqual(result, plain, who.userId);
+          // The command would have answered this claim's payer while it can still be paid: the print does not.
+          if (who === payer && state.status === 'READY_FOR_PAYMENT') {
+            assert.equal((await w.reveal(who)).answered, true);
+            assert.deepEqual(defaultReads, ['account', 'secret']);
+          }
+        }
+      }
+    });
+
+    it('reprints the four-block form without the account, a row or a decrypt, even for a claim that carries one', async () => {
+      const signedByPayer = { claimSignatures: [signatureRow('REQUESTER', 'staff-1'), signatureRow('PAYER', 'fin-1')] };
+      const { print, audits, events, reads, claim } = world(signedByPayer);
+      const result = await print(requester);
+      assert.equal((svgOf(result).match(/<line x1="\d+" y1="\d+" x2="\d+" y2="\d+" stroke="#222"/g) ?? []).length, 4);
+      assert.ok(imagesOf(result).every((image) => !/รับเงินคืนทาง|ลงท้าย/.test(image) && !image.includes(NUMBER)));
+      assert.deepEqual([audits, events, reads], [[], [], { payout: 0, secret: 0, paidInto: [] }]);
+      const withoutPayout = { ...claim, payoutMethod: undefined, payoutDestinationVersion: undefined, payoutFingerprint: undefined };
+      assert.deepEqual(result, await previewUseCase(fakeRepo(withoutPayout).repo).execute(requester, 'rb-1'));
+    });
+  });
+
+  it('prints nothing when the audit row cannot be written, and reads no key', async () => {
+    const { repo, events } = world();
+    const config = { get credentialEncryptionKey() { events.push('key'); return key; } } as any;
+    const failing = { log: async () => undefined, logOrThrow: async () => { throw new Error('audit store down'); } } as any;
+    await assert.rejects(new PreviewReimbursementClaimFormUseCase(repo, fakeStorage(), failing, config).execute(requester, 'rb-1'), /audit store down/);
+    assert.deepEqual(events, []);
+    // Someone outside the group needs no row, so the same outage does not stop their print.
+    const masked = await new PreviewReimbursementClaimFormUseCase(repo, fakeStorage(), failing, config).execute(auditor, 'rb-1');
+    assert.equal(count(svgOf(masked), `>${LAST4}<`), 1);
+  });
+
+  it('refuses a draft that kept its document number, whoever asks, and writes no row', async () => {
+    // Taken back to a draft after it was sent: the number stays with the claim, the frozen marker does not.
+    const reopened = { status: 'DRAFT', submittedAt: undefined, payoutFingerprint: undefined, approvalSteps: [] };
+    for (const who of [requester, payer]) {
+      const { print, audits, events, reads } = world(reopened);
+      await assert.rejects(print(who), /claim_form_requires_submitted/);
+      assert.deepEqual([audits, events, reads], [[], [], { payout: 0, secret: 0, paidInto: [] }]);
+    }
+  });
+
+  it('writes no row for a print that fails before it is rendered', async () => {
+    // A stored signature that cannot be read fails the print (422) for everyone, the requester included.
+    const { repo, audits, events } = world({ claimSignatures: [signatureRow('REQUESTER', 'staff-1')] });
+    const audit = { log: async (entry: any) => { audits.push(entry); }, logOrThrow: async (entry: any) => { audits.push(entry); } } as any;
+    const config = { get credentialEncryptionKey() { events.push('key'); return key; } } as any;
+    const error: any = await new PreviewReimbursementClaimFormUseCase(repo, fakeStorage(Buffer.from('%PDF-1.7 not a png')), audit, config)
+      .execute(requester, 'rb-1').then(() => null, (e: unknown) => e);
+    assert.equal(error.getStatus(), 422);
+    assert.deepEqual([audits, events], [[], []]);
   });
 });
