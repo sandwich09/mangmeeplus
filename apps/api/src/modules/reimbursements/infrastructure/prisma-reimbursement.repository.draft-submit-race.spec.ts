@@ -15,6 +15,13 @@ import { ReimbursementEvidenceService } from '../application/services/reimbursem
 import { PrismaExpenseRepository } from '../../expenses/infrastructure/prisma-expense.repository';
 import { DeleteEmployeeDraftUseCase } from '../../employee-access/application/use-cases/delete-employee-draft.use-case';
 import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifications/application/use-cases/notification.use-cases';
+import { VoidReimbursementPaymentUseCase } from '../application/use-cases/reimbursement-finance.use-case';
+import { PrismaBankingRepository } from '../../banking/infrastructure/prisma-banking.repository';
+import { PrismaMatchSourceQuery } from '../../banking/infrastructure/prisma-match-source.query';
+import { ConfirmMatchUseCase, ListMatchCandidatesUseCase } from '../../banking/application/use-cases/matching.use-case';
+import {
+  CompleteReconciliationSessionUseCase, CreateReconciliationSessionUseCase, ReopenReconciliationSessionUseCase,
+} from '../../banking/application/use-cases/reconciliation.use-case';
 import { MemberPayoutAccountUseCase } from '../application/use-cases/reimbursement-payout.use-case';
 import {
   CASH_PAYOUT_FINGERPRINT, openPayoutAccountNumber, payoutFingerprint, payoutSubmitToken, sealPayoutDestination, type SubmitPayoutColumns,
@@ -1262,38 +1269,130 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     assert.equal(lost[0]?.getStatus?.(), 409, `a conflict, not ${String(lost[0]?.code ?? lost[0]?.message)}`);
   });
 
-  // B7 (impact audit 2026-10-01): voiding a payment must not leave a bank statement line matched to it.
-  it('refuses to void a payment a bank statement line is confirmed against, and voids once the match is undone', async (t) => {
+  // ---- A claim payment and the bank statement (impact audit B7, review 2026-10-01) ----
+  // Voiding a payment must not leave a bank statement line matched to it. Every step a person takes
+  // here goes through its own use case (the bank screen's confirm, complete and reopen, the claim
+  // page's void); only the fixtures, a bank account and a statement line, are written directly.
+
+  const quiet = { log: async () => undefined, append: async () => undefined } as any;
+  const financeCtx = (requestId = `${TAG}-bank`) => ({
+    companyId, userId: `${TAG}-finance`, requestId, scopes: {}, roles: [], authProvider: 'dev',
+    permissions: ['bank.match.read', 'bank.match.confirm', 'bank.reconciliation.create', 'bank.reconciliation.complete', 'bank.reconciliation.reopen', 'reimbursement.payment.void'],
+  }) as any;
+  // The bank screen on its own connection, as another person at another desk.
+  const banking = () => new PrismaBankingRepository({ client: clients[1]! } as any);
+  /** A bank account linked to the ledger, with one withdrawal line of 100 baht as a statement import leaves it. */
+  async function bankLine() {
+    const db = clients[0]!;
+    const ledger = await db.chartOfAccount.create({ data: { companyId, code: `${TAG}-bank-${++fileSequence}`, nameTh: 'เงินฝากธนาคาร', accountClass: 'ASSET', normalBalance: 'DEBIT' } });
+    const account = await db.bankAccount.create({ data: { companyId, branchId, displayName: `${TAG}-bank-${fileSequence}`, ledgerAccountId: ledger.id, createdByUserId: `${TAG}-finance` } });
+    const line = await db.bankStatementLine.create({ data: {
+      companyId, bankAccountId: account.id, sourceType: 'MANUAL', lineHash: `${TAG}-line-${fileSequence}`, postedDate: new Date('2026-10-01T03:00:00.000Z'),
+      description: 'โอนเงินคืนพนักงาน', direction: 'WITHDRAWAL', signedAmount: '-100.0000',
+    } });
+    return {
+      accountId: account.id,
+      lineId: line.id,
+      status: async () => (await db.bankStatementLine.findUniqueOrThrow({ where: { id: line.id } })).status,
+      matches: async () => (await db.bankReconciliationMatch.findMany({ where: { companyId, statementLineId: line.id }, orderBy: { createdAt: 'asc' } }))
+        .map((match) => [match.sourceId, match.status]),
+      remove: async () => {
+        await db.bankReconciliationSession.deleteMany({ where: { companyId, bankAccountId: account.id } });
+        await db.bankReconciliationMatch.deleteMany({ where: { companyId, bankAccountId: account.id } });
+        await db.bankStatementLine.deleteMany({ where: { companyId, bankAccountId: account.id } });
+        await db.bankAccount.deleteMany({ where: { id: account.id } });
+        await db.chartOfAccount.deleteMany({ where: { id: ledger.id } });
+      },
+    };
+  }
+  const confirmMatch = (lineId: string, paymentId: string) => new ConfirmMatchUseCase(banking(), quiet, quiet).execute(financeCtx(), {
+    statementLineId: lineId, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paymentId, allocatedAmount: '100.0000', currency: 'THB',
+  });
+  /** What the bank matching screen lists for an account: its open lines and the payments it offers for them. */
+  const matchingScreen = (accountId: string) => new ListMatchCandidatesUseCase(banking(), new PrismaMatchSourceQuery({ client: clients[1]! } as any))
+    .execute(financeCtx(), accountId);
+  const voidPayment = (requestId: string, paymentId: string, auditRequestId?: string) => new VoidReimbursementPaymentUseCase(
+    repos[0]!, { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any,
+  ).execute(financeCtx(auditRequestId), requestId, paymentId, { reason: 'โอนผิดบัญชี' });
+
+  it('voids a payment a bank line is fully matched to: the match is undone with it, and the claim and the line can both move again', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     const claim = await payableClaim();
     const paid = await cashPayment(claim.requestId, 'bank-matched');
+    const bank = await bankLine();
     const db = clients[0]!;
-    const account = await db.bankAccount.create({ data: { companyId, branchId, displayName: `${TAG}-bank-${++fileSequence}`, createdByUserId: `${TAG}-finance` } });
-    const line = await db.bankStatementLine.create({ data: {
-      companyId, bankAccountId: account.id, sourceType: 'MANUAL', lineHash: `${TAG}-line-${fileSequence}`, postedDate: new Date('2026-10-01T00:00:00.000Z'),
-      description: 'โอนเงินคืนพนักงาน', direction: 'WITHDRAWAL', signedAmount: '-100.0000', status: 'MATCHED',
-    } });
-    const match = await db.bankReconciliationMatch.create({ data: {
-      companyId, bankAccountId: account.id, statementLineId: line.id, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paid.payment.id,
-      sourceDisplayNumber: paid.payment.paymentNo ?? null, allocatedAmount: '100.0000', status: 'CONFIRMED', confirmedByUserId: `${TAG}-finance`, confirmedAt: new Date(),
-    } });
     try {
-      const voidIt = () => repos[0]!.voidPaymentTrueReversal(companyId, claim.requestId, paid.payment.id, `${TAG}-finance`, 'โอนผิดบัญชี');
-      await assert.rejects(voidIt, (error: any) => error.getStatus() === 409 && errorCode(error) === 'reimbursement_payment_bank_matched');
-      // Nothing moved: the payment stands, the claim is still paid, its expense record still reads paid.
+      // The bank screen confirms the whole line against the payment. A fully matched line then leaves that
+      // screen's list, so its "ยกเลิกการจับคู่" cannot be reached: the void is the only way left.
+      const match = await confirmMatch(bank.lineId, paid.payment.id);
+      assert.equal(await bank.status(), 'MATCHED');
+      assert.deepEqual((await matchingScreen(bank.accountId)).lines, []);
+
+      // Before: 409 reimbursement_payment_bank_matched, with nothing in the product that could lift it.
+      const voidRequestId = `${TAG}-void-matched`;
+      const voided = await voidPayment(claim.requestId, paid.payment.id, voidRequestId);
+      assert.deepEqual([voided.status, voided.paymentStatus, voided.payments.map((payment) => payment.status)], ['READY_FOR_PAYMENT', 'UNPAID', ['VOIDED']]);
+      assert.equal((await db.expenseRecord.findUniqueOrThrow({ where: { id: claim.projectionId } })).paymentStatus, 'UNPAID');
+      // The match is undone and the line reads by the bank module's own rule: nothing confirmed, so unmatched.
+      assert.deepEqual(await bank.matches(), [[paid.payment.id, 'VOIDED']]);
+      assert.equal(await bank.status(), 'UNMATCHED');
+      // Both changes are on record, made by the person who voided, in the one request.
+      const audits = await db.auditLog.findMany({ where: { companyId, requestId: voidRequestId }, orderBy: { createdAt: 'asc' } });
+      assert.deepEqual(audits.map((row) => [row.action, row.targetType, row.targetId, row.actorUserId, row.result, row.riskLevel]), [
+        ['reimbursement.payment.void', 'reimbursement_payment', paid.payment.id, `${TAG}-finance`, 'SUCCESS', 'CRITICAL'],
+        ['bank.match.void', 'bank_reconciliation_match', match.id, `${TAG}-finance`, 'SUCCESS', 'HIGH'],
+      ]);
+      assert.deepEqual(audits[1]!.metadataJson, { statementLineId: bank.lineId, reason: 'reimbursement_payment_voided', paymentId: paid.payment.id, requestId: claim.requestId });
+
+      // Nothing is stuck. The claim is paid again, and the bank screen lists the line again, offers the new
+      // payment for it and no longer the voided one, and takes the match.
+      const again = await cashPayment(claim.requestId, 'bank-matched-again');
+      assert.deepEqual([again.created, again.request.status], [true, 'PAID']);
+      const screen = await matchingScreen(bank.accountId);
+      assert.deepEqual(screen.lines.map((line) => [line.id, line.status]), [[bank.lineId, 'UNMATCHED']]);
+      const offered = screen.candidates.map((candidate) => candidate.sourceId);
+      assert.deepEqual([offered.includes(again.payment.id), offered.includes(paid.payment.id)], [true, false]);
+      await confirmMatch(bank.lineId, again.payment.id);
+      assert.equal(await bank.status(), 'MATCHED');
+      assert.deepEqual(await bank.matches(), [[paid.payment.id, 'VOIDED'], [again.payment.id, 'CONFIRMED']]);
+    } finally {
+      await bank.remove();
+    }
+  });
+
+  it('refuses the void only while the matched line sits in a completed reconciliation, and voids once that reconciliation is reopened', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const paid = await cashPayment(claim.requestId, 'bank-reconciled');
+    const bank = await bankLine();
+    const db = clients[0]!;
+    try {
+      await confirmMatch(bank.lineId, paid.payment.id);
+      const session = await new CreateReconciliationSessionUseCase(banking(), quiet).execute(financeCtx(), {
+        bankAccountId: bank.accountId, periodStartDate: '2026-09-01', periodEndDate: '2026-10-31',
+        openingStatementBalanceAmount: '0.00', closingStatementBalanceAmount: '0.00', currency: 'THB',
+      });
+      // An open reconciliation holds nothing; a completed one holds its lines as they stood.
+      assert.equal((await new CompleteReconciliationSessionUseCase(banking(), quiet, quiet).execute(financeCtx(), session.id)).status, 'COMPLETED');
+
+      const refused = `${TAG}-void-reconciled`;
+      await assert.rejects(() => voidPayment(claim.requestId, paid.payment.id, refused),
+        (error: any) => error.getStatus() === 409 && errorCode(error) === 'reimbursement_payment_bank_reconciled');
+      // Nothing moved: the payment stands, the claim is still paid, the match and the line are as the reconciliation recorded them.
       assert.deepEqual((await paymentsOf(claim.requestId)).map((payment) => [payment.status, payment.voidedAt]), [['RECORDED', null]]);
       const still = await db.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } });
       assert.deepEqual([still.status, still.paymentStatus, still.outstandingAmount.toString()], ['PAID', 'PAID', '0']);
       assert.equal((await db.expenseRecord.findUniqueOrThrow({ where: { id: claim.projectionId } })).paymentStatus, 'PAID');
+      assert.deepEqual([await bank.matches(), await bank.status()], [[[paid.payment.id, 'CONFIRMED']], 'MATCHED']);
+      assert.equal(await db.auditLog.count({ where: { companyId, requestId: refused } }), 0);
 
-      // The match is undone in the bank screen first; then the void goes through.
-      await db.bankReconciliationMatch.update({ where: { id: match.id }, data: { status: 'VOIDED' } });
-      const voided = await voidIt();
-      assert.deepEqual([voided.payment.status, voided.request.status, voided.request.paymentStatus], ['VOIDED', 'READY_FOR_PAYMENT', 'UNPAID']);
+      // The way out the message names: reopen that reconciliation on the bank screen, then void.
+      await new ReopenReconciliationSessionUseCase(banking(), quiet, quiet).execute(financeCtx(), session.id, 'ยกเลิกการจ่ายที่จับคู่ไว้');
+      const voided = await voidPayment(claim.requestId, paid.payment.id);
+      assert.deepEqual([voided.status, voided.paymentStatus], ['READY_FOR_PAYMENT', 'UNPAID']);
+      assert.deepEqual([await bank.matches(), await bank.status()], [[[paid.payment.id, 'VOIDED']], 'UNMATCHED']);
     } finally {
-      await db.bankReconciliationMatch.deleteMany({ where: { companyId, bankAccountId: account.id } });
-      await db.bankStatementLine.deleteMany({ where: { companyId, bankAccountId: account.id } });
-      await db.bankAccount.deleteMany({ where: { id: account.id } });
+      await bank.remove();
     }
   });
 
