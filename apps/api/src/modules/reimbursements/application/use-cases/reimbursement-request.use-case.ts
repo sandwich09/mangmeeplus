@@ -42,6 +42,7 @@ import {
   scoreDuplicate,
   normalizeReason,
   normalizeReimbursementAmount,
+  PAYMENT_RECORDING_STATUSES,
 } from '../../domain/logic/reimbursement.logic';
 
 export async function loadReimbursementPolicy(repo: PrismaReimbursementRepository, companyId: string) {
@@ -280,9 +281,11 @@ export class GetReimbursementDetailUseCase {
     const notes = await this.repo.listInternalNotes(ctx.companyId, id);
     const names = await this.repo.getUserDisplayNames(ctx.companyId, notes.map(note => note.authorUserId));
     const detail = withPaymentSlipAccess(await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req), ctx, approvalActions);
-    // Who can record the payment (spec §18.3): read only while the claim waits there, and only on this
-    // read. The page re-reads the claim after every action, like `approvalActions`.
-    const payers = detail.currentDesk?.kind === 'PAYMENT'
+    // Who can record the payment (spec §18.3): read only while the claim waits there and the endpoint would
+    // take a payment at all. A claim with no branch, or in a status it refuses (PARTIALLY_PAID), is refused
+    // for everyone, so nobody is named and the page prints the pool label. Only on this read: the page
+    // re-reads the claim after every action, like `approvalActions`.
+    const payers = detail.currentDesk?.kind === 'PAYMENT' && req.branchId && PAYMENT_RECORDING_STATUSES.includes(req.status)
       ? await this.repo.listPaymentRecorderNames(ctx.companyId, req.branchId) : undefined;
     return {
       ...detail,

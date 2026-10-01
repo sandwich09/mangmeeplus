@@ -263,9 +263,10 @@ export class PrismaReimbursementRepository {
    * Display names of the members the API would accept a payment from on a claim of this branch, for the
    * claim page to say who it waits for. The rule is the permission resolver's, applied to every member in
    * one pass: an ACTIVE membership and user, an ACTIVE role holding the pay right, the entitlement cut,
-   * and a branch scope (over ACTIVE branches) that covers the claim.
+   * and a branch scope (over ACTIVE branches) that covers the claim. The branch is required: a claim
+   * without one is in every scope, yet the payment endpoint refuses it for everyone.
    */
-  async listPaymentRecorderNames(companyId: string, branchId?: string | null): Promise<string[]> {
+  async listPaymentRecorderNames(companyId: string, branchId: string): Promise<string[]> {
     const key = 'reimbursement.payment.record';
     const [members, branches, entitled] = await Promise.all([
       this.prisma.client.companyMembership.findMany({

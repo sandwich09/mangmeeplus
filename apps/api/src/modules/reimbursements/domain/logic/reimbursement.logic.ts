@@ -449,10 +449,15 @@ export type PaymentEligibilityInput = {
   hasSlip: boolean;
 };
 
+/**
+ * The statuses a payment is recorded in. PARTIALLY_PAID is not one: only the full outstanding amount is
+ * taken. The claim page names who can pay only in these, so it never names someone the endpoint refuses.
+ */
+export const PAYMENT_RECORDING_STATUSES: readonly ReimbursementRequestStatus[] = ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'];
+
 /** Returns a stable error code, or null if payment is allowed. Enforces MVP full-payment. */
 export function validatePaymentRecording(input: PaymentEligibilityInput): string | null {
-  const payableStatuses: ReimbursementRequestStatus[] = ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'];
-  if (!payableStatuses.includes(input.status)) return 'invalid_status_transition';
+  if (!PAYMENT_RECORDING_STATUSES.includes(input.status)) return 'invalid_status_transition';
   if (input.financeReviewRequired && !input.financeReviewApproved) return 'finance_review_required';
   if (input.duplicateBlocking) return 'duplicate_unresolved';
 

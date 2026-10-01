@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
 import {
   CreateReimbursementDraftUseCase,
   CancelReimbursementUseCase,
@@ -924,10 +924,10 @@ describe('claim detail paymentDesk', () => {
       companyFeatureEntitlement: { findMany: async () => entitlements },
     } } as any;
   }
-  const listed = (prisma: any, branchId: string | null) => new PrismaReimbursementRepository(prisma, {} as any).listPaymentRecorderNames('co-1', branchId);
-  /** The API's own answer: resolve the member as every request does, then record the payment as them. */
-  async function pays(prisma: any, userId: string, branchId: string | null): Promise<boolean> {
-    const claim = waiting({ branchId });
+  const listed = (prisma: any, branchId: string) => new PrismaReimbursementRepository(prisma, {} as any).listPaymentRecorderNames('co-1', branchId);
+  /** The API's own answer: resolve the member as every request does, then record the payment as them. `paid`, or why not. */
+  async function pays(prisma: any, userId: string, claimState: Record<string, unknown>): Promise<string> {
+    const claim = waiting(claimState);
     const repo = {
       findRequestById: async () => claim, findPolicy: async () => null, assertClaimPaymentReady: async () => undefined,
       listOpenDuplicateCandidates: async () => [], getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [],
@@ -939,11 +939,23 @@ describe('claim detail paymentDesk', () => {
     try {
       const access = await new PrismaPermissionResolverRepository(prisma).resolveForUser({ userId, companyId: 'co-1' });
       const paid = await useCase.execute(ctx({ userId, ...access }), claim.id, { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: day.toISOString() });
-      return paid.status === 'PAID';
+      return paid.status === 'PAID' ? 'paid' : `status ${paid.status}`;
     } catch (error) {
-      if (error instanceof ForbiddenException) return false;
+      // Refused for want of the right or the branch scope, or because the claim itself takes no payment.
+      if (error instanceof ForbiddenException || error instanceof UnprocessableEntityException) return error.message;
       throw error;
     }
+  }
+  /** What the claim page is told: the names in the detail's `paymentDesk`, read through the real repository; null when it carries none. */
+  async function named(prisma: any, claimState: Record<string, unknown>): Promise<string[] | null> {
+    const names = new PrismaReimbursementRepository(prisma, {} as any);
+    const repo = {
+      findRequestById: async () => waiting(claimState), findPolicy: async () => null, findActiveApproverUserIds: async () => new Set(),
+      getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
+      listPaymentRecorderNames: (companyId: string, branchId: string) => names.listPaymentRecorderNames(companyId, branchId),
+    } as any;
+    const detail = await new GetReimbursementDetailUseCase(repo, detailEvidence).execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
+    return detail.paymentDesk ? detail.paymentDesk.names : null;
   }
 
   const approverRole = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];
@@ -973,20 +985,35 @@ describe('claim detail paymentDesk', () => {
       const prisma = company(members, entitlements);
       for (const [branchId, names] of expected) {
         assert.deepEqual(await listed(prisma, branchId), names, `claim branch ${branchId}`);
-        for (const member of members) {
-          assert.equal(await pays(prisma, member.userId, branchId), names.includes(nameOf[member.userId]!),
-            `${member.userId} on claim branch ${branchId}`);
+        // Approved and still being routed to payment waits at the same desk, and the API takes its payment too.
+        for (const status of ['READY_FOR_PAYMENT', 'APPROVED']) {
+          assert.deepEqual(await named(prisma, { branchId, status }), names, `${status} claim of branch ${branchId}`);
+          for (const member of members) {
+            assert.equal(await pays(prisma, member.userId, { branchId, status }) === 'paid', names.includes(nameOf[member.userId]!),
+              `${member.userId} on a ${status} claim of branch ${branchId}`);
+          }
         }
       }
     }
     // A disabled user cannot sign in, so the resolver is never asked: not listed.
     assert.deepEqual(await listed(company([{ userId: 'left', displayName: 'ลาออก', permissions: [PAY], userStatus: 'DISABLED' }]), 'b1'), []);
-    // A legacy claim with no branch is in every scope, so every holder the resolver admits is named. Recording its
-    // payment stops on the missing branch for all of them alike, before any right is looked at.
+  });
+
+  // Before: a part-paid claim and a claim with no branch (legacy rows) named every holder of the pay right, and the
+  // endpoint refused each of them. Nobody is named now, so the page falls back to "ผู้มีสิทธิ์บันทึกจ่าย".
+  it('names nobody on a claim the payment endpoint refuses for everyone', async () => {
     const prisma = company(members);
-    assert.deepEqual(await listed(prisma, null), ['เจ้าของ', 'ปิติ', 'มานี', 'วิชัย', 'สมศรี']);
-    await assert.rejects(pays(prisma, 'owner', null), /กรุณาเลือกสาขาของรายการก่อนบันทึก/);
-    assert.equal(await pays(prisma, 'approver-only', null), false);
+    const refused: Array<[Record<string, unknown>, RegExp]> = [
+      [{ branchId: 'b1', status: 'PARTIALLY_PAID', paymentStatus: 'PARTIALLY_PAID', outstandingAmount: '200.0000' }, /invalid_status_transition/],
+      [{ branchId: null }, /กรุณาเลือกสาขาของรายการก่อนบันทึก/],
+      [{ branchId: undefined }, /กรุณาเลือกสาขาของรายการก่อนบันทึก/],
+    ];
+    for (const [claimState, reason] of refused) {
+      assert.equal(await named(prisma, claimState), null, JSON.stringify(claimState));
+      for (const member of members) assert.notEqual(await pays(prisma, member.userId, claimState), 'paid', `${member.userId} ${JSON.stringify(claimState)}`);
+      // The owner holds the right and every branch: only the claim's own state stops them.
+      assert.match(await pays(prisma, 'owner', claimState), reason);
+    }
   });
 
   it('adds at most five names and the rest as a count, only while the claim waits for payment', async () => {
@@ -1007,11 +1034,15 @@ describe('claim detail paymentDesk', () => {
     assert.deepEqual((await read(waiting(), [])).paymentDesk, { names: [], moreCount: 0 });
     // Approved and still being routed to payment waits at the same desk.
     assert.deepEqual((await read(waiting({ status: 'APPROVED' }), ['กมล'])).paymentDesk, { names: ['กมล'], moreCount: 0 });
-    // Any other desk, and a finished claim: no list, and no extra read.
+    // Any other desk, a finished claim, and a claim nobody can pay (part paid, or with no branch): no list, and no extra read.
     asked.length = 0;
     for (const overrides of [{ status: 'DRAFT' }, { status: 'PENDING_APPROVAL' }, { status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' },
-      { status: 'APPROVED', financeReviewStatus: 'PENDING' }, { status: 'PAID', paymentStatus: 'PAID' }, { status: 'CANCELLED' }]) {
-      assert.equal('paymentDesk' in await read(waiting(overrides), payers), false, overrides.status);
+      { status: 'APPROVED', financeReviewStatus: 'PENDING' }, { status: 'PAID', paymentStatus: 'PAID' }, { status: 'CANCELLED' },
+      { status: 'PARTIALLY_PAID', paymentStatus: 'PARTIALLY_PAID' }, { branchId: null }, { branchId: undefined }]) {
+      const detail = await read(waiting(overrides), payers);
+      assert.equal('paymentDesk' in detail, false, JSON.stringify(overrides));
+      // The part-paid and the branchless claim still wait at the payment desk: the page prints its pool label.
+      if (!('status' in overrides) || overrides.status === 'PARTIALLY_PAID') assert.deepEqual(detail.currentDesk, { kind: 'PAYMENT' });
     }
     assert.deepEqual(asked, []);
   });
