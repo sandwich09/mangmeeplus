@@ -28,8 +28,6 @@ import {
   redactPayload,
   frozenApprovalAuthority,
   currentDesk,
-  paymentTurnUserIds,
-  claimApproverUserId,
   claimSignatureAckHash,
   claimSnapshotFields,
   type CurrentDeskStepFields,
@@ -56,6 +54,8 @@ import {
   sealPayoutDestination,
   submitPayoutColumns,
 } from './payout-destination.logic';
+// Whose turn it is at the pay step (its own import, apart from the block above).
+import { claimApproverUserId, paymentTurnUserIds } from './reimbursement.logic';
 
 const read = (file: string) => readFileSync(join(__dirname, file), 'utf8');
 

@@ -28,7 +28,7 @@ import {
 } from './reimbursements.api';
 import {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
-  FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, PAYMENT_VOIDED_LABEL, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
+  FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
   APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
@@ -41,6 +41,8 @@ import { PayerConfirmationCheck } from './ReimbursementPayout';
 import {
   PAID_DIFFERENTLY_LABEL, PAYMENT_NO_CLAIM_ACCOUNT, paymentDestinationText, paymentFormPayout, requestedPayout,
 } from './reimbursement-payout.logic';
+// The one wording for a voided payment (its own import, apart from the model block above).
+import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
 
 export function StatusBadge({ status }: { status: string }) {
   return <MangmeeBadge tone={REQUEST_STATUS_TONES[status] ?? 'slate'}>{REQUEST_STATUS_LABELS[status] ?? '—'}</MangmeeBadge>;

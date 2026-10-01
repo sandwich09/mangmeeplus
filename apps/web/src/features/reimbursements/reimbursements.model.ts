@@ -1,6 +1,8 @@
 import type { MangmeeTone } from '@/common/components/mangmee';
-import { REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_PAYMENT_METHOD_LABELS, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DESK_LABELS, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
+// The words for a payment method are shared with the server's notice (their own import, apart from the line above).
+import { REIMBURSEMENT_PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
 
 export const REIMBURSEMENT_CREATE_UNAVAILABLE = 'ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อผู้ดูแลบริษัทเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์';
 

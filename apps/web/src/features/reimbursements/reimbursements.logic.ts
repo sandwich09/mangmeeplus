@@ -633,13 +633,12 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
     if (step.invalidatedAt) continue;
     const key = `step-${step.id ?? step.sequenceNo}`;
     const decidedBy = step.decidedByName ?? step.approverName ?? CURRENT_DESK_LABELS.APPROVER;
-    if (step.status === 'APPROVED') {
-      const label = !attestedAccount.has(step.id) ? `อนุมัติโดย ${decidedBy}`
-        // A requester who approved their own claim checked nobody's account but their own: said as the card says it.
-        : step.decisionByUserId && step.decisionByUserId === detail?.requesterUserId ? `อนุมัติโดย ${decidedBy} · ${REQUESTER_SELF_ATTESTED}`
-          : `อนุมัติและตรวจบัญชีรับเงินโดย ${decidedBy}`;
-      rows.push({ key, state: 'done', label, date: step.decidedAt });
-    } else if (step.status === 'REJECTED') rows.push({ key, state: 'done', label: `ปฏิเสธโดย ${decidedBy}`, date: step.decidedAt });
+    // A requester who approved their own claim checked nobody's account but their own: said as the card says it.
+    const approvedLabel = !attestedAccount.has(step.id) ? `อนุมัติโดย ${decidedBy}`
+      : step.decisionByUserId && step.decisionByUserId === detail?.requesterUserId ? `อนุมัติโดย ${decidedBy} · ${REQUESTER_SELF_ATTESTED}`
+        : `อนุมัติและตรวจบัญชีรับเงินโดย ${decidedBy}`;
+    if (step.status === 'APPROVED') rows.push({ key, state: 'done', label: approvedLabel, date: step.decidedAt });
+    else if (step.status === 'REJECTED') rows.push({ key, state: 'done', label: `ปฏิเสธโดย ${decidedBy}`, date: step.decidedAt });
     else if (step.status === 'PENDING') rows.push({ key, state: 'current', label: `กำลังรอ ${waitingFor} อนุมัติ` });
   }
   // Only a claim that IS rejected ends here. Reopen keeps the refused step, so a claim fixed and
