@@ -391,6 +391,20 @@ export function claimApproverUserId(claim: {
     .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0]?.decisionByUserId ?? undefined;
 }
 
+/**
+ * Whose turn it is to record a claim's payment, first to last (owner rule 2026-10-01): the finance
+ * reviewer who passed the claim, then the claim's own approver. It is the order the ready-to-pay notice
+ * and the payment reminder ask in, so the claim page names first the person those notices went to.
+ * Whether they can pay is the caller's question: someone who cannot is not named at all.
+ */
+export function paymentTurnUserIds(claim: Parameters<typeof claimApproverUserId>[0] & {
+  financeReviewStatus?: string;
+  financeReviewedByUserId?: string | null;
+}): string[] {
+  const reviewer = claim.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? claim.financeReviewedByUserId : undefined;
+  return [...new Set([reviewer, claimApproverUserId(claim)].filter((userId): userId is string => !!userId))];
+}
+
 // ---- Status transitions ----
 
 const ALLOWED_TRANSITIONS: Record<ReimbursementRequestStatus, ReimbursementRequestStatus[]> = {

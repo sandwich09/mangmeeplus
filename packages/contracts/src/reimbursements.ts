@@ -696,9 +696,10 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   financeReviewRequired?: boolean;
   /**
    * Who can record this claim's payment, while it waits at the payment desk: the active members the API
-   * would accept the payment from (pay right, branch scope). At most five names, then how many more.
-   * GET detail only; an empty list means nobody can. Absent on a claim the payment endpoint refuses for
-   * everyone (no branch, or part paid): the page then prints the desk's pool label.
+   * would accept the payment from (pay right, branch scope). At most two names, then how many more. The
+   * person whose turn it is comes first when they can pay: the finance reviewer who passed the claim,
+   * then the claim's own approver. GET detail only; an empty list means nobody can. Absent on a claim the
+   * payment endpoint refuses for everyone (no branch, or part paid): the page then prints the desk's pool label.
    */
   paymentDesk?: { names: string[]; moreCount: number };
   missingReceiptReason?: string;

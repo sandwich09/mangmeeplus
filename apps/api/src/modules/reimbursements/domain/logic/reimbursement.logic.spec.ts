@@ -28,6 +28,8 @@ import {
   redactPayload,
   frozenApprovalAuthority,
   currentDesk,
+  paymentTurnUserIds,
+  claimApproverUserId,
   claimSignatureAckHash,
   claimSnapshotFields,
   type CurrentDeskStepFields,
@@ -807,6 +809,40 @@ describe('currentDesk', () => {
       names,
     });
     assert.deepEqual(desk, { kind: 'APPROVER' });
+  });
+});
+
+// Owner rule 2026-10-01: at the payment desk the person whose turn it is comes first. That is the order
+// the ready-to-pay notice and the payment reminder ask in: the finance reviewer who passed the claim, then
+// its approver. The claim page names the people who can pay in this order.
+describe('whose turn it is to record a payment', () => {
+  const at = (hour: number) => new Date(Date.UTC(2026, 9, 1, hour));
+  const approved = (decisionByUserId: string, decidedAt = at(4), overrides: Record<string, unknown> = {}) => ({ status: 'APPROVED', decisionByUserId, decidedAt, ...overrides });
+  const claim = (overrides: Record<string, unknown> = {}) => ({ submittedAt: at(3), approvalSteps: [approved('u-approver')], ...overrides });
+
+  it('is the claim\'s approver, by the one rule for who that is', () => {
+    assert.deepEqual(paymentTurnUserIds(claim()), ['u-approver']);
+    assert.equal(paymentTurnUserIds(claim())[0], claimApproverUserId(claim()));
+    assert.equal(isReimbursementClaimApprover('u-approver', claim()), true);
+    // Nobody approved: a claim below the threshold, a draft, an approval from an earlier round or one withdrawn.
+    for (const nobody of [claim({ approvalSteps: [] }), claim({ submittedAt: null }), claim({ approvalSteps: [approved('u-approver', at(2))] }),
+      claim({ approvalSteps: [approved('u-approver', at(4), { invalidatedAt: at(5) })] }), claim({ approvalSteps: [{ status: 'REJECTED', decisionByUserId: 'u-approver', decidedAt: at(4) }] })]) {
+      assert.deepEqual(paymentTurnUserIds(nobody), []);
+    }
+    // Sent again and approved again: the approver of the round in force.
+    assert.deepEqual(paymentTurnUserIds(claim({ approvalSteps: [approved('u-first', at(2)), approved('u-second', at(4))] })), ['u-second']);
+  });
+
+  it('puts the finance reviewer who passed the claim before its approver', () => {
+    const reviewed = { financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: 'u-finance' };
+    assert.deepEqual(paymentTurnUserIds(claim(reviewed)), ['u-finance', 'u-approver']);
+    // One person who did both is named once.
+    assert.deepEqual(paymentTurnUserIds(claim({ ...reviewed, financeReviewedByUserId: 'u-approver' })), ['u-approver']);
+    // A review that did not pass the claim (pending, blocked, returned, or none) gives the reviewer no turn.
+    for (const financeReviewStatus of ['NOT_REQUIRED', 'PENDING', 'NEEDS_INFO', 'BLOCKED', undefined]) {
+      assert.deepEqual(paymentTurnUserIds(claim({ ...reviewed, financeReviewStatus })), ['u-approver'], String(financeReviewStatus));
+    }
+    assert.deepEqual(paymentTurnUserIds(claim({ financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: null })), ['u-approver']);
   });
 });
 

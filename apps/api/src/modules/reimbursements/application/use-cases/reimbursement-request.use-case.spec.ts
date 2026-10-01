@@ -1053,16 +1053,16 @@ describe('claim detail paymentDesk', () => {
       throw error;
     }
   }
-  /** What the claim page is told: the names in the detail's `paymentDesk`, read through the real repository; null when it carries none. */
-  async function named(prisma: any, claimState: Record<string, unknown>): Promise<string[] | null> {
+  /** What the claim page is told: the detail's `paymentDesk`, read through the real repository; null when it carries none. */
+  async function desk(prisma: any, claimState: Record<string, unknown>): Promise<{ names: string[]; moreCount: number } | null> {
     const names = new PrismaReimbursementRepository(prisma, {} as any);
     const repo = {
       findRequestById: async () => waiting(claimState), findPolicy: async () => null, findActiveApproverUserIds: async () => new Set(),
       getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
-      listPaymentRecorderNames: (companyId: string, branchId: string) => names.listPaymentRecorderNames(companyId, branchId),
+      listPaymentRecorderNames: (companyId: string, branchId: string, turnUserIds: string[]) => names.listPaymentRecorderNames(companyId, branchId, turnUserIds),
     } as any;
     const detail = await new GetReimbursementDetailUseCase(repo, detailEvidence).execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
-    return detail.paymentDesk ? detail.paymentDesk.names : null;
+    return detail.paymentDesk ?? null;
   }
 
   const approverRole = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];
@@ -1094,7 +1094,8 @@ describe('claim detail paymentDesk', () => {
         assert.deepEqual(await listed(prisma, branchId), names, `claim branch ${branchId}`);
         // Approved and still being routed to payment waits at the same desk, and the API takes its payment too.
         for (const status of ['READY_FOR_PAYMENT', 'APPROVED']) {
-          assert.deepEqual(await named(prisma, { branchId, status }), names, `${status} claim of branch ${branchId}`);
+          // The page is told the first two of them by name, and how many more there are.
+          assert.deepEqual(await desk(prisma, { branchId, status }), { names: names.slice(0, 2), moreCount: Math.max(names.length - 2, 0) }, `${status} claim of branch ${branchId}`);
           for (const member of members) {
             assert.equal(await pays(prisma, member.userId, { branchId, status }) === 'paid', names.includes(nameOf[member.userId]!),
               `${member.userId} on a ${status} claim of branch ${branchId}`);
@@ -1116,14 +1117,49 @@ describe('claim detail paymentDesk', () => {
       [{ branchId: undefined }, /กรุณาเลือกสาขาของรายการก่อนบันทึก/],
     ];
     for (const [claimState, reason] of refused) {
-      assert.equal(await named(prisma, claimState), null, JSON.stringify(claimState));
+      assert.equal(await desk(prisma, claimState), null, JSON.stringify(claimState));
       for (const member of members) assert.notEqual(await pays(prisma, member.userId, claimState), 'paid', `${member.userId} ${JSON.stringify(claimState)}`);
       // The owner holds the right and every branch: only the claim's own state stops them.
       assert.match(await pays(prisma, 'owner', claimState), reason);
     }
   });
 
-  it('adds at most five names and the rest as a count, only while the claim waits for payment', async () => {
+  // Owner rule 2026-10-01: the person whose turn it is comes first. The ready-to-pay notice went to the finance
+  // reviewer who passed the claim, else to its approver; the page names that person first, when they can pay.
+  it('names whoever\'s turn it is first among the people who can pay, then the others by name', async () => {
+    const prisma = company(members);
+    const at = (hour: number) => new Date(Date.UTC(2026, 9, 1, hour));
+    const approvedBy = (userId: string, decidedAt = at(4)) => ({ submittedAt: at(3), approvedAt: decidedAt,
+      approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: userId, decidedAt, assignedAt: at(3) }] });
+    const names = async (claimState: Record<string, unknown>) => (await desk(prisma, { branchId: 'b1', ...claimState }))!;
+
+    // Nobody approved (a claim below the threshold): by name, as before.
+    assert.deepEqual(await names({}), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // The approver can pay: first, whatever their name sorts as.
+    assert.deepEqual(await names(approvedBy('b1-selected')), { names: ['สมศรี', 'เจ้าของ'], moreCount: 1 });
+    assert.deepEqual(await names(approvedBy('b1-default')), { names: ['วิชัย', 'เจ้าของ'], moreCount: 1 });
+    assert.deepEqual(await names(approvedBy('owner')), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // The approver cannot pay (no right, or another branch): not named at all, and nobody jumps the queue.
+    assert.deepEqual(await names(approvedBy('approver-only')), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    assert.deepEqual(await names(approvedBy('b2-selected')), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // With a finance step: the finance reviewer who passed the claim, then its approver.
+    const reviewed = { financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: 'b1-default', financeReviewedAt: at(5) };
+    assert.deepEqual(await names({ ...approvedBy('b1-selected'), ...reviewed }), { names: ['วิชัย', 'สมศรี'], moreCount: 1 });
+    // A finance reviewer with no pay right leaves the approver first.
+    assert.deepEqual(await names({ ...approvedBy('b1-selected'), ...reviewed, financeReviewedByUserId: 'approver-only' }), { names: ['สมศรี', 'เจ้าของ'], moreCount: 1 });
+    // A review that did not pass the claim gives nobody a turn.
+    assert.deepEqual(await names({ ...approvedBy('b1-selected'), ...reviewed, financeReviewStatus: 'NOT_REQUIRED' }), { names: ['สมศรี', 'เจ้าของ'], moreCount: 1 });
+    // The approver is the one rule of contracts: an approval from before the claim was last sent, or one no longer in force, is history.
+    assert.deepEqual(await names({ ...approvedBy('b1-selected', at(2)) }), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    assert.deepEqual(await names({ submittedAt: at(3), approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'b1-selected', decidedAt: at(4), assignedAt: at(3), invalidatedAt: at(5) }] }),
+      { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // The whole list is still exactly the people the API takes the payment from: only its order changed.
+    const turnFirst = await new PrismaReimbursementRepository(prisma, {} as any).listPaymentRecorderNames('co-1', 'b1', ['b1-default', 'b1-selected', 'approver-only']);
+    assert.deepEqual(turnFirst, ['วิชัย', 'สมศรี', 'เจ้าของ']);
+    assert.deepEqual([...turnFirst].sort((a, b) => a.localeCompare(b, 'th')), await listed(prisma, 'b1'));
+  });
+
+  it('adds at most two names and the rest as a count, only while the claim waits for payment', async () => {
     const payers = ['กมล', 'ขวัญ', 'จิตรา', 'ชาติ', 'ณัฐ', 'ดวงใจ', 'ธนา'];
     const asked: Array<[string, unknown]> = [];
     const repoFor = (claim: any, names: string[]) => ({
@@ -1136,8 +1172,9 @@ describe('claim detail paymentDesk', () => {
     const read = (claim: any, names: string[]) => new GetReimbursementDetailUseCase(repoFor(claim, names), detailEvidence)
       .execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
 
-    assert.deepEqual((await read(waiting(), payers)).paymentDesk, { names: payers.slice(0, 5), moreCount: 2 });
+    assert.deepEqual((await read(waiting(), payers)).paymentDesk, { names: ['กมล', 'ขวัญ'], moreCount: 5 });
     assert.deepEqual(asked, [['co-1', 'b1']], 'the payers of the claim\'s own branch');
+    assert.deepEqual((await read(waiting(), ['กมล', 'ขวัญ'])).paymentDesk, { names: ['กมล', 'ขวัญ'], moreCount: 0 });
     assert.deepEqual((await read(waiting(), ['กมล'])).paymentDesk, { names: ['กมล'], moreCount: 0 });
     // Nobody can pay: an empty list, which the page reports as such.
     assert.deepEqual((await read(waiting(), [])).paymentDesk, { names: [], moreCount: 0 });

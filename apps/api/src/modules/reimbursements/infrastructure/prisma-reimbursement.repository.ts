@@ -346,8 +346,10 @@ export class PrismaReimbursementRepository {
    * one pass: an ACTIVE membership and user, an ACTIVE role holding the pay right, the entitlement cut,
    * and a branch scope (over ACTIVE branches) that covers the claim. The branch is required: a claim
    * without one is in every scope, yet the payment endpoint refuses it for everyone.
+   * `turnUserIds` are the people whose turn it is, first to last (`paymentTurnUserIds`): those of them
+   * who can pay head the list in that order, and everyone else follows by name.
    */
-  async listPaymentRecorderNames(companyId: string, branchId: string): Promise<string[]> {
+  async listPaymentRecorderNames(companyId: string, branchId: string, turnUserIds: readonly string[] = []): Promise<string[]> {
     const key = 'reimbursement.payment.record';
     const [members, branches, entitled] = await Promise.all([
       this.prisma.client.companyMembership.findMany({
@@ -356,7 +358,7 @@ export class PrismaReimbursementRepository {
           roles: { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key } } } } } },
         },
         select: {
-          branchScopeMode: true, defaultBranchId: true,
+          userId: true, branchScopeMode: true, defaultBranchId: true,
           branchScopes: { select: { branchId: true } },
           user: { select: { displayName: true } },
         },
@@ -366,13 +368,16 @@ export class PrismaReimbursementRepository {
     ]);
     if (filterPermissionsByEntitlement([key], entitled).length === 0) return [];
     const activeBranchIds = new Set(branches.map((branch) => branch.id));
+    // A place in the turn order, or after everyone who has one.
+    const turn = (userId: string) => (turnUserIds.includes(userId) ? turnUserIds.indexOf(userId) : turnUserIds.length);
     return members.filter((member) => {
       const selected = member.branchScopes.map((scope) => scope.branchId).filter((id) => activeBranchIds.has(id));
       // The resolver refuses a SELECTED_BRANCHES member with no active branch outright.
       if (member.branchScopeMode === 'SELECTED_BRANCHES' && selected.length === 0) return false;
       const branchIds = resolveBranchIds(member.branchScopeMode, selected, member.defaultBranchId ?? undefined);
       return isBranchInScope(branchIds === undefined ? {} : { branchIds }, branchId);
-    }).map((member) => member.user.displayName).sort((a, b) => a.localeCompare(b, 'th'));
+    }).sort((a, b) => turn(a.userId) - turn(b.userId) || a.user.displayName.localeCompare(b.user.displayName, 'th'))
+      .map((member) => member.user.displayName);
   }
 
   /** Letterhead for the printed claim form — same precedence as the substitute receipt. */

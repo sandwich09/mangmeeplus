@@ -1052,6 +1052,25 @@ describe('who a claim waits for is the same on every surface', () => {
     }
   });
 
+  // Owner rule 2026-10-01: the API names whoever's turn it is first, then one more person, then a count. The page
+  // prints that list as it came, through one function, so its three places cannot name or order people differently.
+  it('names the same people in the same order in the header, the step note and the timeline', () => {
+    const waiting = (paymentDesk: object) => claim({ financeReviewRequired: false, ...approved, status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' }, paymentDesk });
+    assert.deepEqual(surfaces(waiting({ names: ['สมศรี', 'กมล'], moreCount: 3 })),
+      { desk: 'สมศรี หรือ กมล และอีก 3 คน', note: 'รอ สมศรี หรือ กมล และอีก 3 คน บันทึกจ่าย', timeline: 'กำลังรอ สมศรี หรือ กมล และอีก 3 คน บันทึกจ่าย' });
+    // The order is the API's own: nothing on the page sorts the names again.
+    assert.deepEqual(surfaces(waiting({ names: ['กมล', 'สมศรี'], moreCount: 3 })),
+      { desk: 'กมล หรือ สมศรี และอีก 3 คน', note: 'รอ กมล หรือ สมศรี และอีก 3 คน บันทึกจ่าย', timeline: 'กำลังรอ กมล หรือ สมศรี และอีก 3 คน บันทึกจ่าย' });
+    assert.deepEqual(surfaces(waiting({ names: ['สมศรี'], moreCount: 0 })), { desk: 'สมศรี', note: 'รอ สมศรี บันทึกจ่าย', timeline: 'กำลังรอ สมศรี บันทึกจ่าย' });
+    // The approver who cannot pay is told the same list, in the same words (spec §13.4).
+    const detail = waiting({ names: ['กมล', 'วิชัย'], moreCount: 2 });
+    const toldApprover = activeJourneyStep(buildJourneySteps(detail, ['reimbursement.approve'], 'boss'))!.note!;
+    assert.ok(toldApprover.includes(`ผู้ที่บันทึกจ่ายได้: ${currentDeskText(detail.currentDesk, detail.paymentDesk)} `), toldApprover);
+    // Whoever is offered the payment reads what to do, not who to wait for; the header and the timeline still say who.
+    const forPayer = activeJourneyStep(buildJourneySteps(detail, ['reimbursement.payment.record'], 'payer'))!;
+    assert.deepEqual([forPayer.actions.includes('pay'), forPayer.note], [true, 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง']);
+  });
+
   it('names the finance desk while finance reviews, then the same payment desk', () => {
     const withFinance = { financeReviewRequired: true };
     assert.deepEqual(surfaces(claim({ ...withFinance, ...pending })),
