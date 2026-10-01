@@ -13,6 +13,7 @@ import { ConfirmExpenseUseCase } from '../../expenses/application/use-cases/expe
 import { PrismaAttachmentRepository } from '../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { ReimbursementEvidenceService } from '../application/services/reimbursement-evidence.service';
 import { PrismaExpenseRepository } from '../../expenses/infrastructure/prisma-expense.repository';
+import { openPayoutAccountNumber, payoutFingerprint, sealPayoutDestination } from '../domain/logic/payout-destination.logic';
 
 const TAG = `reimbursement-draft-race-${process.pid}`;
 const periodKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -819,4 +820,401 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     assert.equal((await repos[0]!.findRequestById(companyId, request.id))!.lines![0]!.linkedExpenseId, source.expense.id);
   });
 
+});
+
+/**
+ * Real PostgreSQL proof for the payout account (payout spec §8–§10): what the database itself
+ * refuses, that the number survives encryption digit for digit, and that a submit freezes exactly
+ * the account its hash was made from.
+ */
+describe('reimbursement payout account and claim snapshot (real PostgreSQL)', () => {
+  const PAYOUT_TAG = `reimbursement-payout-${process.pid}`;
+  const key = Buffer.alloc(32, 9);
+  const requester = `${PAYOUT_TAG}-requester`;
+  const approver = `${PAYOUT_TAG}-approver`;
+  const merged = `${PAYOUT_TAG}-merged`;
+  const outsider = `${PAYOUT_TAG}-outsider`;
+  let clients: PrismaClient[] = [];
+  let repos: PrismaReimbursementRepository[] = [];
+  let companyId = '';
+  let otherCompanyId = '';
+  let branchId = '';
+  let reachable = false;
+
+  const KBANK = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0012345678' };
+  const SCB = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountNumber: '4090001112' };
+  const PROMPTPAY = { payoutKind: 'PROMPTPAY_PHONE' as const, accountName: 'นาย สมชาย ใจดี', accountNumber: '0812345678' };
+  const seal = (input: Parameters<typeof sealPayoutDestination>[0]) => sealPayoutDestination(input, key)!;
+  const fingerprintOf = (input: typeof KBANK | typeof PROMPTPAY) =>
+    payoutFingerprint({ payoutKind: input.payoutKind, bankName: 'bankName' in input ? input.bankName : null, accountName: input.accountName, accountNumber: input.accountNumber }, key);
+
+  before(async () => {
+    const url = databaseUrl();
+    if (!url) {
+      if (gateRequired) throw new Error('reimbursement_pg_gate_database_url_required');
+      return;
+    }
+    try {
+      clients = [
+        new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) }),
+        new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) }),
+      ];
+      await clients[0]!.$queryRaw`SELECT 1`;
+    } catch (error) {
+      if (gateRequired) throw error;
+      return;
+    }
+    reachable = true;
+    const db = clients[0]!;
+    await db.user.createMany({ data: [requester, approver, merged, outsider].map((id) => ({ id, displayName: id })) });
+    companyId = (await db.company.create({ data: { name: PAYOUT_TAG, status: 'ACTIVE' }, select: { id: true } })).id;
+    otherCompanyId = (await db.company.create({ data: { name: `${PAYOUT_TAG}-other`, status: 'ACTIVE' }, select: { id: true } })).id;
+    await db.companyMembership.createMany({ data: [
+      { companyId, userId: requester, status: 'ACTIVE' }, { companyId, userId: approver, status: 'ACTIVE' },
+      { companyId: otherCompanyId, userId: requester, status: 'ACTIVE' },
+    ] });
+    branchId = (await db.branch.create({ data: { companyId, code: 'QA-PAYOUT', name: PAYOUT_TAG }, select: { id: true } })).id;
+    repos = clients.map((client) => new PrismaReimbursementRepository({ client } as any, new PrismaDocumentSequenceRepository({ client } as any)));
+  });
+
+  after(async () => {
+    if (reachable) {
+      await clients[0]!.company.deleteMany({ where: { id: { in: [companyId, otherCompanyId] } } });
+      await clients[0]!.user.deleteMany({ where: { id: { in: [requester, approver, merged, outsider] } } });
+    }
+    await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
+  });
+
+  /** What the database said when it refused a write, whichever layer carried the text. */
+  async function refusedBy(run: () => Promise<unknown>, pattern: RegExp, label = String(pattern)) {
+    await assert.rejects(run, (error: any) => {
+      const text = [error?.message, error?.code, JSON.stringify(error?.meta ?? {}), error?.cause?.message].join(' ');
+      assert.match(text, pattern, label);
+      return true;
+    }, label);
+  }
+
+  const setDefault = (input: typeof KBANK | typeof PROMPTPAY, index = 0, userId = requester, company = companyId) => repos[index]!.setMemberPayoutAccount(
+    { companyId: company, userId, actorUserId: userId, payoutMethod: 'BANK_TRANSFER', destination: seal(input) }, async () => undefined,
+  );
+  const destinationsOf = (requestId: string) => clients[0]!.reimbursementPayoutDestination.findMany({ where: { reimbursementRequestId: requestId }, orderBy: { version: 'asc' } });
+  const insertAccount = (columns: Record<string, unknown>) => clients[0]!.memberPayoutAccount.create({ data: {
+    companyId, userId: approver, payoutMethod: 'BANK_TRANSFER', updatedByUserId: approver, ...seal(KBANK), ...columns,
+  } as any });
+
+  async function draft(reason: string, payout?: Parameters<PrismaReimbursementRepository['createRequest']>[1]) {
+    return repos[0]!.createRequest({
+      companyId, branchId, requesterUserId: requester, requesterDisplayNameSnapshot: 'สมชาย', createdByUserId: requester,
+      reason, categoryKey: 'travel', amount: '100.0000', currency: 'THB', incurredDate: new Date('2026-10-01T00:00:00.000Z'),
+      receiptRequirementStatus: 'WAIVED_BY_POLICY',
+      lines: [{ lineNo: 1, incurredDate: new Date('2026-10-01T00:00:00.000Z'), description: reason, categoryKey: 'travel', amount: '100.0000' }],
+    }, payout);
+  }
+
+  /** The submit the use case makes: plan first, hash the plan's columns, freeze the same plan in the transaction. */
+  async function submitArguments(request: NonNullable<Awaited<ReturnType<PrismaReimbursementRepository['findRequestById']>>>) {
+    const plan = await repos[0]!.planSubmitPayout(request);
+    assert.ok(!('error' in plan), JSON.stringify(plan));
+    const payoutColumns = plan.payoutMethod === 'CASH'
+      ? { payoutMethod: 'CASH' as const, payoutDestinationVersion: null, payoutFingerprint: null }
+      : { payoutMethod: 'BANK_TRANSFER' as const, payoutDestinationVersion: plan.version, payoutFingerprint: plan.fingerprint };
+    const hash = computeSnapshotHash({
+      amount: request.amount, currency: request.currency, categoryKey: request.categoryKey, incurredDate: request.incurredDate.toISOString(),
+      reason: request.reason, primaryAttachmentId: request.primaryAttachmentId, lines: request.lines, ...payoutColumns,
+    });
+    return { plan, hash, input: {
+      companyId, requestId: request.id, expectedUpdatedAt: request.updatedAt, duplicateCandidates: [],
+      evidence: { attachmentIds: [], expenseIds: [] },
+      documentNumber: { documentType: 'reimbursement.request', periodKey, idempotencyKey: `reimb-submit:${request.id}`, reservedByUserId: requester },
+      approvalStep: { sequenceNo: 1, approverUserId: approver, approverRoleSnapshot: 'MANAGER', requestSnapshotHash: hash },
+      request: {
+        status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: requester, approvalSnapshotHash: hash,
+        outstandingAmount: request.amount, updatedByUserId: requester, ...payoutColumns,
+      },
+      payout: { plan, actorUserId: requester, frozenAt: new Date() },
+    } as any };
+  }
+
+  async function submit(request: NonNullable<Awaited<ReturnType<PrismaReimbursementRepository['findRequestById']>>>) {
+    const { input, plan } = await submitArguments(request);
+    await repos[0]!.submitDraftAtomic(input);
+    return { plan, pending: (await repos[0]!.findRequestById(companyId, request.id))! };
+  }
+
+  const approval = (pending: NonNullable<Awaited<ReturnType<PrismaReimbursementRepository['findRequestById']>>>, payoutVerifiedVersion?: unknown) => ({
+    companyId, requestId: pending.id, expectedUpdatedAt: pending.updatedAt, expectedApprovalSnapshotHash: pending.approvalSnapshotHash ?? undefined,
+    actorUserId: approver, actorRoles: ['OWNER'], scopes: {}, allowSelfApproval: false, financeReviewRequired: true,
+    decidedAt: new Date('2026-10-01T09:00:00.000Z'), payoutVerifiedVersion,
+    financeRequestPatch: { financeReviewStatus: 'PENDING', paymentStatus: 'UNPAID', updatedByUserId: approver },
+    onDecisionPersisted: async () => undefined,
+  });
+
+  it('stores the number encrypted, gives back every digit including leading zeros, and derives the last 4 from the same digits', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    for (const [index, input] of [KBANK, PROMPTPAY, { ...KBANK, accountNumber: '000123456789012' }, { ...KBANK, accountNumber: '001-2-34567-8' }].entries()) {
+      const digits = input.accountNumber.replace(/\D/g, '');
+      const saved = await setDefault(input);
+      assert.equal(saved.version, index + 1, 'every change is counted');
+      assert.equal(saved.accountLast4, digits.slice(-4));
+      assert.equal('accountNumberEncrypted' in saved, false, 'the stored number never rides along with the masked record');
+
+      const [stored] = await db.$queryRaw<Array<{ encrypted: string; last4: string; type: string }>>`
+        SELECT "accountNumberEncrypted" AS encrypted, "accountLast4" AS last4, pg_typeof("accountLast4")::text AS type
+          FROM "MemberPayoutAccount" WHERE "companyId" = ${companyId} AND "userId" = ${requester}`;
+      assert.equal(stored!.type, 'text');
+      assert.ok(!stored!.encrypted.includes(digits) && !stored!.encrypted.includes(digits.slice(-4).padStart(6, 'x')), 'the column holds ciphertext, not the number');
+      const opened = openPayoutAccountNumber((await repos[0]!.findMemberPayoutSecret(companyId, requester))!, key);
+      assert.equal(opened, digits);
+      assert.equal(opened.slice(-4), stored!.last4, 'the last 4 shown are the last 4 of what a reveal decrypts');
+      assert.throws(() => openPayoutAccountNumber(stored!.encrypted, Buffer.alloc(32, 1)), 'another key opens nothing');
+    }
+    // Cash carries no account at all.
+    await repos[0]!.setMemberPayoutAccount({ companyId, userId: requester, actorUserId: requester, payoutMethod: 'CASH' }, async () => undefined);
+    assert.equal(await repos[0]!.findMemberPayoutSecret(companyId, requester), null);
+    assert.deepEqual({ ...(await repos[0]!.findMemberPayoutAccount(companyId, requester)), updatedAt: undefined }, {
+      companyId, userId: requester, payoutMethod: 'CASH', payoutKind: undefined, bankName: undefined, accountName: undefined,
+      accountLast4: undefined, fingerprint: undefined, version: 5, updatedByUserId: requester, updatedAt: undefined,
+    });
+  });
+
+  it('keeps one default account per member per company, tied to the membership itself', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    await setDefault(KBANK);
+    await setDefault(SCB, 0, requester, otherCompanyId);
+    assert.equal((await repos[0]!.findMemberPayoutAccount(companyId, requester))?.accountLast4, '5678');
+    assert.equal((await repos[0]!.findMemberPayoutAccount(otherCompanyId, requester))?.accountLast4, '1112');
+    assert.equal(await repos[0]!.findMemberPayoutAccount(otherCompanyId, approver), null);
+
+    await refusedBy(() => insertAccount({ userId: requester }), /MemberPayoutAccount_companyId_userId_key|P2002|Unique constraint/i, 'a second account for the same member');
+    await refusedBy(() => insertAccount({ userId: outsider }), /MemberPayoutAccount_companyId_userId_fkey|P2003|Foreign key constraint/i, 'an account for someone who is not a member');
+    await refusedBy(() => insertAccount({ companyId: otherCompanyId, userId: approver }), /MemberPayoutAccount_companyId_userId_fkey|P2003|Foreign key constraint/i, 'an account in a company the user does not belong to');
+
+    // An account merge moves the membership to the surviving user: the account goes with it.
+    await db.$executeRaw`UPDATE "CompanyMembership" SET "userId" = ${merged} WHERE "companyId" = ${otherCompanyId} AND "userId" = ${requester}`;
+    assert.equal(await repos[0]!.findMemberPayoutAccount(otherCompanyId, requester), null);
+    assert.equal(openPayoutAccountNumber((await repos[0]!.findMemberPayoutSecret(otherCompanyId, merged))!, key), SCB.accountNumber);
+    // Leaving the company removes the account with the membership; the other company's account is untouched.
+    await db.companyMembership.deleteMany({ where: { companyId: otherCompanyId, userId: merged } });
+    assert.equal(await db.memberPayoutAccount.count({ where: { companyId: otherCompanyId } }), 0);
+    assert.equal((await repos[0]!.findMemberPayoutAccount(companyId, requester))?.accountLast4, '5678');
+  });
+
+  it('refuses a half-filled default account at the database, whatever code wrote it', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const cash = { payoutKind: null, bankName: null, accountName: null, accountNumberEncrypted: null, accountLast4: null, fingerprint: null };
+    for (const [label, columns] of Object.entries({
+      'a transfer without a number': { accountNumberEncrypted: null },
+      'a transfer without an account name': { accountName: null },
+      'a transfer without the fingerprint': { fingerprint: null },
+      'a bank account without a bank': { bankName: null },
+      'PromptPay with a bank': { payoutKind: 'PROMPTPAY_PHONE' },
+      'an unknown kind': { payoutKind: 'CRYPTO_WALLET' },
+      'three digits where four belong': { accountLast4: '678' },
+      'letters where digits belong': { accountLast4: '56a8' },
+      'a whole number where the last four belong': { accountLast4: '0012345678' },
+      'cash that still carries an account': { payoutMethod: 'CASH' },
+      'cash that still carries the last four': { payoutMethod: 'CASH', ...cash, accountLast4: '5678' },
+    })) await refusedBy(() => insertAccount(columns), /MemberPayoutAccount_shape_check/, label);
+    await refusedBy(() => insertAccount({ version: 0 }), /MemberPayoutAccount_version_check/, 'version 0');
+    assert.equal(await clients[0]!.memberPayoutAccount.count({ where: { companyId, userId: approver } }), 0);
+  });
+
+  it('freezes the claim own copy at submit: later changes to the default never reach it, and the row itself cannot be edited', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    await setDefault(KBANK);
+    const created = await draft('copy of the default');
+    assert.deepEqual([created.payoutMethod, created.payoutDestinationVersion, created.payoutFingerprint], [undefined, undefined, undefined], 'a new draft follows the default');
+    assert.equal((await destinationsOf(created.id)).length, 0);
+
+    const { plan, pending } = await submit(created);
+    assert.deepEqual(plan, { payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 1, fingerprint: fingerprintOf(KBANK), action: 'COPY_DEFAULT' });
+    assert.deepEqual([pending.status, pending.payoutMethod, pending.payoutDestinationVersion, pending.payoutFingerprint], ['PENDING_APPROVAL', 'BANK_TRANSFER', 1, fingerprintOf(KBANK)]);
+    const [frozen] = await destinationsOf(created.id);
+    assert.deepEqual([frozen!.version, frozen!.source, frozen!.accountLast4, frozen!.fingerprint, frozen!.frozenAt !== null, frozen!.verifiedAt],
+      [1, 'DEFAULT_ACCOUNT', '5678', fingerprintOf(KBANK), true, null]);
+    const before = { shown: await repos[0]!.findClaimPayout(pending), number: openPayoutAccountNumber((await repos[0]!.findClaimPayoutSecret(companyId, created.id, 1))!.accountNumberEncrypted, key) };
+    assert.equal(before.number, KBANK.accountNumber);
+    assert.deepEqual(before.shown, { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: KBANK.bankName, accountName: KBANK.accountName, accountLast4: '5678', version: 1, source: 'DEFAULT_ACCOUNT' });
+
+    // The member changes the default, then removes it: the sent claim still shows, reveals and hashes the same account.
+    await setDefault(SCB);
+    await repos[0]!.removeMemberPayoutAccount(companyId, requester, async () => undefined);
+    const after = (await repos[0]!.findRequestById(companyId, created.id))!;
+    assert.deepEqual(await repos[0]!.findClaimPayout(after), before.shown);
+    assert.equal(openPayoutAccountNumber((await repos[0]!.findClaimPayoutSecret(companyId, created.id, 1))!.accountNumberEncrypted, key), before.number);
+    assert.deepEqual([after.payoutDestinationVersion, after.payoutFingerprint, after.approvalSnapshotHash], [1, fingerprintOf(KBANK), pending.approvalSnapshotHash]);
+    assert.equal((await destinationsOf(created.id)).length, 1);
+
+    // Not even a direct write moves a frozen account.
+    const other = seal(SCB);
+    for (const [label, data] of Object.entries({
+      'the number': { accountNumberEncrypted: other.accountNumberEncrypted },
+      'the last four': { accountLast4: '9999' },
+      'the bank': { bankName: SCB.bankName },
+      'the account name': { accountName: 'คนอื่น' },
+      'the fingerprint': { fingerprint: other.fingerprint },
+      'the version': { version: 2 },
+      'the origin': { source: 'PREPARER' },
+      'who entered it': { createdByUserId: approver },
+      'unfreezing': { frozenAt: null },
+      'a new freeze time': { frozenAt: new Date('2030-01-01T00:00:00.000Z') },
+    })) await refusedBy(() => db.reimbursementPayoutDestination.update({ where: { id: frozen!.id }, data: data as any }), /reimbursement_payout_destination_frozen/, label);
+    assert.deepEqual(await repos[0]!.findClaimPayout(after), before.shown);
+  });
+
+  it('never freezes an account nobody hashed: a default that changes between the plan and the transaction refuses the submit', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    await setDefault(KBANK);
+    const stale = await draft('default changed before submit');
+    const { input } = await submitArguments(stale);
+    await setDefault(SCB, 1);
+    await refusedBy(() => repos[0]!.submitDraftAtomic(input), /payout_destination_changed/);
+    const untouched = (await repos[0]!.findRequestById(companyId, stale.id))!;
+    assert.deepEqual([untouched.status, untouched.payoutMethod, untouched.requestNo, (await destinationsOf(stale.id)).length], ['DRAFT', undefined, undefined, 0]);
+    // The same happens when the default is removed, or becomes cash, after the plan.
+    await repos[1]!.removeMemberPayoutAccount(companyId, requester, async () => undefined);
+    const removed = await submitArguments(untouched).then(() => 'planned', (error) => String(error?.message ?? error));
+    assert.match(removed, /payout_method_required/, 'no default and no choice: there is nothing to send');
+
+    // Racing for real: whoever wins, the claim is either still a draft with nothing frozen, or sent
+    // with one frozen row whose every column belongs to the account the hash was made from.
+    for (let round = 0; round < 6; round += 1) {
+      await setDefault(KBANK);
+      const racing = await draft(`race ${round}`);
+      const { input: raced } = await submitArguments(racing);
+      const [sent] = await Promise.allSettled([repos[0]!.submitDraftAtomic(raced), setDefault(round % 2 ? SCB : PROMPTPAY, 1)]);
+      const claim = (await repos[0]!.findRequestById(companyId, racing.id))!;
+      const rows = await destinationsOf(racing.id);
+      if (sent.status === 'rejected') {
+        assert.match(String((sent.reason as any)?.message), /payout_destination_changed/);
+        assert.deepEqual([claim.status, claim.payoutMethod, rows.length], ['DRAFT', undefined, 0]);
+      } else {
+        assert.deepEqual([claim.status, claim.payoutDestinationVersion, claim.payoutFingerprint, rows.length], ['PENDING_APPROVAL', 1, fingerprintOf(KBANK), 1]);
+        assert.deepEqual([rows[0]!.fingerprint, rows[0]!.accountLast4, rows[0]!.bankName, openPayoutAccountNumber(rows[0]!.accountNumberEncrypted, key)],
+          [fingerprintOf(KBANK), '5678', KBANK.bankName, KBANK.accountNumber]);
+      }
+    }
+  });
+
+  it('keeps an account typed for one claim editable until it is sent, then gives a changed account the next version', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    await repos[0]!.removeMemberPayoutAccount(companyId, requester, async () => undefined);
+    const typed = (account: typeof KBANK | typeof PROMPTPAY) => ({ write: { mode: 'SPECIFIED' as const, destination: seal(account), source: 'REQUESTER' as const, actorUserId: requester } });
+    const created = await draft('typed for this claim', typed(KBANK));
+    assert.deepEqual([created.payoutMethod, created.payoutDestinationVersion, created.payoutFingerprint], ['BANK_TRANSFER', 1, undefined]);
+    // The working row is rewritten in place: one row, one version, while the claim is a draft.
+    const edited = await repos[0]!.updateDraftRequest(companyId, created.id, created.updatedAt, {}, undefined, typed(PROMPTPAY));
+    let rows = await destinationsOf(created.id);
+    assert.deepEqual(rows.map((row) => [row.version, row.accountLast4, row.frozenAt, row.source]), [[1, '5678', null, 'REQUESTER']]);
+    assert.equal(openPayoutAccountNumber(rows[0]!.accountNumberEncrypted, key), PROMPTPAY.accountNumber);
+
+    // An edit and a submit of the same draft: one wins, and what is frozen is what was hashed.
+    const { input } = await submitArguments(edited);
+    const [sent, saved] = await Promise.allSettled([
+      repos[0]!.submitDraftAtomic(input),
+      repos[1]!.updateDraftRequest(companyId, created.id, edited.updatedAt, {}, undefined, typed(SCB)),
+    ]);
+    assert.equal([sent, saved].filter((result) => result.status === 'fulfilled').length, 1, 'exactly one of the edit and the submit commits');
+    let claim = (await repos[0]!.findRequestById(companyId, created.id))!;
+    rows = await destinationsOf(created.id);
+    if (sent.status === 'fulfilled') {
+      assert.deepEqual([claim.status, claim.payoutFingerprint, rows.length, rows[0]!.fingerprint, rows[0]!.frozenAt !== null], ['PENDING_APPROVAL', fingerprintOf(PROMPTPAY), 1, fingerprintOf(PROMPTPAY), true]);
+    } else {
+      assert.deepEqual([claim.status, claim.payoutFingerprint, rows.length, rows[0]!.fingerprint, rows[0]!.frozenAt], ['DRAFT', undefined, 1, fingerprintOf(SCB), null]);
+      claim = (await submit(claim)).pending;
+      rows = await destinationsOf(created.id);
+    }
+    const sentFingerprint = rows[0]!.fingerprint;
+
+    // Withdrawn and sent again unchanged: same version, and any earlier attestation is gone.
+    await clients[0]!.$executeRaw`UPDATE "ReimbursementPayoutDestination" SET "verifiedByUserId" = ${approver}, "verifiedAt" = now(), "verifiedVia" = 'APPROVAL' WHERE id = ${rows[0]!.id}`;
+    let reopened = await repos[0]!.reopenRejectedRequest(companyId, claim.id, claim.updatedAt, requester, 'PENDING_APPROVAL');
+    assert.deepEqual([reopened.status, reopened.payoutMethod, reopened.payoutDestinationVersion, reopened.payoutFingerprint], ['DRAFT', 'BANK_TRANSFER', 1, undefined], 'an account named for this claim stays the draft choice');
+    assert.equal((await repos[0]!.findClaimPayout(reopened))?.verifiedAt, undefined, 'a draft shows no attestation');
+    const again = await submit(reopened);
+    assert.deepEqual(again.plan, { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: 1, fingerprint: sentFingerprint, action: 'REUSE' });
+    rows = await destinationsOf(created.id);
+    assert.deepEqual(rows.map((row) => [row.version, row.verifiedByUserId, row.verifiedAt, row.verifiedVia]), [[1, null, null, null]]);
+
+    // Withdrawn, the account changed, sent again: version 2 is frozen and version 1 stays as it was sent.
+    reopened = await repos[0]!.reopenRejectedRequest(companyId, claim.id, again.pending.updatedAt, requester, 'PENDING_APPROVAL');
+    const changed = await repos[0]!.updateDraftRequest(companyId, created.id, reopened.updatedAt, {}, undefined, typed(KBANK));
+    assert.deepEqual([changed.payoutDestinationVersion, changed.payoutFingerprint], [2, undefined]);
+    const third = await submit(changed);
+    assert.deepEqual(third.plan, { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: 2, fingerprint: fingerprintOf(KBANK), action: 'FREEZE' });
+    rows = await destinationsOf(created.id);
+    assert.deepEqual(rows.map((row) => [row.version, row.fingerprint, row.frozenAt !== null]), [[1, sentFingerprint, true], [2, fingerprintOf(KBANK), true]]);
+    assert.equal((await repos[0]!.findClaimPayout(third.pending))?.accountLast4, '5678');
+    assert.notEqual(third.pending.approvalSnapshotHash, again.pending.approvalSnapshotHash, 'a changed account is a changed claim');
+  });
+
+  it('approves a transfer claim only with an attestation of its current version, recorded in the approval transaction', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    await setDefault(KBANK);
+    const { pending } = await submit(await draft('attested at approval'));
+    const [row] = await destinationsOf(pending.id);
+
+    for (const [verified, refusal] of [[undefined, /payout_verification_required/], [null, /payout_verification_required/], [2, /payout_destination_changed/], ['1', /payout_destination_changed/]] as const) {
+      await refusedBy(() => repos[0]!.beginApprovalDecisionAtomic(approval(pending, verified)), refusal, `attesting ${String(verified)}`);
+    }
+    const untouched = await db.reimbursementRequest.findUniqueOrThrow({ where: { id: pending.id }, include: { approvalSteps: true } });
+    assert.deepEqual([untouched.status, untouched.approvalSteps.map((step) => step.status), (await destinationsOf(pending.id))[0]!.verifiedAt], ['PENDING_APPROVAL', ['PENDING'], null]);
+
+    const decided = await repos[0]!.beginApprovalDecisionAtomic(approval(pending, 1));
+    const [attested] = await destinationsOf(pending.id);
+    assert.deepEqual([attested!.verifiedByUserId, attested!.verifiedAt?.toISOString(), attested!.verifiedVia, attested!.approvalStepId],
+      [approver, '2026-10-01T09:00:00.000Z', 'APPROVAL', decided.approvalStepId]);
+    // The attestation changed nothing about the account it attests.
+    assert.deepEqual([attested!.accountNumberEncrypted, attested!.accountLast4, attested!.fingerprint, attested!.frozenAt?.getTime()],
+      [row!.accountNumberEncrypted, row!.accountLast4, row!.fingerprint, row!.frozenAt?.getTime()]);
+
+    // Who, when and how are one fact, and only a frozen snapshot can carry it.
+    await refusedBy(() => db.$executeRaw`UPDATE "ReimbursementPayoutDestination" SET "verifiedVia" = NULL WHERE id = ${attested!.id}`, /ReimbursementPayoutDestination_verification_check/, 'an attestation without its channel');
+    await refusedBy(() => db.$executeRaw`UPDATE "ReimbursementPayoutDestination" SET "verifiedByUserId" = NULL WHERE id = ${attested!.id}`, /ReimbursementPayoutDestination_verification_check/, 'an attestation without its author');
+    await repos[0]!.removeMemberPayoutAccount(companyId, requester, async () => undefined);
+    const working = await draft('unfrozen row', { write: { mode: 'SPECIFIED', destination: seal(SCB), source: 'REQUESTER', actorUserId: requester } });
+    await refusedBy(() => db.$executeRaw`UPDATE "ReimbursementPayoutDestination" SET "verifiedByUserId" = ${approver}, "verifiedAt" = now(), "verifiedVia" = 'APPROVAL' WHERE "reimbursementRequestId" = ${working.id}`,
+      /ReimbursementPayoutDestination_verification_check/, 'an attestation of a draft account');
+
+    // A cash claim and a claim from before the field existed are approved without any attestation.
+    const cash = await submit(await draft('cash', { write: { mode: 'CASH' } }));
+    assert.deepEqual([cash.plan, cash.pending.payoutMethod, cash.pending.payoutDestinationVersion, (await destinationsOf(cash.pending.id)).length], [{ payoutMethod: 'CASH', followsDefault: false }, 'CASH', undefined, 0]);
+    await repos[0]!.beginApprovalDecisionAtomic(approval(cash.pending));
+    const legacyDraft = await draft('legacy');
+    const legacyHash = computeSnapshotHash({
+      amount: legacyDraft.amount, currency: legacyDraft.currency, categoryKey: legacyDraft.categoryKey, incurredDate: legacyDraft.incurredDate.toISOString(),
+      reason: legacyDraft.reason, primaryAttachmentId: legacyDraft.primaryAttachmentId, lines: legacyDraft.lines,
+    });
+    const { input } = await submitArguments(await draft('unused', { write: { mode: 'CASH' } }));
+    await repos[0]!.submitDraftAtomic({
+      ...input, requestId: legacyDraft.id, expectedUpdatedAt: legacyDraft.updatedAt, payout: undefined,
+      documentNumber: { ...input.documentNumber, idempotencyKey: `reimb-submit:${legacyDraft.id}` },
+      approvalStep: { ...input.approvalStep, requestSnapshotHash: legacyHash },
+      request: { ...input.request, approvalSnapshotHash: legacyHash, payoutMethod: undefined, payoutDestinationVersion: undefined, payoutFingerprint: undefined },
+    });
+    const legacy = (await repos[0]!.findRequestById(companyId, legacyDraft.id))!;
+    assert.deepEqual([legacy.payoutMethod, legacy.payoutDestinationVersion, legacy.payoutFingerprint, await repos[0]!.findClaimPayout(legacy)], [undefined, undefined, undefined, undefined]);
+    await repos[0]!.beginApprovalDecisionAtomic(approval(legacy));
+    assert.equal((await db.reimbursementApprovalStep.findFirstOrThrow({ where: { reimbursementRequestId: legacy.id } })).status, 'APPROVED');
+  });
+
+  it('keeps every snapshot row inside its own claim and company', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const claim = await draft('row ownership', { write: { mode: 'SPECIFIED', destination: seal(KBANK), source: 'REQUESTER', actorUserId: requester } });
+    const row = { reimbursementRequestId: claim.id, version: 2, ...seal(SCB), source: 'REQUESTER', createdByUserId: requester };
+    await refusedBy(() => db.reimbursementPayoutDestination.create({ data: { ...row, companyId, version: 1 } as any }), /ReimbursementPayoutDestination_request_version_key|P2002|Unique constraint/i, 'a second row for the same version');
+    await refusedBy(() => db.reimbursementPayoutDestination.create({ data: { ...row, companyId: otherCompanyId } as any }), /ReimbursementPayoutDestination_request_fkey|P2003|Foreign key constraint/i, 'a row filed under another company');
+    await refusedBy(() => db.reimbursementPayoutDestination.create({ data: { ...row, companyId, version: 0 } as any }), /ReimbursementPayoutDestination_version_check/, 'version 0');
+    await refusedBy(() => db.reimbursementPayoutDestination.create({ data: { ...row, companyId, accountLast4: '12' } as any }), /ReimbursementPayoutDestination_shape_check/, 'two digits where four belong');
+    await refusedBy(() => db.reimbursementPayoutDestination.create({ data: { ...row, companyId, bankName: null } as any }), /ReimbursementPayoutDestination_shape_check/, 'a bank account without a bank');
+    assert.equal((await destinationsOf(claim.id)).length, 1);
+    // A deleted draft takes its account with it; nothing is left to decrypt.
+    await db.reimbursementRequest.delete({ where: { id: claim.id } });
+    assert.equal((await destinationsOf(claim.id)).length, 0);
+  });
 });
