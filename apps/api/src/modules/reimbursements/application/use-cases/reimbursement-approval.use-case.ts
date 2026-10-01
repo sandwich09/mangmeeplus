@@ -197,6 +197,9 @@ export class ListApprovalQueueUseCase {
     const approverNames = await this.repo.getUserDisplayNames(ctx.companyId, [...assignedIdsByBranch.values()].flat());
     const now = new Date();
     return rows.flatMap((request) => {
+      // A claim being cancelled takes no decision until that is finished or withdrawn (audit B3): both
+      // endpoints refuse it, so it is no row of anybody's queue.
+      if (request.cancellationPendingAt) return [];
       const policy = effectivePolicyForRequest(request, currentPolicy);
       // Audit H-18 and B20: a row is listed only for a decision this viewer can make, and it says which. The
       // queue used to list the viewer's own claims and to offer อนุมัติ to a reject-only viewer; both answered

@@ -691,6 +691,15 @@ describe('approval queue rows carry what the viewer may do (audit B20)', () => {
     });
   }
 
+  // Audit B3: approve and reject both answer 409 while a cancellation is pending, so the queue offers neither.
+  it('lists no row for a claim that is being cancelled, and lists it again once the cancellation is withdrawn', async () => {
+    const claim = baseRequest({ cancellationPendingAt: new Date('2026-10-01T02:00:00.000Z'), cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำ' });
+    const repo = { ...fakeRepo(claim), listRequests: async () => [claim] } as any;
+    assert.deepEqual(await new ListApprovalQueueUseCase(repo).execute(ctx()), []);
+    Object.assign(claim, { cancellationPendingAt: undefined, cancellationPendingByUserId: undefined, cancellationPendingReason: undefined });
+    assert.deepEqual((await new ListApprovalQueueUseCase(repo).execute(ctx())).map((row) => [row.id, row.approvalActions]), [['rb-1', { canApprove: true, canReject: true }]]);
+  });
+
   it('lists no row for a viewer who can do neither', async () => {
     const reader = ctx({ permissions: ['reimbursement.read'] });
     assert.deepEqual(await new ListApprovalQueueUseCase(queueRepo(baseRequest())).execute(reader), []);

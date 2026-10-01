@@ -898,6 +898,35 @@ describe('a cancellation that was started stays visible and can always be finish
     assert.equal((await claim.cancel.execute(requester(), 'rb-1', 'เปลี่ยนใจ')).status, 'CANCELLED');
   });
 
+  // Payout spec §25.1 I3, both directions: the two buttons the detail offers a viewer are exactly the two calls
+  // the API takes from that viewer. Checked viewer by viewer against the endpoints themselves.
+  it('offers ดำเนินการยกเลิกต่อ and ถอนการยกเลิก to exactly the viewers the cancel and withdraw calls accept', async () => {
+    const viewers: Array<[string, any]> = [
+      ['the requester', requester()],
+      ['the requester without the cancel right', ctx({ permissions: ['reimbursement.read_own'] })],
+      ['a finance reviewer', finance()],
+      ['a finance reviewer of another branch', ctx({ userId: 'fin-2', permissions: ['reimbursement.read', 'reimbursement.finance_review'], scopes: { branchIds: ['branch-2'] } })],
+      ['a reader', bystander()],
+      ['an approver who may also pay', ctx({ userId: 'boss-1', roles: ['MANAGER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.payment.record'] })],
+    ];
+    const refusedForWho = (error: unknown) => error instanceof ForbiddenException;
+    for (const [name, viewer] of viewers) {
+      // Asked of the detail first; a viewer who cannot read the claim is offered nothing.
+      const reading = await claimWorld();
+      reading.strand('ซื้อซ้ำกับใบก่อน');
+      const offered = await reading.detail(viewer).then((detail) => detail.pendingCancellation, () => undefined);
+      // Then each call, on a claim of its own, as that viewer.
+      const continuing = await claimWorld();
+      continuing.strand('ซื้อซ้ำกับใบก่อน');
+      const continued = await continuing.cancel.execute(viewer, 'rb-1').then(() => true, (error) => { if (refusedForWho(error)) return false; throw error; });
+      const withdrawing = await claimWorld();
+      withdrawing.strand('ซื้อซ้ำกับใบก่อน');
+      const withdrawn = await withdrawing.withdraw.execute(viewer, 'rb-1').then(() => true, (error) => { if (refusedForWho(error)) return false; throw error; });
+
+      assert.deepEqual([offered?.canResume ?? false, offered?.canWithdraw ?? false], [continued, withdrawn], name);
+    }
+  });
+
   it('never voids for a cancellation that was withdrawn while it was being continued', async () => {
     const claim = await claimWorld();
     claim.strand('ซื้อซ้ำกับใบก่อน');
