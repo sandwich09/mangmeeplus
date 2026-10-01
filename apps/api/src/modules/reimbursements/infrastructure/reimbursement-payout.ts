@@ -21,11 +21,13 @@ import type {
   ReimbursementRequestStatus,
 } from '@watchdog-bms/contracts';
 import {
+  CASH_PAYOUT_FINGERPRINT,
   draftFollowsDefaultAfterReopen,
   hasPayoutSnapshot,
   LEGACY_PAYMENT_PAYOUT_SOURCE,
   legacyPayoutConfirmToken,
   payoutAttestationError,
+  payoutDefaultToken,
   payoutSubmitToken,
   planSubmitPayout,
   submitPayoutColumns,
@@ -336,6 +338,49 @@ export async function freezePayoutAtSubmit(tx: any, claim: ClaimPayoutPointer, i
     }
   }
   return { plan, columns: submitPayoutColumns(plan) };
+}
+
+/**
+ * The payout side of a correction round (payout spec §14.5), inside its transaction and under the
+ * request lock: the account the claim is given is frozen at once as a NEW version of the claim, and
+ * the columns the claim's hash is made from are returned. A new version also when the account is the
+ * one the claim had: what is approved next is this row, never the one set aside. Earlier versions
+ * stay as they are, attestation included. Cash freezes no row.
+ *
+ * "Use the default account" copies the requester's default as it is now, the way a submit does, and
+ * is held to what the page showed (`payoutDefaultToken`) unless that default was set in this same
+ * transaction, which is then exactly what was typed.
+ */
+export async function freezePayoutCorrection(tx: any, claim: ClaimPayoutPointer, input: {
+  write: DraftPayoutWrite;
+  frozenAt: Date;
+  seenDefaultToken?: unknown;
+  defaultSetInThisTransaction?: boolean;
+}): Promise<SubmitPayoutColumns> {
+  const cash: SubmitPayoutColumns = { payoutMethod: 'CASH', payoutDestinationVersion: null, payoutFingerprint: CASH_PAYOUT_FINGERPRINT };
+  if (input.write.mode === 'CASH') return cash;
+  const row = { companyId: claim.companyId, reimbursementRequestId: claim.id, frozenAt: input.frozenAt };
+  const nextVersion = async () => ((await listVersions(tx, claim.companyId, claim.id))[0]?.version ?? 0) + 1;
+  if (input.write.mode === 'SPECIFIED') {
+    const version = await nextVersion();
+    await tx.reimbursementPayoutDestination.create({ data: { ...row, version, ...input.write.destination, source: input.write.source, createdByUserId: input.write.actorUserId } });
+    return { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: version, payoutFingerprint: input.write.destination.fingerprint };
+  }
+  // An edit of the default waits for this correction, and this correction for one already under way.
+  await tx.$queryRaw`SELECT 1 FROM "MemberPayoutAccount" WHERE "companyId" = ${claim.companyId} AND "userId" = ${claim.requesterUserId} FOR UPDATE`;
+  const account = await tx.memberPayoutAccount.findFirst({ where: { companyId: claim.companyId, userId: claim.requesterUserId } });
+  if (!account) throw new ConflictException('payout_method_required');
+  if (!input.defaultSetInThisTransaction && input.seenDefaultToken !== payoutDefaultToken(claim.id, account)) throw new ConflictException('payout_destination_changed');
+  if (account.payoutMethod === 'CASH') return cash;
+  if (!account.accountNumberEncrypted || !account.fingerprint) throw new ConflictException('payout_destination_required');
+  const version = await nextVersion();
+  // The sealed columns move as one unit, and "who entered it" is whoever last set the default: as at submit.
+  await tx.reimbursementPayoutDestination.create({ data: {
+    ...row, version, payoutKind: account.payoutKind, bankName: account.bankName, accountName: account.accountName,
+    accountNumberEncrypted: account.accountNumberEncrypted, accountLast4: account.accountLast4, fingerprint: account.fingerprint,
+    source: 'DEFAULT_ACCOUNT', createdByUserId: account.updatedByUserId,
+  } });
+  return { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: version, payoutFingerprint: account.fingerprint };
 }
 
 /**

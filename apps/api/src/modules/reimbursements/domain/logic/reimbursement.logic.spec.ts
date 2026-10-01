@@ -980,7 +980,8 @@ describe('payout: a claim with no receiving method keeps its hashes (legacy clai
       read('./reimbursement.logic.ts'), read('../../../../scripts/production-a5-evidence.pg.ts')].join('\n');
     // No call site folds the fields by hand any more: every computeSnapshotHash call goes through the builder.
     assert.deepEqual([...sources.matchAll(/computeSnapshotHash\((?!fields)[^)]{0,40}/g)].map((match) => match[0]).filter((call) => !call.startsWith('computeSnapshotHash(claimSnapshotFields(')), []);
-    assert.equal([...sources.matchAll(/computeSnapshotHash\(claimSnapshotFields\(/g)].length, 3, 'submit, the live approval check, the signature acknowledgement');
+    assert.equal([...sources.matchAll(/computeSnapshotHash\(claimSnapshotFields\(/g)].length, 4,
+      'submit, the live approval check, the signature acknowledgement, the payout account correction');
     assert.match(sources, /\.\.\.claimSnapshotFields\(\{\s+amount: decimal\(header\.amount\)/, 'the production gate');
 
     const record = { ...header, lines };
