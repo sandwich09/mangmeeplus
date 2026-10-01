@@ -386,9 +386,10 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           // Owner rule 2026-10-01: whose turn it is, not everyone who can pay (a shop owner holds
           // every right and was pushed for every claim). That is the actor of this event when they
           // can record the payment: the approver, the finance reviewer, or whoever filed on
-          // someone's behalf a claim that needed no approval. Next, for a claim nobody had to
-          // approve, the people who would have approved it. Never the requester alone. With no
-          // such person, everyone able to record the payment, as before.
+          // someone's behalf a claim that needed no approval. Next, the approvers the event
+          // names: the claim's own approver when finance passed it (a finance reviewer may not
+          // hold the pay right), or the people who would have approved a claim nobody had to
+          // approve. Never the requester alone. With no such person, everyone able to pay.
           preferRecipientPayloadKeys: ['actorUserId', 'approverRecipientUserIds'],
           neverPreferRecipientPayloadKeys: ['requesterUserId'],
           severity: 'action',

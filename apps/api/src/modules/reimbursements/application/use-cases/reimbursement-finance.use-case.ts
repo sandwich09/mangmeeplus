@@ -23,6 +23,7 @@ import { ReimbursementProjectionOrchestratorService } from '../services/reimburs
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import {
   validatePaymentRecording,
+  claimApproverUserId,
   isSamePaymentRequest,
   ageHours,
   redactPayload,
@@ -192,6 +193,7 @@ export class FinanceReviewReimbursementUseCase {
             riskLevel: 'HIGH',
             metadataJson: { decision: input.decision, projectionReady: true },
           }, tx);
+          const approverUserId = claimApproverUserId(req.approvalSteps);
           for (const eventType of ['reimbursement.finance_review_updated', 'reimbursement.ready_for_payment']) {
             await appendReimbursementOutboxWithinTx(tx, {
               companyId: ctx.companyId,
@@ -213,6 +215,9 @@ export class FinanceReviewReimbursementUseCase {
                   decision: input.decision,
                   amount: req.amount,
                   currency: req.currency,
+                  // A finance reviewer may not hold the pay right. The claim's approver is the next
+                  // person the ready-to-pay notice asks, before it goes to everyone able to pay.
+                  ...(approverUserId && { approverRecipientUserIds: [approverUserId] }),
                 },
               },
             });

@@ -2038,7 +2038,8 @@ export class PrismaReimbursementRepository {
           financeReviewedByUserId: { not: null },
           cancellationPendingAt: null,
         },
-        include: { lines: { orderBy: { lineNo: 'asc' } } },
+        // The approved steps too: the replayed ready-to-pay event names the claim's approver.
+        include: { lines: { orderBy: { lineNo: 'asc' } }, approvalSteps: { where: { status: 'APPROVED' } } },
         orderBy: { updatedAt: 'asc' },
         take: limit,
       }),

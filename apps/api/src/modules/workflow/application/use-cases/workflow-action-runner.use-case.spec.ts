@@ -224,6 +224,25 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_finance']);
     });
 
+    // Review: a finance reviewer without the pay right passes a claim, and the notice went straight
+    // to everyone able to pay. The event names the claim's own approver, who is asked next.
+    it('ready_for_payment: when the finance reviewer cannot pay, the claim approver is told before everyone else', async () => {
+      const passedByFinance = { actorUserId: 'u_finance', requesterUserId: 'u_staff', decision: 'APPROVED_FOR_PAYMENT', approverRecipientUserIds: ['u_manager'] };
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin', 'u_manager']);
+      await runReady(passedByFinance);
+      assert.deepEqual((notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds, ['u_manager']);
+
+      // Neither of them can pay: everyone who can.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin']);
+      await runReady(passedByFinance);
+      assert.deepEqual((notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds, ['u_owner', 'u_admin']);
+
+      // The finance reviewer can pay: it stays their turn, not the approver's.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_finance', 'u_manager']);
+      await runReady(passedByFinance);
+      assert.deepEqual((notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds, ['u_finance']);
+    });
+
     it('ready_for_payment: a claim that needed no approval, filed on someone else\'s behalf, goes to whoever filed it', async () => {
       repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_preparer']);
       await runReady({ actorUserId: 'u_preparer', requesterUserId: 'u_staff', decision: 'BELOW_APPROVAL_THRESHOLD' });
