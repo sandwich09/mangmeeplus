@@ -533,6 +533,21 @@ describe('payment slip at the payment step', () => {
     );
   });
 
+  // Review finding 2026-10-01: voiding a payment that is already voided answered the claim without its
+  // steps and payments (it was read without them), so the page showed a claim that had never been paid.
+  it('answers a replayed void with the whole claim, as the void itself did', async () => {
+    const req = financeReviewedRequest();
+    const repo = fakeRepo(req);
+    await recordUC(repo).execute(ctx(perms), 'rb-1', { ...transfer, slipAttachmentId: 'att-slip-1' });
+    const voidUC = new VoidReimbursementPaymentUseCase(repo, fakeDetailEvidence as any);
+    const voider = ctx(['reimbursement.payment.void', 'reimbursement.payment.record']);
+    const first = await voidUC.execute(voider, 'rb-1', 'pay-1', { reason: 'บันทึกเลขอ้างอิงผิด' });
+    const again = await voidUC.execute(voider, 'rb-1', 'pay-1', { reason: 'บันทึกเลขอ้างอิงผิด' });
+    assert.deepEqual(again.payments.map((row) => [row.id, row.status, row.slipCount, row.slips.map((slip) => slip.attachmentId), row.voidReason]),
+      [['pay-1', 'VOIDED', 1, ['att-slip-1'], 'บันทึกเลขอ้างอิงผิด']]);
+    assert.deepEqual(again, first, 'the replay is the same claim detail the void itself answered');
+  });
+
   it('exports each payment with its reference and how many slips it carries, never which files', async () => {
     const req = financeReviewedRequest({ lines: [] });
     const repo = fakeRepo(req);

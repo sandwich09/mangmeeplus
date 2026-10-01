@@ -529,14 +529,16 @@ export class VoidReimbursementPaymentUseCase {
     if (!ctx.permissions.includes('reimbursement.payment.void')) throw new ForbiddenException('Missing permission: reimbursement.payment.void');
     if (!input.reason || input.reason.trim() === '') throw new BadRequestException('void_reason_required');
 
-    const req = await this.repo.findRequestById(ctx.companyId, requestId);
+    // With its relations: a replay of a void answers from this read, and that answer is a claim detail
+    // like any other (steps, payments, signatures), not a header with empty lists.
+    const req = await this.repo.findRequestById(ctx.companyId, requestId, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     // Before the payment lookup and well before the ledger reversal: void is the most destructive
     // action in this module (audited CRITICAL) and it reverses a posted journal.
     assertReimbursementBranchInScope(ctx, req.branchId);
     const payment = await this.repo.findPaymentById(ctx.companyId, paymentId);
     if (!payment || payment.reimbursementRequestId !== requestId) throw new NotFoundException('Payment not found');
-    if (payment.status === 'VOIDED') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, (await this.repo.findRequestById(ctx.companyId, requestId)) ?? req, ctx);
+    if (payment.status === 'VOIDED') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     if (payment.status !== 'RECORDED') throw new UnprocessableEntityException('Payment cannot be voided');
 
     const result = await this.repo.voidPaymentTrueReversal(ctx.companyId, requestId, paymentId, ctx.userId, input.reason, undefined, ctx.requestId ?? `reimbursement-payment-void:${paymentId}`);
