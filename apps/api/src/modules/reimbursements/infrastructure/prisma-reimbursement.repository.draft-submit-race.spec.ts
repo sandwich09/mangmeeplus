@@ -92,7 +92,9 @@ function claimSystem(client: PrismaClient, repo: PrismaReimbursementRepository, 
   const orchestrator = new ReimbursementProjectionOrchestratorService(repo, expenses, new MaterializeClaimExpensesService(), confirm, audit);
   const ownCompany = <T extends { request: { companyId: string } }>(rows: T[], limit: number) => rows.filter((row) => row.request.companyId === companyId).slice(0, limit);
   const scoped = Object.create(repo, {
-    listPendingProjectionIntents: { value: async (limit = 100) => ownCompany(await repo.listPendingProjectionIntents(1000), limit) },
+    // These cases run the pass the moment a decision is on record. The minute a real pass leaves to the
+    // request that is carrying the decision out has a case of its own.
+    listPendingProjectionIntents: { value: async (limit = 100) => ownCompany(await repo.listPendingProjectionIntents(1000, new Date(Date.now() + 60_000)), limit) },
     listPendingCancellationIntents: { value: async (limit = 100) => ownCompany(await repo.listPendingCancellationIntents(1000), limit) },
   }) as PrismaReimbursementRepository;
   const reconciler = new ReimbursementProjectionReconcilerService(scoped, orchestrator, audit, voidExpense, prisma, new ListReimbursementApproverOptionsUseCase(prisma));
@@ -3454,7 +3456,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     await clients[0]!.reimbursementRequest.update({ where: { id: unreadable.requestId }, data: { approvalPolicySnapshotJson: { schemaVersion: 99 } } });
 
     // The repository's own list, across every company in this database: at most three rows, and the newest decided claim is one of them.
-    const listed = await repos[0]!.listPendingProjectionIntents(3);
+    const listed = await repos[0]!.listPendingProjectionIntents(3, new Date(Date.now() + 60_000));
     assert.ok(listed.length <= 3);
     const found = listed.find((intent) => intent.request.id === decided[2]!.requestId);
     assert.deepEqual(found && [found.kind, found.actorUserId, found.approvalStepId], ['MANAGER', MGR, decided[2]!.stepId], 'the decided claim is found');
@@ -3469,6 +3471,30 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     // Nothing is left for a third run: a claim carried out is not carried out again.
     assert.deepEqual(ofThese(decided, await system(0).reconciler.execute()), { completed: [], failed: [], blocked: [] });
     for (const claim of decided) assert.deepEqual(await carried(claim), once(1));
+  });
+
+  // Final review W7: the scheduled pass never competes with the request that is still carrying its own decision out.
+  it('leaves a decision made less than a minute ago to the request carrying it out, and lists it once it is older', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const approved = await decidedClaim();
+    const unapproved = await noApprovalClaim();
+    const reviewed = await waitingClaim();
+    await db.reimbursementRequest.update({ where: { id: reviewed.id }, data: {
+      status: 'FINANCE_REVIEW', currentApprovalStepId: null, financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: FIN, financeReviewedAt: new Date(),
+    } });
+    const fresh = [approved.requestId, reviewed.id, unapproved.requestId];
+    const listed = async () => (await repos[0]!.listPendingProjectionIntents(1000)).filter((intent) => fresh.includes(intent.request.id)).map((intent) => intent.kind).sort();
+
+    // Decided a moment ago: on no list of the pass, though each is a decision waiting to be carried out.
+    assert.deepEqual(await listed(), []);
+    assert.deepEqual((await repos[0]!.listPendingProjectionIntents(1000, new Date(Date.now() + 60_000))).filter((intent) => fresh.includes(intent.request.id)).map((intent) => intent.kind).sort(), ['FINANCE', 'MANAGER', 'POLICY']);
+    // A person who presses "ดำเนินการต่อ" is not kept waiting: the minute is the scheduled pass's own.
+    assert.equal((await system(0).resume.execute(manager(), approved.requestId)).status, 'READY_FOR_PAYMENT');
+
+    // Still waiting a minute later: nothing is carrying them out any more, and the pass takes them.
+    await db.$executeRaw`UPDATE "ReimbursementRequest" SET "updatedAt" = now() - interval '61 seconds' WHERE "id" IN (${reviewed.id}, ${unapproved.requestId})`;
+    assert.deepEqual(await listed(), ['FINANCE', 'POLICY']);
   });
 
   it('carries a decided claim out when ดำเนินการต่อ is pressed, with no second decision, and does nothing the second time', async (t) => {

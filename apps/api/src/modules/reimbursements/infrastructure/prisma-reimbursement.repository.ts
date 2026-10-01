@@ -159,6 +159,9 @@ function activeApproverMembershipWhere(
 /** A draft's receiving choice plus anything that must commit with it (setting the default account, its audit row, the requester's notice). */
 export type DraftPayoutChange = { write: DraftPayoutWrite; onPersisted?: (tx: any, requestId: string) => Promise<void> };
 
+/** How long the scheduled pass leaves a fresh decision to the request that is carrying it out. */
+const PROJECTION_INTENT_MIN_AGE_MS = 60_000;
+
 /** The five round columns of a claim that is in no payout account correction round. */
 const NO_PAYOUT_CORRECTION = {
   payoutCorrectionRequestedAt: null,
@@ -2228,15 +2231,26 @@ export class PrismaReimbursementRepository {
    * drops down the list as new ones arrive instead of holding a place at its head for good.
    * ponytail: no attempt counter. Past `limit` claims that cannot complete, the oldest of them stop
    * being retried by the run; add a counter with a backoff if the failure log ever shows that many.
+   *
+   * Only decisions made before `decidedBefore`, a minute ago unless the caller says otherwise: the
+   * newest decision of all is the one a live approve, submit or finance request is still carrying
+   * out, and a pass that took it would compete with that request for the same expense records (it
+   * can lose a document-number race and answer 409). Left alone for a minute, a decision is either
+   * carried out or truly waiting. The claim's `updatedAt` is when it was decided: the decision is the
+   * write that put it in this state.
    */
-  async listPendingProjectionIntents(limit = 100): Promise<Array<PendingProjectionIntent & { request: ReimbursementRequestRecord }>> {
+  async listPendingProjectionIntents(
+    limit = 100,
+    decidedBefore = new Date(Date.now() - PROJECTION_INTENT_MIN_AGE_MS),
+  ): Promise<Array<PendingProjectionIntent & { request: ReimbursementRequestRecord }>> {
+    const updatedAt = { lt: decidedBefore };
     const [managerRows, financeRows, policyRows] = await Promise.all([
       (this.prisma.client as any).reimbursementRequest.findMany({
         // Decided: no step is waiting any more. Asked of the database, not filtered afterwards:
         // every claim still waiting for its approver is PENDING_APPROVAL too, and a page of those
         // would otherwise crowd the decided ones out of the first `limit` rows.
         where: {
-          status: 'PENDING_APPROVAL', currentApprovalStepId: { not: null }, cancellationPendingAt: null,
+          status: 'PENDING_APPROVAL', currentApprovalStepId: { not: null }, cancellationPendingAt: null, updatedAt,
           // Never a claim whose payout account is being corrected: it holds no decision to carry out.
           payoutCorrectionRequestedAt: null,
           approvalSteps: { some: { status: 'APPROVED' }, none: { status: 'PENDING' } },
@@ -2254,6 +2268,7 @@ export class PrismaReimbursementRepository {
           financeReviewStatus: 'APPROVED_FOR_PAYMENT',
           financeReviewedByUserId: { not: null },
           cancellationPendingAt: null,
+          updatedAt,
         },
         // The approved steps too: the replayed ready-to-pay event names the claim's approver.
         include: { lines: { orderBy: { lineNo: 'asc' } }, approvalSteps: { where: { status: 'APPROVED' } } },
@@ -2261,7 +2276,7 @@ export class PrismaReimbursementRepository {
         take: limit,
       }),
       (this.prisma.client as any).reimbursementRequest.findMany({
-        where: { status: 'APPROVED', currentApprovalStepId: null, cancellationPendingAt: null },
+        where: { status: 'APPROVED', currentApprovalStepId: null, cancellationPendingAt: null, updatedAt },
         include: { lines: { orderBy: { lineNo: 'asc' } } },
         orderBy: { updatedAt: 'desc' },
         take: limit,

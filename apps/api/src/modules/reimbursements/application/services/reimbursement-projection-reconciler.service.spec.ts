@@ -442,6 +442,25 @@ describe('ReimbursementProjectionReconcilerService and a claim whose payout acco
     assert.deepEqual(ordinary.calls, ['project', 'ready']);
   });
 
+  // Final review W7: the newest decided claims come first, and the newest of all is the one a live
+  // approve, submit or finance request is still carrying out.
+  it('asks the database only for decisions made at least a minute ago, in each of the three lists, unless the caller names another moment', async () => {
+    const queries: any[] = [];
+    const repo = new PrismaReimbursementRepository({ client: { reimbursementRequest: { findMany: async (query: any) => { queries.push(query.where); return []; } } } } as any, {} as any);
+    const before = Date.now();
+    await repo.listPendingProjectionIntents();
+    const after = Date.now();
+    assert.deepEqual(queries.map((where) => where.status), ['PENDING_APPROVAL', 'FINANCE_REVIEW', 'APPROVED']);
+    for (const where of queries) {
+      const cutoff = where.updatedAt?.lt?.getTime();
+      assert.ok(cutoff >= before - 60_000 && cutoff <= after - 60_000, `${where.status}: decided before ${where.updatedAt?.lt?.toISOString()}`);
+    }
+    queries.length = 0;
+    const moment = new Date('2026-10-02T03:00:00.000Z');
+    await repo.listPendingProjectionIntents(10, moment);
+    assert.deepEqual(queries.map((where) => where.updatedAt), [{ lt: moment }, { lt: moment }, { lt: moment }]);
+  });
+
   it('is never on the list the scheduled pass works through: the database is asked for no claim in a round, and none it returns is taken', async () => {
     const queries: any[] = [];
     const answer = (rows: any[]) => new PrismaReimbursementRepository({ client: { reimbursementRequest: { findMany: async (query: any) => {
