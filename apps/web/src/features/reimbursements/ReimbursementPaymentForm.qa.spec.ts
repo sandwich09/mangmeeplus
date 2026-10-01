@@ -117,6 +117,21 @@ describe('payment form: the payer chooses the method', () => {
     assert.ok(cashForm.some((text) => text.startsWith('แนบได้ถ้ามี ไม่บังคับสำหรับวิธีจ่ายนี้')));
     assert.equal(cashForm.includes('สลิปหรือหลักฐานการจ่าย *'), false);
   });
+
+  // Payout Phase 1 freezes the requester's account on the claim. Showing it at the pay step, and starting the
+  // method from it, is the next lane (the three "Phase 1 seam" comments). Until then a claim that carries a
+  // frozen account gets this same form, from the hub's dialog and from the claim page alike.
+  it('is the same form for a claim that carries a frozen payout account', () => {
+    const account = { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'พิม ใจดี', accountLast4: '6789',
+      version: 1, source: 'DEFAULT_ACCOUNT', canRevealAccountNumber: true };
+    const frozen = { ...base, payoutMethod: 'BANK_TRANSFER', payout: account };
+    assert.deepEqual(visible(paymentForm(frozen)), visible(paymentForm(base)));
+    assert.deepEqual(visible(paymentForm(frozen, { method: 'BANK_TRANSFER' })), visible(paymentForm(base, { method: 'BANK_TRANSFER' })));
+    assert.deepEqual(visible(paymentForm({ ...base, payoutMethod: 'CASH', payout: { payoutMethod: 'CASH' } })), visible(paymentForm(base)));
+    // No method is chosen for the payer yet, and nothing of the account is on the form.
+    assert.ok(visible(paymentForm(frozen)).includes('เลือกวิธีจ่าย'));
+    for (const text of visible(paymentForm(frozen))) assert.doesNotMatch(text, /6789|กสิกร/u);
+  });
 });
 
 describe('payment form: the slip', () => {

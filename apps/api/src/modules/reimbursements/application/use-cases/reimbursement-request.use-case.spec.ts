@@ -1239,6 +1239,31 @@ describe('list paging and hub buckets', () => {
     assert.deepEqual([beyond.items.length, beyond.total], [0, claims.length]);
   });
 
+  // Payout Phase 1 on the paged list. The hub decides from the row whether "ส่งอนุมัติ" may be sent from the row
+  // (cash the draft itself chose) or opens the claim page, so the paged row has to say how the claim is paid
+  // back, and nothing more of the account.
+  it('says on a paged row how the claim is paid back: a draft\'s own choice, a sent claim\'s snapshot, nothing for a legacy claim', async () => {
+    const row = (id: string, extra: Record<string, unknown>) => ({ ...claims[0]!, id, status: 'DRAFT', ...extra });
+    const fingerprint = 'f'.repeat(64);
+    const { list } = database([
+      row('rb-cash', { payoutMethod: 'CASH' }),
+      row('rb-follows-default', { payoutMethod: null }),
+      row('rb-own-account', { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }),
+      row('rb-sent', { status: 'PENDING_APPROVAL', payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: fingerprint }),
+      row('rb-sent-cash', { status: 'READY_FOR_PAYMENT', payoutMethod: 'CASH', payoutFingerprint: 'cash' }),
+      // Sent by a build from before the account existed: whatever its draft chose, it has no snapshot.
+      row('rb-legacy', { status: 'PENDING_APPROVAL', payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: null }),
+    ]);
+    const page = await list.execute(reader, { pageSize: 100 });
+    assert.deepEqual(Object.fromEntries(page.items.map((item) => [item.id, item.payoutMethod ?? null])), {
+      'rb-cash': 'CASH', 'rb-follows-default': null, 'rb-own-account': 'BANK_TRANSFER', 'rb-sent': 'BANK_TRANSFER', 'rb-sent-cash': 'CASH', 'rb-legacy': null,
+    });
+    assert.doesNotMatch(JSON.stringify(page), new RegExp(`${fingerprint}|payoutFingerprint|payoutDestinationVersion`));
+    // The same rows through a bucket filter: the draft chip of the hub.
+    const drafts = await list.execute(reader, { bucket: 'draft', pageSize: 100 });
+    assert.deepEqual(drafts.items.map((item) => [item.id, item.payoutMethod ?? null]).sort(), [['rb-cash', 'CASH'], ['rb-follows-default', null], ['rb-own-account', 'BANK_TRANSFER']]);
+  });
+
   it('counts each bucket as the rows its filter returns over every page, and the buckets add up to ทั้งหมด', async () => {
     const { list } = database();
     const all = await walk(list, {}, 7);

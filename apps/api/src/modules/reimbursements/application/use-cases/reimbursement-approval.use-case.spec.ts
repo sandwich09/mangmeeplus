@@ -696,6 +696,23 @@ describe('approval queue rows carry what the viewer may do (audit B20)', () => {
     assert.deepEqual(await new ListApprovalQueueUseCase(queueRepo(baseRequest())).execute(reader), []);
     assert.deepEqual(await approvalDecisionActions(reader, baseRequest(), fakeRepo(null)), { canApprove: false, canReject: false });
   });
+
+  // Payout Phase 1 on the same row. It carries what the viewer may do AND what the row showed (the claim hash,
+  // the receiving method). For a claim paid by transfer "may approve" means on the claim page: the row shows no
+  // account, so what the row alone could send is refused, and the hub's button opens the page instead.
+  it('a transfer claim row says who may decide and what it showed, and is not approved from the row alone', async () => {
+    const transfer = () => baseRequest({
+      approvalSnapshotHash: 'hash-as-listed', payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: 'fp-2',
+      payoutSnapshot: { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', version: 2, source: 'DEFAULT_ACCOUNT' },
+    });
+    const [row] = await new ListApprovalQueueUseCase(queueRepo(transfer())).execute(ctx());
+    assert.deepEqual([row!.approvalActions, row!.approvalSnapshotHash, row!.payoutMethod], [{ canApprove: true, canReject: true }, 'hash-as-listed', 'BANK_TRANSFER']);
+    assert.ok(!/6789|กสิกร|สมชาย ใจดี|fp-2/.test(JSON.stringify(row)), 'no account on a queue row');
+    await assert.rejects(() => approveUC(fakeRepo(transfer())).execute(ctx(), 'rb-1', undefined, row!.approvalSnapshotHash), /payout_verification_required/);
+    // With the account version ticked on the claim page, the same hash approves; rejecting never needed the account.
+    assert.equal((await approveUC(fakeRepo(transfer())).execute(ctx(), 'rb-1', undefined, row!.approvalSnapshotHash, 2)).status, 'FINANCE_REVIEW');
+    assert.equal((await new RejectReimbursementUseCase(fakeRepo(transfer()), noopAudit, fakeDetailEvidence as any).execute(ctx(), 'rb-1', 'บัญชีไม่ตรงกับผู้เบิก')).status, 'REJECTED');
+  });
 });
 
 describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
