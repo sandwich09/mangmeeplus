@@ -49,8 +49,8 @@ export function payoutDestinationInput(form: PayoutAccountForm): PayoutDestinati
 
 const FIELD_MESSAGES: Record<PayoutDestinationField, (form: PayoutAccountForm) => string> = {
   payoutKind: () => 'กรุณาเลือกประเภทบัญชี',
-  bankName: (form) => (form.bankChoice === OTHER_BANK ? 'กรุณาระบุชื่อธนาคาร ไม่เกิน 80 ตัวอักษร' : 'กรุณาเลือกธนาคาร'),
-  accountName: () => 'กรุณาระบุชื่อบัญชีตามที่ธนาคารแสดง 2 ถึง 140 ตัวอักษร และไม่ใช่ตัวเลขล้วน',
+  bankName: (form) => (form.bankChoice === OTHER_BANK ? 'กรุณาระบุชื่อธนาคาร ไม่เกิน 80 ตัวอักษร และไม่ใส่เลขบัญชีในช่องนี้' : 'กรุณาเลือกธนาคาร'),
+  accountName: () => 'กรุณาระบุชื่อบัญชีตามที่ธนาคารแสดง 2 ถึง 140 ตัวอักษร ไม่ใช่ตัวเลขล้วน และไม่ใส่เลขบัญชีในช่องนี้',
   accountNumber: (form) => (form.payoutKind === 'PROMPTPAY_PHONE'
     ? 'เบอร์พร้อมเพย์ต้องเป็นเบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0'
     : 'เลขบัญชีต้องเป็นตัวเลข 6 ถึง 20 หลัก'),

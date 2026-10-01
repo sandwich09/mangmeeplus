@@ -691,6 +691,26 @@ describe('payout: account format (completeness and shape only; people verify the
     assert.equal(isBlankPayoutDestination(bank('0123456789')), false);
   });
 
+  // Security review S4: the bank name and the account name are shown unmasked on every screen and
+  // copied into the account owner's notice. A full number typed into either would be read by everyone
+  // who is only meant to see the last 4 digits.
+  it('refuses an account number written into the bank name or the account name', () => {
+    for (const accountName of [
+      'นาย สมชาย ใจดี 0123456789', 'สมชาย 012-3-45678-9', 'สมชาย 081 234 5678', 'นาย สมชาย (เลขบัญชี 123456)',
+      '0123456789 สมชาย',
+    ]) assert.equal(invalidPayoutDestinationField(bank('0123456789', { accountName })), 'accountName', accountName);
+    for (const bankName of ['ธนาคารกสิกรไทย 0123456789', 'กสิกร 012-3-45678-9', 'สหกรณ์ออมทรัพย์ 1234567']) {
+      assert.equal(invalidPayoutDestinationField(bank('0123456789', { bankName })), 'bankName', bankName);
+    }
+    // Names that merely contain a few digits stay names.
+    for (const accountName of ['บริษัท เอบีซี 1999 จำกัด', 'หจก. 168 การค้า', 'ร้านเซเว่น สาขา 12345', 'นาย สมชาย ใจดี']) {
+      assert.equal(invalidPayoutDestinationField(bank('0123456789', { accountName })), null, accountName);
+    }
+    assert.equal(invalidPayoutDestinationField(bank('0123456789', { bankName: 'สหกรณ์ออมทรัพย์ครู 2 จำกัด' })), null);
+    // Nothing of a refused name is stored: the account is not sealed at all.
+    assert.equal(sealPayoutDestination(bank('0123456789', { accountName: 'สมชาย 012-3-45678-9' }), Buffer.alloc(32, 3)), null);
+  });
+
   it('masks an account with one wording for every surface', () => {
     assert.equal(maskedPayoutAccountNumber('6789'), 'ลงท้าย 6789');
     assert.equal(maskedPayoutAccount({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountLast4: '6789' }), 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789');

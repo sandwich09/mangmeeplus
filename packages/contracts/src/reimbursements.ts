@@ -607,15 +607,17 @@ export type PayoutDestinationField = 'payoutKind' | 'bankName' | 'accountName' |
  * The one format rule for an account, shared by the API and the web form. Completeness and shape
  * only: a bank account is 6 to 20 digits (never forced to 10), a PromptPay number is a Thai mobile
  * number. Nothing here matches the account name to a person or asks a bank; people verify that.
+ * The bank name and the account name are shown unmasked on every screen and copied into notices, so
+ * neither may carry something that reads as an account number (`looksLikeAccountNumber`).
  * Returns the first field that fails, or null.
  */
 export function invalidPayoutDestinationField(input: Partial<PayoutDestinationInput> | null | undefined): PayoutDestinationField | null {
   const kind = input?.payoutKind;
   if (kind !== 'BANK_ACCOUNT' && kind !== 'PROMPTPAY_PHONE') return 'payoutKind';
   const bankName = typeof input?.bankName === 'string' ? input.bankName.trim() : '';
-  if (kind === 'BANK_ACCOUNT' && (bankName.length === 0 || bankName.length > PAYOUT_BANK_NAME_MAX_LENGTH)) return 'bankName';
+  if (kind === 'BANK_ACCOUNT' && (bankName.length === 0 || bankName.length > PAYOUT_BANK_NAME_MAX_LENGTH || looksLikeAccountNumber(bankName))) return 'bankName';
   const accountName = typeof input?.accountName === 'string' ? input.accountName.trim() : '';
-  if (accountName.length < 2 || accountName.length > PAYOUT_ACCOUNT_NAME_MAX_LENGTH || /^[\d\s-]+$/.test(accountName)) return 'accountName';
+  if (accountName.length < 2 || accountName.length > PAYOUT_ACCOUNT_NAME_MAX_LENGTH || /^[\d\s-]+$/.test(accountName) || looksLikeAccountNumber(accountName)) return 'accountName';
   const accountNumber = normalizePayoutAccountNumber(input?.accountNumber);
   if (!(kind === 'BANK_ACCOUNT' ? /^\d{6,20}$/ : /^0\d{9}$/).test(accountNumber)) return 'accountNumber';
   return null;

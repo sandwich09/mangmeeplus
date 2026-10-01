@@ -75,8 +75,13 @@ describe('payout account form: the same rule the server runs, said in Thai', () 
     const problem = (overrides: Parameters<typeof form>[0]) => logic.payoutAccountFormError(form(overrides));
     for (const accountNumber of ['0123456789', '012-3-45678-9', '012 345 6789', '000123', '12345678901234567890']) assert.equal(problem({ accountNumber }), null, accountNumber);
     assert.deepEqual(problem({ bankChoice: '' }), { field: 'bankName', text: 'กรุณาเลือกธนาคาร' });
-    assert.deepEqual(problem({ bankChoice: logic.OTHER_BANK, bankOther: ' ' }), { field: 'bankName', text: 'กรุณาระบุชื่อธนาคาร ไม่เกิน 80 ตัวอักษร' });
+    assert.deepEqual(problem({ bankChoice: logic.OTHER_BANK, bankOther: ' ' }), { field: 'bankName', text: 'กรุณาระบุชื่อธนาคาร ไม่เกิน 80 ตัวอักษร และไม่ใส่เลขบัญชีในช่องนี้' });
     for (const accountName of ['', 'ก', '1234567890']) assert.equal(problem({ accountName })?.field, 'accountName', accountName);
+    // The two names are shown unmasked everywhere: a full number typed into either is refused, in words.
+    assert.deepEqual(problem({ accountName: 'นาย สมชาย ใจดี 012-3-45678-9' }),
+      { field: 'accountName', text: 'กรุณาระบุชื่อบัญชีตามที่ธนาคารแสดง 2 ถึง 140 ตัวอักษร ไม่ใช่ตัวเลขล้วน และไม่ใส่เลขบัญชีในช่องนี้' });
+    assert.equal(problem({ bankChoice: logic.OTHER_BANK, bankOther: 'สหกรณ์ออมทรัพย์ 0123456789' })?.field, 'bankName');
+    assert.equal(problem({ accountName: 'บริษัท เอบีซี 1999 จำกัด' }), null, 'a name with a year in it is a name');
     for (const accountNumber of ['', '12345', '123456789012345678901', '01234x6789', '๐๑๒๓๔๕๖']) {
       assert.deepEqual(problem({ accountNumber }), { field: 'accountNumber', text: 'เลขบัญชีต้องเป็นตัวเลข 6 ถึง 20 หลัก' }, accountNumber);
     }
