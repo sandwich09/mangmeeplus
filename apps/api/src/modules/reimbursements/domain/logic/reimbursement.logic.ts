@@ -21,6 +21,7 @@ import type {
 // service, repository) and expenses never depends back — this is a pure Decimal constant,
 // so the "no Nest / Prisma" rule above still holds.
 import { SETTLE_EPSILON } from '../../../expenses/domain/logic/expense-totals.logic';
+import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
 
 // ---- Money helpers ----
 
@@ -424,6 +425,55 @@ export function canTransition(from: ReimbursementRequestStatus, to: Reimbursemen
   return (ALLOWED_TRANSITIONS[from] ?? []).includes(to);
 }
 
+// ---- A decision the system has yet to carry out ----
+
+export type PendingProjectionIntent = {
+  /** MANAGER: a person approved it. FINANCE: finance passed it for payment. POLICY: it needed no approval. */
+  kind: 'MANAGER' | 'FINANCE' | 'POLICY';
+  /** Who made the decision the claim waits on (for POLICY: who sent the claim). */
+  actorUserId: string;
+  approvalStepId?: string;
+};
+
+/**
+ * The durable decision a claim waits for the system to carry out, if any. A decision is committed
+ * first and the claim's expense records are built and confirmed after it, so a failure in between
+ * leaves the claim decided but not moved on (audit B4). One definition for the scheduled reconciler,
+ * for the "ดำเนินการต่อ" call and for the flag on the claim detail, so the three cannot disagree on
+ * which claims are in that state.
+ *
+ * Needs the claim's approval steps (the approved ones at least). A claim that is being cancelled is
+ * never one: the cancellation comes first.
+ */
+export function pendingProjectionIntent(request: {
+  status: ReimbursementRequestStatus;
+  financeReviewStatus?: ReimbursementFinanceReviewStatus;
+  financeReviewedByUserId?: string | null;
+  currentApprovalStepId?: string | null;
+  cancellationPendingAt?: Date | null;
+  requesterUserId: string;
+  submittedByUserId?: string | null;
+  approvalPolicySnapshotJson?: unknown;
+  approvalSteps?: ReadonlyArray<{ id: string; status: ReimbursementApprovalStepStatus; decisionByUserId?: string | null }>;
+}): PendingProjectionIntent | undefined {
+  if (request.cancellationPendingAt) return undefined;
+  if (request.status === 'PENDING_APPROVAL') {
+    const step = request.approvalSteps?.find((candidate) => candidate.id === request.currentApprovalStepId);
+    return step?.status === 'APPROVED' && step.decisionByUserId
+      ? { kind: 'MANAGER', actorUserId: step.decisionByUserId, approvalStepId: step.id } : undefined;
+  }
+  if (request.status === 'FINANCE_REVIEW') {
+    return request.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && request.financeReviewedByUserId
+      ? { kind: 'FINANCE', actorUserId: request.financeReviewedByUserId } : undefined;
+  }
+  if (request.status === 'APPROVED' && !request.currentApprovalStepId) {
+    const snapshot = parseReimbursementPolicySnapshot(request.approvalPolicySnapshotJson);
+    return snapshot && !snapshot.requiresApproval && !snapshot.financeReviewRequired
+      ? { kind: 'POLICY', actorUserId: request.submittedByUserId ?? request.requesterUserId } : undefined;
+  }
+  return undefined;
+}
+
 // ---- Current desk (อยู่ที่ใคร) ----
 
 /** The pending-step fields the desk rule reads; nothing else on a step matters here. */
@@ -446,22 +496,33 @@ export type CurrentDeskStepFields = {
 export function currentDesk(input: {
   status: ReimbursementRequestStatus;
   financeReviewStatus?: ReimbursementFinanceReviewStatus;
+  /** The claim's approval steps when the caller loaded them; left out, nothing is concluded from their absence. */
   steps?: readonly CurrentDeskStepFields[];
   names?: Record<string, string>;
+  /** A cancellation was started and has not completed. */
+  cancellationPending?: boolean;
 }): ReimbursementCurrentDesk | undefined {
+  // A claim being cancelled is with the system whatever its status: nobody approves or pays it meanwhile
+  // (audit B3). A finished claim keeps having no desk.
+  const cancelling = (desk: ReimbursementCurrentDesk): ReimbursementCurrentDesk => (input.cancellationPending ? { kind: 'SYSTEM' } : desk);
   switch (input.status) {
-    case 'DRAFT': return { kind: 'REQUESTER' };
-    case 'FINANCE_REVIEW': return { kind: 'FINANCE' };
+    case 'DRAFT': return cancelling({ kind: 'REQUESTER' });
+    case 'FINANCE_REVIEW': return cancelling({ kind: 'FINANCE' });
     case 'READY_FOR_PAYMENT':
-    case 'PARTIALLY_PAID': return { kind: 'PAYMENT' };
+    case 'PARTIALLY_PAID': return cancelling({ kind: 'PAYMENT' });
     // Transient: approved, waiting for the projection to route it on to one of the two.
-    case 'APPROVED': return { kind: input.financeReviewStatus === 'PENDING' ? 'FINANCE' : 'PAYMENT' };
+    case 'APPROVED': return cancelling({ kind: input.financeReviewStatus === 'PENDING' ? 'FINANCE' : 'PAYMENT' });
     case 'PENDING_APPROVAL': break;
     default: return undefined;
   }
+  if (input.cancellationPending) return { kind: 'SYSTEM' };
   const step = [...(input.steps ?? [])]
     .filter((s) => s.status === 'PENDING' && !s.invalidatedAt)
     .sort((a, b) => a.sequenceNo - b.sequenceNo)[0];
+  // Decided (audit B4): the steps were loaded and none is waiting. The approval is durable and the claim
+  // stays PENDING_APPROVAL only until the system has built its expense records. It waits for no approver,
+  // which is what the LINE backlog answer has always said of it ("รอระบบปรับสถานะ").
+  if (input.steps && !step) return { kind: 'SYSTEM' };
   const names = [...new Set([
     ...(step?.assignedApproverUserIds ?? []),
     ...(step?.approverUserId ? [step.approverUserId] : []),

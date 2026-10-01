@@ -68,6 +68,7 @@ export function toRequestSummary(
     financeReviewStatus: r.financeReviewStatus,
     steps: r.approvalSteps,
     names: options.approverNames,
+    cancellationPending: !!r.cancellationPendingAt,
   });
   return {
     id: r.id,
@@ -85,6 +86,8 @@ export function toRequestSummary(
     incurredDate: r.incurredDate.toISOString(),
     status: r.status,
     ...(desk ? { currentDesk: desk } : {}),
+    // A cancelled claim keeps the intent it was cancelled with; only one still on its way is pending.
+    ...(r.cancellationPendingAt && r.status !== 'CANCELLED' && r.status !== 'VOIDED' ? { cancellationPending: true as const } : {}),
     financeReviewStatus: r.financeReviewStatus,
     paymentStatus: r.paymentStatus,
     duplicateStatus: r.duplicateStatus,

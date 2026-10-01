@@ -1,5 +1,5 @@
 import type { MangmeeTone } from '@/common/components/mangmee';
-import { REIMBURSEMENT_DESK_LABELS, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 // The words for a payment method are shared with the server's notice (their own import, apart from the line above).
 import { REIMBURSEMENT_PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
@@ -52,6 +52,20 @@ export const REQUEST_STATUS_TONES: Record<string, MangmeeTone> = {
   PAID: 'brand',
   VOIDED: 'danger',
 } satisfies Record<string, MangmeeTone>;
+
+/**
+ * The words and colour of a claim's status badge, on a list or queue row and on the claim page alike.
+ *
+ * A claim the system holds has not left its status yet: its approval is decided and not carried out, or it
+ * is being cancelled. The badge used to print that status ("รออนุมัติ" on a claim already approved,
+ * "พร้อมจ่าย" on one being cancelled) beside an "อยู่ที่ ระบบ" line and a step note that said otherwise. It
+ * reads "รอระบบปรับสถานะ" for such a claim: the words of that line, that note and the LINE backlog.
+ */
+export function claimStatusBadge(claim: { status?: string; currentDesk?: { kind?: string } | null } | null | undefined): { label: string; tone: MangmeeTone } {
+  if (claim?.currentDesk?.kind === 'SYSTEM') return { label: REIMBURSEMENT_SYSTEM_WAIT_LABEL, tone: 'amber' };
+  const status = String(claim?.status ?? '');
+  return { label: REQUEST_STATUS_LABELS[status] ?? '—', tone: REQUEST_STATUS_TONES[status] ?? 'slate' };
+}
 
 export const PAYMENT_STATUS_TONES: Record<string, MangmeeTone> = {
   NOT_PAYABLE: 'slate',
@@ -189,15 +203,24 @@ export function canVoidRecordedPayment(payment: any, permissions: readonly strin
   return payment?.status === 'RECORDED' && permissions.includes('reimbursement.payment.void');
 }
 
+/** Whether a claim, as a list row or as its detail, says a cancellation of it was started and has not completed. */
+export function claimIsBeingCancelled(claim: { cancellationPending?: boolean; pendingCancellation?: unknown } | null | undefined): boolean {
+  return claim?.cancellationPending === true || Boolean(claim?.pendingCancellation);
+}
+
 /** Related visibility never implies a write. Every requester action repeats actor, permission and state. */
 export function reimbursementOwnActions(detail: any, userId: string, permissions: readonly string[]) {
   const isRequester = detail?.requesterUserId === userId;
-  const canPrepare = isRequester || permissions.includes('reimbursement.finance_review');
+  // A claim being cancelled takes no edit, submit or second cancel: the API refuses them until the
+  // cancellation is finished or withdrawn. A list row says so with `cancellationPending`, the claim detail
+  // also with `pendingCancellation`.
+  const beingCancelled = claimIsBeingCancelled(detail);
+  const canPrepare = (isRequester || permissions.includes('reimbursement.finance_review')) && !beingCancelled;
   const status = String(detail?.status ?? '');
   return {
     canEditDraft: canPrepare && status === 'DRAFT' && (permissions.includes('reimbursement.update_own_draft') || permissions.includes('reimbursement.finance_review')),
     canSubmit: canPrepare && status === 'DRAFT' && permissions.includes('reimbursement.submit'),
-    canCancel: ((isRequester && permissions.includes('reimbursement.cancel_own'))
+    canCancel: !beingCancelled && ((isRequester && permissions.includes('reimbursement.cancel_own'))
       || permissions.includes('reimbursement.finance_review'))
       && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status),
     // REJECTED -> DRAFT: fix and resubmit under the same request number (server: /reopen).

@@ -1,5 +1,5 @@
 import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
-import type { RequestContext, ReimbursementApprovalQueueItem, ReimbursementRequestDetail } from '@watchdog-bms/contracts';
+import type { RequestContext, ReimbursementApprovalQueueItem, ReimbursementAwaitingSystem, ReimbursementRequestDetail } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
@@ -17,6 +17,7 @@ import {
   canTransition,
   ageHours,
   isSlaRisk,
+  pendingProjectionIntent,
 } from '../../domain/logic/reimbursement.logic';
 import { hasPayoutSnapshot, payoutAttestationError } from '../../domain/logic/payout-destination.logic';
 
@@ -124,6 +125,9 @@ export function pendingApprovalActions(
   allowSelfApproval: boolean,
 ): { canApprove: boolean; canReject: boolean; selfApprovalBlocked?: boolean } {
   if (request.status !== 'PENDING_APPROVAL' || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) return NO_APPROVAL_ACTIONS;
+  // A claim being cancelled takes no decision until that is finished or withdrawn (audit B3): the approve
+  // and reject endpoints refuse it, so neither is offered, on the claim detail or as a queue row.
+  if (request.cancellationPendingAt) return NO_APPROVAL_ACTIONS;
   const step = currentApprovalStep(request);
   const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
   const eligible = isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers);
@@ -163,6 +167,43 @@ export async function approvalDecisionActions(
   return pendingApprovalActions(ctx, request, activeApprovers, policy.allowSelfApproval);
 }
 
+/**
+ * A claim whose decision is on record and waits for the system to carry it out (audit B4), as the
+ * claim detail reports it, with whether this viewer may tell the system to carry on now. The resume
+ * endpoint asks this same function, so "ดำเนินการต่อ" is offered to exactly the people it takes.
+ *
+ * APPROVAL: the approver who decided, while they still hold what approving asks of them: the
+ * claim's branch in their scope, and the approve right or their place on the step. Their roles are
+ * not read again; the decision was checked against them when it was made, and nothing is decided now.
+ * NO_APPROVAL_NEEDED: whoever may record the claim's payment, the people it waits for.
+ * A claim finance passed keeps its own "ดำเนินการต่อ" on the finance step and is not reported here.
+ *
+ * Needs the claim loaded with its lines and approval steps.
+ */
+export async function awaitingSystemOf(
+  ctx: RequestContext,
+  request: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+): Promise<ReimbursementAwaitingSystem | undefined> {
+  const intent = pendingProjectionIntent(request);
+  const inScope = isBranchInScope(ctx.scopes ?? {}, request.branchId);
+  if (intent?.kind === 'MANAGER') {
+    const step = currentApprovalStep(request);
+    const decidedIt = inScope && intent.actorUserId === ctx.userId;
+    return {
+      kind: 'APPROVAL',
+      canResume: decidedIt && (ctx.permissions.includes('reimbursement.approve')
+        || hasFrozenAssignment(step, ctx.userId, await activeStepApprovers(repo, ctx.companyId, step, request.branchId))),
+    };
+  }
+  // Nobody had to approve it: it can be paid as soon as its expense records are confirmed, so it
+  // waits for the system only while they are not (the payment endpoint refuses it until then).
+  if (intent?.kind === 'POLICY' && !(await repo.areClaimProjectionsReady(request))) {
+    return { kind: 'NO_APPROVAL_NEEDED', canResume: inScope && ctx.permissions.includes('reimbursement.payment.record') };
+  }
+  return undefined;
+}
+
 @Injectable()
 export class ListApprovalQueueUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
@@ -200,7 +241,8 @@ export class ListApprovalQueueUseCase {
       const policy = effectivePolicyForRequest(request, currentPolicy);
       // Audit H-18 and B20: a row is listed only for a decision this viewer can make, and it says which. The
       // queue used to list the viewer's own claims and to offer อนุมัติ to a reject-only viewer; both answered
-      // 403. These are the detail's own actions, on the same submitted policy the approve gate reads.
+      // 403. These are the detail's own actions, on the same submitted policy the approve gate reads. A claim
+      // being cancelled has none (audit B3), so it is no row of anybody's queue.
       const { canApprove, canReject } = pendingApprovalActions(
         ctx, request, activeApproversByBranch.get(request.branchId ?? '') ?? new Set<string>(), policy.allowSelfApproval,
       );

@@ -156,8 +156,16 @@ export async function setLineReceipt(companyId: string, requestId: string, lines
 export function submitReimbursement(companyId: string, id: string, payoutSubmitToken?: string) {
   return apiFetch<any>(`${base(companyId)}/${id}/submit`, { method: 'POST', body: JSON.stringify({ payoutSubmitToken }) });
 }
+/**
+ * Cancels a claim, or continues a cancellation that was started and has not completed. A continue sends no
+ * reason (the one on record stays), except the corrected reason when the stored one is what blocks it.
+ */
 export function cancelReimbursement(companyId: string, id: string, reason?: string) {
   return apiFetch<any>(`${base(companyId)}/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+/** Takes back a cancellation that was started and has not completed; the claim goes on as before. */
+export function withdrawReimbursementCancellation(companyId: string, id: string) {
+  return apiFetch<any>(`${base(companyId)}/${id}/cancel/withdraw`, { method: 'POST', body: '{}' });
 }
 export function reopenReimbursement(companyId: string, id: string) {
   return apiFetch<any>(`${base(companyId)}/${id}/reopen`, { method: 'POST', body: '{}' });
@@ -174,6 +182,10 @@ export function approveReimbursement(companyId: string, id: string, comment?: st
 }
 export function rejectReimbursement(companyId: string, id: string, reason: string) {
   return apiFetch<any>(`${base(companyId)}/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+/** "ดำเนินการต่อ": has the system carry out now the decision the claim already holds. It decides nothing, so it sends nothing. */
+export function resumeReimbursement(companyId: string, id: string) {
+  return apiFetch<any>(`${base(companyId)}/${id}/resume`, { method: 'POST', body: '{}' });
 }
 
 // ---- Finance & payment ----

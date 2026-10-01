@@ -4,6 +4,7 @@
 // decimal strings (4 dp in DB). Dates are ISO strings across the wire.
 
 import { coerceCivilDate, isCivilDate, todayCivilDate } from './civil-date.js';
+import type { ExpenseVoidBlocker } from './expenses.js';
 
 /** One incurred-date rule for API writes, stored-draft submit and client validation. */
 export function reimbursementIncurredDateError(value: string | Date, today = todayCivilDate()): string | null {
@@ -494,7 +495,9 @@ export type ReimbursementLineSummary = {
 // Every other desk is a permission pool and prints as the pool, never as a
 // guessed person.
 
-export type ReimbursementCurrentDeskKind = 'REQUESTER' | 'APPROVER' | 'FINANCE' | 'PAYMENT';
+// `SYSTEM`: nobody's turn. The claim's decision is already made (approved, or being cancelled) and
+// the system has not finished moving it on; while it is there, nobody is asked to approve or pay it.
+export type ReimbursementCurrentDeskKind = 'REQUESTER' | 'APPROVER' | 'FINANCE' | 'PAYMENT' | 'SYSTEM';
 
 export type ReimbursementCurrentDesk = {
   kind: ReimbursementCurrentDeskKind;
@@ -513,7 +516,14 @@ export const REIMBURSEMENT_DESK_LABELS: Record<ReimbursementCurrentDeskKind, str
   APPROVER: 'ผู้มีสิทธิ์อนุมัติ',
   FINANCE: 'ฝ่ายการเงิน',
   PAYMENT: 'ผู้มีสิทธิ์บันทึกจ่าย',
+  SYSTEM: 'ระบบ',
 };
+
+/**
+ * What a claim on the system's desk is said to wait for: the words of the LINE backlog answer, and of
+ * the claim page's step note and timeline row for the same claim.
+ */
+export const REIMBURSEMENT_SYSTEM_WAIT_LABEL = 'รอระบบปรับสถานะ';
 
 // ---- หน้ารวม (hub) buckets ----
 
@@ -539,8 +549,8 @@ const HUB_BUCKET_BY_STATUS: Record<ReimbursementRequestStatus, ReimbursementHubB
 
 /**
  * The hub bucket of a claim: the desk it waits at, the one its row prints as "อยู่ที่ …". A claim with no
- * desk, or with a desk kind this code does not know, is placed by its status: a draft is a draft whether
- * or not the row carries a desk. One rule for the cards, the chips and the list.
+ * desk, with the system's desk, or with a desk kind this code does not know, is placed by its status: a
+ * draft is a draft whether or not the row carries a desk. One rule for the cards, the chips and the list.
  */
 export function reimbursementHubBucket(claim: {
   status?: string;
@@ -586,6 +596,12 @@ export type ReimbursementRequestSummary = {
   status: ReimbursementRequestStatus;
   /** Who the claim is waiting on now. Absent on terminal claims (paid/rejected/cancelled/voided). */
   currentDesk?: ReimbursementCurrentDesk;
+  /**
+   * Present while a cancellation of the claim was started and has not completed. The API takes no other
+   * decision on the claim meanwhile (submit, approve, reject, finance review, payment, a second cancel),
+   * so a list or queue row offers none. The claim detail says more in `pendingCancellation`.
+   */
+  cancellationPending?: true;
   financeReviewStatus: ReimbursementFinanceReviewStatus;
   paymentStatus: ReimbursementPaymentStatus;
   duplicateStatus: ReimbursementDuplicateStatus;
@@ -660,6 +676,43 @@ export type LinkReimbursementSignedCopyInput = {
   confirmedRequestNo?: string;
 };
 
+/** What stands in the way of a cancellation that was started: a reason the expense void refuses, or what stops the void itself. */
+export type ReimbursementCancellationBlocker = { code: 'reason_too_short' } | ExpenseVoidBlocker;
+
+/**
+ * A cancellation that was started and has not completed. Cancelling voids the claim's expense
+ * records after the intent is committed, so a claim can sit between the two. While it does, approval
+ * and payment are refused; this says so, to whom it falls, and what they can do.
+ */
+export type ReimbursementPendingCancellation = {
+  startedAt: string;
+  startedByUserId?: string;
+  startedByName?: string;
+  /** The reason it was started with. */
+  reason: string;
+  /** What stops it from completing right now. Absent: nothing known does, and continuing should finish it. */
+  blocker?: ReimbursementCancellationBlocker;
+  /** The cancel endpoint takes this viewer: they may continue it, with a corrected reason when `reason_too_short` blocks it. */
+  canResume: boolean;
+  /** This viewer may take it back so the claim goes on as before: none of its expense records has been voided yet. */
+  canWithdraw: boolean;
+};
+
+/**
+ * A claim whose decision is made and on record, waiting for the system to carry it out: build and
+ * confirm its expense records and move it on to payment. The decision is committed first and the
+ * rest follows it, so a claim can sit between the two; a scheduled run picks it up, and this says
+ * who may also tell the system to carry on now.
+ *
+ * APPROVAL: its approver approved it. NO_APPROVAL_NEEDED: nobody had to approve it, and it cannot be
+ * paid until its expense records are confirmed.
+ */
+export type ReimbursementAwaitingSystem = {
+  kind: 'APPROVAL' | 'NO_APPROVAL_NEEDED';
+  /** The resume endpoint takes this viewer ("ดำเนินการต่อ"). Nothing is decided or attested again. */
+  canResume: boolean;
+};
+
 export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   createdByName?: string;
   currentApproverUserId?: string;
@@ -702,6 +755,10 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
    * payment endpoint refuses for everyone (no branch, or part paid): the page then prints the desk's pool label.
    */
   paymentDesk?: { names: string[]; moreCount: number };
+  /** Present while a cancellation was started and has not completed. GET detail only, like `approvalActions`. */
+  pendingCancellation?: ReimbursementPendingCancellation;
+  /** Present while the claim's decision waits for the system to carry it out. GET detail only. Never together with `pendingCancellation`. */
+  awaitingSystem?: ReimbursementAwaitingSystem;
   missingReceiptReason?: string;
   /** Where the money goes back to, masked. Absent on a legacy claim: one sent before claims carried a receiving method. */
   payout?: ReimbursementPayoutSummary;

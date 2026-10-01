@@ -15,9 +15,8 @@ import {
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
 } from './reimbursements.api';
 import {
-  REQUEST_STATUS_LABELS,
   FINANCE_REVIEW_LABELS, REIMBURSEMENT_CREATE_UNAVAILABLE,
-  currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
+  claimStatusBadge, currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
 } from './reimbursements.model';
 import {
   baht0, dateShort, ICON, KPI, StatCard, ErrorBanner,
@@ -29,7 +28,7 @@ import {
   policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
   type HubFilter, approverPaymentWarning,
   NO_HUB_LIST, QUEUE_PAGE_SIZE, HUB_SEARCH_DELAY_MS, hubCardFilter, hubList, hubListKey, hubListStatusText, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
-  queueRowOffersPayment, quickPayTarget,
+  queueRowOffersFinanceReview, queueRowOffersPayment, quickPayBlockedNote, quickPayTarget,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
@@ -205,6 +204,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
       {payFor && <PaymentModal
         companyId={companyId}
         userId={userId}
+        permissions={permissions}
         request={payFor}
         onClose={() => setPayFor(null)}
         onDone={() => {
@@ -381,7 +381,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                         <td className="text-gray-500">{categoryText(r.categoryLabelSnapshot)}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.amount, r.currency)}</td>
-                        <td><StatusBadge status={r.status} /></td>
+                        <td><StatusBadge status={r.status} desk={r.currentDesk} /></td>
                         <td><PaymentBadge status={r.paymentStatus} /></td>
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
@@ -424,7 +424,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                     <div className="mt-1 truncate text-xs text-gray-500">ผู้ขอ: {r.requesterDisplayNameSnapshot ?? '—'}</div>
                     <CurrentDeskLine row={r} />
                     <div className="mt-3 flex items-center justify-between gap-3">
-                      <StatusBadge status={r.status} />
+                      <StatusBadge status={r.status} desk={r.currentDesk} />
                       <span className="shrink-0 text-xs text-gray-500">{shortDate(r.incurredDate)}</span>
                     </div>
                     <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
@@ -600,7 +600,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   <CurrentDeskLine row={r} />
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <StatusBadge status={r.status} />
+                      <StatusBadge status={r.status} desk={r.currentDesk} />
                       {r.slaRisk && <MangmeeBadge tone="danger">เกิน SLA</MangmeeBadge>}
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>
@@ -704,7 +704,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
     r.outstandingAmount,
     r.amount,
     r.currency,
-    REQUEST_STATUS_LABELS[r.status] ?? r.status,
+    claimStatusBadge(r).label,
     FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? r.financeReviewStatus,
     r.hasDuplicateBlocker ? 'อาจซ้ำ' : '',
     currentDeskText(r.currentDesk),
@@ -767,7 +767,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                         <td>{r.requesterDisplayNameSnapshot}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
-                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge status={r.status} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">อาจซ้ำ</MangmeeBadge>}</div></td>
+                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge status={r.status} desk={r.currentDesk} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">อาจซ้ำ</MangmeeBadge>}</div></td>
                         <td className="text-xs text-gray-500">{FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—'}</td>
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
@@ -776,7 +776,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
+                            {queueRowOffersFinanceReview(r) && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
                             {queueRowOffersPayment(r, permissions) && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); onRecordPayment(r, 'table'); }}>บันทึกจ่าย</button>}
                           </div>
                         </td>
@@ -797,7 +797,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   <CurrentDeskLine row={r} />
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <StatusBadge status={r.status} />
+                      <StatusBadge status={r.status} desk={r.currentDesk} />
                       {r.hasDuplicateBlocker && <MangmeeBadge tone="amber">อาจซ้ำ</MangmeeBadge>}
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>
@@ -805,7 +805,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`/companies/${companyId}/reimbursements/${r.id}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-finance-card">ดูรายละเอียด</Link>
-                    {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
+                    {queueRowOffersFinanceReview(r) && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
                     {queueRowOffersPayment(r, permissions) && <button className={cx(btnClass, 'min-h-11 w-full')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => onRecordPayment(r, 'cards')}>บันทึกจ่าย</button>}
                   </div>
                 </MangmeeCard>
@@ -822,7 +822,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
   );
 }
 
-function PaymentModal({ companyId, userId, request, onClose, onDone }: { companyId: string; userId: string; request: any; onClose: () => void; onDone: () => void }) {
+function PaymentModal({ companyId, userId, permissions, request, onClose, onDone }: { companyId: string; userId: string; permissions: readonly string[]; request: any; onClose: () => void; onDone: () => void }) {
   // The queue row carries no attachments and nothing about where to pay. The claim does: the account
   // to transfer into, the version the payer confirms and the files that can be the slip. The form
   // seeds its own state from what it is given when it mounts, so it mounts once, when that read has
@@ -840,14 +840,26 @@ function PaymentModal({ companyId, userId, request, onClose, onDone }: { company
     return () => { active = false; };
   }, [companyId, request, attempt]);
   const claimPath = `/companies/${companyId}/reimbursements`;
+  // The row can be older than the claim (cancelled meanwhile, paid by someone else, moved off its payment
+  // step). The form is shown only where the claim's own page would show it; otherwise this says why.
+  const blocked = claim ? quickPayBlockedNote(claim, permissions, userId) : null;
   return (
     <Modal open title={`บันทึกการจ่ายเงิน — ${request.requestNo}`} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       {claim ? (
+        blocked ? (
+          <div className="space-y-3">
+            <ErrorBanner message={blocked} />
+            <div className="flex justify-end">
+              <Link href={`${claimPath}/${request.id}`} className={btnClass}>เปิดหน้าใบเบิก</Link>
+            </div>
+          </div>
+        ) : (
         <div className="space-y-3">
           {/* The same box the claim page shows at its payment step: where to transfer, with show and copy. */}
           <ClaimPayoutCard companyId={companyId} detail={claim} userId={userId} payoutAccountHref={`${claimPath}/payout-account`} payStep />
           <PaymentForm companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} />
         </div>
+        )
       ) : failed ? (
         <div className="space-y-3">
           <ErrorBanner message={`เปิดใบเบิกไม่สำเร็จ จึงยังบันทึกจ่ายจากหน้านี้ไม่ได้ · ${failed}`} />

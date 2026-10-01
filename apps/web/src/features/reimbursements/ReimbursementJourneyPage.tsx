@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { EXPENSE_VOID_REASON_MIN_LENGTH } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedSteps, type ThemedStepState } from '@/common/components/steps/ThemedSteps';
@@ -15,8 +16,8 @@ import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/Expen
 import {
   addReimbursementInternalNote, approveReimbursement, attachReimbursementPaymentSlip, cancelReimbursement, deleteReimbursementInternalNote,
   editReimbursementInternalNote, financeReviewReimbursement, getReimbursement, rejectReimbursement,
-  reopenReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadReimbursementPaymentSlip, uploadSignedClaimFormCopy,
-  voidReimbursementPayment,
+  reopenReimbursement, resumeReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadReimbursementPaymentSlip, uploadSignedClaimFormCopy,
+  voidReimbursementPayment, withdrawReimbursementCancellation,
 } from './reimbursements.api';
 import { currentDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
@@ -36,17 +37,26 @@ const STEPPER_STATE: Record<JourneyStepState, ThemedStepState> = {
 
 const ACTION_LABELS: Record<JourneyAction, string> = {
   submit: 'ส่งอนุมัติ', edit: 'แก้ไขคำขอ', cancel: 'ยกเลิกคำขอ', reopen: 'แก้ไขและส่งใหม่',
-  approve: 'อนุมัติ', reject: 'ปฏิเสธ', 'policy-settings': 'ไปที่ตั้งค่าเบิกจ่าย',
+  'resume-cancel': 'ดำเนินการยกเลิกต่อ', 'withdraw-cancel': 'ถอนการยกเลิก',
+  approve: 'อนุมัติ', reject: 'ปฏิเสธ', resume: 'ดำเนินการต่อ', 'policy-settings': 'ไปที่ตั้งค่าเบิกจ่าย',
   'finance-approve': 'อนุมัติจ่าย', 'finance-return': 'ส่งกลับให้แก้ไข', 'finance-block': 'ระงับการจ่าย',
   'resolve-duplicate': 'ปลดรายการซ้ำ', pay: 'บันทึกจ่าย', sign: 'ลงนามในใบเบิก', print: 'พิมพ์ใบเบิก',
   'attach-signed-copy': 'แนบสำเนาที่เซ็นแล้ว', 'void-payment': 'ยกเลิกการจ่าย',
 };
 
-type ReasonAction = 'cancel' | 'finance-return' | 'finance-block' | 'resolve-duplicate';
-const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string; confirmLabel: string; success: string; danger?: boolean }> = {
+type ReasonAction = 'cancel' | 'resume-cancel' | 'finance-return' | 'finance-block' | 'resolve-duplicate';
+const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string; confirmLabel: string; success: string; danger?: boolean; minLength?: number }> = {
   cancel: {
     title: 'ยกเลิกคำขอ', confirmLabel: 'ยืนยันยกเลิกคำขอ', success: 'ยกเลิกคำขอเรียบร้อยแล้ว', danger: true,
     description: 'ระบุเหตุผล ระบบจะปิดคำขอและยกเลิกรายการที่เกี่ยวข้อง คำขอนี้จะนำกลับมาใช้ต่อไม่ได้',
+    // The reason also voids the claim's expense records, which take no shorter one: the API refuses it too.
+    minLength: EXPENSE_VOID_REASON_MIN_LENGTH,
+  },
+  // A cancellation whose stored reason is what blocks it (audit B3): the same cancel call, with the corrected reason.
+  'resume-cancel': {
+    title: 'ดำเนินการยกเลิกต่อ', confirmLabel: 'ยืนยันยกเลิกคำขอ', success: 'ยกเลิกคำขอเรียบร้อยแล้ว', danger: true,
+    description: 'เหตุผลที่ระบุไว้เดิมสั้นเกินไป ระบุเหตุผลที่ยกเลิกใหม่ ระบบจะปิดคำขอและยกเลิกรายการที่เกี่ยวข้อง คำขอนี้จะนำกลับมาใช้ต่อไม่ได้',
+    minLength: EXPENSE_VOID_REASON_MIN_LENGTH,
   },
   'finance-return': {
     title: 'ส่งกลับให้แก้ไข', confirmLabel: 'ส่งกลับให้แก้ไข', success: 'ส่งใบเบิกกลับให้แก้ไขแล้ว',
@@ -265,6 +275,22 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     submit: () => { setApproverHelp(null); void act('submit', () => submitReimbursement(companyId, requestId, detail.payout?.submitToken), 'ส่งขออนุมัติเรียบร้อยแล้ว',
       (e) => { const help = approverNotReadyHelp(e, permissions); setApproverHelp(help); return help !== null; }); },
     cancel: () => { setActionError(null); setReasonAction('cancel'); },
+    // The reason on record stays; only a stored reason the system cannot cancel with is asked for again.
+    'resume-cancel': () => {
+      setActionError(null);
+      if (detail.pendingCancellation?.blocker?.code === 'reason_too_short') setReasonAction('resume-cancel');
+      else void act('resume-cancel', () => cancelReimbursement(companyId, requestId), 'ยกเลิกคำขอเรียบร้อยแล้ว');
+    },
+    'withdraw-cancel': () => void (async () => {
+      if (!(await confirm({
+        title: 'ถอนการยกเลิก',
+        message: 'คำขอนี้จะกลับไปเดินต่อตามขั้นตอนเดิม เหมือนยังไม่เคยกดยกเลิก',
+        confirmLabel: 'ถอนการยกเลิก',
+        cancelLabel: 'กลับ',
+        variant: 'primary',
+      }))) return;
+      await act('withdraw-cancel', () => withdrawReimbursementCancellation(companyId, requestId), 'ถอนการยกเลิกแล้ว คำขอกลับไปเดินต่อตามเดิม');
+    })(),
     reopen: () => void (async () => {
       // Withdrawing takes the claim off the approver's desk, so it asks first; reopening a refusal does not.
       if (detail.status === 'PENDING_APPROVAL' && !(await confirm({
@@ -278,6 +304,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     })(),
     approve: () => void approve(),
     reject: () => { setActionError(null); setRejecting(true); },
+    // Audit B4: the decision is on record; this has the system carry it out now. Nothing is approved or attested again.
+    resume: () => void act('resume', () => resumeReimbursement(companyId, requestId), 'ดำเนินการต่อเรียบร้อยแล้ว'),
     'finance-approve': () => void act('finance-approve', () => financeReviewReimbursement(companyId, requestId, {
       decision: 'APPROVED_FOR_PAYMENT',
       resolveDuplicate: detail.duplicateStatus === 'POSSIBLE_DUPLICATE',
@@ -325,7 +353,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       eyebrow={back}
       title={detail.requestNo ?? 'คำขอเบิกฉบับร่าง'}
       description={desk ? `อยู่ที่ ${desk}` : undefined}
-      meta={<StatusBadge status={detail.status} />}
+      meta={<StatusBadge status={detail.status} desk={detail.currentDesk} />}
     >
       <ClaimSummaryCard detail={detail} />
 
@@ -473,11 +501,13 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
         description={reasonDialog.description}
         confirmLabel={reasonDialog.confirmLabel}
         danger={reasonDialog.danger}
+        minLength={reasonDialog.minLength}
+        initialReason={reasonAction === 'resume-cancel' ? detail.pendingCancellation?.reason : undefined}
         busy={busyAction === reasonAction}
         error={actionError}
         onClose={() => setReasonAction(null)}
         onConfirm={async (reason) => {
-          const request = reasonAction === 'cancel'
+          const request = reasonAction === 'cancel' || reasonAction === 'resume-cancel'
             ? () => cancelReimbursement(companyId, requestId, reason)
             // No decision: the payment-step duplicate clear on the finance-review endpoint.
             : reasonAction === 'resolve-duplicate'

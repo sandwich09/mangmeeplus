@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
-  ApproveReimbursementDto, AttachPaymentSlipDto, CompletePaymentSlipUploadDto, CreateReimbursementRequestDto, InitPaymentSlipUploadDto,
+  ApproveReimbursementDto, AttachPaymentSlipDto, CancelReimbursementDto, CompletePaymentSlipUploadDto, CreateReimbursementRequestDto, InitPaymentSlipUploadDto,
   LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
   ReimbursementInternalNoteDto, SetMemberPayoutAccountDto, SubmitReimbursementDto, UpdateReimbursementDraftDto,
 } from './reimbursement.dtos';
@@ -28,6 +28,17 @@ describe('ReimbursementInternalNoteDto', () => {
     await rejects(ReimbursementInternalNoteDto, { body: 'x'.repeat(2001) });
     await rejects(ReimbursementInternalNoteDto, { body: 'x', authorUserId: 'other' });
     await rejects(ReimbursementInternalNoteDto, { body: 42 });
+  });
+});
+
+// Audit B3: the cancel body reached the use case unvalidated (`@Body() body: { reason?: string }`).
+describe('CancelReimbursementDto', () => {
+  it('takes a reason or none, and refuses a forged field, a non-string and an oversized reason', async () => {
+    assert.equal((await pipe.transform({ reason: 'ซื้อซ้ำ' }, { type: 'body', metatype: CancelReimbursementDto })).reason, 'ซื้อซ้ำ');
+    await pipe.transform({}, { type: 'body', metatype: CancelReimbursementDto });
+    await rejects(CancelReimbursementDto, { reason: 'ซื้อซ้ำ', status: 'CANCELLED' });
+    await rejects(CancelReimbursementDto, { reason: 42 });
+    await rejects(CancelReimbursementDto, { reason: 'x'.repeat(501) });
   });
 });
 

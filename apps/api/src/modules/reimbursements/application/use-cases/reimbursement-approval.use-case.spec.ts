@@ -691,6 +691,15 @@ describe('approval queue rows carry what the viewer may do (audit B20)', () => {
     });
   }
 
+  // Audit B3: approve and reject both answer 409 while a cancellation is pending, so the queue offers neither.
+  it('lists no row for a claim that is being cancelled, and lists it again once the cancellation is withdrawn', async () => {
+    const claim = baseRequest({ cancellationPendingAt: new Date('2026-10-01T02:00:00.000Z'), cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำ' });
+    const repo = { ...fakeRepo(claim), listRequests: async () => [claim] } as any;
+    assert.deepEqual(await new ListApprovalQueueUseCase(repo).execute(ctx()), []);
+    Object.assign(claim, { cancellationPendingAt: undefined, cancellationPendingByUserId: undefined, cancellationPendingReason: undefined });
+    assert.deepEqual((await new ListApprovalQueueUseCase(repo).execute(ctx())).map((row) => [row.id, row.approvalActions]), [['rb-1', { canApprove: true, canReject: true }]]);
+  });
+
   it('lists no row for a viewer who can do neither', async () => {
     const reader = ctx({ permissions: ['reimbursement.read'] });
     assert.deepEqual(await new ListApprovalQueueUseCase(queueRepo(baseRequest())).execute(reader), []);
@@ -810,6 +819,37 @@ describe('approvalDecisionActions self-approval signal (spec §15)', () => {
     assert.deepEqual(await approvalDecisionActions(accountant, mine({}, { requesterUserId: 'staff-1' }), repo), plain, 'not their claim');
     assert.deepEqual(await approvalDecisionActions(accountant, mine(), fakeRepo(null, { allowSelfApproval: true })), plain, 'switch already on');
     assert.deepEqual(await approvalDecisionActions(accountant, mine({ status: 'APPROVED' }), repo), plain, 'already decided');
+  });
+});
+
+// Audit B3, the server's own flags. A claim being cancelled takes no decision until that is finished or
+// withdrawn. The detail used to answer canApprove and canReject as if nothing had happened, and the claim
+// page hid the buttons itself; the answer is now the server's, for every reader of it.
+describe('a claim being cancelled offers no decision, by the server\'s own flags', () => {
+  const cancelling = { cancellationPendingAt: new Date('2026-10-01T02:00:00.000Z'), cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' };
+  const none = { canApprove: false, canReject: false };
+  const frozenStep = () => baseRequest({ approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['approver-1'] }] });
+
+  it('answers no approve and no reject to whoever holds the step, and both again once the cancellation is withdrawn', async () => {
+    const holders: Array<[string, any, any]> = [
+      ['the approver the role routes it to', ctx(), baseRequest()],
+      ['an approver frozen onto the step whose rights are gone', ctx({ roles: ['STAFF'], permissions: [] }), frozenStep()],
+      ['someone who may only reject', ctx({ permissions: ['reimbursement.reject'] }), baseRequest()],
+    ];
+    for (const [who, viewer, claim] of holders) {
+      const held = await approvalDecisionActions(viewer, claim, fakeRepo(claim));
+      assert.ok(held.canApprove || held.canReject, `${who} holds the step`);
+      assert.deepEqual(await approvalDecisionActions(viewer, { ...claim, ...cancelling }, fakeRepo(claim)), none, who);
+      // Withdrawn: the claim is as it was, and so is what they may do.
+      assert.deepEqual(await approvalDecisionActions(viewer, { ...claim, cancellationPendingAt: undefined }, fakeRepo(claim)), held, who);
+    }
+  });
+
+  it('says nothing about the self-approval switch either: nothing can be decided, so nothing is explained', async () => {
+    const mine = baseRequest({ requesterUserId: 'approver-1', approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'ACCOUNTANT', assignedApproverUserIds: ['owner-1'] }] });
+    const accountant = ctx({ roles: ['ACCOUNTANT'] });
+    assert.deepEqual(await approvalDecisionActions(accountant, mine, fakeRepo(null)), { ...none, selfApprovalBlocked: true });
+    assert.deepEqual(await approvalDecisionActions(accountant, { ...mine, ...cancelling }, fakeRepo(null)), none);
   });
 });
 

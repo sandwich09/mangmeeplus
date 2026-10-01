@@ -70,13 +70,16 @@ import {
   isSelfApproval,
   matchesApproverRole,
   frozenApprovalAuthority,
+  pendingProjectionIntent,
+  type PendingProjectionIntent,
   validatePaymentRecording,
   validateRequestFields,
   deriveHeaderFromLines,
   computeReceiptRequirement,
   currentDesk,
 } from '../domain/logic/reimbursement.logic';
-import { CLAIM_PAYOUT_WORKLIST_LIMIT, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { CLAIM_PAYOUT_WORKLIST_LIMIT, exclusiveEndOfDay, isExpenseVoidReason } from '@watchdog-bms/contracts';
+import { findClaimExpenseVoidBlocker, type ExpenseVoidBlocker } from '../../expenses/infrastructure/expense-void-blocker';
 import {
   PAYOUT_PEOPLE_MANAGER_ROLE_KEYS,
   type FrozenPayoutPlan, type SealedPayoutDestination, type SubmitPayoutColumns, type SubmitPayoutPlan,
@@ -576,7 +579,8 @@ export class PrismaReimbursementRepository {
       await this.lockRequest(tx, companyId, requestId);
       const payoutColumns = payout ? await applyDraftPayout(tx, companyId, requestId, payout.write) : {};
       const changed = await tx.reimbursementRequest.updateMany({
-        where: { id: requestId, companyId, status: 'DRAFT', updatedAt: expectedUpdatedAt },
+        // Not while the draft is being cancelled (audit B3): answered like any other change under the editor.
+        where: { id: requestId, companyId, status: 'DRAFT', updatedAt: expectedUpdatedAt, cancellationPendingAt: null },
         data: { ...data, ...payoutColumns, updatedAt: this.nextVersion(expectedUpdatedAt) },
       });
       if (changed.count !== 1) throw this.draftChanged();
@@ -949,6 +953,7 @@ export class PrismaReimbursementRepository {
       await this.assertEvidenceAvailable(tx, data.companyId, data.requestId, data.evidence);
       const sourceRequest = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId: data.companyId, id: data.requestId }, include: { lines: true } });
       const draft = this.toRequest(sourceRequest);
+      this.assertNotBeingCancelled(draft);
       await assertReimbursementSources(tx, draft);
       // Before anything is written: what this submit freezes, and the hash that binds it.
       const payout = data.payout ? await freezePayoutAtSubmit(tx, draft, data.payout) : undefined;
@@ -1090,6 +1095,8 @@ export class PrismaReimbursementRepository {
     reason: string;
     startedAt: Date;
     onIntentPersisted: (tx: any) => Promise<void>;
+    /** Runs in the same transaction when a stored reason the void refuses is replaced by `reason`. */
+    onReasonCorrected?: (tx: any, previousReason: string | undefined) => Promise<void>;
   }): Promise<{ request: ReimbursementRequestRecord; resumed: boolean }> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
@@ -1102,11 +1109,25 @@ export class PrismaReimbursementRepository {
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes);
       if (request.cancellationPendingAt) {
-        if (request.cancellationPendingByUserId !== data.actorUserId
-          || request.cancellationPendingReason !== data.reason) {
+        // Audit B3: a started cancellation is continued by whoever may cancel the claim, not only by
+        // the person who started it (the caller has checked that right). Its reason stays the one on
+        // record: expense records may already be voided under it. Only a stored reason the void
+        // refuses is replaced, because nothing can have been voided with that one.
+        if (request.cancellationPendingReason === data.reason) return { request, resumed: true };
+        if (isExpenseVoidReason(request.cancellationPendingReason)) {
           throw new ConflictException('reimbursement_cancellation_already_pending');
         }
-        return { request, resumed: true };
+        const corrected = await tx.reimbursementRequest.updateMany({
+          where: { id: data.requestId, companyId: data.companyId, updatedAt: row.updatedAt, cancellationPendingAt: row.cancellationPendingAt },
+          data: { cancellationPendingReason: data.reason, updatedByUserId: data.actorUserId, updatedAt: this.nextVersion(row.updatedAt) },
+        });
+        if (corrected.count !== 1) throw new ConflictException('reimbursement_cancellation_state_changed');
+        await data.onReasonCorrected?.(tx, request.cancellationPendingReason);
+        const updated = await tx.reimbursementRequest.findFirstOrThrow({
+          where: { id: data.requestId, companyId: data.companyId },
+          include: { lines: { orderBy: { lineNo: 'asc' } } },
+        });
+        return { request: this.toRequest(updated), resumed: true };
       }
       if (request.status !== data.expectedStatus || request.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('reimbursement_cancellation_state_changed');
@@ -1164,7 +1185,9 @@ export class PrismaReimbursementRepository {
       if (row.status === 'CANCELLED') return this.toRequest(row);
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes, data.systemReconcile, data.expectedBranchId);
-      if (!request.cancellationPendingAt || request.cancellationPendingByUserId !== data.actorUserId) {
+      // Whoever may cancel the claim finishes a cancellation someone else started; what matters is
+      // that the intent is still there (it may have been withdrawn in between).
+      if (!request.cancellationPendingAt) {
         throw new ConflictException('reimbursement_cancellation_intent_changed');
       }
       const recordedPayments = await tx.reimbursementPayment.count({
@@ -1193,7 +1216,6 @@ export class PrismaReimbursementRepository {
           status: row.status,
           updatedAt: row.updatedAt,
           cancellationPendingAt: row.cancellationPendingAt,
-          cancellationPendingByUserId: data.actorUserId,
         },
         data: {
           status: 'CANCELLED',
@@ -1219,6 +1241,86 @@ export class PrismaReimbursementRepository {
     });
   }
 
+  /**
+   * What would stop this claim's cancellation from finishing: the first of its expense records the
+   * void would refuse (a closed accounting period, a locked tax period, a journal that is not posted,
+   * a record no void takes). Read before a cancellation is started, so the intent is not written for
+   * a cancellation that cannot finish, and again whenever a started one is shown or continued.
+   */
+  async findCancellationBlocker(request: Pick<ReimbursementRequestRecord, 'id' | 'companyId' | 'branchId'>): Promise<ExpenseVoidBlocker | null> {
+    for (const projection of await this.listClaimProjections(request.companyId, request.id)) {
+      if (projection.status === 'VOIDED') continue;
+      // The void's own authority check: a record on another branch than its claim is refused.
+      if (projection.branchId !== request.branchId) return { code: 'expense_not_voidable' };
+      const blocker = await findClaimExpenseVoidBlocker(this.prisma.client, request.companyId, projection.id);
+      if (blocker) return blocker;
+    }
+    return null;
+  }
+
+  /**
+   * The fence of a cancellation's expense voids, run first inside each void transaction: the void
+   * goes ahead only while the claim still holds its cancellation intent.
+   *
+   * The claim's lock orders it against a withdrawal: either the withdrawal waits and then finds this
+   * record voided (and refuses), or it ran first. The row lock is what makes "ran first" visible to a
+   * void whose snapshot was taken while it waited (the confirmed-expense void is serializable):
+   * PostgreSQL refuses to lock a row changed since that snapshot, and a read-committed void reads
+   * the row as it is now. A shared lock, so two voids of one cancellation do not refuse each other.
+   */
+  async assertCancellationPending(tx: any, companyId: string, requestId: string): Promise<void> {
+    await this.lockRequest(tx, companyId, requestId);
+    const rows: Array<{ pending: Date | null }> = await tx.$queryRaw`
+      SELECT "cancellationPendingAt" AS pending FROM "ReimbursementRequest"
+      WHERE "id" = ${requestId} AND "companyId" = ${companyId} FOR SHARE`;
+    if (!rows[0]?.pending) throw new ConflictException('reimbursement_cancellation_intent_changed');
+  }
+
+  /**
+   * Takes a started cancellation back, so the claim goes on as before. Only while none of the
+   * claim's expense records has been voided: after that the claim cannot go on, and the
+   * cancellation has to be finished instead.
+   */
+  async withdrawCancellationAtomic(data: {
+    companyId: string;
+    requestId: string;
+    actorUserId: string;
+    scopes: { branchIds?: string[] };
+    onWithdrawnPersisted: (tx: any, withdrawn: { startedByUserId?: string; startedAt: Date; reason?: string }) => Promise<void>;
+  }): Promise<ReimbursementRequestRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await this.lockRequest(tx, data.companyId, data.requestId);
+      const row = await tx.reimbursementRequest.findFirst({ where: { id: data.requestId, companyId: data.companyId } });
+      if (!row) throw new NotFoundException('Reimbursement request not found');
+      this.assertDecisionBranch(row.branchId, data.scopes);
+      if (!row.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_not_pending');
+      const voided = await tx.expenseRecord.count({
+        where: { companyId: data.companyId, sourceReimbursementRequestId: data.requestId, status: 'VOIDED' },
+      });
+      if (voided > 0) throw new ConflictException('reimbursement_cancellation_partly_done');
+      const changed = await tx.reimbursementRequest.updateMany({
+        where: { id: data.requestId, companyId: data.companyId, updatedAt: row.updatedAt, cancellationPendingAt: row.cancellationPendingAt },
+        data: {
+          cancellationPendingAt: null,
+          cancellationPendingByUserId: null,
+          cancellationPendingReason: null,
+          updatedByUserId: data.actorUserId,
+          updatedAt: this.nextVersion(row.updatedAt),
+        },
+      });
+      if (changed.count !== 1) throw new ConflictException('reimbursement_cancellation_state_changed');
+      await data.onWithdrawnPersisted(tx, {
+        startedByUserId: opt(row.cancellationPendingByUserId), startedAt: row.cancellationPendingAt, reason: opt(row.cancellationPendingReason),
+      });
+      const updated = await tx.reimbursementRequest.findFirstOrThrow({
+        where: { id: data.requestId, companyId: data.companyId },
+        include: { _count: { select: { lines: true } } },
+      });
+      return this.toRequest(updated);
+    });
+  }
+
   async listPendingCancellationIntents(limit = 100): Promise<Array<{
     request: ReimbursementRequestRecord;
     actorUserId: string;
@@ -1227,7 +1329,8 @@ export class PrismaReimbursementRepository {
     const rows = await (this.prisma.client as any).reimbursementRequest.findMany({
       where: { cancellationPendingAt: { not: null }, status: { notIn: ['CANCELLED', 'VOIDED'] } },
       include: { lines: { orderBy: { lineNo: 'asc' } } },
-      orderBy: { cancellationPendingAt: 'asc' },
+      // Newest first, like the projection intents: one a person has to unblock never holds the head of the list.
+      orderBy: { cancellationPendingAt: 'desc' },
       take: limit,
     });
     return rows.flatMap((row: any) => row.cancellationPendingByUserId && row.cancellationPendingReason
@@ -1365,6 +1468,15 @@ export class PrismaReimbursementRepository {
 
   private async lockRequest(tx: any, companyId: string, requestId: string): Promise<void> {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${requestId}:reimbursement-request`}))`;
+  }
+
+  /**
+   * A claim being cancelled takes no other decision until that cancellation is finished or
+   * withdrawn (audit B3). A decision taken in between could leave it in a status the cancellation
+   * cannot complete from, or build expense records the cancellation then has to void.
+   */
+  private assertNotBeingCancelled(row: { cancellationPendingAt?: Date | null }): void {
+    if (row.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
   }
 
   private assertDecisionBranch(
@@ -1695,6 +1807,7 @@ export class PrismaReimbursementRepository {
       if (row.status !== 'FINANCE_REVIEW') {
         throw new UnprocessableEntityException(`Cannot finance-review from status ${row.status}`);
       }
+      this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('stale_finance_review_snapshot');
       }
@@ -1765,6 +1878,7 @@ export class PrismaReimbursementRepository {
       if (!['APPROVED', 'READY_FOR_PAYMENT'].includes(row.status)) {
         throw new UnprocessableEntityException(`Cannot resolve duplicates from status ${row.status}`);
       }
+      this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) throw this.requestChanged();
       this.assertDecisionBranch(row.branchId, data.scopes);
       await this.overrideOpenDuplicates(tx, data.companyId, data.requestId, data.actorUserId, data.resolvedAt, data.reason);
@@ -1811,6 +1925,7 @@ export class PrismaReimbursementRepository {
       if (row.status !== 'FINANCE_REVIEW') {
         throw new UnprocessableEntityException(`Cannot finance-review from status ${row.status}`);
       }
+      this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('stale_finance_review_snapshot');
       }
@@ -1909,6 +2024,8 @@ export class PrismaReimbursementRepository {
       if (!row) throw new NotFoundException('Reimbursement request not found');
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes, data.systemReconcile, data.expectedBranchId);
+      // No expense record is built for a claim that is being cancelled: the cancellation would have to void it.
+      this.assertNotBeingCancelled(request);
       if (data.decisionKind === 'MANAGER') {
         if (request.status !== 'PENDING_APPROVAL' || request.currentApprovalStepId !== data.approvalStepId) {
           throw new ConflictException('reimbursement_projection_decision_changed');
@@ -1925,6 +2042,9 @@ export class PrismaReimbursementRepository {
         if (!step || step.requestSnapshotHash !== request.approvalSnapshotHash) {
           throw new ConflictException('reimbursement_projection_decision_changed');
         }
+        // Whoever carries the decision out, at once or as a retry: the claim must still be what was
+        // approved. Nothing is built for a claim whose content moved since (stale_approval_snapshot).
+        this.assertApprovalSnapshot(request, request.approvalSnapshotHash);
       } else if (data.decisionKind === 'FINANCE') {
         if (request.status !== 'FINANCE_REVIEW'
           || request.financeReviewStatus !== 'APPROVED_FOR_PAYMENT'
@@ -2073,20 +2193,31 @@ export class PrismaReimbursementRepository {
     }));
   }
 
-  async listPendingProjectionIntents(limit = 100): Promise<Array<{
-    request: ReimbursementRequestRecord;
-    kind: 'MANAGER' | 'FINANCE' | 'POLICY';
-    actorUserId: string;
-    approvalStepId?: string;
-  }>> {
+  /**
+   * The claims whose durable decision the system has yet to carry out (`pendingProjectionIntent`),
+   * at most `limit` of them, the most recently decided first.
+   *
+   * Newest first: a claim that failed a moment ago most likely failed in passing and is repaired on
+   * this run, while one that cannot be repaired (its line falls in a closed accounting period, say)
+   * drops down the list as new ones arrive instead of holding a place at its head for good.
+   * ponytail: no attempt counter. Past `limit` claims that cannot complete, the oldest of them stop
+   * being retried by the run; add a counter with a backoff if the failure log ever shows that many.
+   */
+  async listPendingProjectionIntents(limit = 100): Promise<Array<PendingProjectionIntent & { request: ReimbursementRequestRecord }>> {
     const [managerRows, financeRows, policyRows] = await Promise.all([
       (this.prisma.client as any).reimbursementRequest.findMany({
-        where: { status: 'PENDING_APPROVAL', currentApprovalStepId: { not: null }, cancellationPendingAt: null },
+        // Decided: no step is waiting any more. Asked of the database, not filtered afterwards:
+        // every claim still waiting for its approver is PENDING_APPROVAL too, and a page of those
+        // would otherwise crowd the decided ones out of the first `limit` rows.
+        where: {
+          status: 'PENDING_APPROVAL', currentApprovalStepId: { not: null }, cancellationPendingAt: null,
+          approvalSteps: { some: { status: 'APPROVED' }, none: { status: 'PENDING' } },
+        },
         include: {
           lines: { orderBy: { lineNo: 'asc' } },
           approvalSteps: { where: { status: 'APPROVED' } },
         },
-        orderBy: { updatedAt: 'asc' },
+        orderBy: { updatedAt: 'desc' },
         take: limit,
       }),
       (this.prisma.client as any).reimbursementRequest.findMany({
@@ -2098,43 +2229,42 @@ export class PrismaReimbursementRepository {
         },
         // The approved steps too: the replayed ready-to-pay event names the claim's approver.
         include: { lines: { orderBy: { lineNo: 'asc' } }, approvalSteps: { where: { status: 'APPROVED' } } },
-        orderBy: { updatedAt: 'asc' },
+        orderBy: { updatedAt: 'desc' },
         take: limit,
       }),
       (this.prisma.client as any).reimbursementRequest.findMany({
         where: { status: 'APPROVED', currentApprovalStepId: null, cancellationPendingAt: null },
         include: { lines: { orderBy: { lineNo: 'asc' } } },
-        orderBy: { updatedAt: 'asc' },
+        orderBy: { updatedAt: 'desc' },
         take: limit,
       }),
     ]);
-    const intents: Array<{
-      request: ReimbursementRequestRecord;
-      kind: 'MANAGER' | 'FINANCE' | 'POLICY';
-      actorUserId: string;
-      approvalStepId?: string;
-    }> = [];
-    for (const row of managerRows) {
-      const request = this.toRequest(row);
-      const step = request.approvalSteps?.find((candidate) => candidate.id === request.currentApprovalStepId);
-      if (step?.status === 'APPROVED' && step.decisionByUserId) {
-        intents.push({ request, kind: 'MANAGER', actorUserId: step.decisionByUserId, approvalStepId: step.id });
-      }
+    return [...managerRows, ...financeRows, ...policyRows]
+      .map((row: any) => this.toRequest(row))
+      .flatMap((request) => {
+        // This list is read across every company. A claim whose frozen policy cannot be read (the
+        // parser throws, as it does on every other read of that claim) is left out of it, so one
+        // such row never stops the run for everyone else's claims.
+        try {
+          const intent = pendingProjectionIntent(request);
+          return intent ? [{ request, ...intent }] : [];
+        } catch {
+          return [];
+        }
+      })
+      .sort((a, b) => b.request.updatedAt.getTime() - a.request.updatedAt.getTime())
+      .slice(0, limit);
+  }
+
+  /** Whether every line of the claim has its confirmed expense record: what the payment gate asks. */
+  async areClaimProjectionsReady(request: ReimbursementRequestRecord): Promise<boolean> {
+    try {
+      await this.assertClaimProjectionsReady(this.prisma.client as any, request);
+      return true;
+    } catch (error) {
+      if (error instanceof ConflictException) return false;
+      throw error;
     }
-    for (const row of financeRows) {
-      const request = this.toRequest(row);
-      if (request.financeReviewedByUserId) {
-        intents.push({ request, kind: 'FINANCE', actorUserId: request.financeReviewedByUserId });
-      }
-    }
-    for (const row of policyRows) {
-      const request = this.toRequest(row);
-      const snapshot = parseReimbursementPolicySnapshot(request.approvalPolicySnapshotJson);
-      if (snapshot && !snapshot.requiresApproval && !snapshot.financeReviewRequired) {
-        intents.push({ request, kind: 'POLICY', actorUserId: request.submittedByUserId ?? request.requesterUserId });
-      }
-    }
-    return intents.sort((a, b) => a.request.updatedAt.getTime() - b.request.updatedAt.getTime()).slice(0, limit);
   }
 
   private async assertClaimProjectionsReady(
@@ -2388,6 +2518,7 @@ export class PrismaReimbursementRepository {
       if (row.status !== 'PENDING_APPROVAL') {
         throw new UnprocessableEntityException(`Cannot reject from status ${row.status}`);
       }
+      this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('stale_approval_snapshot');
       }

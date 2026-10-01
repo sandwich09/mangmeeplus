@@ -19,6 +19,8 @@ import {
   ListReimbursementsUseCase,
   SubmitReimbursementUseCase,
   CancelReimbursementUseCase,
+  WithdrawReimbursementCancellationUseCase,
+  ResumeReimbursementUseCase,
 } from './application/use-cases/reimbursement-request.use-case';
 import { ListApprovalQueueUseCase, ApproveReimbursementUseCase, RejectReimbursementUseCase } from './application/use-cases/reimbursement-approval.use-case';
 import {
@@ -48,13 +50,14 @@ import { ReimbursementPayoutController } from './presentation/http/reimbursement
 import { MemberPayoutAccountUseCase } from './application/use-cases/reimbursement-payout.use-case';
 import { RevealClaimPayoutUseCase } from './application/use-cases/reimbursement-payout-reveal.use-case';
 import { ReimbursementPolicyController } from './presentation/http/reimbursement-policy.controller';
+import { ReimbursementReconcileInternalController } from './presentation/http/reimbursement-reconcile-internal.controller';
 import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursement-write-quiesce.guard';
 import { LineReimbursementDraftUseCase } from './application/use-cases/line-reimbursement-draft.use-case';
 
 @Module({
   imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, ExpensesModule],
   // The payout controller comes first: its fixed `payout-accounts/…` paths must match before `:requestId`.
-  controllers: [ReimbursementPayoutController, ReimbursementController, ReimbursementPolicyController],
+  controllers: [ReimbursementPayoutController, ReimbursementController, ReimbursementPolicyController, ReimbursementReconcileInternalController],
   providers: [
     PrismaReimbursementRepository,
     MemberPayoutAccountUseCase,
@@ -77,6 +80,8 @@ import { LineReimbursementDraftUseCase } from './application/use-cases/line-reim
     ListReimbursementsUseCase,
     SubmitReimbursementUseCase,
     CancelReimbursementUseCase,
+    WithdrawReimbursementCancellationUseCase,
+    ResumeReimbursementUseCase,
     ListApprovalQueueUseCase,
     ApproveReimbursementUseCase,
     RejectReimbursementUseCase,

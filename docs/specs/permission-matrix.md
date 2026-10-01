@@ -607,6 +607,35 @@ reimbursement.policy.manage
 reimbursement.export
 ```
 
+#### Reimbursement claims that stopped halfway
+
+No new permission key (audit B3 and B4, 2026-10-02; step-journey spec §19). Cancelling a claim and
+carrying out its approval are both two-phase: the decision commits first, and the claim's expense
+records are voided or built after it. A claim can sit between the two. These routes finish it, and the
+claim detail says to whom each is open (`pendingCancellation.canResume`, `pendingCancellation.canWithdraw`,
+`awaitingSystem.canResume`) from the same functions the routes ask. Routes sit under
+`/companies/:companyId/reimbursements`.
+
+| Route | Route permission | Who may use it |
+|---|---|---|
+| `POST :requestId/cancel` (existing) | `reimbursement.cancel_own` or `reimbursement.finance_review` | The requester with the cancel right, or a finance reviewer, in the claim's branch scope. It also continues a cancellation that was started: by any of them, not only whoever started it. The reason on record stays, unless it is one the expense void refuses |
+| `POST :requestId/cancel/withdraw` | `reimbursement.cancel_own` or `reimbursement.finance_review` | The same people, while none of the claim's expense records has been voided |
+| `POST :requestId/resume` | `account.session.read` | Decided per claim in the use case, like approve. For an approved claim: the approver who decided it, with the claim's branch in scope and either `reimbursement.approve` or their frozen place on the step. For a claim nobody had to approve: a holder of `reimbursement.payment.record` with the claim's branch in scope. It decides nothing and attests nothing |
+| `POST /internal/reimbursements/reconcile` | `X-Worker-Token` | `@Public()`, workers only: the scheduled run of the same repair, every two minutes |
+
+While a cancellation is pending every other decision on the claim is refused with
+`reimbursement_cancellation_pending`: edit, submit, approve, reject, finance review, duplicate resolution
+and payment. The server's own flags say so: `approvalActions.canApprove` and `canReject` are false (an
+approver frozen onto the step can still read the claim), and every list and queue row carries
+`cancellationPending`. The approval queue lists no such claim; the finance queue keeps it, with no payment
+and no finance decision on its row.
+
+`expense.void`, `expense.reject` and `expense.delete` do not reach an expense record that belongs to a
+claim that still stands (any status but REJECTED, CANCELLED or VOIDED). Such a record is built when the
+claim is approved and ends with it: cancelling the claim voids it. Asked of the expense screen, all three
+answer 409 `expense_belongs_to_reimbursement` and name the claim to go to. The claim's own cancellation is
+the only path that voids one, and it needs the claim rights above, not `expense.void`.
+
 #### Voiding a payment that a bank statement line is matched to
 
 No new permission key (review fix 2026-10-01). `reimbursement.payment.void` alone undoes the confirmed bank

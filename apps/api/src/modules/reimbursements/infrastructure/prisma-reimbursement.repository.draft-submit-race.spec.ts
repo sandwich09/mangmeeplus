@@ -35,6 +35,20 @@ import { MemberPayoutAccountUseCase } from '../application/use-cases/reimburseme
 import {
   CASH_PAYOUT_FINGERPRINT, legacyPayoutConfirmToken, openPayoutAccountNumber, payoutFingerprint, payoutSubmitToken, sealPayoutDestination, type SubmitPayoutColumns,
 } from '../domain/logic/payout-destination.logic';
+import { RejectExpenseUseCase, VoidExpenseUseCase } from '../../expenses/application/use-cases/expense-draft.use-case';
+import { DeleteExpenseUseCase } from '../../expenses/application/use-cases/delete-expense.use-case';
+import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
+import { ReserveDocumentNumberUseCase } from '../../data-model-core/application/use-cases/reserve-document-number.use-case';
+import { CommitDocumentNumberUseCase } from '../../data-model-core/application/use-cases/commit-document-number.use-case';
+import { CancelDocumentNumberUseCase } from '../../data-model-core/application/use-cases/cancel-document-number.use-case';
+import {
+  CancelReimbursementUseCase, GetReimbursementDetailUseCase, ResumeReimbursementUseCase, WithdrawReimbursementCancellationUseCase,
+} from '../application/use-cases/reimbursement-request.use-case';
+import { ReimbursementProjectionOrchestratorService } from '../application/services/reimbursement-projection-orchestrator.service';
+import { ReimbursementProjectionReconcilerService } from '../application/services/reimbursement-projection-reconciler.service';
+import { ListReimbursementApproverOptionsUseCase } from '../application/use-cases/reimbursement-policy.use-case';
+import { ListFinanceQueueUseCase } from '../application/use-cases/reimbursement-finance.use-case';
+import { toRequestSummary } from '../application/dto/reimbursement.mapper';
 
 const TAG = `reimbursement-draft-race-${process.pid}`;
 const periodKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -56,6 +70,35 @@ function errorMessage(error: unknown): string | undefined {
     : response && typeof response === 'object'
       ? String((response as { message?: unknown }).message ?? '')
       : undefined;
+}
+
+/**
+ * The system side of a claim over one connection: the real reconciler (the scheduled run, and the
+ * repair behind "ดำเนินการต่อ") with the real orchestrator, expense confirmation and expense void.
+ * The run reads every company's claims and this database is shared with other suites, so the two
+ * lists it works from are kept to one company; everything it does with a claim is the real thing.
+ */
+function claimSystem(client: PrismaClient, repo: PrismaReimbursementRepository, companyId: string) {
+  const prisma = { client } as any;
+  const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
+  const numbers = new PrismaDocumentSequenceRepository(prisma);
+  const expenses = new PrismaExpenseRepository(prisma);
+  const voidExpense = new VoidExpenseUseCase(expenses, audit, { append: async () => undefined } as any,
+    new ReserveDocumentNumberUseCase(numbers, audit), new CommitDocumentNumberUseCase(numbers, audit), new CancelDocumentNumberUseCase(numbers, audit));
+  const confirm = new ConfirmExpenseUseCase(expenses, audit, { resolveLines: async () => [] } as any, {} as any);
+  const orchestrator = new ReimbursementProjectionOrchestratorService(repo, expenses, new MaterializeClaimExpensesService(), confirm, audit);
+  const ownCompany = <T extends { request: { companyId: string } }>(rows: T[], limit: number) => rows.filter((row) => row.request.companyId === companyId).slice(0, limit);
+  const scoped = Object.create(repo, {
+    listPendingProjectionIntents: { value: async (limit = 100) => ownCompany(await repo.listPendingProjectionIntents(1000), limit) },
+    listPendingCancellationIntents: { value: async (limit = 100) => ownCompany(await repo.listPendingCancellationIntents(1000), limit) },
+  }) as PrismaReimbursementRepository;
+  const reconciler = new ReimbursementProjectionReconcilerService(scoped, orchestrator, audit, voidExpense, prisma, new ListReimbursementApproverOptionsUseCase(prisma));
+  // The run logs a line per claim; these cases read the tables instead.
+  (reconciler as any).logger = { log: () => undefined, warn: () => undefined };
+  return {
+    reconciler,
+    resume: new ResumeReimbursementUseCase(repo, audit, reconciler, new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), expenses)),
+  };
 }
 
 describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
@@ -2752,5 +2795,780 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     // A deleted draft takes its account with it; nothing is left to decrypt.
     await db.reimbursementRequest.delete({ where: { id: claim.id } });
     assert.equal((await destinationsOf(claim.id)).length, 0);
+  });
+});
+
+/**
+ * Audit B3 on a real database, with the real expense void: a cancellation that cannot finish is
+ * refused before anything is written, one that was started stays visible and finishable, and a
+ * withdrawal can never leave a voided expense record on a claim that goes on.
+ */
+describe('a claim is never left half cancelled or half approved (real PostgreSQL)', () => {
+  const S = `${TAG}-stuck`;
+  const STAFF = `${S}-staff`;
+  const FIN = `${S}-fin`;
+  const MGR = `${S}-mgr`;
+  const day = new Date('2026-09-15T00:00:00.000Z');
+  let clients: PrismaClient[] = [];
+  let repos: PrismaReimbursementRepository[] = [];
+  let companyId = '';
+  let branchId = '';
+  let accounts = { expense: '', payable: '' };
+  let reachable = false;
+  let sequence = 0;
+
+  before(async () => {
+    const url = databaseUrl();
+    if (!url) {
+      if (gateRequired) throw new Error('reimbursement_pg_gate_database_url_required');
+      return;
+    }
+    try {
+      clients = [0, 1].map(() => new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) }));
+      await clients[0]!.$queryRaw`SELECT 1`;
+    } catch (error) {
+      if (gateRequired) throw error;
+      return;
+    }
+    reachable = true;
+    const db = clients[0]!;
+    await db.user.createMany({ data: [{ id: STAFF, displayName: 'สมชาย พนักงาน' }, { id: FIN, displayName: 'วราภรณ์ การเงิน' }, { id: MGR, displayName: 'สมศรี ผู้จัดการ' }] });
+    companyId = (await db.company.create({ data: { name: S, status: 'ACTIVE' }, select: { id: true } })).id;
+    await db.companyMembership.createMany({ data: [STAFF, FIN, MGR].map((userId) => ({ companyId, userId, status: 'ACTIVE' as const })) });
+    // These claims carry no receipt, only the reason: the company lets such a line be confirmed.
+    await db.reimbursementPolicy.create({ data: { companyId, allowMissingReceiptWithReason: true, createdByUserId: FIN } });
+    branchId = (await db.branch.create({ data: { companyId, code: 'QA-STUCK', name: S }, select: { id: true } })).id;
+    const account = (code: string, accountClass: 'EXPENSE' | 'LIABILITY', normalBalance: 'DEBIT' | 'CREDIT') =>
+      db.chartOfAccount.create({ data: { companyId, code, nameTh: code, accountClass, normalBalance }, select: { id: true } });
+    accounts = { expense: (await account('QA-5000', 'EXPENSE', 'DEBIT')).id, payable: (await account('QA-2100', 'LIABILITY', 'CREDIT')).id };
+    repos = clients.map((client) => new PrismaReimbursementRepository({ client } as any, new PrismaDocumentSequenceRepository({ client } as any)));
+  });
+
+  after(async () => {
+    if (reachable) {
+      const db = clients[0]!;
+      await db.auditLog.deleteMany({ where: { companyId } });
+      await db.journalEntry.deleteMany({ where: { companyId } });
+      await db.company.deleteMany({ where: { id: companyId } });
+      await db.user.deleteMany({ where: { id: { in: [STAFF, FIN, MGR] } } });
+    }
+    await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
+  });
+
+  const requester = () => ({ requestId: `${S}-${++sequence}`, authSubject: 's', userId: STAFF, companyId, membershipId: 'm', roles: ['STAFF'],
+    permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'], scopes: {}, authProvider: 'dev' }) as any;
+  const finance = () => ({ ...requester(), userId: FIN, roles: ['FINANCE'], permissions: ['reimbursement.read', 'reimbursement.finance_review', 'reimbursement.payment.record'] });
+  const manager = () => ({ ...requester(), userId: MGR, roles: ['MANAGER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'] });
+  /** The scheduled run and the web call over one connection. */
+  const system = (index: number) => claimSystem(clients[index]!, repos[index]!, companyId);
+  /** A run takes every claim of the company that waits, other cases' leftovers included; a case reads what it did with its own. */
+  const ofThese = (claims: Array<{ requestId: string }>, run: { completed: string[]; failed: Array<{ requestId: string; error: string }>; blocked: string[] }) => {
+    const own = (id: string) => claims.some((claim) => claim.requestId === id);
+    return { completed: run.completed.filter(own), failed: run.failed.filter((row) => own(row.requestId)).map((row) => [row.requestId, row.error]), blocked: run.blocked.filter(own).sort() };
+  };
+
+  /** The use cases over one connection, with the real expense void and audit rows written to the database. */
+  function on(index: number) {
+    const client = clients[index]!;
+    const prisma = { client } as any;
+    const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
+    const numbers = new PrismaDocumentSequenceRepository(prisma);
+    const expenses = new PrismaExpenseRepository(prisma);
+    const voidExpense = new VoidExpenseUseCase(expenses, audit, { append: async () => undefined } as any,
+      new ReserveDocumentNumberUseCase(numbers, audit), new CommitDocumentNumberUseCase(numbers, audit), new CancelDocumentNumberUseCase(numbers, audit));
+    return {
+      cancel: new CancelReimbursementUseCase(repos[index]!, audit, voidExpense),
+      withdraw: new WithdrawReimbursementCancellationUseCase(repos[index]!, audit),
+      detail: new GetReimbursementDetailUseCase(repos[index]!, new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), expenses)),
+      /** What the expense screen can ask of a record: void, reject and delete, each with its own right. */
+      expenseScreen: {
+        void: voidExpense,
+        reject: new RejectExpenseUseCase(expenses, audit),
+        remove: new DeleteExpenseUseCase(prisma, new PrismaAttachmentRepository(prisma), audit),
+      },
+    };
+  }
+
+  /**
+   * A claim waiting for payment whose lines each have a confirmed expense record with a posted
+   * journal, the way approval and the posting worker leave it. Each claim gets an accounting period
+   * of its own, so closing one never touches another case.
+   */
+  async function payableClaim(lines = 1) {
+    const db = clients[0]!;
+    const index = ++sequence;
+    const periodKey = `${2100 + index}-09`;
+    let request = await repos[0]!.createRequest({
+      companyId, branchId, requesterUserId: STAFF, requesterDisplayNameSnapshot: 'สมชาย พนักงาน', reason: `stuck-${index}`, categoryKey: 'travel',
+      amount: `${100 * lines}.0000`, currency: 'THB', incurredDate: day, receiptRequirementStatus: 'MISSING_WITH_REASON', missingReceiptReason: 'ใบเสร็จหาย',
+      createdByUserId: STAFF,
+      lines: Array.from({ length: lines }, (_, line) => ({ lineNo: line + 1, incurredDate: day, description: `รายการ ${line + 1}`, categoryKey: 'travel', amount: '100.0000' })),
+    });
+    await db.reimbursementRequest.update({ where: { id: request.id }, data: {
+      status: 'FINANCE_REVIEW', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: FIN, requestNo: `RB-${S}-${index}`,
+      submittedAt: day, submittedByUserId: STAFF, outstandingAmount: `${100 * lines}.0000`,
+    } });
+    request = (await repos[0]!.findRequestById(companyId, request.id))!;
+    const projections = await repos[0]!.prepareClaimProjections({ companyId, requestId: request.id, decisionKind: 'FINANCE', decisionActorUserId: FIN, scopes: {},
+      items: new MaterializeClaimExpensesService().buildItems(request) });
+    const confirm = new ConfirmExpenseUseCase(new PrismaExpenseRepository({ client: db } as any), { log: async () => undefined } as any, { resolveLines: async () => [] } as any, {} as any);
+    const period = await db.accountingPeriod.create({ data: { companyId, periodKey, startDate: new Date('2026-09-01'), endDate: new Date('2026-09-30') } });
+    for (const projection of projections) {
+      await confirm.executeForReimbursement({ ...finance(), permissions: [] }, projection.expenseId,
+        { reimbursementRequestId: request.id, reimbursementLineId: projection.reimbursementLineId, branchId, allowMissingReceiptWithReason: true });
+      await db.journalEntry.create({ data: {
+        companyId, periodId: period.id, entryNumber: `JV-${S}-${++sequence}`, entryType: 'GENERATED', sourceType: 'expense.record', sourceId: projection.expenseId,
+        status: 'POSTED', entryDate: day, postedAt: day, postedByUserId: FIN, createdByUserId: FIN,
+        lines: { create: [
+          { accountId: accounts.expense, lineNumber: 1, debitAmount: '100', creditAmount: '0' },
+          { accountId: accounts.payable, lineNumber: 2, debitAmount: '0', creditAmount: '100' },
+        ] },
+      } });
+      await db.expenseRecord.update({ where: { id: projection.expenseId }, data: { postingStatus: 'posted' } });
+    }
+    await db.reimbursementRequest.update({ where: { id: request.id }, data: { status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID' } });
+    return { requestId: request.id, periodId: period.id, periodKey, expenseIds: projections.map((projection) => projection.expenseId) };
+  }
+
+  const closePeriod = (periodId: string, status: 'CLOSED' | 'OPEN' = 'CLOSED') => clients[0]!.accountingPeriod.update({ where: { id: periodId }, data: { status } });
+  /** What a cancellation leaves behind, read from the tables: the claim, its expense records, the reversal journals and the events. */
+  async function stored(claim: { requestId: string; expenseIds: string[] }) {
+    const db = clients[0]!;
+    const row = await db.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } });
+    const expenses = await db.expenseRecord.findMany({ where: { id: { in: claim.expenseIds } }, orderBy: { createdAt: 'asc' } });
+    return {
+      status: row.status as string, pending: !!row.cancellationPendingAt, pendingReason: row.cancellationPendingReason, closedReason: row.rejectionReason,
+      expenses: expenses.map((expense) => expense.status as string),
+      voidReasons: [...new Set(expenses.map((expense) => expense.voidReason))],
+      reversals: await db.journalEntry.count({ where: { companyId, entryType: 'REVERSAL', sourceId: { in: claim.expenseIds } } }),
+      cancelledEvents: await db.outboxEvent.count({ where: { companyId, aggregateId: claim.requestId, eventType: 'reimbursement.cancelled' } }),
+      cancelAudits: await db.auditLog.count({ where: { companyId, targetId: claim.requestId, action: 'reimbursement.request.cancel' } }),
+    };
+  }
+  /** A cancellation as production could leave it before this fix: the intent committed, nothing after it. */
+  const strand = (claim: { requestId: string }, reason: string) => repos[0]!.findRequestById(companyId, claim.requestId).then((request) => repos[0]!.beginCancellationAtomic({
+    companyId, requestId: claim.requestId, expectedStatus: request!.status, expectedUpdatedAt: request!.updatedAt, actorUserId: STAFF, scopes: {}, reason,
+    startedAt: new Date(), onIntentPersisted: async () => undefined,
+  }));
+
+  it('refuses a short reason and a closed period before any intent is written, then cancels once the period is reopened', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const untouched = { status: 'READY_FOR_PAYMENT', pending: false, pendingReason: null, closedReason: null, expenses: ['CONFIRMED'], voidReasons: [null], reversals: 0, cancelledEvents: 0, cancelAudits: 0 };
+
+    await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId, 'ก'), (error: any) => error.getStatus() === 400 && errorMessage(error) === 'cancellation_reason_too_short');
+    assert.deepEqual(await stored(claim), untouched);
+
+    await closePeriod(claim.periodId);
+    await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId, 'ซื้อซ้ำกับใบก่อน'),
+      (error: any) => error.getStatus() === 409 && errorMessage(error) === `reimbursement_cancellation_accounting_period_locked:${claim.periodKey}`);
+    assert.deepEqual(await stored(claim), untouched, 'nothing was written: no intent, no void, no reversal number used');
+    assert.equal(await clients[0]!.outboxEvent.count({ where: { companyId, aggregateId: claim.requestId } }), 0);
+
+    await closePeriod(claim.periodId, 'OPEN');
+    assert.equal((await on(0).cancel.execute(requester(), claim.requestId, 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
+    assert.deepEqual(await stored(claim), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
+      expenses: ['VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 1, cancelledEvents: 1, cancelAudits: 1 });
+  });
+
+  it('shows a claim stranded by a short reason and lets another canceller finish it with a corrected reason', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim(2);
+    await strand(claim, 'ก');
+
+    const shown = (await on(0).detail.execute(finance(), claim.requestId)).pendingCancellation!;
+    assert.deepEqual([shown.startedByUserId, shown.startedByName, shown.reason, shown.blocker, shown.canResume, shown.canWithdraw],
+      [STAFF, 'สมชาย พนักงาน', 'ก', { code: 'reason_too_short' }, true, true]);
+    // While it is pending, the payment is refused, as before; the difference is that the claim now says why.
+    await assert.rejects(() => repos[0]!.assertClaimPaymentReady(companyId, claim.requestId), /reimbursement_cancellation_pending/);
+
+    for (const again of ['ก', undefined]) {
+      await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId, again), (error: any) => errorMessage(error) === 'cancellation_reason_too_short');
+    }
+    assert.deepEqual((await stored(claim)).expenses, ['CONFIRMED', 'CONFIRMED']);
+
+    assert.equal((await on(1).cancel.execute(finance(), claim.requestId, 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
+    assert.deepEqual(await stored(claim), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
+      expenses: ['VOIDED', 'VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 2, cancelledEvents: 1, cancelAudits: 1 });
+    const corrected = await clients[0]!.auditLog.findFirstOrThrow({ where: { companyId, targetId: claim.requestId, action: 'reimbursement.request.cancellation_reason_corrected' } });
+    assert.deepEqual([corrected.actorUserId, (corrected.metadataJson as any).previousReason, (corrected.metadataJson as any).reason], [FIN, 'ก', 'ซื้อซ้ำกับใบก่อน']);
+  });
+
+  it('shows a period closed after the cancellation started, refuses to void half of it, and finishes once the period is reopened', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim(2);
+    await strand(claim, 'ซื้อซ้ำกับใบก่อน');
+    await closePeriod(claim.periodId);
+
+    const shown = (await on(0).detail.execute(requester(), claim.requestId)).pendingCancellation!;
+    assert.deepEqual([shown.blocker, shown.canResume, shown.canWithdraw], [{ code: 'accounting_period_locked', periodKey: claim.periodKey }, true, true]);
+    await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId),
+      (error: any) => error.getStatus() === 409 && errorMessage(error) === `reimbursement_cancellation_accounting_period_locked:${claim.periodKey}`);
+    assert.deepEqual([(await stored(claim)).expenses, (await stored(claim)).reversals], [['CONFIRMED', 'CONFIRMED'], 0]);
+
+    await closePeriod(claim.periodId, 'OPEN');
+    assert.equal((await on(0).detail.execute(requester(), claim.requestId)).pendingCancellation?.blocker, undefined);
+    assert.equal((await on(1).cancel.execute(finance(), claim.requestId)).status, 'CANCELLED');
+    assert.deepEqual(await stored(claim), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
+      expenses: ['VOIDED', 'VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 2, cancelledEvents: 1, cancelAudits: 1 });
+  });
+
+  it('withdraws a blocked cancellation while nothing was voided, and the claim is paid as if it had never been started', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    await strand(claim, 'ก');
+    await closePeriod(claim.periodId);
+
+    assert.equal((await on(0).withdraw.execute(finance(), claim.requestId)).status, 'READY_FOR_PAYMENT');
+    assert.deepEqual(await stored(claim), { status: 'READY_FOR_PAYMENT', pending: false, pendingReason: null, closedReason: null,
+      expenses: ['CONFIRMED'], voidReasons: [null], reversals: 0, cancelledEvents: 0, cancelAudits: 0 });
+    assert.equal((await on(0).detail.execute(finance(), claim.requestId)).pendingCancellation, undefined);
+    await assert.rejects(() => on(0).withdraw.execute(finance(), claim.requestId), (error: any) => errorMessage(error) === 'reimbursement_cancellation_not_pending');
+    const paid = await repos[0]!.recordPaymentAtomic({ companyId, reimbursementRequestId: claim.requestId, idempotencyKey: `${S}-pay-${claim.requestId}`, paidAmount: '100.0000',
+      currency: 'THB', paymentMethod: 'CASH', paidAt: new Date(), paidByUserId: FIN });
+    assert.equal(paid.request.status, 'PAID');
+  });
+
+  it('refuses to withdraw once an expense record was voided: the cancellation can only be finished', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim(2);
+    await strand(claim, 'ซื้อซ้ำกับใบก่อน');
+    // The first record is voided and the cancellation stops there (what a crash between the two voids leaves).
+    const intent = (await repos[0]!.findRequestById(companyId, claim.requestId))!;
+    const line = intent.lines![0]!;
+    const numbers = new PrismaDocumentSequenceRepository({ client: clients[0]! } as any);
+    const quiet = { log: async () => undefined } as any;
+    await new VoidExpenseUseCase(new PrismaExpenseRepository({ client: clients[0]! } as any), quiet, { append: async () => undefined } as any,
+      new ReserveDocumentNumberUseCase(numbers, quiet), new CommitDocumentNumberUseCase(numbers, quiet), new CancelDocumentNumberUseCase(numbers, quiet))
+      .executeForReimbursement(requester(), claim.expenseIds[0]!, 'ซื้อซ้ำกับใบก่อน', { reimbursementRequestId: claim.requestId, reimbursementLineId: line.id, branchId });
+
+    assert.equal((await on(0).detail.execute(requester(), claim.requestId)).pendingCancellation?.canWithdraw, false);
+    await assert.rejects(() => on(0).withdraw.execute(requester(), claim.requestId), (error: any) => error.getStatus() === 409 && errorMessage(error) === 'reimbursement_cancellation_partly_done');
+    assert.equal((await on(0).cancel.execute(requester(), claim.requestId)).status, 'CANCELLED');
+    assert.deepEqual([(await stored(claim)).expenses, (await stored(claim)).reversals, (await stored(claim)).cancelledEvents], [['VOIDED', 'VOIDED'], 2, 1]);
+  });
+
+  // Before: only approval and payment were refused. A rejection, a finance decision or a submit taken while
+  // a cancellation was pending moved the claim to a status the cancellation could not complete from.
+  it('takes no other decision on a claim while its cancellation is pending, and takes them again once it is withdrawn', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const noop = async () => undefined;
+    /** A claim put in `status` the short way: the guard under test sits right after each transaction's status check. */
+    const claimIn = async (status: string, extra: Record<string, unknown> = {}) => {
+      const index = ++sequence;
+      const request = await repos[0]!.createRequest({
+        companyId, branchId, requesterUserId: STAFF, requesterDisplayNameSnapshot: 'สมชาย พนักงาน', reason: `guard-${index}`, categoryKey: 'travel',
+        amount: '100.0000', currency: 'THB', incurredDate: day, receiptRequirementStatus: 'WAIVED_BY_POLICY', createdByUserId: STAFF,
+        lines: [{ lineNo: 1, incurredDate: day, description: 'รายการ', categoryKey: 'travel', amount: '100.0000' }],
+      });
+      if (status !== 'DRAFT') await db.reimbursementRequest.update({ where: { id: request.id }, data: { status: status as any, submittedAt: day, ...extra } });
+      return (await repos[0]!.findRequestById(companyId, request.id))!;
+    };
+    const decision = (request: { id: string; updatedAt: Date }) => ({ companyId, requestId: request.id, expectedUpdatedAt: request.updatedAt, actorUserId: FIN, scopes: {} });
+    const cases: Array<[string, Record<string, unknown>, (request: any) => Promise<unknown>]> = [
+      ['DRAFT', {}, (request) => repos[0]!.updateDraftRequest(companyId, request.id, request.updatedAt, { reason: 'แก้ไข', updatedByUserId: STAFF })],
+      ['DRAFT', {}, (request) => repos[0]!.submitDraftAtomic({
+        companyId, requestId: request.id, expectedUpdatedAt: request.updatedAt, duplicateCandidates: [], evidence: { attachmentIds: [], expenseIds: [] },
+        documentNumber: { documentType: 'reimbursement.request', periodKey, idempotencyKey: `reimb-submit:${request.id}`, reservedByUserId: STAFF },
+        approvalStep: { sequenceNo: 1, approverRoleSnapshot: 'MANAGER', requestSnapshotHash: 'a'.repeat(32) },
+        request: { status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: STAFF, approvalSnapshotHash: 'a'.repeat(32), outstandingAmount: '100.0000', updatedByUserId: STAFF },
+      } as any)],
+      ['PENDING_APPROVAL', {}, (request) => repos[0]!.rejectRequestAtomic({ ...decision(request), actorRoles: ['OWNER'], allowSelfApproval: false, decidedAt: new Date(),
+        rejectionReason: 'ไม่อนุมัติ', request: { status: 'REJECTED' }, onRejectedPersisted: noop })],
+      ['PENDING_APPROVAL', {}, (request) => repos[0]!.beginApprovalDecisionAtomic({ ...decision(request), expectedApprovalSnapshotHash: 'a'.repeat(32), actorRoles: ['OWNER'],
+        allowSelfApproval: false, financeReviewRequired: false, decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: noop })],
+      ['FINANCE_REVIEW', { financeReviewStatus: 'PENDING' }, (request) => repos[0]!.beginFinanceApprovalAtomic({ ...decision(request), reviewedAt: new Date(), onDecisionPersisted: noop })],
+      ['FINANCE_REVIEW', { financeReviewStatus: 'PENDING' }, (request) => repos[0]!.recordFinanceReviewAtomic({ ...decision(request), reviewedAt: new Date(), decision: 'BLOCKED', onDecisionPersisted: noop })],
+      ['READY_FOR_PAYMENT', {}, (request) => repos[0]!.resolvePaymentDuplicatesAtomic({ ...decision(request), resolvedAt: new Date(), reason: 'ไม่ซ้ำ', onResolvedPersisted: noop })],
+      ['FINANCE_REVIEW', { financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: FIN }, (request) => repos[0]!.prepareClaimProjections({
+        companyId, requestId: request.id, decisionKind: 'FINANCE', decisionActorUserId: FIN, scopes: {}, items: new MaterializeClaimExpensesService().buildItems(request) })],
+      ['READY_FOR_PAYMENT', {}, (request) => repos[0]!.assertClaimPaymentReady(companyId, request.id)],
+    ];
+    const refusedForCancellation = (error: unknown) => errorMessage(error) === 'reimbursement_cancellation_pending' || errorCode(error) === 'reimbursement_draft_changed';
+
+    for (const [status, extra, act] of cases) {
+      const before = await claimIn(status, extra);
+      await strand({ requestId: before.id }, 'ซื้อซ้ำกับใบก่อน');
+      const pending = (await repos[0]!.findRequestById(companyId, before.id))!;
+      await assert.rejects(() => act(pending), refusedForCancellation, `${status}: refused while the cancellation is pending`);
+      const untouched = await db.reimbursementRequest.findUniqueOrThrow({ where: { id: before.id } });
+      assert.deepEqual([untouched.status, untouched.updatedAt.getTime()], [status, pending.updatedAt.getTime()], `${status}: nothing changed`);
+
+      // Withdrawn: the same call is no longer refused for that reason (it may still be refused for its own).
+      await repos[0]!.withdrawCancellationAtomic({ companyId, requestId: before.id, actorUserId: FIN, scopes: {}, onWithdrawnPersisted: noop });
+      const live = (await repos[0]!.findRequestById(companyId, before.id))!;
+      const again = await act(live).then(() => undefined, (error: unknown) => error ?? new Error('rejected with nothing'));
+      assert.ok(!again || !refusedForCancellation(again), `${status}: still refused for the cancellation after it was withdrawn`);
+    }
+  });
+
+  // The fence. A continue reads the claim, then voids each record in a transaction of its own. A
+  // withdrawal that lands in between must stop those voids, or the claim goes on with a voided record.
+  it('never voids for a cancellation withdrawn while it was being continued, even when the void was already waiting behind the withdrawal', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    for (const voidAlreadyWaiting of [false, true]) {
+      const claim = await payableClaim(2);
+      await strand(claim, 'ซื้อซ้ำกับใบก่อน');
+      const repo = repos[0]! as any;
+      const begin = repo.beginCancellationAtomic.bind(repo);
+      let withdrawal: Promise<unknown> = Promise.resolve();
+      // The continue has read the claim and still holds its intent. Now the withdrawal starts on the other connection.
+      repo.beginCancellationAtomic = async (data: any) => {
+        const intent = await begin(data);
+        await new Promise<void>((reached) => {
+          withdrawal = repos[1]!.withdrawCancellationAtomic({
+            companyId, requestId: claim.requestId, actorUserId: FIN, scopes: {},
+            onWithdrawnPersisted: async () => {
+              if (!voidAlreadyWaiting) return;
+              // The intent is cleared and the claim's lock held, but nothing is committed: the continue goes
+              // on, and its void starts (taking its snapshot) while it waits for this transaction.
+              reached();
+              await new Promise((resolve) => setTimeout(resolve, 500));
+            },
+          });
+          void withdrawal.then(() => reached(), () => reached());
+        });
+        return intent;
+      };
+      try {
+        await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId),
+          (error: any) => error.getStatus?.() === 409 && errorMessage(error) === 'reimbursement_cancellation_intent_changed', `void already waiting: ${voidAlreadyWaiting}`);
+        await withdrawal;
+      } finally {
+        delete repo.beginCancellationAtomic;
+      }
+      assert.deepEqual(await stored(claim), { status: 'READY_FOR_PAYMENT', pending: false, pendingReason: null, closedReason: null,
+        expenses: ['CONFIRMED', 'CONFIRMED'], voidReasons: [null], reversals: 0, cancelledEvents: 0, cancelAudits: 0 }, `void already waiting: ${voidAlreadyWaiting}`);
+      // The claim goes on: it can still be paid.
+      await repos[0]!.assertClaimPaymentReady(companyId, claim.requestId);
+    }
+  });
+
+  it('a withdrawal and a continue started together end whole either way: cancelled with every record voided, or going on with none voided', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    for (let round = 0; round < 6; round += 1) {
+      const claim = await payableClaim(2);
+      await strand(claim, 'ซื้อซ้ำกับใบก่อน');
+      const proceed = () => on(round % 2).cancel.execute(requester(), claim.requestId);
+      const takeBack = () => on((round + 1) % 2).withdraw.execute(finance(), claim.requestId);
+      await Promise.allSettled(round % 2 === 0 ? [proceed(), takeBack()] : [takeBack(), proceed()]);
+
+      const after = await stored(claim);
+      const whole = after.status === 'CANCELLED'
+        ? after.expenses.every((status) => status === 'VOIDED') && after.reversals === 2 && after.cancelledEvents === 1
+        : after.status === 'READY_FOR_PAYMENT' && !after.pending && after.expenses.every((status) => status === 'CONFIRMED') && after.reversals === 0 && after.cancelledEvents === 0;
+      assert.ok(whole, `round ${round}: ${JSON.stringify(after)}`);
+    }
+  });
+
+  it('cancels once when two people press ดำเนินการยกเลิกต่อ at the same moment', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    for (let round = 0; round < 6; round += 1) {
+      const claim = await payableClaim(2);
+      await strand(claim, 'ซื้อซ้ำกับใบก่อน');
+      const results = await Promise.allSettled([on(0).cancel.execute(requester(), claim.requestId), on(1).cancel.execute(finance(), claim.requestId)]);
+      // One of them cancels it. The other is told it is cancelled, or (when it lost a void to the first) that
+      // the cancellation is being finished: a 409 to load the claim again, never a database error.
+      const answers = results.map((result) => (result.status === 'fulfilled' ? result.value.status : `${result.reason?.getStatus?.()} ${errorMessage(result.reason)}`));
+      assert.ok(answers.includes('CANCELLED'), `round ${round}: ${answers.join(' | ')}`);
+      assert.ok(answers.every((answer) => answer === 'CANCELLED' || answer === '409 reimbursement_cancellation_in_progress'), `round ${round}: ${answers.join(' | ')}`);
+      assert.deepEqual(await stored(claim), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
+        expenses: ['VOIDED', 'VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 2, cancelledEvents: 1, cancelAudits: 1 }, `round ${round}`);
+    }
+  });
+
+  it('the scheduled run finishes a cancellation nobody continued, and leaves one a person has to unblock exactly as it is', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const [abandoned, shortReason, closed] = [await payableClaim(2), await payableClaim(), await payableClaim()];
+    await strand(abandoned, 'ซื้อซ้ำกับใบก่อน');
+    await strand(shortReason, 'ก');
+    await strand(closed, 'ซื้อซ้ำกับใบก่อน');
+    await closePeriod(closed.periodId);
+    /** Reversal numbers reserved for a claim's expense records, kept or thrown away: each void attempt of a posted record takes one. */
+    const reversalNumbers = (claim: { expenseIds: string[] }) => clients[0]!.documentNumber.count({
+      where: { companyId, OR: claim.expenseIds.map((id) => ({ idempotencyKey: { startsWith: `void-reversal:expense.record:${id}:` } })) },
+    });
+
+    const all = [abandoned, shortReason, closed];
+    const run = ofThese(all, await system(1).reconciler.execute());
+
+    assert.deepEqual(run, { completed: [abandoned.requestId], failed: [], blocked: [shortReason.requestId, closed.requestId].sort() });
+    assert.deepEqual(await stored(abandoned), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
+      expenses: ['VOIDED', 'VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 2, cancelledEvents: 1, cancelAudits: 1 });
+    for (const claim of [shortReason, closed]) {
+      assert.deepEqual([(await stored(claim)).status, (await stored(claim)).expenses, (await stored(claim)).reversals], ['READY_FOR_PAYMENT', ['CONFIRMED'], 0]);
+    }
+    // One reversal number for each record it voided, and none spent on the two claims it could not finish.
+    assert.deepEqual([await reversalNumbers(abandoned), await reversalNumbers(shortReason), await reversalNumbers(closed)], [2, 0, 0]);
+
+    // Once the period is open again the next run finishes that one; the short reason still waits for a person.
+    await closePeriod(closed.periodId, 'OPEN');
+    assert.deepEqual(ofThese(all, await system(1).reconciler.execute()), { completed: [closed.requestId], failed: [], blocked: [shortReason.requestId] });
+    assert.equal((await stored(closed)).status, 'CANCELLED');
+    assert.equal((await on(0).cancel.execute(finance(), shortReason.requestId, 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
+  });
+
+  it('cancels once when ดำเนินการยกเลิกต่อ and the scheduled run take the same claim at the same moment', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    for (let round = 0; round < 6; round += 1) {
+      const claim = await payableClaim(2);
+      await strand(claim, 'ซื้อซ้ำกับใบก่อน');
+      const [person, run] = await Promise.allSettled([on(0).cancel.execute(finance(), claim.requestId), system(1).reconciler.execute()]);
+      // The person is told it is cancelled, or (having lost a void to the run) that it is being finished.
+      const answer = person.status === 'fulfilled' ? person.value.status : `${person.reason?.getStatus?.()} ${errorMessage(person.reason)}`;
+      assert.ok(['CANCELLED', '409 reimbursement_cancellation_in_progress'].includes(answer), `round ${round}: ${answer}`);
+      // The run never calls it a failure that a person got there first.
+      assert.equal(run.status, 'fulfilled', `round ${round}: ${(run as PromiseRejectedResult).reason}`);
+      assert.deepEqual(ofThese([claim], (run as PromiseFulfilledResult<any>).value).failed, [], `round ${round}`);
+      assert.deepEqual(await stored(claim), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
+        expenses: ['VOIDED', 'VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 2, cancelledEvents: 1, cancelAudits: 1 }, `round ${round}`);
+    }
+  });
+
+  it('marks the finance-queue row of a claim being cancelled exactly while the payment is refused, and no row of a cancelled claim', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const queueRow = async () => (await new ListFinanceQueueUseCase(repos[0]!).execute(finance())).find((row) => row.id === claim.requestId);
+    const paymentTaken = () => repos[0]!.assertClaimPaymentReady(companyId, claim.requestId).then(() => true, (error) => {
+      assert.equal(errorMessage(error), 'reimbursement_cancellation_pending');
+      return false;
+    });
+    const says = async () => { const row = await queueRow(); return [row?.cancellationPending ?? false, row?.currentDesk?.kind, await paymentTaken()]; };
+
+    assert.deepEqual(await says(), [false, 'PAYMENT', true]);
+    await strand(claim, 'ก');
+    assert.deepEqual(await says(), [true, 'SYSTEM', false]);
+    await on(0).withdraw.execute(finance(), claim.requestId);
+    assert.deepEqual(await says(), [false, 'PAYMENT', true]);
+
+    // Cancelled: it leaves the queue, and its row elsewhere is a finished claim, not one being cancelled.
+    await on(0).cancel.execute(finance(), claim.requestId, 'ซื้อซ้ำกับใบก่อน');
+    assert.equal(await queueRow(), undefined);
+    const cancelled = (await repos[0]!.findRequestById(companyId, claim.requestId))!;
+    assert.deepEqual([cancelled.status, !!cancelled.cancellationPendingAt, toRequestSummary(cancelled).cancellationPending], ['CANCELLED', true, undefined]);
+  });
+
+  it('offers no approval on a claim being cancelled, as the approve and reject calls refuse it, and offers both again once it is withdrawn', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const waiting = await waitingClaim();
+    const approve = (claim: { id: string; updatedAt: Date; approvalSnapshotHash?: string }) => repos[0]!.beginApprovalDecisionAtomic({
+      companyId, requestId: claim.id, expectedUpdatedAt: claim.updatedAt, expectedApprovalSnapshotHash: claim.approvalSnapshotHash,
+      actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, financeReviewRequired: false,
+      decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => undefined,
+    });
+    const reject = (claim: { id: string; updatedAt: Date }) => repos[0]!.rejectRequestAtomic({
+      companyId, requestId: claim.id, expectedUpdatedAt: claim.updatedAt, actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false,
+      decidedAt: new Date(), rejectionReason: 'ไม่ผ่าน', request: { status: 'REJECTED' }, onRejectedPersisted: async () => undefined,
+    } as any);
+    assert.deepEqual((await on(0).detail.execute(manager(), waiting.id)).approvalActions, { canApprove: true, canReject: true });
+
+    await strand({ requestId: waiting.id }, 'ซื้อซ้ำกับใบก่อน');
+
+    const cancelling = await on(0).detail.execute(manager(), waiting.id);
+    assert.deepEqual([cancelling.approvalActions, cancelling.currentDesk, !!cancelling.pendingCancellation], [{ canApprove: false, canReject: false }, { kind: 'SYSTEM' }, true]);
+    // What the flags say is what the two calls answer.
+    const now = (await repos[0]!.findRequestById(companyId, waiting.id))!;
+    await assert.rejects(() => approve(now), /reimbursement_cancellation_pending/);
+    await assert.rejects(() => reject(now), /reimbursement_cancellation_pending/);
+
+    await on(0).withdraw.execute(requester(), waiting.id);
+    assert.deepEqual((await on(0).detail.execute(manager(), waiting.id)).approvalActions, { canApprove: true, canReject: true });
+    assert.equal((await approve((await repos[0]!.findRequestById(companyId, waiting.id))!)).resumed, false);
+  });
+
+  // ---- A claim's expense record ends with its claim ----
+
+  it('refuses to void, reject or delete a standing claim\'s expense record from the expense screen, and the claim goes on as if nobody had asked', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const accountant = () => ({ ...finance(), permissions: ['expense.void', 'expense.reject', 'expense.delete'] });
+    const refusedForItsClaim = (requestNo: string) => (error: any) => {
+      const response = error.getResponse?.() as { code?: string; message?: string; requestNo?: string } | undefined;
+      assert.deepEqual([error.getStatus?.(), response?.code, response?.requestNo], [409, 'expense_belongs_to_reimbursement', requestNo]);
+      assert.ok(response!.message!.includes(`คำขอเบิก ${requestNo}`) && response!.message!.includes('ให้ยกเลิกที่คำขอเบิกนั้นในเมนูการเบิกจ่าย'), response!.message);
+      return true;
+    };
+
+    // A claim waiting for payment: its record is confirmed and its journal posted.
+    const payable = await payableClaim();
+    const payableNo = (await repos[0]!.findRequestById(companyId, payable.requestId))!.requestNo!;
+    const numbers = () => clients[0]!.documentNumber.count({ where: { companyId, idempotencyKey: { startsWith: `void-reversal:expense.record:${payable.expenseIds[0]}:` } } });
+    await assert.rejects(() => on(0).expenseScreen.void.execute(accountant(), payable.expenseIds[0]!, 'บันทึกผิด'), refusedForItsClaim(payableNo));
+    assert.deepEqual([await stored(payable), await numbers()], [{ status: 'READY_FOR_PAYMENT', pending: false, pendingReason: null, closedReason: null,
+      expenses: ['CONFIRMED'], voidReasons: [null], reversals: 0, cancelledEvents: 0, cancelAudits: 0 }, 0], 'nothing voided, no reversal number spent');
+    await repos[0]!.assertClaimPaymentReady(companyId, payable.requestId);
+
+    // A claim that was approved and whose record is built and not confirmed yet: the record a rejection could reach.
+    const decided = await decidedClaim();
+    const decidedRequest = (await repos[0]!.findRequestById(companyId, decided.requestId))!;
+    const [built] = await repos[0]!.prepareClaimProjections({ companyId, requestId: decided.requestId, decisionKind: 'MANAGER', decisionActorUserId: MGR,
+      approvalStepId: decided.stepId, scopes: {}, items: new MaterializeClaimExpensesService().buildItems(decidedRequest) });
+    await assert.rejects(() => on(0).expenseScreen.reject.execute(accountant(), built!.expenseId, 'ซ้ำ'), refusedForItsClaim(decidedRequest.requestNo!));
+    await assert.rejects(() => on(0).expenseScreen.remove.execute(accountant(), built!.expenseId), refusedForItsClaim(decidedRequest.requestNo!));
+    assert.equal((await clients[0]!.expenseRecord.findUniqueOrThrow({ where: { id: built!.expenseId } })).status, 'READY_FOR_CONFIRMATION');
+    assert.equal(await clients[0]!.auditLog.count({ where: { companyId, targetId: built!.expenseId, action: 'expense.delete', result: 'DENIED' } }), 1);
+    // So the claim is still carried out, and still paid.
+    assert.equal((await system(0).resume.execute(manager(), decided.requestId)).status, 'READY_FOR_PAYMENT');
+    await repos[0]!.assertClaimPaymentReady(companyId, decided.requestId);
+
+    // The claim's own cancel is the way: it voids the record and closes the claim with it.
+    assert.equal((await on(0).cancel.execute(finance(), payable.requestId, 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
+    assert.deepEqual([(await stored(payable)).expenses, (await stored(payable)).reversals], [['VOIDED'], 1]);
+    // Once the claim has ended it holds the record no more: the expense screen answers by its own rules again.
+    await assert.rejects(() => on(0).expenseScreen.void.execute(accountant(), payable.expenseIds[0]!, 'บันทึกผิด'), /Can only void confirmed expenses/);
+  });
+
+  // ---- Audit B4: a decision that is on record and was not carried out ----
+
+  /**
+   * A claim sent for approval and waiting for its approver. Every line has an amount of its own: the
+   * same person, day and amount twice is parked as a possible duplicate instead of being confirmed.
+   */
+  async function waitingClaim(lines = 1, payBy: 'unset' | 'transfer' = 'unset') {
+    const index = ++sequence;
+    const amounts = Array.from({ length: lines }, () => 1000 + ++sequence);
+    // A claim paid by transfer is sent with the requester's default account, which the submit freezes onto it.
+    if (payBy === 'transfer') {
+      await repos[0]!.setMemberPayoutAccount({ companyId, userId: STAFF, actorUserId: STAFF, payoutMethod: 'BANK_TRANSFER',
+        destination: sealPayoutDestination({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0012345678' }, Buffer.alloc(32, 9))! }, async () => undefined);
+    }
+    const draft = await repos[0]!.createRequest({
+      companyId, branchId, requesterUserId: STAFF, requesterDisplayNameSnapshot: 'สมชาย พนักงาน', reason: `decided-${index}`, categoryKey: 'travel',
+      amount: `${amounts.reduce((sum, amount) => sum + amount, 0)}.0000`, currency: 'THB', incurredDate: day, receiptRequirementStatus: 'MISSING_WITH_REASON', missingReceiptReason: 'ใบเสร็จหาย',
+      createdByUserId: STAFF,
+      lines: amounts.map((amount, line) => ({ lineNo: line + 1, incurredDate: day, description: `รายการ ${line + 1}`, categoryKey: 'travel', amount: `${amount}.0000` })),
+    });
+    const requestSnapshotHash = computeSnapshotHash(claimSnapshotFields(draft));
+    const sent = { status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: STAFF, outstandingAmount: draft.amount, updatedByUserId: STAFF };
+    await repos[0]!.submitDraftAtomic({
+      companyId, requestId: draft.id, expectedUpdatedAt: draft.updatedAt, duplicateCandidates: [], evidence: { attachmentIds: [], expenseIds: [] },
+      documentNumber: { documentType: 'reimbursement.request', periodKey, idempotencyKey: `reimb-submit:${draft.id}`, reservedByUserId: STAFF },
+      ...(payBy === 'transfer' ? {
+        approvalStep: { sequenceNo: 1, approverUserId: MGR, approverRoleSnapshot: 'MANAGER' }, request: sent,
+        payout: {
+          actorUserId: STAFF, frozenAt: new Date(), seenToken: payoutSubmitToken(draft.id, await repos[0]!.planSubmitPayout(draft)),
+          snapshotHash: (columns: SubmitPayoutColumns) => computeSnapshotHash(claimSnapshotFields({ ...draft, ...columns })),
+        },
+      } : {
+        approvalStep: { sequenceNo: 1, approverUserId: MGR, approverRoleSnapshot: 'MANAGER', requestSnapshotHash },
+        request: { ...sent, approvalSnapshotHash: requestSnapshotHash },
+      }),
+    } as any);
+    if (payBy === 'transfer') await repos[0]!.removeMemberPayoutAccount(companyId, STAFF, async () => undefined);
+    return (await repos[0]!.findRequestById(companyId, draft.id, true))!;
+  }
+
+  /** Approved by its approver, and nothing after: what a failure between the decision and the expense records leaves. */
+  async function decidedClaim(lines = 1) {
+    const waiting = await waitingClaim(lines);
+    const decision = await repos[0]!.beginApprovalDecisionAtomic({
+      companyId, requestId: waiting.id, expectedUpdatedAt: waiting.updatedAt, expectedApprovalSnapshotHash: waiting.approvalSnapshotHash,
+      actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, financeReviewRequired: false,
+      decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => undefined,
+    });
+    return { requestId: waiting.id, stepId: decision.approvalStepId, lines };
+  }
+
+  /** Sent under a policy that asked for no approval, and nothing after: status APPROVED with no expense record. */
+  async function noApprovalClaim() {
+    const waiting = await waitingClaim();
+    await clients[0]!.reimbursementApprovalStep.deleteMany({ where: { reimbursementRequestId: waiting.id } });
+    await clients[0]!.reimbursementRequest.update({ where: { id: waiting.id }, data: {
+      status: 'APPROVED', approvedAt: new Date(), currentApprovalStepId: null,
+      approvalPolicySnapshotJson: {
+        schemaVersion: 1, policyId: 'pol', policyVersion: 'v1', approvalRequiredFromAmount: '1000.00', requiresApproval: false, route: null, allowSelfApproval: false,
+        requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: false,
+      },
+    } });
+    return { requestId: waiting.id, lines: 1 };
+  }
+
+  /** What carrying a decision out leaves behind, read from the tables. */
+  async function carried(claim: { requestId: string }) {
+    const db = clients[0]!;
+    const row = await db.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } });
+    const expenses = await db.expenseRecord.findMany({ where: { companyId, sourceReimbursementRequestId: claim.requestId }, orderBy: { createdAt: 'asc' } });
+    const events = (await db.outboxEvent.findMany({ where: { companyId, aggregateId: claim.requestId }, select: { eventType: true } })).map((event) => event.eventType);
+    const count = (eventType: string) => events.filter((type) => type === eventType).length;
+    return {
+      status: row.status as string, expenses: expenses.map((expense) => expense.status as string),
+      linesWithARecord: new Set(expenses.map((expense) => expense.sourceReimbursementLineId)).size,
+      approvedEvents: count('reimbursement.approved'), readyEvents: count('reimbursement.ready_for_payment'),
+      readyAudits: await db.auditLog.count({ where: { companyId, targetId: claim.requestId, action: { in: ['reimbursement.approval.approve', 'reimbursement.approval.auto_by_policy'] } } }),
+      resumeAudits: await db.auditLog.count({ where: { companyId, targetId: claim.requestId, action: 'reimbursement.projection.resume' } }),
+    };
+  }
+  const once = (lines: number, resumeAudits = 0) => ({
+    status: 'READY_FOR_PAYMENT', expenses: Array.from({ length: lines }, () => 'CONFIRMED'), linesWithARecord: lines,
+    approvedEvents: 1, readyEvents: 1, readyAudits: 1, resumeAudits,
+  });
+  const untouched = { status: 'PENDING_APPROVAL', expenses: [], linesWithARecord: 0, approvedEvents: 0, readyEvents: 0, readyAudits: 0, resumeAudits: 0 };
+
+  it('finds a decided claim behind a page of claims that still wait for their approver, and takes a bounded number per run', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    // Whatever the cases above left waiting is taken first, so the runs below are about these claims.
+    await system(0).reconciler.execute();
+    // Older than the decided claims, and PENDING_APPROVAL like them: the page the run used to fill up with.
+    for (let waiting = 0; waiting < 3; waiting += 1) await waitingClaim();
+    const decided = [await decidedClaim(), await decidedClaim(), await decidedClaim()];
+    // And one claim whose frozen policy no build can read: it is nobody's to carry out, and it must not stop the list.
+    const unreadable = await noApprovalClaim();
+    await clients[0]!.reimbursementRequest.update({ where: { id: unreadable.requestId }, data: { approvalPolicySnapshotJson: { schemaVersion: 99 } } });
+
+    // The repository's own list, across every company in this database: at most three rows, and the newest decided claim is one of them.
+    const listed = await repos[0]!.listPendingProjectionIntents(3);
+    assert.ok(listed.length <= 3);
+    const found = listed.find((intent) => intent.request.id === decided[2]!.requestId);
+    assert.deepEqual(found && [found.kind, found.actorUserId, found.approvalStepId], ['MANAGER', MGR, decided[2]!.stepId], 'the decided claim is found');
+    assert.ok(!listed.some((intent) => intent.request.id === unreadable.requestId));
+
+    // A run takes at most what it was given, the most recent first, and the next run takes the rest.
+    const first = ofThese(decided, await system(0).reconciler.execute(2));
+    assert.deepEqual(first, { completed: [decided[2]!.requestId, decided[1]!.requestId], failed: [], blocked: [] });
+    assert.deepEqual([(await carried(decided[0]!)).status, (await carried(decided[2]!)).status], ['PENDING_APPROVAL', 'READY_FOR_PAYMENT']);
+    assert.deepEqual(ofThese(decided, await system(0).reconciler.execute(2)), { completed: [decided[0]!.requestId], failed: [], blocked: [] });
+    for (const claim of decided) assert.deepEqual(await carried(claim), once(1));
+    // Nothing is left for a third run: a claim carried out is not carried out again.
+    assert.deepEqual(ofThese(decided, await system(0).reconciler.execute()), { completed: [], failed: [], blocked: [] });
+    for (const claim of decided) assert.deepEqual(await carried(claim), once(1));
+  });
+
+  it('carries a decided claim out when ดำเนินการต่อ is pressed, with no second decision, and does nothing the second time', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await decidedClaim(2);
+    const decision = await clients[0]!.reimbursementApprovalStep.findUniqueOrThrow({ where: { id: claim.stepId } });
+    const shown = await on(0).detail.execute(manager(), claim.requestId);
+    assert.deepEqual([shown.status, shown.awaitingSystem, shown.currentDesk, shown.approvalActions],
+      ['PENDING_APPROVAL', { kind: 'APPROVAL', canResume: true }, { kind: 'SYSTEM' }, { canApprove: false, canReject: false }]);
+    assert.deepEqual((await on(0).detail.execute(requester(), claim.requestId)).awaitingSystem, { kind: 'APPROVAL', canResume: false });
+    await assert.rejects(() => system(0).resume.execute(requester(), claim.requestId), /reimbursement_resume_not_allowed/);
+    assert.deepEqual(await carried(claim), untouched);
+
+    assert.equal((await system(0).resume.execute(manager(), claim.requestId)).status, 'READY_FOR_PAYMENT');
+
+    assert.deepEqual(await carried(claim), once(2, 1));
+    // The decision is the one made before: same approver, same moment. Nothing was decided again.
+    const after = await clients[0]!.reimbursementApprovalStep.findUniqueOrThrow({ where: { id: claim.stepId } });
+    assert.deepEqual([after.status, after.decisionByUserId, after.decidedAt], [decision.status, decision.decisionByUserId, decision.decidedAt]);
+    assert.equal((await on(0).detail.execute(manager(), claim.requestId)).awaitingSystem, undefined);
+
+    assert.equal((await system(1).resume.execute(manager(), claim.requestId)).status, 'READY_FOR_PAYMENT');
+    assert.deepEqual(await carried(claim), once(2, 1), 'pressed again: nothing more');
+  });
+
+  it('carries the decision out once when ดำเนินการต่อ and the scheduled run take the same claim at the same moment', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    for (let round = 0; round < 6; round += 1) {
+      const claim = await decidedClaim(2);
+      const [person, run] = await Promise.allSettled([system(0).resume.execute(manager(), claim.requestId), system(1).reconciler.execute()]);
+      // The person is shown the claim, or (having lost an expense record to the run) told that it is being carried out.
+      const answer = person.status === 'fulfilled' ? 'shown' : `${person.reason?.getStatus?.()} ${errorMessage(person.reason)}`;
+      assert.ok(['shown', '409 reimbursement_resume_in_progress'].includes(answer), `round ${round}: ${answer}`);
+      assert.equal(run.status, 'fulfilled', `round ${round}: ${(run as PromiseRejectedResult).reason}`);
+      assert.deepEqual(ofThese([claim], (run as PromiseFulfilledResult<any>).value).failed, [], `round ${round}`);
+      const left = await carried(claim);
+      assert.deepEqual({ ...left, resumeAudits: 0 }, once(2), `round ${round}: one expense record per line, one set of events`);
+    }
+  });
+
+  it('carries the decision out once when two people press ดำเนินการต่อ at the same moment', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    for (let round = 0; round < 4; round += 1) {
+      const claim = await noApprovalClaim();
+      const presses = await Promise.allSettled([system(0).resume.execute(finance(), claim.requestId), system(1).resume.execute(finance(), claim.requestId)]);
+      const answers = presses.map((press) => (press.status === 'fulfilled' ? 'shown' : `${press.reason?.getStatus?.()} ${errorMessage(press.reason)}`));
+      assert.ok(answers.includes('shown') && answers.every((answer) => ['shown', '409 reimbursement_resume_in_progress'].includes(answer)), `round ${round}: ${answers.join(' | ')}`);
+      assert.deepEqual({ ...(await carried(claim)), resumeAudits: 0 }, once(1), `round ${round}`);
+    }
+  });
+
+  it('lets whoever may record the payment carry on a claim nobody had to approve, which the payment itself refuses until then', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await noApprovalClaim();
+    const shown = await on(0).detail.execute(finance(), claim.requestId);
+    assert.deepEqual([shown.status, shown.awaitingSystem, shown.currentDesk?.kind], ['APPROVED', { kind: 'NO_APPROVAL_NEEDED', canResume: true }, 'PAYMENT']);
+    // What the page stops offering is what the API refuses: the payment, until the expense records are confirmed.
+    await assert.rejects(() => repos[0]!.assertClaimPaymentReady(companyId, claim.requestId), /reimbursement_projection_not_ready/);
+    for (const viewer of [requester(), manager()]) {
+      assert.deepEqual((await on(0).detail.execute(viewer, claim.requestId)).awaitingSystem, { kind: 'NO_APPROVAL_NEEDED', canResume: false });
+      await assert.rejects(() => system(0).resume.execute(viewer, claim.requestId), /reimbursement_resume_not_allowed/);
+    }
+
+    assert.equal((await system(0).resume.execute(finance(), claim.requestId)).status, 'READY_FOR_PAYMENT');
+
+    assert.deepEqual(await carried(claim), once(1, 1));
+    await repos[0]!.assertClaimPaymentReady(companyId, claim.requestId);
+    assert.equal((await on(0).detail.execute(finance(), claim.requestId)).awaitingSystem, undefined);
+  });
+
+  it('builds nothing for a claim that is no longer what was approved, from the web or from the scheduled run', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await decidedClaim();
+    const approved = (await repos[0]!.findRequestById(companyId, claim.requestId))!.amount;
+    const setAmount = async (amount: string) => {
+      await clients[0]!.reimbursementLine.updateMany({ where: { reimbursementRequestId: claim.requestId }, data: { amount } });
+      await clients[0]!.reimbursementRequest.update({ where: { id: claim.requestId }, data: { amount, outstandingAmount: amount } });
+    };
+    // Changed behind the approval: the amount is not the amount the approver saw.
+    await setAmount('9000.0000');
+
+    await assert.rejects(() => system(0).resume.execute(manager(), claim.requestId), (error: any) => error.getStatus() === 409 && errorMessage(error) === 'stale_approval_snapshot');
+    assert.deepEqual(ofThese([claim], await system(1).reconciler.execute()), { completed: [], failed: [[claim.requestId, 'stale_approval_snapshot']], blocked: [] });
+
+    assert.deepEqual(await carried(claim), untouched, 'no expense record, no event, the claim stays where it was');
+    // Put right (here: back to what was approved), the next run carries it out.
+    await setAmount(approved);
+    assert.deepEqual(ofThese([claim], await system(1).reconciler.execute()).completed, [claim.requestId]);
+    assert.deepEqual(await carried(claim), once(1));
+  });
+
+  // Approval rules are not weakened: a claim paid by transfer is approved only with the approver's
+  // attestation of its account, and carrying an approval out neither needs a second one nor stands in for a missing one.
+  it('carries out an attested approval of a transfer claim without asking for the attestation again, and nothing for one nobody attested', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const waiting = await waitingClaim(1, 'transfer');
+    const claim = { requestId: waiting.id };
+    const destination = () => clients[0]!.reimbursementPayoutDestination.findFirstOrThrow({ where: { reimbursementRequestId: waiting.id } });
+    const approve = (payoutVerifiedVersion?: number) => repos[0]!.beginApprovalDecisionAtomic({
+      companyId, requestId: waiting.id, expectedUpdatedAt: waiting.updatedAt, expectedApprovalSnapshotHash: waiting.approvalSnapshotHash,
+      actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, financeReviewRequired: false,
+      decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => undefined, payoutVerifiedVersion,
+    });
+    assert.deepEqual([waiting.payoutMethod, waiting.payoutDestinationVersion], ['BANK_TRANSFER', 1]);
+
+    // No attestation, no approval. The claim holds no decision, so neither the web call nor the run has anything to carry out.
+    await assert.rejects(() => approve(), /payout_verification_required/);
+    assert.equal((await on(0).detail.execute(manager(), waiting.id)).awaitingSystem, undefined);
+    assert.equal((await system(0).resume.execute(manager(), waiting.id)).status, 'PENDING_APPROVAL');
+    assert.deepEqual(ofThese([claim], await system(1).reconciler.execute()), { completed: [], failed: [], blocked: [] });
+    assert.deepEqual([await carried(claim), (await destination()).verifiedAt], [untouched, null]);
+
+    // Attested and approved, and nothing after it.
+    const decided = await approve(1);
+    const attested = await destination();
+    assert.deepEqual([attested.verifiedByUserId, attested.verifiedVia, attested.approvalStepId], [MGR, 'APPROVAL', decided.approvalStepId]);
+
+    // ดำเนินการต่อ takes no attestation and makes none: the claim is carried out with the one on record.
+    assert.equal((await system(0).resume.execute(manager(), waiting.id)).status, 'READY_FOR_PAYMENT');
+    const after = await destination();
+    assert.deepEqual([after.verifiedByUserId, after.verifiedAt?.getTime(), after.verifiedVia, after.approvalStepId],
+      [MGR, attested.verifiedAt?.getTime(), 'APPROVAL', decided.approvalStepId]);
+    assert.deepEqual(await carried(claim), once(1, 1));
+  });
+
+  it('carries nothing out for a claim whose cancellation was started, and carries it out once that is withdrawn', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await decidedClaim();
+    await strand(claim, 'ก');
+
+    const shown = await on(0).detail.execute(manager(), claim.requestId);
+    assert.deepEqual([shown.awaitingSystem, shown.pendingCancellation?.blocker], [undefined, { code: 'reason_too_short' }]);
+    await system(0).resume.execute(manager(), claim.requestId);
+    assert.deepEqual(ofThese([claim], await system(1).reconciler.execute()), { completed: [], failed: [], blocked: [claim.requestId] });
+    assert.deepEqual(await carried(claim), untouched);
+
+    await on(0).withdraw.execute(requester(), claim.requestId);
+    assert.deepEqual(ofThese([claim], await system(1).reconciler.execute()).completed, [claim.requestId]);
+    assert.deepEqual(await carried(claim), once(1));
   });
 });

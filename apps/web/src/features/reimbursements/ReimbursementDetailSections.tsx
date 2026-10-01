@@ -27,11 +27,12 @@ import {
   uploadReimbursementPaymentSlip,
 } from './reimbursements.api';
 import {
-  REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
+  PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
   APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
+  claimStatusBadge,
 } from './reimbursements.model';
 import {
   buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
@@ -44,8 +45,10 @@ import {
 // The one wording for a voided payment (its own import, apart from the model block above).
 import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
 
-export function StatusBadge({ status }: { status: string }) {
-  return <MangmeeBadge tone={REQUEST_STATUS_TONES[status] ?? 'slate'}>{REQUEST_STATUS_LABELS[status] ?? '—'}</MangmeeBadge>;
+/** `desk`: the claim's `currentDesk`. A claim the system holds reads "รอระบบปรับสถานะ", not the status it has not left yet. */
+export function StatusBadge({ status, desk }: { status: string; desk?: { kind?: string } | null }) {
+  const badge = claimStatusBadge({ status, currentDesk: desk });
+  return <MangmeeBadge tone={badge.tone}>{badge.label}</MangmeeBadge>;
 }
 export function PaymentBadge({ status }: { status: string }) {
   return <MangmeeBadge tone={PAYMENT_STATUS_TONES[status] ?? 'slate'}>{PAYMENT_STATUS_LABELS[status] ?? '—'}</MangmeeBadge>;
@@ -91,17 +94,21 @@ export function RejectDialog({ requestNo, busy, error, onClose, onConfirm }: {
   );
 }
 
-export function ReasonDialog({ title, description, confirmLabel, busy, error, danger = false, onClose, onConfirm }: {
+export function ReasonDialog({ title, description, confirmLabel, busy, error, danger = false, minLength = 1, initialReason = '', onClose, onConfirm }: {
   title: string;
   description: string;
   confirmLabel: string;
   busy?: boolean;
   error?: string | null;
   danger?: boolean;
+  /** The shortest reason the API takes for this action; the confirm button stays off below it. */
+  minLength?: number;
+  /** A reason already on record that the person is asked to correct. */
+  initialReason?: string;
   onClose: () => void;
   onConfirm: (reason: string) => void;
 }) {
-  const [reason, setReason] = useState('');
+  const [reason, setReason] = useState(initialReason);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const trimmed = reason.trim();
   useEffect(() => { reasonRef.current?.focus(); }, []);
@@ -113,10 +120,13 @@ export function ReasonDialog({ title, description, confirmLabel, busy, error, da
         <textarea ref={reasonRef} className={cx(inputClass, 'min-h-24 resize-y')} value={reason}
           onChange={e => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH}
           placeholder="ระบุเหตุผลให้ชัดเจน" />
-        <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
+        <div className="flex justify-between gap-3 text-xs text-gray-400">
+          <span>{minLength > 1 ? `อย่างน้อย ${minLength} ตัวอักษร` : ''}</span>
+          <span className="tabular-nums">{reason.length}/500</span>
+        </div>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="button" className={danger ? dangerClass : btnClass} disabled={busy || !trimmed} aria-busy={Boolean(busy)}
+          <button type="button" className={danger ? dangerClass : btnClass} disabled={busy || trimmed.length < minLength} aria-busy={Boolean(busy)}
             onClick={() => onConfirm(trimmed)}>{confirmLabel}</button>
         </div>
       </div>
@@ -685,7 +695,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <h4 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h4>
         <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           <Row k="หมวดหมู่" v={categoryText(detail.categoryLabelSnapshot)} />
-          <Row k="สถานะ" v={<StatusBadge status={detail.status} />} />
+          <Row k="สถานะ" v={<StatusBadge status={detail.status} desk={detail.currentDesk} />} />
           <Row k="ตรวจสอบการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus]} />
           {detail.financeReviewedByName && <Row k="ผู้ตรวจการเงิน" v={detail.financeReviewedByName} />}
           <Row k="การจ่าย" v={<PaymentBadge status={detail.paymentStatus} />} />

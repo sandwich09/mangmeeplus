@@ -1,14 +1,15 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
+  EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
+  reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
-import { formatThaiDate } from '@/common/i18n/thai-date';
+import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import {
   CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
-  canUploadSignedCopy, canVoidRecordedPayment, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
+  canUploadSignedCopy, canVoidRecordedPayment, claimIsBeingCancelled, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
   type ClaimSignatureRole,
 } from './reimbursements.model';
 import { payoutComparableText } from './reimbursement-payout.logic';
@@ -31,8 +32,89 @@ export function errorMessage(
 ): string {
   const parts = raw.split(',').map((part) => part.trim()).filter(Boolean);
   if (parts.length === 0) return apiErrorMessage(source);
-  return parts.map((part) => ERROR_CODE_LABELS[part] ?? translateApiError(part)
+  return parts.map((part) => ERROR_CODE_LABELS[part] ?? cancellationRefusalText(part) ?? translateApiError(part)
     ?? apiErrorMessage(parts.length === 1 ? source : Object.assign(new Error(part), { kind: 'unknown' }))).join(' · ');
+}
+
+// ---- A cancellation that cannot go through, or has not completed (audit B3) ----
+
+/** "ก.ย. 2569" for an accounting period key such as 2026-09; nothing for a key this page cannot read. */
+const periodText = (periodKey: unknown) => (typeof periodKey === 'string' && /^\d{4}-\d{2}$/.test(periodKey) ? ` ${formatThaiMonth(`${periodKey}-01`)} ` : '');
+
+/**
+ * What stands in the way of a cancellation, in words a person can act on. One text for the claim's
+ * step note (a cancellation that was started) and for the refusal of a cancel that meets the same wall.
+ */
+export function cancellationBlockerText(blocker: { code?: unknown; periodKey?: unknown } | null | undefined): string | null {
+  switch (blocker?.code) {
+    case 'reason_too_short': return 'เหตุผลที่ระบุไว้สั้นเกินไป ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้';
+    case 'accounting_period_locked':
+      return `งวดบัญชี${periodText(blocker.periodKey)}ปิดแล้ว ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ ต้องให้ผู้มีสิทธิ์เปิดงวดบัญชีนั้นก่อน`;
+    case 'tax_period_locked':
+      return `งวดภาษี${periodText(blocker.periodKey)}ยื่นแบบหรือปิดแล้ว ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ ต้องให้ผู้ดูแลบัญชีปรับปรุงรายการแทน`;
+    case 'posting_unresolved': return 'รายการบัญชีของค่าใช้จ่ายในใบนี้ยังลงบัญชีไม่เรียบร้อย ต้องให้ผู้ดูแลบัญชีตรวจการลงบัญชีก่อน';
+    case 'expense_not_voidable': return 'รายการค่าใช้จ่ายของใบนี้อยู่ในสถานะที่ระบบยกเลิกให้ไม่ได้ กรุณาติดต่อผู้ดูแลระบบ';
+    default: return null;
+  }
+}
+
+/** The API's refusal of a cancel the expense void would refuse: `reimbursement_cancellation_<blocker>` or `…:<period>`. */
+function cancellationRefusalText(code: string): string | null {
+  const match = /^reimbursement_cancellation_(accounting_period_locked|tax_period_locked|posting_unresolved|expense_not_voidable)(?::(.+))?$/.exec(code);
+  const text = match && cancellationBlockerText({ code: match[1], periodKey: match[2] });
+  return text ? `ยังยกเลิกคำขอนี้ไม่ได้ เพราะ${text}` : null;
+}
+
+/**
+ * The step note of a claim whose cancellation was started and has not completed: who started it and
+ * when, why it has not completed, and what this viewer can do. The claim is with the system meanwhile
+ * (the same words as its "อยู่ที่" line and the LINE backlog), and the API takes no other decision on it.
+ */
+export function pendingCancellationNote(pending: any): string {
+  const started = [pending?.startedByName, 'เริ่มยกเลิกคำขอนี้', pending?.startedAt && `เมื่อ ${formatThaiDateTime(pending.startedAt)}`].filter(Boolean).join(' ');
+  const blocker = cancellationBlockerText(pending?.blocker);
+  const reasonBlocks = pending?.blocker?.code === 'reason_too_short';
+  // A closed period or an unposted journal can be put right; a filed tax period or an unvoidable record cannot.
+  const fixable = ['accounting_period_locked', 'posting_unresolved'].includes(pending?.blocker?.code);
+  const next = pending?.canResume !== true ? 'ผู้ที่ดำเนินการต่อได้คือผู้เบิกหรือผู้มีสิทธิ์ตรวจการเงิน'
+    : reasonBlocks ? `กดดำเนินการยกเลิกต่อ แล้วระบุเหตุผลใหม่อย่างน้อย ${EXPENSE_VOID_REASON_MIN_LENGTH} ตัวอักษร`
+      : !blocker ? 'ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที หรือกดดำเนินการยกเลิกต่อได้เลย'
+        : fixable ? 'เมื่อแก้ไขแล้ว กดดำเนินการยกเลิกต่อ' : null;
+  const takeBack = pending?.canWithdraw === true ? 'ถ้าไม่ต้องการยกเลิกแล้ว กดถอนการยกเลิก ใบจะกลับไปเดินต่อตามเดิม'
+    : pending?.canResume === true ? 'ระบบยกเลิกรายการค่าใช้จ่ายไปบางส่วนแล้ว จึงถอนการยกเลิกไม่ได้' : null;
+  return [
+    `กำลังยกเลิกคำขอ ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`,
+    `${started} แต่ยังยกเลิกไม่เสร็จ${blocker ? ` เพราะ${blocker}` : ''}`,
+    next, takeBack,
+    'ระหว่างนี้ยังอนุมัติ ปฏิเสธ แก้ไข หรือบันทึกจ่ายใบนี้ไม่ได้',
+  ].filter(Boolean).join(' · ');
+}
+
+// ---- A claim that was decided and has not moved on (audit B4) ----
+
+const SYSTEM_WILL_CARRY_ON = 'ระบบจะดำเนินการต่อให้เองภายในไม่กี่นาที';
+
+/**
+ * The step note of a claim whose decision is on record and waits for the system to carry it out: what
+ * was decided, what is still missing, and who can press ดำเนินการต่อ. An approved claim is with the
+ * system (its "อยู่ที่" line and the LINE backlog say the same); a claim nobody had to approve waits at
+ * the payment desk, and whoever may record its payment is who can carry it on.
+ */
+export function awaitingSystemNote(detail: any, approvedBy?: string): string {
+  const waiting = detail?.awaitingSystem;
+  const notReady = 'ระบบยังเตรียมรายการสำหรับจ่ายเงินของใบนี้ไม่เสร็จ จึงยังบันทึกจ่ายไม่ได้';
+  if (waiting?.kind === 'NO_APPROVAL_NEEDED') {
+    const payers = paymentDeskText(detail?.paymentDesk) ?? CURRENT_DESK_LABELS.PAYMENT;
+    return [
+      'ใบนี้ไม่ต้องอนุมัติตามนโยบาย', notReady,
+      waiting.canResume === true ? `${SYSTEM_WILL_CARRY_ON} หรือกดดำเนินการต่อได้เลย` : `${SYSTEM_WILL_CARRY_ON} ถ้ายังค้างอยู่ ${payers} กดดำเนินการต่อได้`,
+    ].join(' · ');
+  }
+  return [
+    `${approvedBy ? `${approvedBy} อนุมัติแล้ว` : 'อนุมัติแล้ว'} ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`, notReady,
+    waiting?.canResume === true ? `${SYSTEM_WILL_CARRY_ON} หรือกดดำเนินการต่อได้เลย ไม่ต้องอนุมัติซ้ำ`
+      : `${SYSTEM_WILL_CARRY_ON} ไม่ต้องอนุมัติซ้ำ ถ้ายังค้างอยู่ ผู้อนุมัติใบนี้กดดำเนินการต่อได้`,
+  ].join(' · ');
 }
 
 /**
@@ -354,8 +436,30 @@ export function quickPayTarget(layout: 'cards' | 'table', companyId: string, req
  * waits for payment, the viewer holds the pay right, and the claim has a branch. The payment endpoint
  * refuses a claim with no branch for everyone, and the claim page offers no button for one either.
  */
-export function queueRowOffersPayment(row: { status?: string; branchId?: string | null } | null | undefined, permissions: readonly string[]): boolean {
-  return row?.status === 'READY_FOR_PAYMENT' && !!row.branchId && permissions.includes('reimbursement.payment.record');
+export function queueRowOffersPayment(
+  row: { status?: string; branchId?: string | null; cancellationPending?: boolean } | null | undefined,
+  permissions: readonly string[],
+): boolean {
+  // A claim being cancelled is not paid (the API refuses it); its row says so and offers no payment.
+  return row?.status === 'READY_FOR_PAYMENT' && !!row.branchId && !claimIsBeingCancelled(row) && permissions.includes('reimbursement.payment.record');
+}
+
+/** Whether a finance-queue row offers its finance decision ("อนุมัติจ่าย", or "ดำเนินการต่อ" once approved): never for a claim being cancelled. */
+export function queueRowOffersFinanceReview(row: { status?: string; cancellationPending?: boolean } | null | undefined): boolean {
+  return row?.status === 'FINANCE_REVIEW' && !claimIsBeingCancelled(row);
+}
+
+/**
+ * What the quick-pay dialog says instead of a payment form for a claim it has just read, or null when it
+ * may show the form. The queue row the press came from can be older than the claim: cancelled meanwhile,
+ * paid by someone else, or no longer at its payment step. The dialog asks the claim's own page rule, so it
+ * never offers a payment that page would not, and says what that page says. The words hold for a claim
+ * that is finished too, so nothing here promises a payment later.
+ */
+export function quickPayBlockedNote(claim: any, permissions: readonly string[], userId: string): string | null {
+  const step = activeJourneyStep(buildJourneySteps(claim, permissions, userId));
+  if (step?.actions.includes('pay')) return null;
+  return ['บันทึกจ่ายใบนี้ไม่ได้', step?.note].filter(Boolean).join(' · ');
 }
 
 /** The claim page opens its payment form on arrival only when the link asked for it and this viewer's current step offers it. */
@@ -624,6 +728,8 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
     ? { key: 'submit', state: 'done', label: 'ยื่นใบ', date: detail.submittedAt }
     : { key: 'submit', state: 'current', label: 'รอผู้ยื่นส่งคำขอ' });
 
+  // A cancellation that was started and has not completed (audit B3): nobody is waited for but the system.
+  const cancelling = status !== 'CANCELLED' && status !== 'VOIDED' ? detail?.pendingCancellation : undefined;
   // The waiting row names the same people the queue line does — one resolved list, never two.
   const waitingFor = currentDeskText(detail?.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER;
   // Spec §17.2: an approval that attested the claim's account says so. Which step did is on the account's
@@ -639,7 +745,7 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
         : `อนุมัติและตรวจบัญชีรับเงินโดย ${decidedBy}`;
     if (step.status === 'APPROVED') rows.push({ key, state: 'done', label: approvedLabel, date: step.decidedAt });
     else if (step.status === 'REJECTED') rows.push({ key, state: 'done', label: `ปฏิเสธโดย ${decidedBy}`, date: step.decidedAt });
-    else if (step.status === 'PENDING') rows.push({ key, state: 'current', label: `กำลังรอ ${waitingFor} อนุมัติ` });
+    else if (step.status === 'PENDING' && !cancelling) rows.push({ key, state: 'current', label: `กำลังรอ ${waitingFor} อนุมัติ` });
   }
   // Only a claim that IS rejected ends here. Reopen keeps the refused step, so a claim fixed and
   // resubmitted still carries it as history and its journey goes on.
@@ -652,6 +758,20 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   ]);
   if (status === 'CANCELLED' || status === 'VOIDED') {
     return [...rows, ...voided, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
+  }
+  // Being cancelled: the journey stops here until the cancellation is finished or withdrawn.
+  if (cancelling) {
+    return [...rows.map((row) => (row.state === 'current' ? { ...row, state: 'done' as const } : row)),
+      { key: 'cancel-started', state: 'done', label: `เริ่มยกเลิกคำขอ${cancelling.startedByName ? ` โดย ${cancelling.startedByName}` : ''}`, date: cancelling.startedAt },
+      { key: 'system', state: 'current', label: `กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}` }];
+  }
+
+  // Decided, and the system has not carried it out yet (audit B4): that is what the claim waits for now. An
+  // approved claim is with the system; one nobody had to approve is with whoever may record its payment.
+  if (detail?.awaitingSystem) {
+    rows.push({ key: 'system', state: 'current', label: detail.awaitingSystem.kind === 'NO_APPROVAL_NEEDED'
+      ? `กำลังรอ ${paymentDeskText(detail?.paymentDesk) ?? CURRENT_DESK_LABELS.PAYMENT} ดำเนินการต่อ`
+      : `กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}` });
   }
 
   // The row the claim waits at is the journey's own step, so the two never disagree; and the finance row
@@ -709,8 +829,8 @@ export type JourneyStepKey = 'items' | 'approval' | 'finance' | 'payment' | 'doc
 /** needs-fix = refused, waiting for the requester; ended = cancelled/voided here, nothing follows. */
 export type JourneyStepState = 'done' | 'current' | 'upcoming' | 'needs-fix' | 'ended';
 export type JourneyAction =
-  | 'submit' | 'edit' | 'cancel' | 'reopen'
-  | 'approve' | 'reject' | 'policy-settings'
+  | 'submit' | 'edit' | 'cancel' | 'reopen' | 'resume-cancel' | 'withdraw-cancel'
+  | 'approve' | 'reject' | 'resume' | 'policy-settings'
   | 'finance-approve' | 'finance-return' | 'finance-block'
   | 'resolve-duplicate' | 'pay' | 'sign' | 'print' | 'attach-signed-copy' | 'void-payment';
 export type JourneyStep = {
@@ -760,8 +880,10 @@ function journeyStepAt(detail: any, withFinance: boolean): JourneyStepKey {
     case 'DRAFT': return 'items';
     case 'PENDING_APPROVAL': case 'REJECTED': return 'approval';
     case 'FINANCE_REVIEW': return 'finance';
-    // Transient: approved, waiting for the projection to route it on (currentDesk FINANCE or PAYMENT).
-    case 'APPROVED': return detail.financeReviewStatus === 'PENDING' ? 'finance' : 'payment';
+    // Transient: approved, waiting for the projection to route it on (currentDesk FINANCE or PAYMENT). While
+    // the server says the claim cannot be paid yet (audit B4) it stands at the approval step, which then
+    // offers ดำเนินการต่อ; the payment step, and its button the API would refuse, come after it.
+    case 'APPROVED': return detail.awaitingSystem ? 'approval' : detail.financeReviewStatus === 'PENDING' ? 'finance' : 'payment';
     case 'READY_FOR_PAYMENT': case 'PARTIALLY_PAID': return 'payment';
     case 'PAID': return 'document';
   }
@@ -799,6 +921,14 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
   const activeStep = (key: JourneyStepKey): Pick<JourneyStep, 'note' | 'actions'> => {
     const actions: JourneyAction[] = [];
     let note: string | undefined;
+    if (!ended && detail?.pendingCancellation) {
+      // Audit B3: a cancellation was started and has not completed. The API takes no other decision on the
+      // claim until it is finished or withdrawn, so those two are all the step offers (the server says to whom).
+      if (detail.pendingCancellation.canResume === true) actions.push('resume-cancel');
+      if (detail.pendingCancellation.canWithdraw === true) actions.push('withdraw-cancel');
+      if (detail?.requestNo && status !== 'DRAFT') actions.push('print');
+      return { note: pendingCancellationNote(detail.pendingCancellation), actions };
+    }
     if (ended) {
       note = status === 'CANCELLED' ? `ยกเลิกคำขอแล้ว${detail?.rejectionReason ? `: ${detail.rejectionReason}` : ''}` : 'เพิกถอนรายการแล้ว';
     } else if (key === 'items') {
@@ -814,6 +944,11 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
     } else if (key === 'approval' && status === 'REJECTED') {
       note = `ปฏิเสธ${detail?.rejectionReason ? `: ${detail.rejectionReason}` : ''}`;
       if (own.canReopen) actions.push('reopen');
+    } else if (key === 'approval' && detail?.awaitingSystem) {
+      // Audit B4: the decision is on record and the system has not carried it out. Nothing is decided again:
+      // the one action is to have the system carry on, offered to whoever the server says it takes it from.
+      if (detail.awaitingSystem.canResume === true) actions.push('resume');
+      note = awaitingSystemNote(detail, approval?.decidedByName ?? approval?.approverName);
     } else if (key === 'approval') {
       if (detail?.approvalActions?.canApprove === true) actions.push('approve');
       if (detail?.approvalActions?.canReject === true) actions.push('reject');
