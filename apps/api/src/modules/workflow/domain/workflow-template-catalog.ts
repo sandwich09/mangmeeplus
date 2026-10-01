@@ -32,7 +32,9 @@ export const WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG: Record<string, Record<str
   reimbursement_decision_requester: { eventTypes: ['reimbursement.approved', 'reimbursement.rejected'] },
   reimbursement_correction_requester: { eventType: 'reimbursement.correction_requested' },
   reimbursement_finance_review: { eventType: 'reimbursement.finance_review_updated' },
-  reimbursement_finance_review_pending: { eventType: 'reimbursement.approved' },
+  // Two ways a claim arrives at the finance desk: a person approved it, or it needed no approval
+  // and was sent straight there. The second wrote an event no rule listened to, so nobody was told.
+  reimbursement_finance_review_pending: { eventTypes: ['reimbursement.approved', 'reimbursement.finance_review_requested'] },
   reimbursement_ready_for_payment: { eventType: 'reimbursement.ready_for_payment' },
   reimbursement_payment_recorded: { eventType: 'reimbursement.payment_recorded' },
   reimbursement_payment_voided: { eventType: 'reimbursement.payment_voided' },
@@ -128,7 +130,10 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
-    defaultConditionJson: { field: 'requestId', op: 'EXISTS' },
+    // Only a claim that waits for a person. A claim below the approval threshold is submitted too,
+    // but has no approver: matching it retried the notice into a dead letter on every such claim
+    // and created an approval task for nobody.
+    defaultConditionJson: { field: 'status', op: 'EQ', value: 'PENDING_APPROVAL' },
     defaultActionJson: [
       {
         actionKey: 'notify_approver',

@@ -763,6 +763,13 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     assert.equal(state.calls.approvalSteps.length, 0);
     assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.approval_not_required'));
     assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.finance_review_requested'));
+    // The finance desk is told from `finance_review_requested`, and nobody is asked to approve from
+    // `request_submitted`: both workflow rules decide on the status these two events carry.
+    for (const eventType of ['reimbursement.finance_review_requested', 'reimbursement.request_submitted']) {
+      const data = state.calls.outbox.find((event: any) => event.eventType === eventType).payloadJson.data;
+      assert.equal(data.status, 'FINANCE_REVIEW', eventType);
+      assert.ok(data.requestNo && data.requesterUserId && data.amount && data.currency, eventType);
+    }
   });
 
   it('reaches ready-for-payment through POLICY projection below threshold when finance is off', async () => {
