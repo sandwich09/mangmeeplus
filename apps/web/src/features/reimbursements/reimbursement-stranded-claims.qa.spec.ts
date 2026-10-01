@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL } from '@watchdog-bms/contracts';
@@ -16,8 +17,10 @@ require.extensions['.svg'] = (module) => { module.exports = () => null; };
 // Modal portals into document.body, which a server render has none of: render the dialog in place.
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as typeof import('./ReimbursementJourneyPage');
-const { activeJourneyStep, buildClaimTimeline, buildJourneySteps, errorText } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
-const { currentDeskText } = require('./reimbursements.model') as typeof import('./reimbursements.model');
+const {
+  activeJourneyStep, buildClaimTimeline, buildJourneySteps, errorText, queueRowOffersFinanceReview, queueRowOffersPayment, quickPayBlockedNote,
+} = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+const { claimIsBeingCancelled, currentDeskText, reimbursementOwnActions } = require('./reimbursements.model') as typeof import('./reimbursements.model');
 const reactRuntime = require('react') as typeof React;
 
 const h = React.createElement;
@@ -274,6 +277,63 @@ describe('a claim whose cancellation has not completed says so in the step card 
       ['done:ยื่นใบ', 'done:เริ่มยกเลิกคำขอ โดย พิม ใจดี', 'current:กำลังรอระบบปรับสถานะ']);
     assert.deepEqual(buildClaimTimeline(cancelling()).map((row) => `${row.state}:${row.label}`),
       ['done:ยื่นใบ', 'done:อนุมัติโดย สมศรี', 'done:เริ่มยกเลิกคำขอ โดย พิม ใจดี', 'current:กำลังรอระบบปรับสถานะ']);
+  });
+});
+
+// The hub's rows. A list or queue row carried nothing about a pending cancellation, so the finance queue
+// offered บันทึกจ่าย and อนุมัติจ่าย, and a draft row ส่งอนุมัติ, on a claim the API refuses them for. And the
+// quick-pay dialog showed its form for whatever claim it read, however stale the row it was opened from.
+describe('the hub offers nothing the API refuses on a claim that is being cancelled or cannot be paid yet', () => {
+  const hub = readFileSync(new URL('./ReimbursementsPages.tsx', import.meta.url), 'utf8');
+  const payer = ['reimbursement.read', 'reimbursement.finance_review', 'reimbursement.payment.record'];
+  const row = (overrides: Record<string, unknown> = {}): Record<string, any> => ({ id: 'claim-1', status: 'READY_FOR_PAYMENT', branchId: 'branch-1', requesterUserId: 'staff', ...overrides });
+
+  it('offers no บันทึกจ่าย and no อนุมัติจ่าย on the finance-queue row of a claim being cancelled, on the table and on the cards alike', () => {
+    assert.equal(queueRowOffersPayment(row(), payer), true);
+    assert.equal(queueRowOffersPayment(row({ cancellationPending: true }), payer), false);
+    assert.equal(queueRowOffersFinanceReview(row({ status: 'FINANCE_REVIEW' })), true);
+    assert.equal(queueRowOffersFinanceReview(row({ status: 'FINANCE_REVIEW', cancellationPending: true })), false);
+    for (const status of ['READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'APPROVED', 'PENDING_APPROVAL']) assert.equal(queueRowOffersFinanceReview(row({ status })), false, status);
+    // A claim nobody had to approve that still waits for the system is APPROVED: it is not paid from a row either.
+    assert.equal(queueRowOffersPayment(row({ status: 'APPROVED' }), payer), false);
+    // Both layouts ask the two rules, and nothing in the queue decides it from the status alone any more.
+    assert.equal(hub.match(/\{queueRowOffersFinanceReview\(r\) && <button/g)?.length, 2);
+    assert.equal(hub.match(/\{queueRowOffersPayment\(r, permissions\) && <button/g)?.length, 2);
+    assert.equal(hub.includes("r.status === 'FINANCE_REVIEW' && <button"), false);
+  });
+
+  it('offers no ส่งอนุมัติ, แก้ไข or ยกเลิก on the list row of a claim being cancelled, as on its page', () => {
+    const everything = [...OWNER];
+    for (const status of ['DRAFT', 'PENDING_APPROVAL', 'READY_FOR_PAYMENT', 'REJECTED']) {
+      const open = reimbursementOwnActions(row({ status }), 'staff', everything);
+      assert.ok(Object.values(open).some(Boolean), `${status}: something is offered while it is not being cancelled`);
+      // A row says it with cancellationPending, the detail also with pendingCancellation: one answer for both.
+      for (const claim of [row({ status, cancellationPending: true }), row({ status, pendingCancellation: { startedAt: '2026-10-01T02:00:00.000Z' } })]) {
+        assert.equal(claimIsBeingCancelled(claim), true);
+        assert.deepEqual(reimbursementOwnActions(claim, 'staff', everything), { canEditDraft: false, canSubmit: false, canCancel: false, canReopen: false }, status);
+      }
+    }
+    assert.equal(claimIsBeingCancelled(row()), false);
+  });
+
+  it('shows no payment form in the quick-pay dialog for a claim its own page would not take a payment on, and says what that page says', () => {
+    const owner = { userId: 'owner', permissions: OWNER };
+    assert.equal(quickPayBlockedNote(claim(), owner.permissions, owner.userId), null, 'a claim waiting for payment');
+    const cancelling = claim({ currentDesk: { kind: 'SYSTEM' }, cancellationPending: true,
+      pendingCancellation: { startedAt: '2026-10-01T02:00:00.000Z', startedByName: 'พิม ใจดี', reason: 'ซื้อซ้ำกับใบก่อน', canResume: true, canWithdraw: true } });
+    assert.match(quickPayBlockedNote(cancelling, owner.permissions, owner.userId)!, /^กำลังยกเลิกคำขอ รอระบบปรับสถานะ/u);
+    const waiting = claim({ status: 'APPROVED', approvalSteps: [], awaitingSystem: { kind: 'NO_APPROVAL_NEEDED', canResume: true } });
+    assert.match(quickPayBlockedNote(waiting, owner.permissions, owner.userId)!, /^ใบนี้ไม่ต้องอนุมัติตามนโยบาย · ระบบยังเตรียมรายการสำหรับจ่ายเงินของใบนี้ไม่เสร็จ/u);
+    // Paid by someone else meanwhile, or a viewer the payment is not taken from: no form either.
+    const paid = claim({ status: 'PAID', paymentStatus: 'PAID', currentDesk: undefined, payments: [{ id: 'p1', status: 'RECORDED', paidAt: '2026-10-01T05:00:00.000Z' }] });
+    assert.ok(quickPayBlockedNote(paid, owner.permissions, owner.userId));
+    assert.ok(quickPayBlockedNote(claim(), ['reimbursement.read'], 'reader'));
+    for (const note of [quickPayBlockedNote(cancelling, owner.permissions, owner.userId)!, quickPayBlockedNote(waiting, owner.permissions, owner.userId)!]) assertPlainThai([note], 'quick pay');
+    // The dialog asks that rule before it mounts the form, with the viewer's own rights.
+    assert.match(hub, /const blocked = claim \? quickPayBlockedNote\(claim, permissions, userId\) : null;/);
+    assert.match(hub, /\{claim \? \(\s+blocked \? \(\s+<div[^>]*>\s+<ErrorBanner message=\{`ใบนี้ยังบันทึกจ่ายไม่ได้ในตอนนี้ · \$\{blocked\}`\} \/>/);
+    assert.match(hub, /\) : \(\s+<div className="space-y-3">[\s\S]{0,400}?<PaymentForm /, 'the form sits in the branch that is not blocked');
+    assert.match(hub, /<PaymentModal\s+companyId=\{companyId\}\s+userId=\{userId\}\s+permissions=\{permissions\}/);
   });
 });
 

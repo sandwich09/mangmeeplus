@@ -190,16 +190,23 @@ export function canVoidRecordedPayment(payment: any, permissions: readonly strin
 }
 
 /** Related visibility never implies a write. Every requester action repeats actor, permission and state. */
+/** Whether a claim, as a list row or as its detail, says a cancellation of it was started and has not completed. */
+export function claimIsBeingCancelled(claim: { cancellationPending?: boolean; pendingCancellation?: unknown } | null | undefined): boolean {
+  return claim?.cancellationPending === true || Boolean(claim?.pendingCancellation);
+}
+
 export function reimbursementOwnActions(detail: any, userId: string, permissions: readonly string[]) {
   const isRequester = detail?.requesterUserId === userId;
   // A claim being cancelled takes no edit, submit or second cancel: the API refuses them until the
-  // cancellation is finished or withdrawn (the claim detail says so; a list row carries no such flag).
-  const canPrepare = (isRequester || permissions.includes('reimbursement.finance_review')) && !detail?.pendingCancellation;
+  // cancellation is finished or withdrawn. A list row says so with `cancellationPending`, the claim detail
+  // also with `pendingCancellation`.
+  const beingCancelled = claimIsBeingCancelled(detail);
+  const canPrepare = (isRequester || permissions.includes('reimbursement.finance_review')) && !beingCancelled;
   const status = String(detail?.status ?? '');
   return {
     canEditDraft: canPrepare && status === 'DRAFT' && (permissions.includes('reimbursement.update_own_draft') || permissions.includes('reimbursement.finance_review')),
     canSubmit: canPrepare && status === 'DRAFT' && permissions.includes('reimbursement.submit'),
-    canCancel: !detail?.pendingCancellation && ((isRequester && permissions.includes('reimbursement.cancel_own'))
+    canCancel: !beingCancelled && ((isRequester && permissions.includes('reimbursement.cancel_own'))
       || permissions.includes('reimbursement.finance_review'))
       && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status),
     // REJECTED -> DRAFT: fix and resubmit under the same request number (server: /reopen).

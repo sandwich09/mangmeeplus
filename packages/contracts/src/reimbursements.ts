@@ -549,6 +549,12 @@ export type ReimbursementRequestSummary = {
   status: ReimbursementRequestStatus;
   /** Who the claim is waiting on now. Absent on terminal claims (paid/rejected/cancelled/voided). */
   currentDesk?: ReimbursementCurrentDesk;
+  /**
+   * Present while a cancellation of the claim was started and has not completed. The API takes no other
+   * decision on the claim meanwhile (submit, approve, reject, finance review, payment, a second cancel),
+   * so a list or queue row offers none. The claim detail says more in `pendingCancellation`.
+   */
+  cancellationPending?: true;
   financeReviewStatus: ReimbursementFinanceReviewStatus;
   paymentStatus: ReimbursementPaymentStatus;
   duplicateStatus: ReimbursementDuplicateStatus;

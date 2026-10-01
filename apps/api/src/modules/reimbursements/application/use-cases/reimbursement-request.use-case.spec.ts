@@ -14,7 +14,7 @@ import {
   ReimbursementInternalNotesUseCase,
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
-import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
+import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, ListFinanceQueueUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere, hubSearchWhere } from '../../infrastructure/prisma-reimbursement.repository';
 import { isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket } from '@watchdog-bms/contracts';
 import { GetReimbursementApprovalBacklogUseCase } from './reimbursement-summary.use-case';
@@ -739,6 +739,39 @@ describe('a claim the system holds reads the same on LINE and on the web', () =>
           `${status}/${financeReviewStatus}`);
       }
     }
+  });
+});
+
+// A list or queue row carried nothing about a pending cancellation, so the hub offered what the API
+// refuses on such a claim: "บันทึกจ่าย" and "อนุมัติจ่าย" in the finance queue, "ส่งอนุมัติ" on a draft row.
+describe('a list or queue row says when its claim is being cancelled', () => {
+  const NOW = new Date('2026-10-01T03:00:00.000Z');
+  const row = (status: string, overrides: Record<string, unknown> = {}) => ({
+    id: `rb-${status}`, companyId: 'co-1', branchId: 'b1', requestNo: `RB-${status}`, requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'สมชาย',
+    reason: 'แท็กซี่', categoryKey: 'travel', amount: '100.0000', outstandingAmount: '100.0000', paymentTotalAmount: '0.0000', currency: 'THB',
+    incurredDate: NOW, status, financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'UNPAID', duplicateStatus: 'NO_MATCH',
+    receiptRequirementStatus: 'ATTACHED', postingStatus: 'not_required', createdAt: NOW, updatedAt: NOW, ...overrides,
+  }) as any;
+  const cancelling = { cancellationPendingAt: NOW, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' };
+
+  it('carries cancellationPending on every row of a claim on its way to being cancelled, and on no other', () => {
+    for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT']) {
+      assert.equal(toRequestSummary(row(status, cancelling)).cancellationPending, true, status);
+      assert.equal('cancellationPending' in toRequestSummary(row(status)), false, `${status}, not being cancelled`);
+    }
+    // A cancelled claim keeps the intent it was cancelled with; it is not pending any more.
+    for (const status of ['CANCELLED', 'VOIDED']) assert.equal('cancellationPending' in toRequestSummary(row(status, cancelling)), false, status);
+  });
+
+  it('keeps such a claim in the finance queue, where whoever may finish or withdraw the cancellation works, and marks it', async () => {
+    const rows = [row('READY_FOR_PAYMENT', { id: 'paying' }), row('READY_FOR_PAYMENT', { id: 'cancel-at-payment', ...cancelling }),
+      row('FINANCE_REVIEW', { id: 'cancel-at-finance', financeReviewStatus: 'PENDING', ...cancelling })];
+    const queue = await new ListFinanceQueueUseCase({ listRequests: async () => rows } as any)
+      .execute(ctx({ userId: 'fin-1', permissions: ['reimbursement.read', 'reimbursement.finance_review', 'reimbursement.payment.record'] }));
+
+    assert.deepEqual(queue.map((item) => [item.id, item.cancellationPending ?? false, item.currentDesk?.kind]), [
+      ['paying', false, 'PAYMENT'], ['cancel-at-payment', true, 'SYSTEM'], ['cancel-at-finance', true, 'SYSTEM'],
+    ]);
   });
 });
 

@@ -47,6 +47,8 @@ import {
 import { ReimbursementProjectionOrchestratorService } from '../application/services/reimbursement-projection-orchestrator.service';
 import { ReimbursementProjectionReconcilerService } from '../application/services/reimbursement-projection-reconciler.service';
 import { ListReimbursementApproverOptionsUseCase } from '../application/use-cases/reimbursement-policy.use-case';
+import { ListFinanceQueueUseCase } from '../application/use-cases/reimbursement-finance.use-case';
+import { toRequestSummary } from '../application/dto/reimbursement.mapper';
 
 const TAG = `reimbursement-draft-race-${process.pid}`;
 const periodKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -3150,6 +3152,29 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
       assert.deepEqual(await stored(claim), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
         expenses: ['VOIDED', 'VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 2, cancelledEvents: 1, cancelAudits: 1 }, `round ${round}`);
     }
+  });
+
+  it('marks the finance-queue row of a claim being cancelled exactly while the payment is refused, and no row of a cancelled claim', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const queueRow = async () => (await new ListFinanceQueueUseCase(repos[0]!).execute(finance())).find((row) => row.id === claim.requestId);
+    const paymentTaken = () => repos[0]!.assertClaimPaymentReady(companyId, claim.requestId).then(() => true, (error) => {
+      assert.equal(errorMessage(error), 'reimbursement_cancellation_pending');
+      return false;
+    });
+    const says = async () => { const row = await queueRow(); return [row?.cancellationPending ?? false, row?.currentDesk?.kind, await paymentTaken()]; };
+
+    assert.deepEqual(await says(), [false, 'PAYMENT', true]);
+    await strand(claim, 'ก');
+    assert.deepEqual(await says(), [true, 'SYSTEM', false]);
+    await on(0).withdraw.execute(finance(), claim.requestId);
+    assert.deepEqual(await says(), [false, 'PAYMENT', true]);
+
+    // Cancelled: it leaves the queue, and its row elsewhere is a finished claim, not one being cancelled.
+    await on(0).cancel.execute(finance(), claim.requestId, 'ซื้อซ้ำกับใบก่อน');
+    assert.equal(await queueRow(), undefined);
+    const cancelled = (await repos[0]!.findRequestById(companyId, claim.requestId))!;
+    assert.deepEqual([cancelled.status, !!cancelled.cancellationPendingAt, toRequestSummary(cancelled).cancellationPending], ['CANCELLED', true, undefined]);
   });
 
   it('offers no approval on a claim being cancelled, as the approve and reject calls refuse it, and offers both again once it is withdrawn', async (t) => {

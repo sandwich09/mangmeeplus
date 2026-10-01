@@ -9,7 +9,7 @@ import { apiErrorMessage, translateApiError } from '@/common/api/api-error-messa
 import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import {
   CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
-  canUploadSignedCopy, canVoidRecordedPayment, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
+  canUploadSignedCopy, canVoidRecordedPayment, claimIsBeingCancelled, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
   type ClaimSignatureRole,
 } from './reimbursements.model';
 import { payoutComparableText } from './reimbursement-payout.logic';
@@ -436,8 +436,29 @@ export function quickPayTarget(layout: 'cards' | 'table', companyId: string, req
  * waits for payment, the viewer holds the pay right, and the claim has a branch. The payment endpoint
  * refuses a claim with no branch for everyone, and the claim page offers no button for one either.
  */
-export function queueRowOffersPayment(row: { status?: string; branchId?: string | null } | null | undefined, permissions: readonly string[]): boolean {
-  return row?.status === 'READY_FOR_PAYMENT' && !!row.branchId && permissions.includes('reimbursement.payment.record');
+export function queueRowOffersPayment(
+  row: { status?: string; branchId?: string | null; cancellationPending?: boolean } | null | undefined,
+  permissions: readonly string[],
+): boolean {
+  // A claim being cancelled is not paid (the API refuses it); its row says so and offers no payment.
+  return row?.status === 'READY_FOR_PAYMENT' && !!row.branchId && !claimIsBeingCancelled(row) && permissions.includes('reimbursement.payment.record');
+}
+
+/** Whether a finance-queue row offers its finance decision ("อนุมัติจ่าย", or "ดำเนินการต่อ" once approved): never for a claim being cancelled. */
+export function queueRowOffersFinanceReview(row: { status?: string; cancellationPending?: boolean } | null | undefined): boolean {
+  return row?.status === 'FINANCE_REVIEW' && !claimIsBeingCancelled(row);
+}
+
+/**
+ * Why the quick-pay dialog shows no payment form for a claim it has just read, or null when it may show
+ * one. The queue row the press came from can be older than the claim: cancelled meanwhile, paid by someone
+ * else, or no longer at its payment step. The dialog asks the claim's own page rule, so it never offers a
+ * payment that page would not, and says what that page says.
+ */
+export function quickPayBlockedNote(claim: any, permissions: readonly string[], userId: string): string | null {
+  const step = activeJourneyStep(buildJourneySteps(claim, permissions, userId));
+  if (step?.actions.includes('pay')) return null;
+  return step?.note ?? 'ใบนี้ยังบันทึกจ่ายไม่ได้ในตอนนี้';
 }
 
 /** The claim page opens its payment form on arrival only when the link asked for it and this viewer's current step offers it. */
