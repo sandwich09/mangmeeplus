@@ -1025,3 +1025,105 @@ describe('H3: one call failing to bind never sinks an index a sibling call alrea
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
   });
 });
+
+// Advisor S0 (R1 integrated G run 2026-10-01): general-knowledge and non-business answers, and stock asked in a mixed
+// message. Each case is one the real model produced in that run.
+describe('advisor S0: general answers are shaped in code, and a stock clause is answered before any planning', () => {
+  const STEER = 'ถ้ามีเรื่องร้านหรือรายจ่ายให้ช่วย บอกได้เลยค่ะ';
+  const FIXED_STOCK = 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องสต็อกสินค้าคงเหลือค่ะ ตอนนี้น้องมั่งมีช่วยเรื่องรายจ่ายและใบเบิกได้ค่ะ เช่น ลองถามว่า "ค่าใช้จ่ายเดือนนี้เท่าไหร่" หรือ "ใบเบิกที่รออนุมัติมีกี่รายการ" ได้เลยค่ะ';
+
+  function recording(responses: string[]) {
+    const queue = [...responses];
+    const calls: Array<{ usageTag: string; systemPrompt: string }> = [];
+    const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+      calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '' });
+      return { ok: true, text: queue.shift() ?? '{}' };
+    } };
+    return { provider, calls };
+  }
+
+  async function general(messageText: string, intakeIntent: LineAiTurnRequest['intakeIntent'], answer: Record<string, unknown>) {
+    const { provider, calls } = recording([JSON.stringify({ answers: [{ index: 0, status: 'handled', sourceRefIds: [], ...answer }] })]);
+    const result = await runSemanticTurnV2({
+      req: { requestId: 'req-s0', webhookEventId: 'event-s0', messageText, messagePreviewHash: '5'.repeat(16), intakeIntent,
+        entitledFeatureKeys: NO_UNSOLD_MODULES_ENTITLED,
+        semanticSubrequests: [{ index: 0, kind: 'general', goal: messageText, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+        userContext: baseUserContext(['expense.read_own', 'expense.create', 'reimbursement.read_own']) },
+      provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('a general answer reads no tool'); },
+    });
+    assert.deepEqual(calls.map((call) => call.usageTag), ['line.compose'], 'the answer with "topic" is accepted on the first compose');
+    assert.deepEqual(result.semanticCoverage, [{ index: 0, status: 'handled', sourceRefIds: [] }], 'topic never joins the coverage');
+    return { replyText: result.replyText, prompt: calls[0]!.systemPrompt };
+  }
+
+  // G-06: five bullets for "แนะนำหนังสนุกๆ หน่อย"; G-15: a full recipe.
+  it('a non-business answer stays two short lines and ends with the shop line from code', async () => {
+    const films = await general('แนะนำหนังสนุกๆ หน่อย', 'UNSUPPORTED', { topic: 'other',
+      text: 'มั่งมีแนะนำหนังสนุกๆ ได้บ้างนะคะ 😊\n\n• Interstellar — ไซไฟอลังการ\n• Parasite — ระทึก พลิกโผ\n• Coco — อบอุ่นมากค่ะ\n\nถ้ามีเรื่องร้านหรือค่าใช้จ่ายให้ช่วย บอกได้เลยนะคะ' });
+    assert.equal(films.replyText, `Interstellar — ไซไฟอลังการ\nParasite — ระทึก พลิกโผ\n\n${STEER}`);
+    // The router may file a food question under its social route; the composer's mark still decides.
+    const recipe = await general('ขอสูตรต้มยำกุ้งหน่อย', 'ADVISOR_CONVERSATION', { topic: 'other', text: 'ต้มน้ำซุปกับตะไคร้ ข่า ใบมะกรูด ใส่กุ้งและเห็ด\nปรุงด้วยน้ำปลา น้ำมะนาว พริกตามชอบค่ะ' });
+    assert.equal(recipe.replyText, `ต้มน้ำซุปกับตะไคร้ ข่า ใบมะกรูด ใส่กุ้งและเห็ด\nปรุงด้วยน้ำปลา น้ำมะนาว พริกตามชอบค่ะ\n\n${STEER}`);
+    // No mark at all: her own shop line on a turn the router placed outside the product says the same.
+    const unmarked = await general('เมืองหลวงของญี่ปุ่นคืออะไร', 'UNSUPPORTED', { text: 'โตเกียวค่ะ\n\nถ้ามีเรื่องร้านหรือค่าใช้จ่ายให้ช่วย บอกได้เลยนะคะ 😊' });
+    assert.equal(unmarked.replyText, `โตเกียวค่ะ\n\n${STEER}`);
+  });
+
+  // G-04, G-11, G-23: business knowledge closed with the shop line; six answers gave an agency website from memory.
+  it('a business-knowledge answer keeps its length and loses the shop line and any web address', async () => {
+    const body = 'การตั้งราคาขายให้มีกำไร มีหลักคิดดังนี้ค่ะ\n\n• คำนวณต้นทุนให้ครบ\n• กำหนดกำไรที่ต้องการ\n• เทียบราคาตลาด\n\nแนะนำให้หารือกับนักบัญชีหรือกรมสรรพากร';
+    const text = `${body} (rd.go.th) นะคะ\n\nถ้ามีเรื่องค่าใช้จ่ายหรือข้อมูลร้านให้ช่วย บอกได้เลยค่ะ 😊`;
+    for (const [intent, topic] of [['ADVISOR_CONVERSATION', 'business'], ['BUSINESS_READ_QUESTION', 'business'],
+      // The router's own business route outranks a composer that marked a business answer "other".
+      ['BUSINESS_READ_QUESTION', 'other'], ['ADVISOR_CONVERSATION', undefined]] as const) {
+      const answer = await general('ตั้งราคาขายยังไงให้มีกำไร', intent, { ...(topic ? { topic } : {}), text });
+      assert.equal(answer.replyText, `${body} นะคะ`, `${intent} ${topic}`);
+    }
+  });
+
+  it('greetings and small talk keep their own reply', async () => {
+    const thanks = await general('ขอบคุณค่ะ', 'UNSUPPORTED', { topic: 'social', text: 'ยินดีค่ะ 😊 มีอะไรให้ช่วยอีกบอกได้เลยนะคะ' });
+    assert.equal(thanks.replyText, 'ยินดีค่ะ 😊 มีอะไรให้ช่วยอีกบอกได้เลยนะคะ');
+  });
+
+  it('tells the composer the general rules: topic, rule before verdict, no re-announced figure, no web address, no list', async () => {
+    const { prompt } = await general('ค่าแรงขั้นต่ำตอนนี้เท่าไหร่', 'BUSINESS_READ_QUESTION', { topic: 'business', text: 'ค่าแรงขั้นต่ำเปลี่ยนตามประกาศค่ะ' });
+    assert.match(prompt, /The answer object of a general subrequest also carries "topic", written before "text"/);
+    assert.match(prompt, /open with the rule and then say on which side of it their figure falls, so no sentence contradicts another/);
+    assert.match(prompt, /A figure you would have to recall that is re-announced from time to time \(the minimum wage, a contribution or wage ceiling, an interest or exchange rate\) is never given as a number/);
+    assert.match(prompt, /name an agency by its name only, never a web address, and never write a calendar date \(day, month and year\) from memory/);
+    assert.match(prompt, /even when the user asks for a list, a recipe or instructions, give only the gist in those two lines/);
+    assert.match(prompt, /a business knowledge answer never carries it/);
+  });
+
+  // G-16: "สต็อกคืออะไร แล้วร้านเรามีของเหลือเท่าไหร่" — the planner read company.get_current_context for the stock half and
+  // the reply was "ยังดึงข้อมูลส่วนนี้ไม่ได้ค่ะ ดูได้ที่หน้ารายจ่ายบนเว็บ".
+  it('a mixed message answers the knowledge half and gives the stock half the fixed reply, with no planning and no tool', async () => {
+    const knowledgeSpan = 'สต็อกคืออะไร', stockSpan = 'ร้านเรามีของเหลือเท่าไหร่';
+    const messageText = `${knowledgeSpan} แล้ว${stockSpan}`;
+    const evidence = await createLineAiInputEvidence({ turnKey: 's0-mixed', parts: [{ partId: 'text', rawText: messageText, eventIdHash: 'b'.repeat(64), acceptedAtMs: Date.now() }] });
+    assert.ok(evidence);
+    const part = evidence.inputEvidence.parts[0]!;
+    const ref = (span: string) => [{ partId: part.partId, rawSha256: part.rawSha256, startUtf16: messageText.indexOf(span), endUtf16: messageText.indexOf(span) + span.length }];
+    const { provider, calls } = recording([JSON.stringify({ answers: [
+      { index: 0, status: 'handled', topic: 'business', text: 'สต็อกคือสินค้าที่กิจการถือไว้เพื่อขายค่ะ', sourceRefIds: [] },
+      { index: 1, status: 'handled', text: 'ignored — the scope policy already answered this clause', sourceRefIds: [] },
+    ] })]);
+    const result = await runSemanticTurnV2({
+      req: { requestId: 'req-s0-mixed', webhookEventId: 'event-s0-mixed', messageText, messagePreviewHash: '6'.repeat(16),
+        intakeIntent: 'BUSINESS_READ_QUESTION', entitledFeatureKeys: NO_UNSOLD_MODULES_ENTITLED, inputEvidence: evidence.inputEvidence,
+        valueCandidates: extractValueCandidates(messageText, '2026-10-01'),
+        semanticSubrequests: [
+          { index: 0, kind: 'general', goal: 'อธิบายความหมายของสต็อก', requiredEvidence: [], dependsOn: [], requestedFilters: {}, evidenceRefs: ref(knowledgeSpan) },
+          { index: 1, kind: 'read', goal: 'ดูยอดสินค้าคงเหลือของร้าน', requiredEvidence: [], dependsOn: [], requestedFilters: {}, evidenceRefs: ref(stockSpan) },
+        ],
+        userContext: baseUserContext(['expense.read']) },
+      provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('no tool may run for the stock clause'); },
+    });
+    assert.deepEqual(calls.map((call) => call.usageTag), ['line.compose'], 'nothing is left to plan');
+    assert.equal(result.replyText, `1. สต็อกคือสินค้าที่กิจการถือไว้เพื่อขายค่ะ\n\n2. ${FIXED_STOCK}`);
+    assert.deepEqual(result.semanticCoverage?.map((entry) => [entry.status, entry.reasonCode]), [['handled', undefined], ['unsupported', 'PACKAGE_FEATURE_NOT_ENABLED']]);
+  });
+});

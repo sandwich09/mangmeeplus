@@ -7,7 +7,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MANGMEE_PERSONA_LINES, MANGMEE_PERSONA_PROMPT, sanitizeMangmeeComposedText, sanitizeMangmeePersonaText } from './mangmee-persona';
+import { MANGMEE_PERSONA_LINES, MANGMEE_PERSONA_PROMPT, closesWithShopLine, sanitizeMangmeeComposedText, sanitizeMangmeePersonaText, shapeGeneralAnswer, steerBackLine } from './mangmee-persona';
 
 describe('sanitizeMangmeePersonaText', () => {
   it('rewrites ครับ to ค่ะ (T-052: "...มีดังนี้ครับ")', () => {
@@ -190,5 +190,61 @@ describe('sanitizeMangmeeComposedText (batch5 A6)', () => {
 
   it('still applies the ครับ/ผม persona fix first (wraps sanitizeMangmeePersonaText)', () => {
     assert.equal(sanitizeMangmeeComposedText('ยอดรวม **100 บาท** มีดังนี้ครับ'), 'ยอดรวม 100 บาท มีดังนี้ค่ะ');
+  });
+});
+
+// Advisor S0 (R1 integrated G run 2026-10-01): what the prompt alone did not hold for an answer that reads no company data.
+describe('advisor S0: the shape of a general answer', () => {
+  const STAFF = ['expense.read_own', 'expense.create', 'reimbursement.read_own'];
+  const STEER = 'ถ้ามีเรื่องร้านหรือรายจ่ายให้ช่วย บอกได้เลยค่ะ';
+
+  // G-06: a film list of five bullets; G-15: a recipe of eleven lines.
+  it('cuts a non-business answer to two short lines with no list, then leads back to the shop', () => {
+    const films = 'มั่งมีแนะนำหนังสนุกๆ ได้บ้างนะคะ 😊\n\n• Interstellar — ไซไฟอลังการ\n• Parasite — ระทึก พลิกโผ\n• Coco — อบอุ่นมากค่ะ\n\nถ้ามีเรื่องร้านหรือค่าใช้จ่ายให้ช่วย บอกได้เลยนะคะ';
+    assert.equal(shapeGeneralAnswer(films, true, STAFF, false), `Interstellar — ไซไฟอลังการ\nParasite — ระทึก พลิกโผ\n\n${STEER}`);
+    const recipe = 'ต้มยำกุ้งสูตรคลาสสิกค่ะ 😊\n\nวัตถุดิบหลัก\n• กุ้งสด, ตะไคร้หั่น, ใบมะกรูด\n• เห็ดฟาง, พริกขี้หนูสด\n\nวิธีทำ\n1. ต้มน้ำซุปจนหอม\n2. ใส่กุ้งและเห็ด';
+    assert.equal(shapeGeneralAnswer(recipe, true, STAFF, false), `ต้มยำกุ้งสูตรคลาสสิกค่ะ 😊\nกุ้งสด, ตะไคร้หั่น, ใบมะกรูด\n\n${STEER}`);
+  });
+
+  it('leaves a non-business answer that already is two short lines alone, and bounds one long line', () => {
+    const capital = 'โตเกียวคือเมืองหลวงของญี่ปุ่นค่ะ\nเป็นเมืองที่มีประชากรหนาแน่นมาก';
+    const shaped = shapeGeneralAnswer(capital, true, STAFF, false);
+    assert.equal(shaped, `${capital}\n\n${STEER}`);
+    assert.equal(shapeGeneralAnswer(shaped, true, STAFF, false), shaped);
+    const long = shapeGeneralAnswer(`${'คำตอบยาว '.repeat(40)}`, true, STAFF, false).split('\n')[0]!;
+    assert.ok(long.length <= 161 && long.endsWith('…'), long);
+  });
+
+  // G-04, G-11, G-23: the line back to the shop closed business-knowledge answers too.
+  it('takes the shop line off any other general answer and never shortens it', () => {
+    const vat = 'เกณฑ์คือรายได้เกิน 1.8 ล้านบาทต่อปีค่ะ\n\n• ข้อหนึ่ง\n• ข้อสอง\n• ข้อสาม\n\nแนะนำให้ยืนยันกับนักบัญชีนะคะ';
+    for (const line of ['ถ้ามีเรื่องร้านหรือค่าใช้จ่ายให้ช่วย บอกได้เลยค่ะ 😊', 'ถ้ามีเรื่องค่าใช้จ่ายหรือข้อมูลร้านให้ช่วย บอกได้เลยค่ะ 😊',
+      'หากมีเรื่องร้านหรือรายจ่ายให้น้องมั่งมีช่วย บอกได้เลยนะคะ', STEER]) {
+      assert.ok(closesWithShopLine(`${vat}\n\n${line}`), line);
+      assert.equal(shapeGeneralAnswer(`${vat}\n\n${line}`, false, STAFF, false), vat);
+    }
+    assert.equal(closesWithShopLine(vat), false);
+    assert.equal(shapeGeneralAnswer(vat, false, STAFF, false), vat);
+    // A sentence about getting help from someone else is not her shop line.
+    assert.equal(closesWithShopLine('ถ้ารายจ่ายของร้านสูงเกินไป ควรให้นักบัญชีช่วยตรวจนะคะ'), false);
+  });
+
+  // Six answers of the G run named an agency website from memory: rd.go.th, labour.go.th, tmd.go.th, www.sso.go.th.
+  it('names the agency and drops a web address, leaving other dotted text alone', () => {
+    assert.equal(shapeGeneralAnswer('แนะนำให้ปรึกษานักบัญชีหรือกรมสรรพากร (rd.go.th) เพื่อจดทะเบียนนะคะ', false, STAFF, false),
+      'แนะนำให้ปรึกษานักบัญชีหรือกรมสรรพากร เพื่อจดทะเบียนนะคะ');
+    assert.equal(shapeGeneralAnswer('ควรตรวจสอบกับสำนักงานประกันสังคมโดยตรงที่ www.sso.go.th ด้วยนะคะ', false, STAFF, false),
+      'ควรตรวจสอบกับสำนักงานประกันสังคมโดยตรง ด้วยนะคะ');
+    assert.equal(shapeGeneralAnswer('ดูประกาศได้ที่ https://www.mol.go.th/news นะคะ', false, STAFF, false), 'ดูประกาศได้ นะคะ');
+    const kept = 'รายได้เกิน 1.8 ล้านบาท ยื่น ภ.พ.30 ตาม ม.33 ติดต่อ info@shop.com (อัตรา 7%)';
+    assert.equal(shapeGeneralAnswer(kept, false, STAFF, false), kept);
+  });
+
+  it('leads back only to what this user can do here', () => {
+    assert.equal(steerBackLine(STAFF, false), STEER);
+    assert.equal(steerBackLine(['reimbursement.read_own'], false), 'ถ้ามีเรื่องร้านหรือใบเบิกให้ช่วย บอกได้เลยค่ะ');
+    assert.equal(steerBackLine([], false), 'ถ้ามีเรื่องร้านให้ช่วย บอกได้เลยค่ะ');
+    assert.equal(steerBackLine(STAFF, true), 'If there is anything about the shop or its expenses I can help with, just tell me.');
+    assert.ok(closesWithShopLine(steerBackLine(STAFF, true)) && closesWithShopLine(steerBackLine([], false)));
   });
 });

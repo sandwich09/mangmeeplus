@@ -147,3 +147,50 @@ export function sanitizeMangmeeComposedText(text: string, bareSelfReference = tr
     .replace(DATA_FIELD_PARENTHETICAL, '');
   return result.split('\n').map((line) => line.replace(/[ \t]{2,}/gu, ' ').trim()).join('\n').trim();
 }
+
+// ─── Advisor S0 (R1 integrated G run 2026-10-01): the shape of a "general" answer, held in code ──────────────────
+// The prompt alone did not hold three rules for an answer that reads no company data (spec §2.1 ก ง ฉ): a film list
+// and a recipe ran to 7 and 11 lines (G-06, G-15), business-knowledge answers closed with the line that leads back
+// to the shop (G-04, G-11, G-23), and six answers gave an agency's website from memory. MODEL-COMPOSED text only.
+const LIST_MARKER = /^(?:[•·▪◦*-]|\d+[.)])\s+/u;
+// Her closing offer of help with the shop, in the words the model uses for it; only ever the answer's last line.
+const SHOP_LINE = /^(?:ถ้า|หาก)(?=[^\n]*(?:ร้าน|รายจ่าย|ค่าใช้จ่าย|ใบเบิก))[^\n]{0,60}ให้(?:น้องมั่งมี|มั่งมี)?ช่วย[^\n]{0,40}$|^if there(?:'s| is) anything about [^\n]{0,60} i can help with[^\n]{0,30}$/iu;
+// "(rd.go.th)", "ที่ www.sso.go.th", "https://…": an agency is named; its address is never written from memory.
+const WEB_ADDRESS = new RegExp([
+  String.raw`\s*\((?:https?:\/\/)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:th|com|org|net)(?:\/[^\s)]*)?\)`,
+  String.raw`(?:\s*(?:ที่|ทาง|ผ่าน))?\s*(?:https?:\/\/|www\.)[^\s)]+`,
+  String.raw`(?:\s*(?:ที่|ทาง|ผ่าน))?\s*(?<![@\w.-])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:go\.th|or\.th|co\.th|ac\.th|in\.th|com|org|net)\b(?:\/[^\s)]*)?`,
+].join('|'), 'giu');
+const NON_BUSINESS_LINE_CHARS = 160;
+
+/** The one line back to the shop (spec §2.1 ง, plan S0 G-06): it names only what this user can do here. */
+export function steerBackLine(permissions: readonly string[], english: boolean): string {
+  const has = (prefix: string) => permissions.some((permission) => permission.startsWith(prefix));
+  const subject = has('expense.') ? (english ? 'the shop or its expenses' : 'ร้านหรือรายจ่าย')
+    : has('reimbursement.') ? (english ? 'the shop or a reimbursement claim' : 'ร้านหรือใบเบิก') : (english ? 'the shop' : 'ร้าน');
+  return english ? `If there is anything about ${subject} I can help with, just tell me.` : `ถ้ามีเรื่อง${subject}ให้ช่วย บอกได้เลยค่ะ`;
+}
+
+/** True when the composer closed its answer with its own line back to the shop. */
+export function closesWithShopLine(text: string): boolean {
+  return SHOP_LINE.test(text.trimEnd().split('\n').pop()!.trim());
+}
+
+/**
+ * A general answer never keeps the composer's own shop line or a web address. A non-business one is also cut to two
+ * short lines with no list, whatever was asked for, and then gets the shop line from code.
+ * ponytail: the cut keeps the first two lines that are not a list's heading; a model that follows the two-line rule
+ * is never cut, so this only bounds the shape of one that did not.
+ */
+export function shapeGeneralAnswer(text: string, nonBusiness: boolean, permissions: readonly string[], english: boolean): string {
+  const lines = text.replace(WEB_ADDRESS, '').split('\n').map((line) => line.replace(/[ \t]{2,}/gu, ' ').trim());
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  if (lines.length && SHOP_LINE.test(lines[lines.length - 1]!)) lines.pop();
+  if (!nonBusiness) return lines.join('\n').trim();
+  const content = lines.filter(Boolean);
+  // A line right before a list item is that list's heading or lead-in ("วัตถุดิบหลัก"); the items carry the answer.
+  const kept = content.filter((line, index) => LIST_MARKER.test(line) || !LIST_MARKER.test(content[index + 1] ?? ''));
+  const short = (kept.length ? kept : content).slice(0, 2).map((line) => line.replace(LIST_MARKER, ''))
+    .map((line) => (line.length <= NON_BUSINESS_LINE_CHARS ? line : `${line.slice(0, NON_BUSINESS_LINE_CHARS).replace(/\s+\S*$/u, '')}…`));
+  return [...short, '', steerBackLine(permissions, english)].join('\n');
+}
