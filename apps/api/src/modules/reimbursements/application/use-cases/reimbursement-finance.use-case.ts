@@ -668,7 +668,9 @@ export class ExportReimbursementEvidenceUseCase {
       // opening one is the slip endpoint's decision, not the export's.
       payments: payments.map((p) => ({
         paymentNo: p.paymentNo, paidAmount: p.paidAmount, currency: p.currency, paymentMethod: p.paymentMethod,
-        paidAt: p.paidAt.toISOString(), paymentReference: p.paymentReference, status: p.status,
+        // `paidOn` is the day the claim page prints: the payment's day in Thai time, which is not always
+        // the day `paidAt` reads as in UTC.
+        paidAt: p.paidAt.toISOString(), paidOn: civilDate(p.paidAt), paymentReference: p.paymentReference, status: p.status,
         slipCount: paymentSlips[p.id]?.length ?? 0,
         // The account this payment was confirmed into (masked), when, and why the method differs from
         // the one asked for: the same three facts the payment row on the claim page shows.

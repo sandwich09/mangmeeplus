@@ -13,6 +13,7 @@ import { ReimbursementController } from '../../presentation/http/reimbursement.c
 import { detailWithFileNames } from '../dto/reimbursement.mapper';
 import { RecordReimbursementPaymentDto } from '../../presentation/http/reimbursement.dtos';
 import { ConflictException } from '@nestjs/common';
+import { reimbursementPaidNotice } from '@watchdog-bms/contracts';
 import { claimSignatureAckHash, claimSnapshotFields, computeSnapshotHash } from '../../domain/logic/reimbursement.logic';
 import { legacyPayoutConfirmToken, planPaymentPayout, sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
 import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
@@ -579,7 +580,7 @@ describe('payment slip at the payment step', () => {
     const out: any = await new ExportReimbursementEvidenceUseCase(repo, noopAudit).execute(ctx(['reimbursement.export']), 'rb-1');
     assert.deepEqual(out.payments, [{
       paymentNo: 'RBPAY-202601-000001', paidAmount: '500.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
-      paidAt, paymentReference: 'TXN-1', status: 'RECORDED', slipCount: 1,
+      paidAt, paidOn: '2026-02-01', paymentReference: 'TXN-1', status: 'RECORDED', slipCount: 1,
     }]);
     assert.equal(JSON.stringify(out).includes('att-slip-1'), false);
   });
@@ -1569,7 +1570,7 @@ describe('ExportReimbursementEvidenceUseCase: the payout account', () => {
     assert.deepEqual(out.request.payout, { payoutMethod: 'BANK_TRANSFER', ...MASKED_ACCOUNT, version: 2, verifiedAt: '2026-01-11T00:00:00.000Z' });
     assert.deepEqual(out.payments, [{
       paymentNo: 'RBPAY-202601-000001', paidAmount: '500.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
-      paidAt, paymentReference: 'TXN-1', status: 'RECORDED', slipCount: 1,
+      paidAt, paidOn: '2026-02-01', paymentReference: 'TXN-1', status: 'RECORDED', slipCount: 1,
       payoutDestination: { version: 2, ...MASKED_ACCOUNT }, payoutConfirmedAt: '2026-02-01T00:00:05.000Z',
     }]);
     // One payment, one reading: every fact the export has is the fact the claim page's payment row has.
@@ -1594,6 +1595,70 @@ describe('ExportReimbursementEvidenceUseCase: the payout account', () => {
     assert.deepEqual(cashClaim.request.payout, { payoutMethod: 'CASH' });
     const legacy: any = await new ExportReimbursementEvidenceUseCase(fakeRepo(financeReviewedRequest({ lines: [] })), noopAudit).execute(ctx(['reimbursement.export']), 'rb-1');
     assert.equal('payout' in legacy.request, false);
+  });
+});
+
+// Invariant I4 (spec §25.1), as far as the API goes. The claim detail (what the payment row and the timeline
+// print), the requester's notice and the evidence export are three readings of one payment record: method,
+// amount, day in Thai time, last 4 digits, slip or not, voided or not.
+describe('one payment reads the same in the claim detail, the requester\'s notice and the export (invariant I4)', () => {
+  const payer = ctx(['reimbursement.payment.record', 'reimbursement.payment.void', 'reimbursement.export']);
+  /** One payment through the use case. The repository writes the event in the payment transaction; this stands in for that. */
+  async function paid(claim: { req: any; tables: any }, input: Record<string, unknown>) {
+    const repo = fakeRepo(claim.req, { payout: claim.tables });
+    const events: any[] = [];
+    const record = repo.recordPaymentAtomic.bind(repo);
+    repo.recordPaymentAtomic = async (data: any) => {
+      const result = await record(data);
+      await data.onPaymentPersisted(fakeTx(events), result.payment, result.request.paymentStatus, result.payout);
+      return result;
+    };
+    const detail = await new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any).execute(payer, 'rb-1', input as any);
+    const exported = async () => ((await new ExportReimbursementEvidenceUseCase(repo, noopAudit).execute(payer, 'rb-1')) as any).payments.at(-1);
+    return { repo, row: detail.payments.at(-1)!, notice: events[0].payloadJson.data.paidNotice as string, exported };
+  }
+  // Late in the evening by UTC, which is already the next day in Thailand.
+  const paidAt = '2026-02-01T18:30:00.000Z';
+
+  it('a transfer into the claim\'s account, then its void', async () => {
+    const one = await paid(transferClaim(), { paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER', paidAt, paymentReference: 'TXN-1', slipAttachmentId: 'att-slip-1',
+      payoutDestinationVersion: 2, payoutConfirmed: true });
+    const exported = await one.exported();
+    // The notice is the shared sentence of exactly the payment the page shows: nothing in it comes from anywhere else.
+    assert.equal(one.notice, reimbursementPaidNotice(one.row));
+    assert.equal(one.notice, 'โอนเข้าบัญชีลงท้าย 1234 จำนวน 500.00 บาท มีสลิปแนบ แตะเพื่อดูสลิป');
+    // Method, amount, last 4 digits, slip: one value each.
+    assert.deepEqual([one.row.paymentMethod, exported.paymentMethod], ['BANK_TRANSFER', 'BANK_TRANSFER']);
+    assert.deepEqual([one.row.paidAmount, one.row.currency, exported.paidAmount, exported.currency], ['500.0000', 'THB', '500.0000', 'THB']);
+    assert.deepEqual([one.row.payoutDestination?.accountLast4, exported.payoutDestination.accountLast4], ['1234', '1234']);
+    assert.deepEqual([one.row.slipCount, exported.slipCount], [1, 1]);
+    // The day: the same instant everywhere, and in the export also the day it is in Thai time, as the page prints it.
+    assert.deepEqual([one.row.paidAt, exported.paidAt, exported.paidOn], [paidAt, paidAt, '2026-02-02']);
+    assert.equal(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date(one.row.paidAt)), exported.paidOn);
+    assert.deepEqual([one.row.status, exported.status], ['RECORDED', 'RECORDED']);
+
+    // Voided: the detail and the export say so of the same payment, and keep what it was.
+    const afterVoid = await new VoidReimbursementPaymentUseCase(one.repo, fakeDetailEvidence as any).execute(payer, 'rb-1', one.row.id, { reason: 'บันทึกเลขอ้างอิงผิด' });
+    const voidedRow = afterVoid.payments.at(-1)!;
+    const voidedExport = await one.exported();
+    assert.deepEqual([voidedRow.status, voidedExport.status], ['VOIDED', 'VOIDED']);
+    for (const fact of ['paymentNo', 'paidAmount', 'currency', 'paymentMethod', 'paidAt', 'paymentReference', 'slipCount', 'payoutDestination'] as const) {
+      assert.deepEqual(voidedExport[fact], voidedRow[fact], fact);
+      assert.deepEqual(voidedRow[fact], one.row[fact], `${fact} did not change with the void`);
+    }
+  });
+
+  it('cash for a claim that asked for a transfer: the method actually used, and no account anywhere', async () => {
+    const one = await paid(transferClaim(), { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt, methodMismatchReason: 'ผู้เบิกมารับเงินสดเอง', payoutDestinationVersion: 2 });
+    const exported = await one.exported();
+    assert.equal(one.notice, reimbursementPaidNotice(one.row));
+    assert.equal(one.notice, 'จ่ายเป็นเงินสด 500.00 บาท');
+    assert.deepEqual([one.row.paymentMethod, exported.paymentMethod], ['CASH', 'CASH']);
+    assert.deepEqual([one.row.payoutDestination, exported.payoutDestination, one.row.slipCount, exported.slipCount], [undefined, undefined, 0, 0]);
+    assert.deepEqual([exported.paidOn, exported.status], ['2026-02-02', 'RECORDED']);
+    // The payer's reason is on the payment row and in the export, which only people who may read the claim get. Not in the notice.
+    assert.deepEqual([one.row.methodMismatchReason, exported.methodMismatchReason], ['ผู้เบิกมารับเงินสดเอง', 'ผู้เบิกมารับเงินสดเอง']);
+    assert.equal(one.notice.includes('ผู้เบิกมารับเงินสดเอง'), false);
   });
 });
 
