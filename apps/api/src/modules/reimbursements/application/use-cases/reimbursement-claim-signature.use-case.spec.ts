@@ -715,7 +715,7 @@ describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () =>
         () => client.repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1', ack),
         (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_in_progress',
       );
-      assert.deepEqual(client.writes, [], 'no link and no declaration');
+      assert.equal(client.writes.length, 0, 'no link and no declaration');
       assert.deepEqual(client.steps, ['lock:co-1:rb-1:reimbursement-request', 'claim'], 'refused before the file is locked or read');
       // The same scan filed without the declaration is an archive copy, as before.
       await client.repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1');

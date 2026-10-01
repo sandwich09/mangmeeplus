@@ -57,6 +57,13 @@ import {
 } from './payout-destination.logic';
 // Whose turn it is at the pay step (its own import, apart from the block above).
 import { claimApproverUserId, paymentTurnUserIds } from './reimbursement.logic';
+// A payout account correction round (payout spec §14).
+import { approvalWaitStartedAt, claimApprovalStep, payoutCorrectionPhase, payoutCorrectionSourceStep, PAYOUT_CORRECTION_STEP_REASON } from './reimbursement.logic';
+import { payoutDefaultToken } from './payout-destination.logic';
+import {
+  isReimbursementPayoutCorrectionReason, REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
+  reimbursementHubBucket, reimbursementPayoutCorrectionPhase,
+} from '@watchdog-bms/contracts';
 
 const read = (file: string) => readFileSync(join(__dirname, file), 'utf8');
 
@@ -1308,5 +1315,164 @@ describe('payout: what a submit freezes', () => {
     assert.equal(draftFollowsDefaultAfterReopen({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2 }, versions), false);
     assert.equal(draftFollowsDefaultAfterReopen({ payoutMethod: 'CASH' }, versions), false);
     assert.equal(draftFollowsDefaultAfterReopen({}, versions), false);
+  });
+});
+
+// Payout spec §14: a claim approved with a wrong payout account is sent back on the same claim. It is
+// PENDING_APPROVAL the whole round (no new status): with no step while its requester gives the account
+// (phase A), with a new step once they have (phase B). Every reader has to tell the two from an
+// ordinary claim waiting for approval, and phase A from "decided, waiting for the system".
+describe('payout account correction round', () => {
+  const sentBackAt = new Date('2026-10-02T03:00:00.000Z');
+  const accountGivenAt = new Date('2026-10-02T05:00:00.000Z');
+  const inRound = { status: 'PENDING_APPROVAL' as const, payoutCorrectionRequestedAt: sentBackAt };
+
+  it('reads the phase from the claim own columns, and only while it waits for approval', () => {
+    assert.equal(payoutCorrectionPhase(inRound), 'AWAITING_REQUESTER');
+    assert.equal(payoutCorrectionPhase({ ...inRound, payoutCorrectionSubmittedAt: accountGivenAt }), 'AWAITING_APPROVAL');
+    assert.equal(payoutCorrectionPhase({ status: 'PENDING_APPROVAL' }), undefined, 'an ordinary claim waiting for approval');
+    assert.equal(payoutCorrectionPhase({ status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: null, payoutCorrectionSubmittedAt: accountGivenAt }), undefined);
+    // Cancelled during a round: the columns stay as history and mean nothing any more.
+    for (const status of ['CANCELLED', 'READY_FOR_PAYMENT', 'PAID', 'DRAFT', 'REJECTED'] as const) {
+      assert.equal(payoutCorrectionPhase({ ...inRound, status, payoutCorrectionSubmittedAt: accountGivenAt }), undefined, status);
+    }
+    // The API and the web read one rule.
+    assert.equal(payoutCorrectionPhase, reimbursementPayoutCorrectionPhase);
+  });
+
+  it('enters and leaves a round by transitions no other journey of a claim uses', () => {
+    assert.equal(canTransition('READY_FOR_PAYMENT', 'PENDING_APPROVAL'), true, 'sent back from the pay step');
+    assert.equal(canTransition('PENDING_APPROVAL', 'READY_FOR_PAYMENT'), true, 'approved again, or nobody has to approve it');
+    // A paid claim has its payment voided first, which brings it to READY_FOR_PAYMENT.
+    for (const from of ['PAID', 'PARTIALLY_PAID', 'FINANCE_REVIEW', 'APPROVED', 'DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'] as const) {
+      assert.equal(canTransition(from, 'PENDING_APPROVAL'), from === 'DRAFT', from);
+    }
+  });
+
+  it('is with its requester in phase A and with the approvers of the new step in phase B, never with the system', () => {
+    const setAside: CurrentDeskStepFields = { sequenceNo: 1, status: 'APPROVED', approverUserId: 'u-1', invalidatedAt: sentBackAt };
+    const names = { 'u-1': 'คุณยุนกิ', 'u-2': 'คุณสมชาย' };
+    // The steps are loaded and none is waiting: without the round that reads "decided, waiting for the system".
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL', steps: [setAside], names }), { kind: 'SYSTEM' });
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL', steps: [setAside], names, payoutCorrectionPhase: 'AWAITING_REQUESTER' }), { kind: 'REQUESTER' });
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL', payoutCorrectionPhase: 'AWAITING_REQUESTER' }), { kind: 'REQUESTER' }, 'also on a list row, which loads no steps');
+    const waiting: CurrentDeskStepFields = { sequenceNo: 1, status: 'PENDING', assignedApproverUserIds: ['u-2', 'u-1'] };
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL', steps: [setAside, waiting], names, payoutCorrectionPhase: 'AWAITING_APPROVAL' }),
+      { kind: 'APPROVER', names: ['คุณสมชาย', 'คุณยุนกิ'] });
+    // A cancellation that was started comes first, as on every claim.
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL', steps: [setAside], payoutCorrectionPhase: 'AWAITING_REQUESTER', cancellationPending: true }), { kind: 'SYSTEM' });
+  });
+
+  it('falls in the approval bucket of the hub in both phases: where its status is counted and listed', () => {
+    assert.equal(reimbursementHubBucket({ status: 'PENDING_APPROVAL', currentDesk: { kind: 'REQUESTER' } }), 'review');
+    assert.equal(reimbursementHubBucket({ status: 'PENDING_APPROVAL', currentDesk: { kind: 'APPROVER' } }), 'review');
+    // A draft is still a draft, with or without its desk on the row.
+    assert.equal(reimbursementHubBucket({ status: 'DRAFT', currentDesk: { kind: 'REQUESTER' } }), 'draft');
+    assert.equal(reimbursementHubBucket({ status: 'DRAFT' }), 'draft');
+  });
+
+  it('leaves nothing for the reconciler: a claim in a round holds no decision to carry out', () => {
+    const claim = (overrides: Record<string, unknown>) => ({ requesterUserId: 'staff-1', ...inRound, ...overrides }) as Parameters<typeof pendingProjectionIntent>[0];
+    const setAside = { id: 'step-1', status: 'APPROVED' as const, decisionByUserId: 'mgr-1' };
+    assert.equal(pendingProjectionIntent(claim({ currentApprovalStepId: null, approvalSteps: [setAside] })), undefined, 'phase A');
+    assert.equal(pendingProjectionIntent(claim({ currentApprovalStepId: 'step-2', payoutCorrectionSubmittedAt: accountGivenAt, approvalSteps: [setAside, { id: 'step-2', status: 'PENDING' }] })), undefined, 'phase B');
+    // Even a row caught between the step being decided and the claim moving on is left alone: the approval's
+    // own transaction moves it, and a second writer would build the claim's expense records twice.
+    const torn = { currentApprovalStepId: 'step-2', approvalSteps: [setAside, { id: 'step-2', status: 'APPROVED' as const, decisionByUserId: 'mgr-1' }] };
+    assert.equal(pendingProjectionIntent(claim({ ...torn, payoutCorrectionSubmittedAt: accountGivenAt })), undefined);
+    assert.deepEqual(pendingProjectionIntent({ status: 'PENDING_APPROVAL', requesterUserId: 'staff-1', ...torn }), { kind: 'MANAGER', actorUserId: 'mgr-1', approvalStepId: 'step-2' },
+      'the same row outside a round is a decision to carry out');
+  });
+
+  it('names as the claim approver only the approval in force: not one a correction set aside', () => {
+    const submittedAt = new Date('2026-10-01T00:00:00.000Z');
+    const first = { id: 'step-1', status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: new Date('2026-10-01T02:00:00.000Z') };
+    assert.equal(claimApprovalStep({ submittedAt, approvalSteps: [first] })?.id, 'step-1');
+    assert.equal(claimApproverUserId({ submittedAt, approvalSteps: [first] }), 'mgr-1');
+    const setAside = { ...first, invalidatedAt: sentBackAt, invalidatedReason: PAYOUT_CORRECTION_STEP_REASON };
+    assert.equal(claimApprovalStep({ submittedAt, approvalSteps: [setAside] }), undefined, 'phase A: the form prints no approver');
+    assert.equal(claimApprovalStep({ submittedAt, approvalSteps: [setAside, { id: 'step-2', status: 'PENDING' }] }), undefined, 'phase B');
+    const again = { id: 'step-2', status: 'APPROVED', decisionByUserId: 'mgr-2', decidedAt: new Date('2026-10-02T06:00:00.000Z') };
+    assert.equal(claimApprovalStep({ submittedAt, approvalSteps: [setAside, again] })?.id, 'step-2');
+    assert.equal(claimApproverUserId({ submittedAt, approvalSteps: [setAside, again] }), 'mgr-2');
+    assert.equal(isReimbursementClaimApprover('mgr-1', { submittedAt, approvalSteps: [setAside, again] }), false);
+    // An approval from before the claim was last sent never counted, and still does not.
+    assert.equal(claimApprovalStep({ submittedAt, approvalSteps: [{ ...first, decidedAt: new Date('2026-09-30T00:00:00.000Z') }] }), undefined);
+  });
+
+  it('asks the approvers the claim stood on again: the set-aside approval, or the step that still waits', () => {
+    const step = (id: string, overrides: Record<string, unknown> = {}) => ({ id, status: 'APPROVED', invalidatedAt: null as Date | null, invalidatedReason: null as string | null, ...overrides });
+    const setAside = step('step-1', { invalidatedAt: sentBackAt, invalidatedReason: PAYOUT_CORRECTION_STEP_REASON });
+    const round = { payoutCorrectionRequestedAt: sentBackAt };
+    assert.equal(payoutCorrectionSourceStep({ ...round, currentApprovalStepId: null, approvalSteps: [setAside] })?.id, 'step-1', 'phase A');
+    // Phase B: the step that waits is the one a second answer replaces.
+    const waiting = step('step-2', { status: 'PENDING' });
+    assert.equal(payoutCorrectionSourceStep({ ...round, currentApprovalStepId: 'step-2', approvalSteps: [setAside, waiting] })?.id, 'step-2');
+    // Sent back again from phase B: the cancelled step of this round is the latest, and names the same people.
+    const laterAt = new Date('2026-10-02T07:00:00.000Z');
+    const refused = step('step-2', { status: 'CANCELLED', invalidatedAt: laterAt, invalidatedReason: PAYOUT_CORRECTION_STEP_REASON });
+    assert.equal(payoutCorrectionSourceStep({ payoutCorrectionRequestedAt: laterAt, currentApprovalStepId: null, approvalSteps: [setAside, refused] })?.id, 'step-2');
+    // Steps set aside for any other reason, or by a round before this one, are nobody's.
+    const withdrawn = step('step-0', { status: 'CANCELLED', invalidatedAt: new Date('2026-10-02T08:00:00.000Z'), invalidatedReason: 'withdrawn_by_requester' });
+    const earlierRound = step('step-9', { invalidatedAt: new Date('2026-09-01T00:00:00.000Z'), invalidatedReason: PAYOUT_CORRECTION_STEP_REASON });
+    assert.equal(payoutCorrectionSourceStep({ ...round, currentApprovalStepId: null, approvalSteps: [withdrawn, earlierRound] }), undefined);
+    // A claim nobody had to approve has none: it is ready for payment as soon as its account is given.
+    assert.equal(payoutCorrectionSourceStep({ ...round, currentApprovalStepId: null, approvalSteps: [] }), undefined);
+    assert.equal(payoutCorrectionSourceStep({ currentApprovalStepId: null, approvalSteps: [setAside] }), undefined, 'not in a round');
+  });
+
+  it('counts the wait of a round approvers from when the account was given, not from when the claim was first sent', () => {
+    const submittedAt = new Date('2026-09-20T00:00:00.000Z');
+    assert.equal(approvalWaitStartedAt({ submittedAt }), submittedAt);
+    assert.equal(approvalWaitStartedAt({ submittedAt, payoutCorrectionSubmittedAt: accountGivenAt }), accountGivenAt);
+    assert.equal(approvalWaitStartedAt({ submittedAt: null, payoutCorrectionSubmittedAt: null }), undefined);
+    // Twelve days after it was sent, one hour after the account was given: one hour, well inside a 48 hour deadline.
+    const now = new Date('2026-10-02T06:00:00.000Z');
+    const age = ageHours(approvalWaitStartedAt({ submittedAt, payoutCorrectionSubmittedAt: accountGivenAt })!, now);
+    assert.deepEqual([age, isSlaRisk(age, 48), isSlaRisk(ageHours(submittedAt, now), 48)], [1, false, true]);
+  });
+
+  it('hashes the same claim with its new account: only the account part moves, and a legacy claim gains one', () => {
+    const claim = {
+      amount: '580.5000', currency: 'THB', categoryKey: 'travel', incurredDate: new Date('2026-09-18T00:00:00.000Z'), reason: 'เบิกค่าเดินทาง', primaryAttachmentId: null,
+      lines: [{ lineNo: 1, incurredDate: new Date('2026-09-18T00:00:00.000Z'), description: 'ค่าแท็กซี่', purpose: null, categoryKey: 'travel', amount: '580.5000', attachmentId: 'att-1', linkedExpenseId: null }],
+      approvalPolicySnapshotJson: null,
+    } as any;
+    const hash = (payout: Record<string, unknown>) => computeSnapshotHash(claimSnapshotFields({ ...claim, ...payout }, claim.approvalPolicySnapshotJson));
+    const approvedWith = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'a'.repeat(64) };
+    // The same account confirmed again is a new version, so a new hash: the earlier approval never covers it.
+    const answers = [approvedWith, { ...approvedWith, payoutDestinationVersion: 2 }, { ...approvedWith, payoutDestinationVersion: 2, payoutFingerprint: 'b'.repeat(64) },
+      submitPayoutColumns({ payoutMethod: 'CASH', followsDefault: false })];
+    assert.equal(new Set(answers.map(hash)).size, answers.length);
+    // A legacy claim has no account part. Given an account in a round, it has one from then on.
+    const legacy = hash({});
+    assert.equal(legacy, hash({ payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null }));
+    assert.notEqual(hash(approvedWith), legacy);
+    assert.notEqual(hash(submitPayoutColumns({ payoutMethod: 'CASH', followsDefault: false })), legacy);
+  });
+
+  it('holds "use the default account" to the default the page showed', () => {
+    const kbank = { payoutMethod: 'BANK_TRANSFER' as const, fingerprint: 'a'.repeat(64) } as any;
+    const token = payoutDefaultToken('rb-1', kbank);
+    assert.equal(typeof token, 'string');
+    assert.equal(token, payoutDefaultToken('rb-1', { ...kbank }));
+    // Another account, cash instead of an account, another claim: each is another token.
+    const others = [payoutDefaultToken('rb-1', { ...kbank, fingerprint: 'b'.repeat(64) }), payoutDefaultToken('rb-1', { payoutMethod: 'CASH' } as any), payoutDefaultToken('rb-2', kbank)];
+    assert.equal(new Set([token, ...others]).size, 4);
+    assert.ok(!String(token).includes('a'.repeat(64)), 'the token carries no fingerprint');
+  });
+
+  it('offers a fixed list of reasons and words both phases in plain Thai', () => {
+    assert.deepEqual(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, {
+      ACCOUNT_NUMBER_WRONG: 'เลขบัญชีไม่ถูกต้อง', ACCOUNT_NAME_MISMATCH: 'ชื่อบัญชีไม่ตรงกับผู้เบิก', BANK_WRONG: 'ธนาคารไม่ถูกต้อง',
+      ACCOUNT_UNUSABLE: 'บัญชีปิดหรือโอนไม่ได้', REQUESTER_ASKED: 'ผู้เบิกขอเปลี่ยนบัญชี', OTHER: 'อื่น ๆ',
+    });
+    assert.deepEqual(REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, { AWAITING_REQUESTER: 'รอผู้เบิกแก้บัญชีรับเงิน', AWAITING_APPROVAL: 'รออนุมัติบัญชีรับเงินใหม่' });
+    for (const code of Object.keys(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS)) assert.equal(isReimbursementPayoutCorrectionReason(code), true, code);
+    // A label, a lowercase code, an inherited key, a non-string: none is a reason.
+    for (const bad of ['เลขบัญชีไม่ถูกต้อง', 'other', 'toString', 'constructor', '', undefined, null, 1, {}]) assert.equal(isReimbursementPayoutCorrectionReason(bad), false, String(bad));
+    for (const text of [...Object.values(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS), ...Object.values(REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS)]) {
+      assert.doesNotMatch(text, /[A-Za-z_]/, text);
+    }
   });
 });
