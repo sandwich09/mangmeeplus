@@ -29,6 +29,8 @@ import {
   type ProductionA5VerificationEvidence,
 } from './production-a5-evidence.logic';
 import { sha256, stableJson } from './a5-readonly-evidence.logic';
+import { classifyProductionA5ReimbursementApprovalSnapshots, readProductionA5ReimbursementApprovalSnapshots } from './production-a5-evidence.pg';
+import { computeSnapshotHash } from '../modules/reimbursements/domain/logic/reimbursement.logic';
 import {
   ALL_FEATURE_ENTITLEMENT_KEYS,
   PLATFORM_INVARIANT_FEATURE_KEYS,
@@ -792,5 +794,59 @@ describe('production A5 H2 evidence contract', () => {
       .filter((key) => !PLATFORM_INVARIANT_FEATURE_KEYS.includes(parentFeatureKey(key)));
     for (const key of platformSubmenus) assert.equal(expectedAllowList.includes(key), false, key);
     assert.equal(productionA5PolicyHashes().allowListHash, sha256(stableJson(expectedAllowList)));
+  });
+});
+
+// The payout-account release adds a payout part to the hash of every claim sent with a receiving
+// method. The production gate must hash those claims the way the live approval check does, or the
+// first pending claim sent after the release would be counted as a corrupted snapshot.
+describe('production A5 pending claims sent with a receiving method', () => {
+  const incurredDate = new Date('2026-10-01T00:00:00.000Z');
+  const header = {
+    requestId: 'claim-1', companyId: 'tenant-secret', title: 'private title', reason: 'private reason',
+    categoryKey: 'travel', categoryLabelSnapshot: null, amount: '100.0000', currency: 'THB', incurredDate,
+    primaryAttachmentId: null, linkedExpenseId: null,
+    currentApprovalStepId: 'step-1', currentStepStatus: 'PENDING', currentStepDecidedAt: null,
+    currentStepDecisionByUserId: null, currentStepComment: null, currentStepRejectionReason: null,
+  };
+  const line = {
+    id: 'line-1', companyId: 'tenant-secret', reimbursementRequestId: 'claim-1', lineNo: 1, incurredDate,
+    description: 'แท็กซี่', purpose: null, categoryKey: 'travel', categoryLabelSnapshot: null, amount: '100.0000',
+    attachmentId: null, linkedExpenseId: null,
+  };
+  const hashOf = (payout: Record<string, unknown>) => computeSnapshotHash({
+    amount: header.amount, currency: header.currency, categoryKey: header.categoryKey, incurredDate: incurredDate.toISOString(),
+    reason: header.reason, title: header.title, lines: [{ ...line, incurredDate: incurredDate.toISOString() }], ...payout,
+  } as any);
+  const classify = (stored: string, columns: Record<string, unknown>) =>
+    classifyProductionA5ReimbursementApprovalSnapshots('POST_MIGRATION', [{ ...header, approvalSnapshotHash: stored, ...columns }], [line]);
+
+  it('classifies a transfer claim, a cash claim and a legacy claim as valid, each by its own columns', () => {
+    const transfer = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'fingerprint-secret' };
+    const cash = { payoutMethod: 'CASH', payoutDestinationVersion: null, payoutFingerprint: null };
+    const legacy = { payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null };
+    for (const columns of [transfer, cash, legacy]) {
+      const result = classify(hashOf(columns), columns);
+      assert.deepEqual([result.v2Valid, result.invalid], [1, 0], JSON.stringify(columns));
+      assert.equal(JSON.stringify(result).includes('fingerprint-secret'), false);
+    }
+    // Three different hashes: the payout part is really in the hash, and a legacy claim keeps the old one.
+    assert.equal(new Set([hashOf(transfer), hashOf(cash), hashOf(legacy)]).size, 3);
+    assert.equal(hashOf(legacy), hashOf({}));
+    // A snapshot that moved after the claim was sent is what this gate exists to catch.
+    assert.equal(classify(hashOf(transfer), { ...transfer, payoutDestinationVersion: 2 }).invalid, 1);
+    assert.equal(classify(hashOf(transfer), { ...transfer, payoutFingerprint: 'another-account' }).invalid, 1);
+    assert.equal(classify(hashOf(transfer), legacy).invalid, 1);
+  });
+
+  it('reads the payout columns in a way a database from before the migration can still answer', async () => {
+    const queries: string[] = [];
+    await readProductionA5ReimbursementApprovalSnapshots({
+      $queryRawUnsafe: (async (sql: string) => { queries.push(sql); return []; }) as any,
+    }, 'POST_MIGRATION');
+    for (const column of ['payoutMethod', 'payoutDestinationVersion', 'payoutFingerprint']) {
+      assert.ok(queries.some((sql) => sql.includes(`to_jsonb(request)->>'${column}'`)), column);
+      assert.ok(queries.every((sql) => !sql.includes(`request."${column}"`)), column);
+    }
   });
 });

@@ -40,6 +40,12 @@ describe('implemented-trigger gate (LINE preference suppression)', () => {
     }
   });
 
+  // Payout spec §8.5 (AC45): letting anyone else set a member's payout account is conditional on the
+  // account owner being told. A key outside the implemented list would be dropped before LINE.
+  it('delivers the notice that someone else set a member payout account', () => {
+    assert.equal(isImplementedTrigger('reimbursement.payout_account_set_by_other'), true);
+  });
+
   it('keeps the pre-existing implemented keys', () => {
     for (const key of ['daily_owner_summary', 'stock_low', 'crm_sla_breach', 'crm_new_conversation', 'crm_payment_proof', 'crm_booking_reminder']) {
       assert.ok(IMPLEMENTED_TRIGGER_KEYS.includes(key), key);

@@ -4,7 +4,7 @@ import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
   CreateReimbursementRequestDto, LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
-  ReimbursementInternalNoteDto, UpdateReimbursementDraftDto,
+  ReimbursementInternalNoteDto, SetMemberPayoutAccountDto, UpdateReimbursementDraftDto,
 } from './reimbursement.dtos';
 
 // The exact global-pipe configuration main.ts registers: this is the runtime gate
@@ -160,5 +160,48 @@ describe('LinkReimbursementSignedCopyDto', () => {
     await rejects(LinkReimbursementSignedCopyDto, { attachmentId: 'att-1', acknowledgedComplete: true, confirmedRequestNo: '' });
     await rejects(LinkReimbursementSignedCopyDto, { attachmentId: 'att-1', acknowledgedComplete: false, confirmedRequestNo: 'RB-1' });
     await rejects(LinkReimbursementSignedCopyDto, { attachmentId: 'att-1', acknowledgedComplete: 'yes', confirmedRequestNo: 'RB-1' });
+  });
+});
+
+describe('payout account bodies', () => {
+  const account = { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' };
+
+  it('carries the account number as text, so leading zeros survive the pipe', async () => {
+    const created = await pipe.transform({ ...validCreate, payout: { mode: 'SPECIFIED', saveAsDefault: true, ...account } }, { type: 'body', metatype: CreateReimbursementRequestDto });
+    assert.deepEqual({ ...created.payout }, { mode: 'SPECIFIED', saveAsDefault: true, ...account });
+    const updated = await pipe.transform({ payout: { mode: 'CASH' } }, { type: 'body', metatype: UpdateReimbursementDraftDto });
+    assert.equal(updated.payout?.mode, 'CASH');
+    const own = await pipe.transform({ payoutMethod: 'BANK_TRANSFER', ...account }, { type: 'body', metatype: SetMemberPayoutAccountDto });
+    assert.equal(own.accountNumber, '0123456789');
+    await pipe.transform({ payoutMethod: 'CASH' }, { type: 'body', metatype: SetMemberPayoutAccountDto });
+  });
+
+  it('rejects a numeric account number, unknown modes and methods, and every server-owned field', async () => {
+    for (const payout of [
+      { mode: 'SPECIFIED', ...account, accountNumber: 123456789 },
+      { mode: 'SPECIFIED', ...account, accountNumber: '1'.repeat(41) },
+      { mode: 'SPECIFIED', ...account, payoutKind: 'CRYPTO_WALLET' },
+      { mode: 'SPECIFIED', ...account, saveAsDefault: 'yes' },
+      { mode: 'EMPLOYEE_DEFAULT' },
+      { ...account },
+      // What only the server may decide: whose account it is, its version, its last 4, who verified it.
+      { mode: 'DEFAULT', userId: 'someone-else' },
+      { mode: 'SPECIFIED', ...account, accountLast4: '0000' },
+      { mode: 'SPECIFIED', ...account, version: 7 },
+      { mode: 'SPECIFIED', ...account, verifiedByUserId: 'approver-1' },
+      { mode: 'SPECIFIED', ...account, source: 'DEFAULT_ACCOUNT' },
+    ]) {
+      await rejects(CreateReimbursementRequestDto, { ...validCreate, payout });
+      await rejects(UpdateReimbursementDraftDto, { payout });
+    }
+    for (const poison of [{ payoutMethod: 'CRYPTO' }, { accountNumber: 123456789 }, { userId: 'someone-else' }, { companyId: 'other-tenant' }, { accountLast4: '0000' }, { version: 3 }]) {
+      await rejects(SetMemberPayoutAccountDto, { payoutMethod: 'BANK_TRANSFER', ...account, ...poison });
+    }
+    await rejects(SetMemberPayoutAccountDto, { ...account });
+    // The claim header itself never takes the snapshot columns from a client.
+    for (const poison of [{ payoutMethod: 'CASH' }, { payoutDestinationVersion: 2 }, { payoutFingerprint: 'forged' }]) {
+      await rejects(CreateReimbursementRequestDto, { ...validCreate, ...poison });
+      await rejects(UpdateReimbursementDraftDto, poison);
+    }
   });
 });

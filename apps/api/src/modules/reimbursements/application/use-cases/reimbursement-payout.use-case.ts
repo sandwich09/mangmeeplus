@@ -186,10 +186,10 @@ export class MemberPayoutAccountUseCase {
         await this.notifications.executeInTransaction({
           companyId: ctx.companyId, triggerKey: PAYOUT_ACCOUNT_SET_TRIGGER_KEY, sourceModule: 'reimbursements',
           sourceType: 'member_payout_account', sourceId: userId, periodKey: `v${change.after.version}`, severity: 'info',
-          title: `มีการตั้งบัญชีรับเงินคืนของคุณโดย ${editorName}`,
+          title: `${editorName} ตั้งบัญชีรับเงินคืนของคุณ`,
           body: change.after.payoutMethod === 'CASH'
-            ? `ตั้งให้รับเงินคืนเป็นเงินสด เมื่อ ${when} ตรวจว่าถูกต้อง`
-            : `${maskedPayoutAccount(change.after)} เมื่อ ${when} ตรวจว่าเป็นบัญชีของคุณ`,
+            ? `ตั้งให้คุณรับเงินคืนเป็นเงินสด เมื่อ ${when} ถ้าไม่ถูกต้อง เปิดดูแล้วแก้ได้ทันที`
+            : `${maskedPayoutAccount(change.after)} ตั้งเมื่อ ${when} ถ้าไม่ใช่บัญชีของคุณ เปิดดูแล้วแก้ได้ทันที`,
           deepLinkHref: `/companies/${ctx.companyId}/reimbursements/payout-account`,
           recipientUserIds: [userId],
         }, client);

@@ -1280,8 +1280,8 @@ describe('payout: someone else sets a member account (owner decision 2026-10-01)
     assert.equal(world.notifications.length, 1);
     const notice = world.notifications[0];
     assert.deepEqual(notice.recipientUserIds, ['staff-1']);
-    assert.equal(notice.title, 'มีการตั้งบัญชีรับเงินคืนของคุณโดย วิภา');
-    assert.match(notice.body, /^ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 เมื่อ .+ ตรวจว่าเป็นบัญชีของคุณ$/);
+    assert.equal(notice.title, 'วิภา ตั้งบัญชีรับเงินคืนของคุณ');
+    assert.match(notice.body, /^ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 ตั้งเมื่อ .+ ถ้าไม่ใช่บัญชีของคุณ เปิดดูแล้วแก้ได้ทันที$/);
     assert.equal(notice.deepLinkHref, '/companies/co-1/reimbursements/payout-account');
     assert.equal(notice.triggerKey, 'reimbursement.payout_account_set_by_other');
     assert.equal(leaksNumber(notice), false);
@@ -1302,8 +1302,8 @@ describe('payout: someone else sets a member account (owner decision 2026-10-01)
     assert.equal(world.notifications.length, 3);
     // One notification per change: the dedup period is the account version.
     assert.deepEqual(world.notifications.map((notice) => notice.periodKey), ['v1', 'v2', 'v3']);
-    assert.match(world.notifications[1].body, /^พร้อมเพย์เบอร์ลงท้าย 5678 เมื่อ /);
-    assert.match(world.notifications[2].body, /^ตั้งให้รับเงินคืนเป็นเงินสด เมื่อ .+ ตรวจว่าถูกต้อง$/);
+    assert.match(world.notifications[1].body, /^พร้อมเพย์เบอร์ลงท้าย 5678 ตั้งเมื่อ /);
+    assert.match(world.notifications[2].body, /^ตั้งให้คุณรับเงินคืนเป็นเงินสด เมื่อ .+ ถ้าไม่ถูกต้อง เปิดดูแล้วแก้ได้ทันที$/);
     assert.equal(leaksNumber(world.notifications), false);
   });
 

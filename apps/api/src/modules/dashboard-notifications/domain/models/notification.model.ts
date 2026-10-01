@@ -127,7 +127,7 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   'workflow.reimbursement_ready_for_payment',
   'workflow.reimbursement_payment_recorded',
   // Someone else set a member's payout account (owner decision 2026-10-01): the account owner is told
-  // on the web and on LINE. The text names the editor and never carries any part of the number.
+  // on the web and on LINE. The text names the editor and carries the last 4 digits, never the number.
   'reimbursement.payout_account_set_by_other',
   'expense.substitute_receipt_signature_pending',
   // Separate key from the payer stage on purpose — a shared key put both stages on one dedup/alert
