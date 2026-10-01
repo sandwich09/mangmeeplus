@@ -278,7 +278,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
           {blockedDraftCount > 0 && (
             <ErrorBanner message={`มีคำขอร่าง ${blockedDraftCount} รายการที่ยังส่งไม่ได้ตามนโยบายใบเสร็จ กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ`} />
           )}
-          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" data-testid="reimbursements-mine-cards">
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" data-testid="reimbursements-mine-summary">
             {statusCards.map(card => (
               <button key={card.key} type="button" aria-pressed={statusFilter === card.key}
                 onClick={() => setStatusFilter(statusFilter === card.key ? 'all' : card.key)}

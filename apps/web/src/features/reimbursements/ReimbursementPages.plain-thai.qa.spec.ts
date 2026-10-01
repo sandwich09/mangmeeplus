@@ -228,7 +228,7 @@ describe('the claim lines fit a 390 px phone (Owner, 2026-09-30)', () => {
 describe('the hub cards and chips count what their filter shows (spec §18.1, AC38)', () => {
   /** The markup inside the element marked `from`, up to the tag that carries `to`. */
   const between = (html: string, from: string, to: string) => html.slice(html.indexOf('>', html.indexOf(from)) + 1, html.lastIndexOf('<', html.indexOf(to)));
-  const cardsOf = (html: string) => between(html, 'data-testid="reimbursements-mine-cards"', 'data-testid="reimbursements-mine-filters"');
+  const cardsOf = (html: string) => between(html, 'data-testid="reimbursements-mine-summary"', 'data-testid="reimbursements-mine-filters"');
   const chipsOf = (html: string) => between(html, 'data-testid="reimbursements-mine-filters"', 'type="search"');
   /** Label → the number on it, one entry per card (the number comes first) or per chip (the number comes last). */
   const numbers = (html: string, numberFirst: boolean) => Object.fromEntries([...html.matchAll(/<button\b[^>]*>(.*?)<\/button>/gsu)].map(([, inner]) => {
@@ -258,7 +258,7 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
 
   it('keeps the four cards two by two on a 390 px phone, each one a button that filters', () => {
     const cards = cardsOf(hubTab('mine', hubClaims, 'payment'));
-    assert.ok(hubTab('mine', hubClaims).includes('<div class="grid grid-cols-2 gap-3 xl:grid-cols-4" data-testid="reimbursements-mine-cards">'));
+    assert.ok(hubTab('mine', hubClaims).includes('<div class="grid grid-cols-2 gap-3 xl:grid-cols-4" data-testid="reimbursements-mine-summary">'));
     const buttons = [...cards.matchAll(/<button type="button" aria-pressed="(true|false)" class="([^"]*)"/gu)];
     assert.deepEqual(buttons.map(([, pressed]) => pressed), ['false', 'false', 'true', 'false'], 'รอจ่ายเงินคืน is the open filter');
     // Nothing with a fixed width: a card is as wide as its grid column and its text wraps inside it.
