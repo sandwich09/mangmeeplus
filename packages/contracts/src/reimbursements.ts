@@ -616,6 +616,19 @@ export function maskedPayoutAccountNumber(accountLast4: string): string {
   return `ลงท้าย ${accountLast4}`;
 }
 
+/**
+ * The masked account in words — "ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789", "พร้อมเพย์เบอร์ลงท้าย 5678" —
+ * so the screen, the notification and the printed form never phrase it differently.
+ */
+export function maskedPayoutAccount(account: {
+  payoutKind?: ReimbursementPayoutKind | null;
+  bankName?: string | null;
+  accountLast4?: string | null;
+}): string {
+  const masked = maskedPayoutAccountNumber(account.accountLast4 ?? '');
+  return account.payoutKind === 'PROMPTPAY_PHONE' ? `พร้อมเพย์เบอร์${masked}` : `${account.bankName ?? ''} เลขบัญชี${masked}`.trim();
+}
+
 /** A member's default payout account as every screen sees it: never the full number. */
 export type MemberPayoutAccountSummary = {
   userId: string;
@@ -674,8 +687,11 @@ export type ReimbursementPayoutSummary = {
   verifiedAt?: string;
   /** Draft only: why submit would be refused. */
   notReadyReason?: ReimbursementPayoutNotReadyReason;
-  /** Whether THIS viewer may call the reveal endpoint. Set on the detail read only; absent means no. */
-  canReveal?: boolean;
+  /**
+   * Whether THIS viewer may call "แสดงเลขบัญชี". Set on the detail read only; absent means no.
+   * About the account number alone: who may open a payment slip is a different group and a different flag.
+   */
+  canRevealAccountNumber?: boolean;
 };
 
 // ---- Printable claim form (ใบเบิกค่าใช้จ่าย) ----
