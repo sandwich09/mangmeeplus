@@ -13,10 +13,10 @@ import {
 } from './reimbursements.model';
 import { payoutComparableText } from './reimbursement-payout.logic';
 // The payment step's side of the payout (kept as its own imports, apart from the blocks above).
-import { looksLikeAccountNumber, maskedPayoutAccountNumber, type ReimbursementPaymentRule } from '@watchdog-bms/contracts';
-import { PAYMENT_METHOD_LABELS } from './reimbursements.model';
+import { looksLikeAccountNumber, reimbursementPaymentHowText, type ReimbursementPaymentRule } from '@watchdog-bms/contracts';
+import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
 import {
-  MISMATCH_REASON_HAS_ACCOUNT_NUMBER, MISMATCH_REASON_REQUIRED, PAID_DIFFERENTLY_LABEL, PAYER_CONFIRMATION_REQUIRED, type PaymentFormPayout,
+  MISMATCH_REASON_HAS_ACCOUNT_NUMBER, MISMATCH_REASON_REQUIRED, PAID_DIFFERENTLY_LABEL, PAYER_CONFIRMATION_REQUIRED, REQUESTER_SELF_ATTESTED, type PaymentFormPayout,
 } from './reimbursement-payout.logic';
 
 /**
@@ -626,19 +626,33 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
 
   // The waiting row names the same people the queue line does — one resolved list, never two.
   const waitingFor = currentDeskText(detail?.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER;
+  // Spec §17.2: an approval that attested the claim's account says so. Which step did is on the account's
+  // own history row, so an approval of a cash or a legacy claim, or one that attested nothing, reads as before.
+  const attestedAccount = new Set((detail?.payoutHistory ?? []).map((version: any) => version.approvalStepId).filter(Boolean));
   for (const step of [...(detail?.approvalSteps ?? [])].sort((a: any, b: any) => a.sequenceNo - b.sequenceNo)) {
     if (step.invalidatedAt) continue;
     const key = `step-${step.id ?? step.sequenceNo}`;
     const decidedBy = step.decidedByName ?? step.approverName ?? CURRENT_DESK_LABELS.APPROVER;
-    if (step.status === 'APPROVED') rows.push({ key, state: 'done', label: `อนุมัติโดย ${decidedBy}`, date: step.decidedAt });
-    else if (step.status === 'REJECTED') rows.push({ key, state: 'done', label: `ปฏิเสธโดย ${decidedBy}`, date: step.decidedAt });
+    if (step.status === 'APPROVED') {
+      const label = !attestedAccount.has(step.id) ? `อนุมัติโดย ${decidedBy}`
+        // A requester who approved their own claim checked nobody's account but their own: said as the card says it.
+        : step.decisionByUserId && step.decisionByUserId === detail?.requesterUserId ? `อนุมัติโดย ${decidedBy} · ${REQUESTER_SELF_ATTESTED}`
+          : `อนุมัติและตรวจบัญชีรับเงินโดย ${decidedBy}`;
+      rows.push({ key, state: 'done', label, date: step.decidedAt });
+    } else if (step.status === 'REJECTED') rows.push({ key, state: 'done', label: `ปฏิเสธโดย ${decidedBy}`, date: step.decidedAt });
     else if (step.status === 'PENDING') rows.push({ key, state: 'current', label: `กำลังรอ ${waitingFor} อนุมัติ` });
   }
   // Only a claim that IS rejected ends here. Reopen keeps the refused step, so a claim fixed and
   // resubmitted still carries it as history and its journey goes on.
   if (status === 'REJECTED') return rows;
+  // A payment since taken back stays in the journey: what was paid, then that it was voided and why.
+  const paidLabel = (payment: any) => [payment.paidByName ? `จ่ายแล้ว โดย ${payment.paidByName}` : 'จ่ายแล้ว', paymentFactsText(payment)].filter(Boolean).join(' · ');
+  const voided = (detail?.payments ?? []).filter((payment: any) => payment.status === 'VOIDED').flatMap((payment: any): ClaimTimelineRow[] => [
+    { key: `payment-${payment.id}`, state: 'done', label: paidLabel(payment), date: payment.paidAt },
+    { key: `void-${payment.id}`, state: 'done', label: `${PAYMENT_VOIDED_LABEL}${payment.voidReason ? `: ${payment.voidReason}` : ''}`, date: payment.voidedAt },
+  ]);
   if (status === 'CANCELLED' || status === 'VOIDED') {
-    return [...rows, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
+    return [...rows, ...voided, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
   }
 
   // The row the claim waits at is the journey's own step, so the two never disagree; and the finance row
@@ -658,8 +672,8 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   }
 
   const paid = (detail?.payments ?? []).find((p: any) => p.status === 'RECORDED');
-  rows.push(paid
-    ? { key: 'payment', state: 'done', label: [paid.paidByName ? `จ่ายแล้ว โดย ${paid.paidByName}` : 'จ่ายแล้ว', paymentFactsText(paid)].filter(Boolean).join(' · '), date: paid.paidAt }
+  rows.push(...voided, paid
+    ? { key: 'payment', state: 'done', label: paidLabel(paid), date: paid.paidAt }
     : { key: 'payment', state: at === 'payment' ? 'current' : 'future', label: at === 'payment' ? `กำลัง${waitingForPayer(detail)}` : 'รอบันทึกจ่าย' });
   return rows;
 }
@@ -668,14 +682,12 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
  * A payment in one phrase: how it was paid — for a transfer the payer confirmed, the last 4 digits of
  * the account it went into — whether a slip is attached, and whether the method is not the one the
  * requester asked for. The timeline says it in these words and the payment row shows the same facts
- * (invariant I4), both from the one payment record.
+ * (invariant I4), both from the one payment record. How it was paid is the shared phrase of contracts,
+ * the one the requester's notice is built from on the server.
  */
 export function paymentFactsText(payment: any): string {
-  const destination = payment?.payoutDestination;
   return [
-    destination
-      ? `โอนเข้า${destination.payoutKind === 'PROMPTPAY_PHONE' ? 'พร้อมเพย์เบอร์' : 'บัญชี'}${maskedPayoutAccountNumber(destination.accountLast4)}`
-      : PAYMENT_METHOD_LABELS[payment?.paymentMethod],
+    reimbursementPaymentHowText({ paymentMethod: payment?.paymentMethod, payoutDestination: payment?.payoutDestination }),
     paymentSlipCount(payment) > 0 && 'มีสลิป',
     payment?.methodMismatchReason && PAID_DIFFERENTLY_LABEL,
   ].filter(Boolean).join(' · ');

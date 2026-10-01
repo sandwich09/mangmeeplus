@@ -1,5 +1,5 @@
 import type { MangmeeTone } from '@/common/components/mangmee';
-import { REIMBURSEMENT_DESK_LABELS, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_PAYMENT_METHOD_LABELS, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 
 export const REIMBURSEMENT_CREATE_UNAVAILABLE = 'ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อผู้ดูแลบริษัทเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์';
@@ -33,12 +33,10 @@ export const FINANCE_REVIEW_LABELS: Record<string, string> = {
   BLOCKED: 'ระงับ',
 };
 
-export const PAYMENT_METHOD_LABELS: Record<string, string> = {
-  CASH: 'เงินสด',
-  BANK_TRANSFER: 'โอนเงิน',
-  CHEQUE: 'เช็ค',
-  OTHER: 'อื่น ๆ',
-};
+/** The shared words (contracts): the requester's notice is built from the same ones on the server. */
+export const PAYMENT_METHOD_LABELS: Record<string, string> = REIMBURSEMENT_PAYMENT_METHOD_LABELS;
+/** A payment that was taken back, in the words of the button that does it. The payment row and the timeline both say this. */
+export const PAYMENT_VOIDED_LABEL = 'ยกเลิกการจ่ายแล้ว';
 
 export const REQUEST_STATUS_TONES: Record<string, MangmeeTone> = {
   DRAFT: 'slate',

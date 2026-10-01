@@ -39,6 +39,8 @@ export const PAYER_IS_VERIFIER_NOTE = 'ยังไม่มีผู้ตร�
 export const PAID_DIFFERENTLY_LABEL = 'จ่ายต่างจากที่ผู้เบิกขอ';
 export const MISMATCH_REASON_REQUIRED = 'วิธีจ่ายต่างจากที่ผู้เบิกขอ กรุณาระบุเหตุผล';
 export const MISMATCH_REASON_HAS_ACCOUNT_NUMBER = 'อย่าพิมพ์เลขบัญชีในช่องเหตุผล เพราะเหตุผลนี้แสดงในประวัติการจ่ายให้ทุกคนที่เปิดใบเบิกเห็น';
+/** Spec §10.2: a requester who approved their own claim gave their own word for the account. It is never called a check. */
+export const REQUESTER_SELF_ATTESTED = 'ผู้เบิกยืนยันบัญชีของตนเอง';
 export const PAYOUT_ATTESTATION_TEXT = 'ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก';
 export const PAYOUT_ATTESTATION_REQUIRED = 'ติ๊กยืนยันว่าตรวจบัญชีรับเงินแล้วก่อนอนุมัติ';
 
@@ -208,7 +210,7 @@ export function claimPayoutView(detail: { status?: string; requesterUserId?: str
     notes.push(!payout.verifiedAt
       ? 'ยังไม่มีผู้ตรวจบัญชีนี้'
       : payout.verifiedByUserId && payout.verifiedByUserId === detail.requesterUserId
-        ? `ผู้เบิกยืนยันบัญชีของตนเอง เมื่อ ${formatThaiDateTime(payout.verifiedAt)}`
+        ? `${REQUESTER_SELF_ATTESTED} เมื่อ ${formatThaiDateTime(payout.verifiedAt)}`
         : `ตรวจบัญชีแล้วโดย ${payout.verifiedByName ?? 'ผู้อนุมัติ'} เมื่อ ${formatThaiDateTime(payout.verifiedAt)}`);
   }
   return { state: 'transfer', line: maskedPayoutAccount(payout), notes };

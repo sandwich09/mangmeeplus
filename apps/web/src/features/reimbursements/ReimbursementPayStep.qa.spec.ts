@@ -525,10 +525,11 @@ describe('a payment reads the same on its row and in the claim history (spec §1
     }
     const html = detailSections(paidWith(transfer), ids.payer, PAYER);
     assert.equal(html.replace(new RegExp([...Object.values(ids), ...DOCUMENT_NUMBERS].join('|'), 'g'), '').match(/\d{5,}/g), null);
-    // One wording for the masked account: the row and the timeline build it from the shared functions.
+    // One wording for the masked account: the row and the timeline build it from the shared functions. The
+    // timeline's phrase is the one in contracts, which the API builds the requester's notice from.
     assert.doesNotMatch(read('./ReimbursementDetailSections.tsx'), /ลงท้าย/);
     assert.equal(read('./reimbursements.logic.ts').match(/ลงท้าย/g), null);
-    assert.match(read('./reimbursements.logic.ts'), /maskedPayoutAccountNumber\(destination\.accountLast4\)/);
+    assert.match(read('./reimbursements.logic.ts'), /reimbursementPaymentHowText\(\{ paymentMethod: payment\?\.paymentMethod, payoutDestination: payment\?\.payoutDestination \}\)/);
   });
 
   it('keeps a voided payment\'s account and reason on its own row', () => {
