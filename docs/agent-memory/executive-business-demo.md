@@ -302,3 +302,24 @@ Corrections to the backend review found while writing the amendments (also noted
 Verification: every amended file checked for existing relative link targets, balanced code fences, table column counts, odd backticks and trailing whitespace (`git diff --check` clean). No tests were run because no code changed. G counts in the application remain 22 OPEN / 13 DEFERRED / 0 CLOSED.
 
 Next: owner answers Q10–Q15 first (they unblock S1 and S5), then Q16–Q34. The UI-side documents must adopt the renamed contract (BE “ชื่อในสัญญาที่เปลี่ยน” table). Before any real use: the legal review in BE §20.3, the one-off company classification, and the provider read-back, which needs the owner's go and the cloud runbook.
+
+## Closing pass against the UI-side amendments — 2026-10-02
+
+The UI-side amendments were merged into `claude/spec-reviews-20261001` at `c2f5fdca9`. This pass makes the backend documents and the UI-side documents close on each other. Documentation only; backend-side files only; not pushed.
+
+Five contract items the UI spec §13.1 and the chart spec §3 depended on, all accepted in the backend spec (none declined):
+
+- API03 returns `summary.netReceiptsSatang`, the net receipts of the whole filtered list, with the same coverage shape as a card (BE §16.2).
+- Ties at a fixed cut are reported everywhere by one rule (BE §13.6): `boundaryTie` for the 20% group, new `prefix80BoundaryTie` for the 80% group with the list filter `spendCohort=TO80_BOUNDARY_TIE`, and `usageRanking.boundaryTie` for the top-ten chart.
+- The existing admin company list `GET /v1/system/partners` gains the filters `reportClassification` (ALL / CUSTOMER / TEST / INTERNAL / UNCLASSIFIED) and `reportIndustryGroup` (ALL / UNSET); the existing `PATCH` and detail endpoints carry the two labelling fields (BE §16.1).
+- Receipt state order is EVER, then NOT_ENTITLED, then UNKNOWN, then NEVER: a shop that is both “not in package” and “cannot assess yet” reads “ไม่มีในแพ็กเกจ”, as the UI side had read it (BE §13.4). Entitled means `loadEntitledFeatureKeys` returns null or contains `expenses` (BE §13.5).
+
+Three backend items with no screen of their own (BE §9.6): the read and export log (R18) needs no screen in version 1; the Q16 and Q26 labelling fields must exist in version 1 on the existing admin pages `/system/partners` and `/system/partners/[companyId]`; `excludedTestInternalCount` needs no line, and the “unknown” usage channel is removed from the version 1 contract because every counted source names its channel.
+
+Wording now agrees with the UI side: the receipt state is “ยังไม่พบการเพิ่มใบเสร็จ”, and period names read “ในเดือน <ชื่อเดือน>”, not “ในเดือนนี้” (BE §13.1, §13.4, §13.6, Q24).
+
+Bug-fix lane merged (PR #950 into develop `6dd3c8c7`, PR #951 into main `4803be00`). The bugs file now records what was actually fixed and what is left: RB-40 covered four routes, not two; RB-36 was fixed with `SalesAgentActiveGuard`, so a suspended agent can still log in while every command is refused; RB-34 added `PLATFORM_ONLY_ROLE_KEYS`, and the role endpoints that take a role id (read, preview, fork) still skip that rule, as does role-name reservation; RB-38 filters the shop audit list with `PLATFORM_AUDIT_ACTION_PREFIXES`; a further fix keeps audit rows the system wrote under the placeholder user id `system`, which the foreign key used to reject silently. The backend spec now requires the executive roles in both `PLATFORM_ONLY_ROLE_KEYS` and `PLATFORM_ROLE_KEYS`, the by-id role routes closed before those roles are added, the prefix `executive.` in `PLATFORM_AUDIT_ACTION_PREFIXES`, and SYSTEM actors for worker-written audit rows.
+
+Q36 point 4 changed to match what the owner was told: deal credit and referral credit both use the package price a deal already uses, not the invoice total, so tax added on top is never part of a salesperson's credit.
+
+Cross-references: every backend section the UI-side documents cite resolves at this head, and every UI-side section the backend documents cite resolves. Links, anchors, code fences and trailing whitespace are clean across the fifteen executive documents. UI-side sentences that this pass makes outdated (they describe a gap that is now closed) were left for the UI-side owner: UI spec §4.2, §9.3 and §13.1; chart spec §3, §4 and §5; the plain-language spec note on “ในเดือนนี้”; item 3 of the open list in the UI review.
