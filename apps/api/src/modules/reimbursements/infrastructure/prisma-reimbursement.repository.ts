@@ -2,7 +2,7 @@ import { serializableTransaction } from '../../../common/database/serializable-t
 import { isSerializationFailure } from '../../../common/database/prisma-error';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import {
-  civilPeriodKey, todayCivilDate, LEDGER_SEQUENCE_KEY,
+  civilDate, civilPeriodKey, todayCivilDate, LEDGER_SEQUENCE_KEY,
   REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES,
 } from '@watchdog-bms/contracts';
 import { expenseDraftNumberingEnabled, expenseNumberInTransaction } from '../../expenses/infrastructure/expense-number';
@@ -2544,7 +2544,7 @@ export class PrismaReimbursementRepository {
 
   // ---- Payment ----
 
-  async assertClaimPaymentReady(companyId: string, requestId: string): Promise<void> {
+  async assertClaimPaymentReady(companyId: string, requestId: string, paidAt?: Date): Promise<void> {
     const row = await (this.prisma.client as any).reimbursementRequest.findFirst({
       where: { id: requestId, companyId },
       include: { lines: { orderBy: { lineNo: 'asc' } } },
@@ -2552,6 +2552,23 @@ export class PrismaReimbursementRepository {
     if (!row) throw new NotFoundException('Reimbursement request not found');
     if (row.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
     await this.assertClaimProjectionsReady(this.prisma.client as any, this.toRequest(row));
+    if (paidAt) await this.assertPaymentPeriodOpen(companyId, paidAt);
+  }
+
+  /**
+   * A payment may only be dated in an accounting period that still takes entries, the rule expense
+   * confirmation applies. Recorded in a closed month, the payout could never be posted until that
+   * month was reopened. A month nobody has opened yet has no row, and is open.
+   * A check before the write, not a lock: the period close holds none either, for any source.
+   */
+  async assertPaymentPeriodOpen(companyId: string, paidAt: Date): Promise<void> {
+    const periodKey = civilPeriodKey(civilDate(paidAt));
+    const period = await (this.prisma.client as any).accountingPeriod.findUnique({
+      where: { companyId_periodKey: { companyId, periodKey } }, select: { status: true },
+    });
+    if (period && !['OPEN', 'REOPENED'].includes(String(period.status))) {
+      throw new ConflictException(`reimbursement_payment_accounting_period_locked:${periodKey}`);
+    }
   }
 
   async recordPaymentAtomic(data: {

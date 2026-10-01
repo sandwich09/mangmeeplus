@@ -25,6 +25,7 @@ import { ReserveDocumentNumberUseCase } from '../../../data-model-core/applicati
 import { PrismaDocumentSequenceRepository } from '../../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import { MaterializeClaimExpensesService } from '../../../reimbursements/application/services/materialize-claim-expenses.service';
+import { RecordReimbursementPaymentUseCase } from '../../../reimbursements/application/use-cases/reimbursement-finance.use-case';
 import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import { PrismaLedgerRepository } from '../../infrastructure/prisma-ledger.repository';
 import { DrainExpenseAutoPostUseCase, expenseAutoPostCandidateSql } from './expense-auto-post.use-case';
@@ -43,11 +44,18 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
   const ledger = new PrismaLedgerRepository(prisma);
   const silent = { log: async () => undefined, append: async () => undefined } as any;
   const reserveNumber = new ReserveDocumentNumberUseCase(allocator, silent);
+  const commitNumber = new CommitDocumentNumberUseCase(allocator, silent);
   const generate = new GenerateJournalFromSourceUseCase(
-    ledger, silent, reserveNumber, new CommitDocumentNumberUseCase(allocator, silent),
+    ledger, silent, reserveNumber, commitNumber,
     silent, {} as any, expenses, {} as any, claims, prisma,
   );
   const drain = new DrainExpenseAutoPostUseCase(prisma, generate, expenses, claims);
+  // The payer's own entry point, for the one rule that lives there: the date a payout may carry.
+  // File names are the only thing its answer reads from outside the database.
+  const recordPayment = new RecordReimbursementPaymentUseCase(
+    claims, silent, silent, reserveNumber, commitNumber,
+    { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any,
+  );
   const companyIds: string[] = [];
   const userIds: string[] = [];
   const incurred = new Date('2026-09-15T00:00:00.000Z');
@@ -55,6 +63,7 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
   after(async () => {
     for (const companyId of companyIds) {
       await client.auditLog.deleteMany({ where: { companyId } });
+      await client.outboxEvent.deleteMany({ where: { companyId } });
       await client.journalEntry.deleteMany({ where: { companyId, entryType: 'REVERSAL' } });
       await client.company.delete({ where: { id: companyId } });
     }
@@ -630,7 +639,50 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
     } finally { await retire(s); }
   });
 
-  it('a payout dated in a closed period is refused, marked for the accountant, and posts once the period is open again', async () => {
+  // Review finding 5. Recording is where a payout gets its date, so that is where a closed month is
+  // refused: the real use case, repository, numbering and tables.
+  it('recording refuses a payment dated in a closed month and writes nothing; once the month is reopened the same payment records and posts into it', async () => {
+    const s = await shop();
+    try {
+      const c = await claim(s, ['75.00']);
+      await post(s, 'expense.record', c.expenseIds[0]!);
+      const august = await client.accountingPeriod.create({ data: { companyId: s.companyId, periodKey: '2026-08', startDate: new Date('2026-08-01'), endDate: new Date('2026-08-31'), status: 'CLOSED' } });
+      const payer = { ...accountant(s), permissions: ['reimbursement.payment.record'] };
+      const record = (paidAt: string): Promise<any> => recordPayment.execute(payer, c.requestId, { paidAmount: c.total, paymentMethod: 'CASH', paidAt } as any);
+      const locked = (error: any) => error.getStatus?.() === 409 && error.message === 'reimbursement_payment_accounting_period_locked:2026-08';
+
+      // The first and the last instant of August in Thai time.
+      await assert.rejects(() => record('2026-07-31T17:00:00.000Z'), locked);
+      await assert.rejects(() => record('2026-08-31T16:59:59.999Z'), locked);
+      await client.accountingPeriod.update({ where: { id: august.id }, data: { status: 'CLOSING_REVIEW' } });
+      await assert.rejects(() => record('2026-08-20T03:00:00.000Z'), locked);
+
+      // Nothing was written: no payment, no payment number, no notice to the requester.
+      assert.equal(await client.reimbursementPayment.count({ where: { companyId: s.companyId } }), 0);
+      assert.equal(await client.documentNumber.count({ where: { companyId: s.companyId, documentType: 'reimbursement.payment' } }), 0);
+      assert.equal(await client.outboxEvent.count({ where: { companyId: s.companyId, eventType: 'reimbursement.payment_recorded' } }), 0);
+      assert.equal((await claimRow(c)).status, 'READY_FOR_PAYMENT');
+      // Only August refuses: the instant before it and the instant after it are other, unopened months.
+      await claims.assertPaymentPeriodOpen(s.companyId, new Date('2026-07-31T16:59:59.999Z'));
+      await claims.assertPaymentPeriodOpen(s.companyId, new Date('2026-08-31T17:00:00.000Z'));
+
+      await client.accountingPeriod.update({ where: { id: august.id }, data: { status: 'REOPENED' } });
+      const detail = await record('2026-08-20T03:00:00.000Z');
+      assert.equal(detail.status, 'PAID');
+      const payment = await client.reimbursementPayment.findFirstOrThrow({ where: { companyId: s.companyId } });
+      assert.deepEqual([payment.status, payment.postingStatus, payment.paidAt.toISOString()], ['RECORDED', 'pending', '2026-08-20T03:00:00.000Z']);
+      assert.equal(await client.outboxEvent.count({ where: { companyId: s.companyId, eventType: 'reimbursement.payment_recorded' } }), 1);
+
+      assert.deepEqual(await drain.execute(), { companies: 1, candidates: 1, posted: 1, failed: 0 });
+      assert.equal((await payoutJournals(s, payment.id))[0]!.periodId, august.id, 'the payout belongs to the month the money left');
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'posted', shape: 'GENERATED:POSTED' });
+      assert.deepEqual(await books(s), { '5310-01': '75.00', '2130-01': '0.00', '1110-01': '-75.00' });
+    } finally { await retire(s); }
+  });
+
+  // Such a row can still exist: one recorded before recording refused the date (the repository is
+  // called directly here, as that older code path did).
+  it('a payout already sitting in a closed period is refused, marked for the accountant, and posts once the period is open again', async () => {
     const s = await shop();
     try {
       const c = await claim(s, ['75.00']);

@@ -387,7 +387,7 @@ export class RecordReimbursementPaymentUseCase {
     // Friendly preflight before reserving a payment number; the repository
     // repeats the same proof under the payment lock to close the race.
     requireTransactionBranchId(req.branchId);
-    await this.repo.assertClaimPaymentReady(ctx.companyId, id);
+    await this.repo.assertClaimPaymentReady(ctx.companyId, id, paidAt);
 
     const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
     const openDuplicates = await this.repo.listOpenDuplicateCandidates(ctx.companyId, id);

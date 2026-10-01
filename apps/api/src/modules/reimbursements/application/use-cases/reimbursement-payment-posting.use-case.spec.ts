@@ -2,6 +2,7 @@ import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { GenerateJournalFromSourceUseCase } from '../../../ledger/application/use-cases/journal.use-case';
+import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 
 // Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
 // detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
@@ -54,6 +55,98 @@ describe('RecordReimbursementPaymentUseCase — postingStatus lifecycle', () => 
     const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
     const detail: any = await uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
     assert.equal(detail.payments[0].postingStatus, 'pending');
+  });
+});
+
+// Review finding 5: a payout dated in a closed month was accepted at recording, and could then never
+// be posted until someone reopened that month. Recording refuses it, the way expense confirmation
+// does. The readiness check and the period rule below are the real repository's, over the two
+// tables they read; only what the use case does before and after them is faked.
+describe('RecordReimbursementPaymentUseCase — a payment date in a closed accounting period', () => {
+  const AUGUST = '2026-08-20T03:00:00.000Z';
+  const locked = (periodKey: string) => (error: any) => error.getStatus?.() === 409
+    && error.message === `reimbursement_payment_accounting_period_locked:${periodKey}`;
+
+  function harness(periodStatus: string | null, paid?: { paidAt: string }) {
+    const claim: any = {
+      id: 'rb-1', companyId: 'co-1', branchId: 'br-1', requestNo: 'RB-1', requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'Somchai',
+      amount: '500.0000', currency: 'THB', categoryKey: 'travel', reason: 'Taxi', status: paid ? 'PAID' : 'READY_FOR_PAYMENT',
+      financeReviewStatus: 'APPROVED_FOR_PAYMENT', paymentStatus: paid ? 'PAID' : 'UNPAID', paymentTotalAmount: paid ? '500.0000' : '0.0000',
+      outstandingAmount: paid ? '0.0000' : '500.0000', duplicateStatus: 'NO_MATCH', incurredDate: new Date('2026-01-01T00:00:00.000Z'),
+      createdAt: new Date('2026-01-01T00:00:00.000Z'), updatedAt: new Date('2026-01-01T00:00:00.000Z'), lines: [],
+    };
+    const payments: any[] = paid ? [{
+      id: 'pay-0', idempotencyKey: 'legacy:pay-0', status: 'RECORDED', postingStatus: 'pending', paidAmount: '500.0000',
+      currency: 'THB', paymentMethod: 'CASH', paidAt: new Date(paid.paidAt),
+    }] : [];
+    const periodReads: any[] = [];
+    const client = {
+      reimbursementRequest: { findFirst: async () => claim },
+      accountingPeriod: { findUnique: async (args: any) => { periodReads.push(args); return periodStatus ? { status: periodStatus } : null; } },
+    };
+    const repo: any = new PrismaReimbursementRepository({ client } as any, {} as any);
+    // Projection readiness runs its own queries and has its own specs.
+    repo.assertClaimProjectionsReady = async () => undefined;
+    const written: any[] = [];
+    Object.assign(repo, {
+      findRequestById: async () => ({ ...claim, approvalSteps: [], payments, duplicateCandidates: [] }),
+      findPolicy: async () => null, getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [],
+      listPaymentSlips: async () => ({}), listOpenDuplicateCandidates: async () => [],
+      recordPaymentAtomic: async (data: any) => {
+        written.push(data);
+        const payment = { id: 'pay-1', ...data, sourcePaymentRef: '{}', status: 'RECORDED', postingStatus: 'pending', createdAt: new Date(), updatedAt: new Date() };
+        return { request: { ...claim, status: 'PAID', paymentStatus: 'PAID', approvalSteps: [], payments: [payment], duplicateCandidates: [] }, payment, created: true };
+      },
+    });
+    const reserve = { execute: mock.fn(async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202608-000001' })) };
+    const commit = { execute: mock.fn(async () => undefined) };
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve as any, commit as any, fakeDetailEvidence as any);
+    const record = (paidAt: string): Promise<any> => uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt });
+    return { repo: repo as PrismaReimbursementRepository, record, reserve, commit, written, periodReads };
+  }
+
+  for (const status of ['CLOSED', 'CLOSING_REVIEW']) {
+    it(`refuses a month that is ${status} before a payment number is reserved, and writes nothing`, async () => {
+      const h = harness(status);
+      await assert.rejects(() => h.record(AUGUST), locked('2026-08'));
+      assert.deepEqual(h.periodReads, [{ where: { companyId_periodKey: { companyId: 'co-1', periodKey: '2026-08' } }, select: { status: true } }]);
+      assert.equal(h.reserve.execute.mock.callCount(), 0, 'a refused payment burns no payment number');
+      assert.deepEqual(h.written, []);
+    });
+  }
+
+  for (const status of ['OPEN', 'REOPENED', null]) {
+    it(`records in a month that is ${status ?? 'not opened yet'}`, async () => {
+      const h = harness(status);
+      const detail = await h.record(AUGUST);
+      assert.equal(detail.payments[0].postingStatus, 'pending');
+      assert.equal(h.periodReads.length, 1, 'the month was still asked about');
+      assert.equal(h.written[0].paidAt.toISOString(), AUGUST);
+      assert.equal(h.commit.execute.mock.callCount(), 1);
+    });
+  }
+
+  it('asks about the month the money left in Thai time', async () => {
+    const h = harness('CLOSED');
+    // 23:59:59.999 on 31 July in Bangkok, and the next instant: 1 August.
+    await assert.rejects(() => h.repo.assertPaymentPeriodOpen('co-1', new Date('2026-07-31T16:59:59.999Z')), locked('2026-07'));
+    await assert.rejects(() => h.repo.assertPaymentPeriodOpen('co-1', new Date('2026-07-31T17:00:00.000Z')), locked('2026-08'));
+    assert.deepEqual(h.periodReads.map((read) => read.where.companyId_periodKey.periodKey), ['2026-07', '2026-08']);
+  });
+
+  it('the readiness check reads no period when it is asked about the claim alone', async () => {
+    const h = harness('CLOSED');
+    await h.repo.assertClaimPaymentReady('co-1', 'rb-1');
+    assert.deepEqual(h.periodReads, []);
+    await assert.rejects(() => h.repo.assertClaimPaymentReady('co-1', 'rb-1', new Date(AUGUST)), locked('2026-08'));
+  });
+
+  it('a replay of the payment already recorded is answered as recorded, though its month has closed since', async () => {
+    const h = harness('CLOSED', { paidAt: AUGUST });
+    const detail = await h.record(AUGUST);
+    assert.equal(detail.payments[0].id, 'pay-0');
+    assert.deepEqual(h.periodReads, [], 'the money already left: nothing new is being dated');
+    assert.deepEqual(h.written, []);
   });
 });
 
