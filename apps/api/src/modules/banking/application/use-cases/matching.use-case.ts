@@ -100,6 +100,7 @@ export class ConfirmMatchUseCase {
       }
     }
 
+    // The match and the line's status are written together, from the matches that stand at that moment.
     const match = await this.repo.createMatch({
       companyId: ctx.companyId,
       bankAccountId: line.bankAccountId,
@@ -111,12 +112,6 @@ export class ConfirmMatchUseCase {
       currency: input.currency,
       overrideReason: input.overrideReason,
     });
-
-    const newStatus = calculateStatementLineMatchStatus({
-      statementLineAmount: line.signedAmount,
-      confirmedAllocations: [...confirmedMatches.map((m) => m.allocatedAmount), input.allocatedAmount],
-    });
-    await this.repo.updateStatementLineStatus(ctx.companyId, input.statementLineId, newStatus);
 
     void this.outbox.append('banking.statement_line.matched', 'bank_statement_line', input.statementLineId, {
       companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,

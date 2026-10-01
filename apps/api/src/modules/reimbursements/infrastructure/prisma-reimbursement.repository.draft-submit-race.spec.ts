@@ -1126,8 +1126,8 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
    * after that transaction's first statement, when its snapshot is already taken. This is the order
    * a lock alone cannot fix: the other writer commits first, and the payment still reads the past.
    */
-  function interleavedRepo(between: () => Promise<unknown>) {
-    const client = new Proxy(clients[0]!, { get(target, property) {
+  function interleavedClient(between: () => Promise<unknown>) {
+    return new Proxy(clients[0]!, { get(target, property) {
       if (property !== '$transaction') return Reflect.get(target, property);
       return (work: (tx: any) => Promise<unknown>, options: any) => target.$transaction((tx: any) => {
         let fired = false;
@@ -1144,7 +1144,9 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
         } }));
       }, { ...options, timeout: 20_000 });
     } });
-    return new PrismaReimbursementRepository({ client } as any, new PrismaDocumentSequenceRepository({ client: clients[0]! } as any));
+  }
+  function interleavedRepo(between: () => Promise<unknown>) {
+    return new PrismaReimbursementRepository({ client: interleavedClient(between) } as any, new PrismaDocumentSequenceRepository({ client: clients[0]! } as any));
   }
   const paymentChanged = (error: any) => error?.getStatus?.() === 409 && error.message === 'reimbursement_payment_state_changed';
 
@@ -1391,6 +1393,106 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
       const voided = await voidPayment(claim.requestId, paid.payment.id);
       assert.deepEqual([voided.status, voided.paymentStatus], ['READY_FOR_PAYMENT', 'UNPAID']);
       assert.deepEqual([await bank.matches(), await bank.status()], [[[paid.payment.id, 'VOIDED']], 'UNMATCHED']);
+    } finally {
+      await bank.remove();
+    }
+  });
+
+  // ---- The bank confirm reads the payment it matches (review 2026-10-01) ----
+  // The confirm stored its source unread. It now needs the claim payment RECORDED, read under the lock the
+  // void takes, in a serializable transaction like the void's: whichever of the two read the other's past
+  // is rolled back by PostgreSQL and runs again.
+
+  /** Whether a transaction is queued for the lock every writer of this claim's payments takes, before `other` settles. */
+  async function queuedForPaymentLock(requestId: string, other: Promise<unknown>): Promise<boolean> {
+    const key = `${companyId}:${requestId}:reimbursement-payment`;
+    let settled = false;
+    void other.then(() => { settled = true; });
+    for (let attempt = 0; attempt < 200 && !settled; attempt += 1) {
+      // An advisory lock on one bigint key shows the key's low half as `objid`.
+      const [row] = await clients[1]!.$queryRaw<{ waiting: bigint }[]>`
+        SELECT count(*) AS waiting FROM pg_locks
+        WHERE locktype = 'advisory' AND NOT granted AND objid::bigint = (hashtext(${key})::bigint & 4294967295)`;
+      if (Number(row!.waiting) > 0) return true;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return false;
+  }
+  const paymentNotRecorded = (error: any) => error?.getStatus?.() === 409 && errorCode(error) === 'bank_match_payment_not_recorded';
+
+  it('refuses to match a bank line to a claim payment voided since the bank screen listed it', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const paid = await cashPayment(claim.requestId, 'stale-candidate');
+    const bank = await bankLine();
+    try {
+      // The bank screen is open and offers the payment; a few minutes later the payment is voided on the claim's page.
+      assert.equal((await matchingScreen(bank.accountId)).candidates.some((candidate) => candidate.sourceId === paid.payment.id), true);
+      await voidPayment(claim.requestId, paid.payment.id);
+      // Before: the match was confirmed, and the line read matched to a payment that no longer stands.
+      await assert.rejects(() => confirmMatch(bank.lineId, paid.payment.id), paymentNotRecorded);
+      assert.deepEqual([await bank.matches(), await bank.status()], [[], 'UNMATCHED']);
+      // A payment this company does not have is refused the same way: the id alone proves nothing.
+      await assert.rejects(() => confirmMatch(bank.lineId, `${TAG}-no-such-payment`), paymentNotRecorded);
+      assert.deepEqual([await bank.matches(), await bank.status()], [[], 'UNMATCHED']);
+    } finally {
+      await bank.remove();
+    }
+  });
+
+  it('queues a confirm behind a void in flight, and refuses it once the void has committed', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const paid = await cashPayment(claim.requestId, 'confirm-behind-void');
+    const bank = await bankLine();
+    try {
+      let confirming: Promise<unknown> | undefined;
+      let queued = false;
+      // The void holds the payment lock and has taken its snapshot when the bank screen confirms the match.
+      const racing = interleavedRepo(async () => {
+        confirming = confirmMatch(bank.lineId, paid.payment.id).then(() => 'confirmed', (error) => error);
+        queued = await queuedForPaymentLock(claim.requestId, confirming);
+      });
+      const voided = await racing.voidPaymentTrueReversal(companyId, claim.requestId, paid.payment.id, `${TAG}-finance`, 'โอนผิดบัญชี');
+      assert.equal(voided.payment.status, 'VOIDED');
+      // Before: the confirm took no lock and read nothing, so it committed in the middle of the void, which
+      // had already looked for matches: the line stayed matched to the voided payment.
+      assert.equal(queued, true, 'the confirm waits for the lock the void holds');
+      assert.equal(paymentNotRecorded(await confirming), true, `refused, not ${String(await confirming)}`);
+      assert.deepEqual([await bank.matches(), await bank.status()], [[], 'UNMATCHED']);
+    } finally {
+      await bank.remove();
+    }
+  });
+
+  it('queues a void behind a confirm in flight, and the void then undoes the match that confirm made', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const paid = await cashPayment(claim.requestId, 'void-behind-confirm');
+    const bank = await bankLine();
+    const db = clients[0]!;
+    try {
+      let voiding: Promise<unknown> | undefined;
+      let queued = false;
+      const auditRequestId = `${TAG}-void-behind-confirm`;
+      // The confirm has read the payment and holds its lock when the claim's page voids it, on another connection.
+      const interleaved = new PrismaBankingRepository({ client: interleavedClient(async () => {
+        voiding = repos[1]!.voidPaymentTrueReversal(companyId, claim.requestId, paid.payment.id, `${TAG}-finance`, 'โอนผิดบัญชี', undefined, auditRequestId)
+          .then((result) => result.payment.status, (error) => error);
+        queued = await queuedForPaymentLock(claim.requestId, voiding);
+      }) } as any);
+      const match = await new ConfirmMatchUseCase(interleaved, quiet, quiet).execute(financeCtx(), {
+        statementLineId: bank.lineId, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paid.payment.id, allocatedAmount: '100.0000', currency: 'THB',
+      });
+      // Before: the confirm ran no transaction and took no lock, so nothing could queue behind it.
+      assert.ok(voiding, 'the confirm reads the payment in a transaction, under the payment lock');
+      assert.equal(queued, true, 'the void waits for the lock the confirm holds');
+      // The void had taken its snapshot before the confirm committed, so it could not see the match. PostgreSQL
+      // rolls that attempt back, and the attempt after it finds the match and undoes it.
+      assert.equal(await voiding, 'VOIDED');
+      assert.deepEqual([await bank.matches(), await bank.status()], [[[paid.payment.id, 'VOIDED']], 'UNMATCHED']);
+      assert.deepEqual((await db.auditLog.findMany({ where: { companyId, requestId: auditRequestId }, orderBy: { createdAt: 'asc' } }))
+        .map((row) => [row.action, row.targetId]), [['reimbursement.payment.void', paid.payment.id], ['bank.match.void', match.id]]);
     } finally {
       await bank.remove();
     }
