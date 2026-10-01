@@ -59,7 +59,7 @@ RB-35 (ผู้ดูแลใส่ผู้แนะนำให้ร้า�
 ### Test ที่ต้องเพิ่ม
 
 1. ระดับ guard ใน `apps/api/src/modules/auth/auth.guard.spec.ts` (CI รันอยู่แล้ว): ผู้เรียกที่มี membership เฉพาะบริษัทแพลตฟอร์มผ่านทั้งสองเส้นทาง
-2. การตรวจรวมใน `apps/api/src/common/pipes/body-validation-coverage.spec.ts` หรือไฟล์ที่ไล่ทุก controller อยู่แล้ว: ไม่มีเส้นทางใต้ `system/` ที่มี parameter ชื่อ `companyId`
+2. การตรวจรวมใน `apps/api/src/common/pipes/body-validation-coverage.spec.ts` หรือไฟล์ที่ไล่ทุก controller อยู่แล้ว: ไม่มีเส้นทางใต้ `system/` หรือ `sales/` ที่มี parameter ชื่อ `companyId`
 3. กรณีใช้งานของสองคำสั่งใน `apps/api/src/modules/sales-console/sales-console.pg.spec.ts` (CI รันด้วย Postgres จริง): แก้ผู้แนะนำสำเร็จ และตรวจธงแล้วยอดเริ่มนับ
 
 ### ผลข้างเคียงที่ต้องยืนยันก่อน merge
