@@ -46,6 +46,8 @@ describe('user guide shortcuts', () => {
       '/companies/co/reimbursements',
       '/companies/co/reimbursements?tab=mine',
       '/companies/co/reimbursements/new',
+      // Whoever can file a claim sets where it is paid back (the page asks for the same right).
+      '/companies/co/reimbursements/payout-account',
     ]);
     assert.ok(!hrefs.some((href) => href.includes('tab=policy')));
   });
@@ -61,7 +63,7 @@ describe('user guide shortcuts', () => {
     const guide = buildReimbursementGuide('co', [], []);
     assert.deepEqual(links(guide), []);
     // The manual itself still renders in full — only the buttons go away.
-    assert.equal(guide.sections.length, 13);
+    assert.equal(guide.sections.length, 21);
   });
 
   it('gates the substitute-receipt shortcuts on the same keys as the sidebar', () => {
