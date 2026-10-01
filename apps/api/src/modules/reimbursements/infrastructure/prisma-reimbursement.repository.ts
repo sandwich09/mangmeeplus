@@ -10,9 +10,12 @@ import { lockPlanTermCompany } from '../../system-partner-management/application
 import { isDeepStrictEqual } from 'node:util';
 import { lockFundingEvidence } from '../../expenses/infrastructure/substitute-funding.guard';
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import type { ReimbursementClaimSignatureRole, ReimbursementRequestStatus } from '@watchdog-bms/contracts';
+import { reimbursementHubBucket } from '@watchdog-bms/contracts';
+import type { ReimbursementClaimSignatureRole, ReimbursementHubBucket, ReimbursementRequestStatus } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
-import { Prisma } from '../../../generated/prisma/client';
+import {
+  Prisma, ReimbursementFinanceReviewStatus as FinanceReviewStatuses, ReimbursementRequestStatus as RequestStatuses,
+} from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import type { ReservedDocumentNumberRecord } from '../../data-model-core/domain/models/document-sequence.model';
 import { branchScopeWhere, isBranchInScope, resolveBranchIds, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
@@ -68,6 +71,7 @@ import {
   validateRequestFields,
   deriveHeaderFromLines,
   computeReceiptRequirement,
+  currentDesk,
 } from '../domain/logic/reimbursement.logic';
 import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
@@ -126,6 +130,33 @@ export type ListRequestsWhere = {
   skip?: number;
   take?: number;
 };
+
+/** The claims of a list scope that share the fields the hub counts on. */
+export type ReimbursementRequestGroup = {
+  status: ReimbursementRequestStatus;
+  financeReviewStatus: string;
+  receiptRequirementStatus: string;
+  count: number;
+  amount: string;
+};
+
+/** The hub bucket of a status pair: the desk the API resolves for it decides, exactly as a row of the list prints it. */
+export function hubBucketOfStatus(status: ReimbursementRequestStatus, financeReviewStatus: string): ReimbursementHubBucket {
+  return reimbursementHubBucket({ status, financeReviewStatus, currentDesk: currentDesk({ status, financeReviewStatus: financeReviewStatus as any }) });
+}
+
+/**
+ * A hub bucket as a query: the bucket rule asked of every status pair the database can hold. Derived, not
+ * written out a second time, so the list filter cannot drift from the counts. An unknown bucket matches nothing.
+ */
+export function hubBucketWhere(bucket: string): Prisma.ReimbursementRequestWhereInput {
+  return {
+    OR: Object.values(RequestStatuses).flatMap((status) => {
+      const finance = Object.values(FinanceReviewStatuses).filter((financeReviewStatus) => hubBucketOfStatus(status, financeReviewStatus) === bucket);
+      return finance.length > 0 ? [{ status, financeReviewStatus: { in: finance } }] : [];
+    }),
+  };
+}
 
 /** View-only actor graph. Linked raw ids are resolved before this predicate is built. */
 export function reimbursementRelatedToUserWhere(
@@ -2272,25 +2303,68 @@ export class PrismaReimbursementRepository {
     if (changed.count !== 1) throw new NotFoundException('Internal note not found');
   }
 
-  async listRequests(where: ListRequestsWhere): Promise<ReimbursementRequestRecord[]> {
+  /** The list predicate: company, requester, status filters, branch scope, the related-records relation and the search. */
+  private async requestListWhere(where: ListRequestsWhere): Promise<Prisma.ReimbursementRequestWhereInput & { AND: Prisma.ReimbursementRequestWhereInput[] }> {
     const predicates: Prisma.ReimbursementRequestWhereInput[] = [
       branchScopeWhere(where.scopes ?? {}) as Prisma.ReimbursementRequestWhereInput,
     ];
     if (where.relatedUserId) {
       predicates.push(await this.relatedRequestPredicate(where.companyId, where.relatedUserId, where.scopes));
     }
+    return {
+      companyId: where.companyId,
+      requesterUserId: where.requesterUserId,
+      status: (where.status as any) ?? (where.statuses ? { in: where.statuses as any } : undefined),
+      paymentStatus: where.paymentStatus as any,
+      AND: [...predicates, ...(where.search ? [{ OR: [
+        { requestNo: { contains: where.search, mode: 'insensitive' as const } },
+        { title: { contains: where.search, mode: 'insensitive' as const } },
+        { reason: { contains: where.search, mode: 'insensitive' as const } },
+      ] }] : [])],
+    };
+  }
+
+  /**
+   * One page of a list, read with LIMIT and OFFSET in the database, and the whole scope grouped by the
+   * fields the hub counts on. Two reads over one predicate: the page adds only the bucket to it, so the
+   * groups of a bucket add up to exactly the claims its pages hold.
+   */
+  async listRequestPage(where: ListRequestsWhere & { bucket?: string; skip: number; take: number }): Promise<{
+    rows: ReimbursementRequestRecord[];
+    groups: ReimbursementRequestGroup[];
+  }> {
+    const scope = await this.requestListWhere(where);
+    const [rows, groups] = await Promise.all([
+      this.prisma.client.reimbursementRequest.findMany({
+        where: where.bucket === undefined ? scope : { ...scope, AND: [...scope.AND, hubBucketWhere(where.bucket)] },
+        include: { _count: { select: { lines: true } } },
+        // The same stable order as `listRequests`: OFFSET pages need every row to keep its place.
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: where.skip,
+        take: where.take,
+      }),
+      this.prisma.client.reimbursementRequest.groupBy({
+        by: ['status', 'financeReviewStatus', 'receiptRequirementStatus'],
+        where: scope,
+        _count: { _all: true },
+        _sum: { amount: true },
+      }),
+    ]);
+    return {
+      rows: rows.map((row) => this.toRequest(row)),
+      groups: groups.map((group) => ({
+        status: group.status,
+        financeReviewStatus: group.financeReviewStatus,
+        receiptRequirementStatus: group.receiptRequirementStatus,
+        count: group._count._all,
+        amount: dec(group._sum.amount),
+      })),
+    };
+  }
+
+  async listRequests(where: ListRequestsWhere): Promise<ReimbursementRequestRecord[]> {
     const rows = await this.prisma.client.reimbursementRequest.findMany({
-      where: {
-        companyId: where.companyId,
-        requesterUserId: where.requesterUserId,
-        status: (where.status as any) ?? (where.statuses ? { in: where.statuses as any } : undefined),
-        paymentStatus: where.paymentStatus as any,
-        AND: [...predicates, ...(where.search ? [{ OR: [
-          { requestNo: { contains: where.search, mode: 'insensitive' as const } },
-          { title: { contains: where.search, mode: 'insensitive' as const } },
-          { reason: { contains: where.search, mode: 'insensitive' as const } },
-        ] }] : [])],
-      },
+      where: await this.requestListWhere(where),
       // Queues show a line count, not the lines themselves — keep the list query cheap.
       include: {
         _count: { select: { lines: true } },

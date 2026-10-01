@@ -425,6 +425,16 @@ export function reimbursementHubBucket(claim: {
   return HUB_BUCKET_BY_STATUS[claim.status as ReimbursementRequestStatus] ?? 'closed';
 }
 
+/** The whole list scope as the server counted it: what the hub's cards and chips print. */
+export type ReimbursementHubSummary = {
+  /** Claims per bucket, and `all` for the scope. The buckets add up to `all`. */
+  counts: Record<'all' | ReimbursementHubBucket, number>;
+  /** Sum of the claimed amounts of the scope. */
+  totalAmount: string;
+  /** Drafts that still owe a receipt before they can be submitted. */
+  blockedDraftCount: number;
+};
+
 // ---- Request ----
 
 export type ReimbursementRequestSummary = {
@@ -650,15 +660,20 @@ export type ListReimbursementsFilter = {
   status?: ReimbursementRequestStatus;
   paymentStatus?: ReimbursementPaymentStatus;
   requesterUserId?: string;
+  /** Only the claims of one hub bucket. An unknown bucket matches nothing. */
+  bucket?: ReimbursementHubBucket;
   page?: number;
   pageSize?: number;
 };
 
 export type PaginatedReimbursements = {
   items: ReimbursementRequestSummary[];
+  /** How many claims the list holds over all its pages. With `bucket`, that is `hub.counts[bucket]`. */
   total: number;
   page: number;
   pageSize: number;
+  /** The scope counted per bucket, whatever `bucket` or page was asked for. */
+  hub: ReimbursementHubSummary;
 };
 
 // ---- Queue items ----

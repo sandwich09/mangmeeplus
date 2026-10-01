@@ -11,6 +11,7 @@ import type {
   VoidReimbursementPaymentInput,
   ReimbursementRequestStatus,
   ReimbursementPaymentStatus,
+  ReimbursementHubBucket,
 } from '@watchdog-bms/contracts';
 import {
   AttachPaymentSlipDto,
@@ -191,9 +192,10 @@ export class ReimbursementController {
     @Query('requesterUserId') requesterUserId?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('bucket') bucket?: ReimbursementHubBucket,
   ) {
     const filter: ListReimbursementsFilter = {
-      scope, status, paymentStatus, requesterUserId,
+      scope, status, paymentStatus, requesterUserId, bucket,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     };

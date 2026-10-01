@@ -157,7 +157,7 @@ describe('reimbursement related-view ABAC', () => {
     let received: any;
     const useCase = new ListReimbursementsUseCase({
       findPolicy: async () => null,
-      listRequests: async (where: any) => { received = where; return []; },
+      listRequestPage: async (where: any) => { received = where; return { rows: [], groups: [] }; },
       findPendingApprovalSteps: async () => [],
       getUserDisplayNames: async () => ({}),
     } as any);

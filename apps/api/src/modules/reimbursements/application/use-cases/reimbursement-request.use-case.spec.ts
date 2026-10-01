@@ -5,6 +5,7 @@ import {
   CreateReimbursementDraftUseCase,
   CancelReimbursementUseCase,
   GetReimbursementDetailUseCase,
+  ListReimbursementsUseCase,
   ReopenRejectedReimbursementUseCase,
   UpdateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
@@ -12,7 +13,8 @@ import {
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
 import { RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
-import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere } from '../../infrastructure/prisma-reimbursement.repository';
+import { reimbursementHubBucket } from '@watchdog-bms/contracts';
 import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { PLATFORM_ROLE_KEYS, ROLE_GRANTS } from '../../../auth/permission-registry';
@@ -1045,6 +1047,166 @@ describe('claim detail paymentDesk', () => {
       if (!('status' in overrides) || overrides.status === 'PARTIALLY_PAID') assert.deepEqual(detail.currentDesk, { kind: 'PAYMENT' });
     }
     assert.deepEqual(asked, []);
+  });
+});
+
+// Review follow-up 2026-10-01 (spec §18.1, acceptance I1). The list pages in the database, and the hub's counts are
+// read with the list's own predicate: a card's number is the rows its filter shows over every page, and the
+// buckets add up to ทั้งหมด.
+describe('list paging and hub buckets', () => {
+  const STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'CANCELLED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'VOIDED'];
+  const FINANCE = ['NOT_REQUIRED', 'PENDING', 'NEEDS_INFO', 'APPROVED_FOR_PAYMENT', 'BLOCKED'];
+  const BUCKETS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
+  const at = (second: number) => new Date(Date.UTC(2026, 8, 1, 0, 0, second));
+  /** One claim for every status pair the database can hold, twice over for the live ones, so no two buckets are the same size. */
+  const claims = STATUSES.flatMap((status, s) => FINANCE.flatMap((financeReviewStatus, f) =>
+    Array.from({ length: status === 'READY_FOR_PAYMENT' || status === 'DRAFT' ? 2 : 1 }, (_, copy) => ({
+      id: `rb-${status}-${financeReviewStatus}-${copy}`, companyId: 'co-1', branchId: 'b1', requesterUserId: copy ? 'staff-2' : 'staff-1',
+      requesterDisplayNameSnapshot: 'ผู้เบิก', reason: 'แท็กซี่', categoryKey: 'travel', amount: `${(s + 1) * 10 + f}.5000`, currency: 'THB',
+      incurredDate: at(0), status, financeReviewStatus, paymentStatus: 'UNPAID', duplicateStatus: 'NO_MATCH',
+      receiptRequirementStatus: f % 2 ? 'REQUIRED' : 'ATTACHED', postingStatus: 'pending', paymentTotalAmount: '0.0000',
+      outstandingAmount: '0.0000', createdByUserId: 'staff-1', createdAt: at(s * 10 + f * 2 + copy), updatedAt: at(0),
+    }))));
+
+  /** The claims table in memory, answering the repository's own `where`, order, OFFSET and LIMIT, and its GROUP BY. */
+  function database(rows: any[] = claims) {
+    const reads: Array<{ skip?: number; take?: number }> = [];
+    const matches = (row: any, where: any): boolean => Object.entries(where ?? {}).every(([field, want]: [string, any]) => {
+      if (want === undefined) return true;
+      if (field === 'AND') return want.every((part: any) => matches(row, part));
+      if (field === 'OR') return want.some((part: any) => matches(row, part));
+      if (want !== null && typeof want === 'object') return want.in.includes(row[field]);
+      return row[field] === want;
+    });
+    const client = {
+      reimbursementRequest: {
+        findMany: async ({ where, skip, take }: any) => {
+          reads.push({ skip, take });
+          const found = rows.filter((row) => matches(row, where))
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1));
+          return found.slice(skip ?? 0, take === undefined ? undefined : (skip ?? 0) + take).map((row) => ({ ...row, _count: { lines: 1 } }));
+        },
+        groupBy: async ({ by, where }: any) => {
+          const groups = new Map<string, any>();
+          for (const row of rows.filter((candidate) => matches(candidate, where))) {
+            const key = by.map((field: string) => row[field]).join('|');
+            const group = groups.get(key) ?? { ...Object.fromEntries(by.map((field: string) => [field, row[field]])), _count: { _all: 0 }, _sum: { amount: 0 } };
+            group._count._all += 1;
+            group._sum.amount += Number(row.amount);
+            groups.set(key, group);
+          }
+          return [...groups.values()];
+        },
+      },
+      reimbursementPolicy: { findMany: async () => [] },
+      reimbursementApprovalStep: { findMany: async () => [] },
+      companyMembership: { findMany: async () => [] },
+    };
+    return { reads, list: new ListReimbursementsUseCase(new PrismaReimbursementRepository({ client } as any, {} as any)) };
+  }
+  const reader = ctx({ permissions: ['reimbursement.read'] });
+  /** Every page of one list, the way a client walks it. */
+  async function walk(list: ListReimbursementsUseCase, filter: Record<string, unknown>, pageSize: number) {
+    const pages: any[] = [];
+    for (let page = 1; ; page += 1) {
+      const answer = await list.execute(reader, { ...filter, page, pageSize });
+      pages.push(answer);
+      if (answer.items.length < answer.pageSize || page * answer.pageSize >= answer.total) return pages;
+    }
+  }
+
+  it('reads one page from the database with OFFSET and LIMIT, and answers the real total', async () => {
+    const { list, reads } = database();
+    const first = await list.execute(reader, { page: 1, pageSize: 7 });
+    const third = await list.execute(reader, { page: 3, pageSize: 7 });
+    // Before: every call read the whole scope (no skip, no take) and sliced it in memory.
+    assert.deepEqual(reads, [{ skip: 0, take: 7 }, { skip: 14, take: 7 }]);
+    assert.deepEqual([first.items.length, first.total, first.page, first.pageSize], [7, claims.length, 1, 7]);
+    assert.equal(third.items.length, 7);
+    // Newest first, with the id as the tie-break: the pages are slices of one stable order.
+    const order = [...claims].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1)).map((row) => row.id);
+    assert.deepEqual(first.items.map((item) => item.id), order.slice(0, 7));
+    assert.deepEqual(third.items.map((item) => item.id), order.slice(14, 21));
+    // The page size is capped at 100 and defaults to 20; a page number that is no number is page 1.
+    assert.equal((await list.execute(reader, { pageSize: 500 })).pageSize, 100);
+    assert.equal((await list.execute(reader, {})).items.length, 20);
+    for (const page of [0, -3, Number.NaN, Number.POSITIVE_INFINITY, 1.9]) {
+      assert.deepEqual((await list.execute(reader, { page, pageSize: 7 })).items.map((item) => item.id), order.slice(0, 7), String(page));
+    }
+    assert.deepEqual(reads.slice(-1), [{ skip: 0, take: 7 }]);
+    // Past the end: an empty page with the same total, not an error.
+    const beyond = await list.execute(reader, { page: 99, pageSize: 7 });
+    assert.deepEqual([beyond.items.length, beyond.total], [0, claims.length]);
+  });
+
+  it('counts each bucket as the rows its filter returns over every page, and the buckets add up to ทั้งหมด', async () => {
+    const { list } = database();
+    const all = await walk(list, {}, 7);
+    const hub = all[0].hub;
+    assert.equal(all.flatMap((answer) => answer.items).length, claims.length);
+    assert.equal(hub.counts.all, claims.length);
+    assert.equal(all[0].total, hub.counts.all);
+    assert.equal(BUCKETS.reduce((sum, bucket) => sum + hub.counts[bucket], 0), hub.counts.all);
+    assert.equal(new Set(BUCKETS.map((bucket) => hub.counts[bucket])).size, BUCKETS.length, 'five different sizes, so a swapped bucket cannot pass');
+
+    const seen: string[] = [];
+    for (const bucket of BUCKETS) {
+      const pages = await walk(list, { bucket }, 7);
+      const items = pages.flatMap((answer) => answer.items);
+      // The card's number is the list's total and the rows of all its pages.
+      assert.equal(items.length, hub.counts[bucket], bucket);
+      for (const answer of pages) {
+        assert.equal(answer.total, hub.counts[bucket], bucket);
+        // The cards count the whole scope whatever bucket or page was asked for.
+        assert.deepEqual(answer.hub, hub, bucket);
+      }
+      // Every row belongs there by the rule its own "อยู่ที่ …" desk follows.
+      for (const item of items) assert.equal(reimbursementHubBucket(item), bucket, item.id);
+      seen.push(...items.map((item) => item.id));
+    }
+    // No claim in two buckets, none in no bucket.
+    assert.deepEqual([...seen].sort(), claims.map((row) => row.id).sort());
+    // What the cards add up besides the counts: the claimed amounts, and the drafts that still owe a receipt.
+    assert.equal(Number(hub.totalAmount), claims.reduce((sum, row) => sum + Number(row.amount), 0));
+    assert.equal(hub.blockedDraftCount, claims.filter((row) => row.status === 'DRAFT' && row.receiptRequirementStatus === 'REQUIRED').length);
+    assert.ok(hub.blockedDraftCount > 0);
+  });
+
+  it('places every status pair by its desk, in one bucket, with the same answer for the count and for the filter', () => {
+    const expected: Record<string, string> = {
+      DRAFT: 'draft', PENDING_APPROVAL: 'review', FINANCE_REVIEW: 'review', READY_FOR_PAYMENT: 'payment', PARTIALLY_PAID: 'payment',
+      PAID: 'paid', REJECTED: 'closed', CANCELLED: 'closed', VOIDED: 'closed',
+    };
+    for (const status of STATUSES) {
+      for (const financeReviewStatus of FINANCE) {
+        // Approved and still being routed on: to finance review while that is pending, otherwise to payment.
+        const bucket = status === 'APPROVED' ? (financeReviewStatus === 'PENDING' ? 'review' : 'payment') : expected[status];
+        assert.equal(hubBucketOfStatus(status as any, financeReviewStatus), bucket, `${status} ${financeReviewStatus}`);
+        // The filter is the count's rule asked of every pair: a pair is in a bucket's query exactly when it is counted there.
+        for (const candidate of BUCKETS) {
+          const inQuery = (hubBucketWhere(candidate).OR as any[]).some((part) => part.status === status && part.financeReviewStatus.in.includes(financeReviewStatus));
+          assert.equal(inQuery, candidate === bucket, `${status} ${financeReviewStatus} in ${candidate}`);
+        }
+      }
+    }
+    // An unknown bucket matches nothing instead of everything.
+    assert.deepEqual(hubBucketWhere('archived'), { OR: [] });
+  });
+
+  it('keeps the counts inside the caller\'s scope, and answers an unknown bucket with an empty list', async () => {
+    const { list } = database();
+    // Own claims only: the cards count what this person may see, never the company.
+    const own = await list.execute(ctx({ userId: 'staff-2', permissions: ['reimbursement.read_own'] }), { pageSize: 100 });
+    const mine = claims.filter((row) => row.requesterUserId === 'staff-2');
+    assert.ok(mine.length > 0 && mine.length < claims.length);
+    assert.deepEqual([own.total, own.hub.counts.all, own.items.length], [mine.length, mine.length, mine.length]);
+    assert.deepEqual(own.hub.counts, { all: mine.length, draft: 5, review: 0, payment: 5, paid: 0, closed: 0 });
+    const unknown = await list.execute(reader, { bucket: 'archived' as any });
+    assert.deepEqual([unknown.items.length, unknown.total, unknown.hub.counts.all], [0, 0, claims.length]);
+    // An empty scope: zeros everywhere, and a total amount that is still a number.
+    const empty = await database([]).list.execute(reader, {});
+    assert.deepEqual(empty.hub, { counts: { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
+    assert.deepEqual([empty.items.length, empty.total], [0, 0]);
   });
 });
 
