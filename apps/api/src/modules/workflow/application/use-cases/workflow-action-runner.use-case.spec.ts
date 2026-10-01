@@ -1,6 +1,9 @@
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { ExecuteWorkflowActionUseCase } from './workflow-action-runner.use-case';
+import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
+import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
+import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { WORKFLOW_TEMPLATE_CATALOG, WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG } from '../../domain/workflow-template-catalog';
 import { ruleMatchesEventType } from '../../domain/logic/workflow-event-match.logic';
 
@@ -56,6 +59,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       updateActionRun: mock.fn(async () => undefined),
       findUserIdsByRoles: mock.fn(async () => []),
       findUserIdsByPermissions: mock.fn(async () => ['u_submitter', 'u_first_approver', 'u_second', 'u_third']),
+      findSourceBranchId: mock.fn(async () => null),
     };
     notify = { execute: mock.fn(async () => ({ skipped: false, event: { id: 'ne_1' } })) };
   });
@@ -63,7 +67,14 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
   // Shadow probe double: SEND_NOTIFICATION never reaches the CALL_WEBHOOK sweep, so a probe that
   // is never touched is the faithful stand-in here.
   const shadow = { startSweep: () => { throw new Error('no shadow sweep on this action type'); } } as any;
-  const make = () => new ExecuteWorkflowActionUseCase(repo, {} as any, {} as any, notify, {} as any, shadow);
+  // Every holder in these tests can act; who cannot is the subject of the B12 block below.
+  const access = {
+    resolveAccess: async () => ({
+      permissions: ['procurement.vendor_bill.approve', 'reimbursement.payment.record', 'reimbursement.finance_review'],
+      scopes: {},
+    }),
+  } as any;
+  const make = () => new ExecuteWorkflowActionUseCase(repo, {} as any, {} as any, notify, {} as any, shadow, access);
 
   it('notifies permission holders minus the submitter and recorded approvers (catalog config)', async () => {
     const cfg = secondApprovalTemplate.defaultActionJson[0]!.configJson;
@@ -293,6 +304,145 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 });
 
 /**
+ * Audit B12: a recipient picked by permission must be able to act on THIS record, or the notice is
+ * a link that answers 403. The REAL permission resolver decides here (over membership fixtures),
+ * so the three rules it applies (ACTIVE role, entitlement filter, branch scope) are the three
+ * rules these tests prove, not a restatement of them.
+ */
+describe('SEND_NOTIFICATION recipients picked by permission can act on the record (audit B12)', () => {
+  const PAY = 'reimbursement.payment.record';
+  const APPROVE_BILL = 'procurement.vendor_bill.approve';
+  const role = (status: string, permission: string) => ({
+    role: { key: 'CUSTOM_PAYER', status, permissions: [{ permission: { key: permission } }] },
+  });
+  const member = (extra: Record<string, unknown> = {}) => ({
+    id: 'm', companyId: 'co_1', branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null,
+    roles: [role('ACTIVE', PAY)], branchScopes: [], company: { status: 'ACTIVE' }, ...extra,
+  });
+
+  function harness(opts: {
+    memberships: Record<string, unknown>;
+    sourceBranchId?: string | null;
+    entitlements?: Array<{ featureKey: string; enabled: boolean }>;
+  }) {
+    const updates: any[] = [];
+    const sent: any[] = [];
+    const repo = {
+      updateActionRun: async (_id: string, data: any) => { updates.push(data); },
+      findUserIdsByRoles: async () => [],
+      // The query's own rule: every active member holding the right through ANY role.
+      findUserIdsByPermissions: async () => Object.keys(opts.memberships),
+      findSourceBranchId: mock.fn(async () => opts.sourceBranchId ?? null),
+    } as any;
+    const prisma = {
+      client: {
+        companyMembership: { findFirst: async ({ where }: any) => opts.memberships[where.userId] ?? null },
+        // Every branch named in a scope is ACTIVE here; a closed branch is the resolver's own spec.
+        branch: { findMany: async ({ where }: any) => (where.id.in as string[]).map((id) => ({ id })) },
+        companyFeatureEntitlement: { findMany: async () => opts.entitlements ?? [] },
+      },
+    } as any;
+    const access = new PermissionResolverService(new PrismaPermissionResolverRepository(prisma));
+    const notify = { execute: async (input: any) => { sent.push(input); return { skipped: false, event: { id: 'ne_1' } }; } } as any;
+    const shadow = { startSweep: () => { throw new Error('no shadow sweep on this action type'); } } as any;
+    return {
+      useCase: new ExecuteWorkflowActionUseCase(repo, {} as any, {} as any, notify, {} as any, shadow, access),
+      repo, sent, updates,
+    };
+  }
+
+  const readyToPay = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_ready_for_payment')!;
+  const claimContext = (): any => ({
+    companyId: 'co_1', ruleName: 'Reimbursement ready for payment', sourceModule: 'reimbursements',
+    sourceType: 'reimbursement_request', sourceId: 'rb_1',
+    payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', actorUserId: 'u_someone_else' },
+    siblingActions: [],
+  });
+
+  it('notifies neither a member outside the claim branch nor a member whose paying role is inactive', async () => {
+    const h = harness({
+      sourceBranchId: 'br_claim',
+      memberships: {
+        u_all_branches: member(),
+        u_claim_branch_only: member({ branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'br_claim' }),
+        u_other_branch: member({ branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'br_other' }] }),
+        u_inactive_role: member({ roles: [role('DISABLED', PAY)] }),
+      },
+    });
+
+    await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), claimContext());
+
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_all_branches', 'u_claim_branch_only']);
+    assert.deepEqual((h.repo.findSourceBranchId.mock.calls[0] as any).arguments, ['co_1', 'reimbursement_request', 'rb_1']);
+    assert.equal(h.updates.at(-1)?.status, 'SUCCEEDED');
+  });
+
+  it('keeps a branch-limited payer for a company-central claim, exactly as the pay endpoint does', async () => {
+    const h = harness({
+      sourceBranchId: null,
+      memberships: { u_other_branch: member({ branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'br_other' }] }) },
+    });
+
+    await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), claimContext());
+
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_other_branch']);
+  });
+
+  it('drops a holder whose right is switched off by the company entitlement', async () => {
+    const billContext = context(approvalRecordedPayload);
+    const cfg = secondApprovalTemplate.defaultActionJson[0]!.configJson;
+    const memberships = { u_second: member({ roles: [role('ACTIVE', APPROVE_BILL)] }) };
+
+    // No entitlement rows at all is the legacy fail-open company: the right stands.
+    const open = harness({ memberships });
+    await open.useCase.execute(actionRun(cfg), billContext);
+    assert.deepEqual(open.sent[0]?.recipientUserIds, ['u_second']);
+
+    // Rows exist and procurement is not among them: the resolver strips the right, so nobody is
+    // left to tell. Nothing resolving at all stays the retryable failure it always was.
+    const closed = harness({ memberships, entitlements: [{ featureKey: 'expenses', enabled: true }] });
+    await closed.useCase.execute(actionRun(cfg), billContext);
+    assert.equal(closed.sent.length, 0);
+    assert.equal(closed.updates.at(-1)?.status, 'FAILED_RETRYABLE');
+  });
+
+  it('drops a holder the resolver refuses outright without failing the others', async () => {
+    const h = harness({
+      memberships: {
+        u_payer: member(),
+        // SELECTED_BRANCHES with no branch left: the resolver answers 403 for this member.
+        u_no_branch_left: member({ branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [] }),
+        u_suspended_company: member({ company: { status: 'SUSPENDED' } }),
+      },
+    });
+
+    await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), claimContext());
+
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_payer']);
+  });
+
+  it('reads the branch from the claim or the vendor bill, and from nothing else', async () => {
+    const queries: any[] = [];
+    const table = (name: string, branchId: string | null) => ({
+      findFirst: async (query: any) => { queries.push({ name, ...query }); return { branchId }; },
+    });
+    const repository = new PrismaWorkflowRepository({
+      client: { reimbursementRequest: table('claim', 'br_claim'), vendorBill: table('bill', null) },
+    } as any);
+
+    assert.equal(await repository.findSourceBranchId('co_1', 'reimbursement_request', 'rb_1'), 'br_claim');
+    assert.equal(await repository.findSourceBranchId('co_1', 'vendor_bill', 'bill_1'), null);
+    assert.equal(await repository.findSourceBranchId('co_1', 'stock_balance', 'p_1'), null);
+    assert.equal(await repository.findSourceBranchId('co_1', 'reimbursement_request', undefined), null);
+    // Tenant-bound: the record is looked up inside the run's own company, never by id alone.
+    assert.deepEqual(queries, [
+      { name: 'claim', where: { id: 'rb_1', companyId: 'co_1' }, select: { branchId: true } },
+      { name: 'bill', where: { id: 'bill_1', companyId: 'co_1' }, select: { branchId: true } },
+    ]);
+  });
+});
+
+/**
  * Shadow coverage for the OUTBOUND webhook row of the F0 async inventory (piece 5).
  *
  * `callWebhook` is the one seam every dispatch path converges on — retry sweep, synchronous rule
@@ -326,7 +476,7 @@ describe('CALL_WEBHOOK shadow coverage', () => {
     } as any;
     const audit = { log: async () => undefined } as any;
     return {
-      useCase: new ExecuteWorkflowActionUseCase(repo, audit, {} as any, {} as any, {} as any, shadow),
+      useCase: new ExecuteWorkflowActionUseCase(repo, audit, {} as any, {} as any, {} as any, shadow, {} as any),
       shadowRecords, flushes, updates,
     };
   }

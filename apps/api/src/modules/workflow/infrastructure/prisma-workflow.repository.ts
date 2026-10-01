@@ -164,6 +164,20 @@ export class PrismaWorkflowRepository {
     return rows.map((r) => r.userId);
   }
 
+  /**
+   * Branch of the record a run is about, so recipients picked by permission can be held to the
+   * branch rule that record's own API enforces (audit B12). Claims and vendor bills are the two
+   * sources whose notices pick recipients that way; any other source stays company-wide.
+   */
+  async findSourceBranchId(companyId: string, sourceType?: string, sourceId?: string): Promise<string | null> {
+    if (!sourceId) return null;
+    const query = { where: { id: sourceId, companyId }, select: { branchId: true } };
+    const row = sourceType === 'reimbursement_request' ? await this.prisma.client.reimbursementRequest.findFirst(query)
+      : sourceType === 'vendor_bill' ? await this.prisma.client.vendorBill.findFirst(query)
+        : null;
+    return row?.branchId ?? null;
+  }
+
   async updateRule(companyId: string, id: string, data: Record<string, unknown>): Promise<WorkflowRuleRecord> {
     const row = await this.prisma.client.workflowRule.update({ where: { id }, data: data as any });
     return this.toRule(row);

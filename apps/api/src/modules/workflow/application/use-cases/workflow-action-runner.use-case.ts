@@ -1,7 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
 import type { WorkflowActionDefinition } from '@watchdog-bms/contracts';
 import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
+import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
@@ -89,6 +91,7 @@ export class ExecuteWorkflowActionUseCase {
     private readonly notify: CreateOrUpdateNotificationEventUseCase,
     private readonly aiDraft: CreateDraftRequestUseCase,
     private readonly shadow: LaunchShadowProbe,
+    private readonly access: PermissionResolverService,
   ) {}
 
   // Idempotent per actionRun row: SUCCEEDED runs are never re-passed here by the caller,
@@ -175,7 +178,7 @@ export class ExecuteWorkflowActionUseCase {
     const recipientPermissions = Array.isArray(cfg['recipientPermissions'])
       ? (cfg['recipientPermissions'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];
-    const permissionRecipientUserIds = await this.repo.findUserIdsByPermissions(context.companyId, recipientPermissions);
+    const permissionRecipientUserIds = await this.membersAbleToAct(context, recipientPermissions);
     const recipientPayloadKeys = Array.isArray(cfg['recipientPayloadKeys'])
       ? (cfg['recipientPayloadKeys'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];
@@ -242,6 +245,30 @@ export class ExecuteWorkflowActionUseCase {
     } catch (err) {
       throw new RetryableActionError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /**
+   * Audit B12: a recipient picked by permission must be able to ACT on this record, or the notice
+   * is a link that answers 403. "Able to act" has one definition, the permission resolver (ACTIVE
+   * role, entitlement filter, branch scope), so each holder is put through it instead of a second
+   * copy of those rules living in the recipient query.
+   * ponytail: one resolver round-trip per holder; batch it if a company ever has hundreds of them.
+   */
+  private async membersAbleToAct(context: ActionRunContext, permissionKeys: string[]): Promise<string[]> {
+    const holders = await this.repo.findUserIdsByPermissions(context.companyId, permissionKeys);
+    if (holders.length === 0) return [];
+    const branchId = await this.repo.findSourceBranchId(context.companyId, context.sourceType, context.sourceId);
+    const able = await Promise.all(holders.map(async (userId) => {
+      try {
+        const access = await this.access.resolveAccess(userId, context.companyId);
+        return permissionKeys.some((key) => access.permissions.includes(key)) && isBranchInScope(access.scopes, branchId);
+      } catch (err) {
+        // The resolver refuses outright a member it would not let into this company at all.
+        if (err instanceof ForbiddenException) return false;
+        throw err;
+      }
+    }));
+    return holders.filter((_, index) => able[index]);
   }
 
   private async createTask(actionRun: WorkflowActionRunRecord, context: ActionRunContext, cfg: Record<string, unknown>, isApprovalReview: boolean) {
