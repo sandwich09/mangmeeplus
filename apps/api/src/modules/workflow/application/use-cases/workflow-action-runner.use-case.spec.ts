@@ -246,6 +246,57 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     });
   });
 
+  // Owner rule 2026-10-01: an action notice goes to the person whose turn it is, not to everyone
+  // who holds the right. The mechanism is generic; the claim templates that use it follow below.
+  describe('preferRecipientPayloadKeys narrows permission recipients to whose turn it is', () => {
+    const send = async (cfg: Record<string, unknown>, payload: Record<string, unknown>) => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin', 'u_mgr_1', 'u_mgr_2']);
+      await make().execute(
+        actionRun({ triggerKey: 'workflow.test', severity: 'action', recipientPermissions: ['reimbursement.payment.record'], ...cfg }),
+        { companyId: 'co_1', ruleName: 'r', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1', payload, siblingActions: [] } as any,
+      );
+      return (notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds;
+    };
+    const prefer = { preferRecipientPayloadKeys: ['firstChoice', 'secondChoice'], neverPreferRecipientPayloadKeys: ['requesterUserId'] };
+
+    it('takes the first payload group that names somebody able to act', async () => {
+      assert.deepEqual(await send(prefer, { firstChoice: 'u_mgr_1', secondChoice: ['u_admin'] }), ['u_mgr_1']);
+      // A list is a group: everyone in it who can act, and nobody else.
+      assert.deepEqual(await send(prefer, { firstChoice: ['u_mgr_2', 'u_mgr_1', 'u_gone'] }), ['u_mgr_1', 'u_mgr_2']);
+    });
+
+    it('moves to the next group when the first names nobody able, or only someone never preferred', async () => {
+      assert.deepEqual(await send(prefer, { firstChoice: 'u_cannot_act', secondChoice: ['u_admin', 'u_mgr_2'] }), ['u_admin', 'u_mgr_2']);
+      assert.deepEqual(await send(prefer, { firstChoice: 'u_mgr_1', secondChoice: 'u_admin', requesterUserId: 'u_mgr_1' }), ['u_admin']);
+    });
+
+    it('keeps the whole group when no preferred group has anyone able to act', async () => {
+      const everyone = ['u_owner', 'u_admin', 'u_mgr_1', 'u_mgr_2'];
+      assert.deepEqual(await send(prefer, {}), everyone);
+      assert.deepEqual(await send(prefer, { firstChoice: 'u_cannot_act', secondChoice: [] }), everyone);
+      // Never preferred is not excluded: with nobody else to prefer, they are still in the whole group.
+      assert.deepEqual(await send(prefer, { firstChoice: 'u_owner', requesterUserId: 'u_owner' }), everyone);
+    });
+
+    it('leaves a rule snapshot without the key exactly as it was: everyone able to act', async () => {
+      const everyone = ['u_owner', 'u_admin', 'u_mgr_1', 'u_mgr_2'];
+      assert.deepEqual(await send({}, { firstChoice: 'u_mgr_1', actorUserId: 'u_mgr_1', requesterUserId: 'u_staff' }), everyone);
+      // The pre-preference ready-to-pay snapshot, as rules pinned before this change still hold it.
+      assert.deepEqual(await send({
+        triggerKey: 'workflow.reimbursement_ready_for_payment', titleTemplate: 'พร้อมจ่ายเบิกจ่าย: {{requestNo}}',
+        bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน',
+      }, { requestNo: 'RB-1', amount: '250', currency: 'THB', actorUserId: 'u_mgr_1', requesterUserId: 'u_staff' }), everyone);
+    });
+
+    it('narrows only the permission group, never role or payload recipients', async () => {
+      repo.findUserIdsByRoles = mock.fn(async () => ['u_auditor']);
+      assert.deepEqual(
+        await send({ ...prefer, recipientRoles: ['AUDITOR_READONLY'], recipientPayloadKeys: ['watcherUserId'] }, { firstChoice: 'u_mgr_1', watcherUserId: 'u_watcher' }),
+        ['u_auditor', 'u_mgr_1', 'u_watcher'],
+      );
+    });
+  });
+
   // Audit B9: a requester told "paid" was never told when that payment was taken back.
   describe('payment voided notice to the requester (audit B9)', () => {
     const voided = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_voided')!;

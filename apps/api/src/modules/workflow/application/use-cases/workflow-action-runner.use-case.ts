@@ -60,6 +60,37 @@ function readablePayload(payload: Record<string, unknown>): Record<string, unkno
     : payload;
 }
 
+/** The user ids that the named payload fields hold: each field is one id or a list of them. */
+function payloadUserIds(keys: unknown, payload: Record<string, unknown>): string[] {
+  if (!Array.isArray(keys)) return [];
+  return keys.flatMap((key) => {
+    const value = typeof key === 'string' ? payload[key] : undefined;
+    if (typeof value === 'string' && value.length > 0) return [value];
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id.length > 0) : [];
+  });
+}
+
+/**
+ * Owner rule 2026-10-01: an action notice goes to the person whose turn it is, not to everyone
+ * who holds the right (a shop owner holds every right and was pushed for every claim in every
+ * branch). `preferRecipientPayloadKeys` names payload fields in order of preference. The first one
+ * that names somebody ABLE to act narrows the group to those people; when none does, the whole
+ * group stands, which keeps a solo owner, an approver without the right and one who has since left.
+ * `neverPreferRecipientPayloadKeys` names people who are never the preferred ones (a requester is
+ * not told alone to pay their own claim) though they stay in the whole group.
+ * A rule snapshot without the key keeps the whole group, exactly as before.
+ */
+function narrowToPreferred(able: string[], cfg: Record<string, unknown>, payload: Record<string, unknown>): string[] {
+  const preferKeys = Array.isArray(cfg['preferRecipientPayloadKeys']) ? cfg['preferRecipientPayloadKeys'] : [];
+  const never = new Set(payloadUserIds(cfg['neverPreferRecipientPayloadKeys'], payload));
+  for (const key of preferKeys) {
+    const named = new Set(payloadUserIds([key], payload));
+    const preferred = able.filter((userId) => named.has(userId) && !never.has(userId));
+    if (preferred.length > 0) return preferred;
+  }
+  return able;
+}
+
 function findTitleTemplate(actionKey: string, configJson: Record<string, unknown>, siblings: WorkflowActionDefinition[]): string | undefined {
   if (typeof configJson['titleTemplate'] === 'string') return configJson['titleTemplate'];
   const sibling = siblings.find((a) => a.actionKey !== actionKey && typeof a.configJson['titleTemplate'] === 'string');
@@ -191,7 +222,7 @@ export class ExecuteWorkflowActionUseCase {
     const recipientPermissions = Array.isArray(cfg['recipientPermissions'])
       ? (cfg['recipientPermissions'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];
-    const permissionRecipientUserIds = await this.membersAbleToAct(context, recipientPermissions);
+    const permissionRecipientUserIds = narrowToPreferred(await this.membersAbleToAct(context, recipientPermissions), cfg, context.payload);
     const recipientPayloadKeys = Array.isArray(cfg['recipientPayloadKeys'])
       ? (cfg['recipientPayloadKeys'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];
