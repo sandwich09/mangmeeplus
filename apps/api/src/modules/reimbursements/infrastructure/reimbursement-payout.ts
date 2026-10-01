@@ -5,8 +5,9 @@
  *
  * Two things hold for every function here:
  *  - the ciphertext is selected only by the two `…Secret` readers, which serve the audited reveal,
- *    and by the two copies that move a sealed account as one unit (submit, and the payment of a
- *    legacy claim);
+ *    and by the copies that move a sealed account as one unit: at submit, in a correction round
+ *    (the requester's default account, or the account the claim had), and at the payment of a
+ *    legacy claim;
  *  - once a claim is submitted, nothing reads the member's default account for it again. The one
  *    exception is a legacy claim, which froze no account: its payer is shown the requester's current
  *    default (`readLegacyPayoutDefault`) and a payment into it keeps a copy (`confirmPaymentPayout`).

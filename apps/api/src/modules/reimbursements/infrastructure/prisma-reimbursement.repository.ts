@@ -118,7 +118,6 @@ function stringArrayOpt(value: unknown): string[] | undefined {
   return [...new Set(value)];
 }
 
-/** A file proven usable as a slip of one claim, with what the link write needs to finish the job. */
 /**
  * A payment transaction PostgreSQL rolled back because another writer got there first: two payers,
  * a payment against a void, or the slip file changing underneath. Nothing was written, so the
@@ -129,6 +128,7 @@ function paymentChangedOnSerializationFailure(error: unknown): never {
   throw error;
 }
 
+/** A file proven usable as a slip of one claim, with what the link write needs to finish the job. */
 type ResolvedPaymentSlip = {
   attachmentId: string;
   source: ReimbursementPaymentSlipSource;
@@ -578,12 +578,6 @@ export class PrismaReimbursementRepository {
     return (await this.findRequestById(data.companyId, row.id))!;
   }
 
-  /**
-   * Wholesale line replacement, mirroring the expense-line convention: advisory
-   * lock on the claim, drop the lines the caller no longer sends, upsert the
-   * rest on the (requestId, lineNo) unique — never create-then-catch-P2002
-   * inside a transaction (Prisma 7 aborts it, 25P02).
-   */
   /**
    * Draft header/line replacement and submit use the same request lock and the
    * version observed by their caller. A stale writer therefore changes nothing.
@@ -1657,6 +1651,12 @@ export class PrismaReimbursementRepository {
     return storedHash;
   }
 
+  /**
+   * Wholesale line replacement, mirroring the expense-line convention: advisory
+   * lock on the claim, drop the lines the caller no longer sends, upsert the
+   * rest on the (requestId, lineNo) unique — never create-then-catch-P2002
+   * inside a transaction (Prisma 7 aborts it, 25P02).
+   */
   private async replaceLines(
     tx: any,
     companyId: string,
