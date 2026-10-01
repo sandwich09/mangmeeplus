@@ -519,8 +519,8 @@ describe('the status badge of a claim the system holds reads รอระบบ�
       assert.deepEqual(claimStatusBadge({ status, currentDesk: { kind: 'SYSTEM' } }), { label: REIMBURSEMENT_SYSTEM_WAIT_LABEL, tone: 'amber' }, status);
     }
     // Each also hands over the row's place in a payout account correction round, which the badge reads after the desk.
-    assert.equal(hub.match(/<StatusBadge status=\{r\.status\} desk=\{r\.currentDesk\} phase=\{r\.payoutCorrectionPhase\} \/>/g)?.length, 5,
-      'the list, its cards, the approval cards, the finance table and its cards');
+    assert.equal(hub.match(/<StatusBadge status=\{r\.status\} desk=\{r\.currentDesk\} phase=\{r\.payoutCorrectionPhase\} \/>/g)?.length, 6,
+      'the list, its cards, the approval cards, the approval table (a row of a correction round), the finance table and its cards');
     assert.equal(hub.includes('<StatusBadge status={r.status} />'), false);
     assert.equal(hub.includes('<StatusBadge status={r.status} desk={r.currentDesk} />'), false);
     assert.match(hub, /claimStatusBadge\(r\)\.label,\s+FINANCE_REVIEW_LABELS\[r\.financeReviewStatus\]/);

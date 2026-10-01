@@ -447,6 +447,25 @@ export function queueRowOffersPayment(
   return row?.status === 'READY_FOR_PAYMENT' && !!row.branchId && !claimIsBeingCancelled(row) && permissions.includes('reimbursement.payment.record');
 }
 
+/**
+ * What an approval-queue row offers its viewer: from the row's own `approvalActions`, as the server resolved them.
+ *
+ * `onClaimPage`: the decision is made on the claim's own page, never from the row. A claim paid by transfer is
+ * approved there, where its account is shown and attested. So is a claim in a payout account correction round
+ * (payout spec §14.6), whatever its new receiving method: what is approved is the change of account, which a row
+ * does not show. Such a row offers one way in for whoever decides the waiting step, and no "ปฏิเสธ": a round's
+ * new account is sent back to its requester, never rejected.
+ */
+export function approvalRowOffers(row: {
+  approvalActions?: { canApprove?: boolean; canReject?: boolean } | null; payoutMethod?: string | null; payoutCorrectionPhase?: string | null;
+} | null | undefined): { approveLabel?: string; reject: boolean; onClaimPage: boolean } {
+  const canApprove = row?.approvalActions?.canApprove === true;
+  const canReject = row?.approvalActions?.canReject === true;
+  if (row?.payoutCorrectionPhase) return { ...((canApprove || canReject) && { approveLabel: 'ตรวจบัญชีรับเงินใหม่' }), reject: false, onClaimPage: true };
+  const transfer = row?.payoutMethod === 'BANK_TRANSFER';
+  return { ...(canApprove && { approveLabel: transfer ? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ' }), reject: canReject, onClaimPage: transfer };
+}
+
 /** Whether a finance-queue row offers its finance decision ("อนุมัติจ่าย", or "ดำเนินการต่อ" once approved): never for a claim being cancelled. */
 export function queueRowOffersFinanceReview(row: { status?: string; cancellationPending?: boolean } | null | undefined): boolean {
   return row?.status === 'FINANCE_REVIEW' && !claimIsBeingCancelled(row);

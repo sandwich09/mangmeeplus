@@ -29,6 +29,7 @@ import {
   type HubFilter, approverPaymentWarning,
   NO_HUB_LIST, QUEUE_PAGE_SIZE, HUB_SEARCH_DELAY_MS, hubCardFilter, hubList, hubListKey, hubListStatusText, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
   queueRowOffersFinanceReview, queueRowOffersPayment, quickPayBlockedNote, quickPayTarget,
+  approvalRowOffers,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
@@ -478,8 +479,9 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
     try { await fn(); await load(); if (successMessage) toast.success(successMessage); } catch (e) { setError(err(e)); } finally { setBusy(null); }
   };
   const approveRow = async (r: any) => {
-    // A claim paid by transfer is approved on its own page, where the approver sees and attests the account.
-    if (r.payoutMethod === 'BANK_TRANSFER') { onOpenDetail(r.id); return; }
+    // A claim paid by transfer is approved on its own page, where the approver sees and attests the account. So is
+    // the new account of a correction round: a row shows nothing of what changed, so it never approves one in place.
+    if (approvalRowOffers(r).onClaimPage) { onOpenDetail(r.id); return; }
     setBusy(r.id); setError(null);
     try {
       await approveReimbursement(companyId, r.id, undefined, r.approvalSnapshotHash);
@@ -568,6 +570,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                           <div className="flex flex-wrap items-center justify-end gap-2">
                             <span className="tabular-nums">{r.ageHours} ชม.</span>
                             {r.slaRisk && <MangmeeBadge tone="danger">เกิน SLA</MangmeeBadge>}
+                            {/* The table has no status column: a row of a correction round says what it waits for here. */}
+                            {r.payoutCorrectionPhase && <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />}
                           </div>
                         </td>
                         <td className="text-right">
@@ -579,8 +583,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
                             {/* The server says what this viewer may do with the row, as on the claim page: never guessed from a role or a tab. */}
-                            {r.approvalActions?.canApprove === true && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); approveRow(r); }}>{r.payoutMethod === 'BANK_TRANSFER' ? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ'}</button>}
-                            {r.approvalActions?.canReject === true && <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>}
+                            {approvalRowOffers(r).approveLabel && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); approveRow(r); }}>{approvalRowOffers(r).approveLabel}</button>}
+                            {approvalRowOffers(r).reject && <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>}
                           </div>
                         </td>
                       </tr>
@@ -608,8 +612,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`/companies/${companyId}/reimbursements/${r.id}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-approvals-card">ดูรายละเอียด</Link>
-                    {r.approvalActions?.canApprove === true && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>{r.payoutMethod === 'BANK_TRANSFER' ? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ'}</button>}
-                    {r.approvalActions?.canReject === true && <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>}
+                    {approvalRowOffers(r).approveLabel && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>{approvalRowOffers(r).approveLabel}</button>}
+                    {approvalRowOffers(r).reject && <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>}
                   </div>
                 </MangmeeCard>
               ))}

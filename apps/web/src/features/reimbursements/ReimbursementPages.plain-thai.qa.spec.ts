@@ -192,6 +192,12 @@ const hubClaims = ([
 ] as const).map(([status, kind], index) => ({ ...draft, id: `${ids.request}${index}`, requestNo: kind === 'REQUESTER' ? undefined : 'RB-202609-00007',
   status, amount: '100.0000', currentDesk: kind && { kind } }));
 
+// The same claim sent back from the pay step for its payout account, as the list API answers it in each phase:
+// PENDING_APPROVAL, first with its requester, then with the approvers its new account waits for.
+const correctionRows = ([['AWAITING_REQUESTER', { kind: 'REQUESTER' }], ['AWAITING_APPROVAL', { kind: 'APPROVER', names: ['สมชาย'] }]] as const)
+  .map(([payoutCorrectionPhase, currentDesk], index) => ({ ...draft, id: `${ids.request}round${index}`, requestNo: 'RB-202609-00007', status: 'PENDING_APPROVAL',
+    receiptRequirementStatus: 'ATTACHED', payoutMethod: 'BANK_TRANSFER', amount: '100.0000', payoutCorrectionPhase, currentDesk }));
+
 /** What the customer reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
 const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map(match => match[1]!),
   ...html.replace(/<[^>]*>/gu, '\n').split('\n')]
@@ -273,6 +279,28 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
       assert.ok(visible(filtered).includes(`พบ ${chips[chip]} จาก 7 รายการ`), filter);
     }
     assert.equal(Object.entries(chips).reduce((sum, [label, count]) => sum + (label === 'ทั้งหมด' ? 0 : Number(count)), 0), 7);
+  });
+
+  // Payout spec §14.2: a claim sent back for its payout account is PENDING_APPROVAL and, while its requester gives the
+  // account, with its requester. The server counts it under รออนุมัติ/ตรวจสอบ; its row must not read as a draft, or as
+  // waiting for an approver nobody waits for.
+  it('shows a claim in a payout account correction round where the server counts it, with its phase and whom it waits for', () => {
+    const claims = [...hubClaims, ...correctionRows];
+    const html = hubTab('mine', claims);
+    assert.deepEqual(numbers(cardsOf(html), true), { 'ร่างรอส่ง': '1', 'รออนุมัติ/ตรวจสอบ': '3', 'รอจ่ายเงินคืน': '2', 'ยอดรวมที่ขอเบิก': '฿900' });
+    assert.deepEqual([numbers(chipsOf(html), false)['ร่าง'], numbers(chipsOf(html), false)['รออนุมัติ/ตรวจสอบ']], ['1', '3']);
+    const review = hubTab('mine', claims, 'review');
+    assert.equal(rowsShown(review), 3);
+    const texts = visible(review);
+    // The badge of each row, in the table and on its phone card: the phase, never the bare status of a claim in a round.
+    for (const label of ['รอผู้เบิกแก้บัญชีรับเงิน', 'รออนุมัติบัญชีรับเงินใหม่']) assert.equal(texts.filter((text) => text === label).length, 2, label);
+    assert.equal(texts.filter((text) => text === 'รออนุมัติ').length, 2, 'the one claim that waits for its first approval');
+    // "อยู่ที่" on the phone cards: the requester in the badge's own word, then the approvers by name.
+    assert.deepEqual(texts.filter((text) => text.startsWith('อยู่ที่')), ['อยู่ที่ ผู้มีสิทธิ์อนุมัติ', 'อยู่ที่ ผู้เบิก', 'อยู่ที่ สมชาย']);
+    // With its requester, and still no draft: nothing on the row sends it, and it is not among the drafts.
+    assert.equal(texts.some((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ'), false);
+    assert.equal(rowsShown(hubTab('mine', claims, 'draft')), 1);
+    assert.equal(visible(hubTab('mine', claims, 'draft')).includes('รอผู้เบิกแก้บัญชีรับเงิน'), false);
   });
 
   it('keeps the four cards two by two on a 390 px phone, each one a button that filters', () => {
@@ -441,6 +469,26 @@ describe('the approval queue offers only what the server says this viewer can do
     // Cash has no account to attest: the row approves in place, as before.
     assert.deepEqual(offered(hubTab('approvals', [{ ...row({ canApprove: true, canReject: false }), payoutMethod: 'CASH' }])), ['อนุมัติ', 'อนุมัติ']);
   });
+
+  // Payout spec §14.6: what a round's approvers approve is the change of account, which a row does not show. Its
+  // row leads to the claim page for whoever decides the waiting step, and offers no "ปฏิเสธ": a round never rejects.
+  it('leads a row of a correction round to the claim page: no approval in place and no ปฏิเสธ, whatever the new receiving method', () => {
+    const offered = (html: string) => visible(html).filter((text) => ['อนุมัติ', 'ตรวจบัญชีและอนุมัติ', 'ตรวจบัญชีรับเงินใหม่', 'ปฏิเสธ'].includes(text));
+    const inRound = (approvalActions: { canApprove: boolean; canReject: boolean } | undefined, payoutMethod: string) =>
+      ({ ...correctionRows[1]!, ageHours: 3, slaRisk: false, approvalActions, payoutMethod, approvalSnapshotHash: 'hash' });
+    for (const payoutMethod of ['BANK_TRANSFER', 'CASH']) {
+      assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, payoutMethod)])), ['ตรวจบัญชีรับเงินใหม่', 'ตรวจบัญชีรับเงินใหม่'], payoutMethod);
+      // Whoever may only send the new account back gets the same way in.
+      assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: false, canReject: true }, payoutMethod)])), ['ตรวจบัญชีรับเงินใหม่', 'ตรวจบัญชีรับเงินใหม่'], payoutMethod);
+      assert.deepEqual(offered(hubTab('approvals', [inRound(undefined, payoutMethod)])), [], payoutMethod);
+    }
+    // The row says what it waits for: in the table beside its age, and on its phone card.
+    const texts = visible(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, 'BANK_TRANSFER')]));
+    assert.equal(texts.filter((text) => text === 'รออนุมัติบัญชีรับเงินใหม่').length, 2);
+    assert.equal(texts.includes('รออนุมัติ'), false);
+    // A row of no round has no such badge in the table, only its status on the card.
+    assert.equal(visible(hubTab('approvals', [row({ canApprove: true, canReject: true })])).filter((text) => text === 'รออนุมัติ').length, 1);
+  });
 });
 
 // Payout Phase 1 on the paged list: a row shows no account, so a draft is sent from its row only when the draft
@@ -571,6 +619,27 @@ describe('the claim page says "อยู่ที่" with the people who can re
   });
 });
 
+// The same claim through a payout account correction round (payout spec §14), with every code the API may grow: a
+// reason, a phase and a kind of event added later print nothing machine-shaped either.
+const correctionEvents = [
+  { kind: 'SENT_BACK', at: '2026-09-28T03:00:00.000Z', byUserId: ids.approver, byName: 'สมชาย', reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าไม่พบบัญชีนี้' },
+  { kind: 'ACCOUNT_SUBMITTED', at: '2026-09-28T04:00:00.000Z', byUserId: ids.requester, byName: 'พิม ใจดี', payoutMethod: 'BANK_TRANSFER', payoutVersion: 2 },
+  { kind: 'REAPPROVED', at: '2026-09-28T05:00:00.000Z', byUserId: ids.approver, byName: 'สมชาย', approvalStepId: ids.step },
+  { kind: 'SENT_BACK', at: '2026-09-28T06:00:00.000Z', byUserId: ids.other, reasonCode: 'A_REASON_ADDED_LATER' },
+  { kind: 'A_KIND_ADDED_LATER', at: '2026-09-28T07:00:00.000Z', byUserId: ids.other },
+];
+const inRound = { ...waiting, status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', approvedAt: undefined, paymentDesk: undefined, payoutMethod: 'BANK_TRANSFER',
+  payout: { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'พิม ใจดี', accountLast4: '6789', version: 2, source: 'REQUESTER' },
+  approvalSteps: [{ ...paid.approvalSteps[0]!, invalidatedAt: '2026-09-28T03:00:00.000Z', invalidatedReason: 'payout_account_correction' }],
+  signedCopies: [{ attachmentId: ids.copy, fileName: 'ใบเบิกที่เซ็นแล้ว.pdf', uploadedAt: '2026-09-27T06:00:00.000Z', beforePayoutCorrection: true }],
+  payoutCorrectionHistory: correctionEvents };
+const correctionDetails: Array<[string, object]> = [
+  ['in a round, waiting for the requester', { ...inRound, payoutCorrectionPhase: 'AWAITING_REQUESTER', currentDesk: { kind: 'REQUESTER' } }],
+  ['in a round, the new account waiting', { ...inRound, payoutCorrectionPhase: 'AWAITING_APPROVAL', currentDesk: { kind: 'APPROVER', names: ['สมชาย'] } }],
+  ['in a round, a phase added later', { ...inRound, payoutCorrectionPhase: 'A_PHASE_ADDED_LATER', currentDesk: { kind: 'APPROVER' } }],
+  ['after a round', { ...waiting, payoutCorrectionHistory: correctionEvents.slice(0, 3), signedCopies: inRound.signedCopies }],
+];
+
 const MACHINE_TOKENS: Array<[string, RegExp]> = [ // ReimbursementDraftActionPage.qa.spec.ts's set
   ['cuid/uuid/hash-like id', /\b[a-z0-9]{20,}\b|[0-9a-f]{8}-[0-9a-f]{4}-/iu], ['enum or code', /[A-Z_]{4,}/u],
   ['field path', /\w+\.\d+\.\w+|\b[a-zA-Z]\w*\.(?:\d|[a-z]\w*\b)/u], ['camelCase key', /\b[a-z]+[A-Z]\w*\b/u], ['snake_case code', /\b[a-z]+_[a-z_]+\b/u],
@@ -594,6 +663,9 @@ describe('no customer-visible claim page text carries a machine token (Owner rul
       ['create form: rows bound to bills that were refused', filledCreatePage(refusedForm)],
       ...['mine', 'approvals', 'finance'].map((tab): [string, string] => [`hub: ${tab}`, hubTab(tab)]),
       ['hub: mine, a claim in every state', hubTab('mine', hubClaims)],
+      ['hub: mine, claims in a payout account correction round', hubTab('mine', correctionRows)],
+      ['hub: approvals, a claim whose new payout account waits', hubTab('approvals', [{ ...correctionRows[1]!, ageHours: 3, slaRisk: false, approvalActions: { canApprove: true, canReject: true } }])],
+      ...correctionDetails.map(([state, detail]): [string, string] => [`detail: ${state}`, detailSections(detail, ids.requester, ['reimbursement.update_own_draft', 'reimbursement.payment.record'])]),
     ];
     let checked = 0;
     for (const [page, html] of pages) {

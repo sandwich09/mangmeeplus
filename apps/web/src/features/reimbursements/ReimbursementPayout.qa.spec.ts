@@ -497,8 +497,14 @@ describe('the approver attests the account version shown before approving a tran
 
   it('sends a transfer claim to its own page instead of approving it from the queue', () => {
     const hub = read('./ReimbursementsPages.tsx');
-    assert.match(hub, /if \(r\.payoutMethod === 'BANK_TRANSFER'\) \{ onOpenDetail\(r\.id\); return; \}/);
-    assert.equal(hub.match(/\{r\.payoutMethod === 'BANK_TRANSFER' \? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ'\}/g)?.length, 2, 'table row and phone card');
+    // One rule says what a queue row offers and where its decision is made (`approvalRowOffers`); the press and both layouts ask it.
+    assert.match(hub, /if \(approvalRowOffers\(r\)\.onClaimPage\) \{ onOpenDetail\(r\.id\); return; \}/);
+    assert.equal(hub.match(/\{approvalRowOffers\(r\)\.approveLabel && <button[^\n]*onClick=\{[^\n]*approveRow\(r\)[^\n]*\{approvalRowOffers\(r\)\.approveLabel\}<\/button>\}/g)?.length, 2, 'table row and phone card');
+    const { approvalRowOffers } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+    const may = { canApprove: true, canReject: true };
+    assert.deepEqual(approvalRowOffers({ approvalActions: may, payoutMethod: 'BANK_TRANSFER' }), { approveLabel: 'ตรวจบัญชีและอนุมัติ', reject: true, onClaimPage: true });
+    assert.deepEqual(approvalRowOffers({ approvalActions: may, payoutMethod: 'CASH' }), { approveLabel: 'อนุมัติ', reject: true, onClaimPage: false });
+    assert.deepEqual(approvalRowOffers({ approvalActions: may }), { approveLabel: 'อนุมัติ', reject: true, onClaimPage: false });
     assert.match(hub, /href=\{`\/companies\/\$\{companyId\}\/reimbursements\/payout-account`\}[^\n]*>บัญชีรับเงินคืนของฉัน<\/Link>/);
   });
 });

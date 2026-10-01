@@ -640,8 +640,10 @@ describe('the buttons of a correction round are what the server says, for every 
     it(`${point}: each viewer is offered exactly what the API takes from them`, () => {
       for (const [name, viewer, flags, buttons] of rows) {
         const detail = CLAIM_AT[point](flags);
-        const { html } = claimPage(detail, viewer);
+        const { html, texts } = claimPage(detail, viewer);
         assert.deepEqual(stepCard(html).buttons, buttons, `${point}, ${name}`);
+        // Plain Thai on the whole page, for every viewer: no id, code, key or raw date.
+        assertPlainThai(texts, `${point}, ${name}`);
         // The whole page, not only the step card: nothing a round refuses is offered anywhere on it.
         const pressable = [...html.matchAll(/<button\b[^>]*>([^<]*)<\/button>/gu)].map((match) => match[1]!);
         if (point !== 'ready') {
@@ -845,6 +847,13 @@ describe('the round\'s forms open inside the step card, never in a dialog', () =
     assert.deepEqual(card.buttons, ['ยกเลิกคำขอ', 'พิมพ์ใบเบิก', 'ยกเลิก', 'บันทึกบัญชีรับเงิน']);
     assert.equal(heading(card.html), 'แก้บัญชีรับเงิน');
     assert.equal(heading(stepCard(withForm(phaseA({ payoutCorrectionActions: GIVE }), financeReviewer, 'correct-payout')!.html).html), 'แก้บัญชีรับเงินแทนผู้เบิก');
+  });
+
+  it('reads in plain Thai with either form open, on the whole page', () => {
+    assertPlainThai(withForm(ready({ payoutCorrectionActions: SEND, signatures: [{ role: 'REQUESTER', signedByName: NAMES.requester, signedAt: AT.approved }] }), payer, 'send-back')!.texts, 'send-back form open');
+    assertPlainThai(withForm(phaseB({ approvalActions: DECIDE, payoutCorrectionActions: SEND }), approver, 'send-back')!.texts, 'send back again');
+    const withDefault = { ...GIVE, requesterDefault: { ...KBANK, accountLast4: '6789', token: 'a1b2c3d4e5f60718293a4b5c6d7e8f90' } };
+    for (const viewer of [requester, financeReviewer]) assertPlainThai(withForm(phaseA({ payoutCorrectionActions: withDefault }), viewer, 'correct-payout')!.texts, 'account form open');
   });
 
   it('opens neither form for a viewer the server does not offer it to, whatever the page was told to open', () => {
