@@ -474,6 +474,23 @@ describe('claim payout: the claim, its expense records and the ledger agree', ()
     assert.equal(f.request.paymentTotalAmount, '0.0000');
   });
 
+  it('a late posting stamp never lands on a voided payment', async () => {
+    const f = await accrued();
+    const { payment } = await f.pay('k-1');
+    await f.claims.voidPaymentTrueReversal('company-1', 'rb-1', payment.id, 'finance-1', 'บันทึกผิด');
+    // The generator and the worker stamp through this one method. It writes RECORDED payments only
+    // and says whether it wrote, so a void's `not_required` cannot become an uncleared error.
+    for (const postingStatus of ['pending', 'posted', 'posting_error'] as const) {
+      assert.equal(await f.claims.updatePaymentPostingStatus('company-1', payment.id, { postingStatus }), false);
+    }
+    assert.equal(f.payments[0].postingStatus, 'not_required');
+    // A recorded payment is stamped, and the caller is told so.
+    const again = (await f.pay('k-2')).payment;
+    assert.equal(await f.claims.updatePaymentPostingStatus('company-1', again.id, { postingStatus: 'posting_error' }), true);
+    assert.equal(f.payments[1].postingStatus, 'posting_error');
+    assert.equal(await f.claims.updatePaymentPostingStatus('other-company', again.id, { postingStatus: 'posted' }), false);
+  });
+
   it('pay, void, pay again: one live payment and one net settlement', async () => {
     const f = await accrued();
     const first = (await f.pay('k-1')).payment;

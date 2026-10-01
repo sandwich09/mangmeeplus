@@ -1,11 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import {
   AUTO_POST_REQUIRED_FEATURES,
   DrainExpenseAutoPostUseCase,
   EXPENSE_AUTO_POST_WORKER_PERMISSIONS,
   expenseAutoPostCandidateSql,
+  postingFailureCode,
 } from './expense-auto-post.use-case';
 
 describe('DrainExpenseAutoPostUseCase', () => {
@@ -221,11 +222,20 @@ describe('DrainExpenseAutoPostUseCase — claim payouts', () => {
       updatePostingStatus: async (...args: any[]) => { expenseWrites.push(args); },
       updatePaymentPostingStatus: async (...args: any[]) => { expenseWrites.push(args); },
     } as any;
-    const reimbursementRepo = { updatePaymentPostingStatus: async (...args: any[]) => { claimWrites.push(args); } } as any;
+    const reimbursementRepo = {
+      findPostedGeneratedJournalId: async () => null,
+      updatePaymentPostingStatus: async (...args: any[]) => { claimWrites.push(args); return true; },
+    } as any;
+    const logged: any[] = [];
+    const drain = new DrainExpenseAutoPostUseCase(prisma, generator, expenseRepo, reimbursementRepo);
+    (drain as any).logger = { warn: (line: unknown) => { logged.push(line); } };
 
-    const result = await new DrainExpenseAutoPostUseCase(prisma, generator, expenseRepo, reimbursementRepo).execute();
+    const result = await drain.execute();
 
     assert.deepEqual(result, { companies: 1, candidates: 2, posted: 1, failed: 1 });
+    // The payment row has no error column, so the reason is kept in one structured line: which
+    // payout, which company, and the stable code. Never the exception's free text.
+    assert.deepEqual(logged, [{ msg: 'ledger.auto_post.claim_payout_failed', companyId: 'co-1', paymentId: 'pay-unmapped', code: 'posting_rule_missing' }]);
     assert.deepEqual(generated.map((call) => call.source), [
       { companyId: 'co-1', sourceType: 'reimbursement.payment', sourceId: 'pay-ok' },
       { companyId: 'co-1', sourceType: 'reimbursement.payment', sourceId: 'pay-unmapped' },
@@ -239,6 +249,58 @@ describe('DrainExpenseAutoPostUseCase — claim payouts', () => {
     // `reimbursement` is read for the freeze, but is NOT a requirement of the drain itself.
     assert.ok(entitlementFilter.includes('reimbursement'));
     assert.equal(AUTO_POST_REQUIRED_FEATURES.includes('reimbursement'), false);
+  });
+
+  // Review finding 2026-10-01: the worker's stamp was unguarded. Between reading the candidates and
+  // generating, a void can commit, or an accountant (or a second pass) can post the same payout.
+  function refusedPayout(repo: { journalId: string | null; recorded: boolean }) {
+    const stamps: any[] = [];
+    const logged: any[] = [];
+    const prisma = {
+      client: {
+        company: { findMany: async () => [company(true)] },
+        $queryRaw: async () => [{ sourceType: 'reimbursement.payment', sourceId: 'pay-1' }],
+      },
+    } as any;
+    const generator = { execute: async () => { throw new BadRequestException({ code: 'reimbursement_payment_not_recorded', message: 'x' }); } } as any;
+    const reimbursementRepo = {
+      findPostedGeneratedJournalId: async () => repo.journalId,
+      // The real stamp writes a RECORDED payment only and says whether it wrote.
+      updatePaymentPostingStatus: async (...args: any[]) => { stamps.push(args[2].postingStatus); return repo.recorded; },
+    } as any;
+    const drain = new DrainExpenseAutoPostUseCase(prisma, generator, {} as any, reimbursementRepo);
+    (drain as any).logger = { warn: (line: unknown) => { logged.push(line); } };
+    return { drain, stamps, logged };
+  }
+
+  it('a payout voided after the candidates were read is neither failed nor posted, and is not logged as a failure', async () => {
+    const { drain, logged } = refusedPayout({ journalId: null, recorded: false });
+    assert.deepEqual(await drain.execute(), { companies: 1, candidates: 1, posted: 0, failed: 0 });
+    assert.deepEqual(logged, []);
+  });
+
+  it('a refused payout that already has a posted settlement is stamped posted, never posting_error', async () => {
+    const { drain, stamps, logged } = refusedPayout({ journalId: 'je-1', recorded: true });
+    assert.deepEqual(await drain.execute(), { companies: 1, candidates: 1, posted: 1, failed: 0 });
+    assert.deepEqual(stamps, ['posted']);
+    assert.deepEqual(logged, []);
+  });
+
+  it('a refused payout with no settlement is stamped posting_error and its reason is logged', async () => {
+    const { drain, stamps, logged } = refusedPayout({ journalId: null, recorded: true });
+    assert.deepEqual(await drain.execute(), { companies: 1, candidates: 1, posted: 0, failed: 1 });
+    assert.deepEqual(stamps, ['posting_error']);
+    assert.equal(logged[0].code, 'reimbursement_payment_not_recorded');
+  });
+
+  it('logs a stable code for every shape of refusal and never free text', () => {
+    assert.equal(postingFailureCode(new BadRequestException({ code: 'period_closed', message: 'งวดบัญชีถูกปิดแล้ว' })), 'period_closed');
+    // The readiness proof throws its code as the message.
+    assert.equal(postingFailureCode(new ConflictException('reimbursement_accrual_not_posted')), 'reimbursement_accrual_not_posted');
+    assert.equal(postingFailureCode(Object.assign(new Error('Unique constraint failed on the fields'), { code: 'P2002' })), 'P2002');
+    assert.equal(postingFailureCode(new Error('connect ECONNREFUSED 10.0.0.5:5432 password=secret')), 'AUTO_POST_FAILED');
+    assert.equal(postingFailureCode(new ConflictException('Generated journal JV-1 is DRAFT; resolve its posting state')), 'AUTO_POST_FAILED');
+    assert.equal(postingFailureCode(undefined), 'AUTO_POST_FAILED');
   });
 
   for (const [name, reimbursement, expected] of [

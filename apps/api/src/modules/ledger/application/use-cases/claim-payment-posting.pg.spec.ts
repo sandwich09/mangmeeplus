@@ -346,6 +346,57 @@ describe('claim payout posting (PostgreSQL)', { skip: !enabled }, () => {
     } finally { await retire(inherited); }
   });
 
+  /** Runs `before` once, in the gap between the worker reading its candidates and generating. */
+  async function drainWith(before: () => Promise<void>, after: () => Promise<void> = async () => undefined) {
+    const execute = generate.execute.bind(generate);
+    let used = false;
+    generate.execute = async (...args: Parameters<typeof execute>) => {
+      if (used) return execute(...args);
+      used = true;
+      await before();
+      const summary = await execute(...args);
+      await after();
+      return summary;
+    };
+    try { return await drain.execute(); } finally { generate.execute = execute; }
+  }
+
+  it('a void that commits after the candidates were read keeps its own status: the worker stamps nothing', async () => {
+    const s = await shop();
+    try {
+      const c = await claim(s, ['60.00']);
+      await post(s, 'expense.record', c.expenseIds[0]!);
+      const payment = await pay(s, c);
+
+      const result = await drainWith(async () => { await claims.voidPaymentTrueReversal(s.companyId, c.requestId, payment.id, s.userId, 'โอนผิดบัญชี'); });
+
+      // The candidate vanished under the worker: neither posted nor failed.
+      assert.deepEqual(result, { companies: 1, candidates: 1, posted: 0, failed: 0 });
+      const row = await paymentRow(payment.id);
+      assert.deepEqual([row.status, row.postingStatus], ['VOIDED', 'not_required']);
+      assert.equal((await payoutJournals(s, payment.id)).length, 0);
+      // The readiness check counts posting errors with no status filter of its own.
+      assert.equal(await client.reimbursementPayment.count({ where: { companyId: s.companyId, postingStatus: 'posting_error' } }), 0);
+      assert.deepEqual(await claims.listUnpostedReimbursementPayments(s.companyId), []);
+    } finally { await retire(s); }
+  });
+
+  it('a failure after the settlement was posted is stamped posted, never an error', async () => {
+    const s = await shop();
+    try {
+      const c = await claim(s, ['85.00']);
+      await post(s, 'expense.record', c.expenseIds[0]!);
+      const payment = await pay(s, c);
+
+      const result = await drainWith(async () => undefined, async () => { throw new Error('the bookkeeping after the post failed'); });
+
+      assert.deepEqual(result, { companies: 1, candidates: 1, posted: 1, failed: 0 });
+      assert.equal((await paymentRow(payment.id)).postingStatus, 'posted');
+      assert.deepEqual((await payoutJournals(s, payment.id)).map((entry) => [entry.entryType, entry.status]), [['GENERATED', 'POSTED']]);
+      assert.deepEqual(await claims.listUnpostedReimbursementPayments(s.companyId), []);
+    } finally { await retire(s); }
+  });
+
   it('a payout dated in a closed period is refused, marked for the accountant, and posts once the period is open again', async () => {
     const s = await shop();
     try {

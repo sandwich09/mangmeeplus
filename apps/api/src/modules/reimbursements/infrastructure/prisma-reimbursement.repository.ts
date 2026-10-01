@@ -3012,15 +3012,18 @@ export class PrismaReimbursementRepository {
   // mirroring how expense/vendor-bill/supplier-payment sources flip after generate.
   // ReimbursementPayment carries no journalEntryId/postingError columns, so only
   // the status changes here.
+  // RECORDED only, and it says whether it wrote: a void owns the posting status of a voided payment
+  // (`reversed` / `not_required`), so a late stamp from the generator or the worker must not land.
   async updatePaymentPostingStatus(
     companyId: string,
     id: string,
     data: { postingStatus: 'pending' | 'posted' | 'posting_error' | 'reversed' },
-  ): Promise<void> {
-    await this.prisma.client.reimbursementPayment.updateMany({
-      where: { id, companyId },
+  ): Promise<boolean> {
+    const stamped = await this.prisma.client.reimbursementPayment.updateMany({
+      where: { id, companyId, status: 'RECORDED' },
       data: { postingStatus: data.postingStatus as any },
     });
+    return stamped.count === 1;
   }
 
   // GAP-02 (mirrors expenses H-04): the ledger journal table is the source of
