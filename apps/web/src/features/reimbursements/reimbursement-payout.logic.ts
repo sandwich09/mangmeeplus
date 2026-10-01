@@ -106,6 +106,15 @@ export function setByOtherLine(account: Pick<MemberPayoutAccountSummary, 'setByO
   return account.setByOtherName ? `ตั้งโดย ${account.setByOtherName} เมื่อ ${formatThaiDateTime(account.updatedAt)}` : null;
 }
 
+/**
+ * The full number on screen: only the one revealed for exactly this account (this claim and account
+ * version, or this default as last saved), and only while the viewer may reveal it. Anything else
+ * shows nothing, from the first render on.
+ */
+export function shownAccountNumber(revealed: { revealKey: string; accountNumber: string } | null, revealKey: string, canReveal: boolean): string | null {
+  return canReveal && revealed?.revealKey === revealKey ? revealed.accountNumber : null;
+}
+
 export type ClaimPayoutView = {
   /**
    * legacy: sent before claims carried a receiving method, so no account is in the system;

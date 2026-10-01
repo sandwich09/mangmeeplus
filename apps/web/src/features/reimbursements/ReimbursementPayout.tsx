@@ -21,7 +21,7 @@ import {
 } from './reimbursement-payout.api';
 import {
   BANK_OPTIONS, OTHER_BANK, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT, claimPayoutView, emptyPayoutAccountForm,
-  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutDefaultChangedHint, setByOtherLine,
+  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutDefaultChangedHint, setByOtherLine, shownAccountNumber,
   type ClaimPayoutForm, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
 
@@ -85,21 +85,27 @@ export function PayoutAccountFields({ value, onChange, disabled = false, invalid
 }
 
 /** The masked account with "แสดงเลขบัญชี". The number is fetched on demand and never kept past this card. */
-function AccountNumberReveal({ masked, canReveal, onReveal }: {
+function AccountNumberReveal({ masked, revealKey, canReveal, onReveal }: {
   masked: string;
+  /** What the number belongs to: the claim and its account version, or the default as last saved. */
+  revealKey: string;
   canReveal: boolean;
   onReveal: () => Promise<string>;
 }) {
   const toast = useToast();
-  const [shown, setShown] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<{ revealKey: string; accountNumber: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Another account version must never sit under a number revealed for the previous one.
-  useEffect(() => { setShown(null); setError(null); }, [masked]);
+  // A number is shown only under the account it was revealed for, and only while this viewer may
+  // reveal: another claim, another account version or a right that is gone shows nothing, from the
+  // first render on. The effect then drops the number from memory as well.
+  const shown = shownAccountNumber(revealed, revealKey, canReveal);
+  useEffect(() => { setRevealed(null); setError(null); }, [revealKey, masked, canReveal]);
 
   const reveal = async () => {
     setBusy(true); setError(null);
-    try { setShown(await onReveal()); } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
+    // Kept under the key it was asked for: an answer that arrives after the account changed is never shown.
+    try { const accountNumber = await onReveal(); setRevealed({ revealKey, accountNumber }); } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
   const copy = async () => {
     try {
@@ -117,18 +123,17 @@ function AccountNumberReveal({ masked, canReveal, onReveal }: {
           <div className="mt-1 break-all font-mono text-lg font-bold tracking-[.06em] text-gray-900" data-testid="payout-account-number">{shown}</div>
         </div>
       )}
-      {canReveal && (
+      {/* The hide control follows the number itself: whenever a number is on screen, so is the way to hide it. */}
+      {shown ? (
         <div className="flex flex-col gap-2 sm:flex-row">
-          {shown ? (
-            <>
-              <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} onClick={() => void copy()}>คัดลอกเลขบัญชี</button>
-              <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} onClick={() => setShown(null)}>ซ่อนเลขบัญชี</button>
-            </>
-          ) : (
-            <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={() => void reveal()}>
-              {busy ? 'กำลังเปิด...' : 'แสดงเลขบัญชี'}
-            </button>
-          )}
+          <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} onClick={() => void copy()}>คัดลอกเลขบัญชี</button>
+          <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} onClick={() => setRevealed(null)}>ซ่อนเลขบัญชี</button>
+        </div>
+      ) : canReveal && (
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={() => void reveal()}>
+            {busy ? 'กำลังเปิด...' : 'แสดงเลขบัญชี'}
+          </button>
         </div>
       )}
       {error && <ErrorBanner message={error} />}
@@ -246,7 +251,7 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
                   <div>
                     <dt className="text-xs font-semibold text-gray-500">บัญชี</dt>
                     <dd className="mt-1">
-                      <AccountNumberReveal masked={payoutAccountLine(account)} canReveal={own}
+                      <AccountNumberReveal masked={payoutAccountLine(account)} revealKey={`${companyId}:${account.userId}:${account.updatedAt}`} canReveal={own}
                         onReveal={async () => (await revealMyPayoutAccount(companyId)).accountNumber} />
                     </dd>
                   </div>
@@ -394,7 +399,7 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
             <div className="min-w-0"><dt className="text-xs font-semibold text-gray-500">ผู้เบิก</dt><dd className="mt-1 break-words text-sm font-semibold text-gray-900">{detail.requesterDisplayNameSnapshot ?? '—'}</dd></div>
             <div className="min-w-0"><dt className="text-xs font-semibold text-gray-500">ชื่อบัญชี</dt><dd className="mt-1 break-words text-sm font-semibold text-gray-900">{payout.accountName ?? '—'}</dd></div>
           </dl>
-          <AccountNumberReveal masked={view.line} canReveal={payout.canRevealAccountNumber === true}
+          <AccountNumberReveal masked={view.line} revealKey={`${detail.id}:${payout.version ?? ''}`} canReveal={payout.canRevealAccountNumber === true}
             onReveal={async () => (await revealClaimPayoutAccount(companyId, detail.id)).accountNumber} />
         </>
       )}

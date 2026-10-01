@@ -251,8 +251,6 @@ describe('the full number: offered only when the server allows it, never in the 
     // A default account is revealed to its owner alone; an editor of someone else's account gets no button.
     assert.match(screen, /canReveal=\{own\}\s+onReveal=\{async \(\) => \(await revealMyPayoutAccount\(companyId\)\)\.accountNumber\}/);
     assert.match(screen, /const own = !memberUserId;/);
-    // The number lives in one component's state, is dropped when the account shown changes, and is never stored.
-    assert.match(screen, /useEffect\(\(\) => \{ setShown\(null\); setError\(null\); \}, \[masked\]\);/);
     assert.doesNotMatch(screen, /localStorage|sessionStorage|console\./);
     // The edit form always starts empty: a saved number is never loaded back into a field.
     assert.match(screen, /setForm\(emptyPayoutAccountForm\(\)\); setMethod\(account\?\.payoutMethod \?\? 'BANK_TRANSFER'\);/);
@@ -263,6 +261,33 @@ describe('the full number: offered only when the server allows it, never in the 
     assert.equal(api.match(/\/reveal/g)?.length, 2, 'two reveal calls: my own default account and a claim');
     // The reveal is a POST the server audits; nothing about an account ever rides in a URL.
     assert.doesNotMatch(api, /\?|accountNumber/);
+  });
+
+  // Security review nit: the number stayed on screen when the claim or the account version under it
+  // changed with the same masked line, and when the right to reveal was withdrawn, where it also lost
+  // its hide button.
+  it('shows a revealed number only under the account it was revealed for, and only while the viewer may reveal', () => {
+    const revealed = { revealKey: 'claim-1:1', accountNumber: '0123456789' };
+    assert.equal(logic.shownAccountNumber(revealed, 'claim-1:1', true), '0123456789');
+    for (const [label, revealKey, canReveal] of [
+      ['another claim with the same masked account', 'claim-2:1', true],
+      ['another account version of the same claim', 'claim-1:2', true],
+      ['the right to reveal is gone', 'claim-1:1', false],
+    ] as const) assert.equal(logic.shownAccountNumber(revealed, revealKey, canReveal), null, label);
+    assert.equal(logic.shownAccountNumber(null, 'claim-1:1', true), null);
+
+    const screen = read('./ReimbursementPayout.tsx');
+    // What is on screen is derived on every render, so a stale number is not painted even once;
+    // the effect then drops it from memory when the claim, the account or the right changes.
+    assert.match(screen, /const shown = shownAccountNumber\(revealed, revealKey, canReveal\);/);
+    assert.match(screen, /useEffect\(\(\) => \{ setRevealed\(null\); setError\(null\); \}, \[revealKey, masked, canReveal\]\);/);
+    assert.match(screen, /const accountNumber = await onReveal\(\); setRevealed\(\{ revealKey, accountNumber \}\);/);
+    // The claim and its account version, and the default as last saved, are what a number belongs to.
+    assert.match(screen, /revealKey=\{`\$\{detail\.id\}:\$\{payout\.version \?\? ''\}`\}/);
+    assert.match(screen, /revealKey=\{`\$\{companyId\}:\$\{account\.userId\}:\$\{account\.updatedAt\}`\}/);
+    // The hide control hangs on the number alone, never on the right to reveal.
+    assert.match(screen, /\{shown \? \(\s+<div[^>]*>\s+<button[^\n]*>คัดลอกเลขบัญชี<\/button>\s+<button[^\n]*onClick=\{\(\) => setRevealed\(null\)\}>ซ่อนเลขบัญชี<\/button>\s+<\/div>\s+\) : canReveal && \(/);
+    assert.equal(screen.match(/setRevealed\(/g)?.length, 3, 'reveal, hide and the reset: nothing else holds a number');
   });
 
   it('keeps the number a text field with a numeric keypad, so a leading zero is never lost', () => {
