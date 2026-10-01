@@ -1,20 +1,22 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, looksLikeAccountNumber, maskedPayoutAccountNumber, reimbursementIncurredDateError,
-  reimbursementPaymentSlipRequired, todayCivilDate,
-  type ReimbursementHubBucket, type ReimbursementHubSummary, type ReimbursementPaymentRule,
+  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
+  type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import {
-  CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS, PAYMENT_METHOD_LABELS,
+  CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
   type ClaimSignatureRole,
 } from './reimbursements.model';
+import { payoutComparableText } from './reimbursement-payout.logic';
+// The payment step's side of the payout (kept as its own imports, apart from the blocks above).
+import { looksLikeAccountNumber, maskedPayoutAccountNumber, type ReimbursementPaymentRule } from '@watchdog-bms/contracts';
+import { PAYMENT_METHOD_LABELS } from './reimbursements.model';
 import {
-  MISMATCH_REASON_HAS_ACCOUNT_NUMBER, MISMATCH_REASON_REQUIRED, PAID_DIFFERENTLY_LABEL, PAYER_CONFIRMATION_REQUIRED, payoutComparableText,
-  type PaymentFormPayout,
+  MISMATCH_REASON_HAS_ACCOUNT_NUMBER, MISMATCH_REASON_REQUIRED, PAID_DIFFERENTLY_LABEL, PAYER_CONFIRMATION_REQUIRED, type PaymentFormPayout,
 } from './reimbursement-payout.logic';
 
 /**
