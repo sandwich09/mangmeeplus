@@ -153,7 +153,7 @@ export function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: 
   );
 }
 
-export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, error, onClose, onConfirm }: {
+export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, error, onClose, onConfirm, confirmLabel = 'อนุมัติด้วยข้อมูลล่าสุด' }: {
   requestNo?: string;
   diff: ApprovalFieldDiff[];
   lines: any[];
@@ -162,6 +162,8 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
   error: string | null;
   onClose: () => void;
   onConfirm: () => void;
+  /** A claim now paid by transfer is not approved from here: the caller sends the approver to check the account first. */
+  confirmLabel?: string;
 }) {
   return (
     <Modal
@@ -174,7 +176,7 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
         <>
           <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
           <button type="button" className={successBtn} style={successBtnStyle} disabled={busy} aria-busy={Boolean(busy)} onClick={onConfirm}>
-            อนุมัติด้วยข้อมูลล่าสุด
+            {confirmLabel}
           </button>
         </>
       )}

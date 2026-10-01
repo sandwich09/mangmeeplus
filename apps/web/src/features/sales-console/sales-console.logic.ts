@@ -513,15 +513,8 @@ export type SalesAgentFormValues = {
 
 export type SalesAgentFormErrors = Partial<Record<keyof SalesAgentFormValues, string>>;
 
-// Source: Bank of Thailand financial institution directory, checked 2026-09-23.
-export const SALES_BANK_NAMES = [
-  'ธนาคารกรุงเทพ', 'ธนาคารกสิกรไทย', 'ธนาคารกรุงไทย', 'ธนาคารไทยพาณิชย์',
-  'ธนาคารกรุงศรีอยุธยา', 'ธนาคารทหารไทยธนชาต', 'ธนาคารยูโอบี',
-  'ธนาคารซีไอเอ็มบี ไทย', 'ธนาคารเกียรตินาคินภัทร', 'ธนาคารแลนด์ แอนด์ เฮ้าส์',
-  'ธนาคารไทยเครดิต', 'ธนาคารไอซีบีซี (ไทย)', 'ธนาคารสแตนดาร์ดชาร์เตอร์ด (ไทย)',
-  'ธนาคารออมสิน', 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร',
-  'ธนาคารอาคารสงเคราะห์', 'ธนาคารอิสลามแห่งประเทศไทย',
-] as const;
+// One bank list for the whole product; it lives in contracts so the claim payout account uses the same names.
+export { THAI_BANK_NAMES as SALES_BANK_NAMES } from '@watchdog-bms/contracts';
 
 export function emptyAgentForm(role: SalesRoleKey = 'MANGMEE_SALES'): SalesAgentFormValues {
   return {

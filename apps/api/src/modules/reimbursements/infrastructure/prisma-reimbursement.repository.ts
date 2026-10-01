@@ -2,7 +2,7 @@ import { serializableTransaction } from '../../../common/database/serializable-t
 import { isSerializationFailure } from '../../../common/database/prisma-error';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import {
-  civilPeriodKey, todayCivilDate, LEDGER_SEQUENCE_KEY,
+  civilPeriodKey, hasPrivilegedGrant, todayCivilDate, LEDGER_SEQUENCE_KEY,
   REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES,
 } from '@watchdog-bms/contracts';
 import { expenseDraftNumberingEnabled, expenseNumberInTransaction } from '../../expenses/infrastructure/expense-number';
@@ -58,6 +58,7 @@ import {
 import { effectivePolicy, effectivePolicyForRequest } from '../domain/reimbursement.constants';
 import {
   buildPaymentSourceRef,
+  claimSnapshotFields,
   computeSnapshotHash,
   computeOutstanding,
   computePaymentStatus,
@@ -75,6 +76,15 @@ import {
   currentDesk,
 } from '../domain/logic/reimbursement.logic';
 import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import {
+  PAYOUT_PEOPLE_MANAGER_ROLE_KEYS,
+  type FrozenPayoutPlan, type SealedPayoutDestination, type SubmitPayoutColumns, type SubmitPayoutPlan,
+} from '../domain/logic/payout-destination.logic';
+import {
+  applyDraftPayout, attestClaimPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit,
+  readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan,
+  writeMemberPayoutAccount, type DraftPayoutWrite, type MemberPayoutAccountRecord,
+} from './reimbursement-payout';
 import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
 
 function dec(v: unknown): string {
@@ -128,6 +138,9 @@ function activeApproverMembershipWhere(
     ] } : {}),
   };
 }
+
+/** A draft's receiving choice plus anything that must commit with it (setting the default account, its audit row, the requester's notice). */
+export type DraftPayoutChange = { write: DraftPayoutWrite; onPersisted?: (tx: any, requestId: string) => Promise<void> };
 
 export type ListRequestsWhere = {
   companyId: string;
@@ -465,7 +478,7 @@ export class PrismaReimbursementRepository {
 
   // ---- Request ----
 
-  async createRequest(data: CreateReimbursementRequestData): Promise<ReimbursementRequestRecord> {
+  async createRequest(data: CreateReimbursementRequestData, payout?: DraftPayoutChange): Promise<ReimbursementRequestRecord> {
     requireTransactionBranchId(data.branchId);
     const client = this.prisma.client as any;
     const row = await client.$transaction(async (tx: any) => {
@@ -498,6 +511,10 @@ export class PrismaReimbursementRepository {
         },
       });
       await this.replaceLines(tx, data.companyId, created.id, data.lines);
+      if (payout) {
+        await tx.reimbursementRequest.update({ where: { id: created.id }, data: await applyDraftPayout(tx, data.companyId, created.id, payout.write) });
+        await payout.onPersisted?.(tx, created.id);
+      }
       return created;
     });
     return (await this.findRequestById(data.companyId, row.id))!;
@@ -519,15 +536,18 @@ export class PrismaReimbursementRepository {
     expectedUpdatedAt: Date,
     data: Record<string, unknown>,
     lines?: ReimbursementLineWriteData[],
+    payout?: DraftPayoutChange,
   ): Promise<ReimbursementRequestRecord> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
       await this.lockRequest(tx, companyId, requestId);
+      const payoutColumns = payout ? await applyDraftPayout(tx, companyId, requestId, payout.write) : {};
       const changed = await tx.reimbursementRequest.updateMany({
         where: { id: requestId, companyId, status: 'DRAFT', updatedAt: expectedUpdatedAt },
-        data: { ...data, updatedAt: this.nextVersion(expectedUpdatedAt) },
+        data: { ...data, ...payoutColumns, updatedAt: this.nextVersion(expectedUpdatedAt) },
       });
       if (changed.count !== 1) throw this.draftChanged();
+      await payout?.onPersisted?.(tx, requestId);
       const sourceRequest = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId, id: requestId }, include: { lines: true } });
       await assertReimbursementSources(tx, { ...sourceRequest, lines: lines ?? sourceRequest.lines.map((line: any) => ({ ...line, sourceExpenseSnapshot: line.sourceExpenseSnapshotJson, attachmentSnapshot: line.attachmentSnapshotJson })) });
       if (lines) {
@@ -849,7 +869,8 @@ export class PrismaReimbursementRepository {
       approverUserId?: string;
       approverRoleSnapshot?: string;
       assignedApproverUserIdsJson?: string[];
-      requestSnapshotHash: string;
+      /** Left out when `payout` is given: the hash is then made inside this transaction. */
+      requestSnapshotHash?: string;
     };
     duplicateCandidates: ReimbursementDuplicateCandidateWriteData[];
     evidence: { attachmentIds: string[]; expenseIds: string[] };
@@ -861,12 +882,24 @@ export class PrismaReimbursementRepository {
       reservedByUserId: string;
     };
     request: Record<string, unknown>;
+    /**
+     * The claim's payout snapshot. Decided, checked against what the submitter was shown, frozen and
+     * hashed inside this transaction: `snapshotHash` is asked for the claim's hash once the payout
+     * columns are known, and that hash is what the step and the claim store.
+     */
+    payout?: {
+      actorUserId: string;
+      frozenAt: Date;
+      seenToken?: unknown;
+      snapshotHash: (columns: SubmitPayoutColumns) => string;
+    };
     onSubmittedPersisted?: (tx: any, result: {
       step?: ReimbursementApprovalStepRecord;
       documentNumber: ReservedDocumentNumberRecord;
       documentNumberReused: boolean;
       supersededDuplicateCandidateCount: number;
       supersededApprovalStepCount: number;
+      payout?: { plan: FrozenPayoutPlan; columns: SubmitPayoutColumns };
     }) => Promise<void>;
   }): Promise<{
     step?: ReimbursementApprovalStepRecord;
@@ -874,6 +907,7 @@ export class PrismaReimbursementRepository {
     documentNumberReused: boolean;
     supersededDuplicateCandidateCount: number;
     supersededApprovalStepCount: number;
+    payout?: { plan: FrozenPayoutPlan; columns: SubmitPayoutColumns };
   }> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
@@ -881,7 +915,11 @@ export class PrismaReimbursementRepository {
       await this.lockEvidence(tx, data.companyId, data.evidence);
       await this.assertEvidenceAvailable(tx, data.companyId, data.requestId, data.evidence);
       const sourceRequest = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId: data.companyId, id: data.requestId }, include: { lines: true } });
-      await assertReimbursementSources(tx, this.toRequest(sourceRequest));
+      const draft = this.toRequest(sourceRequest);
+      await assertReimbursementSources(tx, draft);
+      // Before anything is written: what this submit freezes, and the hash that binds it.
+      const payout = data.payout ? await freezePayoutAtSubmit(tx, draft, data.payout) : undefined;
+      const snapshotHash = payout ? data.payout!.snapshotHash(payout.columns) : data.approvalStep?.requestSnapshotHash;
 
       const reserved = await this.documentNumbers.reserveNumberInTransaction(tx, {
         companyId: data.companyId,
@@ -931,12 +969,14 @@ export class PrismaReimbursementRepository {
           })),
         });
       }
+      if (data.approvalStep && !snapshotHash) throw new Error('reimbursement_submit_snapshot_hash_missing');
       const step = data.approvalStep
         ? await tx.reimbursementApprovalStep.create({
           data: {
             companyId: data.companyId,
             reimbursementRequestId: data.requestId,
             ...data.approvalStep,
+            requestSnapshotHash: snapshotHash,
           },
         })
         : undefined;
@@ -949,6 +989,8 @@ export class PrismaReimbursementRepository {
         },
         data: {
           ...data.request,
+          // The payout columns and the hash made from them, written by this submit and nothing else.
+          ...(payout && { ...payout.columns, approvalSnapshotHash: snapshotHash }),
           requestNo: reserved.documentNumber,
           currentApprovalStepId: step?.id ?? null,
           updatedAt: this.nextVersion(data.expectedUpdatedAt),
@@ -969,6 +1011,7 @@ export class PrismaReimbursementRepository {
         documentNumberReused,
         supersededDuplicateCandidateCount: supersededCandidates.count,
         supersededApprovalStepCount: supersededApprovalSteps.count,
+        payout,
       });
       return {
         step: step ? this.toStep(step) : undefined,
@@ -976,6 +1019,7 @@ export class PrismaReimbursementRepository {
         documentNumberReused,
         supersededDuplicateCandidateCount: supersededCandidates.count,
         supersededApprovalStepCount: supersededApprovalSteps.count,
+        payout,
       };
     });
   }
@@ -1158,6 +1202,109 @@ export class PrismaReimbursementRepository {
       : []);
   }
 
+  // ---- Payout account (rules: ../domain/logic/payout-destination.logic.ts, SQL: ./reimbursement-payout.ts) ----
+
+  findMemberPayoutAccount(companyId: string, userId: string): Promise<MemberPayoutAccountRecord | null> {
+    return readMemberPayoutAccount(this.prisma.client, companyId, userId);
+  }
+
+  /** Reveal only. */
+  findMemberPayoutSecret(companyId: string, userId: string): Promise<string | null> {
+    return readMemberPayoutSecret(this.prisma.client, companyId, userId);
+  }
+
+  /** `tx`: join a draft save that sets the default in the same transaction. */
+  async setMemberPayoutAccount(
+    data: { companyId: string; userId: string; actorUserId: string; payoutMethod: 'BANK_TRANSFER' | 'CASH'; destination?: SealedPayoutDestination },
+    onPersisted: (tx: any, change: { before: MemberPayoutAccountRecord | null; after: MemberPayoutAccountRecord }) => Promise<void>,
+    tx?: any,
+  ): Promise<MemberPayoutAccountRecord> {
+    const write = async (client: any) => {
+      const change = await writeMemberPayoutAccount(client, data);
+      await onPersisted(client, change);
+      return change.after;
+    };
+    return tx ? write(tx) : (this.prisma.client as any).$transaction(write);
+  }
+
+  async removeMemberPayoutAccount(
+    companyId: string,
+    userId: string,
+    onPersisted: (tx: any, before: MemberPayoutAccountRecord) => Promise<void>,
+  ): Promise<boolean> {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      const before = await deleteMemberPayoutAccount(tx, companyId, userId);
+      if (before) await onPersisted(tx, before);
+      return !!before;
+    });
+  }
+
+  /**
+   * Whose default account an employee-data editor may set: the member, whether they have an employee
+   * record, their branches, and whether they manage people themselves (a manager may not set a
+   * peer's or a superior's account).
+   */
+  async findPayoutMember(companyId: string, userId: string): Promise<{
+    displayName: string; membershipStatus: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[]; managesPeople: boolean;
+  } | null> {
+    const row = await this.prisma.client.companyMembership.findFirst({
+      where: { companyId, userId },
+      select: {
+        status: true, branchScopeMode: true, defaultBranchId: true, branchScopes: { select: { branchId: true } },
+        employeeAccessProfile: { select: { id: true } }, user: { select: { displayName: true } },
+        roles: { select: { role: { select: { key: true, permissions: { select: { permission: { select: { key: true } } } } } } } },
+      },
+    });
+    if (!row) return null;
+    return {
+      displayName: row.user.displayName,
+      // The status the notification writer filters recipients by: only an ACTIVE member is ever told.
+      membershipStatus: row.status,
+      hasEmployeeProfile: !!row.employeeAccessProfile,
+      // The same reading of "people-managing role" as suspending or deleting an employee uses.
+      managesPeople: row.roles.some(({ role }) => PAYOUT_PEOPLE_MANAGER_ROLE_KEYS.includes(role.key)
+        || hasPrivilegedGrant(role.permissions.map((entry) => entry.permission.key))),
+      allBranches: row.branchScopeMode === 'ALL_BRANCHES',
+      branchIds: [...new Set([...row.branchScopes.map((scope) => scope.branchId), ...(row.defaultBranchId ? [row.defaultBranchId] : [])])],
+    };
+  }
+
+  /**
+   * Whether the member holds the product's own OWNER or ADMIN role. Roles are compared by what they
+   * are, not by their key: a role a company makes gets its key from its name, so a custom role named
+   * "Admin" has the key ADMIN too, and so does the copy a company gets when it edits the Admin role.
+   * Both live in the company's scope (`scopeKey` = the company, `isSystem` false) and cannot be told
+   * apart, so neither counts: only the system role (`scopeKey` 'system', no company) does.
+   */
+  async holdsSystemOwnerOrAdminRole(companyId: string, userId: string): Promise<boolean> {
+    return !!await this.prisma.client.companyMembership.findFirst({
+      where: {
+        companyId, userId, status: 'ACTIVE',
+        roles: { some: { role: { key: { in: ['OWNER', 'ADMIN'] }, status: 'ACTIVE', isSystem: true, scopeKey: 'system', companyId: null } } },
+      },
+      select: { id: true },
+    });
+  }
+
+  /** The claim's own snapshot. Never the member's default account. */
+  findClaimPayout(request: ReimbursementRequestRecord) {
+    return readClaimPayout(this.prisma.client, request);
+  }
+
+  /** A draft only: the requester's default account it will be sent with. */
+  findDraftDefaultPayout(request: ReimbursementRequestRecord) {
+    return readDraftDefaultPayout(this.prisma.client, request);
+  }
+
+  /** Reveal only. */
+  findClaimPayoutSecret(companyId: string, requestId: string, version: number) {
+    return readClaimPayoutSecret(this.prisma.client, companyId, requestId, version);
+  }
+
+  planSubmitPayout(request: ReimbursementRequestRecord): Promise<SubmitPayoutPlan> {
+    return readSubmitPayoutPlan(this.prisma.client, request);
+  }
+
   private async lockRequest(tx: any, companyId: string, requestId: string): Promise<void> {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${requestId}:reimbursement-request`}))`;
   }
@@ -1288,16 +1435,9 @@ export class PrismaReimbursementRepository {
   ): string {
     const storedHash = request.approvalSnapshotHash;
     if (!storedHash || !request.lines?.length) throw new ConflictException('stale_approval_snapshot');
-    const liveHash = computeSnapshotHash({
-      amount: request.amount,
-      currency: request.currency,
-      categoryKey: request.categoryKey,
-      incurredDate: request.incurredDate.toISOString(),
-      reason: request.reason,
-      primaryAttachmentId: request.primaryAttachmentId,
-      lines: request.lines,
-      approvalPolicySnapshotJson: request.approvalPolicySnapshotJson,
-    });
+    // Same builder as the submit that stored the hash: a claim sent with a payout snapshot is
+    // checked with it, a legacy claim without.
+    const liveHash = computeSnapshotHash(claimSnapshotFields(request, request.approvalPolicySnapshotJson));
     const legacyV1Compatible = isExactLegacyV1FallbackSnapshot({
       requestId: request.id,
       companyId: request.companyId,
@@ -1313,7 +1453,9 @@ export class PrismaReimbursementRepository {
       lines: request.lines,
     }, storedHash);
     if (storedHash !== liveHash && !legacyV1Compatible) throw new ConflictException('stale_approval_snapshot');
-    if (expectedApprovalSnapshotHash && expectedApprovalSnapshotHash !== storedHash) {
+    // Nothing is approved unseen: the approver names the claim content they looked at, and it has to
+    // be the content stored now. A call that names none is as stale as one that names another.
+    if (expectedApprovalSnapshotHash !== storedHash) {
       throw new ConflictException('stale_approval_snapshot');
     }
     return storedHash;
@@ -1376,6 +1518,8 @@ export class PrismaReimbursementRepository {
     financeReviewRequired: boolean;
     decidedAt: Date;
     comment?: string;
+    /** "ตรวจบัญชีแล้ว": the account version the approver looked at. */
+    payoutVerifiedVersion?: unknown;
     financeRequestPatch: Record<string, unknown>;
     onDecisionPersisted: (tx: any) => Promise<void>;
   }): Promise<{ request: ReimbursementRequestRecord; resumed: boolean; approvalStepId: string }> {
@@ -1424,6 +1568,10 @@ export class PrismaReimbursementRepository {
         return { request, resumed: true, approvalStepId: step.id };
       }
       if (step.status !== 'PENDING') throw new ConflictException('stale_approval_snapshot');
+      // Same transaction as the decision: an approval of a transfer claim cannot exist without it.
+      await attestClaimPayout(tx, request, {
+        verifiedVersion: data.payoutVerifiedVersion, actorUserId: data.actorUserId, verifiedAt: data.decidedAt, approvalStepId: step.id,
+      });
 
       const changedStep = await tx.reimbursementApprovalStep.updateMany({
         where: {
@@ -1646,6 +1794,7 @@ export class PrismaReimbursementRepository {
             paymentStatus: 'NOT_PAYABLE',
             duplicateStatus: 'NOT_CHECKED',
             postingStatus: 'not_required',
+            ...await draftPayoutAfterReopen(tx, request),
           } : {}),
           financeReviewStatus: data.decision,
           financeReviewedByUserId: data.actorUserId,
@@ -2432,9 +2581,14 @@ export class PrismaReimbursementRepository {
           : { count: 0 };
         if (withdrawn.count !== 1) throw this.requestChanged();
       }
+      const sent = await tx.reimbursementRequest.findFirst({
+        where: { id, companyId },
+        select: { id: true, companyId: true, requesterUserId: true, status: true, payoutMethod: true, payoutDestinationVersion: true },
+      });
       const changed = await tx.reimbursementRequest.updateMany({
         where: { id, companyId, status: expectedStatus, updatedAt: expectedUpdatedAt, cancellationPendingAt: null },
         data: {
+          ...(sent ? await draftPayoutAfterReopen(tx, sent) : {}),
           status: 'DRAFT',
           submittedAt: null,
           submittedByUserId: null,
@@ -3717,6 +3871,9 @@ export class PrismaReimbursementRepository {
       missingReceiptReason: opt(row.missingReceiptReason),
       approvalSnapshotHash: opt(row.approvalSnapshotHash),
       approvalPolicySnapshotJson: opt(row.approvalPolicySnapshotJson),
+      payoutMethod: opt(row.payoutMethod),
+      payoutDestinationVersion: opt(row.payoutDestinationVersion),
+      payoutFingerprint: opt(row.payoutFingerprint),
       paymentTotalAmount: dec(row.paymentTotalAmount),
       outstandingAmount: dec(row.outstandingAmount),
       idempotencyKey: opt(row.idempotencyKey),

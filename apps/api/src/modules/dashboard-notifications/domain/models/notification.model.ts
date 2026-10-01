@@ -130,6 +130,9 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   'workflow.reimbursement_finance_review',
   'workflow.reimbursement_ready_for_payment',
   'workflow.reimbursement_payment_recorded',
+  // Someone else set a member's payout account (owner decision 2026-10-01): the account owner is told
+  // on the web and on LINE. The text names the editor and carries the last 4 digits, never the number.
+  'reimbursement.payout_account_set_by_other',
   'expense.substitute_receipt_signature_pending',
   // Separate key from the payer stage on purpose — a shared key put both stages on one dedup/alert
   // state and the payer notification's cooldown suppressed this one. See SIGNATURE_STAGES.
@@ -154,6 +157,18 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   // D-P5-6: 14 days before an auto-renewing deal goes back to the catalog price. Reaches the shop
   // OWNER (console + LINE, number-free) and the sales team's own work list.
   'sales_deal_ending',
+];
+
+/**
+ * Notices the product owes a person, which a saved preference list therefore cannot drop. That list
+ * is frozen the first time a preference row is saved, so every trigger added afterwards is missing
+ * from it and its LINE push would be suppressed without anyone having chosen that. A recipient who
+ * turned the LINE channel off altogether is still respected.
+ */
+export const ALWAYS_DELIVERED_TRIGGER_KEYS: string[] = [
+  // Where a member's reimbursements are paid: telling them is the owner's condition for letting
+  // anyone else set the account.
+  'reimbursement.payout_account_set_by_other',
 ];
 
 // Future triggers — disabled until source module exists

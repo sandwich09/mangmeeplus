@@ -12,7 +12,7 @@ import { PrismaAlertStateRepository } from '../../infrastructure/prisma-notifica
 import { buildDedupKey, isInCooldown, computeCooldownUntil, isImplementedTrigger, isRetryable, isInQuietHours, resolveDeliveryOutcome, notificationSourceHref } from '../../domain/logic/notification.logic';
 import type { NotificationSummaryDto, NotificationPreferenceDto, NotificationRuleDto, UnreadCountDto, UpdatePreferenceDto, UpdateRuleDto } from '@watchdog-bms/contracts';
 import { withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
-import { IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, DEFAULT_ENABLED_CHANNELS, DELIVERY_SWEEP_BATCH_LIMIT } from '../../domain/models/notification.model';
+import { ALWAYS_DELIVERED_TRIGGER_KEYS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, DEFAULT_ENABLED_CHANNELS, DELIVERY_SWEEP_BATCH_LIMIT } from '../../domain/models/notification.model';
 import { AuditService } from '../../../audit/application/audit.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { Prisma } from '../../../../generated/prisma/client';
@@ -339,7 +339,9 @@ export class ProcessQueuedDeliveryUseCase {
     const severity = event.severity.toLowerCase();
     const quiet = isInQuietHours(new Date(), preference?.quietHoursStart ?? undefined, preference?.quietHoursEnd ?? undefined, preference?.timezone ?? 'Asia/Bangkok');
 
-    if (!enabledChannels.includes('line') || !enabledTriggers.includes(event.triggerKey) || (quiet && severity !== 'critical')) {
+    // A saved list predates every trigger added after it; a notice the product owes is not dropped for that.
+    const triggerEnabled = enabledTriggers.includes(event.triggerKey) || ALWAYS_DELIVERED_TRIGGER_KEYS.includes(event.triggerKey);
+    if (!enabledChannels.includes('line') || !triggerEnabled || (quiet && severity !== 'critical')) {
       return this.deliveries.update(companyId, deliveryId, {
         status: 'suppressed',
         attemptCount: delivery.attemptCount + 1,
