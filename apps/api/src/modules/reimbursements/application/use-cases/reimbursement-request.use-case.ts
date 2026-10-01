@@ -322,6 +322,10 @@ export class GetReimbursementDetailUseCase {
     // what it froze, and the requester alone is told, from fingerprints that stay on the server.
     const defaultAccountChanged = req.requesterUserId === ctx.userId && detail.payout?.source === 'DEFAULT_ACCOUNT'
       && defaultChangedSinceSubmit(req, detail.payout.source, await this.repo.findMemberPayoutAccount(ctx.companyId, req.requesterUserId));
+    // Spec §15: a legacy claim froze no account, so whoever may record its payment is shown the
+    // requester's default account as it is now, with the token a confirmation of it sends back.
+    // Present exactly when the reveal endpoint would answer this viewer for that account.
+    const legacyPayoutDefault = await legacyPayoutPayer(ctx, req, this.repo) ? await this.repo.findLegacyPayoutDefault(req) : null;
     return {
       ...detail,
       // The button is offered exactly when the reveal endpoint would answer.
@@ -329,6 +333,7 @@ export class GetReimbursementDetailUseCase {
         ...payout, ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
         canRevealAccountNumber: await claimPayoutRevealGroup(ctx, req, this.repo, approvalActions) !== null,
       } }),
+      ...(legacyPayoutDefault && { legacyPayoutDefault }),
       approvalActions,
       ...(payers && { paymentDesk: { names: payers.slice(0, 5), moreCount: Math.max(payers.length - 5, 0) } }),
       internalNotes: notes.map(note => ({
@@ -1021,6 +1026,25 @@ export async function claimPayoutRevealGroup(
     isClaimApprover: actions.canApprove || actions.canReject
       || isReimbursementClaimApprover(ctx.userId, { submittedAt: request.submittedAt, approvalSteps: request.approvalSteps }),
   });
+}
+
+/**
+ * Whether this viewer is shown, and may reveal, the requester's CURRENT default account on a legacy
+ * claim (payout spec §15). A claim sent before claims carried an account froze none, so the payer has
+ * nothing else to transfer into. Only whoever the payment endpoint would accept the payment from,
+ * and only while it would take one: the pay right, the claim's branch, a way to read the claim, and
+ * a claim that can be paid. Nobody else has a use for a member's default on someone's claim. The
+ * detail's `legacyPayoutDefault` block and the reveal endpoint both ask this, so they cannot disagree.
+ */
+export async function legacyPayoutPayer(
+  ctx: RequestContext,
+  request: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+): Promise<boolean> {
+  return request.status !== 'DRAFT' && !hasPayoutSnapshot(request)
+    && !!request.branchId && PAYMENT_RECORDING_STATUSES.includes(request.status)
+    && ctx.permissions.includes('reimbursement.payment.record')
+    && await assertCanReadRequest(ctx, request, repo).then(() => true, () => false);
 }
 
 // claimSignatureAckHash moved to ../../domain/logic/reimbursement.logic (pure record hash).
