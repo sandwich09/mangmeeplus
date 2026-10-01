@@ -19,11 +19,11 @@ const failed: UnpostedClaimPayment = {
   requesterDisplayNameSnapshot: 'วิไล', paymentNo: 'RBPAY-202602-000002', paidAmount: '1289', postingStatus: 'posting_error',
 };
 
-async function render(props: Partial<{ rows: UnpostedClaimPayment[]; visible: number; postingId: string | null; error: string | null }> = {}): Promise<string> {
+async function render(props: Partial<{ rows: UnpostedClaimPayment[] | null; visible: number; postingId: string | null; error: string | null }> = {}): Promise<string> {
   const { ClaimPaymentPostingList, CLAIM_PAYOUT_PAGE_SIZE } = await import('./ClaimPaymentPosting');
   return renderToStaticMarkup(React.createElement(ClaimPaymentPostingList, {
     companyId: 'company-1', rows: [pending, failed], visible: CLAIM_PAYOUT_PAGE_SIZE, postingId: null, error: null,
-    onPost: () => undefined, onShowMore: () => undefined, ...props,
+    onPost: () => undefined, onShowMore: () => undefined, onRetry: () => undefined, ...props,
   }));
 }
 
@@ -49,10 +49,10 @@ test('lists each unposted claim payout in plain Thai with its own posting action
   assert.match(text, /จ่ายเมื่อ 1 ก\.พ\. 2569/);
   // A payout still waiting and one whose last attempt failed read differently, and so do their buttons.
   const [waitingRow, failedRow] = html.split('<li ').slice(1).map(visibleText);
-  assert.match(waitingRow!, /RB-202602-0001.*รอบันทึกบัญชี.*ลงบัญชี/);
-  assert.doesNotMatch(waitingRow!, /บันทึกผิดพลาด|ลองอีกครั้ง/);
-  assert.match(failedRow!, /RB-202602-0002.*บันทึกผิดพลาด.*ลองอีกครั้ง/);
-  assert.doesNotMatch(failedRow!, /รอบันทึกบัญชี/);
+  assert.match(waitingRow!, /RB-202602-0001.*ยังไม่ลงบัญชี/);
+  assert.doesNotMatch(waitingRow!, /ผิดพลาด|ลองอีกครั้ง/);
+  assert.match(failedRow!, /RB-202602-0002.*ลงบัญชีผิดพลาด.*ลองอีกครั้ง/);
+  assert.doesNotMatch(failedRow!, /ยังไม่ลงบัญชี/);
   assert.equal((html.match(/>ลงบัญชี<\/button>/g) ?? []).length, 1);
   assert.equal((html.match(/>ลองอีกครั้ง<\/button>/g) ?? []).length, 1);
   // Each row opens its claim.
@@ -74,10 +74,28 @@ test('a row with no claim number, payer name or payment number falls back to wor
   assert.doesNotMatch(text, /เลขที่จ่าย|undefined|null|cmpayment|cmrequest/);
 });
 
-test('a payout in another currency keeps its own code instead of a baht sign', async () => {
-  const text = visibleText(await render({ rows: [{ ...pending, currency: 'USD', paidAmount: '20' }] }));
-  assert.match(text, /20\.00 USD/);
-  assert.doesNotMatch(text, /฿/);
+// Review finding: the close check that sends the accountant here said "ยังไม่ลงบัญชี / ลงบัญชีผิดพลาด"
+// while the rows said "รอบันทึกบัญชี / บันทึกผิดพลาด".
+test('a row is labelled with the very words the period-close check used to send the accountant here', async () => {
+  const { periodCloseCheckCopy } = await import('../ledger/ledger.logic');
+  const copy = periodCloseCheckCopy({ checkKey: 'reimbursement_postings_complete', status: 'FAILED', count: 2, breakdown: { pendingPayments: 1, paymentErrors: 1 } });
+  const html = await render();
+  const badges = [...html.matchAll(/<li [\s\S]*?จ่ายเมื่อ[^<]*<\/span><span[^>]*>([^<]+)<\/span>/g)].map((match) => match[1]!);
+  assert.deepEqual(badges, ['ยังไม่ลงบัญชี', 'ลงบัญชีผิดพลาด']);
+  for (const badge of badges) assert.ok(copy.message.includes(`การจ่ายเงินคืนใบเบิกที่${badge} 1 รายการ`), `the close check says "${badge}" too`);
+  assert.ok(copy.links?.some((link) => link.label === `เปิดรายการจ่ายเงินคืนที่${badges[0]}` && link.path === '/expenses/evidence'));
+  assert.match(visibleText(html), new RegExp(`การจ่ายเงินคืนใบเบิกที่${badges[0]} \\(2 รายการ\\)`), 'and so does the heading');
+  assert.doesNotMatch(visibleText(html), /รอบันทึกบัญชี|บันทึกผิดพลาด/);
+});
+
+test('a payout in another currency is named in Thai, never by a code or a baht sign', async () => {
+  const amount = async (currency: string) => visibleText(await render({ rows: [{ ...pending, currency, paidAmount: '20' }] }));
+  assert.match(await amount('USD'), /20\.00 ดอลลาร์สหรัฐ/);
+  assert.match(await amount('JPY'), /20\.00 เยนญี่ปุ่น/);
+  // A code nobody can name, and one that is not a currency code at all.
+  assert.match(await amount('XYZ'), /20\.00 สกุลเงินอื่น/);
+  assert.match(await amount('US'), /20\.00 สกุลเงินอื่น/);
+  for (const currency of ['USD', 'JPY', 'XYZ', 'US']) assert.doesNotMatch(await amount(currency), /฿|USD|JPY|XYZ|\bUS\b/);
 });
 
 test('a refused post stays on screen as an alert, with the row still there to retry', async () => {
@@ -93,11 +111,39 @@ test('while one payout is posting, its button says so and no second post can sta
   assert.equal((html.match(/<button[^>]*disabled=""/g) ?? []).length, 2, 'every posting button is locked meanwhile');
 });
 
-test('takes no room when nothing is waiting, and still reports a load failure', async () => {
-  assert.equal(await render({ rows: [] }), '');
-  const html = await render({ rows: [], error: 'โหลดรายการไม่สำเร็จ' });
-  assert.match(html, /role="alert"/);
-  assert.match(visibleText(html), /\(0 รายการ\)/);
+// Review findings: the section used to appear only once rows arrived, pushing the page down, and a
+// failed first load read "(0 รายการ)" with no way to try again.
+test('before the first answer it already holds its place with one line, and claims no count', async () => {
+  const html = await render({ rows: null });
+  assert.match(visibleText(html), /การจ่ายเงินคืนใบเบิกที่ยังไม่ลงบัญชี เงินที่จ่ายคืนพนักงานแล้ว/);
+  assert.match(html, /<p role="status" aria-busy="true" class="text-sm text-gray-500">กำลังโหลด\.\.\.<\/p>/);
+  assert.doesNotMatch(visibleText(html), /รายการ\)|ไม่มีรายการค้าง/);
+  assert.doesNotMatch(html, /<ul|<button|role="alert"/);
+});
+
+test('nothing waiting is one line of the same size as the loading line, so the page below does not move', async () => {
+  const html = await render({ rows: [] });
+  assert.match(html, /<p class="text-sm text-gray-500">ไม่มีรายการค้าง ลงบัญชีครบแล้ว<\/p>/);
+  assert.doesNotMatch(visibleText(html), /รายการ\)|กำลังโหลด/);
+  assert.doesNotMatch(html, /<ul|<button|role="alert"|role="status"/);
+});
+
+test('a failed first load shows the reason and a way to try again, never an empty list or a zero', async () => {
+  const html = await render({ rows: null, error: 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่' });
+  assert.match(html, /role="alert"[^>]*>⚠ เชื่อมต่อระบบไม่ได้/);
+  assert.match(html, /<button type="button" class="[^"]*mangmee-btn[^"]*w-full sm:w-auto"[^>]*>โหลดอีกครั้ง<\/button>/);
+  assert.doesNotMatch(visibleText(html), /0 รายการ|รายการ\)|ไม่มีรายการค้าง|กำลังโหลด/, 'an unread list is not an empty one');
+
+  const section = read('./ClaimPaymentPosting.tsx');
+  assert.match(section, /useState<UnpostedClaimPayment\[\] \| null>\(null\)/, 'the list is unknown until the first answer');
+  assert.match(section, /const retry = \(\) => \{ setError\(null\); void load\(\); \};/, 'a retry clears the error, so the loading line shows again');
+  assert.match(section, /onRetry=\{retry\}/);
+});
+
+test('a refused post on a loaded list offers no reload: the rows are there and each can be retried', async () => {
+  const html = await render({ rows: [failed], error: 'ยังไม่มีกฎลงบัญชีที่ผ่านการตรวจสำหรับเอกสารนี้ จึงยังไม่สร้างรายการบัญชี' });
+  assert.doesNotMatch(html, /โหลดอีกครั้ง|กำลังโหลด/);
+  assert.equal(drawnRows(html), 1);
 });
 
 test('reads top to bottom on a 390px phone: stacked cards, amount in view, full-width action', async () => {
@@ -108,7 +154,9 @@ test('reads top to bottom on a 390px phone: stacked cards, amount in view, full-
   assert.equal((html.match(/sm:hidden[^>]*>฿500\.50</g) ?? []).length, 1);
   assert.equal((html.match(/hidden [^"]*sm:inline[^>]*>฿500\.50</g) ?? []).length, 1);
   assert.equal((html.match(/<button[^>]*class="[^"]*mangmee-btn[^"]*w-full sm:w-auto/g) ?? []).length, 2);
-  assert.match(html, /class="[^"]*truncate[^"]*"[^>]*href=/, 'a long claim number cannot push the amount off screen');
+  // The claim number is a 44px touch target, and it is the number that gets cut when it is too long.
+  assert.equal((html.match(/<a class="flex min-h-11 min-w-0 items-center [^"]*" href="[^"]*"><span class="truncate">/g) ?? []).length, 2,
+    'a long claim number cannot push the amount off screen, and a thumb can hit it');
   assert.match(html, /break-words/);
 });
 
