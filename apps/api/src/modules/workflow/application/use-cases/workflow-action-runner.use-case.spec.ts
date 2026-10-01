@@ -201,11 +201,43 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 
     it('ready_for_payment: the approver who can record the payment is told, as their own next step', async () => {
       repo.findUserIdsByPermissions = mock.fn(async () => ['u_approver', 'u_finance']);
-      await runReady({ actorUserId: 'u_approver' });
+      await runReady({ actorUserId: 'u_approver', requesterUserId: 'u_staff' });
 
       const sent = (notify.execute.mock.calls[0] as any).arguments[0];
-      assert.deepEqual(sent.recipientUserIds, ['u_approver', 'u_finance']);
+      assert.deepEqual(sent.recipientUserIds, ['u_approver']);
       assert.equal(sent.body, 'ยอด 250 THB · รอคุณบันทึกการจ่ายเงิน');
+    });
+
+    // Owner, 2026-10-01: "แจ้งเตือนไปเจ้าของตลอดแบบนี้น่ารำคาญ". The shop owner holds every right, so
+    // "everyone who can pay" pushed the owner for every approved claim. It is the approver's turn.
+    it('ready_for_payment: a manager approves where the owner, an admin and a second manager can all pay, and only that manager is told', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin', 'u_manager', 'u_manager_2']);
+      await runReady({ actorUserId: 'u_manager', requesterUserId: 'u_staff' });
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_manager']);
+    });
+
+    it('ready_for_payment: the finance reviewer who passed the claim is the one told, when they can pay', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_finance', 'u_manager']);
+      await runReady({ actorUserId: 'u_finance', requesterUserId: 'u_staff', decision: 'APPROVED_FOR_PAYMENT' });
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_finance']);
+    });
+
+    it('ready_for_payment: a claim that needed no approval, filed on someone else\'s behalf, goes to whoever filed it', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_preparer']);
+      await runReady({ actorUserId: 'u_preparer', requesterUserId: 'u_staff', decision: 'BELOW_APPROVAL_THRESHOLD' });
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_preparer']);
+    });
+
+    // The requester filed it and nobody approved it: the actor IS the requester, who is never the
+    // one told alone to pay their own claim, so the notice goes to everyone who can.
+    it('ready_for_payment: a claim that needed no approval, filed by its requester, does not go to the requester alone', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_manager', 'u_requester']);
+      await runReady({ actorUserId: 'u_requester', requesterUserId: 'u_requester', decision: 'BELOW_APPROVAL_THRESHOLD' });
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_owner', 'u_manager', 'u_requester']);
     });
 
     it('ready_for_payment: a solo owner who approved their own claim gets the one notice to pay it', async () => {
@@ -590,6 +622,41 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_all_branches', 'u_claim_branch_only']);
     assert.deepEqual((h.repo.findSourceBranchId.mock.calls[0] as any).arguments, ['co_1', 'reimbursement_request', 'rb_1']);
     assert.equal(h.updates.at(-1)?.status, 'SUCCEEDED');
+  });
+
+  // Whose turn it is only counts when that person can act: an approver who holds the pay right
+  // for another branch cannot record this payment, so everyone who can is told instead.
+  it('tells everyone who can pay when the approver cannot record the payment for the claim branch', async () => {
+    const h = harness({
+      sourceBranchId: 'br_claim',
+      memberships: {
+        u_owner: member(),
+        u_admin: member(),
+        u_approver: member({ branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'br_other' }] }),
+      },
+    });
+    const context = claimContext();
+    context.payload = { ...context.payload, actorUserId: 'u_approver', requesterUserId: 'u_staff' };
+
+    await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), context);
+
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_owner', 'u_admin']);
+  });
+
+  it('tells only the approver when they can record the payment for the claim branch', async () => {
+    const h = harness({
+      sourceBranchId: 'br_claim',
+      memberships: {
+        u_owner: member(),
+        u_approver: member({ branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'br_claim' }),
+      },
+    });
+    const context = claimContext();
+    context.payload = { ...context.payload, actorUserId: 'u_approver', requesterUserId: 'u_staff' };
+
+    await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), context);
+
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_approver']);
   });
 
   it('keeps a branch-limited payer for a company-central claim, exactly as the pay endpoint does', async () => {

@@ -358,7 +358,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'reimbursement_ready_for_payment',
     name: 'Reimbursement ready for payment',
-    description: 'Notify everyone who can record this reimbursement payment, the person who approved it included, when a claim is ready for payment.',
+    description: 'Notify the person whose turn it is to record this reimbursement payment (whoever approved it, when they can pay), else everyone who can, when a claim is ready for payment.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -370,6 +370,13 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
         configJson: {
           triggerKey: 'workflow.reimbursement_ready_for_payment',
           recipientPermissions: ['reimbursement.payment.record'],
+          // Owner rule 2026-10-01: whose turn it is, not everyone who can pay (a shop owner holds
+          // every right and was pushed for every claim). That is the actor of this event when they
+          // can record the payment: the approver, the finance reviewer, or whoever filed on
+          // someone's behalf a claim that needed no approval. Never the requester alone. With no
+          // such person, everyone able to record the payment, as before.
+          preferRecipientPayloadKeys: ['actorUserId'],
+          neverPreferRecipientPayloadKeys: ['requesterUserId'],
           severity: 'action',
           titleTemplate: 'พร้อมจ่ายเบิกจ่าย: {{requestNo}}',
           // Worded as the reader's own next step: every recipient is someone who can record it.

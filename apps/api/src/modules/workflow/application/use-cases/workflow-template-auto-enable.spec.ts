@@ -191,6 +191,29 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
     assert.deepEqual(latest.actionSnapshotJson, catalogActions('reimbursement_pending_approval'));
   });
 
+  // Owner rule 2026-10-01: the ready-to-pay notice prefers whose turn it is. A company whose rule
+  // was pinned before that must pick it up at the next release, or it keeps pushing everyone.
+  it('re-pins a ready-to-pay rule pinned before the recipient preference, and leaves an admin-edited one alone', async () => {
+    const before = [{
+      actionKey: 'notify_payer', actionType: 'SEND_NOTIFICATION',
+      configJson: { triggerKey: 'workflow.reimbursement_ready_for_payment', recipientPermissions: ['reimbursement.payment.record'], severity: 'action' },
+    }];
+    const readyRule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: 'reimbursement_ready_for_payment', cooldownSeconds: 0, actionJson: before, ...over });
+    const repo = fakeRepo([readyRule(), readyRule({ companyId: 'co_2', updatedByUserId: 'admin_1' })]);
+
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), ['reimbursement_ready_for_payment']);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), []);
+
+    const cfg = (rule: any) => rule.actionJson[0].configJson;
+    const [pinned, edited] = [repo.rules.find((r: any) => r.id === 'pre_0'), repo.rules.find((r: any) => r.id === 'pre_1')];
+    assert.deepEqual(cfg(pinned).preferRecipientPayloadKeys, ['actorUserId']);
+    assert.deepEqual(cfg(pinned).neverPreferRecipientPayloadKeys, ['requesterUserId']);
+    // The runner reads the version snapshot, not the row.
+    const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];
+    assert.deepEqual(latest.actionSnapshotJson, catalogActions('reimbursement_ready_for_payment'));
+    assert.equal(cfg(edited).preferRecipientPayloadKeys, undefined);
+  });
+
   it('is idempotent: a second run re-pins nothing and adds no version', async () => {
     const repo = fakeRepo([syncOwned()]);
     await resyncWorkflowTemplateRulesForCompany(repo, 'co_1');
