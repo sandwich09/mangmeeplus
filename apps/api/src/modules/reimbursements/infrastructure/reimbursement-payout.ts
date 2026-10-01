@@ -175,6 +175,47 @@ export async function readClaimPayout(client: any, claim: ClaimPayoutPointer): P
   };
 }
 
+/** One account a claim has been sent with, masked: a row of the claim page's account history. */
+export type ClaimPayoutVersionRecord = {
+  version: number;
+  payoutKind: ReimbursementPayoutKind;
+  bankName?: string;
+  accountName: string;
+  accountLast4: string;
+  source: ReimbursementPayoutSource;
+  enteredByUserId?: string;
+  frozenAt: Date;
+  verifiedByUserId?: string;
+  verifiedAt?: Date;
+  approvalStepId?: string;
+};
+
+/**
+ * Every account the claim has been sent with, oldest first, masked like the claim's current one: the
+ * account history of the claim page (spec §17.2). Frozen rows only: a draft's working row is the
+ * draft's own choice, which `readClaimPayout` shows. Never the copy of the requester's default kept
+ * with a legacy claim's payment: that row belongs to its payment, and the claim never pointed at it.
+ */
+export async function readClaimPayoutVersions(client: any, claim: ClaimPayoutPointer): Promise<ClaimPayoutVersionRecord[]> {
+  const rows: any[] = await client.reimbursementPayoutDestination.findMany({
+    where: { companyId: claim.companyId, reimbursementRequestId: claim.id, frozenAt: { not: null }, source: { not: LEGACY_PAYMENT_PAYOUT_SOURCE } },
+    select: {
+      version: true, payoutKind: true, bankName: true, accountName: true, accountLast4: true, source: true,
+      createdByUserId: true, frozenAt: true, verifiedByUserId: true, verifiedAt: true, approvalStepId: true,
+    },
+  });
+  return rows.sort((a, b) => a.version - b.version).map((row) => ({
+    version: row.version, payoutKind: row.payoutKind, ...(row.bankName && { bankName: row.bankName }), accountName: row.accountName,
+    accountLast4: row.accountLast4, source: row.source, frozenAt: row.frozenAt,
+    // The same two rules as the claim's current account (`readClaimPayout`): anyone but the requester
+    // is named, and the version a draft is about to be sent with again carries no attestation.
+    ...(row.createdByUserId !== claim.requesterUserId && { enteredByUserId: row.createdByUserId }),
+    ...(row.verifiedAt && !(claim.status === 'DRAFT' && row.version === claim.payoutDestinationVersion) && {
+      verifiedByUserId: row.verifiedByUserId, verifiedAt: row.verifiedAt, ...(row.approvalStepId && { approvalStepId: row.approvalStepId }),
+    }),
+  }));
+}
+
 /**
  * What a draft with no method of its own will be sent with: the REQUESTER's default account as it
  * is right now (never the viewer's or the preparer's). The only read of a default account on behalf

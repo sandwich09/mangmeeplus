@@ -706,6 +706,11 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   /** Where the money goes back to, masked. Absent on a legacy claim: one sent before claims carried a receiving method. */
   payout?: ReimbursementPayoutSummary;
   /**
+   * GET detail only: every account this claim has been sent with, oldest first, masked. The one in use
+   * is `payout.version`. Absent on a claim never sent with an account: cash, legacy, a draft not sent yet.
+   */
+  payoutHistory?: ReimbursementPayoutVersionSummary[];
+  /**
    * GET detail only, on a legacy claim that can be paid, for a viewer who may record its payment and
    * whose requester has a default account to transfer into (spec §15). Absent for everyone else, and
    * on every claim that carries its own `payout`.
@@ -1084,6 +1089,30 @@ export type ReimbursementPayoutSummary = {
    * About the account number alone: who may open a payment slip is a different group and a different flag.
    */
   canRevealAccountNumber?: boolean;
+};
+
+/**
+ * One account a claim has been sent with, masked like every other account: a row of the claim page's
+ * account history (spec §17.2). A claim sent again with another account keeps the earlier ones here.
+ */
+export type ReimbursementPayoutVersionSummary = {
+  version: number;
+  payoutKind: ReimbursementPayoutKind;
+  bankName?: string;
+  accountName: string;
+  accountLast4: string;
+  source: ReimbursementPayoutSource;
+  /** Who typed or set the account, when it was not the requester. The name is absent when it cannot be resolved. */
+  enteredByUserId?: string;
+  enteredByName?: string;
+  /** When the claim was first sent with this account. */
+  frozenAt: string;
+  /** The attestation of this version ("ตรวจบัญชีแล้ว"); absent when nobody attested it. */
+  verifiedByUserId?: string;
+  verifiedByName?: string;
+  verifiedAt?: string;
+  /** The approval step whose decision attested it. Absent when nobody did, or when whoever recorded the payment did. */
+  approvalStepId?: string;
 };
 
 /**

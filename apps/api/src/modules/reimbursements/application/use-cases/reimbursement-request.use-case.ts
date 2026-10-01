@@ -27,7 +27,7 @@ import type {
   ReimbursementLineWriteData,
   ReimbursementRequestRecord,
 } from '../../domain/models/reimbursement.model';
-import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames, toPayoutSummary } from '../dto/reimbursement.mapper';
+import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames, toPayoutSummary, toPayoutVersionSummary } from '../dto/reimbursement.mapper';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
 import { approvalDecisionActions } from './reimbursement-approval.use-case';
@@ -329,6 +329,11 @@ export class GetReimbursementDetailUseCase {
     // requester's default account as it is now, with the token a confirmation of it sends back.
     // Present exactly when the reveal endpoint would answer this viewer for that account.
     const legacyPayoutDefault = await legacyPayoutPayer(ctx, req, this.repo) ? await this.repo.findLegacyPayoutDefault(req) : null;
+    // Spec §17.2: the accounts this claim has been sent with, masked like the current one. Only a claim
+    // that has a number was ever sent, so a first draft costs no read.
+    const payoutVersions = req.requestNo ? await this.repo.listClaimPayoutVersions(req) : [];
+    const payoutVersionNames = payoutVersions.length > 0 ? await this.repo.getUserDisplayNames(ctx.companyId,
+      payoutVersions.flatMap((version) => [version.enteredByUserId ?? '', version.verifiedByUserId ?? ''])) : {};
     return {
       ...detail,
       // The button is offered exactly when the reveal endpoint would answer.
@@ -337,6 +342,7 @@ export class GetReimbursementDetailUseCase {
         canRevealAccountNumber: await claimPayoutRevealGroup(ctx, req, this.repo, approvalActions) !== null,
       } }),
       ...(legacyPayoutDefault && { legacyPayoutDefault }),
+      ...(payoutVersions.length > 0 && { payoutHistory: payoutVersions.map((version) => toPayoutVersionSummary(version, payoutVersionNames)) }),
       approvalActions,
       // Two names, then a count: the page says "อยู่ที่ … หรือ … และอีก N คน" in its header, its step note and its timeline.
       ...(payers && { paymentDesk: { names: payers.slice(0, 2), moreCount: Math.max(payers.length - 2, 0) } }),

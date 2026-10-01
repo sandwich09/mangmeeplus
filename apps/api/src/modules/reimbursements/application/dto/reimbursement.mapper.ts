@@ -11,6 +11,7 @@ import type {
   ReimbursementClaimSignatureSummary,
   ReimbursementDocumentSignedVia,
   ReimbursementPayoutSummary,
+  ReimbursementPayoutVersionSummary,
   ReimbursementSignedCopySummary,
 } from '@watchdog-bms/contracts';
 import type {
@@ -26,7 +27,7 @@ import { claimSignatureAckHash, computeReceiptRequirement, currentDesk } from '.
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
-import type { ClaimPayoutRecord, PaymentPayoutDestinationRecord } from '../../infrastructure/reimbursement-payout';
+import type { ClaimPayoutRecord, ClaimPayoutVersionRecord, PaymentPayoutDestinationRecord } from '../../infrastructure/reimbursement-payout';
 import { hasPayoutSnapshot } from '../../domain/logic/payout-destination.logic';
 import type { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 
@@ -242,6 +243,20 @@ export function toPayoutSummary(payout: ClaimPayoutRecord | undefined, names: Re
     ...(verifiedAt && {
       verifiedAt: verifiedAt.toISOString(),
       ...(payout.verifiedByUserId && names[payout.verifiedByUserId] && { verifiedByName: names[payout.verifiedByUserId] }),
+    }),
+  };
+}
+
+/** One row of the claim's account history: the stored version with the two people it names resolved. */
+export function toPayoutVersionSummary(version: ClaimPayoutVersionRecord, names: Record<string, string> = {}): ReimbursementPayoutVersionSummary {
+  const { frozenAt, verifiedAt, ...shown } = version;
+  return {
+    ...shown,
+    frozenAt: frozenAt.toISOString(),
+    ...(version.enteredByUserId && names[version.enteredByUserId] && { enteredByName: names[version.enteredByUserId] }),
+    ...(verifiedAt && {
+      verifiedAt: verifiedAt.toISOString(),
+      ...(version.verifiedByUserId && names[version.verifiedByUserId] && { verifiedByName: names[version.verifiedByUserId] }),
     }),
   };
 }

@@ -92,6 +92,8 @@ import {
   assertPaymentPayoutUsable, confirmPaymentPayout, paymentPayoutRefusal, readLegacyPayoutDefault, readPaymentPayoutDestinations, readRecordedPaymentPayout,
   type ConfirmedPaymentPayout,
 } from './reimbursement-payout';
+// The claim page's account history (its own import too, for the same reason).
+import { readClaimPayoutVersions } from './reimbursement-payout';
 import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
 
 function dec(v: unknown): string {
@@ -1320,6 +1322,11 @@ export class PrismaReimbursementRepository {
   /** The claim's own snapshot. Never the member's default account. */
   findClaimPayout(request: ReimbursementRequestRecord) {
     return readClaimPayout(this.prisma.client, request);
+  }
+
+  /** Every account the claim has been sent with, oldest first, masked: the claim page's account history. */
+  listClaimPayoutVersions(request: ReimbursementRequestRecord) {
+    return readClaimPayoutVersions(this.prisma.client, request);
   }
 
   /** A draft only: the requester's default account it will be sent with. */

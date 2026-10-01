@@ -20,7 +20,7 @@ import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case
 import { legacyPayoutConfirmToken, sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
 import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
 import {
-  readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readLegacyPayoutDefault, readMemberPayoutAccount, readMemberPayoutSecret,
+  readClaimPayout, readClaimPayoutSecret, readClaimPayoutVersions, readDraftDefaultPayout, readLegacyPayoutDefault, readMemberPayoutAccount, readMemberPayoutSecret,
 } from '../../infrastructure/reimbursement-payout';
 import {
   REQUIRED_ANY_PERMISSIONS_KEY,
@@ -90,6 +90,7 @@ describe('claim account number reveal: the requester, that claim approver, the p
       // Read only for a claim that has a payment: its one slip.
       listPaymentSlips: async () => ({ 'pay-1': [{ attachmentId: 'att-slip-1', attachedAt: decidedAt }] }),
       findClaimPayout: (row: any) => readClaimPayout(tables.client, row),
+      listClaimPayoutVersions: (row: any) => readClaimPayoutVersions(tables.client, row),
       findDraftDefaultPayout: (row: any) => readDraftDefaultPayout(tables.client, row),
       // The requester's own detail compares the claim with their default as it is now (§22 hint).
       findMemberPayoutAccount: (companyId: string, userId: string) => readMemberPayoutAccount(tables.client, companyId, userId),
@@ -486,6 +487,7 @@ describe('reimbursement related-view ABAC', () => {
       getUserDisplayNames: async () => ({ 'actor-1': 'Approver' }),
       listSignedClaimFormCopies: async () => [],
       listInternalNotes: async () => [{ id: 'note-1', authorUserId: 'actor-1', body: 'สำหรับทีม', createdAt: now, updatedAt: now }],
+      listClaimPayoutVersions: async () => [],
       createInternalNote: async (_companyId: string, _requestId: string, authorUserId: string, body: string) =>
         ({ id: 'note-2', authorUserId, body, createdAt: now, updatedAt: now }),
     } as any;
@@ -672,6 +674,7 @@ describe('who may open a payment slip', () => {
       getUserDisplayNames: async () => ({}),
       listSignedClaimFormCopies: async () => [],
       listInternalNotes: async () => [],
+      listClaimPayoutVersions: async () => [],
       listPaymentSlips: async () => ({ 'pay-1': [{ attachmentId: 'att-slip-1', attachedAt: at }] }),
     } as any;
     const storage = { createDownloadUrl: async (input: any) => { minted.push(input); return { url: 'https://files.example/signed?token=secret', expiresAt: at }; } } as any;
