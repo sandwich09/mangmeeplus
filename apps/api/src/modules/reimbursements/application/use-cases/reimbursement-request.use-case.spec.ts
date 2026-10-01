@@ -4108,6 +4108,35 @@ describe('payout correction: the requester gives the account and it is approved 
     assert.equal(legacy.claim().payoutCorrectionSubmittedAt, undefined);
   });
 
+  // Final review W11: a claim being cancelled takes no account and no approval of one, in either phase of
+  // a round, and offers neither. (The approval's own refusal is the repository's, under the claim lock.)
+  it('takes no account for a claim that is being cancelled, offers nothing on it, and takes the account again once the cancellation is withdrawn', async () => {
+    const cancelling = { cancellationPendingAt: new Date(), cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ยกเลิกคำขอเบิกค่าใช้จ่าย' };
+    const withdrawn = { cancellationPendingAt: undefined, cancellationPendingByUserId: undefined, cancellationPendingReason: undefined };
+    const refused = (error: any) => error.getStatus() === 409 && error.message === 'reimbursement_cancellation_pending';
+    const world = correctionWorld();
+    const id = await sentBack(world);
+
+    // With its requester.
+    world.bump(cancelling);
+    for (const viewer of [ctx(), financeCtx()]) {
+      await assert.rejects(() => world.giveAccount.execute(viewer, id, { mode: 'SPECIFIED', ...SCB }), refused, viewer.userId);
+      assert.equal((await world.detail.execute(viewer, id)).payoutCorrectionActions, undefined, viewer.userId);
+    }
+    assert.deepEqual([world.state.payoutTables.destinations.length, world.claim().payoutCorrectionSubmittedAt, world.events(), world.steps.length], [1, undefined, [], 1]);
+    world.bump(withdrawn);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+
+    // With its approver: no second answer is taken, and the approver is offered neither decision.
+    world.bump(cancelling);
+    await assert.rejects(() => world.giveAccount.execute(ctx(), id, { mode: 'CASH' }), refused);
+    const shown = await world.detail.execute(approverCtx(), id);
+    assert.deepEqual([shown.approvalActions, shown.payoutCorrectionActions, shown.currentDesk], [{ canApprove: false, canReject: false }, undefined, { kind: 'SYSTEM' }]);
+    assert.deepEqual([world.state.payoutTables.destinations.length, world.claim().payoutMethod, world.steps.map((step) => step.status)], [2, 'BANK_TRANSFER', ['APPROVED', 'PENDING']]);
+    world.bump(withdrawn);
+    assert.deepEqual((await world.detail.execute(approverCtx(), id)).approvalActions, { canApprove: true, canReject: true });
+  });
+
   // Final review W8. A second press that arrived after the first was taken froze another version, opened
   // another step and sent another notice: the call compared against its own read, not against the page's.
   it('refuses a second press of the same form once the first was taken, and still takes another account from the page of the waiting step', async () => {

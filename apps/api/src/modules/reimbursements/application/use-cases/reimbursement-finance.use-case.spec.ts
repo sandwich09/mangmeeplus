@@ -2735,4 +2735,29 @@ describe('PrismaReimbursementRepository: sending a claim back for its payout acc
     // Already with its requester: nothing is set aside twice.
     await assert.rejects(() => withPayment.repo.requestPayoutCorrectionAtomic(sendBack(withPayment)), conflict('payout_correction_in_progress'));
   });
+
+  // Final review W11. The other two transactions of a round refuse a claim being cancelled too, by name:
+  // without the explicit check each would still fail, on its compare-and-swap, with another answer.
+  it('takes neither the account of a round nor its approval while the claim is being cancelled, and says why', async () => {
+    const givenAt = new Date('2026-02-01T04:00:00.000Z');
+    for (const round of [{ payoutCorrectionRequestedAt: sentBackAt }, { payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: givenAt, currentApprovalStepId: 'step-2' }]) {
+      const h = readyHarness();
+      Object.assign(h.state().steps[0], { invalidatedAt: sentBackAt, invalidatedReason: 'payout_account_correction' });
+      if (round.payoutCorrectionSubmittedAt) h.addStep({ id: 'step-2', sequenceNo: 1, status: 'PENDING', invalidatedAt: null, assignedApproverUserIdsJson: ['mgr-1'] });
+      Object.assign(h.state().request, { status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', approvedAt: null, ...round, cancellationPendingAt: new Date('2026-02-01T05:00:00.000Z') });
+      const standing = () => JSON.stringify([h.state().request, h.state().steps, h.payout.destinations, h.writes.requestUpdates]);
+      const before = standing();
+      const reached = async () => { throw new Error('reached the write'); };
+      const base = { companyId: 'co-1', requestId: 'rb-1', expectedUpdatedAt: h.state().request.updatedAt, scopes: {} };
+
+      await assert.rejects(() => h.repo.submitPayoutCorrectionAtomic({
+        ...base, actorUserId: 'staff-1', submittedAt: givenAt, payout: { write: { mode: 'CASH' }, onPersisted: reached }, approverRouteUserIds: ['mgr-1'], onPersisted: reached,
+      }), conflict('reimbursement_cancellation_pending'));
+      await assert.rejects(() => h.repo.approvePayoutCorrectionAtomic({
+        ...base, expectedApprovalSnapshotHash: h.state().request.approvalSnapshotHash, actorUserId: 'mgr-1', actorRoles: ['MANAGER'], allowSelfApproval: false,
+        decidedAt: givenAt, onApprovedPersisted: reached,
+      }), conflict('reimbursement_cancellation_pending'));
+      assert.equal(standing(), before, 'nothing was written');
+    }
+  });
 });

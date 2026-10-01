@@ -4397,6 +4397,38 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     await assert.rejects(() => repos[0]!.requestPayoutCorrectionAtomic({ companyId, requestId: claim.requestId, expectedUpdatedAt: read.updatedAt, actorUserId: FIN, actorRoles: ['FINANCE'], scopes: {},
       allowSelfApproval: false, requestedAt: new Date(), reasonCode: 'OTHER', onPersisted: async () => undefined }), conflict('reimbursement_cancellation_pending'));
     assert.deepEqual([(await claimRow(claim.requestId)).status, (await claimRow(claim.requestId)).payoutCorrectionRequestedAt], ['READY_FOR_PAYMENT', null]);
+
+    // Final review W11. The same inside a round, with the claim's records standing: its account is not taken
+    // while it waits for its requester, nor approved while it waits for its approver, and each call says why.
+    const withRequester = await approvedTransferClaim();
+    await round(0).sendBack.execute(finance(), withRequester.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    await strand(withRequester, 'ก');
+    const standingA = await claimRow(withRequester.requestId);
+    await assert.rejects(() => round(0).giveAccount.execute(requesterWhoEdits(), withRequester.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT }), conflict('reimbursement_cancellation_pending'));
+    await assert.rejects(() => repos[0]!.submitPayoutCorrectionAtomic({
+      companyId, requestId: withRequester.requestId, expectedUpdatedAt: standingA.updatedAt, actorUserId: STAFF, scopes: {}, submittedAt: new Date(),
+      payout: { write: { mode: 'CASH' } }, approverRouteUserIds: [MGR], onPersisted: async () => undefined,
+    }), conflict('reimbursement_cancellation_pending'));
+    assert.deepEqual([(await claimRow(withRequester.requestId)).updatedAt, (await accountVersionsOf(withRequester.requestId)).length, (await stepsOf(withRequester.requestId)).length],
+      [standingA.updatedAt, 1, 1]);
+
+    const withApprover = await claimWithANewAccount();
+    await strand(withApprover, 'ก');
+    const standingB = (await repos[0]!.findRequestById(companyId, withApprover.requestId))!;
+    await assert.rejects(() => round(0).approve.execute(manager(), withApprover.requestId, undefined, standingB.approvalSnapshotHash, 2), conflict('reimbursement_cancellation_pending'));
+    await assert.rejects(() => repos[0]!.approvePayoutCorrectionAtomic({
+      companyId, requestId: withApprover.requestId, expectedUpdatedAt: standingB.updatedAt, expectedApprovalSnapshotHash: standingB.approvalSnapshotHash, actorUserId: MGR,
+      actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, decidedAt: new Date(), payoutVerifiedVersion: 2, onApprovedPersisted: async () => undefined,
+    }), conflict('reimbursement_cancellation_pending'));
+    const afterB = await claimRow(withApprover.requestId);
+    assert.deepEqual([afterB.status, afterB.updatedAt, (await stepsOf(withApprover.requestId)).map((step) => step.status), (await accountVersionsOf(withApprover.requestId)).map((account) => account.verifiedByUserId)],
+      ['PENDING_APPROVAL', standingB.updatedAt, ['APPROVED', 'PENDING'], [MGR, null]]);
+    // Withdrawn, each goes on as if the cancellation had never been started.
+    await on(0).withdraw.execute(requester(), withApprover.requestId);
+    const shown = await on(0).detail.execute(manager(), withApprover.requestId);
+    assert.equal((await round(0).approve.execute(manager(), withApprover.requestId, undefined, shown.approvalSnapshotHash, 2)).status, 'READY_FOR_PAYMENT');
+    await on(0).withdraw.execute(requester(), withRequester.requestId);
+    assert.equal((await round(0).giveAccount.execute(requesterWhoEdits(), withRequester.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT })).payoutCorrection?.phase, 'AWAITING_APPROVAL');
   });
 
   // 3B: a claim finance passed, with no approval step, sent before claims carried an account.
