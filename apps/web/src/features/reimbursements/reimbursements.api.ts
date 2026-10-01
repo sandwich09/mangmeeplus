@@ -183,8 +183,11 @@ export function listFinanceQueue(companyId: string) {
 export function financeReviewReimbursement(companyId: string, id: string, body: Record<string, unknown>) {
   return apiFetch<any>(`${base(companyId)}/${id}/finance-review`, { method: 'POST', body: JSON.stringify(body) });
 }
+// No global error toast: the payment form says, in its own banner, what happened and the one thing
+// to do next. A second, generic sentence beside it is how a payer came to be told to reload the page
+// and to press save again at once.
 export function recordReimbursementPayment(companyId: string, id: string, body: Record<string, unknown>) {
-  return apiFetch<any>(`${base(companyId)}/${id}/payments`, { method: 'POST', body: JSON.stringify(body) });
+  return apiFetch<any>(`${base(companyId)}/${id}/payments`, { method: 'POST', body: JSON.stringify(body), suppressErrorToast: true });
 }
 export function voidReimbursementPayment(companyId: string, id: string, paymentId: string, reason: string) {
   return apiFetch<any>(`${base(companyId)}/${id}/payments/${paymentId}/void`, { method: 'POST', body: JSON.stringify({ reason }) });

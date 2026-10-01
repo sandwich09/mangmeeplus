@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { reimbursementPaymentSlipRequired } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
-  buildClaimTimeline, buildJourneySteps, activeJourneyStep, canAttachPaymentSlip, opensPaymentFormOnArrival, paymentSaveErrorMessage,
+  buildClaimTimeline, buildJourneySteps, activeJourneyStep, canAttachPaymentSlip, isLostPaymentRace, opensPaymentFormOnArrival, paymentSaveErrorMessage,
   paymentSlipChoices, paymentSlipCount, PAYMENT_DIALOG_MEDIA_QUERY, quickPayTarget, savePaymentForm, signedCopyMoveConfirmText,
   slipTargetPayment, validatePaymentForm, type PaymentFormSession, type PaymentFormSlip,
 } from './reimbursements.logic';
@@ -57,17 +57,55 @@ describe('payment form rules', () => {
     }
   });
 
+  /** A refusal as the API client throws it: the code is the message, with the HTTP status beside it. */
+  const refused = (code: string, status: number) => Object.assign(new Error(code), { status });
+
   it('never tells a payer who has transferred the money to transfer it again', () => {
     assert.equal(
-      paymentSaveErrorMessage('slip-upload', 'ระบบขัดข้อง กรุณาลองใหม่อีกครั้ง', false),
-      'อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ระบบขัดข้อง กรุณาลองใหม่อีกครั้ง',
+      paymentSaveErrorMessage('slip-upload', refused('payment_slip_invalid', 422), false),
+      'อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ไฟล์สลิปใช้ไม่ได้ เลือกไฟล์ PDF หรือรูปภาพ ขนาดไม่เกิน 10 MB แล้วลองใหม่',
     );
-    const afterSlip = paymentSaveErrorMessage('record', 'คำขอถูกแก้ไขระหว่างทำรายการ', true);
-    assert.match(afterSlip, /^แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · คำขอถูกแก้ไขระหว่างทำรายการ · /);
-    assert.match(afterSlip, /ไม่ต้องแนบสลิปหรือโอนเงินใหม่$/);
-    assert.equal(paymentSaveErrorMessage('record', 'ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น', false), 'ยังบันทึกจ่ายไม่สำเร็จ · ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น');
+    const afterSlip = paymentSaveErrorMessage('record', refused('payment_reference_required', 422), true);
+    assert.equal(afterSlip, 'แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ต้องระบุเลขอ้างอิงสำหรับการโอนเงิน/เช็ค · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');
+    assert.equal(paymentSaveErrorMessage('record', refused('partial_payment_not_allowed', 422), false), 'ยังบันทึกจ่ายไม่สำเร็จ · ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น');
+    // A connection that dropped: the slip is in, and the next press is the same payment.
+    assert.match(paymentSaveErrorMessage('record', new Error('Failed to fetch'), true), /^แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · .+ · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่$/);
     // "บันทึกจ่ายเรียบร้อย" is never part of a failure message.
-    for (const text of [afterSlip, paymentSaveErrorMessage('slip-upload', 'x', false)]) assert.doesNotMatch(text, /เรียบร้อย|สำเร็จแล้ว/);
+    for (const text of [afterSlip, paymentSaveErrorMessage('slip-upload', new Error('x'), false)]) assert.doesNotMatch(text, /เรียบร้อย|สำเร็จแล้ว/);
+  });
+
+  // Review finding: after a lost race the form said "load the list again" and "press save again" in
+  // one breath. Reloading throws away the uploaded slip and the form's key, the two things that make
+  // the next press the same payment.
+  it('gives one thing to do after a lost race: press save again', () => {
+    const lostRace = refused('reimbursement_payment_state_changed', 409);
+    assert.equal(isLostPaymentRace(lostRace), true);
+    assert.equal(isLostPaymentRace(Object.assign(new Error('API error 409'), { status: 409, code: 'reimbursement_payment_state_changed' })), true);
+    for (const other of [refused('payout_destination_changed', 409), refused('reimbursement_payment_already_recorded', 409), new Error('Failed to fetch'), null, 'reimbursement_payment_state_changed']) {
+      assert.equal(isLostPaymentRace(other), false);
+    }
+    for (const slipKept of [true, false]) {
+      const text = paymentSaveErrorMessage('record', lostRace, slipKept);
+      assert.equal(text, 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');
+      assert.doesNotMatch(text, /โหลด|เปิดใบใหม่|เรียบร้อย/);
+    }
+    // The page's own banner is the only message: the request raises no second, generic one beside it.
+    assert.match(sourceOf('reimbursements.api.ts'), /\/payments`, \{ method: 'POST', body: JSON\.stringify\(body\), suppressErrorToast: true \}\)/);
+  });
+
+  // Any other conflict means the claim is not what this page shows. Its own sentence says to open the
+  // claim again, and nothing beside it says to press save on this page.
+  it('does not ask for another press when the claim itself changed', () => {
+    for (const [code, said] of [
+      ['payout_destination_changed', 'บัญชีรับเงินของใบนี้เปลี่ยนไปจากที่แสดงไว้ กรุณาเปิดใบใหม่ ตรวจบัญชีที่แสดงล่าสุด แล้วทำรายการอีกครั้ง'],
+      ['reimbursement_payment_idempotency_conflict', 'มีการบันทึกการจ่ายด้วยข้อมูลอื่นไปแล้ว กรุณาโหลดรายการใหม่แล้วตรวจสอบ'],
+    ] as const) {
+      for (const slipKept of [true, false]) {
+        const text = paymentSaveErrorMessage('record', refused(code, 409), slipKept);
+        assert.equal(text, `ยังบันทึกจ่ายไม่สำเร็จ · ${said}`);
+        assert.doesNotMatch(text, /กดบันทึกจ่ายอีกครั้ง|เรียบร้อย/);
+      }
+    }
   });
 });
 
@@ -310,7 +348,7 @@ describe('saving the payment form', () => {
     const failed = await h.press();
     assert.equal(failed.status, 'refused');
     // The slip is in, the payment is not: the message says so and does not ask for a new slip or a new transfer.
-    assert.match((failed as { text: string }).text, /^แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · .* · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่$/);
+    assert.equal((failed as { text: string }).text, 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');
     assert.deepEqual(h.slip(), { attachmentId: 'att-uploaded', name: 'slip.jpg' }, 'the form now holds the uploaded slip, not the file');
 
     assert.deepEqual(await h.press(), { status: 'saved' });

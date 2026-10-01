@@ -202,12 +202,28 @@ export function signedCopyMoveConfirmText(copy: { fileName?: string; acknowledge
   ].join(' ');
 }
 
+/** The payment was rolled back because another write on the same claim got there first (409 from the payment lock). */
+export function isLostPaymentRace(e: unknown): boolean {
+  return (e as { code?: unknown } | null)?.code === 'reimbursement_payment_state_changed'
+    || (e instanceof Error && e.message.includes('reimbursement_payment_state_changed'));
+}
+
 /**
- * What the payment form says when saving fails. An uploaded slip is not a recorded payment, and a
- * payer who has already transferred the money must not be led to transfer it again (spec §12.2).
+ * What the payment form says when saving fails. "โอนแล้ว" and "บันทึกสำเร็จ" are two things: an
+ * uploaded slip is not a recorded payment, and a payer who has already transferred the money must
+ * not be led to transfer it again (spec §12.2). The sentence gives ONE thing to do:
+ *
+ *  - a lost race: press save again. Nothing about reloading: that would throw away the uploaded slip
+ *    and the form's key, the two things that make the next press the same payment;
+ *  - any other conflict (the claim or its account changed since the page was loaded): the reason
+ *    itself says to open the claim again, so nothing here says to press save on this page;
+ *  - everything else (a field to fix, a failed connection): check and press save again.
  */
-export function paymentSaveErrorMessage(stage: 'slip-upload' | 'record', reason: string, slipKept: boolean): string {
-  if (stage === 'slip-upload') return `อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ${reason}`;
+export function paymentSaveErrorMessage(stage: 'slip-upload' | 'record', error: unknown, slipKept: boolean): string {
+  if (stage === 'slip-upload') return `อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ${errorText(error)}`;
+  if (isLostPaymentRace(error)) return 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่';
+  const reason = errorText(error);
+  if ((error as { status?: unknown } | null)?.status === 409) return `ยังบันทึกจ่ายไม่สำเร็จ · ${reason}`;
   return slipKept
     ? `แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ${reason} · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่`
     : `ยังบันทึกจ่ายไม่สำเร็จ · ${reason}`;
@@ -265,7 +281,7 @@ export async function savePaymentForm(
       try {
         slipAttachmentId = await deps.uploadSlip(slip.file);
       } catch (error) {
-        return { status: 'refused', text: paymentSaveErrorMessage('slip-upload', errorText(error), false) };
+        return { status: 'refused', text: paymentSaveErrorMessage('slip-upload', error, false) };
       }
       deps.onSlipUploaded({ attachmentId: slipAttachmentId, name: slip.file.name });
     }
@@ -277,7 +293,7 @@ export async function savePaymentForm(
         slipAttachmentId, idempotencyKey: session.idempotencyKey,
       });
     } catch (error) {
-      return { status: 'refused', text: paymentSaveErrorMessage('record', errorText(error), slipAttachmentId !== undefined) };
+      return { status: 'refused', text: paymentSaveErrorMessage('record', error, slipAttachmentId !== undefined) };
     }
     return { status: 'saved' };
   } finally {
