@@ -19,7 +19,7 @@ require.extensions['.svg'] = (module) => { module.exports = () => null; };
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const sections = require('./ReimbursementDetailSections') as typeof import('./ReimbursementDetailSections');
 const { ReimbursementCreatePage } = require('./ReimbursementCreatePage') as typeof import('./ReimbursementCreatePage');
-const { ReimbursementsHubPage } = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
+const { ReimbursementsHubPage, PolicySettings } = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
 const { ReimbursementSourceFacts } = require('./ReimbursementSourceFacts') as typeof import('./ReimbursementSourceFacts');
 const { approvalComparable, diffApprovalFields } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
 const reactRuntime = require('react') as typeof React;
@@ -263,6 +263,37 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
     assert.doesNotMatch(cards, /\b(?:min-)?w-\[|whitespace-nowrap/u);
     const chips = between(hubTab('mine', hubClaims), 'data-testid="reimbursements-mine-filters"', 'type="search"');
     assert.doesNotMatch(chips, /\b(?:min-)?w-\[|whitespace-nowrap|lg:grid-cols/u);
+  });
+});
+
+describe('ตั้งค่านโยบาย warns about an approver role that cannot record payment (spec §13.3 F2)', () => {
+  const policy = { id: 'policy-1', updatedAt: '2026-10-01T03:00:00.000Z', status: 'ACTIVE', approvalRequiredFromAmount: '1.00', approverMode: 'CUSTOM_ROLE',
+    defaultApproverRoles: ['MANAGER', 'CHECKER'], allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy: 'WARN',
+    financeReviewRequired: false, slaHours: null };
+  const option = (key: string, name: string, canRecordPayment: boolean) => ({ key, name, optionLabel: name, eligibleApproverCount: 1, coverage: 'COMPLETE',
+    uncoveredBranchNames: [], selectable: true, canRecordPayment });
+  /** The settings form with the policy and the role options already loaded: the form is the component's first state. */
+  const settings = (loaded: object, options: object[]) => {
+    let formLoaded = false;
+    return visible(renderWithState(h(ToastContext.Provider, { value: toast }, h(PolicySettings, { companyId: 'company-1' })), (initial) => {
+      if (initial === null && !formLoaded) { formLoaded = true; return loaded; }
+      return Array.isArray(initial) && initial.length === 0 ? options : initial === true ? false : undefined;
+    }));
+  };
+  const warning = 'บทบาท ผู้ตรวจ อนุมัติได้ แต่บันทึกจ่ายไม่ได้ ใบที่อนุมัติแล้วจะรอผู้ที่มีสิทธิ์บันทึกจ่าย ถ้าต้องการให้ผู้อนุมัติจ่ายเองได้ ให้เพิ่มสิทธิ์บันทึกจ่ายให้บทบาทนี้ในหน้าบทบาทและสิทธิ์';
+
+  it('names the chosen role under the role list while finance review is off, and saving stays possible', () => {
+    const options = [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', false)];
+    const texts = settings(policy, options);
+    assert.ok(texts.includes(warning), texts.filter((text) => text.includes('บันทึกจ่าย')).join(' | '));
+    assert.ok(texts.includes('บันทึกนโยบาย'));
+    for (const [name, pattern] of MACHINE_TOKENS) assert.doesNotMatch(warning, pattern, name);
+    // Nothing to say once finance review pays, once the role is unticked, or when every chosen role can pay.
+    for (const quiet of [settings({ ...policy, financeReviewRequired: true }, options), settings({ ...policy, defaultApproverRoles: ['MANAGER'] }, options),
+      settings(policy, [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', true)])]) {
+      assert.equal(quiet.some((text) => text.includes('บันทึกจ่ายไม่ได้')), false);
+      assert.ok(quiet.includes('ส่งใบเบิกให้ใครอนุมัติ?'), 'the form rendered');
+    }
   });
 });
 

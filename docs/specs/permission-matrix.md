@@ -569,6 +569,10 @@ left approved claims waiting at the payment step.
   role's company (`metadataJson.source = sync-permissions`, the added key and the anchor).
 - Consequence: a company role that keeps `reimbursement.approve` gets the two keys back on the next deploy
   if they are removed by hand.
+- Between deploys a role created or edited without the pay right can still be chosen as approver (routing
+  needs only read, approve and reject). The approver-role option carries `canRecordPayment`, and ตั้งค่านโยบาย
+  warns that such a role approves but cannot record payment while finance review is off. It never blocks
+  the save: a company with a finance desk may split the two on purpose.
 
 The employee baseline is active only while the `reimbursement` entitlement is ON. Safe-OFF continues to strip create, draft update, submit and cancel while retaining the existing runoff permissions for claims already in flight. Company custom roles opt in through `pack.reimbursement.self`; they are never widened solely because the feature is enabled.
 

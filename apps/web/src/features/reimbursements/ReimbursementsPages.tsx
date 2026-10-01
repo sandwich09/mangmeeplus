@@ -27,7 +27,7 @@ import {
   summariseQueue, matchesSearch, pageBounds,
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
-  hubFilterCounts, hubRows, type HubFilter,
+  hubFilterCounts, hubRows, type HubFilter, approverPaymentWarning,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
@@ -787,7 +787,8 @@ function PaymentModal({ companyId, request, onClose, onDone }: { companyId: stri
 }
 
 // ── Policy Settings ───────────────────────────────────────────────────────────
-function PolicySettings({ companyId }: { companyId: string }) {
+// Exported for the QA spec, which renders the form with a policy already loaded.
+export function PolicySettings({ companyId }: { companyId: string }) {
   const toast = useToast();
   const [form, setForm] = useState<any | null>(null);
   const [approverOptions, setApproverOptions] = useState<ReimbursementApproverRoleOption[]>([]);
@@ -850,6 +851,10 @@ function PolicySettings({ companyId }: { companyId: string }) {
   const routeReady = !(roleBasedRoute || approverChanged)
     || (selectedRoles.length > 0 && (form.status !== 'ACTIVE' || !rolesNotReady));
   const roleLabel = selectedOptions.map(approverRoleName).join(' หรือ ');
+  const paymentWarning = approverPaymentWarning(
+    selectedOptions.map((option) => ({ label: approverRoleName(option), canRecordPayment: option.canRecordPayment })),
+    !!form.financeReviewRequired,
+  );
   const ownerRoute = selectedRoles.includes('OWNER');
   const toggleRole = (key: string) => {
     setApproverChanged(true);
@@ -903,6 +908,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
                 <p className="mt-1 text-xs text-gray-500">เลือกอย่างน้อย 1 บทบาท</p>
               ) : null}
               {!ownerRoute && <p className="mt-1 text-xs text-gray-500">ถ้ายังไม่มีคนในบทบาทที่เลือก เจ้าของกิจการเป็นผู้อนุมัติ</p>}
+              {paymentWarning && <p role="status" className="mt-1 text-xs text-warning-700" data-testid="reimbursement-approver-payment-warning">{paymentWarning}</p>}
             </fieldset>
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
               <span className="min-w-0">

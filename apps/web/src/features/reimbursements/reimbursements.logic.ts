@@ -596,6 +596,20 @@ export function policyDecisionPreview(input: {
   ];
 }
 
+/**
+ * Spec §13.3 F2: with finance review off the approver is the one expected to pay, so a chosen approver role
+ * that cannot record payment leaves approved claims waiting for someone else. Saving is still allowed (a
+ * company may want that), so this only warns. Null when there is nothing to say.
+ */
+export function approverPaymentWarning(
+  selectedRoles: readonly { label: string; canRecordPayment?: boolean }[],
+  financeReviewRequired: boolean,
+): string | null {
+  const labels = selectedRoles.filter((role) => role.canRecordPayment === false).map((role) => role.label);
+  if (financeReviewRequired || labels.length === 0) return null;
+  return `บทบาท ${labels.join(' และ ')} อนุมัติได้ แต่บันทึกจ่ายไม่ได้ ใบที่อนุมัติแล้วจะรอผู้ที่มีสิทธิ์บันทึกจ่าย ถ้าต้องการให้ผู้อนุมัติจ่ายเองได้ ให้เพิ่มสิทธิ์บันทึกจ่ายให้บทบาทนี้ในหน้าบทบาทและสิทธิ์`;
+}
+
 export function formatMoney(v: unknown, currency?: string): string {
   const amount = Number(v ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return currency ? `${amount} ${currency === 'THB' ? 'บาท' : currency}` : amount;

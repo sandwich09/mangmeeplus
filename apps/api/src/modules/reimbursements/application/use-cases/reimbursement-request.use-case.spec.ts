@@ -1049,6 +1049,17 @@ describe('reimbursement approver role options', () => {
     assert.equal(options.some((item) => item.key === 'SYSTEM_ADMIN'), false);
   });
 
+  // Payout-account spec §13.3 F2: approving never needed the pay right, so the policy screen is told which roles lack it.
+  it('says whether a role can also record the payment, without changing which roles are selectable', () => {
+    const options = buildReimbursementApproverRoleOptions([
+      approverRole({ key: 'OWNER', name: 'Owner', permissionKeys: [...approverPermissions, 'reimbursement.payment.record'], holders: [approverHolder(['b1', 'b2'])] }),
+      approverRole({ key: 'OLD_APPROVER', name: 'Old approver', holders: [approverHolder(['b1', 'b2'])] }),
+      approverRole({ key: 'STAFF', name: 'Staff', permissionKeys: ['reimbursement.read', 'reimbursement.payment.record'], holders: [approverHolder(['b1', 'b2'])] }),
+    ], approverBranches);
+    assert.deepEqual(Object.fromEntries(options.map((item) => [item.key, [item.selectable, item.canRecordPayment]])),
+      { OWNER: [true, true], OLD_APPROVER: [true, false], STAFF: [false, true] });
+  });
+
   it('blocks partial coverage when OWNER cannot recover the uncovered branch', () => {
     const options = buildReimbursementApproverRoleOptions([
       approverRole({ key: 'OWNER', name: 'Owner', holders: [approverHolder(['b1'])] }),

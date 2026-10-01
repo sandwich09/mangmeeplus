@@ -94,6 +94,8 @@ export type ReimbursementApproverRoleOption = {
   uncoveredBranchNames: string[];
   selectable: boolean;
   unavailableReason?: 'MISSING_CAPABILITY' | 'NO_ACTIVE_HOLDERS' | 'OWNER_RECOVERY_NOT_READY';
+  /** Whether the role also holds the pay right. Approving never needs it, so the policy screen only warns. */
+  canRecordPayment: boolean;
 };
 
 export type ReimbursementPolicySnapshotV1 = {
