@@ -342,7 +342,7 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
       date: detail.financeReviewedAt,
     });
   } else if (withFinance) {
-    rows.push({ key: 'finance', state: at === 'finance' ? 'current' : 'future', label: at === 'finance' ? 'กำลังรอฝ่ายการเงินตรวจ' : 'รอฝ่ายการเงินตรวจ' });
+    rows.push({ key: 'finance', state: at === 'finance' ? 'current' : 'future', label: at === 'finance' ? `กำลัง${WAITING_FOR_FINANCE}` : WAITING_FOR_FINANCE });
   }
 
   const paid = (detail?.payments ?? []).find((p: any) => p.status === 'RECORDED');
@@ -352,6 +352,9 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   return rows;
 }
 
+// Who a claim waits for, in the words of its desk: the timeline row and the step note print the same sentence,
+// built from the pool label the "อยู่ที่ …" line and the LINE backlog answer use.
+const WAITING_FOR_FINANCE = `รอ${CURRENT_DESK_LABELS.FINANCE}ตรวจ`;
 /** "รอ สมศรี หรือ วิชัย บันทึกจ่าย" when the detail names who can pay; otherwise the pool, which already says it. */
 function waitingForPayer(detail: any): string {
   const payers = paymentDeskText(detail?.paymentDesk);
@@ -492,7 +495,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       }
       note = review === 'BLOCKED'
         ? `ฝ่ายการเงินระงับการจ่าย${detail?.financeReviewNote ? `: ${detail.financeReviewNote}` : ''}`
-        : actions.length > 0 ? 'ตรวจใบเสร็จและรายการซ้ำ แล้วอนุมัติจ่ายหรือส่งกลับให้แก้ไข' : 'รอฝ่ายการเงินตรวจ';
+        : actions.length > 0 ? 'ตรวจใบเสร็จและรายการซ้ำ แล้วอนุมัติจ่ายหรือส่งกลับให้แก้ไข' : WAITING_FOR_FINANCE;
     } else if (key === 'payment') {
       // APPROVED here is the no-finance claim waiting for its projection; the API accepts payment then.
       const payable = ['READY_FOR_PAYMENT', 'APPROVED'].includes(status);
