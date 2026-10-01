@@ -532,7 +532,7 @@ export type QueueSummary = { count: number; totalAmount: number; outstandingAmou
 
 /**
  * Rollup of a loaded queue for the summary cards. Display only — the server owns the real numbers.
- * `flagged` counts rows the queue wants to draw attention to (SLA risk or a duplicate blocker).
+ * `flagged` counts rows the queue wants to draw attention to (past the company's deadline, or a duplicate blocker).
  */
 export function summariseQueue(rows: readonly any[]): QueueSummary {
   return (rows ?? []).reduce((acc, r) => ({

@@ -49,8 +49,12 @@ const HUB_TAB_DESCRIPTIONS: Record<HubTab, string> = {
   mine: 'ติดตามคำขอของคุณและเอกสารที่คุณเป็นผู้อนุมัติ ผู้ตรวจ ผู้จ่าย หรือผู้ลงนาม',
   approvals: 'ตรวจคำขอที่รอคุณอนุมัติ ดูรายการและใบเสร็จก่อนตัดสินใจ',
   finance: 'ตรวจสอบคำขอที่อนุมัติแล้ว และบันทึกการจ่ายเงิน',
-  policy: 'กำหนดเกณฑ์การอนุมัติ ใบเสร็จ และ SLA ของการเบิกจ่ายทั้งบริษัท',
+  policy: 'ตั้งเกณฑ์การอนุมัติ ใบเสร็จ และกำหนดเวลาของการเบิกจ่ายทั้งบริษัท',
 };
+/** A claim that has waited longer than the company's deadline, in the words of the notice the server sends for it. */
+const OVERDUE_LABEL = 'เกินกำหนด';
+/** The deadline itself: how long a claim may wait for its approval, and then for its payment. */
+const DEADLINE_LABEL = 'กำหนดเวลาอนุมัติและจ่าย';
 const APPROVER_ROLE_LABELS: Record<string, string> = {
   OWNER: 'เจ้าของกิจการ', ADMIN: 'แอดมิน', MANAGER: 'ผู้จัดการ', FINANCE: 'การเงิน',
   ACCOUNTANT: 'บัญชี', HR: 'ฝ่ายบุคคล', SALES: 'ฝ่ายขาย', INVENTORY: 'คลังสินค้า',
@@ -504,7 +508,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
     r.amount,
     r.currency,
     r.ageHours,
-    r.slaRisk ? 'เกิน SLA' : '',
+    r.slaRisk ? OVERDUE_LABEL : '',
     currentDeskText(r.currentDesk),
   ], query)), [data, query]);
   const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
@@ -519,7 +523,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             <StatCard icon={ICON.clock} label="รอคุณอนุมัติ" value={summary.count} {...KPI.amber} />
             <StatCard icon={ICON.wallet} label="ยอดรวมที่รออนุมัติ" value={baht0(summary.totalAmount)} {...KPI.purple} />
-            <StatCard icon={ICON.alert} label="เกิน SLA" value={summary.flagged} danger={summary.flagged > 0} {...KPI.danger} />
+            <StatCard icon={ICON.alert} label={OVERDUE_LABEL} value={summary.flagged} danger={summary.flagged > 0} {...KPI.danger} />
           </div>
           <MangmeeCard className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -569,7 +573,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                         <td className="text-right">
                           <div className="flex flex-wrap items-center justify-end gap-2">
                             <span className="tabular-nums">{r.ageHours} ชม.</span>
-                            {r.slaRisk && <MangmeeBadge tone="danger">เกิน SLA</MangmeeBadge>}
+                            {r.slaRisk && <MangmeeBadge tone="danger">{OVERDUE_LABEL}</MangmeeBadge>}
                             {/* The table has no status column: a row of a correction round says what it waits for here. */}
                             {r.payoutCorrectionPhase && <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />}
                           </div>
@@ -605,7 +609,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />
-                      {r.slaRisk && <MangmeeBadge tone="danger">เกิน SLA</MangmeeBadge>}
+                      {r.slaRisk && <MangmeeBadge tone="danger">{OVERDUE_LABEL}</MangmeeBadge>}
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>
                   </div>
@@ -1059,7 +1063,7 @@ export function PolicySettings({ companyId }: { companyId: string }) {
           <div className="flex items-start gap-3">
             <span className="flex h-9 w-9 items-center justify-center rounded-[10px]" style={{ background: KPI.purple.bg, color: KPI.purple.color }}>{ICON.wallet}</span>
             <div>
-              <h3 className="text-sm font-bold text-gray-900">การเงินและ SLA</h3>
+              <h3 className="text-sm font-bold text-gray-900">การเงินและกำหนดเวลา</h3>
               <p className="mt-1 text-xs text-gray-500">กำหนดขั้นตอนตรวจสอบก่อนจ่ายและเวลาที่คาดหวัง</p>
             </div>
           </div>
@@ -1072,7 +1076,7 @@ export function PolicySettings({ companyId }: { companyId: string }) {
               <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={!!form.financeReviewRequired} onChange={e => setForm((f: any) => ({ ...f, financeReviewRequired: e.target.checked }))} />
             </label>
             <div>
-              <label className="mb-1.5 block text-xs font-semibold text-gray-600">SLA (ชั่วโมง)</label>
+              <label className="mb-1.5 block text-xs font-semibold text-gray-600">{`${DEADLINE_LABEL} (ชั่วโมง)`}</label>
               <input className={inputClass} type="number" min="0" max="8760" step="1" value={form.slaHours ?? ''} onChange={e => setForm((f: any) => ({ ...f, slaHours: e.target.value }))} />
             </div>
           </div>
@@ -1104,7 +1108,7 @@ export function PolicySettings({ companyId }: { companyId: string }) {
               <dd><MangmeeBadge tone={form.financeReviewRequired ? 'brand' : 'slate'}>{form.financeReviewRequired ? 'เปิด' : 'ปิด'}</MangmeeBadge></dd>
             </div>
             <div className="flex items-center justify-between gap-3 py-3 last:pb-0">
-              <dt className="text-xs text-gray-500">SLA</dt>
+              <dt className="text-xs text-gray-500">{DEADLINE_LABEL}</dt>
               <dd className="text-sm font-semibold text-gray-800">{form.slaHours === '' || form.slaHours == null ? 'ไม่กำหนด' : `${form.slaHours} ชั่วโมง`}</dd>
             </div>
           </dl>

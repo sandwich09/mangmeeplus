@@ -162,10 +162,10 @@ describe('the reimbursement guide reads as the product does', () => {
     assert.deepEqual(quotes.filter((quote) => !isShown(quote) && !notBuiltYet.includes(quote)), []);
   });
 
-  // Owner rule: readers are shop staff on a phone. File types and the two labels the screens print in Latin letters stay.
+  // Owner rule: readers are shop staff on a phone. A file type, a file size and the app's own name are all that stays in Latin letters.
   it('is written in plain Thai, with money as "1,234.50 บาท"', () => {
     const latin = [...new Set(read.flatMap((text) => text.match(/[A-Za-z][A-Za-z0-9_.-]*/g) ?? []))];
-    assert.deepEqual(latin.filter((word) => !['PDF', 'MB', 'SLA', 'LINE'].includes(word)), []);
+    assert.deepEqual(latin.filter((word) => !['PDF', 'MB', 'LINE'].includes(word)), []);
     const amounts = read.flatMap((text) => text.match(/\d[\d,.]* บาท/g) ?? []);
     assert.deepEqual(amounts.filter((amount) => !/^\d{1,3}(,\d{3})*\.\d{2} บาท$/.test(amount)), []);
   });

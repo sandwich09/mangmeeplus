@@ -200,6 +200,12 @@ const correctionRows = ([['AWAITING_REQUESTER', { kind: 'REQUESTER' }], ['AWAITI
   .map(([payoutCorrectionPhase, currentDesk], index) => ({ ...draft, id: `${ids.request}round${index}`, requestNo: 'RB-202609-00007', status: 'PENDING_APPROVAL',
     receiptRequirementStatus: 'ATTACHED', payoutMethod: 'BANK_TRANSFER', amount: '100.0000', payoutCorrectionPhase, currentDesk }));
 
+/** The source of every claim screen, as one text. A comment is not a screen, so comments are left out. */
+function claimScreenSources(): string {
+  const source = (file: string) => readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  return readdirSync(__dirname).filter((name) => /\.tsx?$/.test(name) && !name.includes('.spec.')).map((name) => source(join(__dirname, name))).join('\n');
+}
+
 /** What the customer reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
 const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map(match => match[1]!),
   ...html.replace(/<[^>]*>/gu, '\n').split('\n')]
@@ -510,20 +516,23 @@ describe('a draft row of the hub list is sent from the row only when nothing uns
   });
 });
 
+// The policy form of the hub's ตั้งค่านโยบาย tab, with the policy and the role options already loaded.
+const policyForm = { id: 'policy-1', updatedAt: '2026-10-01T03:00:00.000Z', status: 'ACTIVE', approvalRequiredFromAmount: '1.00', approverMode: 'CUSTOM_ROLE',
+  defaultApproverRoles: ['MANAGER', 'CHECKER'], allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy: 'WARN',
+  financeReviewRequired: false, slaHours: null };
+const roleOption = (key: string, name: string, canRecordPayment: boolean, selectable = true) => ({ key, name, optionLabel: name, eligibleApproverCount: 1, coverage: 'COMPLETE',
+  uncoveredBranchNames: [], selectable, canRecordPayment });
+/** The settings form with the policy and the role options already loaded: the form is the component's first state. */
+const policySettings = (loaded: object, options: object[]) => {
+  let formLoaded = false;
+  return visible(renderWithState(h(ToastContext.Provider, { value: toast }, h(PolicySettings, { companyId: 'company-1' })), (initial) => {
+    if (initial === null && !formLoaded) { formLoaded = true; return loaded; }
+    return Array.isArray(initial) && initial.length === 0 ? options : initial === true ? false : undefined;
+  }));
+};
+
 describe('ตั้งค่านโยบาย warns about an approver role that cannot record payment (spec §13.3 F2)', () => {
-  const policy = { id: 'policy-1', updatedAt: '2026-10-01T03:00:00.000Z', status: 'ACTIVE', approvalRequiredFromAmount: '1.00', approverMode: 'CUSTOM_ROLE',
-    defaultApproverRoles: ['MANAGER', 'CHECKER'], allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy: 'WARN',
-    financeReviewRequired: false, slaHours: null };
-  const option = (key: string, name: string, canRecordPayment: boolean, selectable = true) => ({ key, name, optionLabel: name, eligibleApproverCount: 1, coverage: 'COMPLETE',
-    uncoveredBranchNames: [], selectable, canRecordPayment });
-  /** The settings form with the policy and the role options already loaded: the form is the component's first state. */
-  const settings = (loaded: object, options: object[]) => {
-    let formLoaded = false;
-    return visible(renderWithState(h(ToastContext.Provider, { value: toast }, h(PolicySettings, { companyId: 'company-1' })), (initial) => {
-      if (initial === null && !formLoaded) { formLoaded = true; return loaded; }
-      return Array.isArray(initial) && initial.length === 0 ? options : initial === true ? false : undefined;
-    }));
-  };
+  const policy = policyForm, option = roleOption, settings = policySettings;
   const warning = 'บทบาท ผู้ตรวจ อนุมัติได้ แต่บันทึกจ่ายไม่ได้ ใบที่อนุมัติแล้วจะรอผู้ที่มีสิทธิ์บันทึกจ่าย ถ้าต้องการให้ผู้อนุมัติจ่ายเองได้ ให้เพิ่มสิทธิ์บันทึกจ่ายให้บทบาทนี้ในหน้าบทบาทและสิทธิ์';
 
   it('names the chosen role under the role list while finance review is off, and saving stays possible', () => {
@@ -549,6 +558,25 @@ describe('ตั้งค่านโยบาย warns about an approver role t
     const both = settings({ ...policy, defaultApproverRoles: ['MANAGER', 'CHECKER', 'LEAD'] },
       [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', false), option('LEAD', 'หัวหน้าสาขา', false, false)]);
     assert.ok(both.includes(warning), both.filter((text) => text.includes('บันทึกจ่าย')).join(' | '));
+  });
+});
+
+// Owner 2026-10-02: "SLA" is no word a shop owner reads. A claim that waited past the company's deadline reads "เกินกำหนด",
+// the words of the notice the server sends for it, and the policy page names the deadline for what it is.
+describe('the deadline of a claim is said in plain Thai (owner 2026-10-02)', () => {
+  it('marks a claim past it เกินกำหนด in the approval queue: the count, the table row and the phone card', () => {
+    const texts = visible(hubTab('approvals', [{ ...queueRow, status: 'PENDING_APPROVAL', approvalActions: { canApprove: true, canReject: true } }]));
+    assert.equal(texts.filter((text) => text === 'เกินกำหนด').length, 3);
+    for (const text of texts) assert.doesNotMatch(text, /SLA/u);
+  });
+
+  it('names the deadline on the policy page, its card and its summary', () => {
+    const texts = policySettings({ ...policyForm, slaHours: 24 }, [roleOption('MANAGER', 'Manager', true)]);
+    for (const text of ['การเงินและกำหนดเวลา', 'กำหนดเวลาอนุมัติและจ่าย (ชั่วโมง)', 'กำหนดเวลาอนุมัติและจ่าย', '24 ชั่วโมง']) assert.ok(texts.includes(text), text);
+    for (const text of texts) assert.doesNotMatch(text, /SLA/u);
+    assert.ok(policySettings(policyForm, [roleOption('MANAGER', 'Manager', true)]).includes('ไม่กำหนด'), 'a company that set no deadline');
+    // No screen says it anywhere else either: the tab's description, a tooltip, a message.
+    assert.equal(claimScreenSources().includes('SLA'), false);
   });
 });
 
@@ -645,9 +673,7 @@ const correctionDetails: Array<[string, object]> = [
 // Owner 2026-10-02: one thing has one name. The requester was also "ผู้ขอ", "ผู้ยื่น" and "ผู้สำรองจ่ายและรับเงินคืน", the admin
 // role "ผู้ดูแลบริษัท" beside "แอดมิน", and messages gave the policy tab and its self-approval switch names the hub never printed.
 describe('one thing has one name on the claim screens (owner 2026-10-02)', () => {
-  // A comment is not a screen.
-  const source = (file: string) => readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  const screens = readdirSync(__dirname).filter((name) => /\.tsx?$/.test(name) && !name.includes('.spec.')).map((name) => source(join(__dirname, name))).join('\n');
+  const screens = claimScreenSources();
 
   it('uses no second name for the requester, the admin role, the policy tab or its self-approval switch', () => {
     assert.ok(screens.includes('ผู้เบิก') && screens.includes('แอดมิน') && screens.includes('ตั้งค่านโยบาย'), 'the screens were read');
