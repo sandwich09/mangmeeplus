@@ -33,6 +33,7 @@ import {
   type EvidenceFlagKey,
 } from './evidence-audit.logic';
 import { generateSourceJournal, previewExpenseBackfill, runExpenseBackfill } from '../ledger/ledger.api';
+import { ClaimPaymentPosting } from './ClaimPaymentPosting';
 import { showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
 import { listTaxCodeDefinitions } from '../tax/transaction-tax.api';
 import { availableTaxDefinitions } from '../tax/transaction-tax.model';
@@ -607,11 +608,13 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
 }
 
 // ── Accountant shared evidence + export package ───────────────────────────────
-export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedger, onOpenExpense }: {
+export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedger, canPostClaimPayments = false, onOpenExpense }: {
   companyId: string;
   canExport: boolean;
   canReadLedger: boolean;
   canPostLedger: boolean;
+  /** May post to the ledger AND read the claim payout worklist (`reimbursement.finance_review`). */
+  canPostClaimPayments?: boolean;
   onOpenExpense: (expenseId: string) => void;
 }) {
   const toast = useToast();
@@ -790,6 +793,8 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
       <HowItWorks title="เตรียมหลักฐานให้สำนักงานบัญชี" steps={['เปิดรายการที่มีคำเตือนเพื่อตรวจข้อมูล', 'หากเอกสารยืนยันแล้วผิด ให้ยกเลิกแล้วบันทึกใหม่', 'ตรวจความครบถ้วนก่อนส่งออกให้บัญชี']} />
       <StateBanner error={error} />
       {backfillMessage && <InfoBanner message={backfillMessage} />}
+      {/* Outside the `!error` block on purpose: a refused post is an answer, not a broken screen. */}
+      {canPostClaimPayments && <ClaimPaymentPosting companyId={companyId} />}
 
       {!error && (
         <>

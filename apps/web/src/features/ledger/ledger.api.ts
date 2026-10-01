@@ -40,7 +40,19 @@ export type TrialBalance = {
 export type PnlReport = { periodKey: string; revenue: string; totalCost: string; grossProfit: string; totalExpense: string; taxExpense: string; netProfit: string };
 export type BalanceSheet = { periodKey: string; totalAssets: string; totalLiabilities: string; totalEquity: string };
 export type GlAccountLine = { accountId: string; accountCode: string; accountNameTh: string; openingBalance: string; totalDebit: string; totalCredit: string; endingBalance: string };
-export type PeriodCloseRun = { id: string; status: string; checks: Array<{ checkKey: string; status: string; severity: string; message: string; count?: number; amount?: string }> };
+export type PeriodCloseRun = { id: string; status: string; checks: Array<{ checkKey: string; status: string; severity: string; message: string; count?: number; amount?: string; breakdown?: Record<string, number> }> };
+/** A recorded claim payout whose ledger settlement has not been posted yet, or failed to post. */
+export type UnpostedClaimPayment = {
+  paymentId: string;
+  reimbursementRequestId: string;
+  requestNo?: string;
+  requesterDisplayNameSnapshot?: string;
+  paymentNo?: string;
+  paidAmount: string;
+  currency: string;
+  paidAt: string;
+  postingStatus: string;
+};
 
 export function listLedgerAccounts(companyId: string): Promise<LedgerAccount[]> {
   return apiFetch(`/v1/companies/${companyId}/chart-of-accounts`);
@@ -88,6 +100,11 @@ export function generateSourceJournal(companyId: string, sourceType: string, sou
     method: 'POST',
     body: JSON.stringify({ sourceType, sourceId }),
   });
+}
+
+/** The reimbursement half of the posting worklist. Post a row with `generateSourceJournal(…, 'reimbursement.payment', paymentId)`. */
+export function listUnpostedClaimPayments(companyId: string): Promise<UnpostedClaimPayment[]> {
+  return apiFetch(`/v1/companies/${companyId}/reimbursements/posting/pending`);
 }
 
 export function previewExpenseBackfill(companyId: string): Promise<ExpenseBackfillPreview> {
