@@ -1335,7 +1335,9 @@ export class PrismaReimbursementRepository {
       lines: request.lines,
     }, storedHash);
     if (storedHash !== liveHash && !legacyV1Compatible) throw new ConflictException('stale_approval_snapshot');
-    if (expectedApprovalSnapshotHash && expectedApprovalSnapshotHash !== storedHash) {
+    // Nothing is approved unseen: the approver names the claim content they looked at, and it has to
+    // be the content stored now. A call that names none is as stale as one that names another.
+    if (expectedApprovalSnapshotHash !== storedHash) {
       throw new ConflictException('stale_approval_snapshot');
     }
     return storedHash;

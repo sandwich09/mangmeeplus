@@ -931,13 +931,16 @@ describe('nothing is approved unseen: an approval names the claim content it saw
     findPolicy: async () => null, listRequests: async () => [request],
     findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids), getUserDisplayNames: async () => ({}),
   }) as any;
-  /** Like the repository transaction: the hash the approver names must be the claim's stored hash. */
+  /**
+   * Exactly like the repository transaction: the stored hash is compared only WHEN one is sent. That
+   * is why the use case has to refuse a call that sends none; a stricter fake here would hide it.
+   */
   function comparing(req: any) {
     const repo = fakeRepo(req);
     const decisions: any[] = [];
     const begin = repo.beginApprovalDecisionAtomic;
     repo.beginApprovalDecisionAtomic = async (data: any) => {
-      if (data.expectedApprovalSnapshotHash !== req.approvalSnapshotHash) throw new ConflictException('stale_approval_snapshot');
+      if (data.expectedApprovalSnapshotHash && data.expectedApprovalSnapshotHash !== req.approvalSnapshotHash) throw new ConflictException('stale_approval_snapshot');
       decisions.push(data);
       return begin(data);
     };

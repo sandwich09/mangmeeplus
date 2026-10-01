@@ -1260,6 +1260,8 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     const second = await submit(edited);
     assert.notEqual(second.pending.approvalSnapshotHash, hashOnTheQueueRow);
     await refusedBy(() => repos[0]!.beginApprovalDecisionAtomic({ ...approval(second.pending), expectedApprovalSnapshotHash: hashOnTheQueueRow ?? undefined }), /stale_approval_snapshot/);
+    // And an approval that names no content at all is refused inside the transaction too.
+    await refusedBy(() => repos[0]!.beginApprovalDecisionAtomic({ ...approval(second.pending), expectedApprovalSnapshotHash: undefined }), /stale_approval_snapshot/);
     const untouched = await clients[0]!.reimbursementRequest.findUniqueOrThrow({ where: { id: second.pending.id }, include: { approvalSteps: { where: { status: 'PENDING' } } } });
     assert.deepEqual([untouched.status, untouched.approvalSteps.length], ['PENDING_APPROVAL', 1]);
     await repos[0]!.beginApprovalDecisionAtomic(approval(second.pending));
