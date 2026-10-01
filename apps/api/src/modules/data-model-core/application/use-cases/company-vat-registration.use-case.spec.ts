@@ -169,7 +169,9 @@ describe('CompanyVatRegistrationUseCase.put', () => {
 
   // Superseding the future fact alone would leave the earlier interval ending at a date that no
   // longer means anything, so the accessor would answer UNKNOWN from that day on.
-  it('cancelling a future fact restores the previous one to open-ended', async () => {
+  it('cancelling a future fact restores the previous one to open-ended', async (t) => {
+    // "Future" is measured from the company's today, which the use case reads from the clock.
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-15T05:00:00.000Z') });
     const { prisma, state } = makePrisma({
       facts: [
         fact('f1', '2020-01-15', { effectiveTo: new Date('2027-01-01T00:00:00Z') }),
@@ -188,7 +190,8 @@ describe('CompanyVatRegistrationUseCase.put', () => {
     assert.equal(state.company.vatRegistered, true);
   });
 
-  it('surfaces the interval rules as coded 422s', async () => {
+  it('surfaces the interval rules as coded 422s', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-15T05:00:00.000Z') }); // f2 is still a future fact
     const { prisma } = makePrisma({
       facts: [fact('f1', '2020-01-15'), fact('f2', '2027-01-01', { status: 'NOT_REGISTERED' })],
       version: 2,
