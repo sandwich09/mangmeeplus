@@ -222,6 +222,11 @@ export class CreateOrUpdateNotificationEventUseCase {
      * for, because other producers keep several periods open side by side.
      */
     supersedeEarlier?: boolean;
+    /**
+     * With `supersedeEarlier`: other kinds of notice about the same record that the new one replaces
+     * as well. "Paid" and "payment voided" of one claim name each other here.
+     */
+    alsoSupersedeTriggerKeys?: readonly string[];
     /** Recipients who get this notice in the web bell only, with no LINE push. Everyone else gets both. */
     webOnlyRecipientUserIds?: string[];
   }) {
@@ -239,7 +244,7 @@ export class CreateOrUpdateNotificationEventUseCase {
     let event = existing;
     if (!event || (event.status !== 'open' && !coolingDown && !['plan_term', 'billing'].includes(input.sourceModule))) {
       event = await this.events.create({ companyId: input.companyId, triggerKey: input.triggerKey, sourceModule: input.sourceModule, sourceType: input.sourceType, sourceId: input.sourceId, severity: input.severity as any, title: input.title, body: input.body, payloadJson: {}, sourceRefsJson: { refs: input.sourceRefs ?? [] }, deepLinkHref: input.deepLinkHref, dedupKey, status: 'open', ruleId: rule?.id, firstSeenAt: now, lastSeenAt: now, resolvedAt: undefined });
-      if (input.supersedeEarlier) await this.events.resolveEarlier(event, now);
+      if (input.supersedeEarlier) await this.events.resolveEarlier(event, now, input.alsoSupersedeTriggerKeys);
     } else {
       await this.events.update(input.companyId, event.id, { lastSeenAt: now });
     }

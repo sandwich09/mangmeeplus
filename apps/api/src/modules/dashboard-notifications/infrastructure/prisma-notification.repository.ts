@@ -165,14 +165,20 @@ export class PrismaNotificationEventRepository implements NotificationEventRepos
   /**
    * Resolves the open notices that `event` replaces: same trigger, about the same record. The
    * record is the page the notice opens when it has one (a claim's "paid" notices are filed under
-   * each payment, but all open the same claim), else its source.
+   * each payment, but all open the same claim), else its source. `alsoTriggerKeys` are other kinds
+   * of notice about that record which the new one replaces too.
    */
-  async resolveEarlier(event: Pick<NotificationEvent, 'id' | 'companyId' | 'triggerKey' | 'sourceModule' | 'sourceType' | 'sourceId' | 'deepLinkHref'>, now: Date): Promise<number> {
+  async resolveEarlier(
+    event: Pick<NotificationEvent, 'id' | 'companyId' | 'triggerKey' | 'sourceModule' | 'sourceType' | 'sourceId' | 'deepLinkHref'>,
+    now: Date,
+    alsoTriggerKeys: readonly string[] = [],
+  ): Promise<number> {
     const sameRecord = event.deepLinkHref
       ? { deepLinkHref: event.deepLinkHref }
       : { sourceModule: event.sourceModule, sourceType: event.sourceType, sourceId: event.sourceId ?? null };
+    const triggerKey = alsoTriggerKeys.length > 0 ? { in: [event.triggerKey, ...alsoTriggerKeys] } : event.triggerKey;
     const result = await this.prisma.client.notificationEvent.updateMany({
-      where: { companyId: event.companyId, triggerKey: event.triggerKey, status: 'OPEN', id: { not: event.id }, ...sameRecord },
+      where: { companyId: event.companyId, triggerKey, status: 'OPEN', id: { not: event.id }, ...sameRecord },
       data: { status: 'RESOLVED', resolvedAt: now },
     });
     return result.count;

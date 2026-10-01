@@ -13,6 +13,7 @@ import { LaunchShadowProbe } from '../../../feature-launch/application/launch-sh
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
 import { decryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
 import { renderTemplate } from '../../domain/logic/workflow-render.logic';
+import { WORKFLOW_NOTICE_ALSO_REPLACES } from '../../domain/workflow-template-catalog';
 import { computeNextAttemptAt, isRetryExhausted } from '../../domain/logic/workflow-idempotency.logic';
 import { WORKFLOW_MAX_RETRY_ATTEMPTS } from '../../domain/workflow.constants';
 import type { WorkflowActionRunRecord, WorkflowRunRecord } from '../../domain/models/workflow.model';
@@ -321,11 +322,12 @@ export class ExecuteWorkflowActionUseCase {
     // the event (the "paid" sentence) has nothing to say about an event written before that field existed.
     const body = (bodyTemplate && renderTemplate(bodyTemplate, readable).trim()) || title;
     const webPath = resolveDeepLink(actionRun.actionKey, cfg, context);
+    const triggerKey = String(cfg['triggerKey'] ?? `workflow.${actionRun.actionKey}`);
 
     try {
       const result = await this.notify.execute({
         companyId: context.companyId,
-        triggerKey: String(cfg['triggerKey'] ?? `workflow.${actionRun.actionKey}`),
+        triggerKey,
         sourceModule: context.sourceModule ?? 'workflow',
         sourceType: context.sourceType ?? 'workflow_run',
         sourceId: context.sourceId ?? actionRun.workflowRunId,
@@ -337,6 +339,7 @@ export class ExecuteWorkflowActionUseCase {
         recipientUserIds,
         periodKey: notificationPeriodKey(context, actionRun),
         supersedeEarlier: true,
+        alsoSupersedeTriggerKeys: WORKFLOW_NOTICE_ALSO_REPLACES[triggerKey],
         // People named here keep the notice in the web bell but are not pushed on LINE: the owner
         // finds a push about one's own action annoying, and the to-do item must still exist.
         webOnlyRecipientUserIds: payloadUserIds(cfg['webOnlyRecipientPayloadKeys'], context.payload),

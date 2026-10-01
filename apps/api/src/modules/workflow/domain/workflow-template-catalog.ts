@@ -79,6 +79,16 @@ export const WORKFLOW_TEMPLATE_FOLLOWS_SIBLING: Record<string, string> = {
   reimbursement_payout_correction_submitted: 'reimbursement_pending_approval',
 };
 
+// Notices of two kinds about the same record that take each other's place (final review item 15): the newer
+// one retires the open one of the other kind, as a notice already retires an earlier one of its own kind.
+// "Paid" and "payment voided" are about the same money: after a void "จ่ายเงินเบิกแล้ว" is no longer true, and
+// after the next payment "ยกเลิกการจ่ายเงินเบิก" is not. Keyed by the notice's trigger key and read by the
+// action runner, not kept in a rule's config, so a rule pinned or edited before this follows it too.
+export const WORKFLOW_NOTICE_ALSO_REPLACES: Record<string, readonly string[]> = {
+  'workflow.reimbursement_payment_voided': ['workflow.reimbursement_payment_recorded'],
+  'workflow.reimbursement_payment_recorded': ['workflow.reimbursement_payment_voided'],
+};
+
 // Step-journey spec §11/§13: every reimbursement notification links straight to that claim's
 // journey page (one page per request — no more tab/drawer routing). Rendered by the action runner
 // with the event payload + companyId (same renderer as titles); the plain sourceWebPath is the

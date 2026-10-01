@@ -375,6 +375,33 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       assert.equal(round2.supersedeEarlier, true);
     });
 
+    // Final review item 15: after a void the "paid" notice of the claim is no longer true, and after the next
+    // payment the "voided" one is not. Each replaces the other, whatever the rule's own config says.
+    it('has "payment voided" replace the claim\'s "paid" notice and the reverse, and no other notice replace another kind', async () => {
+      const sentFor = async (templateKey: string, configJson?: Record<string, unknown>) => {
+        const template = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === templateKey)!;
+        const [notifyAction] = template.defaultActionJson;
+        await make().execute({ ...actionRun(configJson ?? notifyAction!.configJson), actionKey: notifyAction!.actionKey, workflowRunId: `run_${templateKey}` }, {
+          companyId: 'co_1', ruleName: template.name, sourceModule: 'reimbursements', sourceType: 'reimbursement_payment', sourceId: 'pay_1',
+          triggerType: 'EVENT', siblingActions: template.defaultActionJson,
+          payload: {
+            requestId: 'rb_1', requestNo: 'RB-1', paidAmount: '250', currency: 'THB', paymentNo: 'RP-1', paidNotice: 'โอนเงิน 250.00 บาท',
+            requesterUserId: 'u_staff', actorUserId: 'u_payer', approverRecipientUserIds: ['u_manager'],
+          },
+        } as any);
+        return (notify.execute.mock.calls.at(-1) as any).arguments[0];
+      };
+
+      const voided = await sentFor('reimbursement_payment_voided');
+      assert.equal(voided.supersedeEarlier, true);
+      assert.deepEqual(voided.alsoSupersedeTriggerKeys, ['workflow.reimbursement_payment_recorded']);
+      assert.deepEqual((await sentFor('reimbursement_payment_recorded')).alsoSupersedeTriggerKeys, ['workflow.reimbursement_payment_voided']);
+      // A rule pinned before this, with the body it had then: the pairing is the notice's, not the rule's.
+      const pinned = { triggerKey: 'workflow.reimbursement_payment_voided', recipientPayloadKeys: ['requesterUserId'], severity: 'info', titleTemplate: 'ยกเลิกการจ่ายเงินเบิก: {{requestNo}}' };
+      assert.deepEqual((await sentFor('reimbursement_payment_voided', pinned)).alsoSupersedeTriggerKeys, ['workflow.reimbursement_payment_recorded']);
+      assert.equal((await sentFor('reimbursement_pending_approval')).alsoSupersedeTriggerKeys, undefined);
+    });
+
     it('gives a scan notice no period of its own, so a scan window never pushes again', async () => {
       for (const triggerType of ['SLA_SCAN', 'THRESHOLD_SCAN', 'SCHEDULE']) {
         const sent = await sendPending({ workflowRunId: `run_${triggerType}` }, { triggerType });

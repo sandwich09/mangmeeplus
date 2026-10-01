@@ -158,7 +158,8 @@ describe('CreateOrUpdateNotificationEventUseCase periods', () => {
         update: async ({ where, data }: any) => Object.assign(events.find((row) => row.id === where.id), data),
         updateMany: async ({ where, data }: any) => {
           const hits = events.filter((row) => Object.entries(where).every(([key, value]) => (
-            key === 'id' ? row.id !== (value as any).not : row[key] === value
+            key === 'id' ? row.id !== (value as any).not
+              : Array.isArray((value as any)?.in) ? (value as any).in.includes(row[key]) : row[key] === value
           )));
           hits.forEach((row) => Object.assign(row, data));
           return { count: hits.length };
@@ -245,6 +246,39 @@ describe('CreateOrUpdateNotificationEventUseCase periods', () => {
     }));
 
     assert.deepEqual(events.map((row) => [row.sourceId, row.status]), [['pay-1', 'RESOLVED'], ['pay-2', 'OPEN'], ['pay-9', 'OPEN']]);
+  });
+
+  // Final review item 15: "paid" and "payment voided" are about the same money. After a void the "paid" notice
+  // stayed current beside the "voided" one, and after the next payment the "voided" one beside the new "paid".
+  it('retires the "paid" notice of a claim when its "payment voided" notice is made, and that one when the claim is paid again', async () => {
+    const { useCase, events } = noticeStore();
+    const about = (kind: 'recorded' | 'voided', paymentId: string, extra: Record<string, unknown> = {}) => useCase.execute(claimNotice({
+      triggerKey: `workflow.reimbursement_payment_${kind}`, sourceType: 'reimbursement_payment', sourceId: paymentId,
+      recipientUserIds: ['staff-1'], periodKey: `run-${kind}-${paymentId}`,
+      alsoSupersedeTriggerKeys: [`workflow.reimbursement_payment_${kind === 'recorded' ? 'voided' : 'recorded'}`], ...extra,
+    }));
+    const current = () => events.filter((row) => row.status === 'OPEN').map((row) => `${row.triggerKey.split('_').at(-1)}:${row.sourceId}`);
+
+    // The claim's own "approved" notice and another claim's "paid" notice are no part of this.
+    await useCase.execute(claimNotice({ triggerKey: 'workflow.reimbursement_decision_requester', recipientUserIds: ['staff-1'], periodKey: 'run-approve' }));
+    await about('recorded', 'pay-9', { deepLinkHref: '/companies/co-1/reimbursements/rb-other' });
+
+    await about('recorded', 'pay-1');
+    assert.deepEqual(current(), ['requester:rb-1', 'recorded:pay-9', 'recorded:pay-1']);
+
+    await about('voided', 'pay-1');
+    assert.deepEqual(current(), ['requester:rb-1', 'recorded:pay-9', 'voided:pay-1']);
+
+    await about('recorded', 'pay-2');
+    assert.deepEqual(current(), ['requester:rb-1', 'recorded:pay-9', 'recorded:pay-2']);
+    assert.ok(events.filter((row) => row.status === 'RESOLVED').every((row) => row.resolvedAt instanceof Date));
+
+    // A producer that names no other kind replaces only its own, as before.
+    await useCase.execute(claimNotice({
+      triggerKey: 'workflow.reimbursement_payment_voided', sourceType: 'reimbursement_payment', sourceId: 'pay-2',
+      recipientUserIds: ['staff-1'], periodKey: 'run-voided-pay-2',
+    }));
+    assert.deepEqual(current(), ['requester:rb-1', 'recorded:pay-9', 'recorded:pay-2', 'voided:pay-2']);
   });
 
   // Owner rule: a push about one's own action is annoying, but the to-do item must still exist.
