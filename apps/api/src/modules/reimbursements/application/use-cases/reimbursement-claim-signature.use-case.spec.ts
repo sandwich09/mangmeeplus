@@ -149,6 +149,39 @@ describe('eligibleClaimSignatureRoles', () => {
     const draft = request({ status: 'DRAFT', requestNo: undefined, submittedAt: undefined });
     assert.deepEqual(eligibleClaimSignatureRoles(draft, 'staff-1'), []);
   });
+
+  // Plan task 3.6: the ผู้อนุมัติ block belongs to whoever the one rule names as the claim's approver
+  // (`isReimbursementClaimApprover`). It used to be the decider of the latest APPROVED step of any round.
+  it('lets only the approver of the round the claim was last sent in sign ผู้อนุมัติ', () => {
+    const earlier = { id: 'st-1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: new Date('2026-07-21T00:00:00.000Z') };
+    // Approved, returned to its requester, corrected and sent again on the 25th: the new round waits for mgr-2.
+    const sentAgain = request({
+      status: 'PENDING_APPROVAL', submittedAt: new Date('2026-07-25T00:00:00.000Z'), payments: [],
+      approvalSteps: [earlier, { id: 'st-2', sequenceNo: 1, status: 'PENDING' }],
+    });
+    assert.deepEqual(eligibleClaimSignatureRoles(sentAgain, 'mgr-1'), [], 'their approval was of an earlier round');
+    // An approval a payout account correction set aside is nobody's either, once the claim is approved again by someone else.
+    const corrected = request({ approvalSteps: [
+      { ...earlier, invalidatedAt: new Date('2026-07-22T00:00:00.000Z'), invalidatedReason: 'payout_account_correction' },
+      { id: 'st-2', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-2', decidedAt: new Date('2026-07-23T00:00:00.000Z') },
+    ] });
+    assert.deepEqual([eligibleClaimSignatureRoles(corrected, 'mgr-1'), eligibleClaimSignatureRoles(corrected, 'mgr-2')], [[], ['APPROVER']]);
+  });
+
+  // Payout spec §14.4, §17.1 (AC32): while the account is being corrected the form prints no account and
+  // no approver, so nobody signs it; a signature then would acknowledge an account its signer was not shown.
+  it('offers nobody a block while the claim payout account is being corrected', () => {
+    const sentBackAt = new Date('2026-07-24T00:00:00.000Z');
+    const setAside = { id: 'st-1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: new Date('2026-07-21T00:00:00.000Z'), invalidatedAt: sentBackAt, invalidatedReason: 'payout_account_correction' };
+    const waitingForRequester = request({ status: 'PENDING_APPROVAL', payments: [], payoutCorrectionRequestedAt: sentBackAt, approvalSteps: [setAside] });
+    const waitingForApproval = request({ ...waitingForRequester, payoutCorrectionSubmittedAt: new Date('2026-07-25T00:00:00.000Z'), approvalSteps: [setAside, { id: 'st-2', sequenceNo: 1, status: 'PENDING' }] });
+    for (const claim of [waitingForRequester, waitingForApproval]) {
+      for (const userId of ['staff-1', 'mgr-1', 'acct-1']) assert.deepEqual(eligibleClaimSignatureRoles(claim, userId), [], userId);
+    }
+    // Approved again: the requester and the new approver sign the form that now prints the corrected account.
+    const approvedAgain = request({ status: 'READY_FOR_PAYMENT', payments: [], approvalSteps: [setAside, { id: 'st-2', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: new Date('2026-07-26T00:00:00.000Z') }] });
+    assert.deepEqual([eligibleClaimSignatureRoles(approvedAgain, 'staff-1'), eligibleClaimSignatureRoles(approvedAgain, 'mgr-1')], [['REQUESTER'], ['APPROVER']]);
+  });
 });
 
 describe('SignClaimFormUseCase', () => {
@@ -241,6 +274,16 @@ describe('SignClaimFormUseCase', () => {
       /claim_signature_role_not_eligible/,
     );
     assert.equal(calls.upserts.length, 0);
+  });
+
+  it('refuses a signature while the claim payout account is being corrected, also from its requester with a current hash', async () => {
+    const req = request({ status: 'PENDING_APPROVAL', payments: [], payoutCorrectionRequestedAt: new Date('2026-07-24T00:00:00.000Z') });
+    const { repo, calls } = fakeRepo(req);
+    await assert.rejects(
+      () => signUseCase(repo).execute(ctx(), 'rb-1', { role: 'REQUESTER', snapshotHash: claimSignatureAckHash(req) }),
+      /claim_signature_role_not_eligible/,
+    );
+    assert.deepEqual(calls.upserts, []);
   });
 
   it('rejects a stale acknowledgement: you sign what you previewed', async () => {
@@ -423,6 +466,8 @@ describe('LinkSignedClaimFormCopyUseCase', () => {
     assert.deepEqual({ ...ack, acknowledgedAt: undefined }, {
       requestId: 'rb-1', requestNo: 'RB-202607-00001', acknowledgedByUserId: 'staff-1',
       acknowledgedAt: undefined, checksumSha256: 'c'.repeat(64),
+      // Which account the declared paper showed (payout spec §19): this claim carries none.
+      payoutDestinationVersion: null,
     });
     assert.match(ack.acknowledgedAt, /^\d{4}-\d{2}-\d{2}T/);
     assert.deepEqual(audits[0].metadataJson, { attachmentId: 'att-scan', acknowledgedComplete: true, ...ack });
@@ -431,6 +476,20 @@ describe('LinkSignedClaimFormCopyUseCase', () => {
     assert.deepEqual(result.map((row) => row.attachmentId), ['att-scan', 'att-old']);
     assert.equal(req.status, 'PAID');
     assert.equal(calls.upserts.length, 0);
+  });
+
+  // Payout spec §19: the declaration says which account version the declared paper showed.
+  it('records the claim account version with the declaration: the version of a transfer claim, none for cash or a legacy claim', async () => {
+    const versionOf = async (payout: Record<string, unknown>) => {
+      const { repo, calls } = fakeRepo(request(payout), { signedCopies: copies });
+      await new LinkSignedClaimFormCopyUseCase(repo, attachments(), noopAudit)
+        .execute(ctx(), 'rb-1', { attachmentId: 'att-scan', acknowledgedComplete: true, confirmedRequestNo: 'RB-202607-00001' });
+      return calls.links[0].ack.payoutDestinationVersion;
+    };
+    assert.equal(await versionOf({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: 'f'.repeat(64) }), 2);
+    assert.equal(await versionOf({ payoutMethod: 'CASH', payoutFingerprint: 'cash' }), null);
+    // A method a draft once chose on a claim sent before claims carried one is not a snapshot.
+    assert.equal(await versionOf({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }), null);
   });
 
   it('refuses a declaration that does not name this claim\'s number', async () => {
@@ -563,8 +622,14 @@ describe('PrismaReimbursementRepository saved claim signatures', () => {
 describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () => {
   const ack = { requestId: 'rb-1', requestNo: 'RB-202607-00001', acknowledgedByUserId: 'staff-1', acknowledgedAt: '2026-07-26T10:00:00.000Z', checksumSha256: 'c'.repeat(64) };
 
-  /** `existingLinks` are the file's links as the transaction sees them once it holds the file's lock. */
-  function linkClient(metadataJson: unknown = { source: 'web' }, existingLinks: { targetType: string; purpose: string }[] = []) {
+  /**
+   * `existingLinks` are the file's links as the transaction sees them once it holds the file's lock;
+   * `claim` is the claim as a declaration reads it under the claim's own lock.
+   */
+  function linkClient(
+    metadataJson: unknown = { source: 'web' }, existingLinks: { targetType: string; purpose: string }[] = [],
+    claim: Record<string, unknown> = { status: 'READY_FOR_PAYMENT', payoutCorrectionRequestedAt: null, payoutCorrectionSubmittedAt: null },
+  ) {
     const writes: any[] = [];
     // Everything the transaction does, in order: the lock, the re-check, the row write, the link.
     const steps: string[] = [];
@@ -586,6 +651,7 @@ describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () =>
         findFirstOrThrow: async (args: any) => { writes.push(['read', args]); return { metadataJson }; },
         update: async (args: any) => { writes.push(['update', args]); return {}; },
       },
+      reimbursementRequest: { findFirst: async () => { steps.push('claim'); return claim; } },
     };
     // Nothing is read outside the transaction: a check made before the lock proves nothing.
     const client = { $transaction: async (fn: any) => fn(tx) };
@@ -636,6 +702,48 @@ describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () =>
       assert.equal(client.steps.includes('upsert'), false, label);
       assert.equal(client.steps.some((step) => step.startsWith('touch:')), false, `${label}: the file is not written either`);
     }
+  });
+
+  // Payout spec §14.4: a declaration says the scan is the signed form of the claim as it stands. While
+  // the claim is sent back for its payout account there is no such form, and a declaration that commits
+  // just before the send-back must be seen by it: both are decided under the claim's own lock.
+  it('refuses a declaration while the claim payout account is being corrected, under the claim lock taken before the file lock', async () => {
+    const sentBack = { status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: new Date('2026-07-27T00:00:00.000Z'), payoutCorrectionSubmittedAt: null };
+    for (const claim of [sentBack, { ...sentBack, payoutCorrectionSubmittedAt: new Date('2026-07-28T00:00:00.000Z') }]) {
+      const client = linkClient({ source: 'web' }, [], claim);
+      await assert.rejects(
+        () => client.repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1', ack),
+        (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_in_progress',
+      );
+      assert.deepEqual(client.writes, [], 'no link and no declaration');
+      assert.deepEqual(client.steps, ['lock:co-1:rb-1:reimbursement-request', 'claim'], 'refused before the file is locked or read');
+      // The same scan filed without the declaration is an archive copy, as before.
+      await client.repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1');
+      assert.deepEqual(client.writes.map(([kind]) => kind), ['upsert']);
+    }
+    // Outside a round the declaration is stored, with the claim's lock taken first: the order a payment takes the two in.
+    const open = linkClient();
+    await open.repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1', ack);
+    assert.deepEqual(open.steps.slice(0, 3), ['lock:co-1:rb-1:reimbursement-request', 'claim', 'lock:co-1:att-scan:attachment-retention']);
+    assert.ok(open.writes.some(([kind]) => kind === 'update'));
+  });
+
+  it('keeps a scan declared before a payout account correction in the list and stops counting it', async () => {
+    const at = new Date('2026-07-26T10:00:00.000Z');
+    const client = {
+      attachmentLink: {
+        findMany: async () => [
+          { id: 'link-2', attachmentId: 'att-new', createdAt: at, attachment: { originalFileName: 'signed-new.pdf', metadataJson: { reimbursementSignedCopyAck: { ...ack, linkId: 'link-2' } } } },
+          { id: 'link-1', attachmentId: 'att-old', createdAt: at, attachment: { originalFileName: 'signed-old.pdf', metadataJson: { reimbursementSignedCopyAck: { ...ack, linkId: 'link-1', supersededAt: '2026-07-27T00:00:00.000Z' } } } },
+        ],
+      },
+    };
+    const rows = await new PrismaReimbursementRepository({ client } as any, {} as any).listSignedClaimFormCopies('co-1', 'rb-1');
+    assert.deepEqual(rows.map((row) => [row.attachmentId, row.acknowledged, row.acknowledgedAt, row.beforePayoutCorrection]), [
+      ['att-new', true, '2026-07-26T10:00:00.000Z', undefined],
+      // Still listed, named as from before the correction, and with no declaration to show.
+      ['att-old', false, undefined, true],
+    ]);
   });
 
   it('counts a copy as acknowledged only when the stored declaration names its own link', async () => {
@@ -690,6 +798,20 @@ describe('claim detail: form layout and documentSignedVia', () => {
       assert.equal(detail.claimFormLayout, layout);
       assert.equal(detail.documentSignedVia, via, JSON.stringify({ claimSignatures: claimSignatures.map((row) => row.role), copies: copies.map((copy) => copy.attachmentId) }));
     }
+  });
+
+  // Payout spec §14.4, invariant I7: after a correction round the paper declared for the earlier account
+  // is shown as such and is no longer how the document was signed.
+  it('shows a scan from before a payout account correction as that, and does not count it as signed on paper', async () => {
+    const before = { attachmentId: 'att-old', fileName: 'signed-old.pdf', uploadedAt, acknowledged: false, beforePayoutCorrection: true as const };
+    const detail = await detailOf(request({ claimSignatures: [] }), [before, archived]);
+    assert.equal(detail.documentSignedVia, null);
+    assert.deepEqual(detail.signedCopies, [
+      { attachmentId: 'att-old', fileName: 'signed-old.pdf', uploadedAt: uploadedAt.toISOString(), beforePayoutCorrection: true },
+      { attachmentId: 'att-archive', fileName: 'scan.jpg', uploadedAt: uploadedAt.toISOString() },
+    ]);
+    // A scan declared after the correction counts again, beside the old one.
+    assert.equal((await detailOf(request({ claimSignatures: [] }), [declared, before])).documentSignedVia, 'PAPER');
   });
 
   it('reports financeReviewRequired from the frozen snapshot once submitted and the current policy for a draft', async () => {

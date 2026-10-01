@@ -7,7 +7,7 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-mo
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import type { ClaimPayoutRecord } from '../../infrastructure/reimbursement-payout';
 import type { ReimbursementClaimSignatureRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
-import { isLineEvidenced, byLineNo } from '../../domain/logic/reimbursement.logic';
+import { isLineEvidenced, byLineNo, claimApprovalStep, payoutCorrectionPhase } from '../../domain/logic/reimbursement.logic';
 import { hasPayoutSnapshot, openPayoutAccountNumber } from '../../domain/logic/payout-destination.logic';
 import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import {
@@ -91,13 +91,13 @@ export class PreviewReimbursementClaimFormUseCase {
     const steps = req.approvalSteps ?? [];
     const payments = req.payments ?? [];
     const lines = req.lines ?? [];
-    // Latest APPROVED step and latest non-voided payment are the ones that signed. Nothing but this
-    // step feeds the ผู้อนุมัติ block, its signature and the same-person line, and the account lines
-    // read no step at all. So a rule for a claim whose approval no longer stands (the account
-    // correction round of payout spec §14) belongs here alone: no step, and the block prints blank.
-    const approvedStep = steps
-      .filter((step) => step.status === 'APPROVED' && !!step.decidedAt)
-      .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0];
+    // The approval the claim stands on and the latest non-voided payment are the ones that signed.
+    // Nothing but this step feeds the ผู้อนุมัติ block, its signature and the same-person line, and it
+    // is the claim's approver by the one rule the page, the reveal and the signing right ask
+    // (`claimApprovalStep`): an approval of an earlier round, or one set aside because the claim's
+    // payout account is being corrected (payout spec §14), is nobody's, and the block prints blank.
+    const approvedStep = claimApprovalStep({ submittedAt: req.submittedAt, approvalSteps: steps });
+    const correcting = !!payoutCorrectionPhase(req);
     const payment = payments
       .filter((row) => row.status === 'RECORDED')
       .sort((a, b) => a.paidAt.getTime() - b.paidAt.getTime())
@@ -110,7 +110,8 @@ export class PreviewReimbursementClaimFormUseCase {
     // The claim's own frozen account version, masked: never the member's default account (invariant
     // I5). Not read for the four-block form, nor for a claim sent before claims carried one (spec
     // §15): those print as they always did, payment line included.
-    const claimPayout = layout === 'TWO_SIGNERS' && hasPayoutSnapshot(req) ? await this.repo.findClaimPayout(req) : undefined;
+    // Nor while the account is being corrected: the form then says so instead of printing an account.
+    const claimPayout = layout === 'TWO_SIGNERS' && hasPayoutSnapshot(req) && !correcting ? await this.repo.findClaimPayout(req) : undefined;
     const paidIntoVersion = claimPayout ? payment?.payoutDestinationVersion : undefined;
 
     const [company, names, signatureImages, paymentSlips, paymentDestinations] = await Promise.all([
@@ -127,7 +128,9 @@ export class PreviewReimbursementClaimFormUseCase {
       // The account that payment was confirmed into, from the version the payment itself stored.
       paidIntoVersion === undefined ? undefined : this.repo.listPaymentPayoutDestinations(companyId, req.id, [paidIntoVersion]),
     ]);
-    const payout = claimFormPayout(claimPayout, names, req.requesterUserId);
+    // Spec §17.1: in a round the line reads "อยู่ระหว่างแก้ไขบัญชีรับเงิน" for every reader. It carries no
+    // account, so nothing is decrypted for it and no reveal is recorded.
+    const payout: ClaimFormPayout | undefined = correcting ? { method: 'CORRECTION_IN_PROGRESS' } : claimFormPayout(claimPayout, names, req.requesterUserId);
     const paidInto = paidIntoVersion === undefined ? undefined : paymentDestinations?.[paidIntoVersion];
     const signer = (userId: string | undefined, at: Date | undefined, role: ReimbursementClaimSignatureRole): ClaimFormSigner | null =>
       (userId && at

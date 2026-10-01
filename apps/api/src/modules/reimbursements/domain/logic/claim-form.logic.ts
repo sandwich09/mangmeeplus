@@ -59,6 +59,8 @@ export type ClaimFormSigner = {
  */
 export type ClaimFormPayout =
   | { method: 'CASH' }
+  /** The claim was sent back to have its payout account corrected (payout spec §17.1): no account is printed until one is approved again. */
+  | { method: 'CORRECTION_IN_PROGRESS' }
   | {
     method: 'BANK_TRANSFER';
     kind: ReimbursementPayoutKind;
@@ -308,6 +310,7 @@ function payoutLines(snapshot: ReimbursementClaimFormSnapshot): string[] {
   const payout = snapshot.layout === 'TWO_SIGNERS' ? snapshot.payout : null;
   if (!payout) return [];
   if (payout.method === 'CASH') return ['รับเงินคืนทาง: รับเป็นเงินสด'];
+  if (payout.method === 'CORRECTION_IN_PROGRESS') return ['รับเงินคืนทาง: อยู่ระหว่างแก้ไขบัญชีรับเงิน'];
   const number = payout.accountNumber ? ` ${payout.accountNumber}` : maskedPayoutAccountNumber(payout.accountLast4);
   const account = payout.kind === 'PROMPTPAY_PHONE'
     ? `พร้อมเพย์เบอร์${number} ชื่อบัญชี ${payout.accountName}`

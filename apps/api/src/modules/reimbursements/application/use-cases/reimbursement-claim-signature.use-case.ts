@@ -20,7 +20,8 @@ import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimb
 import type { ReimbursementRequestRecord, ReimbursementSignedCopyAck } from '../../domain/models/reimbursement.model';
 import { toSignedCopySummaries } from '../dto/reimbursement.mapper';
 import { assertCanReadRequest } from './reimbursement-request.use-case';
-import { claimSignatureAckHash } from '../../domain/logic/reimbursement.logic';
+import { claimApprovalStep, claimSignatureAckHash, payoutCorrectionPhase } from '../../domain/logic/reimbursement.logic';
+import { hasPayoutSnapshot } from '../../domain/logic/payout-destination.logic';
 import { claimFormLayout } from '../../domain/logic/claim-form.logic';
 import { REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG } from '../../domain/reimbursement.constants';
 
@@ -40,12 +41,15 @@ export function eligibleClaimSignatureRoles(req: ReimbursementRequestRecord, use
   // A corrected/reopened draft can keep its request number, but its facts are editable and therefore
   // cannot be signed until resubmission freezes a new snapshot.
   if (!req.requestNo || ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(req.status)) return roles;
+  // Nor while its payout account is being corrected (payout spec §14): the form then prints no
+  // account and no approver, and a signature would acknowledge an account its signer was not shown.
+  if (payoutCorrectionPhase(req)) return roles;
   if (req.requesterUserId === userId) roles.push('REQUESTER');
 
-  const approvedStep = (req.approvalSteps ?? [])
-    .filter((step) => step.status === 'APPROVED' && !!step.decidedAt)
-    .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0];
-  if (approvedStep?.decisionByUserId === userId) roles.push('APPROVER');
+  // The approval the claim stands on, by the one rule for a claim's approver: in force, and given in
+  // the round the claim was last sent in. Whoever approved an earlier round, or an approval a
+  // correction set aside, signs nothing.
+  if (claimApprovalStep(req)?.decisionByUserId === userId) roles.push('APPROVER');
   // D3: the two-signer form has no accounting or payer block; a legacy form keeps all four.
   if (claimFormLayout(req.claimSignatures) === 'TWO_SIGNERS') return roles;
 
@@ -256,6 +260,9 @@ export class LinkSignedClaimFormCopyUseCase {
       ack = {
         requestId, requestNo: req.requestNo, acknowledgedByUserId: ctx.userId,
         acknowledgedAt: new Date().toISOString(), checksumSha256: attachment.checksumSha256 ?? null,
+        // Which account the declared paper showed (payout spec §19). A later correction of the account
+        // sets the declaration aside where it is made (`requestPayoutCorrectionAtomic`).
+        payoutDestinationVersion: hasPayoutSnapshot(req) ? req.payoutDestinationVersion ?? null : null,
       };
     }
 

@@ -551,6 +551,22 @@ describe('claim form payout line', () => {
     }
   });
 
+  // Payout spec §17.1: while a claim's payout account is being corrected the form prints no account at all.
+  it('says อยู่ระหว่างแก้ไขบัญชีรับเงิน for a claim whose account is being corrected: one line, no account, no attestation', () => {
+    const correcting = snapshot({ payout: { method: 'CORRECTION_IN_PROGRESS' }, signers: { ...snapshot().signers, approver: null }, repayment: null });
+    const [plain] = bothRenderings(snapshot({ signers: { ...snapshot().signers, approver: null }, repayment: null })) as [string];
+    for (const artifact of bothRenderings(correcting)) {
+      assert.deepEqual(payoutBlocks(artifact)[0]!.lines, ['รับเงินคืนทาง: อยู่ระหว่างแก้ไขบัญชีรับเงิน']);
+      assert.doesNotMatch(artifact, /ผู้ตรวจบัญชี|ชื่อบัญชี|เลขบัญชี|พร้อมเพย์|ลงท้าย|รับเป็นเงินสด|มานี ผู้จัดการ/);
+    }
+    // One line of its own height, like the cash line.
+    assert.deepEqual([tableTop(plain), tableTop(bothRenderings(correcting)[0]!)], [218, 240]);
+    // The four-block form prints no receiving line at all, in a round as otherwise.
+    for (const artifact of bothRenderings(snapshot({ layout: 'LEGACY_FOUR_SIGNERS', payout: { method: 'CORRECTION_IN_PROGRESS' } }))) {
+      assert.doesNotMatch(artifact, /รับเงินคืนทาง|อยู่ระหว่างแก้ไข/);
+    }
+  });
+
   it('names whoever attested the account, with the Thai day they did, on a line of its own', () => {
     for (const payout of [bank, promptPay]) {
       const [account] = payoutBlocks(renderReimbursementClaimFormSvg(snapshot({ payout })).toString())[0]!.lines;

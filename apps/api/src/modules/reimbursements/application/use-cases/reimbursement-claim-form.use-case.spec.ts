@@ -722,6 +722,39 @@ describe('the receiving account on the printed claim form', () => {
       }
     });
 
+    // Payout spec §14, §17.1 (AC32): a claim sent back to have its payout account corrected prints no
+    // account and no approver until one is approved again, whoever asks and in either phase.
+    it('says อยู่ระหว่างแก้ไขบัญชีรับเงิน and leaves the approver block blank during a correction round, with no number, row or decrypt', async () => {
+      const sentBackAt = new Date('2026-07-25T00:00:00.000Z');
+      const givenAt = new Date('2026-07-26T00:00:00.000Z');
+      const setAside = { id: 'st-1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt, assignedAt: sentAt, invalidatedAt: sentBackAt, invalidatedReason: 'payout_account_correction' };
+      const round = { status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG' };
+      const phases: Array<[string, Record<string, unknown>]> = [
+        // Phase A: no step is open, and the claim still points at the account in question.
+        ['waiting for the requester', { ...round, currentApprovalStepId: undefined, approvalSteps: [setAside] }],
+        // Phase B: the account was given again and a new step waits for mgr-1.
+        ['waiting for approval of the new account', {
+          ...round, payoutCorrectionSubmittedAt: givenAt, currentApprovalStepId: 'st-2', payoutDestinationVersion: 2,
+          approvalSteps: [setAside, { id: 'st-2', sequenceNo: 1, status: 'PENDING', assignedApproverUserIds: ['mgr-1'], assignedAt: givenAt }],
+        }],
+      ];
+      for (const [phase, state] of phases) {
+        for (const [who, viewer] of [...inGroup, ...outsideGroup]) {
+          const { print, audits, events, reads, tables, sealed } = world(state);
+          tables.destinations.push({ ...tables.destinations[0], id: 'destination-2', version: 2, frozenAt: givenAt, verifiedByUserId: null, verifiedAt: null, verifiedVia: null, approvalStepId: null, fingerprint: sealed.fingerprint });
+          const result = await print(viewer);
+          for (const image of imagesOf(result)) {
+            assert.equal(count(image, '>รับเงินคืนทาง: อยู่ระหว่างแก้ไขบัญชีรับเงิน<'), 1, `${phase}, ${who}`);
+            assert.doesNotMatch(image, /ผู้ตรวจบัญชี|ชื่อบัญชี|เลขบัญชี|ลงท้าย|กสิกรไทย|มานี ผู้จัดการ/, `${phase}, ${who}`);
+            assert.ok(!image.includes(NUMBER), `${phase}, ${who}`);
+          }
+          // Two ruled signing lines, and only the requester's carries a name.
+          assert.equal(count(svgOf(result), '( สมชาย ใจดี )'), 1, `${phase}, ${who}`);
+          assert.deepEqual([audits, events, reads.secret, reads.payout], [[], [], 0, 0], `${phase}, ${who}: nothing asked of the payout tables`);
+        }
+      }
+    });
+
     it('reprints the four-block form without the account, a row or a decrypt, even for a claim that carries one', async () => {
       const signedByPayer = { claimSignatures: [signatureRow('REQUESTER', 'staff-1'), signatureRow('PAYER', 'fin-1')] };
       const { print, audits, events, reads, claim } = world(signedByPayer);
@@ -732,6 +765,30 @@ describe('the receiving account on the printed claim form', () => {
       const withoutPayout = { ...claim, payoutMethod: undefined, payoutDestinationVersion: undefined, payoutFingerprint: undefined };
       assert.deepEqual(result, await previewUseCase(fakeRepo(withoutPayout).repo).execute(requester, 'rb-1'));
     });
+  });
+
+  // The print lane's finding (reimbursement-payout-p4-print.md, "Noticed"): the block took the latest
+  // APPROVED step of any round. A claim approved, returned to its requester by finance, corrected and
+  // sent again printed the earlier approver in the ผู้อนุมัติ block while it waited for the new round,
+  // and gave them the full-number print's place to sign. The block now asks the one rule for a
+  // claim's approver (`isReimbursementClaimApprover`, through `claimApprovalStep`).
+  it('names in the ผู้อนุมัติ block only whoever approved the round the claim was last sent in', async () => {
+    const sentAgainAt = new Date('2026-07-25T00:00:00.000Z');
+    const earlierRound = { id: 'st-1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt, assignedAt: sentAt };
+    const waitingAgain = {
+      status: 'PENDING_APPROVAL', submittedAt: sentAgainAt, currentApprovalStepId: 'st-2',
+      approvalSteps: [earlierRound, { id: 'st-2', sequenceNo: 1, status: 'PENDING', assignedApproverUserIds: ['mgr-2'], assignedAt: sentAgainAt }],
+    };
+    const { print } = world(waitingAgain, { attested: false });
+    for (const image of imagesOf(await print(requester))) assert.doesNotMatch(image, /มานี ผู้จัดการ/, 'nobody has approved this round');
+    // Approved again in the new round: that approval is the one printed.
+    const approvedAgain = world({
+      submittedAt: sentAgainAt,
+      approvalSteps: [earlierRound, { id: 'st-2', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'acct-1', decidedAt: new Date('2026-07-26T00:00:00.000Z'), assignedAt: sentAgainAt }],
+    }, { attested: false });
+    const image = svgOf(await approvedAgain.print(requester));
+    assert.match(image, /\( ปรีชา บัญชี \)/);
+    assert.doesNotMatch(image, /มานี ผู้จัดการ/);
   });
 
   it('prints nothing when the audit row cannot be written, and reads no key', async () => {
