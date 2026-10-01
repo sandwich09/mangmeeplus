@@ -14,6 +14,7 @@ import type {
   ReimbursementPostingStatus,
   ReimbursementClaimSignatureRole,
   ReimbursementPaymentMethod,
+  ReimbursementPayoutMethod,
   ReimbursementApproverMode,
   ReimbursementDuplicatePolicy,
   ReimbursementPolicyStatus,
@@ -186,6 +187,11 @@ export type ReimbursementRequestRecord = {
   missingReceiptReason?: string;
   approvalSnapshotHash?: string;
   approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1;
+  /** Undefined on a draft = follows the requester's default account; undefined once submitted = a legacy claim. */
+  payoutMethod?: ReimbursementPayoutMethod;
+  /** The claim's own account snapshot version; undefined for cash. */
+  payoutDestinationVersion?: number;
+  payoutFingerprint?: string;
   paymentTotalAmount: string;
   outstandingAmount: string;
   idempotencyKey?: string;

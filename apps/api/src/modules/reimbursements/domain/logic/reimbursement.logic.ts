@@ -165,6 +165,14 @@ export type ApprovalSnapshotFields = {
   primaryAttachmentId?: string | null;
   lines?: readonly ReimbursementLineFields[];
   approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1;
+  /**
+   * The claim's receiving method and its own account snapshot. Folded into the hash only when the
+   * claim carries a method, so a claim sent before the field existed keeps the hash it was approved
+   * and signed under.
+   */
+  payoutMethod?: string | null;
+  payoutDestinationVersion?: number | null;
+  payoutFingerprint?: string | null;
 };
 
 export type LegacyV1FallbackSnapshotFields = ApprovalSnapshotFields & {
@@ -217,6 +225,9 @@ export function claimSignatureAckHash(req: {
   reason: string;
   primaryAttachmentId?: string | null;
   lines?: ApprovalSnapshotFields['lines'];
+  payoutMethod?: string | null;
+  payoutDestinationVersion?: number | null;
+  payoutFingerprint?: string | null;
 }): string {
   return computeSnapshotHash({
     amount: req.amount,
@@ -226,6 +237,9 @@ export function claimSignatureAckHash(req: {
     reason: req.reason,
     primaryAttachmentId: req.primaryAttachmentId,
     lines: req.lines ?? [],
+    payoutMethod: req.payoutMethod,
+    payoutDestinationVersion: req.payoutDestinationVersion,
+    payoutFingerprint: req.payoutFingerprint,
   });
 }
 
@@ -239,6 +253,12 @@ export function computeSnapshotHash(fields: ApprovalSnapshotFields): string {
     ...snapshotHeaderParts(fields),
     ...(fields.approvalPolicySnapshotJson
       ? [`policy:${stableJson(fields.approvalPolicySnapshotJson)}`]
+      : []),
+    // Cash is hashed too (no version, no fingerprint): switching cash to a transfer after approval
+    // has to invalidate that approval. The attestation itself is not hashed, so ticking it never
+    // changes what was signed.
+    ...(fields.payoutMethod
+      ? [`payout:${fields.payoutMethod}:${fields.payoutDestinationVersion ?? ''}:${fields.payoutFingerprint ?? ''}`]
       : []),
     ...byLineNo(fields.lines ?? []).map((line) => [
       line.lineNo,
