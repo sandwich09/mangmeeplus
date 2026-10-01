@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "61141286fbcf75bab9920d8496ab3d586f47297f",
-  "checkoutBranch": "claude/advisor-r1-integration-20261001",
-  "checkoutDirty": true,
+  "sourceRevision": "cf4f6d53712292ce7a48445ce942cdbedc149be2",
+  "checkoutBranch": "claude/release-assembly-20261001",
+  "checkoutDirty": false,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -9015,6 +9015,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-09-30T18:49:53.442Z",
-  "manifestDigest": "359e4e63da9244349f554658d299ab6a5e2157442a03f22b5b7df0ad57cf5ef4"
+  "generatedAt": "2026-10-01T05:53:43.645Z",
+  "manifestDigest": "e011ce6a09f73035c36d21f165dc2bc7e48ed430073073e90b7e946f0125b6a0"
 }
