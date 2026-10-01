@@ -14,6 +14,8 @@ import { PrismaAttachmentRepository } from '../../data-model-core/infrastructure
 import { ReimbursementEvidenceService } from '../application/services/reimbursement-evidence.service';
 import { PrismaExpenseRepository } from '../../expenses/infrastructure/prisma-expense.repository';
 import { DeleteEmployeeDraftUseCase } from '../../employee-access/application/use-cases/delete-employee-draft.use-case';
+import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifications/application/use-cases/notification.use-cases';
+import { MemberPayoutAccountUseCase } from '../application/use-cases/reimbursement-payout.use-case';
 import {
   CASH_PAYOUT_FINGERPRINT, openPayoutAccountNumber, payoutFingerprint, payoutSubmitToken, sealPayoutDestination, type SubmitPayoutColumns,
 } from '../domain/logic/payout-destination.logic';
@@ -1400,6 +1402,72 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     await db.membershipRole.create({ data: { membershipId: approverMembership.id, roleId: manager.id } });
     assert.equal((await repos[0]!.findPayoutMember(companyId, approver))?.managesPeople, true);
     await db.membershipRole.deleteMany({ where: { membershipId: approverMembership.id } });
+  });
+
+  // Security review M1 and S2, with the real notification writer. It makes recipients of ACTIVE
+  // members only, so a notice for anyone else is an event nobody receives: that is why the use case
+  // refuses them. And a notice is written for the one person it concerns, with the change itself.
+  it('writes the notice for the account owner alone, with the change, and refuses a member it could not reach', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const writer = new CreateOrUpdateNotificationEventUseCase(null as never, null as never, null as never, null as never, null as never, { client: db } as never);
+    const payouts = new MemberPayoutAccountUseCase(repos[0]!, { log: async () => undefined } as never, { credentialEncryptionKey: key } as never, writer);
+    const editor = { requestId: `${PAYOUT_TAG}-notice`, userId: approver, companyId, roles: ['MANAGER'], permissions: ['access.employee.read', 'access.employee.update', 'reimbursement.create', 'reimbursement.finance_review'], scopes: {} } as never;
+    const membership = await db.companyMembership.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: requester } }, select: { id: true } });
+    // An employee record makes the requester someone an editor may set an account for.
+    const profile = await db.employeeAccessProfile.create({ data: {
+      companyId, userId: requester, membershipId: membership.id, displayName: 'สมชาย', identityType: 'THAI_NATIONAL_ID',
+      identityLast4: '0002', identityHash: `${PAYOUT_TAG}-notice-identity`, identityEncryptedRef: 'sealed', phoneNumber: `${PAYOUT_TAG}-notice-phone`,
+      status: 'ACTIVE', createdByUserId: approver,
+    }, select: { id: true } });
+    const told = () => db.notificationRecipient.findMany({
+      where: { companyId }, orderBy: { createdAt: 'asc' },
+      select: { userId: true, event: { select: { triggerKey: true, severity: true, title: true, body: true, deepLinkHref: true } }, deliveries: { select: { channel: true }, orderBy: { channel: 'asc' } } },
+    });
+    try {
+      await repos[0]!.removeMemberPayoutAccount(companyId, requester, async () => undefined);
+      for (const status of ['DRAFT', 'INVITED', 'SUSPENDED', 'DISABLED'] as const) {
+        await db.companyMembership.update({ where: { id: membership.id }, data: { status } });
+        await refusedBy(() => payouts.setForMember(editor, requester, { payoutMethod: 'BANK_TRANSFER', ...KBANK }), /payout_account_member_not_active/, status);
+        // What the refusal prevents: the writer takes the event and gives it to nobody.
+        await db.$transaction((tx) => writer.executeInTransaction({
+          companyId, triggerKey: 'reimbursement.payout_account_set_by_other', sourceModule: 'reimbursements', sourceType: 'member_payout_account',
+          sourceId: requester, periodKey: `unreachable-${status}`, severity: 'critical', title: 'ไม่มีผู้รับ', body: 'ไม่มีผู้รับ', recipientUserIds: [requester],
+        }, tx));
+      }
+      assert.deepEqual([await repos[0]!.findMemberPayoutAccount(companyId, requester), (await told()).length, await db.notificationEvent.count({ where: { companyId } })], [null, 0, 4]);
+      await db.notificationEvent.deleteMany({ where: { companyId } });
+
+      // Active again: the account is set and the notice is there, for that one member, on both channels.
+      await db.companyMembership.update({ where: { id: membership.id }, data: { status: 'ACTIVE' } });
+      const saved = await payouts.setForMember(editor, requester, { payoutMethod: 'BANK_TRANSFER', ...KBANK });
+      assert.equal(saved.account?.accountLast4, '5678');
+      const [defaultNotice, ...none] = await told();
+      assert.equal(none.length, 0);
+      assert.deepEqual([defaultNotice!.userId, defaultNotice!.event.triggerKey, defaultNotice!.event.severity, defaultNotice!.event.title, defaultNotice!.event.deepLinkHref, defaultNotice!.deliveries.map((delivery) => delivery.channel)],
+        [requester, 'reimbursement.payout_account_set_by_other', 'CRITICAL', `${approver} ตั้งบัญชีรับเงินคืนของคุณ`, `/companies/${companyId}/reimbursements/payout-account`, ['WEB', 'LINE']]);
+      assert.match(defaultNotice!.event.body, /^ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678 ตั้งเมื่อ /);
+
+      // The same for an account typed into a claim filed for the requester: one notice, to the requester, linking the claim.
+      const typed = await payouts.draftPayoutChange(editor, requester, { mode: 'SPECIFIED', ...SCB });
+      const claim = await draft('typed by a preparer', typed);
+      const notices = await told();
+      assert.equal(notices.length, 2);
+      assert.deepEqual([notices[1]!.userId, notices[1]!.event.title, notices[1]!.event.deepLinkHref, notices[1]!.deliveries.length],
+        [requester, `${approver} ระบุบัญชีรับเงินคืนในใบเบิกของคุณ`, `/companies/${companyId}/reimbursements/${claim.id}`, 2]);
+      assert.match(notices[1]!.event.body, /^ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112 ระบุเมื่อ /);
+      // Nobody else in the company was written to, and no text carries a number.
+      assert.ok(notices.every((notice) => notice.userId === requester));
+      for (const number of [KBANK.accountNumber, SCB.accountNumber]) assert.equal(JSON.stringify(notices).includes(number), false);
+      // A change that fails takes its notice with it: the draft, the account row and the notice are one transaction.
+      await db.companyMembership.update({ where: { id: membership.id }, data: { status: 'SUSPENDED' } });
+      await assert.rejects(payouts.draftPayoutChange(editor, requester, { mode: 'SPECIFIED', ...KBANK }), /payout_account_member_not_active/);
+      assert.equal((await told()).length, 2);
+    } finally {
+      await db.companyMembership.update({ where: { id: membership.id }, data: { status: 'ACTIVE' } });
+      await db.notificationEvent.deleteMany({ where: { companyId } });
+      await db.employeeAccessProfile.delete({ where: { id: profile.id } });
+    }
   });
 
   // Security review S6: "owner or admin" is the system role, never a key. A role a company makes
