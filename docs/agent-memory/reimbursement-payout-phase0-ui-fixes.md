@@ -75,4 +75,14 @@ Contract additions (all additive): `ReimbursementHubBucket`, `reimbursementHubBu
 
 Not changed: no AI-facing label or tool (the LINE tools map queue rows to their own fields), so the whole-chain acceptance was not needed. No `package.json` edit; the new API tests are in spec files already registered.
 
-Verification of the follow-up is in the handoff report of that lane, and repeats the Phase 0 list: focused web and API specs, both typechecks, the W00 manifest parity spec, and a throwaway PostgreSQL 18 for the sync and for the paged, grouped list.
+Merged with the updated assembly `41e2e1101` (develop's manual-entry docs and the Phase 2 follow-up) at `9cfc25d62`. Two conflicts, both sides kept: GET claim detail takes the assembly's `detailWithFileNames(..., ctx, approvalActions)` together with this lane's `paymentDesk` rule; the hub page's imports keep this lane's list functions together with the assembly's `PAYMENT_DIALOG_MEDIA_QUERY` and `quickPayTarget`. No schema change came with the merge.
+
+Verification at the merged head `9cfc25d62` (2026-10-01):
+
+- Typecheck: native TypeScript (the CI compiler) for api and web pass. The API package script (`tsc --noEmit`, 8 GB heap) passes, 0 errors. `prisma/sync-permissions.ts`, its spec and `seed.ts` are outside the API typecheck config and pass with a one-off config (run before the merge; the merge did not touch them).
+- Web suite `pnpm --filter @watchdog-bms/web test`: 2287 pass, 0 fail.
+- API specs of both lanes, 31 files run directly (every registered reimbursement spec, the attachment logic and repository specs, the LINE reimbursement tools, capability logic, the permission registry and resolver, `spec-suite-coverage`, `prisma/sync-permissions.spec.ts`, and the unregistered approval-backlog spec): 986 pass, 0 fail.
+- W00 manifest parity spec: pass, no regeneration (no hashed file touched).
+- Real PostgreSQL 18 (throwaway container, probe not committed): the sync granted and audited the two pay keys on a company role and on an orphan role, with `actorRefId` and the registry's risk level on every row it wrote, and a rerun wrote nothing. The list answered company, own and related scopes over 330 claims in pages of 100, rows sharing a `createdAt` included: for every bucket the count, the total and the rows of all pages agree, and the buckets add up to the scope.
+- Browser at 390 px (static render with the app's compiled CSS and fonts, headless Chromium), run before the merge: the hub (mixed, 100 of 2,300 rows held, a filter open, a filter loading, both failure states, empty), the approval queue (reject only, both), the policy form with the warning, and the claim page with five payers named: no horizontal overflow.
+- Not run: the full API suite, the whole-chain acceptance (no AI-facing label or tool changed), the boot smoke, Playwright E2E, and the `*.pg.spec.ts` files.
