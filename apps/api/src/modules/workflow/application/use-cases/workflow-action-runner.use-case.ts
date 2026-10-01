@@ -24,6 +24,7 @@ const WEBHOOK_FEATURE_KEY = 'workflow_automation';
 export type ActionRunContext = {
   companyId: string;
   ruleName: string;
+  triggerType?: string;
   sourceModule?: string;
   sourceType?: string;
   sourceId?: string;
@@ -37,6 +38,7 @@ export function buildActionRunContext(run: WorkflowRunRecord): ActionRunContext 
   return {
     companyId: run.companyId,
     ruleName: run.rule?.name ?? '',
+    triggerType: run.triggerType,
     sourceModule: run.sourceModule,
     sourceType: run.sourceType,
     sourceId: run.sourceId,
@@ -47,6 +49,23 @@ export function buildActionRunContext(run: WorkflowRunRecord): ActionRunContext 
 
 class RetryableActionError extends Error {}
 class FinalActionError extends Error {}
+
+const SCAN_TRIGGER_TYPES = ['SCHEDULE', 'THRESHOLD_SCAN', 'SLA_SCAN'];
+
+/**
+ * The period a notice belongs to (review M1). The notice store keeps ONE notice per trigger, record
+ * and period, and a workflow notice is never resolved, so with no period a claim was notified once
+ * per person, ever: a claim sent again never reached its approver, "approved" after "rejected" was
+ * never pushed and the bell kept the old text.
+ * An event happens once, so its run is its period: a retry of the same run repeats nothing, the
+ * next event of the same kind is a new notice. A scan comes round every window and must not nag,
+ * so it has no period of its own; a scan that wants one push per period names it in the payload.
+ */
+function notificationPeriodKey(context: ActionRunContext, actionRun: WorkflowActionRunRecord): string | undefined {
+  const named = context.payload['notificationPeriodKey'];
+  if (typeof named === 'string' && named.length > 0) return named;
+  return context.triggerType && !SCAN_TRIGGER_TYPES.includes(context.triggerType) ? actionRun.workflowRunId : undefined;
+}
 
 /**
  * The payload as a person reads it (audit B15): a claim's `decision` code word becomes the words
@@ -290,6 +309,8 @@ export class ExecuteWorkflowActionUseCase {
         deepLinkHref: webPath,
         sourceRefs: webPath ? [{ module: context.sourceModule, type: context.sourceType, id: context.sourceId, webPath }] : [],
         recipientUserIds,
+        periodKey: notificationPeriodKey(context, actionRun),
+        supersedeEarlier: true,
       });
       return { resultJson: { skipped: result.skipped, reason: (result as { reason?: string }).reason }, targetType: 'notification_event', targetId: result.event?.id };
     } catch (err) {

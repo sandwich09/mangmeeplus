@@ -88,6 +88,7 @@ export class RunWorkflowRuleUseCase {
       await this.executeAction.execute(actionRun, {
         companyId: rule.companyId,
         ruleName: rule.name,
+        triggerType: input.triggerType,
         sourceModule: input.sourceModule,
         sourceType: input.sourceType,
         sourceId: input.sourceId,

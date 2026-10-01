@@ -296,6 +296,47 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     });
   });
 
+  // Review M1: the notice store keeps one notice per trigger, record and period. An event's run is
+  // its period, so the next event of the same kind is a new notice; a scan has none of its own.
+  describe('the period a notice belongs to (review M1)', () => {
+    const pending = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_pending_approval')!;
+    const sendPending = async (run: Record<string, unknown>, context: Record<string, unknown>) => {
+      const [notifyAction] = pending().defaultActionJson;
+      await make().execute({ ...actionRun(notifyAction!.configJson), actionKey: notifyAction!.actionKey, ...run }, {
+        companyId: 'co_1', ruleName: 'Reimbursement pending approval', sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_request', sourceId: 'rb_1', siblingActions: pending().defaultActionJson,
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', approverRecipientUserIds: ['u_manager'] },
+        ...context,
+      } as any);
+      return (notify.execute.mock.calls.at(-1) as any).arguments[0];
+    };
+
+    it('files an event notice under its run, so a claim sent again is a new notice and a retry is not', async () => {
+      const round1 = await sendPending({ workflowRunId: 'run_round_1' }, { triggerType: 'EVENT' });
+      const retry = await sendPending({ workflowRunId: 'run_round_1', attemptCount: 1 }, { triggerType: 'EVENT' });
+      const round2 = await sendPending({ workflowRunId: 'run_round_2' }, { triggerType: 'EVENT' });
+
+      assert.deepEqual([round1.periodKey, retry.periodKey, round2.periodKey], ['run_round_1', 'run_round_1', 'run_round_2']);
+      // The newer notice replaces the older one in the bell.
+      assert.equal(round2.supersedeEarlier, true);
+    });
+
+    it('gives a scan notice no period of its own, so a scan window never pushes again', async () => {
+      for (const triggerType of ['SLA_SCAN', 'THRESHOLD_SCAN', 'SCHEDULE']) {
+        const sent = await sendPending({ workflowRunId: `run_${triggerType}` }, { triggerType });
+        assert.equal(sent.periodKey, undefined, triggerType);
+      }
+    });
+
+    it('takes the period a scan names in its payload: one push per period, not per window', async () => {
+      const payload = { requestId: 'rb_1', requestNo: 'RB-1', approverRecipientUserIds: ['u_manager'], notificationPeriodKey: 'round:2026-10-01T03:00:00.000Z' };
+      const first = await sendPending({ workflowRunId: 'run_hour_1' }, { triggerType: 'SLA_SCAN', payload });
+      const nextWindow = await sendPending({ workflowRunId: 'run_hour_2' }, { triggerType: 'SLA_SCAN', payload });
+
+      assert.deepEqual([first.periodKey, nextWindow.periodKey], ['round:2026-10-01T03:00:00.000Z', 'round:2026-10-01T03:00:00.000Z']);
+    });
+  });
+
   // Owner rule 2026-10-01: an action notice goes to the person whose turn it is, not to everyone
   // who holds the right. The mechanism is generic; the claim templates that use it follow below.
   describe('preferRecipientPayloadKeys narrows permission recipients to whose turn it is', () => {

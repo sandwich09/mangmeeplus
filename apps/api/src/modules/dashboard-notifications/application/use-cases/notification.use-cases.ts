@@ -216,6 +216,12 @@ export class CreateOrUpdateNotificationEventUseCase {
     sourceRefs?: unknown[];
     recipientUserIds: string[];
     periodKey?: string;
+    /**
+     * A newer notice of the same kind about the same record replaces the older ones: they stop
+     * showing as current, and a push of theirs still queued is dropped at egress. Off unless asked
+     * for, because other producers keep several periods open side by side.
+     */
+    supersedeEarlier?: boolean;
   }) {
     const dedupKey = buildDedupKey({ companyId: input.companyId, triggerKey: input.triggerKey, sourceModule: input.sourceModule, sourceType: input.sourceType, sourceId: input.sourceId, periodKey: input.periodKey });
     const now = new Date();
@@ -231,6 +237,7 @@ export class CreateOrUpdateNotificationEventUseCase {
     let event = existing;
     if (!event || (event.status !== 'open' && !coolingDown && !['plan_term', 'billing'].includes(input.sourceModule))) {
       event = await this.events.create({ companyId: input.companyId, triggerKey: input.triggerKey, sourceModule: input.sourceModule, sourceType: input.sourceType, sourceId: input.sourceId, severity: input.severity as any, title: input.title, body: input.body, payloadJson: {}, sourceRefsJson: { refs: input.sourceRefs ?? [] }, deepLinkHref: input.deepLinkHref, dedupKey, status: 'open', ruleId: rule?.id, firstSeenAt: now, lastSeenAt: now, resolvedAt: undefined });
+      if (input.supersedeEarlier) await this.events.resolveEarlier(event, now);
     } else {
       await this.events.update(input.companyId, event.id, { lastSeenAt: now });
     }
