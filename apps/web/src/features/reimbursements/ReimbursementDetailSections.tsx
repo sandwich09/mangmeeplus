@@ -324,7 +324,7 @@ export function PaymentForm({ companyId, request, onCancel, onDone }: { companyI
       newIdempotencyKey: () => crypto.randomUUID(),
       onBusy: (sending) => { setBusy(sending); if (sending) setError(null); },
     });
-    if (result.status === 'refused') setError(result.message);
+    if (result.status === 'refused') setError(result.text);
     if (result.status === 'saved') { onDone(); toast.success('บันทึกจ่ายเรียบร้อยแล้ว'); }
   };
 

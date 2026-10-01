@@ -294,11 +294,11 @@ describe('saving the payment form', () => {
   });
 
   it('sends nothing for a form that is not ready, and says what is missing', async () => {
-    for (const [label, h, message] of [
+    for (const [label, h, text] of [
       ['no method chosen', form({ form: { ...transferForm, paymentMethod: '' } }), 'กรุณาเลือกวิธีจ่าย'],
       ['a transfer without a slip', form({ slip: null }), 'จ่ายด้วยการโอนต้องแนบสลิป'],
     ] as const) {
-      assert.deepEqual(await h.press(), { status: 'refused', message }, label);
+      assert.deepEqual(await h.press(), { status: 'refused', text }, label);
       assert.deepEqual(h.calls, [], label);
       assert.deepEqual(h.busy, [], `${label}: never shown as sending`);
       assert.equal(h.session.idempotencyKey, null, label);
@@ -310,7 +310,7 @@ describe('saving the payment form', () => {
     const failed = await h.press();
     assert.equal(failed.status, 'refused');
     // The slip is in, the payment is not: the message says so and does not ask for a new slip or a new transfer.
-    assert.match((failed as { message: string }).message, /^แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · .* · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่$/);
+    assert.match((failed as { text: string }).text, /^แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · .* · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่$/);
     assert.deepEqual(h.slip(), { attachmentId: 'att-uploaded', name: 'slip.jpg' }, 'the form now holds the uploaded slip, not the file');
 
     assert.deepEqual(await h.press(), { status: 'saved' });
@@ -325,7 +325,7 @@ describe('saving the payment form', () => {
     const h = form({ uploadFails: true });
     const failed = await h.press();
     assert.equal(failed.status, 'refused');
-    assert.match((failed as { message: string }).message, /^อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · /);
+    assert.match((failed as { text: string }).text, /^อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · /);
     assert.deepEqual(h.calls.map(([kind]) => kind), ['upload']);
     assert.equal(h.session.idempotencyKey, null, 'no payment was attempted, so no key is spent');
     assert.deepEqual(h.slip(), picked(), 'the picked file is still in the form to try again');

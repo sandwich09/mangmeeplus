@@ -217,8 +217,8 @@ export type PaymentFormSession = { idempotencyKey: string | null; saving: boolea
 
 export type PaymentFormSave =
   | { status: 'saved' }
-  /** Nothing was sent, or the save failed: `message` is what the form shows. */
-  | { status: 'refused'; message: string }
+  /** Nothing was sent, or the save failed. `text` is the plain-Thai sentence the form shows, never a raw error. */
+  | { status: 'refused'; text: string }
   /** A press that arrived while an earlier one was still running. Nothing was done. */
   | { status: 'ignored' };
 
@@ -251,7 +251,7 @@ export async function savePaymentForm(
   const { form, slip, session } = input;
   if (session.saving) return { status: 'ignored' };
   const invalid = validatePaymentForm({ ...form, outstandingAmount: input.outstandingAmount, hasSlip: slip !== null });
-  if (invalid) return { status: 'refused', message: invalid };
+  if (invalid) return { status: 'refused', text: invalid };
 
   session.saving = true;
   deps.onBusy?.(true);
@@ -261,7 +261,7 @@ export async function savePaymentForm(
       try {
         slipAttachmentId = await deps.uploadSlip(slip.file);
       } catch (error) {
-        return { status: 'refused', message: paymentSaveErrorMessage('slip-upload', errorText(error), false) };
+        return { status: 'refused', text: paymentSaveErrorMessage('slip-upload', errorText(error), false) };
       }
       deps.onSlipUploaded({ attachmentId: slipAttachmentId, name: slip.file.name });
     }
@@ -273,7 +273,7 @@ export async function savePaymentForm(
         slipAttachmentId, idempotencyKey: session.idempotencyKey,
       });
     } catch (error) {
-      return { status: 'refused', message: paymentSaveErrorMessage('record', errorText(error), slipAttachmentId !== undefined) };
+      return { status: 'refused', text: paymentSaveErrorMessage('record', errorText(error), slipAttachmentId !== undefined) };
     }
     return { status: 'saved' };
   } finally {
