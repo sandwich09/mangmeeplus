@@ -147,7 +147,9 @@ describe('payment reminder candidates (audit B9)', () => {
   }
   const fires = (payload: Record<string, unknown>) => evaluateCondition(template().defaultConditionJson, payload, NOW).matched;
 
-  it('offers every claim waiting for payment and fires only past the policy deadline', async () => {
+  // Review: offering every waiting claim wrote a skipped run row per claim per hour in every
+  // company. Only a claim past its deadline is offered; the rest cost nothing downstream.
+  it('offers only the claims waiting for payment past the policy deadline', async () => {
     const { candidates, queries } = provider([
       claim({ id: 'rb-late', approvedAt: hoursAgo(49) }),
       claim({ id: 'rb-fresh', approvedAt: hoursAgo(47) }),
@@ -158,7 +160,6 @@ describe('payment reminder candidates (audit B9)', () => {
     assert.deepEqual(queries, [{ companyId: 'co-1', statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] }]);
     assert.deepEqual(items.map((item) => [item.sourceType, item.sourceId, fires(item.payload)]), [
       ['reimbursement_request', 'rb-late', true],
-      ['reimbursement_request', 'rb-fresh', false],
     ]);
     assert.deepEqual(items[0]!.payload, {
       requestId: 'rb-late', requestNo: 'RB-202610-00001', ageHours: 49, slaRisk: true, amount: '250', currency: 'THB',
@@ -177,13 +178,17 @@ describe('payment reminder candidates (audit B9)', () => {
       { reimbursementRequestId: 'rb-plain', status: 'VOIDED', voidedAt: hoursAgo(5), companyId: 'co-2' },
     ]);
 
-    const [plain, voided] = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+    const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
 
-    assert.equal(plain!.payload['notificationPeriodKey'], `payable:${hoursAgo(60).toISOString()}`);
     // Approved 300 hours ago, but payable again only since the last void 10 hours ago: not late yet.
+    assert.deepEqual(items.map((item) => item.sourceId), ['rb-plain']);
+    assert.equal(items[0]!.payload['notificationPeriodKey'], `payable:${hoursAgo(60).toISOString()}`);
+
+    // Once the deadline passes again, counted from that void, it is a new period and a new reminder.
+    const later = new Date(NOW.getTime() + 40 * 3_600_000);
+    const voided = (await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', later)).find((item) => item.sourceId === 'rb-voided');
     assert.equal(voided!.payload['notificationPeriodKey'], `payable:${hoursAgo(10).toISOString()}`);
-    assert.equal(voided!.payload['ageHours'], 10);
-    assert.equal(fires(voided!.payload), false);
+    assert.equal(voided!.payload['ageHours'], 50);
   });
 
   // Owner rule 2026-10-01: the reminder goes to whose turn it is. The scan names them from what
@@ -246,12 +251,14 @@ describe('payment reminder candidates (audit B9)', () => {
   });
 
   it('starts the clock at the finance decision when there was one, not at the approval before it', async () => {
-    const { candidates } = provider([claim({ approvedAt: hoursAgo(100), financeReviewedAt: hoursAgo(10) })]);
+    const { candidates } = provider([
+      claim({ id: 'rb-passed-recently', approvedAt: hoursAgo(100), financeReviewedAt: hoursAgo(10) }),
+      claim({ id: 'rb-passed-long-ago', approvedAt: hoursAgo(100), financeReviewedAt: hoursAgo(60) }),
+    ]);
 
-    const [item] = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+    const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
 
-    assert.equal(item!.payload['ageHours'], 10);
-    assert.equal(fires(item!.payload), false);
+    assert.deepEqual(items.map((item) => [item.sourceId, item.payload['ageHours']]), [['rb-passed-long-ago', 60]]);
   });
 
   it('reminds for what is left to pay on a legacy part-paid claim', async () => {
@@ -263,14 +270,18 @@ describe('payment reminder candidates (audit B9)', () => {
     assert.equal(fires(item!.payload), true);
   });
 
-  // Same rule as approvals: the deadline is the company's own, and a company that set none is not chased.
-  it('never fires for a company that has not set a deadline in its claim policy', async () => {
+  // Same rule as approvals: the deadline is the company's own, and a company that set none is not
+  // chased. It is not even looked at further: no approver or void lookup, no run row.
+  it('offers nothing for a company that has not set a deadline in its claim policy', async () => {
+    let lookups = 0;
     const { candidates } = provider([claim({ approvedAt: hoursAgo(5000) })], null);
+    (candidates as any).workflowRepo = {
+      findClaimApprovers: async () => { lookups += 1; return new Map(); },
+      findClaimLastPaymentVoids: async () => { lookups += 1; return new Map(); },
+    };
 
-    const [item] = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
-
-    assert.equal(item!.payload['slaRisk'], false);
-    assert.equal(fires(item!.payload), false);
+    assert.deepEqual(await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW), []);
+    assert.equal(lookups, 0);
   });
 
   it('is an auto-enabled SLA_SCAN rule on the default scan cadence, and only a notice', () => {

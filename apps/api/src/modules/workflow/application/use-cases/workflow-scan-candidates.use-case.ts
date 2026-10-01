@@ -152,22 +152,31 @@ export class WorkflowScanCandidatesProvider {
   // approval, and again when a recorded payment is taken back.
   private async paymentSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
     const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
-    const rows = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] });
+    const waiting = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] });
+    // Only claims that have a deadline are looked at, and only those past it are offered. Offering
+    // every waiting claim wrote a skipped run row per claim per hour in every company, deadline or
+    // not; a company that set none now costs one query and nothing else.
+    const rows = waiting.flatMap((r) => {
+      const slaHours = effectivePolicyForRequest(r, currentPolicy).slaHours;
+      return slaHours && slaHours > 0 ? [{ ...r, slaHours }] : [];
+    });
+    if (rows.length === 0) return [];
     const ids = rows.map((r) => r.id);
     const approvers = await this.workflowRepo.findClaimApprovers(companyId, ids);
     const lastVoids = await this.workflowRepo.findClaimLastPaymentVoids(companyId, ids);
-    return rows.map((r) => {
+    return rows.flatMap((r) => {
       const becamePayable = r.financeReviewedAt ?? r.approvedAt ?? r.submittedAt;
       const lastVoid = lastVoids.get(r.id);
       const payableSince = lastVoid && (!becamePayable || lastVoid > becamePayable) ? lastVoid : becamePayable;
       const age = payableSince ? ageHours(payableSince, now) : 0;
+      if (!isSlaRisk(age, r.slaHours)) return [];
       const approver = approvers.get(r.id);
-      return {
+      return [{
         sourceType: 'reimbursement_request',
         sourceId: r.id,
         payload: {
           requestId: r.id, requestNo: r.requestNo, ageHours: age,
-          slaRisk: isSlaRisk(age, effectivePolicyForRequest(r, currentPolicy).slaHours),
+          slaRisk: true,
           // What is left to pay: the whole claim unless a legacy part payment was recorded.
           amount: r.outstandingAmount, currency: r.currency,
           // Whose turn it is to pay, for the notice to prefer (owner rule 2026-10-01): the finance
@@ -179,7 +188,7 @@ export class WorkflowScanCandidatesProvider {
           // One reminder per time the claim became payable (review M1), not one per scan window.
           ...(payableSince && { notificationPeriodKey: `payable:${payableSince.toISOString()}` }),
         },
-      };
+      }];
     });
   }
 
