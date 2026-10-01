@@ -3,7 +3,7 @@ import type { PrismaService } from '../../../common/database/prisma.service';
 import type { BillingAccount, Prisma } from '../../../generated/prisma/client';
 import { billingError } from '../domain/billing-policy';
 import { stripeId, type StripeClient } from '../infrastructure/stripe.client';
-import { PLATFORM_SEAT_EXEMPT_ROLE } from '../../system-partner-management/application/plan-term-limit';
+import { planCapacityUsed } from '../../system-partner-management/application/plan-term-limit';
 
 export type RestartSource = { subscriptionId: string; contractAttemptId: string | null; paidThrough: string; termHash: string | null };
 const review = () => billingError('BILLING_RESTART_REVIEW', 'ต้องตรวจสมาชิกหรือยอดค้างเดิมก่อนเริ่มแพ็กเกจใหม่ กรุณาติดต่อทีมงานพร้อมเลขบริษัท');
@@ -48,7 +48,7 @@ export async function restartSource(prisma: PrismaService, stripe: StripeClient,
 }
 
 export async function restartFits(tx: Prisma.TransactionClient, companyId: string, offer: BillingOffer): Promise<boolean> {
-  const branches = await tx.branch.count({ where: { companyId, status: 'ACTIVE' } });
-  const members = await tx.companyMembership.count({ where: { companyId, status: 'ACTIVE', roles: { none: { role: PLATFORM_SEAT_EXEMPT_ROLE } } } });
+  const branches = await planCapacityUsed.branches(tx, companyId);
+  const members = await planCapacityUsed.members(tx, companyId);
   return branches <= offer.branchLimit && members <= offer.employeeLimit;
 }

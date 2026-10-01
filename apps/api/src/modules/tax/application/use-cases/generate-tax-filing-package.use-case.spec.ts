@@ -42,6 +42,9 @@ describe('GenerateTaxFilingPackageUseCase official PND53 paper form', () => {
     assert.equal(printablePnd53PayeeAddress('{"line1":'), null);
   });
   const period = { id: 'p53', companyId: 'c1', formType: 'PND53', periodKey: '2026-09', status: 'OPEN', dueDate: new Date('2026-10-31') };
+  // The form refuses an overdue period and reads the clock itself, so the cases that produce it
+  // pin "now" inside this period's filing window.
+  const filingDay = new Date('2026-10-05T03:00:00.000Z');
   const event = {
     id: 'e53', companyId: 'c1', eventType: 'WHT_PND53', sourceType: 'expense.record', sourceId: 'expense-1',
     branchId: null, eventDate: new Date('2026-09-10T00:00:00Z'), currency: 'THB',
@@ -68,7 +71,8 @@ describe('GenerateTaxFilingPackageUseCase official PND53 paper form', () => {
     return { useCase, get reserved() { return reserved; } };
   }
 
-  it('exports a printable RD main form and attachment without form widgets', async () => {
+  it('exports a printable RD main form and attachment without form widgets', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: filingDay });
     const harness = pnd53Harness();
     const result = await harness.useCase.execute(ctx, 'p53', 'PDF');
     const pdf = await PDFDocument.load(Buffer.from(result.artifact.contentBase64, 'base64'));
@@ -78,13 +82,15 @@ describe('GenerateTaxFilingPackageUseCase official PND53 paper form', () => {
     assert.equal(harness.reserved, 1);
   });
 
-  it('refuses missing payee address before reserving a filing number', async () => {
+  it('refuses missing payee address before reserving a filing number', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: filingDay });
     const harness = pnd53Harness({ payeeSnapshot: { ...event.payeeSnapshot, address: null } });
     await assert.rejects(() => harness.useCase.execute(ctx, 'p53', 'PDF'), /complete payee/);
     assert.equal(harness.reserved, 0);
   });
 
-  it('refuses a category whose statutory section is not present in the source event', async () => {
+  it('refuses a category whose statutory section is not present in the source event', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: filingDay });
     const harness = pnd53Harness({ incomeCategoryCode: 'WHT_DIVIDEND' });
     await assert.rejects(() => harness.useCase.execute(ctx, 'p53', 'PDF'), /income category/);
     assert.equal(harness.reserved, 0);

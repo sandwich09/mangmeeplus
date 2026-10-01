@@ -175,7 +175,7 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
     >
       <div className="space-y-4">
         <ErrorBanner message="คำขอนี้ถูกแก้ไขหลังจากส่งอนุมัติ กรุณาตรวจสอบข้อมูลล่าสุดก่อนตัดสินใจ" />
-        <div className="mangmee-table-scroll">
+        <div className="overflow-x-auto">
           <table className="mangmee-table">
             <thead>
               <tr><th>ข้อมูล</th><th>ก่อนหน้า</th><th>ปัจจุบัน</th></tr>
@@ -201,7 +201,7 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
         )}
         <div>
           <h4 className="mb-2 text-sm font-bold text-gray-900">รายการปัจจุบัน</h4>
-          <div className="mangmee-table-scroll">
+          <div className="overflow-x-auto">
             <table className="mangmee-table">
               <thead>
                 <tr><th>#</th><th>วันที่</th><th>รายการ</th><th>หมวด</th><th className="text-right">จำนวนเงิน</th></tr>
@@ -589,8 +589,9 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
 
       <MangmeeCard className="p-4">
         <h4 className="mb-2 text-sm font-bold text-gray-900">รายการเบิก ({lines.length})</h4>
-        {/* Phones: one card per line. Seven columns on 390 px squeezed Thai text to a letter per row. */}
-        <div className="space-y-2 sm:hidden" data-testid="reimbursement-line-cards">
+        {/* Below xl: one card per line. Seven columns squeezed Thai text and amounts to a letter or two per row on
+            a phone, and on a 1024 px screen once the sidebar takes its share. */}
+        <div className="space-y-2 xl:hidden" data-testid="reimbursement-line-cards">
           {lines.length === 0 ? <p className="py-3 text-center text-sm text-gray-400">ไม่มีรายการ</p> : lines.map((l: any) => (
             <div key={l.id ?? l.lineNo} className="rounded-xl border border-gray-200 p-3">
               <div className="flex items-start justify-between gap-3 text-sm">
@@ -608,7 +609,10 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
             <span className="tabular-nums">{formatMoney(detail.amount, detail.currency)}</span>
           </div>
         </div>
-        <div className="mangmee-table-scroll hidden sm:block" data-testid="reimbursement-lines-table">
+        {/* Plain overflow-x-auto so the columns wrap to fit: mangmee-table-scroll's max-content pushed the amount and
+            receipt columns off a desktop card. `relative` keeps the receipt picker's hidden input inside this box;
+            `break-normal` undoes the page's overflow-wrap:anywhere, which split Thai words mid-word in narrow columns. */}
+        <div className="relative hidden overflow-x-auto break-normal xl:block" data-testid="reimbursement-lines-table">
           <table className="mangmee-table">
             <thead>
               <tr>

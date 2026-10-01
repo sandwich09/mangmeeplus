@@ -87,7 +87,9 @@ test('ending writes the term-expired lock state: DISABLED by the machine actor, 
   assert.deepEqual([refused.writes, refused.lifecycle.calls], [[], []]);
 });
 
-test('refund terminal step: SUCCEEDED with the choice ends it; failed, pending and default leave the package', async () => {
+test('refund terminal step: SUCCEEDED with the choice ends it; failed, pending and default leave the package', async (t) => {
+  // The service takes no clock: on the real one this term, which ends 2026-10-10, has already expired.
+  t.mock.timers.enable({ apis: ['Date'], now });
   const run = async (terminal: string, endPackage: boolean | undefined, rows = {}) => {
     const db = fakeDb(rows), service = Object.assign(Object.create(BillingRefundsService.prototype), { lifecycle: db.lifecycle });
     const ended = await service.endRefundedPackage(db.tx, { endPackage }, terminal, { id: 'refund', companyId: 'company', referenceId: 'invoice', reason: 'r' }, db.state.account);
@@ -104,7 +106,8 @@ test('refund terminal step: SUCCEEDED with the choice ends it; failed, pending a
     (e: { getResponse(): { code: string } }) => e.getResponse().code === 'BILLING_END_PACKAGE_AUTO_RENEW');
 });
 
-test('standalone end requires a full refund and the current-term invoice, behind the password proof', async () => {
+test('standalone end requires a full refund and the current-term invoice, behind the password proof', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now }); // same reason: `endPackage` reads the clock itself
   const run = async (rows = {}) => {
     const db = fakeDb(rows), proofs: string[] = [];
     const admin = { scopedCompany: async () => ({ account: db.state.account, company: db.state.company, access: { capabilities: ['system.billing.refund.manage'] } }), access: async () => undefined };

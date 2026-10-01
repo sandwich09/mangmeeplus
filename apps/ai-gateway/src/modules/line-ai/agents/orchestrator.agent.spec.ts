@@ -224,6 +224,19 @@ describe('withoutRefusedCoverage', () => {
 });
 
 describe('OrchestratorAgent', () => {
+  // Advisor S1 (spec §2.6): "sign it on the web" names the reason and links the page to sign on.
+  it('refuses to sign a substitute receipt over LINE and links the substitute-receipt page', async () => {
+    let called = false;
+    const orchestrator = new OrchestratorAgent({ invoke: async () => { called = true; throw new Error('must not invoke'); } } as any, makeConfig());
+    const req = makeReq('ช่วยเซ็นใบรับรองให้หน่อย');
+    const result = await orchestrator.run({ ...req, userContext: { ...req.userContext, permissions: ['expense.read_own'] },
+      semanticSubrequests: [{ index: 0, kind: 'write', goal: 'เซ็นใบรับรอง', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }] });
+    assert.equal(called, false);
+    assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED');
+    assert.match(result.replyText, /ลงลายมือชื่อใบรับรองแทนใบเสร็จทำผ่าน LINE ไม่ได้/u);
+    assert.deepEqual(result.webLinks, [{ label: 'ใบรับรองแทนใบเสร็จ', path: '/companies/company-1/expenses/substitute-receipts' }]);
+  });
+
   it('answers capability help without reading company or dashboard data', async () => {
     let called = false;
     const orchestrator = new OrchestratorAgent({ invoke: async () => { called = true; throw new Error('must not invoke'); } } as any, makeConfig());
@@ -419,7 +432,9 @@ describe('OrchestratorAgent', () => {
     assert.ok(okCalls.every((call) => call.status === 'ok' && call.errorCode === undefined), 'success must not invent an errorCode');
   });
 
-  it('shows a complete broad expense summary while preserving source-backed details and counts on request', async () => {
+  it('shows a complete broad expense summary while preserving source-backed details and counts on request', async (t) => {
+    // Mid-month "now": on the 1st the current-month range is a single day and prints as one date.
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-15T05:00:00.000Z') });
     const calledTools: string[] = [];
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
     const currentMonthStart = `${today.slice(0, 7)}-01`;

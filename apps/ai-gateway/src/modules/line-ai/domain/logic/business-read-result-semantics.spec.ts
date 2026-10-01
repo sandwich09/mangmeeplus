@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { aggregateState, aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText,
   expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares,
-  reimbursementApprovalNotPermittedReplyText, reimbursementPendingApprovalsTotal } from './business-read-result-semantics';
+  reimbursementApprovalNotPermittedReplyText, packageManagerRequiredReplyText, reimbursementPendingApprovalsTotal,
+  withoutUnaskedPackagePurchaseLine, withReceiptRestartDate, withAskedSubstituteQueueSideLead } from './business-read-result-semantics';
+import type { ToolResult } from '@watchdog-bms/contracts';
 
 describe('business read result semantics', () => {
   it('uses the API-applied period instead of the requested proposal', () => {
@@ -86,6 +88,161 @@ describe('reimbursement.list_pending_approvals forbidden outcome (REIMBURSEMENT_
     const en = reimbursementApprovalNotPermittedReplyText(true);
     assert.match(en, /does not have permission/);
     assert.match(en, /reimbursement claim/);
+  });
+});
+
+describe('billing.get_package_usage forbidden outcome (PACKAGE_MANAGER_REQUIRED, advisor spec P8)', () => {
+  it('sends the asker to the owner or a package manager, with no figure and no link, in Thai and English', () => {
+    assert.equal(packageManagerRequiredReplyText(false), 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ');
+    assert.match(packageManagerRequiredReplyText(true), /ask the shop owner or someone who manages the package/);
+    for (const text of [packageManagerRequiredReplyText(false), packageManagerRequiredReplyText(true)]) assert.doesNotMatch(text, /\d|https?:|\/companies\//u);
+  });
+});
+
+describe('package answers tell nobody how to buy or change a package unasked (owner 2026-09-30, eval r5/r6/r10 and final P-32)', () => {
+  const prices = 'แพ็กเกจที่ใหญ่กว่ามีดังนี้ค่ะ\n\n• เติบโต — รายเดือน 499 บาท\n\nหมายเหตุ: ยังไม่มีข้อมูลว่าราคาเหล่านี้รวม VAT หรือไม่ค่ะ';
+  const question = 'แล้วแพ็กเกจที่ใหญ่กว่าราคาเท่าไหร่';
+
+  it('drops the "หาก/ถ้า" invitation, to the end of its sentence', () => {
+    assert.equal(withoutUnaskedPackagePurchaseLine(`${prices}\n\nหากต้องการเปลี่ยนแพ็กเกจ ทำได้บนเว็บที่หน้าแพ็กเกจของร้านค่ะ`, question), prices);
+    // r5: the invitation rode the end of the VAT note on the same line.
+    assert.equal(withoutUnaskedPackagePurchaseLine('หมายเหตุ: ยังไม่มีข้อมูลว่าราคาข้างต้นรวม VAT หรือไม่ และหากต้องการเปลี่ยนหรือซื้อแพ็กเกจ สามารถทำได้บนเว็บที่หน้าแพ็กเกจของร้านค่ะ', question),
+      'หมายเหตุ: ยังไม่มีข้อมูลว่าราคาข้างต้นรวม VAT หรือไม่');
+    // Recorded forms: "เพิ่มหรือเปลี่ยน", "ซื้อเพิ่มหรือเปลี่ยน", an invitation behind a fact about this package, a trailing emoji.
+    assert.equal(withoutUnaskedPackagePurchaseLine('ขาดประมาณ 8 ใบค่ะ ถ้าต้องการเพิ่มหรือเปลี่ยนแพ็กเกจ ทำได้บนเว็บที่หน้าแพ็กเกจของร้านค่ะ', 'แพคเกจพอมั้ยเดือนนี้'), 'ขาดประมาณ 8 ใบค่ะ');
+    assert.equal(withoutUnaskedPackagePurchaseLine('รอบนี้สิ้นสุด 11 ต.ค. 2569 และยังไม่ได้ตั้งต่ออายุอัตโนมัติ หากต้องการซื้อหรือเปลี่ยนแพ็กเกจ ทำได้ที่หน้าแพ็กเกจบนเว็บค่ะ', 'แพ็กเกจพอไหม'),
+      'รอบนี้สิ้นสุด 11 ต.ค. 2569 และยังไม่ได้ตั้งต่ออายุอัตโนมัติ');
+    assert.equal(withoutUnaskedPackagePurchaseLine('ราคา 249 บาทค่ะ หากต้องการดูรายละเอียดราคาหรือเปลี่ยนแพ็กเกจ สามารถเข้าไปดูได้ที่หน้าแพ็กเกจบนเว็บได้เลยนะคะ 😊', 'แพ็กเกจเริ่มต้นราคาเท่าไหร่'),
+      'ราคา 249 บาทค่ะ');
+  });
+
+  it('drops the plain statement of where or how, and keeps the sentence before it', () => {
+    // Final-assembly run, P-32: the statement followed the VAT note on one line.
+    assert.equal(withoutUnaskedPackagePurchaseLine(`${prices} การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ`, question), prices);
+    assert.equal(withoutUnaskedPackagePurchaseLine(`${prices}\n\nการซื้อหรือเปลี่ยนแพ็กเกจต้องทำบนเว็บนะคะ`, question), prices);
+    assert.equal(withoutUnaskedPackagePurchaseLine('เหลือ 63 ใบค่ะ ส่วนการอัปเกรดหรือเปลี่ยนแพ็กเกจต้องทำบนเว็บไซต์ ที่หน้าแพ็กเกจของร้านค่ะ', 'เหลือใบเสร็จกี่ใบ'), 'เหลือ 63 ใบค่ะ');
+    assert.equal(withoutUnaskedPackagePurchaseLine('เหลือ 63 ใบค่ะ สามารถอัปเกรดได้ที่หน้าแพ็กเกจบนเว็บนะคะ', 'เหลือใบเสร็จกี่ใบ'), 'เหลือ 63 ใบค่ะ');
+    // A label or a bullet with nothing left behind it goes with its sentence.
+    assert.equal(withoutUnaskedPackagePurchaseLine('เหลือ 63 ใบค่ะ\nหมายเหตุ: การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บค่ะ', 'เหลือใบเสร็จกี่ใบ'), 'เหลือ 63 ใบค่ะ');
+    assert.equal(withoutUnaskedPackagePurchaseLine('63 receipts left. Buying or changing a package is done on the web, on the shop\'s package page.', 'How many receipts are left?'), '63 receipts left.');
+    assert.equal(withoutUnaskedPackagePurchaseLine('You have 63 receipts left. If you would like to upgrade your package, you can do it on the web.', 'How many receipts are left?'), 'You have 63 receipts left.');
+  });
+
+  it('keeps the answer whole when the clause asks about buying, changing, upgrading or renewing', () => {
+    const upgrade = 'การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ\nหากต้องการเปลี่ยนแพ็กเกจ กดลิงก์ด้านล่างได้เลยค่ะ';
+    for (const asked of ['อยากอัปเกรดแพ็กเกจต้องทำยังไง', 'แล้วถ้าอัปเกรดล่ะ', 'ควรเปลี่ยนแพ็กเกจไหม', 'ซื้อยังไง', 'เปลี่ยนแพ็กเกจที่ไหน', 'ต่ออายุยังไง',
+      'ซื้อแพ็กเกจยังไง ราคาเท่าไหร่', 'How do I upgrade?'])
+      assert.equal(withoutUnaskedPackagePurchaseLine(`ราคา 499 บาทค่ะ\n${upgrade}`, asked), `ราคา 499 บาทค่ะ\n${upgrade}`, asked);
+    // A price or contents question that only names buying did not ask how or where.
+    for (const price of ['ถ้าซื้อรายปีราคาเท่าไหร่', 'อัปเกรดแล้วราคาเท่าไหร่', 'เปลี่ยนเป็นแพ็กเกจเติบโตได้อะไรบ้าง'])
+      assert.equal(withoutUnaskedPackagePurchaseLine(`ราคา 499 บาทค่ะ\n${upgrade}`, price), 'ราคา 499 บาทค่ะ', price);
+  });
+
+  it('leaves everything that is not a how-or-where-to-buy sentence, and never empties an answer', () => {
+    for (const kept of [
+      'ถ้าอยากติดตามใกล้ชิด ดูรายละเอียดได้ที่หน้าแพ็กเกจของร้านนะคะ',            // a page pointer that invites no purchase
+      'แพ็กเกจธุรกิจยังไม่เปิดให้ซื้อตอนนี้ค่ะ',                                   // not on sale yet
+      'และแพ็กเกจนี้ยังไม่ได้ตั้งต่ออายุอัตโนมัติ และหมดอายุวันที่ 19 ต.ค. 2569 ด้วยค่ะ ดูได้ที่หน้าแพ็กเกจของร้านนะคะ', // a fact about this package
+      'ถ้าซื้อแพ็กเกจรายปี จะได้สิทธิ์อ่านใบเสร็จ 600 ใบทันทีค่ะ',                   // what yearly gives
+      '• เติบโต — รายเดือน 499 บาท / รายปี 4,990 บาท (ประหยัด 998 บาท เทียบเท่าจ่าย 10 เดือน)',
+      prices,
+    ]) assert.equal(withoutUnaskedPackagePurchaseLine(kept, question), kept);
+    const only = 'การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ';
+    assert.equal(withoutUnaskedPackagePurchaseLine(only, question), only, 'an answer that is only that sentence is not emptied');
+  });
+});
+
+describe('a monthly receipt answer names its restart day (advisor eval r11 P-02)', () => {
+  const usage = (receipts: Record<string, unknown>): ToolResult => ({ toolName: 'billing.get_package_usage', status: 'ok', sourceRefs: [],
+    asOf: '2026-10-01T03:00:00.000Z', data: { package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-11-10' },
+      receipts: { used: 37, limit: 100, remaining: 63, cadence: 'รายเดือน เริ่มนับใหม่ทุกต้นเดือน', periodStartOn: '2026-10-01', periodEndsOn: '2026-10-31', ...receipts } } });
+  const monthly = [usage({ resetsOn: '2026-11-01' })];
+
+  it('adds the day when the answer talks receipts without it', () => {
+    const r11 = 'แพ็กเกจมืออาชีพ (PRO) รอบเดือนนี้ (1–31 ต.ค. 2569) ใช้ไปแล้ว 37 ใบ เหลืออีก 63 ใบค่ะ';
+    assert.equal(withReceiptRestartDate(r11, monthly, false), `${r11}\nใบเสร็จจะเริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ`);
+    assert.equal(withReceiptRestartDate('You have 63 receipts left this month.', monthly, true),
+      'You have 63 receipts left this month.\nReceipts start counting again on Nov 1, 2026.');
+  });
+
+  it('leaves an answer that already names the day, in any form', () => {
+    for (const stated of ['เหลือ 63 ใบ เริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ', 'เหลือ 63 ใบ เริ่มนับใหม่ 1 พ.ย.', 'เหลือ 63 ใบ รอบใหม่เริ่มวันที่ 1 พฤศจิกายน',
+      'เหลือ ๖๓ ใบ เริ่มนับใหม่ ๑ พย', 'เหลือ 63 ใบ รีเซ็ต 1/11 ค่ะ']) assert.equal(withReceiptRestartDate(stated, monthly, false), stated);
+    assert.equal(withReceiptRestartDate('63 receipts left; the count restarts on November 1.', monthly, true), '63 receipts left; the count restarts on November 1.');
+  });
+
+  it('adds nothing without a restart day, a receipt topic or the usage read', () => {
+    const text = 'เหลืออีก 63 ใบค่ะ';
+    assert.equal(withReceiptRestartDate(text, [usage({ resetsOn: null })], false), text, 'a paid allowance or a package that ends first');
+    assert.equal(withReceiptRestartDate('เพิ่มสาขาได้อีก 1 สาขาค่ะ', monthly, false), 'เพิ่มสาขาได้อีก 1 สาขาค่ะ', 'a branch answer');
+    assert.equal(withReceiptRestartDate(text, [{ ...monthly[0]!, status: 'forbidden', data: undefined }], false), text);
+    assert.equal(withReceiptRestartDate(text, [], false), text);
+    // "1–31 ต.ค." is not the restart day of a month that restarts on 1 Oct either: the 1 of a range is not "1 ต.ค.".
+    assert.equal(withReceiptRestartDate('รอบ 1–31 ต.ค. เหลือ 63 ใบ', [usage({ resetsOn: '2026-10-01' })], false).endsWith('ใบเสร็จจะเริ่มนับใหม่ 1 ต.ค. 2569 ค่ะ'), true);
+  });
+});
+
+describe('a substitute-receipt queue answer leads with the side the question names (advisor R1 integrated eval S-09)', () => {
+  const queue = (data: Record<string, unknown>): ToolResult => ({ toolName: 'expense.list_substitute_receipts_to_sign', status: 'ok', sourceRefs: [],
+    asOf: '2026-10-01T03:00:00.000Z', data: { accessScope: 'own', ...data } });
+  // S-09: shop B's owner — 1 to sign as the payer, 3 to approve (2 certified + 1 paper copy to accept).
+  const both = [queue({ total: 4, asPayer: { count: 1, items: [] },
+    asApprover: { count: 3, byStep: [{ stepLabel: 'รอคุณอนุมัติ', count: 2 }, { stepLabel: 'ฉบับกระดาษรอคุณตรวจรับ', count: 1 }], items: [] } })];
+  const s09 = 'มีใบรับรองแทนใบเสร็จรอคุณดำเนินการทั้งหมด 4 ฉบับค่ะ\n\nรอลงลายมือชื่อในฐานะผู้จ่ายเงิน (1 ฉบับ)\n• SRC-202610-00035 — ร้านถ่ายเอกสาร 420 บาท\n\n'
+    + 'รอคุณอนุมัติ (2 ฉบับ)\n• SRC-202610-00031 — ร้านวัสดุก่อสร้าง 1,500 บาท\n• SRC-202610-00032 — ร้านอะไหล่ 900 บาท\n\nฉบับกระดาษรอคุณตรวจรับ (1 ฉบับ)\n• SRC-202610-00033 — ร้านน้ำดื่ม 640 บาท';
+
+  it('S-09: both sides came back and the question names approval — the reply leads with the approval count and keeps the rest', () => {
+    for (const question of ['มีใบรับรองรอฉันอนุมัติไหม', 'มีใบรับรองให้ฉันอนุมัติไหมคะ', 'ใบรับรองแทนใบเสร็จที่รอฉันตรวจรับมีกี่ใบ']) {
+      assert.equal(withAskedSubstituteQueueSideLead(s09, both, question, false), `ใบรับรองแทนใบเสร็จที่รอคุณอนุมัติมี 3 ใบค่ะ\n${s09}`, question);
+    }
+    assert.equal(withAskedSubstituteQueueSideLead('4 substitute receipts are waiting for you.', both, 'Any substitute receipts waiting for my approval?', true),
+      '3 substitute receipts are waiting for your approval.\n4 substitute receipts are waiting for you.');
+  });
+
+  it('only a question that says ผู้จ่าย leads with the payer count', () => {
+    for (const question of ['มีใบรับรองที่ฉันต้องเซ็นในฐานะผู้จ่ายเงินไหม', 'ใบรับรองที่รอฉันในฐานะผู้จ่ายมีกี่ใบ', 'มีใบรับรองที่ฉันต้องลงนามในฐานะผู้จ่ายเงินไหม']) {
+      assert.equal(withAskedSubstituteQueueSideLead(s09, both, question, false), `ใบรับรองแทนใบเสร็จที่รอคุณลงลายมือชื่อในฐานะผู้จ่ายเงินมี 1 ใบค่ะ\n${s09}`, question);
+    }
+    assert.equal(withAskedSubstituteQueueSideLead('4 substitute receipts are waiting for you.', both, 'Which ones wait for me as the payer?', true),
+      '1 substitute receipt is waiting for your signature as the payer.\n4 substitute receipts are waiting for you.');
+  });
+
+  // People say เซ็น for approving too, so a sign verb names no side — S-04 "ต้องเซ็นอะไรบ้าง" keeps its both-sides answer.
+  it('a bare sign verb names no side: เซ็น, ลงนาม, ลงลายมือชื่อ and ลงชื่อ keep today\'s answer', () => {
+    for (const question of ['ต้องเซ็นอะไรบ้าง', 'ใบรับรองใบเสร็จกี่ใบที่ฉันต้องเซ็น', 'มีใบรับรองแทนใบเสร็จรอฉันเซ็นกี่ใบ', 'มีใบรับรองรอฉันลงนามไหม',
+      'ใบรับรองที่รอฉันลงลายมือชื่อมีกี่ใบ', 'มีใบรับรองให้ฉันลงชื่อไหม', 'Any substitute receipts for me to sign?']) {
+      assert.equal(withAskedSubstituteQueueSideLead(s09, both, question, question.startsWith('Any')), s09, question);
+    }
+  });
+
+  it('says so when nothing waits on the side asked about, even though the other side has some', () => {
+    const payerOnly = [queue({ total: 2, asPayer: { count: 2, items: [] }, asApprover: { count: 0, items: [] } })];
+    const text = 'มีใบรับรองแทนใบเสร็จรอคุณเซ็น 2 ใบค่ะ';
+    assert.equal(withAskedSubstituteQueueSideLead(text, payerOnly, 'มีใบรับรองรอฉันอนุมัติไหม', false), `ไม่มีใบรับรองแทนใบเสร็จที่รอคุณอนุมัติค่ะ\n${text}`);
+    const none = 'ตอนนี้ไม่มีใบรับรองแทนใบเสร็จที่รอคุณอนุมัติเลยค่ะ';
+    assert.equal(withAskedSubstituteQueueSideLead(none, payerOnly, 'มีใบรับรองรอฉันอนุมัติไหม', false), none, 'already says none first');
+  });
+
+  it('leaves a reply whose first line already states that side\'s count, in any unit or Thai digits', () => {
+    for (const stated of ['มีใบรับรองแทนใบเสร็จรอคุณอนุมัติ 3 ฉบับค่ะ\n• …', 'รอคุณอนุมัติอยู่ 3 ใบ และรอคุณเซ็น 1 ใบค่ะ', 'รอคุณอนุมัติ ๓ รายการค่ะ']) {
+      assert.equal(withAskedSubstituteQueueSideLead(stated, both, 'มีใบรับรองรอฉันอนุมัติไหม', false), stated);
+    }
+    // A 3 inside another number or a date is not the count: "13 ใบ", "3 ต.ค.".
+    assert.ok(withAskedSubstituteQueueSideLead('รวม 13 ใบ ณ 3 ต.ค. 2569', both, 'มีใบรับรองรอฉันอนุมัติไหม', false).startsWith('ใบรับรองแทนใบเสร็จที่รอคุณอนุมัติมี 3 ใบค่ะ\n'));
+  });
+
+  it('keeps today\'s answer when the question names neither side or both, the read carried a role, or another tool is in the answer', () => {
+    for (const question of ['ใบรับรองรอฉันกี่ใบ', 'มีอะไรค้างที่ฉันต้องทำบ้าง', 'คิดเป็นกี่เปอร์เซ็นต์ของทั้งหมด',
+      // Both sides named; and a sign verb beside อนุมัติ may be the payer's step, so the side is not clear.
+      'ใบรับรองที่รอฉันในฐานะผู้จ่ายหรือผู้อนุมัติมีกี่ใบ', 'มีใบรับรองที่ฉันต้องเซ็นหรืออนุมัติไหม', 'มีใบรับรองรอฉันเซ็นอนุมัติไหม']) {
+      assert.equal(withAskedSubstituteQueueSideLead(s09, both, question, false), s09, question);
+    }
+    const approverOnly = [queue({ total: 3, asApprover: { count: 3, items: [] } })];
+    assert.equal(withAskedSubstituteQueueSideLead(s09, approverOnly, 'มีใบรับรองรอฉันอนุมัติไหม', false), s09, 'the router already passed role approver');
+    const closing: ToolResult = { toolName: 'expense.get_daily_closing', status: 'ok', sourceRefs: [], asOf: '2026-10-01T03:00:00.000Z', data: {} };
+    assert.equal(withAskedSubstituteQueueSideLead(s09, [...both, closing], 'มีใบรับรองรอฉันอนุมัติไหม', false), s09);
+    assert.equal(withAskedSubstituteQueueSideLead(s09, [{ ...both[0]!, status: 'forbidden', data: undefined }], 'มีใบรับรองรอฉันอนุมัติไหม', false), s09);
+    assert.equal(withAskedSubstituteQueueSideLead(s09, [], 'มีใบรับรองรอฉันอนุมัติไหม', false), s09);
   });
 });
 

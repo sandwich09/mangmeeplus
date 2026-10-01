@@ -1,4 +1,4 @@
-import type { SpecialistOutput } from '@watchdog-bms/contracts';
+import { formatThaiDate, mapThaiDigits, type SpecialistOutput, type ToolResult } from '@watchdog-bms/contracts';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -158,6 +158,95 @@ export function reimbursementApprovalNotPermittedReplyText(english: boolean): st
     : 'บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ ถ้าต้องการดูใบเบิกของตัวเอง ถามได้เลย เช่น “ใบเบิกของฉันถึงไหนแล้ว”';
 }
 
+// ─── Advisor S3: reimbursement.get_approval_backlog wording that must not depend on the model ──────
+// Eval 2026-09-30/10-01 (R-20): with nothing waiting, a manager who had never filed a claim was told all of theirs had
+// been processed. An empty backlog has one true answer per scope, so it is rendered here and never composed.
+export function emptyApprovalBacklogReplyText(data: unknown, english: boolean): string | undefined {
+  const backlog = record(data);
+  if (backlog?.['total'] !== 0) return undefined;
+  if (backlog['accessScope'] === 'own') {
+    return backlog['hasOwnClaims'] === false
+      ? (english ? 'You have no reimbursement claims yet.' : 'คุณยังไม่มีใบเบิกในระบบค่ะ')
+      : (english ? 'None of your reimbursement claims is waiting right now.' : 'ตอนนี้ไม่มีใบเบิกของคุณที่รออยู่ค่ะ');
+  }
+  if (backlog['accessScope'] === 'related') {
+    return english ? 'No reimbursement claim related to you is waiting right now.' : 'ตอนนี้ไม่มีใบเบิกที่เกี่ยวข้องกับคุณที่รออยู่ค่ะ';
+  }
+  return english ? 'No reimbursement claim is waiting right now.' : 'ตอนนี้ไม่มีใบเบิกที่รออยู่ค่ะ';
+}
+
+// Eval 2026-09-30/10-01 (R-01, R-12): the backlog total also counts claims already approved and waiting for finance or
+// payment, yet composed answers opened with "ค้างอนุมัติรวม 8 ใบ". Only that total, and only when it is more than what
+// still waits for an approver, is re-worded to "ค้างอยู่"; a group's own "ค้างอนุมัติ 2 ใบ" is left alone.
+export function approvalBacklogStageWording(text: string, data: unknown): string {
+  const backlog = record(data);
+  const total = backlog?.['total'], awaiting = backlog?.['awaitingApprovalCount'];
+  if (typeof total !== 'number' || typeof awaiting !== 'number' || total <= awaiting) return text;
+  const count = [...new Set([String(total), total.toLocaleString('en-US')])].join('|');
+  return text.replace(new RegExp(`(ค้าง|รอ)(?:การ)?อนุมัติ(\\s*(?:อยู่)?\\s*(?:รวม|ทั้งหมด)?\\s*)(${count})(\\s*(?:ใบ|รายการ))`, 'gu'),
+    (_match, verb: string, middle: string, number: string, unit: string) => `${verb}${middle.includes('อยู่') ? '' : 'อยู่'}${middle}${number}${unit}`);
+}
+
+// ─── billing.get_package_usage forbidden outcome (advisor spec §5.1, P8) ─────────────────────────
+// erp-package-tools.use-case.ts refuses a caller without `company.plan.manage` with this errorCode.
+// Owner decision 2026-09-30 (§10 item 2): that caller hears one fixed sentence, whatever the clause
+// asked (figures, an upgrade, a package change) — never a figure, never a package link, and never a
+// wrong reason such as "the package does not include this".
+export const PACKAGE_MANAGER_REQUIRED = 'PACKAGE_MANAGER_REQUIRED';
+
+export function packageManagerRequiredReplyText(english: boolean): string {
+  return english
+    ? 'For this shop\'s package and credit, please ask the shop owner or someone who manages the package.'
+    : 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ';
+}
+
+// Owner 2026-09-30 (no upsell): a package answer tells nobody how or where to buy, change, upgrade or renew a package
+// unless the clause asked that. ANSWER_PROMPT says so, yet answers kept closing with it in two shapes: the invitation
+// "หากต้องการเปลี่ยนแพ็กเกจ ทำได้บนเว็บ…" (advisor eval r5, r6, r10) and the plain statement "การซื้อหรือเปลี่ยนแพ็กเกจ
+// ทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ" (final-assembly run, P-32). Both are cut here, from where they start to the end of
+// their sentence; what stands before them on the line stays. The package page link is not text: it rides sourceRefs
+// and only ever goes to someone who may manage the plan.
+export const PACKAGE_TOOL_NAMES: ReadonlySet<string> = new Set(['billing.get_package_usage', 'billing.get_package_catalog']);
+const PURCHASE_VERB = '(?:ซื้อ(?:เพิ่ม)?|เปลี่ยน|อัป?เกรด|อัพเกรด|ต่ออายุ)';
+// The clause asks about buying or changing ("อัปเกรดยังไง", "เปลี่ยนแพ็กเกจที่ไหน", "แล้วถ้าอัปเกรดล่ะ"), not a price or
+// what a package holds: "ถ้าซื้อรายปีราคาเท่าไหร่" names buying yet asks a price.
+const PURCHASE_WORD = new RegExp(`${PURCHASE_VERB}|upgrad|\\bbuy|\\bchang|\\brenew`, 'iu');
+const HOW_OR_WHERE = /ยังไง|อย่างไร|ที่ไหน|ตรงไหน|ทางไหน|ทำไง|วิธี|ขั้นตอน|\bhow (?:do|can|to)\b|\bwhere\b/iu;
+const PRICE_OR_CONTENTS = /ราคา|เท่าไหร่|เท่าไร|กี่บาท|อะไรบ้าง|ได้อะไร|ต่างกัน|เทียบ|\bprice|how much|\bcost|\binclude|\bcompare/iu;
+// A sentence runs to its closing particle (or the line's end); "นะคะ" closes on "คะ".
+const SENTENCE_REST = '(?:(?!(?:ค่ะ|คะ|ครับ|นะ)(?:[ \\t]|$))[^\\n])*';
+const SENTENCE_END = '(?:(?:ค่ะ|คะ|ครับ|นะ)(?:[ \\t]*\\p{Extended_Pictographic}\\uFE0F?)*)?';
+const WHERE_OR_HOW = '(?:บนเว็บ|ทางเว็บ|ผ่านเว็บ|หน้าเว็บ|เว็บไซต์|หน้าแพ็?[กค]เกจ|ติดต่อ(?:เจ้าหน้าที่|ทีมงาน|แอดมิน))';
+const UNASKED_PURCHASE_SENTENCE = new RegExp([
+  // "หาก/ถ้า ต้องการ|สนใจ|อยาก … ซื้อ/เปลี่ยน/อัปเกรด/ต่ออายุ …": an invitation, wherever it sends the reader.
+  `[ \\t]*(?:(?:และ|หรือ|แต่)[ \\t]*)?(?:หาก|ถ้า)[ \\t]*(?:ต้องการ|สนใจ|อยาก)(?=${SENTENCE_REST}${PURCHASE_VERB})`
+    + `(?=${SENTENCE_REST}(?:แพ็?[กค]เกจ|อัป?เกรด|อัพเกรด|ต่ออายุ))${SENTENCE_REST}${SENTENCE_END}`,
+  // "การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ …", "สามารถอัปเกรดได้ที่หน้าแพ็กเกจ …": a statement of where or how. It starts
+  // a clause, so "ยังไม่ได้ตั้งต่ออายุอัตโนมัติ" (a fact about this package) is never taken for one.
+  `(?<![\\u0E00-\\u0E7F])[ \\t]*(?:(?:ส่วน|และ|โดย|ทั้งนี้|นอกจากนี้)[ \\t]*)?(?:(?:คุณ|ร้าน|ลูกค้า|ท่าน)[ \\t]*)?(?:การ|สามารถ)?`
+    + `(?:เพิ่ม(?:หรือ|และ))?${PURCHASE_VERB}(?:(?:หรือ|และ)(?:${PURCHASE_VERB}|เพิ่ม))*`
+    + `(?=${SENTENCE_REST}แพ็?[กค]เกจ)(?=${SENTENCE_REST}${WHERE_OR_HOW})${SENTENCE_REST}${SENTENCE_END}`,
+  String.raw`[ \t]*if you(?:'d| would)? (?:like|want|wish|need) to (?:buy|change|upgrade|renew)\b[^.!?\n]*[.!?]?`,
+  String.raw`(?<![a-z])[ \t]*(?:you can |to )?(?:buy(?:ing)?|chang(?:e|ing)|upgrad(?:e|ing)|renew(?:ing)?)\b[^.!?\n]*\bpackage[^.!?\n]*(?:on the web|website|package page)[^.!?\n]*[.!?]?`,
+].join('|'), 'gimu');
+// What a cut can leave behind on its line: a joining word at the end, or only a bullet or a "หมายเหตุ:" label.
+const DANGLING_JOIN = /[ \t]*(?:และ|ส่วน|โดย|แต่|ทั้งนี้|นอกจากนี้|[,—–-])?[ \t]*$/u;
+const EMPTY_LABEL = /^(?:[•·▪◦*-]|\d+[.)])?[ \t]*(?:หมายเหตุ|note)?[ \t]*[:：]?[ \t]*$/iu;
+
+export function withoutUnaskedPackagePurchaseLine(text: string, clauseText: string): string {
+  if (PURCHASE_WORD.test(clauseText) && (HOW_OR_WHERE.test(clauseText) || !PRICE_OR_CONTENTS.test(clauseText))) return text;
+  let changed = false;
+  const lines = text.split('\n').flatMap((line) => {
+    const cut = line.replace(UNASKED_PURCHASE_SENTENCE, '');
+    if (cut === line) return [line];
+    changed = true;
+    const rest = cut.replace(DANGLING_JOIN, '');
+    return EMPTY_LABEL.test(rest) ? [] : [rest];
+  });
+  if (!changed) return text;
+  return lines.join('\n').replace(/\n{3,}/gu, '\n\n').trim() || text;
+}
+
 // ─── A3 (batch5, T-084-b): reimbursement.list_pending_approvals has no code-computed total ───────
 // erp-reimbursement-tools.use-case.ts's ReimbursementListPendingApprovalsTool returns `total` (the
 // full count, never truncated) and `items` capped to the first 10 rows — no total AMOUNT at all.
@@ -272,6 +361,71 @@ function formatSignedPercent(percent: number | undefined): string | undefined {
 const THAI_MONTH_ABBR = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const ENGLISH_MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const CIVIL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
+const THAI_MONTH_FULL = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+
+/** True when `text` names this day of this month in any form an answer uses: "1 พ.ย.", "1 พย", "1 พฤศจิกายน",
+ *  "1/11" (Thai digits too), or "Nov 1". The year may be there or not. */
+function statesCivilDay(text: string, month: number, day: number): boolean {
+  const abbr = THAI_MONTH_ABBR[month - 1]!;
+  const thai = `(?<![\\d.])${day}\\s*(?:${abbr.replace(/\./gu, '\\.')}|${abbr.replace(/\./gu, '')}|${THAI_MONTH_FULL[month - 1]}|/\\s*0?${month}(?!\\d))`;
+  const english = `\\b${ENGLISH_MONTH_ABBR[month - 1]}[a-z]*\\.?\\s*${day}(?!\\d)`;
+  return new RegExp(`${thai}|${english}`, 'iu').test(mapThaiDigits(text));
+}
+
+/**
+ * Advisor S2a (eval r11 P-02, 2026-10-01): a monthly receipt allowance starts counting again on
+ * `receipts.resetsOn` from billing.get_package_usage, and an answer about receipts must say that day.
+ * The model gave only the month's range ("1–31 ต.ค.") although the tool returned the day, and the prompt
+ * rule alone failed before, so a receipt answer that does not name the day gets one line that does.
+ * No restart day in the data (a paid allowance, or a package that ends first) leaves the answer as is.
+ */
+export function withReceiptRestartDate(text: string, results: readonly ToolResult[], english: boolean): string {
+  const usage = results.find((result) => result.toolName === 'billing.get_package_usage' && result.status === 'ok');
+  const resetsOn = record(record(usage?.data)?.['receipts'])?.['resetsOn'];
+  const date = typeof resetsOn === 'string' ? CIVIL_DATE.exec(resetsOn) : null;
+  if (!date) return text;
+  const [year, month, day] = [Number(date[1]), Number(date[2]), Number(date[3])];
+  const aboutReceipts = english ? /receipt/iu.test(text) : /ใบเสร็จ|\d\s*ใบ/u.test(mapThaiDigits(text));
+  if (!aboutReceipts || statesCivilDay(text, month, day)) return text;
+  return `${text}\n${english ? `Receipts start counting again on ${ENGLISH_MONTH_ABBR[month - 1]} ${day}, ${year}.`
+    : `ใบเสร็จจะเริ่มนับใหม่ ${formatThaiDate({ day, month, yearBe: year + 543 })} ค่ะ`}`;
+}
+
+// ─── Advisor S1: expense.list_substitute_receipts_to_sign — the side the question names leads ──────
+// R1 integrated eval (2026-10-01, S-09): "มีใบรับรองรอฉันอนุมัติไหม" reached the tool with no role, so both sides came
+// back and the reply opened with their total ("ทั้งหมด 4 ฉบับ"), never the 3 waiting for approval. The side is read
+// from the question here, not left to the model: อนุมัติ/ตรวจรับ is the approver side, ผู้จ่าย the payer side.
+// เซ็น, ลงนาม, ลงลายมือชื่อ and ลงชื่อ name no side — people say them for approving too — and
+// beside อนุมัติ they may be the payer's step ("เซ็นหรืออนุมัติ"), so that question is left alone as well.
+// Only a reply whose first line does not already state that side's count gets one line that does; the rest
+// stays. A question naming neither side or both, a read that carried a role (one side returned) and an answer
+// that also reads another tool are left as they are.
+// ponytail: "already states it" is the count with its unit in the first line, whichever side that line names —
+// equal counts on both sides read as stated; match the side's wording too if that ever misleads.
+const SUBSTITUTE_QUEUE_TOOL = 'expense.list_substitute_receipts_to_sign';
+const APPROVER_SIDE_ASKED = /อนุมัติ|ตรวจรับ|\bapprov/iu;
+const PAYER_SIDE_ASKED = /ผู้จ่าย|\bpayer/iu;
+const SIGN_VERB_ASKED = /(?<!เปอร์)เซ็น|ลงนาม|ลงลายมือชื่อ|ลงชื่อ|\bsign/iu;
+
+export function withAskedSubstituteQueueSideLead(text: string, results: readonly ToolResult[], clauseText: string, english: boolean): string {
+  if (results.length === 0 || results.some((result) => result.toolName !== SUBSTITUTE_QUEUE_TOOL || result.status !== 'ok')) return text;
+  const queue = record(results[0]!.data);
+  const payer = record(queue?.['asPayer'])?.['count'], approver = record(queue?.['asApprover'])?.['count'];
+  if (typeof payer !== 'number' || typeof approver !== 'number') return text;
+  const question = clauseText.normalize('NFC');
+  const asksApprover = APPROVER_SIDE_ASKED.test(question);
+  if (asksApprover === PAYER_SIDE_ASKED.test(question) || (asksApprover && SIGN_VERB_ASKED.test(question))) return text;
+  const count = asksApprover ? approver : payer;
+  const firstLine = mapThaiDigits(text).split('\n').find((line) => line.trim()) ?? '';
+  const stated = count === 0 ? /ไม่มี|\bno\b|\bnone\b|(?<![\d,.])0\s*(?:ใบ|ฉบับ|รายการ)/iu
+    : new RegExp(`(?<![\\d,.])${count}${english ? '(?![\\d,.])' : '\\s*(?:ใบ|ฉบับ|รายการ)'}`, 'u');
+  if (stated.test(firstLine)) return text;
+  const side = asksApprover ? (english ? 'your approval' : 'รอคุณอนุมัติ') : (english ? 'your signature as the payer' : 'รอคุณลงลายมือชื่อในฐานะผู้จ่ายเงิน');
+  const lead = english
+    ? (count === 0 ? `No substitute receipt is waiting for ${side}.` : `${count} substitute receipt${count === 1 ? ' is' : 's are'} waiting for ${side}.`)
+    : (count === 0 ? `ไม่มีใบรับรองแทนใบเสร็จที่${side}ค่ะ` : `ใบรับรองแทนใบเสร็จที่${side}มี ${count} ใบค่ะ`);
+  return `${lead}\n${text}`;
+}
 
 function lastDayOfMonthCe(yearCe: number, month: number): number {
   return new Date(Date.UTC(yearCe, month, 0)).getUTCDate();

@@ -5538,6 +5538,75 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
   });
 
+  // Production 2026-10-01. Every 1:1 chat is bound to the delivery-plan lane, and there a refused route
+  // ended the turn before the answer above could run: the shop was told "ระบบตอบช้ากว่าปกติ ลองส่งข้อความเดิม
+  // อีกครั้ง" and the row said provider_unavailable — an invitation to resend against a refusal that cannot
+  // change this month. The same card and the same budget status, at both places a bound turn is routed.
+  describe('in a bound chat', () => {
+    async function boundTextTurn(code: string, permissions: string[], messageText: string) {
+      const { prisma, updates } = makePrisma();
+      prisma.client.lineIntakePendingMedia.findMany = async () => [];
+      prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+      const h = makeUseCase(prisma, {
+        permissions,
+        config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+          lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+        intakeRouteFn: () => { throw budgetError(code, 'TOTAL'); },
+      });
+      const event: any = { ...BASE_EVENT, webhookEventId: `evt-bound-${code}-${permissions.join('+')}`, messageText };
+      const evidence = await createLineAiInputEvidence({ turnKey: event.webhookEventId, parts: [{ partId: 'part-0',
+        eventIdHash: 'c'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] });
+      assert.ok(evidence);
+      event.inputEvidence = evidence.inputEvidence;
+      const flow = h.useCase as any;
+      const delivered: any[] = [];
+      flow.sendMessages = async (_event: unknown, messages: any[]) => { delivered.push(...messages); return 'ok'; };
+      flow.contextV2 = {
+        admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+        projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+      };
+      flow.prepareTextGrantV2 = async () => ({ turnKey: evidence.inputEvidence.turnKey });
+      flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+      await h.useCase.execute(event);
+      assert.equal(h.intakeRequests.length, 1, 'routed once');
+      assert.equal(h.getAiGatewayCalled(), false, 'B-02: the gate is not asked a second time');
+      return { delivered, final: (updates.at(-1) as any).data };
+    }
+    for (const [route, permissions, messageText] of [
+      ['first', ['line.ai.query'], 'เดือนนี้จ่ายไปเท่าไหร่แล้วคะ'],
+      // A sender who may only capture expenses is not routed first; the second route is theirs.
+      ['second', ['expense.receipt.line_upload'], 'ค่ากาแฟ 50 บาท'],
+    ] as const) {
+      it(`answers a credit refusal at the ${route} route with the credit card and a budget status`, async () => {
+        for (const [code, sentence, status] of [
+          ['AI_MONTHLY_BUDGET_EXCEEDED', /^เครดิต AI ของเดือนนี้หมดแล้วค่ะ/, 'ai_budget_exceeded'],
+          ['AI_BUDGET_INSUFFICIENT', /^เครดิต AI ที่เหลือของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ/, 'ai_budget_insufficient'],
+        ] as const) {
+          // Advisor spec §2.2: the package buttons only for a reader who may manage the package.
+          for (const [planRight, buttons] of [[['company.plan.manage'], ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ']], [[], []]] as const) {
+            const turn = await boundTextTurn(code, [...permissions, ...planRight], messageText);
+            assert.equal(turn.delivered.length, 1, code);
+            assert.equal(turn.delivered[0].type, 'flex', 'the card, never the try-again line');
+            assert.match(turn.delivered[0].canonicalText, sentence);
+            assert.deepEqual((turn.delivered[0].contents.footer?.contents ?? []).map((button: any) => button.action.label), buttons);
+            if (buttons.length === 0) assert.match(turn.delivered[0].canonicalText, /แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ$/);
+            assert.equal(turn.final.status, status);
+            assert.equal(turn.final.errorCode, code);
+          }
+        }
+      });
+
+      it(`keeps the try-again line at the ${route} route when the credit is busy or could not be checked`, async () => {
+        for (const code of ['AI_BUDGET_BUSY', 'AI_BUDGET_UNAVAILABLE']) {
+          const turn = await boundTextTurn(code, [...permissions], messageText);
+          assert.deepEqual(turn.delivered.map((message: any) => message.text), ['ขอโทษค่ะ ระบบตอบช้ากว่าปกติ ลองส่งข้อความเดิมอีกครั้งได้เลยค่ะ'], code);
+          assert.equal(turn.final.status, 'provider_unavailable');
+          assert.equal(turn.final.errorCode, code);
+        }
+      });
+    }
+  });
+
   it('says the budget could not be CHECKED for AI_BUDGET_UNAVAILABLE, and never that it is full', async () => {
     const { prisma, updates } = makePrisma();
     const h = makeUseCase(prisma, {

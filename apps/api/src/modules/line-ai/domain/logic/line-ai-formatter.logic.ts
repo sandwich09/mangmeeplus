@@ -8,6 +8,7 @@ import { AI_BUDGET_REFUSAL_CODES, type AiBudgetScope, type LineAiRefusalReason }
 // One base-URL resolution for the whole app. The previous local const fell back to the production
 // host, so any environment without WEB_BASE_URL/PUBLIC_BASE_URL sent its users to production.
 import { webLink } from '../../../../common/http/web-link';
+import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-manager.logic';
 
 // ---- Refusal messages ----
 
@@ -54,8 +55,11 @@ export const REFUSAL_MESSAGES: Record<LineAiRefusalReason, string> = {
  * longer pay for it. Plain text, no model, no money figure, no company configuration — the live
  * path sends a flex card with package buttons, but the drain pushes text through its own seam and
  * this is the exact string its stored-delivery integrity check re-derives.
+ *
+ * `canManagePlan` (advisor spec §2.2): only a reader who may buy is pointed at a package change;
+ * anyone else is told who to ask. The chat-credit wording offers a purchase to neither.
  */
-export function formatAiBudgetRefusalNotice(code: string, budgetScope?: AiBudgetScope): string {
+export function formatAiBudgetRefusalNotice(code: string, budgetScope?: AiBudgetScope, canManagePlan = true): string {
   const insufficient = code === AI_BUDGET_REFUSAL_CODES.insufficient;
   if (budgetScope === 'CHAT') {
     return insufficient
@@ -64,11 +68,12 @@ export function formatAiBudgetRefusalNotice(code: string, budgetScope?: AiBudget
       : '💚 เครดิต AI ส่วนแชตของเดือนนี้หมดแล้วค่ะ น้องมั่งมีจึงยังไม่ได้ตอบข้อความก่อนหน้านี้ให้นะคะ '
         + 'เดือนหน้าเริ่มใหม่ การเปลี่ยนแพ็กเกจไม่เติมเครดิตแชตในเดือนนี้ หากต้องการตรวจสอบสิทธิ์ดีลพิเศษ กรุณาพิมพ์ “ติดต่อเจ้าหน้าที่” ค่ะ';
   }
+  const next = canManagePlan ? 'หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยค่ะ' : ASK_PLAN_MANAGER_TH;
   return insufficient
     ? '💚 เครดิต AI ที่เหลือของเดือนนี้ไม่พอตอบข้อความก่อนหน้านี้ค่ะ น้องมั่งมีจึงยังไม่ได้ตอบให้นะคะ '
-      + 'เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยค่ะ'
+      + `เดือนหน้าเริ่มใหม่ ${next}`
     : '💚 เครดิต AI ของเดือนนี้หมดแล้วค่ะ น้องมั่งมีจึงยังไม่ได้ตอบข้อความก่อนหน้านี้ให้นะคะ '
-      + 'เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยค่ะ';
+      + `เดือนหน้าเริ่มใหม่ ${next}`;
 }
 
 export function formatRefusal(reason: LineAiRefusalReason, webPath?: string): string {

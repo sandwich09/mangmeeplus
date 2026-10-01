@@ -206,6 +206,14 @@ describe('LINE capability groups', () => {
     // company/employee/hr context tools are deliberately unadvertised; they must not light a line.
     assert.deepEqual(usableCapabilityGroupIds(['company.branch.read', 'hr.leave.read'], null), []);
   });
+
+  it('advertises the package line only to a caller who manages the package (owner 2026-09-30)', () => {
+    // billing.get_package_usage runs for every assistant user and answers a non-manager with a typed
+    // refusal, so the tool alone must not light the line.
+    assert.deepEqual(usableCapabilityGroupIds(['ai.tool.invoke'], null), []);
+    assert.deepEqual(usableCapabilityGroupIds(['ai.tool.invoke', 'company.plan.manage'], EXPENSES_ONLY), ['package']);
+    assert.deepEqual(usableCapabilityGroupIds([...ALL_PERMISSIONS, 'company.plan.manage'], EXPENSES_ONLY), ['expenses', 'alerts', 'package']);
+  });
 });
 
 describe('LINE receipt-capture claim', () => {

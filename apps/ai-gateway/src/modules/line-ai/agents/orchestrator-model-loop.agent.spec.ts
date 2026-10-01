@@ -74,7 +74,9 @@ function trackingErpTools(calledTools: string[]) {
 }
 
 describe('OrchestratorAgent – model-driven tool loop', () => {
-  it('completes both Production expense months in the same resolved branch after one model call', async () => {
+  it('completes both Production expense months in the same resolved branch after one model call', async (t) => {
+    // The day the candidates below are extracted for: "เดือน 12 ปี 2569" must still be a future month.
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-25T04:00:00.000Z') });
     const text = 'มั่งมี ช่วยสรุปค่าใช้จ่าย ของเดือนกรกฏาคม และ สิงหาคม ให้หน่อย';
     const req = makeReq(text);
     req.userContext.permissions = ['expense.read'];

@@ -232,11 +232,17 @@ export const LINE_CAPABILITY_GROUPS = [
   // Assigned workflow tasks and run failures are "pending work and alerts" to the user, and the old
   // hardcoded copy claimed them under that wording; they keep their own feature gate.
   { id: 'alerts', featureKeys: ['dashboard_notifications', 'workflow_automation'] },
+  // billing.get_package_usage is offered to every assistant user so a non-manager reaches its typed
+  // refusal; only someone who manages the package is told the assistant answers it (owner 2026-09-30).
+  // billing.get_package_catalog (package prices and contents, for anyone) shares the module and adds no line.
+  { id: 'package', featureKeys: [], sourceModules: ['billing'], requiredPermissions: ['company.plan.manage'] },
 ] as const satisfies ReadonlyArray<{
   id: string;
   featureKeys: readonly string[];
   /** Matched in addition to featureKeys, for modules that are deliberately not feature-gated. */
   sourceModules?: readonly string[];
+  /** Advertised only to a caller holding all of these, when the tool itself answers others with a refusal. */
+  requiredPermissions?: readonly string[];
 }>;
 
 export type LineCapabilityGroupId = (typeof LINE_CAPABILITY_GROUPS)[number]['id'];
@@ -280,7 +286,9 @@ export function usableCapabilityGroupIds(
   const usable = LINE_TOOL_REGISTRY.filter(
     (tool) => tool.executionReady !== false && hasToolPermissions(tool, permissions) && hasToolFeature(tool, entitled),
   );
-  return LINE_CAPABILITY_GROUPS.filter((group) => usable.some((tool) => inCapabilityGroup(tool, group))).map((group) => group.id);
+  return LINE_CAPABILITY_GROUPS.filter((group) => usable.some((tool) => inCapabilityGroup(tool, group))
+    && (!('requiredPermissions' in group) || group.requiredPermissions.every((permission) => permissions.includes(permission))))
+    .map((group) => group.id);
 }
 
 /** A tool belongs to a group when the group owns one of its feature keys, or its whole module. */
@@ -608,7 +616,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.get_daily_closing',
-    description: 'Read a one-day operational expense-closing checklist only: occurred, paid, outstanding, due, overdue, review, evidence, duplicate, and bounded details by currency. Do not use for week, month, or date-range totals. This alone already answers a general "what do I need to do/check today", "สรุปวันนี้", or "closing วันนี้" question — never also call notifications.list_open_alerts, dashboard.get_business_health_summary, or reimbursement.list_pending_approvals for that same question. Call reimbursement.list_pending_approvals as a separate, additional read only when the user explicitly names pending/รออนุมัติ approvals.',
+    description: 'Read a one-day operational expense-closing checklist only: occurred, paid, outstanding, due, overdue, review, evidence, duplicate, and bounded details by currency. Do not use for week, month, or date-range totals. This alone already answers a general "what do I need to do/check today" ("วันนี้มีอะไรต้องทำบ้าง"), "สรุปวันนี้", or "closing วันนี้" question — never also call notifications.list_open_alerts, dashboard.get_business_health_summary, expense.list_substitute_receipts_to_sign, or reimbursement.list_pending_approvals for that same question. Call reimbursement.list_pending_approvals as a separate, additional read only when the user explicitly names pending/รออนุมัติ approvals. Only the caller\'s OWN pending work — a message that says the work is left pending (ค้าง): "มีอะไรค้างที่ฉันต้องทำ", "งานค้างของฉัน" — also reads expense.list_substitute_receipts_to_sign and, when offered, reimbursement.list_pending_approvals.',
     businessSubjects: ['expense'],
     questionKinds: ['summary', 'list', 'breakdown'],
     category: 'read_summary',
@@ -619,6 +627,25 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
     optionalInputFields: ['date', 'branchId', 'detailLimit'],
+  },
+  {
+    // Advisor spec §5.2 (slice S1): the caller's OWN signature queue — never a company-wide list.
+    name: 'expense.list_substitute_receipts_to_sign',
+    description: 'List substitute receipts (ใบรับรองแทนใบเสร็จรับเงิน) waiting for THIS user\'s own signature: as the named actual payer who must certify, or as an eligible approver who must approve (paper copies waiting to be accepted included). Returns counts per step and up to 10 items each (document number, payee name, amount, date). Signing and approving happen only on the web. Never another person\'s queue and never a company-wide list. A question about this queue ("ใบรับรองที่ฉันต้องเซ็นมีกี่ใบ", "มีใบรับรองรอฉันอนุมัติไหม") is a read, never a request to make a new substitute receipt; a follow-up about the receipts it just listed (which one, whose, how much) reads it again. Never for a general today\'s to-do ("วันนี้มีอะไรต้องทำบ้าง"), which expense.get_daily_closing alone answers.',
+    businessSubjects: ['expense'],
+    questionKinds: ['summary', 'list'],
+    category: 'read_summary',
+    // Payer half: the same permissions as the web certify route (expense.controller.ts
+    // @RequireAnyPermission('expense.read_related', 'expense.read_own')), so it never lists a receipt the
+    // caller cannot open on the web. Approver half: expense.confirm plus eligibility, checked inside the tool.
+    requiredPermissions: [],
+    anyOfPermissions: ['expense.read_related', 'expense.read_own', 'expense.confirm'],
+    sourceModule: 'expenses',
+    supportedAgents: ['accounting', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    optionalInputFields: ['role', 'limit'],
+    inputEnumValues: { role: ['payer', 'approver'] },
   },
   {
     name: 'sales.get_sales_summary',
@@ -1005,6 +1032,37 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     requiredInputFields: ['publicQuestion', 'topic', 'locale', 'temporalIntent', 'sourcePolicyId'],
   },
   {
+    name: 'billing.get_package_usage',
+    description: "Read THIS company's current package: its name, the date it runs until, branch and member room used/limit, and receipt reads used/limit/remaining in the current allowance with an API-computed straight-line projection to the allowance's end. Also the tool for a question about upgrading, changing or buying this company's package: it decides who may be sent to the package page. Only a caller who manages the package gets figures; anyone else gets a typed refusal. Never prices and never another package. Use for 'แพ็กเกจพอไหม', 'เหลือใบเสร็จกี่ใบ', 'เพิ่มสาขาได้อีกไหม', 'อัปเกรดแพ็กเกจ'. Package prices and what each package includes are billing.get_package_catalog.",
+    businessSubjects: ['company', 'expense'],
+    questionKinds: ['summary'],
+    category: 'read_summary',
+    // Offered to every assistant user so a non-manager reaches the typed PACKAGE_MANAGER_REQUIRED refusal
+    // (owner decision 2026-09-30, advisor spec §10 item 2); the tool itself checks company.plan.manage,
+    // the permission canManagePlan/assertOwner use. Same pattern as public.lookup.
+    requiredPermissions: ['ai.tool.invoke'],
+    // `billing` is deliberately absent from TOOL_MODULE_FEATURE_KEYS: every company that reaches the
+    // assistant has a working package (locked companies are answered before any AI turn).
+    sourceModule: 'billing',
+    supportedAgents: ['accounting', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+  },
+  {
+    name: 'billing.get_package_catalog',
+    description: "Read the packages MangmeePlus sells, the same for every shop and every caller: each package's name, monthly and yearly selling price, the amount payable with VAT when VAT applies, branch and user limits, receipt reads, and the menus it includes. Selling prices only, never a cost. Use for 'แพ็กเกจเริ่มต้นราคาเท่าไหร่', 'แต่ละแพ็กเกจต่างกันยังไง', 'รายปีราคาเท่าไหร่', 'แพ็กเกจธุรกิจได้อะไรบ้าง'. Never this shop's own package, its dates or its usage (billing.get_package_usage).",
+    businessSubjects: ['company'],
+    questionKinds: ['summary', 'list'],
+    category: 'read_summary',
+    // Owner 2026-09-30 (advisor spec §10 item 1 as amended): anyone who talks to the assistant may ask
+    // package prices and contents. The same public data as GET /v1/billing/catalog (@Public).
+    requiredPermissions: ['ai.tool.invoke'],
+    sourceModule: 'billing',
+    supportedAgents: ['accounting', 'general'],
+    sensitiveAudit: false,
+    requiresErpPermissionCheck: true,
+  },
+  {
     name: 'bank.get_account_balances',
     description: 'Read last reconciled bank-account balances and dates; these are not live bank balances.',
     businessSubjects: ['bank'],
@@ -1111,6 +1169,21 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
     requiredInputFields: ['reimbursementId'],
+  },
+  {
+    name: 'reimbursement.get_approval_backlog',
+    description: 'Who or what each still-waiting reimbursement claim waits on right now, within the claims the caller may read: one named approver (byApprover counts only claims exactly one active person can approve), a shared pile of claims several people can approve (sharedPile, never counted toward any one person), no active approver, finance review, or payment. Returns count, totals by currency, the oldest date and longest wait in days per group, and up to 10 claims longest-waiting first with the desk each waits at. Use for "ใบเบิกค้างที่ใคร", "กองอยู่ที่ใครเยอะ", "ใครยังไม่อนุมัติ", "ใบไหนรอนานที่สุด"; requester "me" only when the user asks about their OWN claims ("ใบเบิกของฉันค้างที่ใคร"). Claims waiting for the caller to approve are reimbursement.list_pending_approvals. Approving and paying happen only on the web.',
+    businessSubjects: ['reimbursement', 'employee'],
+    questionKinds: ['summary', 'breakdown', 'list'],
+    category: 'read_summary',
+    requiredPermissions: [],
+    anyOfPermissions: ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own'],
+    sourceModule: 'reimbursements',
+    supportedAgents: ['accounting', 'general'],
+    sensitiveAudit: true,
+    requiresErpPermissionCheck: true,
+    optionalInputFields: ['requester'],
+    inputEnumValues: { requester: ['me'] },
   },
   {
     name: 'hr.get_leave_summary',

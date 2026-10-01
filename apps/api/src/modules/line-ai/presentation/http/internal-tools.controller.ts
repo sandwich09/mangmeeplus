@@ -54,7 +54,9 @@ import { WorkflowExplainRunTool, WorkflowListAssignedTasksTool, WorkflowListRece
 import { AccountingGetSummaryTool, AccountingListRecentDocumentsTool, ProcurementApOutstandingTool, CompanyEmployeeSummaryTool, CompanyEmployeeDetailTool, ExpenseGetBreakdownTool } from '../../application/use-cases/erp-business-tools.use-case';
 import { ExpenseGetDailyClosingTool } from '../../application/use-cases/erp-expense-daily-closing.use-case';
 import { ReportsMonthlySummaryTool } from '../../application/use-cases/erp-report-tools.use-case';
-import { ReimbursementListPendingApprovalsTool } from '../../application/use-cases/erp-reimbursement-tools.use-case';
+import { ReimbursementListPendingApprovalsTool, ReimbursementGetApprovalBacklogTool } from '../../application/use-cases/erp-reimbursement-tools.use-case';
+import { ExpenseListSubstituteReceiptsToSignTool } from '../../application/use-cases/erp-substitute-receipt-tools.use-case';
+import { BillingGetPackageCatalogTool, BillingGetPackageUsageTool } from '../../application/use-cases/erp-package-tools.use-case';
 import { CrmGetCustomerSummaryTool, CrmSearchCustomersTool, CrmGetCustomer360Tool } from '../../application/use-cases/erp-crm-tools.use-case';
 import {
   InventoryGetProductDetailTool,
@@ -211,6 +213,7 @@ export class InternalToolsController {
     private readonly expenseBreakdown: ExpenseGetBreakdownTool,
     private readonly expenseDailyClosing: ExpenseGetDailyClosingTool,
     private readonly reimbursementPendingApprovals: ReimbursementListPendingApprovalsTool,
+    private readonly substituteReceiptsToSign: ExpenseListSubstituteReceiptsToSignTool,
     private readonly customerSummary: CrmGetCustomerSummaryTool,
     private readonly customerSearch: CrmSearchCustomersTool,
     private readonly customer360: CrmGetCustomer360Tool,
@@ -242,6 +245,9 @@ export class InternalToolsController {
     private readonly draftSetVatMode: ExpenseDraftSetVatModeTool,
     private readonly bankAccountBalances: BankGetAccountBalancesTool,
     private readonly bankReconciliationStatus: BankGetReconciliationStatusTool,
+    private readonly reimbursementBacklog: ReimbursementGetApprovalBacklogTool,
+    private readonly packageUsage: BillingGetPackageUsageTool,
+    private readonly packageCatalog: BillingGetPackageCatalogTool,
     @Optional() private readonly publicLookup?: PublicLookupAdmissionTool,
     @Optional() private readonly reimbursementDraftGetOptions?: ReimbursementDraftGetOptionsTool,
     @Optional() private readonly reimbursementDraftPreviewCreate?: ReimbursementDraftPreviewCreateTool,
@@ -285,8 +291,10 @@ export class InternalToolsController {
     this.toolMap.set('expense.get_breakdown', this.expenseBreakdown);
     this.toolMap.set('expense.get_daily_closing', this.expenseDailyClosing);
     this.toolMap.set('reimbursement.list_pending_approvals', this.reimbursementPendingApprovals);
+    this.toolMap.set('expense.list_substitute_receipts_to_sign', this.substituteReceiptsToSign);
     this.toolMap.set('reimbursement.get_summary', this.reimbursementSummary);
     this.toolMap.set('reimbursement.get_detail', this.reimbursementDetail);
+    this.toolMap.set('reimbursement.get_approval_backlog', this.reimbursementBacklog);
     this.toolMap.set('accounting.get_document_detail', this.accountingDocumentDetail);
     this.toolMap.set('accounting.get_receivable_summary', this.accountingReceivableSummary);
     this.toolMap.set('crm.get_customer_summary', this.customerSummary);
@@ -315,6 +323,8 @@ export class InternalToolsController {
     this.toolMap.set('expense.draft.set_vat_mode', this.draftSetVatMode);
     this.toolMap.set('bank.get_account_balances', this.bankAccountBalances);
     this.toolMap.set('bank.get_reconciliation_status', this.bankReconciliationStatus);
+    this.toolMap.set('billing.get_package_usage', this.packageUsage);
+    this.toolMap.set('billing.get_package_catalog', this.packageCatalog);
     if (this.publicLookup) this.toolMap.set('public.lookup', this.publicLookup);
     if (this.reimbursementDraftGetOptions) this.toolMap.set('reimbursement.draft.get_options', this.reimbursementDraftGetOptions);
     if (this.reimbursementDraftPreviewCreate) this.toolMap.set('reimbursement.draft.preview_create', this.reimbursementDraftPreviewCreate);
