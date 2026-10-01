@@ -2740,6 +2740,12 @@ export class PrismaReimbursementRepository {
    * new approval step waits for the approvers the claim had (`payoutCorrectionSourceStep`; a step
    * still waiting from an earlier answer is replaced). A claim nobody had to approve is ready for
    * payment at once, its expense records checked first: whoever pays it is the one to check the account.
+   *
+   * Of the people the claim's step named, the new step keeps only those on today's approval route
+   * (`approverRouteUserIds`, final review S2). The old step may be weeks old and a claim in a round
+   * cannot be withdrawn and sent again, so a person who has since lost the approve right would
+   * otherwise be the only one able to approve a change of bank account. When none of them is left
+   * the step names nobody, and its recorded role, or the owner, decides it.
    */
   async submitPayoutCorrectionAtomic(data: {
     companyId: string;
@@ -2754,6 +2760,8 @@ export class PrismaReimbursementRepository {
     seenDefaultToken?: unknown;
     /** The default account is set by `payout.onPersisted` in this transaction: what was typed is what is copied. */
     defaultSetInThisTransaction?: boolean;
+    /** Who is on today's approval route for the step the round takes its approvers from, as a submit would resolve it. */
+    approverRouteUserIds: readonly string[];
     onPersisted: (tx: any, result: {
       columns: SubmitPayoutColumns; step?: ReimbursementApprovalStepRecord; replacedStepId?: string; readyForPayment: boolean;
     }) => Promise<void>;
@@ -2791,12 +2799,15 @@ export class PrismaReimbursementRepository {
         });
         if (cancelled.count !== 1) throw this.requestChanged();
       }
+      const onRoute = (userId: string) => data.approverRouteUserIds.includes(userId);
+      // In the shape the old step had: a frozen list stays a list, a step that only named a person names that person.
+      const stillAssigned = source?.assignedApproverUserIds?.filter(onRoute) ?? [];
       const step = source ? this.toStep(await tx.reimbursementApprovalStep.create({ data: {
         ...where,
         sequenceNo: source.sequenceNo,
-        approverUserId: source.approverUserId,
+        approverUserId: source.approverUserId && onRoute(source.approverUserId) ? source.approverUserId : null,
         approverRoleSnapshot: source.approverRoleSnapshot,
-        ...(source.assignedApproverUserIds && { assignedApproverUserIdsJson: source.assignedApproverUserIds }),
+        ...(stillAssigned.length > 0 && { assignedApproverUserIdsJson: stillAssigned }),
         requestSnapshotHash: snapshotHash,
         assignedAt: data.submittedAt,
       } })) : undefined;

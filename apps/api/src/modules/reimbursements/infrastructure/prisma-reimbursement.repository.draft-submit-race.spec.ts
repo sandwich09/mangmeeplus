@@ -2821,6 +2821,8 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
   const STAFF = `${S}-staff`;
   const FIN = `${S}-fin`;
   const MGR = `${S}-mgr`;
+  /** A member only where a case makes them one. */
+  const OWNER = `${S}-owner`;
   const day = new Date('2026-09-15T00:00:00.000Z');
   let clients: PrismaClient[] = [];
   let repos: PrismaReimbursementRepository[] = [];
@@ -2829,6 +2831,9 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
   let accounts = { expense: '', payable: '' };
   let reachable = false;
   let sequence = 0;
+  let approverPermissionIds: string[] = [];
+  let managerRoleId = '';
+  let managerMembershipId = '';
 
   before(async () => {
     const url = databaseUrl();
@@ -2845,9 +2850,18 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     }
     reachable = true;
     const db = clients[0]!;
-    await db.user.createMany({ data: [{ id: STAFF, displayName: 'สมชาย พนักงาน' }, { id: FIN, displayName: 'วราภรณ์ การเงิน' }, { id: MGR, displayName: 'สมศรี ผู้จัดการ' }] });
+    await db.user.createMany({ data: [{ id: STAFF, displayName: 'สมชาย พนักงาน' }, { id: FIN, displayName: 'วราภรณ์ การเงิน' }, { id: MGR, displayName: 'สมศรี ผู้จัดการ' }, { id: OWNER, displayName: 'เจ้าของร้าน' }] });
     companyId = (await db.company.create({ data: { name: S, status: 'ACTIVE' }, select: { id: true } })).id;
     await db.companyMembership.createMany({ data: [STAFF, FIN, MGR].map((userId) => ({ companyId, userId, status: 'ACTIVE' as const })) });
+    // The manager really holds the role claims are routed to, with the rights an approver needs: the
+    // approval route a correction round asks for is resolved from these rows.
+    approverPermissionIds = await Promise.all(['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'].map(async (key) =>
+      (await db.permission.upsert({ where: { key }, update: {}, create: { key, description: key } })).id));
+    managerRoleId = (await db.role.create({ data: {
+      companyId, scopeKey: companyId, key: 'MANAGER', name: 'ผู้จัดการ', permissions: { create: approverPermissionIds.map((permissionId) => ({ permissionId })) },
+    }, select: { id: true } })).id;
+    managerMembershipId = (await db.companyMembership.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: MGR } }, select: { id: true } })).id;
+    await db.membershipRole.create({ data: { membershipId: managerMembershipId, roleId: managerRoleId } });
     // These claims carry no receipt, only the reason: the company lets such a line be confirmed.
     await db.reimbursementPolicy.create({ data: { companyId, allowMissingReceiptWithReason: true, createdByUserId: FIN } });
     branchId = (await db.branch.create({ data: { companyId, code: 'QA-STUCK', name: S }, select: { id: true } })).id;
@@ -2862,8 +2876,9 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
       const db = clients[0]!;
       await db.auditLog.deleteMany({ where: { companyId } });
       await db.journalEntry.deleteMany({ where: { companyId } });
+      await db.role.deleteMany({ where: { scopeKey: companyId } });
       await db.company.deleteMany({ where: { id: companyId } });
-      await db.user.deleteMany({ where: { id: { in: [STAFF, FIN, MGR] } } });
+      await db.user.deleteMany({ where: { id: { in: [STAFF, FIN, MGR, OWNER] } } });
     }
     await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
   });
@@ -3102,7 +3117,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
       ['READY_FOR_PAYMENT', {}, (request) => repos[0]!.requestPayoutCorrectionAtomic({ ...decision(request), actorRoles: ['FINANCE'], allowSelfApproval: false,
         requestedAt: new Date(), reasonCode: 'OTHER', onPersisted: noop })],
       ['PENDING_APPROVAL', { payoutCorrectionRequestedAt: day }, (request) => repos[0]!.submitPayoutCorrectionAtomic({ ...decision(request), submittedAt: new Date(),
-        payout: { write: { mode: 'CASH' } }, onPersisted: noop })],
+        payout: { write: { mode: 'CASH' } }, approverRouteUserIds: [], onPersisted: noop })],
       ['PENDING_APPROVAL', { payoutCorrectionRequestedAt: day, payoutCorrectionSubmittedAt: day }, (request) => repos[0]!.approvePayoutCorrectionAtomic({ ...decision(request),
         actorRoles: ['OWNER'], allowSelfApproval: false, decidedAt: new Date(), onApprovedPersisted: noop })],
     ];
@@ -4101,6 +4116,72 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.equal(await signaturesOf(signedThenWithdrawn.id), 1);
     await repos[1]!.reopenRejectedRequest(companyId, signedThenWithdrawn.id, signedThenWithdrawn.updatedAt, STAFF, 'PENDING_APPROVAL');
     assert.deepEqual([await signaturesOf(signedThenWithdrawn.id), (await claimRow(signedThenWithdrawn.id)).status], [0, 'DRAFT']);
+  });
+
+  // Final review S2: the step of a round keeps only those of the old step's people who are on today's approval route.
+  it('asks only who is still on the approval route to approve a corrected account: a demoted approver cannot, and the owner can when nobody else is left', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    /** The claim's step as a submit freezes it: the people the route named that day. */
+    const frozenClaim = async () => {
+      const claim = await approvedTransferClaim();
+      await db.reimbursementApprovalStep.updateMany({ where: { reimbursementRequestId: claim.requestId }, data: { assignedApproverUserIdsJson: [MGR] } });
+      await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+      return claim;
+    };
+    const asked = async (requestId: string) => ((await eventsOf(requestId)).filter((event) => event.eventType === 'reimbursement.payout_correction_submitted').at(-1)!.payloadJson as any).data.approverRecipientUserIds;
+    const forbidden = (error: any) => error?.getStatus?.() === 403;
+
+    const ownerMembership = await db.companyMembership.create({ data: { companyId, userId: OWNER, status: 'ACTIVE' }, select: { id: true } });
+    const ownerRole = await db.role.create({ data: {
+      companyId, scopeKey: companyId, key: 'OWNER', name: 'เจ้าของ', permissions: { create: approverPermissionIds.map((permissionId) => ({ permissionId })) },
+    }, select: { id: true } });
+    await db.membershipRole.create({ data: { membershipId: ownerMembership.id, roleId: ownerRole.id } });
+    const owner = () => ({ ...manager(), userId: OWNER, roles: ['OWNER'] });
+    try {
+      // Still holding the role: the same approver is asked again, by name, and approves.
+      const kept = await frozenClaim();
+      await round(0).giveAccount.execute(requesterWhoEdits(), kept.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
+      const [, keptStep] = await stepsOf(kept.requestId);
+      assert.deepEqual([keptStep!.status, keptStep!.approverUserId, keptStep!.assignedApproverUserIdsJson, await asked(kept.requestId)], ['PENDING', MGR, [MGR], [MGR]]);
+      const shownToManager = await on(0).detail.execute(manager(), kept.requestId);
+      assert.equal((await round(0).approve.execute(manager(), kept.requestId, undefined, shownToManager.approvalSnapshotHash, 2)).status, 'READY_FOR_PAYMENT');
+
+      // Moved to a staff role after approving the claim: still an active member of the branch, no approve right.
+      const claim = await frozenClaim();
+      await db.membershipRole.delete({ where: { membershipId_roleId: { membershipId: managerMembershipId, roleId: managerRoleId } } });
+      const demoted = () => ({ ...manager(), roles: ['STAFF'], permissions: ['reimbursement.read'] });
+      await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
+      const [, step] = await stepsOf(claim.requestId);
+      // The new step names nobody, and its notice asks the owner, whom the route falls to today.
+      assert.deepEqual([step!.status, step!.approverUserId, step!.assignedApproverUserIdsJson, step!.approverRoleSnapshot, await asked(claim.requestId)],
+        ['PENDING', null, null, 'MANAGER', [OWNER]]);
+      assert.equal((await claimRow(claim.requestId)).currentApproverUserId, null);
+
+      // The demoted manager is offered nothing and is refused, by the use case and by the repository under the claim's lock.
+      const shownToDemoted = await on(0).detail.execute(demoted(), claim.requestId);
+      assert.deepEqual([shownToDemoted.approvalActions, shownToDemoted.currentDesk], [{ canApprove: false, canReject: false }, { kind: 'APPROVER' }]);
+      await assert.rejects(() => round(0).approve.execute(demoted(), claim.requestId, undefined, shownToDemoted.approvalSnapshotHash, 2), forbidden);
+      await assert.rejects(() => round(0).reject.execute(demoted(), claim.requestId, 'ไม่อนุมัติ'), forbidden);
+      const pending = (await repos[0]!.findRequestById(companyId, claim.requestId))!;
+      await assert.rejects(() => repos[0]!.approvePayoutCorrectionAtomic({
+        companyId, requestId: claim.requestId, expectedUpdatedAt: pending.updatedAt, expectedApprovalSnapshotHash: pending.approvalSnapshotHash ?? undefined,
+        actorUserId: MGR, actorRoles: ['STAFF'], scopes: {}, allowSelfApproval: false, decidedAt: new Date(), payoutVerifiedVersion: 2, onApprovedPersisted: async () => undefined,
+      }), forbidden);
+      assert.deepEqual([(await claimRow(claim.requestId)).status, (await stepsOf(claim.requestId)).map((row) => row.status)], ['PENDING_APPROVAL', ['APPROVED', 'PENDING']]);
+
+      // The owner is not refused as "not the assigned approver": nobody is assigned any more.
+      const shownToOwner = await on(0).detail.execute(owner(), claim.requestId);
+      assert.deepEqual(shownToOwner.approvalActions, { canApprove: true, canReject: true });
+      const approved = await round(0).approve.execute(owner(), claim.requestId, undefined, shownToOwner.approvalSnapshotHash, 2);
+      const [, decided] = await stepsOf(claim.requestId);
+      assert.deepEqual([approved.status, decided!.status, decided!.decisionByUserId, (await accountVersionsOf(claim.requestId)).map((row) => [row.version, row.verifiedByUserId])],
+        ['READY_FOR_PAYMENT', 'APPROVED', OWNER, [[1, MGR], [2, OWNER]]]);
+    } finally {
+      await db.membershipRole.createMany({ data: [{ membershipId: managerMembershipId, roleId: managerRoleId }], skipDuplicates: true });
+      await db.role.delete({ where: { id: ownerRole.id } });
+      await db.companyMembership.delete({ where: { id: ownerMembership.id } });
+    }
   });
 
   it('still cancels a claim in a round by the rule every claim is cancelled by: its records are voided and it closes', async (t) => {

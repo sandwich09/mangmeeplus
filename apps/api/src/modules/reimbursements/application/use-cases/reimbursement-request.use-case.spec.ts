@@ -3640,9 +3640,20 @@ function correctionWorld(options: RepoOptions = {}) {
   const bump = (changes: Record<string, unknown>) => Object.assign(claim(), changes, { updatedAt: new Date(claim().updatedAt.getTime() + 1) });
   const findPlain = repo.findRequestById;
   const names: Record<string, string> = { ...PAYOUT_NAMES, 'payer-1': 'ประไพ' };
-  /** Who the step's role reaches when nobody it named can act any more, and who would approve a claim nobody has to. */
+  /**
+   * Today's approval route for the claim's step, as the submit's resolver answers it (the manager the
+   * claim was approved by, unless a case says otherwise; an error is what the resolver throws when
+   * nobody is on it), and who would approve a claim nobody has to.
+   */
+  let routeToday: string[] | Error = ['manager-1'];
+  const routeCalls: any[] = [];
   const routes = {
-    resolveSubmissionRoutesBestEffort: async () => [{ recipientUserIds: ['owner-1'] }],
+    resolveNamedSubmissionRoute: async () => null,
+    resolveSubmissionRoute: async (input: any) => {
+      routeCalls.push(input);
+      if (routeToday instanceof Error) throw routeToday;
+      return { recipientUserIds: routeToday };
+    },
     resolveWouldBeApproverUserIds: async () => ['manager-1'],
   } as any;
   let activeApprovers: string[] | undefined;
@@ -3698,9 +3709,13 @@ function correctionWorld(options: RepoOptions = {}) {
       const source: any = payoutCorrectionSourceStep<any>({ ...request, approvalSteps: steps });
       const replaced = source?.status === 'PENDING' ? source : undefined;
       if (replaced) Object.assign(replaced, { status: 'CANCELLED', invalidatedAt: data.submittedAt, invalidatedReason: 'payout_account_correction' });
+      // Of the people the old step named, those on today's approval route; nobody left, no frozen list.
+      const onRoute = (userId: string) => data.approverRouteUserIds.includes(userId);
+      const stillAssigned = (source?.assignedApproverUserIds ?? []).filter(onRoute);
       const step = source ? {
         id: `step-${steps.length + 1}`, companyId: request.companyId, reimbursementRequestId: request.id, sequenceNo: source.sequenceNo, status: 'PENDING',
-        approverUserId: source.approverUserId, approverRoleSnapshot: source.approverRoleSnapshot, assignedApproverUserIds: source.assignedApproverUserIds,
+        approverUserId: source.approverUserId && onRoute(source.approverUserId) ? source.approverUserId : undefined,
+        approverRoleSnapshot: source.approverRoleSnapshot, assignedApproverUserIds: stillAssigned.length > 0 ? stillAssigned : undefined,
         requestSnapshotHash: approvalSnapshotHash, assignedAt: data.submittedAt,
       } : undefined;
       if (step) steps.push(step);
@@ -3737,8 +3752,9 @@ function correctionWorld(options: RepoOptions = {}) {
   const approve = new ApproveReimbursementUseCase(repo, audit, { execute: async () => { throw new Error('a correction round builds no expense record'); } } as any, evidence);
   const reject = new RejectReimbursementUseCase(repo, audit, evidence);
   return {
-    ...world, steps, payments, claim, bump, routes, sendBack, giveAccount, approve, reject,
+    ...world, steps, payments, claim, bump, routes, routeCalls, sendBack, giveAccount, approve, reject,
     setActiveApprovers: (ids: string[] | undefined) => { activeApprovers = ids; },
+    setRouteToday: (route: string[] | Error) => { routeToday = route; },
     events: () => calls.outbox as any[],
     /** A claim sent with the requester's default account, approved by its manager (who checked version 1), waiting for payment. */
     async ready(send: { payout?: Record<string, unknown>; setDefault?: typeof KBANK | null } = {}) {
@@ -4054,14 +4070,71 @@ describe('payout correction: the requester gives the account and it is approved 
     assert.equal(world.claim().status, 'PENDING_APPROVAL');
   });
 
-  it('asks the step\'s role, or the owner, when nobody the claim named can approve any more', async () => {
+  // Final review S2. The old step may be weeks old and a claim in a round cannot be withdrawn and sent
+  // again, so the new step keeps only the people who are on today's approval route.
+  const ownerCtx = () => ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'] });
+  /** The manager the claim was approved by, moved to a staff role since: still an active member, no approve right. */
+  const demotedCtx = () => approverCtx({ roles: ['STAFF'], permissions: ['reimbursement.read'] });
+
+  it('asks the same approver again while they are on today\'s approval route for the step\'s role and branch', async () => {
     const world = correctionWorld();
     const id = await sentBack(world);
-    world.setActiveApprovers([]);
     await world.giveAccount.execute(ctx(), id, { mode: 'CASH' });
-    assert.deepEqual(world.events()[0].payloadJson.data.approverRecipientUserIds, ['owner-1']);
-    // The step itself still names who it named: the approval rule decides who stands in, as for any step.
-    assert.deepEqual(world.steps[1].assignedApproverUserIds, ['manager-1']);
+    // The route is the submit's own, asked for the step's recorded role, the claim's branch and requester, under the claim's self-approval rule.
+    assert.deepEqual(world.routeCalls, [{ companyId: 'co-1', branchId: world.claim().branchId, requesterUserId: 'staff-1', allowSelfApproval: false, roleKey: 'MANAGER', roleKeys: ['MANAGER'] }]);
+    assert.deepEqual([world.steps[1].assignedApproverUserIds, world.events()[0].payloadJson.data.approverRecipientUserIds], [['manager-1'], ['manager-1']]);
+    assert.deepEqual((await world.detail.execute(approverCtx(), id)).approvalActions, { canApprove: true, canReject: true });
+  });
+
+  it('does not ask a demoted approver, who cannot approve the account change, and lets the owner approve it when nobody else is left', async () => {
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    // Today the manager role has no holder for this branch: the route falls to the owner.
+    world.setRouteToday(['owner-1']);
+    const given = await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    // The new step names nobody: its recorded role, or the owner, decides it.
+    assert.deepEqual([world.steps[1].status, world.steps[1].assignedApproverUserIds, world.steps[1].approverUserId, world.steps[1].approverRoleSnapshot], ['PENDING', undefined, undefined, 'MANAGER']);
+    assert.deepEqual(given.currentDesk, { kind: 'APPROVER' });
+    assert.deepEqual(world.events()[0].payloadJson.data.approverRecipientUserIds, ['owner-1'], 'the notice asks who can approve, not who used to');
+
+    const forDemoted = await world.detail.execute(demotedCtx(), id);
+    assert.deepEqual([forDemoted.approvalActions, forDemoted.payoutCorrectionActions], [{ canApprove: false, canReject: false }, undefined]);
+    await assert.rejects(() => world.approve.execute(demotedCtx(), id, undefined, forDemoted.approvalSnapshotHash, 2), (error: any) => error.getStatus() === 403);
+    await assert.rejects(() => world.reject.execute(demotedCtx(), id, 'ไม่อนุมัติ'), (error: any) => error.getStatus() === 403);
+    assert.equal(world.claim().status, 'PENDING_APPROVAL');
+
+    const forOwner = await world.detail.execute(ownerCtx(), id);
+    assert.deepEqual(forOwner.approvalActions, { canApprove: true, canReject: true });
+    const approved = await world.approve.execute(ownerCtx(), id, undefined, forOwner.approvalSnapshotHash, 2);
+    assert.deepEqual([approved.status, world.steps[1].decisionByUserId], ['READY_FOR_PAYMENT', 'owner-1']);
+  });
+
+  it('keeps of several approvers only those still on the route, and names nobody when the role itself can no longer approve', async () => {
+    const world = correctionWorld();
+    const id = await world.ready();
+    world.steps[0].assignedApproverUserIds = ['manager-1', 'manager-2'];
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    world.events().length = 0;
+    // manager-1 was moved to another role; manager-2 and a manager hired since hold it today.
+    world.setRouteToday(['manager-2', 'manager-3']);
+    await world.giveAccount.execute(ctx(), id, { mode: 'CASH' });
+    assert.deepEqual([world.steps[1].assignedApproverUserIds, world.events()[0].payloadJson.data.approverRecipientUserIds], [['manager-2'], ['manager-2']]);
+    assert.deepEqual((await world.detail.execute(approverCtx({ userId: 'manager-2' }), id)).approvalActions, { canApprove: true, canReject: true });
+    assert.deepEqual((await world.detail.execute(approverCtx(), id)).approvalActions, { canApprove: false, canReject: false }, 'the step is the remaining assignee\'s');
+
+    // The role lost the approve right for everyone: the resolver finds no route at all.
+    const unrouted = correctionWorld();
+    const unroutedId = await sentBack(unrouted);
+    unrouted.setRouteToday(new BadRequestException('approver_role_not_eligible'));
+    await unrouted.giveAccount.execute(ctx(), unroutedId, { mode: 'CASH' });
+    assert.deepEqual([unrouted.steps[1].assignedApproverUserIds, unrouted.events()[0].payloadJson.data.approverRecipientUserIds], [undefined, undefined]);
+    assert.deepEqual((await unrouted.detail.execute(ownerCtx(), unroutedId)).approvalActions, { canApprove: true, canReject: true });
+    // Anything else the resolver fails with is not "nobody": the account is not given on a guess.
+    const failing = correctionWorld();
+    const failingId = await sentBack(failing);
+    failing.setRouteToday(new Error('database unavailable'));
+    await assert.rejects(() => failing.giveAccount.execute(ctx(), failingId, { mode: 'CASH' }), /database unavailable/);
+    assert.equal(failing.claim().payoutCorrectionSubmittedAt, undefined);
   });
 
   it('is approved for the account alone and is ready for payment at once, with its whole round on record', async () => {

@@ -1,8 +1,8 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { ReimbursementPayoutInput, ReimbursementRequestDetail, RequestContext, SubmitReimbursementPayoutCorrectionInput } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
-import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest, type EffectivePolicy } from '../../domain/reimbursement.constants';
 import { payoutCorrectionPhase, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { detailWithFileNames } from '../dto/reimbursement.mapper';
@@ -95,11 +95,11 @@ export class SubmitPayoutCorrectionUseCase {
     const change = await this.payouts.draftPayoutChange(ctx, req.requesterUserId, payout as ReimbursementPayoutInput);
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
     const source = payoutCorrectionSourceStep(req);
-    // Whom the event names: the approvers of the new step, or, for a claim nobody approves, the people
-    // who would have, whom the ready-to-pay notice asks first (owner rule 2026-10-01). Best effort both.
-    const approverRecipientUserIds = source
-      ? await this.stepApprovers(req, source, effectivePolicyForRequest(req, policy).allowSelfApproval)
-      : await this.approverRoutes.resolveWouldBeApproverUserIds(ctx.companyId, policy, req).catch(() => []);
+    // Who may stay on the new step, and whom its notice asks when it names nobody (final review S2).
+    const approverRouteUserIds = source ? await this.todaysApprovalRoute(req, source, policy) : [];
+    // A claim nobody approves: the people who would have, whom the ready-to-pay notice asks first
+    // (owner rule 2026-10-01). Best effort.
+    const wouldBeApproverUserIds = source ? [] : await this.approverRoutes.resolveWouldBeApproverUserIds(ctx.companyId, policy, req).catch(() => []);
 
     const submittedAt = new Date();
     await this.repo.submitPayoutCorrectionAtomic({
@@ -112,7 +112,12 @@ export class SubmitPayoutCorrectionUseCase {
       payout: change,
       seenDefaultToken: defaultToken,
       defaultSetInThisTransaction: change.audit.savedAsDefault === true,
+      approverRouteUserIds,
       onPersisted: async (tx, result) => {
+        // Whom the event names: the people the new step names; when it names nobody, whoever its
+        // recorded role, or the owner, reaches today.
+        const named = result.step ? [...new Set([...(result.step.assignedApproverUserIds ?? []), ...(result.step.approverUserId ? [result.step.approverUserId] : [])])] : [];
+        const approverRecipientUserIds = !result.step ? wouldBeApproverUserIds : named.length > 0 ? named : approverRouteUserIds;
         await this.audit.log({
           companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payout_correction.submit',
           targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
@@ -155,18 +160,29 @@ export class SubmitPayoutCorrectionUseCase {
   }
 
   /**
-   * Who the new step waits for: the people the claim's step named who can still act; when none of
-   * them can, whoever the step's recorded role, or the owner, reaches (the rule that lets them decide it).
+   * Today's approval route for the step a round takes its approvers from (final review S2), resolved
+   * the way a submit resolves one, for the step's own role and the claim's branch: the approver the
+   * step names, while they hold the approve and reject rights there; else the holders of the step's
+   * recorded role (and of the policy's other approver roles, while the policy still names that
+   * role), the owner when no holder is left, the requester when nobody else is. Nobody: the role can
+   * no longer approve, or has nobody for this branch.
    */
-  private async stepApprovers(req: ReimbursementRequestRecord, step: ReimbursementApprovalStepRecord, allowSelfApproval: boolean): Promise<string[]> {
-    const named = step.assignedApproverUserIds ?? (step.approverUserId ? [step.approverUserId] : []);
-    const active = await this.repo.findActiveApproverUserIds(req.companyId, named, req.branchId);
-    const able = named.filter((userId) => active.has(userId));
-    if (able.length > 0) return able;
-    const [route] = await this.approverRoutes.resolveSubmissionRoutesBestEffort(req.companyId, [{
-      roleKey: step.approverRoleSnapshot ?? 'MANAGER', ...(req.branchId && { branchId: req.branchId }),
-      requesterUserId: req.requesterUserId, allowSelfApproval,
-    }]).catch(() => []);
-    return route?.recipientUserIds ?? [];
+  private async todaysApprovalRoute(req: ReimbursementRequestRecord, step: ReimbursementApprovalStepRecord, policy: EffectivePolicy): Promise<string[]> {
+    const roleKey = step.approverRoleSnapshot ?? 'MANAGER';
+    const claim = {
+      companyId: req.companyId, ...(req.branchId && { branchId: req.branchId }),
+      requesterUserId: req.requesterUserId, allowSelfApproval: effectivePolicyForRequest(req, policy).allowSelfApproval,
+    };
+    try {
+      const named = step.approverUserId
+        ? await this.approverRoutes.resolveNamedSubmissionRoute({ ...claim, userId: step.approverUserId, fallbackRole: roleKey }) : null;
+      const route = named ?? await this.approverRoutes.resolveSubmissionRoute({
+        ...claim, roleKey, ...(policy.defaultApproverRoles?.includes(roleKey) && { roleKeys: policy.defaultApproverRoles }),
+      });
+      return route.recipientUserIds;
+    } catch (error) {
+      if (error instanceof BadRequestException) return [];
+      throw error;
+    }
   }
 }
