@@ -411,6 +411,9 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'packages/contracts/src/line-ai-value-candidates-v2.spec.ts',
     'packages/contracts/src/line-document-qa.spec.ts',
     'packages/contracts/src/line-reimbursement-draft.spec.ts',
+    // The claim-line date rule the web form, the API and the LINE claim draft share. The contracts package's own
+    // `test` script is a fixed list that does not name this file, so this runner is what executes it.
+    'packages/contracts/src/reimbursements.spec.ts',
     'scripts/line-ai-reliability-blind-comparison.spec.ts',
     'scripts/line-ai-reliability-corpus.spec.ts',
     'scripts/line-ai-reliability-evaluation.spec.ts',
