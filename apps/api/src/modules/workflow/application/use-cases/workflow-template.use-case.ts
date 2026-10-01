@@ -80,6 +80,23 @@ async function siblingRuleSwitchedOff(repo: PrismaWorkflowRepository, companyId:
   return rules.length > 0 && !rules.some((rule) => rule.status === 'ENABLED');
 }
 
+/**
+ * The release-time sweep of approval tasks whose claim has moved on. It is housekeeping: a failure
+ * is reported and swallowed, because the release step it rides on (template sync) must not fail for
+ * it. The event handler closes the same tasks as claims move, and the next release sweeps again.
+ */
+export async function closeSettledClaimTasksAtRelease(
+  repo: PrismaWorkflowRepository,
+  report: (message: string, error: unknown) => void = console.error,
+): Promise<number | null> {
+  try {
+    return await repo.closeSettledClaimTasks();
+  } catch (error) {
+    report('Workflow template sync: closing stale approval tasks failed; the release continues.', error);
+    return null;
+  }
+}
+
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 /**

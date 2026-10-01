@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   autoEnableWorkflowTemplatesForCompany,
+  closeSettledClaimTasksAtRelease,
   resyncWorkflowTemplateRulesForCompany,
   WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID,
 } from './workflow-template.use-case';
@@ -294,5 +295,25 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
 
     assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), []);
     assert.equal(repo.rules.find((r: any) => r.id === 'pre_0').cooldownSeconds, 3600);
+  });
+});
+
+// Review: the sweep of stale approval tasks rides on the release's template sync. It is
+// housekeeping, and a failure in it must not fail that step and with it the release.
+describe('closeSettledClaimTasksAtRelease', () => {
+  it('returns how many tasks it closed', async () => {
+    assert.equal(await closeSettledClaimTasksAtRelease({ closeSettledClaimTasks: async () => 7 } as any), 7);
+  });
+
+  it('reports a failure and lets the release step go on', async () => {
+    const reported: any[] = [];
+    const repo = { closeSettledClaimTasks: async () => { throw new Error('relation "WorkflowTask" is locked'); } } as any;
+
+    const closed = await closeSettledClaimTasksAtRelease(repo, (message, error) => { reported.push([message, (error as Error).message]); });
+
+    assert.equal(closed, null);
+    assert.equal(reported.length, 1);
+    assert.match(reported[0][0], /the release continues/);
+    assert.equal(reported[0][1], 'relation "WorkflowTask" is locked');
   });
 });

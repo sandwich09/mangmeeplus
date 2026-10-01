@@ -23,6 +23,7 @@ import { WORKFLOW_TEMPLATE_CATALOG } from '../src/modules/workflow/domain/workfl
 import { PrismaWorkflowRepository } from '../src/modules/workflow/infrastructure/prisma-workflow.repository';
 import {
   autoEnableWorkflowTemplatesForCompany,
+  closeSettledClaimTasksAtRelease,
   resyncWorkflowTemplateRulesForCompany,
 } from '../src/modules/workflow/application/use-cases/workflow-template.use-case';
 
@@ -66,7 +67,8 @@ async function main() {
 
   // Audit B8: approval tasks left open for claims already approved, rejected or paid. Idempotent,
   // so it runs every release: once to clear the backlog, then as the net under the event handler.
-  const staleTasksClosed = await repo.closeSettledClaimTasks();
+  // Housekeeping only: a failure here is logged and never fails the release step.
+  const staleTasksClosed = await closeSettledClaimTasksAtRelease(repo);
 
   const autoEnableCount = WORKFLOW_TEMPLATE_CATALOG.filter((t) => t.autoEnable).length;
   console.log(
@@ -74,7 +76,9 @@ async function main() {
     + `${autoEnableCount} auto-enable templates checked against ${companies.length} active companies, `
     + `${rulesCreated} rules created across ${companiesTouched} companies (admin-owned rules untouched), `
     + `${rulesResynced} sync-owned rules re-pinned to their catalog definition, `
-    + `${staleTasksClosed} approval tasks closed for claims no longer waiting for approval.`,
+    + (staleTasksClosed === null
+      ? 'closing stale approval tasks FAILED (see the error above).'
+      : `${staleTasksClosed} approval tasks closed for claims no longer waiting for approval.`),
   );
 }
 
