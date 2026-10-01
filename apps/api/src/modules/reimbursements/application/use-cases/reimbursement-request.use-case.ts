@@ -171,7 +171,11 @@ export class CreateReimbursementDraftUseCase {
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.create',
       targetType: 'reimbursement_request', targetId: created.id, requestId: ctx.requestId,
       result: 'SUCCESS', riskLevel: 'LOW',
-      metadataJson: { amount: created.amount, currency: created.currency, categoryKey: created.categoryKey, lineCount: input.lines.length },
+      metadataJson: {
+        amount: created.amount, currency: created.currency, categoryKey: created.categoryKey, lineCount: input.lines.length,
+        // The receiving choice and who typed an account. Nothing of the account itself.
+        ...(payout && { payout: payout.audit }),
+      },
     });
     return toRequestSummary(created, { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason });
   }
@@ -233,6 +237,8 @@ export class UpdateReimbursementDraftUseCase {
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.update_draft',
       targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
+      // A change of where the money goes is on record: the choice and who typed an account, never the account.
+      ...(payout && { metadataJson: { payout: payout.audit } }),
     });
     return toRequestSummary(updated, { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason });
   }

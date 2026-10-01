@@ -177,7 +177,7 @@ function fakeRepo(options: RepoOptions = {}) {
       if (!options.noDefaultPayout && !payout) request.payoutMethod = 'CASH';
       if (payout) {
         Object.assign(request, await applyDraftPayout(payoutDb, data.companyId, request.id, payout.write));
-        await payout.onPersisted?.(fakeTx(calls.outbox));
+        await payout.onPersisted?.(fakeTx(calls.outbox), request.id);
       }
       return request;
     },
@@ -185,7 +185,7 @@ function fakeRepo(options: RepoOptions = {}) {
       assert.equal(expectedUpdatedAt, request.updatedAt);
       if (payout) {
         Object.assign(request, await applyDraftPayout(payoutDb, companyId, id, payout.write));
-        await payout.onPersisted?.(fakeTx(calls.outbox));
+        await payout.onPersisted?.(fakeTx(calls.outbox), id);
       }
       Object.assign(request, data, { updatedAt: new Date(request.updatedAt.getTime() + 1) });
       if (lines) request.lines = lines.map((line: any, index: number) => ({
@@ -1720,7 +1720,7 @@ describe('payout: filing a claim on behalf of someone', () => {
   });
 
   it('lets the preparer type the requester account, records who typed it, and shows them the last 4 afterwards', async () => {
-    const world = payoutWorld();
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
     const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
     const forPreparer = (await world.detail.execute(financeCtx(), draft.id)).payout;
     assert.deepEqual([forPreparer?.source, forPreparer?.enteredByName, forPreparer?.accountLast4, forPreparer?.canRevealAccountNumber], ['PREPARER', 'อรทัย', '6789', false]);
@@ -1730,6 +1730,87 @@ describe('payout: filing a claim on behalf of someone', () => {
     assert.deepEqual([forRequester?.enteredByName, forRequester?.canRevealAccountNumber], ['อรทัย', true]);
     assert.equal((await world.reveal.execute(ctx(), draft.id)).accountNumber, '0123456789');
     assert.equal(world.state.payoutTables.accounts.length, 0, 'nobody default was set');
+  });
+
+  // Security review S2: the per-claim path told nobody. Whoever types where the requester's money
+  // goes on a claim filed for them is named to the requester, exactly as for a default account.
+  it('tells the requester, and nobody else, every time someone else types the account on their claim', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
+    assert.equal(world.notifications.length, 1);
+    const notice = world.notifications[0];
+    // To the requester alone: not the preparer, not the shop owner, not an approver.
+    assert.deepEqual(notice.recipientUserIds, ['staff-1']);
+    assert.equal(notice.title, 'อรทัย ระบุบัญชีรับเงินคืนในใบเบิกของคุณ');
+    assert.match(notice.body, /^ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 ระบุเมื่อ .+ ถ้าไม่ใช่บัญชีของคุณ เปิดใบเบิกแล้วแก้ได้ทันที$/);
+    assert.equal(notice.deepLinkHref, `/companies/co-1/reimbursements/${draft.id}`);
+    assert.deepEqual([notice.triggerKey, notice.severity, notice.sourceType, notice.sourceId], ['reimbursement.payout_account_set_by_other', 'critical', 'reimbursement_request', draft.id]);
+
+    // Changed again by the preparer: a notice of its own. Typed by the requester: none.
+    await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'SPECIFIED', ...PROMPTPAY } });
+    assert.equal(world.notifications.length, 2);
+    assert.match(world.notifications[1].body, /^พร้อมเพย์เบอร์ลงท้าย 5678 ระบุเมื่อ /);
+    assert.notEqual(world.notifications[1].periodKey, notice.periodKey);
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    // Cash, or following the requester's own default, types no account for anyone.
+    await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'CASH' } });
+    await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'DEFAULT' } });
+    assert.equal(world.notifications.length, 2);
+    assert.ok(world.notifications.every((entry) => entry.recipientUserIds.length === 1 && entry.recipientUserIds[0] === 'staff-1'));
+    assert.equal(leaksNumber(world.notifications), false);
+  });
+
+  it('types no account for a requester a notice cannot reach', async () => {
+    for (const membershipStatus of ['DRAFT', 'INVITED', 'SUSPENDED', 'DISABLED']) {
+      const world = payoutWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus } } });
+      const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1' }));
+      await assert.rejects(world.update.execute(financeCtx(), draft.id, { payout: { mode: 'SPECIFIED', ...KBANK } }), (error: any) => {
+        assert.equal(error.getStatus(), 409, membershipStatus);
+        assert.match(error.message, /^payout_account_member_not_active$/, membershipStatus);
+        return true;
+      });
+      assert.deepEqual([world.state.payoutTables.destinations.length, world.notifications.length, world.state.request.payoutMethod ?? null], [0, 0, null], membershipStatus);
+      // Cash and the requester's own default remain open: neither is an account someone typed for them.
+      await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'CASH' } });
+    }
+  });
+
+  it('records the receiving choice and who typed an account on the draft audit rows, never the account', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'CASH' } });
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'DEFAULT' } });
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...PROMPTPAY, saveAsDefault: true } });
+    await world.update.execute(ctx(), draft.id, { reason: 'แก้เหตุผลอย่างเดียว' });
+    const draftRows = world.audits.filter((row) => /^reimbursement\.request\.(create|update_draft)$/.test(row.action));
+    assert.deepEqual(draftRows.map((row) => [row.action.split('.').pop(), row.actorUserId, row.metadataJson?.payout]), [
+      ['create', 'finance-1', { mode: 'SPECIFIED', source: 'PREPARER' }],
+      ['update_draft', 'staff-1', { mode: 'SPECIFIED', source: 'REQUESTER' }],
+      ['update_draft', 'staff-1', { mode: 'CASH' }],
+      ['update_draft', 'staff-1', { mode: 'DEFAULT' }],
+      ['update_draft', 'staff-1', { mode: 'SPECIFIED', source: 'REQUESTER', savedAsDefault: true }],
+      // A draft edit that leaves the receiving choice alone says nothing about it.
+      ['update_draft', 'staff-1', undefined],
+    ]);
+    assert.equal(leaksNumber(world.audits), false);
+    assert.doesNotMatch(JSON.stringify(draftRows), /accountLast4|accountName|bankName|fingerprint|6789|9012|5678/);
+  });
+
+  it('still says someone else entered the account when their name can no longer be resolved', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
+    assert.deepEqual([(await world.detail.execute(ctx(), draft.id)).payout?.enteredByUserId, (await world.detail.execute(ctx(), draft.id)).payout?.enteredByName], ['finance-1', 'อรทัย']);
+    // The preparer has left the company: no name comes back for them.
+    delete PAYOUT_NAMES['finance-1'];
+    try {
+      const shown = (await world.detail.execute(ctx(), draft.id)).payout!;
+      assert.deepEqual([shown.source, shown.enteredByUserId, shown.enteredByName], ['PREPARER', 'finance-1', undefined]);
+    } finally { PAYOUT_NAMES['finance-1'] = 'อรทัย'; }
+    // The requester's own account carries neither.
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    const own = (await world.detail.execute(ctx(), draft.id)).payout!;
+    assert.deepEqual([own.source, own.enteredByUserId, own.enteredByName], ['REQUESTER', undefined, undefined]);
   });
 
   it('saves it as the requester default only for a preparer who may edit employee data, and tells the requester', async () => {
@@ -1836,14 +1917,40 @@ describe('payout: the claim is sent with the account its page showed (show befor
     assert.equal(world.state.request.status, 'DRAFT');
   });
 
-  it('takes the draft own choice without a token, and refuses a token that is not what the claim would freeze', async () => {
-    for (const payout of [{ mode: 'CASH' as const }, { mode: 'SPECIFIED' as const, ...KBANK }]) {
-      const world = payoutWorld();
-      const draft = await world.create.execute(ctx(), claimInput({ payout }));
-      await assert.rejects(world.submit.execute(ctx(), draft.id, { payoutSubmitToken: 'e'.repeat(32) }), /payout_destination_changed/);
-      // Cash, or an account typed into this claim, depends on nobody else's edit.
-      assert.equal((await world.submit.execute(ctx(), draft.id)).status, 'PENDING_APPROVAL');
+  it('takes cash the draft chose without a token, and refuses a token that is not what the claim would freeze', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'CASH' } }));
+    await assert.rejects(world.submit.execute(ctx(), draft.id, { payoutSubmitToken: 'e'.repeat(32) }), /payout_destination_changed/);
+    // Cash chosen on the claim itself depends on nothing that was shown and on nobody else's edit.
+    assert.equal((await world.submit.execute(ctx(), draft.id)).status, 'PENDING_APPROVAL');
+  });
+
+  // Security review S2: an account typed into the claim was sent blind. A preparer (or the requester
+  // in another tab) can change it between the page being read and the button being pressed, so a
+  // transfer is sent only with the token of the account that was on the page.
+  it('sends an account typed into the claim only with the token of the page that showed it', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK } }));
+    // A list-row submit, an older browser tab, a script: nothing was shown, nothing is sent.
+    for (const input of [undefined, null, {}, { payoutSubmitToken: 'e'.repeat(32) }]) {
+      await assert.rejects(world.submit.execute(ctx(), draft.id, input), (error: any) => {
+        assert.equal(error.getStatus(), 409);
+        assert.match(error.message, /^payout_destination_changed$/);
+        return true;
+      });
     }
+    // The requester reads the page; then someone who prepares claims for them types another account.
+    const seen = (await world.detail.execute(ctx(), draft.id)).payout!;
+    assert.deepEqual([seen.accountLast4, seen.followsDefault], ['6789', undefined]);
+    await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    await assert.rejects(world.submit.execute(ctx(), draft.id, { payoutSubmitToken: seen.submitToken }), /payout_destination_changed/);
+    assert.deepEqual([world.state.request.status, world.state.request.payoutFingerprint ?? null, world.state.payoutTables.destinations[0]!.frozenAt], ['DRAFT', null, null]);
+    // They look again, see the account now on the claim and who typed it, and send that.
+    const latest = (await world.detail.execute(ctx(), draft.id)).payout!;
+    assert.deepEqual([latest.accountLast4, latest.source, latest.enteredByName], ['9012', 'PREPARER', 'อรทัย']);
+    assert.notEqual(latest.submitToken, seen.submitToken);
+    const sent = await world.submit.execute(ctx(), draft.id, { payoutSubmitToken: latest.submitToken });
+    assert.deepEqual([sent.status, sent.payout?.accountLast4], ['PENDING_APPROVAL', '9012']);
   });
 });
 

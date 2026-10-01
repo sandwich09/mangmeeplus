@@ -137,7 +137,13 @@ export function claimPayoutView(detail: { status?: string; requesterUserId?: str
   const notes: string[] = [];
   if (payout.followsDefault) notes.push('ตามบัญชีรับเงินคืนประจำของผู้เบิก ใบนี้จะส่งด้วยบัญชีที่แสดงอยู่นี้ ถ้าบัญชีประจำถูกแก้ก่อนกดส่ง ระบบจะให้ตรวจบัญชีใหม่');
   else if (draft && payout.payoutMethod === 'BANK_TRANSFER') notes.push('บัญชีที่ระบุสำหรับใบนี้');
-  if (payout.enteredByName) notes.push(payout.followsDefault ? `บัญชีประจำนี้ตั้งโดย ${payout.enteredByName}` : `กรอกโดย ${payout.enteredByName}`);
+  // Someone other than the requester typed or set the account. It is said also when their name is
+  // no longer known (they left the company): silence would read as "the requester entered it".
+  if (payout.enteredByName || payout.enteredByUserId) {
+    notes.push(payout.followsDefault
+      ? `บัญชีประจำนี้ตั้งโดย${payout.enteredByName ? ` ${payout.enteredByName}` : 'ผู้อื่น'}`
+      : `กรอกโดย${payout.enteredByName ? ` ${payout.enteredByName}` : 'ผู้จัดทำ'}`);
+  }
   if (payout.payoutMethod === 'CASH') return { state: 'cash', line: PAYOUT_METHOD_TEXT.CASH!, notes };
   if (!draft) {
     notes.push(!payout.verifiedAt
@@ -163,11 +169,13 @@ export function payoutComparableText(claim: { payout?: ReimbursementPayoutSummar
 }
 
 /**
- * A draft row in a list carries no account. One that follows the requester's default (no method of
- * its own) is sent from its own page, where the account that will be frozen is shown first.
+ * A draft row in a list carries no account. Any draft that may be paid into one — it follows the
+ * requester's default (no method of its own), or an account was typed into it — is sent from its own
+ * page, where the account that will be frozen is shown first. Only cash the draft itself chose is
+ * sent from the row: the server asks for the page's token in every other case.
  */
 export function draftRowSubmitsFromItsPage(row: { payoutMethod?: string | null }): boolean {
-  return !row.payoutMethod;
+  return row.payoutMethod !== 'CASH';
 }
 
 /** Why "ส่งอนุมัติ" is not offered yet, as far as the payout goes; null when the payout is ready. */

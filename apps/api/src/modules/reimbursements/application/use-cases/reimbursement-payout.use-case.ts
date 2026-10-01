@@ -27,6 +27,9 @@ export const PAYOUT_ACCOUNT_SET_TRIGGER_KEY = 'reimbursement.payout_account_set_
 
 const UNNAMED_MEMBER = 'สมาชิกบริษัท';
 
+/** What a draft's audit row says about its receiving choice: the mode, and who typed an account. Never the account. */
+export type DraftPayoutAudit = { mode: 'DEFAULT' | 'CASH' | 'SPECIFIED'; source?: 'REQUESTER' | 'PREPARER'; savedAsDefault?: true };
+
 /** What an audit row may say about an account: kind, bank and the last 4 digits. Never the number. */
 function auditFacts(account: MemberPayoutAccountRecord | null) {
   return account
@@ -119,15 +122,46 @@ export class MemberPayoutAccountUseCase {
    * makes the typed account the REQUESTER's default (never the preparer's) and leaves the claim
    * following that default, in the same transaction as the draft.
    */
-  async draftPayoutChange(ctx: RequestContext, requesterUserId: string, input: ReimbursementPayoutInput): Promise<DraftPayoutChange> {
-    if (input.mode !== 'SPECIFIED') return { write: { mode: input.mode === 'CASH' ? 'CASH' : 'DEFAULT' } };
+  async draftPayoutChange(ctx: RequestContext, requesterUserId: string, input: ReimbursementPayoutInput): Promise<DraftPayoutChange & { audit: DraftPayoutAudit }> {
+    if (input.mode !== 'SPECIFIED') return { write: { mode: input.mode === 'CASH' ? 'CASH' : 'DEFAULT' }, audit: { mode: input.mode === 'CASH' ? 'CASH' : 'DEFAULT' } };
     const destination = this.seal(input);
-    if (!input.saveAsDefault) {
-      return { write: { mode: 'SPECIFIED', destination, source: requesterUserId === ctx.userId ? 'REQUESTER' : 'PREPARER', actorUserId: ctx.userId } };
+    const byRequester = requesterUserId === ctx.userId;
+    const source = byRequester ? 'REQUESTER' as const : 'PREPARER' as const;
+    if (input.saveAsDefault) {
+      if (byRequester) this.assertOwn(ctx);
+      else await this.assertMayEditMember(ctx, requesterUserId);
+      return {
+        write: { mode: 'DEFAULT' }, audit: { mode: 'SPECIFIED', source, savedAsDefault: true },
+        onPersisted: async (tx) => { await this.write(ctx, requesterUserId, 'BANK_TRANSFER', destination, tx); },
+      };
     }
-    if (requesterUserId === ctx.userId) this.assertOwn(ctx);
-    else await this.assertMayEditMember(ctx, requesterUserId);
-    return { write: { mode: 'DEFAULT' }, onPersisted: async (tx) => { await this.write(ctx, requesterUserId, 'BANK_TRANSFER', destination, tx); } };
+    const write = { mode: 'SPECIFIED' as const, destination, source, actorUserId: ctx.userId };
+    if (byRequester) return { write, audit: { mode: 'SPECIFIED', source } };
+    // Someone else types where the requester's money goes, on a claim filed for them. Same condition
+    // as for a default account: the requester is told, in the transaction that saves the draft, so
+    // the account cannot be on the claim without its notice — and only a member a notice can reach
+    // (an active one) may have an account typed for them at all.
+    if ((await this.repo.findPayoutMember(ctx.companyId, requesterUserId))?.membershipStatus !== 'ACTIVE') {
+      throw new ConflictException('payout_account_member_not_active');
+    }
+    const editorName = (await this.repo.getUserDisplayNames(ctx.companyId, [ctx.userId]))[ctx.userId] ?? UNNAMED_MEMBER;
+    return {
+      write, audit: { mode: 'SPECIFIED', source },
+      onPersisted: async (tx, requestId) => {
+        const at = new Date();
+        const when = at.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' });
+        // To the requester alone, never to the shop owner or anyone else. One notice per change: the
+        // period is the moment of this save. The last 4 digits only, and a link to the claim itself.
+        await this.notifications.executeInTransaction({
+          companyId: ctx.companyId, triggerKey: PAYOUT_ACCOUNT_SET_TRIGGER_KEY, sourceModule: 'reimbursements',
+          sourceType: 'reimbursement_request', sourceId: requestId, periodKey: at.toISOString(), severity: 'critical',
+          title: `${editorName} ระบุบัญชีรับเงินคืนในใบเบิกของคุณ`,
+          body: `${maskedPayoutAccount(destination)} ระบุเมื่อ ${when} ถ้าไม่ใช่บัญชีของคุณ เปิดใบเบิกแล้วแก้ได้ทันที`,
+          deepLinkHref: `/companies/${ctx.companyId}/reimbursements/${requestId}`,
+          recipientUserIds: [requesterUserId],
+        }, tx as never);
+      },
+    };
   }
 
   private assertOwn(ctx: RequestContext): void {

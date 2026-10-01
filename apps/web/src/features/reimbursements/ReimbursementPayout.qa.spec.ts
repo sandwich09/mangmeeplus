@@ -158,6 +158,9 @@ describe('what a claim says about where the money goes back to', () => {
     // An account typed for this claim, by the requester or by whoever prepared it.
     assert.deepEqual(draft({ ...transfer, source: 'REQUESTER' }).notes, ['บัญชีที่ระบุสำหรับใบนี้']);
     assert.deepEqual(draft({ ...transfer, source: 'PREPARER', enteredByName: 'วิภา' }).notes, ['บัญชีที่ระบุสำหรับใบนี้', 'กรอกโดย วิภา']);
+    // Their name can no longer be resolved (they left the company): it is still said that someone else did.
+    assert.deepEqual(draft({ ...transfer, source: 'PREPARER', enteredByUserId: ids.approver }).notes, ['บัญชีที่ระบุสำหรับใบนี้', 'กรอกโดยผู้จัดทำ']);
+    assert.equal(draft({ followsDefault: true, ...transfer, enteredByUserId: ids.approver }).notes[1], 'บัญชีประจำนี้ตั้งโดยผู้อื่น');
     // An action response carries no payout block for a draft: say nothing rather than call it legacy.
     assert.equal(logic.claimPayoutView({ status: 'DRAFT' }).state, 'unknown');
     assert.equal(card(claim({ status: 'DRAFT', payout: undefined })), '');
@@ -176,6 +179,7 @@ describe('what a claim says about where the money goes back to', () => {
     assert.match(sent({ verifiedByUserId: ids.approver, verifiedByName: 'สมศรี', verifiedAt: '2026-10-01T03:00:00.000Z' })[0]!, /^ตรวจบัญชีแล้วโดย สมศรี เมื่อ 1 ต\.ค\. 2569/);
     assert.match(sent({ verifiedByUserId: ids.requester, verifiedByName: 'สมชาย', verifiedAt: '2026-10-01T03:00:00.000Z' })[0]!, /^ผู้เบิกยืนยันบัญชีของตนเอง เมื่อ 1 ต\.ค\. 2569/);
     assert.deepEqual(sent({ source: 'PREPARER', enteredByName: 'วิภา' }), ['กรอกโดย วิภา', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    assert.deepEqual(sent({ source: 'PREPARER', enteredByUserId: ids.approver }), ['กรอกโดยผู้จัดทำ', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
     assert.deepEqual(logic.claimPayoutView(claim({ payout: { payoutMethod: 'CASH' } })), { state: 'cash', line: 'รับเป็นเงินสด', notes: [] });
     assert.deepEqual([logic.claimNeedsPayoutAttestation(claim()), logic.claimNeedsPayoutAttestation(claim({ payout: { payoutMethod: 'CASH' } }))], [true, false]);
   });
@@ -324,10 +328,14 @@ describe('a claim is sent with the account its page showed', () => {
     assert.ok(page.indexOf('<ClaimPayoutCard') < page.indexOf('cardActions.map(actionButton)'));
   });
 
-  it('sends a draft that follows the default from its own page, never from a list row', () => {
-    // A list row carries no account, so there is nothing on it to have been shown.
-    for (const row of [{}, { payoutMethod: undefined }, { payoutMethod: null }, { payoutMethod: '' }]) assert.equal(logic.draftRowSubmitsFromItsPage(row), true);
-    for (const payoutMethod of ['CASH', 'BANK_TRANSFER']) assert.equal(logic.draftRowSubmitsFromItsPage({ payoutMethod }), false, payoutMethod);
+  it('sends a draft paid into an account from its own page, never from a list row', () => {
+    // A list row carries no account, so there is nothing on it to have been shown: a draft that
+    // follows the default, one with an account typed into it, and a method added later all open the page.
+    for (const row of [{}, { payoutMethod: undefined }, { payoutMethod: null }, { payoutMethod: '' }, { payoutMethod: 'BANK_TRANSFER' }, { payoutMethod: 'A_METHOD_ADDED_LATER' }]) {
+      assert.equal(logic.draftRowSubmitsFromItsPage(row), true, String(row.payoutMethod));
+    }
+    // Only cash the draft itself chose depends on nothing shown.
+    assert.equal(logic.draftRowSubmitsFromItsPage({ payoutMethod: 'CASH' }), false);
     const hub = read('./ReimbursementsPages.tsx');
     assert.match(hub, /const submitRow = \(r: any\) => \(draftRowSubmitsFromItsPage\(r\)\s+\? onOpenDetail\(r\.id\)\s+: void action\(r\.id, \(\) => submitReimbursement\(companyId, r\.id\), 'ส่งขออนุมัติเรียบร้อยแล้ว'\)\);/);
     assert.equal(hub.match(/\{draftRowSubmitsFromItsPage\(r\) \? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'\}/g)?.length, 2, 'table row and phone card');
@@ -454,6 +462,8 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
     ['attestation', render(h(ui.PayoutAttestationCheck, { checked: true, onChange: noop }))],
     ['my account page', render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: true }))],
     ['my account page: no permission', render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: false }))],
+    // New screens go at the end: the phone check below names two of the screens above by position.
+    ['claim card: typed by a preparer whose name is gone', card(claim({ payout: { ...transfer, source: 'PREPARER', enteredByUserId: ids.approver } }))],
   ];
   // Texts that never pass through a render here: validation, the submit block and the server's refusals.
   const messages = [

@@ -235,8 +235,8 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
     setBusy(id); setError(null);
     try { await fn(); await load(); if (successMessage) toast.success(successMessage); } catch (e) { setError(approverNotReadyHelp(e, permissions)?.text ?? err(e)); } finally { setBusy(null); }
   };
-  // A draft that follows the requester's default account is sent from its own page: a row shows no
-  // account, and nobody sends a claim to an account they were not shown.
+  // A draft paid into an account (the requester's default, or one typed into the claim) is sent from
+  // its own page: a row shows no account, and nobody sends a claim to an account they were not shown.
   const submitRow = (r: any) => (draftRowSubmitsFromItsPage(r)
     ? onOpenDetail(r.id)
     : void action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'));

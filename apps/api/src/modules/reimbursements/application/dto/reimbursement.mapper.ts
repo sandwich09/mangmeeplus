@@ -212,10 +212,11 @@ export function toSignedCopySummaries(
 /** The masked payout block of a detail: bank, account name and last 4 digits, the same for every viewer. */
 export function toPayoutSummary(payout: ClaimPayoutRecord | undefined, names: Record<string, string> = {}): ReimbursementPayoutSummary | undefined {
   if (!payout) return undefined;
-  const { enteredByUserId, verifiedAt, ...shown } = payout;
+  const { verifiedAt, ...shown } = payout;
   return {
     ...shown,
-    ...(enteredByUserId && names[enteredByUserId] && { enteredByName: names[enteredByUserId] }),
+    // The id stays also when the name cannot be resolved, so the screen still says someone else entered it.
+    ...(payout.enteredByUserId && names[payout.enteredByUserId] && { enteredByName: names[payout.enteredByUserId] }),
     ...(verifiedAt && {
       verifiedAt: verifiedAt.toISOString(),
       ...(payout.verifiedByUserId && names[payout.verifiedByUserId] && { verifiedByName: names[payout.verifiedByUserId] }),

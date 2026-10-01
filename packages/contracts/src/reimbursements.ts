@@ -467,9 +467,10 @@ export type UpdateReimbursementDraftInput = {
 export type SubmitReimbursementRequestInput = {
   idempotencyKey?: string;
   /**
-   * `payout.submitToken` of the detail the submitter was looking at. Required when the claim's
-   * account comes from the requester's default: a submit that would freeze anything else than what
-   * was shown is refused with `payout_destination_changed`.
+   * `payout.submitToken` of the detail the submitter was looking at. Required whenever the claim is
+   * paid into an account (the requester's default or one typed into the claim) or follows the
+   * default: a submit that would freeze anything else than what was shown is refused with
+   * `payout_destination_changed`. Only cash chosen on the claim itself needs none.
    */
   payoutSubmitToken?: string;
 };
@@ -706,7 +707,8 @@ export type ReimbursementPayoutSummary = {
   source?: ReimbursementPayoutSource;
   /** Draft only: the account is read from the requester's default until submit freezes a copy. */
   followsDefault?: boolean;
-  /** Who typed or set the account, when it was not the requester. */
+  /** Who typed or set the account, when it was not the requester. The name is absent when it cannot be resolved (they left the company). */
+  enteredByUserId?: string;
   enteredByName?: string;
   /** The attestation of exactly this version ("ตรวจบัญชีแล้ว"); absent until someone attests it. */
   verifiedByUserId?: string;

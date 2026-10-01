@@ -102,8 +102,8 @@ function activeApproverMembershipWhere(
   };
 }
 
-/** A draft's receiving choice plus anything that must commit with it (setting the default account, its audit row). */
-export type DraftPayoutChange = { write: DraftPayoutWrite; onPersisted?: (tx: any) => Promise<void> };
+/** A draft's receiving choice plus anything that must commit with it (setting the default account, its audit row, the requester's notice). */
+export type DraftPayoutChange = { write: DraftPayoutWrite; onPersisted?: (tx: any, requestId: string) => Promise<void> };
 
 export type ListRequestsWhere = {
   companyId: string;
@@ -414,7 +414,7 @@ export class PrismaReimbursementRepository {
       await this.replaceLines(tx, data.companyId, created.id, data.lines);
       if (payout) {
         await tx.reimbursementRequest.update({ where: { id: created.id }, data: await applyDraftPayout(tx, data.companyId, created.id, payout.write) });
-        await payout.onPersisted?.(tx);
+        await payout.onPersisted?.(tx, created.id);
       }
       return created;
     });
@@ -448,7 +448,7 @@ export class PrismaReimbursementRepository {
         data: { ...data, ...payoutColumns, updatedAt: this.nextVersion(expectedUpdatedAt) },
       });
       if (changed.count !== 1) throw this.draftChanged();
-      await payout?.onPersisted?.(tx);
+      await payout?.onPersisted?.(tx, requestId);
       const sourceRequest = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId, id: requestId }, include: { lines: true } });
       await assertReimbursementSources(tx, { ...sourceRequest, lines: lines ?? sourceRequest.lines.map((line: any) => ({ ...line, sourceExpenseSnapshot: line.sourceExpenseSnapshotJson, attachmentSnapshot: line.attachmentSnapshotJson })) });
       if (lines) {

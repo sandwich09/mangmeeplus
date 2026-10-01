@@ -253,9 +253,11 @@ export async function freezePayoutAtSubmit(tx: any, claim: ClaimPayoutPointer, i
   // Every payout refusal on submit and approve is a 409: a browser tab opened before the release
   // has no words for these codes, and its text for a conflict is "load the latest and try again".
   if ('error' in plan) throw new ConflictException(plan.error);
-  // Show before freeze: an account taken from the default must be the one the submitter saw. A
-  // draft's own choice (cash, an account typed for this claim) only has to match when a token is sent.
-  if ((plan.followsDefault || input.seenToken != null) && input.seenToken !== payoutSubmitToken(claim.id, plan)) {
+  // Show before freeze: whatever account the claim is sent with must be the one the submitter saw,
+  // whether it comes from the default or was typed into this claim (by the requester in another tab,
+  // or by whoever prepared the claim for them). Only cash the draft itself chose depends on nothing
+  // that was shown, and has to match only when a token is sent.
+  if ((plan.followsDefault || plan.payoutMethod === 'BANK_TRANSFER' || input.seenToken != null) && input.seenToken !== payoutSubmitToken(claim.id, plan)) {
     throw new ConflictException('payout_destination_changed');
   }
   if (plan.payoutMethod === 'BANK_TRANSFER') {
