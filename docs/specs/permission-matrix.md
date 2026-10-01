@@ -565,8 +565,14 @@ left approved claims waiting at the payment step.
 - Additive and idempotent: a role that already holds a key is skipped, and nothing is ever revoked.
 - Anchored on `reimbursement.approve`: a role without it is never widened (finance reviewers, auditors and
   plain members keep exactly what they had).
-- Audited: each key added to a role writes one `access.role.update` audit row with actor `SYSTEM` in that
-  role's company (`metadataJson.source = sync-permissions`, the added key and the anchor).
+- Audited: each key added to a role writes one `access.role.update` audit row with actor `SYSTEM`
+  (`actorRefId = sync-permissions`) in that role's company, at the risk level the permission registry gives
+  the key (`reimbursement.payment.record` HIGH, `reimbursement.payment.void` CRITICAL), with
+  `metadataJson.source = sync-permissions`, the added key and the anchor. This holds for every entry of
+  `COMPANY_ROLE_BACKFILLS`, not only these two keys.
+- Which roles gain a key is read inside the serializable transaction that writes the grant and its audit
+  rows, so a role edited at that moment is neither granted against an anchor it just lost nor audited for
+  a grant somebody else made.
 - Consequence: a company role that keeps `reimbursement.approve` gets the two keys back on the next deploy
   if they are removed by hand.
 - Between deploys a role created or edited without the pay right can still be chosen as approver (routing

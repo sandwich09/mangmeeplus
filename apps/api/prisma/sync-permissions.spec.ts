@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { it } from 'node:test';
 import { syncPermissions } from './sync-permissions';
-import { REIMBURSEMENT_SELF_SERVICE_PERMISSIONS } from '../src/modules/auth/permission-registry';
+import { PERMISSIONS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS } from '../src/modules/auth/permission-registry';
+import { COMPANY_ROLE_BACKFILLS } from '../src/modules/employee-access/domain/registries/company-role-backfill.registry';
 import { PrismaPermissionResolverRepository } from '../src/modules/access-control/infrastructure/prisma-permission-resolver.repository';
 import { CAPABILITY_PACK_BY_KEY } from '../src/modules/employee-access/domain/registries/capability-pack.registry';
 import { RecordReimbursementPaymentUseCase } from '../src/modules/reimbursements/application/use-cases/reimbursement-finance.use-case';
@@ -50,10 +51,18 @@ function fakeDb(companyRoles: Array<CompanyRole & { holds: string[] }>, companie
     },
     company: { findMany: async ({ where }: any) => companies.filter((id) => where.id.in.includes(id)).map((id) => ({ id })) },
     auditLog: { createMany: async ({ data }: any) => { audits.push(...data); return { count: data.length }; } },
-    // The grant and its audit rows go in one batch transaction.
-    $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+    // The read of who gains a key, the grant and its audit rows share one serializable transaction.
+    $transaction: async (work: (tx: unknown) => Promise<unknown>, options: any) => {
+      assert.equal(options.isolationLevel, 'Serializable');
+      return work(tx);
+    },
   };
-  return { prisma: prisma as any, roles, grants, audits };
+  // Where the company roles are read from: the transaction that grants, or the bare client before it.
+  const roleReads = { outside: 0, inside: 0 };
+  const findRoles = prisma.role.findMany;
+  prisma.role.findMany = async (args: any) => { roleReads.outside += 1; return findRoles(args); };
+  const tx = { ...prisma, role: { ...prisma.role, findMany: async (args: any) => { roleReads.inside += 1; return findRoles(args); } } };
+  return { prisma: prisma as any, roles, grants, audits, roleReads };
 }
 
 it('backfills old custom/read-only roles idempotently and resolves feature-gated own service without new approval/payment authority', async () => {
@@ -164,10 +173,12 @@ it('adds the pay and void rights to company roles that approve reimbursements, a
     ['orphan', PAY[0], null], ['orphan', PAY[1], null],
   ].sort());
   assert.deepEqual(payAudits[0], {
-    companyId: 'co-1', actorType: 'SYSTEM', action: 'access.role.update', targetType: 'Role', targetId: 'approver-old',
+    companyId: 'co-1', actorType: 'SYSTEM', actorRefId: 'sync-permissions', action: 'access.role.update', targetType: 'Role', targetId: 'approver-old',
     requestId: 'sync-permissions:reimbursement.payment.record', result: 'SUCCESS', riskLevel: 'HIGH',
     metadataJson: { source: 'sync-permissions', addedPermissionKeys: ['reimbursement.payment.record'], anchor: 'reimbursement.approve' },
   });
+  // Before: every row said HIGH. The void right is CRITICAL in the registry, and so is the row that grants it.
+  assert.deepEqual([...new Set(payAudits.filter((row) => row.metadataJson.addedPermissionKeys[0] === PAY[1]).map((row) => row.riskLevel))], ['CRITICAL']);
 
   // A second deploy grants nothing and writes no audit row.
   const auditCount = audits.length;
@@ -176,4 +187,48 @@ it('adds the pay and void rights to company roles that approve reimbursements, a
   assert.deepEqual([...grants].map(([id, held]) => [id, [...held].sort()]), first);
   assert.equal(audits.length, auditCount);
   assert.match(report.join('\n'), /reimbursement\.payment\.record: \+0 of 3 matching company roles/);
+});
+
+// Review follow-up 2026-10-01: the audit claim covers every back-fill, not only the two pay keys. Whatever key the
+// sync adds to a company role is audited once, by the system, at the level the registry gives that key.
+it('audits every key it adds to a company role: one row per role and key, the registry\'s risk level, the system as actor, read inside the transaction', async () => {
+  const before: Array<CompanyRole & { holds: string[] }> = [
+    // Saved long ago: gains every universal key, and nothing anchored.
+    { id: 'custom-old', key: 'CUSTOM_ADMIN', scopeKey: 'co-1', companyId: 'co-1', holds: ['account.session.read'] },
+    // Holds three anchors: gains their keys too.
+    { id: 'finance-old', key: 'CUSTOM_FINANCE', scopeKey: 'co-2', companyId: 'co-2',
+      holds: ['account.session.read', 'expense.read', 'expense.void', 'reimbursement.approve', 'dashboard.read'] },
+    { id: 'orphan', key: 'CUSTOM_ADMIN', scopeKey: 'co-gone', companyId: 'co-gone', holds: ['reimbursement.approve'] },
+  ];
+  const { prisma, grants, audits, roleReads } = fakeDb(before, ['co-1', 'co-2']);
+  await syncPermissions(prisma, () => undefined);
+
+  const added = before.flatMap((role) => [...grants.get(role.id)!].filter((key) => !role.holds.includes(key)).map((key) => `${role.id} ${key}`));
+  assert.ok(added.includes('custom-old dashboard.read') && added.includes('finance-old expense.delete') && added.includes('orphan reimbursement.payment.void'));
+  assert.equal(added.includes('finance-old dashboard.read'), false, 'a key the role already held is not granted again');
+  // One audit row for each grant, and none for anything else.
+  assert.deepEqual(audits.map((row) => `${row.targetId} ${row.metadataJson.addedPermissionKeys.join(',')}`).sort(), [...added].sort());
+  const riskLevels = new Map(PERMISSIONS.map((permission) => [permission.key, permission.riskLevel]));
+  const companyOf = Object.fromEntries(before.map((role) => [role.id, role.companyId === 'co-gone' ? null : role.companyId]));
+  for (const row of audits) {
+    const key = row.metadataJson.addedPermissionKeys[0];
+    assert.deepEqual(
+      [row.actorType, row.actorRefId, row.actorUserId, row.action, row.targetType, row.result, row.riskLevel, row.companyId, row.requestId, row.metadataJson.source],
+      ['SYSTEM', 'sync-permissions', undefined, 'access.role.update', 'Role', 'SUCCESS', riskLevels.get(key), companyOf[row.targetId], `sync-permissions:${key}`, 'sync-permissions'],
+      `${row.targetId} ${key}`,
+    );
+  }
+  // The levels really differ by key: the same HIGH for all would pass nothing here.
+  const levelOf = (key: string) => audits.find((row) => row.metadataJson.addedPermissionKeys[0] === key)!.riskLevel;
+  assert.deepEqual([levelOf('reimbursement.payment.void'), levelOf('reimbursement.payment.record'), levelOf('account.password.change'), levelOf('dashboard.read')],
+    ['CRITICAL', 'HIGH', 'MEDIUM', riskLevels.get('dashboard.read')]);
+  assert.equal(levelOf('expense.delete'), 'CRITICAL');
+
+  // Who gains a key is read inside the transaction that grants it: one read per back-fill, none before it.
+  assert.deepEqual(roleReads, { outside: 0, inside: COMPANY_ROLE_BACKFILLS.length });
+
+  // A second deploy grants nothing and audits nothing.
+  const auditCount = audits.length;
+  await syncPermissions(prisma, () => undefined);
+  assert.equal(audits.length, auditCount);
 });
