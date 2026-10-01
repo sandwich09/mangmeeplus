@@ -1048,6 +1048,10 @@ export class PrismaReimbursementRepository {
           ...data.request,
           // The payout columns and the hash made from them, written by this submit and nothing else.
           ...(payout && { ...payout.columns, approvalSnapshotHash: snapshotHash }),
+          // A claim that is sent is in no payout account correction round. Written, not assumed: a build
+          // from before the round neither reads nor clears these columns, so a claim it returned to draft
+          // during a rollback still carries them, and they must never be read as a round again.
+          ...NO_PAYOUT_CORRECTION,
           requestNo: reserved.documentNumber,
           currentApprovalStepId: step?.id ?? null,
           updatedAt: this.nextVersion(data.expectedUpdatedAt),

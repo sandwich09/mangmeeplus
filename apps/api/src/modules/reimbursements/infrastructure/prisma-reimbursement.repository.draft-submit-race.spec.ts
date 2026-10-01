@@ -4118,6 +4118,46 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.deepEqual([await signaturesOf(signedThenWithdrawn.id), (await claimRow(signedThenWithdrawn.id)).status], [0, 'DRAFT']);
   });
 
+  // Final review S4: a build from before the correction round neither reads nor clears the round's columns.
+  it('sends a claim clear of a correction round an older build left on its row', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    // As a rollback leaves it: in a round under this build, returned to draft by the build before it,
+    // which resets what it knows of and leaves the rest.
+    const waiting = await waitingClaim();
+    await repos[0]!.reopenRejectedRequest(companyId, waiting.id, waiting.updatedAt, STAFF, 'PENDING_APPROVAL');
+    const history = [{ kind: 'SENT_BACK', at: day.toISOString(), byUserId: FIN, reasonCode: 'ACCOUNT_NUMBER_WRONG' }];
+    await db.reimbursementRequest.update({ where: { id: waiting.id }, data: {
+      payoutCorrectionRequestedAt: day, payoutCorrectionRequestedByUserId: FIN, payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG',
+      payoutCorrectionNote: 'จากรอบก่อน rollback', payoutCorrectionSubmittedAt: day, payoutCorrectionLogJson: history,
+    } });
+    const draft = (await repos[0]!.findRequestById(companyId, waiting.id))!;
+    assert.deepEqual([draft.status, draft.payoutCorrectionRequestedAt, draft.payoutCorrectionSubmittedAt], ['DRAFT', day, day]);
+
+    const requestSnapshotHash = computeSnapshotHash(claimSnapshotFields(draft));
+    await repos[0]!.submitDraftAtomic({
+      companyId, requestId: draft.id, expectedUpdatedAt: draft.updatedAt, duplicateCandidates: [], evidence: { attachmentIds: [], expenseIds: [] },
+      documentNumber: { documentType: 'reimbursement.request', periodKey, idempotencyKey: `reimb-submit:${draft.id}`, reservedByUserId: STAFF },
+      approvalStep: { sequenceNo: 1, approverUserId: MGR, approverRoleSnapshot: 'MANAGER', requestSnapshotHash },
+      request: { status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: STAFF, outstandingAmount: draft.amount, updatedByUserId: STAFF, approvalSnapshotHash: requestSnapshotHash },
+    } as any);
+
+    // Sent, and in no round: the five columns are written as empty by the submit itself. What happened stays on record.
+    const sent = await claimRow(waiting.id);
+    assert.deepEqual([sent.status, sent.payoutCorrectionRequestedAt, sent.payoutCorrectionRequestedByUserId, sent.payoutCorrectionReasonCode, sent.payoutCorrectionNote, sent.payoutCorrectionSubmittedAt, sent.payoutCorrectionLogJson],
+      ['PENDING_APPROVAL', null, null, null, null, null, history]);
+    // So it is an ordinary claim waiting for its approver, for every reader and every call.
+    const shown = await on(0).detail.execute(manager(), waiting.id);
+    assert.deepEqual([shown.payoutCorrectionPhase, shown.payoutCorrection, shown.currentDesk?.kind, shown.approvalActions], [undefined, undefined, 'APPROVER', { canApprove: true, canReject: true }]);
+    const pending = (await repos[0]!.findRequestById(companyId, waiting.id))!;
+    const decision = await repos[0]!.beginApprovalDecisionAtomic({
+      companyId, requestId: pending.id, expectedUpdatedAt: pending.updatedAt, expectedApprovalSnapshotHash: pending.approvalSnapshotHash,
+      actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, financeReviewRequired: false,
+      decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => undefined,
+    });
+    assert.equal(decision.resumed, false);
+  });
+
   // Final review S2: the step of a round keeps only those of the old step's people who are on today's approval route.
   it('asks only who is still on the approval route to approve a corrected account: a demoted approver cannot, and the owner can when nobody else is left', async (t) => {
     if (!reachable) return t.skip('no database reachable');
