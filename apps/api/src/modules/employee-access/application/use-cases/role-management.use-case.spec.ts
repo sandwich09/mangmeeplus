@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { NON_EDITABLE_ROLE_KEYS, SALES_ROLE_KEYS } from '@watchdog-bms/contracts';
 import { CreateRoleUseCase } from './create-role.use-case';
 import { GetRoleUseCase } from './get-role.use-case';
@@ -9,6 +9,7 @@ import { PreviewRoleUseCase } from './preview-role.use-case';
 import { UpdateRoleUseCase } from './update-role.use-case';
 import { DisableRoleUseCase } from './disable-role.use-case';
 import { compileRole } from '../../domain/logic/capability.logic';
+import { SYSTEM_ROLES } from '../../../auth/permission-registry';
 import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 
 const COMPANY_ID = 'company-1';
@@ -499,6 +500,35 @@ describe('CreateRoleUseCase', () => {
       requestingUserId: 'manager-1', requestId: 'req-plan-manager',
       granterPermissionKeys: ['company.plan.manage', 'access.role.manage'], isOwner: false,
     }), /requires the company owner/);
+  });
+
+  it('refuses a name that would give a custom role the key of a system or platform role', async () => {
+    const create = (prisma: any, companyId: string, name: string, roleTemplateKey?: string) => new CreateRoleUseCase(prisma).execute({
+      companyId, name, roleTemplateKey, permissionKeys: [REAL_PERMISSION], requestingUserId: 'owner-1', requestId: 'req-name', isOwner: true,
+    });
+    const reserved = (error: unknown) => {
+      assert.ok(error instanceof ConflictException);
+      assert.deepEqual(error.getResponse(), { code: 'role_name_reserved', message: 'ชื่อนี้ซ้ำกับบทบาทมาตรฐานของระบบ กรุณาใช้ชื่ออื่น' });
+      return true;
+    };
+    // Every system role, spelled the way a person would type it, plus the reported cases.
+    const names = [...SYSTEM_ROLES.map((role) => role.key.replaceAll('_', ' ').toLowerCase()), 'System Admin', 'OWNER', ' company-view ', 'Mangmee Sales'];
+    for (const companyId of [COMPANY_ID, PLATFORM_TENANT_ID]) {
+      for (const name of names) {
+        const { prisma, state } = makePrisma();
+        await assert.rejects(() => create(prisma, companyId, name), reserved, `${companyId}: ${name}`);
+        assert.deepEqual([state.roles, state.auditLogs], [[], []], `${name}: nothing was written`);
+      }
+    }
+    // A Thai name takes its key from the preset it names, and the preset key is free text.
+    for (const roleTemplateKey of ['tpl.x.system_admin', 'anything.owner', 'x.company_view', 'x.mangmee_sales_lead']) {
+      await assert.rejects(() => create(makePrisma().prisma, COMPANY_ID, 'ผู้ดูแล', roleTemplateKey), reserved, roleTemplateKey);
+    }
+
+    // What stays possible: the audit H-19 lookup for a catalogue preset, and any other name.
+    assert.equal((await create(makePrisma().prisma, COMPANY_ID, 'ผู้จัดการ', 'tpl.x.manager')).key, 'MANAGER');
+    assert.equal((await create(makePrisma().prisma, COMPANY_ID, 'Store Manager')).key, 'STORE_MANAGER');
+    assert.equal((await create(makePrisma().prisma, COMPANY_ID, 'Owner assistant')).key, 'OWNER_ASSISTANT');
   });
 });
 

@@ -111,6 +111,7 @@ describe('Thai coverage for default-open feature error codes', () => {
       ['missing_receipt_reason_required', /เหตุผลที่ไม่มีใบเสร็จ/],
       ['reimbursement_accrual_not_posted', /ก่อน/],
       ['employee_phone_conflict', /เบอร์โทรศัพท์/],
+      ['role_name_reserved', /ใช้ชื่ออื่น/],
       ['password_reuse', /รหัสผ่านเดิม/],
     ] as const) {
       const thai = translateApiError(code);
