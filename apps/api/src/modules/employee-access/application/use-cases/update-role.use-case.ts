@@ -4,10 +4,11 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { COMPANY_PERMISSION_KEYS } from '../../../auth/permission-registry';
 import { compileRole, hasNonCoreCapability } from '../../domain/logic/capability.logic';
-import { ownerGatedGrantViolation } from '../../domain/logic/employee-access.logic';
+import { ownerGatedGrantViolation, platformOnlyRoleRefused } from '../../domain/logic/employee-access.logic';
 import { ROLE_INCLUDE, toRoleSummary } from '../dto/employee-access.mapper';
 import { invalidateLineConversationState } from '../../../line-ai/application/line-conversation-context.service';
 import { lockPlanTermCompany } from '../../../system-partner-management/application/lock-plan-term-company';
+import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 
 export type UpdateRoleCommand = UpdateRoleInput & {
   companyId: string;
@@ -27,7 +28,9 @@ export class UpdateRoleUseCase {
       where: { id: cmd.roleId, OR: [{ scopeKey: 'system' }, { scopeKey: cmd.companyId }] },
       include: { permissions: { select: { permission: { select: { key: true } } } } },
     });
-    if (!existing) throw new NotFoundException('Role not found');
+    // RB-34: editing a system role forks it into a company role with the same key, so a shop that
+    // knew the id of a platform-only role could copy it into its own role list.
+    if (!existing || platformOnlyRoleRefused(existing.key, cmd.companyId === PLATFORM_TENANT_ID)) throw new NotFoundException('Role not found');
     if (existing.isSystem && NON_EDITABLE_ROLE_KEYS.some((key) => key === existing.key)) {
       throw new ForbiddenException('This role is managed by MangmeePlus and cannot be edited.');
     }

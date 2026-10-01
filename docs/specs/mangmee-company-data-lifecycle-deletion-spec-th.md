@@ -321,6 +321,35 @@ their own evidence** for a full-company irreversible deletion"
 
 → **โค้ดเข้มกว่านโยบายที่เอกสารกำหนดเอง** และเมื่อมีแอดมินคนเดียว (D3) เคสจะเดินไม่ได้เลย
 
+**แก้ไข 2026-10-02 — กฎชุดนี้ถูกบังคับซ้ำที่ฐานข้อมูลด้วย ไม่ใช่ที่ service อย่างเดียว**
+
+migration `20260809120000_data_rights_case_orchestration` สร้าง trigger ที่ปฏิเสธเองด้วย `SQLSTATE 55000`
+แม้ service จะยอมให้ผ่าน:
+
+| ที่ | กฎ | ข้อความที่ฐานข้อมูลตอบ |
+|---|---|---|
+| `enforce_data_rights_case_transition` (UPDATE `DataRightsCase`) | ผู้สร้างเคส ≠ ผู้อนุมัติ | `data-rights case requires an approver independent from its creator` |
+| เดียวกัน | ผู้อนุมัติ ≠ ผู้ลงมือ | `data-rights approver cannot execute the case` |
+| เดียวกัน | ผู้ลงมือ ≠ ผู้เริ่มตรวจสอบ | `data-rights execution requires an independent verifier` |
+| เดียวกัน | ผู้ลงมือ ≠ ผู้ปิดเคส | `data-rights executor cannot verify completion` |
+| `enforce_data_rights_evidence_phase` (INSERT `DataRightsEvidenceRecord`) | ผู้ลงมือ ≠ ผู้บันทึกหลักฐานตรวจอิสระ | `data-rights executor cannot provide independent verification` |
+
+ข้อสุดท้ายมีใน service ด้วย (`recordEvidence`, บรรทัด 508) จึงเป็น **5 กฎ ไม่ใช่ 4** ทั้งสองชั้น
+
+ผลที่ตามมา:
+
+- การผ่อนกฎใน `data-rights.service.ts` อย่างเดียว**ไม่ทำให้เคสเดินได้** — คำสั่ง UPDATE จะถูกฐานข้อมูลปฏิเสธ
+  และผู้ใช้จะเห็นข้อผิดพลาดของระบบแทนการอนุมัติ single-admin mode จึง**ต้องมี migration** ที่แทนที่ฟังก์ชัน
+  trigger ทั้งสองตัว ไม่ใช่งานแก้โค้ดอย่างเดียว และขึ้น production ผ่านเส้นทาง hotfix ไม่ได้
+- ชุดทดสอบของ service ใช้ฐานข้อมูลจำลองที่ไม่มี trigger จึงผ่านได้ทั้งที่ของจริงไม่ผ่าน —
+  งาน single-admin ต้องมีการทดสอบกับ Postgres จริงที่รัน migration นี้
+- แอดมินคนเดียวไปไม่ถึง `APPROVED` ด้วยซ้ำ (ติดที่กฎข้อแรก) ไม่ใช่ติดอยู่หลัง `APPROVED`
+- ขั้นต่ำที่ปิดเคสได้โดยไม่แก้อะไรคือ **คนจริงสองคน**: คนที่หนึ่งเปิดเคสและลงมือ คนที่สองอนุมัติ ตรวจสอบ และปิดเคส
+  (ยืนยันด้วยการรัน migration จริงใน Postgres ชั่วคราว 2026-10-02) — คนที่สองต้องเป็นบุคคลจริงอีกคน
+  ไม่ใช่บัญชีที่สองของคนเดิม (§8.3)
+- `apps/api/prisma/production-a5/reviewed-migration-catalog.ts` ตรึงค่า hash ของเนื้อฟังก์ชันทั้งสองไว้
+  ผู้เขียน migration ต้องตรวจว่ามีด่านใดยังรันการตรวจชุดนั้นซ้ำหรือไม่ก่อนแทนที่ฟังก์ชัน
+
 ### 8.2 การบล็อกไว้ไม่ได้ปลอดภัยกว่า
 
 โค้ดวันนี้ไม่ได้กันการลบที่ผิดพลาด มันกันการลบทุกกรณี
@@ -468,7 +497,7 @@ cascade ~162 relation ในทรานแซกชันเดียว = all-
 
 ### 11.5 Single-admin (§8)
 
-- [ ] แอดมินคนเดียวพาเคสจาก `RECEIVED` ถึง `COMPLETED_WITH_EXCEPTION` ได้จบ
+- [ ] แอดมินคนเดียวพาเคสจาก `RECEIVED` ถึง `COMPLETED_WITH_EXCEPTION` ได้จบ **บน Postgres จริงที่มี trigger ของ §8.1**
 - [ ] เคสที่ทำคนเดียวติดธง `selfExecuted` และธงนี้ปรากฏในจดหมายแจ้งผล
 - [ ] E1: รายงานเก่ากว่า 1 ชม. → execute ไม่ได้
 - [ ] E2: พิมพ์ชื่อร้านผิด → execute ไม่ได้

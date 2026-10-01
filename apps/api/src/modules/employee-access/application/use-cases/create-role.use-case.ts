@@ -1,10 +1,11 @@
 import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
-import type { CreateRoleInput, RoleDetail } from '@watchdog-bms/contracts';
+import { NON_EDITABLE_ROLE_KEYS, type CreateRoleInput, type RoleDetail } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
-import { COMPANY_PERMISSION_KEYS } from '../../../auth/permission-registry';
+import { COMPANY_PERMISSION_KEYS, PLATFORM_ONLY_ROLE_KEYS, SYSTEM_ROLES } from '../../../auth/permission-registry';
 import { compileRole, hasNonCoreCapability } from '../../domain/logic/capability.logic';
 import { ownerGatedGrantViolation } from '../../domain/logic/employee-access.logic';
+import { ROLE_TEMPLATE_BY_KEY } from '../../domain/registries/role-template.registry';
 import { ROLE_INCLUDE, toRoleSummary } from '../dto/employee-access.mapper';
 
 export type CreateRoleCommand = CreateRoleInput & {
@@ -44,11 +45,37 @@ export function roleKeyFromName(name: string, roleTemplateKey?: string): string 
   return asciiSlug(name) || asciiSlug(roleTemplateKey?.split('.').pop() ?? '') || 'ROLE';
 }
 
+const SYSTEM_ROLE_KEYS = new Set([...SYSTEM_ROLES.map((role) => role.key), ...PLATFORM_ONLY_ROLE_KEYS]);
+/** Keys that are never a company's own role, whatever they were derived from. */
+const NEVER_A_COMPANY_ROLE_KEY = new Set<string>([...NON_EDITABLE_ROLE_KEYS, ...PLATFORM_ONLY_ROLE_KEYS]);
+
+/**
+ * A new custom role may not take the key of a role the system defines. Owner checks, platform
+ * checks, approval routing and branch scope all compare role KEYS, and the key came from free text:
+ * a role named "System Admin" became `SYSTEM_ADMIN`, one named "Owner" became `OWNER`, and a Thai
+ * name sent with any made-up preset key took that key's last segment. A company changes a standard
+ * role by editing it, which copies it and moves its holders; a new role of the same name would
+ * hide the standard one from the role list while its holders kept the original.
+ *
+ * The one way to a system key is the H-19 lookup above: a name with no Latin letters borrows the
+ * key of a preset that exists in the catalogue. Those are ordinary company roles (MANAGER,
+ * FINANCE, …) and never an owner or platform key.
+ */
+export function reservedRoleKey(name: string, roleTemplateKey?: string): boolean {
+  const key = roleKeyFromName(name, roleTemplateKey);
+  if (!SYSTEM_ROLE_KEYS.has(key)) return false;
+  const borrowedFromPreset = roleKeyFromName(name) !== key && ROLE_TEMPLATE_BY_KEY.has(roleTemplateKey ?? '');
+  return !borrowedFromPreset || NEVER_A_COMPANY_ROLE_KEY.has(key);
+}
+
 @Injectable()
 export class CreateRoleUseCase {
   constructor(private readonly prisma: PrismaService) {}
 
   async execute(cmd: CreateRoleCommand): Promise<RoleDetail> {
+    if (reservedRoleKey(cmd.name, cmd.roleTemplateKey)) {
+      throw new ConflictException({ code: 'role_name_reserved', message: 'ชื่อนี้ซ้ำกับบทบาทมาตรฐานของระบบ กรุณาใช้ชื่ออื่น' });
+    }
     const rawKeys = cmd.permissionKeys ?? [];
     const knownKeys = new Set(COMPANY_PERMISSION_KEYS);
     const unknown = rawKeys.filter((k) => !knownKeys.has(k));

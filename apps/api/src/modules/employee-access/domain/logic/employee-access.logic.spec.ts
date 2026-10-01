@@ -12,9 +12,10 @@ import {
   normalizeIdentityNumber,
   ownerGatedGrantViolation,
   OWNER_LINE_LINK_TOKEN_TTL_MS,
+  platformOnlyRoleRefused,
   roleGrantViolation,
 } from './employee-access.logic';
-import { ROLE_GRANTS } from '../../../auth/permission-registry';
+import { PLATFORM_ONLY_ROLE_KEYS, PLATFORM_ROLE_KEYS, ROLE_GRANTS } from '../../../auth/permission-registry';
 
 const KEY = Buffer.from('a'.repeat(64), 'hex');
 
@@ -158,6 +159,23 @@ describe('employee-access.logic', () => {
     }
     // A shop role with the tenant key SALES is a different thing and stays assignable.
     assert.equal(roleGrantViolation([{ key: 'SALES', isSystem: true, permissionKeys: ['crm.customer.read'] }], [], undefined, true), undefined);
+  });
+
+  it('asks one question about one list wherever a platform-only role could reach a shop (RB-34)', () => {
+    // The list is the registry's, and it is the list the platform-role invariants are built from:
+    // a key added there is refused by every surface below without touching any of them.
+    assert.deepEqual([...PLATFORM_ONLY_ROLE_KEYS], ['MANGMEE_SALES_LEAD', 'MANGMEE_SALES']);
+    assert.deepEqual([...PLATFORM_ROLE_KEYS], ['SYSTEM_ADMIN', ...PLATFORM_ONLY_ROLE_KEYS]);
+    for (const key of PLATFORM_ONLY_ROLE_KEYS) {
+      assert.equal(platformOnlyRoleRefused(key, false), true, key);
+      assert.equal(platformOnlyRoleRefused(key, true), false, `${key} inside the platform company`);
+      // Decided by key, so a shop's own copy of the role (not a system row) is refused the same way.
+      assert.match(roleGrantViolation([{ key, isSystem: false, permissionKeys: [] }], [], undefined, true) ?? '', /platform company/, key);
+    }
+    // The tenant role SALES, and the roles other rules already protect, are not this rule's business.
+    for (const key of ['SALES', 'MANAGER', 'OWNER', 'SYSTEM_ADMIN', 'COMPANY_VIEW']) {
+      assert.equal(platformOnlyRoleRefused(key, false), false, key);
+    }
   });
 
   it('lets HR assign only the explicit operational role allowlist', () => {

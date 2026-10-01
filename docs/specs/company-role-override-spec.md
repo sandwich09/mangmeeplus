@@ -65,6 +65,44 @@ feature.
   permission"), unknown-key rejection, and `ownerGatedGrantViolation` all still apply to the
   resulting key set.
 
+### Platform-only roles and reserved role keys (added 2026-10-02, RB-34)
+
+Copy-on-write keeps the system role's `key`, and several checks compare role keys, so two more
+rules bound what a company may copy or create.
+
+- **R9.** A platform-only role does not exist for a company other than the platform company.
+  The list is `PLATFORM_ONLY_ROLE_KEYS` in `apps/api/src/modules/auth/permission-registry.ts`
+  (today the two Mangmee sales roles) and the single test is `platformOnlyRoleRefused(roleKey,
+  platformTenant)` in `employee-access.logic.ts`. It is asked by key, so it covers the system row
+  and a company copy that kept the key. A shop therefore cannot:
+  - list it (`ListRolesUseCase`, which the access matrix also reads);
+  - read it, preview it or edit it by id (`GetRoleUseCase`, `PreviewRoleUseCase`,
+    `UpdateRoleUseCase` answer `404 Role not found`, the same answer as an unknown id);
+  - assign it (`roleGrantViolation`, employee create and update);
+  - pick it as a reimbursement approver or route a claim to it
+    (`ListReimbursementApproverOptionsUseCase`).
+
+  A copy a shop made before the by-id routes refused it stays in the database and stays with any
+  employee who holds it, but it is no longer listed, editable, assignable or offered as an approver;
+  its `sales.*` permissions never did anything outside the platform company. It can still be
+  disabled by id. Inside the platform company nothing changes.
+
+  A new platform-only role (the executive-report role is the planned one) is defined like any system
+  role in `SYSTEM_ROLES` and `ROLE_GRANTS`, and its key is added to `PLATFORM_ONLY_ROLE_KEYS`. That
+  one list also feeds `PLATFORM_ROLE_KEYS`, so no other code changes.
+- **R10.** A new custom role may not take the key of a role the system defines. The key is derived
+  from the role's name (`roleKeyFromName`), so a role named "System Admin" used to get the key
+  `SYSTEM_ADMIN` and one named "Owner" the key `OWNER`. `CreateRoleUseCase` now refuses a name that
+  derives any `SYSTEM_ROLES` key or platform-only key with `409 role_name_reserved` and the message
+  "ชื่อนี้ซ้ำกับบทบาทมาตรฐานของระบบ กรุณาใช้ชื่ออื่น". A standard role is changed by editing it (R1),
+  which moves its holders; a new role of the same name would hide the standard one (R4) while its
+  holders kept the original.
+  - One exception stays (audit H-19): a name with no Latin letters takes the key of the preset it
+    was created from, for example `tpl.x.manager` gives `MANAGER`, because approval routing compares
+    that key. It applies only to a preset that exists in the catalogue (`roleTemplateKey` is free
+    text on the request) and never to `OWNER`, `SYSTEM_ADMIN`, `COMPANY_VIEW` or a platform-only key.
+  - Renaming a role never changes its key, so R10 is a rule of creation only.
+
 ### Deployment interaction
 
 `sync-permissions.ts` re-syncs system roles on every deploy. Overrides are company-scoped, so a
