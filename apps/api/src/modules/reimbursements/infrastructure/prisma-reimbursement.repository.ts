@@ -2330,6 +2330,12 @@ export class PrismaReimbursementRepository {
         where: { id, companyId },
         include: { _count: { select: { lines: true } } },
       });
+      // Going back to draft had no event at all, so the workflow module could not close the approval task (audit B8).
+      await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.reopened',
+        aggregateType: 'reimbursement_request', aggregateId: id, eventKey: `reimbursement.reopened:reimbursement_request:${id}:${row.updatedAt.toISOString()}`,
+        payloadJson: { companyId, actorUserId, aggregateType: 'reimbursement_request', aggregateId: id,
+          occurredAt: row.updatedAt.toISOString(), data: { requestId: id, status: 'DRAFT', previousStatus: expectedStatus } },
+        priority: 'NORMAL', status: 'PENDING' } });
       return this.toRequest(row);
     });
   }

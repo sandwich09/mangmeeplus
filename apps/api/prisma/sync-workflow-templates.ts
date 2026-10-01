@@ -13,6 +13,8 @@
  * (resyncWorkflowTemplateRulesForCompany) — otherwise a template fix only ever reaches companies
  * created after it. Rules an admin created or edited are skipped there too.
  *
+ * Last, it closes approval tasks whose claim no longer waits for approval (closeSettledClaimTasks).
+ *
  * Runs on production boot after migrate deploy + sync-permissions.
  */
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -62,12 +64,17 @@ async function main() {
     rulesResynced += (await resyncWorkflowTemplateRulesForCompany(repo, company.id)).length;
   }
 
+  // Audit B8: approval tasks left open for claims already approved, rejected or paid. Idempotent,
+  // so it runs every release: once to clear the backlog, then as the net under the event handler.
+  const staleTasksClosed = await repo.closeSettledClaimTasks();
+
   const autoEnableCount = WORKFLOW_TEMPLATE_CATALOG.filter((t) => t.autoEnable).length;
   console.log(
     `Workflow template sync complete: ${WORKFLOW_TEMPLATE_CATALOG.length} templates upserted, `
     + `${autoEnableCount} auto-enable templates checked against ${companies.length} active companies, `
     + `${rulesCreated} rules created across ${companiesTouched} companies (admin-owned rules untouched), `
-    + `${rulesResynced} sync-owned rules re-pinned to their catalog definition.`,
+    + `${rulesResynced} sync-owned rules re-pinned to their catalog definition, `
+    + `${staleTasksClosed} approval tasks closed for claims no longer waiting for approval.`,
   );
 }
 

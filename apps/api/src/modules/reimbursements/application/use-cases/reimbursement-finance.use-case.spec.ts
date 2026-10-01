@@ -551,6 +551,7 @@ function correctionRepositoryHarness(input: {
     lines: [],
   });
   const deleted = { signatures: 0, signedCopies: 0 };
+  const outbox: any[] = [];
   const steps: any[] = [{ id: 'step-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', status: input.stepStatus ?? 'PENDING' }];
   const candidates: any[] = input.candidates ?? [];
   const updateWhere = (rows: any[]) => async ({ where, data }: any) => {
@@ -561,6 +562,7 @@ function correctionRepositoryHarness(input: {
   const tx: any = {
     $executeRaw: async () => 1,
     reimbursementApprovalStep: { updateMany: updateWhere(steps) },
+    outboxEvent: { create: async ({ data }: any) => { outbox.push(data); return data; } },
     reimbursementDuplicateCandidate: { updateMany: updateWhere(candidates) },
     reimbursementPayment: { count: async () => input.recordedPayments ?? 0 },
     expenseRecord: { count: async () => input.liveProjections ?? 0 },
@@ -583,6 +585,7 @@ function correctionRepositoryHarness(input: {
     request,
     expectedUpdatedAt,
     deleted,
+    outbox,
     steps,
     candidates,
   };
@@ -637,6 +640,10 @@ describe('PrismaReimbursementRepository correction transitions', () => {
     assert.equal(h.request.approvalSnapshotHash, null);
     assert.deepEqual(h.deleted, { signatures: 1, signedCopies: 1 });
     assert.equal(h.steps[0].status, 'PENDING', 'reopening a refusal runs no approval-step write');
+    // Audit B8: going back to draft is an event now, so the workflow module can close the approval task.
+    assert.deepEqual(h.outbox.map((row) => [row.eventType, row.aggregateType, row.aggregateId, row.payloadJson.data]), [
+      ['reimbursement.reopened', 'reimbursement_request', 'rb-1', { requestId: 'rb-1', status: 'DRAFT', previousStatus: 'REJECTED' }],
+    ]);
   });
 
   it('withdraws an undecided claim to a draft under the same number and cancels its pending step', async () => {
@@ -655,6 +662,13 @@ describe('PrismaReimbursementRepository correction transitions', () => {
     assert.equal(h.steps[0].invalidatedReason, 'withdrawn_by_requester');
     assert.ok(h.steps[0].invalidatedAt instanceof Date);
     assert.deepEqual(h.deleted, { signatures: 1, signedCopies: 1 });
+    // Audit B8: written in the same transaction as the withdrawal, keyed by the claim's new version
+    // so a second withdrawal of the same claim is a second event.
+    assert.equal(h.outbox.length, 1);
+    assert.equal(h.outbox[0].eventType, 'reimbursement.reopened');
+    assert.equal(h.outbox[0].payloadJson.actorUserId, 'staff-1');
+    assert.equal(h.outbox[0].payloadJson.data.previousStatus, 'PENDING_APPROVAL');
+    assert.equal(h.outbox[0].eventKey, `reimbursement.reopened:reimbursement_request:rb-1:${h.request.updatedAt.toISOString()}`);
   });
 
   it('refuses to withdraw once an approver has decided, and leaves the claim as it was', async () => {
@@ -666,6 +680,7 @@ describe('PrismaReimbursementRepository correction transitions', () => {
     assert.equal(h.request.status, 'PENDING_APPROVAL');
     assert.equal(h.steps[0].status, 'APPROVED');
     assert.deepEqual(h.deleted, { signatures: 0, signedCopies: 0 });
+    assert.equal(h.outbox.length, 0, 'a refused withdrawal announces nothing');
   });
 
   it('clears open duplicate candidates at the payment step under the request lock and version check', async () => {
