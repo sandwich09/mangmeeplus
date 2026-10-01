@@ -142,6 +142,39 @@ describe('claim account number reveal: the requester, that claim approver, the p
     assert.equal(audits.length, 0);
   });
 
+  // Review finding 2026-10-01: the number must never be easier to reach than the claim it belongs to.
+  // The reveal used to ask a claim's approver for branch scope only, so an approver of the current
+  // round who had lost every way to read the claim was refused its page and still answered here.
+  it('requires the read access the claim detail requires, of every member of the reveal group', async () => {
+    const pending = { status: 'PENDING_APPROVAL', approvedAt: undefined, currentApprovalStepId: 'step-1' };
+    const pendingStep = { id: 'step-1', sequenceNo: 1, approverRoleSnapshot: 'MANAGER', assignedApproverUserIds: ['assignee-1'], status: 'PENDING', assignedAt: sentAt };
+    const cases: Array<[string, Record<string, unknown>, RequestContext, string[], boolean]> = [
+      // Every way to read the claim opens the number to its three groups.
+      ['requester reading their own claim', {}, requester, [], true],
+      ['approver who reads every claim', {}, approver, [], true],
+      ['approver left with the related view, and related to the claim', {}, viewer('approver-1', ['reimbursement.read_related']), ['approver-1'], true],
+      ['payer who reads every claim', {}, payer, [], true],
+      // The step waits for this person: that assignment is their way in, as it is on the claim page.
+      ['pending assignee with no permission left', { ...pending, approvalSteps: [pendingStep] }, viewer('assignee-1', []), [], true],
+      // No way to read the claim: no number either.
+      ['approver of the current round with no permission left', {}, viewer('approver-1', []), [], false],
+      ['approver of the current round left with the right to approve alone', {}, viewer('approver-1', ['reimbursement.approve', 'reimbursement.reject']), [], false],
+      ['approver left with the related view, and no longer related', {}, viewer('approver-1', ['reimbursement.read_related']), [], false],
+      ['approver left with the own view', {}, viewer('approver-1', ['reimbursement.read_own']), [], false],
+      ['approver moved to another branch', {}, viewer('approver-1', ['reimbursement.read', 'reimbursement.approve'], { scopes: { branchIds: ['branch-2'] } }), [], false],
+      ['requester with no permission left', {}, viewer('requester-1', []), [], false],
+      ['requester moved to another branch', {}, viewer('requester-1', ['reimbursement.read_own'], { scopes: { branchIds: ['branch-2'] } }), [], false],
+      ['payer left with the pay right alone', {}, viewer('payer-1', ['reimbursement.payment.record']), [], false],
+    ];
+    for (const [name, claim, who, related, allowed] of cases) {
+      const { reveal, detail, audits } = world(claim, { related });
+      const page = await detail.execute(who, 'reimbursement-1').then((shown) => shown, () => null);
+      const answered = await reveal.execute(who, 'reimbursement-1').then(() => true, () => false);
+      assert.deepEqual({ readsTheClaim: page !== null, button: page?.payout?.canRevealAccountNumber ?? false, answered }, { readsTheClaim: allowed, button: allowed, answered: allowed }, name);
+      assert.deepEqual(audits.map((row) => row.result), [allowed ? 'SUCCESS' : 'DENIED'], name);
+    }
+  });
+
   it('counts an approver by this claim: the pending assignee and the routed role, not every holder of the right', async () => {
     const pending = { status: 'PENDING_APPROVAL', approvedAt: undefined, currentApprovalStepId: 'step-1' };
     const assigned = world({ ...pending, approvalSteps: [{ id: 'step-1', sequenceNo: 1, approverRoleSnapshot: 'MANAGER', assignedApproverUserIds: ['assignee-1'], status: 'PENDING', assignedAt: sentAt }] });

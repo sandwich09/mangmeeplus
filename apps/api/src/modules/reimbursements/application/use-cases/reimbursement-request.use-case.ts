@@ -31,7 +31,6 @@ import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbur
 import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
 import { approvalDecisionActions } from './reimbursement-approval.use-case';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
-import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import {
   defaultChangedSinceSubmit, hasPayoutSnapshot, payoutRevealGroup, payoutSubmitToken,
   type PayoutRevealGroup, type SubmitPayoutColumns,
@@ -1003,15 +1002,18 @@ export async function claimPayoutRevealGroup(
   // A draft's own account, or the snapshot a sent claim froze. A legacy claim has neither.
   const hasClaimAccount = request.payoutMethod === 'BANK_TRANSFER' && request.payoutDestinationVersion != null
     && (isDraft || hasPayoutSnapshot(request));
-  // Everyone but the requester must hold the claim's branch, and has no business with a draft.
-  if (!hasClaimAccount || isRequester || isDraft || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) {
-    return payoutRevealGroup({ hasClaimAccount, isDraft, isRequester, isClaimApprover: false, canRecordPayment: false });
-  }
+  if (!hasClaimAccount) return null;
+  // The number is never easier to reach than the claim it belongs to: every group, the requester
+  // included, passes the gate the claim detail itself has (`assertCanReadRequestOrAssignment`):
+  // the claim's branch and a way to read it, or the pending step being theirs to decide. An approver
+  // of the current round who has since lost every way to read the claim is refused the detail, the
+  // slip and, here, the number.
   const actions = approvalActions ?? await approvalDecisionActions(ctx, request, repo);
-  const canRecordPayment = ctx.permissions.includes('reimbursement.payment.record')
-    && await assertCanReadRequest(ctx, request, repo).then(() => true, () => false);
+  const canRead = await assertCanReadRequest(ctx, request, repo).then(() => true, () => false);
+  if (!canRead && !actions.canApprove && !actions.canReject) return null;
   return payoutRevealGroup({
-    hasClaimAccount, isDraft, isRequester, canRecordPayment,
+    hasClaimAccount, isDraft, isRequester,
+    canRecordPayment: canRead && ctx.permissions.includes('reimbursement.payment.record'),
     // The approver this claim was sent to (pending step) or who approved it in this round — not
     // every holder of the approval permission. The same two facts, from the same resolver and the
     // same contracts rule, that `isReimbursementPayoutParty` reads for the payment slip: the reveal,
