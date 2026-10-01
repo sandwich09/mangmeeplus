@@ -563,6 +563,9 @@ left approved claims waiting at the payment step.
 
 - Applied by `prisma/sync-permissions.ts` on every deploy; no migration.
 - Additive and idempotent: a role that already holds a key is skipped, and nothing is ever revoked.
+- Granted once (owner decision 2026-10-01): a role the sync has already granted a key to is skipped on
+  every later deploy. The audit row of that grant is the record. A later removal by the company's admin
+  is respected: the key does not come back. This holds for every entry of `COMPANY_ROLE_BACKFILLS`.
 - Anchored on `reimbursement.approve`: a role without it is never widened (finance reviewers, auditors and
   plain members keep exactly what they had).
 - Audited: each key added to a role writes one `access.role.update` audit row with actor `SYSTEM`
@@ -571,10 +574,12 @@ left approved claims waiting at the payment step.
   `metadataJson.source = sync-permissions`, the added key and the anchor. This holds for every entry of
   `COMPANY_ROLE_BACKFILLS`, not only these two keys.
 - Which roles gain a key is read inside the serializable transaction that writes the grant and its audit
-  rows, so a role edited at that moment is neither granted against an anchor it just lost nor audited for
-  a grant somebody else made.
-- Consequence: a company role that keeps `reimbursement.approve` gets the two keys back on the next deploy
-  if they are removed by hand.
+  rows, so a grant never lands without its audit row. A role edited at that same moment is not covered:
+  the role editor's transaction is not serializable, so an edit that commits in between can leave the key
+  on a role that has just lost the anchor. The window is that one transaction at deploy time; saving the
+  role again rewrites its whole permission list.
+- Consequence: a company role whose admin removes the two keys by hand keeps `reimbursement.approve` and
+  no longer records or voids payments. ตั้งค่านโยบาย warns about such a role (next point).
 - Between deploys a role created or edited without the pay right can still be chosen as approver (routing
   needs only read, approve and reject). The approver-role option carries `canRecordPayment`, and ตั้งค่านโยบาย
   warns that such a role approves but cannot record payment while finance review is off. It never blocks
@@ -621,6 +626,19 @@ claim detail says to whom each is open (`pendingCancellation.canResume`, `pendin
 While a cancellation is pending every other decision on the claim is refused with
 `reimbursement_cancellation_pending`: edit, submit, approve, reject, finance review, duplicate resolution
 and payment. The approval queue lists no such claim.
+
+#### Voiding a payment that a bank statement line is matched to
+
+No new permission key (review fix 2026-10-01). `reimbursement.payment.void` alone undoes the confirmed bank
+match of the payment it voids: the match becomes VOIDED and the statement line's status is derived again, in
+the void's own transaction, and a `bank.match.void` audit row is written beside the `reimbursement.payment.void`
+one, both in the name of the person who voided. `bank.match.unmatch` is not asked for: a match has no meaning
+once its payment is voided, and the bank matching screen cannot reach a fully matched line to undo it there.
+
+- A line that sits in a COMPLETED reconciliation is refused (`reimbursement_payment_bank_reconciled`). Reopening
+  that reconciliation is the bank module's own act and needs `bank.reconciliation.reopen`.
+- In the other direction, `bank.match.confirm` refuses a claim payment that is no longer RECORDED
+  (`bank_match_payment_not_recorded`). The confirm reads the payment under the lock the void takes.
 
 #### Reimbursement payment slips
 

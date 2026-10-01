@@ -5,7 +5,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { reimbursementPaymentSlipRequired, todayCivilDate } from '@watchdog-bms/contracts';
+import { todayCivilDate } from '@watchdog-bms/contracts';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -36,6 +37,10 @@ import {
   buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
   savePaymentForm, slipTargetPayment, sumLineAmounts, type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip,
 } from './reimbursements.logic';
+import { PayerConfirmationCheck } from './ReimbursementPayout';
+import {
+  PAID_DIFFERENTLY_LABEL, PAYMENT_NO_CLAIM_ACCOUNT, paymentDestinationText, paymentFormPayout, requestedPayout,
+} from './reimbursement-payout.logic';
 
 export function StatusBadge({ status }: { status: string }) {
   return <MangmeeBadge tone={REQUEST_STATUS_TONES[status] ?? 'slate'}>{REQUEST_STATUS_LABELS[status] ?? '—'}</MangmeeBadge>;
@@ -310,9 +315,15 @@ function SignedCopyDialog({ requestNo, fileName, onClose, onSend }: {
  */
 export function PaymentForm({ companyId, request, onCancel, onDone }: { companyId: string; request: any; onCancel: () => void; onDone: () => void }) {
   const toast = useToast();
-  // The payer states the method (owner 2026-10-01): a transfer saved under a pre-selected เงินสด is recorded
-  // wrongly and without its slip. Phase 1 seam: start from the claim's own payout method here, once a claim carries one.
-  const [form, setForm] = useState({ paidAmount: String(request.outstandingAmount), paymentMethod: '', paidAt: todayCivilDate(), paymentReference: '' });
+  // The method starts from what the requester asked for (spec §12.2): the claim's own receiving method.
+  // A legacy claim asked for nothing, so nothing is chosen for its payer. เงินสด is never a fallback
+  // (owner 2026-10-01): a transfer saved under a pre-selected เงินสด is recorded wrongly and without its slip.
+  const [form, setForm] = useState({
+    paidAmount: String(request.outstandingAmount), paymentMethod: requestedPayout(request)?.payoutMethod ?? '', paidAt: todayCivilDate(), paymentReference: '',
+  });
+  // What the payer says about the account: the tick is kept with the key of the account it was given
+  // for, so it is no tick for another account version, another default or another method.
+  const [payer, setPayer] = useState({ confirmedFor: '', mismatchReason: '' });
   const [slip, setSlip] = useState<PaymentFormSlip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -320,12 +331,15 @@ export function PaymentForm({ companyId, request, onCancel, onDone }: { companyI
   // second one, and its in-flight flag makes a second press before the first has finished do nothing.
   const session = useRef<PaymentFormSession>({ idempotencyKey: null, saving: false });
   const attached = paymentSlipChoices(request);
-  const slipRequired = reimbursementPaymentSlipRequired(form.paymentMethod);
+  // One rule for the fields shown and the payment the API takes (`reimbursementPaymentRule`): the
+  // slip, the confirmation of the account and the reason for another method than the one asked for.
+  const payout = paymentFormPayout(request, form.paymentMethod);
+  const slipRequired = payout.rule.slipRequired;
   const chosen = slip && 'attachmentId' in slip ? attached.find((choice) => choice.attachmentId === slip.attachmentId) : undefined;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const result = await savePaymentForm({ form, outstandingAmount: String(request.outstandingAmount), slip, session: session.current }, {
+    const result = await savePaymentForm({ form, outstandingAmount: String(request.outstandingAmount), slip, session: session.current, payout, payer }, {
       uploadSlip: (file) => uploadReimbursementPaymentSlip(companyId, request.id, file),
       recordPayment: (body) => recordReimbursementPayment(companyId, request.id, body),
       // Kept once uploaded: if saving then fails, the retry sends this same slip instead of uploading again.
@@ -340,7 +354,6 @@ export function PaymentForm({ companyId, request, onCancel, onDone }: { companyI
   return (
     <form className="space-y-3" onSubmit={submit}>
       <p className="text-xs text-gray-500">จ่ายเต็มจำนวนคงค้าง {formatMoney(request.outstandingAmount, request.currency)}</p>
-      {/* Phase 1 seam: the verified payout account and the payer's confirmation render here, above the fields. */}
       <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">จำนวนเงิน *</label><input className={inputClass} type="number" step="0.01" required value={form.paidAmount} onChange={e => setForm(f => ({ ...f, paidAmount: e.target.value }))} /></div>
       <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วิธีจ่าย *</label>
         <ThemedSelect className={inputClass} aria-label="วิธีจ่าย" required value={form.paymentMethod} onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}>
@@ -348,6 +361,18 @@ export function PaymentForm({ companyId, request, onCancel, onDone }: { companyI
           {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </ThemedSelect>
       </div>
+      {/* Spec §12.4: paying another way than the requester asked is allowed, and says why. */}
+      {payout.rule.mismatchReasonRequired && (
+        <div data-testid="reimbursement-payment-mismatch">
+          <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="reimbursement-payment-mismatch-reason">เหตุผลที่จ่ายต่างจากที่ผู้เบิกขอ *</label>
+          <textarea id="reimbursement-payment-mismatch-reason" className={cx(inputClass, 'min-h-20 resize-y')} aria-required maxLength={REASON_MAX_LENGTH} disabled={busy}
+            value={payer.mismatchReason} onChange={e => setPayer(p => ({ ...p, mismatchReason: sanitizeReasonInput(e.target.value) }))}
+            placeholder="เช่น ผู้เบิกขอรับเป็นเงินสดแทน" />
+          <p className="mt-1 text-xs leading-5 text-gray-500">
+            ผู้เบิกขอ{payout.requestedMethodText} ประวัติการจ่ายจะแสดงว่า{PAID_DIFFERENTLY_LABEL} พร้อมเหตุผลนี้ อย่าพิมพ์เลขบัญชีในช่องนี้
+          </p>
+        </div>
+      )}
       <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่จ่าย *</label><ThemedDate className={inputClass} required value={form.paidAt} onChange={e => setForm(f => ({ ...f, paidAt: e.target.value }))} /></div>
       <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">เลขอ้างอิง {(form.paymentMethod === 'BANK_TRANSFER' || form.paymentMethod === 'CHEQUE') && '*'}</label><input className={inputClass} aria-label="เลขอ้างอิง" value={form.paymentReference} onChange={e => setForm(f => ({ ...f, paymentReference: e.target.value }))} /></div>
       <div data-testid="reimbursement-payment-slip">
@@ -374,6 +399,11 @@ export function PaymentForm({ companyId, request, onCancel, onDone }: { companyI
           </div>
         )}
       </div>
+      {/* Spec §12.3: the transfer went into the account shown. Given per account, never carried over to another. */}
+      {payout.confirmation && (
+        <PayerConfirmationCheck confirmation={payout.confirmation} checked={payer.confirmedFor === payout.confirmation.key} disabled={busy}
+          onChange={(checked) => setPayer(p => ({ ...p, confirmedFor: checked ? payout.confirmation!.key : '' }))} />
+      )}
       {error && <ErrorBanner message={error} />}
       <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button><button type="submit" className={btnClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกจ่าย'}</button></div>
     </form>
@@ -864,6 +894,19 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                 </div>
                 <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? '—'} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : PAYMENT_STATUS_LABELS[p.status] ?? 'สถานะการจ่าย'}</div>
                 <div className="mt-1 break-words text-gray-500">{`วันที่จ่าย ${dateShort(p.paidAt)}${p.paymentReference ? ` · เลขอ้างอิง ${p.paymentReference}` : ''}`}</div>
+                {/* Where the money went, as the payer confirmed it: masked for everyone, and when they confirmed.
+                    A transfer with no account confirmed says so (a legacy claim, or a claim that asked for cash). */}
+                {paymentDestinationText(p) ? (
+                  <div className="mt-1 break-words text-gray-500">
+                    {`โอนเข้า ${paymentDestinationText(p)}${p.payoutConfirmedAt ? ` · ยืนยันเมื่อ ${formatThaiDateTime(p.payoutConfirmedAt)}` : ''}`}
+                  </div>
+                ) : p.paymentMethod === 'BANK_TRANSFER' && <div className="mt-1 text-gray-500">{PAYMENT_NO_CLAIM_ACCOUNT}</div>}
+                {p.methodMismatchReason && (
+                  <div className="mt-1 break-words text-gray-600">
+                    <MangmeeBadge tone="amber">{PAID_DIFFERENTLY_LABEL}</MangmeeBadge>
+                    <span className="ml-2">เหตุผล: {p.methodMismatchReason}</span>
+                  </div>
+                )}
                 {p.paidByName && <div className="mt-1 text-gray-500">จ่ายโดย {p.paidByName}</div>}
                 {slipCount > 0 ? (
                   <div className="mt-1">

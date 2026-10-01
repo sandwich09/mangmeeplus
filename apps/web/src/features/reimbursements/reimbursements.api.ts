@@ -57,17 +57,18 @@ export function listReimbursements(companyId: string, params?: Record<string, un
  * Asks for one page of a hub list and hands it over, unless the caller has let go of the request by then:
  * the function returned is that letting go. The hub lets go when it asks for another list, reloads or
  * unmounts, so an answer that arrives late changes nothing. `filter` is "ทั้งหมด" or one bucket; the API
- * filters by it and counts the whole scope in the same answer.
+ * filters by it and counts the whole scope in the same answer. `search` is the text of the search box:
+ * the API searches, and its counts are then of what the search found.
  */
 export function loadHubPage(
   companyId: string,
-  params: { scope?: string; filter: HubFilter; page: number },
+  params: { scope?: string; filter: HubFilter; search?: string; page: number },
   handlers: { onPage: (result: any) => void; onError: (error: unknown) => void },
 ): () => void {
   let held = true;
   // `.catch` after `.then`, so a page the caller cannot take is reported like a page that did not arrive.
   listReimbursements(companyId, {
-    scope: params.scope, bucket: params.filter === 'all' ? undefined : params.filter, page: params.page, pageSize: HUB_PAGE_SIZE,
+    scope: params.scope, bucket: params.filter === 'all' ? undefined : params.filter, search: params.search, page: params.page, pageSize: HUB_PAGE_SIZE,
   })
     .then((result) => {
       // The cards are the server's counts: an answer without them is not shown as a scope of zero claims.
@@ -195,8 +196,11 @@ export function listFinanceQueue(companyId: string) {
 export function financeReviewReimbursement(companyId: string, id: string, body: Record<string, unknown>) {
   return apiFetch<any>(`${base(companyId)}/${id}/finance-review`, { method: 'POST', body: JSON.stringify(body) });
 }
+// No global error toast: the payment form says, in its own banner, what happened and the one thing
+// to do next. A second, generic sentence beside it is how a payer came to be told to reload the page
+// and to press save again at once.
 export function recordReimbursementPayment(companyId: string, id: string, body: Record<string, unknown>) {
-  return apiFetch<any>(`${base(companyId)}/${id}/payments`, { method: 'POST', body: JSON.stringify(body) });
+  return apiFetch<any>(`${base(companyId)}/${id}/payments`, { method: 'POST', body: JSON.stringify(body), suppressErrorToast: true });
 }
 export function voidReimbursementPayment(companyId: string, id: string, paymentId: string, reason: string) {
   return apiFetch<any>(`${base(companyId)}/${id}/payments/${paymentId}/void`, { method: 'POST', body: JSON.stringify({ reason }) });

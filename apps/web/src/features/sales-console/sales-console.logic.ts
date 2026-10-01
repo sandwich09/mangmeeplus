@@ -3,8 +3,10 @@
 // every conversion, guardrail and label lives here where a unit test can hold it.
 import {
   MENU_ENTITLEMENT_BINDINGS,
+  parentFeatureKey,
   PLAN_TIER_PRESETS,
   planTermStateLabel,
+  salesDealFeatureKeys,
   SALES_CODE_PATTERN,
   SALES_DEAL_OPEN_STATUSES,
   SALES_DEAL_CYCLES_MAX,
@@ -385,6 +387,11 @@ export function isMenuSelected(featureKeys: readonly string[], binding: MenuEnti
 /**
  * Turning a menu off may not strip a parent another selected menu still needs — `crm` backs both
  * กล่องข้อความ and ลูกค้า, so a naive removal silently disabled the sibling the เซลล์ had just sold.
+ *
+ * B3: turning a menu on sells its submenus with it (`salesDealFeatureKeys`, the rule the server
+ * saves by). The picker has no submenu switches, and paying a deal writes every key that is not in
+ * the list as OFF — so the parent key alone, which is all a tap after "ล้างทั้งหมด" used to add,
+ * left the shop with the menu and none of its screens. A parent that goes takes its submenus too.
  */
 export function toggleMenuSelection(
   featureKeys: readonly string[],
@@ -392,13 +399,13 @@ export function toggleMenuSelection(
   next: boolean,
 ): string[] {
   const parent = binding.parentFeatureKey;
-  if (next) return [...new Set([...featureKeys, ...(parent ? [parent] : []), ...binding.entitlementKeys])];
+  if (next) return salesDealFeatureKeys([...featureKeys, ...(parent ? [parent] : []), ...binding.entitlementKeys]);
   const remaining = featureKeys.filter((key) => !binding.entitlementKeys.includes(key));
   const parentStillNeeded = parent !== null && SALES_DEAL_MENU_BINDINGS.some(
     (other) => other.navKey !== binding.navKey && other.parentFeatureKey === parent
       && other.entitlementKeys.some((key) => remaining.includes(key)),
   );
-  return parent !== null && !parentStillNeeded ? remaining.filter((key) => key !== parent) : remaining;
+  return parent !== null && !parentStillNeeded ? remaining.filter((key) => parentFeatureKey(key) !== parent) : remaining;
 }
 
 // ── warnings (never blocks; D1 says the price is free and Q5 says a running shop is allowed) ──

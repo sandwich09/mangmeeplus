@@ -60,6 +60,9 @@ class ListItemsQueryDto {
  * Internal system-admin surface (spec §16). Every route carries the same CRITICAL permission:
  * the holder rewrites the legal tax identity, VAT facts and branch codes of ANY tenant company,
  * which is a wider authority than creating one.
+ *
+ * The target company is `:partnerCompanyId`, never `:companyId`: AuthGuard reads a parameter of
+ * that name as the caller's own company, where the admin has no membership (RB-40).
  */
 @Controller('system/identity-reconciliation')
 @RequirePermissions('system.identity_reconciliation.resolve')
@@ -70,10 +73,10 @@ export class SystemIdentityReconciliationController {
     private readonly resolve: ResolveIdentityReconciliationUseCase,
   ) {}
 
-  @Post('companies/:companyId/generate')
+  @Post('companies/:partnerCompanyId/generate')
   @HttpCode(200)
   @ApiOperation({ summary: 'Generate reconciliation items for one company (writes no domain data)' })
-  async generateForCompany(@Param('companyId') companyId: string) {
+  async generateForCompany(@Param('partnerCompanyId') companyId: string) {
     return this.generate.execute(companyId);
   }
 
@@ -116,11 +119,11 @@ export class SystemIdentityReconciliationController {
     return this.resolve.resolveVatHint(req.context, itemId, dto);
   }
 
-  @Post('companies/:companyId/repair-tax-id')
+  @Post('companies/:partnerCompanyId/repair-tax-id')
   @HttpCode(200)
   @ApiOperation({ summary: 'Repair a tax id typo without creating a legal-date fence (post-B2 route)' })
   async repairTaxId(
-    @Param('companyId') companyId: string,
+    @Param('partnerCompanyId') companyId: string,
     @Body() dto: RepairTaxIdDto,
     @Req() req: Request & { context: RequestContext },
   ) {

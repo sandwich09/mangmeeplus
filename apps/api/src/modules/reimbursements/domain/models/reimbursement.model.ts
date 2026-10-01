@@ -84,6 +84,11 @@ export type ReimbursementPaymentRecord = {
   /** The slip the payment was recorded with; later slips exist only as links. */
   slipAttachmentId?: string;
   slipChecksumSha256?: string;
+  /** The claim's account version the transfer was confirmed into (on a legacy claim, the copy made at payment). */
+  payoutDestinationVersion?: number;
+  payoutConfirmedAt?: Date;
+  /** Why the method differs from the one the requester asked for; set exactly when it does. */
+  methodMismatchReason?: string;
   sourcePaymentRef: string;
   status: 'RECORDED' | 'VOIDED';
   voidedAt?: Date;

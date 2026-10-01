@@ -26,6 +26,7 @@ import { resolveTransactionBranchId, requireTransactionBranchId } from '../../da
 import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 import { assertActiveExpenseBranch, expenseRelatedToUserWhere } from '../../expenses/infrastructure/prisma-expense.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
+import { calculateStatementLineMatchStatus } from '../../banking/domain/logic/banking.logic';
 import type {
   ReimbursementPolicyRecord,
   ReimbursementRequestRecord,
@@ -87,6 +88,12 @@ import {
   applyDraftPayout, attestClaimPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit,
   readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan,
   writeMemberPayoutAccount, type DraftPayoutWrite, type MemberPayoutAccountRecord,
+} from './reimbursement-payout';
+// The payment step's side of the payout (kept as its own imports, apart from the block above).
+import { planPaymentPayout, type PaymentPayoutPlan, type PaymentPayoutStatement } from '../domain/logic/payout-destination.logic';
+import {
+  assertPaymentPayoutUsable, confirmPaymentPayout, paymentPayoutRefusal, readLegacyPayoutDefault, readPaymentPayoutDestinations, readRecordedPaymentPayout,
+  type ConfirmedPaymentPayout,
 } from './reimbursement-payout';
 import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
 
@@ -181,6 +188,25 @@ export function hubBucketWhere(bucket: string): Prisma.ReimbursementRequestWhere
     OR: Object.values(RequestStatuses).flatMap((status) => {
       const finance = Object.values(FinanceReviewStatuses).filter((financeReviewStatus) => hubBucketOfStatus(status, financeReviewStatus) === bucket);
       return finance.length > 0 ? [{ status, financeReviewStatus: { in: finance } }] : [];
+    }),
+  };
+}
+
+/**
+ * What the hub's search box finds: every word typed is in the claim's number, its requester's name, its
+ * reason or its category, or is its amount. Those are the columns a row prints and a person can type;
+ * the status is what the chips filter. Read by the page and by the counts alike.
+ * ponytail: the first five words are read; a longer search ignores the rest.
+ */
+export function hubSearchWhere(search: string): Prisma.ReimbursementRequestWhereInput {
+  return {
+    AND: search.split(/\s+/).filter(Boolean).slice(0, 5).map((word) => {
+      const contains = { contains: word, mode: 'insensitive' as const };
+      const amount = word.replace(/,/g, '');
+      return { OR: [
+        { requestNo: contains }, { requesterDisplayNameSnapshot: contains }, { reason: contains }, { categoryLabelSnapshot: contains },
+        ...(/^\d{1,12}(\.\d{1,4})?$/.test(amount) ? [{ amount }] : []),
+      ] };
     }),
   };
 }
@@ -1408,6 +1434,26 @@ export class PrismaReimbursementRepository {
     return readSubmitPayoutPlan(this.prisma.client, request);
   }
 
+  /** A legacy claim's payer only: the requester's default account as it is now, masked (spec §15). */
+  findLegacyPayoutDefault(request: ReimbursementRequestRecord) {
+    return readLegacyPayoutDefault(this.prisma.client, request);
+  }
+
+  /** The masked accounts a claim's payments were confirmed into, by account version. */
+  listPaymentPayoutDestinations(companyId: string, requestId: string, versions: readonly number[]) {
+    return readPaymentPayoutDestinations(this.prisma.client, companyId, requestId, versions);
+  }
+
+  /** Friendly preflight of the payout proof that `recordPaymentAtomic` repeats under the payment lock. */
+  assertPaymentPayoutUsable(request: ReimbursementRequestRecord, plan: PaymentPayoutPlan): Promise<void> {
+    return assertPaymentPayoutUsable(this.prisma.client, request, plan);
+  }
+
+  /** A recorded payment's account as a payment request states it: see `isSamePaymentRequest`. */
+  findRecordedPaymentPayout(request: ReimbursementRequestRecord, payment: ReimbursementPaymentRecord) {
+    return readRecordedPaymentPayout(this.prisma.client, request, payment);
+  }
+
   private async lockRequest(tx: any, companyId: string, requestId: string): Promise<void> {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${requestId}:reimbursement-request`}))`;
   }
@@ -2619,13 +2665,15 @@ export class PrismaReimbursementRepository {
   /**
    * One page of a list, read with LIMIT and OFFSET in the database, and the whole scope grouped by the
    * fields the hub counts on. Two reads over one predicate: the page adds only the bucket to it, so the
-   * groups of a bucket add up to exactly the claims its pages hold.
+   * groups of a bucket add up to exactly the claims its pages hold. A search narrows that one predicate
+   * (`hubSearchWhere`), so with a search the groups count what was found, bucket by bucket.
    */
   async listRequestPage(where: ListRequestsWhere & { bucket?: string; skip: number; take: number }): Promise<{
     rows: ReimbursementRequestRecord[];
     groups: ReimbursementRequestGroup[];
   }> {
-    const scope = await this.requestListWhere(where);
+    const scope = await this.requestListWhere({ ...where, search: undefined });
+    if (where.search) scope.AND.push(hubSearchWhere(where.search));
     const [rows, groups] = await Promise.all([
       this.prisma.client.reimbursementRequest.findMany({
         where: where.bucket === undefined ? scope : { ...scope, AND: [...scope.AND, hubBucketWhere(where.bucket)] },
@@ -2872,23 +2920,27 @@ export class PrismaReimbursementRepository {
     bankAccountId?: string;
     /** Payment evidence: proven for this claim and payer, then linked, inside this transaction. */
     slipAttachmentId?: string;
+    /**
+     * What the payer said about the payout account, as sent. It is held against the claim under the
+     * payment lock (`planPaymentPayout`), never trusted from a check made before it.
+     */
+    payout?: Omit<PaymentPayoutStatement, 'paymentMethod'>;
     paidByUserId: string;
-  }): Promise<{ request: ReimbursementRequestRecord; payment: ReimbursementPaymentRecord; created: boolean; slip?: ReimbursementPaymentSlipLink }> {
+  }): Promise<{
+    request: ReimbursementRequestRecord; payment: ReimbursementPaymentRecord; created: boolean;
+    slip?: ReimbursementPaymentSlipLink; payout?: ConfirmedPaymentPayout;
+  }> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${data.companyId}:${data.reimbursementRequestId}:reimbursement-payment`}))`;
       await this.lockRequest(tx, data.companyId, data.reimbursementRequestId);
+      const statement: PaymentPayoutStatement = { ...data.payout, paymentMethod: data.paymentMethod };
 
       const existing = await tx.reimbursementPayment.findFirst({
         where: { companyId: data.companyId, idempotencyKey: data.idempotencyKey },
       });
       if (existing) {
-        // A voided payment is not this payment any more: replaying its key must not read as paid.
-        const samePayment = existing.reimbursementRequestId === data.reimbursementRequestId
-          && existing.status === 'RECORDED'
-          && isSamePaymentRequest(existing, data);
-        if (!samePayment) throw new ConflictException('reimbursement_payment_idempotency_conflict');
-        const request = await tx.reimbursementRequest.findFirstOrThrow({
+        const request = await tx.reimbursementRequest.findFirst({
           where: { id: data.reimbursementRequestId, companyId: data.companyId },
           include: {
             lines: { orderBy: { lineNo: 'asc' } },
@@ -2897,6 +2949,15 @@ export class PrismaReimbursementRepository {
             duplicateCandidates: true,
           },
         });
+        if (!request) throw new NotFoundException('Reimbursement request not found');
+        const plan = planPaymentPayout(request, statement);
+        // A voided payment is not this payment any more: replaying its key must not read as paid.
+        // Nor is a replay that names another account, or none, than the one that payment went into.
+        const samePayment = existing.reimbursementRequestId === data.reimbursementRequestId
+          && existing.status === 'RECORDED'
+          && !('error' in plan)
+          && isSamePaymentRequest({ ...existing, ...await readRecordedPaymentPayout(tx, request, existing) }, { ...data, ...plan });
+        if (!samePayment) throw new ConflictException('reimbursement_payment_idempotency_conflict');
         return { request: this.toRequest(request), payment: this.toPayment(existing), created: false };
       }
 
@@ -2931,12 +2992,19 @@ export class PrismaReimbursementRepository {
         hasSlip: Boolean(data.slipAttachmentId),
       });
       if (error) throw new UnprocessableEntityException(error);
+      // Spec §12.3, §12.4, §12.6: the account version the payer was shown is the claim's version NOW,
+      // a transfer into the claim's account is confirmed, and a method other than the one asked for
+      // has its reason. Decided here, from the row read under the lock, so no account change that
+      // committed before this transaction can slip between the check and the payment.
+      const payoutPlan = planPaymentPayout(request, statement);
+      if ('error' in payoutPlan) throw paymentPayoutRefusal(payoutPlan.error);
       const slip = data.slipAttachmentId
         ? await this.resolvePaymentSlipLocked(tx, {
           companyId: data.companyId, requestId: data.reimbursementRequestId,
           attachmentId: data.slipAttachmentId, actorUserId: data.paidByUserId,
         })
         : undefined;
+      const payout = await confirmPaymentPayout(tx, request, payoutPlan, { actorUserId: data.paidByUserId, confirmedAt: new Date() });
 
       let payment = await tx.reimbursementPayment.create({ data: {
         companyId: data.companyId,
@@ -2951,6 +3019,11 @@ export class PrismaReimbursementRepository {
         bankAccountId: data.bankAccountId,
         slipAttachmentId: slip?.attachmentId,
         slipChecksumSha256: slip?.checksumSha256,
+        // The version stored is the one just proven current: what the approver attested, what the
+        // payer was shown and confirmed, and what this payment went into are one number.
+        payoutDestinationVersion: payout?.payoutDestinationVersion,
+        payoutConfirmedAt: payout?.payoutConfirmedAt,
+        methodMismatchReason: payoutPlan.methodMismatchReason,
         sourcePaymentRef: '',
         paidByUserId: data.paidByUserId,
         postingStatus: 'pending',
@@ -3032,7 +3105,10 @@ export class PrismaReimbursementRepository {
           duplicateCandidates: true,
         },
       });
-      return { request: this.toRequest(updated), payment: this.toPayment(payment), created: true, ...(slipLink && { slip: slipLink }) };
+      return {
+        request: this.toRequest(updated), payment: this.toPayment(payment), created: true,
+        ...(slipLink && { slip: slipLink }), ...(payout && { payout }),
+      };
     }, { isolationLevel: 'Serializable' }).catch(paymentChangedOnSerializationFailure);
   }
 
@@ -3074,7 +3150,7 @@ export class PrismaReimbursementRepository {
     const signedCopyLinkIds = links
       .filter((link) => link.targetType === REIMBURSEMENT_ATTACHMENT_TARGET_TYPE && link.targetId === input.requestId && link.purpose === REIMBURSEMENT_SIGNED_COPY_PURPOSE)
       .map((link) => link.id);
-    if (await db.reimbursementLine.count({ where: { companyId: input.companyId, attachmentId: input.attachmentId } }) > 0) throw invalid();
+    const alsoReceipt = await db.reimbursementLine.count({ where: { companyId: input.companyId, attachmentId: input.attachmentId } }) > 0;
     const metadataJson = (file.metadataJson ?? null) as Record<string, unknown> | null;
 
     let source: ReimbursementPaymentSlipSource;
@@ -3083,15 +3159,17 @@ export class PrismaReimbursementRepository {
       const ofThisClaim = await db.reimbursementPayment.count({
         where: { companyId: input.companyId, reimbursementRequestId: input.requestId, id: { in: slipPaymentIds } },
       });
-      if (links.length !== slipPaymentIds.length || ofThisClaim !== new Set(slipPaymentIds).size) throw invalid();
+      if (alsoReceipt || links.length !== slipPaymentIds.length || ofThisClaim !== new Set(slipPaymentIds).size) throw invalid();
       source = 'PREVIOUS_SLIP';
     } else if (metadataJson?.['generatedFor'] === REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG) {
-      if (links.length !== 0 || metadataJson['requestId'] !== input.requestId || file.uploadedByUserId !== input.actorUserId
+      if (alsoReceipt || links.length !== 0 || metadataJson['requestId'] !== input.requestId || file.uploadedByUserId !== input.actorUserId
         || file.byteSize > REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES) throw invalid();
       source = 'UPLOAD';
     } else if (signedCopyLinkIds.length > 0) {
-      // Only this claim's signed copy: the same file on another claim, or as a receipt, stays what it is there.
-      if (links.length !== signedCopyLinkIds.length) throw invalid();
+      // Only this claim's signed copy: the same file on another claim, or as a receipt, stays what it
+      // is there. Said as its own refusal: nothing is wrong with the file's type or size, and the
+      // payer can do something about it (attach the slip as a new file).
+      if (alsoReceipt || links.length !== signedCopyLinkIds.length) throw new UnprocessableEntityException('payment_slip_in_use_elsewhere');
       source = 'SIGNED_COPY';
     } else {
       throw invalid();
@@ -3436,13 +3514,33 @@ export class PrismaReimbursementRepository {
         return { request: this.toRequest(request), payment: this.toPayment(prior), reversalEntryId: null, alreadyVoided: true };
       }
       // A bank statement line confirmed against this payment would be left matched to a payment that
-      // no longer stands. The match is undone first: the rule deleting an expense already follows.
-      const bankMatch = await tx.bankReconciliationMatch.findFirst({
+      // no longer stands. A fully matched line is not listed on the bank matching screen, so nobody
+      // could undo the match there first: the void undoes it here, by the banking module's own rule
+      // (the match is voided and the line's status is derived again from the matches that still
+      // stand). Only a line inside a completed reconciliation is refused: that one is reopened first.
+      const bankMatches: Array<{ id: string; statementLineId: string }> = await tx.bankReconciliationMatch.findMany({
         where: { companyId, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paymentId, status: 'CONFIRMED' },
-        select: { id: true },
+        select: { id: true, statementLineId: true },
       });
-      if (bankMatch) {
-        throw new ConflictException({ code: 'reimbursement_payment_bank_matched', message: 'Undo the bank reconciliation match of this payment before voiding it.' });
+      for (const match of bankMatches) {
+        const reconciled = await tx.bankReconciliationSessionLine.count({
+          where: { companyId, statementLineId: match.statementLineId, session: { status: 'COMPLETED' } },
+        });
+        if (reconciled > 0) {
+          throw new ConflictException({ code: 'reimbursement_payment_bank_reconciled', message: 'This payment is matched to a bank statement line in a completed reconciliation. Reopen that reconciliation before voiding the payment.' });
+        }
+        await tx.bankReconciliationMatch.update({ where: { id: match.id }, data: { status: 'VOIDED' } });
+        const line = await tx.bankStatementLine.findFirstOrThrow({
+          where: { id: match.statementLineId, companyId },
+          select: { signedAmount: true, matches: { where: { status: 'CONFIRMED' }, select: { allocatedAmount: true } } },
+        });
+        await tx.bankStatementLine.update({
+          where: { id: match.statementLineId },
+          data: { status: calculateStatementLineMatchStatus({
+            statementLineAmount: String(line.signedAmount),
+            confirmedAllocations: line.matches.map((standing: { allocatedAmount: unknown }) => String(standing.allocatedAmount)),
+          }) },
+        });
       }
       const voided = await tx.reimbursementPayment.updateMany({
         where: { id: paymentId, companyId, reimbursementRequestId: requestId, status: 'RECORDED' },
@@ -3513,6 +3611,12 @@ export class PrismaReimbursementRepository {
         await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId, action: 'reimbursement.payment.void',
           targetType: 'reimbursement_payment', targetId: paymentId, requestId: auditRequestId, result: 'SUCCESS', riskLevel: 'CRITICAL',
           metadataJson: { reason, requestId, reversalEntryId: reversal.reversalEntryId } }, tx);
+        // The row the bank screen's own "ยกเลิกการจับคู่" writes, so a match reads the same whoever undid it.
+        for (const match of bankMatches) {
+          await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId, action: 'bank.match.void',
+            targetType: 'bank_reconciliation_match', targetId: match.id, requestId: auditRequestId, result: 'SUCCESS', riskLevel: 'HIGH',
+            metadataJson: { statementLineId: match.statementLineId, reason: 'reimbursement_payment_voided', paymentId, requestId } }, tx);
+        }
         await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.payment_voided',
           aggregateType: 'reimbursement_payment', aggregateId: paymentId, eventKey: `reimbursement.payment_voided:${paymentId}`,
           payloadJson: { companyId, actorUserId, requestId: auditRequestId, aggregateType: 'reimbursement_payment', aggregateId: paymentId,
@@ -4105,6 +4209,9 @@ export class PrismaReimbursementRepository {
       bankAccountId: opt(row.bankAccountId),
       slipAttachmentId: opt(row.slipAttachmentId),
       slipChecksumSha256: opt(row.slipChecksumSha256),
+      payoutDestinationVersion: opt(row.payoutDestinationVersion),
+      payoutConfirmedAt: opt(row.payoutConfirmedAt),
+      methodMismatchReason: opt(row.methodMismatchReason),
       sourcePaymentRef: row.sourcePaymentRef,
       status: row.status,
       voidedAt: opt(row.voidedAt),

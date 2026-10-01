@@ -1,8 +1,8 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementIncurredDateError,
-  reimbursementPaymentSlipRequired, todayCivilDate,
+  EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
+  reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
@@ -13,6 +13,12 @@ import {
   type ClaimSignatureRole,
 } from './reimbursements.model';
 import { payoutComparableText } from './reimbursement-payout.logic';
+// The payment step's side of the payout (kept as its own imports, apart from the blocks above).
+import { looksLikeAccountNumber, maskedPayoutAccountNumber, type ReimbursementPaymentRule } from '@watchdog-bms/contracts';
+import { PAYMENT_METHOD_LABELS } from './reimbursements.model';
+import {
+  MISMATCH_REASON_HAS_ACCOUNT_NUMBER, MISMATCH_REASON_REQUIRED, PAID_DIFFERENTLY_LABEL, PAYER_CONFIRMATION_REQUIRED, type PaymentFormPayout,
+} from './reimbursement-payout.logic';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
@@ -204,6 +210,8 @@ export function validatePaymentForm(input: {
   paymentMethod: string;
   paymentReference?: string;
   hasSlip?: boolean;
+  /** What the claim asks of this payment (the API's own rule) and what the payer gave. Omitted: nothing is asked. */
+  payout?: { rule: ReimbursementPaymentRule; confirmed: boolean; mismatchReason: string };
 }): string | null {
   if (!input.paymentMethod) return 'กรุณาเลือกวิธีจ่าย';
   const paid = Number(input.paidAmount);
@@ -216,6 +224,14 @@ export function validatePaymentForm(input: {
   }
   // The API's own words for the same refusal, so the form and the server say one thing.
   if (reimbursementPaymentSlipRequired(input.paymentMethod) && !input.hasSlip) return translateApiError('payment_slip_required');
+  // Spec §12.4, asked in the API's order: the confirmation of the account, then the reason for
+  // another method than the one asked for. The reason is shown on the payment row, so it takes the
+  // API's own guard against an account number.
+  if (input.payout?.rule.payoutConfirmation === 'required' && !input.payout.confirmed) return PAYER_CONFIRMATION_REQUIRED;
+  if (input.payout?.rule.mismatchReasonRequired) {
+    if (!input.payout.mismatchReason.trim()) return MISMATCH_REASON_REQUIRED;
+    if (looksLikeAccountNumber(input.payout.mismatchReason)) return MISMATCH_REASON_HAS_ACCOUNT_NUMBER;
+  }
   return null;
 }
 
@@ -284,12 +300,28 @@ export function signedCopyMoveConfirmText(copy: { fileName?: string; acknowledge
   ].join(' ');
 }
 
+/** The payment was rolled back because another write on the same claim got there first (409 from the payment lock). */
+export function isLostPaymentRace(e: unknown): boolean {
+  return (e as { code?: unknown } | null)?.code === 'reimbursement_payment_state_changed'
+    || (e instanceof Error && e.message.includes('reimbursement_payment_state_changed'));
+}
+
 /**
- * What the payment form says when saving fails. An uploaded slip is not a recorded payment, and a
- * payer who has already transferred the money must not be led to transfer it again (spec §12.2).
+ * What the payment form says when saving fails. "โอนแล้ว" and "บันทึกสำเร็จ" are two things: an
+ * uploaded slip is not a recorded payment, and a payer who has already transferred the money must
+ * not be led to transfer it again (spec §12.2). The sentence gives ONE thing to do:
+ *
+ *  - a lost race: press save again. Nothing about reloading: that would throw away the uploaded slip
+ *    and the form's key, the two things that make the next press the same payment;
+ *  - any other conflict (the claim or its account changed since the page was loaded): the reason
+ *    itself says to open the claim again, so nothing here says to press save on this page;
+ *  - everything else (a field to fix, a failed connection): check and press save again.
  */
-export function paymentSaveErrorMessage(stage: 'slip-upload' | 'record', reason: string, slipKept: boolean): string {
-  if (stage === 'slip-upload') return `อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ${reason}`;
+export function paymentSaveErrorMessage(stage: 'slip-upload' | 'record', error: unknown, slipKept: boolean): string {
+  if (stage === 'slip-upload') return `อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ${errorText(error)}`;
+  if (isLostPaymentRace(error)) return 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่';
+  const reason = errorText(error);
+  if ((error as { status?: unknown } | null)?.status === 409) return `ยังบันทึกจ่ายไม่สำเร็จ · ${reason}`;
   return slipKept
     ? `แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ${reason} · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่`
     : `ยังบันทึกจ่ายไม่สำเร็จ · ${reason}`;
@@ -317,6 +349,9 @@ export type PaymentFormSave =
  * - The session's key is made on the first press and kept: a press after a lost answer is the same
  *   payment to the API, never a second one.
  * - A second press while the first is still running does nothing: no second upload, no second request.
+ * - What the payer says about the account goes with it (spec §12.3): the account version the page
+ *   shows, always, so a page loaded before the account changed is refused; the confirmation, only
+ *   for the account it was ticked for; the reason, only when the method differs from the one asked for.
  */
 export async function savePaymentForm(
   input: {
@@ -324,6 +359,10 @@ export async function savePaymentForm(
     outstandingAmount: string;
     slip: PaymentFormSlip | null;
     session: PaymentFormSession;
+    /** The payout side of the form for the method chosen (`paymentFormPayout`). Omitted: the claim asks nothing of it. */
+    payout?: PaymentFormPayout;
+    /** What the payer ticked and typed: the key of the account the tick was given for, and the reason. */
+    payer?: { confirmedFor: string; mismatchReason: string };
   },
   deps: {
     uploadSlip: (file: File) => Promise<string>;
@@ -334,9 +373,15 @@ export async function savePaymentForm(
     onBusy?: (busy: boolean) => void;
   },
 ): Promise<PaymentFormSave> {
-  const { form, slip, session } = input;
+  const { form, slip, session, payout } = input;
   if (session.saving) return { status: 'ignored' };
-  const invalid = validatePaymentForm({ ...form, outstandingAmount: input.outstandingAmount, hasSlip: slip !== null });
+  // A tick counts only for the account it was given for, and only while that account is the one to confirm.
+  const confirmed = !!payout?.confirmation && input.payer?.confirmedFor === payout.confirmation.key;
+  const mismatchReason = input.payer?.mismatchReason ?? '';
+  const invalid = validatePaymentForm({
+    ...form, outstandingAmount: input.outstandingAmount, hasSlip: slip !== null,
+    ...(payout && { payout: { rule: payout.rule, confirmed, mismatchReason } }),
+  });
   if (invalid) return { status: 'refused', text: invalid };
 
   session.saving = true;
@@ -347,19 +392,21 @@ export async function savePaymentForm(
       try {
         slipAttachmentId = await deps.uploadSlip(slip.file);
       } catch (error) {
-        return { status: 'refused', text: paymentSaveErrorMessage('slip-upload', errorText(error), false) };
+        return { status: 'refused', text: paymentSaveErrorMessage('slip-upload', error, false) };
       }
       deps.onSlipUploaded({ attachmentId: slipAttachmentId, name: slip.file.name });
     }
     session.idempotencyKey ??= deps.newIdempotencyKey();
     try {
-      // Phase 1 seam: the verified payout account's version and the payer's confirmation join this body.
       await deps.recordPayment({
         ...form, paidAt: new Date(form.paidAt).toISOString(), paymentReference: form.paymentReference || undefined,
         slipAttachmentId, idempotencyKey: session.idempotencyKey,
+        ...(payout?.version !== undefined && { payoutDestinationVersion: payout.version }),
+        ...(confirmed && { payoutConfirmed: true, ...(payout.confirmation!.defaultToken && { payoutDefaultToken: payout.confirmation!.defaultToken }) }),
+        ...(payout?.rule.mismatchReasonRequired && { methodMismatchReason: mismatchReason.trim() }),
       });
     } catch (error) {
-      return { status: 'refused', text: paymentSaveErrorMessage('record', errorText(error), slipAttachmentId !== undefined) };
+      return { status: 'refused', text: paymentSaveErrorMessage('record', error, slipAttachmentId !== undefined) };
     }
     return { status: 'saved' };
   } finally {
@@ -368,19 +415,29 @@ export async function savePaymentForm(
   }
 }
 
-/** Tailwind's `sm`: from this width up, the finance queue's quick pay may open as a dialog. */
-export const PAYMENT_DIALOG_MEDIA_QUERY = '(min-width: 640px)';
-
 /**
  * Where "บันทึกจ่าย" on a finance-queue row leads. On a phone the payment form is never a dialog
  * (spec §12.2, §21): it opens in the payment step card of the claim's own page, where the claim's
  * files and the account to pay sit beside it.
+ *
+ * "Phone" is the hub's own answer, not a second measurement: the queue shows cards on a phone and a
+ * table otherwise, and the press says which of the two it came from. So a screen the page lays out
+ * as a phone never gets the dialog, whatever its width or orientation.
  */
-export function quickPayTarget(wideEnoughForDialog: boolean, companyId: string, requestId: string):
+export function quickPayTarget(layout: 'cards' | 'table', companyId: string, requestId: string):
   { kind: 'dialog' } | { kind: 'page'; href: string } {
-  return wideEnoughForDialog
+  return layout === 'table'
     ? { kind: 'dialog' }
     : { kind: 'page', href: `/companies/${companyId}/reimbursements/${requestId}?pay=1` };
+}
+
+/**
+ * Whether a finance-queue row offers "บันทึกจ่าย", on its table row and on its card alike: the claim
+ * waits for payment, the viewer holds the pay right, and the claim has a branch. The payment endpoint
+ * refuses a claim with no branch for everyone, and the claim page offers no button for one either.
+ */
+export function queueRowOffersPayment(row: { status?: string; branchId?: string | null } | null | undefined, permissions: readonly string[]): boolean {
+  return row?.status === 'READY_FOR_PAYMENT' && !!row.branchId && permissions.includes('reimbursement.payment.record');
 }
 
 /** The claim page opens its payment form on arrival only when the link asked for it and this viewer's current step offers it. */
@@ -539,7 +596,7 @@ export function hubCardFilter(open: HubFilter, tapped: HubFilter): HubFilter {
 
 /** The rows of one hub list loaded so far, where the server's list goes on, and the scope as the server counted it. */
 export type HubList = {
-  /** The list these rows belong to (company, scope, filter, reload): rows of another list are never shown as this one's. */
+  /** The list these rows belong to (company, scope, filter, reload, search): rows of another list are never shown as this one's. */
   key: string;
   rows: any[];
   /** The server's count of the whole list. */
@@ -548,12 +605,27 @@ export type HubList = {
   nextPage: number | null;
   /** Why the last page asked for did not arrive. Nothing more is asked until a retry clears it, and the rows stay. */
   failed?: string;
-  /** What the cards and chips print: the whole scope, whatever filter the rows are of. Kept from one list to the next. */
+  /** How many times this list was read again from its first page because it changed between two pages. */
+  restarts?: number;
+  /** What the cards and chips print: the whole scope (with a search, what it found), whatever filter the rows are of. Kept from one list to the next. */
   summary: ReimbursementHubSummary | null;
 };
 export const NO_HUB_LIST: HubList = { key: '', rows: [], total: 0, nextPage: 1, summary: null };
 /** What the hub asks for; what counts is the page size the server answers with. */
 export const HUB_PAGE_SIZE = 100;
+/** How long the typing has to pause before the hub asks the API for the search. */
+export const HUB_SEARCH_DELAY_MS = 300;
+
+/**
+ * The line above the hub's list. With a search the server's counts are of what the search found, so the cards and
+ * chips change with it: the line says so, because a card that showed 12 a moment ago now shows 3.
+ */
+export function hubListStatusText(shown: number, all: number, filter: HubFilter, searching: boolean): string {
+  if (searching) {
+    return `${filter === 'all' ? `พบ ${shown} รายการ` : `พบ ${shown} จาก ${all} รายการ`}ที่ตรงกับคำค้น · ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น`;
+  }
+  return filter === 'all' ? `ทั้งหมด ${all} รายการ` : `พบ ${shown} จาก ${all} รายการ`;
+}
 
 export const hubListKey = (...parts: unknown[]) => parts.join('|');
 
@@ -564,27 +636,41 @@ export function hubList(held: HubList, key: string): HubList {
 
 /**
  * The page to ask the server for now, given how many rows the screen needs: the first page of a list, then
- * more only when the table page shown, or a search, reaches past what is held. Null: the rows needed are
- * loaded, the list is complete, or the last page failed.
+ * more only when the table page shown reaches past what is held. Null: the rows needed are loaded, the list
+ * is complete, or the last page failed.
  */
 export function hubNextPage(list: HubList, need: number): number | null {
   return list.failed === undefined && list.rows.length < need ? list.nextPage : null;
 }
 
+/** How often a list that keeps changing is read again from the start before it is taken as it comes. */
+const HUB_MAX_RESTARTS = 3;
+
 /**
  * Adds one page. The list ends on the server's own total, or on a page shorter than the page size the
  * server answered with, never on the size that was asked for: the server may cap it.
+ *
+ * A later page whose total differs from the one held means the list changed between the two calls. When a
+ * claim left it (approved, paid, deleted), every claim behind it moved up one place, and the one that moved
+ * onto a page already read would never be shown: a claim still waiting, skipped. The list is then read again
+ * from its first page.
+ * ponytail: at most three times for one list; one that changes on every call is then taken as it comes.
  */
 export function withHubPage(
   held: HubList, key: string,
   result: { items?: any[]; total: number; page: number; pageSize: number; hub: ReimbursementHubSummary },
 ): HubList {
   const items = result.items ?? [];
+  const list = hubList(held, key);
+  const restarts = list.restarts ?? 0;
+  if (result.page > 1 && result.total !== list.total && restarts < HUB_MAX_RESTARTS) {
+    return { key, rows: [], total: result.total, nextPage: 1, summary: result.hub, restarts: restarts + 1 };
+  }
   // Keyed by id: a claim filed between two calls shifts the pages and would otherwise repeat a row.
-  const byId = new Map<string, any>(hubList(held, key).rows.map((row) => [row.id, row]));
+  const byId = new Map<string, any>(list.rows.map((row) => [row.id, row]));
   for (const item of items) byId.set(item.id, item);
   const more = items.length > 0 && items.length >= result.pageSize && result.page * result.pageSize < result.total;
-  return { key, rows: [...byId.values()], total: result.total, nextPage: more ? result.page + 1 : null, summary: result.hub };
+  return { key, rows: [...byId.values()], total: result.total, nextPage: more ? result.page + 1 : null, summary: result.hub, ...(restarts > 0 && { restarts }) };
 }
 
 /** A page did not arrive: what was loaded stays, and the same page is asked again on retry. */
@@ -671,9 +757,26 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
 
   const paid = (detail?.payments ?? []).find((p: any) => p.status === 'RECORDED');
   rows.push(paid
-    ? { key: 'payment', state: 'done', label: paid.paidByName ? `จ่ายแล้ว โดย ${paid.paidByName}` : 'จ่ายแล้ว', date: paid.paidAt }
+    ? { key: 'payment', state: 'done', label: [paid.paidByName ? `จ่ายแล้ว โดย ${paid.paidByName}` : 'จ่ายแล้ว', paymentFactsText(paid)].filter(Boolean).join(' · '), date: paid.paidAt }
     : { key: 'payment', state: at === 'payment' ? 'current' : 'future', label: at === 'payment' ? `กำลัง${waitingForPayer(detail)}` : 'รอบันทึกจ่าย' });
   return rows;
+}
+
+/**
+ * A payment in one phrase: how it was paid — for a transfer the payer confirmed, the last 4 digits of
+ * the account it went into — whether a slip is attached, and whether the method is not the one the
+ * requester asked for. The timeline says it in these words and the payment row shows the same facts
+ * (invariant I4), both from the one payment record.
+ */
+export function paymentFactsText(payment: any): string {
+  const destination = payment?.payoutDestination;
+  return [
+    destination
+      ? `โอนเข้า${destination.payoutKind === 'PROMPTPAY_PHONE' ? 'พร้อมเพย์เบอร์' : 'บัญชี'}${maskedPayoutAccountNumber(destination.accountLast4)}`
+      : PAYMENT_METHOD_LABELS[payment?.paymentMethod],
+    paymentSlipCount(payment) > 0 && 'มีสลิป',
+    payment?.methodMismatchReason && PAID_DIFFERENTLY_LABEL,
+  ].filter(Boolean).join(' · ');
 }
 
 // Who a claim waits for, in the words of its desk: the timeline row and the step note print the same sentence,
@@ -770,9 +873,12 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
   const ended = status === 'CANCELLED' || status === 'VOIDED';
   const atIndex = keys.indexOf(journeyStepAt(detail, withFinance));
   const own = reimbursementOwnActions(detail, userId, permissions);
-  // A step approved in an earlier round (before a finance correction) is history, not this round's approval.
-  const approval = (detail?.approvalSteps ?? []).filter((step: any) => step.status === 'APPROVED' && !step.invalidatedAt
-    && String(step.decidedAt ?? '') >= String(detail?.submittedAt ?? '')).at(-1);
+  // This round's approval, by the one rule for a claim's approver (`isReimbursementClaimApprover` in contracts, the
+  // API's own): still in force, and decided at or after the claim was last submitted. A step approved in an earlier
+  // round (before a finance correction) is history. The copy of the rule that stood here compared the two dates as
+  // text and, on a claim with no submission date, counted every approved step.
+  const approval = (detail?.approvalSteps ?? []).filter((step: any) => !!step.decisionByUserId
+    && isReimbursementClaimApprover(step.decisionByUserId, { submittedAt: detail?.submittedAt, approvalSteps: [step] })).at(-1);
   const humanApproved = !!approval;
   const signed = new Set((detail?.signatures ?? []).map((row: any) => row.role));
   const payment = (detail?.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
@@ -851,10 +957,15 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
           : `รอ${PAYER}ตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้`}`;
       } else {
         const canPay = permissions.includes('reimbursement.payment.record');
-        if (payable && canPay) actions.push('pay');
+        // The payment endpoint refuses a claim with no branch for everyone, so nobody is offered the
+        // button for one: a button that can only be answered with a refusal is not an action.
+        const noBranch = payable && !detail?.branchId;
+        if (payable && canPay && !noBranch) actions.push('pay');
         // Spec §18.3 and §13.4: whoever cannot pay reads who can, and the approver of this claim is told so plainly.
         const payers = paymentDeskText(detail?.paymentDesk);
-        const waiting = detail?.paymentDesk && !payers
+        const waiting = noBranch
+          ? 'ใบนี้ไม่ได้ระบุสาขา ระบบจึงยังบันทึกจ่ายไม่ได้ กรุณาติดต่อผู้ดูแลระบบ'
+          : detail?.paymentDesk && !payers
           ? 'ยังไม่มีผู้ที่บันทึกจ่ายใบของสาขานี้ได้ ขอให้เจ้าของกิจการบันทึกจ่ายหรือเพิ่มสิทธิ์'
           : !canPay && approval?.decisionByUserId === userId
             ? `คุณอนุมัติใบนี้แล้ว แต่บัญชีของคุณยังไม่มีสิทธิ์บันทึกจ่าย ${payers ? `ผู้ที่บันทึกจ่ายได้: ${payers} ` : ''}ถ้าต้องการจ่ายเอง ขอให้เจ้าของกิจการเพิ่มสิทธิ์บันทึกจ่ายให้บทบาทของคุณ`

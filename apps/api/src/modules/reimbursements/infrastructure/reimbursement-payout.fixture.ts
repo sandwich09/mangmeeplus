@@ -14,6 +14,9 @@ function matches(row: Record<string, unknown>, where: Record<string, unknown> = 
     if (expected && typeof expected === 'object' && !(expected instanceof Date) && 'not' in expected) {
       return actual !== ((expected as { not: unknown }).not ?? null);
     }
+    if (expected && typeof expected === 'object' && !(expected instanceof Date) && 'in' in expected) {
+      return (expected as { in: unknown[] }).in.includes(actual);
+    }
     return actual === (expected ?? null);
   });
 }

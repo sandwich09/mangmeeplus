@@ -4,11 +4,16 @@
  * `reimbursement-source.ts`. The rules themselves live in `../domain/logic/payout-destination.logic.ts`.
  *
  * Two things hold for every function here:
- *  - the ciphertext is selected only by the two `…Secret` readers, which serve the audited reveal;
- *  - once a claim is submitted, nothing reads the member's default account for it again.
+ *  - the ciphertext is selected only by the two `…Secret` readers, which serve the audited reveal,
+ *    and by the two copies that move a sealed account as one unit (submit, and the payment of a
+ *    legacy claim);
+ *  - once a claim is submitted, nothing reads the member's default account for it again. The one
+ *    exception is a legacy claim, which froze no account: its payer is shown the requester's current
+ *    default (`readLegacyPayoutDefault`) and a payment into it keeps a copy (`confirmPaymentPayout`).
  */
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, type HttpException } from '@nestjs/common';
 import type {
+  ReimbursementLegacyPayoutDefault,
   ReimbursementPayoutKind,
   ReimbursementPayoutMethod,
   ReimbursementPayoutNotReadyReason,
@@ -18,11 +23,15 @@ import type {
 import {
   draftFollowsDefaultAfterReopen,
   hasPayoutSnapshot,
+  LEGACY_PAYMENT_PAYOUT_SOURCE,
+  legacyPayoutConfirmToken,
   payoutAttestationError,
   payoutSubmitToken,
   planSubmitPayout,
   submitPayoutColumns,
   type FrozenPayoutPlan,
+  type PaymentPayoutError,
+  type PaymentPayoutPlan,
   type PayoutDestinationVersionRow,
   type SealedPayoutDestination,
   type SubmitPayoutColumns,
@@ -324,4 +333,177 @@ export async function draftPayoutAfterReopen(tx: any, claim: ClaimPayoutPointer)
   return draftFollowsDefaultAfterReopen(claim, versions)
     ? { payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null }
     : { payoutFingerprint: null };
+}
+
+// ---- The payment step (payout spec §12.3, §15) ----
+
+/** An account as a payment row shows it: masked, the same for every reader. */
+export type PaymentPayoutDestinationRecord = {
+  version: number;
+  payoutKind: ReimbursementPayoutKind;
+  bankName?: string;
+  accountName: string;
+  accountLast4: string;
+};
+
+/**
+ * How a payer's statement that the claim does not accept is answered. 409, like the payout refusals
+ * of submit and approve: a page opened before the release has no words for these codes, and its text
+ * for a conflict is "load the latest and try again". The guard on the reason is the 400 it is on
+ * every other note that may not carry an account number.
+ */
+export function paymentPayoutRefusal(error: PaymentPayoutError): HttpException {
+  return error === 'note_contains_account_number' ? new BadRequestException(error) : new ConflictException(error);
+}
+
+/** What recording a payment did about its account, for the audit row. Never the number. */
+export type ConfirmedPaymentPayout = {
+  payoutDestinationVersion: number;
+  payoutConfirmedAt: Date;
+  /** CLAIM: the claim's own snapshot. MEMBER_DEFAULT: a copy of the requester's default, on a legacy claim. */
+  source: 'CLAIM' | 'MEMBER_DEFAULT';
+  payoutKind: string;
+  bankName: string | null;
+  accountLast4: string;
+  /** Nobody but the requester had checked this account, so the payer is now recorded as who did (§10.2). */
+  payerVerified: boolean;
+};
+
+/**
+ * The accounts the given versions of a claim name, masked, by version: what each payment row of the
+ * claim shows as the account it was confirmed into.
+ */
+export async function readPaymentPayoutDestinations(
+  client: any, companyId: string, requestId: string, versions: readonly number[],
+): Promise<Record<number, PaymentPayoutDestinationRecord>> {
+  if (versions.length === 0) return {};
+  const rows = await client.reimbursementPayoutDestination.findMany({
+    where: { companyId, reimbursementRequestId: requestId, version: { in: [...versions] } },
+    select: { version: true, payoutKind: true, bankName: true, accountName: true, accountLast4: true },
+  });
+  return Object.fromEntries(rows.map((row: any) => [row.version, {
+    version: row.version, payoutKind: row.payoutKind, ...(row.bankName && { bankName: row.bankName }),
+    accountName: row.accountName, accountLast4: row.accountLast4,
+  }]));
+}
+
+/**
+ * A legacy claim's payer is shown the REQUESTER's default account as it is now (spec §15): masked,
+ * with the token that names it. Null when the requester has no account to transfer into (no default,
+ * or a cash default). The caller has already established that the claim is legacy and payable and
+ * that the viewer may record its payment; nothing else reads a default on behalf of a sent claim.
+ */
+export async function readLegacyPayoutDefault(
+  client: any, claim: { id: string; companyId: string; requesterUserId: string },
+): Promise<ReimbursementLegacyPayoutDefault | null> {
+  const account = await readMemberPayoutAccount(client, claim.companyId, claim.requesterUserId);
+  if (account?.payoutMethod !== 'BANK_TRANSFER' || !account.payoutKind || !account.accountName || !account.accountLast4 || !account.fingerprint) return null;
+  return {
+    payoutKind: account.payoutKind, ...(account.bankName && { bankName: account.bankName }),
+    accountName: account.accountName, accountLast4: account.accountLast4,
+    confirmToken: legacyPayoutConfirmToken(claim.id, account.fingerprint),
+  };
+}
+
+type ResolvedPaymentPayout =
+  | { kind: 'NONE' }
+  | { kind: 'CLAIM'; row: { id: string; version: number; payoutKind: string; bankName: string | null; accountLast4: string; verifiedByUserId: string | null } }
+  | { kind: 'MEMBER_DEFAULT'; account: any };
+
+/**
+ * A payment's payout plan held against what is stored. The claim's own snapshot must be the exact
+ * frozen row its fingerprint was made from; a legacy claim's default must still be the account the
+ * payer was shown. Anything else: the account changed since the page was loaded.
+ */
+async function resolvePaymentPayout(client: any, claim: ClaimPayoutPointer, plan: PaymentPayoutPlan): Promise<ResolvedPaymentPayout> {
+  if (plan.payoutDestinationVersion !== undefined) {
+    const row = await client.reimbursementPayoutDestination.findFirst({
+      where: {
+        companyId: claim.companyId, reimbursementRequestId: claim.id, version: plan.payoutDestinationVersion,
+        fingerprint: claim.payoutFingerprint ?? '', frozenAt: { not: null },
+      },
+      select: { id: true, version: true, payoutKind: true, bankName: true, accountLast4: true, verifiedByUserId: true },
+    });
+    if (!row) throw new ConflictException('payout_destination_changed');
+    return { kind: 'CLAIM', row };
+  }
+  if (plan.payoutDefaultToken !== undefined) {
+    const account = await client.memberPayoutAccount.findFirst({ where: { companyId: claim.companyId, userId: claim.requesterUserId } });
+    if (account?.payoutMethod !== 'BANK_TRANSFER' || !account.accountNumberEncrypted || !account.fingerprint
+      || legacyPayoutConfirmToken(claim.id, account.fingerprint) !== plan.payoutDefaultToken) {
+      throw new ConflictException('payout_destination_changed');
+    }
+    return { kind: 'MEMBER_DEFAULT', account };
+  }
+  return { kind: 'NONE' };
+}
+
+/** Friendly check before the payment lock of what `confirmPaymentPayout` proves again under it. */
+export async function assertPaymentPayoutUsable(client: any, claim: ClaimPayoutPointer, plan: PaymentPayoutPlan): Promise<void> {
+  await resolvePaymentPayout(client, claim, plan);
+}
+
+/**
+ * The payout side of recording a payment, inside the payment transaction and under the request lock:
+ * the account the payer confirmed is proven current, and the payment gets the version it went into.
+ *
+ *  - The claim's own snapshot (spec §12.3): the version stored on the payment is the claim's current
+ *    one, the same row the approver attested. Where nobody but the requester has checked that row
+ *    (no approval step, or the requester approved their own claim) the payer is recorded as who did.
+ *  - A legacy claim paid into the requester's default (§15): the default row is locked, so an edit
+ *    of it waits for this payment or fails it; its sealed columns are copied as one unit into a
+ *    frozen row of the claim's own table, and the payment points at that copy. The claim's payout
+ *    columns are not touched: it stays a legacy claim, with the hash it was approved and signed under.
+ */
+export async function confirmPaymentPayout(tx: any, claim: ClaimPayoutPointer, plan: PaymentPayoutPlan, input: {
+  actorUserId: string;
+  confirmedAt: Date;
+}): Promise<ConfirmedPaymentPayout | undefined> {
+  if (plan.payoutDefaultToken !== undefined) {
+    await tx.$queryRaw`SELECT 1 FROM "MemberPayoutAccount" WHERE "companyId" = ${claim.companyId} AND "userId" = ${claim.requesterUserId} FOR UPDATE`;
+  }
+  const resolved = await resolvePaymentPayout(tx, claim, plan);
+  if (resolved.kind === 'NONE') return undefined;
+  const attestation = { verifiedByUserId: input.actorUserId, verifiedAt: input.confirmedAt, verifiedVia: 'PAYMENT' };
+  if (resolved.kind === 'CLAIM') {
+    const { row } = resolved;
+    const payerVerified = !row.verifiedByUserId || (row.verifiedByUserId === claim.requesterUserId && input.actorUserId !== claim.requesterUserId);
+    if (payerVerified) await tx.reimbursementPayoutDestination.update({ where: { id: row.id }, data: { ...attestation, approvalStepId: null } });
+    return {
+      payoutDestinationVersion: row.version, payoutConfirmedAt: input.confirmedAt, source: 'CLAIM',
+      payoutKind: row.payoutKind, bankName: row.bankName, accountLast4: row.accountLast4, payerVerified,
+    };
+  }
+  const { account } = resolved;
+  const version = ((await listVersions(tx, claim.companyId, claim.id))[0]?.version ?? 0) + 1;
+  // "Who entered this account" is whoever last set the default, as for the copy a submit makes.
+  await tx.reimbursementPayoutDestination.create({ data: {
+    companyId: claim.companyId, reimbursementRequestId: claim.id, version,
+    payoutKind: account.payoutKind, bankName: account.bankName, accountName: account.accountName,
+    accountNumberEncrypted: account.accountNumberEncrypted, accountLast4: account.accountLast4, fingerprint: account.fingerprint,
+    source: LEGACY_PAYMENT_PAYOUT_SOURCE, createdByUserId: account.updatedByUserId, frozenAt: input.confirmedAt, ...attestation,
+  } });
+  return {
+    payoutDestinationVersion: version, payoutConfirmedAt: input.confirmedAt, source: 'MEMBER_DEFAULT',
+    payoutKind: account.payoutKind, bankName: account.bankName, accountLast4: account.accountLast4, payerVerified: true,
+  };
+}
+
+/**
+ * A recorded payment's account in the terms a payment request states it, for the replay comparison
+ * (`isSamePaymentRequest`): the claim's own account version, or, for a copy of the default kept with
+ * a legacy claim's payment, the token of that account. Both keys always, so the pair replaces the
+ * payment's own column when the two are compared.
+ */
+export async function readRecordedPaymentPayout(
+  client: any, claim: { id: string; companyId: string }, payment: { payoutDestinationVersion?: number | null },
+): Promise<{ payoutDestinationVersion: number | undefined; payoutDefaultToken: string | undefined }> {
+  const version = payment.payoutDestinationVersion ?? undefined;
+  const row = version === undefined ? null : await client.reimbursementPayoutDestination.findFirst({
+    where: { companyId: claim.companyId, reimbursementRequestId: claim.id, version },
+    select: { source: true, fingerprint: true },
+  });
+  return row?.source === LEGACY_PAYMENT_PAYOUT_SOURCE
+    ? { payoutDestinationVersion: undefined, payoutDefaultToken: legacyPayoutConfirmToken(claim.id, row.fingerprint) }
+    : { payoutDestinationVersion: version, payoutDefaultToken: undefined };
 }

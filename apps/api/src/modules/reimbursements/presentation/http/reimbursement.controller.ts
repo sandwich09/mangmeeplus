@@ -197,9 +197,12 @@ export class ReimbursementController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('bucket') bucket?: ReimbursementHubBucket,
+    @Query('search') search?: string,
   ) {
     const filter: ListReimbursementsFilter = {
       scope, status, paymentStatus, requesterUserId, bucket,
+      // A repeated parameter arrives as a list: only one search text is read.
+      search: typeof search === 'string' ? search : undefined,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     };

@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { reimbursementPaymentSlipRequired } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
-  buildClaimTimeline, buildJourneySteps, activeJourneyStep, canAttachPaymentSlip, opensPaymentFormOnArrival, paymentSaveErrorMessage,
-  paymentSlipChoices, paymentSlipCount, PAYMENT_DIALOG_MEDIA_QUERY, quickPayTarget, savePaymentForm, signedCopyMoveConfirmText,
+  buildClaimTimeline, buildJourneySteps, activeJourneyStep, canAttachPaymentSlip, isLostPaymentRace, opensPaymentFormOnArrival, paymentSaveErrorMessage,
+  paymentSlipChoices, paymentSlipCount, queueRowOffersPayment, quickPayTarget, savePaymentForm, signedCopyMoveConfirmText,
   slipTargetPayment, validatePaymentForm, type PaymentFormSession, type PaymentFormSlip,
 } from './reimbursements.logic';
 import { PAYMENT_METHOD_LABELS } from './reimbursements.model';
@@ -57,17 +57,55 @@ describe('payment form rules', () => {
     }
   });
 
+  /** A refusal as the API client throws it: the code is the message, with the HTTP status beside it. */
+  const refused = (code: string, status: number) => Object.assign(new Error(code), { status });
+
   it('never tells a payer who has transferred the money to transfer it again', () => {
     assert.equal(
-      paymentSaveErrorMessage('slip-upload', 'ระบบขัดข้อง กรุณาลองใหม่อีกครั้ง', false),
-      'อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ระบบขัดข้อง กรุณาลองใหม่อีกครั้ง',
+      paymentSaveErrorMessage('slip-upload', refused('payment_slip_invalid', 422), false),
+      'อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ไฟล์สลิปใช้ไม่ได้ เลือกไฟล์ PDF หรือรูปภาพ ขนาดไม่เกิน 10 MB แล้วลองใหม่',
     );
-    const afterSlip = paymentSaveErrorMessage('record', 'คำขอถูกแก้ไขระหว่างทำรายการ', true);
-    assert.match(afterSlip, /^แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · คำขอถูกแก้ไขระหว่างทำรายการ · /);
-    assert.match(afterSlip, /ไม่ต้องแนบสลิปหรือโอนเงินใหม่$/);
-    assert.equal(paymentSaveErrorMessage('record', 'ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น', false), 'ยังบันทึกจ่ายไม่สำเร็จ · ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น');
+    const afterSlip = paymentSaveErrorMessage('record', refused('payment_reference_required', 422), true);
+    assert.equal(afterSlip, 'แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ต้องระบุเลขอ้างอิงสำหรับการโอนเงิน/เช็ค · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');
+    assert.equal(paymentSaveErrorMessage('record', refused('partial_payment_not_allowed', 422), false), 'ยังบันทึกจ่ายไม่สำเร็จ · ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น');
+    // A connection that dropped: the slip is in, and the next press is the same payment.
+    assert.match(paymentSaveErrorMessage('record', new Error('Failed to fetch'), true), /^แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · .+ · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่$/);
     // "บันทึกจ่ายเรียบร้อย" is never part of a failure message.
-    for (const text of [afterSlip, paymentSaveErrorMessage('slip-upload', 'x', false)]) assert.doesNotMatch(text, /เรียบร้อย|สำเร็จแล้ว/);
+    for (const text of [afterSlip, paymentSaveErrorMessage('slip-upload', new Error('x'), false)]) assert.doesNotMatch(text, /เรียบร้อย|สำเร็จแล้ว/);
+  });
+
+  // Review finding: after a lost race the form said "load the list again" and "press save again" in
+  // one breath. Reloading throws away the uploaded slip and the form's key, the two things that make
+  // the next press the same payment.
+  it('gives one thing to do after a lost race: press save again', () => {
+    const lostRace = refused('reimbursement_payment_state_changed', 409);
+    assert.equal(isLostPaymentRace(lostRace), true);
+    assert.equal(isLostPaymentRace(Object.assign(new Error('API error 409'), { status: 409, code: 'reimbursement_payment_state_changed' })), true);
+    for (const other of [refused('payout_destination_changed', 409), refused('reimbursement_payment_already_recorded', 409), new Error('Failed to fetch'), null, 'reimbursement_payment_state_changed']) {
+      assert.equal(isLostPaymentRace(other), false);
+    }
+    for (const slipKept of [true, false]) {
+      const text = paymentSaveErrorMessage('record', lostRace, slipKept);
+      assert.equal(text, 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');
+      assert.doesNotMatch(text, /โหลด|เปิดใบใหม่|เรียบร้อย/);
+    }
+    // The page's own banner is the only message: the request raises no second, generic one beside it.
+    assert.match(sourceOf('reimbursements.api.ts'), /\/payments`, \{ method: 'POST', body: JSON\.stringify\(body\), suppressErrorToast: true \}\)/);
+  });
+
+  // Any other conflict means the claim is not what this page shows. Its own sentence says to open the
+  // claim again, and nothing beside it says to press save on this page.
+  it('does not ask for another press when the claim itself changed', () => {
+    for (const [code, said] of [
+      ['payout_destination_changed', 'บัญชีรับเงินของใบนี้เปลี่ยนไปจากที่แสดงไว้ กรุณาเปิดใบใหม่ ตรวจบัญชีที่แสดงล่าสุด แล้วทำรายการอีกครั้ง'],
+      ['reimbursement_payment_idempotency_conflict', 'มีการบันทึกการจ่ายด้วยข้อมูลอื่นไปแล้ว กรุณาโหลดรายการใหม่แล้วตรวจสอบ'],
+    ] as const) {
+      for (const slipKept of [true, false]) {
+        const text = paymentSaveErrorMessage('record', refused(code, 409), slipKept);
+        assert.equal(text, `ยังบันทึกจ่ายไม่สำเร็จ · ${said}`);
+        assert.doesNotMatch(text, /กดบันทึกจ่ายอีกครั้ง|เรียบร้อย/);
+      }
+    }
   });
 });
 
@@ -84,7 +122,7 @@ const voided = (overrides: Record<string, unknown> = {}) => ({
   voidReason: 'บันทึกเลขอ้างอิงผิด', slips: [slip('att-slip-1')], ...overrides,
 });
 const claim = (overrides: Record<string, unknown> = {}) => ({
-  id: 'rb-1', requestNo: 'RB-202609-00007', requesterUserId: requester, status: 'PAID', paymentStatus: 'PAID',
+  id: 'rb-1', requestNo: 'RB-202609-00007', requesterUserId: requester, branchId: 'branch-1', status: 'PAID', paymentStatus: 'PAID',
   financeReviewStatus: 'NOT_REQUIRED', financeReviewRequired: false, amount: '500.0000', outstandingAmount: '0.0000', currency: 'THB',
   submittedAt: '2026-09-27T03:00:00.000Z', approvedAt: '2026-09-27T05:00:00.000Z', claimFormLayout: 'TWO_SIGNERS',
   approvalSteps: [{ id: 'step-1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: approver, decidedByName: 'สมชาย', decidedAt: '2026-09-27T05:00:00.000Z' }],
@@ -310,7 +348,7 @@ describe('saving the payment form', () => {
     const failed = await h.press();
     assert.equal(failed.status, 'refused');
     // The slip is in, the payment is not: the message says so and does not ask for a new slip or a new transfer.
-    assert.match((failed as { text: string }).text, /^แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · .* · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่$/);
+    assert.equal((failed as { text: string }).text, 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');
     assert.deepEqual(h.slip(), { attachmentId: 'att-uploaded', name: 'slip.jpg' }, 'the form now holds the uploaded slip, not the file');
 
     assert.deepEqual(await h.press(), { status: 'saved' });
@@ -349,7 +387,7 @@ describe('saving the payment form', () => {
   it('is what the payment form runs, with a session that lives as long as the opened form', () => {
     const source = sourceOf('ReimbursementDetailSections.tsx');
     assert.match(source, /const session = useRef<PaymentFormSession>\(\{ idempotencyKey: null, saving: false \}\)/);
-    assert.match(source, /await savePaymentForm\(\{ form, outstandingAmount: String\(request\.outstandingAmount\), slip, session: session\.current \}/);
+    assert.match(source, /await savePaymentForm\(\{ form, outstandingAmount: String\(request\.outstandingAmount\), slip, session: session\.current, payout, payer \}/);
     assert.match(source, /onSlipUploaded: setSlip/);
     assert.match(source, /if \(result\.status === 'saved'\) \{ onDone\(\); toast\.success\('บันทึกจ่ายเรียบร้อยแล้ว'\); \}/);
   });
@@ -357,10 +395,40 @@ describe('saving the payment form', () => {
 
 // Spec §12.2, §21 (impact audit M13): the payment form is never a dialog on a phone.
 describe('quick pay from the finance queue', () => {
-  it('opens the claim page\'s payment step on a phone, and the dialog from the sm width up', () => {
-    assert.equal(PAYMENT_DIALOG_MEDIA_QUERY, '(min-width: 640px)', 'the same width as the sm breakpoint the page lays out by');
-    assert.deepEqual(quickPayTarget(false, 'co-1', 'rb-1'), { kind: 'page', href: '/companies/co-1/reimbursements/rb-1?pay=1' });
-    assert.deepEqual(quickPayTarget(true, 'co-1', 'rb-1'), { kind: 'dialog' });
+  // Review finding: the dialog was decided by width alone (640 px), while the queue lays itself out
+  // as a phone, in cards, up to 768 px. The press now says which layout it came from.
+  it('opens the claim page\'s payment step from the phone cards, and the dialog from the table', () => {
+    assert.deepEqual(quickPayTarget('cards', 'co-1', 'rb-1'), { kind: 'page', href: '/companies/co-1/reimbursements/rb-1?pay=1' });
+    assert.deepEqual(quickPayTarget('table', 'co-1', 'rb-1'), { kind: 'dialog' });
+    const hub = sourceOf('ReimbursementsPages.tsx');
+    // The two layouts are the page's own: cards below md, the table from md. Each button names its own.
+    assert.match(hub, /<div className="hidden md:block" data-testid="reimbursements-finance-table">[\s\S]*?onRecordPayment\(r, 'table'\)[\s\S]*?<div className="mt-3 space-y-3 md:hidden" data-testid="reimbursements-finance-card-list">[\s\S]*?onRecordPayment\(r, 'cards'\)/);
+    assert.equal(hub.match(/onRecordPayment\(r, '(?:cards|table)'\)/g)?.length, 2);
+    assert.doesNotMatch(hub, /matchMedia|innerWidth/, 'no second measurement of the screen');
+  });
+
+  // Review finding: a claim with no branch showed "บันทึกจ่าย", which the API refuses for everyone.
+  it('offers the button only for a claim the payment endpoint takes: waiting for payment, with a branch, to a holder of the pay right', () => {
+    const row = { status: 'READY_FOR_PAYMENT', branchId: 'branch-1' };
+    assert.equal(queueRowOffersPayment(row, owner), true);
+    assert.equal(queueRowOffersPayment(row, ['reimbursement.read', 'reimbursement.finance_review']), false);
+    for (const branchId of [null, undefined, '']) assert.equal(queueRowOffersPayment({ ...row, branchId }, owner), false, String(branchId));
+    for (const status of ['FINANCE_REVIEW', 'PAID', 'PENDING_APPROVAL', 'DRAFT']) assert.equal(queueRowOffersPayment({ ...row, status }, owner), false, status);
+    assert.equal(queueRowOffersPayment(null, owner), false);
+    const hub = sourceOf('ReimbursementsPages.tsx');
+    assert.equal(hub.match(/\{queueRowOffersPayment\(r, permissions\) && <button/g)?.length, 2, 'the table row and the card ask the same question');
+    assert.doesNotMatch(hub, /r\.status === 'READY_FOR_PAYMENT' &&/);
+
+    // The claim page: no button, and the step says why and what to do.
+    const payable = claim({ status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', outstandingAmount: '500.0000', payments: [], currentDesk: { kind: 'PAYMENT' } });
+    const paymentStep = (detail: any) => buildJourneySteps(detail, owner, 'user-payer').find((step) => step.key === 'payment')!;
+    assert.ok(paymentStep(payable).actions.includes('pay'));
+    for (const branchId of [null, undefined]) {
+      const step = paymentStep({ ...payable, branchId });
+      assert.ok(!step.actions.includes('pay'), String(branchId));
+      assert.equal(step.note, 'ใบนี้ไม่ได้ระบุสาขา ระบบจึงยังบันทึกจ่ายไม่ได้ กรุณาติดต่อผู้ดูแลระบบ');
+      assert.equal(opensPaymentFormOnArrival(true, activeJourneyStep(buildJourneySteps({ ...payable, branchId }, owner, 'user-payer'))), false, 'the ?pay=1 link opens no form either');
+    }
   });
 
   it('opens the form on arrival only when the link asked for it and this viewer\'s current step offers the payment', () => {
@@ -373,16 +441,23 @@ describe('quick pay from the finance queue', () => {
     assert.equal(opensPaymentFormOnArrival(true, undefined), false);
   });
 
-  it('is wired from the queue button to the claim page, and the dialog form mounts once the claim has loaded', () => {
+  it('is wired from the queue button to the claim page, and the dialog form mounts once the claim has loaded, never on the bare row', () => {
     const hub = sourceOf('ReimbursementsPages.tsx');
     // One handler for the table button and the card button; the dialog opens only through it.
-    assert.match(hub, /quickPayTarget\(window\.matchMedia\(PAYMENT_DIALOG_MEDIA_QUERY\)\.matches, companyId, row\.id\)/);
+    assert.match(hub, /const recordPayment = useCallback\(\(row: any, layout: 'cards' \| 'table'\) => \{\s+const target = quickPayTarget\(layout, companyId, row\.id\);/);
     assert.match(hub, /if \(target\.kind === 'page'\) router\.push\(target\.href\);\s+else setPayFor\(row\);/);
     assert.match(hub, /<FinanceQueue \{\.\.\.queueProps\} onRecordPayment=\{recordPayment\} \/>/);
     assert.equal((hub.match(/setPayFor\(/g) ?? []).length, 3, 'opened in one place, closed in two');
-    // The form seeds its state when it mounts, so it mounts after the claim read settles, keyed on what it was given.
+    // The form seeds its state when it mounts, so it mounts once, after the claim read settles, and
+    // never on the bare queue row: that row says nothing about the account to pay into.
     assert.match(hub, /const \[claim, setClaim\] = useState<any \| null>\(null\)/);
-    assert.match(hub, /\{claim\s+[\s\S]*?\? <PaymentForm key=\{claim === request \? 'queue-row' : 'claim'\} companyId=\{companyId\} request=\{claim\}[\s\S]*?: <LoadingState label="กำลังเปิดใบเบิก\.\.\." \/>\}/);
+    assert.match(hub, /\.then\(\(detail\) => \{ if \(active\) setClaim\(detail\); \}\)\s+\.catch\(\(e\) => \{ if \(active\) setFailed\(err\(e\)\); \}\);/);
+    assert.doesNotMatch(hub, /setClaim\(request\)/);
+    assert.match(hub, /\{claim \? \([\s\S]*?<ClaimPayoutCard companyId=\{companyId\} detail=\{claim\} userId=\{userId\}[^\n]* payStep \/>\s+<PaymentForm companyId=\{companyId\} request=\{claim\} onCancel=\{onClose\} onDone=\{onDone\} \/>[\s\S]*?\) : failed \? \([\s\S]*?\) : <LoadingState label="กำลังเปิดใบเบิก\.\.\." \/>\}/);
+    assert.equal(hub.match(/<PaymentForm /g)?.length, 1);
+    // A failed read is not a dead end: try again, or go to the claim's own page with the form open.
+    assert.match(hub, /<ErrorBanner message=\{`เปิดใบเบิกไม่สำเร็จ จึงยังบันทึกจ่ายจากหน้านี้ไม่ได้ · \$\{failed\}`\} \/>/);
+    assert.match(hub, /onClick=\{\(\) => setAttempt\(\(n\) => n \+ 1\)\}>ลองอีกครั้ง<\/button>\s+<Link href=\{`\$\{claimPath\}\/\$\{request\.id\}\?pay=1`\} className=\{btnClass\}>เปิดหน้าใบเบิก<\/Link>/);
 
     const route = sourceOf('..', '..', '..', 'app', '(workspace)', 'companies', '[companyId]', 'reimbursements', '[requestId]', 'page.tsx');
     assert.match(route, /payOnOpen=\{\(searchParams \? await searchParams : \{\}\)\['pay'\] === '1'\}/);

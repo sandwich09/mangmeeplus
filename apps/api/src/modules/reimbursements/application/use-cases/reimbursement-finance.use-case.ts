@@ -28,6 +28,8 @@ import {
   ageHours,
   redactPayload,
 } from '../../domain/logic/reimbursement.logic';
+import { planPaymentPayout } from '../../domain/logic/payout-destination.logic';
+import { paymentPayoutRefusal } from '../../infrastructure/reimbursement-payout';
 import { paymentSlipAuditMetadata } from './reimbursement-payment-slip.use-case';
 
 async function appendReimbursementOutboxWithinTx(tx: any, input: {
@@ -381,10 +383,21 @@ export class RecordReimbursementPaymentUseCase {
       bankAccountId: input.bankAccountId,
       slipAttachmentId: input.slipAttachmentId,
     };
+    // What the payer said about the payout account, as sent. Here it is held against the claim as just
+    // read, for the replay shortcut and a friendly refusal; the repository holds it against the claim
+    // again under the payment lock, which is the check that counts (spec §12.3).
+    const payoutStatement = {
+      payoutDestinationVersion: input.payoutDestinationVersion, payoutConfirmed: input.payoutConfirmed,
+      payoutDefaultToken: input.payoutDefaultToken, methodMismatchReason: input.methodMismatchReason,
+    };
+    const payoutPlan = planPaymentPayout(req, { ...payoutStatement, paymentMethod: input.paymentMethod });
     const recorded = req.payments?.find((row) => row.status === 'RECORDED');
     if (req.paymentStatus === 'PAID' && recorded) {
-      // A replay is the same payment only if every fact matches, the slip included (spec §12.7).
-      if (!isSamePaymentRequest(recorded, payment)) throw new ConflictException('reimbursement_payment_already_recorded');
+      // A replay is the same payment only if every fact matches, the slip and the account included
+      // (spec §12.7). A statement the claim refuses is not that payment either.
+      if ('error' in payoutPlan || !isSamePaymentRequest(
+        { ...recorded, ...await this.repo.findRecordedPaymentPayout(req, recorded) }, { ...payment, ...payoutPlan },
+      )) throw new ConflictException('reimbursement_payment_already_recorded');
       if (!recorded.idempotencyKey.startsWith('legacy:')) {
         await this.ensurePaymentNumber(ctx, paidAt, recorded.idempotencyKey, recorded.id, recorded.paymentNo);
       }
@@ -415,7 +428,11 @@ export class RecordReimbursementPaymentUseCase {
     if (error) throw new UnprocessableEntityException(error);
     // Everything that can refuse the payment is checked before a payment number is reserved: a
     // refusal after that point would burn a number that only a retry with the same key reuses.
-    // Phase 1 seam: the payer's confirmation of the payout account is validated here too.
+    // The payer's statement about the account is one of them.
+    if ('error' in payoutPlan) throw paymentPayoutRefusal(payoutPlan.error);
+    if (payoutPlan.payoutDestinationVersion !== undefined || payoutPlan.payoutDefaultToken !== undefined) {
+      await this.repo.assertPaymentPayoutUsable(req, payoutPlan);
+    }
     if (input.slipAttachmentId) {
       await this.repo.assertPaymentSlipUsable({
         companyId: ctx.companyId, requestId: id, attachmentId: input.slipAttachmentId, actorUserId: ctx.userId,
@@ -444,6 +461,7 @@ export class RecordReimbursementPaymentUseCase {
       idempotencyKey: paymentAttemptKey,
       paymentNo: reservation.paymentNo,
       ...payment,
+      payout: payoutStatement,
       paidByUserId: ctx.userId,
     });
     if (result.created) await this.audit.log({
@@ -452,6 +470,14 @@ export class RecordReimbursementPaymentUseCase {
       metadataJson: {
         paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, paymentMethod: input.paymentMethod, requestId: id,
         ...(result.slip && paymentSlipAuditMetadata(result.slip)),
+        // Which account the payer confirmed: its version, kind, bank and the last 4 digits. Never the
+        // number, and never the payer's free-text reason: that it differs from what was asked is enough here.
+        ...(result.payout && {
+          payoutDestinationVersion: result.payout.payoutDestinationVersion, payoutSource: result.payout.source,
+          payoutKind: result.payout.payoutKind, bankName: result.payout.bankName, accountLast4: result.payout.accountLast4,
+          ...(result.payout.payerVerified && { payerVerifiedAccount: true }),
+        }),
+        ...(result.payment.methodMismatchReason && { paidDifferentlyFromRequested: true, requestedPayoutMethod: req.payoutMethod }),
       },
     });
     if (result.created && reservation.reservedId) {
@@ -529,14 +555,16 @@ export class VoidReimbursementPaymentUseCase {
     if (!ctx.permissions.includes('reimbursement.payment.void')) throw new ForbiddenException('Missing permission: reimbursement.payment.void');
     if (!input.reason || input.reason.trim() === '') throw new BadRequestException('void_reason_required');
 
-    const req = await this.repo.findRequestById(ctx.companyId, requestId);
+    // With its relations: a replay of a void answers from this read, and that answer is a claim detail
+    // like any other (steps, payments, signatures), not a header with empty lists.
+    const req = await this.repo.findRequestById(ctx.companyId, requestId, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     // Before the payment lookup and well before the ledger reversal: void is the most destructive
     // action in this module (audited CRITICAL) and it reverses a posted journal.
     assertReimbursementBranchInScope(ctx, req.branchId);
     const payment = await this.repo.findPaymentById(ctx.companyId, paymentId);
     if (!payment || payment.reimbursementRequestId !== requestId) throw new NotFoundException('Payment not found');
-    if (payment.status === 'VOIDED') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, (await this.repo.findRequestById(ctx.companyId, requestId)) ?? req, ctx);
+    if (payment.status === 'VOIDED') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     if (payment.status !== 'RECORDED') throw new UnprocessableEntityException('Payment cannot be voided');
 
     const result = await this.repo.voidPaymentTrueReversal(ctx.companyId, requestId, paymentId, ctx.userId, input.reason, undefined, ctx.requestId ?? `reimbursement-payment-void:${paymentId}`);
@@ -575,6 +603,11 @@ export class ExportReimbursementEvidenceUseCase {
     const signedCopies = await this.repo.listSignedClaimFormCopies(ctx.companyId, id);
     const payments = req.payments ?? [];
     const paymentSlips = payments.length > 0 ? await this.repo.listPaymentSlips(ctx.companyId, payments.map((payment) => payment.id)) : {};
+    // The account, as every other projection has it: bank, account name and the last 4 digits. The
+    // number itself leaves through the audited reveal alone, never through an export.
+    const payout = req.payoutMethod ? await this.repo.findClaimPayout(req) : undefined;
+    const paidInto = payments.flatMap((payment) => payment.payoutDestinationVersion ?? []);
+    const destinations = paidInto.length > 0 ? await this.repo.listPaymentPayoutDestinations(ctx.companyId, id, paidInto) : {};
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.export',
@@ -596,6 +629,14 @@ export class ExportReimbursementEvidenceUseCase {
         status: req.status,
         paymentStatus: req.paymentStatus,
         approvalSnapshotHash: req.approvalSnapshotHash,
+        ...(payout?.payoutMethod && { payout: {
+          payoutMethod: payout.payoutMethod,
+          ...(payout.payoutMethod === 'BANK_TRANSFER' && {
+            payoutKind: payout.payoutKind, ...(payout.bankName && { bankName: payout.bankName }), accountName: payout.accountName,
+            accountLast4: payout.accountLast4, version: payout.version,
+            ...(payout.verifiedAt && { verifiedAt: payout.verifiedAt.toISOString() }),
+          }),
+        } }),
       },
       // Evidence lives on the lines: since lane C the header attachment/expense ids
       // are null for new claims, so a header-only export would carry no evidence at all.
@@ -619,6 +660,11 @@ export class ExportReimbursementEvidenceUseCase {
         paymentNo: p.paymentNo, paidAmount: p.paidAmount, currency: p.currency, paymentMethod: p.paymentMethod,
         paidAt: p.paidAt.toISOString(), paymentReference: p.paymentReference, status: p.status,
         slipCount: paymentSlips[p.id]?.length ?? 0,
+        // The account this payment was confirmed into (masked), when, and why the method differs from
+        // the one asked for: the same three facts the payment row on the claim page shows.
+        ...(p.payoutDestinationVersion !== undefined && destinations[p.payoutDestinationVersion] && { payoutDestination: destinations[p.payoutDestinationVersion] }),
+        ...(p.payoutConfirmedAt && { payoutConfirmedAt: p.payoutConfirmedAt.toISOString() }),
+        ...(p.methodMismatchReason && { methodMismatchReason: p.methodMismatchReason }),
       })),
     });
   }

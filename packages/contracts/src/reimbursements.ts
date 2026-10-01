@@ -190,6 +190,38 @@ export function reimbursementPaymentSlipRequired(paymentMethod: string): boolean
   return paymentMethod === 'BANK_TRANSFER';
 }
 
+/** What recording a payment asks for beyond amount, date and reference (payout spec §12.4). */
+export type ReimbursementPaymentRule = {
+  /** A transfer is recorded with its slip (D3), whatever the claim asked for. */
+  slipRequired: boolean;
+  /**
+   * The payer's "โอนเข้าบัญชีนี้แล้ว". `required`: a transfer on a claim that carries an account.
+   * `optional`: a transfer on a legacy claim, which froze no account, so the payer confirms the
+   * requester's current default only when the money went there (§15). `none`: no account is paid into.
+   */
+  payoutConfirmation: 'required' | 'optional' | 'none';
+  /** The method recorded is not the one the requester asked for: the payer says why. */
+  mismatchReasonRequired: boolean;
+};
+
+/**
+ * The one table of payout spec §12.4. The API asks it under the payment lock and the payment form
+ * asks it for the fields it shows, so the two cannot disagree. `requested` is what the claim's
+ * requester asked for: the method of the claim's own snapshot and whether that snapshot carries an
+ * account. Null for a legacy claim, one sent before claims carried a receiving method.
+ */
+export function reimbursementPaymentRule(
+  requested: { payoutMethod: ReimbursementPayoutMethod; hasAccount: boolean } | null,
+  paymentMethod: string,
+): ReimbursementPaymentRule {
+  const transfer = paymentMethod === 'BANK_TRANSFER';
+  return {
+    slipRequired: reimbursementPaymentSlipRequired(paymentMethod),
+    payoutConfirmation: !transfer ? 'none' : !requested ? 'optional' : requested.hasAccount ? 'required' : 'none',
+    mismatchReasonRequired: !!requested && paymentMethod !== requested.payoutMethod,
+  };
+}
+
 export const REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES = 10 * 1024 * 1024;
 export const REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES = 5;
 
@@ -201,6 +233,19 @@ export const REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES = 5;
 export type ReimbursementPaymentSlipSummary = {
   attachmentId: string;
   attachedAt: string;
+};
+
+/**
+ * The account a payment was confirmed into, masked: bank, account name and the last 4 digits, the same
+ * for every reader. No surface carries more than this of a payment's account.
+ */
+export type ReimbursementPaymentDestinationSummary = {
+  /** The claim's account version the payer was shown and confirmed. */
+  version: number;
+  payoutKind: ReimbursementPayoutKind;
+  bankName?: string;
+  accountName: string;
+  accountLast4: string;
 };
 
 export type ReimbursementPaymentSummary = {
@@ -232,6 +277,20 @@ export type ReimbursementPaymentSummary = {
    * the button and the slip endpoint cannot disagree. It says nothing about the full account number.
    */
   viewerCanOpenSlips: boolean;
+  /**
+   * The account the payer confirmed the transfer into: the version of the claim's own snapshot they
+   * were shown or, on a legacy claim, the copy of the requester's default account kept with the
+   * payment (spec §15). Absent when no account was confirmed: cash, a cheque, or a transfer on a
+   * legacy claim into an account the payer asked the requester for.
+   */
+  payoutDestination?: ReimbursementPaymentDestinationSummary;
+  /** When the payer confirmed the transfer into `payoutDestination`. */
+  payoutConfirmedAt?: string;
+  /**
+   * Why the payer paid by another method than the requester asked for. Present exactly when they
+   * did, so every surface says "จ่ายต่างจากที่ผู้เบิกขอ" from this one fact.
+   */
+  methodMismatchReason?: string;
 };
 
 // ---- Who sees a claim's payout details (spec §11.1, owner decision D2) ----
@@ -257,8 +316,8 @@ export type ReimbursementPayoutViewerClaim = {
  * Whether this person approved the claim as it stands: they decided an approval that is still in
  * force and belongs to the current round, that is, decided at or after the claim was last
  * submitted. An approval from before a correction and resubmission is history: the claim has since
- * been routed again, and its earlier approver has no say over what it became. The same test the
- * claim page uses for "approved by a person" (`buildJourneySteps`).
+ * been routed again, and its earlier approver has no say over what it became. The claim page asks
+ * this rule too, for "approved by a person" (`buildJourneySteps`); it no longer keeps a copy.
  *
  * The one definition of a claim's own approver. The account-number reveal and its
  * `canRevealAccountNumber` flag (`claimPayoutRevealGroup` in the API), the payment slip
@@ -461,7 +520,7 @@ export function reimbursementHubBucket(claim: {
   return HUB_BUCKET_BY_STATUS[claim.status as ReimbursementRequestStatus] ?? 'closed';
 }
 
-/** The whole list scope as the server counted it: what the hub's cards and chips print. */
+/** The whole list scope as the server counted it, or what a search found in it: what the hub's cards and chips print. */
 export type ReimbursementHubSummary = {
   /** Claims per bucket, and `all` for the scope. The buckets add up to `all`. */
   counts: Record<'all' | ReimbursementHubBucket, number>;
@@ -649,6 +708,12 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   missingReceiptReason?: string;
   /** Where the money goes back to, masked. Absent on a legacy claim: one sent before claims carried a receiving method. */
   payout?: ReimbursementPayoutSummary;
+  /**
+   * GET detail only, on a legacy claim that can be paid, for a viewer who may record its payment and
+   * whose requester has a default account to transfer into (spec §15). Absent for everyone else, and
+   * on every claim that carries its own `payout`.
+   */
+  legacyPayoutDefault?: ReimbursementLegacyPayoutDefault;
   lines: ReimbursementLineSummary[];
   approvalSteps: ReimbursementApprovalStepSummary[];
   payments: ReimbursementPaymentSummary[];
@@ -743,6 +808,25 @@ export type RecordReimbursementPaymentInput = {
    * copy that is really the slip, or the slip of an earlier payment of the same claim).
    */
   slipAttachmentId?: string;
+  /**
+   * The claim's account version the payer was shown (`payout.version`). Whenever it is sent it must be
+   * the claim's current version, else `payout_destination_changed`. Required, with `payoutConfirmed`,
+   * to record a transfer on a claim that carries an account.
+   */
+  payoutDestinationVersion?: number;
+  /** "โอนเข้าบัญชีนี้แล้ว และชื่อผู้รับที่ธนาคารแสดงตรงกับใบเบิก": the payer transferred into the account shown. */
+  payoutConfirmed?: boolean;
+  /**
+   * Legacy claim only: `legacyPayoutDefault.confirmToken` of the account the payer was shown, sent
+   * with `payoutConfirmed` when the transfer went into that account. A copy of it is then kept with
+   * the payment. Omitted when the payer transferred somewhere else.
+   */
+  payoutDefaultToken?: string;
+  /**
+   * Why the payment is recorded by another method than the requester asked for; required then
+   * (`reimbursementPaymentRule`). Shown on the payment row, so it may not carry an account number.
+   */
+  methodMismatchReason?: string;
 };
 
 export type AttachReimbursementPaymentSlipInput = {
@@ -758,8 +842,13 @@ export type ListReimbursementsFilter = {
   status?: ReimbursementRequestStatus;
   paymentStatus?: ReimbursementPaymentStatus;
   requesterUserId?: string;
-  /** Only the claims of one hub bucket. An unknown bucket matches nothing. */
+  /** Only the claims of one hub bucket. Any other name is refused (400). */
   bucket?: ReimbursementHubBucket;
+  /**
+   * The hub's search box: every word is in the claim's number, requester name, reason or category, or is
+   * its amount. It narrows the list and `hub` alike, so each count is still the rows its filter returns.
+   */
+  search?: string;
   page?: number;
   pageSize?: number;
 };
@@ -770,7 +859,7 @@ export type PaginatedReimbursements = {
   total: number;
   page: number;
   pageSize: number;
-  /** The scope counted per bucket, whatever `bucket` or page was asked for. */
+  /** The scope counted per bucket, whatever `bucket` or page was asked for. With `search`, the claims it found. */
   hub: ReimbursementHubSummary;
 };
 
@@ -998,6 +1087,25 @@ export type ReimbursementPayoutSummary = {
    * About the account number alone: who may open a payment slip is a different group and a different flag.
    */
   canRevealAccountNumber?: boolean;
+};
+
+/**
+ * Legacy claims only (payout spec §15). A claim sent before claims carried an account froze none, so
+ * whoever records its payment is shown the requester's CURRENT default account instead, as an account
+ * this claim never had approved. Masked like every other account: the full number comes from the
+ * claim's own reveal call, which answers that payer for this account and records it.
+ */
+export type ReimbursementLegacyPayoutDefault = {
+  payoutKind: ReimbursementPayoutKind;
+  bankName?: string;
+  accountName: string;
+  accountLast4: string;
+  /**
+   * Names the account shown, opaquely. A payer who transferred into it sends this back as
+   * `payoutDefaultToken`; the payment is refused (`payout_destination_changed`) when the requester's
+   * default is no longer that account, so nobody confirms an account they were not shown.
+   */
+  confirmToken: string;
 };
 
 // ---- Printable claim form (ใบเบิกค่าใช้จ่าย) ----

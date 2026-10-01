@@ -15,7 +15,7 @@ import {
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
 } from './reimbursements.api';
 import {
-  REQUEST_STATUS_LABELS, PAYMENT_STATUS_LABELS,
+  REQUEST_STATUS_LABELS,
   FINANCE_REVIEW_LABELS, REIMBURSEMENT_CREATE_UNAVAILABLE,
   currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
 } from './reimbursements.model';
@@ -28,13 +28,14 @@ import {
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
   type HubFilter, approverPaymentWarning,
-  NO_HUB_LIST, QUEUE_PAGE_SIZE, hubCardFilter, hubList, hubListKey, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
-  PAYMENT_DIALOG_MEDIA_QUERY, quickPayTarget,
+  NO_HUB_LIST, QUEUE_PAGE_SIZE, HUB_SEARCH_DELAY_MS, hubCardFilter, hubList, hubListKey, hubListStatusText, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
+  queueRowOffersPayment, quickPayTarget,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
 } from './ReimbursementDetailSections';
 import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage } from './reimbursement-payout.logic';
+import { ClaimPayoutCard } from './ReimbursementPayout';
 import { type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
@@ -124,9 +125,11 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   // "บันทึกจ่าย" stays a quick action right on the finance row; it never needed the drawer.
   const [payFor, setPayFor] = useState<any | null>(null);
   // On a phone the payment form is never a dialog (spec §12.2, §21): the same press opens the claim's
-  // own page with the form already open in its payment step card.
-  const recordPayment = useCallback((row: any) => {
-    const target = quickPayTarget(window.matchMedia(PAYMENT_DIALOG_MEDIA_QUERY).matches, companyId, row.id);
+  // own page with the form already open in its payment step card. Which it is comes from the layout
+  // the press was made in (the queue's cards or its table), so the dialog never opens over the
+  // layout this page shows a phone.
+  const recordPayment = useCallback((row: any, layout: 'cards' | 'table') => {
+    const target = quickPayTarget(layout, companyId, row.id);
     if (target.kind === 'page') router.push(target.href);
     else setPayFor(row);
   }, [companyId, router]);
@@ -201,6 +204,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
 
       {payFor && <PaymentModal
         companyId={companyId}
+        userId={userId}
         request={payFor}
         onClose={() => setPayFor(null)}
         onDone={() => {
@@ -229,26 +233,33 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   const [busy, setBusy] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<HubFilter>('all');
   const [query, setQuery] = useState('');
+  // The search the API is asked for: what was typed, once the typing has paused. Before, the search ran in the
+  // browser over rows it first had to load, every page of the filter (30 calls for 3,000 claims).
+  const [search, setSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(query.trim()), HUB_SEARCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [query]);
   const [page, setPage] = useState(1);
 
   const scope = reimbursementListScope(permissions);
-  const listKey = hubListKey(companyId, scope, statusFilter, refreshKey, reload);
+  // The search goes last: it is the one part a person types, and nothing follows it that it could be mistaken for.
+  const listKey = hubListKey(companyId, scope, statusFilter, refreshKey, reload, search);
   const list = hubList(held, listKey);
-  const searching = query.trim() !== '';
-  // Lazy: the first page of the filter, then more only when the table page shown reaches past what is held.
-  // ponytail: search reads the rows on this page, so a search takes every page of its filter (one call per
-  // 100 claims); search on the server once a shop holds thousands of claims.
-  const nextPage = hubNextPage(list, searching ? Infinity : page * QUEUE_PAGE_SIZE);
+  const searching = search !== '';
+  // Lazy: the first page of the filter and the search, then more only when the table page shown reaches past what is held.
+  const nextPage = hubNextPage(list, page * QUEUE_PAGE_SIZE);
   useEffect(() => {
     if (nextPage === null) return;
-    // The cleanup lets go of the request: another filter, a reload, another company or an unmount leaves its answer unused.
-    return loadHubPage(companyId, { scope, filter: statusFilter, page: nextPage }, {
+    // The cleanup lets go of the request: another filter or search, a reload, another company or an unmount leaves its answer unused.
+    return loadHubPage(companyId, { scope, filter: statusFilter, search, page: nextPage }, {
       onPage: (result) => setHeld((current) => withHubPage(current, listKey, result)),
       onError: (e) => setHeld((current) => withHubFailure(current, listKey, err(e))),
     });
-  }, [companyId, scope, statusFilter, listKey, nextPage]);
+  }, [companyId, scope, statusFilter, search, listKey, nextPage]);
   const loading = nextPage !== null;
-  // The cards and chips are the server's counts of the whole scope, so they hold whatever part of the list is loaded.
+  // The cards and chips are the server's counts, so they hold whatever part of the list is loaded: of the whole scope,
+  // or with a search of what the search found. Either way the number on a card is the rows its filter shows.
   const summary = list.summary;
   const rows = list.rows;
 
@@ -263,23 +274,11 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
     ? onOpenDetail(r.id)
     : void action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'));
 
-  const filteredData = useMemo(() => (searching ? rows.filter(r => matchesSearch([
-    r.requestNo,
-    r.requesterDisplayNameSnapshot,
-    r.reason,
-    r.categoryLabelSnapshot ?? r.categoryKey,
-    r.lineCount ?? 1,
-    r.amount,
-    r.currency,
-    REQUEST_STATUS_LABELS[r.status] ?? r.status,
-    PAYMENT_STATUS_LABELS[r.paymentStatus] ?? r.paymentStatus,
-    currentDeskText(r.currentDesk),
-  ], query)) : rows), [rows, searching, query]);
-  // The server's total stands for the rows not loaded yet. A search, or a list that is complete, counts the rows it holds.
-  const shownTotal = searching || list.nextPage === null ? filteredData.length : list.total;
+  // The server's total stands for the rows not loaded yet. A list that is complete counts the rows it holds.
+  const shownTotal = list.nextPage === null ? rows.length : list.total;
   const bounds = useMemo(() => pageBounds(shownTotal, page), [shownTotal, page]);
-  const pagedData = useMemo(() => filteredData.slice(bounds.start, bounds.end), [filteredData, bounds]);
-  useEffect(() => { setPage(1); }, [query, statusFilter]);
+  const pagedData = useMemo(() => rows.slice(bounds.start, bounds.end), [rows, bounds]);
+  useEffect(() => { setPage(1); }, [search, statusFilter]);
   const statusChips: Array<{ key: HubFilter; label: string }> = [
     { key: 'all', label: 'ทั้งหมด' },
     { key: 'draft', label: 'ร่าง' },
@@ -339,12 +338,12 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm text-gray-500 tabular-nums" role="status">
-                {loading ? 'กำลังโหลดรายการ...'
-                  : searching || statusFilter !== 'all' ? `พบ ${shownTotal} จาก ${summary.counts.all} รายการ` : `ทั้งหมด ${summary.counts.all} รายการ`}
+                {loading ? 'กำลังโหลดรายการ...' : hubListStatusText(shownTotal, summary.counts.all, statusFilter, searching)}
               </div>
               <div className="relative w-full sm:max-w-96">
+                {/* Short enough to read whole on a 390 px phone (248 px of the 265 the field leaves at its 16 px font). */}
                 <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
-                  placeholder="ค้นหาทุกข้อมูลในตาราง เช่น เลขที่ ผู้ขอ จำนวนเงิน สถานะ"
+                  placeholder="ค้นหาเลขที่ ผู้ขอ เหตุผล หมวด ยอดเงิน"
                   value={query} onChange={e => setQuery(e.target.value)} />
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
                   {ICON.search}
@@ -355,9 +354,10 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
               // Nothing to show yet is not "no claims": a page still on its way, or one that failed, says so itself.
               loading ? <LoadingState label="กำลังโหลด..." /> : list.failed === undefined && (
                 <div className="mt-3">
+                  {/* With a search the counts are of what it found: none found is not a shop with no claims. */}
                   <EmptyState
-                    title={summary.counts.all === 0 ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
-                    description={summary.counts.all === 0
+                    title={summary.counts.all === 0 && !searching ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
+                    description={summary.counts.all === 0 && !searching
                       ? canCreate ? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : REIMBURSEMENT_CREATE_UNAVAILABLE
                       : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
                   />
@@ -662,7 +662,10 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
 }
 
 // ── Finance Queue ─────────────────────────────────────────────────────────────
-function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onRecordPayment }: QueueProps & { onRecordPayment: (request: any) => void }) {
+function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onRecordPayment }: QueueProps & {
+  /** `layout`: where the press was made, the table (a dialog opens) or the phone cards (the claim page opens). */
+  onRecordPayment: (request: any, layout: 'cards' | 'table') => void;
+}) {
   const toast = useToast();
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -774,7 +777,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
                             {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
-                            {(r.status === 'READY_FOR_PAYMENT' && permissions.includes('reimbursement.payment.record')) && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); onRecordPayment(r); }}>บันทึกจ่าย</button>}
+                            {queueRowOffersPayment(r, permissions) && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); onRecordPayment(r, 'table'); }}>บันทึกจ่าย</button>}
                           </div>
                         </td>
                       </tr>
@@ -803,7 +806,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`/companies/${companyId}/reimbursements/${r.id}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-finance-card">ดูรายละเอียด</Link>
                     {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
-                    {r.status === 'READY_FOR_PAYMENT' && permissions.includes('reimbursement.payment.record') && <button className={cx(btnClass, 'min-h-11 w-full')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => onRecordPayment(r)}>บันทึกจ่าย</button>}
+                    {queueRowOffersPayment(r, permissions) && <button className={cx(btnClass, 'min-h-11 w-full')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => onRecordPayment(r, 'cards')}>บันทึกจ่าย</button>}
                   </div>
                 </MangmeeCard>
               ))}
@@ -819,26 +822,41 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
   );
 }
 
-function PaymentModal({ companyId, request, onClose, onDone }: { companyId: string; request: any; onClose: () => void; onDone: () => void }) {
-  // The queue row carries no attachments and nothing about where to pay. The claim does, and the form
-  // seeds its own state from what it is given when it mounts. So the form waits for that read to
-  // settle and mounts once: with the claim, or with the row if the read failed (the row is still
-  // enough to pay). Mounting on the row and swapping the claim in later would leave the seeded state
-  // stale, and remounting then would throw away what the payer had already picked.
+function PaymentModal({ companyId, userId, request, onClose, onDone }: { companyId: string; userId: string; request: any; onClose: () => void; onDone: () => void }) {
+  // The queue row carries no attachments and nothing about where to pay. The claim does: the account
+  // to transfer into, the version the payer confirms and the files that can be the slip. The form
+  // seeds its own state from what it is given when it mounts, so it mounts once, when that read has
+  // settled, and never on the bare row: recording a transfer for an account nobody was shown is what
+  // this step exists to prevent. A read that fails says so, with the claim's own page as the way on.
   const [claim, setClaim] = useState<any | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
+    setFailed(null);
     getReimbursement(companyId, request.id)
       .then((detail) => { if (active) setClaim(detail); })
-      .catch(() => { if (active) setClaim(request); });
+      .catch((e) => { if (active) setFailed(err(e)); });
     return () => { active = false; };
-  }, [companyId, request]);
+  }, [companyId, request, attempt]);
+  const claimPath = `/companies/${companyId}/reimbursements`;
   return (
     <Modal open title={`บันทึกการจ่ายเงิน — ${request.requestNo}`} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
-      {claim
-        // Keyed on what it was seeded from: a form never outlives the data its state came from.
-        ? <PaymentForm key={claim === request ? 'queue-row' : 'claim'} companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} />
-        : <LoadingState label="กำลังเปิดใบเบิก..." />}
+      {claim ? (
+        <div className="space-y-3">
+          {/* The same box the claim page shows at its payment step: where to transfer, with show and copy. */}
+          <ClaimPayoutCard companyId={companyId} detail={claim} userId={userId} payoutAccountHref={`${claimPath}/payout-account`} payStep />
+          <PaymentForm companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} />
+        </div>
+      ) : failed ? (
+        <div className="space-y-3">
+          <ErrorBanner message={`เปิดใบเบิกไม่สำเร็จ จึงยังบันทึกจ่ายจากหน้านี้ไม่ได้ · ${failed}`} />
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button type="button" className={ghostClass} onClick={() => setAttempt((n) => n + 1)}>ลองอีกครั้ง</button>
+            <Link href={`${claimPath}/${request.id}?pay=1`} className={btnClass}>เปิดหน้าใบเบิก</Link>
+          </div>
+        </div>
+      ) : <LoadingState label="กำลังเปิดใบเบิก..." />}
     </Modal>
   );
 }

@@ -5,6 +5,7 @@ import type {
   UpdateReimbursementDraftInput,
   ListReimbursementsFilter,
   ReimbursementLineInput,
+  ReimbursementHubBucket,
   ReimbursementHubSummary,
   PaginatedReimbursements,
   ReimbursementRequestSummary,
@@ -22,6 +23,7 @@ import { OutboxAppendService } from '../../../data-model-core/application/servic
 import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import type { ExpenseVoidBlocker } from '../../../expenses/infrastructure/expense-void-blocker';
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type {
   ReimbursementDuplicateCandidateWriteData,
   ReimbursementLineRecord,
@@ -33,7 +35,6 @@ import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbur
 import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
 import { approvalDecisionActions, awaitingSystemOf } from './reimbursement-approval.use-case';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
-import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import {
   defaultChangedSinceSubmit, hasPayoutSnapshot, payoutRevealGroup, payoutSubmitToken,
   type PayoutRevealGroup, type SubmitPayoutColumns,
@@ -330,6 +331,10 @@ export class GetReimbursementDetailUseCase {
     const pendingCancellation = await pendingCancellationOf(ctx, req, this.repo);
     // Audit B4: a claim that was decided and has not moved on said nothing of it either.
     const awaitingSystem = await awaitingSystemOf(ctx, req, this.repo);
+    // Spec §15: a legacy claim froze no account, so whoever may record its payment is shown the
+    // requester's default account as it is now, with the token a confirmation of it sends back.
+    // Present exactly when the reveal endpoint would answer this viewer for that account.
+    const legacyPayoutDefault = await legacyPayoutPayer(ctx, req, this.repo) ? await this.repo.findLegacyPayoutDefault(req) : null;
     return {
       ...detail,
       ...(pendingCancellation && { pendingCancellation }),
@@ -339,6 +344,7 @@ export class GetReimbursementDetailUseCase {
         ...payout, ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
         canRevealAccountNumber: await claimPayoutRevealGroup(ctx, req, this.repo, approvalActions) !== null,
       } }),
+      ...(legacyPayoutDefault && { legacyPayoutDefault }),
       approvalActions,
       ...(payers && { paymentDesk: { names: payers.slice(0, 5), moreCount: Math.max(payers.length - 5, 0) } }),
       internalNotes: notes.map(note => ({
@@ -430,6 +436,9 @@ export function hubSummary(groups: readonly ReimbursementRequestGroup[]): Reimbu
   return { counts, totalAmount: decStr(totalAmount), blockedDraftCount };
 }
 
+/** The hub's buckets by name. Typed over every bucket, so one added later has to be named here to be asked for. */
+const HUB_BUCKETS: readonly string[] = Object.keys({ draft: true, review: true, payment: true, paid: true, closed: true } satisfies Record<ReimbursementHubBucket, true>);
+
 /** A page number or size from the query string: a whole number from 1 up, and small enough to be an OFFSET. */
 const wholeFrom1 = (value: number | undefined, fallback: number) =>
   (value !== undefined && Number.isFinite(value) && value >= 1 ? Math.min(Math.floor(value), 1_000_000) : fallback);
@@ -443,6 +452,9 @@ export class ListReimbursementsUseCase {
     const canReadOwn = ctx.permissions.includes('reimbursement.read_own');
     const canReadRelated = ctx.permissions.includes('reimbursement.read_related');
     if (!canReadAll && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read reimbursements');
+    // Only a bucket the hub has. The name came straight from the query string: `all` answered no rows under the
+    // whole scope's total, and a name every object carries (`constructor`) answered with no total at all.
+    if (filter.bucket !== undefined && !HUB_BUCKETS.includes(filter.bucket)) throw new BadRequestException('reimbursement_list_bucket_invalid');
 
     let requesterUserId: string | undefined;
     let relatedUserId: string | undefined;
@@ -472,6 +484,8 @@ export class ListReimbursementsUseCase {
       status: filter.status,
       paymentStatus: filter.paymentStatus,
       bucket: filter.bucket,
+      // The hub's search box. The counts below are of the same searched list, so a card still counts its rows.
+      search: filter.search?.trim().slice(0, 100) || undefined,
       skip: (page - 1) * pageSize,
       take: pageSize,
     }), loadReimbursementPolicy(this.repo, ctx.companyId)]);
@@ -493,7 +507,7 @@ export class ListReimbursementsUseCase {
         { ...row, approvalSteps: pendingSteps.filter((step) => step.reimbursementRequestId === row.id) },
         { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames },
       )),
-      total: filter.bucket === undefined ? hub.counts.all : hub.counts[filter.bucket] ?? 0,
+      total: hub.counts[filter.bucket ?? 'all'],
       page,
       pageSize,
       hub,
@@ -1198,15 +1212,18 @@ export async function claimPayoutRevealGroup(
   // A draft's own account, or the snapshot a sent claim froze. A legacy claim has neither.
   const hasClaimAccount = request.payoutMethod === 'BANK_TRANSFER' && request.payoutDestinationVersion != null
     && (isDraft || hasPayoutSnapshot(request));
-  // Everyone but the requester must hold the claim's branch, and has no business with a draft.
-  if (!hasClaimAccount || isRequester || isDraft || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) {
-    return payoutRevealGroup({ hasClaimAccount, isDraft, isRequester, isClaimApprover: false, canRecordPayment: false });
-  }
+  if (!hasClaimAccount) return null;
+  // The number is never easier to reach than the claim it belongs to: every group, the requester
+  // included, passes the gate the claim detail itself has (`assertCanReadRequestOrAssignment`):
+  // the claim's branch and a way to read it, or the pending step being theirs to decide. An approver
+  // of the current round who has since lost every way to read the claim is refused the detail, the
+  // slip and, here, the number.
   const actions = approvalActions ?? await approvalDecisionActions(ctx, request, repo);
-  const canRecordPayment = ctx.permissions.includes('reimbursement.payment.record')
-    && await assertCanReadRequest(ctx, request, repo).then(() => true, () => false);
+  const canRead = await assertCanReadRequest(ctx, request, repo).then(() => true, () => false);
+  if (!canRead && !actions.canApprove && !actions.canReject) return null;
   return payoutRevealGroup({
-    hasClaimAccount, isDraft, isRequester, canRecordPayment,
+    hasClaimAccount, isDraft, isRequester,
+    canRecordPayment: canRead && ctx.permissions.includes('reimbursement.payment.record'),
     // The approver this claim was sent to (pending step) or who approved it in this round — not
     // every holder of the approval permission. The same two facts, from the same resolver and the
     // same contracts rule, that `isReimbursementPayoutParty` reads for the payment slip: the reveal,
@@ -1214,6 +1231,25 @@ export async function claimPayoutRevealGroup(
     isClaimApprover: actions.canApprove || actions.canReject
       || isReimbursementClaimApprover(ctx.userId, { submittedAt: request.submittedAt, approvalSteps: request.approvalSteps }),
   });
+}
+
+/**
+ * Whether this viewer is shown, and may reveal, the requester's CURRENT default account on a legacy
+ * claim (payout spec §15). A claim sent before claims carried an account froze none, so the payer has
+ * nothing else to transfer into. Only whoever the payment endpoint would accept the payment from,
+ * and only while it would take one: the pay right, the claim's branch, a way to read the claim, and
+ * a claim that can be paid. Nobody else has a use for a member's default on someone's claim. The
+ * detail's `legacyPayoutDefault` block and the reveal endpoint both ask this, so they cannot disagree.
+ */
+export async function legacyPayoutPayer(
+  ctx: RequestContext,
+  request: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+): Promise<boolean> {
+  return request.status !== 'DRAFT' && !hasPayoutSnapshot(request)
+    && !!request.branchId && PAYMENT_RECORDING_STATUSES.includes(request.status)
+    && ctx.permissions.includes('reimbursement.payment.record')
+    && await assertCanReadRequest(ctx, request, repo).then(() => true, () => false);
 }
 
 // claimSignatureAckHash moved to ../../domain/logic/reimbursement.logic (pure record hash).

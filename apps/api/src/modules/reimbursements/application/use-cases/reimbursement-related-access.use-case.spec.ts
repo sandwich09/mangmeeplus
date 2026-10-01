@@ -17,9 +17,11 @@ import {
 import { ReimbursementController } from '../../presentation/http/reimbursement.controller';
 import { ReimbursementPayoutController } from '../../presentation/http/reimbursement-payout.controller';
 import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
-import { sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
+import { legacyPayoutConfirmToken, sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
 import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
-import { readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readMemberPayoutAccount } from '../../infrastructure/reimbursement-payout';
+import {
+  readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readLegacyPayoutDefault, readMemberPayoutAccount, readMemberPayoutSecret,
+} from '../../infrastructure/reimbursement-payout';
 import {
   REQUIRED_ANY_PERMISSIONS_KEY,
   REQUIRED_PERMISSIONS_KEY,
@@ -92,10 +94,13 @@ describe('claim account number reveal: the requester, that claim approver, the p
       // The requester's own detail compares the claim with their default as it is now (§22 hint).
       findMemberPayoutAccount: (companyId: string, userId: string) => readMemberPayoutAccount(tables.client, companyId, userId),
       findClaimPayoutSecret: (companyId: string, requestId: string, version: number) => readClaimPayoutSecret(tables.client, companyId, requestId, version),
+      // A legacy claim's payer is shown, and may reveal, the requester's default as it is now.
+      findLegacyPayoutDefault: (row: any) => readLegacyPayoutDefault(tables.client, row),
+      findMemberPayoutSecret: (companyId: string, userId: string) => readMemberPayoutSecret(tables.client, companyId, userId),
     } as any;
     const audit = { log: async (entry: any) => { audits.push(entry); }, logOrThrow: async (entry: any) => { audits.push(entry); } } as any;
     return {
-      claim, audits, repo,
+      claim, audits, repo, tables,
       reveal: new RevealClaimPayoutUseCase(repo, audit, { credentialEncryptionKey: key } as any),
       detail: new GetReimbursementDetailUseCase(repo, { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any),
     };
@@ -140,6 +145,39 @@ describe('claim account number reveal: the requester, that claim approver, the p
     const { reveal, audits } = world();
     await assert.rejects(reveal.execute(viewer('payer-1', ['reimbursement.read', 'reimbursement.payment.record'], { companyId: 'company-2' }), 'reimbursement-1'), /not found/i);
     assert.equal(audits.length, 0);
+  });
+
+  // Review finding 2026-10-01: the number must never be easier to reach than the claim it belongs to.
+  // The reveal used to ask a claim's approver for branch scope only, so an approver of the current
+  // round who had lost every way to read the claim was refused its page and still answered here.
+  it('requires the read access the claim detail requires, of every member of the reveal group', async () => {
+    const pending = { status: 'PENDING_APPROVAL', approvedAt: undefined, currentApprovalStepId: 'step-1' };
+    const pendingStep = { id: 'step-1', sequenceNo: 1, approverRoleSnapshot: 'MANAGER', assignedApproverUserIds: ['assignee-1'], status: 'PENDING', assignedAt: sentAt };
+    const cases: Array<[string, Record<string, unknown>, RequestContext, string[], boolean]> = [
+      // Every way to read the claim opens the number to its three groups.
+      ['requester reading their own claim', {}, requester, [], true],
+      ['approver who reads every claim', {}, approver, [], true],
+      ['approver left with the related view, and related to the claim', {}, viewer('approver-1', ['reimbursement.read_related']), ['approver-1'], true],
+      ['payer who reads every claim', {}, payer, [], true],
+      // The step waits for this person: that assignment is their way in, as it is on the claim page.
+      ['pending assignee with no permission left', { ...pending, approvalSteps: [pendingStep] }, viewer('assignee-1', []), [], true],
+      // No way to read the claim: no number either.
+      ['approver of the current round with no permission left', {}, viewer('approver-1', []), [], false],
+      ['approver of the current round left with the right to approve alone', {}, viewer('approver-1', ['reimbursement.approve', 'reimbursement.reject']), [], false],
+      ['approver left with the related view, and no longer related', {}, viewer('approver-1', ['reimbursement.read_related']), [], false],
+      ['approver left with the own view', {}, viewer('approver-1', ['reimbursement.read_own']), [], false],
+      ['approver moved to another branch', {}, viewer('approver-1', ['reimbursement.read', 'reimbursement.approve'], { scopes: { branchIds: ['branch-2'] } }), [], false],
+      ['requester with no permission left', {}, viewer('requester-1', []), [], false],
+      ['requester moved to another branch', {}, viewer('requester-1', ['reimbursement.read_own'], { scopes: { branchIds: ['branch-2'] } }), [], false],
+      ['payer left with the pay right alone', {}, viewer('payer-1', ['reimbursement.payment.record']), [], false],
+    ];
+    for (const [name, claim, who, related, allowed] of cases) {
+      const { reveal, detail, audits } = world(claim, { related });
+      const page = await detail.execute(who, 'reimbursement-1').then((shown) => shown, () => null);
+      const answered = await reveal.execute(who, 'reimbursement-1').then(() => true, () => false);
+      assert.deepEqual({ readsTheClaim: page !== null, button: page?.payout?.canRevealAccountNumber ?? false, answered }, { readsTheClaim: allowed, button: allowed, answered: allowed }, name);
+      assert.deepEqual(audits.map((row) => row.result), [allowed ? 'SUCCESS' : 'DENIED'], name);
+    }
   });
 
   it('counts an approver by this claim: the pending assignee and the routed role, not every holder of the right', async () => {
@@ -194,6 +232,87 @@ describe('claim account number reveal: the requester, that claim approver, the p
     const draft = world({ status: 'DRAFT', submittedAt: undefined, approvedAt: undefined, approvalSteps: [], requestNo: undefined }, { destinationFrozen: false });
     assert.equal((await draft.reveal.execute(requester, 'reimbursement-1')).accountNumber, '0123456789');
     for (const who of [payer, approver, refused[4]![1]]) await assert.rejects(draft.reveal.execute(who, 'reimbursement-1'), /payout_reveal_denied/);
+  });
+
+  // Spec §15: a legacy claim froze no account, so its payer is shown the requester's default account
+  // as it is now, and this call answers that payer with that account's number. Nobody else, ever.
+  describe('a legacy claim: the payer, and only the payer, sees the requester default account', () => {
+    const legacy = { payoutMethod: undefined, payoutDestinationVersion: undefined, payoutFingerprint: undefined };
+    const SCB = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountNumber: '409-0-00111-2' };
+    function legacyWorld(overrides: Record<string, unknown> = {}, account: Record<string, unknown> | null = {}) {
+      const w = world({ ...legacy, ...overrides }, { related: ['related-1'] });
+      // The claim's own table holds nothing for a legacy claim; the requester has set a default since.
+      w.tables.destinations.splice(0, w.tables.destinations.length);
+      const sealed = sealPayoutDestination(SCB, key)!;
+      if (account) w.tables.accounts.push({ id: 'account-1', companyId: 'company-1', userId: 'requester-1', payoutMethod: 'BANK_TRANSFER', ...sealed, version: 4, updatedByUserId: 'requester-1', updatedAt: decidedAt, ...account });
+      return { ...w, sealed };
+    }
+    const masked = { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountLast4: '1112' };
+
+    it('shows the payer the default account masked, with the token that names it, and reveals it with an audit row', async () => {
+      const { detail, reveal, audits, sealed, claim } = legacyWorld();
+      const shown = await detail.execute(payer, 'reimbursement-1');
+      assert.equal(shown.payout, undefined, 'the claim itself still carries no account');
+      assert.deepEqual(shown.legacyPayoutDefault, { ...masked, confirmToken: legacyPayoutConfirmToken('reimbursement-1', sealed.fingerprint) });
+      const text = JSON.stringify(shown);
+      assert.ok(!text.includes('4090001112') && !text.includes(sealed.fingerprint) && !text.includes(sealed.accountNumberEncrypted));
+      assert.doesNotMatch(text, /"(?:payout)?(?:accountNumber\w*|fingerprint)":/i);
+
+      assert.deepEqual(await reveal.execute(payer, 'reimbursement-1'), { accountNumber: '4090001112' });
+      assert.deepEqual(audits.map((row) => [row.action, row.result, row.riskLevel, row.actorUserId, row.targetType, row.targetId]),
+        [['reimbursement.payout.reveal', 'SUCCESS', 'HIGH', 'payer-1', 'reimbursement_request', 'reimbursement-1']]);
+      // The row says whose default it was and that it is no snapshot of the claim, and never the number.
+      assert.deepEqual(audits[0].metadataJson, { group: 'PAYER', source: 'MEMBER_DEFAULT', accountUserId: 'requester-1', version: 4, payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountLast4: '1112' });
+      assert.ok(!JSON.stringify(audits).includes('4090001112'));
+      // The claim was read and nothing on it was written.
+      assert.deepEqual([claim.payoutMethod, claim.payoutDestinationVersion, claim.payoutFingerprint], [undefined, undefined, undefined]);
+    });
+
+    it('offers the block exactly when the reveal answers: the payer of a payable legacy claim whose requester has an account', async () => {
+      const cashDefault = { payoutMethod: 'CASH', payoutKind: null, bankName: null, accountName: null, accountNumberEncrypted: null, accountLast4: null, fingerprint: null };
+      const cases: Array<[string, Record<string, unknown>, RequestContext, Record<string, unknown> | null, boolean]> = [
+        ['payer', {}, payer, {}, true],
+        ['payer, while the claim is approved and being routed on', { status: 'APPROVED' }, payer, {}, true],
+        ['payer who also approved the claim', {}, viewer('approver-1', ['reimbursement.read', 'reimbursement.approve', 'reimbursement.payment.record']), {}, true],
+        // The other two groups of a claim with its own account have nothing here: no approver attested
+        // this account, and the requester reads their own default on their own page.
+        ['requester', {}, requester, {}, false],
+        ['approver of the claim', {}, approver, {}, false],
+        ['finance reviewer without the payment right', {}, refused[0]![1], {}, false],
+        ['auditor', {}, refused[1]![1], {}, false],
+        ['related viewer', {}, refused[3]![1], {}, false],
+        ['payer of another branch', {}, refused[5]![1], {}, false],
+        ['payer with no way to read the claim', {}, refused[7]![1], {}, false],
+        // Nothing to transfer into, or nothing left to pay.
+        ['payer, the requester has no default account', {}, payer, null, false],
+        ['payer, the requester takes cash by default', {}, payer, cashDefault, false],
+        ['payer, the claim is already paid', { status: 'PAID', paymentStatus: 'PAID' }, payer, {}, false],
+        ['payer, the claim is still waiting for approval', { status: 'PENDING_APPROVAL', approvedAt: undefined }, payer, {}, false],
+        ['payer, the claim has no branch and cannot be paid', { branchId: undefined }, payer, {}, false],
+        ['payer, the claim was cancelled', { status: 'CANCELLED' }, payer, {}, false],
+      ];
+      for (const [name, claim, who, account, allowed] of cases) {
+        const { detail, reveal } = legacyWorld(claim, account);
+        const shown = await detail.execute(who, 'reimbursement-1').then((page) => page, () => null);
+        const answered = await reveal.execute(who, 'reimbursement-1').then(() => true, () => false);
+        assert.deepEqual({ block: shown?.legacyPayoutDefault !== undefined, answered }, { block: allowed, answered: allowed }, name);
+        assert.equal(shown?.payout, undefined, name);
+      }
+    });
+
+    it('never reads a default account for a claim that carries its own, or for a draft', async () => {
+      // A requester whose default differs from the account their claim froze: the claim shows, and reveals, its own.
+      const own = world({}, {});
+      const other = sealPayoutDestination(SCB, key)!;
+      own.tables.accounts.push({ id: 'account-1', companyId: 'company-1', userId: 'requester-1', payoutMethod: 'BANK_TRANSFER', ...other, version: 4, updatedByUserId: 'requester-1', updatedAt: decidedAt });
+      const shown = await own.detail.execute(payer, 'reimbursement-1');
+      assert.deepEqual([shown.legacyPayoutDefault, shown.payout?.accountLast4], [undefined, '6789']);
+      assert.deepEqual(await own.reveal.execute(payer, 'reimbursement-1'), { accountNumber: '0123456789' });
+      assert.equal(own.audits[0].metadataJson.source, undefined);
+
+      const draft = legacyWorld({ status: 'DRAFT', submittedAt: undefined, approvedAt: undefined, approvalSteps: [], requestNo: undefined });
+      await assert.rejects(draft.reveal.execute(payer, 'reimbursement-1'), /payout_reveal_denied/);
+    });
   });
 
   it('never answers when the audit row cannot be written', async () => {

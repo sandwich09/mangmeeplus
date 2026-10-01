@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
-import { PrismaAttachmentRepository } from './prisma-attachment.repository';
+import { Prisma } from '../../../../generated/prisma/client';
+import { NOT_REIMBURSEMENT_PAYMENT_SLIP_WHERE, PrismaAttachmentRepository } from './prisma-attachment.repository';
 
 function makeRepo(input?: { directEvidence?: object | null; snapshotEvidence?: object | null; linkedExpenseIds?: string[]; sourceEvidence?: object | null; wetSignedScan?: object | null }) {
   const expenseSubstituteReceiptEvidence = {
@@ -192,6 +193,23 @@ describe('PrismaAttachmentRepository reimbursement payment slips', () => {
 
     attachmentLink.findFirst = mock.fn(async () => null);
     assert.equal(await repo.isReimbursementPaymentSlip({ id: 'att-receipt', companyId: 'co-1' }), false);
+  });
+
+  // Review 2026-10-01: the LINE claim-draft picker offered the payer's slip files as receipts to pick, and picking
+  // one was refused when the line was saved. The picker asks with this query.
+  it('writes "not a payment slip" as a query that keeps every ordinary upload', () => {
+    assert.deepEqual(NOT_REIMBURSEMENT_PAYMENT_SLIP_WHERE, { AND: [
+      // A slip a payment carries: by its link.
+      { links: { none: { targetType: 'reimbursement_payment', purpose: 'reimbursement.payment.slip' } } },
+      // A slip uploaded and not recorded yet: by its upload tag, said as "no such tag, or another tag". The shorter
+      // NOT (tag = slip) is NULL for a file with no metadata or no `generatedFor`, and PostgreSQL then drops every
+      // ordinary receipt from the list. The real database answers this in the reimbursement gate
+      // (prisma-reimbursement.repository.draft-submit-race.spec.ts).
+      { OR: [
+        { metadataJson: { path: ['generatedFor'], equals: Prisma.DbNull } },
+        { metadataJson: { path: ['generatedFor'], not: 'reimbursement_payment_slip' } },
+      ] },
+    ] });
   });
 
   it('refuses to delete a slip inside the delete transaction, before anything is written', async () => {

@@ -4,11 +4,16 @@
 import {
   invalidPayoutDestinationField,
   maskedPayoutAccount,
+  reimbursementPaymentRule,
   THAI_BANK_NAMES,
   type MemberPayoutAccountSummary,
   type PayoutDestinationField,
   type PayoutDestinationInput,
+  type ReimbursementLegacyPayoutDefault,
+  type ReimbursementPaymentDestinationSummary,
+  type ReimbursementPaymentRule,
   type ReimbursementPayoutInput,
+  type ReimbursementPayoutMethod,
   type ReimbursementPayoutSummary,
   type SetMemberPayoutAccountInput,
 } from '@watchdog-bms/contracts';
@@ -17,8 +22,23 @@ import { formatThaiDateTime } from '@/common/i18n/thai-date';
 export const PAYOUT_METHOD_TEXT: Record<string, string> = { BANK_TRANSFER: 'โอนเข้าบัญชี', CASH: 'รับเป็นเงินสด' };
 export const PAYOUT_KIND_TEXT: Record<string, string> = { BANK_ACCOUNT: 'บัญชีธนาคาร', PROMPTPAY_PHONE: 'พร้อมเพย์ (เบอร์มือถือ)' };
 
-/** A claim sent before claims carried a receiving method. One sentence, wherever such a claim is shown. */
-export const LEGACY_PAYOUT_NOTE = 'ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีข้อมูลบัญชีรับเงินในระบบ';
+/** A claim sent before claims carried a receiving method (payout spec §15). One sentence, wherever such a claim is shown. */
+export const LEGACY_PAYOUT_NOTE = 'ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีบัญชีที่ผ่านการอนุมัติในใบ';
+/** What a legacy claim's payer is shown instead: the requester's default as it is now. */
+export const LEGACY_DEFAULT_LABEL = 'บัญชีประจำปัจจุบันของผู้เบิก (ยังไม่ผ่านการอนุมัติในใบนี้)';
+/** A legacy claim whose requester has no account to transfer into. */
+export const LEGACY_ASK_REQUESTER_NOTE = 'สอบถามบัญชีจากผู้เบิกโดยตรง';
+/** A transfer recorded with no account confirmed: a legacy claim paid elsewhere, or a claim that asked for cash. */
+export const PAYMENT_NO_CLAIM_ACCOUNT = 'ไม่มีบัญชีรับเงินในใบเบิก';
+/** The payer's confirmation, spec §12.3. */
+export const PAYER_CONFIRMATION_TEXT = 'โอนเข้าบัญชีนี้แล้ว และชื่อผู้รับที่ธนาคารแสดงตรงกับใบเบิก';
+export const PAYER_CONFIRMATION_REQUIRED = 'ติ๊กยืนยันว่าโอนเข้าบัญชีนี้แล้ว และชื่อผู้รับที่ธนาคารแสดงตรงกับใบเบิก ก่อนกดบันทึกจ่าย';
+/** Spec §10.2: nobody but the requester has checked the account, so the payer is told they are the one checking. */
+export const PAYER_IS_VERIFIER_NOTE = 'ยังไม่มีผู้ตรวจบัญชีนี้ คุณเป็นผู้ตรวจ';
+/** The mark on a payment recorded by another method than the requester asked for (spec §12.4, §17.2). */
+export const PAID_DIFFERENTLY_LABEL = 'จ่ายต่างจากที่ผู้เบิกขอ';
+export const MISMATCH_REASON_REQUIRED = 'วิธีจ่ายต่างจากที่ผู้เบิกขอ กรุณาระบุเหตุผล';
+export const MISMATCH_REASON_HAS_ACCOUNT_NUMBER = 'อย่าพิมพ์เลขบัญชีในช่องเหตุผล เพราะเหตุผลนี้แสดงในประวัติการจ่ายให้ทุกคนที่เปิดใบเบิกเห็น';
 export const PAYOUT_ATTESTATION_TEXT = 'ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก';
 export const PAYOUT_ATTESTATION_REQUIRED = 'ติ๊กยืนยันว่าตรวจบัญชีรับเงินแล้วก่อนอนุมัติ';
 
@@ -134,6 +154,15 @@ export function shownAccountNumber(revealed: { revealKey: string; accountNumber:
   return canReveal && revealed?.revealKey === revealKey ? revealed.accountNumber : null;
 }
 
+/**
+ * Whether a number the API answered with belongs on the card that asked for it: it must end with the
+ * last 4 digits that card shows. The API answers with the account as it is now, so a page loaded
+ * before the account changed would otherwise put the new number under the old bank and name.
+ */
+export function revealedNumberMatchesCard(accountNumber: string, last4?: string | null): boolean {
+  return !last4 || accountNumber.endsWith(last4);
+}
+
 export type ClaimPayoutView = {
   /**
    * legacy: sent before claims carried a receiving method, so no account is in the system;
@@ -230,6 +259,83 @@ export function claimPayoutSubmitBlock(detail: { status?: string; payout?: Reimb
 /** An approver must attest the account of a claim paid by transfer; cash and legacy claims have none. */
 export function claimNeedsPayoutAttestation(detail: { payout?: ReimbursementPayoutSummary | null }): boolean {
   return detail.payout?.payoutMethod === 'BANK_TRANSFER';
+}
+
+// ---- The payment step (payout spec §12.1 to §12.4, §15) ----
+
+type PayStepClaim = {
+  requesterUserId?: string;
+  payout?: ReimbursementPayoutSummary | null;
+  legacyPayoutDefault?: ReimbursementLegacyPayoutDefault | null;
+};
+
+/** What the claim's requester asked for, as `reimbursementPaymentRule` takes it. Null: a legacy claim, which asked for nothing. */
+export function requestedPayout(detail: PayStepClaim | null | undefined): { payoutMethod: ReimbursementPayoutMethod; hasAccount: boolean } | null {
+  const payout = detail?.payout;
+  return payout?.payoutMethod ? { payoutMethod: payout.payoutMethod, hasAccount: payout.payoutMethod === 'BANK_TRANSFER' && payout.version != null } : null;
+}
+
+/** An account in one line with its holder: the shared masked wording, then the account name. */
+export function payoutAccountWithName(account: Parameters<typeof maskedPayoutAccount>[0] & { accountName?: string | null }): string {
+  return `${maskedPayoutAccount(account)}${account.accountName ? ` · ชื่อบัญชี ${account.accountName}` : ''}`;
+}
+
+/** The account a payer confirms a transfer into, and what the tick is worth. */
+export type PaymentFormConfirmation = {
+  /** Names exactly this account: a tick given for it is no tick for another version or another default. */
+  key: string;
+  /** A transfer into the claim's own account is not recorded without it; a legacy claim's payer gives it only when the money went there. */
+  required: boolean;
+  /** The account in words, so "บัญชีนี้" needs nothing else on the screen to be understood. */
+  accountLine: string;
+  note?: string;
+  /** Legacy claim: the token of the default the page shows, sent back with the confirmation. */
+  defaultToken?: string;
+};
+
+/** What the payment form asks about the payout, for the method chosen: the API's own rule, turned into fields. */
+export type PaymentFormPayout = {
+  rule: ReimbursementPaymentRule;
+  /** The method the requester asked for, in the payout card's words; absent for a legacy claim. */
+  requestedMethodText?: string;
+  /** The claim's account version on this page. Sent with every payment, so a page loaded before the account changed is refused. */
+  version?: number;
+  confirmation?: PaymentFormConfirmation;
+};
+
+/**
+ * The payout side of the payment form. One rule decides what is shown and what is sent
+ * (`reimbursementPaymentRule`, which the API applies under the payment lock), so a field is on the
+ * form exactly when the API asks for it.
+ */
+export function paymentFormPayout(detail: PayStepClaim | null | undefined, paymentMethod: string): PaymentFormPayout {
+  const payout = detail?.payout ?? undefined;
+  const requested = requestedPayout(detail);
+  const rule = reimbursementPaymentRule(requested, paymentMethod);
+  const legacyDefault = requested ? undefined : detail?.legacyPayoutDefault ?? undefined;
+  const confirmation: PaymentFormConfirmation | undefined = rule.payoutConfirmation === 'required' && payout
+    ? {
+      key: `version:${payout.version}`, required: true, accountLine: payoutAccountWithName(payout),
+      // Nobody attested the account, or only the requester did: this confirmation is its check.
+      ...((!payout.verifiedAt || payout.verifiedByUserId === detail?.requesterUserId) && { note: PAYER_IS_VERIFIER_NOTE }),
+    }
+    : rule.payoutConfirmation === 'optional' && legacyDefault
+      ? {
+        key: `default:${legacyDefault.confirmToken}`, required: false, accountLine: payoutAccountWithName(legacyDefault), defaultToken: legacyDefault.confirmToken,
+        note: `บัญชีนี้ยังไม่ผ่านการอนุมัติในใบนี้ ติ๊กเมื่อโอนเข้าบัญชีนี้ ถ้าโอนเข้าบัญชีอื่นที่สอบถามจากผู้เบิก ไม่ต้องติ๊ก ระบบจะบันทึกว่า${PAYMENT_NO_CLAIM_ACCOUNT}`,
+      }
+      : undefined;
+  return {
+    rule,
+    ...(requested && { requestedMethodText: PAYOUT_METHOD_TEXT[requested.payoutMethod] }),
+    ...(payout?.version != null && { version: payout.version }),
+    ...(confirmation && { confirmation }),
+  };
+}
+
+/** Where a payment went, masked, as its row says it; null when no account was confirmed for it. */
+export function paymentDestinationText(payment: { payoutDestination?: ReimbursementPaymentDestinationSummary | null } | null | undefined): string | null {
+  return payment?.payoutDestination ? payoutAccountWithName(payment.payoutDestination) : null;
 }
 
 export const BANK_OPTIONS: readonly string[] = THAI_BANK_NAMES;

@@ -7,22 +7,23 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import type { MemberPayoutAccountSummary, ReimbursementPayoutSummary } from '@watchdog-bms/contracts';
+import { maskedPayoutAccount, type MemberPayoutAccountSummary, type ReimbursementLegacyPayoutDefault, type ReimbursementPayoutSummary } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { MangmeeBadge, MangmeeCard, cx } from '@/common/components/mangmee';
 import { ErrorState, LoadingState } from '@/common/components/state';
 import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
 import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/ExpensesUi';
-import { errorText } from './reimbursements.logic';
+import { errorMessage, errorText } from './reimbursements.logic';
 import {
   deleteMyPayoutAccount, getMemberPayoutAccount, getMyPayoutAccount, revealClaimPayoutAccount, revealMyPayoutAccount,
   setMemberPayoutAccount, setMyPayoutAccount,
 } from './reimbursement-payout.api';
 import {
-  BANK_OPTIONS, OTHER_BANK, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT, chooseClaimPayoutMode, claimPayoutView, emptyPayoutAccountForm,
-  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutDefaultChangedHint, setByOtherLine, shownAccountNumber,
-  type ClaimPayoutForm, type PayoutAccountForm,
+  BANK_OPTIONS, LEGACY_ASK_REQUESTER_NOTE, LEGACY_DEFAULT_LABEL, OTHER_BANK, PAYER_CONFIRMATION_TEXT, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT,
+  chooseClaimPayoutMode, claimPayoutView, emptyPayoutAccountForm,
+  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutDefaultChangedHint, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
+  type ClaimPayoutForm, type PaymentFormConfirmation, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
 
 const labelClass = 'mb-1.5 block text-xs font-semibold text-gray-600';
@@ -85,12 +86,14 @@ export function PayoutAccountFields({ value, onChange, disabled = false, invalid
 }
 
 /** The masked account with "แสดงเลขบัญชี". The number is fetched on demand and never kept past this card. */
-function AccountNumberReveal({ masked, revealKey, canReveal, onReveal }: {
+function AccountNumberReveal({ masked, revealKey, canReveal, onReveal, last4 }: {
   masked: string;
   /** What the number belongs to: the claim and its account version, or the default as last saved. */
   revealKey: string;
   canReveal: boolean;
   onReveal: () => Promise<string>;
+  /** The last 4 digits this card shows. An answer that does not end with them is the number of another account: the page is out of date. */
+  last4?: string;
 }) {
   const toast = useToast();
   const [revealed, setRevealed] = useState<{ revealKey: string; accountNumber: string } | null>(null);
@@ -105,7 +108,13 @@ function AccountNumberReveal({ masked, revealKey, canReveal, onReveal }: {
   const reveal = async () => {
     setBusy(true); setError(null);
     // Kept under the key it was asked for: an answer that arrives after the account changed is never shown.
-    try { const accountNumber = await onReveal(); setRevealed({ revealKey, accountNumber }); } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
+    // Nor is the number of an account other than the one on this card: the API answers with the account
+    // as it is now, and a page loaded before a change would put that number under the old bank and name.
+    try {
+      const accountNumber = await onReveal();
+      if (revealedNumberMatchesCard(accountNumber, last4)) setRevealed({ revealKey, accountNumber });
+      else setError(errorMessage('payout_destination_changed'));
+    } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
   const copy = async () => {
     try {
@@ -252,7 +261,7 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
                     <dt className="text-xs font-semibold text-gray-500">บัญชี</dt>
                     <dd className="mt-1">
                       <AccountNumberReveal masked={payoutAccountLine(account)} revealKey={`${companyId}:${account.userId}:${account.updatedAt}`} canReveal={own}
-                        onReveal={async () => (await revealMyPayoutAccount(companyId)).accountNumber} />
+                        last4={account.accountLast4} onReveal={async () => (await revealMyPayoutAccount(companyId)).accountNumber} />
                     </dd>
                   </div>
                 </dl>
@@ -356,8 +365,13 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
  * name beside the account name so a person can compare them, who attested it, and the reveal button
  * for the viewers the server allows. A sent claim shows its own frozen snapshot, whatever the
  * requester's default account is today.
+ *
+ * At the payment step, for whoever records the payment (`payStep`), the same card is the box
+ * "โอนเข้าบัญชีนี้" of spec §12.1: the account to transfer into, with show and then copy. A legacy
+ * claim froze no account, so its payer is shown the requester's current default instead, labelled
+ * as never approved on this claim, or is told to ask the requester (§15).
  */
-export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAccountHref, canWithdraw = false }: {
+export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAccountHref, canWithdraw = false, payStep = false }: {
   companyId: string;
   detail: any;
   userId: string;
@@ -365,6 +379,8 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
   payoutAccountHref: string;
   /** The viewer may still take this sent claim back to a draft (the page's own withdraw action). */
   canWithdraw?: boolean;
+  /** The claim waits for its payment and this viewer is offered to record it. */
+  payStep?: boolean;
 }) {
   const payout: ReimbursementPayoutSummary | undefined = detail.payout;
   const view = claimPayoutView(detail);
@@ -372,13 +388,37 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
   // A draft whose payout block was not loaded (an action response): say nothing rather than guess.
   if (view.state === 'unknown') return null;
   const isRequester = detail.requesterUserId === userId;
+  // Present only for a viewer the server lets pay this legacy claim, whose requester has an account.
+  const legacyDefault: ReimbursementLegacyPayoutDefault | undefined = view.state === 'legacy' ? detail.legacyPayoutDefault ?? undefined : undefined;
+  // Side by side on purpose: people, not the system, judge whether the two names belong together.
+  const names = (accountName?: string) => (
+    <dl className="grid grid-cols-2 gap-3">
+      <div className="min-w-0"><dt className="text-xs font-semibold text-gray-500">ผู้เบิก</dt><dd className="mt-1 break-words text-sm font-semibold text-gray-900">{detail.requesterDisplayNameSnapshot ?? '—'}</dd></div>
+      <div className="min-w-0"><dt className="text-xs font-semibold text-gray-500">ชื่อบัญชี</dt><dd className="mt-1 break-words text-sm font-semibold text-gray-900">{accountName ?? '—'}</dd></div>
+    </dl>
+  );
+  const reveal = async () => (await revealClaimPayoutAccount(companyId, detail.id)).accountNumber;
   return (
     <MangmeeCard className="space-y-3 p-4 [overflow-wrap:anywhere] sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-bold text-gray-900">การรับเงินคืน</h2>
+        {/* Only the claim's own approved account is an instruction; a legacy claim's default is shown under its own label. */}
+        <h2 className="font-bold text-gray-900">{payStep && view.state === 'transfer' ? 'โอนเข้าบัญชีนี้' : 'การรับเงินคืน'}</h2>
         {payout?.payoutMethod && <MangmeeBadge tone={payout.payoutMethod === 'CASH' ? 'slate' : 'teal'}>{PAYOUT_METHOD_TEXT[payout.payoutMethod]}</MangmeeBadge>}
       </div>
-      {view.state === 'legacy' && <p className="text-sm text-gray-600">{view.line}</p>}
+      {view.state === 'legacy' && (
+        <>
+          <p className="text-sm text-gray-600">{view.line}</p>
+          {legacyDefault ? (
+            <>
+              <p className="text-sm font-semibold text-gray-900">{LEGACY_DEFAULT_LABEL}</p>
+              {names(legacyDefault.accountName)}
+              {/* The claim's own reveal call: it answers this payer with the requester's default, and records it. */}
+              <AccountNumberReveal masked={maskedPayoutAccount(legacyDefault)} revealKey={`${detail.id}:default:${legacyDefault.confirmToken}`} canReveal
+                last4={legacyDefault.accountLast4} onReveal={reveal} />
+            </>
+          ) : payStep && <p className="text-sm text-gray-700">{LEGACY_ASK_REQUESTER_NOTE}</p>}
+        </>
+      )}
       {view.state === 'missing' && (
         <>
           <ErrorBanner message={view.line} />
@@ -391,13 +431,9 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
       {view.state === 'cash' && <p className="text-sm text-gray-700">ผู้เบิกขอรับเป็นเงินสด ไม่ต้องมีบัญชี</p>}
       {view.state === 'transfer' && payout && (
         <>
-          {/* Side by side on purpose: people, not the system, judge whether the two names belong together. */}
-          <dl className="grid grid-cols-2 gap-3">
-            <div className="min-w-0"><dt className="text-xs font-semibold text-gray-500">ผู้เบิก</dt><dd className="mt-1 break-words text-sm font-semibold text-gray-900">{detail.requesterDisplayNameSnapshot ?? '—'}</dd></div>
-            <div className="min-w-0"><dt className="text-xs font-semibold text-gray-500">ชื่อบัญชี</dt><dd className="mt-1 break-words text-sm font-semibold text-gray-900">{payout.accountName ?? '—'}</dd></div>
-          </dl>
+          {names(payout.accountName)}
           <AccountNumberReveal masked={view.line} revealKey={`${detail.id}:${payout.version ?? ''}`} canReveal={payout.canRevealAccountNumber === true}
-            onReveal={async () => (await revealClaimPayoutAccount(companyId, detail.id)).accountNumber} />
+            last4={payout.accountLast4} onReveal={reveal} />
         </>
       )}
       {view.notes.length > 0 && (
@@ -420,6 +456,30 @@ export function PayoutAttestationCheck({ checked, onChange, disabled = false }: 
       <span>
         <span className="block font-semibold text-gray-900">{PAYOUT_ATTESTATION_TEXT}</span>
         <span className="mt-0.5 block text-xs text-gray-500">ดูชื่อบัญชี เลขบัญชี และธนาคารในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ</span>
+      </span>
+    </label>
+  );
+}
+
+/**
+ * The payer's "โอนเข้าบัญชีนี้แล้ว" (spec §12.3), given for exactly one account. A transfer into the
+ * claim's own account is not recorded without it; on a legacy claim it is the payer's to give, when
+ * the money went into the requester's default account shown.
+ */
+export function PayerConfirmationCheck({ confirmation, checked, onChange, disabled = false }: {
+  confirmation: PaymentFormConfirmation;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="flex min-h-11 items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700 [overflow-wrap:anywhere]" data-testid="reimbursement-payment-confirmation">
+      <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={checked} disabled={disabled} aria-required={confirmation.required}
+        onChange={(event) => onChange(event.target.checked)} />
+      <span className="min-w-0">
+        <span className="block font-semibold text-gray-900">{PAYER_CONFIRMATION_TEXT}{confirmation.required && ' *'}</span>
+        <span className="mt-0.5 block text-xs text-gray-600">{confirmation.accountLine}</span>
+        {confirmation.note && <span className="mt-0.5 block text-xs text-gray-500">{confirmation.note}</span>}
       </span>
     </label>
   );

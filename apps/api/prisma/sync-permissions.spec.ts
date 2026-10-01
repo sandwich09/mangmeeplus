@@ -61,7 +61,16 @@ function fakeDb(companyRoles: Array<CompanyRole & { holds: string[] }>, companie
   const roleReads = { outside: 0, inside: 0 };
   const findRoles = prisma.role.findMany;
   prisma.role.findMany = async (args: any) => { roleReads.outside += 1; return findRoles(args); };
-  const tx = { ...prisma, role: { ...prisma.role, findMany: async (args: any) => { roleReads.inside += 1; return findRoles(args); } } };
+  const tx = {
+    ...prisma,
+    role: { ...prisma.role, findMany: async (args: any) => { roleReads.inside += 1; return findRoles(args); } },
+    // The record of earlier grants is read in the granting transaction only: the bare client has no such read.
+    auditLog: { ...prisma.auditLog, findMany: async ({ where, select }: any) => {
+      assert.deepEqual([Object.keys(where).sort(), select], [['action', 'requestId', 'targetType'], { targetId: true }]);
+      return audits.filter((row) => row.requestId === where.requestId && row.action === where.action && row.targetType === where.targetType)
+        .map((row) => ({ targetId: row.targetId }));
+    } },
+  };
   return { prisma: prisma as any, roles, grants, audits, roleReads };
 }
 
@@ -231,4 +240,41 @@ it('audits every key it adds to a company role: one row per role and key, the re
   const auditCount = audits.length;
   await syncPermissions(prisma, () => undefined);
   assert.equal(audits.length, auditCount);
+});
+
+// Review 2026-10-01, owner decision: a back-fill grants a key to a role once. Before, a company whose admin had
+// taken the pay right off an approver role got it back on every deploy, with no way to make the removal stick.
+it('grants a key to a role once: a right the company\'s admin removes afterwards is not granted again on a later deploy', async () => {
+  const PAY = ['reimbursement.payment.record', 'reimbursement.payment.void'];
+  const approve = CAPABILITY_PACK_BY_KEY.get('pack.reimbursement.approve')!.permissionKeys.filter((key) => !PAY.includes(key));
+  const { prisma, roles, grants, audits } = fakeDb([
+    { id: 'approver-old', key: 'CUSTOM_APPROVER', scopeKey: 'co-1', companyId: 'co-1', holds: approve },
+  ]);
+  await syncPermissions(prisma, () => undefined);
+  const held = grants.get('approver-old')!;
+  assert.deepEqual([...PAY, 'dashboard.read'].map((key) => held.has(key)), [true, true, true]);
+
+  // The company's admin removes the record right and the dashboard from the role, and keeps approve and void.
+  held.delete(PAY[0]!);
+  held.delete('dashboard.read');
+  // A role saved after that deploy, which never held the pay right, is still owed its first grant.
+  roles.set('approver-new', { id: 'approver-new', key: 'CUSTOM_APPROVER_2', scopeKey: 'co-1', companyId: 'co-1' });
+  grants.set('approver-new', new Set(approve));
+  const before = audits.length;
+  const report: string[] = [];
+  await syncPermissions(prisma, (line) => report.push(line));
+
+  // The removal is respected, for an anchored key and for a universal one alike; nothing the admin left is touched.
+  assert.deepEqual([PAY[0]!, 'dashboard.read', PAY[1]!, 'reimbursement.approve'].map((key) => held.has(key)), [false, false, true, true]);
+  for (const key of PAY) assert.ok(grants.get('approver-new')!.has(key), `approver-new: ${key}`);
+  // Only the new role is written and audited, and the report says how many roles gained each key.
+  const written = audits.slice(before);
+  assert.deepEqual([...new Set(written.map((row) => row.targetId))], ['approver-new']);
+  assert.equal(written.some((row) => row.metadataJson.addedPermissionKeys[0] === PAY[0]), true);
+  assert.match(report.join('\n'), /reimbursement\.payment\.record: \+1 of 2 matching company roles \(anchor reimbursement\.approve\)/);
+
+  // And it stays that way: a third deploy grants nothing and writes nothing.
+  const settled = audits.length;
+  await syncPermissions(prisma, () => undefined);
+  assert.deepEqual([held.has(PAY[0]!), held.has('dashboard.read'), audits.length], [false, false, settled]);
 });

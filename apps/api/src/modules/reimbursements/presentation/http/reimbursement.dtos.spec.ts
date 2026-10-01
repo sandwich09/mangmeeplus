@@ -170,6 +170,29 @@ describe('RecordReimbursementPaymentDto', () => {
       await rejects(RecordReimbursementPaymentDto, { ...validPayment, ...forged });
     }
   });
+
+  // Payout Phase 1 part B: what the payer says about the account. Shapes only; whether it is enough
+  // for the claim is decided under the payment lock.
+  it('takes the account version the payer was shown, the confirmation, a default-account token and a reason', async () => {
+    const transfer = { ...validPayment, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1', slipAttachmentId: 'att-slip-1' };
+    const out = await pipe.transform({ ...transfer, payoutDestinationVersion: 2, payoutConfirmed: true }, { type: 'body', metatype: RecordReimbursementPaymentDto });
+    assert.deepEqual([out.payoutDestinationVersion, out.payoutConfirmed], [2, true]);
+    const legacy = await pipe.transform({ ...transfer, payoutConfirmed: true, payoutDefaultToken: 'a'.repeat(32) }, { type: 'body', metatype: RecordReimbursementPaymentDto });
+    assert.equal(legacy.payoutDefaultToken, 'a'.repeat(32));
+    const cash = await pipe.transform({ ...validPayment, methodMismatchReason: 'ผู้เบิกขอรับเป็นเงินสดแทน' }, { type: 'body', metatype: RecordReimbursementPaymentDto });
+    assert.equal(cash.methodMismatchReason, 'ผู้เบิกขอรับเป็นเงินสดแทน');
+
+    // A version is a whole number, a confirmation is a boolean: nothing that merely looks like one.
+    // (An explicit null passes as "not sent", and the rule under the payment lock then reads it as absent.)
+    for (const payoutDestinationVersion of ['2', 0, -1, 2.5, true, [2]]) await rejects(RecordReimbursementPaymentDto, { ...transfer, payoutDestinationVersion, payoutConfirmed: true });
+    for (const payoutConfirmed of ['true', 1, 'yes']) await rejects(RecordReimbursementPaymentDto, { ...transfer, payoutDestinationVersion: 2, payoutConfirmed });
+    for (const payoutDefaultToken of ['', 'A'.repeat(32), 'a'.repeat(31), 'a'.repeat(64), 42]) await rejects(RecordReimbursementPaymentDto, { ...transfer, payoutConfirmed: true, payoutDefaultToken });
+    for (const methodMismatchReason of [42, 'x'.repeat(501), ['เหตุผล']]) await rejects(RecordReimbursementPaymentDto, { ...validPayment, methodMismatchReason });
+    // The account itself never comes from the payer: not its number, not its fingerprint, not when it was confirmed.
+    for (const forged of [{ accountNumber: '0123456789' }, { payoutFingerprint: 'f'.repeat(64) }, { payoutConfirmedAt: validPayment.paidAt }, { payoutDestination: { version: 2 } }, { payout: { payoutConfirmed: true } }]) {
+      await rejects(RecordReimbursementPaymentDto, { ...transfer, ...forged });
+    }
+  });
 });
 
 describe('payment slip DTOs', () => {

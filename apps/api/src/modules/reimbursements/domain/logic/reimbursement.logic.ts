@@ -598,26 +598,34 @@ export function validatePaymentRecording(input: PaymentEligibilityInput): string
 /**
  * Whether a request repeats an already recorded payment (spec §12.7). One list of facts for the
  * shortcut before the payment lock and the check under it: a replay that differs in any of them,
- * the slip included, is a conflict and never a success.
+ * the slip and the account included, is a conflict and never a success.
+ *
+ * The account is compared as the payer stated it: the claim's account version the transfer was
+ * confirmed into, or the token of the default a legacy claim's payer confirmed. The recorded side
+ * comes from `readRecordedPaymentPayout`, the requested side from `planPaymentPayout`.
  */
 export function isSamePaymentRequest(
   recorded: {
     paidAmount: unknown; currency: string; paymentMethod: string; paidAt: Date;
     paymentReference?: string | null; bankAccountId?: string | null; slipAttachmentId?: string | null;
+    payoutDestinationVersion?: number | null; payoutDefaultToken?: string | null;
   },
   requested: {
     paidAmount: string; currency: string; paymentMethod: string; paidAt: Date;
     paymentReference?: string; bankAccountId?: string; slipAttachmentId?: string;
+    payoutDestinationVersion?: number; payoutDefaultToken?: string;
   },
 ): boolean {
-  const same = (left?: string | null, right?: string | null) => (left ?? undefined) === (right ?? undefined);
+  const same = (left?: string | number | null, right?: string | number | null) => (left ?? undefined) === (right ?? undefined);
   return d(String(recorded.paidAmount)).eq(d(requested.paidAmount))
     && recorded.currency === requested.currency
     && recorded.paymentMethod === requested.paymentMethod
     && recorded.paidAt.getTime() === requested.paidAt.getTime()
     && same(recorded.paymentReference, requested.paymentReference)
     && same(recorded.bankAccountId, requested.bankAccountId)
-    && same(recorded.slipAttachmentId, requested.slipAttachmentId);
+    && same(recorded.slipAttachmentId, requested.slipAttachmentId)
+    && same(recorded.payoutDestinationVersion, requested.payoutDestinationVersion)
+    && same(recorded.payoutDefaultToken, requested.payoutDefaultToken);
 }
 
 export function validatePaymentReference(method: ReimbursementPaymentMethod, reference?: string): boolean {

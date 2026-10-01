@@ -93,7 +93,9 @@ Authorization rule in the use case:
 
 ### B. Endpoint
 
-`DELETE /v1/companies/:companyId/expenses/:expenseId` on `expense.controller.ts`, guarded `@RequirePermissions('expense.update')` (the broader in-use-case check above enforces the real rule; the guard is the coarse floor). Returns `204`.
+`DELETE /v1/companies/:companyId/expenses/:expenseId` on `expense.controller.ts`, guarded `@RequireAnyPermission('expense.delete', 'expense.update')` (the broader in-use-case check above enforces the real rule; the guard is the coarse floor). Returns `204`.
+
+> 2026-10-01 (F02): the guard was `@RequirePermissions('expense.update')` alone. Roles built from the finance templates hold `expense.delete` without `expense.update` (`pack.expense.finance`), so their delete button answered 403 before the use case ran. The guard now admits either permission; ownership and state checks are unchanged in the use case.
 
 Place it **below** the static routes, per the existing `// NOTE: static routes must stay above the :expenseId param routes.` comment.
 
