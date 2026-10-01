@@ -29,12 +29,13 @@ import {
   policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
   type HubFilter, approverPaymentWarning,
   NO_HUB_LIST, QUEUE_PAGE_SIZE, hubCardFilter, hubList, hubListKey, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
-  PAYMENT_DIALOG_MEDIA_QUERY, quickPayTarget,
+  queueRowOffersPayment, quickPayTarget,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
 } from './ReimbursementDetailSections';
 import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage } from './reimbursement-payout.logic';
+import { ClaimPayoutCard } from './ReimbursementPayout';
 import { type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
@@ -124,9 +125,11 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   // "บันทึกจ่าย" stays a quick action right on the finance row; it never needed the drawer.
   const [payFor, setPayFor] = useState<any | null>(null);
   // On a phone the payment form is never a dialog (spec §12.2, §21): the same press opens the claim's
-  // own page with the form already open in its payment step card.
-  const recordPayment = useCallback((row: any) => {
-    const target = quickPayTarget(window.matchMedia(PAYMENT_DIALOG_MEDIA_QUERY).matches, companyId, row.id);
+  // own page with the form already open in its payment step card. Which it is comes from the layout
+  // the press was made in (the queue's cards or its table), so the dialog never opens over the
+  // layout this page shows a phone.
+  const recordPayment = useCallback((row: any, layout: 'cards' | 'table') => {
+    const target = quickPayTarget(layout, companyId, row.id);
     if (target.kind === 'page') router.push(target.href);
     else setPayFor(row);
   }, [companyId, router]);
@@ -201,6 +204,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
 
       {payFor && <PaymentModal
         companyId={companyId}
+        userId={userId}
         request={payFor}
         onClose={() => setPayFor(null)}
         onDone={() => {
@@ -662,7 +666,10 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
 }
 
 // ── Finance Queue ─────────────────────────────────────────────────────────────
-function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onRecordPayment }: QueueProps & { onRecordPayment: (request: any) => void }) {
+function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onRecordPayment }: QueueProps & {
+  /** `layout`: where the press was made, the table (a dialog opens) or the phone cards (the claim page opens). */
+  onRecordPayment: (request: any, layout: 'cards' | 'table') => void;
+}) {
   const toast = useToast();
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -774,7 +781,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
                             {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
-                            {(r.status === 'READY_FOR_PAYMENT' && permissions.includes('reimbursement.payment.record')) && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); onRecordPayment(r); }}>บันทึกจ่าย</button>}
+                            {queueRowOffersPayment(r, permissions) && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); onRecordPayment(r, 'table'); }}>บันทึกจ่าย</button>}
                           </div>
                         </td>
                       </tr>
@@ -803,7 +810,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`/companies/${companyId}/reimbursements/${r.id}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-finance-card">ดูรายละเอียด</Link>
                     {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
-                    {r.status === 'READY_FOR_PAYMENT' && permissions.includes('reimbursement.payment.record') && <button className={cx(btnClass, 'min-h-11 w-full')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => onRecordPayment(r)}>บันทึกจ่าย</button>}
+                    {queueRowOffersPayment(r, permissions) && <button className={cx(btnClass, 'min-h-11 w-full')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => onRecordPayment(r, 'cards')}>บันทึกจ่าย</button>}
                   </div>
                 </MangmeeCard>
               ))}
@@ -819,26 +826,41 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
   );
 }
 
-function PaymentModal({ companyId, request, onClose, onDone }: { companyId: string; request: any; onClose: () => void; onDone: () => void }) {
-  // The queue row carries no attachments and nothing about where to pay. The claim does, and the form
-  // seeds its own state from what it is given when it mounts. So the form waits for that read to
-  // settle and mounts once: with the claim, or with the row if the read failed (the row is still
-  // enough to pay). Mounting on the row and swapping the claim in later would leave the seeded state
-  // stale, and remounting then would throw away what the payer had already picked.
+function PaymentModal({ companyId, userId, request, onClose, onDone }: { companyId: string; userId: string; request: any; onClose: () => void; onDone: () => void }) {
+  // The queue row carries no attachments and nothing about where to pay. The claim does: the account
+  // to transfer into, the version the payer confirms and the files that can be the slip. The form
+  // seeds its own state from what it is given when it mounts, so it mounts once, when that read has
+  // settled, and never on the bare row: recording a transfer for an account nobody was shown is what
+  // this step exists to prevent. A read that fails says so, with the claim's own page as the way on.
   const [claim, setClaim] = useState<any | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
+    setFailed(null);
     getReimbursement(companyId, request.id)
       .then((detail) => { if (active) setClaim(detail); })
-      .catch(() => { if (active) setClaim(request); });
+      .catch((e) => { if (active) setFailed(err(e)); });
     return () => { active = false; };
-  }, [companyId, request]);
+  }, [companyId, request, attempt]);
+  const claimPath = `/companies/${companyId}/reimbursements`;
   return (
     <Modal open title={`บันทึกการจ่ายเงิน — ${request.requestNo}`} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
-      {claim
-        // Keyed on what it was seeded from: a form never outlives the data its state came from.
-        ? <PaymentForm key={claim === request ? 'queue-row' : 'claim'} companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} />
-        : <LoadingState label="กำลังเปิดใบเบิก..." />}
+      {claim ? (
+        <div className="space-y-3">
+          {/* The same box the claim page shows at its payment step: where to transfer, with show and copy. */}
+          <ClaimPayoutCard companyId={companyId} detail={claim} userId={userId} payoutAccountHref={`${claimPath}/payout-account`} payStep />
+          <PaymentForm companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} />
+        </div>
+      ) : failed ? (
+        <div className="space-y-3">
+          <ErrorBanner message={`เปิดใบเบิกไม่สำเร็จ จึงยังบันทึกจ่ายจากหน้านี้ไม่ได้ · ${failed}`} />
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button type="button" className={ghostClass} onClick={() => setAttempt((n) => n + 1)}>ลองอีกครั้ง</button>
+            <Link href={`${claimPath}/${request.id}?pay=1`} className={btnClass}>เปิดหน้าใบเบิก</Link>
+          </div>
+        </div>
+      ) : <LoadingState label="กำลังเปิดใบเบิก..." />}
     </Modal>
   );
 }

@@ -331,19 +331,29 @@ export async function savePaymentForm(
   }
 }
 
-/** Tailwind's `sm`: from this width up, the finance queue's quick pay may open as a dialog. */
-export const PAYMENT_DIALOG_MEDIA_QUERY = '(min-width: 640px)';
-
 /**
  * Where "บันทึกจ่าย" on a finance-queue row leads. On a phone the payment form is never a dialog
  * (spec §12.2, §21): it opens in the payment step card of the claim's own page, where the claim's
  * files and the account to pay sit beside it.
+ *
+ * "Phone" is the hub's own answer, not a second measurement: the queue shows cards on a phone and a
+ * table otherwise, and the press says which of the two it came from. So a screen the page lays out
+ * as a phone never gets the dialog, whatever its width or orientation.
  */
-export function quickPayTarget(wideEnoughForDialog: boolean, companyId: string, requestId: string):
+export function quickPayTarget(layout: 'cards' | 'table', companyId: string, requestId: string):
   { kind: 'dialog' } | { kind: 'page'; href: string } {
-  return wideEnoughForDialog
+  return layout === 'table'
     ? { kind: 'dialog' }
     : { kind: 'page', href: `/companies/${companyId}/reimbursements/${requestId}?pay=1` };
+}
+
+/**
+ * Whether a finance-queue row offers "บันทึกจ่าย", on its table row and on its card alike: the claim
+ * waits for payment, the viewer holds the pay right, and the claim has a branch. The payment endpoint
+ * refuses a claim with no branch for everyone, and the claim page offers no button for one either.
+ */
+export function queueRowOffersPayment(row: { status?: string; branchId?: string | null } | null | undefined, permissions: readonly string[]): boolean {
+  return row?.status === 'READY_FOR_PAYMENT' && !!row.branchId && permissions.includes('reimbursement.payment.record');
 }
 
 /** The claim page opens its payment form on arrival only when the link asked for it and this viewer's current step offers it. */
@@ -800,10 +810,15 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
           : `รอ${PAYER}ตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้`}`;
       } else {
         const canPay = permissions.includes('reimbursement.payment.record');
-        if (payable && canPay) actions.push('pay');
+        // The payment endpoint refuses a claim with no branch for everyone, so nobody is offered the
+        // button for one: a button that can only be answered with a refusal is not an action.
+        const noBranch = payable && !detail?.branchId;
+        if (payable && canPay && !noBranch) actions.push('pay');
         // Spec §18.3 and §13.4: whoever cannot pay reads who can, and the approver of this claim is told so plainly.
         const payers = paymentDeskText(detail?.paymentDesk);
-        const waiting = detail?.paymentDesk && !payers
+        const waiting = noBranch
+          ? 'ใบนี้ไม่ได้ระบุสาขา ระบบจึงยังบันทึกจ่ายไม่ได้ กรุณาติดต่อผู้ดูแลระบบ'
+          : detail?.paymentDesk && !payers
           ? 'ยังไม่มีผู้ที่บันทึกจ่ายใบของสาขานี้ได้ ขอให้เจ้าของกิจการบันทึกจ่ายหรือเพิ่มสิทธิ์'
           : !canPay && approval?.decisionByUserId === userId
             ? `คุณอนุมัติใบนี้แล้ว แต่บัญชีของคุณยังไม่มีสิทธิ์บันทึกจ่าย ${payers ? `ผู้ที่บันทึกจ่ายได้: ${payers} ` : ''}ถ้าต้องการจ่ายเอง ขอให้เจ้าของกิจการเพิ่มสิทธิ์บันทึกจ่ายให้บทบาทของคุณ`

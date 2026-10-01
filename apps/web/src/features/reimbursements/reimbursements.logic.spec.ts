@@ -627,7 +627,7 @@ describe('buildJourneySteps', () => {
   const STAFF = ['reimbursement.read_own', 'reimbursement.create', 'reimbursement.submit', 'reimbursement.update_own_draft', 'reimbursement.cancel_own'];
   const FINANCE = ['reimbursement.read', 'reimbursement.finance_review', 'reimbursement.payment.record'];
   const claim = (overrides: Record<string, unknown> = {}) => ({
-    id: 'r1', requestNo: 'RB-1', requesterUserId: 'staff', status: 'DRAFT', financeReviewStatus: 'NOT_REQUIRED',
+    id: 'r1', requestNo: 'RB-1', requesterUserId: 'staff', branchId: 'branch-1', status: 'DRAFT', financeReviewStatus: 'NOT_REQUIRED',
     approvalSteps: [], payments: [], signatures: [], ...overrides,
   });
   const submitted = { submittedAt: '2026-09-20T03:00:00.000Z' };
@@ -965,7 +965,7 @@ describe('who a claim waits for is the same on every surface', () => {
   const submitted = { submittedAt: '2026-09-20T03:00:00.000Z' };
   const approved = { ...submitted, approvedAt: '2026-09-20T04:00:00.000Z',
     approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'boss', decidedByName: 'สมศรี', decidedAt: '2026-09-20T04:00:00.000Z' }] };
-  const claim = (overrides: Record<string, unknown>): any => ({ id: 'r1', requestNo: 'RB-1', requesterUserId: 'staff', financeReviewStatus: 'NOT_REQUIRED',
+  const claim = (overrides: Record<string, unknown>): any => ({ id: 'r1', requestNo: 'RB-1', requesterUserId: 'staff', branchId: 'branch-1', financeReviewStatus: 'NOT_REQUIRED',
     approvalSteps: [], payments: [], signatures: [], ...overrides });
   /** What a viewer with no part in the claim reads in the three places. */
   const surfaces = (detail: any) => ({
