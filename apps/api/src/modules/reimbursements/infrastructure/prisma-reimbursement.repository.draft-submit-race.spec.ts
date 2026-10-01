@@ -35,7 +35,8 @@ import { MemberPayoutAccountUseCase } from '../application/use-cases/reimburseme
 import {
   CASH_PAYOUT_FINGERPRINT, legacyPayoutConfirmToken, openPayoutAccountNumber, payoutFingerprint, payoutSubmitToken, sealPayoutDestination, type SubmitPayoutColumns,
 } from '../domain/logic/payout-destination.logic';
-import { VoidExpenseUseCase } from '../../expenses/application/use-cases/expense-draft.use-case';
+import { RejectExpenseUseCase, VoidExpenseUseCase } from '../../expenses/application/use-cases/expense-draft.use-case';
+import { DeleteExpenseUseCase } from '../../expenses/application/use-cases/delete-expense.use-case';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { ReserveDocumentNumberUseCase } from '../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../data-model-core/application/use-cases/commit-document-number.use-case';
@@ -2805,6 +2806,12 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
       cancel: new CancelReimbursementUseCase(repos[index]!, audit, voidExpense),
       withdraw: new WithdrawReimbursementCancellationUseCase(repos[index]!, audit),
       detail: new GetReimbursementDetailUseCase(repos[index]!, new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), expenses)),
+      /** What the expense screen can ask of a record: void, reject and delete, each with its own right. */
+      expenseScreen: {
+        void: voidExpense,
+        reject: new RejectExpenseUseCase(expenses, audit),
+        remove: new DeleteExpenseUseCase(prisma, new PrismaAttachmentRepository(prisma), audit),
+      },
     };
   }
 
@@ -3143,6 +3150,47 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
       assert.deepEqual(await stored(claim), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
         expenses: ['VOIDED', 'VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 2, cancelledEvents: 1, cancelAudits: 1 }, `round ${round}`);
     }
+  });
+
+  // ---- A claim's expense record ends with its claim ----
+
+  it('refuses to void, reject or delete a standing claim\'s expense record from the expense screen, and the claim goes on as if nobody had asked', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const accountant = () => ({ ...finance(), permissions: ['expense.void', 'expense.reject', 'expense.delete'] });
+    const refusedForItsClaim = (requestNo: string) => (error: any) => {
+      const response = error.getResponse?.() as { code?: string; message?: string; requestNo?: string } | undefined;
+      assert.deepEqual([error.getStatus?.(), response?.code, response?.requestNo], [409, 'expense_belongs_to_reimbursement', requestNo]);
+      assert.ok(response!.message!.includes(`คำขอเบิก ${requestNo}`) && response!.message!.includes('ให้ยกเลิกที่คำขอเบิกนั้นในเมนูการเบิกจ่าย'), response!.message);
+      return true;
+    };
+
+    // A claim waiting for payment: its record is confirmed and its journal posted.
+    const payable = await payableClaim();
+    const payableNo = (await repos[0]!.findRequestById(companyId, payable.requestId))!.requestNo!;
+    const numbers = () => clients[0]!.documentNumber.count({ where: { companyId, idempotencyKey: { startsWith: `void-reversal:expense.record:${payable.expenseIds[0]}:` } } });
+    await assert.rejects(() => on(0).expenseScreen.void.execute(accountant(), payable.expenseIds[0]!, 'บันทึกผิด'), refusedForItsClaim(payableNo));
+    assert.deepEqual([await stored(payable), await numbers()], [{ status: 'READY_FOR_PAYMENT', pending: false, pendingReason: null, closedReason: null,
+      expenses: ['CONFIRMED'], voidReasons: [null], reversals: 0, cancelledEvents: 0, cancelAudits: 0 }, 0], 'nothing voided, no reversal number spent');
+    await repos[0]!.assertClaimPaymentReady(companyId, payable.requestId);
+
+    // A claim that was approved and whose record is built and not confirmed yet: the record a rejection could reach.
+    const decided = await decidedClaim();
+    const decidedRequest = (await repos[0]!.findRequestById(companyId, decided.requestId))!;
+    const [built] = await repos[0]!.prepareClaimProjections({ companyId, requestId: decided.requestId, decisionKind: 'MANAGER', decisionActorUserId: MGR,
+      approvalStepId: decided.stepId, scopes: {}, items: new MaterializeClaimExpensesService().buildItems(decidedRequest) });
+    await assert.rejects(() => on(0).expenseScreen.reject.execute(accountant(), built!.expenseId, 'ซ้ำ'), refusedForItsClaim(decidedRequest.requestNo!));
+    await assert.rejects(() => on(0).expenseScreen.remove.execute(accountant(), built!.expenseId), refusedForItsClaim(decidedRequest.requestNo!));
+    assert.equal((await clients[0]!.expenseRecord.findUniqueOrThrow({ where: { id: built!.expenseId } })).status, 'READY_FOR_CONFIRMATION');
+    assert.equal(await clients[0]!.auditLog.count({ where: { companyId, targetId: built!.expenseId, action: 'expense.delete', result: 'DENIED' } }), 1);
+    // So the claim is still carried out, and still paid.
+    assert.equal((await system(0).resume.execute(manager(), decided.requestId)).status, 'READY_FOR_PAYMENT');
+    await repos[0]!.assertClaimPaymentReady(companyId, decided.requestId);
+
+    // The claim's own cancel is the way: it voids the record and closes the claim with it.
+    assert.equal((await on(0).cancel.execute(finance(), payable.requestId, 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
+    assert.deepEqual([(await stored(payable)).expenses, (await stored(payable)).reversals], [['VOIDED'], 1]);
+    // Once the claim has ended it holds the record no more: the expense screen answers by its own rules again.
+    await assert.rejects(() => on(0).expenseScreen.void.execute(accountant(), payable.expenseIds[0]!, 'บันทึกผิด'), /Can only void confirmed expenses/);
   });
 
   // ---- Audit B4: a decision that is on record and was not carried out ----

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { workspaceDictionary } from '../../common/i18n/workspace-dictionary';
+import { translateApiError } from '../../common/api/api-error-message';
+import { CLAIM_EXPENSE_RECORD_NOTE, canDeleteExpense, isClaimExpenseRecord } from './expenses.model';
 
 const source = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
 
@@ -193,4 +195,34 @@ test('correcting calls the correction endpoint and downloads the returned PDF im
 
 test('issuing a replacement copy calls the replacement-copy endpoint with no form', () => {
   assert.match(source, /await issueSystemWhtReplacementCopy\(companyId, whtHandoff\.id\)/);
+});
+
+/**
+ * A claim's expense record ends with its claim: cancelling the claim voids it. The API refuses to void,
+ * reject or delete it from the expense screen, which used to strand the claim. So the screen offers none
+ * of the three for such a record, whatever the viewer holds, and says where to go instead.
+ */
+test('a claim\'s expense record offers no void, reject or delete here, and says where to cancel it', () => {
+  const claimRecord = { status: 'REJECTED', grandTotalAmount: '100.00', paymentStatus: 'UNPAID', createdByUserId: 'u1', sourceReimbursementRequestId: 'claim-1' } as const;
+  const everything = { canDelete: true, canUpdate: true };
+  assert.equal(isClaimExpenseRecord(claimRecord), true);
+  assert.equal(isClaimExpenseRecord({ sourceReimbursementRequestId: null }), false);
+  assert.equal(isClaimExpenseRecord({}), false);
+  // The same rejected record with no claim is deletable; the claim's own is not, even for its creator with every right.
+  assert.equal(canDeleteExpense({ ...claimRecord, sourceReimbursementRequestId: null }, 'u1', everything), true);
+  assert.equal(canDeleteExpense(claimRecord, 'u1', everything), false);
+
+  // The page takes all three from that one rule.
+  assert.match(source, /const claimRecord = isClaimExpenseRecord\(detail\);/);
+  assert.match(source, /const canReject = caps\.canReject && !claimRecord;/);
+  assert.equal((source.match(/caps\.canReject/g) ?? []).length, 1, 'the reject button reads the gated flag everywhere');
+  assert.match(source, /const canCancelFinancialExpense = !claimedSource && !claimRecord && canVoidExpenseFinancialState\(detail\);/);
+  assert.match(source, /const canDelete = canDeleteExpense\(detail, userId, caps\);/);
+  // And it says where to go, with a link to the claim.
+  assert.match(source, /\{claimRecord && <span[^>]*>\{CLAIM_EXPENSE_RECORD_NOTE\}<\/span>\}/);
+  assert.match(source, /\{claimRecord && <Link[^>]*href=\{`\/companies\/\$\{companyId\}\/reimbursements\/\$\{detail\.sourceReimbursementRequestId\}`\}>เปิดคำขอเบิก<\/Link>\}/);
+  for (const text of [CLAIM_EXPENSE_RECORD_NOTE, translateApiError('expense_belongs_to_reimbursement')!]) {
+    assert.match(text, /ให้ยกเลิกที่คำขอเบิกในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง/u);
+    assert.doesNotMatch(text, /[A-Za-z_]{3,}/u, 'plain Thai: no code or key');
+  }
 });

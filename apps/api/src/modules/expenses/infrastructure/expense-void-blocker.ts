@@ -101,3 +101,40 @@ export async function findClaimExpenseVoidBlocker(db: any, companyId: string, ex
   if (journal.refusal) return journal.refusal.blocker;
   return (await journalPeriodRefusal(db, { companyId, lockedTaxFormTypes: lockedTaxFormTypesOf(expense) }, journal.original)).refusal?.blocker ?? null;
 }
+
+// ---- An expense record that belongs to a reimbursement claim ----
+
+/** A claim whose expense records still count: the statuses a claim's evidence is released on (`expense-capture-group`). */
+const ENDED_CLAIM_STATUSES = ['REJECTED', 'CANCELLED', 'VOIDED'];
+
+export type ExpenseClaimOwner = { requestId: string; requestNo: string | null };
+
+/**
+ * The claim an expense record belongs to, while that claim still stands. A claim's expense records are
+ * built when the claim is approved and end with it: cancelling the claim voids every one of them, with
+ * the claim's own checks and in step with the claim's status. Voided, rejected or deleted on its own,
+ * such a record leaves a claim that can be neither paid nor carried out.
+ */
+export async function findLiveClaimOf(
+  db: any,
+  companyId: string,
+  expense: { sourceReimbursementRequestId?: string | null },
+): Promise<ExpenseClaimOwner | null> {
+  if (!expense.sourceReimbursementRequestId) return null;
+  const claim = await db.reimbursementRequest.findFirst({
+    where: { id: expense.sourceReimbursementRequestId, companyId, status: { notIn: ENDED_CLAIM_STATUSES } },
+    select: { id: true, requestNo: true },
+  });
+  return claim ? { requestId: claim.id, requestNo: claim.requestNo ?? null } : null;
+}
+
+/** The refusal of a void, a rejection or a deletion asked of the expense screen for such a record: it names where to go. */
+export function claimOwnsExpenseError(claim: ExpenseClaimOwner): ConflictException {
+  return new ConflictException({
+    code: 'expense_belongs_to_reimbursement',
+    message: `รายการนี้เป็นรายการค่าใช้จ่ายของคำขอเบิก${claim.requestNo ? ` ${claim.requestNo}` : ''} จึงยกเลิก ปฏิเสธ หรือลบจากหน้ารายจ่ายไม่ได้ `
+      + 'ให้ยกเลิกที่คำขอเบิกนั้นในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง ถ้าจ่ายเงินคืนแล้ว ให้ยกเลิกการจ่ายที่คำขอเบิกก่อน',
+    reimbursementRequestId: claim.requestId,
+    ...(claim.requestNo && { requestNo: claim.requestNo }),
+  });
+}

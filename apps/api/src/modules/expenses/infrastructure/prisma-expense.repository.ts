@@ -6,7 +6,7 @@ import { assertSubstituteEditAllowed, reviseSubstituteEvidence, syncSubstituteAf
 import { assertProjectionSource } from '../../reimbursements/infrastructure/reimbursement-source';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
-import { findJournalToReverse, journalPeriodRefusal, lockedTaxFormTypesOf } from './expense-void-blocker';
+import { findJournalToReverse, findLiveClaimOf, journalPeriodRefusal, lockedTaxFormTypesOf, type ExpenseClaimOwner } from './expense-void-blocker';
 import { assertFullSubstitutePayment, assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../domain/logic/substitute-funding.logic';
 import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
 import { confirmBuyerMismatch, readBuyerAsPrinted } from '../domain/logic/buyer-as-printed.logic';
@@ -2655,6 +2655,11 @@ export class PrismaExpenseRepository {
         postingError: data.postingError,
       },
     });
+  }
+
+  /** The claim this expense record belongs to, while that claim still stands (`findLiveClaimOf`). */
+  findLiveClaimOf(companyId: string, expense: { sourceReimbursementRequestId?: string | null }): Promise<ExpenseClaimOwner | null> {
+    return findLiveClaimOf(this.prisma.client, companyId, expense);
   }
 
   /**

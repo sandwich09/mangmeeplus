@@ -9,6 +9,7 @@ import { collectLineExpenseDraftQuestions, parseLineExpenseDraftContinuation, ne
 import { withPurposeNote } from '../../domain/logic/line-correction.logic';
 import { PAYMENT_IDEMPOTENCY_KEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
 import { PrismaExpenseRepository, requireExpenseBranchId } from '../../infrastructure/prisma-expense.repository';
+import { claimOwnsExpenseError } from '../../infrastructure/expense-void-blocker';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
@@ -1501,6 +1502,9 @@ export class RejectExpenseUseCase {
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     assertBranchInScope(ctx, r.branchId);
+    // A claim's expense record ends with its claim, never on its own: rejected here, the claim could be neither paid nor carried out.
+    const claim = r.sourceReimbursementRequestId ? await this.repo.findLiveClaimOf(ctx.companyId, r) : null;
+    if (claim) throw claimOwnsExpenseError(claim);
     const err = validateStatusTransition(r.status, 'REJECTED');
     if (err) throw new BadRequestException(err);
     const updated = await this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId, status: 'REJECTED', rejectedByUserId: ctx.userId, rejectedAt: new Date(), rejectReason: reason, postingStatus: 'not_required' });
@@ -1608,6 +1612,11 @@ export class VoidExpenseUseCase {
       }
     } else {
       assertBranchInScope(ctx, r.branchId);
+      // A claim's expense record is voided by its claim alone: cancelling the claim voids every record of
+      // it, checks what would stop that before it starts, and closes the claim with them. Voided from
+      // here, the record would leave a claim that can be neither paid nor carried out.
+      const claim = r.sourceReimbursementRequestId ? await this.repo.findLiveClaimOf(ctx.companyId, r) : null;
+      if (claim) throw claimOwnsExpenseError(claim);
     }
     if (!canVoidExpenseFinancialState(r)) throw new BadRequestException(`Can only void confirmed expenses or unconfirmed expenses with recorded financial activity (current: ${r.status})`);
 

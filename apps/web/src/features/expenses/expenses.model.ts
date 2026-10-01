@@ -1504,12 +1504,22 @@ export function expenseCapabilities(permissions: string[]): ExpenseCapabilities 
   };
 }
 
+/**
+ * A record the system built for a line of a reimbursement claim. It ends with its claim: cancelling the
+ * claim voids it. The API refuses to void, reject or delete it from the expense screen
+ * (`expense_belongs_to_reimbursement`), so the screen offers none of the three and says where to go.
+ */
+export function isClaimExpenseRecord(expense: { sourceReimbursementRequestId?: string | null }): boolean {
+  return Boolean(expense.sourceReimbursementRequestId);
+}
+export const CLAIM_EXPENSE_RECORD_NOTE = 'รายการนี้เป็นรายการค่าใช้จ่ายของคำขอเบิก จึงยกเลิก ปฏิเสธ หรือลบจากหน้านี้ไม่ได้ ถ้าต้องการยกเลิก ให้ยกเลิกที่คำขอเบิกในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง';
+
 export function canDeleteExpense(
-  expense: Pick<ExpenseSummary, 'status' | 'grandTotalAmount' | 'paymentStatus' | 'createdByUserId'>,
+  expense: Pick<ExpenseSummary, 'status' | 'grandTotalAmount' | 'paymentStatus' | 'createdByUserId'> & { sourceReimbursementRequestId?: string | null },
   userId: string,
   caps: Pick<ExpenseCapabilities, 'canDelete' | 'canUpdate'>,
 ): boolean {
-  return isExpenseDeletableState(expense)
+  return !isClaimExpenseRecord(expense) && isExpenseDeletableState(expense)
     && (caps.canDelete || (caps.canUpdate && expense.createdByUserId === userId));
 }
 
