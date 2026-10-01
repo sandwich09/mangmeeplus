@@ -50,7 +50,7 @@ describe('LoginPage R-B5 extended (a LINE link never dead-ends at a password for
   // Review 2026-09-29: the auto-start screen had no way out, and a Back press from LINE's own page
   // bounced straight forward again.
   it('never traps: `auto=0`, a back navigation or a back-forward-cache restore stops the auto-start', () => {
-    assert.match(source, /if \(checkingSession \|\| !fromLineLink \|\| autoStartSuppressed \|\| accessState === 'CLOSED' \|\| lineLoginState !== 'available'\) return;/);
+    assert.match(source, /if \(checkingSession \|\| sessionRecoveryUnavailable \|\| !fromLineLink \|\| autoStartSuppressed \|\| accessState === 'CLOSED' \|\| lineLoginState !== 'available'\) return;/);
     assert.match(source, /searchParams\.get\('auto'\) === '0'/);
     assert.match(source, /\?\.type === 'back_forward'/);
     assert.match(source, /window\.addEventListener\('pageshow', onPageShow\);/);

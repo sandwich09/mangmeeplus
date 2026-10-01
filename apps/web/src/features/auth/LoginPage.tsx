@@ -233,15 +233,16 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
 
   // R-B5 ขยาย: a session-less arrival from a LINE link starts LINE login immediately — no password
   // form flashes first. `checkingSession` gates this until refresh-cookie recovery has had its shot
-  // (a session that recovers navigates away above, never reaching here); `lineLoginState==='available'`
+  // (a session that recovers navigates away above, never reaching here). Unavailable recovery cannot
+  // establish sign-out and must stay on its retry screen. `lineLoginState==='available'`
   // gates it until the availability probe answers, so an `unavailable`/`error` outcome falls through
   // to the ordinary form instead of stalling on a lane that will never redirect.
   useEffect(() => {
-    if (checkingSession || !fromLineLink || autoStartSuppressed || accessState === 'CLOSED' || lineLoginState !== 'available') return;
+    if (checkingSession || sessionRecoveryUnavailable || !fromLineLink || autoStartSuppressed || accessState === 'CLOSED' || lineLoginState !== 'available') return;
     setAutoStartingLine(true);
     const reason = lineNotice === 'handoff-expired' ? 'handoff-expired' : lineLink;
     window.location.assign(withLineExternalBrowser(`${lineStartUrl(nextPath ?? '/')}&from=${reason}&auto=1`, navigator.userAgent));
-  }, [checkingSession, fromLineLink, autoStartSuppressed, accessState, lineLoginState, lineNotice, lineLink, nextPath]);
+  }, [checkingSession, sessionRecoveryUnavailable, fromLineLink, autoStartSuppressed, accessState, lineLoginState, lineNotice, lineLink, nextPath]);
 
   useEffect(() => {
     const onPageShow = (event: PageTransitionEvent) => {
@@ -337,8 +338,8 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   };
 
   if (sessionRecoveryUnavailable) {
-    const retryParams = new URLSearchParams();
-    if (nextPath) retryParams.set('next', nextPath);
+    const retryParams = new URLSearchParams(searchParams.toString());
+    retryParams.delete(RECOVERY_PARAM);
     const retryQuery = retryParams.toString();
     return <GenericClientNotice alert retryHref={retryQuery ? `/login?${retryQuery}` : '/login'} />;
   }
