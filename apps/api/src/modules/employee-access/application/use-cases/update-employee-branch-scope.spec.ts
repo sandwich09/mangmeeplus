@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { UpdateEmployeeInput } from '@watchdog-bms/contracts';
 import { UpdateEmployeeUseCase } from './update-employee.use-case';
+import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 
 const KEY = Buffer.from('a'.repeat(64), 'hex');
 const CONFIG = { credentialEncryptionKey: KEY } as any;
@@ -286,6 +287,26 @@ describe('UpdateEmployeeUseCase role assignment guards', () => {
       () => new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...hrCmd, roleIds: [customStaff.id] }),
       /HR may assign only operational roles/,
     );
+  });
+
+  it('refuses a shop owner who moves staff onto a Mangmee sales role, and leaves existing ones and the platform company alone (RB-34)', async () => {
+    const mangmeeSales = { id: 'r-mangmee', key: 'MANGMEE_SALES', isSystem: true, permissions: [{ permission: { key: 'sales.console.read' } }] };
+    const owner = { ...baseCmd, requesterRoles: ['OWNER'] };
+
+    const shop = makePrisma({ candidateRoles: [mangmeeSales] });
+    await assert.rejects(() => new UpdateEmployeeUseCase(shop.prisma, CONFIG).execute({ ...owner, roleIds: ['r-mangmee'] }), /platform company/);
+    assert.equal(shop.writes.auditArgs.data.result, 'DENIED');
+    assert.equal(shop.writes.assignedRoleIds, undefined);
+
+    // An assignment made before the rule is not taken away by an edit that leaves the role as it is.
+    const held = makePrisma({ targetRoleRows: [{ roleId: 'r-mangmee', role: { key: 'MANGMEE_SALES', isSystem: true } }] });
+    await new UpdateEmployeeUseCase(held.prisma, CONFIG).execute({ ...owner, roleIds: ['r-mangmee'], jobTitle: 'พนักงานขาย' });
+    assert.equal(held.writes.assignedRoleIds, undefined);
+    assert.equal(held.writes.profileUpdate.data.jobTitle, 'พนักงานขาย');
+
+    const platform = makePrisma({ candidateRoles: [mangmeeSales] });
+    await new UpdateEmployeeUseCase(platform.prisma, CONFIG).execute({ ...owner, companyId: PLATFORM_TENANT_ID, roleIds: ['r-mangmee'] });
+    assert.deepEqual(platform.writes.assignedRoleIds, ['r-mangmee']);
   });
 
   it('requires owner approval for FINANCE update even when the requester holds its permissions', async () => {

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { DenyByDefaultGuard } from '../../../../common/security/deny-by-default.guard';
+import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
+import { ExpenseController } from '../../presentation/http/expense.controller';
 import { DeleteExpenseUseCase } from './delete-expense.use-case';
 
 const EXPENSE_ID = 'expense-1';
@@ -770,5 +774,29 @@ describe('DeleteExpenseUseCase', () => {
     assert.equal(harness.expenseRecord.updateMany.mock.callCount(), 1);
     assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 1);
     assert.deepEqual(harness.order.slice(-2), ['expense.delete', 'transaction.rollback']);
+  });
+});
+
+// F02. The web shows the delete button for `expense.delete` and the use case accepts it, but the
+// route asked for `expense.update` alone. A role built from a finance template holds the first and
+// not the second, so its delete button answered 403 before the use case was ever asked.
+describe('DELETE expenses/:expenseId route guard (F02)', () => {
+  const guard = new DenyByDefaultGuard(new Reflector());
+  const reach = (permissions: string[]) => guard.canActivate({
+    getHandler: () => ExpenseController.prototype.removeExpense,
+    getClass: () => ExpenseController,
+    switchToHttp: () => ({ getRequest: () => ({ context: { permissions } }) }),
+  } as any);
+
+  it('admits a role built from every finance template, the own-draft editor, and nobody holding neither', () => {
+    for (const roleTemplateKey of ['tpl.x.finance', 'tpl.trading.finance', 'tpl.service.finance', 'tpl.ecom.finance']) {
+      const { permissionKeys } = compileRole({ roleTemplateKey, permissionKeys: [], entitledFeatureKeys: null, granterPermissionKeys: null });
+      assert.ok(permissionKeys.includes('expense.delete') && !permissionKeys.includes('expense.update'),
+        `${roleTemplateKey} is the role shape this test exists for`);
+      assert.equal(reach(permissionKeys), true, roleTemplateKey);
+    }
+    // The creator's own-draft path is unchanged; ownership and state stay with the use case.
+    assert.equal(reach(['expense.update']), true);
+    assert.throws(() => reach(['expense.read', 'expense.review', 'expense.confirm']), ForbiddenException);
   });
 });

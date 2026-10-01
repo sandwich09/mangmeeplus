@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { apiErrorCode } from '@/common/api/api-error-message';
 import { logoutCurrentSession } from '@/common/auth/session';
 import { AlertModal } from '@/common/components/modal';
 import { getSalesMyWork } from '@/features/sales-console/sales.api';
@@ -15,17 +16,26 @@ const MY_WORK_HREF = '/sales/my-work';
  * system header's support badge: refetched on every navigation over the console's own read, and
  * quiet about its own failures (a 403 or an outage leaves `null`, which renders nothing at all
  * rather than a confident zero).
+ *
+ * RB-36: the one failure it is not quiet about is a suspended account. Every sales route refuses
+ * with that code, and this read runs on every screen, so the shell learns it here and says so once
+ * instead of leaving each page to show its own empty list.
  */
-function useMyWorkBadge(pathname: string): number | null {
+function useMyWorkBadge(pathname: string): { badge: number | null; suspended: boolean } {
   const [badge, setBadge] = useState<number | null>(null);
+  const [suspended, setSuspended] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     getSalesMyWork({ signal: controller.signal })
-      .then((result) => { if (!controller.signal.aborted) setBadge(result.badge); })
-      .catch(() => { if (!controller.signal.aborted) setBadge(null); });
+      .then((result) => { if (!controller.signal.aborted) { setBadge(result.badge); setSuspended(false); } })
+      .catch((cause) => {
+        if (controller.signal.aborted) return;
+        setBadge(null);
+        setSuspended(apiErrorCode(cause) === 'SALES_AGENT_SUSPENDED');
+      });
     return () => controller.abort();
   }, [pathname]);
-  return badge;
+  return { badge, suspended };
 }
 
 const REPORTS_HREF = '/sales/reports';
@@ -48,7 +58,7 @@ const SalesHeader: React.FC<{ canManageTeam?: boolean; canReadReports?: boolean;
   const menuButton = useRef<HTMLButtonElement>(null);
   const pathname = usePathname();
   useEffect(() => setMenuOpen(false), [pathname]);
-  const badge = useMyWorkBadge(pathname);
+  const { badge, suspended } = useMyWorkBadge(pathname);
   const badgeLabel = badge === null ? null : myWorkBadgeLabel(badge);
   const sections = SECTIONS.filter((section) => (section.href !== '/sales/team' || canManageTeam)
     && (section.href !== REPORTS_HREF || canReadReports));
@@ -95,6 +105,8 @@ const SalesHeader: React.FC<{ canManageTeam?: boolean; canReadReports?: boolean;
           </div>)}
         </nav>
       </aside>
+      {/* Signing out is the only thing left to do here, so it is the only way this closes. */}
+      <AlertModal open={suspended && !signOutFailed} title="บัญชีทีมขายถูกระงับ" message="บัญชีนี้ใช้หน้าทีมขายไม่ได้ในขณะนี้ กรุณาติดต่อหัวหน้าทีมหรือผู้ดูแลระบบ เมื่อเปิดใช้งานบัญชีอีกครั้งจะกลับมาใช้ได้ทันที" closeLabel={signingOut ? 'กำลังออกจากระบบ…' : 'ออกจากระบบ'} onClose={() => void handleSignOut()} />
       <AlertModal open={signOutFailed} title="ออกจากระบบ" message="ออกจากระบบไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง" onClose={() => setSignOutFailed(false)} />
     </>
   );

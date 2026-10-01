@@ -20,6 +20,7 @@ import { lockEmployeeProfile } from '../lock-employee-profile';
 import { assertEmployeeActivationScope } from '../employee-activation-scope';
 import { lockPlanTermCompany } from '../../../system-partner-management/application/lock-plan-term-company';
 import { uniqueConstraintFields } from '../../../../common/database/prisma-error';
+import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 
 export type CreateEmployeeCommand = {
   companyId: string;
@@ -94,6 +95,7 @@ export class CreateEmployeeUseCase {
       cmd.requesterPermissions,
       cmd.requesterEntitlementDeniedPermissions,
       cmd.requesterRoles?.includes('OWNER'),
+      cmd.companyId === PLATFORM_TENANT_ID,
     );
     if (violation) {
       await this.prisma.client.auditLog.create({

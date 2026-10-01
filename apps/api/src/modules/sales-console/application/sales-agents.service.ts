@@ -205,7 +205,8 @@ export class SalesAgentsService {
             ? {
               status: statusChange,
               // Suspending keeps the membership and the role: the lead must still be able to read
-              // the agent's deals afterwards (§J5/R12). Only the sales code stops resolving.
+              // the agent's deals afterwards (§J5/R12). The sales code stops resolving, and
+              // SalesAgentActiveGuard refuses the agent's own console until the status is ACTIVE again.
               suspendedAt: statusChange === 'SUSPENDED' ? new Date() : null,
               suspendReason: statusChange === 'SUSPENDED' ? (body.reason ?? '').trim() : null,
             }

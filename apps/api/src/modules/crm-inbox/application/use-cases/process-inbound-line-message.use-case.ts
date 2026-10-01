@@ -238,7 +238,10 @@ export class ProcessInboundLineMessageUseCase {
         if (revoked) {
           await this.audit.log({
             companyId: channel.companyId,
-            actorUserId: SYSTEM_ACTOR,
+            // Not `actorUserId: SYSTEM_ACTOR`: that id is no User row, the FK rejects the insert and
+            // `audit.log` never throws, so the record of a consent withdrawal was silently lost.
+            actorType: 'SYSTEM',
+            actorRefId: 'crm-line-inbound',
             action: 'crm.customer.marketing_consent.revoked',
             targetType: 'crm_customer',
             targetId: identity.customerId,

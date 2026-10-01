@@ -696,6 +696,18 @@ describe('ProcessInboundLineMessageUseCase', () => {
     assert.equal(calls.audit[0].metadataJson.transactionalMessagesRemainEnabled, true);
   });
 
+  it('records the consent withdrawal as a typed SYSTEM actor, never the User FK', async () => {
+    const { repo, crmRepo } = makeRepo();
+    const { uc, calls } = makeUseCase(repo, crmRepo);
+    await uc.execute(channel(), [textEvent('U-optout', 'm-optout-1', 'STOP', { replyToken: 'rt-1', receivedAt: Date.now() }) as any]);
+
+    // 'system' is no User row: as a USER actor the insert fails the FK and the row is lost.
+    const revoked = calls.audit.find((entry) => entry.action === 'crm.customer.marketing_consent.revoked');
+    assert.equal(revoked.actorType, 'SYSTEM');
+    assert.equal(revoked.actorRefId, 'crm-line-inbound');
+    assert.equal(revoked.actorUserId, undefined);
+  });
+
   it('does not unsubscribe when a keyword is only part of a normal message', async () => {
     const { repo, crmRepo, state } = makeRepo();
     const { uc } = makeUseCase(repo, crmRepo);

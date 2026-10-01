@@ -87,6 +87,8 @@ export function dealSnapshot(offerSnapshotJson: unknown): SalesDealSnapshot {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw.version !== 2 && raw.version !== 3 && raw.version !== 4)) throw mismatch();
   // Stored offers predate the current Sale picker. Preserve their pinned terms while new writes
   // continue to use the narrower allowlist in buildDealSnapshot.
+  // B3: the rebuild is also where a stored deal that names a parent menu alone gains that parent's
+  // submenus, so the offer card, the feature plan and the list of menus that stop all agree.
   try { return buildDealSnapshot(raw, raw.version, ALL_FEATURE_ENTITLEMENT_KEYS); } catch (error) {
     if (error instanceof SalesSnapshotError) throw mismatch();
     throw error;
