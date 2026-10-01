@@ -178,14 +178,18 @@ function served(claims: any[], filter?: string) {
  * One hub tab, its queue loaded with the rows (each queue starts as an empty list, loading); `filter` = a card or chip already tapped.
  * The hub's own list is held a page at a time: `held` overrides what it holds (pages still to come, a page that failed).
  * `search` = a search already typed and asked for: the rows are then what the API found, and so are the counts.
+ * `financeStep`: the viewer may read the company's policy, which says whether the finance-review step is on; 'unread' = may read it and
+ * has not yet. Left out, the viewer holds no policy right, as `hubPermissions` has none.
  */
-const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string, held: object = {}, search = '') => renderWithState(
+const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string, held: object = {}, search = '', financeStep?: boolean | 'unread') => renderWithState(
   h(AppRouterContext.Provider, { value: router }, h(SearchParamsContext.Provider, { value: new URLSearchParams(`tab=${tab}`) },
     h(ToastContext.Provider, { value: toast },
-      h(ReimbursementsHubPage, { companyId: 'company-1', userId: ids.requester, roles: ['OWNER'], permissions: hubPermissions })))),
-  (initial) => (Array.isArray(initial) && initial.length === 0 ? rows
-    : Array.isArray(initial?.rows) ? { key: hubListKey('company-1', reimbursementListScope(hubPermissions), filter ?? 'all', 0, 0, search), nextPage: null, ...served(rows, filter), ...held }
-      : initial === true ? false : initial === 'all' ? filter : initial === '' ? search : undefined),
+      h(ReimbursementsHubPage, { companyId: 'company-1', userId: ids.requester, roles: ['OWNER'],
+        permissions: financeStep === undefined ? hubPermissions : [...hubPermissions, 'reimbursement.policy.read'] })))),
+  (initial) => (initial && typeof initial === 'object' && 'financeStep' in initial ? (typeof financeStep === 'boolean' ? { companyId: 'company-1', financeStep } : undefined)
+    : Array.isArray(initial) && initial.length === 0 ? rows
+      : Array.isArray(initial?.rows) ? { key: hubListKey('company-1', reimbursementListScope(hubPermissions), filter ?? 'all', 0, 0, search), nextPage: null, ...served(rows, filter), ...held }
+        : initial === true ? false : initial === 'all' ? filter : initial === '' ? search : undefined),
 );
 // One claim per state the hub has to place: the desk is what the list API answers, and finished claims have none.
 const hubClaims = ([
@@ -558,6 +562,51 @@ describe('ตั้งค่านโยบาย warns about an approver role t
     const both = settings({ ...policy, defaultApproverRoles: ['MANAGER', 'CHECKER', 'LEAD'] },
       [option('MANAGER', 'Manager', true), option('CHECKER', 'ผู้ตรวจ', false), option('LEAD', 'หัวหน้าสาขา', false, false)]);
     assert.ok(both.includes(warning), both.filter((text) => text.includes('บันทึกจ่าย')).join(' | '));
+  });
+});
+
+// Owner's model 2026-10-01: a claim has a requester and an approver, and a finance desk exists only where the company turned the
+// finance-review step on. A shop without the step still had a tab "คิวการเงิน", empty with "ไม่มีรายการรอการเงิน".
+describe('the hub\'s third tab is the pay queue where the company has no finance-review step (owner 2026-10-02)', () => {
+  const ready = { ...queueRow, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', hasDuplicateBlocker: false, currentDesk: { kind: 'PAYMENT' } };
+  const underReview = { ...queueRow, id: `${ids.request}review`, financeReviewStatus: 'PENDING', hasDuplicateBlocker: false, currentDesk: { kind: 'FINANCE' } };
+  /** The work tabs of the hub's own navigation. */
+  const tabsOf = (html: string) => visible(html.slice(html.indexOf('>', html.indexOf('<nav')) + 1, html.indexOf('</nav>')));
+
+  it('names it คิวรอจ่าย and says nothing of finance: the tab, its description, its count, its empty text and its columns', () => {
+    const empty = hubTab('finance', [], undefined, {}, '', false);
+    assert.deepEqual(tabsOf(empty), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวรอจ่าย']);
+    for (const text of ['บันทึกการจ่ายเงินของคำขอที่อนุมัติแล้ว', 'รอจ่าย', 'ไม่มีใบรอจ่าย', 'คำขอที่อนุมัติแล้วและรอจ่ายเงินคืนจะแสดงที่นี่']) assert.ok(visible(empty).includes(text), text);
+    const filled = visible(hubTab('finance', [ready], undefined, {}, '', false));
+    for (const text of ['พร้อมจ่าย', 'บันทึกจ่าย', 'รอจ่าย']) assert.ok(filled.includes(text), text);
+    // Before: the tab and its empty text named a finance desk, and every row read "ไม่ต้องตรวจ" under "ตรวจการเงิน".
+    for (const text of [...visible(empty), ...filled]) assert.doesNotMatch(text, /การเงิน|ไม่ต้องตรวจ|รอตรวจ/u);
+  });
+
+  it('keeps the finance wording where the step is on', () => {
+    const empty = hubTab('finance', [], undefined, {}, '', true);
+    assert.deepEqual(tabsOf(empty), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวการเงิน']);
+    for (const text of ['ตรวจสอบคำขอที่อนุมัติแล้ว และบันทึกการจ่ายเงิน', 'รอตรวจ/รอจ่าย', 'ไม่มีรายการรอการเงิน', 'คำขอที่ผ่านการอนุมัติแล้วจะแสดงที่นี่']) assert.ok(visible(empty).includes(text), text);
+    const filled = visible(hubTab('finance', [ready, underReview], undefined, {}, '', true));
+    for (const text of ['ตรวจการเงิน', 'ไม่ต้องตรวจ', 'รอตรวจสอบ', 'อนุมัติจ่าย']) assert.ok(filled.includes(text), text);
+  });
+
+  // The policy is frozen on a claim when it is sent, so a claim sent while the step was on is still reviewed after it is turned off.
+  it('keeps the review column and its count for a queue that still holds such a claim, under the tab the company now has', () => {
+    const html = hubTab('finance', [ready, underReview], undefined, {}, '', false);
+    assert.deepEqual(tabsOf(html), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวรอจ่าย']);
+    for (const text of ['รอตรวจ/รอจ่าย', 'ตรวจการเงิน', 'รอตรวจสอบ', 'ไม่ต้องตรวจ']) assert.ok(visible(html).includes(text), text);
+  });
+
+  it('names no third tab before the policy is read, and keeps the finance wording for a viewer who may not read it', () => {
+    const unread = hubTab('finance', [ready], undefined, {}, '', 'unread');
+    assert.deepEqual(tabsOf(unread), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ']);
+    for (const text of visible(unread)) assert.doesNotMatch(text, /คิวการเงิน|คิวรอจ่าย|ไม่มีใบรอจ่าย|รอตรวจ\/รอจ่าย/u);
+    assert.ok(visible(unread).includes('กำลังโหลด...'));
+    // The policy endpoint asks for a policy right. Whoever holds the finance-review right without one cannot be told the
+    // company's switch, and reads the tab by the right they hold.
+    assert.deepEqual(tabsOf(hubTab('finance', [])), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวการเงิน']);
+    assert.ok(visible(hubTab('finance', [])).includes('ไม่มีรายการรอการเงิน'));
   });
 });
 

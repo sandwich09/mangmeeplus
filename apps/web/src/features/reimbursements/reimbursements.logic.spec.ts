@@ -8,6 +8,7 @@ import {
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
   approverNotReadyHelp, approverPaymentWarning, hubCardFilter, hubList, hubListStatusText, hubNextPage, NO_HUB_LIST, QUEUE_PAGE_SIZE, withHubPage,
+  financeQueueWords, rowHasFinanceReview,
   type HubFilter,
 } from './reimbursements.logic';
 import { currentDeskText } from './reimbursements.model';
@@ -22,6 +23,25 @@ describe('paymentReferenceRequired', () => {
     assert.equal(paymentReferenceRequired('BANK_TRANSFER'), true);
     assert.equal(paymentReferenceRequired('CHEQUE'), true);
     assert.equal(paymentReferenceRequired('CASH'), false);
+  });
+});
+
+// Owner's model 2026-10-01: a finance desk exists only where a company turned the finance-review step on.
+describe('financeQueueWords', () => {
+  it('names the pay queue with no word of finance where the company has no finance-review step', () => {
+    const words = financeQueueWords(false);
+    assert.deepEqual([words.tab, words.waiting, words.emptyTitle], ['คิวรอจ่าย', 'รอจ่าย', 'ไม่มีใบรอจ่าย']);
+    for (const text of Object.values(words)) assert.doesNotMatch(text, /การเงิน|ตรวจ/u);
+  });
+
+  it('keeps the finance desk\'s words where the step is on', () => {
+    const words = financeQueueWords(true);
+    assert.deepEqual([words.tab, words.waiting, words.emptyTitle], ['คิวการเงิน', 'รอตรวจ/รอจ่าย', 'ไม่มีรายการรอการเงิน']);
+  });
+
+  it('knows a row that goes or went through the review from the row itself', () => {
+    for (const status of ['PENDING', 'NEEDS_INFO', 'APPROVED_FOR_PAYMENT', 'BLOCKED']) assert.equal(rowHasFinanceReview({ financeReviewStatus: status }), true, status);
+    for (const row of [{ financeReviewStatus: 'NOT_REQUIRED' }, {}, null, undefined]) assert.equal(rowHasFinanceReview(row), false);
   });
 });
 

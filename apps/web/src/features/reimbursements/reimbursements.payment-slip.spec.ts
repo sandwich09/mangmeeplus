@@ -446,7 +446,7 @@ describe('quick pay from the finance queue', () => {
     // One handler for the table button and the card button; the dialog opens only through it.
     assert.match(hub, /const recordPayment = useCallback\(\(row: any, layout: 'cards' \| 'table'\) => \{\s+const target = quickPayTarget\(layout, companyId, row\.id\);/);
     assert.match(hub, /if \(target\.kind === 'page'\) router\.push\(target\.href\);\s+else setPayFor\(row\);/);
-    assert.match(hub, /<FinanceQueue \{\.\.\.queueProps\} onRecordPayment=\{recordPayment\} \/>/);
+    assert.match(hub, /<FinanceQueue \{\.\.\.queueProps\}[^\n>]* onRecordPayment=\{recordPayment\} \/>/);
     assert.equal((hub.match(/setPayFor\(/g) ?? []).length, 3, 'opened in one place, closed in two');
     // The form seeds its state when it mounts, so it mounts once, after the claim read settles, and
     // never on the bare queue row: that row says nothing about the account to pay into.

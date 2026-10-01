@@ -29,7 +29,7 @@ import {
   type HubFilter, approverPaymentWarning,
   NO_HUB_LIST, QUEUE_PAGE_SIZE, HUB_SEARCH_DELAY_MS, hubCardFilter, hubList, hubListKey, hubListStatusText, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
   queueRowOffersFinanceReview, queueRowOffersPayment, quickPayBlockedNote, quickPayTarget,
-  approvalRowOffers,
+  approvalRowOffers, financeQueueWords, rowHasFinanceReview,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
@@ -42,13 +42,14 @@ import { useToast } from '@/common/components/toast';
 /** Every banner in this feature goes through here, so API error codes never reach the user raw. */
 function err(e: unknown) { return errorText(e); }
 
-const HUB_TAB_LABELS: Record<HubTab, string> = {
-  mine: 'รายการที่เกี่ยวข้อง', approvals: 'คิวอนุมัติ', finance: 'คิวการเงิน', policy: POLICY_TAB_LABEL,
+// The third tab has no fixed name: it is the finance queue or the pay queue by the company's policy (`financeQueueWords`).
+type NamedHubTab = Exclude<HubTab, 'finance'>;
+const HUB_TAB_LABELS: Record<NamedHubTab, string> = {
+  mine: 'รายการที่เกี่ยวข้อง', approvals: 'คิวอนุมัติ', policy: POLICY_TAB_LABEL,
 };
-const HUB_TAB_DESCRIPTIONS: Record<HubTab, string> = {
+const HUB_TAB_DESCRIPTIONS: Record<NamedHubTab, string> = {
   mine: 'ติดตามคำขอของคุณและเอกสารที่คุณเป็นผู้อนุมัติ ผู้ตรวจ ผู้จ่าย หรือผู้ลงนาม',
   approvals: 'ตรวจคำขอที่รอคุณอนุมัติ ดูรายการและใบเสร็จก่อนตัดสินใจ',
-  finance: 'ตรวจสอบคำขอที่อนุมัติแล้ว และบันทึกการจ่ายเงิน',
   policy: 'ตั้งเกณฑ์การอนุมัติ ใบเสร็จ และกำหนดเวลาของการเบิกจ่ายทั้งบริษัท',
 };
 /** A claim that has waited longer than the company's deadline, in the words of the notice the server sends for it. */
@@ -139,6 +140,29 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   }, [companyId, router]);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // A finance desk exists only where the company turned the finance-review step on, so the tab that holds the claims
+  // waiting for payment is named by the company's own policy. The page reads it where this session may (the policy
+  // endpoint asks for a policy right). A session that may not keeps the finance wording, for the right it holds.
+  const canReadPolicy = permissionTabs.includes('finance')
+    && (permissions.includes('reimbursement.policy.read') || permissions.includes('reimbursement.policy.manage'));
+  const [policyRead, setPolicyRead] = useState<{ companyId: string | null; financeStep: boolean }>({ companyId: null, financeStep: true });
+  const notePolicy = useCallback((policy: { financeReviewRequired?: boolean }) => {
+    setPolicyRead({ companyId, financeStep: policy.financeReviewRequired === true });
+  }, [companyId]);
+  useEffect(() => {
+    if (!canReadPolicy) return;
+    let current = true;
+    void getReimbursementPolicy(companyId)
+      .then((policy) => { if (current) notePolicy(policy); })
+      // Not read: the finance wording, as for a session that may not read the policy at all.
+      .catch(() => { if (current) notePolicy({ financeReviewRequired: true }); });
+    return () => { current = false; };
+  }, [companyId, canReadPolicy, notePolicy]);
+  // Undefined: the policy is still being read, and the tab is not named before it is known.
+  const financeStep = !canReadPolicy ? true : policyRead.companyId === companyId ? policyRead.financeStep : undefined;
+  const financeWords = financeStep === undefined ? undefined : financeQueueWords(financeStep);
+  const tabLabel = (t: HubTab) => (t === 'finance' ? financeWords?.tab : HUB_TAB_LABELS[t]);
+
   // Roles can change after submission. Permission-based navigation alone would strand the exact
   // assignee, so ask the server whether this session still owns a frozen task. The queue endpoint
   // returns only exact assignments. Once found, keep the tab for this page session so completing
@@ -176,7 +200,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     <MangmeePage
       eyebrow="การเบิกจ่าย"
       title="การเบิกจ่ายและอนุมัติ"
-      description={HUB_TAB_DESCRIPTIONS[tab]}
+      description={tab === 'finance' ? financeWords?.description : HUB_TAB_DESCRIPTIONS[tab]}
       // Beside the page actions on every tab: whoever can file a claim sets where it is paid back.
       meta={permissions.includes('reimbursement.create') ? (
         <Link href={`/companies/${companyId}/reimbursements/payout-account`} className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')}>บัญชีรับเงินคืนของฉัน</Link>
@@ -187,10 +211,10 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     >
       <nav aria-label="งานเบิกจ่าย" className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200">
         <div className="flex max-w-full gap-1 overflow-x-auto">
-          {tabs.filter(t => t !== 'policy').map(t => (
+          {tabs.filter(t => t !== 'policy' && tabLabel(t)).map(t => (
             <button type="button" key={t} onClick={() => setTab(t)} aria-pressed={tab === t}
               className={cx('min-h-12 shrink-0 border-b-2 px-4 py-3 text-base font-semibold', tab === t ? 'border-brand-600 text-brand-700' : 'border-transparent text-gray-600 hover:text-brand-700')}>
-              {HUB_TAB_LABELS[t]}
+              {tabLabel(t)}
             </button>
           ))}
         </div>
@@ -203,8 +227,8 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         canCreate={permissions.includes('reimbursement.create')}
       />}
       {tab === 'approvals' && <ApprovalQueue {...queueProps} />}
-      {tab === 'finance' && <FinanceQueue {...queueProps} onRecordPayment={recordPayment} />}
-      {tab === 'policy' && <PolicySettings companyId={companyId} />}
+      {tab === 'finance' && <FinanceQueue {...queueProps} financeStep={financeStep} onRecordPayment={recordPayment} />}
+      {tab === 'policy' && <PolicySettings companyId={companyId} onPolicy={notePolicy} />}
 
       {payFor && <PaymentModal
         companyId={companyId}
@@ -670,9 +694,11 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
 }
 
 // ── Finance Queue ─────────────────────────────────────────────────────────────
-function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onRecordPayment }: QueueProps & {
+function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onRecordPayment, financeStep }: QueueProps & {
   /** `layout`: where the press was made, the table (a dialog opens) or the phone cards (the claim page opens). */
   onRecordPayment: (request: any, layout: 'cards' | 'table') => void;
+  /** Whether the company has the finance-review step. Undefined while the page is still reading its policy. */
+  financeStep: boolean | undefined;
 }) {
   const toast = useToast();
   const [data, setData] = useState<any[]>([]);
@@ -705,6 +731,10 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
     setBusy(null);
   };
   const summary = useMemo(() => summariseQueue(data), [data]);
+  // A claim sent while the step was on still goes through it after the company turns it off: a queue that holds one
+  // keeps the words of the review, and the column that says where each claim's review stands.
+  const withReview = financeStep === true || data.some(rowHasFinanceReview);
+  const words = financeQueueWords(withReview);
   const filteredData = useMemo(() => data.filter(r => matchesSearch([
     r.requestNo,
     r.requesterDisplayNameSnapshot,
@@ -724,10 +754,10 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
   return (
     <div className="space-y-4">
       {error && <ErrorBanner message={error} />}
-      {loading ? <LoadingState label="กำลังโหลด..." /> : (
+      {loading || financeStep === undefined ? <LoadingState label="กำลังโหลด..." /> : (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-            <StatCard icon={ICON.clock} label="รอตรวจ/รอจ่าย" value={summary.count} {...KPI.sky} />
+            <StatCard icon={ICON.clock} label={words.waiting} value={summary.count} {...KPI.sky} />
             <StatCard icon={ICON.wallet} label="ยอดคงค้างรวม" value={baht0(summary.outstandingAmount)} {...KPI.purple} />
             <StatCard icon={ICON.alert} label="พบรายการที่อาจซ้ำ" value={summary.flagged} danger={summary.flagged > 0} {...KPI.danger} />
           </div>
@@ -748,8 +778,8 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
             {filteredData.length === 0 ? (
               <div className="mt-3">
                 <EmptyState
-                  title={data.length === 0 ? 'ไม่มีรายการรอการเงิน' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
-                  description={data.length === 0 ? 'คำขอที่ผ่านการอนุมัติแล้วจะแสดงที่นี่' : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
+                  title={data.length === 0 ? words.emptyTitle : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
+                  description={data.length === 0 ? words.emptyDescription : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
                 />
               </div>
             ) : (
@@ -759,24 +789,17 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
               <div className="min-w-[980px]">
                 <table className="mangmee-table">
                   <thead>
-                    <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้เบิก</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th><th className="!text-center">ตรวจการเงิน</th><th className="!text-center">การกระทำ</th></tr>
+                    <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้เบิก</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th>{withReview && <th className="!text-center">ตรวจการเงิน</th>}<th className="!text-center">การกระทำ</th></tr>
                   </thead>
                   <tbody>
-                    {filteredData.length === 0 ? (
-                      <tr><td colSpan={7}>
-                        <EmptyState
-                          title={data.length === 0 ? 'ไม่มีรายการรอการเงิน' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
-                          description={data.length === 0 ? 'คำขอที่ผ่านการอนุมัติแล้วจะแสดงที่นี่' : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
-                        />
-                      </td></tr>
-                    ) : pagedData.map((r: any) => (
+                    {pagedData.map((r: any) => (
                       <tr key={r.id} className="cursor-pointer" onClick={() => onOpenDetail(r.id)}>
                         <td className="font-mono text-xs">{r.requestNo ?? '—'}</td>
                         <td>{r.requesterDisplayNameSnapshot}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
                         <td><div className="flex flex-wrap items-center gap-2"><StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">อาจซ้ำ</MangmeeBadge>}</div></td>
-                        <td className="text-xs text-gray-500">{FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—'}</td>
+                        {withReview && <td className="text-xs text-gray-500">{FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—'}</td>}
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
                             <button type="button" aria-label="ดูรายละเอียด" title="ดูรายละเอียด"
@@ -883,7 +906,11 @@ function PaymentModal({ companyId, userId, permissions, request, onClose, onDone
 
 // ── Policy Settings ───────────────────────────────────────────────────────────
 // Exported for the QA spec, which renders the form with a policy already loaded.
-export function PolicySettings({ companyId }: { companyId: string }) {
+export function PolicySettings({ companyId, onPolicy }: {
+  companyId: string;
+  /** The policy as it was just read, also after a save: the hub names its third tab by it. */
+  onPolicy?: (policy: { financeReviewRequired?: boolean }) => void;
+}) {
   const toast = useToast();
   const [form, setForm] = useState<any | null>(null);
   const [approverOptions, setApproverOptions] = useState<ReimbursementApproverRoleOption[]>([]);
@@ -904,10 +931,11 @@ export function PolicySettings({ companyId }: { companyId: string }) {
       // save store the shorter list.
       const roles = (policy.defaultApproverRoles ?? []).filter((key) => options.some((option) => option.key === key));
       setForm({ ...policy, defaultApproverRoles: roles }); setApproverOptions(options);
+      onPolicy?.(policy);
       setApproverChanged(roles.length !== (policy.defaultApproverRoles ?? []).length);
     }
     catch (e) { setError(err(e)); } finally { setLoading(false); }
-  }, [companyId]);
+  }, [companyId, onPolicy]);
   useEffect(() => { load(); }, [load]);
 
   const save = async (e: React.FormEvent) => {

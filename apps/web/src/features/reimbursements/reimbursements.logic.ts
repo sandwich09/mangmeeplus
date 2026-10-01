@@ -584,6 +584,25 @@ export function validateRequestForm(input: { reason: string; missingReceiptReaso
   return null;
 }
 
+/**
+ * The words of the hub's third tab, by what the company has (owner's model, 2026-10-01): a finance desk exists only
+ * where the company turned the finance-review step on. There the tab is the finance desk's queue, of claims that
+ * wait for its review and of claims that wait for their payment. Where the step is off it holds nothing but claims
+ * that wait for their payment, so it is the pay queue and says nothing of finance.
+ */
+export function financeQueueWords(financeStep: boolean): { tab: string; description: string; waiting: string; emptyTitle: string; emptyDescription: string } {
+  return financeStep
+    ? { tab: 'คิวการเงิน', description: 'ตรวจสอบคำขอที่อนุมัติแล้ว และบันทึกการจ่ายเงิน', waiting: 'รอตรวจ/รอจ่าย',
+      emptyTitle: 'ไม่มีรายการรอการเงิน', emptyDescription: 'คำขอที่ผ่านการอนุมัติแล้วจะแสดงที่นี่' }
+    : { tab: 'คิวรอจ่าย', description: 'บันทึกการจ่ายเงินของคำขอที่อนุมัติแล้ว', waiting: 'รอจ่าย',
+      emptyTitle: 'ไม่มีใบรอจ่าย', emptyDescription: 'คำขอที่อนุมัติแล้วและรอจ่ายเงินคืนจะแสดงที่นี่' };
+}
+
+/** A queue row that goes, or went, through the finance review: its claim was sent while the company had that step. */
+export function rowHasFinanceReview(row: { financeReviewStatus?: string | null } | null | undefined): boolean {
+  return !!row?.financeReviewStatus && row.financeReviewStatus !== 'NOT_REQUIRED';
+}
+
 export const HUB_TABS = ['mine', 'approvals', 'finance', 'policy'] as const;
 export type HubTab = (typeof HUB_TABS)[number];
 

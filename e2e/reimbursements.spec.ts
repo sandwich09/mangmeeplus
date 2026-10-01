@@ -168,8 +168,22 @@ test.describe('REIMB — reimbursements', () => {
   test('REIMB-01 @smoke reimbursements list renders', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/reimbursements');
     await expect(authedPage.getByRole('heading', { name: /การเบิกจ่ายและอนุมัติ|Reimbursements/i })).toBeVisible();
-    for (const tab of [/รายการที่เกี่ยวข้อง|Related/i, /คิวอนุมัติ|Approval/i, /คิวการเงิน|Finance/i]) {
+    // The third tab is the finance queue or the pay queue by the company's policy (REIMB-13).
+    for (const tab of [/รายการที่เกี่ยวข้อง|Related/i, /คิวอนุมัติ|Approval/i, /คิวการเงิน|คิวรอจ่าย/]) {
       await expect(authedPage.getByRole('button', { name: tab })).toBeVisible();
+    }
+  });
+
+  // Owner's model: a finance desk exists only where the company turned the finance-review step on. The tab that holds
+  // the claims waiting for payment says so: the pay queue without the step, the finance queue with it.
+  test('REIMB-13 @p1 the third tab is the pay queue without a finance-review step and the finance queue with one', async ({ authedPage, api, companyId }) => {
+    for (const [financeReviewRequired, name, other] of [[false, 'คิวรอจ่าย', 'คิวการเงิน'], [true, 'คิวการเงิน', 'คิวรอจ่าย']] as const) {
+      await withPolicy(api, companyId, { financeReviewRequired }, async () => {
+        await gotoCompany(authedPage, companyId, '/reimbursements');
+        const nav = authedPage.getByRole('navigation', { name: 'งานเบิกจ่าย' });
+        await expect(nav.getByRole('button', { name, exact: true })).toBeVisible();
+        await expect(nav.getByRole('button', { name: other, exact: true })).toHaveCount(0);
+      });
     }
   });
 
