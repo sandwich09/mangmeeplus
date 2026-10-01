@@ -775,6 +775,20 @@ describe('buildJourneySteps', () => {
     assert.deepEqual([payer.actions, payer.note], [['pay', 'print'], 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง']);
   });
 
+  // Phase 0.6 (spec §13.3 F1): the deploy-time back-fill gives a company role that approves the two pay keys, and
+  // apps/api/prisma/sync-permissions.spec.ts proves the API then takes that role's payment. The page reads the same
+  // keys, so the same person gets the button: before the back-fill neither side lets them pay, after it both do.
+  it('offers บันทึกจ่าย and ยกเลิกการจ่าย to an approver role once it holds the pay rights', () => {
+    const beforeBackfill = ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.reject'];
+    const afterBackfill = [...beforeBackfill, 'reimbursement.payment.record', 'reimbursement.payment.void'];
+    const ready = claim({ ...approved, status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' }, paymentDesk: { names: ['เจ้าของ'], moreCount: 0 } });
+    assert.deepEqual(active(ready, beforeBackfill, 'boss').actions, ['print']);
+    assert.deepEqual(active(ready, afterBackfill, 'boss').actions, ['pay', 'print']);
+    const paid = claim({ ...approved, status: 'PAID', payments: [{ id: 'p1', status: 'RECORDED', paidByUserId: 'boss', paidAt: '2026-09-20T06:00:00.000Z' }] });
+    assert.equal(active(paid, beforeBackfill, 'boss').actions.includes('void-payment'), false);
+    assert.equal(active(paid, afterBackfill, 'boss').actions.includes('void-payment'), true);
+  });
+
   it('gives a staff requester only requester actions at every step (AC12)', () => {
     const requesterOnly = new Set(['submit', 'edit', 'cancel', 'reopen', 'print', 'sign', 'attach-signed-copy']);
     const statuses: Array<Record<string, unknown>> = [
