@@ -34,7 +34,7 @@ describe('implemented-trigger gate (LINE preference suppression)', () => {
       .filter((action) => action.actionType === 'SEND_NOTIFICATION')
       .map((action) => String(action.configJson['triggerKey']));
 
-    assert.equal(workflowTriggerKeys.length, 10);
+    assert.equal(workflowTriggerKeys.length, 12);
     for (const key of workflowTriggerKeys) {
       assert.equal(isImplementedTrigger(key), true, key);
     }
@@ -51,12 +51,16 @@ describe('implemented-trigger gate (LINE preference suppression)', () => {
 
   // The list is short on purpose: every key on it overrides a person's saved trigger list. Adding one
   // is a decision, so the whole list is pinned here.
-  it('always delivers exactly the three claim notices a saved preference list must not drop', () => {
+  it('always delivers exactly the five claim notices a saved preference list must not drop', () => {
     assert.deepEqual(ALWAYS_DELIVERED_TRIGGER_KEYS, [
       'reimbursement.payout_account_set_by_other',
       // Audit B9: a voided payment (to the requester) and a claim waiting past the deadline (to whoever can pay).
       'workflow.reimbursement_payment_voided',
       'workflow.reimbursement_payment_sla_breach',
+      // Payout spec §14: a claim held back until its payout account is corrected (to the requester), and
+      // the corrected account waiting for approval (to the approvers of the new step).
+      'workflow.reimbursement_payout_correction_requested',
+      'workflow.reimbursement_payout_correction_submitted',
     ]);
     // Each workflow key on it is one an auto-enabled template's notice really carries.
     const emitted = WORKFLOW_TEMPLATE_CATALOG.filter((template) => template.autoEnable)

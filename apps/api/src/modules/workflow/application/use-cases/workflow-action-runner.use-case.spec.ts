@@ -752,6 +752,72 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     });
   });
 
+  // Payout spec §14, §17.3: an approved claim sent back to have its payout account corrected. Each notice
+  // goes only to the person it concerns (owner rule 2026-10-01): the requester when the claim is sent
+  // back, the approvers of the new step when the account is given.
+  describe('the two notices of a payout account correction', () => {
+    const template = (key: string) => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === key)!;
+    const send = async (key: string, payload: Record<string, unknown>) => {
+      const action = template(key).defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')!;
+      // Nobody is picked by a role or a permission: whoever else may approve or pay is not told.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_payer', 'u_owner']);
+      await make().execute({ ...actionRun(action.configJson), actionKey: action.actionKey }, {
+        companyId: 'co_1', ruleName: template(key).name, triggerType: 'EVENT', sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_request', sourceId: 'rb_1', payload, siblingActions: template(key).defaultActionJson,
+      } as any);
+      return (notify.execute.mock.calls.at(-1) as any)?.arguments[0];
+    };
+    /** As `sendBackForPayoutCorrection` writes it: sent back by `u_payer`, with the reason as a finished sentence. */
+    const sentBack = (overrides: Record<string, unknown> = {}) => ({
+      requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', status: 'PENDING_APPROVAL',
+      payoutCorrectionNotice: 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน',
+      eventType: 'reimbursement.payout_correction_requested', actorUserId: 'u_payer', ...overrides,
+    });
+    /** As `SubmitPayoutCorrectionUseCase` writes it: the requester gave the account, which waits for `u_manager`. */
+    const accountGiven = (overrides: Record<string, unknown> = {}) => ({
+      requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', amount: '1614.5000', currency: 'THB',
+      status: 'PENDING_APPROVAL', stepId: 'step_2', approverRecipientUserIds: ['u_manager'],
+      eventType: 'reimbursement.payout_correction_submitted', actorUserId: 'u_requester', ...overrides,
+    });
+
+    it('tells the requester alone that the claim needs its account corrected, with the reason and a link to the claim', async () => {
+      const sent = await send('reimbursement_payout_correction_requested', sentBack());
+      assert.deepEqual([sent.title, sent.body], ['ใบเบิกต้องแก้บัญชีรับเงิน: RB-202610-00007', 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน']);
+      assert.deepEqual([sent.recipientUserIds, sent.deepLinkHref, sent.triggerKey, sent.severity],
+        [['u_requester'], '/companies/co_1/reimbursements/rb_1', 'workflow.reimbursement_payout_correction_requested', 'action']);
+      assert.doesNotMatch(`${sent.title} ${sent.body}`.replace('RB-202610-00007', ''), /[A-Za-z_]/);
+    });
+
+    it('does not tell a requester who asked for their own account to be changed', async () => {
+      const before = notify.execute.mock.callCount();
+      await send('reimbursement_payout_correction_requested', sentBack({ actorUserId: 'u_requester' }));
+      assert.equal(notify.execute.mock.callCount(), before);
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.deepEqual([finalUpdate.status, finalUpdate.resultJson.reason], ['SUCCEEDED', 'all_recipients_excluded']);
+    });
+
+    it('tells the approvers of the new step, and nobody else, that a new account waits for their approval', async () => {
+      const sent = await send('reimbursement_payout_correction_submitted', accountGiven({ approverRecipientUserIds: ['u_manager', 'u_manager_2'] }));
+      assert.deepEqual([sent.title, sent.body], ['รออนุมัติบัญชีรับเงินใหม่: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่']);
+      assert.deepEqual([sent.recipientUserIds, sent.deepLinkHref, sent.triggerKey, sent.severity],
+        [['u_manager', 'u_manager_2'], '/companies/co_1/reimbursements/rb_1', 'workflow.reimbursement_payout_correction_submitted', 'action']);
+      assert.doesNotMatch(`${sent.title} ${sent.body}`.replace('RB-202610-00007', ''), /[A-Za-z_]|\d\.\d{3,}/);
+      // A requester who is their own approver gave the account themselves, and is not told so.
+      const before = notify.execute.mock.callCount();
+      await send('reimbursement_payout_correction_submitted', accountGiven({ approverRecipientUserIds: ['u_requester'] }));
+      assert.equal(notify.execute.mock.callCount(), before);
+    });
+
+    it('creates no task and reads no account: each is one notice, about where the claim stands', () => {
+      for (const key of ['reimbursement_payout_correction_requested', 'reimbursement_payout_correction_submitted']) {
+        assert.deepEqual(template(key).defaultActionJson.map((action) => action.actionType), ['SEND_NOTIFICATION'], key);
+        assert.doesNotMatch(JSON.stringify(template(key).defaultActionJson), /accountLast4|accountNumber|bankName|accountName|\{\{note\}\}|reasonCode/, key);
+      }
+      // A claim nobody has to approve sends no "waits for your approval" notice: its event is the ready-to-pay one.
+      assert.deepEqual(template('reimbursement_payout_correction_submitted').defaultConditionJson, { field: 'status', op: 'EQ', value: 'PENDING_APPROVAL' });
+    });
+  });
+
   // Review: a task title carried an English tag ("[Approval review] ...") and the approval reminder
   // said "SLA". Both are read by the approver in their task list and on LINE: plain Thai.
   describe('task and reminder titles are plain Thai', () => {

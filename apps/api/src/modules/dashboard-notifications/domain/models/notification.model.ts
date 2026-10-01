@@ -130,6 +130,10 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   'workflow.reimbursement_finance_review',
   'workflow.reimbursement_ready_for_payment',
   'workflow.reimbursement_payment_recorded',
+  // Payout spec §14: an approved claim sent back to have its payout account corrected (to its
+  // requester), and the account given again (to the approvers of the new step).
+  'workflow.reimbursement_payout_correction_requested',
+  'workflow.reimbursement_payout_correction_submitted',
   // Someone else set a member's payout account (owner decision 2026-10-01): the account owner is told
   // on the web and on LINE. The text names the editor and carries the last 4 digits, never the number.
   'reimbursement.payout_account_set_by_other',
@@ -174,6 +178,10 @@ export const ALWAYS_DELIVERED_TRIGGER_KEYS: string[] = [
   // and everyone who saved a preference row before today would otherwise get them on the web bell only.
   'workflow.reimbursement_payment_voided',
   'workflow.reimbursement_payment_sla_breach',
+  // A claim held back from payment until its payout account is corrected, and the account then waiting
+  // for approval: neither person asked for the wait, and the money is paid only after both have acted.
+  'workflow.reimbursement_payout_correction_requested',
+  'workflow.reimbursement_payout_correction_submitted',
 ];
 
 // Future triggers — disabled until source module exists

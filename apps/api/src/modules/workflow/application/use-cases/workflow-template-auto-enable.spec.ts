@@ -128,7 +128,10 @@ describe('autoEnableWorkflowTemplatesForCompany', () => {
     const created = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');
 
     assert.equal(created.includes('reimbursement_pending_approval'), false);
-    assert.equal(created.length, AUTO_ENABLE_KEYS.length - 1);
+    // One less for the rule that was there, and one for the notice that follows its switch: "a corrected
+    // payout account waits for your approval" is created switched off beside it.
+    assert.equal(created.includes('reimbursement_payout_correction_submitted'), false);
+    assert.equal(created.length, AUTO_ENABLE_KEYS.length - 2);
     const preexisting = repo.rules.find((r: any) => r.id === 'pre_0');
     assert.equal(preexisting.status, 'DISABLED');
     assert.equal(preexisting.createdByUserId, 'admin_1');
@@ -169,6 +172,38 @@ describe('autoEnableWorkflowTemplatesForCompany', () => {
       const enabled = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');
       assert.ok(enabled.includes('reimbursement_payment_voided'));
       assert.ok(enabled.includes('reimbursement_payment_sla_breach'));
+    }
+  });
+
+  // Payout spec §17.3: the two notices of a payout account correction arrive at a release, for companies
+  // that already run the other claim notices. Each sits next to the notice it resembles and follows its switch.
+  it('creates the two payout correction notices beside the notices they resemble, on or off as those are', async () => {
+    const keys = ['reimbursement_payout_correction_requested', 'reimbursement_payout_correction_submitted'] as const;
+    const repo = fakeRepo([
+      // The company switched off "your claim needs correcting" and kept "a claim waits for your approval".
+      { templateKey: 'reimbursement_correction_requester', status: 'DISABLED' },
+      { templateKey: 'reimbursement_pending_approval', status: 'ENABLED' },
+    ]);
+    const enabled = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');
+    const ruleOf = (key: string) => repo.rules.find((r: any) => r.templateId === repo.templates.find((t: any) => t.key === key).id && r.id.startsWith('rule_'));
+    const [requested, submitted] = keys.map(ruleOf);
+    assert.deepEqual(keys.map((key) => enabled.includes(key)), [false, true]);
+    assert.deepEqual([requested.status, submitted.status], ['DISABLED', 'ENABLED']);
+    for (const [key, rule] of [[keys[0], requested], [keys[1], submitted]] as const) {
+      const template = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === key)!;
+      assert.deepEqual([rule.triggerType, rule.triggerConfigJson, rule.cooldownSeconds, rule.createdByUserId],
+        ['EVENT', { eventType: key.replace('reimbursement_', 'reimbursement.') }, 0, WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID], key);
+      assert.deepEqual(rule.actionJson, template.defaultActionJson, key);
+      assert.deepEqual(rule.conditionJson, template.defaultConditionJson, key);
+    }
+    // The enabled one is versioned, so the runner has a snapshot to read; the other waits for the admin's own enable.
+    assert.deepEqual([repo.versions.some((v: any) => v.ruleId === requested.id), repo.versions.filter((v: any) => v.ruleId === submitted.id).map((v: any) => v.version)], [false, [1]]);
+    assert.deepEqual(await autoEnableWorkflowTemplatesForCompany(repo, 'co_1'), []);
+
+    // A company with neither sibling, or with both on, gets both switched on.
+    for (const other of [fakeRepo(), fakeRepo([{ templateKey: 'reimbursement_correction_requester', status: 'ENABLED' }, { templateKey: 'reimbursement_pending_approval', status: 'ENABLED' }])]) {
+      const created = await autoEnableWorkflowTemplatesForCompany(other, 'co_1');
+      assert.deepEqual(keys.map((key) => created.includes(key)), [true, true]);
     }
   });
 
@@ -295,6 +330,32 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
     assert.deepEqual([config['recipientPayloadKeys'], config['excludeRecipientPayloadKeys'], config['deepLinkPathTemplate']],
       [['requesterUserId'], ['actorUserId'], '/companies/{{companyId}}/reimbursements/{{requestId}}']);
     assert.equal(config['recipientPermissions'] ?? config['recipientRoles'], undefined);
+  });
+
+  // The release-time sync decides "an admin edited this" by content, not by who stamped the row.
+  it('re-pins the payout correction notices when their words change, and leaves one an admin worded alone', async () => {
+    for (const key of ['reimbursement_payout_correction_requested', 'reimbursement_payout_correction_submitted']) {
+      const [catalogAction] = catalogActions(key);
+      const worded = (bodyTemplate: string) => [{ ...catalogAction!, configJson: { ...catalogAction!.configJson, bodyTemplate } }];
+      const before = worded('ข้อความรุ่นก่อน {{requestNo}}');
+      const rule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: key, cooldownSeconds: 0, actionJson: before, ...over });
+      const repo = fakeRepo([
+        rule(),
+        rule({ companyId: 'co_2', updatedByUserId: 'admin_1', actionJson: worded('ผู้ดูแลเขียนเอง {{requestNo}}'), pinned: { actionJson: before } }),
+        // Switched off and on by an admin, nothing in it edited: brought up to date like the first.
+        rule({ companyId: 'co_3', status: 'DISABLED', updatedByUserId: 'admin_1' }),
+      ]);
+      assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [key]);
+      assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), []);
+      assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_3'), [key]);
+      const body = (id: string) => repo.rules.find((r: any) => r.id === id).actionJson[0].configJson.bodyTemplate;
+      assert.deepEqual([body('pre_0'), body('pre_1'), body('pre_2')],
+        [catalogAction!.configJson['bodyTemplate'], 'ผู้ดูแลเขียนเอง {{requestNo}}', catalogAction!.configJson['bodyTemplate']], key);
+      assert.equal(repo.rules.find((r: any) => r.id === 'pre_2').status, 'DISABLED', key);
+      const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];
+      assert.deepEqual(latest.actionSnapshotJson, catalogActions(key), key);
+      assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [], `${key}: a second run changes nothing`);
+    }
   });
 
   it('is idempotent: a second run re-pins nothing and adds no version', async () => {

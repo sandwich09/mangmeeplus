@@ -38,6 +38,8 @@ export const WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG: Record<string, Record<str
   reimbursement_ready_for_payment: { eventType: 'reimbursement.ready_for_payment' },
   reimbursement_payment_recorded: { eventType: 'reimbursement.payment_recorded' },
   reimbursement_payment_voided: { eventType: 'reimbursement.payment_voided' },
+  reimbursement_payout_correction_requested: { eventType: 'reimbursement.payout_correction_requested' },
+  reimbursement_payout_correction_submitted: { eventType: 'reimbursement.payout_correction_submitted' },
   vendor_bill_pending_approval: { eventType: 'vendor_bill.submitted' },
   vendor_bill_second_approval: { eventType: 'vendor_bill.approval_recorded' },
   ai_draft_requested: { eventType: 'ai.draft_requested' },
@@ -59,6 +61,8 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
   reimbursement_ready_for_payment: 0,
   reimbursement_payment_recorded: 0,
   reimbursement_payment_voided: 0,
+  reimbursement_payout_correction_requested: 0,
+  reimbursement_payout_correction_submitted: 0,
 };
 
 // A template added next to one a company already has follows that one's switch: where the company
@@ -68,6 +72,11 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
 export const WORKFLOW_TEMPLATE_FOLLOWS_SIBLING: Record<string, string> = {
   reimbursement_payment_voided: 'reimbursement_payment_recorded',
   reimbursement_payment_sla_breach: 'approval_sla_breach',
+  // The two notices of a payout account correction (payout spec §17.3): "your claim needs its account
+  // corrected" beside "your claim needs correcting", "a new account waits for your approval" beside
+  // "a claim waits for your approval".
+  reimbursement_payout_correction_requested: 'reimbursement_correction_requester',
+  reimbursement_payout_correction_submitted: 'reimbursement_pending_approval',
 };
 
 // Step-journey spec §11/§13: every reimbursement notification links straight to that claim's
@@ -498,6 +507,78 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
       },
     ],
     requiredPermissions: ['reimbursement.read_own'],
+    requiredSourceModules: ['reimbursements'],
+    defaultEnabled: false,
+    autoEnable: true,
+    status: 'AVAILABLE',
+  },
+  {
+    // Payout spec §14, §17.3: an approved claim was sent back to have its payout account corrected.
+    // To the requester alone, the one person it concerns (owner rule 2026-10-01).
+    key: 'reimbursement_payout_correction_requested',
+    name: 'Reimbursement payout account correction requested',
+    description: 'Notify the requester when their approved reimbursement is sent back to have its payout account corrected.',
+    category: 'finance',
+    sourceModule: 'reimbursements',
+    triggerType: 'EVENT',
+    defaultConditionJson: { field: 'requesterUserId', op: 'EXISTS' },
+    defaultActionJson: [
+      {
+        actionKey: 'notify_requester_payout_correction',
+        actionType: 'SEND_NOTIFICATION',
+        configJson: {
+          triggerKey: 'workflow.reimbursement_payout_correction_requested',
+          recipientPayloadKeys: ['requesterUserId'],
+          severity: 'action',
+          titleTemplate: 'ใบเบิกต้องแก้บัญชีรับเงิน: {{requestNo}}',
+          // The sentence the event itself carries, built where the claim is sent back: the reason in the
+          // words of the fixed list. Nothing here assembles it, so no rule can print a code word, and the
+          // note a person typed is in no notice at all.
+          bodyTemplate: '{{payoutCorrectionNotice}}',
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // Step-journey spec §11 (AC11): a requester who asked for their own account to be changed is
+          // not told what they have just done.
+          excludeRecipientPayloadKeys: ['actorUserId'],
+          skipWhenAllRecipientsExcluded: true,
+        },
+      },
+    ],
+    requiredPermissions: ['reimbursement.read_own'],
+    requiredSourceModules: ['reimbursements'],
+    defaultEnabled: false,
+    autoEnable: true,
+    status: 'AVAILABLE',
+  },
+  {
+    // Payout spec §14, §17.3: the requester gave the account again. To the approvers of the new step
+    // alone: the people the claim had, or whoever its recorded role or the owner reaches when none of
+    // them can act any more. A notice only: the approval is asked for on the claim's own page.
+    key: 'reimbursement_payout_correction_submitted',
+    name: 'Reimbursement payout account awaiting approval',
+    description: 'Notify the approvers of the new step when the requester has given the payout account of a claim sent back for correction.',
+    category: 'finance',
+    sourceModule: 'reimbursements',
+    triggerType: 'EVENT',
+    defaultConditionJson: { field: 'status', op: 'EQ', value: 'PENDING_APPROVAL' },
+    defaultActionJson: [
+      {
+        actionKey: 'notify_approver_payout_correction',
+        actionType: 'SEND_NOTIFICATION',
+        configJson: {
+          triggerKey: 'workflow.reimbursement_payout_correction_submitted',
+          recipientPayloadKeys: ['approverRecipientUserIds'],
+          severity: 'action',
+          titleTemplate: 'รออนุมัติบัญชีรับเงินใหม่: {{requestNo}}',
+          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่',
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // Step-journey spec §11 (AC11): a requester who is their own approver gave the account
+          // themselves, and is not told so.
+          excludeRecipientPayloadKeys: ['actorUserId'],
+          skipWhenAllRecipientsExcluded: true,
+        },
+      },
+    ],
+    requiredPermissions: ['reimbursement.approve'],
     requiredSourceModules: ['reimbursements'],
     defaultEnabled: false,
     autoEnable: true,

@@ -58,6 +58,8 @@ describe('IngestWorkflowEventUseCase', () => {
       'reimbursement_payment_recorded',
       'reimbursement_payment_sla_breach',
       'reimbursement_payment_voided',
+      'reimbursement_payout_correction_requested',
+      'reimbursement_payout_correction_submitted',
       'reimbursement_pending_approval',
       'reimbursement_ready_for_payment',
     ]);
@@ -129,7 +131,7 @@ describe('IngestWorkflowEventUseCase', () => {
       .filter((entry) => entry.sourceModule === 'reimbursements' && entry.triggerType === 'EVENT')
       .map((entry) => ({ key: entry.key, cfg: entry.defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')?.configJson ?? {} }));
 
-    assert.equal(notifications.length, 8);
+    assert.equal(notifications.length, 10);
     for (const { key, cfg } of notifications) {
       assert.equal(typeof cfg['bodyTemplate'], 'string', key);
       assert.notEqual(cfg['bodyTemplate'], cfg['titleTemplate'], key);
@@ -137,7 +139,10 @@ describe('IngestWorkflowEventUseCase', () => {
       // that carries none: it says what happened to the claim, and the claim page has the rest.
       // The paid notice prints the sentence the payment event carries, which holds the amount, how
       // the payment was made and whether a slip is attached (payout spec §17.3).
+      // The notice that a claim was sent back for its payout account prints the sentence its event carries
+      // too: the reason in the fixed list's own words, and nothing a person typed (payout spec §17.3).
       if (key === 'reimbursement_payment_recorded') assert.equal(cfg['bodyTemplate'], '{{paidNotice}}', key);
+      else if (key === 'reimbursement_payout_correction_requested') assert.equal(cfg['bodyTemplate'], '{{payoutCorrectionNotice}}', key);
       else if (key !== 'reimbursement_payment_voided') assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
       assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK, key);
       if (key === 'reimbursement_ready_for_payment') {
@@ -297,7 +302,11 @@ describe('claim approval tasks close when the claim moves on (audit B8)', () => 
     templateKey: 'reimbursement_pending_approval', ...extra,
   });
 
-  function store(tasks: any[], claims: Array<{ id: string; companyId?: string; status: string }>, rules: any[] = []) {
+  function store(
+    tasks: any[],
+    claims: Array<{ id: string; companyId?: string; status: string; payoutCorrectionRequestedAt?: Date; payoutCorrectionSubmittedAt?: Date }>,
+    rules: any[] = [],
+  ) {
     const inbox = new Map<string, any>();
     const writes: any[] = [];
     const matches = (row: any, where: any) => (where.companyId === undefined || row.companyId === where.companyId)
@@ -329,7 +338,10 @@ describe('claim approval tasks close when the claim moves on (audit B8)', () => 
         reimbursementRequest: {
           findMany: async ({ where }: any) => claims
             .filter((claim) => where.id.in.includes(claim.id))
-            .map((claim) => ({ id: claim.id, companyId: claim.companyId ?? 'co-1', status: claim.status })),
+            .map((claim) => ({
+              id: claim.id, companyId: claim.companyId ?? 'co-1', status: claim.status,
+              payoutCorrectionRequestedAt: claim.payoutCorrectionRequestedAt ?? null, payoutCorrectionSubmittedAt: claim.payoutCorrectionSubmittedAt ?? null,
+            })),
         },
       },
     } as any;
@@ -501,6 +513,28 @@ describe('claim approval tasks close when the claim moves on (audit B8)', () => 
 
     assert.deepEqual(statuses(tasks), { 'pending-claim': 'OPEN', 'other-company': 'OPEN' });
     assert.deepEqual(writes, []);
+  });
+
+  // Payout spec §14: a claim sent back to have its payout account corrected is PENDING_APPROVAL, with
+  // nothing to approve while its requester gives the account. A reminder task that chased its approver
+  // is cancelled then, kept while a new account waits for them, and done when they approve it.
+  it('cancels a task that asks for approval once the claim is with its requester for its account', async () => {
+    const sentBackAt = new Date('2026-10-01T03:00:00.000Z');
+    const phases: Array<[string, string, Record<string, unknown>, string]> = [
+      ['reimbursement.payout_correction_requested', 'PENDING_APPROVAL', { payoutCorrectionRequestedAt: sentBackAt }, 'CANCELED'],
+      ['reimbursement.payout_correction_submitted', 'PENDING_APPROVAL', { payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: NOW }, 'OPEN'],
+      ['reimbursement.ready_for_payment', 'READY_FOR_PAYMENT', {}, 'DONE'],
+    ];
+    for (const [eventType, status, round, expected] of phases) {
+      const tasks = [task('sla', { templateKey: 'approval_sla_breach' }), task('other-claim', { sourceId: 'req-2' })];
+      const { repo } = store(tasks, [{ id: 'req-1', status, ...round }, { id: 'req-2', status: 'PENDING_APPROVAL' }]);
+      await new IngestWorkflowEventUseCase(repo, noRules as any).execute(baseEvent({ eventType }));
+      assert.deepEqual(statuses(tasks), { sla: expected, 'other-claim': 'OPEN' }, eventType);
+    }
+    assert.equal(claimApprovalTaskOutcome('PENDING_APPROVAL', true), 'CANCELED');
+    assert.equal(claimApprovalTaskOutcome('PENDING_APPROVAL', false), null);
+    // Only a claim waiting for approval can be with its requester for its account.
+    assert.equal(claimApprovalTaskOutcome('READY_FOR_PAYMENT', true), 'DONE');
   });
 
   it('decides the outcome from the claim status, and finds the claim an event is about', () => {
