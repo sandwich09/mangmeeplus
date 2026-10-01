@@ -1,8 +1,8 @@
-# Agent Memory: reimbursement payout Phase 3, the correction round (server side)
+# Agent Memory: reimbursement payout Phase 3, the correction round (server side and web)
 
-Status: server side done on `claude/reimb-payout-p3-correction-round-20261002`, not pushed. Plan tasks 3.1 to 3.9 and 3.11 to 3.13. The web (plan task 3.10) is not started and builds on this branch.
+Status: server side and web done on `claude/reimb-payout-p3-correction-round-20261002`, not pushed. Plan tasks 3.1 to 3.13; nothing is ticked in the plan. The web is described under "What the web does" below.
 Owner: payout lane, Phase 3 (spec `docs/specs/reimbursement-payout-account-and-payment-slip-spec-th.md` §14, §17, §19; plan `docs/plans/reimbursement-payout-account-and-payment-slip-plan-th.md` Phase 3).
-Scope: contracts, API, workflow notices, notification state, the assistant's two reads, the A5 evidence classifier, the printed form. Web only as far as it compiles (six Thai sentences for the new refusal codes).
+Scope: contracts, API, workflow notices, notification state, the assistant's two reads, the A5 evidence classifier, the printed form. Web: the claim page, the hub rows and the approval queue of a round, and two Thai sentences for payment refusals that had none. The web lane touched no file outside `apps/web/` and `e2e/`.
 
 ## What a correction round is
 
@@ -216,6 +216,37 @@ After the approval, as whoever pays sees it:
 - Timeline (spec §17.2): the first approval as history, then one row per `payoutCorrectionHistory` entry: "ส่งกลับให้แก้บัญชีรับเงินโดย {byName} : {reason label}", "ผู้เบิกแก้บัญชีรับเงิน" (name the person when `byUserId` is not the requester), "อนุมัติบัญชีรับเงินใหม่โดย {byName}".
 - The printed form during a round prints "รับเงินคืนทาง: อยู่ระหว่างแก้ไขบัญชีรับเงิน" and an empty approver block; that is the API's own output, nothing for the web to do.
 
+## What the web does (plan task 3.10, and the web of 3.11 to 3.13)
+
+Every button of a round is shown from a flag the server sent: `payoutCorrectionActions.canRequest` and `.canSubmit`, `approvalActions.canApprove` on the claim, `approvalActions` on a queue row. No role, permission or status decides one. "บันทึกจ่าย" is as before this work (the session's pay permission and the claim's status).
+
+### On the claim page
+
+- Pay step, before a round. "ส่งกลับให้แก้บัญชีรับเงิน" beside "บันทึกจ่าย" for whoever `canRequest` names. Its form opens inside the step card, never in a dialog, closes a payment form left open, and takes the focus at its heading. Six reasons from the contract's list as radio buttons, an optional note of 500 characters, and what is lost said before the confirm: signatures made in the system, a paper copy declared as signed, and for a claim sent before claims carried an account, that it gets one this way. A refusal or a lost race is said in the form's own banner in the server's sentence, the reason and the note stay, and no global toast is raised.
+- Phase A. The step strip is back at "อนุมัติ" with the same number of steps, drawn as a step to put right. Badge "รอผู้เบิกแก้บัญชีรับเงิน", header "อยู่ที่ ผู้เบิก", step note "ส่งกลับให้แก้บัญชีรับเงินโดย {name} : {reason} · หมายเหตุ: {note} · รอผู้เบิกแก้บัญชีรับเงิน". The requester reads "รอคุณแก้บัญชีรับเงิน …" and has "แก้บัญชีรับเงิน"; anyone else `canSubmit` names (a finance reviewer) has "แก้บัญชีรับเงินแทนผู้เบิก". The form offers the requester's default account (only when the server sent `requesterDefault` with a transfer account; it is sent back by its token), cash, or an account typed for this claim. Nothing is chosen in advance. "บันทึกเป็นบัญชีประจำ" is offered only when the default-account endpoint answers `canEdit`. The card "การรับเงินคืน" says the account under it is the one in question and that the claim cannot be paid meanwhile.
+- Phase B. Badge "รออนุมัติบัญชีรับเงินใหม่", header "อยู่ที่ {approvers}", step note "รอ {approvers} อนุมัติบัญชีรับเงินใหม่" (the approver reads "รอคุณอนุมัติบัญชีรับเงินใหม่ …"). The step card carries "สิ่งที่เปลี่ยน: บัญชีรับเงินคืน": the account the claim was approved with (last 4 digits; "ไม่มี ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน" for a legacy claim) beside the new one, the sentence that the lines and the amount are what was approved on {date}, who sent the claim back and why, and who gave the new account and when. The approver ticks the attestation for the new version (a transfer; cash has nothing to attest) and has "อนุมัติ" and "ส่งกลับให้แก้อีกครั้ง". The second is the first endpoint again, not reject. "ปฏิเสธ" and "แก้ไข (เปิดกลับเป็นร่าง)" are not offered in a round. Whoever `canSubmit` names may give the account again ("แก้บัญชีรับเงินอีกครั้ง"), drawn without the look of the next thing to do.
+- After the approval the claim is at its pay step with the new account and "ตรวจบัญชีแล้วโดย {the approver of the round}". A claim nobody approves is there in the same call that gives the account, and its payer reads "ยังไม่มีผู้ตรวจบัญชีนี้ คุณเป็นผู้ตรวจ" (the rule that existed).
+- An approval that lost its race. Where the viewer may still approve the claim as it now stands, the compare dialog that existed opens. Where they may not (it was sent back, decided or cancelled meanwhile), the page shows the claim as it is and says "ยังไม่ได้อนุมัติ เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ".
+- Journey ("เส้นทางของใบเบิก"). The approval a round set aside stays as history. One row per `payoutCorrectionHistory` entry, in time order with payments that were voided. While a round is open the waiting row uses the words of the badge.
+- Finance step of a claim finance passed, during a round: passed, "ตรวจแล้ว ไม่ต้องตรวจซ้ำ". Five steps before, during and after.
+- Signing. While a round is open there is no sign button and no declaration of a signed copy, and the page says why; a file is still attached as an ordinary attachment. A copy declared before the round reads "สำเนาก่อนแก้บัญชีรับเงิน · ไม่นับว่าลงนามแล้ว". Print stays for every reader. Who signs as approver, and who the card "ขั้นตอนอนุมัติ" shows as in force, follow the approval that is not set aside (`invalidatedAt`).
+
+### In the hub
+
+- A row or card of a round reads its phase on the badge, and "อยู่ที่ ผู้เบิก" in phase A. It is counted under "รออนุมัติ/ตรวจสอบ" by the server's bucket.
+- Approval queue: a row of a round has one button, "ตรวจบัญชีรับเงินใหม่", which opens the claim page. It approves nothing in place and offers no "ปฏิเสธ". Ordinary rows are as before.
+
+### Decisions on the web
+
+- "ผู้เบิก", not the pool word "ผู้ยื่น", for the desk of phase A: the badge, the note and the journey name the requester, and a draft may be filed by someone else.
+- The two forms do not read the claim again when the API refuses, so what was typed stays. The page under the form then still shows the claim as it was until it is opened again. The payment form behaves the same way.
+- A journey row for an account given says who gave it, not which account. A requester who gives the account twice on one day gets two rows that read alike.
+
+### Words and tests
+
+- `payment_amount_invalid` and `payment_over_approved_amount` have sentences in `apps/web/src/common/api/api-error-message.ts`.
+- `e2e/reimbursements.spec.ts` has `REIMB-12` (send back, correct, approve again, pay into the new account under the same number). It is type-checked and was not run with Playwright.
+
 ## Notices
 
 - `reimbursement.payout_correction_requested`, to the requester alone: "ใบเบิกต้องแก้บัญชีรับเงิน: {เลขที่ใบ}" and "เหตุผล: {reason label} · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน". Not sent to a requester who asked for it themselves.
@@ -236,6 +267,8 @@ After the approval, as whoever pays sees it:
 - A declaration names the claim by its number only, so a paper printed before a round can be declared after it. The declaration then stores the new account version.
 - `reimbursement.get_detail` (LINE, a hashed file, not touched) shows a claim in a round as `PENDING_APPROVAL` with an approved step and says nothing of the round.
 - The note is optional for every reason, `OTHER` included.
+- Web: after a lost race the form keeps what was typed and shows the server's sentence, and for `payout_correction_in_progress` that sentence ("ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน") names nothing to do next. Say if the form should offer to open the claim again.
+- Web: the approval queue table is 980 px wide in a 901 px card at 1280 px with the side menu open, so its action column scrolls inside the card. It was so before this work, for every row.
 - Rollback: the previous build knows nothing of rounds. A claim in phase A is safe with it (no step to decide). A claim in phase B can be rejected, or withdrawn to a draft by its requester, by the previous build while its expense records stand. Check that no claim is in phase B before rolling back.
 
 ## Artifacts
@@ -244,7 +277,8 @@ After the approval, as whoever pays sees it:
 - Migration: `apps/api/prisma/migrations/20261002100000_reimbursement_payout_correction/migration.sql`.
 - API: `apps/api/src/modules/reimbursements/application/use-cases/reimbursement-payout-correction.use-case.ts` (new), `reimbursement-approval.use-case.ts`, `reimbursement-request.use-case.ts`, `reimbursement-finance.use-case.ts`, `reimbursement-claim-form.use-case.ts`, `reimbursement-claim-signature.use-case.ts`, `reimbursement-summary.use-case.ts`, `application/dto/reimbursement.mapper.ts`, `domain/logic/reimbursement.logic.ts`, `domain/logic/claim-form.logic.ts`, `domain/logic/payout-destination.logic.ts`, `infrastructure/prisma-reimbursement.repository.ts`, `infrastructure/reimbursement-payout.ts`, `presentation/http/reimbursement-payout.controller.ts`, `presentation/http/reimbursement.dtos.ts`.
 - Outside the module: `workflow/application/use-cases/workflow-scan-candidates.use-case.ts`, `workflow/domain/workflow-template-catalog.ts`, `workflow/domain/logic/workflow-claim-task.logic.ts`, `workflow/infrastructure/prisma-workflow.repository.ts`, `dashboard-notifications/domain/models/notification.model.ts`, `dashboard-notifications/infrastructure/document-notification-state.ts`, `scripts/production-a5-evidence.pg.ts`.
-- Web: `apps/web/src/common/api/api-error-message.ts` (six sentences).
+- Web: `apps/web/src/common/api/api-error-message.ts` (six sentences from the server lane, two from the web lane), and under `apps/web/src/features/reimbursements/`: `ReimbursementPayoutCorrection.tsx` (new: the two forms and the comparison card), `ReimbursementJourneyPage.tsx`, `ReimbursementDetailSections.tsx`, `ReimbursementsPages.tsx`, `ReimbursementPayout.tsx`, `reimbursements.logic.ts`, `reimbursement-payout.logic.ts`, `reimbursements.model.ts`, `reimbursements.api.ts`. Specs: `reimbursement-payout-correction.qa.spec.ts` (new), and additions in `reimbursements.logic.spec.ts`, `reimbursements.model.spec.ts`, `reimbursements.api.spec.ts`, `ReimbursementPages.plain-thai.qa.spec.ts`, `ReimbursementPayout.qa.spec.ts`, `reimbursement-stranded-claims.qa.spec.ts`, `apps/web/src/common/api/api-error-coverage.spec.ts`.
+- E2E: `e2e/reimbursements.spec.ts` (`REIMB-12`).
 
 ## Verification
 
@@ -260,10 +294,20 @@ Run on 2026-10-02 at the lane head, before the commit that adds this note (that 
 - Maintenance pins `--check`: current, no pinned file touched. W00 manifest parity 4 of 4 with no regeneration (no hashed file touched). `node scripts/run-line-ai-whole-chain-acceptance.mjs`: exit 0, 12 suites.
 - `git diff --check` clean. No `package.json` edit.
 
-Not run: Playwright E2E, a browser pass, and any real-model check (no model call was made). The web screens do not exist yet.
+Not run by the server lane: Playwright E2E, a browser pass, and any real-model check (no model call was made).
+
+Web lane, run on 2026-10-02 at `201c21776`, the last code commit before the one that adds these lines:
+
+- Whole web suite `pnpm --filter @watchdog-bms/web test`: 2508 of 2508 (2419 before). The reimbursement specs are 415 (327 before); the new spec file holds 79.
+- Thirty faults put into the committed web code one at a time (a round offers "ปฏิเสธ", a button read from a permission, signing offered in a round, and so on), the reimbursement specs run against each: every one makes at least one test fail.
+- Typechecks: contracts (package script), web (the native compiler CI uses, and the package script), and `e2e/reimbursements.spec.ts` on its own: all exit 0. The API was not touched.
+- Maintenance pins `--check`: current. W00 manifest parity 4 of 4 with no regeneration; no hashed file was touched, so the whole-chain run was not needed. `git diff --check` clean. No `package.json` edit.
+- A real run in a browser on a throwaway stack made from nothing (PostgreSQL 18.3, Redis, MinIO; 271 migrations, the seed; the API and `next dev` of this branch), removed afterwards: 92 steps in one pass, all holding. A claim paid by transfer through the whole round as six viewers (requester, approver, payer, finance reviewer, read-only auditor, a reader of another branch) at each of four points, the buttons of the step card held against what the API takes from that viewer; a claim finance had passed; a claim nobody approves; a claim sent before claims carried an account; lost races and refusals; the printed form in a round; the saved default, giving the account again, and cash. 390 px and 1280 px throughout, 700 px for the forms, the approver's card and the approval queue. No page was wider than its screen, and nothing to press in the step card was under 44 px on the phone (the app's own buttons and fields are 40 px from 640 px wide).
+- `REIMB-12` walked by hand on that stack with the locators and API calls of the spec: 16 of 16 checks. Playwright itself was not run, and no real-model check was made (the web makes no model call).
 
 ## Next
 
-- Web (plan task 3.10) on this branch: the send-back button and dialog, the requester's account form, the approval card comparing the two accounts, the two phases in the step strip and notes, the badge in the hub, the three timeline rows, the "สำเนาก่อนแก้บัญชีรับเงิน" label.
 - A real-model check of the two assistant reads above.
-- E2E and a 390 px browser pass once the web exists.
+- Run `REIMB-12` with Playwright where the E2E suite runs.
+- The user guide (`apps/web/src/features/user-guide/reimbursement-guide.content.ts`) is being rewritten on another branch and says nothing of a round yet.
+- The open questions above, then tick Phase 3 in the plan.
