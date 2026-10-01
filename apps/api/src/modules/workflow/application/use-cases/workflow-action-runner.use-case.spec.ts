@@ -739,9 +739,10 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 
     // A payment recorded by the build before this one, read by the rule after its re-pin: the event has
     // no sentence. The notice is then its title, with nothing made up underneath it.
-    it('prints only the title for a payment event written before the sentence existed', async () => {
+    // Final review W3: such an event has nothing for the body to print, and an empty body is no notice.
+    it('prints the title as the body for a payment event written before the sentence existed', async () => {
       const sent = await send(catalogConfig(), event({ paidNotice: undefined }));
-      assert.deepEqual([sent.title, sent.body], ['จ่ายเงินเบิกแล้ว: RB-202610-00007', '']);
+      assert.deepEqual([sent.title, sent.body], ['จ่ายเงินเบิกแล้ว: RB-202610-00007', 'จ่ายเงินเบิกแล้ว: RB-202610-00007']);
     });
 
     it('prints nothing of the event but the sentence: no code word, raw decimal or currency code', async () => {
@@ -863,6 +864,28 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     const sent = (notify.execute.mock.calls[0] as any).arguments[0];
     assert.equal(sent.title, 'พร้อมจ่ายเบิกจ่าย: RB-202608-00021');
     assert.equal(sent.body, 'ยอด 250.00 บาท · รอคุณบันทึกการจ่ายเงิน');
+  });
+
+  // Final review W3: the "paid" notice reads a sentence the payment event itself carries. An event
+  // written by the build before that sentence existed (between the release task and the cutover, or
+  // after a rollback) has none, and the notice went out with a title and an empty body.
+  it('falls back to the title when the rendered body is empty, and keeps a body that says something', async () => {
+    const paid = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_recorded')!;
+    const cfg = paid.defaultActionJson[0]!.configJson;
+    const send = async (payload: Record<string, unknown>) => {
+      notify.execute.mock.resetCalls();
+      await make().execute(actionRun(cfg), {
+        companyId: 'co_1', ruleName: 'Reimbursement payment recorded', sourceModule: 'reimbursements', sourceType: 'reimbursement_payment', sourceId: 'pay_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-202608-00021', requesterUserId: 'u_requester', actorUserId: 'u_payer', ...payload }, siblingActions: [],
+      } as any);
+      const sent = (notify.execute.mock.calls[0] as any).arguments[0];
+      return [sent.title, sent.body];
+    };
+    assert.equal(cfg['bodyTemplate'], '{{paidNotice}}');
+    // The older build's event: amount and number, no finished sentence.
+    assert.deepEqual(await send({ paidAmount: '250', currency: 'THB', paymentNo: 'RBPAY-1' }), ['จ่ายเงินเบิกแล้ว: RB-202608-00021', 'จ่ายเงินเบิกแล้ว: RB-202608-00021']);
+    assert.deepEqual(await send({ paidNotice: '   ' }), ['จ่ายเงินเบิกแล้ว: RB-202608-00021', 'จ่ายเงินเบิกแล้ว: RB-202608-00021']);
+    assert.deepEqual(await send({ paidNotice: 'โอนเข้าบัญชีลงท้าย 6789 จำนวน 250.00 บาท' }), ['จ่ายเงินเบิกแล้ว: RB-202608-00021', 'โอนเข้าบัญชีลงท้าย 6789 จำนวน 250.00 บาท']);
   });
 
   it('keeps the sibling-borrowed title but not the body on the pending-approval alert', async () => {

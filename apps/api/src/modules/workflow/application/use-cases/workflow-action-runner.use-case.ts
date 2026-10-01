@@ -317,7 +317,9 @@ export class ExecuteWorkflowActionUseCase {
     // Own config only (no sibling fallback like the title): a body borrowed from a sibling action
     // is how the notification ended up printing its own title twice.
     const bodyTemplate = typeof cfg['bodyTemplate'] === 'string' ? (cfg['bodyTemplate'] as string) : undefined;
-    const body = bodyTemplate ? renderTemplate(bodyTemplate, readable) : title;
+    // A body that renders to nothing falls back to the title too: a template that prints one field of
+    // the event (the "paid" sentence) has nothing to say about an event written before that field existed.
+    const body = (bodyTemplate && renderTemplate(bodyTemplate, readable).trim()) || title;
     const webPath = resolveDeepLink(actionRun.actionKey, cfg, context);
 
     try {
