@@ -195,6 +195,35 @@ describe('what a claim says about where the money goes back to', () => {
   });
 });
 
+// Payout spec §22 row 1: a member who changes their default after sending a claim expects the claim
+// to follow. It keeps the account it was sent with, and the requester is told so, with what to do.
+describe('the requester is told when their default changed after the claim was sent', () => {
+  const changed = claim({ payout: { ...transfer, defaultAccountChanged: true } });
+  const canStill = 'บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดปุ่มแก้ไข (เปิดกลับเป็นร่าง) ในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง';
+  const tooLate = 'บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ตอนนี้คุณเปิดใบนี้กลับเป็นร่างเองไม่ได้แล้ว ถ้าต้องการเปลี่ยนบัญชี แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน';
+
+  it('says the claim still uses the earlier account, and how to change it while that is still possible', () => {
+    assert.equal(logic.payoutDefaultChangedHint(changed, true), canStill);
+    assert.equal(logic.payoutDefaultChangedHint(changed, false), tooLate);
+    // Only the server's own yes: nothing is guessed on the page.
+    for (const payout of [transfer, { ...transfer, defaultAccountChanged: false as never }, undefined]) assert.equal(logic.payoutDefaultChangedHint(claim({ payout }), true), null);
+
+    const withdrawable = render(h(ui.ClaimPayoutCard, { companyId: ids.company, detail: changed, userId: ids.requester, payoutAccountHref: '/payout-account', canWithdraw: true }));
+    assert.ok(visible(withdrawable).includes(canStill));
+    assert.match(withdrawable, /<p class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว/);
+    assert.ok(visible(card(changed, ids.requester)).includes(tooLate));
+    assert.ok(!visible(card(claim(), ids.requester)).some((text) => text.startsWith('บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว')));
+  });
+
+  it('names the page own withdraw button and follows its condition', () => {
+    const page = read('./ReimbursementJourneyPage.tsx');
+    // The words in the hint are the label of the button it points to.
+    assert.match(page, /action === 'reopen' && detail\.status === 'PENDING_APPROVAL' \? 'แก้ไข \(เปิดกลับเป็นร่าง\)'/);
+    assert.match(page, /canWithdraw=\{detail\.status === 'PENDING_APPROVAL' && Boolean\(step\?\.actions\.includes\('reopen'\)\)\}/);
+    assert.match(read('./ReimbursementPayout.tsx'), /const defaultChanged = payoutDefaultChangedHint\(detail, canWithdraw\);/);
+  });
+});
+
 describe('the full number: offered only when the server allows it, never in the page itself', () => {
   it('shows the reveal button exactly when the claim says this viewer may reveal', () => {
     const allowed = card(claim({ payout: { ...transfer, canRevealAccountNumber: true } }));
@@ -473,6 +502,8 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
     ['my account page', render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: true }))],
     ['my account page: no permission', render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: false }))],
     // New screens go at the end: the phone check below names two of the screens above by position.
+    ['claim card: the default changed, can still withdraw', render(h(ui.ClaimPayoutCard, { companyId: ids.company, detail: claim({ payout: { ...transfer, defaultAccountChanged: true } }), userId: ids.requester, payoutAccountHref: '/payout-account', canWithdraw: true }))],
+    ['claim card: the default changed, too late to withdraw', card(claim({ status: 'READY_FOR_PAYMENT', payout: { ...transfer, defaultAccountChanged: true } }), ids.requester)],
     ['claim card: a default someone else set', card(claim({ payout: { ...transfer, enteredByUserId: ids.approver, enteredByName: 'วิภา' } }))],
     ['claim card: typed by a preparer whose name is gone', card(claim({ payout: { ...transfer, source: 'PREPARER', enteredByUserId: ids.approver } }))],
   ];

@@ -170,6 +170,29 @@ export function isEffectiveClaimApprover(
     && step.decisionByUserId === userId && !!step.decidedAt && step.decidedAt.getTime() >= submittedAt);
 }
 
+// ---- The requester's default changed after the claim was sent ----
+
+/** Sent and not yet paid: the only time telling the requester can still change anything. */
+export const PAYOUT_DEFAULT_CHANGE_HINT_STATUSES: readonly string[] = ['PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'];
+
+/**
+ * Whether the requester's default account is no longer the one a sent claim copied (payout spec §22).
+ * The claim keeps the account it froze; the requester is told so on the claim. Decided from the two
+ * fingerprints, which never leave the server.
+ */
+// ponytail: only a claim that copied a default ACCOUNT. An account typed for the claim never
+// followed the default, and no row says whether a cash claim did (see `draftFollowsDefaultAfterReopen`).
+export function defaultChangedSinceSubmit(
+  claim: { status: string; payoutMethod?: string | null; payoutFingerprint?: string | null },
+  frozenSource: string | undefined,
+  defaultAccount: { payoutMethod: string; fingerprint?: string | null } | null | undefined,
+): boolean {
+  if (!PAYOUT_DEFAULT_CHANGE_HINT_STATUSES.includes(claim.status) || claim.payoutMethod !== 'BANK_TRANSFER' || !claim.payoutFingerprint) return false;
+  // A removed default is not a changed one: there is no newer account the claim could use instead.
+  if (frozenSource !== 'DEFAULT_ACCOUNT' || !defaultAccount) return false;
+  return defaultAccount.payoutMethod !== 'BANK_TRANSFER' || defaultAccount.fingerprint !== claim.payoutFingerprint;
+}
+
 // ---- Attestation at approval ----
 
 /**

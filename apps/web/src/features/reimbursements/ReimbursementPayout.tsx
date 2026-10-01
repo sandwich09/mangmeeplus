@@ -21,7 +21,7 @@ import {
 } from './reimbursement-payout.api';
 import {
   BANK_OPTIONS, OTHER_BANK, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT, claimPayoutView, emptyPayoutAccountForm,
-  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, setByOtherLine,
+  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutDefaultChangedHint, setByOtherLine,
   type ClaimPayoutForm, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
 
@@ -355,15 +355,18 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
  * for the viewers the server allows. A sent claim shows its own frozen snapshot, whatever the
  * requester's default account is today.
  */
-export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAccountHref }: {
+export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAccountHref, canWithdraw = false }: {
   companyId: string;
   detail: any;
   userId: string;
   editHref?: string;
   payoutAccountHref: string;
+  /** The viewer may still take this sent claim back to a draft (the page's own withdraw action). */
+  canWithdraw?: boolean;
 }) {
   const payout: ReimbursementPayoutSummary | undefined = detail.payout;
   const view = claimPayoutView(detail);
+  const defaultChanged = payoutDefaultChangedHint(detail, canWithdraw);
   // A draft whose payout block was not loaded (an action response): say nothing rather than guess.
   if (view.state === 'unknown') return null;
   const isRequester = detail.requesterUserId === userId;
@@ -398,6 +401,7 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
       {view.notes.length > 0 && (
         <ul className="space-y-1 text-xs text-gray-500">{view.notes.map((note) => <li key={note}>{note}</li>)}</ul>
       )}
+      {defaultChanged && <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{defaultChanged}</p>}
     </MangmeeCard>
   );
 }

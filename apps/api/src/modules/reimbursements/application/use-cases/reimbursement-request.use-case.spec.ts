@@ -1700,10 +1700,11 @@ describe('payout: submit gate and the claim own snapshot', () => {
     }));
 
     // The member now edits the default twice and finally removes it.
-    for (const change of [() => world.payouts.setOwn(ctx(), SCB), () => world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' as const }), () => world.payouts.deleteOwn(ctx())]) {
+    // The requester is told that the default is no longer this account (a removed default is not another account).
+    for (const [change, told] of [[() => world.payouts.setOwn(ctx(), SCB), true], [() => world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' as const }), true], [() => world.payouts.deleteOwn(ctx()), false]] as const) {
       await change();
       const now = await world.detail.execute(ctx(), draft.id);
-      assert.deepEqual(now.payout, { ...frozen, canRevealAccountNumber: true }, 'display');
+      assert.deepEqual(now.payout, { ...frozen, canRevealAccountNumber: true, ...(told && { defaultAccountChanged: true }) }, 'display');
       assert.equal((await world.reveal.execute(ctx(), draft.id)).accountNumber, '0123456789', 'reveal');
       assert.deepEqual({ method: world.state.request.payoutMethod, version: world.state.request.payoutDestinationVersion, fingerprint: world.state.request.payoutFingerprint, hash: world.state.request.approvalSnapshotHash }, stored, 'attestation target and hash');
     }
@@ -1770,6 +1771,78 @@ describe('payout: submit gate and the claim own snapshot', () => {
     assert.equal(leaksNumber(world.audits), false);
     assert.equal(leaksNumber(world.state.calls.outbox), false);
     assert.ok(world.state.calls.outbox.every((event: any) => !/payout|account/i.test(JSON.stringify(event.payloadJson.data))), 'no event payload carries account data');
+  });
+});
+
+// Payout spec §22 row 1 (security review S7): a member who changes their default after sending a claim
+// expects the claim to follow. It does not, by design; the requester is told so on the claim.
+describe('payout: the requester is told when their default changed after the claim was sent', () => {
+  const flag = async (world: ReturnType<typeof payoutWorld>, viewer: any, id: string) => (await world.detail.execute(viewer, id)).payout?.defaultAccountChanged;
+  const approver = () => ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.approve'] });
+
+  it('says so to the requester alone, from the fingerprints, and never shows a fingerprint', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1' }));
+    assert.equal(await flag(world, ctx(), draft.id), undefined, 'a draft follows the default: nothing has changed for it');
+    await world.send(ctx(), draft.id);
+    assert.equal(await flag(world, ctx(), draft.id), undefined, 'the default is still the account the claim copied');
+    // The same account saved again is the same account.
+    await world.payouts.setOwn(ctx(), { ...KBANK, accountNumber: '0123456789' });
+    assert.equal(await flag(world, ctx(), draft.id), undefined);
+
+    await world.payouts.setOwn(ctx(), SCB);
+    assert.equal(await flag(world, ctx(), draft.id), true);
+    // The claim itself still shows, and reveals, the account it was sent with.
+    const shown = await world.detail.execute(ctx(), draft.id);
+    assert.equal(shown.payout?.accountLast4, '6789');
+    assert.equal((await world.reveal.execute(ctx(), draft.id)).accountNumber, '0123456789');
+    // Nobody else is told: not the approver, not whoever prepared the claim.
+    assert.equal(await flag(world, approver(), draft.id), undefined);
+    assert.equal(await flag(world, financeCtx(), draft.id), undefined);
+    // The answer is a yes or nothing; no fingerprint of either account leaves the server.
+    const { accounts, destinations } = world.state.payoutTables;
+    for (const fingerprint of [accounts[0]!.fingerprint, destinations[0]!.fingerprint]) assert.equal(JSON.stringify(shown).includes(fingerprint), false);
+    assert.doesNotMatch(JSON.stringify(shown), /fingerprint/i);
+
+    // Switched to cash is a change too; a removed default is not a newer account.
+    await world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' });
+    assert.equal(await flag(world, ctx(), draft.id), true);
+    await world.payouts.deleteOwn(ctx());
+    assert.equal(await flag(world, ctx(), draft.id), undefined);
+  });
+
+  it('follows the claim while telling can still change something, and stops once it is paid or closed', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    await world.send(ctx(), draft.id);
+    await world.payouts.setOwn(ctx(), SCB);
+    for (const [status, told] of [
+      ['PENDING_APPROVAL', true], ['APPROVED', true], ['FINANCE_REVIEW', true], ['READY_FOR_PAYMENT', true],
+      ['PARTIALLY_PAID', undefined], ['PAID', undefined], ['REJECTED', undefined], ['CANCELLED', undefined], ['VOIDED', undefined],
+    ] as const) {
+      world.state.request.status = status;
+      assert.equal(await flag(world, ctx(), draft.id), told, status);
+    }
+    // Taken back and sent again, the claim copies the default as it is now: nothing left to say.
+    world.state.request.status = 'PENDING_APPROVAL';
+    await world.reopen.execute(ctx(), draft.id);
+    assert.equal(await flag(world, ctx(), draft.id), undefined, 'a draft again');
+    const resent = await world.send(ctx(), draft.id);
+    assert.deepEqual([resent.payout?.accountLast4, await flag(world, ctx(), draft.id)], ['9012', undefined]);
+  });
+
+  it('says nothing about a claim that never followed the default', async () => {
+    // An account typed for this claim, and cash: the default was never theirs to follow.
+    for (const payout of [{ mode: 'SPECIFIED' as const, ...KBANK }, { mode: 'CASH' as const }]) {
+      const world = payoutWorld();
+      await world.payouts.setOwn(ctx(), PROMPTPAY);
+      const draft = await world.create.execute(ctx(), claimInput({ payout }));
+      await world.send(ctx(), draft.id);
+      await world.payouts.setOwn(ctx(), SCB);
+      assert.equal(await flag(world, ctx(), draft.id), undefined, payout.mode);
+    }
   });
 });
 

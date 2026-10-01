@@ -18,7 +18,7 @@ import { ReimbursementPayoutController } from '../../presentation/http/reimburse
 import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
 import { sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
 import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
-import { readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout } from '../../infrastructure/reimbursement-payout';
+import { readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readMemberPayoutAccount } from '../../infrastructure/reimbursement-payout';
 import {
   REQUIRED_ANY_PERMISSIONS_KEY,
   REQUIRED_PERMISSIONS_KEY,
@@ -84,6 +84,8 @@ describe('claim account number reveal: the requester, that claim approver, the p
       listInternalNotes: async () => [],
       findClaimPayout: (row: any) => readClaimPayout(tables.client, row),
       findDraftDefaultPayout: (row: any) => readDraftDefaultPayout(tables.client, row),
+      // The requester's own detail compares the claim with their default as it is now (§22 hint).
+      findMemberPayoutAccount: (companyId: string, userId: string) => readMemberPayoutAccount(tables.client, companyId, userId),
       findClaimPayoutSecret: (companyId: string, requestId: string, version: number) => readClaimPayoutSecret(tables.client, companyId, requestId, version),
     } as any;
     const audit = { log: async (entry: any) => { audits.push(entry); }, logOrThrow: async (entry: any) => { audits.push(entry); } } as any;

@@ -745,6 +745,11 @@ export type ReimbursementPayoutSummary = {
    */
   submitToken?: string;
   /**
+   * For the requester only, on the detail read of a sent claim not yet paid: their default account
+   * is no longer the one this claim copied. The claim still uses the account shown here. Absent means no.
+   */
+  defaultAccountChanged?: true;
+  /**
    * Whether THIS viewer may call "แสดงเลขบัญชี". Set on the detail read only; absent means no.
    * About the account number alone: who may open a payment slip is a different group and a different flag.
    */

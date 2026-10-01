@@ -158,6 +158,18 @@ export function claimPayoutView(detail: { status?: string; requesterUserId?: str
 }
 
 /**
+ * Payout spec §22: the requester changed their default account after sending the claim. The claim
+ * keeps the account it was sent with; this says so, and how to change it while that is still theirs
+ * to do (taking the claim back to a draft and sending it again). Null when the server said nothing.
+ */
+export function payoutDefaultChangedHint(detail: { payout?: ReimbursementPayoutSummary | null }, canWithdraw: boolean): string | null {
+  if (detail.payout?.defaultAccountChanged !== true) return null;
+  return `บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ${canWithdraw
+    ? 'ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดปุ่มแก้ไข (เปิดกลับเป็นร่าง) ในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง'
+    : 'ตอนนี้คุณเปิดใบนี้กลับเป็นร่างเองไม่ได้แล้ว ถ้าต้องการเปลี่ยนบัญชี แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน'}`;
+}
+
+/**
  * The receiving method and account in the words the stale-approval dialog compares: a detail's masked
  * account with its account name, or a queue row's method. Empty for a claim with no payout.
  */

@@ -31,7 +31,7 @@ import { approvalDecisionActions } from './reimbursement-approval.use-case';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import {
-  hasPayoutSnapshot, isEffectiveClaimApprover, payoutRevealGroup, payoutSubmitToken,
+  defaultChangedSinceSubmit, hasPayoutSnapshot, isEffectiveClaimApprover, payoutRevealGroup, payoutSubmitToken,
   type PayoutRevealGroup, type SubmitPayoutColumns,
 } from '../../domain/logic/payout-destination.logic';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
@@ -308,11 +308,15 @@ export class GetReimbursementDetailUseCase {
     // What "ส่งอนุมัติ" would freeze right now. The page sends this back with the submit, and a
     // submit whose own answer differs is refused: nobody sends a claim to an account they did not see.
     const submitToken = req.status === 'DRAFT' ? payoutSubmitToken(req.id, await this.repo.planSubmitPayout(req)) : undefined;
+    // Payout spec §22: the requester changed their default after sending this claim. The claim keeps
+    // what it froze, and the requester alone is told, from fingerprints that stay on the server.
+    const defaultAccountChanged = req.requesterUserId === ctx.userId && detail.payout?.source === 'DEFAULT_ACCOUNT'
+      && defaultChangedSinceSubmit(req, detail.payout.source, await this.repo.findMemberPayoutAccount(ctx.companyId, req.requesterUserId));
     return {
       ...detail,
       // The button is offered exactly when the reveal endpoint would answer.
       ...(payout && { payout: {
-        ...payout, ...(submitToken && { submitToken }),
+        ...payout, ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
         canRevealAccountNumber: await claimPayoutRevealGroup(ctx, req, this.repo, approvalActions) !== null,
       } }),
       approvalActions,
