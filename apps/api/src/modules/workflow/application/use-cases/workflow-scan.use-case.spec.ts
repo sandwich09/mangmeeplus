@@ -284,6 +284,19 @@ describe('payment reminder candidates (audit B9)', () => {
     assert.equal(lookups, 0);
   });
 
+  // Review: the scan drops a whole company's candidates when the adapter throws, so one claim with
+  // a policy snapshot that cannot be read silenced the reminders of all the others.
+  it('keeps reminding for the other claims when one claim carries a policy snapshot that cannot be read', async () => {
+    const { candidates } = provider([
+      claim({ id: 'rb-broken', approvalPolicySnapshotJson: { schemaVersion: 1, unexpected: true } }),
+      claim({ id: 'rb-fine' }),
+    ]);
+
+    const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+
+    assert.deepEqual(items.map((item) => item.sourceId), ['rb-fine']);
+  });
+
   it('is an auto-enabled SLA_SCAN rule on the default scan cadence, and only a notice', () => {
     assert.equal(template().triggerType, 'SLA_SCAN');
     assert.equal(template().autoEnable, true);

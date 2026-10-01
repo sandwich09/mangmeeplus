@@ -157,8 +157,14 @@ export class WorkflowScanCandidatesProvider {
     // every waiting claim wrote a skipped run row per claim per hour in every company, deadline or
     // not; a company that set none now costs one query and nothing else.
     const rows = waiting.flatMap((r) => {
-      const slaHours = effectivePolicyForRequest(r, currentPolicy).slaHours;
-      return slaHours && slaHours > 0 ? [{ ...r, slaHours }] : [];
+      try {
+        const slaHours = effectivePolicyForRequest(r, currentPolicy).slaHours;
+        return slaHours && slaHours > 0 ? [{ ...r, slaHours }] : [];
+      } catch {
+        // A policy snapshot that cannot be read costs this one claim its reminder. Left to throw,
+        // it stopped the reminders of every other claim in the company, every scan.
+        return [];
+      }
     });
     if (rows.length === 0) return [];
     const ids = rows.map((r) => r.id);
