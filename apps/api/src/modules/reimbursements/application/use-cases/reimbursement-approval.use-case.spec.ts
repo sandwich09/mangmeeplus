@@ -932,8 +932,9 @@ describe('nothing is approved unseen: an approval names the claim content it saw
     findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids), getUserDisplayNames: async () => ({}),
   }) as any;
   /**
-   * Exactly like the repository transaction: the stored hash is compared only WHEN one is sent. That
-   * is why the use case has to refuse a call that sends none; a stricter fake here would hide it.
+   * Deliberately lenient: it compares the stored hash only WHEN one is sent, as the repository once
+   * did. So what this proves is the use case's own refusal of a call that names none; a fake as
+   * strict as today's transaction would hide it.
    */
   function comparing(req: any) {
     const repo = fakeRepo(req);

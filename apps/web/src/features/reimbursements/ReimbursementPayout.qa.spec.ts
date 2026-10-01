@@ -142,12 +142,12 @@ describe('what a claim says about where the money goes back to', () => {
   it('shows a draft what it will be sent with, and says so when the default is edited, removed or missing', () => {
     const draft = (payout: ReimbursementPayoutSummary) => logic.claimPayoutView({ status: 'DRAFT', requesterUserId: ids.requester, payout });
     assert.deepEqual(draft({ followsDefault: true, ...transfer }), { state: 'transfer', line: 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789',
-      notes: ['ตามบัญชีรับเงินคืนประจำของผู้เบิก ระบบจะใช้บัญชีล่าสุดตอนกดส่งอนุมัติ'] });
+      notes: ['ตามบัญชีรับเงินคืนประจำของผู้เบิก ใบนี้จะส่งด้วยบัญชีที่แสดงอยู่นี้ ถ้าบัญชีประจำถูกแก้ก่อนกดส่ง ระบบจะให้ตรวจบัญชีใหม่'] });
     // The default was set by someone else (a claim filed on the requester's behalf shows this to the preparer too).
     assert.deepEqual(draft({ followsDefault: true, ...transfer, enteredByName: 'วิภา' }).notes,
-      ['ตามบัญชีรับเงินคืนประจำของผู้เบิก ระบบจะใช้บัญชีล่าสุดตอนกดส่งอนุมัติ', 'บัญชีประจำนี้ตั้งโดย วิภา']);
+      ['ตามบัญชีรับเงินคืนประจำของผู้เบิก ใบนี้จะส่งด้วยบัญชีที่แสดงอยู่นี้ ถ้าบัญชีประจำถูกแก้ก่อนกดส่ง ระบบจะให้ตรวจบัญชีใหม่', 'บัญชีประจำนี้ตั้งโดย วิภา']);
     assert.deepEqual(draft({ followsDefault: true, payoutMethod: 'CASH', source: 'DEFAULT_ACCOUNT' }),
-      { state: 'cash', line: 'รับเป็นเงินสด', notes: ['ตามบัญชีรับเงินคืนประจำของผู้เบิก ระบบจะใช้บัญชีล่าสุดตอนกดส่งอนุมัติ'] });
+      { state: 'cash', line: 'รับเป็นเงินสด', notes: ['ตามบัญชีรับเงินคืนประจำของผู้เบิก ใบนี้จะส่งด้วยบัญชีที่แสดงอยู่นี้ ถ้าบัญชีประจำถูกแก้ก่อนกดส่ง ระบบจะให้ตรวจบัญชีใหม่'] });
     // The default was removed, or never set: the draft can be saved but not sent.
     const missing = { followsDefault: true, notReadyReason: 'payout_method_required' as const };
     assert.deepEqual(draft(missing), { state: 'missing', line: 'ยังไม่ได้เลือกวิธีรับเงินคืน',
@@ -258,7 +258,7 @@ describe('the receiving choice on the claim form', () => {
   it('files on behalf with the REQUESTER account: the preparer never sees or picks their own', () => {
     const html = section({ forSelf: false, defaultAccount: null, canSaveAsDefault: true, value: { mode: 'SPECIFIED', account: logic.emptyPayoutAccountForm(), saveAsDefault: false } });
     const texts = visible(html);
-    for (const text of ['ตามบัญชีรับเงินคืนประจำของผู้เบิก', 'ระบบใช้บัญชีรับเงินคืนประจำของผู้เบิกที่เลือกไว้ ตามที่ตั้งล่าสุดตอนกดส่งอนุมัติ',
+    for (const text of ['ตามบัญชีรับเงินคืนประจำของผู้เบิก', 'ระบบใช้บัญชีรับเงินคืนประจำของผู้เบิกที่เลือกไว้ และแสดงบัญชีนั้นให้ตรวจในหน้าใบเบิกก่อนกดส่งอนุมัติ',
       'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย', 'บันทึกเป็นบัญชีประจำของผู้เบิก']) assert.ok(texts.includes(text), text);
     assert.ok(!texts.some((text) => text.includes('ของฉัน')), 'nothing on an on-behalf form speaks of "my" account');
     assert.doesNotMatch(html, /payout-account/, 'and nothing links to the preparer own account page');

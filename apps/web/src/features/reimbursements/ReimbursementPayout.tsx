@@ -306,7 +306,7 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
     saveAsDefault: mode === 'SPECIFIED' && value.mode !== 'SPECIFIED' ? forSelf && defaultAccount === null : value.saveAsDefault,
   });
   const defaultHint = !forSelf
-    ? 'ระบบใช้บัญชีรับเงินคืนประจำของผู้เบิกที่เลือกไว้ ตามที่ตั้งล่าสุดตอนกดส่งอนุมัติ'
+    ? 'ระบบใช้บัญชีรับเงินคืนประจำของผู้เบิกที่เลือกไว้ และแสดงบัญชีนั้นให้ตรวจในหน้าใบเบิกก่อนกดส่งอนุมัติ'
     : defaultAccount === undefined ? 'กำลังโหลดบัญชีประจำของคุณ...'
       : defaultAccount ? `${payoutAccountLine(defaultAccount)}${defaultAccount.accountName ? ` · ${defaultAccount.accountName}` : ''}`
         : 'คุณยังไม่ได้ตั้งบัญชีประจำ บันทึกร่างได้ แต่ต้องเลือกวิธีอื่นหรือตั้งบัญชีประจำก่อนส่งอนุมัติ';

@@ -135,7 +135,7 @@ export function claimPayoutView(detail: { status?: string; requesterUserId?: str
     };
   }
   const notes: string[] = [];
-  if (payout.followsDefault) notes.push('ตามบัญชีรับเงินคืนประจำของผู้เบิก ระบบจะใช้บัญชีล่าสุดตอนกดส่งอนุมัติ');
+  if (payout.followsDefault) notes.push('ตามบัญชีรับเงินคืนประจำของผู้เบิก ใบนี้จะส่งด้วยบัญชีที่แสดงอยู่นี้ ถ้าบัญชีประจำถูกแก้ก่อนกดส่ง ระบบจะให้ตรวจบัญชีใหม่');
   else if (draft && payout.payoutMethod === 'BANK_TRANSFER') notes.push('บัญชีที่ระบุสำหรับใบนี้');
   if (payout.enteredByName) notes.push(payout.followsDefault ? `บัญชีประจำนี้ตั้งโดย ${payout.enteredByName}` : `กรอกโดย ${payout.enteredByName}`);
   if (payout.payoutMethod === 'CASH') return { state: 'cash', line: PAYOUT_METHOD_TEXT.CASH!, notes };
