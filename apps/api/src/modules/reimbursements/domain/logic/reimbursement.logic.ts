@@ -5,7 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { Decimal } from 'decimal.js';
-import { reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate } from '@watchdog-bms/contracts';
+import { isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate } from '@watchdog-bms/contracts';
 import type {
   ReimbursementRequestStatus,
   ReimbursementApprovalStepStatus,
@@ -375,16 +375,20 @@ export function isSelfApproval(
 }
 
 /**
- * The claim's own approver: whoever decided its latest approval that is still in force. The same
- * person `isReimbursementPayoutParty` (contracts) and the workflow reminder scan mean.
+ * The claim's own approver, for a notice that asks one person. Who that is has one definition,
+ * `isReimbursementClaimApprover` in contracts (it also decides the account number and the payment
+ * slip): an approval still in force, made in the round the claim was last sent in. This asks that
+ * rule of each decider and takes the latest. The workflow reminder scan reads the same person with a
+ * query (`findClaimApprovers`), which restates the rule because it cannot call it.
  */
-export function claimApproverUserId(
-  steps: ReadonlyArray<{ status: string; decisionByUserId?: string | null; decidedAt?: Date | null; invalidatedAt?: Date | null }> | undefined,
-): string | undefined {
-  const latest = [...(steps ?? [])]
-    .filter((step) => step.status === 'APPROVED' && !step.invalidatedAt && !!step.decidedAt && !!step.decisionByUserId)
-    .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0];
-  return latest?.decisionByUserId ?? undefined;
+export function claimApproverUserId(claim: {
+  submittedAt?: Date | null;
+  approvalSteps?: ReadonlyArray<{ status: string; decisionByUserId?: string | null; decidedAt?: Date | null; invalidatedAt?: Date | null }>;
+}): string | undefined {
+  return (claim.approvalSteps ?? [])
+    .filter((step) => !!step.decisionByUserId
+      && isReimbursementClaimApprover(step.decisionByUserId, { submittedAt: claim.submittedAt, approvalSteps: [step] }))
+    .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0]?.decisionByUserId ?? undefined;
 }
 
 // ---- Status transitions ----

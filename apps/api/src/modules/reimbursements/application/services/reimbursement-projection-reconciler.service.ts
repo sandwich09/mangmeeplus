@@ -64,7 +64,7 @@ export class ReimbursementProjectionReconcilerService {
         // The same field the live submit writes for a claim that needed no approval, so a replayed
         // ready-to-pay event asks the same people first (owner rule 2026-10-01).
         // And for a claim finance passed, its own approver, exactly as the live finance review writes it.
-        const financePathApprover = intent.kind === 'FINANCE' ? claimApproverUserId(intent.request.approvalSteps) : undefined;
+        const financePathApprover = intent.kind === 'FINANCE' ? claimApproverUserId(intent.request) : undefined;
         const approverRecipientUserIds = intent.kind === 'POLICY'
           ? await this.approverRoutes.resolveWouldBeApproverUserIds(intent.request.companyId, currentPolicy, intent.request).catch(() => [])
           : financePathApprover ? [financePathApprover] : [];

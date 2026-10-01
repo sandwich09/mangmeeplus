@@ -260,8 +260,9 @@ export type ReimbursementPayoutViewerClaim = {
  * claim page uses for "approved by a person" (`buildJourneySteps`).
  *
  * The one definition of a claim's own approver. The account-number reveal and its
- * `canRevealAccountNumber` flag (`claimPayoutRevealGroup` in the API) and the payment slip
- * (`isReimbursementPayoutParty` below) all ask it. One reader cannot call it, a database query, and
+ * `canRevealAccountNumber` flag (`claimPayoutRevealGroup` in the API), the payment slip
+ * (`isReimbursementPayoutParty` below) and the approver a ready-to-pay notice asks after finance
+ * (`claimApproverUserId` in the API) all ask it. One reader cannot call it, a database query, and
  * restates it: the payment reminder's `findClaimApprovers` (workflow repository) with the round test
  * in `paymentSlaBreach`. A change here is a change there.
  */

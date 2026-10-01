@@ -193,7 +193,7 @@ export class FinanceReviewReimbursementUseCase {
             riskLevel: 'HIGH',
             metadataJson: { decision: input.decision, projectionReady: true },
           }, tx);
-          const approverUserId = claimApproverUserId(req.approvalSteps);
+          const approverUserId = claimApproverUserId(req);
           for (const eventType of ['reimbursement.finance_review_updated', 'reimbursement.ready_for_payment']) {
             await appendReimbursementOutboxWithinTx(tx, {
               companyId: ctx.companyId,
