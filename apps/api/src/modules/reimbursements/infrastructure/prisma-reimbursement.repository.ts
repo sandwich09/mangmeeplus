@@ -2364,6 +2364,9 @@ export class PrismaReimbursementRepository {
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
       if (row.status === 'READY_FOR_PAYMENT') return this.toRequest(row);
+      // A cancellation started while the decision was being carried out comes first: the claim is not
+      // moved on, and nobody is told to pay it, only for the cancellation to close it a moment later.
+      this.assertNotBeingCancelled(row);
       if (row.status !== 'PENDING_APPROVAL' || row.currentApprovalStepId !== data.approvalStepId) {
         throw new ConflictException('reimbursement_projection_decision_changed');
       }
@@ -2389,6 +2392,7 @@ export class PrismaReimbursementRepository {
           status: 'PENDING_APPROVAL',
           currentApprovalStepId: data.approvalStepId,
           updatedAt: row.updatedAt,
+          cancellationPendingAt: null,
         },
         data: {
           status: 'READY_FOR_PAYMENT',
@@ -2432,6 +2436,7 @@ export class PrismaReimbursementRepository {
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
       if (row.status === 'READY_FOR_PAYMENT') return this.toRequest(row);
+      this.assertNotBeingCancelled(row);
       const request = this.toRequest(row);
       const snapshot = parseReimbursementPolicySnapshot(request.approvalPolicySnapshotJson);
       if (request.status !== 'APPROVED' || request.currentApprovalStepId
@@ -2447,6 +2452,7 @@ export class PrismaReimbursementRepository {
           status: 'APPROVED',
           currentApprovalStepId: null,
           updatedAt: row.updatedAt,
+          cancellationPendingAt: null,
         },
         data: {
           status: 'READY_FOR_PAYMENT',
@@ -2486,6 +2492,7 @@ export class PrismaReimbursementRepository {
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
       if (row.status === 'READY_FOR_PAYMENT') return this.toRequest(row);
+      this.assertNotBeingCancelled(row);
       if (row.status !== 'FINANCE_REVIEW'
         || row.financeReviewStatus !== 'APPROVED_FOR_PAYMENT'
         || row.financeReviewedByUserId !== data.decisionActorUserId) {
@@ -2502,6 +2509,7 @@ export class PrismaReimbursementRepository {
           financeReviewStatus: 'APPROVED_FOR_PAYMENT',
           financeReviewedByUserId: data.decisionActorUserId,
           updatedAt: row.updatedAt,
+          cancellationPendingAt: null,
         },
         data: {
           status: 'READY_FOR_PAYMENT',

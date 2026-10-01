@@ -100,6 +100,8 @@ function claimSystem(client: PrismaClient, repo: PrismaReimbursementRepository, 
   (reconciler as any).logger = { log: () => undefined, warn: () => undefined };
   return {
     reconciler,
+    /** Builds and confirms a decided claim's expense records, and stops there. */
+    orchestrator,
     resume: new ResumeReimbursementUseCase(repo, audit, reconciler, new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), expenses)),
   };
 }
@@ -3606,6 +3608,56 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     await on(0).withdraw.execute(requester(), claim.requestId);
     assert.deepEqual(ofThese([claim], await system(1).reconciler.execute()).completed, [claim.requestId]);
     assert.deepEqual(await carried(claim), once(1));
+  });
+
+  // Final review W4: a cancellation started while a decision was being carried out. The expense records are
+  // built and confirmed, and the last write of each of the three ways to "ready for payment" is still to come.
+  it('moves no claim on to ready-for-payment, and sends no such notice, once its cancellation is pending', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const ready = (requestId: string) => db.outboxEvent.count({ where: { companyId, aggregateId: requestId, eventType: 'reimbursement.ready_for_payment' } });
+    const notify = (requestId: string) => async (tx: any) => { await tx.outboxEvent.create({ data: {
+      companyId, eventType: 'reimbursement.ready_for_payment', aggregateType: 'reimbursement_request', aggregateId: requestId,
+      eventKey: `reimbursement.ready_for_payment:reimbursement_request:${requestId}:w4`, payloadJson: {}, priority: 'NORMAL', status: 'PENDING',
+    } }); };
+
+    // Approved by its manager.
+    const approved = await decidedClaim();
+    // Passed by finance.
+    const reviewed = await waitingClaim();
+    await db.reimbursementApprovalStep.updateMany({ where: { reimbursementRequestId: reviewed.id }, data: { status: 'APPROVED', decisionByUserId: MGR, decidedAt: new Date() } });
+    await db.reimbursementRequest.update({ where: { id: reviewed.id }, data: {
+      status: 'FINANCE_REVIEW', currentApprovalStepId: null, approvedAt: new Date(), financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: FIN, financeReviewedAt: new Date(),
+    } });
+    // Sent under a policy that asks for no approval.
+    const unapproved = await noApprovalClaim();
+
+    const cases: Array<{ name: string; requestId: string; ctx: any; decision: { kind: 'MANAGER' | 'FINANCE' | 'POLICY'; actorUserId: string; approvalStepId?: string }; complete: () => Promise<{ status: string }> }> = [
+      { name: 'approval', requestId: approved.requestId, ctx: manager(), decision: { kind: 'MANAGER', actorUserId: MGR, approvalStepId: approved.stepId },
+        complete: () => repos[0]!.completeApprovalProjectionAtomic({ companyId, requestId: approved.requestId, decisionActorUserId: MGR, approvalStepId: approved.stepId, scopes: {}, completedAt: new Date(), onReadyPersisted: notify(approved.requestId) }) },
+      { name: 'finance decision', requestId: reviewed.id, ctx: finance(), decision: { kind: 'FINANCE', actorUserId: FIN },
+        complete: () => repos[0]!.completeFinanceProjectionAtomic({ companyId, requestId: reviewed.id, decisionActorUserId: FIN, scopes: {}, completedAt: new Date(), onReadyPersisted: notify(reviewed.id) }) },
+      { name: 'no-approval submit', requestId: unapproved.requestId, ctx: requester(), decision: { kind: 'POLICY', actorUserId: STAFF },
+        complete: () => repos[0]!.completePolicyProjectionAtomic({ companyId, requestId: unapproved.requestId, actorUserId: STAFF, scopes: {}, completedAt: new Date(), onReadyPersisted: notify(unapproved.requestId) }) },
+    ];
+    for (const { name, requestId, ctx, decision, complete } of cases) {
+      const decided = (await repos[0]!.findRequestById(companyId, requestId, true))!;
+      await system(0).orchestrator.execute(ctx, decided, { ...decision, allowMissingReceiptWithReason: true });
+      const standing = await claimRow(requestId);
+      assert.deepEqual((await db.expenseRecord.findMany({ where: { companyId, sourceReimbursementRequestId: requestId } })).map((expense) => expense.status), ['CONFIRMED'], name);
+
+      // The cancellation starts now (a reason the void refuses, so it stays pending until someone acts).
+      await strand({ requestId }, 'ก');
+      await assert.rejects(complete, conflict('reimbursement_cancellation_pending'), name);
+      const refused = await claimRow(requestId);
+      assert.deepEqual([refused.status, refused.paymentStatus, refused.cancellationPendingAt !== null, await ready(requestId)], [standing.status, standing.paymentStatus, true, 0], name);
+
+      // Withdrawn: the same write carries the decision out, once, with its notice.
+      await on(0).withdraw.execute(requester(), requestId);
+      assert.equal((await complete()).status, 'READY_FOR_PAYMENT', name);
+      const done = await claimRow(requestId);
+      assert.deepEqual([done.status, done.paymentStatus, done.cancellationPendingAt, await ready(requestId)], ['READY_FOR_PAYMENT', 'UNPAID', null, 1], name);
+    }
   });
 
   // ---- Payout spec §14 (AC25, AC29-AC32): the payout account of an approved claim is corrected on the same claim ----
