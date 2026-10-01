@@ -558,7 +558,10 @@ export function reimbursementHubBucket(claim: {
   currentDesk?: { kind?: string } | null;
 }): ReimbursementHubBucket {
   switch (claim.currentDesk?.kind) {
-    case 'REQUESTER': return 'draft';
+    // A claim waiting for approval that is with its requester was sent back to have its payout account
+    // corrected (payout spec §14). It stands at the approval step, so its status places it, in รออนุมัติ/ตรวจสอบ:
+    // the counts and the list filter are made from the status, and a row must fall where they put it.
+    case 'REQUESTER': if (claim.status === 'PENDING_APPROVAL') break; return 'draft';
     case 'APPROVER': case 'FINANCE': return 'review';
     case 'PAYMENT': return 'payment';
   }
@@ -611,6 +614,11 @@ export type ReimbursementRequestSummary = {
   postingStatus: ReimbursementPostingStatus;
   /** How the requester asked to be paid back. Absent on a legacy claim and on a draft that follows the default account. */
   payoutMethod?: ReimbursementPayoutMethod;
+  /**
+   * Present while the claim was sent back from the pay step to have its payout account corrected
+   * (payout spec §14): whom it waits for. Its status is PENDING_APPROVAL meanwhile, and nothing is paid.
+   */
+  payoutCorrectionPhase?: ReimbursementPayoutCorrectionPhase;
   paymentTotalAmount: string;
   outstandingAmount: string;
   lineCount: number;
@@ -649,6 +657,11 @@ export type ReimbursementSignedCopySummary = {
   acknowledgedAt?: string;
   /** Who made that declaration, on the detail read when the name resolves (never a user id). */
   acknowledgedByName?: string;
+  /**
+   * A scan declared as signed before the claim's payout account was corrected: it stays in the list
+   * ("สำเนาก่อนแก้บัญชีรับเงิน") and no longer counts as the signed document. It carries no `acknowledgedAt`.
+   */
+  beforePayoutCorrection?: true;
 };
 
 export type ReimbursementInternalNote = {
@@ -773,6 +786,12 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
    * on every claim that carries its own `payout`.
    */
   legacyPayoutDefault?: ReimbursementLegacyPayoutDefault;
+  /** Present while the claim's payout account is being corrected (payout spec §14), on every detail the API returns. */
+  payoutCorrection?: ReimbursementPayoutCorrection;
+  /** GET detail only: what THIS viewer may do about the payout account of an approved claim. Absent means neither. */
+  payoutCorrectionActions?: ReimbursementPayoutCorrectionActions;
+  /** GET detail only: every step of every correction round this claim went through, oldest first. Absent when there was none. */
+  payoutCorrectionHistory?: ReimbursementPayoutCorrectionEvent[];
   lines: ReimbursementLineSummary[];
   approvalSteps: ReimbursementApprovalStepSummary[];
   payments: ReimbursementPaymentSummary[];
@@ -839,6 +858,142 @@ export type RejectReimbursementInput = {
   reason: string;
   approvalSnapshotHash?: string;
   idempotencyKey?: string;
+  /**
+   * Only for a claim whose payout account is being corrected: refusing its new account sends it back
+   * to the requester again, never to REJECTED. This names why, from the fixed list; `reason` is then the
+   * optional note. Without it the reason is OTHER.
+   */
+  payoutCorrectionReasonCode?: ReimbursementPayoutCorrectionReason;
+};
+
+// ---- Correcting the payout account after approval (payout spec §14) ----
+//
+// A wrong account found after approval and before payment is fixed on the SAME claim: it is sent back,
+// its requester gives the account again, and its approvers approve that account alone. Lines, amounts
+// and evidence do not change, and nothing is paid meanwhile.
+
+/**
+ * Why a claim is sent back to have its payout account corrected. A fixed list on purpose: the reason is
+ * copied into the requester's notice, and free text there could carry an account number.
+ */
+export const REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS = {
+  ACCOUNT_NUMBER_WRONG: 'เลขบัญชีไม่ถูกต้อง',
+  ACCOUNT_NAME_MISMATCH: 'ชื่อบัญชีไม่ตรงกับผู้เบิก',
+  BANK_WRONG: 'ธนาคารไม่ถูกต้อง',
+  ACCOUNT_UNUSABLE: 'บัญชีปิดหรือโอนไม่ได้',
+  REQUESTER_ASKED: 'ผู้เบิกขอเปลี่ยนบัญชี',
+  OTHER: 'อื่น ๆ',
+} as const;
+export type ReimbursementPayoutCorrectionReason = keyof typeof REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS;
+
+export function isReimbursementPayoutCorrectionReason(value: unknown): value is ReimbursementPayoutCorrectionReason {
+  return typeof value === 'string' && Object.hasOwn(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, value);
+}
+
+/** The note that may go with a reason. Shown on the claim page only; it may not carry an account number. */
+export const REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH = 500;
+
+/**
+ * Where a claim stands in a correction round. AWAITING_REQUESTER (spec phase A): sent back, no approval
+ * step is open, the requester gives the account. AWAITING_APPROVAL (spec phase B): the account was
+ * given and a new step waits for the approvers the claim had.
+ */
+export type ReimbursementPayoutCorrectionPhase = 'AWAITING_REQUESTER' | 'AWAITING_APPROVAL';
+
+/** What a claim in a round is said to wait for: the status badge of the web and the LINE backlog answer use these words. */
+export const REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS: Record<ReimbursementPayoutCorrectionPhase, string> = {
+  AWAITING_REQUESTER: 'รอผู้เบิกแก้บัญชีรับเงิน',
+  AWAITING_APPROVAL: 'รออนุมัติบัญชีรับเงินใหม่',
+};
+
+/** `POST :requestId/payout-correction`: send an approved claim back to have its payout account corrected. */
+export type RequestReimbursementPayoutCorrectionInput = {
+  reasonCode: ReimbursementPayoutCorrectionReason;
+  note?: string;
+};
+
+/**
+ * `PUT :requestId/payout-destination`: the account a claim in a round is to be paid into. The same
+ * three choices as on a draft. Keeping the account it had is a choice too: it is frozen as a new
+ * version and approved again like any other.
+ */
+export type SubmitReimbursementPayoutCorrectionInput =
+  | { mode: 'CASH' }
+  | {
+    mode: 'DEFAULT';
+    /** `payoutCorrectionActions.requesterDefault.token` of the default account the page showed. */
+    defaultToken: string;
+  }
+  | ({
+    mode: 'SPECIFIED';
+    /** Also make it the requester's default account. */
+    saveAsDefault?: boolean;
+  } & PayoutDestinationInput);
+
+/** A receiving method and account, masked: what a claim was to be paid into at some point. */
+export type ReimbursementPayoutCorrectionAccount = {
+  payoutMethod: ReimbursementPayoutMethod;
+  payoutKind?: ReimbursementPayoutKind;
+  bankName?: string;
+  accountName?: string;
+  accountLast4?: string;
+  version?: number;
+};
+
+/** The round a claim is in. Absent on a claim that is in none. */
+export type ReimbursementPayoutCorrection = {
+  phase: ReimbursementPayoutCorrectionPhase;
+  /** When, by whom and why it was last sent back. The name is absent when it cannot be resolved. */
+  requestedAt: string;
+  requestedByUserId?: string;
+  requestedByName?: string;
+  reasonCode: ReimbursementPayoutCorrectionReason;
+  note?: string;
+  /** AWAITING_APPROVAL: when the account now on the claim was given. The approvers' wait counts from here. */
+  submittedAt?: string;
+  /**
+   * What the claim was approved with before the round, to set beside the account it has now. Absent
+   * for a claim sent before claims carried a receiving method: it had none.
+   */
+  previous?: ReimbursementPayoutCorrectionAccount;
+  /** When that approval was given. The claim's lines, amounts and evidence are what they were then. */
+  previouslyApprovedAt?: string;
+};
+
+/** What this viewer may do about the payout account of an approved claim. The endpoints enforce the same. */
+export type ReimbursementPayoutCorrectionActions = {
+  /** `POST :requestId/payout-correction` takes this viewer: send the claim back (or, on its waiting step, back again). */
+  canRequest: boolean;
+  /** `PUT :requestId/payout-destination` takes this viewer: give the account of a claim in a round. */
+  canSubmit: boolean;
+  /**
+   * With `canSubmit`: the requester's default account as it is now, masked, and the token that names it.
+   * Choosing it sends `{ mode: 'DEFAULT', defaultToken }`, so the claim never takes an account the page did not show.
+   * Absent when the requester has set none.
+   */
+  requesterDefault?: ReimbursementPayoutCorrectionAccount & { token: string };
+};
+
+/**
+ * One thing that happened in a correction round, for the claim's timeline (spec §17.2):
+ * SENT_BACK "ส่งกลับให้แก้บัญชีรับเงินโดย … : เหตุผล", ACCOUNT_SUBMITTED "ผู้เบิกแก้บัญชีรับเงิน",
+ * REAPPROVED "อนุมัติบัญชีรับเงินใหม่โดย …". A claim nobody has to approve has no REAPPROVED: it is
+ * ready for payment from its ACCOUNT_SUBMITTED.
+ */
+export type ReimbursementPayoutCorrectionEvent = {
+  kind: 'SENT_BACK' | 'ACCOUNT_SUBMITTED' | 'REAPPROVED';
+  at: string;
+  byUserId: string;
+  /** Absent when the name cannot be resolved. */
+  byName?: string;
+  /** SENT_BACK only. */
+  reasonCode?: ReimbursementPayoutCorrectionReason;
+  note?: string;
+  /** ACCOUNT_SUBMITTED only: what the claim was given. A transfer names its row of `payoutHistory`. */
+  payoutMethod?: ReimbursementPayoutMethod;
+  payoutVersion?: number;
+  /** REAPPROVED only: the approval step that approved the account, a row of `approvalSteps`. */
+  approvalStepId?: string;
 };
 
 export type FinanceReviewReimbursementInput = {
