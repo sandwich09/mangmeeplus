@@ -139,40 +139,75 @@ export class WorkflowScanCandidatesProvider {
           approverTaskUserId: recipients[0],
           ownerRecipientUserIds: ownerRecipients[index],
           approverTaskRole: taskRole,
+          // One reminder per round the claim was sent in (review M1): the scan comes round every
+          // window and must not nag, and a claim sent again and late again is reminded again.
+          ...(r.submittedAt && { notificationPeriodKey: `round:${r.submittedAt.toISOString()}` }),
         },
       };
     });
   }
 
   // Audit B9: claims waiting for payment, held to the same policy deadline as approvals. The clock
-  // starts when the claim became payable: the finance decision when there was one, else the approval.
+  // starts when the claim became payable: the finance decision when there was one, else the
+  // approval, and again when a recorded payment is taken back.
   private async paymentSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
     const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
-    const rows = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] });
-    const approvers = await this.workflowRepo.findClaimApprovers(companyId, rows.map((r) => r.id));
-    return rows.map((r) => {
-      const payableSince = r.financeReviewedAt ?? r.approvedAt ?? r.submittedAt;
+    const waiting = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] });
+    // Only claims that have a deadline are looked at, and only those past it are offered. Offering
+    // every waiting claim wrote a skipped run row per claim per hour in every company, deadline or
+    // not; a company that set none now costs one query and nothing else.
+    const rows = waiting.flatMap((r) => {
+      try {
+        const slaHours = effectivePolicyForRequest(r, currentPolicy).slaHours;
+        return slaHours && slaHours > 0 ? [{ ...r, slaHours }] : [];
+      } catch {
+        // A policy snapshot that cannot be read costs this one claim its reminder. Left to throw,
+        // it stopped the reminders of every other claim in the company, every scan.
+        return [];
+      }
+    });
+    if (rows.length === 0) return [];
+    const ids = rows.map((r) => r.id);
+    const approvers = await this.workflowRepo.findClaimApprovers(companyId, ids);
+    const lastVoids = await this.workflowRepo.findClaimLastPaymentVoids(companyId, ids);
+    const candidates: ScanCandidate[] = [];
+    for (const r of rows) {
+      const becamePayable = r.financeReviewedAt ?? r.approvedAt ?? r.submittedAt;
+      const lastVoid = lastVoids.get(r.id);
+      const payableSince = lastVoid && (!becamePayable || lastVoid > becamePayable) ? lastVoid : becamePayable;
       const age = payableSince ? ageHours(payableSince, now) : 0;
+      if (!isSlaRisk(age, r.slaHours)) continue;
       const approver = approvers.get(r.id);
-      return {
+      // The round test of `isReimbursementClaimApprover` (contracts), over the steps that
+      // `findClaimApprovers` already held to its step conditions: no submission in force, no approver.
+      const approvedByUserId = approver && r.submittedAt && approver.decidedAt >= r.submittedAt ? approver.userId : undefined;
+      const financeReviewerUserId = r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? r.financeReviewedByUserId : undefined;
+      // Nobody passed or approved this claim: it needed no approval. Its ready-to-pay notice asked
+      // the people who would have approved it, so its reminder asks the same people, not everyone.
+      // ponytail: one route lookup per such overdue claim; batch it if a company ever has many.
+      const wouldApprove = financeReviewerUserId || approvedByUserId ? []
+        : await this.approverRoutes.resolveWouldBeApproverUserIds(companyId, currentPolicy, r).catch(() => []);
+      candidates.push({
         sourceType: 'reimbursement_request',
         sourceId: r.id,
         payload: {
           requestId: r.id, requestNo: r.requestNo, ageHours: age,
-          slaRisk: isSlaRisk(age, effectivePolicyForRequest(r, currentPolicy).slaHours),
+          slaRisk: true,
           // What is left to pay: the whole claim unless a legacy part payment was recorded.
           amount: r.outstandingAmount, currency: r.currency,
           // Whose turn it is to pay, for the notice to prefer (owner rule 2026-10-01): the finance
           // reviewer who passed the claim, else whoever approved it in the round it was last sent
-          // in. A claim that needed no approval names nobody, and the notice goes to everyone able.
+          // in, else the people who would have approved a claim that needed no approval.
           requesterUserId: r.requesterUserId,
-          ...(r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && r.financeReviewedByUserId && { financeReviewerUserId: r.financeReviewedByUserId }),
-          // The round test of `isReimbursementClaimApprover` (contracts), over the steps that
-          // `findClaimApprovers` already held to its step conditions: no submission in force, no approver.
-          ...(approver && r.submittedAt && approver.decidedAt >= r.submittedAt && { approvedByUserId: approver.userId }),
+          ...(financeReviewerUserId && { financeReviewerUserId }),
+          ...(approvedByUserId && { approvedByUserId }),
+          ...(wouldApprove.length > 0 && { approverRecipientUserIds: wouldApprove }),
+          // One reminder per time the claim became payable (review M1), not one per scan window.
+          ...(payableSince && { notificationPeriodKey: `payable:${payableSince.toISOString()}` }),
         },
-      };
-    });
+      });
+    }
+    return candidates;
   }
 
   private async taxDueSoon(companyId: string): Promise<ScanCandidate[]> {

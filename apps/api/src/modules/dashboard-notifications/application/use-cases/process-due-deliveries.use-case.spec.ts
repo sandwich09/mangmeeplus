@@ -10,6 +10,13 @@ import {
   buildLineMessage,
 } from './notification.use-cases';
 import {
+  PrismaAlertStateRepository,
+  PrismaNotificationDeliveryRepository,
+  PrismaNotificationEventRepository,
+  PrismaNotificationRecipientRepository,
+  PrismaNotificationRuleRepository,
+} from '../../infrastructure/prisma-notification.repository';
+import {
 
   CreateDailyOwnerSummariesSweepUseCase,
   GenerateDashboardSnapshotsSweepUseCase,
@@ -129,6 +136,144 @@ describe('CreateOrUpdateNotificationEventUseCase recipients', () => {
     });
 
     assert.deepEqual(createdRecipients, ['active-user']);
+  });
+});
+
+/**
+ * Review M1: the store keeps ONE notice per trigger, record and period, and a workflow notice is
+ * never resolved. With no period a claim was notified once per person, ever. These run the real
+ * repositories over an in-memory store, so the dedup key, the deliveries and the resolving of the
+ * older notice are what is proven.
+ */
+describe('CreateOrUpdateNotificationEventUseCase periods', () => {
+  function noticeStore() {
+    const events: any[] = [];
+    const recipients: any[] = [];
+    const deliveries: any[] = [];
+    const alertStates = new Map<string, any>();
+    const client = {
+      notificationEvent: {
+        findFirst: async ({ where }: any) => events.find((row) => row.companyId === where.companyId && row.dedupKey === where.dedupKey) ?? null,
+        create: async ({ data }: any) => { const row = { id: `event-${events.length + 1}`, createdAt: new Date(), ...data }; events.push(row); return row; },
+        update: async ({ where, data }: any) => Object.assign(events.find((row) => row.id === where.id), data),
+        updateMany: async ({ where, data }: any) => {
+          const hits = events.filter((row) => Object.entries(where).every(([key, value]) => (
+            key === 'id' ? row.id !== (value as any).not : row[key] === value
+          )));
+          hits.forEach((row) => Object.assign(row, data));
+          return { count: hits.length };
+        },
+      },
+      notificationRule: { findFirst: async () => null },
+      alertState: {
+        findUnique: async ({ where }: any) => alertStates.get(where.companyId_dedupKey.dedupKey) ?? null,
+        upsert: async ({ where, create }: any) => { alertStates.set(where.companyId_dedupKey.dedupKey, { status: 'COOLING_DOWN', ...create }); return alertStates.get(where.companyId_dedupKey.dedupKey); },
+      },
+      companyMembership: { findMany: async ({ where }: any) => where.userId.in.map((userId: string) => ({ userId })) },
+      notificationRecipient: {
+        findUnique: async ({ where }: any) => recipients.find((row) => row.eventId === where.eventId_userId.eventId && row.userId === where.eventId_userId.userId) ?? null,
+        create: async ({ data }: any) => { const row = { id: `recipient-${recipients.length + 1}`, ...data }; recipients.push(row); return row; },
+      },
+      notificationDelivery: {
+        findFirst: async ({ where }: any) => deliveries.find((row) => row.recipientId === where.recipientId && row.channel === where.channel) ?? null,
+        create: async ({ data }: any) => { const row = { id: `delivery-${deliveries.length + 1}`, ...data }; deliveries.push(row); return row; },
+      },
+    };
+    const prisma = { client } as any;
+    const useCase = new CreateOrUpdateNotificationEventUseCase(
+      new PrismaNotificationEventRepository(prisma), new PrismaNotificationRecipientRepository(prisma),
+      new PrismaNotificationDeliveryRepository(prisma), new PrismaAlertStateRepository(prisma),
+      new PrismaNotificationRuleRepository(prisma), prisma,
+    );
+    const pushedTo = (eventId: string) => recipients
+      .filter((row) => row.eventId === eventId && deliveries.some((delivery) => delivery.recipientId === row.id && delivery.channel === 'LINE'))
+      .map((row) => row.userId);
+    return { useCase, events, recipients, deliveries, pushedTo };
+  }
+  const claimNotice = (extra: Record<string, unknown>) => ({
+    companyId: 'co-1', triggerKey: 'workflow.reimbursement_pending_approval', sourceModule: 'reimbursements',
+    sourceType: 'reimbursement_request', sourceId: 'rb-1', severity: 'action', title: 'อนุมัติเบิกจ่าย: RB-1',
+    body: 'รออนุมัติจากคุณ', deepLinkHref: '/companies/co-1/reimbursements/rb-1', recipientUserIds: ['mgr-1'],
+    supersedeEarlier: true, ...extra,
+  }) as any;
+
+  it('sends a claim sent again to its approver a second time, and the first notice stops being current', async () => {
+    const { useCase, events, deliveries, pushedTo } = noticeStore();
+
+    const round1 = await useCase.execute(claimNotice({ periodKey: 'run-1' }));
+    // The same run retried: nothing new, nobody pushed twice.
+    const retry = await useCase.execute(claimNotice({ periodKey: 'run-1' }));
+    assert.equal(retry.event.id, round1.event.id);
+    assert.equal(deliveries.length, 2);
+
+    const round2 = await useCase.execute(claimNotice({ periodKey: 'run-2' }));
+
+    assert.notEqual(round2.event.id, round1.event.id);
+    assert.deepEqual(pushedTo(round2.event.id), ['mgr-1']);
+    assert.deepEqual(events.map((row) => [row.id, row.status]), [['event-1', 'RESOLVED'], ['event-2', 'OPEN']]);
+    assert.ok(events[0].resolvedAt instanceof Date);
+  });
+
+  it('pushes "approved" after an earlier "rejected", with its own text, and retires the old one', async () => {
+    const { useCase, events, pushedTo } = noticeStore();
+    const decision = (periodKey: string, body: string) => useCase.execute(claimNotice({
+      triggerKey: 'workflow.reimbursement_decision_requester', recipientUserIds: ['staff-1'], periodKey, body,
+    }));
+
+    await decision('run-reject', 'ผลการพิจารณา: ไม่อนุมัติ');
+    const approved = await decision('run-approve', 'ผลการพิจารณา: อนุมัติ');
+
+    assert.deepEqual(pushedTo(approved.event.id), ['staff-1']);
+    assert.deepEqual(events.map((row) => [row.body, row.status]), [
+      ['ผลการพิจารณา: ไม่อนุมัติ', 'RESOLVED'], ['ผลการพิจารณา: อนุมัติ', 'OPEN'],
+    ]);
+  });
+
+  it('retires an older notice about the same claim even when each is filed under its own payment', async () => {
+    const { useCase, events } = noticeStore();
+    const paid = (paymentId: string) => useCase.execute(claimNotice({
+      triggerKey: 'workflow.reimbursement_payment_recorded', sourceType: 'reimbursement_payment', sourceId: paymentId,
+      recipientUserIds: ['staff-1'], periodKey: `run-${paymentId}`,
+    }));
+
+    await paid('pay-1');
+    await paid('pay-2');
+    // Another claim's notice of the same kind is left alone.
+    await useCase.execute(claimNotice({
+      triggerKey: 'workflow.reimbursement_payment_recorded', sourceType: 'reimbursement_payment', sourceId: 'pay-9',
+      deepLinkHref: '/companies/co-1/reimbursements/rb-other', recipientUserIds: ['staff-1'], periodKey: 'run-pay-9',
+    }));
+
+    assert.deepEqual(events.map((row) => [row.sourceId, row.status]), [['pay-1', 'RESOLVED'], ['pay-2', 'OPEN'], ['pay-9', 'OPEN']]);
+  });
+
+  // Owner rule: a push about one's own action is annoying, but the to-do item must still exist.
+  it('gives a web-only recipient the bell item and no LINE push, and everyone else both', async () => {
+    const { useCase, recipients, deliveries } = noticeStore();
+
+    await useCase.execute(claimNotice({
+      triggerKey: 'workflow.reimbursement_ready_for_payment', periodKey: 'run-1',
+      recipientUserIds: ['approver-1', 'admin-1'], webOnlyRecipientUserIds: ['approver-1'],
+    }));
+
+    const channelsOf = (userId: string) => deliveries
+      .filter((delivery) => delivery.recipientId === recipients.find((row) => row.userId === userId)!.id)
+      .map((delivery) => delivery.channel);
+    assert.deepEqual(channelsOf('approver-1'), ['WEB']);
+    assert.deepEqual(channelsOf('admin-1'), ['WEB', 'LINE']);
+  });
+
+  it('leaves the periods of a producer that did not ask for it open side by side', async () => {
+    const { useCase, events } = noticeStore();
+    const digest = (periodKey: string) => useCase.execute(claimNotice({
+      triggerKey: 'sales_deal_renewal_pending', sourceModule: 'sales', sourceType: 'deal', sourceId: 'deal-1',
+      deepLinkHref: '/companies/co-1/billing', periodKey, supersedeEarlier: undefined,
+    }));
+
+    await digest('2026-09');
+    await digest('2026-10');
+
+    assert.deepEqual(events.map((row) => row.status), ['OPEN', 'OPEN']);
   });
 });
 

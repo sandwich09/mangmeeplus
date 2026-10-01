@@ -216,6 +216,14 @@ export class CreateOrUpdateNotificationEventUseCase {
     sourceRefs?: unknown[];
     recipientUserIds: string[];
     periodKey?: string;
+    /**
+     * A newer notice of the same kind about the same record replaces the older ones: they stop
+     * showing as current, and a push of theirs still queued is dropped at egress. Off unless asked
+     * for, because other producers keep several periods open side by side.
+     */
+    supersedeEarlier?: boolean;
+    /** Recipients who get this notice in the web bell only, with no LINE push. Everyone else gets both. */
+    webOnlyRecipientUserIds?: string[];
   }) {
     const dedupKey = buildDedupKey({ companyId: input.companyId, triggerKey: input.triggerKey, sourceModule: input.sourceModule, sourceType: input.sourceType, sourceId: input.sourceId, periodKey: input.periodKey });
     const now = new Date();
@@ -231,6 +239,7 @@ export class CreateOrUpdateNotificationEventUseCase {
     let event = existing;
     if (!event || (event.status !== 'open' && !coolingDown && !['plan_term', 'billing'].includes(input.sourceModule))) {
       event = await this.events.create({ companyId: input.companyId, triggerKey: input.triggerKey, sourceModule: input.sourceModule, sourceType: input.sourceType, sourceId: input.sourceId, severity: input.severity as any, title: input.title, body: input.body, payloadJson: {}, sourceRefsJson: { refs: input.sourceRefs ?? [] }, deepLinkHref: input.deepLinkHref, dedupKey, status: 'open', ruleId: rule?.id, firstSeenAt: now, lastSeenAt: now, resolvedAt: undefined });
+      if (input.supersedeEarlier) await this.events.resolveEarlier(event, now);
     } else {
       await this.events.update(input.companyId, event.id, { lastSeenAt: now });
     }
@@ -250,7 +259,7 @@ export class CreateOrUpdateNotificationEventUseCase {
         await this.recipients.create({ eventId: event.id, companyId: input.companyId, userId, recipientReason: 'role', readAt: undefined, dismissedAt: undefined, snoozedUntil: undefined });
       // A retry repairs partial old event/recipient writes even during cooldown. Sent/failed
       // deliveries are owned by the existing delivery worker, never recreated by this producer.
-      for (const channel of ['web', 'line'] as const) {
+      for (const channel of (input.webOnlyRecipientUserIds?.includes(userId) ? ['web'] : ['web', 'line']) as Array<'web' | 'line'>) {
         const delivery = await this.prisma.client.notificationDelivery.findFirst({
           where: { recipientId: recipient.id, channel: channel === 'web' ? 'WEB' : 'LINE' }, select: { id: true },
         });

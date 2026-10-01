@@ -162,6 +162,21 @@ export class PrismaNotificationEventRepository implements NotificationEventRepos
     });
     return toEvent(r);
   }
+  /**
+   * Resolves the open notices that `event` replaces: same trigger, about the same record. The
+   * record is the page the notice opens when it has one (a claim's "paid" notices are filed under
+   * each payment, but all open the same claim), else its source.
+   */
+  async resolveEarlier(event: Pick<NotificationEvent, 'id' | 'companyId' | 'triggerKey' | 'sourceModule' | 'sourceType' | 'sourceId' | 'deepLinkHref'>, now: Date): Promise<number> {
+    const sameRecord = event.deepLinkHref
+      ? { deepLinkHref: event.deepLinkHref }
+      : { sourceModule: event.sourceModule, sourceType: event.sourceType, sourceId: event.sourceId ?? null };
+    const result = await this.prisma.client.notificationEvent.updateMany({
+      where: { companyId: event.companyId, triggerKey: event.triggerKey, status: 'OPEN', id: { not: event.id }, ...sameRecord },
+      data: { status: 'RESOLVED', resolvedAt: now },
+    });
+    return result.count;
+  }
   async update(companyId: string, id: string, data: Partial<NotificationEvent>) {
     const r = await this.prisma.client.notificationEvent.update({
       where: { id },

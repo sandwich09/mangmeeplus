@@ -374,6 +374,19 @@ export function isSelfApproval(
   return !approverRoles.some((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role));
 }
 
+/**
+ * The claim's own approver: whoever decided its latest approval that is still in force. The same
+ * person `isReimbursementPayoutParty` (contracts) and the workflow reminder scan mean.
+ */
+export function claimApproverUserId(
+  steps: ReadonlyArray<{ status: string; decisionByUserId?: string | null; decidedAt?: Date | null; invalidatedAt?: Date | null }> | undefined,
+): string | undefined {
+  const latest = [...(steps ?? [])]
+    .filter((step) => step.status === 'APPROVED' && !step.invalidatedAt && !!step.decidedAt && !!step.decisionByUserId)
+    .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0];
+  return latest?.decisionByUserId ?? undefined;
+}
+
 // ---- Status transitions ----
 
 const ALLOWED_TRANSITIONS: Record<ReimbursementRequestStatus, ReimbursementRequestStatus[]> = {

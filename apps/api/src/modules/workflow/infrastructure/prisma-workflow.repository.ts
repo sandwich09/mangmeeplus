@@ -159,7 +159,9 @@ export class PrismaWorkflowRepository {
   async findUserIdsByPermissions(companyId: string, permissionKeys: string[]): Promise<string[]> {
     if (permissionKeys.length === 0) return [];
     const rows = await this.prisma.client.companyMembership.findMany({
-      where: { companyId, status: 'ACTIVE', roles: { some: { role: { permissions: { some: { permission: { key: { in: permissionKeys } } } } } } } },
+      // The login too, not only the membership: a suspended account cannot act, and as the sole
+      // recipient it would swallow the notice.
+      where: { companyId, status: 'ACTIVE', user: { status: 'ACTIVE' }, roles: { some: { role: { permissions: { some: { permission: { key: { in: permissionKeys } } } } } } } },
       select: { userId: true },
     });
     return rows.map((r) => r.userId);
@@ -203,6 +205,18 @@ export class PrismaWorkflowRepository {
     return new Map(steps.map((step) => [step.reimbursementRequestId, { userId: step.decisionByUserId!, decidedAt: step.decidedAt! }]));
   }
 
+  /** When a payment of each claim was last taken back: the claim is payable again from that moment. */
+  async findClaimLastPaymentVoids(companyId: string, requestIds: string[]): Promise<Map<string, Date>> {
+    if (requestIds.length === 0) return new Map();
+    const voids = await this.prisma.client.reimbursementPayment.findMany({
+      where: { companyId, reimbursementRequestId: { in: requestIds }, status: 'VOIDED', voidedAt: { not: null } },
+      select: { reimbursementRequestId: true, voidedAt: true },
+      orderBy: { voidedAt: 'asc' },
+    });
+    // Oldest first, so the latest void of a claim is the one left in the map.
+    return new Map(voids.map((row) => [row.reimbursementRequestId, row.voidedAt!]));
+  }
+
   async updateRule(companyId: string, id: string, data: Record<string, unknown>): Promise<WorkflowRuleRecord> {
     const row = await this.prisma.client.workflowRule.update({ where: { id }, data: data as any });
     return this.toRule(row);
@@ -242,6 +256,11 @@ export class PrismaWorkflowRepository {
   async findRuleVersionById(id: string): Promise<WorkflowRuleVersionRecord | null> {
     const row = await this.prisma.client.workflowRuleVersion.findUnique({ where: { id } });
     return row ? this.toRuleVersion(row) : null;
+  }
+
+  async listRuleVersions(ruleId: string): Promise<WorkflowRuleVersionRecord[]> {
+    const rows = await this.prisma.client.workflowRuleVersion.findMany({ where: { ruleId }, orderBy: { version: 'asc' } });
+    return rows.map((row) => this.toRuleVersion(row));
   }
 
   async findLatestRuleVersion(ruleId: string): Promise<WorkflowRuleVersionRecord | null> {
@@ -468,6 +487,9 @@ export class PrismaWorkflowRepository {
     scope: { companyId?: string; requestId?: string; supersede?: boolean } = {},
     now: Date = new Date(),
   ): Promise<number> {
+    // Superseding ignores the claim's status, so without a claim it would cancel every open
+    // approval task of every company. Only ever one claim's.
+    if (scope.supersede && !scope.requestId) throw new Error('closeSettledClaimTasks: supersede needs the claim it is for');
     const stillOpen = { in: ['OPEN', 'SNOOZED'] as any };
     const tasks = await this.prisma.client.workflowTask.findMany({
       where: {

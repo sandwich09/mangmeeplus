@@ -118,7 +118,7 @@ describe('payment reminder candidates (audit B9)', () => {
   });
   const template = () => WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_payment_sla_breach')!;
 
-  function provider(rows: any[], policy: Record<string, unknown> | null = { slaHours: 48 }, steps: any[] = []) {
+  function provider(rows: any[], policy: Record<string, unknown> | null = { slaHours: 48 }, steps: any[] = [], voids: any[] = []) {
     const queries: any[] = [];
     const reimbursementRepo = {
       findPolicy: async () => policy,
@@ -133,16 +133,29 @@ describe('payment reminder candidates (audit B9)', () => {
               && row.status === where.status && row.invalidatedAt === where.invalidatedAt && row.decisionByUserId != null && row.decidedAt != null)
             .sort((a, b) => a.decidedAt.getTime() - b.decidedAt.getTime()),
         },
+        reimbursementPayment: {
+          findMany: async ({ where }: any) => voids
+            .filter((row) => (row.companyId ?? 'co-1') === where.companyId && where.reimbursementRequestId.in.includes(row.reimbursementRequestId)
+              && row.status === where.status && row.voidedAt != null)
+            .sort((a, b) => a.voidedAt.getTime() - b.voidedAt.getTime()),
+        },
       },
     } as any);
+    // Who would approve a claim under the policy: the reimbursement module's own resolver, faked.
+    const wouldApproveAsked: any[] = [];
+    const approverRoutes = {
+      resolveWouldBeApproverUserIds: async (...args: any[]) => { wouldApproveAsked.push(args); return ['u_manager', 'u_manager_2']; },
+    } as any;
     return {
-      candidates: new WorkflowScanCandidatesProvider(reimbursementRepo, {} as any, {} as any, {} as any, {} as any, {} as any, workflowRepo),
-      queries,
+      candidates: new WorkflowScanCandidatesProvider(reimbursementRepo, {} as any, {} as any, {} as any, {} as any, approverRoutes, workflowRepo),
+      queries, wouldApproveAsked,
     };
   }
   const fires = (payload: Record<string, unknown>) => evaluateCondition(template().defaultConditionJson, payload, NOW).matched;
 
-  it('offers every claim waiting for payment and fires only past the policy deadline', async () => {
+  // Review: offering every waiting claim wrote a skipped run row per claim per hour in every
+  // company. Only a claim past its deadline is offered; the rest cost nothing downstream.
+  it('offers only the claims waiting for payment past the policy deadline', async () => {
     const { candidates, queries } = provider([
       claim({ id: 'rb-late', approvedAt: hoursAgo(49) }),
       claim({ id: 'rb-fresh', approvedAt: hoursAgo(47) }),
@@ -153,12 +166,36 @@ describe('payment reminder candidates (audit B9)', () => {
     assert.deepEqual(queries, [{ companyId: 'co-1', statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] }]);
     assert.deepEqual(items.map((item) => [item.sourceType, item.sourceId, fires(item.payload)]), [
       ['reimbursement_request', 'rb-late', true],
-      ['reimbursement_request', 'rb-fresh', false],
     ]);
     assert.deepEqual(items[0]!.payload, {
       requestId: 'rb-late', requestNo: 'RB-202610-00001', ageHours: 49, slaRisk: true, amount: '250', currency: 'THB',
-      requesterUserId: 'u_staff',
+      requesterUserId: 'u_staff', approverRecipientUserIds: ['u_manager', 'u_manager_2'],
+      notificationPeriodKey: `payable:${hoursAgo(49).toISOString()}`,
     });
+  });
+
+  // Review M1: a reminder is one push per period, not one per scan window. For a claim waiting for
+  // payment the period is the time it became payable, which a void starts again.
+  it('files the reminder under the time the claim became payable, and a void starts both that and the clock again', async () => {
+    const paidThenVoided = claim({ id: 'rb-voided', approvedAt: hoursAgo(300) });
+    const { candidates } = provider([claim({ id: 'rb-plain', approvedAt: hoursAgo(60) }), paidThenVoided], undefined, [], [
+      { reimbursementRequestId: 'rb-voided', status: 'VOIDED', voidedAt: hoursAgo(200) },
+      { reimbursementRequestId: 'rb-voided', status: 'VOIDED', voidedAt: hoursAgo(10) },
+      { reimbursementRequestId: 'rb-voided', status: 'RECORDED', voidedAt: null },
+      { reimbursementRequestId: 'rb-plain', status: 'VOIDED', voidedAt: hoursAgo(5), companyId: 'co-2' },
+    ]);
+
+    const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+
+    // Approved 300 hours ago, but payable again only since the last void 10 hours ago: not late yet.
+    assert.deepEqual(items.map((item) => item.sourceId), ['rb-plain']);
+    assert.equal(items[0]!.payload['notificationPeriodKey'], `payable:${hoursAgo(60).toISOString()}`);
+
+    // Once the deadline passes again, counted from that void, it is a new period and a new reminder.
+    const later = new Date(NOW.getTime() + 40 * 3_600_000);
+    const voided = (await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', later)).find((item) => item.sourceId === 'rb-voided');
+    assert.equal(voided!.payload['notificationPeriodKey'], `payable:${hoursAgo(10).toISOString()}`);
+    assert.equal(voided!.payload['ageHours'], 50);
   });
 
   // Owner rule 2026-10-01: the reminder goes to whose turn it is. The scan names them from what
@@ -190,23 +227,45 @@ describe('payment reminder candidates (audit B9)', () => {
 
     assert.equal(item!.payload['financeReviewerUserId'], 'u_finance');
     assert.equal(item!.payload['approvedByUserId'], 'u_manager');
-    // The notice asks the finance reviewer first, then the approver.
-    assert.deepEqual(template().defaultActionJson[0]!.configJson['preferRecipientPayloadKeys'], ['financeReviewerUserId', 'approvedByUserId']);
+    // The notice asks the finance reviewer first, then the approver, then the would-be approvers.
+    assert.deepEqual(template().defaultActionJson[0]!.configJson['preferRecipientPayloadKeys'], ['financeReviewerUserId', 'approvedByUserId', 'approverRecipientUserIds']);
     assert.deepEqual(template().defaultActionJson[0]!.configJson['neverPreferRecipientPayloadKeys'], ['requesterUserId']);
   });
 
-  it('names nobody for a claim that needed no approval, or whose only approval predates its last submission', async () => {
-    const { candidates } = provider(
-      [claim({ id: 'rb-auto' }), claim({ id: 'rb-resent', submittedAt: hoursAgo(50) })],
-      undefined, [step({ reimbursementRequestId: 'rb-resent', decidedAt: hoursAgo(120) })],
+  // Review: the ready-to-pay notice of a claim that needed no approval asked the people who would
+  // have approved it, but its reminder went to everyone able, the shop owner included.
+  it('names the would-be approvers for a claim nobody passed or approved, and only for such a claim', async () => {
+    const { candidates, wouldApproveAsked } = provider(
+      [
+        claim({ id: 'rb-auto', branchId: 'br-1' }),
+        claim({ id: 'rb-resent', submittedAt: hoursAgo(50) }),
+        claim({ id: 'rb-approved' }),
+      ],
+      { slaHours: 48, defaultApproverRole: 'MANAGER' },
+      [step({ reimbursementRequestId: 'rb-resent', decidedAt: hoursAgo(120) }), step({ reimbursementRequestId: 'rb-approved' })],
     );
 
     const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
 
-    assert.deepEqual(items.map((item) => [item.sourceId, item.payload['approvedByUserId'], item.payload['financeReviewerUserId']]), [
-      ['rb-auto', undefined, undefined],
-      ['rb-resent', undefined, undefined],
+    assert.deepEqual(items.map((item) => [item.sourceId, item.payload['approvedByUserId'], item.payload['approverRecipientUserIds']]), [
+      ['rb-auto', undefined, ['u_manager', 'u_manager_2']],
+      // Its only approval predates the last submission, so nobody approved it in this round.
+      ['rb-resent', undefined, ['u_manager', 'u_manager_2']],
+      ['rb-approved', 'u_manager', undefined],
     ]);
+    // Asked with the company, its current policy and the claim, and never for a claim that has an approver.
+    assert.equal(wouldApproveAsked.length, 2);
+    assert.deepEqual([wouldApproveAsked[0][0], wouldApproveAsked[0][1].defaultApproverRole, wouldApproveAsked[0][2].id, wouldApproveAsked[0][2].branchId], ['co-1', 'MANAGER', 'rb-auto', 'br-1']);
+  });
+
+  it('still reminds, naming nobody, when the would-be approvers cannot be resolved', async () => {
+    const { candidates } = provider([claim({ id: 'rb-auto' })]);
+    (candidates as any).approverRoutes = { resolveWouldBeApproverUserIds: async () => { throw new Error('lookup failed'); } };
+
+    const [item] = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+
+    assert.equal(item!.sourceId, 'rb-auto');
+    assert.equal(item!.payload['approverRecipientUserIds'], undefined);
   });
 
   it('takes the latest approval still in force when a claim has more than one', async () => {
@@ -259,12 +318,14 @@ describe('payment reminder candidates (audit B9)', () => {
   });
 
   it('starts the clock at the finance decision when there was one, not at the approval before it', async () => {
-    const { candidates } = provider([claim({ approvedAt: hoursAgo(100), financeReviewedAt: hoursAgo(10) })]);
+    const { candidates } = provider([
+      claim({ id: 'rb-passed-recently', approvedAt: hoursAgo(100), financeReviewedAt: hoursAgo(10) }),
+      claim({ id: 'rb-passed-long-ago', approvedAt: hoursAgo(100), financeReviewedAt: hoursAgo(60) }),
+    ]);
 
-    const [item] = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+    const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
 
-    assert.equal(item!.payload['ageHours'], 10);
-    assert.equal(fires(item!.payload), false);
+    assert.deepEqual(items.map((item) => [item.sourceId, item.payload['ageHours']]), [['rb-passed-long-ago', 60]]);
   });
 
   it('reminds for what is left to pay on a legacy part-paid claim', async () => {
@@ -276,14 +337,31 @@ describe('payment reminder candidates (audit B9)', () => {
     assert.equal(fires(item!.payload), true);
   });
 
-  // Same rule as approvals: the deadline is the company's own, and a company that set none is not chased.
-  it('never fires for a company that has not set a deadline in its claim policy', async () => {
+  // Same rule as approvals: the deadline is the company's own, and a company that set none is not
+  // chased. It is not even looked at further: no approver or void lookup, no run row.
+  it('offers nothing for a company that has not set a deadline in its claim policy', async () => {
+    let lookups = 0;
     const { candidates } = provider([claim({ approvedAt: hoursAgo(5000) })], null);
+    (candidates as any).workflowRepo = {
+      findClaimApprovers: async () => { lookups += 1; return new Map(); },
+      findClaimLastPaymentVoids: async () => { lookups += 1; return new Map(); },
+    };
 
-    const [item] = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+    assert.deepEqual(await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW), []);
+    assert.equal(lookups, 0);
+  });
 
-    assert.equal(item!.payload['slaRisk'], false);
-    assert.equal(fires(item!.payload), false);
+  // Review: the scan drops a whole company's candidates when the adapter throws, so one claim with
+  // a policy snapshot that cannot be read silenced the reminders of all the others.
+  it('keeps reminding for the other claims when one claim carries a policy snapshot that cannot be read', async () => {
+    const { candidates } = provider([
+      claim({ id: 'rb-broken', approvalPolicySnapshotJson: { schemaVersion: 1, unexpected: true } }),
+      claim({ id: 'rb-fine' }),
+    ]);
+
+    const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+
+    assert.deepEqual(items.map((item) => item.sourceId), ['rb-fine']);
   });
 
   it('is an auto-enabled SLA_SCAN rule on the default scan cadence, and only a notice', () => {
@@ -295,5 +373,38 @@ describe('payment reminder candidates (audit B9)', () => {
     assert.equal(WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS['approval_sla_breach'], undefined);
     // No task action: a task per scan window is how stale tasks pile up (audit B8).
     assert.deepEqual(template().defaultActionJson.map((action) => action.actionType), ['SEND_NOTIFICATION']);
+  });
+});
+
+// Review M1: the approval reminder is one push per round the claim was sent in. A claim sent again
+// and late again is reminded again; a scan window in the same round is not a new reminder.
+describe('approval reminder period (review M1)', () => {
+  const NOW = new Date('2026-10-01T12:00:00.000Z');
+  const hoursAgo = (hours: number) => new Date(NOW.getTime() - hours * 3_600_000);
+
+  it('files the reminder under the submission round of the claim', async () => {
+    const pending = (id: string, submittedAt: Date) => ({
+      id, requestNo: `RB-${id}`, status: 'PENDING_APPROVAL', amount: '250', currency: 'THB', requesterUserId: 'u_staff',
+      submittedAt, currentApprovalStepId: `step-${id}`,
+      approvalSteps: [{ id: `step-${id}`, status: 'PENDING', assignedApproverUserIds: ['u_manager'], approverRoleSnapshot: 'MANAGER' }],
+    });
+    const reimbursementRepo = {
+      findPolicy: async () => ({ slaHours: 48 }),
+      listRequests: async () => [pending('rb-1', hoursAgo(72)), pending('rb-2', hoursAgo(1))],
+      findActiveApproverUserIds: async (_companyId: string, userIds: string[]) => new Set(userIds),
+    } as any;
+    const approverRoutes = {
+      resolveOwnerRecipientUserIds: async (_companyId: string, inputs: any[]) => inputs.map(() => ['u_owner']),
+      resolveSubmissionRoutesBestEffort: async () => [],
+    } as any;
+    const candidates = new WorkflowScanCandidatesProvider(reimbursementRepo, {} as any, {} as any, {} as any, {} as any, approverRoutes, {} as any);
+
+    const items = await candidates.forTemplate('approval_sla_breach', 'co-1', NOW);
+
+    assert.deepEqual(items.map((item) => [item.sourceId, item.payload['slaRisk'], item.payload['notificationPeriodKey']]), [
+      ['rb-1', true, `round:${hoursAgo(72).toISOString()}`],
+      ['rb-2', false, `round:${hoursAgo(1).toISOString()}`],
+    ]);
+    assert.deepEqual(items[0]!.payload['approverRecipientUserIds'], ['u_manager']);
   });
 });

@@ -5,6 +5,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
+import { claimApproverUserId } from '../../domain/logic/reimbursement.logic';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { ReimbursementProjectionOrchestratorService } from './reimbursement-projection-orchestrator.service';
 import { ListReimbursementApproverOptionsUseCase } from '../use-cases/reimbursement-policy.use-case';
@@ -62,9 +63,11 @@ export class ReimbursementProjectionReconcilerService {
         const policy = effectivePolicyForRequest(intent.request, currentPolicy);
         // The same field the live submit writes for a claim that needed no approval, so a replayed
         // ready-to-pay event asks the same people first (owner rule 2026-10-01).
+        // And for a claim finance passed, its own approver, exactly as the live finance review writes it.
+        const financePathApprover = intent.kind === 'FINANCE' ? claimApproverUserId(intent.request.approvalSteps) : undefined;
         const approverRecipientUserIds = intent.kind === 'POLICY'
           ? await this.approverRoutes.resolveWouldBeApproverUserIds(intent.request.companyId, currentPolicy, intent.request).catch(() => [])
-          : [];
+          : financePathApprover ? [financePathApprover] : [];
         await this.projections.execute(ctx, intent.request, {
           kind: intent.kind,
           actorUserId: intent.actorUserId,

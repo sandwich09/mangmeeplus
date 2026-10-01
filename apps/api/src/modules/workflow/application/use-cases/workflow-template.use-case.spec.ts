@@ -21,17 +21,21 @@ const template = {
 
 /** Only resolves the one template this test cares about; every other autoEnable key is a no-op. */
 function fakeRepo(rule: any) {
-  const updateRule = mock.fn(async (_companyId: string, _id: string, data: any) => ({ ...rule, ...data }));
+  // The row is live: a re-pin changes it, so a second sync sees what the first one wrote.
+  const updateRule = mock.fn(async (_companyId: string, _id: string, data: any) => Object.assign(rule, data));
   const createRuleVersion = mock.fn(async (_data: any) => undefined);
+  // What the sync pinned on this rule when it created it.
+  const pinnedBySync = {
+    id: 'v-1', ruleId: rule.id, version: 1, status: 'ENABLED',
+    triggerSnapshotJson: {}, conditionSnapshotJson: { field: 'stale', op: 'EXISTS' }, actionSnapshotJson: [],
+    recipientSnapshotJson: {}, cooldownSeconds: 3600, createdBy: WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID, createdAt: new Date(),
+  };
   return {
     repo: {
       findTemplateByKey: async (key: string) => (key === TEMPLATE_KEY ? template : null),
       listRules: async () => [rule],
-      findLatestRuleVersion: async () => ({
-        id: 'v-1', ruleId: rule.id, version: 1, status: 'ENABLED',
-        triggerSnapshotJson: {}, conditionSnapshotJson: { field: 'stale', op: 'EXISTS' }, actionSnapshotJson: [],
-        recipientSnapshotJson: {}, cooldownSeconds: 3600, createdBy: WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID, createdAt: new Date(),
-      }),
+      findLatestRuleVersion: async () => pinnedBySync,
+      listRuleVersions: async () => [pinnedBySync],
       updateRule,
       createRuleVersion,
     } as any,
@@ -68,7 +72,27 @@ describe('resyncWorkflowTemplateRulesForCompany (template sync non-destructivene
     assert.equal(createRuleVersion.mock.callCount(), 1);
   });
 
-  it('never touches a rule an admin has edited (e.g. disabled) — not on the first sync, not on a second', async () => {
+  it('never touches a rule an admin has edited — not on the first sync, not on a second', async () => {
+    const adminEditedRule = {
+      id: 'rule-2', companyId: 'co-1', status: 'DISABLED',
+      createdBy: WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID, updatedBy: 'admin-user-1',
+      // The sync pinned an hour and the `stale` condition; the admin changed both.
+      cooldownSeconds: 900, triggerConfigJson: {}, conditionJson: { field: 'amount', op: 'GT', value: 1000 }, actionJson: [],
+    };
+    const { repo, updateRule, createRuleVersion } = fakeRepo(adminEditedRule);
+
+    const first = await resyncWorkflowTemplateRulesForCompany(repo, 'co-1');
+    const second = await resyncWorkflowTemplateRulesForCompany(repo, 'co-1');
+
+    assert.deepEqual(first, []);
+    assert.deepEqual(second, []);
+    assert.equal(updateRule.mock.callCount(), 0);
+    assert.equal(createRuleVersion.mock.callCount(), 0);
+  });
+
+  // Review: disabling a rule stamps the admin's id on it and changes nothing else. Reading that
+  // stamp as an edit kept the company on the old definition for good, even once switched back on.
+  it('brings a rule an admin only switched off up to date, and leaves it switched off', async () => {
     const adminDisabledRule = {
       id: 'rule-2', companyId: 'co-1', status: 'DISABLED',
       createdBy: WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID, updatedBy: 'admin-user-1',
@@ -79,9 +103,14 @@ describe('resyncWorkflowTemplateRulesForCompany (template sync non-destructivene
     const first = await resyncWorkflowTemplateRulesForCompany(repo, 'co-1');
     const second = await resyncWorkflowTemplateRulesForCompany(repo, 'co-1');
 
-    assert.deepEqual(first, []);
+    assert.deepEqual(first, [TEMPLATE_KEY]);
     assert.deepEqual(second, []);
-    assert.equal(updateRule.mock.callCount(), 0);
+    // The definition only: no status in the update, and no version, because a rule that is off is not enabled by a sync.
+    assert.equal(updateRule.mock.callCount(), 1);
+    const updateData = (updateRule.mock.calls[0] as any).arguments[2];
+    assert.deepEqual(updateData.actionJson, catalogSeed.defaultActionJson);
+    assert.equal('status' in updateData, false);
+    assert.equal(adminDisabledRule.status, 'DISABLED');
     assert.equal(createRuleVersion.mock.callCount(), 0);
   });
 
