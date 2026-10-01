@@ -4,7 +4,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { LINE_ALLOWED_TOOL_CATEGORIES, LINE_DRAFT_UPDATE_TOOLS, LINE_DRAFT_UPDATE_TOOL_CATEGORY, LINE_REIMBURSEMENT_DRAFT_TOOL_NAMES, LINE_TOOL_REGISTRY, hasToolFeature, toolFeatureKeys, type ToolMeta, type ToolResult } from '@watchdog-bms/contracts';
 
 /** Constructor arity of the controller's tool list. Bumped whenever a tool is wired. */
-const WIRED_TOOL_COUNT = 67;
+const WIRED_TOOL_COUNT = 71;
 function makeController(...args: any[]) {
   const controller = new (InternalToolsController as any)(...args);
   controller.readEvidence = { record: async () => 'synthetic-evidence' };
@@ -926,7 +926,7 @@ describe('InternalToolsController — company feature entitlement', () => {
   it('never gates reimbursement reads, which outlive their feature switch by owner decision', async () => {
     // Owner decision 2026-08-10 (launch matrix §6.3 r5): disabling reimbursement blocks new claims
     // but in-flight approvals keep flowing, so an approver must still be able to ask LINE.
-    for (const name of ['reimbursement.list_pending_approvals', 'reimbursement.get_summary', 'reimbursement.get_detail']) {
+    for (const name of ['reimbursement.list_pending_approvals', 'reimbursement.get_summary', 'reimbursement.get_detail', 'reimbursement.get_approval_backlog']) {
       const tool = LINE_TOOL_REGISTRY.find((entry) => entry.name === name);
       assert.deepEqual(toolFeatureKeys(tool!), [], `${name} must stay ungated`);
       assert.equal(hasToolFeature(tool!, new Set(['expenses'])), true, name);

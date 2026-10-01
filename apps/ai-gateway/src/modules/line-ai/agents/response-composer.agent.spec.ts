@@ -828,6 +828,23 @@ describe('ResponseComposerAgent – capability help', () => {
     assert.doesNotMatch(english, /sales and sales documents/);
   });
 
+  it('names the package line only for a caller who manages the package (advisor S2a, owner 2026-09-30)', () => {
+    const manager = ask([...STAFF, 'ai.tool.invoke', 'company.plan.manage'], EXPENSES_ONLY);
+    assert.match(manager, /• แพ็กเกจและใบเสร็จคงเหลือ/);
+    assert.match(teach([...STAFF, 'ai.tool.invoke', 'company.plan.manage'], EXPENSES_ONLY), /อยากรู้ว่าแพ็กเกจพอไหม พิมพ์ว่า “แพ็กเกจนี้พอไหม”/);
+    // Every assistant user can call the package tool (a non-manager gets its typed refusal), so the
+    // tool alone must never light the line — and a caller with no known access is never told it either.
+    assert.doesNotMatch(ask([...STAFF, 'ai.tool.invoke'], EXPENSES_ONLY), /แพ็กเกจ/);
+    assert.doesNotMatch(agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH'), /แพ็กเกจ/);
+  });
+
+  // Owner 2026-09-30 (~16:00): the tool-less casual lane (also the public group lane) names no package price
+  // and never a MangmeePlus cost; prices come only from billing.get_package_catalog in a business turn.
+  it('keeps package prices and MangmeePlus costs out of the tool-less casual lane', () => {
+    assert.match(CASUAL_CONVERSATION_SYSTEM_PROMPT, /Never state, estimate or hint at what anything costs to provide this service — AI or model cost, cost per receipt or per credit, margins, payment fees, exchange rates\./);
+    assert.match(CASUAL_CONVERSATION_SYSTEM_PROMPT, /Never state or guess the price or contents of this service's packages in this lane/);
+  });
+
   it('keeps the pre-entitlement full text when no caller context is supplied', () => {
     const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH');
     assert.match(reply, /ยอดขายและเอกสารขาย/);

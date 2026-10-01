@@ -156,6 +156,15 @@ export function isSubstituteReceiptConversationText(text: string): boolean {
   return SUBSTITUTE_VOCABULARY.test(text.normalize('NFC').toLocaleLowerCase('th-TH'));
 }
 
+/** Advisor S1 (spec §5.2): "มีใบรับรองแทนใบเสร็จรอฉันเซ็นกี่ใบ" names the document but asks about the ones
+ *  ALREADY waiting for a signature or an approval — a read, answered by the queue tool. Never an explicit
+ *  start, even when the router misroutes it here. */
+// `(?<!รับ)`: the document's own name ใบรับรอง already spells รอ.
+const SUBSTITUTE_QUEUE_QUESTION = /(?:(?<!รับ)รอ|ต้อง|ค้าง)[^\n]{0,12}(?:เซ็น|ลงนาม|ลงชื่อ|ลายมือชื่อ|อนุมัติ)|กี่ใบ/u;
+export function isSubstituteQueueQuestion(text: string): boolean {
+  return SUBSTITUTE_QUEUE_QUESTION.test(text.normalize('NFC'));
+}
+
 /** Whole-message pause/cancel controls, anchored so answers like “ไม่มี”/“ไม่มีใบเสร็จ” stay out.
  *  Shared by `execute`'s turn routing and the short-answer capture guard in `extractValues`. */
 const SUBSTITUTE_PAUSE = /^(พัก|พักไว้ก่อน|ไว้ทำทีหลัง|ไม่ทำต่อ|ไม่ต่อ|ไม่ทำ|ไม่เอา|ไม่ต้องทำ)$/u;
@@ -1662,7 +1671,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     // (the webhook persists only an intake-ledger clarification). Permission is already gated at the top of
     // execute; an existing workflow needs no re-confirmation to continue.
     const explicitStart = isCanonicalSubstituteStart(input.messageText)
-      || isSubstituteReceiptConversationText(input.messageText)
+      || (isSubstituteReceiptConversationText(input.messageText) && !isSubstituteQueueQuestion(input.messageText))
       || input.confirmedStart === true;
     // A fresh start is CONFIRMED (safe to open AND to save) when it is explicit, OR when the caller is not
     // the PRIMARY model-only dispatcher (requireStartConfirmation !== true) — the OFF/legacy path and every

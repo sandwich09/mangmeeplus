@@ -77,6 +77,9 @@ export const CASUAL_CONVERSATION_SYSTEM_PROMPT = [
   'For tax or accounting specifics that depend on the user\'s own case, give the general principle first, then add one short line suggesting they confirm with their accountant — do not refuse to explain.',
   'Never state THIS company\'s numbers, records, or results in this lane — if asked, invite them to ask the business question directly (e.g. "ลองถามว่า ค่าใช้จ่ายเดือนนี้เท่าไหร่ ได้เลยค่ะ").',
   'Never claim live external facts you cannot check here (today\'s news, weather, prices, exchange rates) — say you cannot check live info and offer what you do know in general.',
+  // Owner 2026-09-30 (~16:00): package prices come only from the catalog read (semantic turn), and
+  // MangmeePlus's own costs are never told — this lane has no tool, so it names neither.
+  'Never state, estimate or hint at what anything costs to provide this service — AI or model cost, cost per receipt or per credit, margins, payment fees, exchange rates. Never state or guess the price or contents of this service\'s packages in this lane; if asked, say briefly that you cannot check package prices here.',
   'Never pretend to be human, to have a body, personal life, real-world experiences, or feelings of your own.',
   'For medical, legal, personal-finance, or crisis matters, avoid authoritative advice and encourage appropriate human or professional help.',
   'Use recent conversationContext only for conversational continuity, never as business truth, permission truth, or company selection.',
@@ -139,6 +142,7 @@ const CAPABILITY_COPY = {
       bookings: { line: '• นัดหมายและคิว', example: 'คิววันนี้มีอะไรบ้าง' },
       procurement: { line: '• จัดซื้อและผู้ขาย', example: 'ใบสั่งซื้อที่ค้างอยู่มีอะไรบ้าง' },
       alerts: { line: '• งานค้างและการแจ้งเตือน', example: 'มีงานค้างอะไรบ้าง' },
+      package: { line: '• แพ็กเกจและใบเสร็จคงเหลือ', example: 'แพ็กเกจนี้พอไหม' },
     },
   },
   en: {
@@ -157,6 +161,7 @@ const CAPABILITY_COPY = {
       bookings: { line: '• bookings and queues', example: 'What is on today’s schedule?' },
       procurement: { line: '• procurement and suppliers', example: 'Which purchase orders are still open?' },
       alerts: { line: '• pending work and alerts', example: 'What is pending for me?' },
+      package: { line: '• your package and receipts left', example: 'Is my package enough?' },
     },
   },
 } as const satisfies Record<'th' | 'en', {
@@ -190,6 +195,7 @@ const TEACHING_COPY = {
       bookings: 'อยากดูคิวหรือนัด',
       procurement: 'อยากดูของที่สั่งซื้อ',
       alerts: 'อยากรู้ว่ามีงานค้างไหม',
+      package: 'อยากรู้ว่าแพ็กเกจพอไหม',
     },
     approvals: 'ถ้ามีรายการรอคุณอนุมัติ พิมพ์ว่า “รายการรออนุมัติ” น้องมั่งมีจะสรุปให้ก่อน ส่วนการกดอนุมัติจริงทำในเว็บค่ะ',
     menu: 'อยากเห็นเมนูทั้งหมด กดปุ่ม “เมนูหลัก” ด้านล่างได้เลยค่ะ',
@@ -211,6 +217,7 @@ const TEACHING_COPY = {
       bookings: 'To see bookings',
       procurement: 'To see purchase orders',
       alerts: 'To see pending work',
+      package: 'To check your package',
     },
     approvals: 'If claims are waiting for you, type “pending approvals” and Nong Mangmee summarizes them first; the approval itself happens in the web app.',
     menu: 'To see the full menu, tap the “เมนูหลัก” (main menu) button below.',
@@ -256,7 +263,7 @@ function usableAccess(access?: CapabilityAccess): { groups: LineCapabilityGroupI
   const permissions = access ? access.permissions ?? [] : undefined;
   const groups = permissions
     ? usableCapabilityGroupIds(permissions, entitled)
-    : [...LINE_CAPABILITY_GROUPS].map((group) => group.id);
+    : LINE_CAPABILITY_GROUPS.filter((group) => !('requiredPermissions' in group)).map((group) => group.id);
   const receipt = permissions ? canAdvertiseReceiptCapture(permissions, entitled) : true;
   // The one role-scoped claim (spec T3): derived from the registry tool that would answer it, never
   // from a role name. A no-context caller never sees it — the old copy never claimed it either.

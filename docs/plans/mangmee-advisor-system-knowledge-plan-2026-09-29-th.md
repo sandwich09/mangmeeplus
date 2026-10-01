@@ -43,7 +43,7 @@
 | ลำดับ | Slice | ปิดคำถาม (สเปก §4) | คุณค่า | ขนาด | ต้องรอ | Release |
 |---|---|---|---|---|---|---|
 | 1 | **S0** นโยบายความรู้ทั่วไป (วัดแล้วแก้เฉพาะข้อที่ไม่ผ่าน) | G1–G8 | สูง (กระทบทุกคำตอบ) | เล็ก 0.5 วัน | — (D1 เสร็จแล้ว) | R1 |
-| 2 | **S2a** แพ็กเกจและโควตาใบเสร็จ | #1, P1–P4, P8, P9 | สูงมาก | กลาง 2.5–3.5 วัน | — | R1 |
+| 2 | **S2a** แพ็กเกจ โควตาใบเสร็จ และราคาแพ็กเกจ | #1, P1–P4, P6, P8–P12 | สูงมาก | กลาง 3–4 วัน | — | R1 |
 | 3 | **S1** ใบรับรองที่ต้องเซ็น + งานค้างของฉัน | #7, Q2, S1–S3 (Q1 คงทางลัดเดิม) | สูง | กลาง 2.5–3.5 วัน | — (D1 เสร็จแล้ว) | R1 |
 | 4 | **S3** ใบเบิกค้างที่ใคร | #5, R1–R4 | สูง | กลาง 2–2.5 วัน | — | R1 |
 | — | **S8** ปุ่มและลิงก์ในการ์ด LINE (งานตายตัว ทำคู่ขนานได้) | กติกาปุ่มซื้อ (ค), ลิงก์หน้ารายชื่อพนักงาน (จ), การ์ดคำถามนโยบาย (ฉ) | กลาง | เล็ก 1–1.5 วัน | — | R1 |
@@ -139,12 +139,13 @@ Owner 2026-09-29: "ยอดขาย สต็อก เรายัง dev ไ
 
 ### S2a — แพ็กเกจและโควตาใบเสร็จ
 
-- **ปิด:** #1, P1–P4, P8, P9
+- **ปิด:** #1, P1–P4, P6, P8–P12
 - **มติ Owner 2026-09-30 ที่ใช้ (สเปก §10):**
   - ข้อ 1: บอกจำนวนใบเสร็จคงเหลือและวันที่ใช้ได้ถึงได้ ไม่บอกราคา
+    - **มติประมาณ 16:00 แทนส่วน "ไม่บอกราคา":** ทุกคนถามราคาและรายละเอียดของทุกแพ็กเกจได้ ตอบเฉพาะราคาขาย ห้ามต้นทุน และบอกยอดชำระสุทธิรวม VAT เมื่อระบบชำระเงินคิด VAT → เครื่องมือที่สอง `billing.get_package_catalog` ด้านล่าง
   - ข้อ 2: เฉพาะผู้มีสิทธิ์ `company.plan.manage` ใช้การตรวจสิทธิ์เดิม คนอื่นได้ข้อความ P8
   - ข้อ 3: หักเครดิตตามปกติ ไม่ทำทางตอบฟรี
-  - ข้อ 4 และ 4 ข: คาดการณ์ว่าพอหรือขาดกี่ใบจากอัตราการใช้รอบนี้ ห้ามเอ่ยชื่อหรือแนะนำแพ็กเกจอื่น ห้ามชวนอัปเกรด
+  - ข้อ 4 และ 4 ข: คาดการณ์ว่าพอหรือขาดกี่ใบจากอัตราการใช้รอบนี้ ห้ามเอ่ยชื่อหรือแนะนำแพ็กเกจอื่น ห้ามชวนอัปเกรด (ปรับตามมติ 16:00: ตอบราคาและเทียบแพ็กเกจเมื่อผู้ใช้ถามเอง แต่ยังห้ามแนะนำและชวนอัปเกรด และคำตอบ "พอไหม" ยังไม่เอ่ยชื่อแพ็กเกจอื่น)
 - **Endpoint ที่มีอยู่วันนี้ (ตรวจ 2026-09-30):**
   - ลูกค้า: `GET companies/:cid/billing` (`billing.controller.ts:579`) และ `…/capacity` (`:629`) ผ่าน guard `account.session.read` บวก `assertOwner` ใน service
     - `…/capacity` ล็อกแถวบริษัท `FOR UPDATE` และหน้าแพ็กเกจไม่แสดงจำนวนสาขาและสมาชิกที่ใช้อยู่
@@ -170,7 +171,7 @@ Owner 2026-09-29: "ยอดขาย สต็อก เรายัง dev ไ
 ```ts
 {
   name: 'billing.get_package_usage',
-  description: "Read THIS company's current package: the package name, the date it runs until, branch and member capacity used, and receipt reads used/limit/remaining in the current allowance with an API-computed straight-line projection to its end (and, once available, remaining AI credit). Only a caller who manages the package gets figures; anyone else gets a typed refusal. Never prices and never another package. Use for 'is my package enough', 'how many receipts are left', 'can I add a branch', 'how much AI credit is left'. Public package prices and package contents are not this tool.",
+  description: "Read THIS company's current package: the package name, the date it runs until, branch and member capacity used, and receipt reads used/limit/remaining in the current allowance with an API-computed straight-line projection to its end (and, once available, remaining AI credit). Only a caller who manages the package gets figures; anyone else gets a typed refusal. Never prices and never another package. Use for 'is my package enough', 'how many receipts are left', 'can I add a branch', 'how much AI credit is left'. Package prices and what each package includes are billing.get_package_catalog.",
   businessSubjects: ['company', 'expense'],
   questionKinds: ['summary'],
   category: 'read_summary',
@@ -200,6 +201,13 @@ Owner 2026-09-29: "ยอดขาย สต็อก เรายัง dev ไ
   - `CONTROL_PROMPT`: "For THIS company's package, receipt quota, capacity or AI credit, call billing.get_package_usage; when the question also refers to expense volume, add expense.list_recent for the same current period. Public package prices or contents are never this tool."
   - `ANSWER_PROMPT`: ห้ามราคา ห้ามเอ่ยชื่อหรือแนะนำแพ็กเกจอื่นและห้ามชวนอัปเกรด (มติข้อ 4) คาดการณ์ต้องใช้ค่า `pace` ของเครื่องมือพร้อมคำว่า "คาดการณ์" และบอกได้แค่ว่าน่าจะพอหรือขาดประมาณกี่ใบ
   - คำถามเรื่องอัปเกรดหรือเปลี่ยนแพ็กเกจ (P9) ใช้กติกางานบนเว็บเดิม และเรียก `billing.get_package_usage` ด้วยเพื่อให้ API ตัดสินสิทธิ์ซื้อ: ผู้มีสิทธิ์ได้ลิงก์หน้าแพ็กเกจจาก `sourceRefs` คนอื่นได้ข้อความ P8 ไม่มีลิงก์หรือปุ่ม (กติกาปุ่มซื้อ สเปก §2.2)
+- **เครื่องมือที่สอง `billing.get_package_catalog` (มติ Owner 2026-09-30 ประมาณ 16:00, สเปก §5.1a):**
+  - API: `BillingGetPackageCatalogTool` ในไฟล์เดียวกัน อ่าน `BillingService.catalog()` (ตัวเดียวกับ `GET /v1/billing/catalog` ที่เป็น `@Public`) คิด VAT ด้วย `quoteTotals` ของใบเสนอราคา เมนูจาก `packageMenuLabels` ซึ่งย้ายจาก `dealMenuLabels` ของหน้าเว็บมาไว้ใน contracts (หน้าเว็บ re-export ชื่อเดิม) และใช้ `baht` ของ `line-event-discount.logic.ts` จัดรูปเงิน
+    - ส่งเฉพาะฟิลด์ที่เลือกไว้ ไม่ส่ง `aiMonthlyBudgetSatang` รหัสนโยบาย เวลาออกแคตตาล็อก หรือรหัส tier
+    - ลิงก์หน้าแพ็กเกจเฉพาะผู้มี `company.plan.manage`
+  - ToolMeta: `requiredPermissions: ['ai.tool.invoke']`, `sourceModule: 'billing'`, `sensitiveAudit: false`, `questionKinds: ['summary', 'list']`
+  - Gateway: `ROUTER_ENABLED_TOOLS`, `ALLOWED_TOOLS`, `TOOL_FACT_LABELS`, แถว coverage `package_catalog`, router `PACKAGE_RULE` (คำถามราคาและรายละเอียดแพ็กเกจเป็น read ของเครื่องมือนี้ ใครถามก็ได้), `CONTROL_PROMPT` (เรียกด้วย input `{}`), `ANSWER_PROMPT` (ตัวเลขแพ็กเกจจากเครื่องมือนี้เท่านั้น ไม่คำนวณเอง VAT ตาม `vatNote` ราคาเป็นราคาปกติไม่ใช่ยอดที่ร้านจ่าย ห้ามต้นทุนทุกแบบ ไม่แนะนำแพ็กเกจ) และ `CASUAL_CONVERSATION_SYSTEM_PROMPT` (ทางที่ไม่มีเครื่องมือ รวมแชตกลุ่ม: ไม่บอกราคาแพ็กเกจและต้นทุน)
+  - ไม่แตะกลุ่มความสามารถ: การ์ด "ทำอะไรได้บ้าง" ไม่มีบรรทัดราคาแพ็กเกจเพิ่ม
 - **W00:** regenerate
 - **Specs:**
   - `package-usage-pace.logic.spec.ts`: เกณฑ์ 7 วัน, ไม่จำกัด, shortfall 0, การปัดขึ้น, ความยาวเดือน, รอบแบบ `PAID_GRANTS`, หลาย lot ซ้อนกัน → `null`
@@ -208,11 +216,13 @@ Owner 2026-09-29: "ยอดขาย สต็อก เรายัง dev ไ
     - ไม่มี field ราคาและชื่อแพ็กเกจอื่น
     - อ่านสองครั้งได้ `lineReadResultHash` เท่ากัน
     - แปลง `LEGACY_MONTH` กับ `PAID_GRANTS` ถูก และชื่อแพ็กเกจมาจาก `term.tierKey` แม้มีของขวัญชั่วคราว
+    - แคตตาล็อก: ราคาและเพดานทั้ง 4 แพ็กเกจตรงโค้ด, VAT ทั้ง 4 แบบตรง `quoteTotals`, ราคาจาก `offerTerms` ของนโยบาย, ไม่มีเพดานเงิน AI หรือรหัสใด ๆ, ลิงก์เฉพาะผู้มีสิทธิ์ซื้อ, อ่านซ้ำได้ hash เดิม
+  - gateway: router ส่งคำถามราคาไปเครื่องมือแคตตาล็อก, compose ใช้กติการาคา VAT และห้ามต้นทุน, พนักงานไม่ได้ลิงก์, ทาง casual มีกติกาห้ามต้นทุน
   - spec ของ helper นับสาขาและสมาชิก และ spec เดิมของที่ที่เปลี่ยนไปเรียก helper ต้องผ่านเหมือนเดิม
   - PG `apps/api/src/modules/line-ai/application/package-usage.pg.spec.ts`: ใช้แถวจริงของโควตา รวมยอดแถมและ lot แบบ `PAID_GRANTS` และนับสาขากับสมาชิก → `reliability-postgres-v2`
-- **Eval:** ชุด P อย่างน้อย 20 ข้อ × 2 ประมาณ 150–250 บาท
+- **Eval:** ชุด P 32 ข้อความ (ชุดเดิม 23 + ราคาแพ็กเกจ 9 ข้อ P-07, P-24 ถึง P-32) ผ่านสองรอบติดกัน ประมาณ 150–250 บาท ข้อ VAT รันแยกตามนโยบาย VAT เพราะเครื่องทดสอบปิดระบบชำระเงิน
 - **ต้นทุนต่อข้อความ:** 0.9–1.3 บาท (อ่าน 1–2 ครั้ง)
-- **ขนาด:** 2.5–3.5 วัน (เดิม 2–3 วัน เพิ่มจาก helper นับสาขาและสมาชิก รอบของ `PAID_GRANTS` และทางให้ข้อความ P8 เกิดได้)
+- **ขนาด:** 3–4 วัน (เดิม 2–3 วัน เพิ่มจาก helper นับสาขาและสมาชิก รอบของ `PAID_GRANTS` ทางให้ข้อความ P8 เกิดได้ และเครื่องมือราคาแพ็กเกจตามมติ 16:00 อีกครึ่งวัน)
 
 ### S1 — ใบรับรองที่ต้องเซ็น + งานค้างของฉัน
 
@@ -696,7 +706,7 @@ R1 เริ่ม implement 2026-09-30: Owner อ่านแผนแล้ว
 | Slice | วันทำงาน (คนเดียว) | ค่าทดสอบโมเดลจริง |
 |---|---|---|
 | S0 | 0.5 | 50–100 บาท |
-| S2a | 2.5–3.5 | 150–250 บาท |
+| S2a | 3–4 | 150–250 บาท |
 | S1 | 2.5–3.5 | 150–250 บาท |
 | S3 | 2–2.5 | 100–200 บาท |
 | S8 | 1–1.5 | ไม่มี (unit spec) |
@@ -707,13 +717,13 @@ R1 เริ่ม implement 2026-09-30: Owner อ่านแผนแล้ว
 | S4b | 2–3 | 150–250 บาท |
 | S7 | 2–3 + เวลา Owner | 100–200 บาท |
 | ชุดกันถดถอยต่อ release | — | ประมาณ 50–70 บาทต่อครั้ง × 4 |
-| **รวม** | **ประมาณ 20–29 วันทำงาน** (ถ้าทำขนานสองถึงสามสาย ใช้เวลาจริงประมาณ 2–3 สัปดาห์ ไม่รวมเวลารอ D2 และคำตอบของ Owner) | **ประมาณ 1,300–2,300 บาท** (อนุมัติแล้วเฉพาะ R1 ไม่เกิน 800 บาท) |
+| **รวม** | **ประมาณ 20.5–29.5 วันทำงาน** (ถ้าทำขนานสองถึงสามสาย ใช้เวลาจริงประมาณ 2–3 สัปดาห์ ไม่รวมเวลารอ D2 และคำตอบของ Owner) | **ประมาณ 1,300–2,300 บาท** (อนุมัติแล้วเฉพาะ R1 ไม่เกิน 800 บาท) |
 
 - **งบ R1 (มติ Owner 2026-09-30 สเปก §10 ข้อ 11):** ไม่เกิน 800 บาท สำหรับ S0, S2a, S1 และ S3 ส่วน S8 ไม่ใช้
   - ประมาณการของสี่ slice รวม 450–800 บาท และชุดกันถดถอยของ R1 อีกประมาณ 50–70 บาท ถ้าทุก slice ใช้ถึงขอบบนจะเกินเพดาน
   - ให้ติดตามยอดจริงหลังแต่ละ slice และแจ้งผู้คุมก่อนถึงเพดาน
   - release ถัดไปทำต่อทีละชุดตามแผน
-- **ที่เปลี่ยนจากฉบับ 2026-09-29:** S0 ลดลงเพราะ #910 ทำส่วนใหญ่แล้ว ส่วน S2a, S1 และ S3 เพิ่มขึ้นจากสิ่งที่พบในโค้ดหลัง #903–#928 (ดูรายละเอียดในแต่ละ slice) เพิ่ม S8 ตามมติ Owner 2026-09-30 ซึ่งไม่ใช้งบทดสอบกับโมเดลจริง และ S5 เพิ่มจากขอบเขตคู่ค้าตามสาขา (มติ §10 ข้อ 7)
+- **ที่เปลี่ยนจากฉบับ 2026-09-29:** S0 ลดลงเพราะ #910 ทำส่วนใหญ่แล้ว ส่วน S2a, S1 และ S3 เพิ่มขึ้นจากสิ่งที่พบในโค้ดหลัง #903–#928 (ดูรายละเอียดในแต่ละ slice) เพิ่ม S8 ตามมติ Owner 2026-09-30 ซึ่งไม่ใช้งบทดสอบกับโมเดลจริง และ S5 เพิ่มจากขอบเขตคู่ค้าตามสาขา (มติ §10 ข้อ 7) S2a เพิ่มอีกครึ่งวันจากเครื่องมือราคาแพ็กเกจตามมติ Owner 2026-09-30 ประมาณ 16:00
 - **ค่าทดสอบ** มาจากขนาดชุด × 2 รอบ × ประมาณ 1 บาทต่อข้อความ บวกรอบแก้ 2–3 รอบ
 - **อ้างอิง:** รอบ NAT05 + NAT06 (10 ข้อความ) ใช้ประมาณ 15 บาทต่อรอบ และรอบเต็มของโปรแกรมรายจ่าย (ประมาณ 260 ข้อ) ใช้ 100–250 บาท
 - **ต้นทุนต่อคำถามของลูกค้า** ประมาณ 1 บาท (≈ 1 เครดิต AI) ตามสเปก §8

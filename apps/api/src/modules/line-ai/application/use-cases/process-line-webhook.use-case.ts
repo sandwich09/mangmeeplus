@@ -666,8 +666,9 @@ const isDocumentReadingCreditSpent = (errorCode?: string): boolean =>
  * (`ROUTER_UNREACHABLE`, tryRouteIntake's own catch block), the provider itself could not be reached
  * in time (`PROVIDER_THROTTLED`/`PROVIDER_TIMEOUT` — the two provider codes the gateway always marks
  * `retryable: true`, in `bedrock.provider.ts`/`openai.provider.ts`, regardless of which call site hit
- * them), or our AI budget gate could not run or is exhausted — reads to the customer as "the system
- * is slow right now", never "I don't understand you". Everything else with `status !== 'ROUTED'`
+ * them), or our AI budget gate could not run — reads to the customer as "the system is slow right
+ * now", never "I don't understand you". A credit that is spent or too small for the call is answered
+ * before this choice, by `answerAiCreditRefusal`. Everything else with `status !== 'ROUTED'`
  * (the model answered but produced an invalid or unroutable plan, e.g. `ROUTER_SEMANTIC_SCHEMA_INVALID`)
  * is the model genuinely not making sense of the text.
  */
@@ -2662,6 +2663,31 @@ export class ProcessLineWebhookUseCase {
     return term?.tierKey === 'FREE_TRIAL_15';
   }
 
+  /**
+   * The AI credit refused this call for good — spent, or too little left for it (spec §9.1). One answer
+   * wherever that refusal surfaces: the credit card, and a durable budget status rather than "provider
+   * unavailable" (§9.3). Returns false for anything else — busy and "could not check" included — so the
+   * caller keeps its own reply. It only words a refusal already made; it admits and refuses nothing.
+   */
+  private async answerAiCreditRefusal(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
+    companyId: string,
+    refusal: { budgetErrorCode?: string; budgetScope?: AiBudgetScope },
+    /** Advisor spec §2.2: the reader holds `company.plan.manage`; only they get the package buttons. */
+    canManagePlan: boolean,
+  ): Promise<boolean> {
+    if (!isAiBudgetPermanentRefusal(refusal.budgetErrorCode)) return false;
+    await this.deliverRequiredMessages(event, [buildAiBudgetExceededMessage(await this.isTrialTier(companyId), refusal, canManagePlan)]);
+    await this.updateEventLog(
+      event.webhookEventId,
+      refusal.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded',
+      refusal.budgetErrorCode,
+      companyId,
+      refusal.budgetScope ? { budgetScope: refusal.budgetScope } : undefined,
+    );
+    return true;
+  }
+
   /** True while a support pause set by `ติดต่อเจ้าหน้าที่` is still running (§8, 24h, self-expiring). */
   async assistantPaused(lineUserId: string): Promise<boolean> {
     const context = await this.prisma.client.lineCompanyContext.findUnique({
@@ -3962,7 +3988,13 @@ export class ProcessLineWebhookUseCase {
       acceptedRequest: { request, ownerEpoch: bound.epoch, conversationId: bound.id, accessFingerprint: this.deliveryAccess.get(event)!.fingerprint } });
     let response: LineAiTurnResponse;
     try { response = await this.aiGateway.requestLineTurn(request); }
-    catch { await this.deliverReply(event, 'ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่'); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_UNAVAILABLE', bound.owner.companyId); return; }
+    catch (error) {
+      const budget = knownAiBudgetRefusal(error);
+      if (budget && await this.answerAiCreditRefusal(event, bound.owner.companyId,
+        { budgetErrorCode: budget.code, ...(budget.budgetScope ? { budgetScope: budget.budgetScope } : {}) },
+        access.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))) return;
+      await this.deliverReply(event, 'ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่'); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_UNAVAILABLE', bound.owner.companyId); return;
+    }
     if (response.toolsInvoked.length || !response.semanticCoverage || response.semanticCoverage.length !== route.semanticSubrequests.length) {
       await this.deliverReply(event, 'ยังตรวจสอบคำตอบครบทุกส่วนไม่ได้ค่ะ กรุณาลองใหม่');
       await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_CONTRACT_UNSUPPORTED', bound.owner.companyId);
@@ -5950,6 +5982,7 @@ export class ProcessLineWebhookUseCase {
         substituteContext: open.substituteContext }));
       this.intakePlansV2.set(event, semanticRoutePlan);
       if (semanticRoutePlan.status !== 'ROUTED' || !semanticRoutePlan.semanticSubrequests?.length) {
+        if (await this.answerAiCreditRefusal(event, companyId, semanticRoutePlan, resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))) return;
         await this.deliverReply(event, isTransientLineAiRouteFailure(semanticRoutePlan.errorCode)
           ? LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY);
         await this.updateEventLog(event.webhookEventId, 'provider_unavailable', semanticRoutePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
@@ -6565,6 +6598,11 @@ export class ProcessLineWebhookUseCase {
       ...(substituteMode === 'primary' ? { substituteContext } : {}),
       busyWaitDeadlineMs,
     }));
+    // A bound chat ends a refused route just below (a retained selection, then the grant gate), so the
+    // credit refusal is answered here. An unbound chat keeps its deterministic fallbacks and is answered
+    // after them, further down.
+    if (this.boundConversations.has(event)
+      && await this.answerAiCreditRefusal(event, companyId, routePlan, resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))) return;
 
     const retainedTask = this.retainedTaskSources?.get(event);
     if (retainedTask) {
@@ -7431,20 +7469,10 @@ export class ProcessLineWebhookUseCase {
     // BUSY is deliberately NOT short-circuited: its lease frees between calls, so the turn keeps its
     // existing bounded wait and its existing ledger follow-up.
     if (routePlan.budgetErrorCode && routePlan.budgetErrorCode !== AI_BUDGET_REFUSAL_CODES.busy) {
-      const permanent = isAiBudgetPermanentRefusal(routePlan.budgetErrorCode);
-      await (permanent
-        ? this.deliverRequiredMessages(event, [buildAiBudgetExceededMessage(await this.isTrialTier(companyId), routePlan,
-          resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))])
-        : this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY));
-      await this.updateEventLog(
-        event.webhookEventId,
-        permanent
-          ? (routePlan.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded')
-          : 'provider_unavailable',
-        routePlan.budgetErrorCode,
-        companyId,
-        routePlan.budgetScope ? { budgetScope: routePlan.budgetScope } : undefined,
-      );
+      if (await this.answerAiCreditRefusal(event, companyId, routePlan, resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))) return;
+      await this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'provider_unavailable', routePlan.budgetErrorCode, companyId,
+        routePlan.budgetScope ? { budgetScope: routePlan.budgetScope } : undefined);
       return;
     }
 

@@ -21,6 +21,7 @@ import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
+import { PLAN_MANAGE_PERMISSION_KEY } from '../../../access-control/domain/logic/plan-manager.logic';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
 import { AiGatewayClient } from '../../infrastructure/ai-gateway.client';
@@ -69,15 +70,18 @@ const LEDGER_FEATURE_KEY = 'ai_line_assistant';
  */
 class LedgerEntryHeldError extends Error {}
 
-/** A refusal this drain can compose itself, with no model call and no read evidence. */
-type BudgetStaticRefusal = { code: AiBudgetRefusalCode; budgetScope?: AiBudgetScope };
+/** A refusal this drain can compose itself, with no model call and no read evidence.
+ *  `canManagePlan: false` is stored for a reader who may not buy (advisor spec §2.2), so the integrity
+ *  check below re-derives the words that reader was sent; a row saved without it keeps the buyer wording. */
+type BudgetStaticRefusal = { code: AiBudgetRefusalCode; budgetScope?: AiBudgetScope; canManagePlan?: false };
 type StaticRefusalReason = 'feature_disabled' | 'forbidden' | 'original_answer_unavailable' | AiBudgetRefusalCode | BudgetStaticRefusal;
 
 const isBudgetStaticRefusal = (value: unknown): value is BudgetStaticRefusal => {
   if (!value || typeof value !== 'object') return false;
-  const { code, budgetScope } = value as { code?: unknown; budgetScope?: unknown };
+  const { code, budgetScope, canManagePlan } = value as { code?: unknown; budgetScope?: unknown; canManagePlan?: unknown };
   return isAiBudgetPermanentRefusal(typeof code === 'string' ? code : undefined)
-    && (budgetScope === undefined || budgetScope === 'TOTAL' || budgetScope === 'CHAT' || budgetScope === 'OCR');
+    && (budgetScope === undefined || budgetScope === 'TOTAL' || budgetScope === 'CHAT' || budgetScope === 'OCR')
+    && (canManagePlan === undefined || canManagePlan === false);
 };
 const isStaticRefusalReason = (value: unknown): value is StaticRefusalReason =>
   value === 'feature_disabled' || value === 'forbidden' || value === 'original_answer_unavailable'
@@ -91,7 +95,7 @@ const staticRefusalText = (reason: StaticRefusalReason): string => {
   if (reason === 'feature_disabled' || reason === 'forbidden') return formatRefusal(reason);
   return typeof reason === 'string'
     ? formatAiBudgetRefusalNotice(reason)
-    : formatAiBudgetRefusalNotice(reason.code, reason.budgetScope);
+    : formatAiBudgetRefusalNotice(reason.code, reason.budgetScope, reason.canManagePlan !== false);
 };
 
 @Injectable()
@@ -287,6 +291,7 @@ export class DrainLineLedgerUseCase {
         return this.sendStaticRefusal(entry, claim, deliveryCount, {
           code: budget.code,
           ...(budget.budgetScope ? { budgetScope: budget.budgetScope } : {}),
+          ...(userContext.permissions.includes(PLAN_MANAGE_PERMISSION_KEY) ? {} : { canManagePlan: false as const }),
         });
       }
       if (entry.kind === 'turn') await this.finalizeSourceEvent(entry, status, budget.code, budget.budgetScope);

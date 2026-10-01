@@ -12,7 +12,7 @@ import type {
   ToolMeta,
 } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
-import { canonicalizeReadToolEnums, nameFilterGroundedInText, paymentStatusGroundedInText } from './read-tool-input';
+import { canonicalizeReadToolEnums, myPendingWorkQuestion, nameFilterGroundedInText, paymentStatusGroundedInText } from './read-tool-input';
 
 // Spec item 2(b): categoryName/vendorName are free text the model must have echoed from what the user
 // typed, not a value proven by an id/date/enum shape. Checked by normalized substring, not raw equality.
@@ -81,7 +81,9 @@ export type CompactSimpleReadRejection =
   | 'required_filter_missing'
   | 'prepared_contract_invalid'
   // tuning-5b (B3): the deterministic why/explain/compare/advice guard — see WHY_COMPARE_ADVICE_PATTERN.
-  | 'why_compare_advice_question';
+  | 'why_compare_advice_question'
+  // Advisor Q2: the caller's own pending work reads several queues — see myPendingWorkQuestion.
+  | 'my_pending_work_question';
 
 export type CompactDecisionResult = {
   semanticSubrequests: LineAiSemanticSubrequestV2[];
@@ -320,6 +322,8 @@ function simpleReadPlan(input: {
   // tuning-5b (B3): checked before the shape/tool checks below so a why/compare/advice question never
   // takes the fast lane regardless of how the rest of the payload looks.
   if (WHY_COMPARE_ADVICE_PATTERN.test(messageText)) return { rejection: 'why_compare_advice_question' };
+  // Advisor Q2 (owner 2026-09-30): "งานค้างของฉัน" is never Q1's one-tool closing checklist.
+  if (myPendingWorkQuestion(messageText)) return { rejection: 'my_pending_work_question' };
   // tuning-5b (B1c/B3a): subject/agent are no longer required — derived below from the tool's own
   // registry entry instead of trusted from the model (run 4: 7 reimbursement.get_summary proposals sent
   // agent "general", 8 sent none; both used to fail here for no safety reason). Confidence floor lowered

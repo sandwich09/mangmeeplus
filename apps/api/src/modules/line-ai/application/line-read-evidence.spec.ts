@@ -361,6 +361,15 @@ describe('read memory extraction (spec §4 R-M1)', () => {
     assert.equal(memory.shownItems, undefined);
   });
 
+  it('expense.list_substitute_receipts_to_sign: remembers the list only — no status basis, filter or item to inherit', () => {
+    const memory = readMemoryEvidence({
+      toolName: 'expense.list_substitute_receipts_to_sign', status: 'ok', asOf, sourceRefs: [],
+      data: { accessScope: 'own', total: 1, asPayer: { count: 1, items: [{ documentNumber: 'SRC-1', payeeName: 'ร้านป้าแดง', amount: '350' }] } },
+      queryApplied: { statusBasis: 'waiting_for_caller_signature_or_approval', filters: { role: 'payer' } },
+    } as any)!;
+    assert.deepEqual(memory, { tool: 'expense.list_substitute_receipts_to_sign', answerShape: 'list', asOf });
+  });
+
   it('reimbursement.list_pending_approvals: shownItems in the tool\'s own order, no queryApplied needed', () => {
     const memory = readMemoryEvidence({
       toolName: 'reimbursement.list_pending_approvals', status: 'ok', asOf, sourceRefs: [],
@@ -374,6 +383,21 @@ describe('read memory extraction (spec §4 R-M1)', () => {
       { ordinal: 1, id: 'r1', label: 'สมชาย', date: '2026-08-05' },
       { ordinal: 2, id: 'r2', label: 'สมหญิง', date: '2026-08-06' },
     ]);
+  });
+
+  it('reimbursement.get_approval_backlog: the listed claims by document number, never its status basis or amounts', () => {
+    const memory = readMemoryEvidence({
+      toolName: 'reimbursement.get_approval_backlog', status: 'ok', asOf, sourceRefs: [],
+      data: { total: 2, byApprover: [], sharedPile: null, desks: [], items: [
+        { id: 'r1', documentNumber: 'RB-001', requesterName: 'สมชาย', amount: '1500.00', waitingOn: 'สมศรี', submittedOn: '2026-08-05', waitDays: 3 },
+        { id: 'r2', documentNumber: null, requesterName: 'สมหญิง', amount: '2500.00', waitingOn: 'ฝ่ายการเงิน', submittedOn: '2026-08-06', waitDays: 2 },
+      ] },
+      queryApplied: { timezone: 'Asia/Bangkok', dateBasis: 'submitted_or_approved_thai_day', statusBasis: 'waiting_claims', dataset: 'reimbursement_requests', accessScope: 'own' },
+    } as any)!;
+    assert.deepEqual(memory, { tool: 'reimbursement.get_approval_backlog', answerShape: 'list', asOf, shownItems: [
+      { ordinal: 1, id: 'r1', label: 'RB-001', date: '2026-08-05' },
+      { ordinal: 2, id: 'r2', label: 'ใบเบิก', date: '2026-08-06' },
+    ] });
   });
 
   it('reimbursement.get_summary: no shownItems, single_metric', () => {

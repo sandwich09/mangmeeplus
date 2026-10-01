@@ -176,6 +176,13 @@ describe('item 2: LINE approve/reject/pay/confirm/void action boundary (spec §1
     assert.equal(lineActionBoundaryReplyText('ขอดูใบเบิกที่จ่ายแล้วหน่อย', [], 'th'), undefined);
   });
 
+  it('does not fire for a backlog question naming the approver or who has not approved yet (advisor S3)', () => {
+    assert.equal(lineActionBoundaryReplyText('สรุปใบเบิกที่ค้างให้หน่อย แยกตามคนอนุมัติ', APPROVER, 'th'), undefined);
+    assert.equal(lineActionBoundaryReplyText('ช่วยดูหน่อยว่าใครยังไม่อนุมัติใบเบิก', APPROVER, 'th'), undefined);
+    assert.equal(lineActionBoundaryReplyText('ขอดูใบเบิกแยกตามผู้อนุมัติหน่อย', APPROVER, 'th'), undefined);
+    assert.ok(lineActionBoundaryReplyText('ช่วยอนุมัติใบเบิกที่ยังไม่อนุมัติหน่อย', APPROVER, 'th')?.includes('LINE ไม่ได้'));
+  });
+
   it('still fires when a real action verb accompanies the state phrase (C2)', () => {
     const text = lineActionBoundaryReplyText('ช่วยอนุมัติใบเบิกที่รออนุมัติหน่อย', APPROVER, 'th')!;
     assert.ok(text.includes('LINE ไม่ได้'), text);
@@ -258,5 +265,99 @@ describe('scopePolicyOverride: combined entry point and kind exemption', () => {
   it('a company with the feature entitled is never blocked', () => {
     const override = scopePolicyOverride('ขอดูยอดขายเดือนนี้หน่อยจ้ะ', 'read', [], ['expenses', 'sales_documents'], 'th');
     assert.equal(override, undefined);
+  });
+
+  // Advisor S2a (owner 2026-09-30 ~16:00; eval r5 P-31): "กำไรต่อแพ็กเกจ" routed to the package catalog is
+  // about MangmeePlus's own packages, not this shop's P&L — the catalog answer, not the unsold-module line.
+  it('a package question routed to a package read is not an unsold-module question', () => {
+    const text = 'มั่งมีมีต้นทุน AI ต่อใบเสร็จเท่าไหร่ กำไรต่อแพ็กเกจเท่าไหร่';
+    assert.equal(scopePolicyOverride(text, 'read', [], ['expenses'], 'th', 'billing.get_package_catalog'), undefined);
+    assert.equal(scopePolicyOverride('ร้านรายได้ 1 ล้านใช้แพคเกจไหนได้บ้าง', 'read', [], ['expenses'], 'th', 'billing.get_package_catalog'), undefined);
+    // The hint alone never lifts the reply: the clause must name a package or MangmeePlus, and any other hint keeps it.
+    assert.equal(scopePolicyOverride('กำไรเดือนนี้เท่าไหร่', 'read', [], ['expenses'], 'th', 'billing.get_package_catalog')?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+    assert.equal(scopePolicyOverride(text, 'read', [], ['expenses'], 'th', 'expense.list_recent')?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+    assert.equal(scopePolicyOverride(text, 'read', [], ['expenses'], 'th')?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+  });
+});
+
+// Advisor S1 (spec §2.6, §4.3 S3): signing or approving a substitute receipt stays on the web.
+describe('advisor S1: signing or approving a substitute receipt from LINE', () => {
+  const PAYER = ['expense.read_own', 'expense.read_related'];
+  const APPROVER = [...PAYER, 'expense.confirm'];
+
+  it('a sign request — with or without naming the document — says why it is web-only and links the page', () => {
+    for (const text of ['เซ็นให้หน่อย', 'ช่วยเซ็นใบรับรองแทนใบเสร็จให้หน่อยค่ะ', 'ช่วยลงนามใบรับรองนี้หน่อย', 'ช่วยรับรองใบรับรองให้หน่อยนะ']) {
+      const override = scopePolicyOverride(text, 'write', PAYER, ['expenses'], 'th');
+      assert.equal(override?.reasonCode, 'LINE_ACTION_NOT_SUPPORTED', text);
+      assert.ok(override!.text.includes('ลงลายมือชื่อใบรับรองแทนใบเสร็จทำผ่าน LINE ไม่ได้'), override!.text);
+      assert.ok(override!.text.includes('ก่อนเซ็น'), 'gives the reason, not just the rule');
+      assert.ok(override!.text.includes('หน้าใบรับรองแทนใบเสร็จบนเว็บ'), override!.text);
+      assert.equal(override!.webPage, 'substitute-receipts', text);
+    }
+  });
+
+  it('a bare imperative that opens with the verb is a request even without a politeness marker', () => {
+    for (const text of ['อนุมัติใบรับรองนี้เลย', 'เซ็นใบรับรองแทนใบเสร็จอันนี้เลย']) {
+      assert.equal(scopePolicyOverride(text, 'write', APPROVER, ['expenses'], 'th')?.webPage, 'substitute-receipts', text);
+    }
+    // Claims and expenses keep their request-marker rule unchanged.
+    assert.equal(lineActionBoundaryReplyText('อนุมัติใบเบิกนี้เลย', ['reimbursement.approve'], 'th'), undefined);
+    // A statement that does not open with the verb is still no command.
+    assert.equal(scopePolicyOverride('ใบรับรองของฉันอนุมัติแล้วหรือยัง', 'read', APPROVER, ['expenses'], 'th'), undefined);
+  });
+
+  it('an approve request needs expense.confirm; without it the role limit is named and no link is offered', () => {
+    const approver = scopePolicyOverride('ช่วยอนุมัติใบรับรองนี้ให้หน่อย', 'write', APPROVER, ['expenses'], 'th');
+    assert.ok(approver!.text.startsWith('การอนุมัติใบรับรองแทนใบเสร็จทำผ่าน LINE ไม่ได้'), approver!.text);
+    assert.equal(approver!.webPage, 'substitute-receipts');
+    const staff = scopePolicyOverride('ช่วยอนุมัติใบรับรองนี้ให้หน่อย', 'write', PAYER, ['expenses'], 'th');
+    assert.ok(staff!.text.startsWith('บทบาทของคุณยังไม่มีสิทธิ์อนุมัติใบรับรองแทนใบเสร็จ'), staff!.text);
+    assert.equal(staff!.webPage, undefined);
+  });
+
+  it('a question about the queue — even with a request marker — is never read as a command', () => {
+    for (const text of [
+      'ใบรับรองใบเสร็จกี่ใบที่ฉันต้องเซ็น', 'มีใบรับรองแทนใบเสร็จรอฉันเซ็นกี่ใบ', 'มีใบรับรองรอฉันอนุมัติไหม',
+      'ช่วยดูหน่อยว่ามีใบรับรองที่ต้องเซ็นไหม', 'ช่วยบอกหน่อยว่าใบรับรองรอเซ็นกี่ใบ', 'ช่วยดูใบรับรองที่รอฉันอนุมัติหน่อย',
+      'ขอดูใบรับรองที่รอลงนามหน่อย', 'ช่วยอธิบายหน่อยว่าใบรับรองแทนใบเสร็จคืออะไร',
+    ]) assert.equal(scopePolicyOverride(text, 'read', APPROVER, ['expenses'], 'th'), undefined, text);
+  });
+
+  it('never fires for a saved-signature request, signing in, or a claim/expense sentence', () => {
+    for (const text of ['ช่วยส่งลายเซ็นให้หน่อย', 'ช่วยอัปโหลดลายเซ็นหน่อยค่ะ', 'ช่วยบอกวิธีลงชื่อเข้าใช้หน่อย']) {
+      assert.equal(lineActionBoundaryReplyText(text, APPROVER, 'th'), undefined, text);
+    }
+    // A signing word beside a claim is the claim's own rule (or none) — never the substitute page.
+    assert.equal(scopePolicyOverride('ช่วยเซ็นอนุมัติใบเบิกให้หน่อย', 'write', ['reimbursement.approve'], ['expenses'], 'th')?.webPage, undefined);
+    assert.equal(scopePolicyOverride('ช่วยเซ็นใบเบิกให้หน่อย', 'write', APPROVER, ['expenses'], 'th'), undefined);
+  });
+});
+
+// Advisor S0 (R1 integrated G run 2026-10-01, G-09/G-16/G-24): stock asked without the exact word got a planner
+// sentence or the dead-end line. The fixed reply and its wording are unchanged; only what counts as stock widened.
+describe('advisor S0: stock asked without the exact word still gets the fixed unsold-module reply', () => {
+  const FIXED = 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องสต็อกสินค้าคงเหลือค่ะ ตอนนี้น้องมั่งมีช่วยเรื่องรายจ่ายและใบเบิกได้ค่ะ เช่น ลองถามว่า "ค่าใช้จ่ายเดือนนี้เท่าไหร่" หรือ "ใบเบิกที่รออนุมัติมีกี่รายการ" ได้เลยค่ะ';
+
+  for (const text of ['ของอะไรใกล้หมดบ้าง', 'ร้านเรามีของเหลือเท่าไหร่', 'สต๊อกเหลือเท่าไหร่อะ', 'สินค้าคงเหลือมีเท่าไหร่',
+    'น้ำปลาเหลือกี่ขวด', 'เหลือกี่ชิ้น', 'เช็คสตอกต่ำที', 'สินค้าที่เหลือมีอะไรบ้าง', 'ของใกล้จะหมดมีอะไรบ้าง', 'Stock เหลือเท่าไหร่']) {
+    it(`reads "${text}" as a stock question`, () => {
+      assert.equal(unsoldModuleTopicFor(text)?.featureKey, 'inventory');
+      assert.equal(scopePolicyOverride(text, 'read', [], ['expenses', 'reimbursement'], 'th')?.text, FIXED);
+    });
+  }
+
+  // "เหลือ" and "ใกล้หมด" also describe a receipt quota, a credit, a budget or what is left to pay; "เจ้าของ" and
+  // "เหลือง" only contain the letters.
+  for (const text of ['ใบเสร็จเหลือกี่ใบ', 'เหลือใบเสร็จอีกกี่ใบคะ', 'โควตาใบเสร็จของร้านใกล้หมดหรือยัง', 'แพ็กเกจของเราใกล้หมดอายุหรือยัง',
+    'เครดิตเหลือเท่าไหร่', 'ใบเสร็จของเหลืองทองบันทึกหรือยัง', 'เงินสำรองเจ้าของเหลือเท่าไหร่', 'งบของเดือนนี้เหลือเท่าไหร่',
+    'ซื้อของหมดไปเท่าไหร่', 'ใบเบิกเหลือค้างกี่ใบ', 'ค่าเช่าคลังสินค้าเดือนนี้เท่าไหร่', 'ส่วนที่เหลือจ่ายพรุ่งนี้']) {
+    it(`never reads "${text}" as a stock question`, () => {
+      assert.equal(unsoldModuleTopicFor(text), undefined);
+    });
+  }
+
+  it('still answers general knowledge about stock, and a shop that has the module', () => {
+    assert.equal(scopePolicyOverride('ของเหลือควรนับบ่อยแค่ไหน', 'general', [], ['expenses'], 'th'), undefined);
+    assert.equal(scopePolicyOverride('ของอะไรใกล้หมดบ้าง', 'read', [], ['expenses', 'inventory'], 'th'), undefined);
   });
 });

@@ -1,5 +1,5 @@
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PartnerController } from './partner.controller';
@@ -155,6 +155,11 @@ function harness(options: Options = {}) {
 }
 
 describe('GET /system/partners/:id/timeline — §8', () => {
+  // The timeline derives its last line from the clock and the controller passes none, so "now" is
+  // pinned inside the September these fixtures describe: a term ending 2026-10-01 is still live.
+  beforeEach(() => mock.timers.enable({ apis: ['Date'], now: NOW }));
+  afterEach(() => mock.timers.reset());
+
   it('distinguishes paid package fulfillment from an Admin approval in the shop history', async () => {
     const h=harness({packageChanges:[
       {requestedTierKey:'PRO_999',status:'APPROVED',paymentState:'STRIPE_APPLIED',createdAt:new Date('2026-09-15T05:00:00Z')},
@@ -216,6 +221,10 @@ describe('GET /system/partners/:id/timeline — §8', () => {
 });
 
 describe('the timeline last line: why the assistant is refusing right now', () => {
+  // Same pin as §8: `liveTerm` is live only until 2026-10-01.
+  beforeEach(() => mock.timers.enable({ apis: ['Date'], now: NOW }));
+  afterEach(() => mock.timers.reset());
+
   const refusalOf = async (options: Options) => {
     const { entries } = await harness(options).controller.partnerTimeline('co-1');
     return entries.find((entry) => entry.kind === 'ai_refusal')?.detail;
