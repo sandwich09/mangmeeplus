@@ -347,6 +347,9 @@ export class ApproveReimbursementUseCase {
 
   /** `payoutVerifiedVersion`: the approver's "ตรวจบัญชีแล้ว" for the account version they looked at. */
   async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string, payoutVerifiedVersion?: unknown): Promise<ReimbursementRequestDetail> {
+    // The comment stays on the step, which every reader of the claim is shown, and in the audit row.
+    // An approver has just checked an account: its number is not typed here.
+    if (looksLikeAccountNumber(comment)) throw new BadRequestException('note_contains_account_number');
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot approve from status ${req.status}`);

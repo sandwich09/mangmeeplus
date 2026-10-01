@@ -569,6 +569,9 @@ export class VoidReimbursementPaymentUseCase {
   async execute(ctx: RequestContext, requestId: string, paymentId: string, input: VoidReimbursementPaymentInput): Promise<ReimbursementRequestDetail> {
     if (!ctx.permissions.includes('reimbursement.payment.void')) throw new ForbiddenException('Missing permission: reimbursement.payment.void');
     if (!input.reason || input.reason.trim() === '') throw new BadRequestException('void_reason_required');
+    // The reason is shown on the payment row to every reader of the claim and kept in the audit row,
+    // and "transferred into the wrong account" is where a number gets typed: no account number there.
+    if (looksLikeAccountNumber(input.reason)) throw new BadRequestException('note_contains_account_number');
 
     // With its relations: a replay of a void answers from this read, and that answer is a claim detail
     // like any other (steps, payments, signatures), not a header with empty lists.

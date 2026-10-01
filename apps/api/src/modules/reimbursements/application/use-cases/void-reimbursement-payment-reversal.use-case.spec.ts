@@ -61,6 +61,18 @@ describe('VoidReimbursementPaymentUseCase (GAP-02 true reversal)', () => {
     assert.ok(detail);
     assert.deepEqual(repo.voidPaymentTrueReversal.mock.calls[0].arguments, ['co-1', 'rb-1', 'pay-1', 'fin-1', 'จ่ายผิดบัญชี', undefined, 'req-1']);
   });
+  // Final review W1: the reason is shown on the payment row to every reader of the claim, and kept in the audit row.
+  it('refuses a reason that carries an account number, before the claim is read, and takes an ordinary one', async () => {
+    for (const reason of ['โอนเข้าบัญชี 012-3-45678-9 ผิด', 'ต้องโอนเข้า 0812345678', 'เลขบัญชีที่ถูกคือ ๑๒๓๔๕๖๗๘๙๐']) {
+      await assert.rejects(make().execute(ctx, 'rb-1', 'pay-1', { reason }), (error: any) => error.getStatus() === 400 && error.message === 'note_contains_account_number', reason);
+    }
+    assert.deepEqual([repo.findRequestById.mock.callCount(), repo.voidPaymentTrueReversal.mock.callCount()], [0, 0]);
+    // What a payer really writes: the last four digits, the claim's own number, an amount.
+    for (const reason of ['โอนผิดบัญชี ที่ถูกลงท้าย 6789', 'ซ้ำกับใบ RB-202609-0003', 'โอนเกิน 1500 บาท']) {
+      await make().execute(ctx, 'rb-1', 'pay-1', { reason });
+    }
+    assert.equal(repo.voidPaymentTrueReversal.mock.callCount(), 3);
+  });
   it('propagates transaction failure without emitting a second event or committing a number', async () => {
     repo.voidPaymentTrueReversal = mock.fn(async () => { throw new UnprocessableEntityException('injected rollback'); });
     await assert.rejects(make().execute(ctx, 'rb-1', 'pay-1', { reason: 'ผิดพลาด' }), /injected rollback/);

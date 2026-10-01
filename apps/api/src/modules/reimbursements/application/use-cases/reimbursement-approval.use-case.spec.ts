@@ -240,6 +240,19 @@ describe('ApproveReimbursementUseCase', () => {
     });
   });
 
+  // Final review W1: the comment is kept on the step, which every reader of the claim is shown, and in the audit row.
+  it('refuses a comment that carries an account number, before anything is decided, and takes an ordinary one', async () => {
+    const events: any[] = [];
+    const req = baseRequest();
+    for (const comment of ['โอนเข้า 012-3-45678-9 ได้เลย', 'บัญชีใหม่ 1234567890']) {
+      await assert.rejects(approveUC(fakeRepo(req, FINANCE_REVIEW_ON, events)).execute(ctx(), 'rb-1', comment),
+        (error: any) => error.getStatus() === 400 && error.message === 'note_contains_account_number', comment);
+    }
+    assert.deepEqual([req.status, req.approvalSteps[0].status, events], ['PENDING_APPROVAL', 'PENDING', []]);
+    const approved = await approveUC(fakeRepo(req, FINANCE_REVIEW_ON, events)).execute(ctx(), 'rb-1', 'ตรวจกับใบเสร็จแล้ว บัญชีลงท้าย 6789');
+    assert.equal(approved.status, 'FINANCE_REVIEW');
+  });
+
   it('rejects approving a non-pending request', async () => {
     const req = baseRequest({ status: 'APPROVED' });
     const uc = approveUC(fakeRepo(req));

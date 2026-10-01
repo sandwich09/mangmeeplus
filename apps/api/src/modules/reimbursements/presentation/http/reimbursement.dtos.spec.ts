@@ -6,7 +6,7 @@ import {
   ApproveReimbursementDto, AttachPaymentSlipDto, CancelReimbursementDto, CompletePaymentSlipUploadDto, CreateReimbursementRequestDto, InitPaymentSlipUploadDto,
   LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
   ReimbursementInternalNoteDto, SetMemberPayoutAccountDto, SubmitReimbursementDto, UpdateReimbursementDraftDto,
-  RequestPayoutCorrectionDto, SubmitPayoutCorrectionDto,
+  RequestPayoutCorrectionDto, SubmitPayoutCorrectionDto, RejectReimbursementDto, VoidReimbursementPaymentDto,
 } from './reimbursement.dtos';
 
 // The exact global-pipe configuration main.ts registers: this is the runtime gate
@@ -40,6 +40,28 @@ describe('CancelReimbursementDto', () => {
     await rejects(CancelReimbursementDto, { reason: 'ซื้อซ้ำ', status: 'CANCELLED' });
     await rejects(CancelReimbursementDto, { reason: 42 });
     await rejects(CancelReimbursementDto, { reason: 'x'.repeat(501) });
+  });
+});
+
+// Final review W1: the reject and void bodies reached their use cases unvalidated (`@Body() body: <a contracts type>`).
+describe('RejectReimbursementDto and VoidReimbursementPaymentDto', () => {
+  it('take a bounded reason, and refuse a forged field, a non-string and an oversized reason', async () => {
+    const rejected = await pipe.transform({ reason: 'ใบเสร็จไม่ชัด', approvalSnapshotHash: 'a'.repeat(32), payoutCorrectionReasonCode: 'ACCOUNT_NAME_MISMATCH' },
+      { type: 'body', metatype: RejectReimbursementDto });
+    assert.deepEqual([rejected.reason, rejected.payoutCorrectionReasonCode], ['ใบเสร็จไม่ชัด', 'ACCOUNT_NAME_MISMATCH']);
+    assert.equal((await pipe.transform({ reason: 'โอนผิดบัญชี' }, { type: 'body', metatype: VoidReimbursementPaymentDto })).reason, 'โอนผิดบัญชี');
+    // That a reason is given at all stays the use case's refusal, with the code each screen has words for.
+    await pipe.transform({}, { type: 'body', metatype: RejectReimbursementDto });
+    await pipe.transform({}, { type: 'body', metatype: VoidReimbursementPaymentDto });
+    for (const metatype of [RejectReimbursementDto, VoidReimbursementPaymentDto]) {
+      await rejects(metatype, { reason: 'x'.repeat(501) });
+      await rejects(metatype, { reason: 42 });
+      await rejects(metatype, { reason: ['ก', 'ข'] });
+      await rejects(metatype, { reason: 'ซ้ำ', status: 'REJECTED' });
+      await rejects(metatype, { reason: 'ซ้ำ', voidedByUserId: 'someone-else' });
+    }
+    await rejects(RejectReimbursementDto, { reason: 'ซ้ำ', payoutCorrectionReasonCode: 'x'.repeat(41) });
+    await rejects(VoidReimbursementPaymentDto, { reason: 'ซ้ำ', payoutCorrectionReasonCode: 'OTHER' });
   });
 });
 
