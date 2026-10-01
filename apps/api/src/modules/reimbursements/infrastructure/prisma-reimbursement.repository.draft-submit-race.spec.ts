@@ -1265,6 +1265,41 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     await repos[0]!.beginApprovalDecisionAtomic(approval(second.pending));
   });
 
+  // "บันทึกเป็นบัญชีประจำ" on the claim form writes the member's default and the draft that follows it.
+  // One without the other is a draft following a default that does not exist, or a default nobody
+  // asked the claim to follow: both are written, or neither.
+  it('saves the default account and the draft that follows it together, or neither', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    await repos[0]!.removeMemberPayoutAccount(companyId, requester, async () => undefined);
+    const saveDefault = (fail: boolean) => ({
+      write: { mode: 'DEFAULT' as const },
+      onPersisted: async (tx: any) => {
+        await repos[0]!.setMemberPayoutAccount(
+          { companyId, userId: requester, actorUserId: requester, payoutMethod: 'BANK_TRANSFER', destination: seal(KBANK) },
+          async () => { if (fail) throw new Error('the audit row or the notice could not be written'); }, tx);
+      },
+    });
+
+    await assert.rejects(draft('saved as default, failing', saveDefault(true)), /could not be written/);
+    assert.deepEqual([await db.reimbursementRequest.count({ where: { companyId, reason: 'saved as default, failing' } }),
+      await repos[0]!.findMemberPayoutAccount(companyId, requester)], [0, null]);
+
+    const created = await draft('saved as default', saveDefault(false));
+    assert.deepEqual([created.payoutMethod, (await repos[0]!.findMemberPayoutAccount(companyId, requester))?.accountLast4], [undefined, '5678']);
+    // The same on a draft edit: a failed default leaves the draft exactly as it was.
+    await assert.rejects(repos[0]!.updateDraftRequest(companyId, created.id, created.updatedAt, { reason: 'edited' }, undefined, {
+      write: { mode: 'DEFAULT' },
+      onPersisted: async (tx: any) => {
+        await repos[0]!.setMemberPayoutAccount({ companyId, userId: requester, actorUserId: requester, payoutMethod: 'BANK_TRANSFER', destination: seal(SCB) },
+          async () => { throw new Error('the audit row or the notice could not be written'); }, tx);
+      },
+    }), /could not be written/);
+    const untouched = (await repos[0]!.findRequestById(companyId, created.id))!;
+    assert.deepEqual([untouched.reason, untouched.updatedAt.getTime(), (await repos[0]!.findMemberPayoutAccount(companyId, requester))?.accountLast4],
+      ['saved as default', created.updatedAt.getTime(), '5678']);
+  });
+
   // Payout impact audit M6: an account can be set for an employee who is still a draft, and
   // "ลบพนักงานที่ยังกรอกไม่เสร็จ" hard-deletes the membership. The account must go with it, not block it.
   it('lets a draft employee be deleted together with the payout account set for them', async (t) => {
