@@ -138,7 +138,7 @@ describe('what a claim says about where the money goes back to', () => {
       assert.equal(logic.claimPayoutSubmitBlock({ status }), null);
       for (const viewer of [ids.requester, ids.approver]) {
         const html = card(claim({ status, payout: undefined }), viewer);
-        assert.deepEqual(visible(html), ['การรับเงินคืน', 'ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีข้อมูลบัญชีรับเงินในระบบ'], `${status} ${viewer}`);
+        assert.deepEqual(visible(html), ['การรับเงินคืน', 'ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีบัญชีที่ผ่านการอนุมัติในใบ'], `${status} ${viewer}`);
         assert.doesNotMatch(html, /<button/, 'nothing to reveal');
       }
     }
@@ -247,9 +247,12 @@ describe('the full number: offered only when the server allows it, never in the 
   it('takes the flag from the server and asks the server for the number: no other source', () => {
     const screen = read('./ReimbursementPayout.tsx');
     assert.match(screen, /canReveal=\{payout\.canRevealAccountNumber === true\}/);
-    assert.match(screen, /onReveal=\{async \(\) => \(await revealClaimPayoutAccount\(companyId, detail\.id\)\)\.accountNumber\}/);
+    // One call for the claim's account and for a legacy claim's default: the server decides which it answers with.
+    assert.match(screen, /const reveal = async \(\) => \(await revealClaimPayoutAccount\(companyId, detail\.id\)\)\.accountNumber;/);
+    assert.match(screen, /canReveal=\{payout\.canRevealAccountNumber === true\}\s+last4=\{payout\.accountLast4\} onReveal=\{reveal\}/);
+    assert.equal(screen.match(/revealClaimPayoutAccount\(/g)?.length, 1);
     // A default account is revealed to its owner alone; an editor of someone else's account gets no button.
-    assert.match(screen, /canReveal=\{own\}\s+onReveal=\{async \(\) => \(await revealMyPayoutAccount\(companyId\)\)\.accountNumber\}/);
+    assert.match(screen, /canReveal=\{own\}\s+last4=\{account\.accountLast4\} onReveal=\{async \(\) => \(await revealMyPayoutAccount\(companyId\)\)\.accountNumber\}/);
     assert.match(screen, /const own = !memberUserId;/);
     assert.doesNotMatch(screen, /localStorage|sessionStorage|console\./);
     // The edit form always starts empty: a saved number is never loaded back into a field.
@@ -281,7 +284,12 @@ describe('the full number: offered only when the server allows it, never in the 
     // the effect then drops it from memory when the claim, the account or the right changes.
     assert.match(screen, /const shown = shownAccountNumber\(revealed, revealKey, canReveal\);/);
     assert.match(screen, /useEffect\(\(\) => \{ setRevealed\(null\); setError\(null\); \}, \[revealKey, masked, canReveal\]\);/);
-    assert.match(screen, /const accountNumber = await onReveal\(\); setRevealed\(\{ revealKey, accountNumber \}\);/);
+    // The answer is the account as it is now. On a page loaded before the account changed it is the
+    // number of another account than the bank and name on the card: it is not shown, and the page says to open the claim again.
+    assert.match(screen, /const accountNumber = await onReveal\(\);\s+if \(revealedNumberMatchesCard\(accountNumber, last4\)\) setRevealed\(\{ revealKey, accountNumber \}\);\s+else setError\(errorMessage\('payout_destination_changed'\)\);/);
+    assert.deepEqual([logic.revealedNumberMatchesCard('0123456789', '6789'), logic.revealedNumberMatchesCard('0812345678', '5678')], [true, true]);
+    for (const [number, last4] of [['0123456780', '6789'], ['6789012345', '6789'], ['789', '6789']] as const) assert.equal(logic.revealedNumberMatchesCard(number, last4), false, number);
+    assert.equal(translateApiError('payout_destination_changed'), 'บัญชีรับเงินของใบนี้เปลี่ยนไปจากที่แสดงไว้ กรุณาเปิดใบใหม่ ตรวจบัญชีที่แสดงล่าสุด แล้วทำรายการอีกครั้ง');
     // The claim and its account version, and the default as last saved, are what a number belongs to.
     assert.match(screen, /revealKey=\{`\$\{detail\.id\}:\$\{payout\.version \?\? ''\}`\}/);
     assert.match(screen, /revealKey=\{`\$\{companyId\}:\$\{account\.userId\}:\$\{account\.updatedAt\}`\}/);

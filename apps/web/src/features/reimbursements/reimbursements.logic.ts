@@ -1,8 +1,9 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
-  type ReimbursementHubBucket, type ReimbursementHubSummary,
+  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, looksLikeAccountNumber, maskedPayoutAccountNumber, reimbursementIncurredDateError,
+  reimbursementPaymentSlipRequired, todayCivilDate,
+  type ReimbursementHubBucket, type ReimbursementHubSummary, type ReimbursementPaymentRule,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
@@ -11,7 +12,10 @@ import {
   canUploadSignedCopy, canVoidRecordedPayment, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
   type ClaimSignatureRole,
 } from './reimbursements.model';
-import { payoutComparableText } from './reimbursement-payout.logic';
+import {
+  MISMATCH_REASON_HAS_ACCOUNT_NUMBER, MISMATCH_REASON_REQUIRED, PAID_DIFFERENTLY_LABEL, PAYER_CONFIRMATION_REQUIRED, payoutComparableText,
+  type PaymentFormPayout,
+} from './reimbursement-payout.logic';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
@@ -122,6 +126,8 @@ export function validatePaymentForm(input: {
   paymentMethod: string;
   paymentReference?: string;
   hasSlip?: boolean;
+  /** What the claim asks of this payment (the API's own rule) and what the payer gave. Omitted: nothing is asked. */
+  payout?: { rule: ReimbursementPaymentRule; confirmed: boolean; mismatchReason: string };
 }): string | null {
   if (!input.paymentMethod) return 'กรุณาเลือกวิธีจ่าย';
   const paid = Number(input.paidAmount);
@@ -134,6 +140,14 @@ export function validatePaymentForm(input: {
   }
   // The API's own words for the same refusal, so the form and the server say one thing.
   if (reimbursementPaymentSlipRequired(input.paymentMethod) && !input.hasSlip) return translateApiError('payment_slip_required');
+  // Spec §12.4, asked in the API's order: the confirmation of the account, then the reason for
+  // another method than the one asked for. The reason is shown on the payment row, so it takes the
+  // API's own guard against an account number.
+  if (input.payout?.rule.payoutConfirmation === 'required' && !input.payout.confirmed) return PAYER_CONFIRMATION_REQUIRED;
+  if (input.payout?.rule.mismatchReasonRequired) {
+    if (!input.payout.mismatchReason.trim()) return MISMATCH_REASON_REQUIRED;
+    if (looksLikeAccountNumber(input.payout.mismatchReason)) return MISMATCH_REASON_HAS_ACCOUNT_NUMBER;
+  }
   return null;
 }
 
@@ -251,6 +265,9 @@ export type PaymentFormSave =
  * - The session's key is made on the first press and kept: a press after a lost answer is the same
  *   payment to the API, never a second one.
  * - A second press while the first is still running does nothing: no second upload, no second request.
+ * - What the payer says about the account goes with it (spec §12.3): the account version the page
+ *   shows, always, so a page loaded before the account changed is refused; the confirmation, only
+ *   for the account it was ticked for; the reason, only when the method differs from the one asked for.
  */
 export async function savePaymentForm(
   input: {
@@ -258,6 +275,10 @@ export async function savePaymentForm(
     outstandingAmount: string;
     slip: PaymentFormSlip | null;
     session: PaymentFormSession;
+    /** The payout side of the form for the method chosen (`paymentFormPayout`). Omitted: the claim asks nothing of it. */
+    payout?: PaymentFormPayout;
+    /** What the payer ticked and typed: the key of the account the tick was given for, and the reason. */
+    payer?: { confirmedFor: string; mismatchReason: string };
   },
   deps: {
     uploadSlip: (file: File) => Promise<string>;
@@ -268,9 +289,15 @@ export async function savePaymentForm(
     onBusy?: (busy: boolean) => void;
   },
 ): Promise<PaymentFormSave> {
-  const { form, slip, session } = input;
+  const { form, slip, session, payout } = input;
   if (session.saving) return { status: 'ignored' };
-  const invalid = validatePaymentForm({ ...form, outstandingAmount: input.outstandingAmount, hasSlip: slip !== null });
+  // A tick counts only for the account it was given for, and only while that account is the one to confirm.
+  const confirmed = !!payout?.confirmation && input.payer?.confirmedFor === payout.confirmation.key;
+  const mismatchReason = input.payer?.mismatchReason ?? '';
+  const invalid = validatePaymentForm({
+    ...form, outstandingAmount: input.outstandingAmount, hasSlip: slip !== null,
+    ...(payout && { payout: { rule: payout.rule, confirmed, mismatchReason } }),
+  });
   if (invalid) return { status: 'refused', text: invalid };
 
   session.saving = true;
@@ -287,10 +314,12 @@ export async function savePaymentForm(
     }
     session.idempotencyKey ??= deps.newIdempotencyKey();
     try {
-      // Phase 1 seam: the verified payout account's version and the payer's confirmation join this body.
       await deps.recordPayment({
         ...form, paidAt: new Date(form.paidAt).toISOString(), paymentReference: form.paymentReference || undefined,
         slipAttachmentId, idempotencyKey: session.idempotencyKey,
+        ...(payout?.version !== undefined && { payoutDestinationVersion: payout.version }),
+        ...(confirmed && { payoutConfirmed: true, ...(payout.confirmation!.defaultToken && { payoutDefaultToken: payout.confirmation!.defaultToken }) }),
+        ...(payout?.rule.mismatchReasonRequired && { methodMismatchReason: mismatchReason.trim() }),
       });
     } catch (error) {
       return { status: 'refused', text: paymentSaveErrorMessage('record', error, slipAttachmentId !== undefined) };

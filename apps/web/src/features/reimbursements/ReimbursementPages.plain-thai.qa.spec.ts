@@ -518,7 +518,7 @@ describe('the claim page says "อยู่ที่" with the people who can re
     assert.equal(texts.includes('แสดงเลขบัญชี'), false);
     assert.ok(visible(claimPage({ ...frozen, payout: { ...frozen.payout, canRevealAccountNumber: true } })).includes('แสดงเลขบัญชี'));
     // The same claim sent before claims carried an account says so instead, and the desk line is unchanged.
-    assert.ok(visible(claimPage(waiting)).includes('ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีข้อมูลบัญชีรับเงินในระบบ'));
+    assert.ok(visible(claimPage(waiting)).includes('ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีบัญชีที่ผ่านการอนุมัติในใบ'));
   });
 });
 

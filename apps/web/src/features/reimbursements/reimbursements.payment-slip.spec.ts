@@ -387,7 +387,7 @@ describe('saving the payment form', () => {
   it('is what the payment form runs, with a session that lives as long as the opened form', () => {
     const source = sourceOf('ReimbursementDetailSections.tsx');
     assert.match(source, /const session = useRef<PaymentFormSession>\(\{ idempotencyKey: null, saving: false \}\)/);
-    assert.match(source, /await savePaymentForm\(\{ form, outstandingAmount: String\(request\.outstandingAmount\), slip, session: session\.current \}/);
+    assert.match(source, /await savePaymentForm\(\{ form, outstandingAmount: String\(request\.outstandingAmount\), slip, session: session\.current, payout, payer \}/);
     assert.match(source, /onSlipUploaded: setSlip/);
     assert.match(source, /if \(result\.status === 'saved'\) \{ onDone\(\); toast\.success\('บันทึกจ่ายเรียบร้อยแล้ว'\); \}/);
   });

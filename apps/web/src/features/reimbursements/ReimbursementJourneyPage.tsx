@@ -393,6 +393,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
         payoutAccountHref={`${hubHref}/payout-account`}
         // The same condition as the withdraw button of the approval step below.
         canWithdraw={detail.status === 'PENDING_APPROVAL' && Boolean(step?.actions.includes('reopen'))}
+        // At the payment step, for whoever is offered to record the payment, the card is the account to transfer into.
+        payStep={step?.key === 'payment' && step.actions.includes('pay')}
         {...(step?.actions.includes('edit') && { editHref: `${hubHref}/${detail.id}/edit` })}
       />
 

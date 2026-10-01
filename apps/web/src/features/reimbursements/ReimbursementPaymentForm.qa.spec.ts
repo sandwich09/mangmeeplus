@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ToastContext } from '@/common/components/toast/use-toast';
 
@@ -19,6 +20,7 @@ const reactRuntime = require('react') as typeof React;
 
 const h = React.createElement;
 const noop = () => undefined;
+const read = (file: string) => readFileSync(new URL(file, import.meta.url), 'utf8');
 const toast = { success: noop, warning: noop, error: noop };
 
 /** What the customer reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
@@ -60,7 +62,8 @@ const paid = { ...base, status: 'PAID', paymentStatus: 'PAID', outstandingAmount
 
 /**
  * The payment form with some of its state swapped in. Its own useState calls come first and in a fixed
- * order (fields, slip, error, busy), so the first two `null` initial values are the slip and the error.
+ * order (fields, the payer's statement, slip, error, busy), so the first two `null` initial values are the
+ * slip and the error. A method not given is the one the form itself starts from.
  */
 function paymentForm(request: object, state: { method?: string; slip?: object; error?: string } = {}): string {
   const realUseState = reactRuntime.useState;
@@ -68,7 +71,7 @@ function paymentForm(request: object, state: { method?: string; slip?: object; e
   Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
     const [value, set] = (realUseState as (initial: unknown) => [unknown, unknown])(initial);
     const start = typeof initial === 'function' ? (initial as () => unknown)() : initial;
-    if (start && typeof start === 'object' && 'paymentMethod' in start) return [{ ...start, paymentMethod: state.method ?? '' }, set];
+    if (start && typeof start === 'object' && 'paymentMethod' in start) return [{ ...start, ...(state.method !== undefined && { paymentMethod: state.method }) }, set];
     if (start === null) {
       nulls += 1;
       if (nulls === 1 && state.slip) return [state.slip, set];
@@ -118,19 +121,22 @@ describe('payment form: the payer chooses the method', () => {
     assert.equal(cashForm.includes('สลิปหรือหลักฐานการจ่าย *'), false);
   });
 
-  // Payout Phase 1 freezes the requester's account on the claim. Showing it at the pay step, and starting the
-  // method from it, is the next lane (the three "Phase 1 seam" comments). Until then a claim that carries a
-  // frozen account gets this same form, from the hub's dialog and from the claim page alike.
-  it('is the same form for a claim that carries a frozen payout account', () => {
+  // Spec §12.2: the method starts from what the requester asked for. A claim sent before claims carried a
+  // receiving method asked for nothing, so nothing is chosen for its payer, and เงินสด is never a fallback.
+  // What the form then asks about the account is ReimbursementPayStep.qa.spec.ts.
+  it('starts from the method the claim asks for, and from none for a claim that asked for nothing', () => {
+    const chosen = (request: object) => /<summary[^>]*role="combobox"[^>]*aria-label="วิธีจ่าย"[^>]*>(.*?)<\/summary>/su.exec(paymentForm(request))![1]!;
     const account = { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'พิม ใจดี', accountLast4: '6789',
       version: 1, source: 'DEFAULT_ACCOUNT', canRevealAccountNumber: true };
-    const frozen = { ...base, payoutMethod: 'BANK_TRANSFER', payout: account };
-    assert.deepEqual(visible(paymentForm(frozen)), visible(paymentForm(base)));
-    assert.deepEqual(visible(paymentForm(frozen, { method: 'BANK_TRANSFER' })), visible(paymentForm(base, { method: 'BANK_TRANSFER' })));
-    assert.deepEqual(visible(paymentForm({ ...base, payoutMethod: 'CASH', payout: { payoutMethod: 'CASH' } })), visible(paymentForm(base)));
-    // No method is chosen for the payer yet, and nothing of the account is on the form.
-    assert.ok(visible(paymentForm(frozen)).includes('เลือกวิธีจ่าย'));
-    for (const text of visible(paymentForm(frozen))) assert.doesNotMatch(text, /6789|กสิกร/u);
+    assert.match(chosen({ ...base, payoutMethod: 'BANK_TRANSFER', payout: account }), /โอนเงิน/);
+    assert.match(chosen({ ...base, payoutMethod: 'CASH', payout: { payoutMethod: 'CASH' } }), /เงินสด/);
+    for (const legacy of [base, { ...base, payout: undefined }, { ...base, payout: null },
+      { ...base, legacyPayoutDefault: { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'พิม ใจดี', accountLast4: '6789', confirmToken: '0'.repeat(32) } }]) {
+      assert.match(chosen(legacy), /เลือกวิธีจ่าย/);
+      assert.doesNotMatch(chosen(legacy), /เงินสด|โอนเงิน|เช็ค|อื่น ๆ/);
+    }
+    // It is a starting value in the form's own state, which the payer changes like any other field.
+    assert.match(read('./ReimbursementDetailSections.tsx'), /paymentMethod: requestedPayout\(request\)\?\.payoutMethod \?\? ''/);
   });
 });
 
