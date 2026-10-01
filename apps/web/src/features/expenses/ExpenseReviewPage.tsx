@@ -1604,7 +1604,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         {personalSubstitute && <p className="text-sm text-gray-600">{detail.reimbursementProgress?.requestId ? `สถานะใบเบิก: ${expenseReimbursementProgressLabel(detail.reimbursementProgress)} · ดูการจ่ายและประวัติจากใบเบิกคืน` : "พนักงานจ่ายร้านเต็มจำนวนแล้ว ยื่นใบเบิกเพื่อดำเนินการคืนเงิน"}</p>}
         {Boolean(detail.sourceReimbursementRequestId) && (
           <p className="text-sm text-gray-500">
-            รายการนี้มาจากการเบิกคืนพนักงาน{detail.vendorDocumentNumber ? ` (ใบเบิก ${detail.vendorDocumentNumber})` : ''} — ระบบบันทึกการชำระให้อัตโนมัติเมื่อการเงินบันทึกจ่ายใบเบิก
+            รายการนี้มาจากการเบิกคืนพนักงาน{detail.vendorDocumentNumber ? ` (ใบเบิก ${detail.vendorDocumentNumber})` : ''} — ระบบบันทึกการชำระให้อัตโนมัติเมื่อมีการบันทึกจ่ายใบเบิก
           </p>
         )}
         {isConfirmed && !personalSubstitute && caps.canRecordPayment && Number(detail.outstandingAmount) > 0 && !detail.sourceReimbursementRequestId && (

@@ -107,7 +107,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     void getReimbursement(companyId, requestId).then(detail => {
       if (!active) return;
       if (detail.status !== 'DRAFT') throw new Error('แก้ไขได้เฉพาะคำขอฉบับร่าง');
-      if (detail.requesterUserId !== userId && !canPrepareForOthers) throw new Error('เฉพาะผู้ขอหรือฝ่ายการเงินเท่านั้นที่แก้ไขคำขอนี้ได้');
+      if (detail.requesterUserId !== userId && !canPrepareForOthers) throw new Error('คำขอนี้แก้ไขได้เฉพาะผู้เบิก หรือผู้ที่มีสิทธิ์ทำคำขอแทนผู้เบิก');
       setRequesterUserId(detail.requesterUserId);
       setSourceBranchId(detail.branchId ?? null);
       setForm({
