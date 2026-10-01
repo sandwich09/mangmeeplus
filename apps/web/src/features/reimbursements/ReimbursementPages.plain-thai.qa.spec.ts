@@ -229,17 +229,20 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
   /** The markup inside the element marked `from`, up to the tag that carries `to`. */
   const between = (html: string, from: string, to: string) => html.slice(html.indexOf('>', html.indexOf(from)) + 1, html.lastIndexOf('<', html.indexOf(to)));
   const cardsOf = (html: string) => between(html, 'data-testid="reimbursements-mine-cards"', 'data-testid="reimbursements-mine-filters"');
-  /** Label → the number beside it, for the cards (number first) or the chips (label first). */
-  const numbers = (texts: string[], numberFirst: boolean) => Object.fromEntries(Array.from({ length: Math.floor(texts.length / 2) }, (_, index) =>
-    (numberFirst ? [texts[index * 2 + 1]!, texts[index * 2]!] : [texts[index * 2]!, texts[index * 2 + 1]!])));
+  const chipsOf = (html: string) => between(html, 'data-testid="reimbursements-mine-filters"', 'type="search"');
+  /** Label → the number on it, one entry per card (the number comes first) or per chip (the number comes last). */
+  const numbers = (html: string, numberFirst: boolean) => Object.fromEntries([...html.matchAll(/<button\b[^>]*>(.*?)<\/button>/gsu)].map(([, inner]) => {
+    const texts = visible(inner!);
+    return numberFirst ? [texts.slice(1).join(''), texts[0]!] : [texts.slice(0, -1).join(''), texts.at(-1)!];
+  }));
   const rowsShown = (html: string) => html.match(/data-testid="reimbursements-mine-card"/gu)?.length ?? 0;
 
   it('splits claims waiting for payment from those waiting for approval, and every number is its list', () => {
     const html = hubTab('mine', hubClaims);
     // Before: คำขอทั้งหมด 7 and รออนุมัติ/ตรวจสอบ 3 (the two approved claims counted as waiting for approval).
-    assert.deepEqual(numbers(visible(cardsOf(html)), true),
+    assert.deepEqual(numbers(cardsOf(html), true),
       { 'ร่างรอส่ง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่ายเงินคืน': '2', 'ยอดรวมที่ขอเบิก': '฿700' });
-    const chips = numbers(visible(between(html, 'data-testid="reimbursements-mine-filters"', 'type="search"')).slice(0, 12), false);
+    const chips = numbers(chipsOf(html), false);
     assert.deepEqual(chips, { 'ทั้งหมด': '7', 'ร่าง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่าย': '2', 'จ่ายแล้ว': '1', 'ปฏิเสธ/ยกเลิก': '2' });
     assert.equal(rowsShown(html), 7);
     // Tapping a card or its chip shows exactly the claims it counted.
@@ -247,7 +250,7 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
       ['payment', 'รอจ่ายเงินคืน', 'รอจ่าย'], ['paid', null, 'จ่ายแล้ว'], ['closed', null, 'ปฏิเสธ/ยกเลิก']] as const) {
       const filtered = hubTab('mine', hubClaims, filter);
       assert.equal(String(rowsShown(filtered)), chips[chip], filter);
-      if (card) assert.equal(numbers(visible(cardsOf(filtered)), true)[card], chips[chip], filter);
+      if (card) assert.equal(numbers(cardsOf(filtered), true)[card], chips[chip], filter);
       assert.ok(visible(filtered).includes(`พบ ${chips[chip]} จาก 7 รายการ`), filter);
     }
     assert.equal(Object.entries(chips).reduce((sum, [label, count]) => sum + (label === 'ทั้งหมด' ? 0 : Number(count)), 0), 7);
@@ -261,8 +264,14 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
     // Nothing with a fixed width: a card is as wide as its grid column and its text wraps inside it.
     for (const [, , className] of buttons) assert.match(className!, /^h-full w-full min-w-0 rounded-2xl text-left/u);
     assert.doesNotMatch(cards, /\b(?:min-)?w-\[|whitespace-nowrap/u);
-    const chips = between(hubTab('mine', hubClaims), 'data-testid="reimbursements-mine-filters"', 'type="search"');
-    assert.doesNotMatch(chips, /\b(?:min-)?w-\[|whitespace-nowrap|lg:grid-cols/u);
+    // The chips: two columns on a phone, three from sm, and no chip that refuses to wrap.
+    const html = hubTab('mine', hubClaims);
+    assert.ok(html.includes('<div class="grid w-full grid-cols-2 gap-2 sm:grid-cols-3" data-testid="reimbursements-mine-filters">'));
+    const chipClasses = [...chipsOf(html).matchAll(/<button type="button" aria-pressed="(?:true|false)" class="([^"]*)"/gu)].map(([, className]) => className!);
+    assert.equal(chipClasses.length, 6);
+    for (const className of chipClasses) assert.doesNotMatch(className, /\b(?:min-)?w-\[|whitespace-nowrap/u);
+    // A label wider than a 390 px chip (measured in a browser: 143 px needed, 132 there) breaks at its slash, never inside a Thai word.
+    assert.ok(chipsOf(html).includes('<span class="min-w-0"><span class="whitespace-nowrap">รออนุมัติ/</span><span class="whitespace-nowrap">ตรวจสอบ</span></span>'));
   });
 });
 

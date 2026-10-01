@@ -288,13 +288,16 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
             ))}
           </div>
           <MangmeeCard className="p-4">
-            {/* Three rows of two on a phone, two rows of three from sm; a long label wraps inside its chip. */}
+            {/* Three rows of two on a phone, two rows of three from sm. A label too long for a 390 px chip wraps
+                at its slash, never inside a Thai word (measured: "รออนุมัติ/ตรวจสอบ" needs 143 px of the 132 there). */}
             <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3" data-testid="reimbursements-mine-filters">
               {statusChips.map(chip => (
                 <button key={chip.key} type="button" aria-pressed={statusFilter === chip.key} onClick={() => setStatusFilter(chip.key)}
                   className={cx('inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center text-sm font-semibold transition sm:min-h-0',
                     statusFilter === chip.key ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
-                  {chip.label}
+                  <span className="min-w-0">{chip.label.split('/').map((part, index, parts) => (
+                    <span key={part} className="whitespace-nowrap">{part}{index < parts.length - 1 && '/'}</span>
+                  ))}</span>
                   <span className={cx('tabular-nums inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', statusFilter === chip.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{statusCounts[chip.key]}</span>
                 </button>
               ))}
