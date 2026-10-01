@@ -7,8 +7,12 @@ import {
   UpdateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
   ReimbursementInternalNotesUseCase,
+  GetReimbursementDetailUseCase,
+  ListReimbursementsUseCase,
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
+import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
+import { computeSnapshotHash } from '../../domain/logic/reimbursement.logic';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { PLATFORM_ROLE_KEYS, ROLE_GRANTS } from '../../../auth/permission-registry';
 import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
@@ -1144,5 +1148,475 @@ describe('reimbursement policy role save', () => {
     assert.equal(audits[0]?.action, 'reimbursement.policy.update');
     assert.equal(outboxRows[0]?.eventType, 'reimbursement.policy_updated');
     assert.equal(outboxRows[0]?.aggregateId, 'policy-1');
+  });
+});
+
+// ---- Payout account (payout spec §8–§11, owner decisions 2026-10-01) ----
+//
+// The repository fake keeps the two payout tables in memory, and every read and write on them is the
+// production function, so these cases exercise the real freeze, masking and reveal code.
+
+const KBANK = { payoutMethod: 'BANK_TRANSFER' as const, payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '012-3-45678-9' };
+const SCB = { payoutMethod: 'BANK_TRANSFER' as const, payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountNumber: '000123456789012' };
+const PROMPTPAY = { payoutMethod: 'BANK_TRANSFER' as const, payoutKind: 'PROMPTPAY_PHONE' as const, accountName: 'นาย สมชาย ใจดี', accountNumber: '081-234-5678' };
+const PAYOUT_NAMES: Record<string, string> = { 'staff-1': 'สมชาย', 'manager-1': 'วิภา', 'finance-1': 'อรทัย', 'owner-1': 'เจ้าของร้าน' };
+/** Every full number a case types in. None may ever appear in a payload, an audit row or a notification. */
+const FULL_NUMBERS = ['0123456789', '000123456789012', '0812345678'];
+const leaksNumber = (value: unknown) => FULL_NUMBERS.some((number) => JSON.stringify(value ?? null).includes(number));
+
+function payoutWorld(options: RepoOptions = {}) {
+  const state = fakeRepo({ noDefaultPayout: true, ...options });
+  Object.assign(state.repo, {
+    getUserDisplayNames: async (_companyId: string, ids: string[]) => Object.fromEntries(ids.filter((id) => PAYOUT_NAMES[id]).map((id) => [id, PAYOUT_NAMES[id]])),
+    listInternalNotes: async () => [],
+    findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+    isUserRelatedToRequest: async () => false,
+  });
+  const audits: any[] = [];
+  const notifications: any[] = [];
+  const audit = { log: async (entry: any) => { audits.push(entry); }, logOrThrow: async (entry: any) => { audits.push(entry); } } as any;
+  const payouts = payoutUseCase(state.repo, audit, notifications);
+  const evidence = evidenceService();
+  return {
+    state, audits, notifications, payouts,
+    create: new CreateReimbursementDraftUseCase(state.repo, audit, evidence, payouts),
+    update: new UpdateReimbursementDraftUseCase(state.repo, audit, evidence, payouts),
+    submit: new SubmitReimbursementUseCase(state.repo, audit, noopOutbox, evidence, readyApproverRoutes, noopProjections),
+    detail: new GetReimbursementDetailUseCase(state.repo, evidence),
+    reopen: new ReopenRejectedReimbursementUseCase(state.repo, audit),
+    reveal: new RevealClaimPayoutUseCase(state.repo, audit, { credentialEncryptionKey: PAYOUT_KEY } as any),
+  };
+}
+
+const claimInput = (extra: Record<string, unknown> = {}) => ({ reason: 'ค่าเดินทาง', branchId: 'branch-1', lines: [inputLine({ attachmentId: 'att-1' })], ...extra }) as any;
+const financeCtx = () => ctx({
+  userId: 'finance-1', roles: ['FINANCE'],
+  permissions: ['reimbursement.create', 'reimbursement.finance_review', 'reimbursement.submit', 'reimbursement.read', 'reimbursement.update_own_draft'],
+});
+const managerCtx = (overrides: Partial<any> = {}) => ctx({
+  userId: 'manager-1', roles: ['MANAGER'], permissions: ['access.employee.read', 'access.employee.update', 'reimbursement.create'], ...overrides,
+});
+const EMPLOYEE = { displayName: 'สมชาย', hasEmployeeProfile: true, allBranches: false, branchIds: ['branch-1'] };
+
+describe('payout: a member sets their own default account', () => {
+  it('works for every self-service role and for an owner who has no employee record', async () => {
+    for (const [role, permissions] of Object.entries(ROLE_GRANTS).filter(([key]) => !PLATFORM_ROLE_KEYS.includes(key))) {
+      // No employee record anywhere in this world: the account hangs off the membership alone.
+      const world = payoutWorld();
+      const me = ctx({ userId: `${role}-user`, roles: [role], permissions });
+      const set = await world.payouts.setOwn(me, KBANK);
+      assert.deepEqual(set.account && { bank: set.account.bankName, last4: set.account.accountLast4, name: set.account.accountName },
+        { bank: 'ธนาคารกสิกรไทย', last4: '6789', name: 'นาย สมชาย ใจดี' }, role);
+      assert.equal((await world.payouts.revealOwn(me)).accountNumber, '0123456789', role);
+      assert.equal((await world.payouts.setOwn(me, { payoutMethod: 'CASH' })).account?.payoutMethod, 'CASH', role);
+      assert.deepEqual(await world.payouts.deleteOwn(me), { account: null });
+      assert.deepEqual(await world.payouts.getOwn(me), { account: null });
+    }
+  });
+
+  it('keeps every digit: leading zeros, 6 to 20 digits, and a PromptPay mobile number', async () => {
+    const world = payoutWorld();
+    for (const [input, full, last4] of [[KBANK, '0123456789', '6789'], [SCB, '000123456789012', '9012'], [PROMPTPAY, '0812345678', '5678']] as const) {
+      assert.equal((await world.payouts.setOwn(ctx(), input)).account?.accountLast4, last4);
+      assert.equal((await world.payouts.revealOwn(ctx())).accountNumber, full);
+    }
+    await assert.rejects(world.payouts.setOwn(ctx(), { ...KBANK, accountNumber: '12345' }), /payout_destination_invalid/);
+    await assert.rejects(world.payouts.setOwn(ctx(), { ...KBANK, accountNumber: '123456789012345678901' }), /payout_destination_invalid/);
+    await assert.rejects(world.payouts.setOwn(ctx(), { ...PROMPTPAY, accountNumber: '1234567890123' }), /payout_destination_invalid/);
+    await assert.rejects(world.payouts.setOwn(ctx(), { payoutMethod: 'BANK_TRANSFER' } as any), /payout_destination_required/);
+    await assert.rejects(world.payouts.setOwn(ctx(), { payoutMethod: 'CHEQUE' } as any), /payout_method_required/);
+    // Cash needs no account at all.
+    assert.deepEqual(Object.keys((await world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' })).account!).sort(), ['payoutMethod', 'updatedAt', 'userId']);
+  });
+
+  it('is one account per company, and no payload or audit row ever carries the number', async () => {
+    const world = payoutWorld();
+    const here = ctx();
+    const elsewhere = ctx({ companyId: 'co-2' });
+    const answers = [await world.payouts.setOwn(here, KBANK), await world.payouts.setOwn(elsewhere, SCB), await world.payouts.getOwn(here)];
+    assert.equal((await world.payouts.getOwn(here)).account?.accountLast4, '6789');
+    assert.equal((await world.payouts.getOwn(elsewhere)).account?.accountLast4, '9012');
+    assert.equal((await world.payouts.revealOwn(elsewhere)).accountNumber, '000123456789012');
+    assert.equal(leaksNumber(answers), false);
+    assert.equal(leaksNumber(world.audits), false);
+    assert.ok(answers.every((answer) => !('accountNumber' in (answer.account ?? {})) && !('accountNumberEncrypted' in (answer.account ?? {}))));
+    // Every change and every reveal is on record, with the last 4 before and after.
+    assert.deepEqual(world.audits.map((row) => row.action), [
+      'reimbursement.payout_account.set', 'reimbursement.payout_account.set', 'reimbursement.payout_account.reveal',
+    ]);
+    assert.deepEqual(world.audits[0].metadataJson, {
+      accountUserId: 'staff-1', byOwner: true, before: null,
+      after: { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountLast4: '6789', version: 1 },
+    });
+  });
+
+  it('refuses a member who may not file claims, and a reveal with nothing set', async () => {
+    const world = payoutWorld();
+    const noClaims = ctx({ permissions: ['reimbursement.read_own'] });
+    for (const call of [() => world.payouts.getOwn(noClaims), () => world.payouts.setOwn(noClaims, KBANK), () => world.payouts.deleteOwn(noClaims), () => world.payouts.revealOwn(noClaims)]) {
+      await assert.rejects(call, /Missing permission: reimbursement.create/);
+    }
+    await assert.rejects(world.payouts.revealOwn(ctx()), /payout_account_not_set/);
+    assert.equal(world.state.payoutTables.accounts.length, 0);
+  });
+});
+
+describe('payout: someone else sets a member account (owner decision 2026-10-01)', () => {
+  it('lets an employee-data editor set a subordinate account, records it and tells the account owner', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const answer = await world.payouts.setForMember(managerCtx(), 'staff-1', KBANK);
+    // The editor typed the full number once; what comes back is the last 4, like for everyone else.
+    assert.equal(answer.account?.accountLast4, '6789');
+    assert.equal(answer.account?.setByOtherName, 'วิภา');
+    assert.equal(leaksNumber(answer), false);
+
+    assert.equal(world.audits.length, 1);
+    assert.deepEqual([world.audits[0].action, world.audits[0].riskLevel, world.audits[0].actorUserId, world.audits[0].metadataJson.byOwner], [
+      'reimbursement.payout_account.set', 'HIGH', 'manager-1', false,
+    ]);
+    assert.equal(leaksNumber(world.audits), false);
+
+    // The owner's condition: the account owner is told who, when and which account, last 4 only.
+    assert.equal(world.notifications.length, 1);
+    const notice = world.notifications[0];
+    assert.deepEqual(notice.recipientUserIds, ['staff-1']);
+    assert.equal(notice.title, 'มีการตั้งบัญชีรับเงินคืนของคุณโดย วิภา');
+    assert.match(notice.body, /^ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 เมื่อ .+ ตรวจว่าเป็นบัญชีของคุณ$/);
+    assert.equal(notice.deepLinkHref, '/companies/co-1/reimbursements/payout-account');
+    assert.equal(notice.triggerKey, 'reimbursement.payout_account_set_by_other');
+    assert.equal(leaksNumber(notice), false);
+
+    // The account owner sees who set it until they save it themselves; the editor still cannot read the number.
+    assert.equal((await world.payouts.getOwn(ctx())).account?.setByOtherName, 'วิภา');
+    assert.equal((await world.payouts.getForMember(managerCtx(), 'staff-1')).account?.accountLast4, '6789');
+    assert.equal(typeof (world.payouts as any).revealForMember, 'undefined', 'there is no way to reveal someone else default account');
+    await assert.rejects(world.payouts.revealOwn(managerCtx()), /payout_account_not_set/, "the editor's own reveal reads the editor's own account");
+    assert.equal((await world.payouts.revealOwn(ctx())).accountNumber, '0123456789');
+  });
+
+  it('notifies again on every later change by someone else, including a switch to cash', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    await world.payouts.setForMember(managerCtx(), 'staff-1', KBANK);
+    await world.payouts.setForMember(managerCtx(), 'staff-1', PROMPTPAY);
+    await world.payouts.setForMember(managerCtx(), 'staff-1', { payoutMethod: 'CASH' });
+    assert.equal(world.notifications.length, 3);
+    // One notification per change: the dedup period is the account version.
+    assert.deepEqual(world.notifications.map((notice) => notice.periodKey), ['v1', 'v2', 'v3']);
+    assert.match(world.notifications[1].body, /^พร้อมเพย์เบอร์ลงท้าย 5678 เมื่อ /);
+    assert.match(world.notifications[2].body, /^ตั้งให้รับเงินคืนเป็นเงินสด เมื่อ .+ ตรวจว่าถูกต้อง$/);
+    assert.equal(leaksNumber(world.notifications), false);
+  });
+
+  it('sends nothing when the account owner edits their own account', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE, 'manager-1': { ...EMPLOYEE, displayName: 'วิภา' } } });
+    await world.payouts.setOwn(ctx(), KBANK);
+    await world.payouts.setOwn(ctx(), SCB);
+    // An editor saving their OWN account through the employee page is a self-edit too.
+    await world.payouts.setForMember(managerCtx(), 'manager-1', KBANK);
+    assert.equal(world.notifications.length, 0);
+    assert.ok(world.audits.every((row) => row.metadataJson.byOwner === true && row.riskLevel === 'MEDIUM'));
+    // Saving it themselves also clears "set by someone else".
+    await world.payouts.setForMember(managerCtx(), 'staff-1', PROMPTPAY);
+    assert.equal((await world.payouts.getOwn(ctx())).account?.setByOtherName, 'วิภา');
+    await world.payouts.setOwn(ctx(), KBANK);
+    assert.equal((await world.payouts.getOwn(ctx())).account?.setByOtherName, undefined);
+  });
+
+  it('refuses another company, an owner with no employee record, another branch, and a company without reimbursements', async () => {
+    const world = payoutWorld({ payoutMembers: {
+      'staff-1': EMPLOYEE,
+      'owner-1': { displayName: 'เจ้าของร้าน', hasEmployeeProfile: false, allBranches: true, branchIds: [] },
+      'staff-b2': { ...EMPLOYEE, branchIds: ['branch-2'] },
+      'staff-both': { ...EMPLOYEE, branchIds: ['branch-1', 'branch-2'] },
+      'admin-1': { ...EMPLOYEE, allBranches: true, branchIds: [] },
+    } });
+    const branchManager = managerCtx({ scopes: { branchIds: ['branch-1'] } });
+
+    // A user id from another company is simply not a member here.
+    await assert.rejects(world.payouts.setForMember(managerCtx(), 'user-of-another-company', KBANK), /payout_member_not_found/);
+    await assert.rejects(world.payouts.getForMember(managerCtx(), 'user-of-another-company'), /payout_member_not_found/);
+    // A business owner has no employee record: only they set their own.
+    await assert.rejects(world.payouts.setForMember(managerCtx(), 'owner-1', KBANK), /payout_member_not_found/);
+    // A branch-limited editor: only members wholly inside the editor's branches.
+    assert.equal((await world.payouts.setForMember(branchManager, 'staff-1', KBANK)).account?.accountLast4, '6789');
+    for (const outside of ['staff-b2', 'staff-both', 'admin-1']) {
+      await assert.rejects(world.payouts.setForMember(branchManager, outside, KBANK), /payout_account_edit_denied/, outside);
+    }
+    assert.equal(world.audits.filter((row) => row.result === 'DENIED' && row.metadataJson.reason === 'outside_editor_branch_scope').length, 3);
+    // An editor with every branch is not limited.
+    assert.equal((await world.payouts.setForMember(managerCtx(), 'staff-b2', SCB)).account?.accountLast4, '9012');
+    // No right to edit employee data, or the company does not use reimbursements.
+    await assert.rejects(world.payouts.setForMember(managerCtx({ permissions: ['access.employee.read'] }), 'staff-1', KBANK), /payout_account_edit_denied/);
+    await assert.rejects(world.payouts.setForMember(managerCtx({ entitlementDeniedPermissions: { 'reimbursement.create': 'reimbursements' } }), 'staff-1', KBANK), /payout_account_edit_denied/);
+    await assert.rejects(world.payouts.getForMember(ctx(), 'staff-1'), /Missing permission: access.employee.read/);
+    // Nothing refused left a row or a notification behind.
+    assert.deepEqual(world.state.payoutTables.accounts.map((row) => row.userId).sort(), ['staff-1', 'staff-b2']);
+    assert.equal(world.notifications.length, 2);
+  });
+});
+
+describe('payout: a draft follows the latest default until submit', () => {
+  it('shows the requester default as it is now: set, edited, switched to cash, removed', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput());
+    const shown = async () => (await world.detail.execute(ctx(), draft.id)).payout;
+
+    assert.deepEqual(await shown(), { followsDefault: true, notReadyReason: 'payout_method_required', canRevealAccountNumber: false });
+    await world.payouts.setOwn(ctx(), KBANK);
+    assert.deepEqual(await shown(), {
+      followsDefault: true, payoutMethod: 'BANK_TRANSFER', source: 'DEFAULT_ACCOUNT', payoutKind: 'BANK_ACCOUNT',
+      bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', canRevealAccountNumber: false,
+    });
+    await world.payouts.setOwn(ctx(), SCB);
+    assert.equal((await shown())?.accountLast4, '9012');
+    await world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' });
+    assert.deepEqual(await shown(), { followsDefault: true, payoutMethod: 'CASH', source: 'DEFAULT_ACCOUNT', canRevealAccountNumber: false });
+    await world.payouts.deleteOwn(ctx());
+    assert.equal((await shown())?.notReadyReason, 'payout_method_required');
+    // A draft never keeps a copy: nothing was written to the claim's own table.
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+    assert.equal(world.state.request.payoutMethod ?? null, null);
+  });
+
+  it('names who set the default when it was not the requester', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(ctx(), claimInput());
+    await world.payouts.setForMember(managerCtx(), 'staff-1', KBANK);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.enteredByName, 'วิภา');
+    await world.payouts.setOwn(ctx(), KBANK);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.enteredByName, undefined);
+  });
+
+  it('takes cash, or an account for this claim only, in place of the default', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'CASH' } }));
+    assert.deepEqual((await world.detail.execute(ctx(), draft.id)).payout, { payoutMethod: 'CASH', canRevealAccountNumber: false });
+
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    const own = (await world.detail.execute(ctx(), draft.id)).payout;
+    assert.deepEqual(own, {
+      payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี',
+      accountLast4: '9012', version: 1, source: 'REQUESTER', canRevealAccountNumber: true,
+    });
+    // The default is untouched, and typing again edits the same working row instead of piling versions up.
+    assert.equal((await world.payouts.getOwn(ctx())).account?.accountLast4, '6789');
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...PROMPTPAY } });
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.accountLast4, row.frozenAt]), [[1, '5678', null]]);
+    // Back to the default: the draft keeps no ciphertext of its own.
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'DEFAULT' } });
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.accountLast4, '6789');
+  });
+
+  it('refuses an account that is missing or malformed without changing the draft', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput());
+    await assert.rejects(world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', payoutKind: 'BANK_ACCOUNT' } as any }), /payout_destination_required/);
+    await assert.rejects(world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...KBANK, accountNumber: '12345' } }), /payout_destination_invalid/);
+    await assert.rejects(world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK, accountName: '123456' } })), /payout_destination_invalid/);
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+  });
+
+  it('saves a typed account as the default and lets the claim follow it', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK, saveAsDefault: true } }));
+    assert.equal((await world.payouts.getOwn(ctx())).account?.accountLast4, '6789');
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.followsDefault, true);
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+    assert.equal(world.notifications.length, 0, 'their own account, so nobody is notified');
+    // The next claim needs no typing.
+    const submitted = await world.submit.execute(ctx(), draft.id);
+    assert.deepEqual([submitted.payout?.payoutMethod, submitted.payout?.accountLast4, submitted.payout?.source], ['BANK_TRANSFER', '6789', 'DEFAULT_ACCOUNT']);
+  });
+});
+
+describe('payout: submit gate and the claim own snapshot', () => {
+  it('refuses a claim with no receiving method and takes cash without an account', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput());
+    await assert.rejects(world.submit.execute(ctx(), draft.id), /payout_method_required/);
+    assert.equal(world.state.request.status, 'DRAFT');
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'CASH' } });
+    const submitted = await world.submit.execute(ctx(), draft.id);
+    assert.deepEqual(submitted.payout, { payoutMethod: 'CASH' });
+    assert.equal(submitted.payoutMethod, 'CASH');
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+  });
+
+  it('freezes its own copy at submit: later changes to the default never reach the claim', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    const submitted = await world.submit.execute(ctx(), draft.id);
+    const frozen = { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', version: 1, source: 'DEFAULT_ACCOUNT' };
+    assert.deepEqual(submitted.payout, frozen);
+    assert.equal(leaksNumber(submitted), false);
+    const request = world.state.request;
+    const stored = { method: request.payoutMethod, version: request.payoutDestinationVersion, fingerprint: request.payoutFingerprint, hash: request.approvalSnapshotHash };
+    // The approval hash covers exactly this snapshot.
+    assert.equal(stored.hash, computeSnapshotHash({
+      amount: request.amount, currency: request.currency, categoryKey: request.categoryKey, incurredDate: request.incurredDate.toISOString(),
+      reason: request.reason, primaryAttachmentId: request.primaryAttachmentId, lines: request.lines,
+      approvalPolicySnapshotJson: request.approvalPolicySnapshotJson,
+      payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: world.state.payoutTables.destinations[0]!.fingerprint,
+    }));
+
+    // The member now edits the default twice and finally removes it.
+    for (const change of [() => world.payouts.setOwn(ctx(), SCB), () => world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' as const }), () => world.payouts.deleteOwn(ctx())]) {
+      await change();
+      const now = await world.detail.execute(ctx(), draft.id);
+      assert.deepEqual(now.payout, { ...frozen, canRevealAccountNumber: true }, 'display');
+      assert.equal((await world.reveal.execute(ctx(), draft.id)).accountNumber, '0123456789', 'reveal');
+      assert.deepEqual({ method: world.state.request.payoutMethod, version: world.state.request.payoutDestinationVersion, fingerprint: world.state.request.payoutFingerprint, hash: world.state.request.approvalSnapshotHash }, stored, 'attestation target and hash');
+    }
+    assert.equal(world.state.payoutTables.destinations.length, 1);
+    // The frozen copy itself cannot be rewritten, whatever code tries.
+    await assert.rejects(
+      world.state.payoutTables.client.reimbursementPayoutDestination.updateMany({ where: { reimbursementRequestId: draft.id }, data: { accountLast4: '0000' } }),
+      /reimbursement_payout_destination_frozen/,
+    );
+  });
+
+  it('refuses the submit when the default changed after it was read, instead of freezing an account nobody hashed', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    const submitAtomic = world.state.repo.submitDraftAtomic;
+    // The member saves a different default between the use case reading it and the transaction.
+    world.state.repo.submitDraftAtomic = async (data: any) => { await world.payouts.setOwn(ctx(), SCB); return submitAtomic(data); };
+    await assert.rejects(world.submit.execute(ctx(), draft.id), /payout_destination_changed/);
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+    world.state.repo.submitDraftAtomic = submitAtomic;
+    assert.equal((await world.submit.execute(ctx(), draft.id)).payout?.accountLast4, '9012');
+  });
+
+  it('sent again after a withdraw: an unchanged account keeps its version, a changed default gets the next', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    await world.submit.execute(ctx(), draft.id);
+    await world.reopen.execute(ctx(), draft.id);
+    // Back in draft it follows the default again, so it shows whatever the default is now.
+    assert.equal(world.state.request.payoutMethod, null);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.followsDefault, true);
+    assert.equal((await world.submit.execute(ctx(), draft.id)).payout?.version, 1);
+
+    await world.reopen.execute(ctx(), draft.id);
+    await world.payouts.setOwn(ctx(), SCB);
+    const resent = await world.submit.execute(ctx(), draft.id);
+    assert.deepEqual([resent.payout?.version, resent.payout?.accountLast4], [2, '9012']);
+    // Version 1 stays as history, untouched.
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.accountLast4]).sort(), [[1, '6789'], [2, '9012']]);
+  });
+
+  it('an account named for the claim survives a withdraw, and a new one becomes the next version', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK } }));
+    await world.submit.execute(ctx(), draft.id);
+    await world.reopen.execute(ctx(), draft.id);
+    assert.deepEqual([world.state.request.payoutMethod, world.state.request.payoutDestinationVersion], ['BANK_TRANSFER', 1]);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.accountLast4, '6789');
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    const resent = await world.submit.execute(ctx(), draft.id);
+    assert.deepEqual([resent.payout?.version, resent.payout?.accountLast4], [2, '9012']);
+    assert.equal(world.state.payoutTables.destinations.every((row) => row.frozenAt), true);
+  });
+
+  it('records which snapshot was frozen in the submit audit, without any account detail', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    await world.submit.execute(ctx(), draft.id);
+    const submit = world.audits.find((row) => row.action === 'reimbursement.request.submit');
+    assert.deepEqual(submit.metadataJson.payout, { method: 'BANK_TRANSFER', version: 1, followsDefault: true });
+    assert.equal(leaksNumber(world.audits), false);
+    assert.equal(leaksNumber(world.state.calls.outbox), false);
+    assert.ok(world.state.calls.outbox.every((event: any) => !/payout|account/i.test(JSON.stringify(event.payloadJson.data))), 'no event payload carries account data');
+  });
+});
+
+describe('payout: filing a claim on behalf of someone', () => {
+  it("uses the requester's account, never the preparer's, and follows the requester's default until submit", async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(financeCtx(), SCB); // the preparer's own account, which must never appear
+    await world.payouts.setOwn(ctx(), KBANK); // the requester's
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1' }));
+    const seenByPreparer = async () => (await world.detail.execute(financeCtx(), draft.id)).payout;
+
+    assert.deepEqual([(await seenByPreparer())?.accountLast4, (await seenByPreparer())?.canRevealAccountNumber], ['6789', false]);
+    // The requester changes their default while the claim is still a draft: the draft shows the new one.
+    await world.payouts.setOwn(ctx(), PROMPTPAY);
+    assert.equal((await seenByPreparer())?.accountLast4, '5678');
+
+    const submitted = await world.submit.execute(financeCtx(), draft.id);
+    assert.deepEqual([submitted.payout?.accountLast4, submitted.payout?.source, submitted.payout?.enteredByName], ['5678', 'DEFAULT_ACCOUNT', undefined]);
+    // After submit the requester's default changes again; the claim does not.
+    await world.payouts.setOwn(ctx(), KBANK);
+    assert.equal((await seenByPreparer())?.accountLast4, '5678');
+    assert.equal((await world.reveal.execute(ctx(), draft.id)).accountNumber, '0812345678', 'the requester reads their own frozen number');
+    // The preparer holds no payment right and is not the approver: last 4 only.
+    assert.equal((await seenByPreparer())?.canRevealAccountNumber, false);
+    await assert.rejects(world.reveal.execute(financeCtx(), draft.id), /payout_reveal_denied/);
+  });
+
+  it('lets the preparer type the requester account, records who typed it, and shows them the last 4 afterwards', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
+    const forPreparer = (await world.detail.execute(financeCtx(), draft.id)).payout;
+    assert.deepEqual([forPreparer?.source, forPreparer?.enteredByName, forPreparer?.accountLast4, forPreparer?.canRevealAccountNumber], ['PREPARER', 'อรทัย', '6789', false]);
+    await assert.rejects(world.reveal.execute(financeCtx(), draft.id), /payout_reveal_denied/);
+    // The requester opens their own claim and sees the account that was put on it.
+    const forRequester = (await world.detail.execute(ctx(), draft.id)).payout;
+    assert.deepEqual([forRequester?.enteredByName, forRequester?.canRevealAccountNumber], ['อรทัย', true]);
+    assert.equal((await world.reveal.execute(ctx(), draft.id)).accountNumber, '0123456789');
+    assert.equal(world.state.payoutTables.accounts.length, 0, 'nobody default was set');
+  });
+
+  it('saves it as the requester default only for a preparer who may edit employee data, and tells the requester', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const input = claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK, saveAsDefault: true } });
+    await assert.rejects(world.create.execute(financeCtx(), input), /payout_account_edit_denied/);
+    assert.equal(world.state.payoutTables.accounts.length, 0);
+
+    const hr = ctx({ userId: 'finance-1', permissions: [...financeCtx().permissions, 'access.employee.update'] });
+    const draft = await world.create.execute(hr, input);
+    assert.deepEqual(world.state.payoutTables.accounts.map((row) => [row.userId, row.accountLast4, row.updatedByUserId]), [['staff-1', '6789', 'finance-1']]);
+    assert.equal((await world.detail.execute(hr, draft.id)).payout?.followsDefault, true);
+    assert.deepEqual(world.notifications.map((notice) => notice.recipientUserIds), [['staff-1']]);
+  });
+});
+
+describe('payout: a draft made from LINE', () => {
+  // LINE writes a draft with no account data at all (it has no payout field); it is sent on the web.
+  it('submits on the web when the requester has a default account, with nothing to add', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const lineDraft = await world.create.execute(ctx(), claimInput());
+    assert.equal(world.state.request.payoutMethod ?? null, null);
+    assert.equal((await world.submit.execute(ctx(), lineDraft.id)).payout?.accountLast4, '6789');
+  });
+
+  it('says what is missing when the requester has none, and submits once a method is chosen', async () => {
+    const world = payoutWorld();
+    const lineDraft = await world.create.execute(ctx(), claimInput());
+    assert.deepEqual((await world.detail.execute(ctx(), lineDraft.id)).payout, { followsDefault: true, notReadyReason: 'payout_method_required', canRevealAccountNumber: false });
+    await assert.rejects(world.submit.execute(ctx(), lineDraft.id), /payout_method_required/);
+    await world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' });
+    assert.equal((await world.submit.execute(ctx(), lineDraft.id)).payout?.payoutMethod, 'CASH');
+  });
+});
+
+describe('payout: lists carry the receiving method and nothing of the account', () => {
+  it('returns the method on a row and no bank, name, last 4 or number', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    await world.submit.execute(ctx(), draft.id);
+    Object.assign(world.state.repo, { listRequests: async () => [world.state.request], findPendingApprovalSteps: async () => [] });
+    const page = await new ListReimbursementsUseCase(world.state.repo).execute(ctx(), {});
+    assert.equal(page.items[0]!.payoutMethod, 'BANK_TRANSFER');
+    assert.ok(!/payout(?!Method)|bankName|accountName|accountLast4|accountNumber|fingerprint/i.test(JSON.stringify(page)));
+    assert.equal(leaksNumber(page), false);
   });
 });

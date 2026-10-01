@@ -29,6 +29,18 @@ import {
   type CurrentDeskStepFields,
 } from './reimbursement.logic';
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
+import { invalidPayoutDestinationField, maskedPayoutAccount, maskedPayoutAccountNumber, normalizePayoutAccountNumber } from '@watchdog-bms/contracts';
+import {
+  draftFollowsDefaultAfterReopen,
+  isBlankPayoutDestination,
+  isEffectiveClaimApprover,
+  openPayoutAccountNumber,
+  payoutAttestationError,
+  payoutFingerprint,
+  payoutRevealGroup,
+  planSubmitPayout,
+  sealPayoutDestination,
+} from './payout-destination.logic';
 
 /** A minimal valid line; overrides shape each case. */
 function line(overrides: Partial<Parameters<typeof computeClaimTotal>[0][number]> & Record<string, unknown> = {}): any {
@@ -566,5 +578,205 @@ describe('payout: a claim with no receiving method keeps its hashes (legacy clai
     assert.equal(computeSnapshotHash(approvalFields), 'e8a0a0d5832da0361ee0442a28534235');
     assert.equal(claimSignatureAckHash({ ...header, lines }), '0c87de6573bfb6150d6cd23c1f29fa01');
     assert.equal(computeLegacySnapshotHashV1({ ...header, incurredDate: header.incurredDate.toISOString() }), '9436b51c8a27d00fcc3bbd319e80a905');
+  });
+
+  it('reads the same whether the payout columns are absent, undefined or NULL', () => {
+    for (const payout of [{}, { payoutMethod: undefined, payoutDestinationVersion: undefined, payoutFingerprint: undefined },
+      { payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null }]) {
+      assert.equal(computeSnapshotHash({ ...approvalFields, ...payout }), 'e8a0a0d5832da0361ee0442a28534235');
+      assert.equal(claimSignatureAckHash({ ...header, lines, ...payout }), '0c87de6573bfb6150d6cd23c1f29fa01');
+    }
+  });
+
+  it('a claim that carries a method hashes it: method, snapshot version and fingerprint each move the hash', () => {
+    const transfer = { ...approvalFields, payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'f'.repeat(64) };
+    const hashes = [
+      computeSnapshotHash(approvalFields),
+      computeSnapshotHash(transfer),
+      computeSnapshotHash({ ...transfer, payoutDestinationVersion: 2 }),
+      computeSnapshotHash({ ...transfer, payoutFingerprint: 'e'.repeat(64) }),
+      // Cash is hashed too, so cash cannot quietly become a transfer after approval.
+      computeSnapshotHash({ ...approvalFields, payoutMethod: 'CASH' }),
+    ];
+    assert.equal(new Set(hashes).size, hashes.length);
+    assert.equal(computeSnapshotHash(transfer), computeSnapshotHash({ ...transfer }));
+    assert.notEqual(claimSignatureAckHash({ ...header, lines, payoutMethod: 'CASH' }), '0c87de6573bfb6150d6cd23c1f29fa01');
+  });
+});
+
+describe('payout: account format (completeness and shape only; people verify the rest)', () => {
+  const bank = (accountNumber: string, extra: Record<string, unknown> = {}) => ({ payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber, ...extra });
+
+  it('keeps digits as text: leading zeros survive, dashes and spaces go, nothing becomes a number', () => {
+    assert.equal(normalizePayoutAccountNumber('012-3-45678-9'), '0123456789');
+    assert.equal(normalizePayoutAccountNumber(' 000 123 456 789 012 '), '000123456789012');
+    assert.equal(normalizePayoutAccountNumber(123456 as unknown), '', 'a number is refused, never stringified');
+    for (const accountNumber of ['0123456789', '000123456789012', '012-3-45678-9']) assert.equal(invalidPayoutDestinationField(bank(accountNumber)), null, accountNumber);
+  });
+
+  it('takes 6 to 20 digits for a bank account and never forces 10', () => {
+    for (const ok of ['123456', '1234567', '123456789012', '12345678901234567890']) assert.equal(invalidPayoutDestinationField(bank(ok)), null, ok);
+    for (const bad of ['12345', '123456789012345678901', '', '12345a', '๑๒๓๔๕๖', '1234.56']) assert.equal(invalidPayoutDestinationField(bank(bad)), 'accountNumber', bad);
+  });
+
+  it('takes a Thai mobile number for PromptPay and nothing else', () => {
+    const promptPay = (accountNumber: string) => ({ payoutKind: 'PROMPTPAY_PHONE' as const, accountName: 'นาย สมชาย ใจดี', accountNumber });
+    assert.equal(invalidPayoutDestinationField(promptPay('081-234-5678')), null);
+    // A 13-digit national id is not a PromptPay phone, and neither is a number not starting with 0.
+    for (const bad of ['1234567890123', '8123456789', '08123456', '081234567890']) assert.equal(invalidPayoutDestinationField(promptPay(bad)), 'accountNumber', bad);
+  });
+
+  it('needs a bank for a bank account, an account name that is a name, and a known kind', () => {
+    assert.equal(invalidPayoutDestinationField(bank('0123456789', { bankName: ' ' })), 'bankName');
+    assert.equal(invalidPayoutDestinationField(bank('0123456789', { bankName: 'ธ'.repeat(81) })), 'bankName');
+    for (const accountName of ['', ' ก ', '1234567890', '12 34-56', 'ก'.repeat(141)]) assert.equal(invalidPayoutDestinationField(bank('0123456789', { accountName })), 'accountName', accountName);
+    assert.equal(invalidPayoutDestinationField(bank('0123456789', { accountName: 'ก'.repeat(140) })), null);
+    assert.equal(invalidPayoutDestinationField({ ...bank('0123456789'), payoutKind: 'NATIONAL_ID' as never }), 'payoutKind');
+    assert.equal(invalidPayoutDestinationField(null), 'payoutKind');
+    assert.equal(isBlankPayoutDestination({ payoutKind: 'BANK_ACCOUNT' }), true);
+    assert.equal(isBlankPayoutDestination(bank('0123456789')), false);
+  });
+
+  it('masks an account with one wording for every surface', () => {
+    assert.equal(maskedPayoutAccountNumber('6789'), 'ลงท้าย 6789');
+    assert.equal(maskedPayoutAccount({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountLast4: '6789' }), 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789');
+    assert.equal(maskedPayoutAccount({ payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' }), 'พร้อมเพย์เบอร์ลงท้าย 5678');
+  });
+});
+
+describe('payout: sealing an account (one place on write)', () => {
+  const key = Buffer.alloc(32, 3);
+  const typed = { payoutKind: 'BANK_ACCOUNT' as const, bankName: ' ธนาคารกสิกรไทย ', accountName: ' นาย สมชาย ใจดี ', accountNumber: '012-3-45678-9' };
+
+  it('stores a last 4 that is always the tail of what a reveal decrypts, leading zeros included', () => {
+    for (const accountNumber of ['012-3-45678-9', '000123456789012', '0000001234', '100000', '0812345678']) {
+      const sealed = sealPayoutDestination({ ...typed, accountNumber }, key)!;
+      const opened = openPayoutAccountNumber(sealed.accountNumberEncrypted, key);
+      assert.equal(opened, normalizePayoutAccountNumber(accountNumber));
+      assert.equal(sealed.accountLast4, opened.slice(-4));
+      assert.match(sealed.accountLast4, /^\d{4}$/);
+      assert.ok(!sealed.accountNumberEncrypted.includes(opened), 'the stored column is ciphertext');
+    }
+  });
+
+  it('trims the names, drops a bank from a PromptPay number and refuses a malformed account', () => {
+    const sealed = sealPayoutDestination(typed, key)!;
+    assert.deepEqual([sealed.payoutKind, sealed.bankName, sealed.accountName, sealed.accountLast4], ['BANK_ACCOUNT', 'ธนาคารกสิกรไทย', 'นาย สมชาย ใจดี', '6789']);
+    assert.equal(sealPayoutDestination({ payoutKind: 'PROMPTPAY_PHONE', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย', accountNumber: '0812345678' }, key)!.bankName, null);
+    assert.equal(sealPayoutDestination({ ...typed, accountNumber: '12345' }, key), null);
+    assert.equal(sealPayoutDestination(undefined, key), null);
+  });
+
+  it('gives the same fingerprint for the same account on every write, and another for any change', () => {
+    const first = sealPayoutDestination(typed, key)!;
+    const again = sealPayoutDestination({ ...typed, accountNumber: '0123456789' }, key)!;
+    assert.notEqual(first.accountNumberEncrypted, again.accountNumberEncrypted, 'the ciphertext is random per write');
+    assert.equal(first.fingerprint, again.fingerprint);
+    const base = { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' };
+    assert.equal(payoutFingerprint(base, key), first.fingerprint);
+    for (const change of [{ accountNumber: '0123456780' }, { accountName: 'นาย สมชาย ใจดีมาก' }, { bankName: 'ธนาคารกรุงเทพ' }, { payoutKind: 'PROMPTPAY_PHONE' }]) {
+      assert.notEqual(payoutFingerprint({ ...base, ...change }, key), first.fingerprint, JSON.stringify(change));
+    }
+    assert.notEqual(payoutFingerprint(base, Buffer.alloc(32, 4)), first.fingerprint, 'keyed: useless without the key');
+    assert.ok(!first.fingerprint.includes('0123456789'));
+  });
+
+  it('redaction drops a full number that strays into an outbound payload and keeps the last 4', () => {
+    assert.deepEqual(redactPayload({ accountNumber: '0123456789', payoutAccountNumber: '0123456789', accountLast4: '6789', bankName: 'ธนาคารกสิกรไทย' }),
+      { accountLast4: '6789', bankName: 'ธนาคารกสิกรไทย' });
+  });
+});
+
+describe('payout: who may see the full number (one decision for the endpoint and the button)', () => {
+  const nobody = { hasClaimAccount: true, isDraft: false, isRequester: false, isClaimApprover: false, canRecordPayment: false };
+
+  it('answers the requester, that claim approver and the payment recorder, and nobody else', () => {
+    assert.equal(payoutRevealGroup({ ...nobody, isRequester: true }), 'REQUESTER');
+    assert.equal(payoutRevealGroup({ ...nobody, isClaimApprover: true }), 'APPROVER');
+    assert.equal(payoutRevealGroup({ ...nobody, canRecordPayment: true }), 'PAYER');
+    assert.equal(payoutRevealGroup(nobody), null);
+  });
+
+  it('has nothing to reveal on a cash or legacy claim, and keeps a draft to its requester', () => {
+    assert.equal(payoutRevealGroup({ ...nobody, hasClaimAccount: false, isRequester: true, isClaimApprover: true, canRecordPayment: true }), null);
+    assert.equal(payoutRevealGroup({ ...nobody, isDraft: true, isClaimApprover: true, canRecordPayment: true }), null);
+    assert.equal(payoutRevealGroup({ ...nobody, isDraft: true, isRequester: true }), 'REQUESTER');
+  });
+
+  it('counts an approval only in the round the claim was last sent in', () => {
+    const submittedAt = new Date('2026-10-01T03:00:00.000Z');
+    const step = (overrides: Record<string, unknown> = {}) => ({ status: 'APPROVED' as const, decisionByUserId: 'approver-1', decidedAt: new Date('2026-10-01T04:00:00.000Z'), ...overrides });
+    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step()] }, 'approver-1'), true);
+    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step()] }, 'someone-else'), false);
+    // Approved, then sent back and submitted again: that approval was of an earlier snapshot.
+    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step({ decidedAt: new Date('2026-10-01T02:00:00.000Z') })] }, 'approver-1'), false);
+    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step({ invalidatedAt: new Date() })] }, 'approver-1'), false);
+    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step({ status: 'REJECTED' })] }, 'approver-1'), false);
+    assert.equal(isEffectiveClaimApprover({ approvalSteps: [step()] }, 'approver-1'), false, 'a draft has no approver');
+  });
+});
+
+describe('payout: attestation binds to one snapshot version', () => {
+  const transfer = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2 };
+
+  it('refuses a transfer claim without it, and with any version but the current one', () => {
+    assert.equal(payoutAttestationError(transfer, undefined), 'payout_verification_required');
+    assert.equal(payoutAttestationError(transfer, null), 'payout_verification_required');
+    assert.equal(payoutAttestationError(transfer, 1), 'payout_destination_changed');
+    assert.equal(payoutAttestationError(transfer, '2'), 'payout_destination_changed', 'a look-alike is not the version');
+    assert.equal(payoutAttestationError(transfer, true), 'payout_destination_changed');
+    assert.equal(payoutAttestationError(transfer, 2), null);
+  });
+
+  it('asks nothing of a cash claim or a legacy claim', () => {
+    for (const claim of [{ payoutMethod: 'CASH' }, {}, { payoutMethod: null, payoutDestinationVersion: null }]) {
+      assert.equal(payoutAttestationError(claim, undefined), null);
+      assert.equal(payoutAttestationError(claim, 7), null);
+    }
+  });
+});
+
+describe('payout: what a submit freezes', () => {
+  const frozen = (version: number, fingerprint: string, source: 'DEFAULT_ACCOUNT' | 'REQUESTER' | 'PREPARER' = 'DEFAULT_ACCOUNT') => ({ version, fingerprint, source, frozenAt: new Date('2026-10-01T00:00:00.000Z') });
+  const account = (fingerprint: string) => ({ payoutMethod: 'BANK_TRANSFER' as const, fingerprint });
+
+  it('never picks a method for a requester who has not chosen one', () => {
+    assert.deepEqual(planSubmitPayout({}, [], null), { error: 'payout_method_required' });
+    assert.deepEqual(planSubmitPayout({ payoutMethod: null }, [frozen(1, 'fp-a')], undefined), { error: 'payout_method_required' });
+  });
+
+  it('follows the default as it is at submit: cash needs no account, a transfer gets its own frozen copy', () => {
+    assert.deepEqual(planSubmitPayout({}, [], { payoutMethod: 'CASH' }), { payoutMethod: 'CASH', followsDefault: true });
+    assert.deepEqual(planSubmitPayout({}, [], account('fp-a')),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 1, fingerprint: 'fp-a', action: 'COPY_DEFAULT' });
+    assert.deepEqual(planSubmitPayout({}, [], { payoutMethod: 'BANK_TRANSFER', fingerprint: null }), { error: 'payout_destination_required' });
+  });
+
+  it('keeps the version when the account is unchanged and takes the next one when it changed', () => {
+    assert.deepEqual(planSubmitPayout({}, [frozen(1, 'fp-a')], account('fp-a')),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 1, fingerprint: 'fp-a', action: 'REUSE' });
+    assert.deepEqual(planSubmitPayout({}, [frozen(1, 'fp-a')], account('fp-b')),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 2, fingerprint: 'fp-b', action: 'COPY_DEFAULT' });
+    // The latest frozen version was an account named for this claim: following the default is a change.
+    assert.deepEqual(planSubmitPayout({}, [frozen(2, 'fp-a', 'REQUESTER'), frozen(1, 'fp-a')], account('fp-a')),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 3, fingerprint: 'fp-a', action: 'COPY_DEFAULT' });
+  });
+
+  it('freezes the claim own account, or reuses it when it was frozen before and left untouched', () => {
+    const working = { version: 2, fingerprint: 'fp-own', source: 'REQUESTER' as const, frozenAt: null };
+    assert.deepEqual(planSubmitPayout({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2 }, [working, frozen(1, 'fp-a')], account('fp-zzz')),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: 2, fingerprint: 'fp-own', action: 'FREEZE' });
+    assert.deepEqual(planSubmitPayout({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }, [frozen(1, 'fp-own', 'PREPARER')], null),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: 1, fingerprint: 'fp-own', action: 'REUSE' });
+    assert.deepEqual(planSubmitPayout({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 5 }, [frozen(1, 'fp-a')], account('fp-a')), { error: 'payout_destination_required' });
+    assert.deepEqual(planSubmitPayout({ payoutMethod: 'CASH' }, [frozen(1, 'fp-a')], account('fp-a')), { payoutMethod: 'CASH', followsDefault: false });
+  });
+
+  it('a claim back in draft follows the default again only when its account was a copy of the default', () => {
+    const versions = [{ version: 1, source: 'DEFAULT_ACCOUNT' as const }, { version: 2, source: 'REQUESTER' as const }];
+    assert.equal(draftFollowsDefaultAfterReopen({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }, versions), true);
+    assert.equal(draftFollowsDefaultAfterReopen({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2 }, versions), false);
+    assert.equal(draftFollowsDefaultAfterReopen({ payoutMethod: 'CASH' }, versions), false);
+    assert.equal(draftFollowsDefaultAfterReopen({}, versions), false);
   });
 });

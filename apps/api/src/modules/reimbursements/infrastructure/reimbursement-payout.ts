@@ -151,7 +151,7 @@ export async function readClaimPayout(client: any, claim: ClaimPayoutPointer): P
   });
   if (!row) return { payoutMethod: 'BANK_TRANSFER', ...(claim.status === 'DRAFT' && { notReadyReason: 'payout_destination_required' as const }) };
   return {
-    payoutMethod: 'BANK_TRANSFER', payoutKind: row.payoutKind, bankName: opt(row.bankName), accountName: row.accountName,
+    payoutMethod: 'BANK_TRANSFER', payoutKind: row.payoutKind, ...(row.bankName && { bankName: row.bankName }), accountName: row.accountName,
     accountLast4: row.accountLast4, version: row.version, source: row.source,
     ...(row.source === 'PREPARER' && { enteredByUserId: row.createdByUserId }),
     // An attestation belongs to a sent claim: a draft is about to be frozen and attested again.
@@ -170,8 +170,11 @@ export async function readDraftDefaultPayout(client: any, claim: ClaimPayoutPoin
   if (!account) return { followsDefault: true, notReadyReason: 'payout_method_required' };
   return {
     followsDefault: true, payoutMethod: account.payoutMethod, source: 'DEFAULT_ACCOUNT',
-    payoutKind: account.payoutKind, bankName: account.bankName, accountName: account.accountName,
-    accountLast4: account.accountLast4,
+    // A cash default carries no account, so the block carries no account keys either.
+    ...(account.payoutMethod === 'BANK_TRANSFER' && {
+      payoutKind: account.payoutKind, accountName: account.accountName, accountLast4: account.accountLast4,
+      ...(account.bankName && { bankName: account.bankName }),
+    }),
     ...(account.updatedByUserId !== claim.requesterUserId && { enteredByUserId: account.updatedByUserId }),
   };
 }

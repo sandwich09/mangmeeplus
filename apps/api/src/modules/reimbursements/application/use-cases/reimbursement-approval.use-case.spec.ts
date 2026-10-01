@@ -11,6 +11,11 @@ import { ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { REIMBURSEMENT_POLICY_DEFAULTS } from '../../domain/reimbursement.constants';
 import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
+import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
+import {
+  applyDraftPayout, attestClaimPayout, draftPayoutAfterReopen, freezeSubmitPayout, readClaimPayout, readSubmitPayoutPlan, writeMemberPayoutAccount,
+} from '../../infrastructure/reimbursement-payout';
+import { sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
 
 // Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
 // detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
@@ -805,5 +810,185 @@ describe('solo requester on a custom role (owner order 2026-09-21)', () => {
     ).execute(solo, created.id, { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
     assert.equal(paid.status, 'PAID');
     assert.equal(paidByUserId, 'solo-1');
+  });
+});
+
+// ---- Payout account: human verification at approval (owner decision P1, payout spec §10) ----
+
+describe('approving a claim that is paid by transfer needs the approver attestation', () => {
+  const transferClaim = (overrides: Partial<any> = {}) => baseRequest({
+    payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: 'fp-2',
+    payoutSnapshot: { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', version: 2, source: 'DEFAULT_ACCOUNT' },
+    ...overrides,
+  });
+  /** Counts what reaches the transaction, so a refusal is proven to happen before any write. */
+  function counted(req: any, policy?: any) {
+    const repo = fakeRepo(req, policy);
+    const decisions: any[] = [];
+    const begin = repo.beginApprovalDecisionAtomic;
+    repo.beginApprovalDecisionAtomic = async (data: any) => { decisions.push(data); return begin(data); };
+    return { repo, decisions };
+  }
+
+  it('is refused without "ตรวจบัญชีแล้ว", before anything is written, also on a direct call', async () => {
+    const { repo, decisions } = counted(transferClaim());
+    await assert.rejects(() => approveUC(repo).execute(ctx(), 'rb-1'), /payout_verification_required/);
+    await assert.rejects(() => approveUC(repo).execute(ctx(), 'rb-1', 'ok', undefined, null), /payout_verification_required/);
+    assert.equal(decisions.length, 0);
+  });
+
+  it('is refused when the attestation names another snapshot version', async () => {
+    const { repo, decisions } = counted(transferClaim());
+    for (const stale of [1, 3, '2', true]) await assert.rejects(() => approveUC(repo).execute(ctx(), 'rb-1', undefined, undefined, stale), /payout_destination_changed/);
+    assert.equal(decisions.length, 0);
+  });
+
+  it('goes through with the current version, hands it to the transaction and audits who attested which version', async () => {
+    const entries: any[] = [];
+    const { repo, decisions } = counted(transferClaim());
+    const detail = await approveUC(repo, undefined, { log: async (entry: any, tx: any) => { entries.push({ ...entry, inTransaction: !!tx }); } })
+      .execute(ctx(), 'rb-1', undefined, undefined, 2);
+    assert.equal(detail.status, 'FINANCE_REVIEW');
+    assert.equal(decisions[0].payoutVerifiedVersion, 2);
+    const verify = entries.find((entry) => entry.action === 'reimbursement.payout.verify');
+    assert.deepEqual(verify.metadataJson, { version: 2, via: 'APPROVAL', approvalStepId: 'step-1', byRequester: false });
+    assert.equal(verify.inTransaction, true, 'the attestation is recorded in the decision transaction');
+    assert.equal(verify.actorUserId, 'approver-1');
+    // The answer shows the account masked; nothing in the audit or the answer is a full number.
+    assert.deepEqual([detail.payout?.accountLast4, detail.payout?.version], ['6789', 2]);
+    assert.ok(!/accountNumber|\d{6,}/.test(JSON.stringify([entries.map((entry) => entry.metadataJson), detail.payout])));
+  });
+
+  it('records the requester attesting their own account when they approve their own claim', async () => {
+    const entries: any[] = [];
+    const own = transferClaim({ requesterUserId: 'approver-1' });
+    await approveUC(fakeRepo(own), undefined, { log: async (entry: any) => { entries.push(entry); } }).execute(ctx({ roles: ['OWNER'] }), 'rb-1', undefined, undefined, 2);
+    assert.equal(entries.find((entry) => entry.action === 'reimbursement.payout.verify').metadataJson.byRequester, true);
+    // Self-approval still needs it: being the requester is not an attestation.
+    await assert.rejects(() => approveUC(fakeRepo(transferClaim({ requesterUserId: 'approver-1' }))).execute(ctx({ roles: ['OWNER'] }), 'rb-1'), /payout_verification_required/);
+  });
+
+  it('keeps the eligibility answer first: someone who may not approve learns nothing about the attestation', async () => {
+    const assigned = transferClaim({ approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['assigned-1'] }] });
+    await assert.rejects(() => approveUC(fakeRepo(assigned)).execute(ctx({ roles: ['OWNER'] }), 'rb-1'), /not_eligible_approver/);
+    await assert.rejects(() => approveUC(fakeRepo(transferClaim())).execute(ctx({ permissions: [] }), 'rb-1'), /permission/i);
+  });
+
+  it('resumes a decision that was already made without asking for the attestation again', async () => {
+    const decided = transferClaim({ approvalSteps: [{ ...baseRequest().approvalSteps[0], status: 'APPROVED', decisionByUserId: 'approver-1', decidedAt: new Date('2026-01-02T00:00:00.000Z') }] });
+    const detail = await approveUC(fakeRepo(decided, { ...REIMBURSEMENT_POLICY_DEFAULTS, financeReviewRequired: false })).execute(ctx(), 'rb-1');
+    assert.equal(detail.status, 'READY_FOR_PAYMENT');
+  });
+
+  it('asks nothing of a cash claim or a legacy claim: they approve exactly as before', async () => {
+    const entries: any[] = [];
+    const audit = { log: async (entry: any) => { entries.push(entry); } };
+    for (const claim of [baseRequest({ payoutMethod: 'CASH' }), baseRequest()]) {
+      assert.equal((await approveUC(fakeRepo(claim), undefined, audit).execute(ctx(), 'rb-1')).status, 'FINANCE_REVIEW');
+    }
+    // A stray version on a claim with no account changes nothing either.
+    assert.equal((await approveUC(fakeRepo(baseRequest())).execute(ctx(), 'rb-1', undefined, undefined, 9)).status, 'FINANCE_REVIEW');
+    assert.equal(entries.some((entry) => entry.action === 'reimbursement.payout.verify'), false, 'no attestation is invented for them');
+    // A legacy claim answers with no payout block at all.
+    assert.equal((await approveUC(fakeRepo(baseRequest())).execute(ctx(), 'rb-1')).payout, undefined);
+  });
+
+  it('shows the queue the receiving method and nothing of the account', async () => {
+    const queueRepo = {
+      findPolicy: async () => null, listRequests: async () => [transferClaim()],
+      findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids), getUserDisplayNames: async () => ({}),
+    } as any;
+    const items = await new ListApprovalQueueUseCase(queueRepo).execute(ctx());
+    assert.equal(items[0]?.payoutMethod, 'BANK_TRANSFER');
+    assert.ok(!/payoutSnapshot|bankName|accountName|accountLast4|accountNumber|fingerprint|6789/i.test(JSON.stringify(items)));
+  });
+});
+
+describe('the stored attestation names one snapshot version (attestation binding)', () => {
+  const key = Buffer.alloc(32, 5);
+  const kbank = sealPayoutDestination({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' }, key)!;
+  const scb = sealPayoutDestination({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountNumber: '000123456789012' }, key)!;
+  const when = new Date('2026-10-01T04:00:00.000Z');
+
+  /** A claim, its payout tables and the three moves a claim makes: send, attest, come back to draft. */
+  function claimWorld() {
+    const tables = fakePayoutTables();
+    const db = tables.client;
+    const claim: any = { id: 'rb-1', companyId: 'co-1', requesterUserId: 'staff-1', status: 'DRAFT', payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null };
+    return {
+      tables, db, claim,
+      setDefault: (destination: typeof kbank) => writeMemberPayoutAccount(db, { companyId: 'co-1', userId: 'staff-1', actorUserId: 'staff-1', payoutMethod: 'BANK_TRANSFER', destination }),
+      async send() {
+        const plan = await readSubmitPayoutPlan(db, claim);
+        if ('error' in plan) throw new Error(plan.error);
+        await freezeSubmitPayout(db, { ...claim }, plan, 'staff-1', when);
+        Object.assign(claim, { status: 'PENDING_APPROVAL', payoutMethod: plan.payoutMethod },
+          plan.payoutMethod === 'BANK_TRANSFER' ? { payoutDestinationVersion: plan.version, payoutFingerprint: plan.fingerprint } : {});
+      },
+      attest: (verifiedVersion: unknown, approvalStepId = 'step-1') => attestClaimPayout(db, claim, { verifiedVersion, actorUserId: 'approver-1', verifiedAt: when, approvalStepId }),
+      async backToDraft() { Object.assign(claim, await draftPayoutAfterReopen(db, claim), { status: 'DRAFT' }); },
+      shown: () => readClaimPayout(db, claim),
+    };
+  }
+
+  it('stores who attested, when, which version and which approval step, on that version row', async () => {
+    const world = claimWorld();
+    await world.setDefault(kbank);
+    await world.send();
+    await assert.rejects(world.attest(undefined), /payout_verification_required/);
+    await assert.rejects(world.attest(2), /payout_destination_changed/);
+    assert.equal((await world.shown())?.verifiedAt, undefined);
+    await world.attest(1);
+    const row = world.tables.destinations[0]!;
+    assert.deepEqual([row.version, row.verifiedByUserId, row.verifiedAt, row.verifiedVia, row.approvalStepId], [1, 'approver-1', when, 'APPROVAL', 'step-1']);
+    assert.deepEqual([(await world.shown())?.verifiedByUserId, (await world.shown())?.version], ['approver-1', 1]);
+  });
+
+  it('a claim sent again with another account gets a new version: the old attestation no longer counts', async () => {
+    const world = claimWorld();
+    await world.setDefault(kbank);
+    await world.send();
+    await world.attest(1);
+    // Sent back to draft (finance asked for a correction), the member changes the account, sends again.
+    await world.backToDraft();
+    await world.setDefault(scb);
+    await world.send();
+    assert.equal(world.claim.payoutDestinationVersion, 2);
+    assert.equal((await world.shown())?.verifiedAt, undefined, 'the new snapshot is unattested');
+    // An approver still looking at the old page attests version 1: refused until they attest version 2.
+    await assert.rejects(world.attest(1, 'step-2'), /payout_destination_changed/);
+    assert.equal((await world.shown())?.verifiedAt, undefined);
+    await world.attest(2, 'step-2');
+    assert.deepEqual(world.tables.destinations.map((row) => [row.version, row.accountLast4, row.approvalStepId]).sort(), [[1, '6789', 'step-1'], [2, '9012', 'step-2']]);
+  });
+
+  it('a claim sent again with the SAME account keeps its version but loses the earlier attestation', async () => {
+    const world = claimWorld();
+    await world.setDefault(kbank);
+    await world.send();
+    await world.attest(1);
+    await world.backToDraft();
+    // While it is a draft, the attestation of the round before is not shown as if it still held.
+    assert.equal(world.claim.payoutMethod, null);
+    await world.send();
+    assert.equal(world.claim.payoutDestinationVersion, 1);
+    const row = world.tables.destinations[0]!;
+    assert.deepEqual([row.verifiedByUserId, row.verifiedAt, row.verifiedVia, row.approvalStepId], [null, null, null, null]);
+    assert.equal((await world.shown())?.verifiedAt, undefined);
+    await assert.rejects(world.attest(undefined, 'step-2'), /payout_verification_required/);
+    await world.attest(1, 'step-2');
+    assert.equal(world.tables.destinations[0]!.approvalStepId, 'step-2');
+  });
+
+  it('refuses an attestation when the row behind the version is not the one the claim was hashed with', async () => {
+    const world = claimWorld();
+    await world.setDefault(kbank);
+    await world.send();
+    world.claim.payoutFingerprint = scb.fingerprint; // the claim says one account, the row holds another
+    await assert.rejects(world.attest(1), /payout_destination_changed/);
+    // An account named for the claim that was never frozen cannot be attested either.
+    const draft = claimWorld();
+    Object.assign(draft.claim, await applyDraftPayout(draft.db, 'co-1', 'rb-1', { mode: 'SPECIFIED', destination: kbank, source: 'REQUESTER', actorUserId: 'staff-1' }), { payoutFingerprint: kbank.fingerprint });
+    await assert.rejects(draft.attest(1), /payout_destination_changed/);
   });
 });
