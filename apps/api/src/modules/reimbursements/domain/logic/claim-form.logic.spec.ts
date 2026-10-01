@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { cancelledDocumentReasonBox } from '../../../../common/documents/cancelled-document';
 import {
@@ -458,6 +459,42 @@ describe('reimbursement claim form', () => {
     // Signatures stay at the foot of the sheet whatever the body length.
     assert.ok(many.includes(`y="${height - 150}"`), 'signature row anchors to the page foot');
   });
+});
+
+// Payout spec §17.1: the four-block form, and the form of a claim sent before claims carried a
+// receiving account, print as they always did, letter for letter. These digests are of the bytes the
+// renderer produced BEFORE the payout line was added (they were committed on their own, against the
+// untouched renderer), so they pin the old print and not the new code's opinion of it. Every text
+// here fits its line, so no digest depends on where a Thai dictionary breaks a word.
+describe('prints that predate the payout line are unchanged, byte for byte', () => {
+  const sha256 = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
+  const base = snapshot();
+  const unapproved = { ...base.signers, approver: null, accounting: null, finance: null };
+  const signed = { ...base.signers, requester: { ...base.signers.requester!, signatureDataUrl: 'data:image/png;base64,AAAB' } };
+  const prints: Array<[string, Partial<ReimbursementClaimFormSnapshot>, string, string]> = [
+    ['four blocks, fully signed', { layout: 'LEGACY_FOUR_SIGNERS' }, '99698fee62531f3fa0376094307c8f801991ec98f75bfd1a22bbeeed3556ffcc', '6c55175fdbf1ae5e59258b64887a60162450a72fb7e681ce2510cd0b220a2dfe'],
+    ['four blocks, waiting for approval, receipt waived', { layout: 'LEGACY_FOUR_SIGNERS', signers: unapproved, hasReceiptEvidence: false, missingReceiptReason: 'ร้านค้าไม่ออกใบเสร็จ' }, '83d79a0f65a13ccd7b2341b215ddd7d2229cc06b8cf5278737f7c0ebe0b8c1bb', '03ee4956983f743857f3a2843c9425cdd772fab868b8cbe1c3e1b90a939a6bd4'],
+    ['four blocks, approval skipped by policy', { layout: 'LEGACY_FOUR_SIGNERS', signers: unapproved, approvalDecisionNote: 'ไม่ต้องอนุมัติตามนโยบาย' }, '02ec24c13ac2f69e06f72acdf0e5ad972034c427a5a2078c23a25062dae0ecaf', 'e2b4b95a50bb82063e2613407938d1b25b99240b0f9166ae7ad562202a41f048'],
+    ['four blocks, signed on screen, cancelled', { layout: 'LEGACY_FOUR_SIGNERS', signers: signed, cancellation: { reason: 'บันทึกซ้ำ' } }, '0cbd38c68e9b46be506b249c3879efa4b4c3a654f4dfd474c138661eb0a7acd9', '7bab863947db7f39e866841ca200257c5d6af3c88ab6a712d687666eef62c75e'],
+    ['two blocks, paid by transfer', {}, '7f05fa5de4f86022c64de84b041464fb98d82148d9e6f8d6e3feba5f1ac9902a', '64e7374821c409165f36676a72b5bc7c19172e2418bd378bb09e4ae9078e3d70'],
+    ['two blocks, waiting for approval, not paid', { signers: unapproved, repayment: null }, 'e5fb330697f129289f54e7c318ce1b0145aa517ccf685be5849dbcca721892d8', '697ebf449fed9e25f2890dc4ef77fce5dd7b8cdbd78ae5031d3dd5347d1be792'],
+    ['two blocks, own approval, paid in cash with a slip', { selfApproved: true, hasPaymentEvidence: true, repayment: { ...base.repayment!, method: 'CASH', reference: null } }, 'efed6dd67933e9477fc022f45a3238363613f6c404a4e25fdd6262330ff9c55c', '405df586737ba0cd2e017654084c824c1543c2dc2042b8a98d75145f5a3fefdf'],
+    ['two blocks, approval skipped by policy, cancelled', { signers: unapproved, approvalDecisionNote: 'ไม่ต้องอนุมัติตามนโยบาย', cancellation: { reason: 'บันทึกซ้ำ' } }, '52aaa250838ecf81aae9876ce02b916f78a6b326b29b2429c9c65855692ce95e', '0affadcd29c054c613dc459d1d991124af637f12c6ca154066bcab9100cf9986'],
+    ['two blocks, 65 lines over several pages', {
+      lines: Array.from({ length: 65 }, (_, i) => ({ lineNo: i + 1, incurredDate: '2026-09-10', description: `ROW-${i + 1}-END รายการค่าใช้จ่าย`, purpose: 'กิจการ', amount: '10.00' })),
+      totalAmount: '650.00',
+    }, '10c2e04202293608b64b22df98a5d3318664c913ab596113041a87fe65a5d7a6', 'f9791cbb6e221c98d04cc9cabcca905307194fc26d87c2d77541b5235e00d96a'],
+  ];
+
+  for (const [name, overrides, single, pages] of prints) {
+    it(name, () => {
+      const input = snapshot(overrides);
+      assert.deepEqual(
+        [sha256(renderReimbursementClaimFormSvg(input)), sha256(Buffer.concat(renderReimbursementClaimFormPages(input)))],
+        [single, pages],
+      );
+    });
+  }
 });
 
 describe('claim form layout and documentSignedVia', () => {

@@ -84,6 +84,22 @@ function svgOf(result: { svgDataUrl: string }): string {
 }
 
 describe('PreviewReimbursementClaimFormUseCase', () => {
+  // Payout spec §15, §17.1: a claim sent before claims carried a receiving account prints as it
+  // always did, on either layout. The digests are of the answer BEFORE the payout line was added
+  // (committed on their own, against the untouched use case), so they pin the old print.
+  it('answers a legacy claim with the same bytes as before the payout line, on both layouts', async () => {
+    const answer = async (row: any) => {
+      const result = await previewUseCase(fakeRepo(row).repo).execute(ctx(), 'rb-1');
+      // The endpoint's answer keeps its shape: two renderings of the form and the checksum of the first.
+      assert.deepEqual(Object.keys(result), ['svgDataUrl', 'pageSvgDataUrls', 'checksumSha256']);
+      assert.equal(result.checksumSha256, createHash('sha256').update(svgOf(result)).digest('hex'));
+      return [result.checksumSha256, createHash('sha256').update(result.pageSvgDataUrls!.join('\n')).digest('hex')];
+    };
+    assert.deepEqual(await answer(request()), ['02422d0511230c547357f416f85bdf4c36336544b56d2b158f4a9c55139c0d3c', '619a3e83bfae529daecaef1c831f432b7be5098aded35d6cf067af19155c1112']);
+    // Signed in the payer block: the four-block form, with both stored signatures drawn.
+    assert.deepEqual(await answer(request({ claimSignatures: [signatureRow('REQUESTER', 'staff-1'), signatureRow('PAYER', 'fin-1')] })), ['63993c6c49e5c0aeed166eeb3959e06a42f973c5b652a14a897fc54a7b3bda0d', '09341ab7212936d7cfea723e83d5041a7e426ebbe6b4afa24fcbb53f59fe1ba8']);
+  });
+
   // The payment line and the payment-evidence box are read from the same recorded payment the
   // claim page shows, so paper and screen cannot disagree about the method, the reference or the slip.
   it('ticks หลักฐานการชำระเงิน for a slip on the recorded payment, and not for one left on a voided payment', async () => {
