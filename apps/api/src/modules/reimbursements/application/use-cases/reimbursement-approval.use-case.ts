@@ -433,8 +433,10 @@ export class ApproveReimbursementUseCase {
               metadataJson: { version: req.payoutDestinationVersion, via: 'APPROVAL', approvalStepId, byRequester: req.requesterUserId === ctx.userId },
             }, tx);
           }
-          // The existing ready-to-pay notice, unchanged: its actor is the approver, whose turn it now is.
-          // After them it asks the finance reviewer who passed the claim, when there was one.
+          // The existing ready-to-pay notice. Whose turn it is to pay has one order, the claim page's
+          // (`paymentTurnUserIds`): the finance reviewer who passed the claim, when there was one, then
+          // its approver, who is the actor of this event. The reviewer is named where the notice looks
+          // first, and still in the list a rule from before that order reads after the actor.
           const financeReviewer = req.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? req.financeReviewedByUserId : undefined;
           await appendOutboxWithinTx(tx, {
             companyId: ctx.companyId,
@@ -447,7 +449,7 @@ export class ApproveReimbursementUseCase {
               data: {
                 requestId: id, requestNo: req.requestNo, status: 'READY_FOR_PAYMENT', decision: 'APPROVED',
                 requesterUserId: req.requesterUserId, amount: req.amount, currency: req.currency,
-                ...(financeReviewer && { approverRecipientUserIds: [financeReviewer] }),
+                ...(financeReviewer && { financeReviewerUserId: financeReviewer, approverRecipientUserIds: [financeReviewer] }),
               },
             },
           });

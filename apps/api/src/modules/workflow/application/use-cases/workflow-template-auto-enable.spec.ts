@@ -289,12 +289,20 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
 
     const cfg = (rule: any) => rule.actionJson[0].configJson;
     const [pinned, edited] = [repo.rules.find((r: any) => r.id === 'pre_0'), repo.rules.find((r: any) => r.id === 'pre_1')];
-    assert.deepEqual(cfg(pinned).preferRecipientPayloadKeys, ['actorUserId', 'approverRecipientUserIds']);
+    // In the order the claim page names whose turn it is: the finance reviewer who passed the claim first.
+    assert.deepEqual(cfg(pinned).preferRecipientPayloadKeys, ['financeReviewerUserId', 'actorUserId', 'approverRecipientUserIds']);
     assert.deepEqual(cfg(pinned).neverPreferRecipientPayloadKeys, ['requesterUserId']);
     // The runner reads the version snapshot, not the row.
     const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];
     assert.deepEqual(latest.actionSnapshotJson, catalogActions('reimbursement_ready_for_payment'));
     assert.equal(cfg(edited).preferRecipientPayloadKeys, undefined);
+
+    // A rule the sync pinned with the earlier order (the actor first) picks the new order up the same way.
+    const [catalogAction] = catalogActions('reimbursement_ready_for_payment');
+    const actorFirst = [{ ...catalogAction!, configJson: { ...catalogAction!.configJson, preferRecipientPayloadKeys: ['actorUserId', 'approverRecipientUserIds'] } }];
+    const earlier = fakeRepo([readyRule({ actionJson: actorFirst })]);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(earlier, 'co_1'), ['reimbursement_ready_for_payment']);
+    assert.deepEqual(cfg(earlier.rules.find((r: any) => r.id === 'pre_0')).preferRecipientPayloadKeys, ['financeReviewerUserId', 'actorUserId', 'approverRecipientUserIds']);
   });
 
   // Payout spec §17.3: the "paid" notice prints the sentence the payment event carries. A company whose

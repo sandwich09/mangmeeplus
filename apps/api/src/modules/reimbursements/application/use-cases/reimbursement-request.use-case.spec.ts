@@ -47,7 +47,7 @@ import {
 } from '../../infrastructure/reimbursement-payout';
 import { attestClaimPayout, confirmPaymentPayout, readClaimPayoutVersions } from '../../infrastructure/reimbursement-payout';
 import { freezePayoutCorrection, readPaymentPayoutDestinations } from '../../infrastructure/reimbursement-payout';
-import { payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
+import { paymentTurnUserIds, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
 import { payoutDefaultToken } from '../../domain/logic/payout-destination.logic';
 import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
 import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from './reimbursement-payout-correction.use-case';
@@ -4334,8 +4334,15 @@ describe('payout correction: claims finance passed, claims nobody approves and l
     const waiting = await world.detail.execute(approverCtx(), id);
     const approved = await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, 2);
     assert.deepEqual([approved.status, approved.financeReviewStatus], ['READY_FOR_PAYMENT', 'APPROVED_FOR_PAYMENT']);
-    // The ready-to-pay notice asks the finance reviewer who passed the claim first, as it did the first time.
-    assert.deepEqual(world.events().map((event) => [event.eventType, event.payloadJson.data.approverRecipientUserIds]), [['reimbursement.ready_for_payment', ['finance-1']]]);
+    // The ready-to-pay notice asks the finance reviewer who passed the claim first, as it did the first time:
+    // the event names them where the notice looks first, ahead of its own actor, the approver. That is
+    // the order the claim page names the two in (`paymentTurnUserIds`).
+    const [ready] = world.events();
+    assert.deepEqual([world.events().length, ready.eventType], [1, 'reimbursement.ready_for_payment']);
+    assert.deepEqual([ready.payloadJson.data.financeReviewerUserId, ready.payloadJson.actorUserId], paymentTurnUserIds({ ...world.claim(), approvalSteps: world.steps }));
+    assert.deepEqual([ready.payloadJson.data.financeReviewerUserId, ready.payloadJson.actorUserId], ['finance-1', 'manager-1']);
+    // And still where a rule made before this order looks second, so nobody is dropped before the template sync runs.
+    assert.deepEqual(ready.payloadJson.data.approverRecipientUserIds, ['finance-1']);
   });
 
   it('gives a legacy claim an account through a round: from then on it is hashed and attested like any claim with one', async () => {

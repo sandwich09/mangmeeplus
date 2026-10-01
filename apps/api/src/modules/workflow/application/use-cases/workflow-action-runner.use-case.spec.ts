@@ -1057,6 +1057,38 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_approver']);
   });
 
+  // One order for whose turn it is to pay (owner rule 2026-10-01): the finance reviewer who passed the
+  // claim, then its approver. The claim page and the payment reminder ask in that order. After a
+  // correction round the approver is the actor of the ready-to-pay event, and the notice asked them first.
+  it('asks the finance reviewer who passed the claim before its approver, in the order the claim page and the reminder name them', async () => {
+    const cfg = readyToPay().defaultActionJson[0]!.configJson;
+    const reminder = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_sla_breach')!.defaultActionJson[0]!.configJson;
+    assert.deepEqual(cfg['preferRecipientPayloadKeys'], ['financeReviewerUserId', 'actorUserId', 'approverRecipientUserIds']);
+    assert.equal((reminder['preferRecipientPayloadKeys'] as string[])[0], 'financeReviewerUserId');
+    // The event of an approval that ends a round on a claim finance passed: the approver acted, the reviewer is named.
+    const toldAfterARound = async (memberships: Record<string, unknown>) => {
+      const h = harness({ sourceBranchId: 'br_claim', memberships });
+      const context = claimContext();
+      context.payload = { ...context.payload, actorUserId: 'u_approver', requesterUserId: 'u_staff', financeReviewerUserId: 'u_finance', approverRecipientUserIds: ['u_finance'] };
+      await h.useCase.execute(actionRun(cfg), context);
+      return h.sent[0]?.recipientUserIds;
+    };
+    const elsewhere = member({ branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'br_other' }] });
+    assert.deepEqual(await toldAfterARound({ u_owner: member(), u_approver: member(), u_finance: member() }), ['u_finance']);
+    // A reviewer who cannot record this payment is not asked: the approver is, when they can.
+    assert.deepEqual(await toldAfterARound({ u_owner: member(), u_approver: member(), u_finance: elsewhere }), ['u_approver']);
+    assert.deepEqual(await toldAfterARound({ u_owner: member(), u_approver: member() }), ['u_approver']);
+    // Neither can: everyone able to.
+    assert.deepEqual(await toldAfterARound({ u_owner: member(), u_admin: member(), u_approver: elsewhere, u_finance: elsewhere }), ['u_owner', 'u_admin']);
+
+    // A claim finance never saw is unchanged: its approver, the actor, is asked first.
+    const h = harness({ sourceBranchId: 'br_claim', memberships: { u_owner: member(), u_approver: member() } });
+    const context = claimContext();
+    context.payload = { ...context.payload, actorUserId: 'u_approver', requesterUserId: 'u_staff' };
+    await h.useCase.execute(actionRun(cfg), context);
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_approver']);
+  });
+
   it('keeps a branch-limited payer for a company-central claim, exactly as the pay endpoint does', async () => {
     const h = harness({
       sourceBranchId: null,
