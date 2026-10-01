@@ -7024,6 +7024,13 @@ model ReimbursementPayment {
   /// Every slip, this one included, is an AttachmentLink row on the payment.
   slipAttachmentId       String?
   slipChecksumSha256     String?
+  /// The account this transfer was confirmed into: a version of the claim's own
+  /// ReimbursementPayoutDestination rows (on a legacy claim, the copy of the requester's default
+  /// account made at payment). NULL when no account was confirmed. Never changes once recorded.
+  payoutDestinationVersion Int?
+  payoutConfirmedAt      DateTime?
+  /// Why the payer paid by another method than the requester asked for; NULL when it was the same.
+  methodMismatchReason   String?
   sourcePaymentRef       String
   status                 ReimbursementPaymentRecordStatus @default(RECORDED)
   voidedAt               DateTime?
@@ -7103,14 +7110,15 @@ model ReimbursementPayoutDestination {
   accountNumberEncrypted String
   accountLast4           String
   fingerprint            String
-  /// DEFAULT_ACCOUNT | REQUESTER | PREPARER: where the account came from.
+  /// DEFAULT_ACCOUNT | REQUESTER | PREPARER: where the claim's account came from. LEGACY_PAYMENT: a
+  /// copy of the requester's default made when a legacy claim was paid into it (the claim never points at it).
   source                 String
   /// Who entered the account: whoever typed it, or — for a copy of the default — whoever last set that default.
   createdByUserId        String
   frozenAt               DateTime?
   verifiedByUserId       String?
   verifiedAt             DateTime?
-  /// APPROVAL today; the payment step attests the same row later.
+  /// APPROVAL, or PAYMENT when the payer was the first person other than the requester to check it.
   verifiedVia            String?
   approvalStepId         String?
   createdAt              DateTime             @default(now())
