@@ -19,6 +19,8 @@ function slipTables(links: any[] = []) {
       metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' },
     }) },
     attachmentLink: { findMany: async () => [], create: async ({ data }: any) => { links.push(data); return data; } },
+    // A slip is exclusive: no claim line names the file as its receipt.
+    reimbursementLine: { count: async () => 0 },
   };
 }
 

@@ -312,9 +312,9 @@ function expense(overrides: Partial<any> = {}) {
   return { id: 'exp-1', companyId: 'co-1', branchId: 'branch-1', createdByUserId: 'staff-1', ...overrides } as any;
 }
 
-function evidenceService(attachmentResult: any = null, expenseResult: any = null) {
+function evidenceService(attachmentResult: any = null, expenseResult: any = null, linkedAsPaymentSlip = false) {
   return new ReimbursementEvidenceService(
-    { findById: async () => attachmentResult, findManyByIds: async () => (attachmentResult ? [attachmentResult] : []) } as any,
+    { findById: async () => attachmentResult, findManyByIds: async () => (attachmentResult ? [attachmentResult] : []), isReimbursementPaymentSlip: async () => linkedAsPaymentSlip } as any,
     { findById: async () => expenseResult, findSubstituteEvidence: async () => null } as any,
   );
 }
@@ -411,6 +411,8 @@ describe('Reimbursement request evidence validation', () => {
     ['cross-company', attachment({ companyId: 'co-2' })],
     ['other-user', attachment({ uploadedByUserId: 'staff-2' })],
     ['non-ACTIVE', attachment({ status: 'PENDING_UPLOAD' })],
+    // Owner 2026-10-01: payment evidence is never a claim receipt, the requester's own slip upload included.
+    ['payment-slip upload', attachment({ metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-9' } })],
   ] as const;
   const invalidExpenses = [
     ['nonexistent', null],
@@ -431,6 +433,20 @@ describe('Reimbursement request evidence validation', () => {
       await assert.rejects(() => uc.execute(requesterCtx(), 'rb-1'), /invalid_primary_attachment/);
     });
   }
+
+  // A file already linked as the slip of a payment carries no tag when it was moved there from the
+  // signed copies. Refused when the line is saved: at approval the expense record could not link it
+  // either, and the claim would be stuck in front of its approver.
+  it('rejects the slip of a payment as a line receipt, at create and at submit', async () => {
+    const create = new CreateReimbursementDraftUseCase(requestRepo().repo, noopAudit, evidenceService(attachment(), null, true));
+    await assert.rejects(() => create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] }),
+      (error: any) => error.getStatus() === 422 && error.message === 'invalid_primary_attachment');
+    const state = requestRepo(draftRequest({ lines: [lineRecord({ attachmentId: 'att-1' })] }));
+    await assert.rejects(() => submitUseCase(state.repo, noopAudit, noopOutbox, evidenceService(attachment(), null, true)).execute(requesterCtx(), 'rb-1'), /invalid_primary_attachment/);
+    // The same file, not a slip, is the ordinary receipt it always was.
+    await new CreateReimbursementDraftUseCase(requestRepo().repo, noopAudit, evidenceService(attachment()))
+      .execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
+  });
 
   for (const [name, record] of invalidExpenses) {
     it(`rejects ${name} expense at create`, async () => {

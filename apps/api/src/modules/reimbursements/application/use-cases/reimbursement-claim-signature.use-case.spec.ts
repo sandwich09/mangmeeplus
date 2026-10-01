@@ -563,17 +563,33 @@ describe('PrismaReimbursementRepository saved claim signatures', () => {
 describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () => {
   const ack = { requestId: 'rb-1', requestNo: 'RB-202607-00001', acknowledgedByUserId: 'staff-1', acknowledgedAt: '2026-07-26T10:00:00.000Z', checksumSha256: 'c'.repeat(64) };
 
-  function linkClient(metadataJson: unknown = { source: 'web' }) {
+  /** `existingLinks` are the file's links as the transaction sees them once it holds the file's lock. */
+  function linkClient(metadataJson: unknown = { source: 'web' }, existingLinks: { targetType: string; purpose: string }[] = []) {
     const writes: any[] = [];
+    // Everything the transaction does, in order: the lock, the re-check, the row write, the link.
+    const steps: string[] = [];
     const tx = {
-      attachmentLink: { upsert: async (args: any) => { writes.push(['upsert', args]); return { id: 'link-1' }; } },
+      $executeRaw: async (sql: TemplateStringsArray, ...values: string[]) => {
+        steps.push(sql.join('?').includes('pg_advisory_xact_lock') ? `lock:${values[0]}` : `touch:${values[0]}`);
+        return 1;
+      },
+      attachmentLink: {
+        findFirst: async ({ where }: any) => {
+          steps.push('check');
+          return existingLinks.find((link) => (typeof where.targetType === 'string' ? link.targetType === where.targetType : link.targetType !== where.targetType.not)
+            && (where.purpose === undefined || link.purpose === where.purpose)) ?? null;
+        },
+        upsert: async (args: any) => { steps.push('upsert'); writes.push(['upsert', args]); return { id: 'link-1' }; },
+      },
       attachmentObject: {
+        findFirst: async () => ({ metadataJson }),
         findFirstOrThrow: async (args: any) => { writes.push(['read', args]); return { metadataJson }; },
         update: async (args: any) => { writes.push(['update', args]); return {}; },
       },
     };
-    const client = { attachmentLink: { findFirst: async () => null }, $transaction: async (fn: any) => fn(tx) };
-    return { repo: new PrismaReimbursementRepository({ client } as any, {} as any), writes };
+    // Nothing is read outside the transaction: a check made before the lock proves nothing.
+    const client = { $transaction: async (fn: any) => fn(tx) };
+    return { repo: new PrismaReimbursementRepository({ client } as any, {} as any), writes, steps };
   }
 
   it('stores the declaration in the scan metadata, bound to its link id, keeping existing keys', async () => {
@@ -589,6 +605,37 @@ describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () =>
     const { repo, writes } = linkClient();
     await repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1');
     assert.deepEqual(writes.map(([kind]) => kind), ['upsert']);
+  });
+
+  // Owner 2026-10-01: a payment slip is never a signed copy. A slip link is written under the file's
+  // retention lock, so this link takes the same lock and looks again inside its own transaction.
+  it('takes the file lock, then re-checks, then writes: in that order, inside one transaction', async () => {
+    const { repo, steps } = linkClient();
+    await repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1');
+    assert.equal(steps[0], 'lock:co-1:att-scan:attachment-retention', 'the key a slip link and a delete of this file take');
+    assert.ok(steps.indexOf('check') > 0 && steps.indexOf('check') < steps.indexOf('upsert'), 'checked under the lock, before the link');
+    // The file's row is written too: a payment reading it under an older snapshot fails on its row lock instead of missing this link.
+    assert.ok(steps.includes('touch:att-scan') && steps.indexOf('touch:att-scan') < steps.indexOf('upsert'));
+  });
+
+  it('refuses a payment slip as a signed copy, declared or not, and writes nothing', async () => {
+    const slipLink = { targetType: 'reimbursement_payment', purpose: 'reimbursement.payment.slip' };
+    const cases: [string, ReturnType<typeof linkClient>][] = [
+      ['the slip of a payment', linkClient({ source: 'web' }, [slipLink])],
+      ['a slip upload no payment carries yet', linkClient({ generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' })],
+    ];
+    for (const [label, client] of cases) {
+      for (const declaration of [undefined, ack]) {
+        await assert.rejects(
+          () => client.repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1', declaration),
+          (error: any) => error.getStatus() === 422 && /payment slip cannot be attached to anything else/.test(error.message),
+          label,
+        );
+      }
+      assert.deepEqual(client.writes, [], `${label}: no link, no declaration`);
+      assert.equal(client.steps.includes('upsert'), false, label);
+      assert.equal(client.steps.some((step) => step.startsWith('touch:')), false, `${label}: the file is not written either`);
+    }
   });
 
   it('counts a copy as acknowledged only when the stored declaration names its own link', async () => {
@@ -743,6 +790,8 @@ describe('moving a misfiled slip recomputes how the document was signed', () => 
         findFirst: async ({ where }: any) => payments.find((row) => matches(row, where)) ?? null,
         count: async ({ where }: any) => payments.filter((row) => matches(row, where)).length,
       },
+      // No claim line names the misfiled file as a receipt.
+      reimbursementLine: { count: async () => 0 },
     };
     const client = { ...tables, $transaction: async (work: (tx: any) => Promise<unknown>) => work({ ...tables, $executeRaw: async () => 1 }) };
     const repository = new PrismaReimbursementRepository({ client } as any, {} as any);

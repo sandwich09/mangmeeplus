@@ -111,6 +111,7 @@ function evidenceService() {
     {
       findById: async ({ id }: any) => ({ ...attachment, id }),
       findManyByIds: async ({ ids }: any) => ids.map((id: string) => ({ ...attachment, id })),
+      isReimbursementPaymentSlip: async () => false,
     } as any,
     { findById: async (_c: string, id: string) => ({ id, companyId: 'co-1', branchId: 'branch-1', createdByUserId: 'staff-1' }) } as any,
   );

@@ -1111,6 +1111,8 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
   // Attachment rows and their links: what a slip is proven against and written to.
   let files: any[] = [];
   let links: any[] = [];
+  // Claim lines of the company that name a file as their receipt (this claim's own line has none).
+  const receiptLines: any[] = [];
   let fault = initialFault;
   let timeoutPending = ambiguousTimeout;
   let transactionTail = Promise.resolve();
@@ -1134,6 +1136,7 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
       findFirst: async ({ where }: any) => files.find((file) => rowMatches(file, where)) ?? null,
       update: async ({ where, data }: any) => Object.assign(files.find((file) => file.id === where.id)!, data),
     },
+    reimbursementLine: { count: async ({ where }: any) => receiptLines.filter((line) => rowMatches(line, where)).length },
     attachmentLink: {
       findMany: async ({ where }: any) => links.filter((link) => rowMatches(link, where)),
       create: async ({ data }: any) => {
@@ -1192,6 +1195,7 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
   const client: any = {
     // The slip preflight reads outside a transaction, from the same rows.
     attachmentObject: tx.attachmentObject, attachmentLink: tx.attachmentLink, reimbursementPayment: tx.reimbursementPayment,
+    reimbursementLine: tx.reimbursementLine,
     $transaction: async (work: (transaction: any) => Promise<any>, options: any) => {
       const previous = transactionTail;
       let release!: () => void;
@@ -1234,6 +1238,7 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
     addFile: (file: any) => { files.push(file); return file; },
     addLink: (link: any) => { links.push({ companyId: 'co-1', createdAt: new Date('2026-01-20T00:00:00.000Z'), ...link }); },
     addPayment: (payment: any) => { payments.push(payment); },
+    addReceiptLine: (line: any) => { receiptLines.push({ companyId: 'co-1', ...line }); },
   };
 }
 
@@ -1248,10 +1253,10 @@ function slipUpload(overrides: Partial<any> = {}) {
 }
 
 /** A file attached through the "ใบเบิกที่เซ็นแล้ว" uploader with the paper declaration: the misfiled slip. */
-function misfiledSignedCopy(h: ReturnType<typeof atomicPaymentHarness>, declared = true) {
-  h.addLink({ id: 'link-copy', attachmentId: 'att-misfiled', targetType: 'reimbursement_request', targetId: 'rb-1', purpose: 'reimbursement.claim_form.signed', linkedByUserId: 'staff-1' });
+function misfiledSignedCopy(h: ReturnType<typeof atomicPaymentHarness>, declared = true, id = 'att-misfiled') {
+  h.addLink({ id: 'link-copy', attachmentId: id, targetType: 'reimbursement_request', targetId: 'rb-1', purpose: 'reimbursement.claim_form.signed', linkedByUserId: 'staff-1' });
   return h.addFile({
-    id: 'att-misfiled', companyId: 'co-1', status: 'ACTIVE', mimeType: 'application/pdf', byteSize: 12_000_000,
+    id, companyId: 'co-1', status: 'ACTIVE', mimeType: 'application/pdf', byteSize: 12_000_000,
     checksumSha256: 'c'.repeat(64), uploadedByUserId: 'staff-1',
     metadataJson: { source: 'web', ...(declared && { reimbursementSignedCopyAck: { requestId: 'rb-1', requestNo: 'RB-202601-000001', acknowledgedByUserId: 'staff-1', acknowledgedAt: '2026-01-20T00:00:00.000Z', checksumSha256: 'c'.repeat(64), linkId: 'link-copy' } }) },
   });
@@ -1425,6 +1430,33 @@ describe('PrismaReimbursementRepository payment slips', () => {
         h.addFile(slipUpload());
         h.addLink({ id: 'link-other', attachmentId: 'att-slip-1', targetType: 'reimbursement_payment', targetId: 'pay-of-rb-2', purpose: 'reimbursement.payment.slip' });
       }],
+      // A slip is exclusive: the generic file paths stop serving it, so it cannot also be anything else's evidence.
+      ['a slip upload that is also an expense receipt', (h) => {
+        h.addFile(slipUpload());
+        h.addLink({ id: 'link-receipt', attachmentId: 'att-slip-1', targetType: 'expense.record', targetId: 'exp-9', purpose: 'expense.receipt.primary' });
+      }],
+      ['a slip upload that a claim line names as its receipt', (h) => {
+        h.addFile(slipUpload());
+        h.addReceiptLine({ id: 'rbl-9', reimbursementRequestId: 'rb-9', attachmentId: 'att-slip-1' });
+      }],
+      ['this claim\'s signed copy that is also a signed copy of another claim', (h) => {
+        misfiledSignedCopy(h, false, 'att-slip-1');
+        h.addLink({ id: 'link-other', attachmentId: 'att-slip-1', targetType: 'reimbursement_request', targetId: 'rb-2', purpose: 'reimbursement.claim_form.signed' });
+      }],
+      ['this claim\'s signed copy that is also an expense receipt', (h) => {
+        misfiledSignedCopy(h, false, 'att-slip-1');
+        h.addLink({ id: 'link-receipt', attachmentId: 'att-slip-1', targetType: 'expense.record', targetId: 'exp-9', purpose: 'expense.receipt.supporting' });
+      }],
+      ['this claim\'s signed copy that is also the receipt of one of its own lines', (h) => {
+        misfiledSignedCopy(h, false, 'att-slip-1');
+        h.addReceiptLine({ id: 'rbl-1', reimbursementRequestId: 'rb-1', attachmentId: 'att-slip-1' });
+      }],
+      ['an earlier slip of this claim that has since been linked to something else', (h) => {
+        h.addFile(slipUpload({ uploadedByUserId: 'another-payer' }));
+        h.addPayment({ id: 'pay-old', companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'old', status: 'VOIDED', slipAttachmentId: 'att-slip-1' });
+        h.addLink({ id: 'link-old', attachmentId: 'att-slip-1', targetType: 'reimbursement_payment', targetId: 'pay-old', purpose: 'reimbursement.payment.slip' });
+        h.addLink({ id: 'link-receipt', attachmentId: 'att-slip-1', targetType: 'expense.record', targetId: 'exp-9', purpose: 'expense.receipt.primary' });
+      }],
     ];
     for (const [label, arrange] of refused) {
       const h = atomicPaymentHarness();
@@ -1434,7 +1466,8 @@ describe('PrismaReimbursementRepository payment slips', () => {
         (error: any) => error.getStatus() === 422 && error.message === 'payment_slip_invalid',
         label,
       );
-      assert.equal(h.state().payments.length, 0, label);
+      assert.equal(h.state().payments.filter((payment) => payment.status !== 'VOIDED').length, 0, label);
+      assert.deepEqual(h.state().links.filter((link) => link.id.startsWith('link-') && link.id.endsWith('reimbursement.payment.slip')), [], `${label}: no slip link written`);
       // The friendly preflight gives the same verdict as the check under the lock.
       await assert.rejects(() => h.repo.assertPaymentSlipUsable({ companyId: 'co-1', requestId: 'rb-1', attachmentId: 'att-slip-1', actorUserId: 'fin-1' }), /payment_slip_invalid/, label);
     }
@@ -1478,6 +1511,51 @@ describe('PrismaReimbursementRepository payment slips', () => {
       assert.deepEqual(await h.repo.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1' }), { created: false });
       assert.equal(h.state().links.length, 1);
     }
+  });
+
+  it('withdraws only the declaration made with the copy it removes: one bound to another link is left alone', async () => {
+    const h = atomicPaymentHarness();
+    const file = misfiledSignedCopy(h);
+    // The stored declaration names a link that is not this claim's copy (pre-filled at upload, or left by a link since replaced).
+    const elsewhere = { ...file.metadataJson.reimbursementSignedCopyAck, linkId: 'link-of-something-else' };
+    file.metadataJson = { source: 'web', reimbursementSignedCopyAck: elsewhere };
+
+    const result = await h.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-misfiled' });
+    assert.deepEqual(result.slip, { attachmentId: 'att-misfiled', source: 'SIGNED_COPY', uploadedByUserId: 'staff-1', declarationWithdrawn: false });
+    assert.deepEqual(h.state().files[0].metadataJson, { source: 'web', reimbursementSignedCopyAck: elsewhere }, 'not this claim\'s declaration to strip');
+    // The copy link itself is gone all the same: the file is the slip now, and only the slip.
+    assert.deepEqual(h.state().links.map((link) => link.purpose), ['reimbursement.payment.slip']);
+  });
+
+  it('answers a serialization conflict as "the payment changed, reload and retry", never a server error', async () => {
+    for (const boundary of ['serialization-row-lock', 'serialization-commit'] as AtomicFault[]) {
+      const pay = atomicPaymentHarness(boundary);
+      pay.addFile(slipUpload());
+      await assert.rejects(
+        () => pay.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-slip-1' }),
+        (error: any) => error.getStatus() === 409 && error.message === 'reimbursement_payment_state_changed',
+        boundary,
+      );
+      assert.equal(pay.state().payments.length, 0, `${boundary}: nothing was written`);
+      assert.deepEqual(slipLinksOf(pay), [], boundary);
+      // The retry the message asks for goes through.
+      pay.setFault();
+      assert.equal((await pay.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-slip-1' })).created, true, boundary);
+
+      const attach = atomicPaymentHarness();
+      await attach.repo.recordPaymentAtomic(atomicPaymentInput);
+      attach.addFile(slipUpload());
+      attach.setFault(boundary);
+      await assert.rejects(
+        () => attach.repo.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-slip-1', actorUserId: 'fin-1' }),
+        (error: any) => error.getStatus() === 409 && error.message === 'reimbursement_payment_state_changed',
+        boundary,
+      );
+      assert.deepEqual(slipLinksOf(attach), [], boundary);
+    }
+    // Any other failure stays what it was: this is not a net for every error.
+    const other = atomicPaymentHarness('create');
+    await assert.rejects(() => other.repo.recordPaymentAtomic(atomicPaymentInput), /fault:create/);
   });
 
   it('adds slips to a recorded payment only: five at most, none to a voided or foreign payment', async () => {

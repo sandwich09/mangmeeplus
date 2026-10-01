@@ -2659,6 +2659,11 @@ export class PrismaReimbursementRepository {
    * things qualify: a slip already on another payment of the claim (a re-pay after a void), the
    * payer's own slip upload for the claim, and a file attached to the claim as a signed copy (the
    * misfiled slip, §16). Anything else is refused: another claim's slip, somebody else's upload, a receipt.
+   *
+   * A slip is exclusive (owner 2026-10-01: never an expense receipt, never a signed claim copy). The
+   * generic file paths stop serving a slip to everyone, so a file that is also something else's
+   * evidence is refused here: every link it has must be the kind its source allows, and no claim
+   * line may name it as a receipt.
    */
   private async resolvePaymentSlip(
     db: any,
@@ -2670,15 +2675,17 @@ export class PrismaReimbursementRepository {
       select: { id: true, byteSize: true, checksumSha256: true, uploadedByUserId: true, metadataJson: true },
     });
     if (!file) throw invalid();
-    const links: { id: string; targetType: string; targetId: string }[] = await db.attachmentLink.findMany({
-      where: { companyId: input.companyId, attachmentId: input.attachmentId, OR: [
-        { targetType: REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE, purpose: REIMBURSEMENT_PAYMENT_SLIP_PURPOSE },
-        { targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE, targetId: input.requestId, purpose: REIMBURSEMENT_SIGNED_COPY_PURPOSE },
-      ] },
-      select: { id: true, targetType: true, targetId: true },
+    const links: { id: string; targetType: string; targetId: string; purpose: string }[] = await db.attachmentLink.findMany({
+      where: { companyId: input.companyId, attachmentId: input.attachmentId },
+      select: { id: true, targetType: true, targetId: true, purpose: true },
     });
-    const slipPaymentIds = links.filter((link) => link.targetType === REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE).map((link) => link.targetId);
-    const signedCopyLinkIds = links.filter((link) => link.targetType === REIMBURSEMENT_ATTACHMENT_TARGET_TYPE).map((link) => link.id);
+    const slipPaymentIds = links
+      .filter((link) => link.targetType === REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE && link.purpose === REIMBURSEMENT_PAYMENT_SLIP_PURPOSE)
+      .map((link) => link.targetId);
+    const signedCopyLinkIds = links
+      .filter((link) => link.targetType === REIMBURSEMENT_ATTACHMENT_TARGET_TYPE && link.targetId === input.requestId && link.purpose === REIMBURSEMENT_SIGNED_COPY_PURPOSE)
+      .map((link) => link.id);
+    if (await db.reimbursementLine.count({ where: { companyId: input.companyId, attachmentId: input.attachmentId } }) > 0) throw invalid();
     const metadataJson = (file.metadataJson ?? null) as Record<string, unknown> | null;
 
     let source: ReimbursementPaymentSlipSource;
@@ -2687,13 +2694,15 @@ export class PrismaReimbursementRepository {
       const ofThisClaim = await db.reimbursementPayment.count({
         where: { companyId: input.companyId, reimbursementRequestId: input.requestId, id: { in: slipPaymentIds } },
       });
-      if (ofThisClaim !== new Set(slipPaymentIds).size) throw invalid();
+      if (links.length !== slipPaymentIds.length || ofThisClaim !== new Set(slipPaymentIds).size) throw invalid();
       source = 'PREVIOUS_SLIP';
     } else if (metadataJson?.['generatedFor'] === REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG) {
-      if (metadataJson['requestId'] !== input.requestId || file.uploadedByUserId !== input.actorUserId
+      if (links.length !== 0 || metadataJson['requestId'] !== input.requestId || file.uploadedByUserId !== input.actorUserId
         || file.byteSize > REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES) throw invalid();
       source = 'UPLOAD';
     } else if (signedCopyLinkIds.length > 0) {
+      // Only this claim's signed copy: the same file on another claim, or as a receipt, stays what it is there.
+      if (links.length !== signedCopyLinkIds.length) throw invalid();
       source = 'SIGNED_COPY';
     } else {
       throw invalid();
@@ -2741,10 +2750,10 @@ export class PrismaReimbursementRepository {
     if (slip.source === 'SIGNED_COPY') {
       await tx.attachmentLink.deleteMany({ where: { companyId: input.companyId, id: { in: slip.signedCopyLinkIds } } });
       const { [REIMBURSEMENT_SIGNED_COPY_ACK_KEY]: ack, ...rest } = slip.metadataJson ?? {};
-      if (ack !== undefined) {
-        await tx.attachmentObject.update({ where: { id: slip.attachmentId }, data: { metadataJson: rest } });
-        declarationWithdrawn = slip.signedCopyLinkIds.includes((ack as { linkId?: string } | null)?.linkId ?? '');
-      }
+      // Only the declaration made with a link removed here. One bound to any other link is not this
+      // claim's to withdraw, and it never counted for this claim either.
+      declarationWithdrawn = slip.signedCopyLinkIds.includes((ack as { linkId?: string } | null | undefined)?.linkId ?? '');
+      if (declarationWithdrawn) await tx.attachmentObject.update({ where: { id: slip.attachmentId }, data: { metadataJson: rest } });
     }
     return { attachmentId: slip.attachmentId, source: slip.source, uploadedByUserId: slip.uploadedByUserId, declarationWithdrawn };
   }
@@ -3404,12 +3413,19 @@ export class PrismaReimbursementRepository {
     linkedByUserId: string,
     ack?: ReimbursementSignedCopyAck,
   ): Promise<void> {
-    const conflict = await findAttachmentLinkConflict(this.prisma.client, {
-      companyId, attachmentId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
-    });
-    if (conflict) throw new UnprocessableEntityException(conflict);
     const client = this.prisma.client as any;
     await client.$transaction(async (tx: any) => {
+      // The key a slip link and a delete of this file take, so the check below sees whichever of
+      // them committed first: a payment slip never becomes a signed copy (owner 2026-10-01).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${attachmentId}:attachment-retention`}))`;
+      const conflict = await findAttachmentLinkConflict(tx, {
+        companyId, attachmentId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
+      });
+      if (conflict) throw new UnprocessableEntityException(conflict);
+      // The other order: a payment that started before this commit reads the file under its older
+      // snapshot and would not see the link written here. Writing the file's row makes that payment
+      // fail on its own row lock and retry, instead of putting a slip link beside this copy.
+      await tx.$executeRaw`UPDATE "AttachmentObject" SET "updatedAt" = now() WHERE "id" = ${attachmentId} AND "companyId" = ${companyId}`;
       const link = await tx.attachmentLink.upsert({
         where: {
           attachmentId_targetType_targetId_purpose: {
