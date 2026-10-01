@@ -528,6 +528,27 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
     } finally { await retire(s); }
   });
 
+  it('a settlement that fails midway leaves nothing behind: its number, journal and stamp go back together, and a retry posts once', async () => {
+    const s = await shop();
+    try {
+      const { payment } = await payable(s, '95.00');
+      const numbersBefore = await journalNumbers(s);
+      // The journal is created, then posting it fails. By then the payment is stamped and the number taken.
+      const restore = intercept(ledger, 'postJournalEntry', () => async () => { throw new Error('connection lost'); });
+      try {
+        await assert.rejects(() => post(s, 'reimbursement.payment', payment.id), /connection lost/);
+      } finally { restore(); }
+      assert.deepEqual(await journalNumbers(s), numbersBefore, 'no journal number is left reserved for a settlement that was not written');
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'pending', shape: '' });
+
+      await post(s, 'reimbursement.payment', payment.id);
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'posted', shape: 'GENERATED:POSTED' });
+      const numbersAfter = await journalNumbers(s);
+      assert.equal(numbersAfter.length, numbersBefore.length + 1);
+      assert.ok(numbersAfter.every((number) => number.endsWith(':COMMITTED')), 'the one new number belongs to the one settlement');
+    } finally { await retire(s); }
+  });
+
   it('two posters at once take turns on the payment row: one settlement, both answered with it, the flag already right', async () => {
     const s = await shop();
     try {
