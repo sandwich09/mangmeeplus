@@ -646,6 +646,53 @@ describe('LINE staff menu', () => {
   });
 });
 
+// Production 2026-10-01. These four cards answer a chat that is already bound to its company, so the
+// reply goes through the v2 delivery plan — and the plan refuses a Flex message with no canonicalText
+// (LINE_PLAN_CANONICAL_TEXT_REQUIRED). "เมนูหลัก" was answered with "ระบบตอบกลับไม่ได้ชั่วคราว". Each one
+// now carries the words it shows; the plan sends them as text and keeps the quick reply.
+describe('cards a bound chat is answered with carry their own words as canonical text', () => {
+  const canonical = (message: unknown) => (message as { canonicalText?: string }).canonicalText;
+  const bodyLines = (message: unknown) => ((message as { contents: any }).contents.body.contents as any[])
+    .map((block) => block.text ?? (block.contents as any[]).map((span) => span.text).join(''));
+
+  it('main menu: the greeting, exactly as the bubble spells it', () => {
+    const message = buildStaffMainMenu({ ...context, permissions: ALL_PERMISSIONS });
+    assert.equal(canonical(message), bodyLines(message).join('\n'));
+    assert.equal(canonical(message), (message as { altText: string }).altText);
+  });
+
+  it('services: the complete list (only the preview is capped at 400 characters)', () => {
+    const all = buildServiceEntitlementMessage(null);
+    const sellable = FEATURE_CATALOG.filter((feature) => feature.sellable).map((feature) => feature.labelTh);
+    assert.equal(canonical(all), `บริการที่บริษัทของคุณเปิดใช้: ${sellable.join(', ')}`);
+    assert.equal((all as { altText: string }).altText, canonical(all)!.slice(0, 400));
+    const none = buildServiceEntitlementMessage(new Set());
+    assert.equal(canonical(none), 'บริษัทนี้ยังไม่มีบริการที่เปิดใช้งานผ่าน LINE');
+    assert.equal(canonical(none), bodyLines(none)[1]);
+  });
+
+  it('receipt prompt: the title and the instruction', () => {
+    const message = buildReceiptCapturePrompt(context);
+    assert.equal(canonical(message), bodyLines(message).join('\n'));
+  });
+
+  it('pending approvals: every line the card shows, then each button as a link line', () => {
+    const approver = { ...context, permissions: ['reimbursement.approve', 'procurement.purchase_order.approve'] };
+    const pending = { reimbursement: { total: 7, items: ['RB-1 · สมชาย · 1,130.00 บาท', 'RB-2'] }, procurement: { total: 1, items: ['PO-1'] } };
+    const card = buildPendingApprovalCard(approver, pending);
+    assert.equal(canonical(card), [
+      ...bodyLines(card),
+      'คำขอเบิกเงิน: https://app.example.com/companies/c%201/reimbursements?tab=approvals',
+      'ใบขอซื้อ/ใบสั่งซื้อ: https://app.example.com/companies/c%201/procurement',
+    ].join('\n'));
+    // No web base, no button — and no link line naming a page the card would not open.
+    for (const snapshot of [pending, { reimbursement: { total: 0, items: [] } }, undefined]) {
+      const plain = buildPendingApprovalCard({ ...approver, webBaseUrl: undefined }, snapshot);
+      assert.equal(canonical(plain), bodyLines(plain).join('\n'));
+    }
+  });
+});
+
 describe('promotion menu (rich menu v2 ver2)', () => {
   it('matches the promotion command, emoji-prefixed and synonym forms included', () => {
     assert.equal(staffMenuCommand('โปรโมชั่น'), 'promotion');

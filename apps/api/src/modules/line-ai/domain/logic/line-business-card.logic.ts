@@ -54,6 +54,16 @@ export function inheritCompleteLineBusinessAnswerPresentation<T extends LineRepl
   return target;
 }
 
+/** A server-worded card whose bubble holds its whole sentence is a complete presentation too, so a
+ *  delivery plan sends the card itself — a limit card exists for its buttons — and keeps the sentence
+ *  as the text fallback. A sentence the bubble body would cut stays text-first. */
+function completeCard(message: LineReplyMessage, bodyText: string): LineReplyMessage {
+  if (Array.from(bodyText.trim()).length <= ANSWER_CARD_BODY_LIMIT) {
+    completeBusinessAnswerPresentations.set(message, businessAnswerPresentationFingerprint(message)!);
+  }
+  return message;
+}
+
 /**
  * A URI button, one that sends a text command the webhook already answers (`โปรโมชั่น`), or one
  * that posts a bare intent back (P10-L G-04). Postback `data` never carries an id or any state —
@@ -344,6 +354,7 @@ export function buildReimbursementPayerClarificationMessage(): LineReplyMessage 
   return {
     type: 'flex',
     altText: preview(text, 400),
+    canonicalText: text,
     contents: bubble({ title: 'น้องมั่งมีขอถามเพิ่ม', text }, undefined, '', []),
   };
 }
@@ -356,14 +367,18 @@ export function buildReimbursementHandoffMessage(webBaseUrl: string | undefined,
   const text = 'น้องมั่งมียังไม่ได้สร้างรายการเบิกคืนให้นะคะ '
     + 'กรุณาเปิดหน้าเว็บเพื่อตรวจสอบและกรอกรายละเอียดการเบิกคืนด้วยตนเอง '
     + 'ระบบจะสร้างรายการเมื่อกดบันทึกในเว็บเท่านั้นค่ะ';
+  const webLink = { label: 'เปิดกรอกใบเบิกคืนในเว็บ', path: `/companies/${encodeURIComponent(companyId)}/reimbursements/new` };
+  const link = safeTenantLink(webBaseUrl, companyId, webLink.path);
   return {
     type: 'flex',
     altText: preview(text, 400),
+    // The button as a line, like the expense draft card: a text delivery still carries the way in.
+    canonicalText: link ? `${text}\n${webLink.label}: ${link}` : text,
     contents: bubble({
       title: 'เบิกคืนค่าใช้จ่าย',
       badge: '📝 ยังไม่ได้สร้างรายการ',
       text,
-      webLink: { label: 'เปิดกรอกใบเบิกคืนในเว็บ', path: `/companies/${encodeURIComponent(companyId)}/reimbursements/new` },
+      webLink,
     }, webBaseUrl, companyId),
   };
 }
@@ -528,9 +543,10 @@ export function buildAiBudgetExceededMessage(
       { label: 'ดูแพ็กเกจ', text: VIEW_PACKAGES_COMMAND },
       { label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND },
     ] : [];
-  return {
+  return completeCard({
     type: 'flex',
     altText: preview(text, 400),
+    canonicalText: text,
       contents: bubble(
       insufficient
         ? { title: chatOnly ? 'เครดิต AI ส่วนแชตที่เหลือไม่พอ' : 'เครดิต AI เดือนนี้เหลือไม่พอ',
@@ -540,7 +556,7 @@ export function buildAiBudgetExceededMessage(
       '',
       actions,
     ),
-  };
+  }, text);
 }
 
 /** Accepts only a handoff URL on our own web origin (`<web>/l/<token>`); anything else keeps the plain link. */
@@ -638,9 +654,12 @@ export function buildProfileGuardNudgeCard(): LineReplyMessage {
  * Advisor spec §2.2: the buttons only for a reader who may buy; `text` already says who to ask otherwise.
  */
 export function buildReceiptQuotaExceededMessage(text: string, canManagePlan: boolean): LineReplyMessage {
-  return {
+  return completeCard({
     type: 'flex',
     altText: preview(text, 400),
+    // Required on a bound chat: its delivery plan refuses a card with no text form. With the proof
+    // `completeCard` adds, the plan sends the card itself and keeps this sentence as the fallback.
+    canonicalText: text,
     contents: bubble(
       { title: 'โควตาให้ AI อ่านรูปเดือนนี้ครบแล้ว', badge: '📄 ครบโควตาเดือนนี้', text },
       undefined,
@@ -650,7 +669,7 @@ export function buildReceiptQuotaExceededMessage(text: string, canManagePlan: bo
         { label: 'ขอเปลี่ยนแพ็กเกจ', text: PACKAGE_CHANGE_COMMAND },
       ] : [],
     ),
-  };
+  }, text);
 }
 
 function completeAnswerText(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string): string {
