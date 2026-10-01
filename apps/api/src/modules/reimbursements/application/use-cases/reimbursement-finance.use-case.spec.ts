@@ -10,7 +10,7 @@ import {
 } from './reimbursement-payment-slip.use-case';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { ReimbursementController } from '../../presentation/http/reimbursement.controller';
-import { withPaymentSlipAccess } from '../dto/reimbursement.mapper';
+import { detailWithFileNames } from '../dto/reimbursement.mapper';
 import { RecordReimbursementPaymentDto } from '../../presentation/http/reimbursement.dtos';
 
 // Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
@@ -389,10 +389,12 @@ describe('payment slip at the payment step', () => {
     // Voiding is its own right: someone who holds only that one is not among the slip's readers.
     const voidOnly = { ...ctx(['reimbursement.payment.void']), userId: 'voider-1' };
     const voided = await controller.voidRequestPayment(voidOnly, 'rb-1', 'pay-1', { reason: 'บันทึกเลขอ้างอิงผิด' });
-    assert.deepEqual(voided.payments.map((row: any) => [row.status, row.slips.length, row.viewerCanOpenSlips]), [['VOIDED', 1, false]]);
-    // The requester voiding nothing, just reading the same shape: theirs is true.
-    const asRequester = withPaymentSlipAccess(voided, { userId: 'staff-1', permissions: [] });
-    assert.equal(asRequester.payments[0]!.viewerCanOpenSlips, true);
+    // They are told a slip exists, and are not handed the file's id.
+    assert.deepEqual(voided.payments.map((row: any) => [row.status, row.slipCount, row.slips, row.viewerCanOpenSlips]), [['VOIDED', 1, [], false]]);
+    assert.doesNotMatch(JSON.stringify(voided), /att-slip-1/);
+    // The requester voiding nothing, just reading the same claim: theirs is true, with the file named.
+    const asRequester = await detailWithFileNames(repo, fakeDetailEvidence as any, 'co-1', await repo.findRequestById('co-1', 'rb-1', true), { userId: 'staff-1', permissions: [] });
+    assert.deepEqual(asRequester.payments.map((row) => [row.slipCount, row.slips.map((slip) => slip.attachmentId), row.viewerCanOpenSlips]), [[1, ['att-slip-1'], true]]);
   });
 
   it('records a transfer with its slip, and the claim shows the slip on that payment', async () => {
@@ -507,9 +509,10 @@ describe('payment slip at the payment step', () => {
 
     const voided = await voidUC.execute(ctx(['reimbursement.payment.void']), 'rb-1', 'pay-1', { reason: 'บันทึกเลขอ้างอิงผิด' });
     // The claim is payable again, and the record that was voided still shows what it was paid with.
+    // (Whoever voids with only the void right sees that the slip is there, not which file it is.)
     assert.deepEqual([voided.status, voided.paymentStatus, voided.outstandingAmount, voided.paymentTotalAmount], ['READY_FOR_PAYMENT', 'UNPAID', '500.0000', '0.0000']);
-    assert.deepEqual(voided.payments.map((row) => [row.id, row.status, row.paymentMethod, row.paymentReference, row.slips.map((slip) => slip.attachmentId)]),
-      [['pay-1', 'VOIDED', 'BANK_TRANSFER', 'TXN-1', ['att-slip-1']]]);
+    assert.deepEqual(voided.payments.map((row) => [row.id, row.status, row.paymentMethod, row.paymentReference, row.slipCount]),
+      [['pay-1', 'VOIDED', 'BANK_TRANSFER', 'TXN-1', 1]]);
 
     // The old slip does not carry over on its own: the new transfer is refused until it names a slip.
     await assert.rejects(() => recordUC(repo).execute(ctx(perms), 'rb-1', { ...transfer, paymentReference: 'TXN-2', idempotencyKey: 'form-2' }), /payment_slip_required/);

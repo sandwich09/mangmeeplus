@@ -384,7 +384,7 @@ export class ApproveReimbursementUseCase {
     }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 }
 
@@ -474,6 +474,6 @@ export class RejectReimbursementUseCase {
     });
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 }

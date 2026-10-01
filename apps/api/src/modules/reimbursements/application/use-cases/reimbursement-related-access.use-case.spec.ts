@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { canOpenReimbursementPaymentSlip, isReimbursementPayoutParty, type RequestContext } from '@watchdog-bms/contracts';
+import { canOpenReimbursementPaymentSlip, isReimbursementClaimApprover, isReimbursementPayoutParty, type RequestContext } from '@watchdog-bms/contracts';
 import { CreatePaymentSlipDownloadUrlUseCase } from './reimbursement-payment-slip.use-case';
 import {
   assertCanReadRequest,
@@ -283,10 +283,15 @@ describe('who may open a payment slip', () => {
     status: 'PAID', financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'PAID', duplicateStatus: 'NO_MATCH',
     receiptRequirementStatus: 'ATTACHED', postingStatus: 'not_required',
     paymentTotalAmount: '500.0000', outstandingAmount: '0.0000', createdByUserId: 'requester-1', createdAt: at, updatedAt: at,
+    // The current round: the claim was corrected and sent again on the 26th.
+    submittedAt: new Date('2026-09-26T03:00:00.000Z'),
     lines: [], duplicateCandidates: [], claimSignatures: [],
     approvalSteps: [
       // An earlier round, undone by a correction: its approver is no longer this claim's approver.
       step({ id: 'step-0', decisionByUserId: 'earlier-approver', decidedAt: new Date('2026-09-20T03:00:00.000Z'), invalidatedAt: new Date('2026-09-21T03:00:00.000Z') }),
+      // Approved, never invalidated, then the claim was corrected and resubmitted to someone else:
+      // an approved step stays APPROVED in the history, and only the resubmission date tells it is past.
+      step({ id: 'step-0b', decisionByUserId: 'superseded-approver', decidedAt: new Date('2026-09-22T03:00:00.000Z') }),
       step({ id: 'step-1', decisionByUserId: 'approver-1', decidedAt: new Date('2026-09-27T03:00:00.000Z') }),
     ],
     payments: [{ id: 'pay-1', status: 'RECORDED', paidByUserId: 'payer-1', paidAt: at }],
@@ -353,6 +358,7 @@ describe('who may open a payment slip', () => {
       ['an ordinary reader such as an auditor', reader('auditor-1', ['reimbursement.read', 'reimbursement.export'])],
       ['an approval-permission holder this claim was never routed to', reader('manager-2', ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'])],
       ['the approver of a round a correction undid', reader('earlier-approver', ['reimbursement.read'])],
+      ['the approver of a round the claim was resubmitted after', reader('superseded-approver', ['reimbursement.read'])],
       ['a related reader who only attached a signed copy', reader('clerk-1', ['reimbursement.read_related'])],
       ['the payer of record once the pay right is gone', reader('payer-1', ['reimbursement.read'])],
     ];
@@ -377,6 +383,7 @@ describe('who may open a payment slip', () => {
       ['auditor', reader('auditor-1', ['reimbursement.read', 'reimbursement.export'])],
       ['approval-right holder off this claim', reader('manager-2', ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'])],
       ['approver of an undone round', reader('earlier-approver', ['reimbursement.read'])],
+      ['approver of a superseded round', reader('superseded-approver', ['reimbursement.read'])],
       ['related reader', reader('clerk-1', ['reimbursement.read_related'])],
       ['void-right holder who cannot record', reader('voider-1', ['reimbursement.read', 'reimbursement.payment.void'])],
     ];
@@ -386,8 +393,11 @@ describe('who may open a payment slip', () => {
       const detail = await h.detail(viewer);
       const told = detail.payments[0]!.viewerCanOpenSlips;
       assert.equal(typeof told, 'boolean', `${label}: the detail always answers`);
-      // Everyone who reads the claim sees that a slip exists, by id and time only.
-      assert.deepEqual(detail.payments[0]!.slips, [{ attachmentId: 'att-slip-1', attachedAt: at.toISOString() }], label);
+      // Everyone who reads the claim sees that a slip exists. Which file it is goes only to someone
+      // who may open it: a reader the endpoint refuses is not handed the file id either.
+      assert.equal(detail.payments[0]!.slipCount, 1, label);
+      assert.deepEqual(detail.payments[0]!.slips, told ? [{ attachmentId: 'att-slip-1', attachedAt: at.toISOString() }] : [], label);
+      if (!told) assert.doesNotMatch(JSON.stringify(detail), /att-slip-1/, `${label}: the slip's id is nowhere in the detail`);
       const served = await h.open(viewer).then(() => true, (error: any) => {
         assert.equal(error.message, 'payment_slip_access_denied', label);
         return false;
@@ -397,8 +407,8 @@ describe('who may open a payment slip', () => {
     }
     assert.deepEqual(verdicts, {
       requester: true, 'claim approver': true, 'payment-record holder': true, 'finance reviewer without the pay right': true,
-      auditor: false, 'approval-right holder off this claim': false, 'approver of an undone round': false, 'related reader': false,
-      'void-right holder who cannot record': false,
+      auditor: false, 'approval-right holder off this claim': false, 'approver of an undone round': false,
+      'approver of a superseded round': false, 'related reader': false, 'void-right holder who cannot record': false,
     });
 
     // A frozen assignee of a pending step, with no permission left: the detail and the endpoint agree there too.
@@ -459,6 +469,7 @@ describe('who may open a payment slip', () => {
       [viewer('payer-2', ['reimbursement.payment.record']), true, true],
       [viewer('accountant-1', ['reimbursement.finance_review']), false, true],
       [viewer('earlier-approver', []), false, false],
+      [viewer('superseded-approver', []), false, false],
       [viewer('manager-2', ['reimbursement.approve', 'reimbursement.read']), false, false],
       [viewer('', ['reimbursement.read']), false, false],
     ] as const) {
@@ -466,11 +477,44 @@ describe('who may open a payment slip', () => {
       assert.equal(canOpenReimbursementPaymentSlip(who, claim), slip, JSON.stringify(who));
     }
     // The web detail carries the same facts as ISO strings and gets the same answers.
-    const detail = { requesterUserId: 'requester-1', approvalSteps: claim.approvalSteps.map((row: any) => ({
+    const detail = { requesterUserId: 'requester-1', submittedAt: claim.submittedAt.toISOString(), approvalSteps: claim.approvalSteps.map((row: any) => ({
       status: row.status, decisionByUserId: row.decisionByUserId, decidedAt: row.decidedAt?.toISOString(), invalidatedAt: row.invalidatedAt?.toISOString(),
     })) };
     assert.equal(canOpenReimbursementPaymentSlip(viewer('approver-1', []), detail), true);
     assert.equal(canOpenReimbursementPaymentSlip(viewer('earlier-approver', []), detail), false);
+    assert.equal(canOpenReimbursementPaymentSlip(viewer('superseded-approver', []), detail), false);
     assert.equal(canOpenReimbursementPaymentSlip(viewer('assignee-1', []), { ...detail, approvalActions: { canApprove: true, canReject: false } }), true);
+  });
+
+  // An approved step is never invalidated when the claim is corrected and sent again: only PENDING
+  // steps are. So "the latest approval still in force" kept naming the earlier approver. The round
+  // the claim is in starts at its current submission, and only an approval made in it counts.
+  it('counts an approval only in the round the claim is in: resubmitted, its earlier approver is out', () => {
+    const viewer = (userId: string) => ({ userId, permissions: [] });
+    const approved = (userId: string, decidedAt: string) => ({ status: 'APPROVED', decisionByUserId: userId, decidedAt, invalidatedAt: null });
+    const first = { requesterUserId: 'requester-1', submittedAt: '2026-09-20T02:00:00.000Z', approvalSteps: [approved('approver-a', '2026-09-20T05:00:00.000Z')] };
+    assert.equal(isReimbursementClaimApprover('approver-a', first), true);
+    assert.equal(isReimbursementPayoutParty(viewer('approver-a'), first), true);
+
+    // Corrected and sent again on the 25th, to somebody else, who has not decided yet.
+    const resubmitted = { ...first, submittedAt: '2026-09-25T02:00:00.000Z' };
+    assert.equal(isReimbursementClaimApprover('approver-a', resubmitted), false);
+    assert.equal(isReimbursementPayoutParty(viewer('approver-a'), resubmitted), false);
+    assert.equal(canOpenReimbursementPaymentSlip(viewer('approver-a'), resubmitted), false);
+
+    // The new approver decides: theirs counts, the earlier one still does not.
+    const reapproved = { ...resubmitted, approvalSteps: [...first.approvalSteps, approved('approver-b', '2026-09-25T06:00:00.000Z')] };
+    assert.deepEqual(['approver-a', 'approver-b'].map((userId) => isReimbursementClaimApprover(userId, reapproved)), [false, true]);
+    // Decided at the very instant of the submission still belongs to that round.
+    assert.equal(isReimbursementClaimApprover('approver-b', { ...reapproved, submittedAt: '2026-09-25T06:00:00.000Z' }), true);
+
+    // Back with the requester for a correction (no submission in force): nobody is its approver by a past decision.
+    for (const submittedAt of [null, undefined]) {
+      assert.equal(isReimbursementClaimApprover('approver-b', { ...reapproved, submittedAt }), false);
+      assert.equal(isReimbursementPayoutParty(viewer('approver-b'), { ...reapproved, submittedAt }), false);
+      // The requester, and whoever may decide the step it waits on, never depended on a past decision.
+      assert.equal(isReimbursementPayoutParty(viewer('requester-1'), { ...reapproved, submittedAt }), true);
+      assert.equal(isReimbursementPayoutParty(viewer('approver-c'), { ...reapproved, submittedAt, approvalActions: { canApprove: true, canReject: true } }), true);
+    }
   });
 });

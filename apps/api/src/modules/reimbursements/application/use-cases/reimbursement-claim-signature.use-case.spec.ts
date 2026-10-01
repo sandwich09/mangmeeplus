@@ -623,7 +623,7 @@ describe('claim detail: form layout and documentSignedVia', () => {
     const evidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any;
     // The detail maps every step, so the steps need the assignment time the shared fixture leaves out.
     const approvalSteps = req.approvalSteps.map((step: any) => ({ ...step, assignedAt: new Date('2026-07-20T00:00:00.000Z') }));
-    return detailWithFileNames(repo, evidence, 'co-1', { ...req, approvalSteps });
+    return detailWithFileNames(repo, evidence, 'co-1', { ...req, approvalSteps }, { userId: 'staff-1', permissions: [] });
   }
   const declared = { attachmentId: 'att-paper', fileName: 'signed.pdf', uploadedAt, acknowledged: true };
   const archived = { attachmentId: 'att-archive', fileName: 'scan.jpg', uploadedAt, acknowledged: false };
@@ -752,7 +752,7 @@ describe('moving a misfiled slip recomputes how the document was signed', () => 
     const claim = request({ claimSignatures });
     const approvalSteps = claim.approvalSteps.map((step: any) => ({ ...step, assignedAt: new Date('2026-07-20T00:00:00.000Z') }));
     return {
-      detail: () => detailWithFileNames(repo, evidence, 'co-1', { ...claim, approvalSteps }),
+      detail: () => detailWithFileNames(repo, evidence, 'co-1', { ...claim, approvalSteps }, { userId: 'staff-1', permissions: [] }),
       move: () => repository.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1' }),
       misfiled: files[0],
       links: () => links,
