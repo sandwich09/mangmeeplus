@@ -466,6 +466,8 @@ export type HubList = {
   nextPage: number | null;
   /** Why the last page asked for did not arrive. Nothing more is asked until a retry clears it, and the rows stay. */
   failed?: string;
+  /** How many times this list was read again from its first page because it changed between two pages. */
+  restarts?: number;
   /** What the cards and chips print: the whole scope (with a search, what it found), whatever filter the rows are of. Kept from one list to the next. */
   summary: ReimbursementHubSummary | null;
 };
@@ -502,20 +504,34 @@ export function hubNextPage(list: HubList, need: number): number | null {
   return list.failed === undefined && list.rows.length < need ? list.nextPage : null;
 }
 
+/** How often a list that keeps changing is read again from the start before it is taken as it comes. */
+const HUB_MAX_RESTARTS = 3;
+
 /**
  * Adds one page. The list ends on the server's own total, or on a page shorter than the page size the
  * server answered with, never on the size that was asked for: the server may cap it.
+ *
+ * A later page whose total differs from the one held means the list changed between the two calls. When a
+ * claim left it (approved, paid, deleted), every claim behind it moved up one place, and the one that moved
+ * onto a page already read would never be shown: a claim still waiting, skipped. The list is then read again
+ * from its first page.
+ * ponytail: at most three times for one list; one that changes on every call is then taken as it comes.
  */
 export function withHubPage(
   held: HubList, key: string,
   result: { items?: any[]; total: number; page: number; pageSize: number; hub: ReimbursementHubSummary },
 ): HubList {
   const items = result.items ?? [];
+  const list = hubList(held, key);
+  const restarts = list.restarts ?? 0;
+  if (result.page > 1 && result.total !== list.total && restarts < HUB_MAX_RESTARTS) {
+    return { key, rows: [], total: result.total, nextPage: 1, summary: result.hub, restarts: restarts + 1 };
+  }
   // Keyed by id: a claim filed between two calls shifts the pages and would otherwise repeat a row.
-  const byId = new Map<string, any>(hubList(held, key).rows.map((row) => [row.id, row]));
+  const byId = new Map<string, any>(list.rows.map((row) => [row.id, row]));
   for (const item of items) byId.set(item.id, item);
   const more = items.length > 0 && items.length >= result.pageSize && result.page * result.pageSize < result.total;
-  return { key, rows: [...byId.values()], total: result.total, nextPage: more ? result.page + 1 : null, summary: result.hub };
+  return { key, rows: [...byId.values()], total: result.total, nextPage: more ? result.page + 1 : null, summary: result.hub, ...(restarts > 0 && { restarts }) };
 }
 
 /** A page did not arrive: what was loaded stays, and the same page is asked again on retry. */

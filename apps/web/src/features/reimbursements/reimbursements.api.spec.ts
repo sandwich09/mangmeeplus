@@ -263,6 +263,53 @@ describe('loadHubPage and the hub list it fills', () => {
     assert.equal(shortPage.length, 2);
   });
 
+  // Review 2026-10-01: a claim that left the list between two page loads moved the rest up one place, and the claim
+  // that slid onto the page already read was never loaded.
+  it('reads the list again from its first page when its total changed between two pages, so no waiting claim is skipped', async () => {
+    (globalThis as Record<string, unknown>)['window'] = {};
+    /** A list endpoint over rows that `change` after the first call: what a claim approved or filed in between does. */
+    const changing = (before: Array<{ id: string }>, after: Array<{ id: string }>) => {
+      const pages: string[] = [];
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        const number = Number(new URL(String(input), 'http://web.test').searchParams.get('page'));
+        const rows = pages.length === 0 ? before : after;
+        pages.push(String(number));
+        return Response.json({ items: rows.slice((number - 1) * 100, number * 100), total: rows.length, page: number, pageSize: 100, hub: hub(rows.length) });
+      }) as typeof fetch;
+      return pages;
+    };
+    // 101 claims wait; after page 1 is read, rb-5 is approved and leaves the filter. rb-100 moves from page 2 onto page 1.
+    const left = changing(claims(101), claims(101).filter((claim) => claim.id !== 'rb-5'));
+    const afterRemoval = await fill(NO_HUB_LIST, 'list');
+    // Before: page 2 came back empty, and the hub held rb-5 (gone) and never showed rb-100 (still waiting).
+    assert.deepEqual(afterRemoval.rows.map((row) => row.id), claims(101).map((claim) => claim.id).filter((id) => id !== 'rb-5'));
+    assert.deepEqual([afterRemoval.total, afterRemoval.nextPage, afterRemoval.summary?.counts.all], [100, null, 100]);
+    assert.deepEqual(left, ['1', '2', '1'], 'page 2 showed the change, and the list was read again from page 1');
+
+    // A claim filed in between is taken the same way: every claim once, the new one included.
+    const joined = changing(claims(150), [{ id: 'rb-new' }, ...claims(150)]);
+    const afterAddition = await fill(NO_HUB_LIST, 'list');
+    assert.deepEqual(afterAddition.rows.map((row) => row.id), ['rb-new', ...claims(150).map((claim) => claim.id)]);
+    assert.deepEqual(joined, ['1', '2', '1', '2']);
+
+    // The same total on every page is no change: nothing is read twice.
+    const steady = server(claims(230));
+    assert.equal((await fill(NO_HUB_LIST, 'list')).rows.length, 230);
+    assert.equal(steady.urls.length, 3);
+
+    // A list that changes on every single call is read again three times, then taken as it comes: no endless loop.
+    let calls = 0;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const number = Number(new URL(String(input), 'http://web.test').searchParams.get('page'));
+      calls += 1;
+      const rows = claims(150 + calls);
+      return Response.json({ items: rows.slice((number - 1) * 100, number * 100), total: rows.length, page: number, pageSize: 100, hub: hub(rows.length) });
+    }) as typeof fetch;
+    const restless = await fill(NO_HUB_LIST, 'list');
+    assert.deepEqual([calls, restless.nextPage, restless.failed], [8, null, undefined]);
+    assert.ok(restless.rows.length >= 150);
+  });
+
   it('keeps what was loaded when a later page fails, and a retry asks for that page again', async () => {
     const down = server(claims(230), 100, [2]);
     const failed = await fill(NO_HUB_LIST, 'list');
