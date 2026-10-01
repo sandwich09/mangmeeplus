@@ -712,6 +712,21 @@ describe('ProcessQueuedDeliveryUseCase and a preference list saved before a trig
     // With no saved row at all the notice goes out like every implemented trigger.
     assert.equal((await deliver('reimbursement.payout_account_set_by_other', null)).pushes.length, 1);
   });
+
+  // Audit B9, added the same day as the payout notice: a requester whose payment was taken back, and
+  // whoever can pay a claim waiting past the deadline. A list saved earlier names neither.
+  it('still pushes the voided-payment notice and the payment reminder, and respects LINE switched off for them too', async () => {
+    const savedEarlier = { ...savedLong, quietHoursStart: null, quietHoursEnd: null };
+    for (const [triggerKey, severity] of [['workflow.reimbursement_payment_voided', 'INFO'], ['workflow.reimbursement_payment_sla_breach', 'CRITICAL']] as const) {
+      const sent = await deliver(triggerKey, savedEarlier, severity);
+      assert.deepEqual([sent.pushes.length, sent.last.status], [1, 'SENT'], triggerKey);
+      const lineOff = await deliver(triggerKey, { ...savedEarlier, enabledChannelsJson: ['web'] }, severity);
+      assert.deepEqual([lineOff.pushes.length, lineOff.last.status], [0, 'suppressed'], triggerKey);
+    }
+    // Quiet hours are a person's own choice and still hold a notice that is not critical.
+    const quiet = await deliver('workflow.reimbursement_payment_voided', savedLong, 'INFO');
+    assert.deepEqual([quiet.pushes.length, quiet.last.status], [0, 'suppressed']);
+  });
 });
 
 describe('notification producer sweeps', () => {
