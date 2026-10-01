@@ -9,6 +9,8 @@ type Policy = {
   allowMissingReceiptWithReason: boolean;
   requireReceipt: boolean;
   financeReviewRequired: boolean;
+  /** Holders of any of these roles approve a claim. The seeded policy routes to the manager role. */
+  defaultApproverRoles?: string[];
 };
 type ReimbursementLine = { lineNo: number; description: string; amount: string; categoryKey: string };
 /** One payment as the claim detail reports it to whoever asked: the slip files only if they may open them. */
@@ -64,7 +66,11 @@ async function createReimbursement(api: any, companyId: string, amounts: string[
 
 async function withPolicy(api: any, companyId: string, patch: Partial<Policy>, fn: () => Promise<void>) {
   const original = await json<Policy>(await api.get(`companies/${companyId}/reimbursement-policy`));
-  const body = (p: Policy) => ({ allowSelfApproval: p.allowSelfApproval, allowMissingReceiptWithReason: p.allowMissingReceiptWithReason, requireReceipt: p.requireReceipt, financeReviewRequired: p.financeReviewRequired });
+  // The approval route is sent, and put back afterwards, only by a case that changes it.
+  const body = (p: Policy) => ({
+    allowSelfApproval: p.allowSelfApproval, allowMissingReceiptWithReason: p.allowMissingReceiptWithReason, requireReceipt: p.requireReceipt, financeReviewRequired: p.financeReviewRequired,
+    ...(patch.defaultApproverRoles && { defaultApproverRoles: p.defaultApproverRoles }),
+  });
   await json<Policy>(await api.put(`companies/${companyId}/reimbursement-policy`, { data: { ...body(original), ...patch, ...(original.id !== 'default' && { expectedUpdatedAt: original.updatedAt }) } }));
   try {
     await fn();
@@ -76,7 +82,7 @@ async function withPolicy(api: any, companyId: string, patch: Partial<Policy>, f
 
 // ---- Payment slips (claim payout Phase 2) ----
 
-/** A claim can be filed without a receipt, approved by its owner and paid straight after approval. */
+/** A claim can be filed without a receipt and paid straight after its approval: no finance-review step. */
 const PAYABLE = { requireReceipt: false, allowSelfApproval: true, allowMissingReceiptWithReason: true, financeReviewRequired: false };
 /** A valid 1x1 PNG: the smallest thing the upload check accepts as an image. */
 const SLIP_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
@@ -86,7 +92,10 @@ const claimUrl = (companyId: string, id: string) => `companies/${companyId}/reim
 const slipUrl = (companyId: string, id: string, paymentId: string, attachmentId: string) =>
   `${claimUrl(companyId, id)}/payments/${paymentId}/slips/${attachmentId}/download-url?disposition=inline`;
 
-/** A claim approved and waiting for its payment: `requester` files and submits it, `approver` approves it. */
+/**
+ * A claim approved and waiting for its payment: `requester` files and submits it, `approver` approves it. The approver
+ * is whoever the policy routes the claim to: on the seeded company that is the manager role, never the owner.
+ */
 async function payableClaim(requester: APIRequestContext, approver: APIRequestContext, companyId: string, amount: string) {
   const draft = await createReimbursement(requester, companyId, [amount]);
   const submitted = await json<Reimbursement>(await requester.post(`${claimUrl(companyId, draft.id)}/submit`, { data: {} }));
@@ -124,12 +133,16 @@ async function uploadPlainFile(uploader: APIRequestContext, request: APIRequestC
   return intent.attachmentId;
 }
 
-/** Records the claim's full payment as a bank transfer carrying that slip. */
+/**
+ * Records the claim's full payment as a bank transfer carrying that slip. The claims of these cases ask to be paid
+ * back in cash (`createReimbursement`'s default), so a transfer is another method than the one asked for and says why.
+ */
 async function payByTransfer(payer: APIRequestContext, companyId: string, claim: Reimbursement, slipAttachmentId: string) {
   const paid = await json<Reimbursement>(await payer.post(`${claimUrl(companyId, claim.id)}/payments`, {
     data: {
       idempotencyKey: `e2e-transfer-${claim.id}`, paidAmount: Number(claim.amount).toFixed(2), currency: 'THB',
       paymentMethod: 'BANK_TRANSFER', paymentReference: unique('E2E-TXN'), paidAt: new Date().toISOString(), slipAttachmentId,
+      methodMismatchReason: 'E2E: the requester asked for cash and was paid by transfer',
     },
   }));
   expect(paid.status).toBe('PAID');
@@ -223,9 +236,10 @@ test.describe('REIMB — reimbursements', () => {
     });
   });
 
-  // AC02: the solo owner walks ส่งอนุมัติ → อนุมัติ → บันทึกจ่าย on the one journey page, never leaving it.
+  // AC02: the solo owner walks ส่งอนุมัติ → อนุมัติ → บันทึกจ่าย on the one journey page, never leaving it. The seeded
+  // company has a manager, whom its policy routes every claim to; a shop whose approver is its owner routes to the owner.
   test('REIMB-07 @p1 owner submits, approves, and pays a claim on the journey page without leaving it', async ({ authedPage, api, companyId }) => {
-    await withPolicy(api, companyId, { requireReceipt: false, allowMissingReceiptWithReason: true, financeReviewRequired: false }, async () => {
+    await withPolicy(api, companyId, { requireReceipt: false, allowMissingReceiptWithReason: true, financeReviewRequired: false, defaultApproverRoles: ['OWNER'] }, async () => {
       const draft = await createReimbursement(api, companyId, ['77.00']);
       await gotoCompany(authedPage, companyId, `/reimbursements/${draft.id}`);
       const url = new RegExp(`/reimbursements/${draft.id}$`);
@@ -236,16 +250,12 @@ test.describe('REIMB — reimbursements', () => {
 
       // authedPage is the seeded OWNER, exempt from the self-approval switch; approving own
       // request opens the inline payment form automatically (AC03) with the outstanding
-      // amount and today's date filled in. The method is the payer's to choose (owner
-      // 2026-10-01): nothing is pre-selected, and saving without one is refused on the form.
+      // amount and today's date filled in. The method starts from what the requester asked
+      // for (payout spec §12.2): this claim asked for cash, so the form opens on เงินสด. Only a
+      // claim sent before claims carried a receiving method leaves the method for its payer to pick.
       await authedPage.getByRole('button', { name: 'อนุมัติ', exact: true }).click();
       await expect(authedPage.getByText('จ่ายเต็มจำนวนคงค้าง')).toBeVisible();
-      const method = authedPage.getByRole('combobox', { name: 'วิธีจ่าย', exact: true });
-      await expect(method).toHaveText('เลือกวิธีจ่าย');
-      await authedPage.getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
-      await expect(authedPage.getByText('กรุณาเลือกวิธีจ่าย')).toBeVisible();
-      await method.click();
-      await authedPage.getByRole('option', { name: 'เงินสด', exact: true }).click();
+      await expect(authedPage.getByRole('combobox', { name: 'วิธีจ่าย', exact: true })).toHaveText('เงินสด');
       await authedPage.getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
 
       await expect(authedPage.getByText('จ่ายแล้ว').first()).toBeVisible();
@@ -255,9 +265,10 @@ test.describe('REIMB — reimbursements', () => {
 
   // Owner decision 2026-10-01: a payment recorded as a bank transfer carries its slip. The form asks
   // for it, and the API refuses the same payment when it is posted straight to it.
-  test('REIMB-08 @p1 a transfer is refused without its slip, on the form and by the API, and recorded with one', async ({ authedPage, api, request, companyId }) => {
+  test('REIMB-08 @p1 a transfer is refused without its slip, on the form and by the API, and recorded with one', async ({ authedPage, api, apiAs, request, companyId }) => {
+    const manager = await apiAs('MANAGER');
     await withPolicy(api, companyId, PAYABLE, async () => {
-      const claim = await payableClaim(api, api, companyId, '64.00');
+      const claim = await payableClaim(api, manager, companyId, '64.00');
 
       await gotoCompany(authedPage, companyId, `/reimbursements/${claim.id}`);
       await authedPage.getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
@@ -288,10 +299,11 @@ test.describe('REIMB — reimbursements', () => {
   // reviewers. Everyone else who reads the claim is told a slip exists, and is not given the file.
   test('REIMB-09 @p1 the requester opens the slip of their own claim, and a reader outside its group only learns that one exists', async ({ api, apiAs, pageAs, request, companyId }) => {
     const staff = await apiAs('STAFF');
+    const manager = await apiAs('MANAGER');
     // Reads every claim of the company; holds neither the payment-record right nor finance review.
     const reader = await apiAs('COMPANY_VIEW');
     await withPolicy(api, companyId, PAYABLE, async () => {
-      const claim = await payableClaim(staff, api, companyId, '52.00');
+      const claim = await payableClaim(staff, manager, companyId, '52.00');
       const slipAttachmentId = await uploadSlip(api, request, companyId, claim.id);
       const payment = await payByTransfer(api, companyId, claim, slipAttachmentId);
       const slip = slipUrl(companyId, claim.id, payment.id, slipAttachmentId);
@@ -320,8 +332,9 @@ test.describe('REIMB — reimbursements', () => {
   // The generic attachment download is not a way to it for anyone, the payer included.
   test('REIMB-10 @p1 an accountant who reviews but cannot pay opens the slip, and the generic file download serves it to nobody', async ({ api, apiAs, request, companyId }) => {
     const accountant = await apiAs('ACCOUNTANT');
+    const manager = await apiAs('MANAGER');
     await withPolicy(api, companyId, PAYABLE, async () => {
-      const claim = await payableClaim(api, api, companyId, '47.00');
+      const claim = await payableClaim(api, manager, companyId, '47.00');
       const slipAttachmentId = await uploadSlip(api, request, companyId, claim.id);
       const payment = await payByTransfer(api, companyId, claim, slipAttachmentId);
 
@@ -341,9 +354,10 @@ test.describe('REIMB — reimbursements', () => {
 
   // The production incident of 1 October: slips went into "ใบเบิกที่เซ็นแล้ว" with the signed-on-paper
   // declaration, because the payment step had nowhere to put one. The file is moved, not uploaded again.
-  test('REIMB-11 @p1 a slip attached as a signed copy by mistake becomes the slip of the payment, and the paper declaration goes with it', async ({ api, request, companyId }) => {
+  test('REIMB-11 @p1 a slip attached as a signed copy by mistake becomes the slip of the payment, and the paper declaration goes with it', async ({ api, apiAs, request, companyId }) => {
+    const manager = await apiAs('MANAGER');
     await withPolicy(api, companyId, PAYABLE, async () => {
-      const claim = await payableClaim(api, api, companyId, '41.00');
+      const claim = await payableClaim(api, manager, companyId, '41.00');
       const paid = await json<Reimbursement>(await api.post(`${claimUrl(companyId, claim.id)}/payments`, {
         data: { idempotencyKey: `e2e-cash-${claim.id}`, paidAmount: '41.00', currency: 'THB', paymentMethod: 'CASH', paidAt: new Date().toISOString() },
       }));
