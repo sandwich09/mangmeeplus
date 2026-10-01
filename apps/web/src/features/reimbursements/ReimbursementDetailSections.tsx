@@ -45,9 +45,12 @@ import {
 // The one wording for a voided payment (its own import, apart from the model block above).
 import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
 
-/** `desk`: the claim's `currentDesk`. A claim the system holds reads "รอระบบปรับสถานะ", not the status it has not left yet. */
-export function StatusBadge({ status, desk }: { status: string; desk?: { kind?: string } | null }) {
-  const badge = claimStatusBadge({ status, currentDesk: desk });
+/**
+ * `desk`: the claim's `currentDesk`. A claim the system holds reads "รอระบบปรับสถานะ", not the status it has not left yet.
+ * `phase`: its `payoutCorrectionPhase`. A claim sent back for its payout account reads whom it waits for.
+ */
+export function StatusBadge({ status, desk, phase }: { status: string; desk?: { kind?: string } | null; phase?: string | null }) {
+  const badge = claimStatusBadge({ status, currentDesk: desk, payoutCorrectionPhase: phase });
   return <MangmeeBadge tone={badge.tone}>{badge.label}</MangmeeBadge>;
 }
 export function PaymentBadge({ status }: { status: string }) {
@@ -695,7 +698,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <h4 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h4>
         <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           <Row k="หมวดหมู่" v={categoryText(detail.categoryLabelSnapshot)} />
-          <Row k="สถานะ" v={<StatusBadge status={detail.status} desk={detail.currentDesk} />} />
+          <Row k="สถานะ" v={<StatusBadge status={detail.status} desk={detail.currentDesk} phase={detail.payoutCorrectionPhase} />} />
           <Row k="ตรวจสอบการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus]} />
           {detail.financeReviewedByName && <Row k="ผู้ตรวจการเงิน" v={detail.financeReviewedByName} />}
           <Row k="การจ่าย" v={<PaymentBadge status={detail.paymentStatus} />} />

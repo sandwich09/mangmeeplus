@@ -16,7 +16,7 @@ import {
 } from './reimbursements.api';
 import {
   FINANCE_REVIEW_LABELS, REIMBURSEMENT_CREATE_UNAVAILABLE,
-  claimStatusBadge, currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
+  claimDeskText, claimStatusBadge, currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
 } from './reimbursements.model';
 import {
   baht0, dateShort, ICON, KPI, StatCard, ErrorBanner,
@@ -66,8 +66,8 @@ const approverRoleName = (option?: Pick<ReimbursementApproverRoleOption, 'key' |
 };
 const shortDate = (iso?: string) => dateShort(iso);
 /** A claim never said whose desk it sits on. Terminal claims have none, and render nothing. */
-function CurrentDeskLine({ row }: { row: { currentDesk?: { kind?: string; names?: string[] } } }) {
-  const desk = currentDeskText(row.currentDesk);
+function CurrentDeskLine({ row }: { row: { currentDesk?: { kind?: string; names?: string[] }; payoutCorrectionPhase?: string } }) {
+  const desk = claimDeskText(row);
   return desk ? <div className="mt-1 truncate text-xs text-gray-500" data-testid="reimbursement-current-desk">อยู่ที่ {desk}</div> : null;
 }
 
@@ -381,7 +381,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                         <td className="text-gray-500">{categoryText(r.categoryLabelSnapshot)}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.amount, r.currency)}</td>
-                        <td><StatusBadge status={r.status} desk={r.currentDesk} /></td>
+                        <td><StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} /></td>
                         <td><PaymentBadge status={r.paymentStatus} /></td>
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
@@ -424,7 +424,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                     <div className="mt-1 truncate text-xs text-gray-500">ผู้ขอ: {r.requesterDisplayNameSnapshot ?? '—'}</div>
                     <CurrentDeskLine row={r} />
                     <div className="mt-3 flex items-center justify-between gap-3">
-                      <StatusBadge status={r.status} desk={r.currentDesk} />
+                      <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />
                       <span className="shrink-0 text-xs text-gray-500">{shortDate(r.incurredDate)}</span>
                     </div>
                     <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
@@ -600,7 +600,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   <CurrentDeskLine row={r} />
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <StatusBadge status={r.status} desk={r.currentDesk} />
+                      <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />
                       {r.slaRisk && <MangmeeBadge tone="danger">เกิน SLA</MangmeeBadge>}
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>
@@ -767,7 +767,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                         <td>{r.requesterDisplayNameSnapshot}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
-                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge status={r.status} desk={r.currentDesk} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">อาจซ้ำ</MangmeeBadge>}</div></td>
+                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">อาจซ้ำ</MangmeeBadge>}</div></td>
                         <td className="text-xs text-gray-500">{FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—'}</td>
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
@@ -797,7 +797,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   <CurrentDeskLine row={r} />
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <StatusBadge status={r.status} desk={r.currentDesk} />
+                      <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />
                       {r.hasDuplicateBlocker && <MangmeeBadge tone="amber">อาจซ้ำ</MangmeeBadge>}
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>

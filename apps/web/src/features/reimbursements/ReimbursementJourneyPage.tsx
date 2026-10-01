@@ -19,7 +19,7 @@ import {
   reopenReimbursement, resumeReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadReimbursementPaymentSlip, uploadSignedClaimFormCopy,
   voidReimbursementPayment, withdrawReimbursementCancellation,
 } from './reimbursements.api';
-import { currentDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
+import { claimDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
   activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, errorText, isMissingSavedSignatureError,
   isStaleApprovalError, opensPaymentFormOnArrival, signedCopyMoveConfirmText, type JourneyAction, type JourneyStepState,
@@ -268,7 +268,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const duplicateResolutionBlocked = detail.duplicateStatus === 'POSSIBLE_DUPLICATE'
     && !permissions.includes('reimbursement.duplicate.resolve');
   const recordedPayment = (detail.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
-  const desk = currentDeskText(detail.currentDesk, detail.paymentDesk);
+  const desk = claimDeskText(detail);
   const handlers: Partial<Record<JourneyAction, () => void>> = {
     // No approver at all: the answer names who fixes it and, for a policy manager, links there.
     // The token names the account shown in the card above: the server sends the claim with that one or refuses.
@@ -353,7 +353,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       eyebrow={back}
       title={detail.requestNo ?? 'คำขอเบิกฉบับร่าง'}
       description={desk ? `อยู่ที่ ${desk}` : undefined}
-      meta={<StatusBadge status={detail.status} desk={detail.currentDesk} />}
+      meta={<StatusBadge status={detail.status} desk={detail.currentDesk} phase={detail.payoutCorrectionPhase} />}
     >
       <ClaimSummaryCard detail={detail} />
 

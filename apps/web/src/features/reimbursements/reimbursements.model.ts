@@ -3,6 +3,8 @@ import { REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimburseme
 import { translateApiError } from '@/common/api/api-error-message';
 // The words for a payment method are shared with the server's notice (their own import, apart from the line above).
 import { REIMBURSEMENT_PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
+// A claim sent back for its payout account (payout spec §14): the words the LINE backlog uses for its two phases.
+import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, type ReimbursementPayoutCorrectionPhase } from '@watchdog-bms/contracts';
 
 export const REIMBURSEMENT_CREATE_UNAVAILABLE = 'ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อผู้ดูแลบริษัทเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์';
 
@@ -61,10 +63,22 @@ export const REQUEST_STATUS_TONES: Record<string, MangmeeTone> = {
  * "พร้อมจ่าย" on one being cancelled) beside an "อยู่ที่ ระบบ" line and a step note that said otherwise. It
  * reads "รอระบบปรับสถานะ" for such a claim: the words of that line, that note and the LINE backlog.
  */
-export function claimStatusBadge(claim: { status?: string; currentDesk?: { kind?: string } | null } | null | undefined): { label: string; tone: MangmeeTone } {
+export function claimStatusBadge(
+  claim: { status?: string; currentDesk?: { kind?: string } | null; payoutCorrectionPhase?: string | null } | null | undefined,
+): { label: string; tone: MangmeeTone } {
   if (claim?.currentDesk?.kind === 'SYSTEM') return { label: REIMBURSEMENT_SYSTEM_WAIT_LABEL, tone: 'amber' };
+  // Payout spec §14.2: a claim sent back for its payout account is PENDING_APPROVAL by its status. "รออนุมัติ" would
+  // name an approver nobody waits for while the requester gives the account, and say nothing of what is approved after.
+  const correction = payoutCorrectionPhaseLabel(claim?.payoutCorrectionPhase);
+  if (correction) return { label: correction, tone: 'amber' };
   const status = String(claim?.status ?? '');
   return { label: REQUEST_STATUS_LABELS[status] ?? '—', tone: REQUEST_STATUS_TONES[status] ?? 'slate' };
+}
+
+/** A claim's place in a correction round in words; nothing for a claim in none, or for a phase this build has no words for. */
+export function payoutCorrectionPhaseLabel(phase: unknown): string | undefined {
+  return typeof phase === 'string' && Object.hasOwn(REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, phase)
+    ? REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS[phase as ReimbursementPayoutCorrectionPhase] : undefined;
 }
 
 export const PAYMENT_STATUS_TONES: Record<string, MangmeeTone> = {
@@ -124,6 +138,21 @@ export function currentDeskText(
   if (!desk?.kind) return null;
   const names = desk.kind === 'PAYMENT' ? paymentDeskText(paymentDesk) : desk.names?.join(' หรือ ');
   return names || (CURRENT_DESK_LABELS[desk.kind] ?? null);
+}
+
+/** Who a claim sent back for its payout account is with, in the word its badge uses for them ("รอผู้เบิกแก้บัญชีรับเงิน"). */
+export const PAYOUT_CORRECTION_REQUESTER_DESK = 'ผู้เบิก';
+
+/**
+ * `อยู่ที่ <this>` of a claim, as its list row or as its detail. A claim sent back for its payout account is with
+ * its requester (payout spec §14.2), who is "ผู้เบิก" on its badge, in its step note and in its timeline: the pool
+ * word of that desk, "ผู้ยื่น", is whoever sends a draft, and may be another person than the one the money goes to.
+ */
+export function claimDeskText(claim: {
+  currentDesk?: Parameters<typeof currentDeskText>[0]; paymentDesk?: Parameters<typeof paymentDeskText>[0]; payoutCorrectionPhase?: string | null;
+} | null | undefined): string | null {
+  if (claim?.payoutCorrectionPhase === 'AWAITING_REQUESTER' && claim.currentDesk?.kind === 'REQUESTER') return PAYOUT_CORRECTION_REQUESTER_DESK;
+  return currentDeskText(claim?.currentDesk, claim?.paymentDesk);
 }
 
 // ---- Claim-form signatures ----
