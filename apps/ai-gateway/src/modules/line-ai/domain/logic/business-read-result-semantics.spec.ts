@@ -99,20 +99,56 @@ describe('billing.get_package_usage forbidden outcome (PACKAGE_MANAGER_REQUIRED,
   });
 });
 
-describe('package answers invite no unasked purchase (owner 2026-09-30, advisor eval r5/r6/r10)', () => {
-  it('drops the closing buy or change invitation unless the clause asked about buying, changing or upgrading', () => {
-    const prices = 'แพ็กเกจที่ใหญ่กว่ามีดังนี้ค่ะ\n\n• เติบโต — รายเดือน 499 บาท\n\nหมายเหตุ: ยังไม่มีข้อมูลว่าราคาเหล่านี้รวม VAT หรือไม่ค่ะ';
-    const question = 'แล้วแพ็กเกจที่ใหญ่กว่าราคาเท่าไหร่';
+describe('package answers tell nobody how to buy or change a package unasked (owner 2026-09-30, eval r5/r6/r10 and final P-32)', () => {
+  const prices = 'แพ็กเกจที่ใหญ่กว่ามีดังนี้ค่ะ\n\n• เติบโต — รายเดือน 499 บาท\n\nหมายเหตุ: ยังไม่มีข้อมูลว่าราคาเหล่านี้รวม VAT หรือไม่ค่ะ';
+  const question = 'แล้วแพ็กเกจที่ใหญ่กว่าราคาเท่าไหร่';
+
+  it('drops the "หาก/ถ้า" invitation, to the end of its sentence', () => {
     assert.equal(withoutUnaskedPackagePurchaseLine(`${prices}\n\nหากต้องการเปลี่ยนแพ็กเกจ ทำได้บนเว็บที่หน้าแพ็กเกจของร้านค่ะ`, question), prices);
     // r5: the invitation rode the end of the VAT note on the same line.
     assert.equal(withoutUnaskedPackagePurchaseLine('หมายเหตุ: ยังไม่มีข้อมูลว่าราคาข้างต้นรวม VAT หรือไม่ และหากต้องการเปลี่ยนหรือซื้อแพ็กเกจ สามารถทำได้บนเว็บที่หน้าแพ็กเกจของร้านค่ะ', question),
       'หมายเหตุ: ยังไม่มีข้อมูลว่าราคาข้างต้นรวม VAT หรือไม่');
-    // Asked how to upgrade: the web-page answer is the answer.
+    // Recorded forms: "เพิ่มหรือเปลี่ยน", "ซื้อเพิ่มหรือเปลี่ยน", an invitation behind a fact about this package, a trailing emoji.
+    assert.equal(withoutUnaskedPackagePurchaseLine('ขาดประมาณ 8 ใบค่ะ ถ้าต้องการเพิ่มหรือเปลี่ยนแพ็กเกจ ทำได้บนเว็บที่หน้าแพ็กเกจของร้านค่ะ', 'แพคเกจพอมั้ยเดือนนี้'), 'ขาดประมาณ 8 ใบค่ะ');
+    assert.equal(withoutUnaskedPackagePurchaseLine('รอบนี้สิ้นสุด 11 ต.ค. 2569 และยังไม่ได้ตั้งต่ออายุอัตโนมัติ หากต้องการซื้อหรือเปลี่ยนแพ็กเกจ ทำได้ที่หน้าแพ็กเกจบนเว็บค่ะ', 'แพ็กเกจพอไหม'),
+      'รอบนี้สิ้นสุด 11 ต.ค. 2569 และยังไม่ได้ตั้งต่ออายุอัตโนมัติ');
+    assert.equal(withoutUnaskedPackagePurchaseLine('ราคา 249 บาทค่ะ หากต้องการดูรายละเอียดราคาหรือเปลี่ยนแพ็กเกจ สามารถเข้าไปดูได้ที่หน้าแพ็กเกจบนเว็บได้เลยนะคะ 😊', 'แพ็กเกจเริ่มต้นราคาเท่าไหร่'),
+      'ราคา 249 บาทค่ะ');
+  });
+
+  it('drops the plain statement of where or how, and keeps the sentence before it', () => {
+    // Final-assembly run, P-32: the statement followed the VAT note on one line.
+    assert.equal(withoutUnaskedPackagePurchaseLine(`${prices} การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ`, question), prices);
+    assert.equal(withoutUnaskedPackagePurchaseLine(`${prices}\n\nการซื้อหรือเปลี่ยนแพ็กเกจต้องทำบนเว็บนะคะ`, question), prices);
+    assert.equal(withoutUnaskedPackagePurchaseLine('เหลือ 63 ใบค่ะ ส่วนการอัปเกรดหรือเปลี่ยนแพ็กเกจต้องทำบนเว็บไซต์ ที่หน้าแพ็กเกจของร้านค่ะ', 'เหลือใบเสร็จกี่ใบ'), 'เหลือ 63 ใบค่ะ');
+    assert.equal(withoutUnaskedPackagePurchaseLine('เหลือ 63 ใบค่ะ สามารถอัปเกรดได้ที่หน้าแพ็กเกจบนเว็บนะคะ', 'เหลือใบเสร็จกี่ใบ'), 'เหลือ 63 ใบค่ะ');
+    // A label or a bullet with nothing left behind it goes with its sentence.
+    assert.equal(withoutUnaskedPackagePurchaseLine('เหลือ 63 ใบค่ะ\nหมายเหตุ: การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บค่ะ', 'เหลือใบเสร็จกี่ใบ'), 'เหลือ 63 ใบค่ะ');
+    assert.equal(withoutUnaskedPackagePurchaseLine('63 receipts left. Buying or changing a package is done on the web, on the shop\'s package page.', 'How many receipts are left?'), '63 receipts left.');
+    assert.equal(withoutUnaskedPackagePurchaseLine('You have 63 receipts left. If you would like to upgrade your package, you can do it on the web.', 'How many receipts are left?'), 'You have 63 receipts left.');
+  });
+
+  it('keeps the answer whole when the clause asks about buying, changing, upgrading or renewing', () => {
     const upgrade = 'การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ\nหากต้องการเปลี่ยนแพ็กเกจ กดลิงก์ด้านล่างได้เลยค่ะ';
-    assert.equal(withoutUnaskedPackagePurchaseLine(upgrade, 'อยากอัปเกรดแพ็กเกจต้องทำยังไง'), upgrade);
-    // A page pointer that invites no purchase, and "ยังไม่เปิดให้ซื้อ", stay.
-    for (const kept of ['ถ้าอยากติดตามใกล้ชิด ดูรายละเอียดได้ที่หน้าแพ็กเกจของร้านนะคะ', 'แพ็กเกจธุรกิจยังไม่เปิดให้ซื้อตอนนี้ค่ะ'])
-      assert.equal(withoutUnaskedPackagePurchaseLine(kept, question), kept);
+    for (const asked of ['อยากอัปเกรดแพ็กเกจต้องทำยังไง', 'แล้วถ้าอัปเกรดล่ะ', 'ควรเปลี่ยนแพ็กเกจไหม', 'ซื้อยังไง', 'เปลี่ยนแพ็กเกจที่ไหน', 'ต่ออายุยังไง',
+      'ซื้อแพ็กเกจยังไง ราคาเท่าไหร่', 'How do I upgrade?'])
+      assert.equal(withoutUnaskedPackagePurchaseLine(`ราคา 499 บาทค่ะ\n${upgrade}`, asked), `ราคา 499 บาทค่ะ\n${upgrade}`, asked);
+    // A price or contents question that only names buying did not ask how or where.
+    for (const price of ['ถ้าซื้อรายปีราคาเท่าไหร่', 'อัปเกรดแล้วราคาเท่าไหร่', 'เปลี่ยนเป็นแพ็กเกจเติบโตได้อะไรบ้าง'])
+      assert.equal(withoutUnaskedPackagePurchaseLine(`ราคา 499 บาทค่ะ\n${upgrade}`, price), 'ราคา 499 บาทค่ะ', price);
+  });
+
+  it('leaves everything that is not a how-or-where-to-buy sentence, and never empties an answer', () => {
+    for (const kept of [
+      'ถ้าอยากติดตามใกล้ชิด ดูรายละเอียดได้ที่หน้าแพ็กเกจของร้านนะคะ',            // a page pointer that invites no purchase
+      'แพ็กเกจธุรกิจยังไม่เปิดให้ซื้อตอนนี้ค่ะ',                                   // not on sale yet
+      'และแพ็กเกจนี้ยังไม่ได้ตั้งต่ออายุอัตโนมัติ และหมดอายุวันที่ 19 ต.ค. 2569 ด้วยค่ะ ดูได้ที่หน้าแพ็กเกจของร้านนะคะ', // a fact about this package
+      'ถ้าซื้อแพ็กเกจรายปี จะได้สิทธิ์อ่านใบเสร็จ 600 ใบทันทีค่ะ',                   // what yearly gives
+      '• เติบโต — รายเดือน 499 บาท / รายปี 4,990 บาท (ประหยัด 998 บาท เทียบเท่าจ่าย 10 เดือน)',
+      prices,
+    ]) assert.equal(withoutUnaskedPackagePurchaseLine(kept, question), kept);
+    const only = 'การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ';
+    assert.equal(withoutUnaskedPackagePurchaseLine(only, question), only, 'an answer that is only that sentence is not emptied');
   });
 });
 

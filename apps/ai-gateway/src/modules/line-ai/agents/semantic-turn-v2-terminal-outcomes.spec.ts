@@ -407,6 +407,33 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     assert.doesNotMatch(result.replyText, /หากต้องการซื้อแพ็กเกจ/, 'an unasked buy line is dropped');
     assert.deepEqual(result.webLinks, [], 'someone who cannot buy gets no package page link');
   });
+
+  // Final-assembly run, P-32: a price answer closed with the plain "การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ …" statement.
+  it('drops an unasked where-to-buy statement from a price answer and keeps it for a how-to-upgrade question', async () => {
+    const control = JSON.stringify({ calls: [{ index: 0, toolName: 'billing.get_package_catalog', input: {} }] });
+    const data = { packages: [{ name: 'เติบโต (BASIC)', branches: 2, users: 5, monthly: { price: '499', payable: '499', receiptReads: 50 } }], vatNote: 'ยังไม่มีข้อมูลว่าราคานี้มี VAT หรือไม่' };
+    const composed = 'แพ็กเกจเติบโต รายเดือน 499 บาทค่ะ\n\nหมายเหตุ: ยังไม่มีข้อมูลว่าราคานี้มี VAT หรือไม่ค่ะ การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ';
+    for (const [question, expected] of [
+      ['แล้วแพ็กเกจที่ใหญ่กว่าราคาเท่าไหร่', 'แพ็กเกจเติบโต รายเดือน 499 บาทค่ะ\n\nหมายเหตุ: ยังไม่มีข้อมูลว่าราคานี้มี VAT หรือไม่ค่ะ'],
+      ['อยากอัปเกรดแพ็กเกจต้องทำยังไง', composed],
+    ] as const) {
+      const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+        return { ok: true, text: input.usageTag === 'line.compose' ? JSON.stringify({ answers: [{ index: 0, status: 'handled', text: composed,
+          sourceRefIds: ['billing:package_catalog:summary'] }] }) : control };
+      } };
+      const result = await runSemanticTurnV2({
+        req: request('read', question, ['ai.tool.invoke', 'company.plan.manage']), provider, draftEditEnabled: false,
+        reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        async invoke(): Promise<ToolResult> {
+          return { toolName: 'billing.get_package_catalog', status: 'ok', data, asOf: '2026-10-01T03:00:00.000Z', sourceRefs: [{ label: 'แพ็กเกจที่เปิดขาย',
+            module: 'billing', entityType: 'package_catalog', permissionChecked: true, webPath: '/companies/company/billing' }] };
+        },
+      });
+      assert.equal(result.replyText, expected, question);
+      // The page link is not text: whoever may manage the plan still gets it, asked or not.
+      assert.deepEqual(result.webLinks, [{ label: 'แพ็กเกจที่เปิดขาย', path: '/companies/company/billing' }]);
+    }
+  });
 });
 
 // Items 1-4 (docs/specs/mangmee-ai-expense-advisor-spec-th.md §2, §3 rows 17-18, §8, §11): real-model
@@ -1068,6 +1095,15 @@ describe('advisor S0: general answers are shaped in code, and a stock clause is 
     // No mark at all: her own shop line on a turn the router placed outside the product says the same.
     const unmarked = await general('เมืองหลวงของญี่ปุ่นคืออะไร', 'UNSUPPORTED', { text: 'โตเกียวค่ะ\n\nถ้ามีเรื่องร้านหรือค่าใช้จ่ายให้ช่วย บอกได้เลยนะคะ 😊' });
     assert.equal(unmarked.replyText, `โตเกียวค่ะ\n\n${STEER}`);
+  });
+
+  // Final-assembly run, P-31: the cost question went to the general lane and the refusal said "margin".
+  it('a general answer says "margin" and "reset" in Thai unless the turn itself used the word', async () => {
+    const refusal = 'มั่งมีบอกได้เฉพาะราคาที่แพ็กเกจถูกขายค่ะ ต้นทุน AI ต่อใบเสร็จ กำไรต่อแพ็กเกจ หรือ margin ใดๆ เป็นข้อมูลภายในค่ะ';
+    const cost = await general('มั่งมีมีต้นทุน AI ต่อใบเสร็จเท่าไหร่ กำไรต่อแพ็กเกจเท่าไหร่', 'BUSINESS_READ_QUESTION', { topic: 'business', text: refusal });
+    assert.equal(cost.replyText, 'มั่งมีบอกได้เฉพาะราคาที่แพ็กเกจถูกขายค่ะ ต้นทุน AI ต่อใบเสร็จ กำไรต่อแพ็กเกจ หรือกำไรส่วนต่างใดๆ เป็นข้อมูลภายในค่ะ');
+    const asked = await general('margin คืออะไรคะ', 'BUSINESS_READ_QUESTION', { topic: 'business', text: 'margin คือส่วนต่างระหว่างราคาขายกับต้นทุนค่ะ' });
+    assert.equal(asked.replyText, 'margin คือส่วนต่างระหว่างราคาขายกับต้นทุนค่ะ', 'the user said the word: it stays');
   });
 
   // G-04, G-11, G-23: business knowledge closed with the shop line; six answers gave an agency website from memory.

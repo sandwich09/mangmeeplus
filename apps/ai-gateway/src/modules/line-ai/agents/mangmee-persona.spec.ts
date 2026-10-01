@@ -7,7 +7,8 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MANGMEE_PERSONA_LINES, MANGMEE_PERSONA_PROMPT, closesWithShopLine, sanitizeMangmeeComposedText, sanitizeMangmeePersonaText, shapeGeneralAnswer, steerBackLine } from './mangmee-persona';
+import { MANGMEE_PERSONA_LINES, MANGMEE_PERSONA_PROMPT, closesWithShopLine, sanitizeMangmeeComposedText, sanitizeMangmeePersonaText, shapeGeneralAnswer, steerBackLine,
+  thaiForEnglishBusinessWords } from './mangmee-persona';
 
 describe('sanitizeMangmeePersonaText', () => {
   it('rewrites ครับ to ค่ะ (T-052: "...มีดังนี้ครับ")', () => {
@@ -250,5 +251,45 @@ describe('advisor S0: the shape of a general answer', () => {
     assert.equal(steerBackLine([], false), 'ถ้ามีเรื่องร้านให้ช่วย บอกได้เลยค่ะ');
     assert.equal(steerBackLine(STAFF, true), 'If there is anything about the shop or its expenses I can help with, just tell me.');
     assert.ok(closesWithShopLine(steerBackLine(STAFF, true)) && closesWithShopLine(steerBackLine([], false)));
+  });
+});
+
+// Owner plain-Thai rule: "reset" and "margin" reached customers in Thai replies (advisor eval r10, final-assembly P-31).
+describe('thaiForEnglishBusinessWords: two English business words in a Thai reply', () => {
+  // A package read's own data: the field name "resetsOn" is not the word "reset".
+  const usage = JSON.stringify(['เหลือกี่ใบ', { receipts: { resetsOn: '2026-11-01', remaining: 18 } }]);
+
+  it('writes them in Thai, as whole words, with Thai spacing', () => {
+    assert.equal(thaiForEnglishBusinessWords('รอบนี้เริ่มนับ 1 ต.ค. 2569 และจะ reset ใหม่ 1 พ.ย. 2569 นะคะ', usage), 'รอบนี้เริ่มนับ 1 ต.ค. 2569 และจะเริ่มนับใหม่ 1 พ.ย. 2569 นะคะ');
+    assert.equal(thaiForEnglishBusinessWords('โควต้าจะ reset วันที่ 1 พ.ย. ค่ะ', usage), 'โควต้าจะเริ่มนับใหม่วันที่ 1 พ.ย. ค่ะ');
+    assert.equal(thaiForEnglishBusinessWords('ต้นทุน AI ต่อใบเสร็จ กำไรต่อแพ็กเกจ หรือ margin ใดๆ เป็นข้อมูลภายในค่ะ', '["กำไรต่อแพ็กเกจเท่าไหร่"]'),
+      'ต้นทุน AI ต่อใบเสร็จ กำไรต่อแพ็กเกจ หรือกำไรส่วนต่างใดๆ เป็นข้อมูลภายในค่ะ');
+    assert.equal(thaiForEnglishBusinessWords('Reset ทุกต้นเดือนค่ะ ส่วน MARGIN 30% คือเป้าของร้าน', usage), 'เริ่มนับใหม่ทุกต้นเดือนค่ะ ส่วนกำไรส่วนต่าง 30% คือเป้าของร้าน');
+    // r10 P-01: before a count of receipts "margin" is room to spare, never profit.
+    assert.equal(thaiForEnglishBusinessWords('น่าจะพอค่ะ ยังเหลือ margin อีก 12 ใบ', usage), 'น่าจะพอค่ะ ยังเหลือเผื่ออีก 12 ใบ');
+    assert.equal(thaiForEnglishBusinessWords('ร้านเหลือ margin 20% ค่ะ', usage), 'ร้านเหลือกำไรส่วนต่าง 20% ค่ะ');
+  });
+
+  it('never touches a quote, inline code, a web address, a longer word or an English reply', () => {
+    for (const kept of [
+      'คำว่า "margin" หมายถึงส่วนต่างกำไรค่ะ และ “reset” คือเริ่มใหม่',
+      'ดูที่ https://example.com/reset หรือ www.margin.co.th ได้ค่ะ และ `reset` คือคำสั่ง',
+      'กำไรขั้นต้น (gross margins) กับ resetting, pre-reset และ reset_at ไม่ใช่คำนี้ค่ะ',
+      'The count will reset on Nov 1 and the margin is unknown.',
+      'ใช้ไปแล้ว 12 ใบ เหลืออีก 18 ใบค่ะ',
+    ]) assert.equal(thaiForEnglishBusinessWords(kept, usage), kept);
+  });
+
+  it('leaves a word the turn itself carries: it may be a name the user or a tool supplied', () => {
+    const vendor = JSON.stringify(['จ่ายร้านไหนเยอะสุด', { byVendor: [{ name: 'Margin Cafe', amount: '300.00' }] }]);
+    const text = 'ร้าน Margin Cafe จ่ายไป 300 บาทค่ะ margin ของร้านไม่ทราบค่ะ และจะ reset 1 พ.ย.';
+    assert.equal(thaiForEnglishBusinessWords(text, vendor), 'ร้าน Margin Cafe จ่ายไป 300 บาทค่ะ margin ของร้านไม่ทราบค่ะ และจะเริ่มนับใหม่ 1 พ.ย.');
+    const asked = 'ลูกค้าถามว่า reset รหัสผ่านยังไง ให้ reset ที่หน้าเว็บค่ะ';
+    assert.equal(thaiForEnglishBusinessWords(asked, JSON.stringify(['reset รหัสผ่านยังไง'])), asked);
+  });
+
+  it('runs inside the composed-text backstop only when the turn\'s words are given', () => {
+    assert.equal(sanitizeMangmeeComposedText('จะ reset ใหม่ 1 พ.ย. ครับ', true, usage), 'จะเริ่มนับใหม่ 1 พ.ย. ค่ะ');
+    assert.equal(sanitizeMangmeeComposedText('จะ reset ใหม่ 1 พ.ย. ครับ'), 'จะ reset ใหม่ 1 พ.ย. ค่ะ');
   });
 });

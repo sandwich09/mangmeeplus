@@ -200,19 +200,51 @@ export function packageManagerRequiredReplyText(english: boolean): string {
     : 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ';
 }
 
-// Owner 2026-09-30 (no upsell): a package answer invites no purchase, change or upgrade the user did not
-// ask about. ANSWER_PROMPT says so, yet price and "พอไหม" answers kept closing with "หากต้องการเปลี่ยน
-// แพ็กเกจ ทำได้บนเว็บ…" (advisor eval r5, r6, r10), so that unasked invitation — from its "หาก/ถ้า …
-// ซื้อ/เปลี่ยน/อัปเกรด … แพ็กเกจ" to the end of its line — is dropped here. A clause that itself asks about
-// buying, changing, upgrading or renewing keeps its answer whole.
+// Owner 2026-09-30 (no upsell): a package answer tells nobody how or where to buy, change, upgrade or renew a package
+// unless the clause asked that. ANSWER_PROMPT says so, yet answers kept closing with it in two shapes: the invitation
+// "หากต้องการเปลี่ยนแพ็กเกจ ทำได้บนเว็บ…" (advisor eval r5, r6, r10) and the plain statement "การซื้อหรือเปลี่ยนแพ็กเกจ
+// ทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ" (final-assembly run, P-32). Both are cut here, from where they start to the end of
+// their sentence; what stands before them on the line stays. The package page link is not text: it rides sourceRefs
+// and only ever goes to someone who may manage the plan.
 export const PACKAGE_TOOL_NAMES: ReadonlySet<string> = new Set(['billing.get_package_usage', 'billing.get_package_catalog']);
-const PACKAGE_PURCHASE_ASKED = /ซื้อ|เปลี่ยน|อัป?เกรด|อัพเกรด|ต่ออายุ|upgrade|buy|change|renew/iu;
-const UNASKED_PURCHASE_INVITATION = /[ \t]*(?:และ[ \t]*)?(?:หาก|ถ้า)[ \t]*(?:ต้องการ|สนใจ|อยาก)[^\n]*?(?:ซื้อ|เปลี่ยน|อัป?เกรด|อัพเกรด)[^\n]*?แพ็?[กค]เกจ[^\n]*/gu;
+const PURCHASE_VERB = '(?:ซื้อ(?:เพิ่ม)?|เปลี่ยน|อัป?เกรด|อัพเกรด|ต่ออายุ)';
+// The clause asks about buying or changing ("อัปเกรดยังไง", "เปลี่ยนแพ็กเกจที่ไหน", "แล้วถ้าอัปเกรดล่ะ"), not a price or
+// what a package holds: "ถ้าซื้อรายปีราคาเท่าไหร่" names buying yet asks a price.
+const PURCHASE_WORD = new RegExp(`${PURCHASE_VERB}|upgrad|\\bbuy|\\bchang|\\brenew`, 'iu');
+const HOW_OR_WHERE = /ยังไง|อย่างไร|ที่ไหน|ตรงไหน|ทางไหน|ทำไง|วิธี|ขั้นตอน|\bhow (?:do|can|to)\b|\bwhere\b/iu;
+const PRICE_OR_CONTENTS = /ราคา|เท่าไหร่|เท่าไร|กี่บาท|อะไรบ้าง|ได้อะไร|ต่างกัน|เทียบ|\bprice|how much|\bcost|\binclude|\bcompare/iu;
+// A sentence runs to its closing particle (or the line's end); "นะคะ" closes on "คะ".
+const SENTENCE_REST = '(?:(?!(?:ค่ะ|คะ|ครับ|นะ)(?:[ \\t]|$))[^\\n])*';
+const SENTENCE_END = '(?:(?:ค่ะ|คะ|ครับ|นะ)(?:[ \\t]*\\p{Extended_Pictographic}\\uFE0F?)*)?';
+const WHERE_OR_HOW = '(?:บนเว็บ|ทางเว็บ|ผ่านเว็บ|หน้าเว็บ|เว็บไซต์|หน้าแพ็?[กค]เกจ|ติดต่อ(?:เจ้าหน้าที่|ทีมงาน|แอดมิน))';
+const UNASKED_PURCHASE_SENTENCE = new RegExp([
+  // "หาก/ถ้า ต้องการ|สนใจ|อยาก … ซื้อ/เปลี่ยน/อัปเกรด/ต่ออายุ …": an invitation, wherever it sends the reader.
+  `[ \\t]*(?:(?:และ|หรือ|แต่)[ \\t]*)?(?:หาก|ถ้า)[ \\t]*(?:ต้องการ|สนใจ|อยาก)(?=${SENTENCE_REST}${PURCHASE_VERB})`
+    + `(?=${SENTENCE_REST}(?:แพ็?[กค]เกจ|อัป?เกรด|อัพเกรด|ต่ออายุ))${SENTENCE_REST}${SENTENCE_END}`,
+  // "การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ …", "สามารถอัปเกรดได้ที่หน้าแพ็กเกจ …": a statement of where or how. It starts
+  // a clause, so "ยังไม่ได้ตั้งต่ออายุอัตโนมัติ" (a fact about this package) is never taken for one.
+  `(?<![\\u0E00-\\u0E7F])[ \\t]*(?:(?:ส่วน|และ|โดย|ทั้งนี้|นอกจากนี้)[ \\t]*)?(?:(?:คุณ|ร้าน|ลูกค้า|ท่าน)[ \\t]*)?(?:การ|สามารถ)?`
+    + `(?:เพิ่ม(?:หรือ|และ))?${PURCHASE_VERB}(?:(?:หรือ|และ)(?:${PURCHASE_VERB}|เพิ่ม))*`
+    + `(?=${SENTENCE_REST}แพ็?[กค]เกจ)(?=${SENTENCE_REST}${WHERE_OR_HOW})${SENTENCE_REST}${SENTENCE_END}`,
+  String.raw`[ \t]*if you(?:'d| would)? (?:like|want|wish|need) to (?:buy|change|upgrade|renew)\b[^.!?\n]*[.!?]?`,
+  String.raw`(?<![a-z])[ \t]*(?:you can |to )?(?:buy(?:ing)?|chang(?:e|ing)|upgrad(?:e|ing)|renew(?:ing)?)\b[^.!?\n]*\bpackage[^.!?\n]*(?:on the web|website|package page)[^.!?\n]*[.!?]?`,
+].join('|'), 'gimu');
+// What a cut can leave behind on its line: a joining word at the end, or only a bullet or a "หมายเหตุ:" label.
+const DANGLING_JOIN = /[ \t]*(?:และ|ส่วน|โดย|แต่|ทั้งนี้|นอกจากนี้|[,—–-])?[ \t]*$/u;
+const EMPTY_LABEL = /^(?:[•·▪◦*-]|\d+[.)])?[ \t]*(?:หมายเหตุ|note)?[ \t]*[:：]?[ \t]*$/iu;
 
 export function withoutUnaskedPackagePurchaseLine(text: string, clauseText: string): string {
-  if (PACKAGE_PURCHASE_ASKED.test(clauseText)) return text;
-  const kept = text.replace(UNASKED_PURCHASE_INVITATION, '').replace(/\n{3,}/gu, '\n\n').trim();
-  return kept || text;
+  if (PURCHASE_WORD.test(clauseText) && (HOW_OR_WHERE.test(clauseText) || !PRICE_OR_CONTENTS.test(clauseText))) return text;
+  let changed = false;
+  const lines = text.split('\n').flatMap((line) => {
+    const cut = line.replace(UNASKED_PURCHASE_SENTENCE, '');
+    if (cut === line) return [line];
+    changed = true;
+    const rest = cut.replace(DANGLING_JOIN, '');
+    return EMPTY_LABEL.test(rest) ? [] : [rest];
+  });
+  if (!changed) return text;
+  return lines.join('\n').replace(/\n{3,}/gu, '\n\n').trim() || text;
 }
 
 // ─── A3 (batch5, T-084-b): reimbursement.list_pending_approvals has no code-computed total ───────

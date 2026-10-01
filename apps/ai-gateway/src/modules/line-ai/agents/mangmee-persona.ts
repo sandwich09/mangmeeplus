@@ -128,7 +128,33 @@ function tableRowToBullet(line: string): string {
  *  or a CE year in Thai prose. Deterministic, MODEL-COMPOSED text only — never a quoted user string
  *  or a tool-derived data value (a vendor/category name, an id, a raw figure), same restriction as
  *  sanitizeMangmeePersonaText, whose ครับ/ผม fix runs first here. */
-export function sanitizeMangmeeComposedText(text: string, bareSelfReference = true): string {
+// Owner plain-Thai rule (advisor eval r10 "จะ reset ใหม่ 1 พ.ย.", final-assembly P-31 "หรือ margin ใดๆ"): two English
+// business words kept reaching customers in Thai replies although ANSWER_PROMPT names both. Thai MODEL-COMPOSED text
+// only, whole words only, never inside quotes, inline code or a web address — and a word the turn itself carries (the
+// user's text, a tool result: a shop called "Margin", a "reset fee" category) may be a name, so it is left alone
+// everywhere in the reply. ponytail: two words; add one only when an eval shows it.
+const THAI_FOR_ENGLISH_WORD: ReadonlyArray<readonly [word: string, thai: string, after: string]> = [
+  // r10 P-01 "ยังเหลือ margin อีก 12 ใบ": before a count of receipts the word means room to spare, not profit.
+  ['margin', 'เผื่อ', '(?= ?(?:อีก ?)?\\d[\\d,]* ?ใบ)'],
+  ['margin', 'กำไรส่วนต่าง', ''],
+  ['reset', 'เริ่มนับใหม่', '(?: ?ใหม่)?'], // "reset ใหม่" is one "เริ่มนับใหม่"
+];
+const UNTRANSLATED_SPAN = String.raw`“[^”\n]*”|"[^"\n]*"|‘[^’\n]*’|` + '`[^`\\n]*`' + String.raw`|(?:https?:\/\/|www\.)\S+`;
+
+/** `turnWords` is everything the turn supplied as text: the user's message, its context and the tool results. */
+export function thaiForEnglishBusinessWords(text: string, turnWords: string): string {
+  if (!/[\u0E00-\u0E7F]/u.test(text)) return text;
+  let result = text;
+  for (const [word, thai, after] of THAI_FOR_ENGLISH_WORD) {
+    if (new RegExp(`(?<![A-Za-z])${word}(?![A-Za-z])`, 'iu').test(turnWords)) continue;
+    // A single space on either side goes with the English word when Thai follows or precedes it: Thai writes no space there.
+    const pattern = new RegExp(`(${UNTRANSLATED_SPAN})|(?:(?<=[\\u0E00-\\u0E7F]) )?(?<![A-Za-z0-9_@#./:-])${word}(?![A-Za-z0-9_@/:-]|\\.[A-Za-z0-9])${after}(?: (?=[\\u0E00-\\u0E7F]))?`, 'giu');
+    result = result.replace(pattern, (_match: string, untranslated?: string) => untranslated ?? thai);
+  }
+  return result;
+}
+
+export function sanitizeMangmeeComposedText(text: string, bareSelfReference = true, turnWords?: string): string {
   let result = sanitizeMangmeePersonaText(text, bareSelfReference)
     .replace(/```[a-zA-Z]*\n?/gu, '').replace(/```/gu, '')
     .replace(/^#{1,6}[ \t]*/gmu, '')
@@ -145,7 +171,8 @@ export function sanitizeMangmeeComposedText(text: string, bareSelfReference = tr
     .replace(APP_MARKDOWN_LINK, '$1')
     .replace(APP_PATH, (_match, page?: string, subpage?: string) => APP_PAGE_TH[`${page}/${subpage}`] ?? APP_PAGE_TH[page ?? ''] ?? 'หน้าเว็บของบริษัท')
     .replace(DATA_FIELD_PARENTHETICAL, '');
-  return result.split('\n').map((line) => line.replace(/[ \t]{2,}/gu, ' ').trim()).join('\n').trim();
+  result = result.split('\n').map((line) => line.replace(/[ \t]{2,}/gu, ' ').trim()).join('\n').trim();
+  return turnWords === undefined ? result : thaiForEnglishBusinessWords(result, turnWords);
 }
 
 // ─── Advisor S0 (R1 integrated G run 2026-10-01): the shape of a "general" answer, held in code ──────────────────

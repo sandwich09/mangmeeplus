@@ -1067,6 +1067,9 @@ export async function runSemanticTurnV2(input: {
   // deterministic replaced it (`modelComposed`), right before it joins `texts`.
   const answers = (parsed?.answers ?? []) as Array<{ index: number; status: LineAiSemanticCoverageV2['status']; text: string; sourceRefIds?: string[]; reasonCode?: string; topic?: unknown }>;
   const bareNu = !turnSaysNu && !results.some(entry => saysNu(entry.result.data));
+  // Everything this turn supplied as text; an English word found here may be a name and is never put into Thai.
+  const turnWords = JSON.stringify([req.messageText, req.userContext, req.conversationContext, req.taskProjection, req.inputEvidence, retained?.modelData,
+    results.map(entry => entry.result.data)]);
   const coverage: LineAiSemanticCoverageV2[] = [], texts: string[] = [];
   for (const item of inventory) {
     // C1(d): the composer never produced a usable answer for this subrequest after every retry —
@@ -1234,7 +1237,7 @@ export async function runSemanticTurnV2(input: {
     // A6: the deterministic backstop (persona ครับ/ผม fix, Markdown/status-key/CE-year cleanup) runs
     // on genuinely model-composed text ONLY, and only now — after grounding above has already judged
     // this item's RAW text and decided whether to keep or replace it.
-    if (modelComposed) answer.text = sanitizeMangmeeComposedText(answer.text, bareNu);
+    if (modelComposed) answer.text = sanitizeMangmeeComposedText(answer.text, bareNu, turnWords);
     // Advisor S0 (R1 integrated G run): a general answer gives no web address and keeps no shop line of its own. It is
     // cut to two short lines and led back to the shop only when the composer marked it "other" on a turn the router
     // placed outside the company's records; with no mark, its own shop line on an UNSUPPORTED turn says the same.
