@@ -119,8 +119,12 @@ export async function setLineReceipt(companyId: string, requestId: string, lines
     return updateReimbursementDraft(companyId, requestId, { lines: next });
   });
 }
-export function submitReimbursement(companyId: string, id: string) {
-  return apiFetch<any>(`${base(companyId)}/${id}/submit`, { method: 'POST', body: '{}' });
+/**
+ * `payoutSubmitToken`: the `payout.submitToken` of the claim the page showed. A claim that follows the
+ * requester's default account is refused without it, and refused when the account changed since.
+ */
+export function submitReimbursement(companyId: string, id: string, payoutSubmitToken?: string) {
+  return apiFetch<any>(`${base(companyId)}/${id}/submit`, { method: 'POST', body: JSON.stringify({ payoutSubmitToken }) });
 }
 export function cancelReimbursement(companyId: string, id: string, reason?: string) {
   return apiFetch<any>(`${base(companyId)}/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) });

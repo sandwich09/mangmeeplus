@@ -25,6 +25,8 @@ Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => nod
 const ui = require('./ReimbursementPayout') as typeof import('./ReimbursementPayout');
 const { ReimbursementPayoutAccountPage } = require('./ReimbursementPayoutAccountPage') as typeof import('./ReimbursementPayoutAccountPage');
 const logic = require('./reimbursement-payout.logic') as typeof import('./reimbursement-payout.logic');
+const { approvalComparable, diffApprovalFields } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+const { StaleApprovalDialog } = require('./ReimbursementDetailSections') as typeof import('./ReimbursementDetailSections');
 
 const h = React.createElement;
 const noop = () => undefined;
@@ -310,6 +312,80 @@ describe('the approver attests the account version shown before approving a tran
     assert.match(hub, /if \(r\.payoutMethod === 'BANK_TRANSFER'\) \{ onOpenDetail\(r\.id\); return; \}/);
     assert.equal(hub.match(/\{r\.payoutMethod === 'BANK_TRANSFER' \? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ'\}/g)?.length, 2, 'table row and phone card');
     assert.match(hub, /href=\{`\/companies\/\$\{companyId\}\/reimbursements\/payout-account`\}[^\n]*>บัญชีรับเงินคืนของฉัน<\/Link>/);
+  });
+});
+
+describe('a claim is sent with the account its page showed', () => {
+  it('sends back the token of the claim on the page with "ส่งอนุมัติ"', () => {
+    assert.match(read('./ReimbursementJourneyPage.tsx'), /submitReimbursement\(companyId, requestId, detail\.payout\?\.submitToken\)/);
+    assert.match(read('./reimbursements.api.ts'), /\/submit`, \{ method: 'POST', body: JSON\.stringify\(\{ payoutSubmitToken \}\) \}/);
+    // The card with the account sits above the step card that holds the button.
+    const page = read('./ReimbursementJourneyPage.tsx');
+    assert.ok(page.indexOf('<ClaimPayoutCard') < page.indexOf('cardActions.map(actionButton)'));
+  });
+
+  it('sends a draft that follows the default from its own page, never from a list row', () => {
+    // A list row carries no account, so there is nothing on it to have been shown.
+    for (const row of [{}, { payoutMethod: undefined }, { payoutMethod: null }, { payoutMethod: '' }]) assert.equal(logic.draftRowSubmitsFromItsPage(row), true);
+    for (const payoutMethod of ['CASH', 'BANK_TRANSFER']) assert.equal(logic.draftRowSubmitsFromItsPage({ payoutMethod }), false, payoutMethod);
+    const hub = read('./ReimbursementsPages.tsx');
+    assert.match(hub, /const submitRow = \(r: any\) => \(draftRowSubmitsFromItsPage\(r\)\s+\? onOpenDetail\(r\.id\)\s+: void action\(r\.id, \(\) => submitReimbursement\(companyId, r\.id\), 'ส่งขออนุมัติเรียบร้อยแล้ว'\)\);/);
+    assert.equal(hub.match(/\{draftRowSubmitsFromItsPage\(r\) \? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'\}/g)?.length, 2, 'table row and phone card');
+    assert.equal(hub.match(/submitReimbursement\(/g)?.length, 1, 'no other list path submits');
+  });
+});
+
+describe('the stale-approval dialog names an account change and never approves an account nobody ticked', () => {
+  const scb = { ...transfer, bankName: 'ธนาคารไทยพาณิชย์', accountLast4: '9012', version: 2 };
+  const payoutRow = (before: object, after: object) => diffApprovalFields(approvalComparable(before, 1), approvalComparable(after, 1)).find((row) => row.key === 'payout');
+
+  it('compares where the money goes back to, masked', () => {
+    assert.equal(logic.payoutComparableText({ payout: transfer }), 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · นาย สมชาย ใจดี');
+    assert.equal(logic.payoutComparableText({ payout: { payoutMethod: 'CASH' } }), 'รับเป็นเงินสด');
+    assert.equal(logic.payoutComparableText({ payoutMethod: 'CASH' }), 'รับเป็นเงินสด');
+    assert.equal(logic.payoutComparableText({ payoutMethod: 'A_METHOD_ADDED_LATER' }), 'วิธีอื่น');
+    for (const none of [{}, null, undefined, { payout: null }]) assert.equal(logic.payoutComparableText(none), '');
+
+    // On the claim page both sides are details: an account changed while the page was open is named.
+    assert.deepEqual(payoutRow(claim(), claim({ payout: scb })), {
+      key: 'payout', label: 'รับเงินคืนทาง', changed: true,
+      before: 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · นาย สมชาย ใจดี', after: 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · นาย สมชาย ใจดี',
+    });
+    assert.equal(payoutRow(claim(), claim())?.changed, false);
+    // In the queue the row carries the method only: a cash claim sent again as a transfer is named too.
+    assert.deepEqual([payoutRow({ payoutMethod: 'CASH' }, claim({ payout: { payoutMethod: 'CASH' } }))?.changed, payoutRow({ payoutMethod: 'CASH' }, claim())?.changed], [false, true]);
+    // A claim from before the field existed has nothing on either side.
+    assert.deepEqual(payoutRow({}, claim({ payout: undefined })), { key: 'payout', label: 'รับเงินคืนทาง', before: '—', after: '—', changed: false });
+  });
+
+  it('shows the change in the dialog and lets the caller replace the approve button', () => {
+    const diff = diffApprovalFields(approvalComparable(claim(), 1), approvalComparable(claim({ payout: scb }), 1));
+    const dialog = (props: object = {}) => {
+      Object.assign(globalThis, { document: { body: {} } }); // Modal's portal target; never touched by a server render
+      try {
+        return visible(render(h(StaleApprovalDialog, { requestNo: 'RB-202610-00001', diff, lines: [], currency: 'THB', busy: false, error: null, onClose: noop, onConfirm: noop, ...props })));
+      } finally { Reflect.deleteProperty(globalThis, 'document'); }
+    };
+    for (const text of ['รับเงินคืนทาง', 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · นาย สมชาย ใจดี', 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · นาย สมชาย ใจดี', 'อนุมัติด้วยข้อมูลล่าสุด']) {
+      assert.ok(dialog().includes(text), text);
+    }
+    const guarded = dialog({ confirmLabel: 'ปิดเพื่อตรวจบัญชีรับเงิน' });
+    assert.ok(guarded.includes('ปิดเพื่อตรวจบัญชีรับเงิน') && !guarded.includes('อนุมัติด้วยข้อมูลล่าสุด'));
+  });
+
+  it('approves from the dialog only an account version the approver ticked; otherwise sends them to the account', () => {
+    const page = read('./ReimbursementJourneyPage.tsx');
+    assert.match(page, /const staleReviewNeedsAttestation = !!staleReview && claimNeedsPayoutAttestation\(staleReview\.detail\)\s+&& attestedVersion !== staleReview\.detail\.payout\?\.version;/);
+    assert.match(page, /\{\.\.\.\(staleReviewNeedsAttestation && \{ confirmLabel: 'ปิดเพื่อตรวจบัญชีรับเงิน' \}\)\}/);
+    assert.match(page, /onConfirm=\{\(\) => \(staleReviewNeedsAttestation \? setStaleReview\(null\) : void approve\(\{ detail: staleReview\.detail \}\)\)\}/);
+    // When the ticked version is still the claim's version, the confirm carries it with the latest hash.
+    assert.match(page, /const verified = claimNeedsPayoutAttestation\(target\) \? attestedVersion : null;/);
+
+    const hub = read('./ReimbursementsPages.tsx');
+    // The queue row sends the hash it showed; a claim that is a transfer by now is opened, not approved.
+    assert.match(hub, /await approveReimbursement\(companyId, r\.id, undefined, r\.approvalSnapshotHash\);/);
+    assert.match(hub, /\{\.\.\.\(claimNeedsPayoutAttestation\(staleReview\.detail\) && \{ confirmLabel: 'เปิดใบเพื่อตรวจบัญชีรับเงิน' \}\)\}/);
+    assert.match(hub, /if \(claimNeedsPayoutAttestation\(review\.detail\)\) \{ setStaleReview\(null\); onOpenDetail\(review\.row\.id\); return; \}/);
   });
 });
 

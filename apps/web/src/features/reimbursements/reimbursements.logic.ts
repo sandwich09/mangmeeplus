@@ -7,6 +7,7 @@ import {
   CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, eligibleSignatureRoles, reimbursementOwnActions,
 } from './reimbursements.model';
+import { payoutComparableText } from './reimbursement-payout.logic';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
@@ -69,7 +70,7 @@ export type ApprovalFieldDiff = { key: string; label: string; before: string; af
 
 /** Values the approval-queue row and the fresh detail can both provide. */
 export type ApprovalComparable = {
-  reason?: unknown; amount?: unknown; currency?: unknown; categoryLabel?: unknown; lineCount?: unknown;
+  reason?: unknown; amount?: unknown; currency?: unknown; categoryLabel?: unknown; lineCount?: unknown; payout?: unknown;
 };
 
 /**
@@ -84,6 +85,8 @@ export function diffApprovalFields(before: ApprovalComparable, after: ApprovalCo
     { key: 'currency', label: 'สกุลเงิน' },
     { key: 'categoryLabel', label: 'หมวด' },
     { key: 'lineCount', label: 'จำนวนรายการ' },
+    // Where the money goes back to: an account changed after the list or page loaded is named here.
+    { key: 'payout', label: 'รับเงินคืนทาง' },
   ];
   return rows.map(({ key, label }) => {
     const b = before[key] == null || before[key] === '' ? '—' : String(before[key]);
@@ -96,7 +99,7 @@ export function diffApprovalFields(before: ApprovalComparable, after: ApprovalCo
 export function approvalComparable(claim: any, lineCount: number): ApprovalComparable {
   return {
     reason: claim?.reason, amount: money(claim?.amount, claim?.currency), currency: currencyWord(claim?.currency),
-    categoryLabel: categoryText(claim?.categoryLabelSnapshot), lineCount,
+    categoryLabel: categoryText(claim?.categoryLabelSnapshot), lineCount, payout: payoutComparableText(claim),
   };
 }
 

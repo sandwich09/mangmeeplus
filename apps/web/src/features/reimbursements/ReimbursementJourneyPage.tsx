@@ -240,13 +240,16 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const readiness = receiptReadiness.blocked || !payoutBlock ? receiptReadiness : { blocked: true, message: payoutBlock };
   const needsAttestation = Boolean(step?.actions.includes('approve')) && claimNeedsPayoutAttestation(detail);
   const attested = needsAttestation && attestedVersion === detail.payout?.version;
+  const staleReviewNeedsAttestation = !!staleReview && claimNeedsPayoutAttestation(staleReview.detail)
+    && attestedVersion !== staleReview.detail.payout?.version;
   const duplicateResolutionBlocked = detail.duplicateStatus === 'POSSIBLE_DUPLICATE'
     && !permissions.includes('reimbursement.duplicate.resolve');
   const recordedPayment = (detail.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
   const desk = currentDeskText(detail.currentDesk);
   const handlers: Partial<Record<JourneyAction, () => void>> = {
     // No approver at all: the answer names who fixes it and, for a policy manager, links there.
-    submit: () => { setApproverHelp(null); void act('submit', () => submitReimbursement(companyId, requestId), 'ส่งขออนุมัติเรียบร้อยแล้ว',
+    // The token names the account shown in the card above: the server sends the claim with that one or refuses.
+    submit: () => { setApproverHelp(null); void act('submit', () => submitReimbursement(companyId, requestId, detail.payout?.submitToken), 'ส่งขออนุมัติเรียบร้อยแล้ว',
       (e) => { const help = approverNotReadyHelp(e, permissions); setApproverHelp(help); return help !== null; }); },
     cancel: () => { setActionError(null); setReasonAction('cancel'); },
     reopen: () => void (async () => {
@@ -476,7 +479,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
         busy={busyAction === 'approve'}
         error={actionError}
         onClose={() => setStaleReview(null)}
-        onConfirm={() => void approve({ detail: staleReview.detail })}
+        // The page behind already shows the latest claim. An account the approver has not ticked
+        // (it changed, or was never ticked) is checked there, not approved from this dialog.
+        {...(staleReviewNeedsAttestation && { confirmLabel: 'ปิดเพื่อตรวจบัญชีรับเงิน' })}
+        onConfirm={() => (staleReviewNeedsAttestation ? setStaleReview(null) : void approve({ detail: staleReview.detail }))}
       />}
     </MangmeePage>
   );

@@ -149,6 +149,27 @@ export function claimPayoutView(detail: { status?: string; requesterUserId?: str
   return { state: 'transfer', line: maskedPayoutAccount(payout), notes };
 }
 
+/**
+ * The receiving method and account in the words the stale-approval dialog compares: a detail's masked
+ * account with its account name, or a queue row's method. Empty for a claim with no payout.
+ */
+export function payoutComparableText(claim: { payout?: ReimbursementPayoutSummary | null; payoutMethod?: string | null } | null | undefined): string {
+  const payout = claim?.payout;
+  if (payout?.payoutMethod === 'BANK_TRANSFER' && payout.accountLast4) {
+    return `${maskedPayoutAccount(payout)}${payout.accountName ? ` · ${payout.accountName}` : ''}`;
+  }
+  const method = payout?.payoutMethod ?? claim?.payoutMethod;
+  return method ? PAYOUT_METHOD_TEXT[method] ?? 'วิธีอื่น' : '';
+}
+
+/**
+ * A draft row in a list carries no account. One that follows the requester's default (no method of
+ * its own) is sent from its own page, where the account that will be frozen is shown first.
+ */
+export function draftRowSubmitsFromItsPage(row: { payoutMethod?: string | null }): boolean {
+  return !row.payoutMethod;
+}
+
 /** Why "ส่งอนุมัติ" is not offered yet, as far as the payout goes; null when the payout is ready. */
 export function claimPayoutSubmitBlock(detail: { status?: string; payout?: ReimbursementPayoutSummary | null }): string | null {
   if (detail.status !== 'DRAFT') return null;
