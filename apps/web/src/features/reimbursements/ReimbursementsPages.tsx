@@ -15,7 +15,7 @@ import {
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
 } from './reimbursements.api';
 import {
-  FINANCE_REVIEW_LABELS, REIMBURSEMENT_CREATE_UNAVAILABLE,
+  FINANCE_REVIEW_LABELS, POLICY_TAB_LABEL, REIMBURSEMENT_CREATE_UNAVAILABLE, SELF_APPROVAL_SWITCH_LABEL,
   claimDeskText, claimStatusBadge, currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
 } from './reimbursements.model';
 import {
@@ -43,7 +43,7 @@ import { useToast } from '@/common/components/toast';
 function err(e: unknown) { return errorText(e); }
 
 const HUB_TAB_LABELS: Record<HubTab, string> = {
-  mine: 'รายการที่เกี่ยวข้อง', approvals: 'คิวอนุมัติ', finance: 'คิวการเงิน', policy: 'ตั้งค่านโยบาย',
+  mine: 'รายการที่เกี่ยวข้อง', approvals: 'คิวอนุมัติ', finance: 'คิวการเงิน', policy: POLICY_TAB_LABEL,
 };
 const HUB_TAB_DESCRIPTIONS: Record<HubTab, string> = {
   mine: 'ติดตามคำขอของคุณและเอกสารที่คุณเป็นผู้อนุมัติ ผู้ตรวจ ผู้จ่าย หรือผู้ลงนาม',
@@ -67,7 +67,7 @@ const approverRoleName = (option?: Pick<ReimbursementApproverRoleOption, 'key' |
 };
 const shortDate = (iso?: string) => dateShort(iso);
 /** A claim never said whose desk it sits on. Terminal claims have none, and render nothing. */
-function CurrentDeskLine({ row }: { row: { currentDesk?: { kind?: string; names?: string[] }; payoutCorrectionPhase?: string } }) {
+function CurrentDeskLine({ row }: { row: { currentDesk?: { kind?: string; names?: string[] } } }) {
   const desk = claimDeskText(row);
   return desk ? <div className="mt-1 truncate text-xs text-gray-500" data-testid="reimbursement-current-desk">อยู่ที่ {desk}</div> : null;
 }
@@ -190,7 +190,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
             </button>
           ))}
         </div>
-        {tabs.includes('policy') && <button type="button" onClick={() => setTab('policy')} aria-pressed={tab === 'policy'} className={cx('min-h-11 rounded-lg px-3 py-2 text-sm font-semibold', tab === 'policy' ? 'bg-brand-50 text-brand-700' : 'text-gray-600 hover:bg-gray-100')}>ตั้งค่านโยบาย</button>}
+        {tabs.includes('policy') && <button type="button" onClick={() => setTab('policy')} aria-pressed={tab === 'policy'} className={cx('min-h-11 rounded-lg px-3 py-2 text-sm font-semibold', tab === 'policy' ? 'bg-brand-50 text-brand-700' : 'text-gray-600 hover:bg-gray-100')}>{HUB_TAB_LABELS.policy}</button>}
       </nav>
       {!permissions.includes('reimbursement.create') && <div role="status" className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">{REIMBURSEMENT_CREATE_UNAVAILABLE}</div>}
       {tab === 'mine' && <MyRequests
@@ -342,9 +342,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                 {loading ? 'กำลังโหลดรายการ...' : hubListStatusText(shownTotal, summary.counts.all, statusFilter, searching)}
               </div>
               <div className="relative w-full sm:max-w-96">
-                {/* Short enough to read whole on a 390 px phone (248 px of the 265 the field leaves at its 16 px font). */}
+                {/* Short enough to read whole on a 390 px phone (254 px of the 266 the field leaves at its 16 px font). */}
                 <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
-                  placeholder="ค้นหาเลขที่ ผู้ขอ เหตุผล หมวด ยอดเงิน"
+                  placeholder="ค้นหาเลขที่ ผู้เบิก เหตุผล หมวด ยอดเงิน"
                   value={query} onChange={e => setQuery(e.target.value)} />
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
                   {ICON.search}
@@ -371,7 +371,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
               <div className="min-w-[980px]">
                 <table className="mangmee-table">
                   <thead>
-                    <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้ขอ</th><th className="!text-center">เหตุผล</th><th className="!text-center">หมวด</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th><th className="!text-center">การจ่าย</th><th className="!text-center">การกระทำ</th></tr>
+                    <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้เบิก</th><th className="!text-center">เหตุผล</th><th className="!text-center">หมวด</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th><th className="!text-center">การจ่าย</th><th className="!text-center">การกระทำ</th></tr>
                   </thead>
                   <tbody>
                     {pagedData.map((r: any) => (
@@ -422,7 +422,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                       <span className="max-w-[45%] truncate font-mono text-xs text-gray-600">{r.requestNo ?? '—'}</span>
                       <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{r.reason}</span>
                     </div>
-                    <div className="mt-1 truncate text-xs text-gray-500">ผู้ขอ: {r.requesterDisplayNameSnapshot ?? '—'}</div>
+                    <div className="mt-1 truncate text-xs text-gray-500">ผู้เบิก: {r.requesterDisplayNameSnapshot ?? '—'}</div>
                     <CurrentDeskLine row={r} />
                     <div className="mt-3 flex items-center justify-between gap-3">
                       <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />
@@ -528,7 +528,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
               </div>
               <div className="relative w-full sm:max-w-96">
                 <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
-                  placeholder="ค้นหาทุกข้อมูลในตาราง เช่น เลขที่ ผู้ขอ จำนวนเงิน สถานะ"
+                  placeholder="ค้นหาทุกข้อมูลในตาราง เช่น เลขที่ ผู้เบิก จำนวนเงิน สถานะ"
                   value={query} onChange={e => setQuery(e.target.value)} />
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
                   {ICON.search}
@@ -549,7 +549,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
               <div className="min-w-[980px]">
                 <table className="mangmee-table">
                   <thead>
-                    <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้ขอ</th><th className="!text-center">เหตุผล</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">อายุ</th><th className="!text-center">การกระทำ</th></tr>
+                    <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้เบิก</th><th className="!text-center">เหตุผล</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">อายุ</th><th className="!text-center">การกระทำ</th></tr>
                   </thead>
                   <tbody>
                     {filteredData.length === 0 ? (
@@ -734,7 +734,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
               </div>
               <div className="relative w-full sm:max-w-96">
                 <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
-                  placeholder="ค้นหาทุกข้อมูลในตาราง เช่น เลขที่ ผู้ขอ จำนวนเงิน สถานะ"
+                  placeholder="ค้นหาทุกข้อมูลในตาราง เช่น เลขที่ ผู้เบิก จำนวนเงิน สถานะ"
                   value={query} onChange={e => setQuery(e.target.value)} />
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
                   {ICON.search}
@@ -755,7 +755,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
               <div className="min-w-[980px]">
                 <table className="mangmee-table">
                   <thead>
-                    <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้ขอ</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th><th className="!text-center">ตรวจการเงิน</th><th className="!text-center">การกระทำ</th></tr>
+                    <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้เบิก</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th><th className="!text-center">ตรวจการเงิน</th><th className="!text-center">การกระทำ</th></tr>
                   </thead>
                   <tbody>
                     {filteredData.length === 0 ? (
@@ -1003,7 +1003,7 @@ export function PolicySettings({ companyId }: { companyId: string }) {
             </fieldset>
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
               <span className="min-w-0">
-                <span className="block text-sm font-semibold text-gray-800">ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้</span>
+                <span className="block text-sm font-semibold text-gray-800">{SELF_APPROVAL_SWITCH_LABEL}</span>
                 <span className="mt-0.5 block text-xs text-gray-500">เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายสามารถอนุมัติใบเบิกที่ตัวเองสร้างได้</span>
               </span>
               <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={!!form.allowSelfApproval} onChange={e => setForm((f: any) => ({ ...f, allowSelfApproval: e.target.checked }))} />
@@ -1040,7 +1040,7 @@ export function PolicySettings({ companyId }: { companyId: string }) {
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200">
               <span className="min-w-0">
                 <span className="block text-sm font-semibold text-gray-800">อนุญาตไม่มีใบเสร็จได้หากระบุเหตุผล</span>
-                <span className="mt-0.5 block text-xs text-gray-500">ผู้ขอกรอกเหตุผลแทนใบเสร็จได้ในบางกรณี</span>
+                <span className="mt-0.5 block text-xs text-gray-500">ผู้เบิกกรอกเหตุผลแทนใบเสร็จได้ในบางกรณี</span>
               </span>
               <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={!!form.allowMissingReceiptWithReason} onChange={e => setForm((f: any) => ({ ...f, allowMissingReceiptWithReason: e.target.checked }))} />
             </label>

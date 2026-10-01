@@ -19,7 +19,7 @@ import {
   reopenReimbursement, resumeReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadReimbursementPaymentSlip, uploadSignedClaimFormCopy,
   voidReimbursementPayment, withdrawReimbursementCancellation,
 } from './reimbursements.api';
-import { claimDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
+import { POLICY_TAB_LABEL, claimDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
   activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, errorText, isMissingSavedSignatureError,
   isStaleApprovalError, opensPaymentFormOnArrival, signedCopyMoveConfirmText, type JourneyAction, type JourneyStepState,
@@ -41,7 +41,7 @@ const STEPPER_STATE: Record<JourneyStepState, ThemedStepState> = {
 const ACTION_LABELS: Record<JourneyAction, string> = {
   submit: 'ส่งอนุมัติ', edit: 'แก้ไขคำขอ', cancel: 'ยกเลิกคำขอ', reopen: 'แก้ไขและส่งใหม่',
   'resume-cancel': 'ดำเนินการยกเลิกต่อ', 'withdraw-cancel': 'ถอนการยกเลิก',
-  approve: 'อนุมัติ', reject: 'ปฏิเสธ', resume: 'ดำเนินการต่อ', 'policy-settings': 'ไปที่ตั้งค่าเบิกจ่าย',
+  approve: 'อนุมัติ', reject: 'ปฏิเสธ', resume: 'ดำเนินการต่อ', 'policy-settings': `ไปที่${POLICY_TAB_LABEL}`,
   'finance-approve': 'อนุมัติจ่าย', 'finance-return': 'ส่งกลับให้แก้ไข', 'finance-block': 'ระงับการจ่าย',
   'resolve-duplicate': 'ปลดรายการซ้ำ', pay: 'บันทึกจ่าย', sign: 'ลงนามในใบเบิก', print: 'พิมพ์ใบเบิก',
   'attach-signed-copy': 'แนบสำเนาที่เซ็นแล้ว', 'void-payment': 'ยกเลิกการจ่าย',

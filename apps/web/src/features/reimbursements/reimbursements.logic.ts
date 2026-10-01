@@ -10,6 +10,7 @@ import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i1
 import {
   CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, claimIsBeingCancelled, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
+  POLICY_TAB_LABEL, SELF_APPROVAL_SWITCH_LABEL,
   type ClaimSignatureRole,
 } from './reimbursements.model';
 import { payoutComparableText } from './reimbursement-payout.logic';
@@ -147,7 +148,7 @@ export function isMissingSavedSignatureError(e: unknown): boolean {
 
 /**
  * Owner 2026-09-21: submit found nobody who may approve the claim. Instead of a bare refusal, say
- * who can fix it where it failed: a policy manager picks an approver in ตั้งค่าเบิกจ่าย (the page
+ * who can fix it where it failed: a policy manager picks an approver in ตั้งค่านโยบาย (the page
  * offers the link), anyone else asks the owner. Null for every other error.
  */
 export function approverNotReadyHelp(e: unknown, permissions: readonly string[]): { text: string; policyLink: boolean } | null {
@@ -156,8 +157,8 @@ export function approverNotReadyHelp(e: unknown, permissions: readonly string[])
   return {
     policyLink,
     text: policyLink
-      ? 'ยังไม่มีผู้อนุมัติใบเบิกนี้ เลือกบทบาทผู้อนุมัติในตั้งค่าเบิกจ่าย (บทบาทนั้นต้องมีสิทธิ์อนุมัติการเบิก) แล้วกลับมากดส่งอนุมัติอีกครั้ง'
-      : 'ยังไม่มีผู้อนุมัติใบเบิกนี้ ขอให้เจ้าของกิจการเลือกผู้อนุมัติในตั้งค่าเบิกจ่าย หรือเพิ่มสิทธิ์อนุมัติการเบิกให้บทบาทของคุณ แล้วกดส่งอนุมัติอีกครั้ง',
+      ? `ยังไม่มีผู้อนุมัติใบเบิกนี้ เลือกบทบาทผู้อนุมัติใน${POLICY_TAB_LABEL} (บทบาทนั้นต้องมีสิทธิ์อนุมัติการเบิก) แล้วกลับมากดส่งอนุมัติอีกครั้ง`
+      : `ยังไม่มีผู้อนุมัติใบเบิกนี้ ขอให้เจ้าของกิจการเลือกผู้อนุมัติใน${POLICY_TAB_LABEL} หรือเพิ่มสิทธิ์อนุมัติการเบิกให้บทบาทของคุณ แล้วกดส่งอนุมัติอีกครั้ง`,
   };
 }
 
@@ -748,7 +749,7 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   const rows: ClaimTimelineRow[] = [];
   rows.push(detail?.submittedAt
     ? { key: 'submit', state: 'done', label: 'ยื่นใบ', date: detail.submittedAt }
-    : { key: 'submit', state: 'current', label: 'รอผู้ยื่นส่งคำขอ' });
+    : { key: 'submit', state: 'current', label: 'รอผู้เบิกส่งคำขอ' });
 
   // A cancellation that was started and has not completed (audit B3): nobody is waited for but the system.
   const cancelling = status !== 'CANCELLED' && status !== 'VOIDED' ? detail?.pendingCancellation : undefined;
@@ -934,7 +935,7 @@ function openDuplicateText(detail: any): string {
 }
 
 /** The policy switch, quoted as the settings page labels it so it can be found there. */
-const SELF_APPROVAL_SWITCH = '"ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้"';
+const SELF_APPROVAL_SWITCH = `"${SELF_APPROVAL_SWITCH_LABEL}"`;
 
 /**
  * Whether THIS claim passes through finance review (spec §5: per claim, from its frozen policy).
@@ -1057,7 +1058,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         if (own.canEditDraft) actions.push('edit');
         if (own.canSubmit) actions.push('submit');
       } else {
-        note = own.canSubmit || own.canEditDraft ? 'ตรวจรายการและหลักฐานให้ครบ แล้วกดส่งอนุมัติ' : 'รอผู้ยื่นส่งคำขอ';
+        note = own.canSubmit || own.canEditDraft ? 'ตรวจรายการและหลักฐานให้ครบ แล้วกดส่งอนุมัติ' : 'รอผู้เบิกส่งคำขอ';
         if (own.canSubmit) actions.push('submit');
         if (own.canEditDraft) actions.push('edit');
       }
@@ -1089,7 +1090,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       if (detail?.approvalActions?.selfApprovalBlocked === true) {
         const canManagePolicy = permissions.includes('reimbursement.policy.manage');
         note = `${waiting} · ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด ${SELF_APPROVAL_SWITCH} คุณจึงอนุมัติเองไม่ได้ ถ้าต้องการอนุมัติเอง ${
-          canManagePolicy ? 'เปิดได้ที่ตั้งค่าเบิกจ่าย' : 'ขอให้เจ้าของกิจการเปิดในตั้งค่าเบิกจ่าย'} แล้วเปิดคำขอกลับเป็นร่างและส่งอนุมัติใหม่`;
+          canManagePolicy ? `เปิดได้ที่${POLICY_TAB_LABEL}` : `ขอให้เจ้าของกิจการเปิดใน${POLICY_TAB_LABEL}`} แล้วเปิดคำขอกลับเป็นร่างและส่งอนุมัติใหม่`;
         if (canManagePolicy) actions.push('policy-settings');
       }
       // spec §6: the requester takes back a claim nobody has decided yet — the same reopen as a refusal.

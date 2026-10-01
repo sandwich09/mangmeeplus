@@ -25,7 +25,7 @@ export function ReimbursementPayoutAccountPage({ companyId, canManage }: { compa
         />
       ) : (
         <MangmeeCard className="p-6">
-          <EmptyState title="ยังตั้งบัญชีรับเงินคืนไม่ได้" description="บัญชีนี้ยังไม่มีสิทธิ์สร้างคำขอเบิก กรุณาติดต่อผู้ดูแลบริษัท" />
+          <EmptyState title="ยังตั้งบัญชีรับเงินคืนไม่ได้" description="บัญชีนี้ยังไม่มีสิทธิ์สร้างคำขอเบิก กรุณาติดต่อเจ้าของกิจการหรือแอดมิน" />
         </MangmeeCard>
       )}
     </MangmeePage>

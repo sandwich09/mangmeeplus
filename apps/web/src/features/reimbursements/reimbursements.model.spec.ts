@@ -310,7 +310,8 @@ describe('currentDeskText', () => {
 
   it('falls back to the pool label, and stays silent on a terminal claim', () => {
     assert.equal(currentDeskText({ kind: 'APPROVER' }), 'ผู้มีสิทธิ์อนุมัติ');
-    assert.equal(currentDeskText({ kind: 'REQUESTER' }), 'ผู้ยื่น');
+    // One word for the requester on every claim screen: the desk of a draft says it as the badge and the step note do.
+    assert.equal(currentDeskText({ kind: 'REQUESTER' }), 'ผู้เบิก');
     assert.equal(currentDeskText({ kind: 'FINANCE' }), 'ฝ่ายการเงิน');
     // Before: "ฝ่ายการเงิน (รอบันทึกจ่าย)", also for a shop with no finance desk (spec §18.3).
     assert.equal(currentDeskText({ kind: 'PAYMENT' }), 'ผู้มีสิทธิ์บันทึกจ่าย');
@@ -357,8 +358,8 @@ describe('a claim in a payout account correction round', () => {
     assert.ok(REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER.includes(claimDeskText(round('AWAITING_REQUESTER', { kind: 'REQUESTER' }))!));
     assert.equal(claimDeskText(round('AWAITING_APPROVAL', { kind: 'APPROVER', names: ['สมศรี', 'วิชัย'] })), 'สมศรี หรือ วิชัย');
     assert.equal(claimDeskText(round('AWAITING_REQUESTER', { kind: 'SYSTEM' })), 'ระบบ');
-    // Every other claim reads as before: a draft is with whoever sends it, a payment desk names its payers.
-    assert.equal(claimDeskText({ currentDesk: { kind: 'REQUESTER' } }), 'ผู้ยื่น');
+    // A draft is with its requester too, in the same word; a payment desk names its payers.
+    assert.equal(claimDeskText({ currentDesk: { kind: 'REQUESTER' } }), 'ผู้เบิก');
     assert.equal(claimDeskText({ currentDesk: { kind: 'PAYMENT' }, paymentDesk: { names: ['สมศรี'], moreCount: 1 } }), 'สมศรี และอีก 1 คน');
     assert.equal(claimDeskText({}), null);
     assert.equal(claimDeskText(null), null);

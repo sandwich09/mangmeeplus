@@ -6,7 +6,14 @@ import { REIMBURSEMENT_PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
 // A claim sent back for its payout account (payout spec §14): the words the LINE backlog uses for its two phases.
 import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, type ReimbursementPayoutCorrectionPhase } from '@watchdog-bms/contracts';
 
-export const REIMBURSEMENT_CREATE_UNAVAILABLE = 'ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อผู้ดูแลบริษัทเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์';
+export const REIMBURSEMENT_CREATE_UNAVAILABLE = 'ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อเจ้าของกิจการหรือแอดมินเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์';
+
+/**
+ * The hub's policy tab and its self-approval switch, by the names the screens print. Every message that sends a
+ * person there quotes these, so a message cannot name a tab or a switch the page does not show.
+ */
+export const POLICY_TAB_LABEL = 'ตั้งค่านโยบาย';
+export const SELF_APPROVAL_SWITCH_LABEL = 'ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้';
 
 export const REQUEST_STATUS_LABELS: Record<string, string> = {
   DRAFT: 'ร่าง',
@@ -117,8 +124,12 @@ export const REQUEST_STATUS_OPTIONS = Object.keys(REQUEST_STATUS_LABELS);
 
 // ---- อยู่ที่ใคร (current desk) ----
 
-/** Pool labels, the same words the LINE backlog answer uses. A desk prefers the real names the server resolved. */
-export const CURRENT_DESK_LABELS: Record<string, string> = REIMBURSEMENT_DESK_LABELS;
+/**
+ * Pool labels, the same words the LINE backlog answer uses. A desk prefers the real names the server resolved.
+ * The requester is "ผู้เบิก" on every claim screen: one word for one person. The contract's word for that desk,
+ * "ผู้ยื่น", is read by nothing but this file (the LINE backlog names no desk of a draft), so only the screens say it.
+ */
+export const CURRENT_DESK_LABELS: Record<string, string> = { ...REIMBURSEMENT_DESK_LABELS, REQUESTER: 'ผู้เบิก' };
 
 /** "สมศรี หรือ วิชัย และอีก 2 คน": who can record the payment, as the claim detail names them. Null when it names nobody. */
 export function paymentDeskText(paymentDesk?: { names?: readonly string[]; moreCount?: number } | null): string | null {
@@ -140,18 +151,13 @@ export function currentDeskText(
   return names || (CURRENT_DESK_LABELS[desk.kind] ?? null);
 }
 
-/** Who a claim sent back for its payout account is with, in the word its badge uses for them ("รอผู้เบิกแก้บัญชีรับเงิน"). */
-export const PAYOUT_CORRECTION_REQUESTER_DESK = 'ผู้เบิก';
-
 /**
- * `อยู่ที่ <this>` of a claim, as its list row or as its detail. A claim sent back for its payout account is with
- * its requester (payout spec §14.2), who is "ผู้เบิก" on its badge, in its step note and in its timeline: the pool
- * word of that desk, "ผู้ยื่น", is whoever sends a draft, and may be another person than the one the money goes to.
+ * `อยู่ที่ <this>` of a claim, as its list row or as its detail. A draft, and a claim sent back for its payout
+ * account (payout spec §14.2), are with their requester: "ผู้เบิก", as on the badge, the step note and the timeline.
  */
 export function claimDeskText(claim: {
-  currentDesk?: Parameters<typeof currentDeskText>[0]; paymentDesk?: Parameters<typeof paymentDeskText>[0]; payoutCorrectionPhase?: string | null;
+  currentDesk?: Parameters<typeof currentDeskText>[0]; paymentDesk?: Parameters<typeof paymentDeskText>[0];
 } | null | undefined): string | null {
-  if (claim?.payoutCorrectionPhase === 'AWAITING_REQUESTER' && claim.currentDesk?.kind === 'REQUESTER') return PAYOUT_CORRECTION_REQUESTER_DESK;
   return currentDeskText(claim?.currentDesk, claim?.paymentDesk);
 }
 
@@ -295,7 +301,7 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   approver_role_required: 'กรุณาเลือกบทบาทที่จะรับผิดชอบอนุมัติใบเบิก',
   approver_role_not_eligible: 'บทบาทนี้ยังไม่มีสิทธิ์หรือพนักงานที่พร้อมอนุมัติ กรุณาเลือกบทบาทอื่น',
   reimbursement_approver_not_ready: 'ยังไม่มีผู้อนุมัติที่รับผิดชอบใบเบิกนี้ กรุณาให้ผู้ดูแลตรวจบทบาท สิทธิ์ และสาขา แล้วส่งใหม่',
-  reimbursement_policy_inactive: 'บริษัทปิดรับใบเบิกใหม่ชั่วคราว กรุณาติดต่อผู้ดูแลบริษัท',
+  reimbursement_policy_inactive: 'บริษัทปิดรับใบเบิกใหม่ชั่วคราว กรุณาติดต่อเจ้าของกิจการหรือแอดมิน',
   reimbursement_policy_changed: 'นโยบายถูกแก้ไขโดยผู้ใช้อื่น ระบบยังไม่บันทึกค่าของคุณ กรุณาโหลดค่าล่าสุดแล้วตรวจสอบอีกครั้ง',
   duplicate_company_policy: 'พบนโยบายบริษัทซ้ำ ระบบยังไม่บันทึก กรุณาติดต่อผู้ดูแลระบบ',
   invalid_reimbursement_policy_snapshot: 'ข้อมูลนโยบายของใบเบิกนี้ไม่สมบูรณ์ ระบบจึงหยุดรายการไว้เพื่อความปลอดภัย กรุณาติดต่อผู้ดูแลระบบ',
@@ -303,9 +309,9 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   void_reason_required: 'กรุณาระบุเหตุผลที่ยกเลิกการจ่าย',
   reimbursement_payment_changed: 'ข้อมูลการจ่ายถูกเปลี่ยนแล้ว กรุณาโหลดรายการใหม่',
   // Audit H-18: the old wording read like a fixed rule of the system, so a company that wanted
-  // self-approval had no reason to look for the switch. Quotes the toggle's own label verbatim —
+  // self-approval had no reason to look for the switch. Quotes the tab's and the toggle's own labels —
   // a message that paraphrases a control is a message you cannot search the settings page with.
-  self_approval_denied: 'ไม่สามารถอนุมัติคำขอของตนเองได้ตามการตั้งค่าปัจจุบัน — เปิดได้ที่ ตั้งค่าเบิกจ่าย › "อนุญาตให้อนุมัติคำขอตนเอง"',
+  self_approval_denied: `ไม่สามารถอนุมัติคำขอของตนเองได้ตามการตั้งค่าปัจจุบัน — เปิดได้ที่ ${POLICY_TAB_LABEL} › "${SELF_APPROVAL_SWITCH_LABEL}"`,
   reimbursement_changed: 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง',
   stale_approval_snapshot: 'คำขอถูกแก้ไขหลังส่งอนุมัติ กรุณาเปิดดูรายละเอียดใหม่ก่อนตัดสินใจ',
   expense_already_claimed: 'ค่าใช้จ่ายนี้ถูกใช้เบิกในคำขออื่นอยู่แล้ว',

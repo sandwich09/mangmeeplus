@@ -273,7 +273,7 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
                   <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} onClick={startEdit}>{account ? 'แก้ไขบัญชี' : 'ตั้งบัญชีรับเงินคืน'}</button>
                   {own && account && <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={() => void remove()}>ลบบัญชี</button>}
                 </div>
-              ) : <p className="text-xs text-gray-500">บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี เจ้าของกิจการ หรือผู้ดูแลบริษัท ส่วนผู้จัดการและฝ่ายบุคคลตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล</p>}
+              ) : <p className="text-xs text-gray-500">บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี เจ้าของกิจการ หรือแอดมิน ส่วนผู้จัดการและฝ่ายบุคคลตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล</p>}
             </>
           )}
       {confirmDialog}

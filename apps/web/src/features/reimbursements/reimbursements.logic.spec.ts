@@ -451,7 +451,8 @@ describe('errorMessage', () => {
     // Audit H-18: the refusal has to say the rule is a setting, and name the toggle the way the
     // settings page labels it, or the reader cannot find what to change.
     assert.match(errorMessage('self_approval_denied'), /การตั้งค่า/);
-    assert.match(errorMessage('self_approval_denied'), /"อนุญาตให้อนุมัติคำขอตนเอง"/);
+    // The tab and the toggle as the hub prints them: the names had drifted ("ตั้งค่าเบิกจ่าย", "อนุญาตให้อนุมัติคำขอตนเอง").
+    assert.ok(errorMessage('self_approval_denied').endsWith('เปิดได้ที่ ตั้งค่านโยบาย › "ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้"'));
     assert.match(errorMessage('claim_form_requires_submitted'), /เลขที่เอกสาร/);
     for (const code of ['stale_approval_snapshot', 'expense_already_claimed', 'attachment_already_claimed',
       'duplicate_unresolved', 'partial_payment_not_allowed', 'missing_receipt_reason_required',
@@ -512,7 +513,7 @@ describe('buildClaimTimeline', () => {
 
   it('waits on the requester while the claim is still a draft', () => {
     assert.deepEqual(labels({ status: 'DRAFT', currentDesk: { kind: 'REQUESTER' } }), [
-      'current:รอผู้ยื่นส่งคำขอ',
+      'current:รอผู้เบิกส่งคำขอ',
       'future:รอบันทึกจ่าย',
     ]);
   });
@@ -584,8 +585,8 @@ describe('buildClaimTimeline', () => {
 
   // Spec §18.3 (AC39). Before: every claim not yet approved carried "รอฝ่ายการเงินตรวจ", finance step or not.
   it('shows the finance row only on a claim that has a finance-review step', () => {
-    assert.deepEqual(labels({ status: 'DRAFT', financeReviewRequired: true }), ['current:รอผู้ยื่นส่งคำขอ', 'future:รอฝ่ายการเงินตรวจ', 'future:รอบันทึกจ่าย']);
-    assert.deepEqual(labels({ status: 'DRAFT', financeReviewRequired: false }), ['current:รอผู้ยื่นส่งคำขอ', 'future:รอบันทึกจ่าย']);
+    assert.deepEqual(labels({ status: 'DRAFT', financeReviewRequired: true }), ['current:รอผู้เบิกส่งคำขอ', 'future:รอฝ่ายการเงินตรวจ', 'future:รอบันทึกจ่าย']);
+    assert.deepEqual(labels({ status: 'DRAFT', financeReviewRequired: false }), ['current:รอผู้เบิกส่งคำขอ', 'future:รอบันทึกจ่าย']);
     const approved = { submittedAt: '2026-08-20T03:00:00.000Z', approvedAt: '2026-08-21T03:00:00.000Z' };
     // Approved and still being routed on: the row the claim waits at is the journey's own step.
     assert.deepEqual(labels({ ...approved, status: 'APPROVED', financeReviewStatus: 'PENDING' }), ['done:ยื่นใบ', 'current:กำลังรอฝ่ายการเงินตรวจ', 'future:รอบันทึกจ่าย']);
@@ -699,13 +700,13 @@ describe('approverNotReadyHelp', () => {
   it('sends a policy manager to the settings to pick an approver', () => {
     const help = approverNotReadyHelp(notReady, ['reimbursement.submit', 'reimbursement.policy.manage']);
     assert.equal(help?.policyLink, true);
-    assert.match(help?.text ?? '', /^ยังไม่มีผู้อนุมัติใบเบิกนี้ เลือกบทบาทผู้อนุมัติในตั้งค่าเบิกจ่าย/);
+    assert.match(help?.text ?? '', /^ยังไม่มีผู้อนุมัติใบเบิกนี้ เลือกบทบาทผู้อนุมัติในตั้งค่านโยบาย/);
   });
 
   it('tells anyone else to ask the owner for an approver or approve permission, with no link', () => {
     const help = approverNotReadyHelp(notReady, ['reimbursement.submit']);
     assert.equal(help?.policyLink, false);
-    assert.match(help?.text ?? '', /ขอให้เจ้าของกิจการเลือกผู้อนุมัติในตั้งค่าเบิกจ่าย หรือเพิ่มสิทธิ์อนุมัติการเบิกให้บทบาทของคุณ/);
+    assert.match(help?.text ?? '', /ขอให้เจ้าของกิจการเลือกผู้อนุมัติในตั้งค่านโยบาย หรือเพิ่มสิทธิ์อนุมัติการเบิกให้บทบาทของคุณ/);
   });
 
   it('shows people no codes and leaves every other error to the usual message', () => {
@@ -1094,10 +1095,10 @@ describe('buildJourneySteps', () => {
     assert.deepEqual(manager.actions, ['policy-settings', 'reopen', 'cancel', 'print']);
     assert.match(manager.note ?? '', /^รอ เจ้าของ อนุมัติ · ใบนี้เป็นของคุณเอง/);
     assert.match(manager.note ?? '', /"ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้"/);
-    assert.match(manager.note ?? '', /เปิดได้ที่ตั้งค่าเบิกจ่าย แล้วเปิดคำขอกลับเป็นร่างและส่งอนุมัติใหม่$/);
+    assert.match(manager.note ?? '', /เปิดได้ที่ตั้งค่านโยบาย แล้วเปิดคำขอกลับเป็นร่างและส่งอนุมัติใหม่$/);
     const member = active(own, custom, 'solo');
     assert.deepEqual(member.actions, ['reopen', 'cancel', 'print']);
-    assert.match(member.note ?? '', /ขอให้เจ้าของกิจการเปิดในตั้งค่าเบิกจ่าย/);
+    assert.match(member.note ?? '', /ขอให้เจ้าของกิจการเปิดในตั้งค่านโยบาย/);
     // No server flag, no hint: an ordinary wait reads as before.
     assert.equal(active({ ...own, approvalActions: { canApprove: false, canReject: false } }, custom, 'solo').note, 'รอ เจ้าของ อนุมัติ');
   });

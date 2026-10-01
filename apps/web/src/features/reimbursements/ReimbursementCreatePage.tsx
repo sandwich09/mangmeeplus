@@ -356,7 +356,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         <MangmeeCard className="p-6">
           <EmptyState
             title={editing ? 'ไม่มีสิทธิ์แก้ไขคำขอเบิก' : 'ไม่มีสิทธิ์สร้างคำขอเบิก'}
-            description={editing ? 'เฉพาะผู้ขอที่มีสิทธิ์แก้ไขร่างเท่านั้น' : REIMBURSEMENT_CREATE_UNAVAILABLE}
+            description={editing ? 'เฉพาะผู้เบิกที่มีสิทธิ์แก้ไขร่างเท่านั้น' : REIMBURSEMENT_CREATE_UNAVAILABLE}
           />
         </MangmeeCard>
       </MangmeePage>
@@ -388,14 +388,14 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           {sourceLinkNotice && <ErrorBanner message={`รายการต้นทางที่เลือกมายังเบิกไม่ได้: ${sourceLinkNotice}`} />}
           <MangmeeCard className="p-4">
             <h3 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h3>
-            <label className="mt-3 block text-xs font-semibold text-gray-600">ผู้สำรองจ่ายและรับเงินคืน
-              <ThemedSelect aria-label="ผู้รับเงินคืน" className={cx(inputClass, 'mt-1.5')} value={requesterUserId} disabled={editing || !canPrepareForOthers || sourcesLoading}
+            <label className="mt-3 block text-xs font-semibold text-gray-600">ผู้เบิก
+              <ThemedSelect aria-label="ผู้เบิก" className={cx(inputClass, 'mt-1.5')} value={requesterUserId} disabled={editing || !canPrepareForOthers || sourcesLoading}
                 onChange={event => { setRequesterUserId(event.target.value); setForm(current => ({ ...current, lines: [emptyLine()] })); setPayout(emptyClaimPayoutForm()); }}>
-                {!sourceOptions.requesters.some(member => member.userId === requesterUserId) && <option value={requesterUserId}>{requesterUserId === userId ? 'ฉัน' : 'ผู้รับเงินคืนตามใบเบิก'}</option>}
+                {!sourceOptions.requesters.some(member => member.userId === requesterUserId) && <option value={requesterUserId}>{requesterUserId === userId ? 'ฉัน' : 'ผู้เบิกของใบนี้'}</option>}
                 {sourceOptions.requesters.map(member => <option key={member.userId} value={member.userId}>{member.displayName}</option>)}
               </ThemedSelect>
             </label>
-            <p className="mt-1 text-xs text-gray-500">ผู้จัดทำอาจเป็นคนละคนกับผู้สำรองจ่าย บริษัทจะคืนเงินให้ผู้ที่ระบุข้างต้น</p>
+            <p className="mt-1 text-xs text-gray-500">ผู้เบิกคือคนที่จ่ายเงินไปก่อน และบริษัทจะคืนเงินให้ ผู้จัดทำคำขออาจเป็นคนละคนกับผู้เบิก</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <label className="mb-1.5 block text-xs font-semibold text-gray-600">เหตุผล *</label>

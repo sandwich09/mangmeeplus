@@ -81,7 +81,7 @@ export function RejectDialog({ requestNo, busy, error, onClose, onConfirm }: {
   return (
     <Modal open title={`ปฏิเสธคำขอ ${requestNo ?? ''}`.trim()} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <div className="space-y-3">
-        <p className="text-sm text-gray-500">ระบุเหตุผลที่ปฏิเสธ ผู้ขอจะเห็นข้อความนี้</p>
+        <p className="text-sm text-gray-500">ระบุเหตุผลที่ปฏิเสธ ผู้เบิกจะเห็นข้อความนี้</p>
         {error && <ErrorBanner message={error} />}
         <textarea ref={reasonRef} className={cx(inputClass, 'min-h-24 resize-y')} value={reason}
           onChange={e => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH}
@@ -613,7 +613,7 @@ export function ClaimSummaryCard({ detail }: { detail: any }) {
     <MangmeeCard className="p-4">
       <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
         <div className="min-w-0">
-          <div className="text-xs font-semibold text-gray-500">ผู้เบิก / ผู้รับเงินคืน</div>
+          <div className="text-xs font-semibold text-gray-500">ผู้เบิก</div>
           <div className="mt-1 font-semibold text-gray-900">{detail.requesterDisplayNameSnapshot ?? '—'}</div>
           {detail.createdByName && <div className="mt-2 text-xs text-gray-500">ผู้จัดทำ: {detail.createdByName}</div>}
           <div className="mt-3 text-xs font-semibold text-gray-500">เหตุผล</div>

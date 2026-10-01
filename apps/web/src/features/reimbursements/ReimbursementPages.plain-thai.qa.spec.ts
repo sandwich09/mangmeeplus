@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime';
@@ -22,7 +24,7 @@ const { ReimbursementCreatePage } = require('./ReimbursementCreatePage') as type
 const { ReimbursementsHubPage, PolicySettings } = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
 const { ReimbursementSourceFacts } = require('./ReimbursementSourceFacts') as typeof import('./ReimbursementSourceFacts');
 const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as typeof import('./ReimbursementJourneyPage');
-const { approvalComparable, diffApprovalFields, hubListKey, reimbursementListScope } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+const { approvalComparable, diffApprovalFields, errorMessage, hubListKey, reimbursementListScope } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
 const reactRuntime = require('react') as typeof React;
 
 const h = React.createElement;
@@ -433,8 +435,8 @@ describe('the hub search is asked of the API, and the cards count what it found 
   it('names what the search box finds, in plain Thai', () => {
     const html = hubTab('mine', hubClaims);
     // Every column the API searches, and short enough to read whole in the field of a 390 px phone (measured with the
-    // app's fonts at the field's 16 px: 248 px of 265; the wording before this needed 291, the one before that 365).
-    assert.match(html, /placeholder="ค้นหาเลขที่ ผู้ขอ เหตุผล หมวด ยอดเงิน"/u);
+    // app's fonts at the field's 16 px: 254 px of 266; the wordings before the requester was "ผู้เบิก" here needed 248, 291 and 365).
+    assert.match(html, /placeholder="ค้นหาเลขที่ ผู้เบิก เหตุผล หมวด ยอดเงิน"/u);
     // Before: "ค้นหาทุกข้อมูลในตาราง เช่น … สถานะ". The status is what the chips filter, and the API does not search it.
     assert.doesNotMatch(html, /ค้นหาทุกข้อมูลในตาราง/u);
   });
@@ -639,6 +641,26 @@ const correctionDetails: Array<[string, object]> = [
   ['in a round, a phase added later', { ...inRound, payoutCorrectionPhase: 'A_PHASE_ADDED_LATER', currentDesk: { kind: 'APPROVER' } }],
   ['after a round', { ...waiting, payoutCorrectionHistory: correctionEvents.slice(0, 3), signedCopies: inRound.signedCopies }],
 ];
+
+// Owner 2026-10-02: one thing has one name. The requester was also "ผู้ขอ", "ผู้ยื่น" and "ผู้สำรองจ่ายและรับเงินคืน", the admin
+// role "ผู้ดูแลบริษัท" beside "แอดมิน", and messages gave the policy tab and its self-approval switch names the hub never printed.
+describe('one thing has one name on the claim screens (owner 2026-10-02)', () => {
+  // A comment is not a screen.
+  const source = (file: string) => readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const screens = readdirSync(__dirname).filter((name) => /\.tsx?$/.test(name) && !name.includes('.spec.')).map((name) => source(join(__dirname, name))).join('\n');
+
+  it('uses no second name for the requester, the admin role, the policy tab or its self-approval switch', () => {
+    assert.ok(screens.includes('ผู้เบิก') && screens.includes('แอดมิน') && screens.includes('ตั้งค่านโยบาย'), 'the screens were read');
+    for (const retired of ['ผู้ขอ', 'ผู้ยื่น', 'ผู้รับเงินคืน', 'ผู้สำรองจ่ายและรับเงินคืน', 'ผู้ดูแลบริษัท', 'ตั้งค่าเบิกจ่าย', 'อนุญาตให้อนุมัติคำขอตนเอง']) {
+      assert.equal(screens.includes(retired), false, retired);
+    }
+    // The sentences the API's refusals are said in, for the codes of a claim that name one of them.
+    for (const code of ['reimbursement_source_payer_unlinked', 'reimbursement_source_wrong_payer', 'reimbursement_requester_unavailable', 'invalid_primary_attachment',
+      'invalid_linked_expense', 'payout_account_edit_denied', 'reimbursement_policy_inactive', 'self_approval_denied']) {
+      assert.doesNotMatch(errorMessage(code), /ผู้ขอ|ผู้ยื่น|ผู้รับเงินคืน|ผู้ดูแลบริษัท|ตั้งค่าเบิกจ่าย|คำขอตนเอง"/u, code);
+    }
+  });
+});
 
 const MACHINE_TOKENS: Array<[string, RegExp]> = [ // ReimbursementDraftActionPage.qa.spec.ts's set
   ['cuid/uuid/hash-like id', /\b[a-z0-9]{20,}\b|[0-9a-f]{8}-[0-9a-f]{4}-/iu], ['enum or code', /[A-Z_]{4,}/u],
