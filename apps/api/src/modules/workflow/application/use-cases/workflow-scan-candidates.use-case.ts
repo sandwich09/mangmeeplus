@@ -178,7 +178,9 @@ export class WorkflowScanCandidatesProvider {
       const age = payableSince ? ageHours(payableSince, now) : 0;
       if (!isSlaRisk(age, r.slaHours)) continue;
       const approver = approvers.get(r.id);
-      const approvedByUserId = approver && (!r.submittedAt || approver.decidedAt >= r.submittedAt) ? approver.userId : undefined;
+      // The round test of `isReimbursementClaimApprover` (contracts), over the steps that
+      // `findClaimApprovers` already held to its step conditions: no submission in force, no approver.
+      const approvedByUserId = approver && r.submittedAt && approver.decidedAt >= r.submittedAt ? approver.userId : undefined;
       const financeReviewerUserId = r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? r.financeReviewedByUserId : undefined;
       // Nobody passed or approved this claim: it needed no approval. Its ready-to-pay notice asked
       // the people who would have approved it, so its reminder asks the same people, not everyone.

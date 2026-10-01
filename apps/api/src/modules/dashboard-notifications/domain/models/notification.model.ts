@@ -169,6 +169,11 @@ export const ALWAYS_DELIVERED_TRIGGER_KEYS: string[] = [
   // Where a member's reimbursements are paid: telling them is the owner's condition for letting
   // anyone else set the account.
   'reimbursement.payout_account_set_by_other',
+  // Audit B9, added the same day: a requester whose recorded payment was taken back, and whoever can
+  // pay a claim that has waited past the company's deadline. Both are about money a person is owed,
+  // and everyone who saved a preference row before today would otherwise get them on the web bell only.
+  'workflow.reimbursement_payment_voided',
+  'workflow.reimbursement_payment_sla_breach',
 ];
 
 // Future triggers — disabled until source module exists

@@ -34,15 +34,14 @@ import {
 } from './reimbursement.logic';
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
 import {
-  invalidPayoutDestinationField, looksLikeAccountNumber, maskedPayoutAccount, maskedPayoutAccountNumber, normalizePayoutAccountNumber,
-  reimbursementPaymentSlipRequired,
+  invalidPayoutDestinationField, isReimbursementClaimApprover, looksLikeAccountNumber, maskedPayoutAccount, maskedPayoutAccountNumber,
+  normalizePayoutAccountNumber, reimbursementPaymentSlipRequired,
 } from '@watchdog-bms/contracts';
 import {
   CASH_PAYOUT_FINGERPRINT,
   draftFollowsDefaultAfterReopen,
   hasPayoutSnapshot,
   isBlankPayoutDestination,
-  isEffectiveClaimApprover,
   openPayoutAccountNumber,
   payoutAttestationError,
   payoutFingerprint,
@@ -909,16 +908,18 @@ describe('payout: who may see the full number (one decision for the endpoint and
     assert.equal(payoutRevealGroup({ ...nobody, isDraft: true, isRequester: true }), 'REQUESTER');
   });
 
+  // The approver answer is the contracts rule (`isReimbursementClaimApprover`), the one the payment
+  // slip uses too. These are the cases the account number depends on, asked of that rule.
   it('counts an approval only in the round the claim was last sent in', () => {
     const submittedAt = new Date('2026-10-01T03:00:00.000Z');
     const step = (overrides: Record<string, unknown> = {}) => ({ status: 'APPROVED' as const, decisionByUserId: 'approver-1', decidedAt: new Date('2026-10-01T04:00:00.000Z'), ...overrides });
-    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step()] }, 'approver-1'), true);
-    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step()] }, 'someone-else'), false);
+    assert.equal(isReimbursementClaimApprover('approver-1', { submittedAt, approvalSteps: [step()] }), true);
+    assert.equal(isReimbursementClaimApprover('someone-else', { submittedAt, approvalSteps: [step()] }), false);
     // Approved, then sent back and submitted again: that approval was of an earlier snapshot.
-    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step({ decidedAt: new Date('2026-10-01T02:00:00.000Z') })] }, 'approver-1'), false);
-    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step({ invalidatedAt: new Date() })] }, 'approver-1'), false);
-    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step({ status: 'REJECTED' })] }, 'approver-1'), false);
-    assert.equal(isEffectiveClaimApprover({ approvalSteps: [step()] }, 'approver-1'), false, 'a draft has no approver');
+    assert.equal(isReimbursementClaimApprover('approver-1', { submittedAt, approvalSteps: [step({ decidedAt: new Date('2026-10-01T02:00:00.000Z') })] }), false);
+    assert.equal(isReimbursementClaimApprover('approver-1', { submittedAt, approvalSteps: [step({ invalidatedAt: new Date() })] }), false);
+    assert.equal(isReimbursementClaimApprover('approver-1', { submittedAt, approvalSteps: [step({ status: 'REJECTED' })] }), false);
+    assert.equal(isReimbursementClaimApprover('approver-1', { submittedAt: undefined, approvalSteps: [step()] }), false, 'a draft has no approver');
   });
 });
 

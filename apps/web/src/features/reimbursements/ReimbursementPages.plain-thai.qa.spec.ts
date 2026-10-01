@@ -379,6 +379,36 @@ describe('the approval queue offers only what the server says this viewer can do
     // The row stays readable either way.
     assert.ok(visible(hubTab('approvals', [row({ canApprove: false, canReject: true })])).includes('ดูรายละเอียด'));
   });
+
+  // Payout Phase 1 on the same rows: a claim paid by transfer is approved on its own page, where the account is
+  // shown and attested, and its button says so. It is still offered only where the row allows approving.
+  it('names the approve button of a transfer claim for what it does, and offers it under the same rule', () => {
+    const transfer = (approvalActions?: { canApprove: boolean; canReject: boolean }) => ({ ...row(approvalActions), payoutMethod: 'BANK_TRANSFER' });
+    const offered = (html: string) => visible(html).filter((text) => ['อนุมัติ', 'ตรวจบัญชีและอนุมัติ', 'ปฏิเสธ'].includes(text));
+    assert.deepEqual(offered(hubTab('approvals', [transfer({ canApprove: true, canReject: true })])),
+      ['ตรวจบัญชีและอนุมัติ', 'ปฏิเสธ', 'ตรวจบัญชีและอนุมัติ', 'ปฏิเสธ']);
+    assert.deepEqual(offered(hubTab('approvals', [transfer({ canApprove: false, canReject: true })])), ['ปฏิเสธ', 'ปฏิเสธ']);
+    assert.deepEqual(offered(hubTab('approvals', [transfer()])), []);
+    // Cash has no account to attest: the row approves in place, as before.
+    assert.deepEqual(offered(hubTab('approvals', [{ ...row({ canApprove: true, canReject: false }), payoutMethod: 'CASH' }])), ['อนุมัติ', 'อนุมัติ']);
+  });
+});
+
+// Payout Phase 1 on the paged list: a row shows no account, so a draft is sent from its row only when the draft
+// itself chose cash. Any other draft may be paid into an account, and its button opens the claim page instead.
+describe('a draft row of the hub list is sent from the row only when nothing unseen would be frozen', () => {
+  const sending = (html: string) => visible(html).filter((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ');
+  const ready = { ...draft, receiptRequirementStatus: 'ATTACHED' };
+
+  it('says ส่งอนุมัติ on a cash draft and ตรวจบัญชีและส่งอนุมัติ on every other draft, in the list the hub holds', () => {
+    // Table row and phone card, both from the rows of the held list.
+    assert.deepEqual(sending(hubTab('mine', [{ ...ready, payoutMethod: 'CASH' }])), ['ส่งอนุมัติ', 'ส่งอนุมัติ']);
+    for (const payoutMethod of [undefined, 'BANK_TRANSFER']) {
+      assert.deepEqual(sending(hubTab('mine', [{ ...ready, payoutMethod }])), ['ตรวจบัญชีและส่งอนุมัติ', 'ตรวจบัญชีและส่งอนุมัติ'], String(payoutMethod));
+    }
+    // A claim already sent has no send button, whatever it is paid by.
+    assert.deepEqual(sending(hubTab('mine', [{ ...ready, status: 'PENDING_APPROVAL', payoutMethod: 'CASH', currentDesk: { kind: 'APPROVER' } }])), []);
+  });
 });
 
 describe('ตั้งค่านโยบาย warns about an approver role that cannot record payment (spec §13.3 F2)', () => {
@@ -475,6 +505,20 @@ describe('the claim page says "อยู่ที่" with the people who can re
     // The payers belong to the payment desk only: an approval desk keeps its own names, a finished claim has no line.
     assert.deepEqual(deskLine({ ...waiting, status: 'PENDING_APPROVAL', currentDesk: { kind: 'APPROVER', names: ['สมศรี'] } }), ['อยู่ที่ สมศรี']);
     assert.deepEqual(deskLine(paid), []);
+  });
+
+  // Payout Phase 1 on the same page: the claim's own account, masked, with who can record its payment.
+  it('shows the claim\'s frozen payout account, masked, on the page that names who can pay it', () => {
+    const frozen = { ...waiting, payoutMethod: 'BANK_TRANSFER', payout: { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย',
+      accountName: 'พิม ใจดี', accountLast4: '6789', version: 1, source: 'DEFAULT_ACCOUNT' } };
+    const texts = visible(claimPage(frozen));
+    assert.deepEqual(deskLine(frozen), ['อยู่ที่ สมชาย หรือ วิชัย']);
+    for (const text of ['การรับเงินคืน', 'โอนเข้าบัญชี', 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789', 'ยังไม่มีผู้ตรวจบัญชีนี้']) assert.ok(texts.includes(text), text);
+    // The detail did not say this viewer may see the number, so the page offers no way to it.
+    assert.equal(texts.includes('แสดงเลขบัญชี'), false);
+    assert.ok(visible(claimPage({ ...frozen, payout: { ...frozen.payout, canRevealAccountNumber: true } })).includes('แสดงเลขบัญชี'));
+    // The same claim sent before claims carried an account says so instead, and the desk line is unchanged.
+    assert.ok(visible(claimPage(waiting)).includes('ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีข้อมูลบัญชีรับเงินในระบบ'));
   });
 });
 

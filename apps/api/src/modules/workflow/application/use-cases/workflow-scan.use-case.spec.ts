@@ -8,6 +8,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { isReimbursementClaimApprover } from '@watchdog-bms/contracts';
 import { RunWorkflowScanUseCase } from './workflow-scan.use-case';
 import { WorkflowScanCandidatesProvider } from './workflow-scan-candidates.use-case';
 import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
@@ -276,6 +277,44 @@ describe('payment reminder candidates (audit B9)', () => {
     const [item] = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
 
     assert.equal(item!.payload['approvedByUserId'], 'u_latest');
+  });
+
+  // The claim's own approver has one definition, `isReimbursementClaimApprover` in contracts (who may
+  // see the claim's account number and open its payment slip). The scan cannot call it from a query
+  // and restates it, so the two are held together here: the scan names somebody exactly when that
+  // rule has somebody, and it is the same person.
+  it('names an approver exactly when the claim approver rule in contracts has one', async () => {
+    const claims = [
+      claim({ id: 'rb-approved' }),
+      claim({ id: 'rb-resent', submittedAt: hoursAgo(50) }),
+      claim({ id: 'rb-at-submit', submittedAt: hoursAgo(100) }),
+      claim({ id: 'rb-undone' }),
+      claim({ id: 'rb-rejected' }),
+      claim({ id: 'rb-auto' }),
+      // No submission in force: nobody is a claim's approver by a past decision.
+      claim({ id: 'rb-no-round', submittedAt: undefined }),
+    ];
+    const steps = [
+      step({ reimbursementRequestId: 'rb-approved' }),
+      step({ reimbursementRequestId: 'rb-resent', decidedAt: hoursAgo(120) }),
+      step({ reimbursementRequestId: 'rb-at-submit', decidedAt: hoursAgo(100) }),
+      step({ reimbursementRequestId: 'rb-undone', invalidatedAt: hoursAgo(90) }),
+      step({ reimbursementRequestId: 'rb-rejected', status: 'REJECTED' }),
+      step({ reimbursementRequestId: 'rb-no-round' }),
+    ];
+    const { candidates } = provider(claims, undefined, steps);
+
+    const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+
+    const named = items.map((item) => [item.sourceId, item.payload['approvedByUserId']]);
+    assert.deepEqual(named, claims.map((row: any) => [row.id, isReimbursementClaimApprover('u_manager', {
+      submittedAt: row.submittedAt, approvalSteps: steps.filter((entry: any) => entry.reimbursementRequestId === row.id) as any,
+    }) ? 'u_manager' : undefined]));
+    // Both answers occur, so neither side passes by answering the same thing for every claim.
+    assert.deepEqual(named, [
+      ['rb-approved', 'u_manager'], ['rb-resent', undefined], ['rb-at-submit', 'u_manager'], ['rb-undone', undefined],
+      ['rb-rejected', undefined], ['rb-auto', undefined], ['rb-no-round', undefined],
+    ]);
   });
 
   it('starts the clock at the finance decision when there was one, not at the approval before it', async () => {
