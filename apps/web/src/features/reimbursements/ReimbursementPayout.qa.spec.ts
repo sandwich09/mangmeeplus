@@ -72,16 +72,16 @@ describe('payout account form: the same rule the server runs, said in Thai', () 
   it('names the first field that is wrong, and accepts what a person really types', () => {
     const problem = (overrides: Parameters<typeof form>[0]) => logic.payoutAccountFormError(form(overrides));
     for (const accountNumber of ['0123456789', '012-3-45678-9', '012 345 6789', '000123', '12345678901234567890']) assert.equal(problem({ accountNumber }), null, accountNumber);
-    assert.deepEqual(problem({ bankChoice: '' }), { field: 'bankName', message: 'กรุณาเลือกธนาคาร' });
-    assert.deepEqual(problem({ bankChoice: logic.OTHER_BANK, bankOther: ' ' }), { field: 'bankName', message: 'กรุณาระบุชื่อธนาคาร ไม่เกิน 80 ตัวอักษร' });
+    assert.deepEqual(problem({ bankChoice: '' }), { field: 'bankName', text: 'กรุณาเลือกธนาคาร' });
+    assert.deepEqual(problem({ bankChoice: logic.OTHER_BANK, bankOther: ' ' }), { field: 'bankName', text: 'กรุณาระบุชื่อธนาคาร ไม่เกิน 80 ตัวอักษร' });
     for (const accountName of ['', 'ก', '1234567890']) assert.equal(problem({ accountName })?.field, 'accountName', accountName);
     for (const accountNumber of ['', '12345', '123456789012345678901', '01234x6789', '๐๑๒๓๔๕๖']) {
-      assert.deepEqual(problem({ accountNumber }), { field: 'accountNumber', message: 'เลขบัญชีต้องเป็นตัวเลข 6 ถึง 20 หลัก' }, accountNumber);
+      assert.deepEqual(problem({ accountNumber }), { field: 'accountNumber', text: 'เลขบัญชีต้องเป็นตัวเลข 6 ถึง 20 หลัก' }, accountNumber);
     }
     // No bank account is forced to 10 digits; a PromptPay phone number is.
     for (const accountNumber of ['081234567', '8123456789', '08123456789']) {
       assert.deepEqual(problem({ payoutKind: 'PROMPTPAY_PHONE', accountNumber }),
-        { field: 'accountNumber', message: 'เบอร์พร้อมเพย์ต้องเป็นเบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0' }, accountNumber);
+        { field: 'accountNumber', text: 'เบอร์พร้อมเพย์ต้องเป็นเบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0' }, accountNumber);
     }
     assert.equal(problem({ payoutKind: 'PROMPTPAY_PHONE', bankChoice: '', accountNumber: '081-234-5678' }), null);
   });
@@ -371,7 +371,7 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
   const messages = [
     logic.LEGACY_PAYOUT_NOTE, logic.PAYOUT_ATTESTATION_TEXT, logic.PAYOUT_ATTESTATION_REQUIRED, ...Object.values(logic.PAYOUT_METHOD_TEXT), ...Object.values(logic.PAYOUT_KIND_TEXT),
     ...[{ bankChoice: '' }, { bankChoice: logic.OTHER_BANK }, { accountName: '' }, { accountNumber: '' }, { payoutKind: 'PROMPTPAY_PHONE' as const, accountNumber: '1' }]
-      .map((overrides) => logic.payoutAccountFormError(form(overrides))!.message),
+      .map((overrides) => logic.payoutAccountFormError(form(overrides))!.text),
     logic.claimPayoutSubmitBlock({ status: 'DRAFT', payout: { followsDefault: true, notReadyReason: 'payout_method_required' } })!,
     ...['payout_method_required', 'payout_destination_required', 'payout_destination_invalid', 'payout_verification_required', 'payout_destination_changed',
       'payout_reveal_denied', 'payout_account_not_set', 'payout_account_edit_denied', 'payout_member_not_found'].map((code) => translateApiError(code) ?? code),

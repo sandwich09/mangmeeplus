@@ -181,7 +181,7 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     const problem = method === 'BANK_TRANSFER' ? payoutAccountFormError(form) : null;
-    if (problem) { setError(problem.message); setInvalidField(problem.field); return; }
+    if (problem) { setError(problem.text); setInvalidField(problem.field); return; }
     setBusy(true); setError(null); setInvalidField(undefined);
     try {
       const input = memberPayoutAccountInput(method, form);
@@ -253,7 +253,7 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
               {error && <ErrorBanner message={error} />}
               {canEdit ? (
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} onClick={startEdit}>{account ? 'แก้ไขบัญชี' : 'ตั้งบัญชีรับเงินคืน'}</button>
+                  <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} onClick={startEdit}>{account ? 'แก้ไขบัญชี' : 'ตั้งบัญชีรับเงินคืน'}</button>
                   {own && account && <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={() => void remove()}>ลบบัญชี</button>}
                 </div>
               ) : <p className="text-xs text-gray-500">บัญชีนี้แก้ไขได้โดยเจ้าของบัญชี หรือผู้ที่ดูแลข้อมูลพนักงานในสาขาเดียวกัน</p>}

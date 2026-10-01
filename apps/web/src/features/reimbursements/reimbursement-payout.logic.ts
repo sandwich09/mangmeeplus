@@ -57,9 +57,9 @@ const FIELD_MESSAGES: Record<PayoutDestinationField, (form: PayoutAccountForm) =
 };
 
 /** The first problem with the typed account, in Thai, or null. Same rule as the server. */
-export function payoutAccountFormError(form: PayoutAccountForm): { field: PayoutDestinationField; message: string } | null {
+export function payoutAccountFormError(form: PayoutAccountForm): { field: PayoutDestinationField; text: string } | null {
   const field = invalidPayoutDestinationField(payoutDestinationInput(form));
-  return field ? { field, message: FIELD_MESSAGES[field](form) } : null;
+  return field ? { field, text: FIELD_MESSAGES[field](form) } : null;
 }
 
 export function memberPayoutAccountInput(method: 'BANK_TRANSFER' | 'CASH', form: PayoutAccountForm): SetMemberPayoutAccountInput {
@@ -83,7 +83,7 @@ export function claimPayoutFormOf(payout?: ReimbursementPayoutSummary | null): C
 }
 
 export function claimPayoutFormError(form: ClaimPayoutForm): string | null {
-  return form.mode === 'SPECIFIED' ? payoutAccountFormError(form.account)?.message ?? null : null;
+  return form.mode === 'SPECIFIED' ? payoutAccountFormError(form.account)?.text ?? null : null;
 }
 
 /** The `payout` field of a create or update call; undefined leaves the draft's choice untouched. */
