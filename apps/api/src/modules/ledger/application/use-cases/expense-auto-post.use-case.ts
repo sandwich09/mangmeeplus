@@ -5,6 +5,7 @@ import type { RequestContext } from '../../../auth/domain/models/request-context
 import { systemWorkerContext } from '../../../auth/domain/logic/system-worker-context';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
+import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import { GenerateJournalFromSourceUseCase } from './journal.use-case';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
@@ -28,6 +29,8 @@ export const AUTO_POST_REQUIRED_FEATURES = [
 ];
 export const AUTO_POST_ENTITLEMENT_FILTER = AUTO_POST_REQUIRED_FEATURES
   .map((featureKey) => ({ featureEntitlements: { some: { featureKey, enabled: true } } }));
+/** Owns `ReimbursementPayment`. Not a requirement of the drain — it gates the claim-payout branch only. */
+const CLAIM_PAYMENT_FEATURE = 'reimbursement';
 
 const NOOP_SHADOW = {
   startSweep: () => ({ record: async () => undefined, flush: async () => ({}) }),
@@ -48,7 +51,82 @@ function workerContext(companyId: string): RequestContext {
   });
 }
 
-export function expenseAutoPostCandidateSql(companyId: string, activationAt: Date, limit: number): Prisma.Sql {
+export type AutoPostSourceType = 'expense.record' | 'expense.payment' | 'reimbursement.payment';
+
+/**
+ * Claim payouts (2026-10-01). Same gates as an expense payment — recorded, still pending, created
+ * at or after the activation boundary, no generated journal yet — and the same "a settlement waits
+ * for its accrual" rule, which for a claim is `assertSettlementPostingReady`: every claim line has a
+ * projection that is either a posted accrual or a confirmed duplicate needing none. A suspected
+ * duplicate or an accrual still waiting keeps the payment OUT of the candidate set, so it stays
+ * `pending` instead of being attempted, refused and marked `posting_error` once a minute.
+ * This is a pre-filter only: the generator repeats the proof and stays authoritative.
+ */
+function claimPaymentCandidateSql(companyId: string, activationAt: Date): Prisma.Sql {
+  return Prisma.sql`
+      UNION ALL
+      SELECT 'reimbursement.payment'::text AS "sourceType", payment."id" AS "sourceId",
+        payment."createdAt" AS "eventAt", 2 AS "sortOrder"
+      FROM "ReimbursementPayment" AS payment
+      WHERE payment."companyId" = ${companyId}
+        AND payment."status"::text = 'RECORDED'
+        AND payment."postingStatus"::text = 'pending'
+        AND payment."createdAt" >= ${activationAt}
+        AND EXISTS (
+          SELECT 1
+          FROM "ReimbursementLine" AS line
+          WHERE line."companyId" = payment."companyId"
+            AND line."reimbursementRequestId" = payment."reimbursementRequestId"
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "ReimbursementLine" AS line
+          WHERE line."companyId" = payment."companyId"
+            AND line."reimbursementRequestId" = payment."reimbursementRequestId"
+            AND NOT EXISTS (
+              SELECT 1
+              FROM "ExpenseRecord" AS projection
+              WHERE projection."companyId" = line."companyId"
+                AND projection."sourceReimbursementRequestId" = line."reimbursementRequestId"
+                AND projection."sourceReimbursementLineId" = line."id"
+                AND (
+                  (
+                    projection."duplicateStatus"::text = 'CONFIRMED_DUPLICATE'
+                    AND projection."postingStatus"::text = 'not_required'
+                  )
+                  OR (
+                    projection."duplicateStatus"::text NOT IN ('POSSIBLE_DUPLICATE', 'CONFIRMED_DUPLICATE')
+                    AND projection."status"::text = 'CONFIRMED'
+                    AND EXISTS (
+                      SELECT 1
+                      FROM "JournalEntry" AS accrual
+                      WHERE accrual."companyId" = projection."companyId"
+                        AND accrual."sourceType" = 'expense.record'
+                        AND accrual."sourceId" = projection."id"
+                        AND accrual."entryType"::text = 'GENERATED'
+                        AND accrual."status"::text = 'POSTED'
+                    )
+                  )
+                )
+            )
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "JournalEntry" AS journal
+          WHERE journal."companyId" = payment."companyId"
+            AND journal."sourceType" = 'reimbursement.payment'
+            AND journal."sourceId" = payment."id"
+            AND journal."entryType"::text = 'GENERATED'
+        )
+  `;
+}
+
+export function expenseAutoPostCandidateSql(
+  companyId: string,
+  activationAt: Date,
+  limit: number,
+  includeClaimPayments = true,
+): Prisma.Sql {
   return Prisma.sql`
     SELECT candidate."sourceType", candidate."sourceId"
     FROM (
@@ -119,6 +197,7 @@ export function expenseAutoPostCandidateSql(companyId: string, activationAt: Dat
             AND journal."sourceId" = payment."id"
             AND journal."entryType"::text = 'GENERATED'
         )
+      ${includeClaimPayments ? claimPaymentCandidateSql(companyId, activationAt) : Prisma.empty}
     ) AS candidate
     ORDER BY candidate."eventAt" ASC, candidate."sortOrder" ASC, candidate."sourceId" ASC
     LIMIT ${limit}
@@ -148,6 +227,7 @@ export class DrainExpenseAutoPostUseCase {
     private readonly prisma: PrismaService,
     private readonly generateJournal: GenerateJournalFromSourceUseCase,
     private readonly expenseRepo: PrismaExpenseRepository,
+    private readonly reimbursementRepo: PrismaReimbursementRepository,
     private readonly shadow: LaunchShadowProbe = NOOP_SHADOW,
   ) {}
 
@@ -158,7 +238,7 @@ export class DrainExpenseAutoPostUseCase {
       select: {
         id: true,
         featureEntitlements: {
-          where: { featureKey: { in: AUTO_POST_REQUIRED_FEATURES } },
+          where: { featureKey: { in: [...AUTO_POST_REQUIRED_FEATURES, CLAIM_PAYMENT_FEATURE] } },
           select: { featureKey: true, enabled: true, updatedAt: true },
         },
       },
@@ -176,8 +256,13 @@ export class DrainExpenseAutoPostUseCase {
       for (const company of companies) {
         const activationAt = company.featureEntitlements.find((row) => row.featureKey === 'expense_auto_post')?.updatedAt;
         if (!activationAt) continue;
-        const rows = await this.prisma.client.$queryRaw<Array<{ sourceType: 'expense.record' | 'expense.payment'; sourceId: string }>>(
-          expenseAutoPostCandidateSql(company.id, activationAt, limit),
+        // Freeze in place, the rule `expenses` follows in AUTO_POST_REQUIRED_FEATURES: a disabled
+        // `reimbursement` family leaves its payments dormant. Only an explicit OFF row freezes — with
+        // `expenses` ON (required here) a company without the row inherits the family, exactly as
+        // the canonical entitlement evaluator reads it.
+        const claimPayments = !company.featureEntitlements.some((row) => row.featureKey === CLAIM_PAYMENT_FEATURE && !row.enabled);
+        const rows = await this.prisma.client.$queryRaw<Array<{ sourceType: AutoPostSourceType; sourceId: string }>>(
+          expenseAutoPostCandidateSql(company.id, activationAt, limit, claimPayments),
         );
         candidates += rows.length;
         const ctx = workerContext(company.id);
@@ -192,7 +277,11 @@ export class DrainExpenseAutoPostUseCase {
           } catch (error) {
             failed += 1;
             const postingError = redactedExpensePostingError(error);
-            if (row.sourceType === 'expense.payment') {
+            if (row.sourceType === 'reimbursement.payment') {
+              // The payment row has no postingError column; the status alone hands it to the
+              // accountant's worklist, where a retry shows the reason.
+              await this.reimbursementRepo.updatePaymentPostingStatus(company.id, row.sourceId, { postingStatus: 'posting_error' });
+            } else if (row.sourceType === 'expense.payment') {
               await this.expenseRepo.updatePaymentPostingStatus(company.id, row.sourceId, { postingStatus: 'posting_error', postingError });
             } else {
               await this.expenseRepo.updatePostingStatus(company.id, row.sourceId, { postingStatus: 'posting_error', postingError });

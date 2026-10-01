@@ -5,7 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { Decimal } from 'decimal.js';
-import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import { reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate } from '@watchdog-bms/contracts';
 import type {
   ReimbursementRequestStatus,
   ReimbursementApprovalStepStatus,
@@ -165,7 +165,54 @@ export type ApprovalSnapshotFields = {
   primaryAttachmentId?: string | null;
   lines?: readonly ReimbursementLineFields[];
   approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1;
+  /**
+   * The claim's receiving method and its own account snapshot. Folded into the hash only when the
+   * claim carries `payoutFingerprint` — the one value nothing but the payout-aware submit writes — so
+   * a claim sent before the field existed, or sent by an older build during a rollback, keeps the
+   * hash it was approved and signed under whatever a draft had chosen.
+   */
+  payoutMethod?: string | null;
+  payoutDestinationVersion?: number | null;
+  payoutFingerprint?: string | null;
 };
+
+/** A claim as its hash reads it: the record itself, or the same columns read by the production gate. */
+export type ClaimSnapshotSource = {
+  amount: string;
+  currency: string;
+  categoryKey: string;
+  incurredDate: Date | string;
+  reason: string;
+  primaryAttachmentId?: string | null;
+  lines?: ApprovalSnapshotFields['lines'];
+  payoutMethod?: string | null;
+  payoutDestinationVersion?: number | null;
+  payoutFingerprint?: string | null;
+};
+
+/**
+ * The ONE mapping from a claim to the fields its hash is made of. Submit, the live approval check,
+ * the signature acknowledgement (preview and sign) and the production gate all hash through it, so
+ * the payout part cannot be folded into one and left out of another.
+ */
+export function claimSnapshotFields(
+  claim: ClaimSnapshotSource,
+  approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1 | null,
+): ApprovalSnapshotFields {
+  return {
+    amount: claim.amount,
+    currency: claim.currency,
+    categoryKey: claim.categoryKey,
+    incurredDate: isoOf(claim.incurredDate),
+    reason: claim.reason,
+    primaryAttachmentId: claim.primaryAttachmentId,
+    lines: claim.lines ?? [],
+    ...(approvalPolicySnapshotJson && { approvalPolicySnapshotJson }),
+    payoutMethod: claim.payoutMethod,
+    payoutDestinationVersion: claim.payoutDestinationVersion,
+    payoutFingerprint: claim.payoutFingerprint,
+  };
+}
 
 export type LegacyV1FallbackSnapshotFields = ApprovalSnapshotFields & {
   requestId: string;
@@ -209,24 +256,8 @@ export function computeLegacySnapshotHashV1(fields: ApprovalSnapshotFields): str
  * it without an application-layer import cycle; structural param keeps this file
  * free of model/Prisma imports.
  */
-export function claimSignatureAckHash(req: {
-  amount: ApprovalSnapshotFields['amount'];
-  currency: string;
-  categoryKey: string;
-  incurredDate: Date;
-  reason: string;
-  primaryAttachmentId?: string | null;
-  lines?: ApprovalSnapshotFields['lines'];
-}): string {
-  return computeSnapshotHash({
-    amount: req.amount,
-    currency: req.currency,
-    categoryKey: req.categoryKey,
-    incurredDate: req.incurredDate.toISOString(),
-    reason: req.reason,
-    primaryAttachmentId: req.primaryAttachmentId,
-    lines: req.lines ?? [],
-  });
+export function claimSignatureAckHash(req: ClaimSnapshotSource): string {
+  return computeSnapshotHash(claimSnapshotFields(req));
 }
 
 /**
@@ -239,6 +270,12 @@ export function computeSnapshotHash(fields: ApprovalSnapshotFields): string {
     ...snapshotHeaderParts(fields),
     ...(fields.approvalPolicySnapshotJson
       ? [`policy:${stableJson(fields.approvalPolicySnapshotJson)}`]
+      : []),
+    // Cash is hashed too (no version; its fingerprint is the fixed cash marker): switching cash to a
+    // transfer after approval has to invalidate that approval. The attestation itself is not hashed,
+    // so ticking it never changes what was signed.
+    ...(fields.payoutFingerprint
+      ? [`payout:${fields.payoutMethod ?? ''}:${fields.payoutDestinationVersion ?? ''}:${fields.payoutFingerprint}`]
       : []),
     ...byLineNo(fields.lines ?? []).map((line) => [
       line.lineNo,
@@ -445,12 +482,19 @@ export type PaymentEligibilityInput = {
   paidAmount: string;
   paymentMethod: ReimbursementPaymentMethod;
   paymentReference?: string;
+  /** A slip comes with this payment. Whether the file itself is acceptable is proven separately. */
+  hasSlip: boolean;
 };
+
+/**
+ * The statuses a payment is recorded in. PARTIALLY_PAID is not one: only the full outstanding amount is
+ * taken. The claim page names who can pay only in these, so it never names someone the endpoint refuses.
+ */
+export const PAYMENT_RECORDING_STATUSES: readonly ReimbursementRequestStatus[] = ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'];
 
 /** Returns a stable error code, or null if payment is allowed. Enforces MVP full-payment. */
 export function validatePaymentRecording(input: PaymentEligibilityInput): string | null {
-  const payableStatuses: ReimbursementRequestStatus[] = ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'];
-  if (!payableStatuses.includes(input.status)) return 'invalid_status_transition';
+  if (!PAYMENT_RECORDING_STATUSES.includes(input.status)) return 'invalid_status_transition';
   if (input.financeReviewRequired && !input.financeReviewApproved) return 'finance_review_required';
   if (input.duplicateBlocking) return 'duplicate_unresolved';
 
@@ -467,7 +511,35 @@ export function validatePaymentRecording(input: PaymentEligibilityInput): string
   if (outstanding.sub(paid).gte(SETTLE_EPSILON)) return 'partial_payment_not_allowed';
 
   if (!validatePaymentReference(input.paymentMethod, input.paymentReference)) return 'payment_reference_required';
+  // Owner decision D3: a transfer is recorded with its slip. Claims approved before the slip
+  // existed are paid under the same rule, so nothing here reads the claim's age.
+  if (reimbursementPaymentSlipRequired(input.paymentMethod) && !input.hasSlip) return 'payment_slip_required';
   return null;
+}
+
+/**
+ * Whether a request repeats an already recorded payment (spec §12.7). One list of facts for the
+ * shortcut before the payment lock and the check under it: a replay that differs in any of them,
+ * the slip included, is a conflict and never a success.
+ */
+export function isSamePaymentRequest(
+  recorded: {
+    paidAmount: unknown; currency: string; paymentMethod: string; paidAt: Date;
+    paymentReference?: string | null; bankAccountId?: string | null; slipAttachmentId?: string | null;
+  },
+  requested: {
+    paidAmount: string; currency: string; paymentMethod: string; paidAt: Date;
+    paymentReference?: string; bankAccountId?: string; slipAttachmentId?: string;
+  },
+): boolean {
+  const same = (left?: string | null, right?: string | null) => (left ?? undefined) === (right ?? undefined);
+  return d(String(recorded.paidAmount)).eq(d(requested.paidAmount))
+    && recorded.currency === requested.currency
+    && recorded.paymentMethod === requested.paymentMethod
+    && recorded.paidAt.getTime() === requested.paidAt.getTime()
+    && same(recorded.paymentReference, requested.paymentReference)
+    && same(recorded.bankAccountId, requested.bankAccountId)
+    && same(recorded.slipAttachmentId, requested.slipAttachmentId);
 }
 
 export function validatePaymentReference(method: ReimbursementPaymentMethod, reference?: string): boolean {
@@ -594,14 +666,28 @@ export function isSlaRisk(ageHrs: number, slaHours?: number): boolean {
 
 const SENSITIVE_KEYS = /url|signedurl|objectkey|token|secret|accountnumber|ocr|rawtext|filebody/i;
 
-/** Strips known-sensitive keys from a bounded payload before it leaves the module. */
+/**
+ * Strips known-sensitive keys from a bounded payload before it leaves the module. The key list
+ * applies to the top level, as before; an account number is stripped at any depth, because the
+ * export and the event payloads nest objects and a full number must not ride out inside one
+ * (`accountLast4` is a different key and stays).
+ */
 export function redactPayload(payload: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(payload)) {
     if (SENSITIVE_KEYS.test(key)) continue;
-    out[key] = value;
+    out[key] = withoutAccountNumbers(value);
   }
   return out;
+}
+
+function withoutAccountNumbers(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutAccountNumbers);
+  // Plain objects only: a Date or a decimal is a value, not a bag of keys.
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !/accountnumber/i.test(key))
+    .map(([key, item]) => [key, withoutAccountNumbers(item)]));
 }
 
 /**

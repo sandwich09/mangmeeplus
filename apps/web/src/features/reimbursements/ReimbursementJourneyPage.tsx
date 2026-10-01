@@ -13,20 +13,22 @@ import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
 import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/ExpensesUi';
 import {
-  addReimbursementInternalNote, approveReimbursement, cancelReimbursement, deleteReimbursementInternalNote,
+  addReimbursementInternalNote, approveReimbursement, attachReimbursementPaymentSlip, cancelReimbursement, deleteReimbursementInternalNote,
   editReimbursementInternalNote, financeReviewReimbursement, getReimbursement, rejectReimbursement,
-  reopenReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadSignedClaimFormCopy,
+  reopenReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadReimbursementPaymentSlip, uploadSignedClaimFormCopy,
   voidReimbursementPayment,
 } from './reimbursements.api';
 import { currentDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
   activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, errorText, isMissingSavedSignatureError,
-  isStaleApprovalError, type JourneyAction, type JourneyStepState,
+  isStaleApprovalError, opensPaymentFormOnArrival, signedCopyMoveConfirmText, type JourneyAction, type JourneyStepState,
 } from './reimbursements.logic';
 import {
   ClaimDetailSections, ClaimSummaryCard, MissingSavedSignatureModal, PaymentForm, ReasonDialog, RejectDialog,
   StaleApprovalDialog, StatusBadge, VoidPaymentDialog, financeActionLabel, useClaimDocumentPreview,
 } from './ReimbursementDetailSections';
+import { ClaimPayoutCard, PayoutAttestationCheck } from './ReimbursementPayout';
+import { PAYOUT_ATTESTATION_REQUIRED, claimNeedsPayoutAttestation, claimPayoutSubmitBlock } from './reimbursement-payout.logic';
 
 const STEPPER_STATE: Record<JourneyStepState, ThemedStepState> = {
   done: 'done', current: 'current', upcoming: 'upcoming', 'needs-fix': 'attention', ended: 'attention',
@@ -60,12 +62,14 @@ const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string;
   },
 };
 
-export function ReimbursementJourneyPage({ companyId, requestId, userId, permissions, roles = [] }: {
+export function ReimbursementJourneyPage({ companyId, requestId, userId, permissions, roles = [], payOnOpen = false }: {
   companyId: string;
   requestId: string;
   userId: string;
   permissions: readonly string[];
   roles?: readonly string[];
+  /** The finance queue's quick pay on a phone lands here: the payment form opens in the step card, never in a dialog. */
+  payOnOpen?: boolean;
 }) {
   const toast = useToast();
   const { confirm, confirmDialog } = useConfirm();
@@ -88,8 +92,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const [editingNote, setEditingNote] = useState<string | null>(null);
   const [noteBusy, setNoteBusy] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
+  // "ตรวจบัญชีแล้ว" is given for one account version; a claim sent again with another version unticks it.
+  const [attestedVersion, setAttestedVersion] = useState<number | null>(null);
   const cardRef = useRef<HTMLElement>(null);
-  const { previewLoadingKey, openClaimForm, openAttachment, previewModals } = useClaimDocumentPreview(companyId, setActionError);
+  const { previewLoadingKey, openClaimForm, openAttachment, openPaymentSlip, previewModals } = useClaimDocumentPreview(companyId, setActionError);
 
   const saveNote = async () => {
     if (!noteBody.trim() || noteBusy) return;
@@ -122,14 +128,25 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     finally { setNoteBusy(false); }
   };
 
+  // Asked for once, on arrival: a later re-read of the claim never reopens a form the payer closed.
+  const payRequested = useRef(payOnOpen);
   useEffect(() => {
     let active = true;
     setLoadError(null);
     getReimbursement(companyId, requestId)
-      .then((next) => { if (active) setDetail(next); })
+      .then((next) => {
+        if (!active) return;
+        setDetail(next);
+        if (opensPaymentFormOnArrival(payRequested.current, activeJourneyStep(buildJourneySteps(next, permissions, userId)))) {
+          setPayOpen(true);
+          // The step card holding the form comes into view, as it does after an action.
+          setFocusTick((tick) => tick + 1);
+        }
+        payRequested.current = false;
+      })
       .catch((e) => { if (active) setLoadError(e); });
     return () => { active = false; };
-  }, [companyId, requestId, reloadKey]);
+  }, [companyId, requestId, reloadKey, permissions, userId]);
 
   // The card of the step the claim moved to takes focus (and scrolls into view) after an action.
   useEffect(() => { if (focusTick) cardRef.current?.focus(); }, [focusTick]);
@@ -172,10 +189,18 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
 
   const approve = async (review?: { detail: any }) => {
     const before = detail;
+    const target = review?.detail ?? detail;
+    // The server refuses a transfer claim without the attestation of its current account version.
+    const verified = claimNeedsPayoutAttestation(target) ? attestedVersion : null;
+    if (claimNeedsPayoutAttestation(target) && verified !== target.payout?.version) {
+      setStaleReview(null);
+      setActionError(PAYOUT_ATTESTATION_REQUIRED);
+      return;
+    }
     let stale = false;
     const { ok, latest } = await act(
       'approve',
-      () => approveReimbursement(companyId, requestId, undefined, (review?.detail ?? detail).approvalSnapshotHash),
+      () => approveReimbursement(companyId, requestId, undefined, target.approvalSnapshotHash, verified ?? undefined),
       'อนุมัติคำขอเรียบร้อยแล้ว',
       (e) => { stale = !review && isStaleApprovalError(e); return stale; },
     );
@@ -222,14 +247,22 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   }
 
   const stepIndex = step ? steps.indexOf(step) : -1;
-  const readiness = reimbursementSubmitReadiness(detail);
+  const receiptReadiness = reimbursementSubmitReadiness(detail);
+  const payoutBlock = claimPayoutSubmitBlock(detail);
+  // One reason at a time: the receipt rule first, then the receiving method.
+  const readiness = receiptReadiness.blocked || !payoutBlock ? receiptReadiness : { blocked: true, message: payoutBlock };
+  const needsAttestation = Boolean(step?.actions.includes('approve')) && claimNeedsPayoutAttestation(detail);
+  const attested = needsAttestation && attestedVersion === detail.payout?.version;
+  const staleReviewNeedsAttestation = !!staleReview && claimNeedsPayoutAttestation(staleReview.detail)
+    && attestedVersion !== staleReview.detail.payout?.version;
   const duplicateResolutionBlocked = detail.duplicateStatus === 'POSSIBLE_DUPLICATE'
     && !permissions.includes('reimbursement.duplicate.resolve');
   const recordedPayment = (detail.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
-  const desk = currentDeskText(detail.currentDesk);
+  const desk = currentDeskText(detail.currentDesk, detail.paymentDesk);
   const handlers: Partial<Record<JourneyAction, () => void>> = {
     // No approver at all: the answer names who fixes it and, for a policy manager, links there.
-    submit: () => { setApproverHelp(null); void act('submit', () => submitReimbursement(companyId, requestId), 'ส่งขออนุมัติเรียบร้อยแล้ว',
+    // The token names the account shown in the card above: the server sends the claim with that one or refuses.
+    submit: () => { setApproverHelp(null); void act('submit', () => submitReimbursement(companyId, requestId, detail.payout?.submitToken), 'ส่งขออนุมัติเรียบร้อยแล้ว',
       (e) => { const help = approverNotReadyHelp(e, permissions); setApproverHelp(help); return help !== null; }); },
     cancel: () => { setActionError(null); setReasonAction('cancel'); },
     reopen: () => void (async () => {
@@ -271,7 +304,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     if (action === 'attach-signed-copy') return <a key={action} className={className} href="#reimbursement-signed-copies">{label}</a>;
     const working = busyAction === action || (action === 'print' && previewLoadingKey !== null);
     const blockedReason = action === 'submit' && readiness.blocked ? readiness.message
-      : action === 'finance-approve' && duplicateResolutionBlocked ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined;
+      : action === 'approve' && needsAttestation && !attested ? PAYOUT_ATTESTATION_REQUIRED
+        : action === 'finance-approve' && duplicateResolutionBlocked ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined;
     return (
       <button key={action} type="button" className={className} title={blockedReason}
         disabled={busyAction !== null || previewLoadingKey !== null || Boolean(blockedReason)} aria-busy={working}
@@ -352,6 +386,16 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
         />
       </MangmeeCard>
 
+      <ClaimPayoutCard
+        companyId={companyId}
+        detail={detail}
+        userId={userId}
+        payoutAccountHref={`${hubHref}/payout-account`}
+        // The same condition as the withdraw button of the approval step below.
+        canWithdraw={detail.status === 'PENDING_APPROVAL' && Boolean(step?.actions.includes('reopen'))}
+        {...(step?.actions.includes('edit') && { editHref: `${hubHref}/${detail.id}/edit` })}
+      />
+
       {step && (
         <section ref={cardRef} tabIndex={-1} aria-labelledby="journey-step-title"
           className="mangmee-card space-y-3 p-4 outline-none focus-visible:ring-2 focus-visible:ring-brand-500 sm:p-5">
@@ -361,6 +405,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
             {step.note && <p className="mt-1 text-sm text-gray-600">{step.note}</p>}
           </div>
           {step.actions.includes('submit') && readiness.blocked && readiness.message && <ErrorBanner message={readiness.message} />}
+          {needsAttestation && (
+            <PayoutAttestationCheck checked={attested} disabled={busyAction !== null}
+              onChange={(checked) => setAttestedVersion(checked ? detail.payout?.version ?? null : null)} />
+          )}
           {cardActions.length > 0 && (
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">{cardActions.map(actionButton)}</div>
           )}
@@ -393,6 +441,18 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           () => uploadSignedClaimFormCopy(companyId, requestId, file, detail.branchId, confirmedRequestNo),
           confirmedRequestNo ? 'แนบสำเนาใบเบิกที่ลงนามครบเรียบร้อยแล้ว' : 'แนบไฟล์เรียบร้อยแล้ว')}
         onRequestVoidPayment={(payment) => { setActionError(null); setVoidingPayment(payment); }}
+        onOpenPaymentSlip={(payment, attachmentId, name) => void openPaymentSlip(detail.id, payment.id, attachmentId, name)}
+        onAttachPaymentSlip={(payment, file) => void act('attach-slip', async () => attachReimbursementPaymentSlip(
+          companyId, requestId, payment.id, await uploadReimbursementPaymentSlip(companyId, requestId, file),
+        ), 'แนบสลิปเรียบร้อยแล้ว')}
+        onUseSignedCopyAsSlip={(copy, payment) => void (async () => {
+          // The file changes hands and a paper-signature declaration may go with it, so it asks first.
+          if (!(await confirm({
+            title: 'ใช้ไฟล์นี้เป็นสลิปการจ่าย', message: signedCopyMoveConfirmText(copy, payment),
+            confirmLabel: 'ย้ายเป็นสลิปการจ่าย', cancelLabel: 'กลับ', variant: 'primary',
+          }))) return;
+          await act('move-slip', () => attachReimbursementPaymentSlip(companyId, requestId, payment.id, copy.attachmentId), 'ย้ายไฟล์ไปเป็นสลิปการจ่ายแล้ว');
+        })()}
       />
 
       {previewModals}
@@ -446,7 +506,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
         busy={busyAction === 'approve'}
         error={actionError}
         onClose={() => setStaleReview(null)}
-        onConfirm={() => void approve({ detail: staleReview.detail })}
+        // The page behind already shows the latest claim. An account the approver has not ticked
+        // (it changed, or was never ticked) is checked there, not approved from this dialog.
+        {...(staleReviewNeedsAttestation && { confirmLabel: 'ปิดเพื่อตรวจบัญชีรับเงิน' })}
+        onConfirm={() => (staleReviewNeedsAttestation ? setStaleReview(null) : void approve({ detail: staleReview.detail }))}
       />}
     </MangmeePage>
   );

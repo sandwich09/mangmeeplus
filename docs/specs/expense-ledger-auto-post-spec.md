@@ -30,7 +30,8 @@ accounting offices:
 
 ## 4. Non-goals
 
-- Auto-posting sales documents, procurement bills, supplier payments, or reimbursements in this phase.
+- Auto-posting sales documents, procurement bills, or supplier payments in this phase. Reimbursement
+  (claim) payouts were out of scope until the 2026-10-01 amendment in section 17.
 - Bypassing evidence, account mapping, tax snapshot, branch, permission, or period-close rules.
 - Automatically backfilling historical pending expenses when Auto-post is enabled.
 - Public permanent evidence links or public folders.
@@ -118,7 +119,8 @@ yet been recognized.
 - A closed period is a blocker, not an override path.
 - Partial payments are cumulative and append-only. Each `ExpensePayment.id` is its own `expense.payment`
   source, posting status, journal identity, retry boundary, and reversal boundary.
-- A claim-born expense cannot be settled through this path; it settles through `reimbursement.payment`.
+- A claim-born expense cannot be settled through this path; it settles through `reimbursement.payment`
+  (section 17).
 
 ### 7.4 Evidence and export
 
@@ -305,3 +307,74 @@ POST /v1/internal/ledger/expense-auto-post/drain
 - Retry is allowed after the cause is fixed.
 - Auto-post applies to new documents by default.
 - Historical pending documents require a separate previewed and confirmed backfill.
+
+## 17. Amendment 2026-10-01: Claim Payouts (`reimbursement.payment`)
+
+Until this amendment a recorded claim payout stayed `pending` until someone called
+`POST /posting/generate` by hand: no worker drained it and no screen offered it (finance-gaps spec
+GAP-02, follow-up (ก), never built). Period close then refuses for as long as one is pending.
+Nothing about the accounting changes here. The journal still comes from the existing canonical
+generator and its existing mapping; this amendment only makes the two existing modes reach it.
+
+### 17.1 Auto-post mode
+
+The drain selects a claim payout under the rules it already applies to an expense payment:
+
+- the company has `expense_auto_post`, `double_entry_ledger` and `expenses` enabled;
+- the payment is `RECORDED`, its posting status is `pending`, and it was created at or after the
+  activation boundary (section 7.1) — a payout recorded before Auto-post was switched on is never
+  picked up automatically;
+- no generated `reimbursement.payment` journal exists for it;
+- it waits for its accruals: every claim line has an expense record that is either `CONFIRMED` with a
+  `POSTED` accrual journal, or a confirmed duplicate that needs none. A suspected duplicate, a missing
+  expense record or an accrual still waiting keeps the payout out of the candidate set, so it stays
+  `pending`; it is not attempted and marked as an error once a minute.
+
+A frozen `reimbursement` family (an explicit disabled entitlement row) removes claim payouts from the
+drain while expense sources keep posting. `reimbursement` is not a requirement of the drain itself.
+
+A failed attempt marks that payment `posting_error`. `ReimbursementPayment` has no error column, so
+the reason is shown when an accountant retries. A failed payout is not retried by the worker.
+
+A void needs no worker step: voiding a posted payout creates and posts its reversing entry inside
+the void transaction, and voiding an unposted one marks it `not_required`. A voided payout is never
+a candidate.
+
+### 17.2 Manual mode
+
+- The accounting-evidence screen lists every recorded payout whose posting status is `pending` or
+  `posting_error`, of any age, from the existing `GET /reimbursements/posting/pending` worklist, and
+  posts one through the existing `POST /posting/generate`.
+- It is shown to a user who may post to the ledger (`journal.entry.create` and `journal.entry.post`)
+  and may read the worklist (`reimbursement.finance_review`). It follows the same presentation switch
+  as the other posting buttons, so it stays hidden while the accounting screens are closed.
+- A refusal stays on screen in Thai and the row stays listed for a retry.
+- The period-close check `reimbursement_postings_complete` carries a `breakdown` of its three counts
+  (unconfirmed claim expenses, pending payouts, failed payouts). The web names each kind that is
+  pending and links to the screen that fixes it, and shows the checks when a close is refused.
+
+### 17.3 Known limits (not changed by this amendment)
+
+- A company on the `TH_SME_COA_V1` chart has no reviewed mapping for a settlement (cash or bank by
+  payment method is still undecided work, chart bootstrap plan Phase 6). Its payout is refused with
+  `posting_rule_missing`, no journal is created, and the payment becomes `posting_error`. The same is
+  true of `expense.payment`.
+- A claim line typed into the claim form carries no expense category, so on that chart its accrual is
+  refused with `expense_account_unmapped:no_category` and its payout keeps waiting.
+- The historical backfill (section 11) covers expense accruals only. A payout recorded before the
+  activation boundary is posted from the screen.
+- The worker and an accountant posting the same source at the same moment still produce one journal,
+  but the loser can leave the status flag at `posting_error`; posting again corrects it. This is true
+  of every auto-posted source.
+
+### 17.4 Acceptance
+
+- [x] A ready claim payout is posted by the drain; a payout that is not ready stays `pending`.
+- [x] Auto-post never posts a payout recorded before its activation boundary, a voided payout, or
+      one that already has a generated journal.
+- [x] After posting, the claim's paid total, the payment, the settlement journal and the expense
+      records carry the same amount, and the employee payable nets to zero.
+- [x] After a void, the settlement and its reversal net to zero and the claim, its expense records
+      and the payable read unpaid again; paying again leaves one live payment and one net settlement.
+- [x] The screen lists pending and failed payouts and a refusal does not hide the list.
+- [x] The period-close check names what is pending and where to fix it.

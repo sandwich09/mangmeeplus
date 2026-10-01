@@ -6,6 +6,7 @@
  * substitute-receipt renderer on purpose — the two documents live in different
  * modules and must not import each other's domain logic.
  */
+import { civilDate } from '@watchdog-bms/contracts';
 import type {
   ReimbursementClaimFormLayout,
   ReimbursementClaimSignatureRole,
@@ -74,6 +75,8 @@ export type ReimbursementClaimFormSnapshot = {
   layout: ReimbursementClaimFormLayout;
   /** Latest recorded payment, stated as text under the table; null prints ยังไม่จ่าย. */
   repayment: { paidAt: string; method: string; reference: string | null; recordedByName: string } | null;
+  /** That payment carries a slip: ticks หลักฐานการชำระเงิน on TWO_SIGNERS, so paper and screen agree. */
+  hasPaymentEvidence?: boolean;
   /** The requester decided their own approval. */
   selfApproved?: boolean;
   /**
@@ -228,7 +231,7 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
     <text x="45" y="${checklistTitleY}" font-weight="700">เอกสารแนบ</text>
     ${checkbox(52, checklistY, snapshot.hasReceiptEvidence, 'ใบเสร็จรับเงิน')}
     ${checkbox(232, checklistY, false, 'ใบกำกับภาษี')}
-    ${checkbox(392, checklistY, false, 'หลักฐานการชำระเงิน')}
+    ${checkbox(392, checklistY, paymentEvidenceTicked(snapshot), 'หลักฐานการชำระเงิน')}
     ${checkbox(600, checklistY, false, 'อื่น ๆ ______________')}
     ${waiverLines.length ? multilineText(52, waiverY, waiverLines, 20) : ''}
     <text x="45" y="${reasonTitleY}" font-weight="700">เหตุผลในการเบิก</text>
@@ -312,7 +315,7 @@ export function renderReimbursementClaimFormPages(snapshot: ReimbursementClaimFo
   page.push(`<text x="45" y="${y}" font-weight="700">เอกสารแนบ</text>
     ${checkbox(52, y + 28, snapshot.hasReceiptEvidence, 'ใบเสร็จรับเงิน')}
     ${checkbox(232, y + 28, false, 'ใบกำกับภาษี')}
-    ${checkbox(392, y + 28, false, 'หลักฐานการชำระเงิน')}
+    ${checkbox(392, y + 28, paymentEvidenceTicked(snapshot), 'หลักฐานการชำระเงิน')}
     ${checkbox(600, y + 28, false, 'อื่น ๆ ______________')}`);
   y += 64;
   const paragraph = (title: string, text: string) => {
@@ -362,6 +365,11 @@ function signatureSection(snapshot: ReimbursementClaimFormSnapshot, top: number)
   return `<text x="45" y="${top - 30}" font-weight="700">การอนุมัติ</text>
     ${signatureBlock(45, top, 'ผู้เบิก', signers.requester, 380)}${signatureBlock(425, top, 'ผู้อนุมัติ', signers.approver, 380, note)}${snapshot.selfApproved ? `
     <text x="425" y="${top + 140}" text-anchor="middle" font-size="13">${SAME_PERSON_NOTE}</text>` : ''}`;
+}
+
+/** The legacy four-block form reprints byte for byte, so only the two-signer form reports the slip. */
+function paymentEvidenceTicked(snapshot: ReimbursementClaimFormSnapshot): boolean {
+  return snapshot.layout === 'TWO_SIGNERS' && snapshot.hasPaymentEvidence === true;
 }
 
 function repaymentText(repayment: ReimbursementClaimFormSnapshot['repayment']): string {
@@ -478,8 +486,15 @@ function money(value: string): string {
   return Number.isFinite(amount) ? amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : xml(value);
 }
 
+/**
+ * The day a date falls on in Thailand, as every screen shows it. The submit date and each signer's
+ * date are instants, and the UTC calendar day is the day before for anything done between midnight
+ * and 07:00 Thai time. A date-only value is stored at UTC midnight, 07:00 of the same Thai day, so
+ * it prints unchanged.
+ */
 function formatDate(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  const instant = new Date(value);
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(Number.isNaN(instant.getTime()) ? value : civilDate(instant));
   if (!match) return value || '-';
   const [, year, month, day] = match;
   const monthLabel = THAI_MONTHS[Number(month) - 1];

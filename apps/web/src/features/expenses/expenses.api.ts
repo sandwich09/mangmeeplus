@@ -328,6 +328,11 @@ async function checkedPreviewBlob(response: Response, expectedMimeType?: string)
   return blob;
 }
 
+/** The bytes behind a signed download URL, under the same checks every preview gets (type allowlist, magic bytes). */
+export async function fetchSignedPreviewBlob(downloadUrl: string, expectedMimeType?: string): Promise<Blob> {
+  return checkedPreviewBlob(await fetch(resolveUploadUrl(downloadUrl), { mode: 'cors', credentials: 'omit' }), expectedMimeType);
+}
+
 export async function fetchAttachmentPreviewBlob(
   companyId: string,
   attachmentId: string,
@@ -335,7 +340,7 @@ export async function fetchAttachmentPreviewBlob(
 ): Promise<Blob> {
   if (expectedMimeType !== undefined) checkedPreviewMimeType(expectedMimeType);
   const { downloadUrl } = await getAttachmentDownloadUrl(companyId, attachmentId, { disposition: 'inline' });
-  const blob = await checkedPreviewBlob(await fetch(resolveUploadUrl(downloadUrl), { mode: 'cors', credentials: 'omit' }), expectedMimeType);
+  const blob = await fetchSignedPreviewBlob(downloadUrl, expectedMimeType);
   return blob.type === 'image/svg+xml'
     ? new Blob([removeSubstituteReceiptDisplayMetadata(await blob.text())], { type: blob.type })
     : blob;

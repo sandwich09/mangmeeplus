@@ -1,5 +1,5 @@
 import type { MangmeeTone } from '@/common/components/mangmee';
-import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DESK_LABELS, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 
 export const REIMBURSEMENT_CREATE_UNAVAILABLE = 'ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อผู้ดูแลบริษัทเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์';
@@ -89,21 +89,27 @@ export const REQUEST_STATUS_OPTIONS = Object.keys(REQUEST_STATUS_LABELS);
 
 // ---- อยู่ที่ใคร (current desk) ----
 
-/** Pool labels. The APPROVER desk prefers the real names the server resolved. */
-export const CURRENT_DESK_LABELS: Record<string, string> = {
-  REQUESTER: 'ผู้ยื่น',
-  APPROVER: 'ผู้มีสิทธิ์อนุมัติ',
-  FINANCE: 'ฝ่ายการเงิน',
-  PAYMENT: 'ฝ่ายการเงิน (รอบันทึกจ่าย)',
-};
+/** Pool labels, the same words the LINE backlog answer uses. A desk prefers the real names the server resolved. */
+export const CURRENT_DESK_LABELS: Record<string, string> = REIMBURSEMENT_DESK_LABELS;
+
+/** "สมศรี หรือ วิชัย และอีก 2 คน": who can record the payment, as the claim detail names them. Null when it names nobody. */
+export function paymentDeskText(paymentDesk?: { names?: readonly string[]; moreCount?: number } | null): string | null {
+  if (!paymentDesk?.names?.length) return null;
+  return `${paymentDesk.names.join(' หรือ ')}${paymentDesk.moreCount ? ` และอีก ${paymentDesk.moreCount} คน` : ''}`;
+}
 
 /**
  * The one line a queue row appends: `อยู่ที่ <this>`. Several assigned approvers read as
- * "A หรือ B" — any one of them can decide. Null on a terminal claim, which has no desk.
+ * "A หรือ B" — any one of them can decide. The payment desk is named from the detail's `paymentDesk`
+ * (a list row has none and prints the pool). Null on a terminal claim, which has no desk.
  */
-export function currentDeskText(desk?: { kind?: string; names?: readonly string[] } | null): string | null {
+export function currentDeskText(
+  desk?: { kind?: string; names?: readonly string[] } | null,
+  paymentDesk?: Parameters<typeof paymentDeskText>[0],
+): string | null {
   if (!desk?.kind) return null;
-  return desk.names?.length ? desk.names.join(' หรือ ') : CURRENT_DESK_LABELS[desk.kind] ?? null;
+  const names = desk.kind === 'PAYMENT' ? paymentDeskText(paymentDesk) : desk.names?.join(' หรือ ');
+  return names || (CURRENT_DESK_LABELS[desk.kind] ?? null);
 }
 
 // ---- Claim-form signatures ----

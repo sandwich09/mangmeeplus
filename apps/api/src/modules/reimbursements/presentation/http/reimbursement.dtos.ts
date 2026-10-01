@@ -8,13 +8,19 @@ import {
   IsString, Matches, Max, MaxLength, Min, ValidateIf, ValidateNested,
 } from 'class-validator';
 import type {
+  ApproveReimbursementInput,
+  AttachReimbursementPaymentSlipInput,
   CreateReimbursementRequestInput,
   LinkReimbursementSignedCopyInput,
   RecordReimbursementPaymentInput,
   ReimbursementClaimSignatureRole,
   ReimbursementLineInput,
   ReimbursementPaymentMethod,
+  ReimbursementPayoutInput,
+  ReimbursementPayoutKind,
+  ReimbursementPayoutMethod,
   SignReimbursementClaimFormInput,
+  SubmitReimbursementRequestInput,
   UpdateReimbursementDraftInput,
   UpdateReimbursementPolicyInput,
 } from '@watchdog-bms/contracts';
@@ -40,6 +46,31 @@ export class ReimbursementLineDto implements ReimbursementLineInput {
   @IsDateString({ strict: true }) @IsOptional() sourceExpenseUpdatedAt?: string;
 }
 
+// ---- Payout account ----
+//
+// Types and transport bounds only. Whether an account is complete and well formed is decided by the
+// one shared rule in contracts (`invalidPayoutDestinationField`), so the API and the web cannot drift.
+
+const PAYOUT_KINDS: ReimbursementPayoutKind[] = ['BANK_ACCOUNT', 'PROMPTPAY_PHONE'];
+const PAYOUT_METHODS: ReimbursementPayoutMethod[] = ['BANK_TRANSFER', 'CASH'];
+
+class PayoutDestinationFieldsDto {
+  @IsIn(PAYOUT_KINDS) @IsOptional() payoutKind?: ReimbursementPayoutKind;
+  @IsString() @IsOptional() @MaxLength(120) bankName?: string;
+  @IsString() @IsOptional() @MaxLength(200) accountName?: string;
+  // A string on purpose: leading zeros survive, and no client can send a number.
+  @IsString() @IsOptional() @MaxLength(40) accountNumber?: string;
+}
+
+export class ReimbursementPayoutDto extends PayoutDestinationFieldsDto {
+  @IsIn(['DEFAULT', 'CASH', 'SPECIFIED']) mode!: ReimbursementPayoutInput['mode'];
+  @IsBoolean() @IsOptional() saveAsDefault?: boolean;
+}
+
+export class SetMemberPayoutAccountDto extends PayoutDestinationFieldsDto {
+  @IsIn(PAYOUT_METHODS) payoutMethod!: ReimbursementPayoutMethod;
+}
+
 export class CreateReimbursementRequestDto implements CreateReimbursementRequestInput {
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) requesterUserId?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) branchId?: string;
@@ -47,6 +78,7 @@ export class CreateReimbursementRequestDto implements CreateReimbursementRequest
   @IsString() @IsNotEmpty() @MaxLength(1000) reason!: string;
   @IsString() @IsOptional() @MaxLength(3) currency?: string;
   @IsString() @IsOptional() @MaxLength(500) missingReceiptReason?: string;
+  @ValidateNested() @Type(() => ReimbursementPayoutDto) @IsOptional() payout?: ReimbursementPayoutInput;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(REIMBURSEMENT_MAX_LINES)
   @ValidateNested({ each: true }) @Type(() => ReimbursementLineDto)
   lines!: ReimbursementLineDto[];
@@ -57,9 +89,24 @@ export class UpdateReimbursementDraftDto implements UpdateReimbursementDraftInpu
   @IsString() @unlessNullish @IsNotEmpty() @MaxLength(1000) reason?: string;
   @IsString() @unlessNullish @IsNotEmpty() @MaxLength(3) currency?: string;
   @IsString() @unlessNullish @MaxLength(500) missingReceiptReason?: string | null;
+  @ValidateNested() @Type(() => ReimbursementPayoutDto) @IsOptional() payout?: ReimbursementPayoutInput;
   @IsArray() @IsOptional() @ArrayMinSize(1) @ArrayMaxSize(REIMBURSEMENT_MAX_LINES)
   @ValidateNested({ each: true }) @Type(() => ReimbursementLineDto)
   lines?: ReimbursementLineDto[];
+}
+
+export class SubmitReimbursementDto implements SubmitReimbursementRequestInput {
+  @IsString() @IsOptional() @MaxLength(200) idempotencyKey?: string;
+  // What the draft's page showed as the account to be frozen (payout.submitToken).
+  @Matches(/^[0-9a-f]{32}$/) @IsOptional() payoutSubmitToken?: string;
+}
+
+export class ApproveReimbursementDto implements ApproveReimbursementInput {
+  @IsString() @IsOptional() @MaxLength(2000) comment?: string;
+  @IsString() @IsOptional() @MaxLength(128) approvalSnapshotHash?: string;
+  @IsString() @IsOptional() @MaxLength(200) idempotencyKey?: string;
+  // "ตรวจบัญชีแล้ว": a whole version number, never a string that happens to look like one.
+  @IsInt() @Min(1) @IsOptional() payoutVerifiedVersion?: number;
 }
 
 export class ReimbursementDraftActionControlDto {
@@ -126,4 +173,25 @@ export class RecordReimbursementPaymentDto implements RecordReimbursementPayment
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) bankAccountId?: string;
   @IsString() @IsOptional() @MaxLength(500) note?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(128) idempotencyKey?: string;
+  @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) slipAttachmentId?: string;
+}
+
+// ---- Payment slips ----
+//
+// Type and size are judged by the use case, which answers with the stable `payment_slip_invalid`
+// the payment form translates; here only the shape is fixed.
+
+export class InitPaymentSlipUploadDto {
+  @IsString() @IsNotEmpty() @MaxLength(255) originalFileName!: string;
+  @IsString() @IsNotEmpty() @MaxLength(255) mimeType!: string;
+  @IsInt() @Min(1) byteSize!: number;
+}
+
+export class CompletePaymentSlipUploadDto {
+  @Matches(/^[0-9a-f]{64}$/) @IsOptional() checksumSha256?: string;
+  @IsInt() @IsOptional() @Min(1) byteSize?: number;
+}
+
+export class AttachPaymentSlipDto implements AttachReimbursementPaymentSlipInput {
+  @IsString() @IsNotEmpty() @MaxLength(64) attachmentId!: string;
 }

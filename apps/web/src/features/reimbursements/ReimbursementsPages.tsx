@@ -9,7 +9,7 @@ import { Modal } from '@/common/components/modal';
 import { EmptyState } from '@/common/components/state/EmptyState';
 import { LoadingState } from '@/common/components/state/LoadingState';
 import {
-  listReimbursements, submitReimbursement, getReimbursement,
+  loadHubPage, submitReimbursement, getReimbursement,
   listApprovalQueue, approveReimbursement, rejectReimbursement,
   listFinanceQueue, financeReviewReimbursement,
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
@@ -27,10 +27,14 @@ import {
   summariseQueue, matchesSearch, pageBounds,
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
+  type HubFilter, approverPaymentWarning,
+  NO_HUB_LIST, QUEUE_PAGE_SIZE, hubCardFilter, hubList, hubListKey, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
+  PAYMENT_DIALOG_MEDIA_QUERY, quickPayTarget,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
 } from './ReimbursementDetailSections';
+import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage } from './reimbursement-payout.logic';
 import { type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
@@ -119,6 +123,13 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   const openJourney = useCallback((id: string) => router.push(`/companies/${companyId}/reimbursements/${id}`), [companyId, router]);
   // "บันทึกจ่าย" stays a quick action right on the finance row; it never needed the drawer.
   const [payFor, setPayFor] = useState<any | null>(null);
+  // On a phone the payment form is never a dialog (spec §12.2, §21): the same press opens the claim's
+  // own page with the form already open in its payment step card.
+  const recordPayment = useCallback((row: any) => {
+    const target = quickPayTarget(window.matchMedia(PAYMENT_DIALOG_MEDIA_QUERY).matches, companyId, row.id);
+    if (target.kind === 'page') router.push(target.href);
+    else setPayFor(row);
+  }, [companyId, router]);
   const [refreshKey, setRefreshKey] = useState(0);
 
   // Roles can change after submission. Permission-based navigation alone would strand the exact
@@ -159,6 +170,10 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
       eyebrow="การเบิกจ่าย"
       title="การเบิกจ่ายและอนุมัติ"
       description={HUB_TAB_DESCRIPTIONS[tab]}
+      // Beside the page actions on every tab: whoever can file a claim sets where it is paid back.
+      meta={permissions.includes('reimbursement.create') ? (
+        <Link href={`/companies/${companyId}/reimbursements/payout-account`} className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')}>บัญชีรับเงินคืนของฉัน</Link>
+      ) : undefined}
       actions={permissions.includes('reimbursement.create') && tab === 'mine' ? (
         <Link href={`/companies/${companyId}/reimbursements/new`} className={cx(btnClass, 'min-h-11 w-full sm:w-auto')}>+ สร้างคำขอเบิก</Link>
       ) : undefined}
@@ -181,7 +196,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         canCreate={permissions.includes('reimbursement.create')}
       />}
       {tab === 'approvals' && <ApprovalQueue {...queueProps} />}
-      {tab === 'finance' && <FinanceQueue {...queueProps} onRecordPayment={setPayFor} />}
+      {tab === 'finance' && <FinanceQueue {...queueProps} onRecordPayment={recordPayment} />}
       {tab === 'policy' && <PolicySettings companyId={companyId} />}
 
       {payFor && <PaymentModal
@@ -206,103 +221,126 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   canCreate: boolean;
 }) {
   const toast = useToast();
-  const [data, setData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  // One list is held, a page at a time. Which list it is (company, scope, filter, reload) is part of what is
+  // held, so rows that were loaded for another one are never shown, and an answer that arrives late is dropped.
+  const [held, setHeld] = useState<HubList>(NO_HUB_LIST);
+  const [reload, setReload] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'pending' | 'approved' | 'paid'>('all');
+  const [statusFilter, setStatusFilter] = useState<HubFilter>('all');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
-    try {
-      const scope = reimbursementListScope(permissions);
-      const r = await listReimbursements(companyId, { scope });
-      setData(r.items ?? []);
-    }
-    catch (e) { setError(err(e)); } finally { setLoading(false); }
-  }, [companyId, permissions]);
-  useEffect(() => { load(); }, [load, refreshKey]);
+  const scope = reimbursementListScope(permissions);
+  const listKey = hubListKey(companyId, scope, statusFilter, refreshKey, reload);
+  const list = hubList(held, listKey);
+  const searching = query.trim() !== '';
+  // Lazy: the first page of the filter, then more only when the table page shown reaches past what is held.
+  // ponytail: search reads the rows on this page, so a search takes every page of its filter (one call per
+  // 100 claims); search on the server once a shop holds thousands of claims.
+  const nextPage = hubNextPage(list, searching ? Infinity : page * QUEUE_PAGE_SIZE);
+  useEffect(() => {
+    if (nextPage === null) return;
+    // The cleanup lets go of the request: another filter, a reload, another company or an unmount leaves its answer unused.
+    return loadHubPage(companyId, { scope, filter: statusFilter, page: nextPage }, {
+      onPage: (result) => setHeld((current) => withHubPage(current, listKey, result)),
+      onError: (e) => setHeld((current) => withHubFailure(current, listKey, err(e))),
+    });
+  }, [companyId, scope, statusFilter, listKey, nextPage]);
+  const loading = nextPage !== null;
+  // The cards and chips are the server's counts of the whole scope, so they hold whatever part of the list is loaded.
+  const summary = list.summary;
+  const rows = list.rows;
 
   // Only the row "ส่งอนุมัติ" uses this; a refusal for want of an approver says who can fix it.
   const action = async (id: string, fn: () => Promise<unknown>, successMessage?: string) => {
     setBusy(id); setError(null);
-    try { await fn(); await load(); if (successMessage) toast.success(successMessage); } catch (e) { setError(approverNotReadyHelp(e, permissions)?.text ?? err(e)); } finally { setBusy(null); }
+    try { await fn(); setReload(n => n + 1); if (successMessage) toast.success(successMessage); } catch (e) { setError(approverNotReadyHelp(e, permissions)?.text ?? err(e)); } finally { setBusy(null); }
   };
+  // A draft paid into an account (the requester's default, or one typed into the claim) is sent from
+  // its own page: a row shows no account, and nobody sends a claim to an account they were not shown.
+  const submitRow = (r: any) => (draftRowSubmitsFromItsPage(r)
+    ? onOpenDetail(r.id)
+    : void action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'));
 
-  const summary = useMemo(() => summariseQueue(data), [data]);
-  const blockedDraftCount = useMemo(
-    () => data.filter(row => reimbursementSubmitReadiness(row).blocked).length,
-    [data],
-  );
-  const statusCounts = useMemo(() => ({
-    all: data.length,
-    draft: data.filter(r => r.status === 'DRAFT').length,
-    pending: data.filter(r => r.status === 'PENDING_APPROVAL').length,
-    approved: data.filter(r => ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(r.status)).length,
-    paid: data.filter(r => r.status === 'PAID').length,
-    review: data.filter(r => ['PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(r.status)).length,
-  }), [data]);
-  const filteredData = useMemo(() => {
-    return data.filter(r => {
-      if (statusFilter === 'draft' && r.status !== 'DRAFT') return false;
-      if (statusFilter === 'pending' && r.status !== 'PENDING_APPROVAL') return false;
-      if (statusFilter === 'approved' && !['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(r.status)) return false;
-      if (statusFilter === 'paid' && r.status !== 'PAID') return false;
-      return matchesSearch([
-        r.requestNo,
-        r.requesterDisplayNameSnapshot,
-        r.reason,
-        r.categoryLabelSnapshot ?? r.categoryKey,
-        r.lineCount ?? 1,
-        r.amount,
-        r.currency,
-        REQUEST_STATUS_LABELS[r.status] ?? r.status,
-        PAYMENT_STATUS_LABELS[r.paymentStatus] ?? r.paymentStatus,
-        currentDeskText(r.currentDesk),
-      ], query);
-    });
-  }, [data, statusFilter, query]);
-  const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
+  const filteredData = useMemo(() => (searching ? rows.filter(r => matchesSearch([
+    r.requestNo,
+    r.requesterDisplayNameSnapshot,
+    r.reason,
+    r.categoryLabelSnapshot ?? r.categoryKey,
+    r.lineCount ?? 1,
+    r.amount,
+    r.currency,
+    REQUEST_STATUS_LABELS[r.status] ?? r.status,
+    PAYMENT_STATUS_LABELS[r.paymentStatus] ?? r.paymentStatus,
+    currentDeskText(r.currentDesk),
+  ], query)) : rows), [rows, searching, query]);
+  // The server's total stands for the rows not loaded yet. A search, or a list that is complete, counts the rows it holds.
+  const shownTotal = searching || list.nextPage === null ? filteredData.length : list.total;
+  const bounds = useMemo(() => pageBounds(shownTotal, page), [shownTotal, page]);
   const pagedData = useMemo(() => filteredData.slice(bounds.start, bounds.end), [filteredData, bounds]);
   useEffect(() => { setPage(1); }, [query, statusFilter]);
-  const statusChips: Array<{ key: typeof statusFilter; label: string }> = [
+  const statusChips: Array<{ key: HubFilter; label: string }> = [
     { key: 'all', label: 'ทั้งหมด' },
     { key: 'draft', label: 'ร่าง' },
-    { key: 'pending', label: 'รออนุมัติ' },
-    { key: 'approved', label: 'อนุมัติแล้ว' },
+    { key: 'review', label: 'รออนุมัติ/ตรวจสอบ' },
+    { key: 'payment', label: 'รอจ่าย' },
     { key: 'paid', label: 'จ่ายแล้ว' },
+    { key: 'closed', label: 'ปฏิเสธ/ยกเลิก' },
   ];
+  // Each card is the same filter as its chip; tapping the open one goes back to ทั้งหมด.
+  const statusCards = summary ? [
+    { key: 'draft', icon: ICON.edit, label: 'ร่างรอส่ง', value: summary.counts.draft, tone: KPI.amber },
+    { key: 'review', icon: ICON.clock, label: 'รออนุมัติ/ตรวจสอบ', value: summary.counts.review, tone: KPI.purple },
+    { key: 'payment', icon: ICON.wallet, label: 'รอจ่ายเงินคืน', value: summary.counts.payment, tone: KPI.sky },
+    { key: 'all', icon: ICON.doc, label: 'ยอดรวมที่ขอเบิก', value: baht0(summary.totalAmount), tone: KPI.brand },
+  ] as const : [];
 
   return (
     <div className="space-y-4">
       {error && <ErrorBanner message={error} />}
-      {loading ? <LoadingState label="กำลังโหลด..." /> : (
+      {list.failed !== undefined && (
+        // A page that did not arrive is said as such, with a way to ask again: never as "ยังไม่มีคำขอเบิก".
+        <div className="space-y-2" data-testid="reimbursements-mine-load-failed">
+          <ErrorBanner message={rows.length > 0
+            ? `โหลดรายการได้ไม่ครบ รายการด้านล่างยังไม่ใช่ทั้งหมด · ${list.failed}`
+            : `โหลดรายการไม่สำเร็จ · ${list.failed}`} />
+          <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} onClick={() => setHeld(withHubRetry)}>ลองอีกครั้ง</button>
+        </div>
+      )}
+      {!summary ? loading && <LoadingState label="กำลังโหลด..." /> : (
         <>
-          {blockedDraftCount > 0 && (
-            <ErrorBanner message={`มีคำขอร่าง ${blockedDraftCount} รายการที่ยังส่งไม่ได้ตามนโยบายใบเสร็จ กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ`} />
+          {summary.blockedDraftCount > 0 && (
+            <ErrorBanner message={`มีคำขอร่าง ${summary.blockedDraftCount} รายการที่ยังส่งไม่ได้ตามนโยบายใบเสร็จ กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ`} />
           )}
-          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <StatCard icon={ICON.doc} label="คำขอทั้งหมด" value={summary.count} sub="จำนวนใบ" {...KPI.sky} />
-            <StatCard icon={ICON.edit} label="ร่างรอส่ง" value={statusCounts.draft} {...KPI.amber} />
-            <StatCard icon={ICON.clock} label="รออนุมัติ/ตรวจสอบ" value={statusCounts.review} {...KPI.purple} />
-            <StatCard icon={ICON.wallet} label="ยอดรวมที่ขอเบิก" value={baht0(summary.totalAmount)} {...KPI.brand} />
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" data-testid="reimbursements-mine-summary">
+            {statusCards.map(card => (
+              <button key={card.key} type="button" aria-pressed={statusFilter === card.key}
+                onClick={() => setStatusFilter(hubCardFilter(statusFilter, card.key))}
+                className={cx('h-full w-full min-w-0 rounded-2xl text-left', card.key !== 'all' && statusFilter === card.key && 'ring-2 ring-brand-500 ring-offset-2')}>
+                <StatCard icon={card.icon} label={card.label} value={card.value} {...card.tone} />
+              </button>
+            ))}
           </div>
           <MangmeeCard className="p-4">
-            <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            {/* Three rows of two on a phone, two rows of three from sm. A label too long for a 390 px chip wraps
+                at its slash, never inside a Thai word (measured: "รออนุมัติ/ตรวจสอบ" needs 143 px of the 132 there). */}
+            <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3" data-testid="reimbursements-mine-filters">
               {statusChips.map(chip => (
-                <button key={chip.key} onClick={() => setStatusFilter(chip.key)}
-                  className={cx('inline-flex min-h-11 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition sm:min-h-0',
+                <button key={chip.key} type="button" aria-pressed={statusFilter === chip.key} onClick={() => setStatusFilter(chip.key)}
+                  className={cx('inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-center text-sm font-semibold transition sm:min-h-0',
                     statusFilter === chip.key ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
-                  {chip.label}
-                  <span className={cx('tabular-nums inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', statusFilter === chip.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{statusCounts[chip.key]}</span>
+                  <span className="min-w-0">{chip.label.split('/').map((part, index, parts) => (
+                    <span key={part} className="whitespace-nowrap">{part}{index < parts.length - 1 && '/'}</span>
+                  ))}</span>
+                  <span className={cx('tabular-nums inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', statusFilter === chip.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{summary.counts[chip.key]}</span>
                 </button>
               ))}
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-gray-500 tabular-nums">
-                {query.trim() ? `พบ ${filteredData.length} จาก ${data.length} รายการ` : `ทั้งหมด ${data.length} รายการ`}
+              <div className="text-sm text-gray-500 tabular-nums" role="status">
+                {loading ? 'กำลังโหลดรายการ...'
+                  : searching || statusFilter !== 'all' ? `พบ ${shownTotal} จาก ${summary.counts.all} รายการ` : `ทั้งหมด ${summary.counts.all} รายการ`}
               </div>
               <div className="relative w-full sm:max-w-96">
                 <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
@@ -313,15 +351,18 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                 </span>
               </div>
             </div>
-            {filteredData.length === 0 ? (
-              <div className="mt-3">
-                <EmptyState
-                  title={data.length === 0 ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
-                  description={data.length === 0
-                    ? canCreate ? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : REIMBURSEMENT_CREATE_UNAVAILABLE
-                    : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
-                />
-              </div>
+            {pagedData.length === 0 ? (
+              // Nothing to show yet is not "no claims": a page still on its way, or one that failed, says so itself.
+              loading ? <LoadingState label="กำลังโหลด..." /> : list.failed === undefined && (
+                <div className="mt-3">
+                  <EmptyState
+                    title={summary.counts.all === 0 ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
+                    description={summary.counts.all === 0
+                      ? canCreate ? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : REIMBURSEMENT_CREATE_UNAVAILABLE
+                      : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
+                  />
+                </div>
+              )
             ) : (
               <>
             <div className="hidden md:block" data-testid="reimbursements-mine-table">
@@ -332,14 +373,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                     <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้ขอ</th><th className="!text-center">เหตุผล</th><th className="!text-center">หมวด</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th><th className="!text-center">การจ่าย</th><th className="!text-center">การกระทำ</th></tr>
                   </thead>
                   <tbody>
-                    {filteredData.length === 0 ? (
-                      <tr><td colSpan={9}>
-                        <EmptyState
-                          title={data.length === 0 ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
-                          description={data.length === 0 ? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
-                        />
-                      </td></tr>
-                    ) : pagedData.map((r: any) => (
+                    {pagedData.map((r: any) => (
                       <tr key={r.id} className="cursor-pointer" onClick={() => onOpenDetail(r.id)}>
                         <td className="font-mono text-xs">{r.requestNo ?? '—'}</td>
                         <td>{r.requesterDisplayNameSnapshot ?? '—'}</td>
@@ -359,9 +393,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                             {reimbursementOwnActions(r, userId, permissions).canSubmit && <button
                               className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
                               title={reimbursementSubmitReadiness(r).message}
-                              onClick={e => { e.stopPropagation(); action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'); }}
+                              onClick={e => { e.stopPropagation(); submitRow(r); }}
                               disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
-                            >ส่งอนุมัติ</button>}
+                            >{draftRowSubmitsFromItsPage(r) ? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'}</button>}
                             {/* Cancelling now opens the journey page (Phase 6): its own "ยกเลิกคำขอ" action carries the confirm dialog. */}
                             {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                           </div>
@@ -400,9 +434,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                       {reimbursementOwnActions(r, userId, permissions).canSubmit && <button
                         className={cx(btnClass, 'min-h-11 w-full')}
                         title={reimbursementSubmitReadiness(r).message}
-                        onClick={() => action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}
+                        onClick={() => submitRow(r)}
                         disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
-                      >ส่งอนุมัติ</button>}
+                      >{draftRowSubmitsFromItsPage(r) ? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'}</button>}
                       {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 w-full')} onClick={() => onOpenDetail(r.id)} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                     </div>
                   )}
@@ -411,7 +445,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
             </div>
             </>
             )}
-            <TablePager from={bounds.from} to={bounds.to} total={filteredData.length}
+            <TablePager from={bounds.from} to={bounds.to} total={shownTotal}
               page={bounds.page} totalPages={bounds.totalPages} onPage={setPage} />
           </MangmeeCard>
         </>
@@ -444,6 +478,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
     try { await fn(); await load(); if (successMessage) toast.success(successMessage); } catch (e) { setError(err(e)); } finally { setBusy(null); }
   };
   const approveRow = async (r: any) => {
+    // A claim paid by transfer is approved on its own page, where the approver sees and attests the account.
+    if (r.payoutMethod === 'BANK_TRANSFER') { onOpenDetail(r.id); return; }
     setBusy(r.id); setError(null);
     try {
       await approveReimbursement(companyId, r.id, undefined, r.approvalSnapshotHash);
@@ -542,8 +578,9 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>
-                            <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>
+                            {/* The server says what this viewer may do with the row, as on the claim page: never guessed from a role or a tab. */}
+                            {r.approvalActions?.canApprove === true && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); approveRow(r); }}>{r.payoutMethod === 'BANK_TRANSFER' ? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ'}</button>}
+                            {r.approvalActions?.canReject === true && <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>}
                           </div>
                         </td>
                       </tr>
@@ -571,8 +608,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`/companies/${companyId}/reimbursements/${r.id}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-approvals-card">ดูรายละเอียด</Link>
-                    <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>อนุมัติ</button>
-                    <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>
+                    {r.approvalActions?.canApprove === true && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>{r.payoutMethod === 'BANK_TRANSFER' ? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ'}</button>}
+                    {r.approvalActions?.canReject === true && <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>}
                   </div>
                 </MangmeeCard>
               ))}
@@ -604,9 +641,12 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
         busy={busy === staleReview.row.id}
         error={error}
         onClose={() => setStaleReview(null)}
+        // Sent again as a transfer claim since the list loaded: its account is checked on its own page.
+        {...(claimNeedsPayoutAttestation(staleReview.detail) && { confirmLabel: 'เปิดใบเพื่อตรวจบัญชีรับเงิน' })}
         onConfirm={async () => {
           const review = staleReview;
           if (!review) return;
+          if (claimNeedsPayoutAttestation(review.detail)) { setStaleReview(null); onOpenDetail(review.row.id); return; }
           setBusy(review.row.id); setError(null);
           try {
             await approveReimbursement(companyId, review.row.id, undefined, review.detail.approvalSnapshotHash);
@@ -780,15 +820,32 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
 }
 
 function PaymentModal({ companyId, request, onClose, onDone }: { companyId: string; request: any; onClose: () => void; onDone: () => void }) {
+  // The queue row carries no attachments and nothing about where to pay. The claim does, and the form
+  // seeds its own state from what it is given when it mounts. So the form waits for that read to
+  // settle and mounts once: with the claim, or with the row if the read failed (the row is still
+  // enough to pay). Mounting on the row and swapping the claim in later would leave the seeded state
+  // stale, and remounting then would throw away what the payer had already picked.
+  const [claim, setClaim] = useState<any | null>(null);
+  useEffect(() => {
+    let active = true;
+    getReimbursement(companyId, request.id)
+      .then((detail) => { if (active) setClaim(detail); })
+      .catch(() => { if (active) setClaim(request); });
+    return () => { active = false; };
+  }, [companyId, request]);
   return (
     <Modal open title={`บันทึกการจ่ายเงิน — ${request.requestNo}`} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
-      <PaymentForm companyId={companyId} request={request} onCancel={onClose} onDone={onDone} />
+      {claim
+        // Keyed on what it was seeded from: a form never outlives the data its state came from.
+        ? <PaymentForm key={claim === request ? 'queue-row' : 'claim'} companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} />
+        : <LoadingState label="กำลังเปิดใบเบิก..." />}
     </Modal>
   );
 }
 
 // ── Policy Settings ───────────────────────────────────────────────────────────
-function PolicySettings({ companyId }: { companyId: string }) {
+// Exported for the QA spec, which renders the form with a policy already loaded.
+export function PolicySettings({ companyId }: { companyId: string }) {
   const toast = useToast();
   const [form, setForm] = useState<any | null>(null);
   const [approverOptions, setApproverOptions] = useState<ReimbursementApproverRoleOption[]>([]);
@@ -851,6 +908,10 @@ function PolicySettings({ companyId }: { companyId: string }) {
   const routeReady = !(roleBasedRoute || approverChanged)
     || (selectedRoles.length > 0 && (form.status !== 'ACTIVE' || !rolesNotReady));
   const roleLabel = selectedOptions.map(approverRoleName).join(' หรือ ');
+  const paymentWarning = approverPaymentWarning(
+    selectedOptions.map((option) => ({ label: approverRoleName(option), selectable: option.selectable, canRecordPayment: option.canRecordPayment })),
+    !!form.financeReviewRequired,
+  );
   const ownerRoute = selectedRoles.includes('OWNER');
   const toggleRole = (key: string) => {
     setApproverChanged(true);
@@ -904,6 +965,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
                 <p className="mt-1 text-xs text-gray-500">เลือกอย่างน้อย 1 บทบาท</p>
               ) : null}
               {!ownerRoute && <p className="mt-1 text-xs text-gray-500">ถ้ายังไม่มีคนในบทบาทที่เลือก เจ้าของกิจการเป็นผู้อนุมัติ</p>}
+              {paymentWarning && <p role="status" className="mt-1 text-xs text-warning-700" data-testid="reimbursement-approver-payment-warning">{paymentWarning}</p>}
             </fieldset>
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
               <span className="min-w-0">

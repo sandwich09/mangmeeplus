@@ -56,7 +56,7 @@ describe('DrainExpenseAutoPostUseCase', () => {
       updatePaymentPostingStatus: async (...args: any[]) => { paymentErrors.push(args); },
     } as any;
 
-    const result = await new DrainExpenseAutoPostUseCase(prisma, generator, repo).execute(500);
+    const result = await new DrainExpenseAutoPostUseCase(prisma, generator, repo, {} as any).execute(500);
 
     assert.deepEqual(result, { companies: 1, candidates: 2, posted: 1, failed: 1 });
     assert.deepEqual(generated.map((call) => call.source), [
@@ -92,7 +92,7 @@ describe('DrainExpenseAutoPostUseCase', () => {
       },
     } as any;
 
-    const result = await new DrainExpenseAutoPostUseCase(prisma, {} as any, {} as any).execute();
+    const result = await new DrainExpenseAutoPostUseCase(prisma, {} as any, {} as any, {} as any).execute();
 
     assert.deepEqual(result, { companies: 0, candidates: 0, posted: 0, failed: 0 });
     assert.equal(queried, false, 'the frozen family\'s expense rows are never even read');
@@ -107,7 +107,7 @@ describe('DrainExpenseAutoPostUseCase', () => {
         $queryRaw: async () => { queried = true; return []; },
       },
     } as any;
-    const result = await new DrainExpenseAutoPostUseCase(prisma, {} as any, {} as any).execute();
+    const result = await new DrainExpenseAutoPostUseCase(prisma, {} as any, {} as any, {} as any).execute();
     assert.deepEqual(result, { companies: 0, candidates: 0, posted: 0, failed: 0 });
     assert.equal(queried, false);
   });
@@ -137,10 +137,126 @@ describe('DrainExpenseAutoPostUseCase', () => {
       }),
     } as any;
 
-    const result = await new DrainExpenseAutoPostUseCase(prisma, {} as any, {} as any, shadow).execute();
+    const result = await new DrainExpenseAutoPostUseCase(prisma, {} as any, {} as any, {} as any, shadow).execute();
 
     assert.deepEqual(result, { companies: 0, candidates: 0, posted: 0, failed: 0 });
     assert.deepEqual(records, [['co-disabled', 'expense_auto_post']]);
     assert.equal(flushed, true);
   });
+});
+
+// 2026-10-01: a claim payout is a posting source the worker drains too, under the rules the
+// expense sources already follow. Before this the payment stayed `pending` until someone called
+// the generate endpoint by hand, and no screen or worker did.
+describe('DrainExpenseAutoPostUseCase — claim payouts', () => {
+  const sqlText = (query: { sql: unknown }) => (Array.isArray(query.sql) ? query.sql.join(' ') : String(query.sql));
+  const claimBranch = (sql: string) => sql.slice(sql.indexOf(`'reimbursement.payment'::text`));
+
+  it('selects a recorded, pending, post-activation payout only once every claim accrual is posted', () => {
+    const sql = sqlText(expenseAutoPostCandidateSql('co-1', new Date('2026-07-29T00:00:00.000Z'), 20));
+    const claim = claimBranch(sql);
+    assert.match(claim, /FROM "ReimbursementPayment" AS payment/);
+    // Same gates as an expense payment: recorded, pending, activation boundary, no journal yet.
+    assert.match(claim, /payment\."status"::text = 'RECORDED'/);
+    assert.match(claim, /payment\."postingStatus"::text = 'pending'/);
+    assert.match(claim, /payment\."createdAt"\s*>=/);
+    assert.match(claim, /NOT EXISTS[\s\S]*journal\."sourceType" = 'reimbursement\.payment'[\s\S]*journal\."entryType"::text = 'GENERATED'/);
+    // "A settlement waits for its accrual": no claim line may lack a posted accrual…
+    assert.match(claim, /NOT EXISTS[\s\S]*FROM "ReimbursementLine" AS line[\s\S]*NOT EXISTS[\s\S]*FROM "ExpenseRecord" AS projection/);
+    assert.match(claim, /projection\."sourceReimbursementLineId" = line\."id"/);
+    assert.match(claim, /projection\."status"::text = 'CONFIRMED'\s+AND EXISTS \(\s+SELECT 1\s+FROM "JournalEntry" AS accrual[\s\S]*accrual\."sourceType" = 'expense\.record'[\s\S]*accrual\."status"::text = 'POSTED'/);
+    // …a suspected duplicate keeps the settlement waiting, a confirmed one needs no accrual.
+    assert.match(claim, /NOT IN \('POSSIBLE_DUPLICATE', 'CONFIRMED_DUPLICATE'\)/);
+    assert.match(claim, /'CONFIRMED_DUPLICATE'\s+AND projection\."postingStatus"::text = 'not_required'/);
+    // A voided payout is never a candidate: the void reverses its journal in its own transaction.
+    assert.doesNotMatch(claim, /VOIDED/);
+    // Company-scoped like every other branch, and ordered after the expense sources of one instant.
+    assert.match(claim, /payment\."companyId" = /);
+    assert.match(claim, /2 AS "sortOrder"/);
+  });
+
+  it('leaves the claim branch out entirely when the reimbursement family is frozen', () => {
+    const sql = sqlText(expenseAutoPostCandidateSql('co-1', new Date('2026-07-29T00:00:00.000Z'), 20, false));
+    assert.doesNotMatch(sql, /ReimbursementPayment|reimbursement\.payment/);
+    assert.match(sql, /"ExpensePayment"/, 'the expense sources are untouched');
+  });
+
+  function company(reimbursement?: boolean) {
+    return {
+      id: 'co-1',
+      featureEntitlements: [
+        { featureKey: 'expense_auto_post', enabled: true, updatedAt: new Date('2026-07-29T00:00:00.000Z') },
+        { featureKey: 'double_entry_ledger', enabled: true, updatedAt: new Date('2026-07-28T00:00:00.000Z') },
+        { featureKey: 'expenses', enabled: true, updatedAt: new Date('2026-07-27T00:00:00.000Z') },
+        ...(reimbursement === undefined ? [] : [{ featureKey: 'reimbursement', enabled: reimbursement, updatedAt: new Date('2026-07-27T00:00:00.000Z') }]),
+      ],
+    };
+  }
+
+  it('posts a claim payout through the canonical generator and marks only that payment on failure', async () => {
+    const generated: any[] = [];
+    const expenseWrites: any[] = [];
+    const claimWrites: any[] = [];
+    let entitlementFilter: string[] = [];
+    const prisma = {
+      client: {
+        company: { findMany: async (args: any) => {
+          entitlementFilter = args.select.featureEntitlements.where.featureKey.in;
+          return [company(true)];
+        } },
+        $queryRaw: async () => [
+          { sourceType: 'reimbursement.payment', sourceId: 'pay-ok' },
+          { sourceType: 'reimbursement.payment', sourceId: 'pay-unmapped' },
+        ],
+      },
+    } as any;
+    const generator = {
+      execute: async (ctx: any, source: any) => {
+        generated.push({ ctx, source });
+        // What a company on the standard chart answers today: no reviewed settlement mapping.
+        if (source.sourceId === 'pay-unmapped') throw new BadRequestException({ code: 'posting_rule_missing', message: 'internal detail' });
+      },
+    } as any;
+    const expenseRepo = {
+      updatePostingStatus: async (...args: any[]) => { expenseWrites.push(args); },
+      updatePaymentPostingStatus: async (...args: any[]) => { expenseWrites.push(args); },
+    } as any;
+    const reimbursementRepo = { updatePaymentPostingStatus: async (...args: any[]) => { claimWrites.push(args); } } as any;
+
+    const result = await new DrainExpenseAutoPostUseCase(prisma, generator, expenseRepo, reimbursementRepo).execute();
+
+    assert.deepEqual(result, { companies: 1, candidates: 2, posted: 1, failed: 1 });
+    assert.deepEqual(generated.map((call) => call.source), [
+      { companyId: 'co-1', sourceType: 'reimbursement.payment', sourceId: 'pay-ok' },
+      { companyId: 'co-1', sourceType: 'reimbursement.payment', sourceId: 'pay-unmapped' },
+    ]);
+    // No new authority: the worker posts a payout with the permissions it already carried.
+    assert.deepEqual(generated[0].ctx.permissions, [...EXPENSE_AUTO_POST_WORKER_PERMISSIONS]);
+    assert.deepEqual(generated[0].ctx.roles, []);
+    // The failed payout goes to the accountant's worklist; the posted one is the generator's to mark.
+    assert.deepEqual(claimWrites, [['co-1', 'pay-unmapped', { postingStatus: 'posting_error' }]]);
+    assert.deepEqual(expenseWrites, [], 'an expense row is never blamed for a claim payout');
+    // `reimbursement` is read for the freeze, but is NOT a requirement of the drain itself.
+    assert.ok(entitlementFilter.includes('reimbursement'));
+    assert.equal(AUTO_POST_REQUIRED_FEATURES.includes('reimbursement'), false);
+  });
+
+  for (const [name, reimbursement, expected] of [
+    ['an explicit OFF row freezes the claim branch, and the expense sources keep draining', false, false],
+    ['an explicit ON row drains claim payouts', true, true],
+    ['a company without the row inherits the family from expenses, as the evaluator reads it', undefined, true],
+  ] as const) {
+    it(name, async () => {
+      let sql = '';
+      const prisma = {
+        client: {
+          company: { findMany: async () => [company(reimbursement)] },
+          $queryRaw: async (query: any) => { sql = sqlText(query); return [{ sourceType: 'expense.record', sourceId: 'expense-1' }]; },
+        },
+      } as any;
+      const result = await new DrainExpenseAutoPostUseCase(prisma, { execute: async () => undefined } as any, {} as any, {} as any).execute();
+      assert.equal(sql.includes('"ReimbursementPayment"'), expected);
+      assert.deepEqual(result, { companies: 1, candidates: 1, posted: 1, failed: 0 });
+    });
+  }
 });

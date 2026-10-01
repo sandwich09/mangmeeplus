@@ -1,0 +1,182 @@
+{
+  "config": {
+    "argv": [
+      "/opt/homebrew/Cellar/node@22/22.23.2/bin/node",
+      "/private/tmp/manual-flag-e2e-20261001/repo/node_modules/@playwright/test/cli.js",
+      "test",
+      "-c",
+      "playwright.baseline-recheck.config.ts",
+      "--grep",
+      "EXP-01|EXP-09"
+    ],
+    "configFile": "/private/tmp/manual-flag-e2e-20261001/repo/playwright.baseline-recheck.config.ts",
+    "rootDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/tmp/manual-flag-e2e-20261001/evidence/baseline-recheck-tests",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/(expenses|expense-number-save|substitute-editable-navigation|substitute-cancelled-view-only)\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/tmp/manual-flag-e2e-20261001/evidence/baseline-recheck-results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "expenses.spec.ts",
+      "file": "expenses.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "EXP — expenses + receipts",
+          "file": "expenses.spec.ts",
+          "line": 109,
+          "column": 6,
+          "specs": [
+            {
+              "title": "EXP-01 @smoke expenses list renders filters and table surface",
+              "ok": true,
+              "tags": [
+                "smoke"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1492,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:59:08.130Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/baseline-recheck-tests/expenses-EXP-—-expenses-re-5810d-s-filters-and-table-surface/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-1b44ae599a7161cfe583",
+              "file": "expenses.spec.ts",
+              "line": 154,
+              "column": 7
+            },
+            {
+              "title": "EXP-09 @p2 confirmed chip filters without client error",
+              "ok": true,
+              "tags": [
+                "p2"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1447,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-01T10:59:09.818Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/tmp/manual-flag-e2e-20261001/evidence/baseline-recheck-tests/expenses-EXP-—-expenses-re-65543-ilters-without-client-error/trace.zip"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "19f6d4c28173e403e5b8-0c486ad81677b9ab5e8e",
+              "file": "expenses.spec.ts",
+              "line": 513,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-01T10:59:07.774Z",
+    "duration": 3550.9249999999997,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

@@ -5,6 +5,8 @@ import type {
   UpdateReimbursementDraftInput,
   ListReimbursementsFilter,
   ReimbursementLineInput,
+  ReimbursementHubSummary,
+  PaginatedReimbursements,
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
   ReimbursementInternalNote,
@@ -12,7 +14,7 @@ import type {
   ReimbursementSourceSnapshot,
 } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
-import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import { PrismaReimbursementRepository, hubBucketOfStatus, type ReimbursementRequestGroup } from '../../infrastructure/prisma-reimbursement.repository';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
@@ -24,10 +26,16 @@ import type {
   ReimbursementLineWriteData,
   ReimbursementRequestRecord,
 } from '../../domain/models/reimbursement.model';
-import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames } from '../dto/reimbursement.mapper';
+import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames, toPayoutSummary } from '../dto/reimbursement.mapper';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
 import { approvalDecisionActions } from './reimbursement-approval.use-case';
+import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import {
+  defaultChangedSinceSubmit, hasPayoutSnapshot, isEffectiveClaimApprover, payoutRevealGroup, payoutSubmitToken,
+  type PayoutRevealGroup, type SubmitPayoutColumns,
+} from '../../domain/logic/payout-destination.logic';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
 import {
   validateRequestFields,
@@ -35,6 +43,7 @@ import {
   requiresApproval,
   computeReceiptRequirement,
   isLineEvidenced,
+  claimSnapshotFields,
   computeSnapshotHash,
   canTransition,
   deriveHeaderFromLines,
@@ -42,6 +51,9 @@ import {
   scoreDuplicate,
   normalizeReason,
   normalizeReimbursementAmount,
+  PAYMENT_RECORDING_STATUSES,
+  d,
+  decStr,
 } from '../../domain/logic/reimbursement.logic';
 
 export async function loadReimbursementPolicy(repo: PrismaReimbursementRepository, companyId: string) {
@@ -112,6 +124,7 @@ export class CreateReimbursementDraftUseCase {
     private readonly repo: PrismaReimbursementRepository,
     private readonly audit: AuditService,
     private readonly evidence: ReimbursementEvidenceService,
+    private readonly payouts: MemberPayoutAccountUseCase,
   ) {}
 
   async execute(ctx: RequestContext, input: CreateReimbursementRequestInput): Promise<ReimbursementRequestSummary> {
@@ -137,6 +150,8 @@ export class CreateReimbursementDraftUseCase {
     });
     // Header amount/category/date are the rollup of the lines — never client input.
     const header = deriveHeaderFromLines(resolvedLines);
+    // The account is the REQUESTER's, whoever prepares the claim. No choice sent = follow their default.
+    const payout = input.payout ? await this.payouts.draftPayoutChange(ctx, requesterUserId, input.payout) : undefined;
 
     const created = await this.repo.createRequest({
       companyId: ctx.companyId,
@@ -155,13 +170,17 @@ export class CreateReimbursementDraftUseCase {
       receiptRequirementStatus: receipt.status === 'REQUIRED' ? 'REQUIRED' : receipt.status,
       createdByUserId: ctx.userId,
       lines: prepareReimbursementLineWrites(resolvedLines),
-    });
+    }, payout);
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.create',
       targetType: 'reimbursement_request', targetId: created.id, requestId: ctx.requestId,
       result: 'SUCCESS', riskLevel: 'LOW',
-      metadataJson: { amount: created.amount, currency: created.currency, categoryKey: created.categoryKey, lineCount: input.lines.length },
+      metadataJson: {
+        amount: created.amount, currency: created.currency, categoryKey: created.categoryKey, lineCount: input.lines.length,
+        // The receiving choice and who typed an account. Nothing of the account itself.
+        ...(payout && { payout: payout.audit }),
+      },
     });
     return toRequestSummary(created, { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason });
   }
@@ -173,6 +192,7 @@ export class UpdateReimbursementDraftUseCase {
     private readonly repo: PrismaReimbursementRepository,
     private readonly audit: AuditService,
     private readonly evidence: ReimbursementEvidenceService,
+    private readonly payouts: MemberPayoutAccountUseCase,
   ) {}
 
   async execute(ctx: RequestContext, id: string, input: UpdateReimbursementDraftInput): Promise<ReimbursementRequestSummary> {
@@ -217,10 +237,13 @@ export class UpdateReimbursementDraftUseCase {
       missingReceiptReason: input.missingReceiptReason ?? req.missingReceiptReason,
     });
     data.receiptRequirementStatus = receipt.status;
-    const updated = await this.repo.updateDraftRequest(ctx.companyId, id, req.updatedAt, data, lines);
+    const payout = input.payout ? await this.payouts.draftPayoutChange(ctx, req.requesterUserId, input.payout) : undefined;
+    const updated = await this.repo.updateDraftRequest(ctx.companyId, id, req.updatedAt, data, lines, payout);
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.update_draft',
       targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
+      // A change of where the money goes is on record: the choice and who typed an account, never the account.
+      ...(payout && { metadataJson: { payout: payout.audit } }),
     });
     return toRequestSummary(updated, { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason });
   }
@@ -279,9 +302,36 @@ export class GetReimbursementDetailUseCase {
     const approvalActions = await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     const notes = await this.repo.listInternalNotes(ctx.companyId, id);
     const names = await this.repo.getUserDisplayNames(ctx.companyId, notes.map(note => note.authorUserId));
+    const detail = await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx, approvalActions);
+    // Who can record the payment (spec §18.3): read only while the claim waits there and the endpoint would
+    // take a payment at all. A claim with no branch, or in a status it refuses (PARTIALLY_PAID), is refused
+    // for everyone, so nobody is named and the page prints the pool label. Only on this read: the page
+    // re-reads the claim after every action, like `approvalActions`.
+    const payers = detail.currentDesk?.kind === 'PAYMENT' && req.branchId && PAYMENT_RECORDING_STATUSES.includes(req.status)
+      ? await this.repo.listPaymentRecorderNames(ctx.companyId, req.branchId) : undefined;
+    // A draft with no method of its own shows the requester's default account it would be sent with.
+    // This read is the only one, and only for a draft: a sent claim shows its own frozen snapshot.
+    const draftDefault = req.status === 'DRAFT' && !req.payoutMethod ? await this.repo.findDraftDefaultPayout(req) : undefined;
+    const payout = detail.payout ?? toPayoutSummary(
+      draftDefault,
+      draftDefault?.enteredByUserId ? await this.repo.getUserDisplayNames(ctx.companyId, [draftDefault.enteredByUserId]) : {},
+    );
+    // What "ส่งอนุมัติ" would freeze right now. The page sends this back with the submit, and a
+    // submit whose own answer differs is refused: nobody sends a claim to an account they did not see.
+    const submitToken = req.status === 'DRAFT' ? payoutSubmitToken(req.id, await this.repo.planSubmitPayout(req)) : undefined;
+    // Payout spec §22: the requester changed their default after sending this claim. The claim keeps
+    // what it froze, and the requester alone is told, from fingerprints that stay on the server.
+    const defaultAccountChanged = req.requesterUserId === ctx.userId && detail.payout?.source === 'DEFAULT_ACCOUNT'
+      && defaultChangedSinceSubmit(req, detail.payout.source, await this.repo.findMemberPayoutAccount(ctx.companyId, req.requesterUserId));
     return {
-      ...await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req),
+      ...detail,
+      // The button is offered exactly when the reveal endpoint would answer.
+      ...(payout && { payout: {
+        ...payout, ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
+        canRevealAccountNumber: await claimPayoutRevealGroup(ctx, req, this.repo, approvalActions) !== null,
+      } }),
       approvalActions,
+      ...(payers && { paymentDesk: { names: payers.slice(0, 5), moreCount: Math.max(payers.length - 5, 0) } }),
       internalNotes: notes.map(note => ({
         id: note.id,
         authorUserId: note.authorUserId,
@@ -294,7 +344,7 @@ export class GetReimbursementDetailUseCase {
   }
 }
 
-async function assertCanReadRequestOrAssignment(ctx: RequestContext, req: ReimbursementRequestRecord, repo: PrismaReimbursementRepository) {
+export async function assertCanReadRequestOrAssignment(ctx: RequestContext, req: ReimbursementRequestRecord, repo: PrismaReimbursementRepository) {
   const approvalActions = await approvalDecisionActions(ctx, req, repo);
   try {
     await assertCanReadRequest(ctx, req, repo);
@@ -356,11 +406,30 @@ export class ReimbursementInternalNotesUseCase {
   }
 }
 
+/** The scope's groups folded into what the hub's cards and chips print. Every claim is counted in exactly one bucket. */
+export function hubSummary(groups: readonly ReimbursementRequestGroup[]): ReimbursementHubSummary {
+  const counts = { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 };
+  let totalAmount = d('0');
+  let blockedDraftCount = 0;
+  for (const group of groups) {
+    counts.all += group.count;
+    counts[hubBucketOfStatus(group.status, group.financeReviewStatus)] += group.count;
+    totalAmount = totalAmount.add(d(group.amount));
+    // The gate a list row shows on its ส่งอนุมัติ button: a draft that still owes its receipt.
+    if (group.status === 'DRAFT' && group.receiptRequirementStatus === 'REQUIRED') blockedDraftCount += group.count;
+  }
+  return { counts, totalAmount: decStr(totalAmount), blockedDraftCount };
+}
+
+/** A page number or size from the query string: a whole number from 1 up, and small enough to be an OFFSET. */
+const wholeFrom1 = (value: number | undefined, fallback: number) =>
+  (value !== undefined && Number.isFinite(value) && value >= 1 ? Math.min(Math.floor(value), 1_000_000) : fallback);
+
 @Injectable()
 export class ListReimbursementsUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
 
-  async execute(ctx: RequestContext, filter: ListReimbursementsFilter): Promise<{ items: ReimbursementRequestSummary[]; total: number; page: number; pageSize: number }> {
+  async execute(ctx: RequestContext, filter: ListReimbursementsFilter): Promise<PaginatedReimbursements> {
     const canReadAll = ctx.permissions.includes('reimbursement.read');
     const canReadOwn = ctx.permissions.includes('reimbursement.read_own');
     const canReadRelated = ctx.permissions.includes('reimbursement.read_related');
@@ -382,18 +451,23 @@ export class ListReimbursementsUseCase {
       requesterUserId = ctx.userId;
     }
 
-    const [rows, policy] = await Promise.all([this.repo.listRequests({
+    const page = wholeFrom1(filter.page, 1);
+    const pageSize = Math.min(wholeFrom1(filter.pageSize, 20), 100);
+    // The database pages. Before, every call loaded the whole scope and sliced it here, so walking a
+    // list of N claims read N rows per page: N²/100 rows for all of it.
+    const [{ rows: items, groups }, policy] = await Promise.all([this.repo.listRequestPage({
       companyId: ctx.companyId,
       requesterUserId,
       relatedUserId,
       scopes: ctx.scopes ?? {},
       status: filter.status,
       paymentStatus: filter.paymentStatus,
+      bucket: filter.bucket,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     }), loadReimbursementPolicy(this.repo, ctx.companyId)]);
-    const page = filter.page && filter.page > 0 ? filter.page : 1;
-    const pageSize = filter.pageSize && filter.pageSize > 0 ? Math.min(filter.pageSize, 100) : 20;
-    const start = (page - 1) * pageSize;
-    const items = rows.slice(start, start + pageSize);
+    // The total is read off the same groups the cards print, so a card can never count a different list.
+    const hub = hubSummary(groups);
     // "อยู่ที่ …" needs the pending step and its assignees only where a claim is actually waiting
     // on a person. Two batched lookups for the page — and neither runs when the page has no
     // PENDING_APPROVAL row (both helpers return empty on an empty id list).
@@ -410,9 +484,10 @@ export class ListReimbursementsUseCase {
         { ...row, approvalSteps: pendingSteps.filter((step) => step.reimbursementRequestId === row.id) },
         { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames },
       )),
-      total: rows.length,
+      total: filter.bucket === undefined ? hub.counts.all : hub.counts[filter.bucket] ?? 0,
       page,
       pageSize,
+      hub,
     };
   }
 }
@@ -428,7 +503,8 @@ export class SubmitReimbursementUseCase {
     private readonly projections: ReimbursementProjectionOrchestratorService,
   ) {}
 
-  async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestDetail> {
+  /** `payoutSubmitToken`: the `payout.submitToken` of the detail the submitter was looking at. */
+  async execute(ctx: RequestContext, id: string, input?: { payoutSubmitToken?: unknown } | null): Promise<ReimbursementRequestDetail> {
     if (!ctx.permissions.includes('reimbursement.submit')) throw new ForbiddenException('Missing permission: reimbursement.submit');
 
     const req = await this.repo.findRequestById(ctx.companyId, id);
@@ -526,16 +602,13 @@ export class SubmitReimbursementUseCase {
       financeReviewRequired: policy.financeReviewRequired,
       ...(policy.slaHours !== undefined && { slaHours: policy.slaHours }),
     };
-    const snapshotHash = computeSnapshotHash({
-      amount: req.amount,
-      currency: req.currency,
-      categoryKey: req.categoryKey,
-      incurredDate: req.incurredDate.toISOString(),
-      reason: req.reason,
-      primaryAttachmentId: req.primaryAttachmentId,
-      lines,
-      approvalPolicySnapshotJson: policySnapshot,
-    });
+    // Payout gate: a claim is sent with a receiving method, and a transfer with a complete account.
+    // A draft that names none follows the requester's default; nothing is picked for a requester who
+    // has not chosen, so a claim meant for a transfer is never sent as cash. All of it — what is
+    // frozen, its fingerprint and version, and the hash that binds them — is decided inside the
+    // submit transaction, which asks this for the hash once the payout columns are known.
+    const snapshotHash = (payoutColumns: SubmitPayoutColumns) =>
+      computeSnapshotHash(claimSnapshotFields({ ...req, lines, ...payoutColumns }, policySnapshot));
 
     const periodKey = reimbursementPeriodKey(now);
     // A corrected request may be submitted again under the same unchanged policy and even with
@@ -570,14 +643,14 @@ export class SubmitReimbursementUseCase {
         approverUserId,
         approverRoleSnapshot: submissionRoute!.responsibilityRole,
         assignedApproverUserIdsJson: submissionRoute!.recipientUserIds,
-        requestSnapshotHash: snapshotHash,
       } }),
+      // The claim's own copy is frozen in this transaction; from here on nothing reads the default.
+      payout: { actorUserId: ctx.userId, frozenAt: now, seenToken: input?.payoutSubmitToken, snapshotHash },
       request: {
         status: initialStatus,
         submittedAt: now,
         submittedByUserId: ctx.userId,
         currentApproverUserId: humanApprovalRequired ? approverUserId : null,
-        approvalSnapshotHash: snapshotHash,
         approvalPolicySnapshotJson: policySnapshot,
         // A corrected draft may carry NEEDS_INFO while the requester works. Once it is
         // resubmitted, that decision is historical; finance starts again only after the new approval.
@@ -618,6 +691,8 @@ export class SubmitReimbursementUseCase {
             ownerFallbackUsed: submissionRoute?.ownerFallbackUsed ?? false,
             soloSelfApproval: submissionRoute?.soloSelfApproval ?? false,
             branchId: req.branchId,
+            // Which snapshot was frozen. Version and origin only: no account detail belongs here.
+            payout: { method: persisted.payout!.plan.payoutMethod, version: persisted.payout!.columns.payoutDestinationVersion, followsDefault: persisted.payout!.plan.followsDefault },
             legacyRecovery: {
               documentNumberReused: persisted.documentNumberReused,
               supersededDuplicateCandidateCount: persisted.supersededDuplicateCandidateCount,
@@ -725,7 +800,7 @@ export class SubmitReimbursementUseCase {
     }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 
   /**
@@ -910,6 +985,37 @@ export async function assertCanReadRequest(
   if (ctx.permissions.includes('reimbursement.read_related')
     && await repo.isUserRelatedToRequest(ctx.companyId, request.id, ctx.userId, ctx.scopes ?? {})) return;
   throw new ForbiddenException('Cannot read this reimbursement');
+}
+
+/**
+ * Which reveal group this viewer is in for this claim, or null. Gathers the facts for
+ * `payoutRevealGroup`; the detail's `canRevealAccountNumber` flag and the reveal endpoint both call this, so the
+ * two can never disagree. Needs the claim loaded with its approval steps.
+ */
+export async function claimPayoutRevealGroup(
+  ctx: RequestContext,
+  request: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+  approvalActions?: { canApprove: boolean; canReject: boolean },
+): Promise<PayoutRevealGroup | null> {
+  const isRequester = request.requesterUserId === ctx.userId;
+  const isDraft = request.status === 'DRAFT';
+  // A draft's own account, or the snapshot a sent claim froze. A legacy claim has neither.
+  const hasClaimAccount = request.payoutMethod === 'BANK_TRANSFER' && request.payoutDestinationVersion != null
+    && (isDraft || hasPayoutSnapshot(request));
+  // Everyone but the requester must hold the claim's branch, and has no business with a draft.
+  if (!hasClaimAccount || isRequester || isDraft || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) {
+    return payoutRevealGroup({ hasClaimAccount, isDraft, isRequester, isClaimApprover: false, canRecordPayment: false });
+  }
+  const actions = approvalActions ?? await approvalDecisionActions(ctx, request, repo);
+  const canRecordPayment = ctx.permissions.includes('reimbursement.payment.record')
+    && await assertCanReadRequest(ctx, request, repo).then(() => true, () => false);
+  return payoutRevealGroup({
+    hasClaimAccount, isDraft, isRequester, canRecordPayment,
+    // The approver this claim was sent to (pending step) or who approved it in this round — not
+    // every holder of the approval permission.
+    isClaimApprover: actions.canApprove || actions.canReject || isEffectiveClaimApprover(request, ctx.userId),
+  });
 }
 
 // claimSignatureAckHash moved to ../../domain/logic/reimbursement.logic (pure record hash).

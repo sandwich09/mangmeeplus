@@ -388,6 +388,8 @@ export type PeriodCloseCheck = {
   message: string;
   count?: number;
   amount?: string;
+  /** The named parts of `count`, so a client can say WHAT is pending instead of one total. */
+  breakdown?: Record<string, number>;
 };
 
 export type PeriodCloseRunSummary = {

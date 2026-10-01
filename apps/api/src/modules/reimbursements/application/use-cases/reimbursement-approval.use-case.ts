@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import type { RequestContext, ReimbursementApprovalQueueItem, ReimbursementRequestDetail } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -18,6 +18,7 @@ import {
   ageHours,
   isSlaRisk,
 } from '../../domain/logic/reimbursement.logic';
+import { hasPayoutSnapshot, payoutAttestationError } from '../../domain/logic/payout-destination.logic';
 
 function currentApprovalStep(request: ReimbursementRequestRecord): ReimbursementApprovalStepRecord | undefined {
   return request.approvalSteps?.find((step) => step.id === request.currentApprovalStepId);
@@ -108,40 +109,58 @@ export async function activeStepApprovers(
   ], branchId);
 }
 
+const NO_APPROVAL_ACTIONS = { canApprove: false, canReject: false };
+
+/**
+ * What this viewer may do with the step a claim waits on, from facts the caller has already loaded: which
+ * of the step's named approvers can still act, and whether the claim's policy lets a requester decide their
+ * own claim. The claim detail and every approval-queue row answer through here, so a queue row offers
+ * exactly what the detail, and the approve and reject endpoints, allow.
+ */
+export function pendingApprovalActions(
+  ctx: RequestContext,
+  request: ReimbursementRequestRecord,
+  activeApprovers: Set<string>,
+  allowSelfApproval: boolean,
+): { canApprove: boolean; canReject: boolean; selfApprovalBlocked?: boolean } {
+  if (request.status !== 'PENDING_APPROVAL' || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) return NO_APPROVAL_ACTIONS;
+  const step = currentApprovalStep(request);
+  const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
+  const eligible = isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers);
+  // Assignment resolution already applied the submitted self-approval rule and role exemptions.
+  // Re-evaluating it from a later role would hide a still-actionable task.
+  if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, ctx.userId, allowSelfApproval, ctx.roles)) {
+    // They hold the approval this step waits on, so only the switch stands in the way.
+    const blockedOnlyBySwitch = step?.status === 'PENDING'
+      && ctx.permissions.includes('reimbursement.approve')
+      && (eligible || matchesApproverRole(step.approverRoleSnapshot, ctx.roles));
+    return { ...NO_APPROVAL_ACTIONS, ...(blockedOnlyBySwitch && { selfApprovalBlocked: true }) };
+  }
+  if (!eligible) return NO_APPROVAL_ACTIONS;
+  return {
+    canApprove: assignedBySnapshot || ctx.permissions.includes('reimbursement.approve'),
+    canReject: assignedBySnapshot || ctx.permissions.includes('reimbursement.reject'),
+  };
+}
+
 export async function approvalDecisionActions(
   ctx: RequestContext,
   request: ReimbursementRequestRecord,
   repo: PrismaReimbursementRepository,
 ): Promise<{ canApprove: boolean; canReject: boolean; selfApprovalBlocked?: boolean }> {
-  if (request.status !== 'PENDING_APPROVAL' || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) {
-    return { canApprove: false, canReject: false };
-  }
+  if (request.status !== 'PENDING_APPROVAL' || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) return NO_APPROVAL_ACTIONS;
   const step = currentApprovalStep(request);
   const activeApprovers = await activeStepApprovers(repo, ctx.companyId, step, request.branchId);
-  const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
-  const eligible = isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers);
   // The requester is read on past eligibility: routing leaves them off their own step when
   // self-approval is off, which is exactly the case the journey page has to explain (spec §15).
-  if (!eligible && request.requesterUserId !== ctx.userId) {
-    return { canApprove: false, canReject: false };
+  if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers) && request.requesterUserId !== ctx.userId) {
+    return NO_APPROVAL_ACTIONS;
   }
   const policy = effectivePolicyForRequest(
     request,
     effectivePolicy(await repo.findPolicy(ctx.companyId, null)),
   );
-  if (!assignedBySnapshot
-    && isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
-    // They hold the approval this step waits on, so only the switch stands in the way.
-    const blockedOnlyBySwitch = step?.status === 'PENDING'
-      && ctx.permissions.includes('reimbursement.approve')
-      && (eligible || matchesApproverRole(step.approverRoleSnapshot, ctx.roles));
-    return { canApprove: false, canReject: false, ...(blockedOnlyBySwitch && { selfApprovalBlocked: true }) };
-  }
-  if (!eligible) return { canApprove: false, canReject: false };
-  return {
-    canApprove: assignedBySnapshot || ctx.permissions.includes('reimbursement.approve'),
-    canReject: assignedBySnapshot || ctx.permissions.includes('reimbursement.reject'),
-  };
+  return pendingApprovalActions(ctx, request, activeApprovers, policy.allowSelfApproval);
 }
 
 @Injectable()
@@ -149,7 +168,6 @@ export class ListApprovalQueueUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
 
   async execute(ctx: RequestContext): Promise<ReimbursementApprovalQueueItem[]> {
-    const hasCurrentDecisionPermission = ctx.permissions.some((permission) => permission === 'reimbursement.approve' || permission === 'reimbursement.reject');
     const currentPolicy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
     const rows = await this.repo.listRequests({
       companyId: ctx.companyId,
@@ -178,28 +196,23 @@ export class ListApprovalQueueUseCase {
     // collected above — one names lookup for the whole queue, no per-row query.
     const approverNames = await this.repo.getUserDisplayNames(ctx.companyId, [...assignedIdsByBranch.values()].flat());
     const now = new Date();
-    return rows.filter((request) => {
-      const step = currentApprovalStep(request);
+    return rows.flatMap((request) => {
       const policy = effectivePolicyForRequest(request, currentPolicy);
-      const activeApprovers = activeApproversByBranch.get(request.branchId ?? '') ?? new Set<string>();
-      const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
-      return isBranchInScope(ctx.scopes ?? {}, request.branchId)
-        && (hasCurrentDecisionPermission || assignedBySnapshot)
-        && isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers)
-        // Audit H-18: the queue used to list the viewer's own claims, so the approve button was
-        // offered on a request that answers `self_approval_denied` — and the pending-approval
-        // notification pushed a deep link straight to it. Same predicate and same company-level
-        // policy the approve gate uses, so the two can never disagree about what is offered and
-        // what is allowed; when allowSelfApproval is on, isSelfApproval returns false and nothing
-        // is filtered.
-        // Assignment resolution already applied the submitted self-approval rule and role
-        // exemptions. Re-evaluating it from a later role would hide a still-actionable task.
-        && (assignedBySnapshot
-          || !isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles));
-    }).map((r) => {
-      const policy = effectivePolicyForRequest(r, currentPolicy);
-      const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
-      return { ...toRequestSummary(r, { approverNames }), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours) };
+      // Audit H-18 and B20: a row is listed only for a decision this viewer can make, and it says which. The
+      // queue used to list the viewer's own claims and to offer อนุมัติ to a reject-only viewer; both answered
+      // 403. These are the detail's own actions, on the same submitted policy the approve gate reads.
+      const { canApprove, canReject } = pendingApprovalActions(
+        ctx, request, activeApproversByBranch.get(request.branchId ?? '') ?? new Set<string>(), policy.allowSelfApproval,
+      );
+      if (!canApprove && !canReject) return [];
+      const age = request.submittedAt ? ageHours(request.submittedAt, now) : 0;
+      return [{
+        ...toRequestSummary(request, { approverNames }), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours),
+        approvalActions: { canApprove, canReject },
+        // What this row shows. The quick approve sends it back, so a claim withdrawn, edited and sent
+        // again while the list was open is not approved with content nobody looked at.
+        ...(request.approvalSnapshotHash && { approvalSnapshotHash: request.approvalSnapshotHash }),
+      }];
     });
   }
 }
@@ -213,7 +226,8 @@ export class ApproveReimbursementUseCase {
     private readonly evidence: ReimbursementEvidenceService,
   ) {}
 
-  async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string): Promise<ReimbursementRequestDetail> {
+  /** `payoutVerifiedVersion`: the approver's "ตรวจบัญชีแล้ว" for the account version they looked at. */
+  async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string, payoutVerifiedVersion?: unknown): Promise<ReimbursementRequestDetail> {
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot approve from status ${req.status}`);
@@ -240,6 +254,18 @@ export class ApproveReimbursementUseCase {
     if (!canResumeApprovedDecision(step, ctx.userId, ctx.roles, activeApprovers)) {
       throw new ForbiddenException('not_eligible_approver');
     }
+    // Nothing is approved unseen: the approver names the claim content they were looking at — the
+    // queue row and the claim page both carry it. A call that names none is answered like a stale
+    // one, so the screen loads the claim as it is now and asks again.
+    if (!expectedHash) throw new ConflictException('stale_approval_snapshot');
+    // Human verification (owner decision P1): a claim paid by transfer is approved only with the
+    // approver's attestation of the exact account version on the claim. The repository repeats this
+    // under the request lock; a decision already made is only resumed, never attested twice.
+    if (step?.status === 'PENDING') {
+      const payoutError = payoutAttestationError(req, payoutVerifiedVersion);
+      // 409 for both: a tab opened before the release then says "load the latest and try again".
+      if (payoutError) throw new ConflictException(payoutError);
+    }
 
     const now = new Date();
     const decision = await this.repo.beginApprovalDecisionAtomic({
@@ -254,6 +280,7 @@ export class ApproveReimbursementUseCase {
       financeReviewRequired: policy.financeReviewRequired,
       decidedAt: now,
       comment,
+      payoutVerifiedVersion,
       financeRequestPatch: {
         status: 'FINANCE_REVIEW',
         approvedAt: now,
@@ -298,6 +325,15 @@ export class ApproveReimbursementUseCase {
               : {}),
           },
         }, tx);
+        if (req.payoutMethod === 'BANK_TRANSFER' && hasPayoutSnapshot(req)) {
+          // Who attested which account version, in the decision's own transaction. The requester
+          // approving their own claim is recorded as exactly that.
+          await this.audit.log({
+            companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payout.verify',
+            targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+            metadataJson: { version: req.payoutDestinationVersion, via: 'APPROVAL', approvalStepId: step!.id, byRequester: req.requesterUserId === ctx.userId },
+          }, tx);
+        }
         const eventType = policy.financeReviewRequired
           ? 'reimbursement.approved'
           : 'reimbursement.approval_projection_started';
@@ -384,7 +420,7 @@ export class ApproveReimbursementUseCase {
     }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 }
 
@@ -474,6 +510,6 @@ export class RejectReimbursementUseCase {
     });
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 }

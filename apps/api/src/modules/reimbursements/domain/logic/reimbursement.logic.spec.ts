@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   requiresApproval,
   validateRequestFields,
@@ -16,6 +18,7 @@ import {
   validateRejectionReason,
   validatePaymentRecording,
   validatePaymentReference,
+  isSamePaymentRequest,
   computeOutstanding,
   computePaymentStatus,
   scoreDuplicate,
@@ -25,9 +28,32 @@ import {
   redactPayload,
   frozenApprovalAuthority,
   currentDesk,
+  claimSignatureAckHash,
+  claimSnapshotFields,
   type CurrentDeskStepFields,
 } from './reimbursement.logic';
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
+import {
+  invalidPayoutDestinationField, looksLikeAccountNumber, maskedPayoutAccount, maskedPayoutAccountNumber, normalizePayoutAccountNumber,
+  reimbursementPaymentSlipRequired,
+} from '@watchdog-bms/contracts';
+import {
+  CASH_PAYOUT_FINGERPRINT,
+  draftFollowsDefaultAfterReopen,
+  hasPayoutSnapshot,
+  isBlankPayoutDestination,
+  isEffectiveClaimApprover,
+  openPayoutAccountNumber,
+  payoutAttestationError,
+  payoutFingerprint,
+  payoutRevealGroup,
+  planSubmitPayout,
+  payoutSubmitToken,
+  sealPayoutDestination,
+  submitPayoutColumns,
+} from './payout-destination.logic';
+
+const read = (file: string) => readFileSync(join(__dirname, file), 'utf8');
 
 /** A minimal valid line; overrides shape each case. */
 function line(overrides: Partial<Parameters<typeof computeClaimTotal>[0][number]> & Record<string, unknown> = {}): any {
@@ -324,6 +350,7 @@ describe('payment recording (MVP full-payment)', () => {
     outstandingAmount: '500.00',
     paidAmount: '500.00',
     paymentMethod: 'CASH' as const,
+    hasSlip: false,
   };
   it('accepts a full payment', () => {
     assert.equal(validatePaymentRecording(base), null);
@@ -358,7 +385,54 @@ describe('payment recording (MVP full-payment)', () => {
   });
   it('requires reference for bank transfer', () => {
     assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER' }), 'payment_reference_required');
-    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1' }), null);
+    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1', hasSlip: true }), null);
+  });
+
+  // Owner decision 2026-10-01 (D3): a transfer is recorded with its slip; every other method may carry one.
+  it('requires a slip for a bank transfer and for no other method', () => {
+    const transfer = { ...base, paymentMethod: 'BANK_TRANSFER' as const, paymentReference: 'TXN-1' };
+    assert.equal(validatePaymentRecording(transfer), 'payment_slip_required');
+    assert.equal(validatePaymentRecording({ ...transfer, hasSlip: true }), null);
+    for (const [paymentMethod, paymentReference] of [['CASH', undefined], ['CHEQUE', 'CHQ-1'], ['OTHER', undefined]] as const) {
+      assert.equal(validatePaymentRecording({ ...base, paymentMethod, paymentReference }), null, `${paymentMethod} without a slip`);
+      assert.equal(validatePaymentRecording({ ...base, paymentMethod, paymentReference, hasSlip: true }), null, `${paymentMethod} with a slip`);
+    }
+    assert.equal(reimbursementPaymentSlipRequired('BANK_TRANSFER'), true);
+    for (const method of ['CASH', 'CHEQUE', 'OTHER', '']) assert.equal(reimbursementPaymentSlipRequired(method), false, method);
+  });
+
+  it('keeps the earlier refusals ahead of the slip rule, so a claim that cannot be paid says why', () => {
+    const transfer = { ...base, paymentMethod: 'BANK_TRANSFER' as const, paymentReference: 'TXN-1' };
+    assert.equal(validatePaymentRecording({ ...transfer, status: 'PENDING_APPROVAL' }), 'invalid_status_transition');
+    assert.equal(validatePaymentRecording({ ...transfer, paidAmount: '250.00' }), 'partial_payment_not_allowed');
+  });
+});
+
+describe('payment replay (spec §12.7)', () => {
+  const paidAt = new Date('2026-02-01T00:00:00.000Z');
+  const recorded = {
+    paidAmount: '500.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER', paidAt,
+    paymentReference: 'TXN-1', bankAccountId: null, slipAttachmentId: 'att-slip-1',
+  };
+  const request = {
+    paidAmount: '500.00', currency: 'THB', paymentMethod: 'BANK_TRANSFER', paidAt: new Date(paidAt),
+    paymentReference: 'TXN-1', slipAttachmentId: 'att-slip-1',
+  };
+
+  it('is the same payment only when every fact matches, the slip included', () => {
+    assert.equal(isSamePaymentRequest(recorded, request), true);
+    assert.equal(isSamePaymentRequest(recorded, { ...request, slipAttachmentId: 'att-slip-2' }), false, 'a different slip');
+    assert.equal(isSamePaymentRequest(recorded, { ...request, slipAttachmentId: undefined }), false, 'the slip dropped');
+    assert.equal(isSamePaymentRequest({ ...recorded, slipAttachmentId: null }, request), false, 'a slip added');
+    assert.equal(isSamePaymentRequest(recorded, { ...request, paymentReference: 'TXN-2' }), false);
+    assert.equal(isSamePaymentRequest(recorded, { ...request, paymentMethod: 'CASH' }), false);
+    assert.equal(isSamePaymentRequest(recorded, { ...request, paidAmount: '500.01' }), false);
+    assert.equal(isSamePaymentRequest(recorded, { ...request, paidAt: new Date('2026-02-02T00:00:00.000Z') }), false);
+  });
+
+  it('reads a stored null and an omitted field as the same absence', () => {
+    const cash = { paidAmount: '500.0000', currency: 'THB', paymentMethod: 'CASH', paidAt, paymentReference: null, bankAccountId: null, slipAttachmentId: null };
+    assert.equal(isSamePaymentRequest(cash, { paidAmount: '500', currency: 'THB', paymentMethod: 'CASH', paidAt }), true);
   });
 });
 
@@ -538,5 +612,407 @@ describe('currentDesk', () => {
       names,
     });
     assert.deepEqual(desk, { kind: 'APPROVER' });
+  });
+});
+
+// ---- Payout account (payout spec §8–§11) ----
+
+describe('payout: a claim with no receiving method keeps its hashes (legacy claims)', () => {
+  // A claim sent before the payout field existed. The three values below were computed by the code
+  // on develop 219c2369, BEFORE the payout part was added to the hash, and are pinned as literals:
+  // if any of them moves, every pending approval and every signature in production goes stale.
+  const policy = {
+    schemaVersion: 1 as const, policyId: 'pol-1', policyVersion: '2026-09-20T03:00:00.000Z',
+    approvalRequiredFromAmount: '1.0000', requiresApproval: true,
+    route: { mode: 'MANAGER_ROLE' as const, roleKey: 'MANAGER', effectiveTaskRole: 'MANAGER', ownerFallbackUsedAtSubmission: false },
+    allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true,
+    duplicatePolicy: 'WARN' as const, financeReviewRequired: false,
+  };
+  const lines = [
+    { lineNo: 1, incurredDate: new Date('2026-09-18T00:00:00.000Z'), description: 'ค่าแท็กซี่ไปพบลูกค้า', purpose: 'พบลูกค้า', categoryKey: 'travel', amount: '350.0000', attachmentId: 'att-1', linkedExpenseId: null },
+    { lineNo: 2, incurredDate: new Date('2026-09-19T00:00:00.000Z'), description: 'ค่าอาหารกลางวัน', purpose: null, categoryKey: 'meals', amount: '230.5000', attachmentId: null, linkedExpenseId: 'exp-9' },
+  ];
+  const header = { amount: '580.5000', currency: 'THB', categoryKey: 'travel', incurredDate: new Date('2026-09-18T00:00:00.000Z'), reason: 'เบิกค่าเดินทางและอาหาร', primaryAttachmentId: null };
+  const approvalFields = { ...header, incurredDate: header.incurredDate.toISOString(), lines, approvalPolicySnapshotJson: policy };
+
+  it('approval hash, signature acknowledgement hash and the v1 header hash are byte for byte what they were', () => {
+    assert.equal(computeSnapshotHash(approvalFields), 'e8a0a0d5832da0361ee0442a28534235');
+    assert.equal(claimSignatureAckHash({ ...header, lines }), '0c87de6573bfb6150d6cd23c1f29fa01');
+    assert.equal(computeLegacySnapshotHashV1({ ...header, incurredDate: header.incurredDate.toISOString() }), '9436b51c8a27d00fcc3bbd319e80a905');
+  });
+
+  it('reads the same whether the payout columns are absent, undefined or NULL', () => {
+    for (const payout of [{}, { payoutMethod: undefined, payoutDestinationVersion: undefined, payoutFingerprint: undefined },
+      { payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null }]) {
+      assert.equal(computeSnapshotHash({ ...approvalFields, ...payout }), 'e8a0a0d5832da0361ee0442a28534235');
+      assert.equal(claimSignatureAckHash({ ...header, lines, ...payout }), '0c87de6573bfb6150d6cd23c1f29fa01');
+    }
+  });
+
+  it('a claim sent with a payout snapshot hashes it: method, snapshot version and fingerprint each move the hash', () => {
+    const transfer = { ...approvalFields, payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'f'.repeat(64) };
+    const cash = submitPayoutColumns({ payoutMethod: 'CASH', followsDefault: false });
+    assert.deepEqual(cash, { payoutMethod: 'CASH', payoutDestinationVersion: null, payoutFingerprint: CASH_PAYOUT_FINGERPRINT });
+    const hashes = [
+      computeSnapshotHash(approvalFields),
+      computeSnapshotHash(transfer),
+      computeSnapshotHash({ ...transfer, payoutDestinationVersion: 2 }),
+      computeSnapshotHash({ ...transfer, payoutFingerprint: 'e'.repeat(64) }),
+      // Cash is hashed too, so cash cannot quietly become a transfer after approval.
+      computeSnapshotHash({ ...approvalFields, ...cash }),
+    ];
+    assert.equal(new Set(hashes).size, hashes.length);
+    assert.equal(computeSnapshotHash(transfer), computeSnapshotHash({ ...transfer }));
+    assert.notEqual(claimSignatureAckHash({ ...header, lines, ...cash }), '0c87de6573bfb6150d6cd23c1f29fa01');
+  });
+
+  // The rollback window: a draft chose its method under the new build, an older build sent it (it
+  // knows nothing of the payout columns, so the method stays and no fingerprint is written), and the
+  // new build comes back. Deciding "legacy" by the method would recompute a hash the claim was never
+  // stored with and refuse its approval for ever.
+  it('is decided by the fingerprint only the payout-aware submit writes, not by what a draft chose', () => {
+    for (const leftByADraft of [{ payoutMethod: 'CASH' }, { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 },
+      { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: null }, { payoutMethod: 'CASH', payoutFingerprint: '' }]) {
+      assert.equal(hasPayoutSnapshot(leftByADraft), false);
+      assert.equal(computeSnapshotHash({ ...approvalFields, ...leftByADraft }), 'e8a0a0d5832da0361ee0442a28534235', JSON.stringify(leftByADraft));
+      assert.equal(claimSignatureAckHash({ ...header, lines, ...leftByADraft }), '0c87de6573bfb6150d6cd23c1f29fa01', JSON.stringify(leftByADraft));
+      assert.equal(payoutAttestationError(leftByADraft, undefined), null, 'nothing to attest');
+    }
+    assert.equal(hasPayoutSnapshot({ payoutFingerprint: CASH_PAYOUT_FINGERPRINT }), true);
+    assert.equal(hasPayoutSnapshot({ payoutFingerprint: 'f'.repeat(64) }), true);
+  });
+
+  // Submit, the live approval check, the signature acknowledgement and the production gate all hash
+  // through `claimSnapshotFields`. One record, three kinds of claim, one answer each.
+  it('gives the same hash whichever call site builds it, for a legacy, a cash and a transfer claim', () => {
+    const sources = [read('../../application/use-cases/reimbursement-request.use-case.ts'), read('../../infrastructure/prisma-reimbursement.repository.ts'),
+      read('./reimbursement.logic.ts'), read('../../../../scripts/production-a5-evidence.pg.ts')].join('\n');
+    // No call site folds the fields by hand any more: every computeSnapshotHash call goes through the builder.
+    assert.deepEqual([...sources.matchAll(/computeSnapshotHash\((?!fields)[^)]{0,40}/g)].map((match) => match[0]).filter((call) => !call.startsWith('computeSnapshotHash(claimSnapshotFields(')), []);
+    assert.equal([...sources.matchAll(/computeSnapshotHash\(claimSnapshotFields\(/g)].length, 3, 'submit, the live approval check, the signature acknowledgement');
+    assert.match(sources, /\.\.\.claimSnapshotFields\(\{\s+amount: decimal\(header\.amount\)/, 'the production gate');
+
+    const record = { ...header, lines };
+    for (const [kind, payout, golden] of [
+      ['legacy', {}, 'e8a0a0d5832da0361ee0442a28534235'],
+      ['cash', submitPayoutColumns({ payoutMethod: 'CASH', followsDefault: true }), undefined],
+      ['transfer', submitPayoutColumns({ payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 3, fingerprint: 'a'.repeat(64), action: 'COPY_DEFAULT' }), undefined],
+    ] as const) {
+      const claim = { ...record, ...payout };
+      const atSubmit = computeSnapshotHash(claimSnapshotFields(claim, policy));
+      const atApproval = computeSnapshotHash(claimSnapshotFields({ ...claim, incurredDate: claim.incurredDate.toISOString() }, policy));
+      assert.equal(atSubmit, atApproval, kind);
+      if (golden) assert.equal(atSubmit, golden);
+      // The signature acknowledgement is the same claim without the approval policy.
+      assert.equal(claimSignatureAckHash(claim), computeSnapshotHash(claimSnapshotFields(claim)), kind);
+      assert.notEqual(claimSignatureAckHash(claim), atSubmit, kind);
+    }
+  });
+});
+
+describe('payout: account format (completeness and shape only; people verify the rest)', () => {
+  const bank = (accountNumber: string, extra: Record<string, unknown> = {}) => ({ payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber, ...extra });
+
+  it('keeps digits as text: leading zeros survive, dashes and spaces go, nothing becomes a number', () => {
+    assert.equal(normalizePayoutAccountNumber('012-3-45678-9'), '0123456789');
+    assert.equal(normalizePayoutAccountNumber(' 000 123 456 789 012 '), '000123456789012');
+    assert.equal(normalizePayoutAccountNumber(123456 as unknown), '', 'a number is refused, never stringified');
+    for (const accountNumber of ['0123456789', '000123456789012', '012-3-45678-9']) assert.equal(invalidPayoutDestinationField(bank(accountNumber)), null, accountNumber);
+  });
+
+  it('takes 6 to 20 digits for a bank account and never forces 10', () => {
+    for (const ok of ['123456', '1234567', '123456789012', '12345678901234567890']) assert.equal(invalidPayoutDestinationField(bank(ok)), null, ok);
+    for (const bad of ['12345', '123456789012345678901', '', '12345a', '๑๒๓๔๕๖', '1234.56']) assert.equal(invalidPayoutDestinationField(bank(bad)), 'accountNumber', bad);
+  });
+
+  it('takes a Thai mobile number for PromptPay and nothing else', () => {
+    const promptPay = (accountNumber: string) => ({ payoutKind: 'PROMPTPAY_PHONE' as const, accountName: 'นาย สมชาย ใจดี', accountNumber });
+    assert.equal(invalidPayoutDestinationField(promptPay('081-234-5678')), null);
+    // A 13-digit national id is not a PromptPay phone, and neither is a number not starting with 0.
+    for (const bad of ['1234567890123', '8123456789', '08123456', '081234567890']) assert.equal(invalidPayoutDestinationField(promptPay(bad)), 'accountNumber', bad);
+  });
+
+  it('needs a bank for a bank account, an account name that is a name, and a known kind', () => {
+    assert.equal(invalidPayoutDestinationField(bank('0123456789', { bankName: ' ' })), 'bankName');
+    assert.equal(invalidPayoutDestinationField(bank('0123456789', { bankName: 'ธ'.repeat(81) })), 'bankName');
+    for (const accountName of ['', ' ก ', '1234567890', '12 34-56', 'ก'.repeat(141)]) assert.equal(invalidPayoutDestinationField(bank('0123456789', { accountName })), 'accountName', accountName);
+    assert.equal(invalidPayoutDestinationField(bank('0123456789', { accountName: 'ก'.repeat(140) })), null);
+    assert.equal(invalidPayoutDestinationField({ ...bank('0123456789'), payoutKind: 'NATIONAL_ID' as never }), 'payoutKind');
+    assert.equal(invalidPayoutDestinationField(null), 'payoutKind');
+    assert.equal(isBlankPayoutDestination({ payoutKind: 'BANK_ACCOUNT' }), true);
+    assert.equal(isBlankPayoutDestination(bank('0123456789')), false);
+  });
+
+  // Security review S4: the bank name and the account name are shown unmasked on every screen and
+  // copied into the account owner's notice. A full number typed into either would be read by everyone
+  // who is only meant to see the last 4 digits.
+  it('refuses an account number written into the bank name or the account name', () => {
+    for (const accountName of [
+      'นาย สมชาย ใจดี 0123456789', 'สมชาย 012-3-45678-9', 'สมชาย 081 234 5678', 'นาย สมชาย (เลขบัญชี 123456)',
+      '0123456789 สมชาย',
+    ]) assert.equal(invalidPayoutDestinationField(bank('0123456789', { accountName })), 'accountName', accountName);
+    for (const bankName of ['ธนาคารกสิกรไทย 0123456789', 'กสิกร 012-3-45678-9', 'สหกรณ์ออมทรัพย์ 1234567']) {
+      assert.equal(invalidPayoutDestinationField(bank('0123456789', { bankName })), 'bankName', bankName);
+    }
+    // Names that merely contain a few digits stay names.
+    for (const accountName of ['บริษัท เอบีซี 1999 จำกัด', 'หจก. 168 การค้า', 'ร้านเซเว่น สาขา 12345', 'นาย สมชาย ใจดี']) {
+      assert.equal(invalidPayoutDestinationField(bank('0123456789', { accountName })), null, accountName);
+    }
+    assert.equal(invalidPayoutDestinationField(bank('0123456789', { bankName: 'สหกรณ์ออมทรัพย์ครู 2 จำกัด' })), null);
+    // Nothing of a refused name is stored: the account is not sealed at all.
+    assert.equal(sealPayoutDestination(bank('0123456789', { accountName: 'สมชาย 012-3-45678-9' }), Buffer.alloc(32, 3)), null);
+  });
+
+  it('masks an account with one wording for every surface', () => {
+    assert.equal(maskedPayoutAccountNumber('6789'), 'ลงท้าย 6789');
+    assert.equal(maskedPayoutAccount({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountLast4: '6789' }), 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789');
+    assert.equal(maskedPayoutAccount({ payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' }), 'พร้อมเพย์เบอร์ลงท้าย 5678');
+  });
+});
+
+describe('payout: sealing an account (one place on write)', () => {
+  const key = Buffer.alloc(32, 3);
+  const typed = { payoutKind: 'BANK_ACCOUNT' as const, bankName: ' ธนาคารกสิกรไทย ', accountName: ' นาย สมชาย ใจดี ', accountNumber: '012-3-45678-9' };
+
+  it('stores a last 4 that is always the tail of what a reveal decrypts, leading zeros included', () => {
+    for (const accountNumber of ['012-3-45678-9', '000123456789012', '0000001234', '100000', '0812345678']) {
+      const sealed = sealPayoutDestination({ ...typed, accountNumber }, key)!;
+      const opened = openPayoutAccountNumber(sealed.accountNumberEncrypted, key);
+      assert.equal(opened, normalizePayoutAccountNumber(accountNumber));
+      assert.equal(sealed.accountLast4, opened.slice(-4));
+      assert.match(sealed.accountLast4, /^\d{4}$/);
+      assert.ok(!sealed.accountNumberEncrypted.includes(opened), 'the stored column is ciphertext');
+    }
+  });
+
+  it('trims the names, drops a bank from a PromptPay number and refuses a malformed account', () => {
+    const sealed = sealPayoutDestination(typed, key)!;
+    assert.deepEqual([sealed.payoutKind, sealed.bankName, sealed.accountName, sealed.accountLast4], ['BANK_ACCOUNT', 'ธนาคารกสิกรไทย', 'นาย สมชาย ใจดี', '6789']);
+    assert.equal(sealPayoutDestination({ payoutKind: 'PROMPTPAY_PHONE', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย', accountNumber: '0812345678' }, key)!.bankName, null);
+    assert.equal(sealPayoutDestination({ ...typed, accountNumber: '12345' }, key), null);
+    assert.equal(sealPayoutDestination(undefined, key), null);
+  });
+
+  it('gives the same fingerprint for the same account on every write, and another for any change', () => {
+    const first = sealPayoutDestination(typed, key)!;
+    const again = sealPayoutDestination({ ...typed, accountNumber: '0123456789' }, key)!;
+    assert.notEqual(first.accountNumberEncrypted, again.accountNumberEncrypted, 'the ciphertext is random per write');
+    assert.equal(first.fingerprint, again.fingerprint);
+    const base = { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' };
+    assert.equal(payoutFingerprint(base, key), first.fingerprint);
+    for (const change of [{ accountNumber: '0123456780' }, { accountName: 'นาย สมชาย ใจดีมาก' }, { bankName: 'ธนาคารกรุงเทพ' }, { payoutKind: 'PROMPTPAY_PHONE' }]) {
+      assert.notEqual(payoutFingerprint({ ...base, ...change }, key), first.fingerprint, JSON.stringify(change));
+    }
+    assert.notEqual(payoutFingerprint(base, Buffer.alloc(32, 4)), first.fingerprint, 'keyed: useless without the key');
+    assert.ok(!first.fingerprint.includes('0123456789'));
+  });
+
+  it('redaction drops a full number that strays into an outbound payload and keeps the last 4', () => {
+    assert.deepEqual(redactPayload({ accountNumber: '0123456789', payoutAccountNumber: '0123456789', accountLast4: '6789', bankName: 'ธนาคารกสิกรไทย' }),
+      { accountLast4: '6789', bankName: 'ธนาคารกสิกรไทย' });
+  });
+
+  // The evidence export and the event payloads nest objects; the old check looked at the top level only.
+  it('strips an account number at any depth, and leaves every other nested value as it was', () => {
+    const paidAt = new Date('2026-10-01T00:00:00.000Z');
+    const nested = redactPayload({
+      request: { id: 'rb-1', payout: { accountNumber: '0123456789', accountNumberEncrypted: 'v1:cipher', accountLast4: '6789', bankName: 'ธนาคารกสิกรไทย' } },
+      payments: [{ paymentNo: 'RBPAY-1', destination: { payoutAccountNumber: '0123456789', accountLast4: '6789' }, paidAt }],
+      lines: [{ lineNo: 1, sourceExpenseSnapshot: { seller: { name: 'ร้าน', documentNumber: 'INV-0042' }, accountHintKey: 'travel' } }],
+    });
+    assert.deepEqual(nested, {
+      request: { id: 'rb-1', payout: { accountLast4: '6789', bankName: 'ธนาคารกสิกรไทย' } },
+      payments: [{ paymentNo: 'RBPAY-1', destination: { accountLast4: '6789' }, paidAt }],
+      lines: [{ lineNo: 1, sourceExpenseSnapshot: { seller: { name: 'ร้าน', documentNumber: 'INV-0042' }, accountHintKey: 'travel' } }],
+    });
+    assert.equal((nested.payments as any[])[0].paidAt, paidAt, 'a date is a value, not a bag of keys');
+    assert.equal(JSON.stringify(nested).includes('0123456789'), false);
+  });
+});
+
+// Security review S5: the guard refused the product's own document numbers and plain amounts, so a
+// finance reviewer could not write "ดูใบ RB-202609-0003", and it missed a number written with dots,
+// slashes, several spaces or Thai digits. One function, one table.
+describe('payout: no account number in a note that goes into a notification', () => {
+  const cases: Array<[text: unknown, refused: boolean, why: string]> = [
+    // An account or a PromptPay number, the ways people write one.
+    ['0812345678', true, 'ten digits in one piece'],
+    ['เลขบัญชี 0123456789', true, 'an account number after its label'],
+    ['บัญชีผิด ต้องเป็น 123-4-56789-0', true, 'groups joined by dashes'],
+    ['โอนเข้า 123 4 56789 0 แทน', true, 'groups joined by spaces'],
+    ['พร้อมเพย์ 081-000-1234', true, 'a phone number with dashes'],
+    ['เบอร์ 081 234 5678 ครับ', true, 'a phone number with spaces'],
+    ['กสิกร 012-3-45678-9 ชื่อสมชาย', true, 'between other words'],
+    ['000-123-456-789-012', true, 'fifteen digits in groups of three'],
+    ['เลขที่ 123456', true, 'six digits in a row'],
+    ['โอนเข้า 123.4.56789.0', true, 'groups joined by dots'],
+    ['โอนเข้า 123/4/56789/0', true, 'groups joined by slashes'],
+    ['เบอร์ 081  234  5678', true, 'two spaces between the groups'],
+    ['เบอร์ 081\t234\n5678', true, 'a tab and a line break between the groups'],
+    ['012 3-45678.9', true, 'mixed separators'],
+    ['พร้อมเพย์ ๐๘๑๒๓๔๕๖๗๘', true, 'Thai digits in one piece'],
+    ['บัญชี ๑๒๓-๔-๕๖๗๘๙-๐', true, 'Thai digits in groups'],
+    ['บัญชี 123-4-๕๖๗๘๙-0', true, 'Thai and Arabic digits mixed'],
+    // What looks like an exception but is not one.
+    ['SCB-0123456789', true, 'a bank short name is not a document prefix'],
+    ['KBANK-012-3-45678-9', true, 'a bank short name before a grouped number'],
+    ['RB-0123456789', true, 'a document prefix without the year and running number'],
+    ['ดูใบ RB-202609-0003 แล้วโอนเข้า 0123456789', true, 'a document number beside an account number'],
+    ['โอน 0123456789 บาท', true, 'an amount never starts with 0'],
+    ['โอน 1234567890 บาท', true, 'ten digits is not an amount'],
+    ['ยอด 1500000', true, 'seven digits with nothing saying they are an amount'],
+    ['123 4 56789 5 บาท', true, 'a grouped number is not an amount because บาท follows it'],
+    // The product's own document numbers.
+    ['RB-202609-0003', false, 'a claim number'],
+    ['EXP-2026-10-000123', false, 'an expense number with the month apart'],
+    ['ดูใบ RB-202609-00003 และ RBPAY-202610-00001', false, 'two document numbers in a sentence'],
+    ['หนังสือรับรอง WHT-2026-00012', false, 'a yearly document number'],
+    ['ใบเบิก rb-256910-0007', false, 'typed in lower case, Buddhist year'],
+    // Plain amounts.
+    ['ยอดเกิน 1500000 บาท', false, 'a plain amount in baht'],
+    ['ยอด 1500000.50 บาท', false, 'a plain amount with satang'],
+    ['ยอด 1,250.00 บาท เกินวงเงิน 500 บาท', false, 'amounts with separators'],
+    ['ยอด ๑๕๐๐๐๐๐ บาท', false, 'a plain amount in Thai digits'],
+    // Ordinary notes: dates, short references, counts.
+    ['ยอดไม่ตรงกับใบเสร็จ', false, 'no digits at all'],
+    ['ใบเสร็จลงวันที่ 01-10-2569 ไม่ตรงกับวันที่เบิก', false, 'a date with dashes'],
+    ['วันที่ 2026-10-01 ซ้ำกับใบก่อน', false, 'an ISO date'],
+    ['ใบเสร็จวันที่ 01/10/2569 และ 05/10/2569', false, 'dates with slashes'],
+    ['ช่วงวันที่ 01/10/2569 - 05/10/2569', false, 'a date range'],
+    ['วันที่ 1.10.2569', false, 'a date with dots'],
+    ['ใบเสร็จเลขที่ 12345 ไม่ชัด', false, 'five digits'],
+    ['รายการที่ 3 - 4 ไม่มีใบเสร็จ', false, 'line numbers'],
+    ['แนบสลิป 2 ใบ ของวันที่ 5 - 6 ต.ค.', false, 'counts and days'],
+    ['', false, 'empty'], ['   ', false, 'blank'],
+    [undefined, false, 'not text'], [null, false, 'not text'], [1234567890, false, 'a number is not text'], [{ text: '0123456789' }, false, 'an object is not text'],
+  ];
+
+  it('refuses what reads as an account number and lets document numbers, amounts and dates through', () => {
+    for (const [text, refused, why] of cases) assert.equal(looksLikeAccountNumber(text), refused, `${why}: ${JSON.stringify(text)}`);
+    assert.ok(cases.filter(([, refused]) => refused).length >= 20 && cases.filter(([, refused]) => !refused).length >= 20);
+  });
+});
+
+describe('payout: who may see the full number (one decision for the endpoint and the button)', () => {
+  const nobody = { hasClaimAccount: true, isDraft: false, isRequester: false, isClaimApprover: false, canRecordPayment: false };
+
+  it('answers the requester, that claim approver and the payment recorder, and nobody else', () => {
+    assert.equal(payoutRevealGroup({ ...nobody, isRequester: true }), 'REQUESTER');
+    assert.equal(payoutRevealGroup({ ...nobody, isClaimApprover: true }), 'APPROVER');
+    assert.equal(payoutRevealGroup({ ...nobody, canRecordPayment: true }), 'PAYER');
+    assert.equal(payoutRevealGroup(nobody), null);
+  });
+
+  it('has nothing to reveal on a cash or legacy claim, and keeps a draft to its requester', () => {
+    assert.equal(payoutRevealGroup({ ...nobody, hasClaimAccount: false, isRequester: true, isClaimApprover: true, canRecordPayment: true }), null);
+    assert.equal(payoutRevealGroup({ ...nobody, isDraft: true, isClaimApprover: true, canRecordPayment: true }), null);
+    assert.equal(payoutRevealGroup({ ...nobody, isDraft: true, isRequester: true }), 'REQUESTER');
+  });
+
+  it('counts an approval only in the round the claim was last sent in', () => {
+    const submittedAt = new Date('2026-10-01T03:00:00.000Z');
+    const step = (overrides: Record<string, unknown> = {}) => ({ status: 'APPROVED' as const, decisionByUserId: 'approver-1', decidedAt: new Date('2026-10-01T04:00:00.000Z'), ...overrides });
+    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step()] }, 'approver-1'), true);
+    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step()] }, 'someone-else'), false);
+    // Approved, then sent back and submitted again: that approval was of an earlier snapshot.
+    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step({ decidedAt: new Date('2026-10-01T02:00:00.000Z') })] }, 'approver-1'), false);
+    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step({ invalidatedAt: new Date() })] }, 'approver-1'), false);
+    assert.equal(isEffectiveClaimApprover({ submittedAt, approvalSteps: [step({ status: 'REJECTED' })] }, 'approver-1'), false);
+    assert.equal(isEffectiveClaimApprover({ approvalSteps: [step()] }, 'approver-1'), false, 'a draft has no approver');
+  });
+});
+
+describe('payout: attestation binds to one snapshot version', () => {
+  const transfer = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: 'f'.repeat(64) };
+
+  it('refuses a transfer claim without it, and with any version but the current one', () => {
+    assert.equal(payoutAttestationError(transfer, undefined), 'payout_verification_required');
+    assert.equal(payoutAttestationError(transfer, null), 'payout_verification_required');
+    assert.equal(payoutAttestationError(transfer, 1), 'payout_destination_changed');
+    assert.equal(payoutAttestationError(transfer, '2'), 'payout_destination_changed', 'a look-alike is not the version');
+    assert.equal(payoutAttestationError(transfer, true), 'payout_destination_changed');
+    assert.equal(payoutAttestationError(transfer, 2), null);
+  });
+
+  it('asks nothing of a cash claim or a legacy claim', () => {
+    for (const claim of [{ payoutMethod: 'CASH', payoutFingerprint: CASH_PAYOUT_FINGERPRINT }, {}, { payoutMethod: null, payoutDestinationVersion: null }]) {
+      assert.equal(payoutAttestationError(claim, undefined), null);
+      assert.equal(payoutAttestationError(claim, 7), null);
+    }
+  });
+});
+
+describe('payout: the claim is sent with the account its page showed', () => {
+  const copy = { payoutMethod: 'BANK_TRANSFER' as const, followsDefault: true, version: 1, fingerprint: 'a'.repeat(64), action: 'COPY_DEFAULT' as const };
+
+  it('names what a submit would freeze as an opaque token, and nothing when nothing can be sent', () => {
+    const token = payoutSubmitToken('claim-1', copy)!;
+    assert.match(token, /^[0-9a-f]{32}$/);
+    assert.equal(payoutSubmitToken('claim-1', { ...copy }), token);
+    assert.equal(payoutSubmitToken('claim-1', { error: 'payout_method_required' }), undefined);
+    assert.equal(payoutSubmitToken('claim-1', { error: 'payout_destination_required' }), undefined);
+    // It says nothing about the account: it is not the fingerprint and does not contain it.
+    assert.ok(!token.includes(copy.fingerprint.slice(0, 8)));
+  });
+
+  it('changes when the account, the method or its origin changes, and is never shared by two claims', () => {
+    const tokens = [
+      payoutSubmitToken('claim-1', copy),
+      payoutSubmitToken('claim-1', { ...copy, fingerprint: 'b'.repeat(64) }),
+      payoutSubmitToken('claim-1', { ...copy, followsDefault: false, action: 'FREEZE' }),
+      payoutSubmitToken('claim-1', { payoutMethod: 'CASH', followsDefault: true }),
+      payoutSubmitToken('claim-1', { payoutMethod: 'CASH', followsDefault: false }),
+      // The same default account on another claim: a reader of both learns nothing from the tokens.
+      payoutSubmitToken('claim-2', copy),
+    ];
+    assert.equal(new Set(tokens).size, tokens.length);
+    // The version and the freeze action are bookkeeping, not what the page showed: the same account
+    // sent again after a withdraw keeps its token.
+    assert.equal(payoutSubmitToken('claim-1', { ...copy, version: 2, action: 'REUSE' }), tokens[0]);
+  });
+});
+
+describe('payout: what a submit freezes', () => {
+  const frozen = (version: number, fingerprint: string, source: 'DEFAULT_ACCOUNT' | 'REQUESTER' | 'PREPARER' = 'DEFAULT_ACCOUNT') => ({ version, fingerprint, source, frozenAt: new Date('2026-10-01T00:00:00.000Z') });
+  const account = (fingerprint: string) => ({ payoutMethod: 'BANK_TRANSFER' as const, fingerprint });
+
+  it('never picks a method for a requester who has not chosen one', () => {
+    assert.deepEqual(planSubmitPayout({}, [], null), { error: 'payout_method_required' });
+    assert.deepEqual(planSubmitPayout({ payoutMethod: null }, [frozen(1, 'fp-a')], undefined), { error: 'payout_method_required' });
+  });
+
+  it('follows the default as it is at submit: cash needs no account, a transfer gets its own frozen copy', () => {
+    assert.deepEqual(planSubmitPayout({}, [], { payoutMethod: 'CASH' }), { payoutMethod: 'CASH', followsDefault: true });
+    assert.deepEqual(planSubmitPayout({}, [], account('fp-a')),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 1, fingerprint: 'fp-a', action: 'COPY_DEFAULT' });
+    assert.deepEqual(planSubmitPayout({}, [], { payoutMethod: 'BANK_TRANSFER', fingerprint: null }), { error: 'payout_destination_required' });
+  });
+
+  it('keeps the version when the account is unchanged and takes the next one when it changed', () => {
+    assert.deepEqual(planSubmitPayout({}, [frozen(1, 'fp-a')], account('fp-a')),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 1, fingerprint: 'fp-a', action: 'REUSE' });
+    assert.deepEqual(planSubmitPayout({}, [frozen(1, 'fp-a')], account('fp-b')),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 2, fingerprint: 'fp-b', action: 'COPY_DEFAULT' });
+    // The latest frozen version was an account named for this claim: following the default is a change.
+    assert.deepEqual(planSubmitPayout({}, [frozen(2, 'fp-a', 'REQUESTER'), frozen(1, 'fp-a')], account('fp-a')),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 3, fingerprint: 'fp-a', action: 'COPY_DEFAULT' });
+  });
+
+  it('freezes the claim own account, or reuses it when it was frozen before and left untouched', () => {
+    const working = { version: 2, fingerprint: 'fp-own', source: 'REQUESTER' as const, frozenAt: null };
+    assert.deepEqual(planSubmitPayout({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2 }, [working, frozen(1, 'fp-a')], account('fp-zzz')),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: 2, fingerprint: 'fp-own', action: 'FREEZE' });
+    assert.deepEqual(planSubmitPayout({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }, [frozen(1, 'fp-own', 'PREPARER')], null),
+      { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: 1, fingerprint: 'fp-own', action: 'REUSE' });
+    assert.deepEqual(planSubmitPayout({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 5 }, [frozen(1, 'fp-a')], account('fp-a')), { error: 'payout_destination_required' });
+    assert.deepEqual(planSubmitPayout({ payoutMethod: 'CASH' }, [frozen(1, 'fp-a')], account('fp-a')), { payoutMethod: 'CASH', followsDefault: false });
+  });
+
+  it('a claim back in draft follows the default again only when its account was a copy of the default', () => {
+    const versions = [{ version: 1, source: 'DEFAULT_ACCOUNT' as const }, { version: 2, source: 'REQUESTER' as const }];
+    assert.equal(draftFollowsDefaultAfterReopen({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }, versions), true);
+    assert.equal(draftFollowsDefaultAfterReopen({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2 }, versions), false);
+    assert.equal(draftFollowsDefaultAfterReopen({ payoutMethod: 'CASH' }, versions), false);
+    assert.equal(draftFollowsDefaultAfterReopen({}, versions), false);
   });
 });

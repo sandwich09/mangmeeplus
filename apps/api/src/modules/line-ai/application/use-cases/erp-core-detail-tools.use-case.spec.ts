@@ -109,8 +109,12 @@ describe('LINE ERP core detail tools', () => {
       postingStatus: 'NOT_POSTED', paymentTotalAmount: '0', outstandingAmount: '100', createdAt: '', updatedAt: '', primaryAttachmentId: 'secret',
       approvalSteps: [{ id: 's1', sequenceNo: 1, approverUserId: 'secret-approver', status: 'PENDING', assignedAt: '' }],
       payments: [], duplicateCandidates: [],
+      payoutMethod: 'BANK_TRANSFER',
+      payout: { payoutMethod: 'BANK_TRANSFER', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', version: 1, canRevealAccountNumber: true },
     }) } as any);
     const result = await detail.execute(ctx, { reimbursementId: 'rr1' });
+    // Payout spec §11.2: the claim's payout account never reaches an AI answer, masked or not.
+    assert.doesNotMatch(JSON.stringify(result), /payout|6789|กสิกร|สมชาย/);
     // Step-journey spec §11/§13 (AC10): the AI's answer about a claim's status links straight to
     // that claim's journey page, the same path every notification template and the LINE handoff use.
     assert.equal(result.sourceRefs?.[0]?.webPath, '/companies/c1/reimbursements/rr1');

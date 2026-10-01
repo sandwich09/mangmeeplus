@@ -96,6 +96,16 @@ export const COMPANY_ROLE_BACKFILLS: readonly CompanyRoleBackfill[] = [
       + 'own expense drafts receive only owner-scoped signature access; read-only and reviewer-only '
       + 'roles are not widened.',
   },
+  ...['reimbursement.payment.record', 'reimbursement.payment.void'].map((key) => ({
+    key,
+    anchor: 'reimbursement.approve',
+    why: 'Owner decision 2026-10-01 (payout-account spec §13.3 F1): whoever approves a claim can record its '
+      + 'payment and void a payment recorded by mistake. pack.reimbursement.approve has granted both keys since '
+      + '2026-09-21, but a custom role, or a system role the company edited, saved before that still approves '
+      + 'without them, so its claims stopped at จ่ายเงินคืน. Anchored on reimbursement.approve, which only that pack '
+      + 'grants (asserted in capability.logic.spec.ts). HIGH/CRITICAL: each grant writes an audit row in the '
+      + 'role\'s company. A role that keeps reimbursement.approve gets them back on the next deploy if removed.',
+  })),
   {
     key: 'report.snapshot.read',
     anchor: 'report.query.run',

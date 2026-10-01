@@ -14,6 +14,7 @@ import type {
   ReimbursementPostingStatus,
   ReimbursementClaimSignatureRole,
   ReimbursementPaymentMethod,
+  ReimbursementPayoutMethod,
   ReimbursementApproverMode,
   ReimbursementDuplicatePolicy,
   ReimbursementPolicyStatus,
@@ -80,6 +81,9 @@ export type ReimbursementPaymentRecord = {
   paidAt: Date;
   paymentReference?: string;
   bankAccountId?: string;
+  /** The slip the payment was recorded with; later slips exist only as links. */
+  slipAttachmentId?: string;
+  slipChecksumSha256?: string;
   sourcePaymentRef: string;
   status: 'RECORDED' | 'VOIDED';
   voidedAt?: Date;
@@ -138,6 +142,18 @@ export type ReimbursementClaimSignatureRecord = {
   updatedAt: Date;
 };
 
+/** How a file came to be a payment slip: uploaded as one, reused from an earlier payment of the claim, or moved out of the signed copies (§16). */
+export type ReimbursementPaymentSlipSource = 'UPLOAD' | 'PREVIOUS_SLIP' | 'SIGNED_COPY';
+
+/** What linking a slip did, for the audit row. No file name, key or URL. */
+export type ReimbursementPaymentSlipLink = {
+  attachmentId: string;
+  source: ReimbursementPaymentSlipSource;
+  uploadedByUserId: string;
+  /** A moved signed copy carried a live "signed on paper" declaration, now withdrawn. */
+  declarationWithdrawn: boolean;
+};
+
 /** A4 declaration made when attaching a paper-signed scan; stored with the scan, bound to its link row. */
 export type ReimbursementSignedCopyAck = {
   requestId: string;
@@ -186,6 +202,11 @@ export type ReimbursementRequestRecord = {
   missingReceiptReason?: string;
   approvalSnapshotHash?: string;
   approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1;
+  /** Undefined on a draft = follows the requester's default account; undefined once submitted = a legacy claim. */
+  payoutMethod?: ReimbursementPayoutMethod;
+  /** The claim's own account snapshot version; undefined for cash. */
+  payoutDestinationVersion?: number;
+  payoutFingerprint?: string;
   paymentTotalAmount: string;
   outstandingAmount: string;
   idempotencyKey?: string;

@@ -48,10 +48,15 @@ const signatureRow = (role: string, userId: string, id = `sig-${role}`) => ({
 /** Smallest bytes that pass the PNG magic-byte check. */
 const PNG_BYTES = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from('signature')]);
 
-function fakeRepo(row: any | null) {
-  const calls = { nameLookups: [] as string[][], signatureLookups: [] as any[] };
+function fakeRepo(row: any | null, slips: Record<string, { attachmentId: string; attachedAt: Date }[]> = {}) {
+  const calls = { nameLookups: [] as string[][], signatureLookups: [] as any[], slipLookups: [] as string[][] };
   const repo = {
     findRequestById: async (_companyId: string, _id: string, _withRelations?: boolean) => row,
+    // No signed-copy reader on purpose: the printed form never depends on the scans attached back.
+    listPaymentSlips: async (_companyId: string, paymentIds: string[]) => {
+      calls.slipLookups.push(paymentIds);
+      return Object.fromEntries(paymentIds.filter((id) => slips[id]).map((id) => [id, slips[id]]));
+    },
     getClaimFormCompanyContext: async () => ({ name: 'บริษัท ทดสอบ จำกัด', taxId: '0100000000000', branchName: 'สาขาลาดพร้าว' }),
     getUserDisplayNames: async (_companyId: string, userIds: string[]) => {
       calls.nameLookups.push(userIds);
@@ -79,6 +84,26 @@ function svgOf(result: { svgDataUrl: string }): string {
 }
 
 describe('PreviewReimbursementClaimFormUseCase', () => {
+  // The payment line and the payment-evidence box are read from the same recorded payment the
+  // claim page shows, so paper and screen cannot disagree about the method, the reference or the slip.
+  it('ticks หลักฐานการชำระเงิน for a slip on the recorded payment, and not for one left on a voided payment', async () => {
+    const attachedAt = new Date('2026-07-23T01:00:00.000Z');
+    const ticks = async (slips: Record<string, { attachmentId: string; attachedAt: Date }[]>, row = request()) =>
+      (svgOf(await previewUseCase(fakeRepo(row, slips).repo).execute(ctx(), 'rb-1')).match(/<path d="M/g) ?? []).length;
+
+    assert.equal(await ticks({}), 1, 'the receipt box only');
+    assert.equal(await ticks({ 'pay-1': [{ attachmentId: 'att-slip', attachedAt }] }), 2);
+    assert.equal(await ticks({ 'pay-void': [{ attachmentId: 'att-old-slip', attachedAt }] }), 1, 'a voided payment\'s slip is history, not evidence of this payment');
+
+    // Voided and not paid again: no payment is printed, so nothing is asked and nothing is ticked.
+    const voidedOnly = request({ status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', payments: [request().payments[0]] });
+    const { repo, calls } = fakeRepo(voidedOnly, { 'pay-void': [{ attachmentId: 'att-old-slip', attachedAt }] });
+    const svg = svgOf(await previewUseCase(repo).execute(ctx(), 'rb-1'));
+    assert.equal((svg.match(/<path d="M/g) ?? []).length, 1);
+    assert.match(svg, /การจ่ายเงินคืน: ยังไม่จ่าย/);
+    assert.deepEqual(calls.slipLookups, []);
+  });
+
   it('uses the recorded cancellation reason only after cancellation completes', async () => {
     const cancellation = { rejectionReason: 'เบิกซ้ำกับรายการเดือนก่อน', cancelledAt: new Date('2026-09-10T01:00:00Z') };
     const { repo } = fakeRepo(request({ status: 'CANCELLED', ...cancellation }));
@@ -118,6 +143,8 @@ describe('PreviewReimbursementClaimFormUseCase', () => {
 
     assert.equal(calls.nameLookups.length, 1, 'names resolve in a single batch query');
     assert.deepEqual(calls.nameLookups[0], ['mgr-1', 'acct-1', 'fin-1']);
+    // The slip is asked of the one payment the form prints, never of the voided one.
+    assert.deepEqual(calls.slipLookups, [['pay-1']]);
   });
 
   it('rejects a draft: there is no document number to print yet', async () => {

@@ -1,4 +1,6 @@
+import { canOpenReimbursementPaymentSlip } from '@watchdog-bms/contracts';
 import type {
+  ReimbursementPayoutViewer,
   ReimbursementPolicySummary,
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
@@ -8,6 +10,7 @@ import type {
   ReimbursementLineSummary,
   ReimbursementClaimSignatureSummary,
   ReimbursementDocumentSignedVia,
+  ReimbursementPayoutSummary,
   ReimbursementSignedCopySummary,
 } from '@watchdog-bms/contracts';
 import type {
@@ -23,6 +26,8 @@ import { claimSignatureAckHash, computeReceiptRequirement, currentDesk } from '.
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import type { ClaimPayoutRecord } from '../../infrastructure/reimbursement-payout';
+import { hasPayoutSnapshot } from '../../domain/logic/payout-destination.logic';
 import type { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 
 const iso = (d?: Date): string | undefined => (d ? d.toISOString() : undefined);
@@ -87,6 +92,9 @@ export function toRequestSummary(
       ? { allowMissingReceiptWithReason: options.allowMissingReceiptWithReason }
       : {}),
     postingStatus: r.postingStatus,
+    // The method only: no list or queue row carries an account. On a sent claim it is the method
+    // of its own snapshot; a legacy claim has none, whatever a draft once chose.
+    ...(r.payoutMethod && (r.status === 'DRAFT' || hasPayoutSnapshot(r)) ? { payoutMethod: r.payoutMethod } : {}),
     paymentTotalAmount: r.paymentTotalAmount,
     outstandingAmount: r.outstandingAmount,
     lineCount: r.lineCount ?? r.lines?.length ?? 0,
@@ -116,7 +124,16 @@ export function toStepSummary(s: ReimbursementApprovalStepRecord, names: Record<
   };
 }
 
-export function toPaymentSummary(p: ReimbursementPaymentRecord, names: Record<string, string> = {}): ReimbursementPaymentSummary {
+/** A payment's slips as the repository lists them: per payment id, oldest first. */
+export type PaymentSlipRows = Record<string, { attachmentId: string; attachedAt: Date }[]>;
+
+export function toPaymentSummary(
+  p: ReimbursementPaymentRecord,
+  names: Record<string, string> = {},
+  slips: PaymentSlipRows[string] = [],
+  // Default deny: a slip's file id goes only to a caller the slip endpoint would serve.
+  viewerCanOpenSlips = false,
+): ReimbursementPaymentSummary {
   return {
     id: p.id,
     paidByUserId: p.paidByUserId,
@@ -133,6 +150,10 @@ export function toPaymentSummary(p: ReimbursementPaymentRecord, names: Record<st
     voidedAt: iso(p.voidedAt),
     voidReason: p.voidReason,
     postingStatus: p.postingStatus,
+    // From the slip links alone, so every reader of a payment answers "is there a slip" the same way.
+    slipCount: slips.length,
+    slips: viewerCanOpenSlips ? slips.map((slip) => ({ attachmentId: slip.attachmentId, attachedAt: slip.attachedAt.toISOString() })) : [],
+    viewerCanOpenSlips,
   };
 }
 
@@ -203,6 +224,21 @@ export function toSignedCopySummaries(
   });
 }
 
+/** The masked payout block of a detail: bank, account name and last 4 digits, the same for every viewer. */
+export function toPayoutSummary(payout: ClaimPayoutRecord | undefined, names: Record<string, string> = {}): ReimbursementPayoutSummary | undefined {
+  if (!payout) return undefined;
+  const { verifiedAt, ...shown } = payout;
+  return {
+    ...shown,
+    // The id stays also when the name cannot be resolved, so the screen still says someone else entered it.
+    ...(payout.enteredByUserId && names[payout.enteredByUserId] && { enteredByName: names[payout.enteredByUserId] }),
+    ...(verifiedAt && {
+      verifiedAt: verifiedAt.toISOString(),
+      ...(payout.verifiedByUserId && names[payout.verifiedByUserId] && { verifiedByName: names[payout.verifiedByUserId] }),
+    }),
+  };
+}
+
 export function toRequestDetail(
   r: ReimbursementRequestRecord,
   primaryAttachmentFileName?: string,
@@ -217,6 +253,9 @@ export function toRequestDetail(
     financeReviewRequired?: boolean;
     allowMissingReceiptWithReason?: boolean;
     duplicateBlocksPayment?: boolean;
+    paymentSlips?: PaymentSlipRows;
+    viewerCanOpenSlips?: boolean;
+    payout?: ReimbursementPayoutSummary;
   } = {},
 ): ReimbursementRequestDetail {
   return {
@@ -243,8 +282,9 @@ export function toRequestDetail(
     documentSignedVia: extras.documentSignedVia,
     financeReviewRequired: extras.financeReviewRequired,
     missingReceiptReason: r.missingReceiptReason,
+    ...(extras.payout && { payout: extras.payout }),
     approvalSteps: (r.approvalSteps ?? []).map((s) => toStepSummary(s, displayNames)),
-    payments: (r.payments ?? []).map((p) => toPaymentSummary(p, displayNames)),
+    payments: (r.payments ?? []).map((p) => toPaymentSummary(p, displayNames, extras.paymentSlips?.[p.id], extras.viewerCanOpenSlips)),
     duplicateCandidates: (r.duplicateCandidates ?? []).map(toDuplicateSummary),
     duplicateBlocksPayment: extras.duplicateBlocksPayment,
     signatures: (r.claimSignatures ?? []).map((s) => toClaimSignatureSummary(s, displayNames)),
@@ -259,23 +299,38 @@ export function toRequestDetail(
  * their response in the drawer on purpose (a frozen assignee may lose read permission the
  * moment they decide), so their responses must be as complete as a GET. Lives in the mapper
  * because the request, approval, and finance use-cases all need it and already import here.
+ *
+ * `viewer` is whoever the answer goes to. Each payment tells them whether they may open its slips
+ * (the verdict of the one rule the slip endpoint enforces) and names the slip files only if they
+ * may; everyone else gets the count. Required, so no route can return a detail without deciding it.
+ * `approvalActions` is the viewer's authority over a pending step, where the route resolved it.
  */
 export async function detailWithFileNames(
   repo: PrismaReimbursementRepository,
   evidence: ReimbursementEvidenceService,
   companyId: string,
   req: ReimbursementRequestRecord,
+  viewer: ReimbursementPayoutViewer,
+  approvalActions?: { canApprove: boolean; canReject: boolean } | null,
 ): Promise<ReimbursementRequestDetail> {
   const signedCopiesRead = repo.listSignedClaimFormCopies(companyId, req.id);
-  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy] = await Promise.all([
+  const paymentIds = (req.payments ?? []).map((payment) => payment.id);
+  // The claim's own snapshot only. A legacy claim has none, and nothing here can reach a member's
+  // default account: a draft that still follows the default gets its preview on the detail read alone.
+  const payoutRead = req.payoutMethod ? repo.findClaimPayout(req) : Promise.resolve(undefined);
+  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy, paymentSlips, payout] = await Promise.all([
     evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
     evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
-    // Whoever declared a paper-signed scan is named in the same batch, so the lookup follows the copies.
-    signedCopiesRead.then((copies) => repo.getUserDisplayNames(companyId, [
+    // Whoever declared a paper-signed scan, typed the account or attested it is named in the same batch.
+    Promise.all([signedCopiesRead, payoutRead]).then(([copies, claimPayout]) => repo.getUserDisplayNames(companyId, [
       ...detailUserIds(req), ...copies.map((copy) => copy.acknowledgedByUserId ?? ''),
+      claimPayout?.enteredByUserId ?? '', claimPayout?.verifiedByUserId ?? '',
     ])),
     signedCopiesRead,
     repo.findPolicy(companyId, null).then(effectivePolicy),
+    // Only a claim with a payment can have a slip, so an unpaid claim costs no query.
+    paymentIds.length > 0 ? repo.listPaymentSlips(companyId, paymentIds) : undefined,
+    payoutRead,
   ]);
   const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
   const receiptRequirementStatus = req.status === 'DRAFT'
@@ -299,5 +354,11 @@ export async function detailWithFileNames(
     // once projections run, that field carries the expense-level result, not these candidates.
     duplicateBlocksPayment: requestPolicy.duplicatePolicy === 'BLOCK_PAYMENT'
       && (req.duplicateCandidates ?? []).some((candidate) => candidate.status === 'OPEN'),
+    paymentSlips,
+    viewerCanOpenSlips: canOpenReimbursementPaymentSlip(
+      { userId: viewer.userId, permissions: viewer.permissions },
+      { requesterUserId: req.requesterUserId, submittedAt: req.submittedAt, approvalSteps: req.approvalSteps, approvalActions },
+    ),
+    payout: toPayoutSummary(payout, displayNames),
   });
 }

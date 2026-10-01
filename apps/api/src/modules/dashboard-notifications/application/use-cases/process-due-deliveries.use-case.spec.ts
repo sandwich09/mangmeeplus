@@ -654,6 +654,66 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
   });
 });
 
+// Payout impact audit M7: a preference row saves the list of triggers as it was that day, so every
+// trigger added later is missing from it. The notice that someone else set a member's payout account
+// is the owner's condition for allowing that at all, and must not be dropped that way.
+describe('ProcessQueuedDeliveryUseCase and a preference list saved before a trigger existed', () => {
+  async function deliver(triggerKey: string, preference: Record<string, unknown> | null, severity = 'CRITICAL') {
+    const event = { status: 'OPEN', triggerKey, severity, title: 'วิภา ตั้งบัญชีรับเงินคืนของคุณ', body: 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789', deepLinkHref: '/companies/co-1/reimbursements/payout-account' };
+    const delivery = { id: 'delivery-1', companyId: 'co-1', channel: 'LINE', status: 'QUEUED', attemptCount: 0, recipient: { userId: 'user-1', event } };
+    const updates: any[] = [];
+    const prisma = { client: {
+      notificationDelivery: { findFirst: async () => delivery },
+      notificationPreference: { findUnique: async () => preference },
+      externalIdentity: { findFirst: async () => ({ providerUserId: 'line-user-1' }) },
+    } } as any;
+    prisma.client.$transaction = async (run: any) => run({
+      notificationDelivery: {
+        findFirst: async () => delivery,
+        updateMany: async (query: any) => { updates.push(query.data); return { count: 1 }; },
+        update: async (query: any) => { updates.push(query.data); return query.data; },
+      },
+      $queryRaw: async () => [{ id: 'membership-1' }],
+    });
+    const deliveries = { update: async (_companyId: string, _deliveryId: string, data: any) => { updates.push(data); return data; } } as any;
+    const originalFetch = globalThis.fetch;
+    const pushes: any[] = [];
+    try {
+      globalThis.fetch = (async (_input: any, init: any) => {
+        pushes.push(JSON.parse(init.body));
+        return new Response(JSON.stringify({ sentMessages: [{ id: 'line-message-1' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }) as any;
+      const config = { lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any;
+      await new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture(config), prisma, deliveries, { log: async () => undefined } as any, config).execute('co-1', 'delivery-1');
+    } finally { globalThis.fetch = originalFetch; }
+    return { pushes, last: updates.at(-1) };
+  }
+  /** Saved before the payout trigger existed, with quiet hours that cover the whole day. */
+  const savedLong = { enabledChannelsJson: ['web', 'line'], enabledTriggerKeysJson: ['stock_low', 'daily_owner_summary'], quietHoursStart: '00:00', quietHoursEnd: '23:59', timezone: 'Asia/Bangkok' };
+
+  it('still pushes the payout-account notice, quiet hours included, with the last 4 digits only', async () => {
+    const { pushes, last } = await deliver('reimbursement.payout_account_set_by_other', savedLong);
+    assert.equal(pushes.length, 1);
+    assert.equal(last.status, 'SENT');
+    const text = JSON.stringify(pushes[0]);
+    assert.match(text, /วิภา ตั้งบัญชีรับเงินคืนของคุณ/);
+    assert.match(text, /ลงท้าย 6789/);
+    // Everything a person reads in the push (colours and sizes aside) has no run of digits longer than the last 4.
+    const shown = [...text.matchAll(/"(?:text|altText|label)":"([^"]*)"/g)].map((match) => match[1]!);
+    assert.ok(shown.length >= 3);
+    for (const line of shown) assert.doesNotMatch(line, /\d{5,}/, line);
+  });
+
+  it('keeps dropping any other trigger the saved list leaves out, and respects LINE switched off', async () => {
+    const other = await deliver('workflow.reimbursement_pending_approval', { ...savedLong, quietHoursStart: null, quietHoursEnd: null }, 'ACTION');
+    assert.deepEqual([other.pushes.length, other.last.status, other.last.errorCode], [0, 'suppressed', 'PREFERENCE_SUPPRESSED']);
+    const lineOff = await deliver('reimbursement.payout_account_set_by_other', { ...savedLong, enabledChannelsJson: ['web'] });
+    assert.deepEqual([lineOff.pushes.length, lineOff.last.status], [0, 'suppressed']);
+    // With no saved row at all the notice goes out like every implemented trigger.
+    assert.equal((await deliver('reimbursement.payout_account_set_by_other', null)).pushes.length, 1);
+  });
+});
+
 describe('notification producer sweeps', () => {
   it('uses the stable period key for daily-summary identity and keeps the snapshot in source refs', async () => {
     const events: any[] = [];

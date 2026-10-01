@@ -8,7 +8,7 @@ import type {
   ReimbursementFinanceQueueItem,
   ReimbursementRequestDetail,
 } from '@watchdog-bms/contracts';
-import { civilDate, civilPeriodKey, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
+import { civilDate, civilPeriodKey, looksLikeAccountNumber, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
@@ -23,10 +23,11 @@ import { ReimbursementProjectionOrchestratorService } from '../services/reimburs
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import {
   validatePaymentRecording,
+  isSamePaymentRequest,
   ageHours,
-  d,
   redactPayload,
 } from '../../domain/logic/reimbursement.logic';
+import { paymentSlipAuditMetadata } from './reimbursement-payment-slip.use-case';
 
 async function appendReimbursementOutboxWithinTx(tx: any, input: {
   companyId: string;
@@ -94,6 +95,8 @@ export class FinanceReviewReimbursementUseCase {
     const now = new Date();
     const note = input.note?.trim();
     if (note && note.length > 500) throw new BadRequestException('finance_review_note_too_long');
+    // The note is copied into the requester's notification, on the web and on LINE: no account number there.
+    if (looksLikeAccountNumber(note)) throw new BadRequestException('note_contains_account_number');
     if (input.resolveDuplicate) {
       if (!ctx.permissions.includes('reimbursement.duplicate.resolve')) throw new ForbiddenException('Missing permission: reimbursement.duplicate.resolve');
       if (!input.duplicateResolutionReason?.trim()) throw new BadRequestException('duplicate_resolution_reason_required');
@@ -225,7 +228,7 @@ export class FinanceReviewReimbursementUseCase {
     }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 
   /**
@@ -271,7 +274,7 @@ export class FinanceReviewReimbursementUseCase {
     });
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 
   private async recordNonApproval(
@@ -363,19 +366,24 @@ export class RecordReimbursementPaymentUseCase {
     // learn that a payment exists by replaying one.
     assertReimbursementBranchInScope(ctx, req.branchId);
 
-    const recorded = req.payments?.find((payment) => payment.status === 'RECORDED');
+    // The request as the repository will compare it: one object for the replay check here and the write below.
+    const payment = {
+      paidAmount: input.paidAmount,
+      currency: input.currency ?? req.currency,
+      paymentMethod: input.paymentMethod,
+      paidAt,
+      paymentReference: input.paymentReference,
+      bankAccountId: input.bankAccountId,
+      slipAttachmentId: input.slipAttachmentId,
+    };
+    const recorded = req.payments?.find((row) => row.status === 'RECORDED');
     if (req.paymentStatus === 'PAID' && recorded) {
-      const samePayment = d(recorded.paidAmount).eq(d(input.paidAmount))
-        && recorded.currency === (input.currency ?? req.currency)
-        && recorded.paymentMethod === input.paymentMethod
-        && recorded.paidAt.getTime() === paidAt.getTime()
-        && recorded.paymentReference === input.paymentReference
-        && recorded.bankAccountId === input.bankAccountId;
-      if (!samePayment) throw new ConflictException('reimbursement_payment_already_recorded');
+      // A replay is the same payment only if every fact matches, the slip included (spec §12.7).
+      if (!isSamePaymentRequest(recorded, payment)) throw new ConflictException('reimbursement_payment_already_recorded');
       if (!recorded.idempotencyKey.startsWith('legacy:')) {
         await this.ensurePaymentNumber(ctx, paidAt, recorded.idempotencyKey, recorded.id, recorded.paymentNo);
       }
-      return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req);
+      return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     }
 
     // Friendly preflight before reserving a payment number; the repository
@@ -397,8 +405,17 @@ export class RecordReimbursementPaymentUseCase {
       paidAmount: input.paidAmount,
       paymentMethod: input.paymentMethod,
       paymentReference: input.paymentReference,
+      hasSlip: Boolean(input.slipAttachmentId),
     });
     if (error) throw new UnprocessableEntityException(error);
+    // Everything that can refuse the payment is checked before a payment number is reserved: a
+    // refusal after that point would burn a number that only a retry with the same key reuses.
+    // Phase 1 seam: the payer's confirmation of the payout account is validated here too.
+    if (input.slipAttachmentId) {
+      await this.repo.assertPaymentSlipUsable({
+        companyId: ctx.companyId, requestId: id, attachmentId: input.slipAttachmentId, actorUserId: ctx.userId,
+      });
+    }
 
     const paymentAttemptKey = createHash('sha256')
       .update([ctx.companyId, id, clientKey ?? req.updatedAt.toISOString()].join(':'))
@@ -421,18 +438,16 @@ export class RecordReimbursementPaymentUseCase {
       reimbursementRequestId: id,
       idempotencyKey: paymentAttemptKey,
       paymentNo: reservation.paymentNo,
-      paidAmount: input.paidAmount,
-      currency: input.currency ?? req.currency,
-      paymentMethod: input.paymentMethod,
-      paidAt,
-      paymentReference: input.paymentReference,
-      bankAccountId: input.bankAccountId,
+      ...payment,
       paidByUserId: ctx.userId,
     });
     if (result.created) await this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payment.record',
       targetType: 'reimbursement_payment', targetId: result.payment.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
-      metadataJson: { paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, paymentMethod: input.paymentMethod, requestId: id },
+      metadataJson: {
+        paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, paymentMethod: input.paymentMethod, requestId: id,
+        ...(result.slip && paymentSlipAuditMetadata(result.slip)),
+      },
     });
     if (result.created && reservation.reservedId) {
       await this.commitNumber.execute({
@@ -443,7 +458,7 @@ export class RecordReimbursementPaymentUseCase {
       }, ctx.userId);
     }
 
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request, ctx);
   }
 
   private async reservePaymentNumber(
@@ -516,12 +531,12 @@ export class VoidReimbursementPaymentUseCase {
     assertReimbursementBranchInScope(ctx, req.branchId);
     const payment = await this.repo.findPaymentById(ctx.companyId, paymentId);
     if (!payment || payment.reimbursementRequestId !== requestId) throw new NotFoundException('Payment not found');
-    if (payment.status === 'VOIDED') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, (await this.repo.findRequestById(ctx.companyId, requestId)) ?? req);
+    if (payment.status === 'VOIDED') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, (await this.repo.findRequestById(ctx.companyId, requestId)) ?? req, ctx);
     if (payment.status !== 'RECORDED') throw new UnprocessableEntityException('Payment cannot be voided');
 
     const result = await this.repo.voidPaymentTrueReversal(ctx.companyId, requestId, paymentId, ctx.userId, input.reason, undefined, ctx.requestId ?? `reimbursement-payment-void:${paymentId}`);
 
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request!, ctx);
   }
 }
 
@@ -553,6 +568,8 @@ export class ExportReimbursementEvidenceUseCase {
     // obey the same scope as reading the claim it summarizes.
     assertReimbursementBranchInScope(ctx, req.branchId);
     const signedCopies = await this.repo.listSignedClaimFormCopies(ctx.companyId, id);
+    const payments = req.payments ?? [];
+    const paymentSlips = payments.length > 0 ? await this.repo.listPaymentSlips(ctx.companyId, payments.map((payment) => payment.id)) : {};
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.export',
@@ -591,7 +608,13 @@ export class ExportReimbursementEvidenceUseCase {
       // Scans of the wet-ink signed form: ids only, same redaction discipline as the lines.
       signedCopyAttachmentIds: signedCopies.map((copy) => copy.attachmentId),
       approvals: (req.approvalSteps ?? []).map((s) => ({ sequenceNo: s.sequenceNo, status: s.status, decidedAt: s.decidedAt?.toISOString(), comment: s.comment, rejectionReason: s.rejectionReason })),
-      payments: (req.payments ?? []).map((p) => ({ paymentNo: p.paymentNo, paidAmount: p.paidAmount, currency: p.currency, paymentMethod: p.paymentMethod, paidAt: p.paidAt.toISOString(), status: p.status })),
+      // The same facts the claim page shows for each payment. Slips are counted, never identified:
+      // opening one is the slip endpoint's decision, not the export's.
+      payments: payments.map((p) => ({
+        paymentNo: p.paymentNo, paidAmount: p.paidAmount, currency: p.currency, paymentMethod: p.paymentMethod,
+        paidAt: p.paidAt.toISOString(), paymentReference: p.paymentReference, status: p.status,
+        slipCount: paymentSlips[p.id]?.length ?? 0,
+      })),
     });
   }
 }

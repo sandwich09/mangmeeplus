@@ -4,6 +4,7 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../domain/por
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { AuditService } from '../../../audit/application/audit.service';
 import { isBranchInScope } from '../../domain/logic/branch.logic';
+import { REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG } from '../../../reimbursements/domain/reimbursement.constants';
 
 /**
  * `disposition: 'inline'` is the preview ask (an <img>/<embed> src, which Chrome's ORB refuses to
@@ -42,6 +43,20 @@ export class CreateDownloadUrlUseCase {
     }
     if (await this.attachments.isSubstituteRawSignature({ id: existing.id, companyId: ctx.companyId })) {
       throw new ForbiddenException('Raw substitute-receipt signatures are never available through generic attachment downloads.');
+    }
+    // A reimbursement payment slip shows a bank transfer, often with a full account number. Its
+    // readers are decided per claim by the slip endpoint (owner decision 2026-10-01), so this
+    // generic path serves it to nobody: not once it is linked to a payment, and not while it is
+    // still an upload waiting to be recorded.
+    if (existing.metadataJson?.['generatedFor'] === REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG
+      || await this.attachments.isReimbursementPaymentSlip({ id: existing.id, companyId: ctx.companyId })) {
+      void this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId,
+        action: 'attachment.download_url.create', targetType: 'attachment', targetId: existing.id,
+        requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH',
+        metadataJson: { reason: 'reimbursement_payment_slip' },
+      });
+      throw new ForbiddenException('Payment slips are opened from their reimbursement claim.');
     }
     // A signature is a personal asset (owner decision 2026-08-20): only the person whose signature
     // it is may ever fetch the image. The gate above covers only images a certificate already
