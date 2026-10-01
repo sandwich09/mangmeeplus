@@ -840,6 +840,21 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_payer']);
   });
 
+  // Review: the membership can be ACTIVE while the login is suspended. Such a member cannot act, and
+  // as the only holder they would be the only recipient of a notice nobody then sees.
+  it('asks only for holders whose membership and login are both active', async () => {
+    const queries: any[] = [];
+    const repository = new PrismaWorkflowRepository({
+      client: { companyMembership: { findMany: async (query: any) => { queries.push(query); return [{ userId: 'u_payer' }]; } } },
+    } as any);
+
+    assert.deepEqual(await repository.findUserIdsByPermissions('co_1', [PAY]), ['u_payer']);
+    assert.equal(queries[0].where.companyId, 'co_1');
+    assert.equal(queries[0].where.status, 'ACTIVE');
+    assert.deepEqual(queries[0].where.user, { status: 'ACTIVE' });
+    assert.deepEqual(queries[0].where.roles.some.role.permissions.some.permission.key, { in: [PAY] });
+  });
+
   it('reads the branch from the claim or the vendor bill, and from nothing else', async () => {
     const queries: any[] = [];
     const table = (name: string, branchId: string | null) => ({

@@ -159,7 +159,9 @@ export class PrismaWorkflowRepository {
   async findUserIdsByPermissions(companyId: string, permissionKeys: string[]): Promise<string[]> {
     if (permissionKeys.length === 0) return [];
     const rows = await this.prisma.client.companyMembership.findMany({
-      where: { companyId, status: 'ACTIVE', roles: { some: { role: { permissions: { some: { permission: { key: { in: permissionKeys } } } } } } } },
+      // The login too, not only the membership: a suspended account cannot act, and as the sole
+      // recipient it would swallow the notice.
+      where: { companyId, status: 'ACTIVE', user: { status: 'ACTIVE' }, roles: { some: { role: { permissions: { some: { permission: { key: { in: permissionKeys } } } } } } } },
       select: { userId: true },
     });
     return rows.map((r) => r.userId);
