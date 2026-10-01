@@ -49,12 +49,12 @@ const slip = (attachmentId: string) => ({ attachmentId, attachedAt: '2026-09-29T
 // `viewerCanOpenSlips` is the API's verdict for whoever asked for the claim; here, a viewer it serves.
 const voidedTransfer = { id: ids.voided, paymentNo: 'RBPAY-202609-00001', paidAmount: '1614.5000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
   paidAt: '2026-09-28T03:00:00.000Z', paymentReference: 'TXN-1001', status: 'VOIDED', voidReason: 'บันทึกเลขอ้างอิงผิด', paidByUserId: ids.payer, paidByName: 'สมศรี',
-  slips: [slip(ids.oldSlip)], viewerCanOpenSlips: true };
+  slipCount: 1, slips: [slip(ids.oldSlip)], viewerCanOpenSlips: true };
 const transfer = { id: ids.payment, paymentNo: 'RBPAY-202609-00002', paidAmount: '1614.5000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
   paidAt: '2026-09-29T03:00:00.000Z', paymentReference: 'TXN-1002', status: 'RECORDED', paidByUserId: ids.payer, paidByName: 'สมศรี',
-  slips: [slip(ids.slip)], viewerCanOpenSlips: true as boolean | undefined };
-/** The same claim as the API returns it to a reader it does not serve slips to. */
-const refusedSlips = (detail: typeof paid) => ({ ...detail, payments: detail.payments.map((payment) => ({ ...payment, viewerCanOpenSlips: false })) });
+  slipCount: 1 as number | undefined, slips: [slip(ids.slip)] as ReturnType<typeof slip>[] | undefined, viewerCanOpenSlips: true as boolean | undefined };
+/** The same claim as the API returns it to a reader it does not serve slips to: how many slips, and none of the files. */
+const refusedSlips = (detail: typeof paid) => ({ ...detail, payments: detail.payments.map((payment) => ({ ...payment, slips: [], viewerCanOpenSlips: false })) });
 const misfiled = { attachmentId: ids.copy, fileName: 'สลิปโอนเงิน.jpg', uploadedAt: '2026-09-29T05:00:00.000Z', acknowledgedAt: '2026-09-29T05:00:00.000Z', acknowledgedByName: 'สมชาย' };
 const paid = { ...base, status: 'PAID', paymentStatus: 'PAID', outstandingAmount: '0.0000', payments: [voidedTransfer, transfer] };
 
@@ -200,10 +200,16 @@ describe('payment list: one record, the same facts, and ดูสลิป for i
       assert.ok(row.includes('มีสลิปแนบ 1 ไฟล์'), `${label}: everyone who reads the claim sees that a slip exists`);
       assert.equal(row.includes('ดูสลิป'), offered, label);
     }
+    // The count is the API's own, so it is right for a reader who is not given the files: two slips, none listed.
+    const twoSlips = { ...paid, payments: [{ ...transfer, slipCount: 2, slips: [], viewerCanOpenSlips: false }] };
+    const counted = visible(paymentRow(detailSections(twoSlips, ids.auditor, ['reimbursement.read']), 'RBPAY-202609-00002'));
+    assert.ok(counted.includes('มีสลิปแนบ 2 ไฟล์'));
+    assert.equal(counted.includes('ดูสลิป'), false);
+    assert.equal(counted.includes('ไม่มีสลิปแนบ'), false);
   });
 
   it('says so when a payment has no slip, and lets only a payer attach one', () => {
-    const legacy = { ...paid, payments: [{ ...transfer, slips: undefined }] };
+    const legacy = { ...paid, payments: [{ ...transfer, slipCount: 0, slips: undefined }] };
     const payerRow = visible(paymentRow(detailSections(legacy, ids.payer, ['reimbursement.read', 'reimbursement.payment.record']), 'RBPAY-202609-00002'));
     assert.ok(payerRow.includes('ไม่มีสลิปแนบ'));
     assert.ok(payerRow.includes('แนบสลิป'));
@@ -215,7 +221,7 @@ describe('payment list: one record, the same facts, and ดูสลิป for i
 });
 
 describe('ใบเบิกที่เซ็นแล้ว is not where a slip goes', () => {
-  const withCopy = { ...paid, payments: [{ ...transfer, slips: [] }], signedCopies: [misfiled], documentSignedVia: 'PAPER' };
+  const withCopy = { ...paid, payments: [{ ...transfer, slipCount: 0, slips: [] }], signedCopies: [misfiled], documentSignedVia: 'PAPER' };
   const NOT_FOR_SLIPS = 'ช่องนี้สำหรับใบเบิกที่มีลายเซ็นเท่านั้น ไม่ใช่ที่แนบสลิปโอนเงิน สลิปโอนเงินแนบที่ขั้นจ่ายเงินคืน ตอนกดบันทึกจ่าย';
 
   it('says so under the uploader and in its dialog', () => {
@@ -252,6 +258,16 @@ describe('ใบเบิกที่เซ็นแล้ว is not where a sli
     const unpaid = { ...withCopy, status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', payments: [voidedTransfer] };
     assert.equal(visible(detailSections(unpaid, ids.payer, ['reimbursement.read', 'reimbursement.payment.record'])).includes('ใช้ไฟล์นี้เป็นสลิปการจ่าย'), false);
   });
+
+  // The move withdraws a "signed on paper" declaration. It is the fix for a payment that has no slip,
+  // not a way to add a second one: a payment that carries its slip takes more by upload, from its own row.
+  it('does not offer the move once the standing payment has a slip', () => {
+    const paidWithSlip = { ...paid, signedCopies: [misfiled], documentSignedVia: 'PAPER' };
+    const payer = visible(detailSections(paidWithSlip, ids.payer, ['reimbursement.read', 'reimbursement.payment.record']));
+    assert.equal(payer.includes('ใช้ไฟล์นี้เป็นสลิปการจ่าย'), false);
+    assert.ok(payer.includes('แนบสลิปเพิ่ม'), 'the payment row still takes another slip');
+    assert.ok(payer.some((text) => text.includes('สลิปโอนเงิน.jpg')), 'the copy stays listed where it is');
+  });
 });
 
 const MACHINE_TOKENS: Array<[string, RegExp]> = [ // ReimbursementPages.plain-thai.qa.spec.ts's set
@@ -274,7 +290,7 @@ describe('no payment-step text carries a machine token (Owner rule 2026-09-27/29
       ['form: files on the claim', paymentForm(withFiles, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.copy, name: 'สลิปโอนเงิน.jpg · แนบไว้ที่ใบเบิกที่เซ็นแล้ว' } })],
       ['list: payer', detailSections(paid, ids.payer, ['reimbursement.read', 'reimbursement.payment.record', 'reimbursement.payment.void'])],
       ['list: ordinary reader', detailSections(refusedSlips(paid), ids.auditor, ['reimbursement.read'])],
-      ['list: misfiled copy, payer', detailSections({ ...paid, payments: [{ ...transfer, slips: [] }], signedCopies: [misfiled], documentSignedVia: 'PAPER' },
+      ['list: misfiled copy, payer', detailSections({ ...paid, payments: [{ ...transfer, slipCount: 0, slips: [] }], signedCopies: [misfiled], documentSignedVia: 'PAPER' },
         ids.payer, ['reimbursement.read', 'reimbursement.payment.record'])],
     ];
     let checked = 0;

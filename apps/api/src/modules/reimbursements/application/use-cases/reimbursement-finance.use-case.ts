@@ -225,7 +225,7 @@ export class FinanceReviewReimbursementUseCase {
     }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 
   /**
@@ -271,7 +271,7 @@ export class FinanceReviewReimbursementUseCase {
     });
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 
   private async recordNonApproval(
@@ -380,7 +380,7 @@ export class RecordReimbursementPaymentUseCase {
       if (!recorded.idempotencyKey.startsWith('legacy:')) {
         await this.ensurePaymentNumber(ctx, paidAt, recorded.idempotencyKey, recorded.id, recorded.paymentNo);
       }
-      return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req);
+      return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     }
 
     // Friendly preflight before reserving a payment number; the repository
@@ -405,6 +405,9 @@ export class RecordReimbursementPaymentUseCase {
       hasSlip: Boolean(input.slipAttachmentId),
     });
     if (error) throw new UnprocessableEntityException(error);
+    // Everything that can refuse the payment is checked before a payment number is reserved: a
+    // refusal after that point would burn a number that only a retry with the same key reuses.
+    // Phase 1 seam: the payer's confirmation of the payout account is validated here too.
     if (input.slipAttachmentId) {
       await this.repo.assertPaymentSlipUsable({
         companyId: ctx.companyId, requestId: id, attachmentId: input.slipAttachmentId, actorUserId: ctx.userId,
@@ -446,7 +449,7 @@ export class RecordReimbursementPaymentUseCase {
       }, ctx.userId);
     }
 
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request, ctx);
   }
 
   private async reservePaymentNumber(
@@ -519,12 +522,12 @@ export class VoidReimbursementPaymentUseCase {
     assertReimbursementBranchInScope(ctx, req.branchId);
     const payment = await this.repo.findPaymentById(ctx.companyId, paymentId);
     if (!payment || payment.reimbursementRequestId !== requestId) throw new NotFoundException('Payment not found');
-    if (payment.status === 'VOIDED') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, (await this.repo.findRequestById(ctx.companyId, requestId)) ?? req);
+    if (payment.status === 'VOIDED') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, (await this.repo.findRequestById(ctx.companyId, requestId)) ?? req, ctx);
     if (payment.status !== 'RECORDED') throw new UnprocessableEntityException('Payment cannot be voided');
 
     const result = await this.repo.voidPaymentTrueReversal(ctx.companyId, requestId, paymentId, ctx.userId, input.reason, undefined, ctx.requestId ?? `reimbursement-payment-void:${paymentId}`);
 
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request!, ctx);
   }
 }
 

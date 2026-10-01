@@ -218,14 +218,19 @@ export type ReimbursementPaymentSummary = {
   postingStatus: ReimbursementPostingStatus;
   paidByUserId?: string;
   paidByName?: string;
-  /** Slips attached to this record, oldest first. A voided record keeps the slips it had. */
+  /** How many slips this record carries. Every reader of the claim sees this much; a voided record keeps its slips. */
+  slipCount: number;
+  /**
+   * The slip files, oldest first, for a caller who may open them (`viewerCanOpenSlips`). Empty for
+   * everyone else: a file id is not handed to someone the slip endpoint would refuse.
+   */
   slips: ReimbursementPaymentSlipSummary[];
   /**
    * Whether the caller may open this payment's slips: the verdict of `canOpenReimbursementPaymentSlip`
    * for them, set on every claim detail the API returns. The web offers ดูสลิป from this alone, so
    * the button and the slip endpoint cannot disagree. It says nothing about the full account number.
    */
-  viewerCanOpenSlips?: boolean;
+  viewerCanOpenSlips: boolean;
 };
 
 // ---- Who sees a claim's payout details (spec §11.1, owner decision D2) ----
@@ -235,6 +240,8 @@ export type ReimbursementPayoutViewer = { userId: string; permissions: readonly 
 /** The claim facts the rule reads. The API record and the web detail both have this shape. */
 export type ReimbursementPayoutViewerClaim = {
   requesterUserId: string;
+  /** When the claim's current round was submitted; none while it is a draft. Named by every caller: it decides whose approval still counts. */
+  submittedAt: string | Date | null | undefined;
   approvalSteps?: readonly {
     status: string;
     decisionByUserId?: string | null;
@@ -246,20 +253,32 @@ export type ReimbursementPayoutViewerClaim = {
 };
 
 /**
+ * Whether this person approved the claim as it stands: they decided an approval that is still in
+ * force and belongs to the current round, that is, decided at or after the claim was last
+ * submitted. An approval from before a correction and resubmission is history: the claim has since
+ * been routed again, and its earlier approver has no say over what it became. The same test the
+ * claim page uses for "approved by a person" (`buildJourneySteps`).
+ */
+export function isReimbursementClaimApprover(userId: string, claim: Pick<ReimbursementPayoutViewerClaim, 'submittedAt' | 'approvalSteps'>): boolean {
+  if (!userId || !claim.submittedAt) return false;
+  const roundStartedAt = new Date(claim.submittedAt).getTime();
+  return (claim.approvalSteps ?? []).some((step) => step.status === 'APPROVED' && !step.invalidatedAt && !!step.decidedAt
+    && step.decisionByUserId === userId && new Date(step.decidedAt).getTime() >= roundStartedAt);
+}
+
+/**
  * The people a claim's payout details belong to: the requester, the claim's own approver (whoever
- * decided its latest approval still in force, or may decide the step it waits on), and holders of
- * the payment-record right. Holding the approval permission without being routed this claim is not
+ * approved its current round, or may decide the step it waits on), and holders of the
+ * payment-record right. Holding the approval permission without being routed this claim is not
  * enough. The caller has already established that the viewer may read the claim, branch included.
+ * The single rule for the full account number (§11.1) and, with finance reviewers added, for slips.
  */
 export function isReimbursementPayoutParty(viewer: ReimbursementPayoutViewer, claim: ReimbursementPayoutViewerClaim): boolean {
   if (!viewer.userId) return false;
   if (viewer.userId === claim.requesterUserId) return true;
   if (viewer.permissions.includes('reimbursement.payment.record')) return true;
   if (claim.approvalActions?.canApprove || claim.approvalActions?.canReject) return true;
-  const approved = [...(claim.approvalSteps ?? [])]
-    .filter((step) => step.status === 'APPROVED' && !step.invalidatedAt && !!step.decidedAt)
-    .sort((a, b) => new Date(b.decidedAt!).getTime() - new Date(a.decidedAt!).getTime())[0];
-  return approved?.decisionByUserId === viewer.userId;
+  return isReimbursementClaimApprover(viewer.userId, claim);
 }
 
 /**

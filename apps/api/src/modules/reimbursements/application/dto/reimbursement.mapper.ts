@@ -125,6 +125,8 @@ export function toPaymentSummary(
   p: ReimbursementPaymentRecord,
   names: Record<string, string> = {},
   slips: PaymentSlipRows[string] = [],
+  // Default deny: a slip's file id goes only to a caller the slip endpoint would serve.
+  viewerCanOpenSlips = false,
 ): ReimbursementPaymentSummary {
   return {
     id: p.id,
@@ -143,7 +145,9 @@ export function toPaymentSummary(
     voidReason: p.voidReason,
     postingStatus: p.postingStatus,
     // From the slip links alone, so every reader of a payment answers "is there a slip" the same way.
-    slips: slips.map((slip) => ({ attachmentId: slip.attachmentId, attachedAt: slip.attachedAt.toISOString() })),
+    slipCount: slips.length,
+    slips: viewerCanOpenSlips ? slips.map((slip) => ({ attachmentId: slip.attachmentId, attachedAt: slip.attachedAt.toISOString() })) : [],
+    viewerCanOpenSlips,
   };
 }
 
@@ -174,24 +178,6 @@ export function toLineSummary(l: ReimbursementLineRecord, attachmentFileName?: s
     linkedExpenseId: l.linkedExpenseId,
     sourceExpenseSnapshot: l.sourceExpenseSnapshot,
   };
-}
-
-/**
- * Tells this viewer, on each payment, whether they may open its slips: the verdict of the one rule
- * the slip endpoint enforces, read from the same facts the detail already carries. Every route that
- * answers with a claim detail runs it, so the web never has to work the answer out for itself.
- * `approvalActions` is the caller's authority over a pending step, where the route resolved it.
- */
-export function withPaymentSlipAccess<T extends Pick<ReimbursementRequestDetail, 'requesterUserId' | 'approvalSteps' | 'payments'>>(
-  detail: T,
-  viewer: ReimbursementPayoutViewer,
-  approvalActions?: { canApprove: boolean; canReject: boolean },
-): T {
-  const viewerCanOpenSlips = canOpenReimbursementPaymentSlip(
-    { userId: viewer.userId, permissions: viewer.permissions },
-    { requesterUserId: detail.requesterUserId, approvalSteps: detail.approvalSteps, approvalActions },
-  );
-  return { ...detail, payments: detail.payments.map((payment) => ({ ...payment, viewerCanOpenSlips })) };
 }
 
 /** Every user id whose display name the drawer and the claim form need — one batch lookup, no N+1. */
@@ -247,6 +233,7 @@ export function toRequestDetail(
     allowMissingReceiptWithReason?: boolean;
     duplicateBlocksPayment?: boolean;
     paymentSlips?: PaymentSlipRows;
+    viewerCanOpenSlips?: boolean;
   } = {},
 ): ReimbursementRequestDetail {
   return {
@@ -274,7 +261,7 @@ export function toRequestDetail(
     financeReviewRequired: extras.financeReviewRequired,
     missingReceiptReason: r.missingReceiptReason,
     approvalSteps: (r.approvalSteps ?? []).map((s) => toStepSummary(s, displayNames)),
-    payments: (r.payments ?? []).map((p) => toPaymentSummary(p, displayNames, extras.paymentSlips?.[p.id])),
+    payments: (r.payments ?? []).map((p) => toPaymentSummary(p, displayNames, extras.paymentSlips?.[p.id], extras.viewerCanOpenSlips)),
     duplicateCandidates: (r.duplicateCandidates ?? []).map(toDuplicateSummary),
     duplicateBlocksPayment: extras.duplicateBlocksPayment,
     signatures: (r.claimSignatures ?? []).map((s) => toClaimSignatureSummary(s, displayNames)),
@@ -289,12 +276,19 @@ export function toRequestDetail(
  * their response in the drawer on purpose (a frozen assignee may lose read permission the
  * moment they decide), so their responses must be as complete as a GET. Lives in the mapper
  * because the request, approval, and finance use-cases all need it and already import here.
+ *
+ * `viewer` is whoever the answer goes to. Each payment tells them whether they may open its slips
+ * (the verdict of the one rule the slip endpoint enforces) and names the slip files only if they
+ * may; everyone else gets the count. Required, so no route can return a detail without deciding it.
+ * `approvalActions` is the viewer's authority over a pending step, where the route resolved it.
  */
 export async function detailWithFileNames(
   repo: PrismaReimbursementRepository,
   evidence: ReimbursementEvidenceService,
   companyId: string,
   req: ReimbursementRequestRecord,
+  viewer: ReimbursementPayoutViewer,
+  approvalActions?: { canApprove: boolean; canReject: boolean } | null,
 ): Promise<ReimbursementRequestDetail> {
   const signedCopiesRead = repo.listSignedClaimFormCopies(companyId, req.id);
   const paymentIds = (req.payments ?? []).map((payment) => payment.id);
@@ -333,5 +327,9 @@ export async function detailWithFileNames(
     duplicateBlocksPayment: requestPolicy.duplicatePolicy === 'BLOCK_PAYMENT'
       && (req.duplicateCandidates ?? []).some((candidate) => candidate.status === 'OPEN'),
     paymentSlips,
+    viewerCanOpenSlips: canOpenReimbursementPaymentSlip(
+      { userId: viewer.userId, permissions: viewer.permissions },
+      { requesterUserId: req.requesterUserId, submittedAt: req.submittedAt, approvalSteps: req.approvalSteps, approvalActions },
+    ),
   });
 }

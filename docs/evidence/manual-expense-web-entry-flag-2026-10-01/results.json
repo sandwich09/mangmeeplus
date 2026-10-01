@@ -1,0 +1,2125 @@
+{
+  "config": {
+    "argv": [
+      "/opt/homebrew/Cellar/node@22/22.23.2/bin/node",
+      "/private/tmp/manual-flag-e2e-20261001/repo/node_modules/@playwright/test/cli.js",
+      "test",
+      "-c",
+      "playwright.manual.config.ts"
+    ],
+    "configFile": "/private/tmp/manual-flag-e2e-20261001/repo/playwright.manual.config.ts",
+    "rootDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/tmp/manual-flag-e2e-20261001/evidence/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "manual-flag-simulation.spec.ts"
+        ],
+        "timeout": 90000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/tmp/manual-flag-e2e-20261001/evidence/results.json"
+        }
+      ],
+      [
+        "html",
+        {
+          "outputFolder": "/tmp/manual-flag-e2e-20261001/evidence/report",
+          "open": "never"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "manual-flag-simulation.spec.ts",
+      "file": "manual-flag-simulation.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "API OWNER: OFF must preserve role permissions and expense endpoints",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 620,
+                  "error": {
+                    "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m    \"expense.void\",\u001b[22m\n\u001b[2m    \"expense.delete\",\u001b[22m",
+                    "stack": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m    \"expense.void\",\u001b[22m\n\u001b[2m    \"expense.delete\",\u001b[22m\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                      "column": 91,
+                      "line": 45
+                    },
+                    "snippet": "  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 91,
+                        "line": 45
+                      },
+                      "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m    \"expense.void\",\u001b[22m\n\u001b[2m    \"expense.delete\",\u001b[22m\n\n  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 89,
+                        "line": 46
+                      },
+                      "message": "Error: direct API create must retain same authority\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  44 |   note('role-matrix',samples);\n  45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n> 46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n     |                                                                                         ^\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:46:89"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: ready authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: delete authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m204\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:05.458Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c2268-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c2268-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c2268-sions-and-expense-endpoints/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                    "column": 91,
+                    "line": 45
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-a5e6637d58e07c4c9ca8",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 33,
+          "column": 6
+        },
+        {
+          "title": "API ADMIN: OFF must preserve role permissions and expense endpoints",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 441,
+                  "error": {
+                    "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m    \"expense.void\",\u001b[22m\n\u001b[2m    \"expense.delete\",\u001b[22m",
+                    "stack": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m    \"expense.void\",\u001b[22m\n\u001b[2m    \"expense.delete\",\u001b[22m\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                      "column": 91,
+                      "line": 45
+                    },
+                    "snippet": "  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 91,
+                        "line": 45
+                      },
+                      "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m    \"expense.void\",\u001b[22m\n\u001b[2m    \"expense.delete\",\u001b[22m\n\n  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 89,
+                        "line": 46
+                      },
+                      "message": "Error: direct API create must retain same authority\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  44 |   note('role-matrix',samples);\n  45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n> 46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n     |                                                                                         ^\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:46:89"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: ready authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: delete authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m204\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:06.414Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-67d0e-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-67d0e-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-67d0e-sions-and-expense-endpoints/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                    "column": 91,
+                    "line": 45
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-2ffc6a1ed63bf0d772a1",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 33,
+          "column": 6
+        },
+        {
+          "title": "API MANAGER: OFF must preserve role permissions and expense endpoints",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 378,
+                  "error": {
+                    "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.duplicate.resolve\",\u001b[22m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m",
+                    "stack": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.duplicate.resolve\",\u001b[22m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                      "column": 91,
+                      "line": 45
+                    },
+                    "snippet": "  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 91,
+                        "line": 45
+                      },
+                      "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.duplicate.resolve\",\u001b[22m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\n  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 89,
+                        "line": 46
+                      },
+                      "message": "Error: direct API create must retain same authority\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  44 |   note('role-matrix',samples);\n  45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n> 46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n     |                                                                                         ^\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:46:89"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: ready authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: delete authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m204\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:07.164Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-f03fe-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-f03fe-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-f03fe-sions-and-expense-endpoints/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                    "column": 91,
+                    "line": 45
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-9ed72535da86d24ec016",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 33,
+          "column": 6
+        },
+        {
+          "title": "API STAFF: OFF must preserve role permissions and expense endpoints",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 3,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 348,
+                  "error": {
+                    "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m",
+                    "stack": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                      "column": 91,
+                      "line": 45
+                    },
+                    "snippet": "  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 91,
+                        "line": 45
+                      },
+                      "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m\n\n  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 89,
+                        "line": 46
+                      },
+                      "message": "Error: direct API create must retain same authority\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  44 |   note('role-matrix',samples);\n  45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n> 46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n     |                                                                                         ^\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:46:89"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: edit authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: ready authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: delete authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m204\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:07.852Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-fe660-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-fe660-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-fe660-sions-and-expense-endpoints/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                    "column": 91,
+                    "line": 45
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-e9edd7c8fc549b86de72",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 33,
+          "column": 6
+        },
+        {
+          "title": "API FINANCE: OFF must preserve role permissions and expense endpoints",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 4,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 396,
+                  "error": {
+                    "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m    \"expense.void\",\u001b[22m\n\u001b[2m    \"expense.delete\",\u001b[22m",
+                    "stack": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m    \"expense.void\",\u001b[22m\n\u001b[2m    \"expense.delete\",\u001b[22m\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                      "column": 91,
+                      "line": 45
+                    },
+                    "snippet": "  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 91,
+                        "line": 45
+                      },
+                      "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.review\",\u001b[22m\n\u001b[2m    \"expense.confirm\",\u001b[22m\n\u001b[2m    \"expense.reject\",\u001b[22m\n\u001b[2m    \"expense.void\",\u001b[22m\n\u001b[2m    \"expense.delete\",\u001b[22m\n\n  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 89,
+                        "line": 46
+                      },
+                      "message": "Error: direct API create must retain same authority\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  44 |   note('role-matrix',samples);\n  45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n> 46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n     |                                                                                         ^\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:46:89"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: ready authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: delete authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m204\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:08.509Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-db613-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-db613-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-db613-sions-and-expense-endpoints/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                    "column": 91,
+                    "line": 45
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-cd3b1a3959af3b37ea25",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 33,
+          "column": 6
+        },
+        {
+          "title": "API ACCOUNTANT: OFF must preserve role permissions and expense endpoints",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 5,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 380,
+                  "error": {
+                    "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"expense.export\",\u001b[22m\n\u001b[2m    \"reimbursement.read\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m",
+                    "stack": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"expense.export\",\u001b[22m\n\u001b[2m    \"reimbursement.read\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                      "column": 91,
+                      "line": 45
+                    },
+                    "snippet": "  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 91,
+                        "line": 45
+                      },
+                      "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,14 +1,12 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read\",\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.evidence.read\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"expense.export\",\u001b[22m\n\u001b[2m    \"reimbursement.read\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\n  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 89,
+                        "line": 46
+                      },
+                      "message": "Error: direct API create must retain same authority\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  44 |   note('role-matrix',samples);\n  45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n> 46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n     |                                                                                         ^\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:46:89"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: edit authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: ready authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: delete authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m204\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:09.212Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c222e-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c222e-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-c222e-sions-and-expense-endpoints/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                    "column": 91,
+                    "line": 45
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-cde60fef8e6342ef949d",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 33,
+          "column": 6
+        },
+        {
+          "title": "API COMPANY_VIEW: OFF must preserve role permissions and expense endpoints",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 6,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 151,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:09.925Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-cb542-sions-and-expense-endpoints/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-643dc383ecaf795c6d60",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 33,
+          "column": 6
+        },
+        {
+          "title": "API SALES: OFF must preserve role permissions and expense endpoints",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 6,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 351,
+                  "error": {
+                    "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m",
+                    "stack": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                      "column": 91,
+                      "line": 45
+                    },
+                    "snippet": "  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 91,
+                        "line": 45
+                      },
+                      "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m\n\n  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 89,
+                        "line": 46
+                      },
+                      "message": "Error: direct API create must retain same authority\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  44 |   note('role-matrix',samples);\n  45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n> 46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n     |                                                                                         ^\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:46:89"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: edit authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: ready authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: delete authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m204\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:10.177Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-bc092-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-bc092-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-bc092-sions-and-expense-endpoints/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                    "column": 91,
+                    "line": 45
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-5e8ae173e9edfd1c88ec",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 33,
+          "column": 6
+        },
+        {
+          "title": "API INVENTORY: OFF must preserve role permissions and expense endpoints",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 7,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 404,
+                  "error": {
+                    "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m",
+                    "stack": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                      "column": 91,
+                      "line": 45
+                    },
+                    "snippet": "  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 91,
+                        "line": 45
+                      },
+                      "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m\n\n  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 89,
+                        "line": 46
+                      },
+                      "message": "Error: direct API create must retain same authority\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  44 |   note('role-matrix',samples);\n  45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n> 46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n     |                                                                                         ^\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:46:89"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: edit authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: ready authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: delete authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m204\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:10.868Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-667ef-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-667ef-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-667ef-sions-and-expense-endpoints/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                    "column": 91,
+                    "line": 45
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-42ba3ad2df9d3ca52288",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 33,
+          "column": 6
+        },
+        {
+          "title": "API MARKETING: OFF must preserve role permissions and expense endpoints",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 8,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 356,
+                  "error": {
+                    "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m",
+                    "stack": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                      "column": 91,
+                      "line": 45
+                    },
+                    "snippet": "  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 91,
+                        "line": 45
+                      },
+                      "message": "Error: OFF must retain business permissions (spec AC01)\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoEqual\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // deep equality\u001b[22m\n\n\u001b[32m- Expected  - 2\u001b[39m\n\u001b[31m+ Received  + 0\u001b[39m\n\n\u001b[33m@@ -1,12 +1,10 @@\u001b[39m\n\u001b[2m  Array [\u001b[22m\n\u001b[2m    \"expense.read_related\",\u001b[22m\n\u001b[2m    \"expense.read_own\",\u001b[22m\n\u001b[32m-   \"expense.create\",\u001b[39m\n\u001b[2m    \"expense.receipt.upload\",\u001b[22m\n\u001b[2m    \"expense.receipt.line_upload\",\u001b[22m\n\u001b[32m-   \"expense.update\",\u001b[39m\n\u001b[2m    \"expense.signature.self_manage\",\u001b[22m\n\u001b[2m    \"reimbursement.read_related\",\u001b[22m\n\u001b[2m    \"reimbursement.read_own\",\u001b[22m\n\u001b[2m    \"reimbursement.create\",\u001b[22m\n\u001b[2m    \"reimbursement.update_own_draft\",\u001b[22m\n\n  43 |   }\n  44 |   note('role-matrix',samples);\n> 45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n     |                                                                                           ^\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:45:91"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 89,
+                        "line": 46
+                      },
+                      "message": "Error: direct API create must retain same authority\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  44 |   note('role-matrix',samples);\n  45 |   expect.soft(samples.OFF.permissions,'OFF must retain business permissions (spec AC01)').toEqual(samples.ON.permissions);\n> 46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n     |                                                                                         ^\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n  48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:46:89"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: edit authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m200\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: ready authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 167,
+                        "line": 48
+                      },
+                      "message": "Error: delete authority/result must be unchanged\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m204\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  46 |   expect.soft(samples.OFF.create.status,'direct API create must retain same authority').toBe(samples.ON.create.status);\n  47 |   expect.soft(samples.OFF.list.status).toBe(samples.ON.list.status);\n> 48 |   for(const action of ['edit','review','ready','delete'])if(samples.ON[action])expect.soft(samples.OFF[action].status,`${action} authority/result must be unchanged`).toBe(samples.ON[action].status);\n     |                                                                                                                                                                       ^\n  49 |   expect(samples.OFF.deniedTenant.status).toBe(403);\n  50 |  });\n  51 | }\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:48:167"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:11.590Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-5285f-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-5285f-sions-and-expense-endpoints/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-5285f-sions-and-expense-endpoints/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                    "column": 91,
+                    "line": 45
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-c084012f9d990deba080",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 33,
+          "column": 6
+        },
+        {
+          "title": "API parent expenses OFF retains parent boundary",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 63,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:12.261Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-30512-OFF-retains-parent-boundary/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-6ce3dfc181eb4755a375",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 53,
+          "column": 5
+        },
+        {
+          "title": "API cross-company flag isolation",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 47,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:12.416Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-cross-company-flag-isolation/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-95b30fe081b5a65f7c7a",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 54,
+          "column": 5
+        },
+        {
+          "title": "API flag ON again restores create without relogin",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 66,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:12.473Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-bf1bd-ores-create-without-relogin/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-05f8e89a4d389c072723",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 55,
+          "column": 5
+        },
+        {
+          "title": "Browser 1440: ON manual create persists and survives reload",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3099,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:12.547Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-67f2a-ersists-and-survives-reload/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-43a16c9eaff85ee11354",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 58,
+          "column": 6
+        },
+        {
+          "title": "Browser 1440: OFF closes direct URL and legacy alias",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3073,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:15.950Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-3a7f0-direct-URL-and-legacy-alias/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-407aac6ba21e6fc291dc",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 59,
+          "column": 6
+        },
+        {
+          "title": "Browser 1440: OFF upload image still creates a readable draft",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2802,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:19.078Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-75f5a-ll-creates-a-readable-draft/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-7849447469229d583819",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 60,
+          "column": 6
+        },
+        {
+          "title": "Browser 390: ON manual create persists and survives reload",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2684,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:21.959Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-24b8e-ersists-and-survives-reload/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-89483e73a01183f5ca71",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 58,
+          "column": 6
+        },
+        {
+          "title": "Browser 390: OFF closes direct URL and legacy alias",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2306,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:24.694Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-dc2f3-direct-URL-and-legacy-alias/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-a9aa5726a7e65540b4fc",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 59,
+          "column": 6
+        },
+        {
+          "title": "Browser 390: OFF upload image still creates a readable draft",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1887,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:27.035Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-82b8c-ll-creates-a-readable-draft/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-203df786141234f51995",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 60,
+          "column": 6
+        },
+        {
+          "title": "Browser OFF route and CTA audit /expenses",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1189,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:28.965Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-14c04-oute-and-CTA-audit-expenses/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-1683e8da8cfd21f44f07",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 63,
+          "column": 6
+        },
+        {
+          "title": "Browser OFF route and CTA audit /expenses/upload",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1216,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:30.184Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-31ac4-d-CTA-audit-expenses-upload/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-55b358491779eee162d3",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 63,
+          "column": 6
+        },
+        {
+          "title": "Browser OFF route and CTA audit /income-expense-ledger",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1843,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:31.429Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-cc4ab-audit-income-expense-ledger/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-255d0100a78c3a7e3553",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 63,
+          "column": 6
+        },
+        {
+          "title": "Browser OFF route and CTA audit /user-guide/expenses",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1658,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:33.293Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-f62e8-A-audit-user-guide-expenses/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-b0504e6c4207210c54d4",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 63,
+          "column": 6
+        },
+        {
+          "title": "Browser OFF route and CTA audit /ai-suggestions",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1700,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:34.977Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-8b05d-nd-CTA-audit-ai-suggestions/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-da0cce516b878d11940a",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 63,
+          "column": 6
+        },
+        {
+          "title": "Browser OFF route and CTA audit /expenses/substitute-receipts",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2552,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:36.699Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-e6dc7-xpenses-substitute-receipts/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-74c5eec91bd940d70a1c",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 63,
+          "column": 6
+        },
+        {
+          "title": "Browser OFF route and CTA audit /reimbursements",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1939,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:39.274Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-5ba79-nd-CTA-audit-reimbursements/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-7478ba98ae7283d0bbcf",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 63,
+          "column": 6
+        },
+        {
+          "title": "Browser OFF route and CTA audit /expenses/categories",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1976,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:41.241Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-b6f45-A-audit-expenses-categories/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-e72410c058eb5d979cd2",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 63,
+          "column": 6
+        },
+        {
+          "title": "Browser OFF route and CTA audit /expenses/signatures",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1891,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:43.245Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-7ba5a-A-audit-expenses-signatures/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-815d86ddfe1f0172d2f1",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 63,
+          "column": 6
+        },
+        {
+          "title": "Browser OFF route and CTA audit /expenses/evidence",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2059,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:45.160Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-e61dc-CTA-audit-expenses-evidence/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-50689e4e61aa511da01c",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 63,
+          "column": 6
+        },
+        {
+          "title": "Browser OFF preserves manual creation inside substitute wizard",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 9,
+                  "parallelIndex": 0,
+                  "status": "timedOut",
+                  "duration": 90207,
+                  "error": {
+                    "message": "\u001b[31mTest timeout of 90000ms exceeded.\u001b[39m",
+                    "stack": "\u001b[31mTest timeout of 90000ms exceeded.\u001b[39m"
+                  },
+                  "errors": [
+                    {
+                      "message": "\u001b[31mTest timeout of 90000ms exceeded.\u001b[39m"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 279,
+                        "line": 66
+                      },
+                      "message": "Error: locator.click: Target page, context or browser has been closed\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'เพิ่มรายการค่าใช้จ่ายใหม่', exact: true }).first()\u001b[22m\n\n\n  64 | }\n  65 |\n> 66 | test('Browser OFF preserves manual creation inside substitute wizard',async({authedPage:page,api})=>{await flag(false);await page.goto(`/companies/${company}/expenses/substitute-receipts/new`);await page.getByRole('button',{name:'เพิ่มรายการค่าใช้จ่ายใหม่',exact:true}).first().click();const branch=await firstActiveBranch(api,company);await chooseThemedOption(page,page.getByRole('combobox',{name:'สาขาของรายการ',exact:true}),branchOptionName(branch));await screenshot(page,'wizard-off');const create=page.getByRole('button',{name:'สร้างฉบับร่างและใช้รายการนี้',exact:true});note('wizard',{createButtons:await create.count(),text:(await page.locator('main').innerText()).slice(0,5500)});await expect(create).toBeEnabled();});\n     |                                                                                                                                                                                                                                                                                       ^\n  67 | test('Browser admitted manual form can finish immediately after OFF',async({authedPage:page,api})=>{await page.goto(`/companies/${company}/expenses/manual`);await fillManual(page,api);await flag(false);const saved=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname.endsWith('/expenses'));await page.getByRole('button',{name:'บันทึกฉบับร่าง',exact:true}).click();const response=await saved;note('active-submit',await body(response));await screenshot(page,'active-submit-off');expect(response.status()).toBe(201);});\n  68 | test('Browser admitted manual form survives OFF focus refresh',async({authedPage:page,api})=>{await page.goto(`/companies/${company}/expenses/manual`);await fillManual(page,api);await flag(false);const refreshed=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/auth/me'));await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await refreshed;await expect(page.getByText(/คุณไม่มีสิทธิ์เข้าถึงส่วนนี้/)).toBeVisible();note('focus-refresh',{url:page.url(),formCount:await page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true}).count()});await screenshot(page,'focus-refresh-off');await expect(page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true})).toHaveValue('Unsaved manual flag E2E');});\n  69 |\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:66:279"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:47:47.253Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "screenshot",
+                      "contentType": "image/png",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-33baf-on-inside-substitute-wizard/test-failed-1.png"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-33baf-on-inside-substitute-wizard/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-33baf-on-inside-substitute-wizard/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-33baf-on-inside-substitute-wizard/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-703721a5a6affdbb4fa3",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 66,
+          "column": 5
+        },
+        {
+          "title": "Browser admitted manual form can finish immediately after OFF",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 10,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 1963,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:67:532",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                      "column": 532,
+                      "line": 67
+                    },
+                    "snippet": "  65 |\n  66 | test('Browser OFF preserves manual creation inside substitute wizard',async({authedPage:page,api})=>{await flag(false);await page.goto(`/companies/${company}/expenses/substitute-receipts/new`);await page.getByRole('button',{name:'เพิ่มรายการค่าใช้จ่ายใหม่',exact:true}).first().click();const branch=await firstActiveBranch(api,company);await chooseThemedOption(page,page.getByRole('combobox',{name:'สาขาของรายการ',exact:true}),branchOptionName(branch));await screenshot(page,'wizard-off');const create=page.getByRole('button',{name:'สร้างฉบับร่างและใช้รายการนี้',exact:true});note('wizard',{createButtons:await create.count(),text:(await page.locator('main').innerText()).slice(0,5500)});await expect(create).toBeEnabled();});\n> 67 | test('Browser admitted manual form can finish immediately after OFF',async({authedPage:page,api})=>{await page.goto(`/companies/${company}/expenses/manual`);await fillManual(page,api);await flag(false);const saved=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname.endsWith('/expenses'));await page.getByRole('button',{name:'บันทึกฉบับร่าง',exact:true}).click();const response=await saved;note('active-submit',await body(response));await screenshot(page,'active-submit-off');expect(response.status()).toBe(201);});\n     |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^\n  68 | test('Browser admitted manual form survives OFF focus refresh',async({authedPage:page,api})=>{await page.goto(`/companies/${company}/expenses/manual`);await fillManual(page,api);await flag(false);const refreshed=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/auth/me'));await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await refreshed;await expect(page.getByText(/คุณไม่มีสิทธิ์เข้าถึงส่วนนี้/)).toBeVisible();note('focus-refresh',{url:page.url(),formCount:await page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true}).count()});await screenshot(page,'focus-refresh-off');await expect(page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true})).toHaveValue('Unsaved manual flag E2E');});\n  69 |\n  70 | test('Browser permission-negative reader cannot enter manual ON or OFF',async({pageAs})=>{const page=await pageAs('COMPANY_VIEW');for(const enabled of [true,false]){await flag(enabled);await page.goto(`/companies/${company}/expenses/manual`);await expect(page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'บันทึกฉบับร่าง',exact:true})).toHaveCount(0);}await screenshot(page,'reader-denied');});"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 532,
+                        "line": 67
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m201\u001b[39m\nReceived: \u001b[31m403\u001b[39m\n\n  65 |\n  66 | test('Browser OFF preserves manual creation inside substitute wizard',async({authedPage:page,api})=>{await flag(false);await page.goto(`/companies/${company}/expenses/substitute-receipts/new`);await page.getByRole('button',{name:'เพิ่มรายการค่าใช้จ่ายใหม่',exact:true}).first().click();const branch=await firstActiveBranch(api,company);await chooseThemedOption(page,page.getByRole('combobox',{name:'สาขาของรายการ',exact:true}),branchOptionName(branch));await screenshot(page,'wizard-off');const create=page.getByRole('button',{name:'สร้างฉบับร่างและใช้รายการนี้',exact:true});note('wizard',{createButtons:await create.count(),text:(await page.locator('main').innerText()).slice(0,5500)});await expect(create).toBeEnabled();});\n> 67 | test('Browser admitted manual form can finish immediately after OFF',async({authedPage:page,api})=>{await page.goto(`/companies/${company}/expenses/manual`);await fillManual(page,api);await flag(false);const saved=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname.endsWith('/expenses'));await page.getByRole('button',{name:'บันทึกฉบับร่าง',exact:true}).click();const response=await saved;note('active-submit',await body(response));await screenshot(page,'active-submit-off');expect(response.status()).toBe(201);});\n     |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ^\n  68 | test('Browser admitted manual form survives OFF focus refresh',async({authedPage:page,api})=>{await page.goto(`/companies/${company}/expenses/manual`);await fillManual(page,api);await flag(false);const refreshed=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/auth/me'));await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await refreshed;await expect(page.getByText(/คุณไม่มีสิทธิ์เข้าถึงส่วนนี้/)).toBeVisible();note('focus-refresh',{url:page.url(),formCount:await page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true}).count()});await screenshot(page,'focus-refresh-off');await expect(page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true})).toHaveValue('Unsaved manual flag E2E');});\n  69 |\n  70 | test('Browser permission-negative reader cannot enter manual ON or OFF',async({pageAs})=>{const page=await pageAs('COMPANY_VIEW');for(const enabled of [true,false]){await flag(enabled);await page.goto(`/companies/${company}/expenses/manual`);await expect(page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'บันทึกฉบับร่าง',exact:true})).toHaveCount(0);}await screenshot(page,'reader-denied');});\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:67:532"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:49:17.852Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "screenshot",
+                      "contentType": "image/png",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-ccdf9-inish-immediately-after-OFF/test-failed-1.png"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-ccdf9-inish-immediately-after-OFF/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-ccdf9-inish-immediately-after-OFF/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-ccdf9-inish-immediately-after-OFF/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                    "column": 532,
+                    "line": 67
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-c38b6eea8a12cd926018",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 67,
+          "column": 5
+        },
+        {
+          "title": "Browser admitted manual form survives OFF focus refresh",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 11,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 13698,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveValue\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true })\nExpected: \u001b[32m\"Unsaved manual flag E2E\"\u001b[39m\nTimeout: 12000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toHaveValue\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true })\u001b[22m\n",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveValue\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true })\nExpected: \u001b[32m\"Unsaved manual flag E2E\"\u001b[39m\nTimeout: 12000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toHaveValue\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true })\u001b[22m\n\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:68:696",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                      "column": 696,
+                      "line": 68
+                    },
+                    "snippet": "  66 | test('Browser OFF preserves manual creation inside substitute wizard',async({authedPage:page,api})=>{await flag(false);await page.goto(`/companies/${company}/expenses/substitute-receipts/new`);await page.getByRole('button',{name:'เพิ่มรายการค่าใช้จ่ายใหม่',exact:true}).first().click();const branch=await firstActiveBranch(api,company);await chooseThemedOption(page,page.getByRole('combobox',{name:'สาขาของรายการ',exact:true}),branchOptionName(branch));await screenshot(page,'wizard-off');const create=page.getByRole('button',{name:'สร้างฉบับร่างและใช้รายการนี้',exact:true});note('wizard',{createButtons:await create.count(),text:(await page.locator('main').innerText()).slice(0,5500)});await expect(create).toBeEnabled();});\n  67 | test('Browser admitted manual form can finish immediately after OFF',async({authedPage:page,api})=>{await page.goto(`/companies/${company}/expenses/manual`);await fillManual(page,api);await flag(false);const saved=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname.endsWith('/expenses'));await page.getByRole('button',{name:'บันทึกฉบับร่าง',exact:true}).click();const response=await saved;note('active-submit',await body(response));await screenshot(page,'active-submit-off');expect(response.status()).toBe(201);});\n> 68 | test('Browser admitted manual form survives OFF focus refresh',async({authedPage:page,api})=>{await page.goto(`/companies/${company}/expenses/manual`);await fillManual(page,api);await flag(false);const refreshed=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/auth/me'));await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await refreshed;await expect(page.getByText(/คุณไม่มีสิทธิ์เข้าถึงส่วนนี้/)).toBeVisible();note('focus-refresh',{url:page.url(),formCount:await page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true}).count()});await screenshot(page,'focus-refresh-off');await expect(page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true})).toHaveValue('Unsaved manual flag E2E');});\n     |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ^\n  69 |\n  70 | test('Browser permission-negative reader cannot enter manual ON or OFF',async({pageAs})=>{const page=await pageAs('COMPANY_VIEW');for(const enabled of [true,false]){await flag(enabled);await page.goto(`/companies/${company}/expenses/manual`);await expect(page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'บันทึกฉบับร่าง',exact:true})).toHaveCount(0);}await screenshot(page,'reader-denied');});\n  71 | test('API admin command OFF replay CAS ON and runtime resolution',async({request,playwright,api})=>{"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                        "column": 696,
+                        "line": 68
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveValue\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true })\nExpected: \u001b[32m\"Unsaved manual flag E2E\"\u001b[39m\nTimeout: 12000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toHaveValue\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true })\u001b[22m\n\n\n  66 | test('Browser OFF preserves manual creation inside substitute wizard',async({authedPage:page,api})=>{await flag(false);await page.goto(`/companies/${company}/expenses/substitute-receipts/new`);await page.getByRole('button',{name:'เพิ่มรายการค่าใช้จ่ายใหม่',exact:true}).first().click();const branch=await firstActiveBranch(api,company);await chooseThemedOption(page,page.getByRole('combobox',{name:'สาขาของรายการ',exact:true}),branchOptionName(branch));await screenshot(page,'wizard-off');const create=page.getByRole('button',{name:'สร้างฉบับร่างและใช้รายการนี้',exact:true});note('wizard',{createButtons:await create.count(),text:(await page.locator('main').innerText()).slice(0,5500)});await expect(create).toBeEnabled();});\n  67 | test('Browser admitted manual form can finish immediately after OFF',async({authedPage:page,api})=>{await page.goto(`/companies/${company}/expenses/manual`);await fillManual(page,api);await flag(false);const saved=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname.endsWith('/expenses'));await page.getByRole('button',{name:'บันทึกฉบับร่าง',exact:true}).click();const response=await saved;note('active-submit',await body(response));await screenshot(page,'active-submit-off');expect(response.status()).toBe(201);});\n> 68 | test('Browser admitted manual form survives OFF focus refresh',async({authedPage:page,api})=>{await page.goto(`/companies/${company}/expenses/manual`);await fillManual(page,api);await flag(false);const refreshed=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/auth/me'));await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await refreshed;await expect(page.getByText(/คุณไม่มีสิทธิ์เข้าถึงส่วนนี้/)).toBeVisible();note('focus-refresh',{url:page.url(),formCount:await page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true}).count()});await screenshot(page,'focus-refresh-off');await expect(page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true})).toHaveValue('Unsaved manual flag E2E');});\n     |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ^\n  69 |\n  70 | test('Browser permission-negative reader cannot enter manual ON or OFF',async({pageAs})=>{const page=await pageAs('COMPANY_VIEW');for(const enabled of [true,false]){await flag(enabled);await page.goto(`/companies/${company}/expenses/manual`);await expect(page.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'บันทึกฉบับร่าง',exact:true})).toHaveCount(0);}await screenshot(page,'reader-denied');});\n  71 | test('API admin command OFF replay CAS ON and runtime resolution',async({request,playwright,api})=>{\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts:68:696"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:49:20.300Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "screenshot",
+                      "contentType": "image/png",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-6a074--survives-OFF-focus-refresh/test-failed-1.png"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-6a074--survives-OFF-focus-refresh/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-6a074--survives-OFF-focus-refresh/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-6a074--survives-OFF-focus-refresh/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-simulation.spec.ts",
+                    "column": 696,
+                    "line": 68
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-a8b222e8ff27ab4e8a92",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 68,
+          "column": 5
+        },
+        {
+          "title": "Browser permission-negative reader cannot enter manual ON or OFF",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 12,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2957,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:49:34.457Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-Bro-e83b8-nnot-enter-manual-ON-or-OFF/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-edf0cadfd141fcdb1422",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 70,
+          "column": 5
+        },
+        {
+          "title": "API admin command OFF replay CAS ON and runtime resolution",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 12,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 208,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:49:37.589Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/test-results/manual-flag-simulation-API-085b3-S-ON-and-runtime-resolution/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "deea2275b6aff081d82a-96bdca9054ae21d4a168",
+          "file": "manual-flag-simulation.spec.ts",
+          "line": 71,
+          "column": 5
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-01T10:47:05.127Z",
+    "duration": 152706.39299999998,
+    "expected": 22,
+    "skipped": 0,
+    "unexpected": 12,
+    "flaky": 0
+  }
+}

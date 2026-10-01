@@ -1,0 +1,591 @@
+{
+  "config": {
+    "argv": [
+      "/opt/homebrew/Cellar/node@22/22.23.2/bin/node",
+      "/private/tmp/manual-flag-e2e-20261001/repo/node_modules/@playwright/test/cli.js",
+      "test",
+      "-c",
+      "playwright.extended.config.ts"
+    ],
+    "configFile": "/private/tmp/manual-flag-e2e-20261001/repo/playwright.extended.config.ts",
+    "rootDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/private/tmp/manual-flag-e2e-20261001/repo/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "manual-flag-extended.spec.ts"
+        ],
+        "timeout": 90000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/tmp/manual-flag-e2e-20261001/evidence/extended-results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "manual-flag-extended.spec.ts",
+      "file": "manual-flag-extended.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "Wizard ON baseline retains create action",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2764,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:52:50.886Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Wizar-9011f-eline-retains-create-action/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6c2ccb2c8c21b73b68d9-72eb299d647e5eada2bd",
+          "file": "manual-flag-extended.spec.ts",
+          "line": 32,
+          "column": 39
+        },
+        {
+          "title": "Wizard OFF target retains create action",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 15302,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeEnabled\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('button', { name: 'สร้างฉบับร่างและใช้รายการนี้', exact: true })\nExpected: enabled\nReceived: disabled\nTimeout:  12000ms\n\nCall log:\n\u001b[2m  - Expect \"toBeEnabled\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: 'สร้างฉบับร่างและใช้รายการนี้', exact: true })\u001b[22m\n\u001b[2m    28 × locator resolved to <button disabled type=\"button\" aria-busy=\"false\" class=\"mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50 ml-auto\">สร้างฉบับร่างและใช้รายการนี้</button>\u001b[22m\n\u001b[2m       - unexpected value \"disabled\"\u001b[22m\n",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeEnabled\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('button', { name: 'สร้างฉบับร่างและใช้รายการนี้', exact: true })\nExpected: enabled\nReceived: disabled\nTimeout:  12000ms\n\nCall log:\n\u001b[2m  - Expect \"toBeEnabled\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: 'สร้างฉบับร่างและใช้รายการนี้', exact: true })\u001b[22m\n\u001b[2m    28 × locator resolved to <button disabled type=\"button\" aria-busy=\"false\" class=\"mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50 ml-auto\">สร้างฉบับร่างและใช้รายการนี้</button>\u001b[22m\n\u001b[2m       - unexpected value \"disabled\"\u001b[22m\n\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts:32:714",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts",
+                      "column": 714,
+                      "line": 32
+                    },
+                    "snippet": "  30 | test.afterAll(async()=>{await pool.end();});\n  31 |\n> 32 | for(const enabled of [true,false])test(`Wizard ${enabled?'ON baseline':'OFF target'} retains create action`,async({authedPage:page,api})=>{await flag(enabled);await page.goto(`/companies/${company}/expenses/substitute-receipts/new`);await page.getByRole('radio',{name:/ยังไม่ได้บันทึกรายการ/}).click();const branch=await firstActiveBranch(api,company);await chooseThemedOption(page,page.getByRole('combobox',{name:'สาขาของรายการ',exact:true}),branchOptionName(branch));const create=page.getByRole('button',{name:'สร้างฉบับร่างและใช้รายการนี้',exact:true});await expect(create).toBeVisible();await screenshot(page,'wizard-'+enabled);note('wizard',{enabled,disabled:await create.isDisabled()});await expect(create).toBeEnabled();});\n     |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ^\n  33 |\n  34 | test('Browser admin starter preset preserves manual OFF before save',async({context})=>{await flag(false);const response=await context.request.post(WEB_BASE_URL+'/api/auth/login',{data:{...SEED_USERS.systemAdmin,remember:false}});expect(response.status()).toBe(200);await ensureBrowserLegalAcceptance(context,'seed-watchdog-system-company');const page=await context.newPage();await page.goto(`/system/partners/${company}`);await page.getByPlaceholder('ค้นหาเมนู…').fill('บันทึกด้วยมือ');const off=page.getByRole('switch',{name:'เปิดเมนู บันทึกด้วยมือ',exact:true});await expect(off).toHaveAttribute('aria-checked','false');await page.getByRole('button',{name:'เริ่มต้น',exact:true}).click();await screenshot(page,'admin-preset');note('preset',{manualTurnsOn:await page.getByRole('switch',{name:'ปิดเมนู บันทึกด้วยมือ',exact:true}).count()});await expect(off).toHaveAttribute('aria-checked','false');});\n  35 |"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts",
+                        "column": 714,
+                        "line": 32
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeEnabled\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('button', { name: 'สร้างฉบับร่างและใช้รายการนี้', exact: true })\nExpected: enabled\nReceived: disabled\nTimeout:  12000ms\n\nCall log:\n\u001b[2m  - Expect \"toBeEnabled\" with timeout 12000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: 'สร้างฉบับร่างและใช้รายการนี้', exact: true })\u001b[22m\n\u001b[2m    28 × locator resolved to <button disabled type=\"button\" aria-busy=\"false\" class=\"mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50 ml-auto\">สร้างฉบับร่างและใช้รายการนี้</button>\u001b[22m\n\u001b[2m       - unexpected value \"disabled\"\u001b[22m\n\n\n  30 | test.afterAll(async()=>{await pool.end();});\n  31 |\n> 32 | for(const enabled of [true,false])test(`Wizard ${enabled?'ON baseline':'OFF target'} retains create action`,async({authedPage:page,api})=>{await flag(enabled);await page.goto(`/companies/${company}/expenses/substitute-receipts/new`);await page.getByRole('radio',{name:/ยังไม่ได้บันทึกรายการ/}).click();const branch=await firstActiveBranch(api,company);await chooseThemedOption(page,page.getByRole('combobox',{name:'สาขาของรายการ',exact:true}),branchOptionName(branch));const create=page.getByRole('button',{name:'สร้างฉบับร่างและใช้รายการนี้',exact:true});await expect(create).toBeVisible();await screenshot(page,'wizard-'+enabled);note('wizard',{enabled,disabled:await create.isDisabled()});await expect(create).toBeEnabled();});\n     |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ^\n  33 |\n  34 | test('Browser admin starter preset preserves manual OFF before save',async({context})=>{await flag(false);const response=await context.request.post(WEB_BASE_URL+'/api/auth/login',{data:{...SEED_USERS.systemAdmin,remember:false}});expect(response.status()).toBe(200);await ensureBrowserLegalAcceptance(context,'seed-watchdog-system-company');const page=await context.newPage();await page.goto(`/system/partners/${company}`);await page.getByPlaceholder('ค้นหาเมนู…').fill('บันทึกด้วยมือ');const off=page.getByRole('switch',{name:'เปิดเมนู บันทึกด้วยมือ',exact:true});await expect(off).toHaveAttribute('aria-checked','false');await page.getByRole('button',{name:'เริ่มต้น',exact:true}).click();await screenshot(page,'admin-preset');note('preset',{manualTurnsOn:await page.getByRole('switch',{name:'ปิดเมนู บันทึกด้วยมือ',exact:true}).count()});await expect(off).toHaveAttribute('aria-checked','false');});\n  35 |\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts:32:714"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:52:54.048Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "screenshot",
+                      "contentType": "image/png",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Wizard-OFF-target-retains-create-action/test-failed-1.png"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Wizard-OFF-target-retains-create-action/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Wizard-OFF-target-retains-create-action/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Wizard-OFF-target-retains-create-action/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts",
+                    "column": 714,
+                    "line": 32
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "6c2ccb2c8c21b73b68d9-d61a031372d398a18410",
+          "file": "manual-flag-extended.spec.ts",
+          "line": 32,
+          "column": 39
+        },
+        {
+          "title": "Browser admin starter preset preserves manual OFF before save",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "timedOut",
+                  "duration": 90122,
+                  "error": {
+                    "message": "\u001b[31mTest timeout of 90000ms exceeded.\u001b[39m",
+                    "stack": "\u001b[31mTest timeout of 90000ms exceeded.\u001b[39m"
+                  },
+                  "errors": [
+                    {
+                      "message": "\u001b[31mTest timeout of 90000ms exceeded.\u001b[39m"
+                    },
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts",
+                        "column": 466,
+                        "line": 34
+                      },
+                      "message": "Error: locator.fill: Test timeout of 90000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByPlaceholder('ค้นหาเมนู…')\u001b[22m\n\n\n  32 | for(const enabled of [true,false])test(`Wizard ${enabled?'ON baseline':'OFF target'} retains create action`,async({authedPage:page,api})=>{await flag(enabled);await page.goto(`/companies/${company}/expenses/substitute-receipts/new`);await page.getByRole('radio',{name:/ยังไม่ได้บันทึกรายการ/}).click();const branch=await firstActiveBranch(api,company);await chooseThemedOption(page,page.getByRole('combobox',{name:'สาขาของรายการ',exact:true}),branchOptionName(branch));const create=page.getByRole('button',{name:'สร้างฉบับร่างและใช้รายการนี้',exact:true});await expect(create).toBeVisible();await screenshot(page,'wizard-'+enabled);note('wizard',{enabled,disabled:await create.isDisabled()});await expect(create).toBeEnabled();});\n  33 |\n> 34 | test('Browser admin starter preset preserves manual OFF before save',async({context})=>{await flag(false);const response=await context.request.post(WEB_BASE_URL+'/api/auth/login',{data:{...SEED_USERS.systemAdmin,remember:false}});expect(response.status()).toBe(200);await ensureBrowserLegalAcceptance(context,'seed-watchdog-system-company');const page=await context.newPage();await page.goto(`/system/partners/${company}?view=package`);await page.getByPlaceholder('ค้นหาเมนู…').fill('บันทึกด้วยมือ');const off=page.getByRole('switch',{name:'เปิดเมนู บันทึกด้วยมือ',exact:true});await expect(off).toHaveAttribute('aria-checked','false');await page.getByRole('button',{name:'เริ่มต้น',exact:true}).click();await screenshot(page,'admin-preset');note('preset',{manualTurnsOn:await page.getByRole('switch',{name:'ปิดเมนู บันทึกด้วยมือ',exact:true}).count()});await expect(off).toHaveAttribute('aria-checked','false');});\n     |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  ^\n  35 |\n  36 | test('Browser OFF new tab of existing session cannot enter manual',async({authedPage:page})=>{await page.goto(`/companies/${company}/expenses/manual`);await expect(page.getByRole('heading',{name:'บันทึกด้วยมือ',exact:true})).toBeVisible();await flag(false);const tab=await page.context().newPage();await tab.goto(`/companies/${company}/expenses/manual?from=bookmark`);await expect(tab.getByText(/คุณไม่มีสิทธิ์เข้าถึงส่วนนี้/)).toBeVisible();await expect(tab.getByRole('textbox',{name:'รายละเอียดค่าใช้จ่าย',exact:true})).toHaveCount(0);await tab.close();});\n  37 |\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts:34:466"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:53:09.743Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "screenshot",
+                      "contentType": "image/png",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-ae1ea-rves-manual-OFF-before-save/test-failed-1.png"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-ae1ea-rves-manual-OFF-before-save/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-ae1ea-rves-manual-OFF-before-save/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-ae1ea-rves-manual-OFF-before-save/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "6c2ccb2c8c21b73b68d9-96e711e4d10b0859a5e0",
+          "file": "manual-flag-extended.spec.ts",
+          "line": 34,
+          "column": 5
+        },
+        {
+          "title": "Browser OFF new tab of existing session cannot enter manual",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2818,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:54:40.306Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-f20c4-session-cannot-enter-manual/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6c2ccb2c8c21b73b68d9-50bb467cd159a092dd95",
+          "file": "manual-flag-extended.spec.ts",
+          "line": 36,
+          "column": 5
+        },
+        {
+          "title": "Browser restored ON focus permits a new manual visit without login",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3480,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:54:43.355Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-0d61c--manual-visit-without-login/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6c2ccb2c8c21b73b68d9-86cebf1dd088239b8f38",
+          "file": "manual-flag-extended.spec.ts",
+          "line": 38,
+          "column": 5
+        },
+        {
+          "title": "Browser manual route requires authentication",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1500,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:54:46.896Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-a5b3b-ute-requires-authentication/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6c2ccb2c8c21b73b68d9-b2ac501f0c3a03a8934a",
+          "file": "manual-flag-extended.spec.ts",
+          "line": 40,
+          "column": 5
+        },
+        {
+          "title": "Browser OFF multi-file intake saves PNG and PDF drafts",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 3542,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:54:48.413Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-Brows-16598-ke-saves-PNG-and-PDF-drafts/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6c2ccb2c8c21b73b68d9-560677be4091cd709cec",
+          "file": "manual-flag-extended.spec.ts",
+          "line": 42,
+          "column": 5
+        },
+        {
+          "title": "API OFF reviewer ready keeps own reviewer endpoint",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 110,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:54:52.037Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-API-O-ee326-keeps-own-reviewer-endpoint/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6c2ccb2c8c21b73b68d9-47a16d1b96d7e24b2297",
+          "file": "manual-flag-extended.spec.ts",
+          "line": 44,
+          "column": 5
+        },
+        {
+          "title": "API OFF real foreign company stays forbidden for staff",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 59,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:54:52.155Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-API-O-b0219-y-stays-forbidden-for-staff/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "6c2ccb2c8c21b73b68d9-da2aa664fa68cf7ffa57",
+          "file": "manual-flag-extended.spec.ts",
+          "line": 46,
+          "column": 5
+        },
+        {
+          "title": "API auth context exposes the feature snapshot required by web entry spec",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 34,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoHaveProperty\u001b[2m(\u001b[22m\u001b[32mpath\u001b[39m\u001b[2m)\u001b[22m\n\nExpected path: \u001b[32m\"entitledFeatureKeys\"\u001b[39m\nReceived path: \u001b[31m[]\u001b[39m\n\nReceived value: \u001b[31m{\"authProvider\": \"watchdog\", \"canSkipCurrentPassword\": false, \"companyId\": \"seed-local-company\", \"displayName\": \"Local Owner\", \"legalAcceptanceRequired\": false, \"membershipId\": \"cmupela0v00b14dk1uysjsepy\", \"mustChangePassword\": false, \"permissions\": [\"procurement.supplier_payment.release\", \"account.session.read\", \"account.password.change\", \"account.identity.link\", \"account.identity.unlink\", \"company.setup.read\", \"company.setup.manage\", \"company.plan.manage\", \"company.settings.view\", \"company.legal_identity.read\", …], \"roleNames\": {\"OWNER\": \"Owner\"}, \"roles\": [\"OWNER\"], \"scopes\": {}, \"userId\": \"seed-local-owner\"}\u001b[39m",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoHaveProperty\u001b[2m(\u001b[22m\u001b[32mpath\u001b[39m\u001b[2m)\u001b[22m\n\nExpected path: \u001b[32m\"entitledFeatureKeys\"\u001b[39m\nReceived path: \u001b[31m[]\u001b[39m\n\nReceived value: \u001b[31m{\"authProvider\": \"watchdog\", \"canSkipCurrentPassword\": false, \"companyId\": \"seed-local-company\", \"displayName\": \"Local Owner\", \"legalAcceptanceRequired\": false, \"membershipId\": \"cmupela0v00b14dk1uysjsepy\", \"mustChangePassword\": false, \"permissions\": [\"procurement.supplier_payment.release\", \"account.session.read\", \"account.password.change\", \"account.identity.link\", \"account.identity.unlink\", \"company.setup.read\", \"company.setup.manage\", \"company.plan.manage\", \"company.settings.view\", \"company.legal_identity.read\", …], \"roleNames\": {\"OWNER\": \"Owner\"}, \"roles\": [\"OWNER\"], \"scopes\": {}, \"userId\": \"seed-local-owner\"}\u001b[39m\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts:48:230",
+                    "location": {
+                      "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts",
+                      "column": 230,
+                      "line": 48
+                    },
+                    "snippet": "  46 | test('API OFF real foreign company stays forbidden for staff',async({apiAs})=>{const staff=await apiAs('STAFF');await flag(false);const read=await body(await staff.get('companies/seed-local-company-2/expenses'));const write=await body(await staff.post('companies/seed-local-company-2/expenses',{data:input('seed-local-branch-2')}));note('real-tenant-boundary',{read,write});expect(read.status).toBe(403);expect(write.status).toBe(403);});\n  47 |\n> 48 | test('API auth context exposes the feature snapshot required by web entry spec',async({api})=>{await flag(false);const current=await me(api);note('auth-feature-snapshot',{present:'entitledFeatureKeys'in current});expect(current).toHaveProperty('entitledFeatureKeys');});\n     |                                                                                                                                                                                                                                      ^\n  49 |"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts",
+                        "column": 230,
+                        "line": 48
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoHaveProperty\u001b[2m(\u001b[22m\u001b[32mpath\u001b[39m\u001b[2m)\u001b[22m\n\nExpected path: \u001b[32m\"entitledFeatureKeys\"\u001b[39m\nReceived path: \u001b[31m[]\u001b[39m\n\nReceived value: \u001b[31m{\"authProvider\": \"watchdog\", \"canSkipCurrentPassword\": false, \"companyId\": \"seed-local-company\", \"displayName\": \"Local Owner\", \"legalAcceptanceRequired\": false, \"membershipId\": \"cmupela0v00b14dk1uysjsepy\", \"mustChangePassword\": false, \"permissions\": [\"procurement.supplier_payment.release\", \"account.session.read\", \"account.password.change\", \"account.identity.link\", \"account.identity.unlink\", \"company.setup.read\", \"company.setup.manage\", \"company.plan.manage\", \"company.settings.view\", \"company.legal_identity.read\", …], \"roleNames\": {\"OWNER\": \"Owner\"}, \"roles\": [\"OWNER\"], \"scopes\": {}, \"userId\": \"seed-local-owner\"}\u001b[39m\n\n  46 | test('API OFF real foreign company stays forbidden for staff',async({apiAs})=>{const staff=await apiAs('STAFF');await flag(false);const read=await body(await staff.get('companies/seed-local-company-2/expenses'));const write=await body(await staff.post('companies/seed-local-company-2/expenses',{data:input('seed-local-branch-2')}));note('real-tenant-boundary',{read,write});expect(read.status).toBe(403);expect(write.status).toBe(403);});\n  47 |\n> 48 | test('API auth context exposes the feature snapshot required by web entry spec',async({api})=>{await flag(false);const current=await me(api);note('auth-feature-snapshot',{present:'entitledFeatureKeys'in current});expect(current).toHaveProperty('entitledFeatureKeys');});\n     |                                                                                                                                                                                                                                      ^\n  49 |\n    at /private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts:48:230"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-01T10:54:52.220Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-API-a-63e88--required-by-web-entry-spec/error-context.md"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-API-a-63e88--required-by-web-entry-spec/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/tmp/manual-flag-e2e-20261001/evidence/extended-tests/manual-flag-extended-API-a-63e88--required-by-web-entry-spec/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/private/tmp/manual-flag-e2e-20261001/repo/e2e/manual-flag-extended.spec.ts",
+                    "column": 230,
+                    "line": 48
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "6c2ccb2c8c21b73b68d9-405128d3d6891f87e4bd",
+          "file": "manual-flag-extended.spec.ts",
+          "line": 48,
+          "column": 5
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-01T10:52:50.582Z",
+    "duration": 121716.127,
+    "expected": 7,
+    "skipped": 0,
+    "unexpected": 3,
+    "flaky": 0
+  }
+}

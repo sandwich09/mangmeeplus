@@ -62,7 +62,6 @@ import {
   InitPaymentSlipUploadUseCase,
 } from '../../application/use-cases/reimbursement-payment-slip.use-case';
 import { ReimbursementEvidenceService } from '../../application/services/reimbursement-evidence.service';
-import { withPaymentSlipAccess } from '../../application/dto/reimbursement.mapper';
 import { ReimbursementWriteQuiesceGuard } from './reimbursement-write-quiesce.guard';
 import { LineReimbursementDraftUseCase } from '../../application/use-cases/line-reimbursement-draft.use-case';
 
@@ -110,12 +109,11 @@ export class ReimbursementController {
       this.evidence.getAttachmentFileName(ctx.companyId, detail.primaryAttachmentId),
       this.evidence.getAttachmentFileNames(ctx.companyId, (detail.lines ?? []).map((line: any) => line.attachmentId ?? '')),
     ]);
-    // The same slip verdict the GET detail carries, for the person who just acted.
-    return withPaymentSlipAccess({
+    return {
       ...detail,
       primaryAttachmentFileName,
       lines: (detail.lines ?? []).map((line: any) => ({ ...line, attachmentFileName: line.attachmentId ? lineFileNames[line.attachmentId] : undefined })),
-    }, ctx);
+    };
   }
 
   // ---- Static routes (declared before :requestId) ----
