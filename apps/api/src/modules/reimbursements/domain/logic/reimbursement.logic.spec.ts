@@ -36,6 +36,7 @@ import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
 import {
   invalidPayoutDestinationField, isReimbursementClaimApprover, looksLikeAccountNumber, maskedPayoutAccount, maskedPayoutAccountNumber,
   normalizePayoutAccountNumber, reimbursementPaymentRule, reimbursementPaymentSlipRequired,
+  REIMBURSEMENT_PAYMENT_METHOD_LABELS, reimbursementPaidNotice, reimbursementPaymentHowText,
 } from '@watchdog-bms/contracts';
 import {
   CASH_PAYOUT_FINGERPRINT,
@@ -574,6 +575,59 @@ describe('payout: the payer statement held against the claim', () => {
     assert.equal(fingerprint.includes(shown) || shown.includes('6789'), false);
     // Not the token a draft's submit uses: one cannot be passed off as the other.
     assert.notEqual(payoutSubmitToken('claim-1', { payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 1, fingerprint, action: 'COPY_DEFAULT' }), shown);
+  });
+});
+
+// Payout spec §17.3 and invariant I4: one payment is said in the same words wherever it is said. The
+// claim page (its payment row and its timeline) and the requester's notice read the method and the
+// account from these two functions, which live in contracts so the web and the API cannot drift.
+describe('payment: the words every surface shares', () => {
+  const account = { payoutKind: 'BANK_ACCOUNT', accountLast4: '1234' };
+  const facts = (overrides: Record<string, unknown> = {}) => ({ paymentMethod: 'BANK_TRANSFER', paidAmount: '1614.5000', currency: 'THB', slipCount: 1, payoutDestination: account, ...overrides });
+
+  it('says where a confirmed transfer went by its last 4 digits, and every other payment by its method', () => {
+    assert.equal(reimbursementPaymentHowText(facts()), 'โอนเข้าบัญชีลงท้าย 1234');
+    assert.equal(reimbursementPaymentHowText(facts({ payoutDestination: { payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' } })), 'โอนเข้าพร้อมเพย์เบอร์ลงท้าย 5678');
+    // The masked form is the shared one, never a second spelling of it.
+    assert.equal(reimbursementPaymentHowText(facts()), `โอนเข้าบัญชี${maskedPayoutAccountNumber('1234')}`);
+    for (const [method, word] of Object.entries(REIMBURSEMENT_PAYMENT_METHOD_LABELS)) {
+      assert.equal(reimbursementPaymentHowText({ paymentMethod: method }), word, method);
+    }
+    assert.deepEqual(REIMBURSEMENT_PAYMENT_METHOD_LABELS, { CASH: 'เงินสด', BANK_TRANSFER: 'โอนเงิน', CHEQUE: 'เช็ค', OTHER: 'อื่น ๆ' });
+    // A method added later, or a name every object carries, is never printed as it came.
+    for (const method of ['A_METHOD_ADDED_LATER', 'constructor', 'toString', '']) assert.equal(reimbursementPaymentHowText({ paymentMethod: method }), '', method);
+  });
+
+  it('builds the requester\'s notice from the payment\'s own facts (spec §17.3)', () => {
+    // The two sentences the spec gives, word for word.
+    assert.equal(reimbursementPaidNotice(facts()), 'โอนเข้าบัญชีลงท้าย 1234 จำนวน 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป');
+    assert.equal(reimbursementPaidNotice(facts({ paymentMethod: 'CASH', payoutDestination: undefined, slipCount: 0 })), 'จ่ายเป็นเงินสด 1,614.50 บาท');
+    const notice = (overrides: Record<string, unknown>) => reimbursementPaidNotice(facts({ payoutDestination: undefined, slipCount: 0, ...overrides }));
+    assert.equal(reimbursementPaidNotice(facts({ payoutDestination: { payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' } })), 'โอนเข้าพร้อมเพย์เบอร์ลงท้าย 5678 จำนวน 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป');
+    // A transfer with no account confirmed (a claim that asked for cash, a legacy claim paid elsewhere).
+    assert.equal(notice({ slipCount: 1 }), 'โอนเงิน จำนวน 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป');
+    assert.equal(notice({ paymentMethod: 'CHEQUE' }), 'จ่ายเป็นเช็ค 1,614.50 บาท');
+    assert.equal(notice({ paymentMethod: 'OTHER' }), 'จ่ายด้วยวิธีอื่น 1,614.50 บาท');
+    // Evidence attached to a payment that needs none is said too: the row on the claim page shows it.
+    assert.equal(notice({ paymentMethod: 'CASH', slipCount: 2 }), 'จ่ายเป็นเงินสด 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป');
+    assert.equal(notice({ paymentMethod: 'A_METHOD_ADDED_LATER' }), 'จ่ายแล้ว 1,614.50 บาท');
+  });
+
+  it('writes the amount as the claim page does: two decimals, grouped, in baht', () => {
+    const amountOf = (paidAmount: string, currency = 'THB') => reimbursementPaidNotice({ paymentMethod: 'CASH', paidAmount, currency, slipCount: 0 });
+    assert.equal(amountOf('500.0000'), 'จ่ายเป็นเงินสด 500.00 บาท');
+    assert.equal(amountOf('1234567.8900'), 'จ่ายเป็นเงินสด 1,234,567.89 บาท');
+    // A legacy four-decimal claim pays, prints and is announced at its satang figure (FIN-01).
+    assert.equal(amountOf('580.0042'), 'จ่ายเป็นเงินสด 580.00 บาท');
+    assert.equal(amountOf('0.5'), 'จ่ายเป็นเงินสด 0.50 บาท');
+    // Another currency keeps its own code rather than being called baht.
+    assert.equal(amountOf('99.5000', 'USD'), 'จ่ายเป็นเงินสด 99.50 USD');
+    // No sentence in baht carries a Latin letter: no code word, no currency code.
+    for (const method of ['CASH', 'BANK_TRANSFER', 'CHEQUE', 'OTHER', 'LATER']) {
+      for (const payoutDestination of [undefined, account, { payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' }]) {
+        for (const slipCount of [0, 1]) assert.doesNotMatch(reimbursementPaidNotice(facts({ paymentMethod: method, payoutDestination, slipCount })), /[A-Za-z_]/);
+      }
+    }
   });
 });
 

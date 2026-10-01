@@ -292,6 +292,53 @@ export type ReimbursementPaymentSummary = {
   methodMismatchReason?: string;
 };
 
+// ---- One payment, the same words on every surface (spec §25.1, invariant I4) ----
+
+/** A payment method in words: the payment row, the claim's timeline and the requester's notice read it from here. */
+export const REIMBURSEMENT_PAYMENT_METHOD_LABELS: Record<ReimbursementPaymentMethod, string> = {
+  CASH: 'เงินสด', BANK_TRANSFER: 'โอนเงิน', CHEQUE: 'เช็ค', OTHER: 'อื่น ๆ',
+};
+
+/** What a payment's words are built from. A payment summary has these, and so has a payment as it is being recorded. */
+export type ReimbursementPaymentFacts = {
+  paymentMethod: string;
+  paidAmount: string;
+  currency: string;
+  slipCount: number;
+  /** The account the payer confirmed the transfer into; absent when none was confirmed. */
+  payoutDestination?: { payoutKind?: string | null; accountLast4?: string | null } | null;
+};
+
+/**
+ * How a payment was made, in one phrase: where a confirmed transfer went ("โอนเข้าบัญชีลงท้าย 1234",
+ * "โอนเข้าพร้อมเพย์เบอร์ลงท้าย 5678"), otherwise the method's own word. Empty for a method there is
+ * no word for: a code is never printed.
+ */
+export function reimbursementPaymentHowText(payment: Pick<ReimbursementPaymentFacts, 'paymentMethod' | 'payoutDestination'>): string {
+  const destination = payment.payoutDestination;
+  if (destination) return `โอนเข้า${destination.payoutKind === 'PROMPTPAY_PHONE' ? 'พร้อมเพย์เบอร์' : 'บัญชี'}${maskedPayoutAccountNumber(destination.accountLast4 ?? '')}`;
+  return Object.hasOwn(REIMBURSEMENT_PAYMENT_METHOD_LABELS, payment.paymentMethod)
+    ? REIMBURSEMENT_PAYMENT_METHOD_LABELS[payment.paymentMethod as ReimbursementPaymentMethod] : '';
+}
+
+/**
+ * What the requester is told when their claim is paid (spec §17.3, AC37): the method actually used,
+ * which is not always the one they asked for (AC21); for a transfer the payer confirmed, the last 4
+ * digits of the account it went into; the amount; and whether a slip is attached, which the notice's
+ * link opens on the claim page. The payment event carries this as a finished sentence, built where
+ * the payment is recorded from the payment's own facts: no template assembles it from raw fields.
+ */
+export function reimbursementPaidNotice(payment: ReimbursementPaymentFacts): string {
+  // "1,614.50 บาท", as the claim page writes it. Another currency keeps its code rather than being called baht.
+  const amount = `${Number(payment.paidAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${
+    payment.currency === 'THB' ? 'บาท' : payment.currency}`;
+  const how = reimbursementPaymentHowText(payment);
+  const paid = payment.payoutDestination || payment.paymentMethod === 'BANK_TRANSFER' ? `${how} จำนวน ${amount}`
+    : payment.paymentMethod === 'OTHER' ? `จ่ายด้วยวิธีอื่น ${amount}`
+      : how ? `จ่ายเป็น${how} ${amount}` : `จ่ายแล้ว ${amount}`;
+  return `${paid}${payment.slipCount > 0 ? ' มีสลิปแนบ แตะเพื่อดูสลิป' : ''}`;
+}
+
 // ---- Who sees a claim's payout details (spec §11.1, owner decision D2) ----
 
 export type ReimbursementPayoutViewer = { userId: string; permissions: readonly string[] };
