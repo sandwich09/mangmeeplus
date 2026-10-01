@@ -4,6 +4,7 @@ import { LINE_AI_EXPENSE_CRITERION_REPLIES } from '@watchdog-bms/contracts';
 import { LAUNCH_SHADOW_READ_FAILED_EVENT, LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { DrainLineLedgerUseCase } from './drain-line-ledger.use-case';
 import { REFUSAL_MESSAGES } from '../../domain/logic/line-ai-formatter.logic';
+import { ASK_PLAN_MANAGER_TH, PLAN_MANAGE_PERMISSION_KEY } from '../../../access-control/domain/logic/plan-manager.logic';
 import { LineAiLedgerInternalController } from '../../presentation/http/line-ai-ledger-internal.controller';
 import { ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 
@@ -794,10 +795,49 @@ describe('drain: a permanent money refusal is an answer, not a retry (§9.4)', (
     assert.match(h.pushes[0]!.text, /ติดต่อเจ้าหน้าที่/);
     assert.doesNotMatch(h.pushes[0]!.text, /ขอเปลี่ยนแพ็กเกจ|ดูแพ็กเกจ/);
     const saved = [...h.deliveryRows.values()][0]!;
+    // This harness reader holds no `company.plan.manage`, and the stored refusal says so (next test).
     assert.deepEqual(saved.authorizationJson.staticRefusal,
-      { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' });
+      { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT', canManagePlan: false });
     assert.equal(saved.completionJson.budgetScope, 'CHAT');
     assert.equal(h.terminalLogs.find((event) => event.msg === 'line.ai.terminal')?.budgetScope, 'CHAT');
+  });
+
+  // Advisor spec §2.2 (Owner 2026-09-30): only a reader who may buy is pointed at a package change;
+  // staff are told who to ask. The reader's right is frozen on the stored refusal, so a re-send after
+  // an unconfirmed push re-derives the same words and passes the integrity check.
+  it('tells a reader who may not buy who to ask, and re-sends those same stored words', async () => {
+    for (const code of ['AI_MONTHLY_BUDGET_EXCEEDED', 'AI_BUDGET_INSUFFICIENT']) {
+      const opts = { claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 10_000 }],
+        turnFn: budgetThrow(code), pushResult: 'failed_other' as 'failed_other' | 'ok' };
+      const h = makeUseCase(opts);
+      // Only the static-refusal integrity check may let the stored notice through again.
+      (h.useCase as any).readEvidence.verifyDelivery = async () => false;
+      await h.useCase.execute(20, NOW);
+      assert.equal([...h.deliveryRows.values()][0].status, 'UNKNOWN');
+      opts.pushResult = 'ok';
+      await h.useCase.execute(20, NOW);
+
+      assert.equal(h.turnRequests.length, 1, 'the stored refusal is re-sent, never recomputed');
+      assert.equal(h.pushes.length, 2);
+      assert.equal(h.pushes[1].text, h.pushes[0].text);
+      assert.ok(h.pushes[0].text.endsWith(`เดือนหน้าเริ่มใหม่ ${ASK_PLAN_MANAGER_TH}`), h.pushes[0].text);
+      assert.doesNotMatch(h.pushes[0].text, /ขอเปลี่ยนแพ็กเกจ|ดูแพ็กเกจ|ซื้อ|โปรโมชั่น/);
+      const saved = [...h.deliveryRows.values()][0]!;
+      assert.deepEqual(saved.authorizationJson.staticRefusal, { code, budgetScope: 'TOTAL', canManagePlan: false });
+      assert.equal(saved.status, 'ACCEPTED');
+    }
+  });
+
+  it('keeps the package-change wording, and the stored refusal as it was, for a reader who may buy', async () => {
+    const h = makeUseCase({ claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 10_000 }],
+      permissions: ['line.ai.query', PLAN_MANAGE_PERMISSION_KEY], turnFn: budgetThrow('AI_MONTHLY_BUDGET_EXCEEDED') });
+    await h.useCase.execute(20, NOW);
+
+    assert.equal(h.pushes[0]!.text, '💚 เครดิต AI ของเดือนนี้หมดแล้วค่ะ น้องมั่งมีจึงยังไม่ได้ตอบข้อความก่อนหน้านี้ให้นะคะ '
+      + 'เดือนหน้าเริ่มใหม่ หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยค่ะ');
+    // No reader field for a buyer: a refusal stored before this rule re-derives to these same words.
+    assert.deepEqual([...h.deliveryRows.values()][0]!.authorizationJson.staticRefusal,
+      { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' });
   });
 
   it('never sends an unsolicited notice for a stale turn or a sub_request', async () => {
