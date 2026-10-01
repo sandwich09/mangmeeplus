@@ -157,7 +157,7 @@ describe('pay step: what the payer is shown (spec §12.1, §15)', () => {
   it('a transfer claim: the box "โอนเข้าบัญชีนี้" with the two names side by side, the masked account, the reveal button and who checked it', () => {
     assert.deepEqual(visible(card(transferClaim, { payStep: true })), [
       'โอนเข้าบัญชีนี้', 'โอนเข้าบัญชี', 'ผู้เบิก', 'สมชาย ใจดี', 'ชื่อบัญชี', 'นาย สมชาย ใจดี', KBANK_LINE, 'แสดงเลขบัญชี',
-      'ตรวจบัญชีแล้วโดย สมหญิง เมื่อ 1 ต.ค. 2569 10:00 น.',
+      'ใช้บัญชีประจำของผู้เบิก', 'ตรวจบัญชีแล้วโดย สมหญิง เมื่อ 1 ต.ค. 2569 10:00 น.',
     ]);
     // The three things the line under the account can say.
     const lineOf = (overrides: object) => visible(card({ ...transferClaim, payout: { ...transferClaim.payout, verifiedByUserId: undefined, verifiedByName: undefined, verifiedAt: undefined, ...overrides } }, { payStep: true })).at(-1);
@@ -182,7 +182,8 @@ describe('pay step: what the payer is shown (spec §12.1, §15)', () => {
 
   it('a PromptPay claim: the phone number masked the same way, with no bank', () => {
     assert.deepEqual(visible(card(promptPayClaim, { payStep: true })), [
-      'โอนเข้าบัญชีนี้', 'โอนเข้าบัญชี', 'ผู้เบิก', 'สมชาย ใจดี', 'ชื่อบัญชี', 'นาย สมชาย ใจดี', 'พร้อมเพย์เบอร์ลงท้าย 5678', 'แสดงเลขบัญชี', 'ยังไม่มีผู้ตรวจบัญชีนี้',
+      'โอนเข้าบัญชีนี้', 'โอนเข้าบัญชี', 'ผู้เบิก', 'สมชาย ใจดี', 'ชื่อบัญชี', 'นาย สมชาย ใจดี', 'พร้อมเพย์เบอร์ลงท้าย 5678', 'แสดงเลขบัญชี',
+      'ผู้เบิกระบุบัญชีนี้สำหรับใบนี้', 'ยังไม่มีผู้ตรวจบัญชีนี้',
     ]);
   });
 
