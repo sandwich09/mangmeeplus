@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
+import { REIMBURSEMENT_PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
 import { cancelledDocumentReasonBox } from '../../../../common/documents/cancelled-document';
 import {
   claimFormLayout,
@@ -496,6 +497,23 @@ describe('prints that predate the payout line are unchanged, byte for byte', () 
       );
     });
   }
+});
+
+// Invariant I4 (final review, leftovers): the form kept its own copy of the payment-method words and printed
+// the stored code for a method it had no word for. It reads the one list the claim page and the notice read.
+describe('the payment method on the printed form', () => {
+  const paidBy = (method: string) => renderReimbursementClaimFormSvg(snapshot({
+    repayment: { paidAt: '2026-07-23T03:00:00.000Z', method, reference: 'TXN-1', recordedByName: 'สุดา การเงิน' },
+  })).toString('utf8');
+
+  it('prints the words the claim page and the notice use for each method, and no code word for one it does not know', () => {
+    for (const [method, words] of Object.entries(REIMBURSEMENT_PAYMENT_METHOD_LABELS)) {
+      assert.ok(paidBy(method).includes(`วิธี ${words} เลขอ้างอิง TXN-1`), method);
+    }
+    const unknown = paidBy('WIRE_TRANSFER');
+    assert.ok(unknown.includes('วิธี - เลขอ้างอิง TXN-1'));
+    assert.equal(unknown.includes('WIRE_TRANSFER'), false);
+  });
 });
 
 // Payout spec §17.1, AC36: the two-signer form of a claim that carries its own receiving account says
