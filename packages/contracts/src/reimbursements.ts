@@ -295,6 +295,19 @@ export type ReimbursementCurrentDesk = {
   names?: string[];
 };
 
+/**
+ * The words for a desk when no person is named. One source for the web ("อยู่ที่ …", the step note, the
+ * timeline) and for the LINE backlog answer, so they cannot name different parties for the same claim.
+ * Payment is whoever holds the pay right: most shops have no finance desk, so "ฝ่ายการเงิน" is said only
+ * of the finance-review step.
+ */
+export const REIMBURSEMENT_DESK_LABELS: Record<ReimbursementCurrentDeskKind, string> = {
+  REQUESTER: 'ผู้ยื่น',
+  APPROVER: 'ผู้มีสิทธิ์อนุมัติ',
+  FINANCE: 'ฝ่ายการเงิน',
+  PAYMENT: 'ผู้มีสิทธิ์บันทึกจ่าย',
+};
+
 // ---- Request ----
 
 export type ReimbursementRequestSummary = {
@@ -420,6 +433,12 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   documentSignedVia?: ReimbursementDocumentSignedVia;
   /** Whether this claim has the finance review step: its frozen policy once submitted, the current policy while a draft. Detail only. */
   financeReviewRequired?: boolean;
+  /**
+   * Who can record this claim's payment, while it waits at the payment desk: the active members the API
+   * would accept the payment from (pay right, branch scope). At most five names, then how many more.
+   * GET detail only; an empty list means nobody can.
+   */
+  paymentDesk?: { names: string[]; moreCount: number };
   missingReceiptReason?: string;
   lines: ReimbursementLineSummary[];
   approvalSteps: ReimbursementApprovalStepSummary[];

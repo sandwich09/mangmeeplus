@@ -1,14 +1,19 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { ForbiddenException } from '@nestjs/common';
 import {
   CreateReimbursementDraftUseCase,
   CancelReimbursementUseCase,
+  GetReimbursementDetailUseCase,
   ReopenRejectedReimbursementUseCase,
   UpdateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
   ReimbursementInternalNotesUseCase,
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
+import { RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
+import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { PLATFORM_ROLE_KEYS, ROLE_GRANTS } from '../../../auth/permission-registry';
 import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
@@ -871,6 +876,144 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     assert.equal(state.calls.duplicates[0].candidateType, 'ATTACHMENT_CHECKSUM');
     assert.equal(state.calls.duplicates[0].candidateAttachmentId, 'att-1');
     assert.match(state.calls.duplicates[0].reason, /line 2/);
+  });
+});
+
+// Spec §18.3 and the owner's consistency rule 2026-10-01: `paymentDesk` names exactly the members the API accepts a
+// payment from on that claim — the resolver's permission, entitlement cut and branch scope, nothing looser.
+describe('claim detail paymentDesk', () => {
+  const PAY = 'reimbursement.payment.record';
+  const day = new Date('2026-10-01T03:00:00.000Z');
+  const waiting = (overrides: Record<string, unknown> = {}) => ({
+    id: 'rb-1', companyId: 'co-1', branchId: 'b1', requestNo: 'RB-202610-000001', requesterUserId: 'staff-1',
+    requesterDisplayNameSnapshot: 'ผู้เบิก', createdByUserId: 'staff-1', reason: 'แท็กซี่', categoryKey: 'travel', amount: '500.0000',
+    currency: 'THB', incurredDate: day, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'UNPAID',
+    duplicateStatus: 'NO_MATCH', receiptRequirementStatus: 'ATTACHED', postingStatus: 'pending', paymentTotalAmount: '0.0000',
+    outstandingAmount: '500.0000', createdAt: day, updatedAt: day, lines: [], approvalSteps: [], payments: [], duplicateCandidates: [],
+    claimSignatures: [], ...overrides,
+  }) as any;
+  const detailEvidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any;
+
+  type Member = {
+    userId: string; displayName: string; permissions: string[]; roleStatus?: string; status?: string; userStatus?: string;
+    branchScopeMode?: string; defaultBranchId?: string; branchIds?: string[];
+  };
+  /** One company in memory, read by the repository (who is listed) and by the permission resolver (who may pay). */
+  function company(members: Member[], entitlements: Array<{ featureKey: string; enabled: boolean }> = []) {
+    const rows = members.map((member) => ({
+      id: `m-${member.userId}`, companyId: 'co-1', userId: member.userId, status: member.status ?? 'ACTIVE',
+      branchScopeMode: member.branchScopeMode ?? 'ALL_BRANCHES', defaultBranchId: member.defaultBranchId ?? null,
+      branchScopes: (member.branchIds ?? []).map((branchId) => ({ branchId })),
+      user: { status: member.userStatus ?? 'ACTIVE', displayName: member.displayName },
+      company: { status: 'ACTIVE' },
+      roles: [{ role: { key: `ROLE_${member.userId}`, status: member.roleStatus ?? 'ACTIVE',
+        permissions: member.permissions.map((key) => ({ permission: { key } })) } }],
+    }));
+    return { client: {
+      companyMembership: {
+        // The repository's own where clause, applied as written.
+        findMany: async ({ where }: any) => rows.filter((row) => row.companyId === where.companyId && row.status === where.status
+          && row.user.status === where.user.status
+          && row.roles.some(({ role }) => role.status === where.roles.some.role.status
+            && role.permissions.some(({ permission }) => permission.key === where.roles.some.role.permissions.some.permission.key))),
+        findFirst: async ({ where }: any) => rows.find((row) => row.userId === where.userId && row.companyId === where.companyId
+          && row.status === where.status) ?? null,
+      },
+      // b1 and b2 are open; b-closed is an archived branch.
+      branch: { findMany: async ({ where }: any) => ['b1', 'b2'].filter((id) => !where.id || where.id.in.includes(id)).map((id) => ({ id })) },
+      companyFeatureEntitlement: { findMany: async () => entitlements },
+    } } as any;
+  }
+  const listed = (prisma: any, branchId: string | null) => new PrismaReimbursementRepository(prisma, {} as any).listPaymentRecorderNames('co-1', branchId);
+  /** The API's own answer: resolve the member as every request does, then record the payment as them. */
+  async function pays(prisma: any, userId: string, branchId: string | null): Promise<boolean> {
+    const claim = waiting({ branchId });
+    const repo = {
+      findRequestById: async () => claim, findPolicy: async () => null, assertClaimPaymentReady: async () => undefined,
+      listOpenDuplicateCandidates: async () => [], getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [],
+      recordPaymentAtomic: async (data: any) => ({ created: true, payment: { id: 'pay-1', ...data, status: 'RECORDED', postingStatus: 'pending' },
+        request: { ...claim, status: 'PAID', paymentStatus: 'PAID' } }),
+    } as any;
+    const useCase = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox,
+      { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202610-000001' }) } as any, { execute: async () => undefined } as any, detailEvidence);
+    try {
+      const access = await new PrismaPermissionResolverRepository(prisma).resolveForUser({ userId, companyId: 'co-1' });
+      const paid = await useCase.execute(ctx({ userId, ...access }), claim.id, { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: day.toISOString() });
+      return paid.status === 'PAID';
+    } catch (error) {
+      if (error instanceof ForbiddenException) return false;
+      throw error;
+    }
+  }
+
+  const approverRole = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];
+  const members: Member[] = [
+    { userId: 'owner', displayName: 'เจ้าของ', permissions: [...approverRole, PAY] },
+    { userId: 'b1-selected', displayName: 'สมศรี', permissions: [PAY], branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b1'] },
+    { userId: 'b1-default', displayName: 'วิชัย', permissions: [PAY], branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'b1' },
+    { userId: 'b2-selected', displayName: 'มานี', permissions: [PAY], branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b2'] },
+    { userId: 'b2-default', displayName: 'ปิติ', permissions: [PAY], branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'b2' },
+    // An approver role saved before the pay right was added: approves, cannot pay.
+    { userId: 'approver-only', displayName: 'ชูใจ', permissions: approverRole },
+    { userId: 'disabled-role', displayName: 'วีระ', permissions: [PAY], roleStatus: 'DISABLED' },
+    { userId: 'suspended', displayName: 'ปรีชา', permissions: [PAY], status: 'SUSPENDED' },
+    // Every branch this member covers is archived: the resolver refuses them outright.
+    { userId: 'closed-branch', displayName: 'สุดา', permissions: [PAY], branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b-closed'] },
+  ];
+  const nameOf = Object.fromEntries(members.map((member) => [member.userId, member.displayName]));
+
+  it('lists a member exactly when the API accepts their payment: listed can pay, unlisted is refused', async () => {
+    const expected: Array<[string, string[]]> = [
+      ['b1', ['เจ้าของ', 'วิชัย', 'สมศรี']],
+      ['b2', ['เจ้าของ', 'ปิติ', 'มานี']],
+      ['b-closed', ['เจ้าของ']],
+    ];
+    // The runoff rule keeps the pay right while the feature is switched off: the list and the API follow it together.
+    for (const entitlements of [[], [{ featureKey: 'reimbursement', enabled: false }]]) {
+      const prisma = company(members, entitlements);
+      for (const [branchId, names] of expected) {
+        assert.deepEqual(await listed(prisma, branchId), names, `claim branch ${branchId}`);
+        for (const member of members) {
+          assert.equal(await pays(prisma, member.userId, branchId), names.includes(nameOf[member.userId]!),
+            `${member.userId} on claim branch ${branchId}`);
+        }
+      }
+    }
+    // A disabled user cannot sign in, so the resolver is never asked: not listed.
+    assert.deepEqual(await listed(company([{ userId: 'left', displayName: 'ลาออก', permissions: [PAY], userStatus: 'DISABLED' }]), 'b1'), []);
+    // A legacy claim with no branch is in every scope, so every holder the resolver admits is named. Recording its
+    // payment stops on the missing branch for all of them alike, before any right is looked at.
+    const prisma = company(members);
+    assert.deepEqual(await listed(prisma, null), ['เจ้าของ', 'ปิติ', 'มานี', 'วิชัย', 'สมศรี']);
+    await assert.rejects(pays(prisma, 'owner', null), /กรุณาเลือกสาขาของรายการก่อนบันทึก/);
+    assert.equal(await pays(prisma, 'approver-only', null), false);
+  });
+
+  it('adds at most five names and the rest as a count, only while the claim waits for payment', async () => {
+    const payers = ['กมล', 'ขวัญ', 'จิตรา', 'ชาติ', 'ณัฐ', 'ดวงใจ', 'ธนา'];
+    const asked: Array<[string, unknown]> = [];
+    const repoFor = (claim: any, names: string[]) => ({
+      findRequestById: async () => claim, findPolicy: async () => null, findActiveApproverUserIds: async () => new Set(),
+      getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
+      listPaymentRecorderNames: async (companyId: string, branchId: unknown) => { asked.push([companyId, branchId]); return names; },
+    }) as any;
+    const read = (claim: any, names: string[]) => new GetReimbursementDetailUseCase(repoFor(claim, names), detailEvidence)
+      .execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
+
+    assert.deepEqual((await read(waiting(), payers)).paymentDesk, { names: payers.slice(0, 5), moreCount: 2 });
+    assert.deepEqual(asked, [['co-1', 'b1']], 'the payers of the claim\'s own branch');
+    assert.deepEqual((await read(waiting(), ['กมล'])).paymentDesk, { names: ['กมล'], moreCount: 0 });
+    // Nobody can pay: an empty list, which the page reports as such.
+    assert.deepEqual((await read(waiting(), [])).paymentDesk, { names: [], moreCount: 0 });
+    // Approved and still being routed to payment waits at the same desk.
+    assert.deepEqual((await read(waiting({ status: 'APPROVED' }), ['กมล'])).paymentDesk, { names: ['กมล'], moreCount: 0 });
+    // Any other desk, and a finished claim: no list, and no extra read.
+    asked.length = 0;
+    for (const overrides of [{ status: 'DRAFT' }, { status: 'PENDING_APPROVAL' }, { status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' },
+      { status: 'APPROVED', financeReviewStatus: 'PENDING' }, { status: 'PAID', paymentStatus: 'PAID' }, { status: 'CANCELLED' }]) {
+      assert.equal('paymentDesk' in await read(waiting(overrides), payers), false, overrides.status);
+    }
+    assert.deepEqual(asked, []);
   });
 });
 

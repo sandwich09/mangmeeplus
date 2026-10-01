@@ -12,7 +12,9 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import type { ReservedDocumentNumberRecord } from '../../data-model-core/domain/models/document-sequence.model';
-import { branchScopeWhere, isBranchInScope, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+import { branchScopeWhere, isBranchInScope, resolveBranchIds, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+import { loadEntitledFeatureKeys } from '../../employee-access/application/entitlement.helper';
+import { filterPermissionsByEntitlement } from '../../employee-access/domain/logic/feature-gate.logic';
 import { resolveTransactionBranchId, requireTransactionBranchId } from '../../data-model-core/application/services/transaction-branch';
 import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 import { assertActiveExpenseBranch, expenseRelatedToUserWhere } from '../../expenses/infrastructure/prisma-expense.repository';
@@ -235,6 +237,40 @@ export class PrismaReimbursementRepository {
       select: { userId: true },
     });
     return new Set(rows.map((row) => row.userId));
+  }
+
+  /**
+   * Display names of the members the API would accept a payment from on a claim of this branch, for the
+   * claim page to say who it waits for. The rule is the permission resolver's, applied to every member in
+   * one pass: an ACTIVE membership and user, an ACTIVE role holding the pay right, the entitlement cut,
+   * and a branch scope (over ACTIVE branches) that covers the claim.
+   */
+  async listPaymentRecorderNames(companyId: string, branchId?: string | null): Promise<string[]> {
+    const key = 'reimbursement.payment.record';
+    const [members, branches, entitled] = await Promise.all([
+      this.prisma.client.companyMembership.findMany({
+        where: {
+          companyId, status: 'ACTIVE', user: { status: 'ACTIVE' },
+          roles: { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key } } } } } },
+        },
+        select: {
+          branchScopeMode: true, defaultBranchId: true,
+          branchScopes: { select: { branchId: true } },
+          user: { select: { displayName: true } },
+        },
+      }),
+      this.prisma.client.branch.findMany({ where: { companyId, status: 'ACTIVE' }, select: { id: true } }),
+      loadEntitledFeatureKeys(this.prisma, companyId),
+    ]);
+    if (filterPermissionsByEntitlement([key], entitled).length === 0) return [];
+    const activeBranchIds = new Set(branches.map((branch) => branch.id));
+    return members.filter((member) => {
+      const selected = member.branchScopes.map((scope) => scope.branchId).filter((id) => activeBranchIds.has(id));
+      // The resolver refuses a SELECTED_BRANCHES member with no active branch outright.
+      if (member.branchScopeMode === 'SELECTED_BRANCHES' && selected.length === 0) return false;
+      const branchIds = resolveBranchIds(member.branchScopeMode, selected, member.defaultBranchId ?? undefined);
+      return isBranchInScope(branchIds === undefined ? {} : { branchIds }, branchId);
+    }).map((member) => member.user.displayName).sort((a, b) => a.localeCompare(b, 'th'));
   }
 
   /** Letterhead for the printed claim form — same precedence as the substitute receipt. */

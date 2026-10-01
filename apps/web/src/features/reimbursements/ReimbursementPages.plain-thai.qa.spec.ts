@@ -266,6 +266,26 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
   });
 });
 
+// The same claim as `paid`, on the default route: approved, then paid by whoever holds the pay right.
+const noFinance = { ...paid, financeReviewStatus: 'NOT_REQUIRED', financeReviewRequired: false, financeReviewedByName: undefined, financeReviewedAt: undefined };
+const waiting = { ...noFinance, status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', documentSignedVia: null, payments: [], signatures: [], signedCopies: [],
+  currentDesk: { kind: 'PAYMENT' }, paymentDesk: { names: ['สมชาย', 'วิชัย'], moreCount: 0 } };
+
+describe('a claim with no finance-review step never says ฝ่ายการเงิน (spec §18.3, AC39)', () => {
+  it('names who records the payment in the claim timeline instead', () => {
+    const texts = visible(detailSections(waiting, ids.requester, []));
+    // Before: "กำลังรอฝ่ายการเงินบันทึกจ่าย", in a shop that has no finance desk.
+    assert.ok(texts.includes('กำลังรอ สมชาย หรือ วิชัย บันทึกจ่าย'));
+    assert.ok(visible(detailSections({ ...waiting, paymentDesk: undefined }, ids.requester, [])).includes('กำลังรอผู้มีสิทธิ์บันทึกจ่าย'));
+    for (const [state, detail] of [['draft', { ...draft, financeReviewRequired: false }], ['waiting for payment', waiting], ['paid', noFinance]] as const) {
+      for (const text of visible(detailSections(detail, ids.requester, []))) assert.doesNotMatch(text, /ฝ่ายการเงิน/u, state);
+    }
+    // A claim that does pass finance review keeps its finance rows.
+    assert.ok(visible(detailSections(paid, ids.requester, [])).includes('ฝ่ายการเงินตรวจแล้ว โดย สมศรี การเงิน'));
+    assert.ok(visible(detailSections({ ...draft, financeReviewRequired: true }, ids.requester, [])).includes('รอฝ่ายการเงินตรวจ'));
+  });
+});
+
 const MACHINE_TOKENS: Array<[string, RegExp]> = [ // ReimbursementDraftActionPage.qa.spec.ts's set
   ['cuid/uuid/hash-like id', /\b[a-z0-9]{20,}\b|[0-9a-f]{8}-[0-9a-f]{4}-/iu], ['enum or code', /[A-Z_]{4,}/u],
   ['field path', /\w+\.\d+\.\w+|\b[a-zA-Z]\w*\.(?:\d|[a-z]\w*\b)/u], ['camelCase key', /\b[a-z]+[A-Z]\w*\b/u], ['snake_case code', /\b[a-z]+_[a-z_]+\b/u],
@@ -281,6 +301,7 @@ describe('no customer-visible claim page text carries a machine token (Owner rul
       ['detail: LINE-made draft', detailSections(draft, ids.requester, ['reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own'])],
       ['detail: paid, signed on paper', detailSections(paid, ids.requester, ['reimbursement.payment.void', 'reimbursement.finance_review'])],
       ['detail: enums added later', detailSections(later, ids.approver, [])],
+      ['detail: waiting for payment, payers named', detailSections(waiting, ids.approver, [])],
       ['stale-approval dialog', staleDialog({ ...draft, status: 'PENDING_APPROVAL', amount: '1234.5000', lineCount: 1 }, { ...paid, status: 'PENDING_APPROVAL' })],
       ['stale-approval dialog: enums added later, LINE-made lines', staleDialog({ ...later, lineCount: 1 }, { ...later, lines: draft.lines })],
       ['create form: new claim', renderToStaticMarkup(createPage())],

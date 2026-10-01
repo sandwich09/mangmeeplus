@@ -5,7 +5,7 @@ import { apiErrorMessage, translateApiError } from '@/common/api/api-error-messa
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import {
   CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
-  canUploadSignedCopy, canVoidRecordedPayment, claimSignatureSlots, eligibleSignatureRoles, reimbursementOwnActions,
+  canUploadSignedCopy, canVoidRecordedPayment, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
   type ClaimSignatureRole,
 } from './reimbursements.model';
 
@@ -329,11 +329,11 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
     return [...rows, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
   }
 
+  // The row the claim waits at is the journey's own step, so the two never disagree; and the finance row
+  // exists only for a claim that has that step (spec §18.3: no "ฝ่ายการเงิน" on a claim without one).
+  const withFinance = claimHasFinanceStep(detail);
+  const at = journeyStepAt(detail, withFinance);
   const financeDone = detail?.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && !!detail?.financeReviewedAt;
-  const waitingFinance = status === 'FINANCE_REVIEW';
-  // NOT_REQUIRED on a claim already past approval means the policy path went straight to payment.
-  const financeSkipped = detail?.financeReviewStatus === 'NOT_REQUIRED'
-    && ['READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID'].includes(status);
   if (financeDone) {
     rows.push({
       key: 'finance',
@@ -341,16 +341,21 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
       label: detail.financeReviewedByName ? `ฝ่ายการเงินตรวจแล้ว โดย ${detail.financeReviewedByName}` : 'ฝ่ายการเงินตรวจแล้ว',
       date: detail.financeReviewedAt,
     });
-  } else if (!financeSkipped) {
-    rows.push({ key: 'finance', state: waitingFinance ? 'current' : 'future', label: waitingFinance ? 'กำลังรอฝ่ายการเงินตรวจ' : 'รอฝ่ายการเงินตรวจ' });
+  } else if (withFinance) {
+    rows.push({ key: 'finance', state: at === 'finance' ? 'current' : 'future', label: at === 'finance' ? 'กำลังรอฝ่ายการเงินตรวจ' : 'รอฝ่ายการเงินตรวจ' });
   }
 
   const paid = (detail?.payments ?? []).find((p: any) => p.status === 'RECORDED');
-  const waitingPayment = status === 'READY_FOR_PAYMENT' || status === 'PARTIALLY_PAID';
   rows.push(paid
     ? { key: 'payment', state: 'done', label: paid.paidByName ? `จ่ายแล้ว โดย ${paid.paidByName}` : 'จ่ายแล้ว', date: paid.paidAt }
-    : { key: 'payment', state: waitingPayment ? 'current' : 'future', label: waitingPayment ? 'กำลังรอฝ่ายการเงินบันทึกจ่าย' : 'รอบันทึกจ่าย' });
+    : { key: 'payment', state: at === 'payment' ? 'current' : 'future', label: at === 'payment' ? `กำลัง${waitingForPayer(detail)}` : 'รอบันทึกจ่าย' });
   return rows;
+}
+
+/** "รอ สมศรี หรือ วิชัย บันทึกจ่าย" when the detail names who can pay; otherwise the pool, which already says it. */
+function waitingForPayer(detail: any): string {
+  const payers = paymentDeskText(detail?.paymentDesk);
+  return payers ? `รอ ${payers} บันทึกจ่าย` : `รอ${CURRENT_DESK_LABELS.PAYMENT}`;
 }
 
 // ---- Journey steps (หน้า journey ต่อคำขอเบิกหนึ่งใบ — spec §5, §6) ----
@@ -501,9 +506,16 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
           ? 'ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล จึงจะบันทึกจ่ายได้'
           : 'รอผู้บันทึกจ่ายตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้'}`;
       } else {
-        if (payable && permissions.includes('reimbursement.payment.record')) actions.push('pay');
-        note = [actions.length > 0 ? 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง' : 'รอผู้มีสิทธิ์บันทึกจ่าย', duplicate]
-          .filter(Boolean).join(' · ');
+        const canPay = permissions.includes('reimbursement.payment.record');
+        if (payable && canPay) actions.push('pay');
+        // Spec §18.3 and §13.4: whoever cannot pay reads who can, and the approver of this claim is told so plainly.
+        const payers = paymentDeskText(detail?.paymentDesk);
+        const waiting = detail?.paymentDesk && !payers
+          ? 'ยังไม่มีผู้ที่บันทึกจ่ายใบของสาขานี้ได้ ขอให้เจ้าของกิจการบันทึกจ่ายหรือเพิ่มสิทธิ์'
+          : !canPay && approval?.decisionByUserId === userId
+            ? `คุณอนุมัติใบนี้แล้ว แต่บัญชีของคุณยังไม่มีสิทธิ์บันทึกจ่าย ${payers ? `ผู้ที่บันทึกจ่ายได้: ${payers} ` : ''}ถ้าต้องการจ่ายเอง ขอให้เจ้าของกิจการเพิ่มสิทธิ์บันทึกจ่ายให้บทบาทของคุณ`
+            : waitingForPayer(detail);
+        note = [actions.length > 0 ? 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง' : waiting, duplicate].filter(Boolean).join(' · ');
       }
     } else if (key === 'document' && detail?.documentSignedVia) {
       // Done in the system or on paper (A4); the latest declared scan names who attached it and when.

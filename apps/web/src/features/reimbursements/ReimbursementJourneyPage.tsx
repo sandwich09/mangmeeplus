@@ -226,7 +226,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const duplicateResolutionBlocked = detail.duplicateStatus === 'POSSIBLE_DUPLICATE'
     && !permissions.includes('reimbursement.duplicate.resolve');
   const recordedPayment = (detail.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
-  const desk = currentDeskText(detail.currentDesk);
+  const desk = currentDeskText(detail.currentDesk, detail.paymentDesk);
   const handlers: Partial<Record<JourneyAction, () => void>> = {
     // No approver at all: the answer names who fixes it and, for a policy manager, links there.
     submit: () => { setApproverHelp(null); void act('submit', () => submitReimbursement(companyId, requestId), 'ส่งขออนุมัติเรียบร้อยแล้ว',
