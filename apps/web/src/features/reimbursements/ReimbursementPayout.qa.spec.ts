@@ -417,6 +417,13 @@ describe('"บัญชีรับเงินคืนของฉัน" and 
     // The viewer's own employee page uses their own path; anyone else's goes through the employee-edit path.
     assert.match(employee, /<MemberPayoutAccountCard/);
     assert.match(employee, /canEdit=\{!branchScopeReadOnly\}/);
+    // Not for a draft, invited, suspended or disabled employee: the notice the account owner is owed
+    // reaches active members only, and the server refuses the save for the same reason.
+    assert.match(employee, /const employeeActive = draftActivated \|\| editingEmployee\?\.status === 'ACTIVE';/);
+    assert.match(employee, /\{editingEmployee && employeeActive && viewerPermissions\.includes\('reimbursement\.create'\) && \(\s+<MemberPayoutAccountCard/);
+    assert.equal(employee.match(/<MemberPayoutAccountCard/g)?.length, 1, 'the one place an employee account is set');
+    assert.equal(translateApiError('payout_account_member_not_active'),
+      'ตั้งบัญชีรับเงินคืนแทนได้เฉพาะเมื่อเจ้าของบัญชียังใช้งานระบบอยู่ เพราะระบบต้องแจ้งเจ้าของบัญชีทุกครั้ง เปิดใช้งานสมาชิกคนนี้ก่อน หรือให้เจ้าของบัญชีตั้งเองเมื่อเข้าใช้งานได้แล้ว');
   });
 });
 
@@ -455,7 +462,7 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
       .map((overrides) => logic.payoutAccountFormError(form(overrides))!.text),
     logic.claimPayoutSubmitBlock({ status: 'DRAFT', payout: { followsDefault: true, notReadyReason: 'payout_method_required' } })!,
     ...['payout_method_required', 'payout_destination_required', 'payout_destination_invalid', 'payout_verification_required', 'payout_destination_changed',
-      'payout_reveal_denied', 'payout_account_not_set', 'payout_account_edit_denied', 'payout_member_not_found'].map((code) => translateApiError(code) ?? code),
+      'payout_reveal_denied', 'payout_account_not_set', 'payout_account_edit_denied', 'payout_member_not_found', 'payout_account_member_not_active'].map((code) => translateApiError(code) ?? code),
   ];
 
   it('carries no machine token in any state, including a method the API may add later', () => {

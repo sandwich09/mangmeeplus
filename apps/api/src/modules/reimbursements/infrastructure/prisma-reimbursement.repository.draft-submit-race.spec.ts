@@ -1302,8 +1302,9 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
       ['saved as default', created.updatedAt.getTime(), '5678']);
   });
 
-  // Payout impact audit M6: an account can be set for an employee who is still a draft, and
-  // "ลบพนักงานที่ยังกรอกไม่เสร็จ" hard-deletes the membership. The account must go with it, not block it.
+  // Payout impact audit M6: "ลบพนักงานที่ยังกรอกไม่เสร็จ" hard-deletes the membership, and whatever
+  // account row hangs off it must go with it, not block it. (The use case no longer sets an account
+  // for a member who is not active; the row here is written directly to prove the cascade.)
   it('lets a draft employee be deleted together with the payout account set for them', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     const db = clients[0]!;
@@ -1332,8 +1333,13 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     if (!reachable) return t.skip('no database reachable');
     const db = clients[0]!;
     assert.deepEqual(await repos[0]!.findPayoutMember(companyId, requester), {
-      displayName: requester, hasEmployeeProfile: false, managesPeople: false, allBranches: true, branchIds: [],
+      displayName: requester, membershipStatus: 'ACTIVE', hasEmployeeProfile: false, managesPeople: false, allBranches: true, branchIds: [],
     });
+    // The status is the membership's own, the one the notification writer filters recipients by.
+    for (const status of ['DRAFT', 'INVITED', 'SUSPENDED', 'DISABLED', 'ACTIVE'] as const) {
+      await db.companyMembership.update({ where: { companyId_userId: { companyId, userId: requester } }, data: { status } });
+      assert.equal((await repos[0]!.findPayoutMember(companyId, requester))?.membershipStatus, status);
+    }
     assert.equal(await repos[0]!.findPayoutMember(companyId, outsider), null, 'not a member of this company');
     const approverMembership = await db.companyMembership.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: approver } }, select: { id: true } });
     // A plain custom role does not manage people; one that carries the employee-edit grant does, whatever it is called.

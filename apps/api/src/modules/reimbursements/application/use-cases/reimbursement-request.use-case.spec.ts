@@ -137,7 +137,7 @@ type RepoOptions = {
   /** Payout: by default the fixture claim asks for cash, so a test about something else needs no account; this leaves it with no choice. */
   noDefaultPayout?: boolean;
   /** Payout: members an employee-data editor can look up (`findPayoutMember`). */
-  payoutMembers?: Record<string, { displayName: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[]; managesPeople: boolean }>;
+  payoutMembers?: Record<string, { displayName: string; membershipStatus?: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[]; managesPeople: boolean }>;
 };
 
 /** Captures the outbox rows a two-phase repository method writes inside its transaction. */
@@ -308,7 +308,8 @@ function fakeRepo(options: RepoOptions = {}) {
       if (before) await onPersisted(fakeTx(calls.outbox), before);
       return !!before;
     },
-    findPayoutMember: async (_companyId: string, userId: string) => options.payoutMembers?.[userId] ?? null,
+    // A member of the fixture is ACTIVE unless a case says otherwise.
+    findPayoutMember: async (_companyId: string, userId: string) => (options.payoutMembers?.[userId] ? { membershipStatus: 'ACTIVE', ...options.payoutMembers[userId] } : null),
     findClaimPayout: (claim: any) => readClaimPayout(payoutDb, claim),
     findDraftDefaultPayout: (claim: any) => readDraftDefaultPayout(payoutDb, claim),
     findClaimPayoutSecret: (companyId: string, requestId: string, version: number) => readClaimPayoutSecret(payoutDb, companyId, requestId, version),
@@ -1342,6 +1343,41 @@ describe('payout: someone else sets a member account (owner decision 2026-10-01)
     assert.equal((await world.payouts.getOwn(ctx())).account?.setByOtherName, 'วิภา');
     await world.payouts.setOwn(ctx(), KBANK);
     assert.equal((await world.payouts.getOwn(ctx())).account?.setByOtherName, undefined);
+  });
+
+  // Security review M1: the notice is the owner's condition for letting anyone else set an account,
+  // and the notification writer makes recipients of ACTIVE members only. A draft, invited, suspended
+  // or disabled member would never be told, so nobody sets their account for them: not a manager,
+  // not an admin, not the owner.
+  it('refuses a member who is not active, whoever asks, and tells an active member', async () => {
+    const editRights = ['access.employee.read', 'access.employee.update', 'reimbursement.create'];
+    const editors = [managerCtx(), ctx({ userId: 'admin-1', roles: ['ADMIN'], permissions: editRights }), ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: editRights })];
+    for (const membershipStatus of ['DRAFT', 'INVITED', 'SUSPENDED', 'DISABLED']) {
+      for (const editor of editors) {
+        const label = `${editor.roles[0]} → ${membershipStatus}`;
+        const world = payoutWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus } } });
+        assert.equal((await world.payouts.getForMember(editor, 'staff-1')).canEdit, false, `${label}: no button`);
+        await assert.rejects(world.payouts.setForMember(editor, 'staff-1', KBANK), (error: any) => {
+          assert.equal(error.getStatus(), 409, label);
+          assert.match(error.message, /^payout_account_member_not_active$/, label);
+          return true;
+        }, label);
+        // The same through "save as the requester's default" on a claim filed for them.
+        const preparer = ctx({ ...editor, permissions: [...editRights, 'reimbursement.finance_review', 'reimbursement.update_own_draft'] });
+        await assert.rejects(world.create.execute(preparer, claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK, saveAsDefault: true } })), /^ConflictException: payout_account_member_not_active$/, label);
+        // Each attempt is on record with its reason; nothing was written and no notice went into the void.
+        assert.deepEqual(world.audits.map((row) => [row.action, row.result, row.metadataJson.reason]),
+          Array(2).fill(['reimbursement.payout_account.set', 'DENIED', 'target_not_active']), label);
+        assert.deepEqual([world.state.payoutTables.accounts.length, world.notifications.length], [0, 0], label);
+      }
+    }
+    // The same member once active: the account is set, and they are the one and only person told.
+    for (const editor of editors) {
+      const world = payoutWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus: 'ACTIVE' } } });
+      assert.equal((await world.payouts.getForMember(editor, 'staff-1')).canEdit, true);
+      assert.equal((await world.payouts.setForMember(editor, 'staff-1', KBANK)).account?.accountLast4, '6789');
+      assert.deepEqual(world.notifications.map((notice) => notice.recipientUserIds), [['staff-1']]);
+    }
   });
 
   it('refuses another company, an owner with no employee record, another branch, and a company without reimbursements', async () => {

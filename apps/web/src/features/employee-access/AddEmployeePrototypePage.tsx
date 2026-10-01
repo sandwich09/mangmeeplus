@@ -816,8 +816,10 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
 
         {/* One card beside the wizard, saved on its own: where this employee's claims are paid back.
             Offered only where the company uses reimbursements; the server holds a branch-limited
-            editor to employees inside their own branches, the same reading as the branch picker above. */}
-        {editingEmployee && viewerPermissions.includes('reimbursement.create') && (
+            editor to employees inside their own branches, the same reading as the branch picker above.
+            Not for a draft or any other employee who is not active yet: the account owner is told of
+            every change, and that notice reaches active members only (the server refuses the same). */}
+        {editingEmployee && employeeActive && viewerPermissions.includes('reimbursement.create') && (
           <MemberPayoutAccountCard
             companyId={companyId}
             {...(!editingSelf && { memberUserId: editingEmployee.userId })}

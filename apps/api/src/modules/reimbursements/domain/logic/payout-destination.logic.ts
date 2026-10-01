@@ -94,14 +94,17 @@ export function isBlankPayoutDestination(input: Partial<PayoutDestinationInput> 
 /** Roles that manage people by name; a custom role counts when it carries a people-managing grant. */
 export const PAYOUT_PEOPLE_MANAGER_ROLE_KEYS: readonly string[] = ['OWNER', 'SYSTEM_ADMIN', 'COMPANY_VIEW', 'ADMIN', 'MANAGER'];
 
-export type PayoutAccountEditRefusal = 'target_manages_people' | 'outside_editor_branch_scope';
+export type PayoutAccountEditRefusal = 'target_not_active' | 'target_manages_people' | 'outside_editor_branch_scope';
 
 /**
  * Whether an employee-data editor may set SOMEONE ELSE's default payout account (owner direction
  * 2026-10-01). The account decides where a person's money goes, and the employee-edit right reaches
  * the whole company, so on its own it would let a manager redirect a peer's, an admin's or another
  * branch's reimbursements. Hence:
- *  - an owner or an admin may set any employee's;
+ *  - nobody sets the account of a member who is not ACTIVE: the account owner must be told of every
+ *    such change, and a notice reaches active members only (a draft, invited, suspended or disabled
+ *    member would never see it);
+ *  - an owner or an admin may set any active employee's;
  *  - any other holder of the right (a manager, HR, a custom role) may set it only for members who do
  *    not manage people themselves, and only for members wholly inside the editor's own branches.
  * Null means allowed. The account owner is told of every such change (see the use case).
@@ -110,8 +113,9 @@ export function payoutAccountEditRefusal(input: {
   editorRoles: readonly string[];
   /** Undefined: the editor holds every branch. */
   editorBranchIds?: readonly string[];
-  target: { managesPeople: boolean; allBranches: boolean; branchIds: readonly string[] };
+  target: { membershipStatus: string; managesPeople: boolean; allBranches: boolean; branchIds: readonly string[] };
 }): PayoutAccountEditRefusal | null {
+  if (input.target.membershipStatus !== 'ACTIVE') return 'target_not_active';
   if (input.editorRoles.some((role) => role === 'OWNER' || role === 'ADMIN')) return null;
   if (input.target.managesPeople) return 'target_manages_people';
   const branches = input.editorBranchIds;

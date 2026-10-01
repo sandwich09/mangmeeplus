@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { maskedPayoutAccount } from '@watchdog-bms/contracts';
 import type {
   MemberPayoutAccountResponse,
@@ -137,7 +137,7 @@ export class MemberPayoutAccountUseCase {
   /** Why this editor may not set this member's account, or null: the right itself, then the rule about whose. */
   private editRefusal(
     ctx: RequestContext,
-    member: { managesPeople: boolean; allBranches: boolean; branchIds: string[] },
+    member: { membershipStatus: string; managesPeople: boolean; allBranches: boolean; branchIds: string[] },
   ): string | null {
     // A company without reimbursements has no payout accounts to manage.
     if (!ctx.permissions.includes('access.employee.update') || ctx.entitlementDeniedPermissions?.['reimbursement.create']) return 'no_employee_edit_right';
@@ -159,6 +159,9 @@ export class MemberPayoutAccountUseCase {
         targetType: 'member_payout_account', targetId: userId, requestId: ctx.requestId,
         result: 'DENIED', riskLevel: 'HIGH', metadataJson: { accountUserId: userId, reason },
       });
+      // A member who is not active is nobody's to set, the owner's included: the notice below would
+      // reach no one. Said as its own refusal, so the screen can tell the editor what to do instead.
+      if (reason === 'target_not_active') throw new ConflictException('payout_account_member_not_active');
       throw new ForbiddenException('payout_account_edit_denied');
     }
   }

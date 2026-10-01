@@ -1146,12 +1146,12 @@ export class PrismaReimbursementRepository {
    * peer's or a superior's account).
    */
   async findPayoutMember(companyId: string, userId: string): Promise<{
-    displayName: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[]; managesPeople: boolean;
+    displayName: string; membershipStatus: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[]; managesPeople: boolean;
   } | null> {
     const row = await this.prisma.client.companyMembership.findFirst({
       where: { companyId, userId },
       select: {
-        branchScopeMode: true, defaultBranchId: true, branchScopes: { select: { branchId: true } },
+        status: true, branchScopeMode: true, defaultBranchId: true, branchScopes: { select: { branchId: true } },
         employeeAccessProfile: { select: { id: true } }, user: { select: { displayName: true } },
         roles: { select: { role: { select: { key: true, permissions: { select: { permission: { select: { key: true } } } } } } } },
       },
@@ -1159,6 +1159,8 @@ export class PrismaReimbursementRepository {
     if (!row) return null;
     return {
       displayName: row.user.displayName,
+      // The status the notification writer filters recipients by: only an ACTIVE member is ever told.
+      membershipStatus: row.status,
       hasEmployeeProfile: !!row.employeeAccessProfile,
       // The same reading of "people-managing role" as suspending or deleting an employee uses.
       managesPeople: row.roles.some(({ role }) => PAYOUT_PEOPLE_MANAGER_ROLE_KEYS.includes(role.key)
