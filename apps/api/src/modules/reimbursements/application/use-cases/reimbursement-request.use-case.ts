@@ -34,12 +34,12 @@ import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './
 import { approvalDecisionActions } from './reimbursement-approval.use-case';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
-import { isSerializationFailure, uniqueConstraintFields } from '../../../../common/database/prisma-error';
 import {
   defaultChangedSinceSubmit, hasPayoutSnapshot, payoutRevealGroup, payoutSubmitToken,
   type PayoutRevealGroup, type SubmitPayoutColumns,
 } from '../../domain/logic/payout-destination.logic';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
+import { lostWriteRace } from '../services/reimbursement-projection-reconciler.service';
 import {
   validateRequestFields,
   validateLines,
@@ -893,19 +893,6 @@ function cancellationReasonFor(req: ReimbursementRequestRecord, supplied?: strin
   return reason;
 }
 
-/**
- * A failure that means another party was voiding the same expense records at the same moment:
- * PostgreSQL rolled this attempt back (a serialization conflict), two voids reserved their reversal
- * number or wrote the one reversal a record may have in the same instant (a unique conflict), or the
- * record was voided between this attempt's read and its write.
- */
-export function lostCancellationRace(error: unknown): boolean {
-  if (isSerializationFailure(error) || uniqueConstraintFields(error)) return true;
-  const response = (error as { getResponse?: () => unknown }).getResponse?.();
-  const code = response && typeof response === 'object' ? (response as { code?: unknown }).code : undefined;
-  return code === 'expense_changed' || code === 'posting_state_changed';
-}
-
 /** `code` or `code:periodKey`: the shape the web translates by its prefix, like the payment's closed period. */
 function cancellationBlockedError(blocker: ExpenseVoidBlocker): ConflictException {
   return new ConflictException(`reimbursement_cancellation_${blocker.code}${'periodKey' in blocker ? `:${blocker.periodKey}` : ''}`);
@@ -1040,7 +1027,7 @@ export class CancelReimbursementUseCase {
       // Someone else (a second press, another canceller, the scheduled reconciler) finished the same
       // cancellation meanwhile: the claim is cancelled, which is what was asked.
       if (latest?.status === 'CANCELLED') return toRequestSummary(latest);
-      if (!lostCancellationRace(error)) throw error;
+      if (!lostWriteRace(error)) throw error;
       // This attempt lost to another party on the same cancellation, and nothing of it was kept: the
       // cancellation was withdrawn, or is being finished right now. Said as that, not as a server error.
       throw new ConflictException(latest?.cancellationPendingAt ? 'reimbursement_cancellation_in_progress' : 'reimbursement_cancellation_intent_changed');

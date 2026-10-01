@@ -69,6 +69,8 @@ import {
   isSelfApproval,
   matchesApproverRole,
   frozenApprovalAuthority,
+  pendingProjectionIntent,
+  type PendingProjectionIntent,
   validatePaymentRecording,
   validateRequestFields,
   deriveHeaderFromLines,
@@ -1294,7 +1296,8 @@ export class PrismaReimbursementRepository {
     const rows = await (this.prisma.client as any).reimbursementRequest.findMany({
       where: { cancellationPendingAt: { not: null }, status: { notIn: ['CANCELLED', 'VOIDED'] } },
       include: { lines: { orderBy: { lineNo: 'asc' } } },
-      orderBy: { cancellationPendingAt: 'asc' },
+      // Newest first, like the projection intents: one a person has to unblock never holds the head of the list.
+      orderBy: { cancellationPendingAt: 'desc' },
       take: limit,
     });
     return rows.flatMap((row: any) => row.cancellationPendingByUserId && row.cancellationPendingReason
@@ -1981,6 +1984,9 @@ export class PrismaReimbursementRepository {
         if (!step || step.requestSnapshotHash !== request.approvalSnapshotHash) {
           throw new ConflictException('reimbursement_projection_decision_changed');
         }
+        // Whoever carries the decision out, at once or as a retry: the claim must still be what was
+        // approved. Nothing is built for a claim whose content moved since (stale_approval_snapshot).
+        this.assertApprovalSnapshot(request, request.approvalSnapshotHash);
       } else if (data.decisionKind === 'FINANCE') {
         if (request.status !== 'FINANCE_REVIEW'
           || request.financeReviewStatus !== 'APPROVED_FOR_PAYMENT'
@@ -2129,20 +2135,31 @@ export class PrismaReimbursementRepository {
     }));
   }
 
-  async listPendingProjectionIntents(limit = 100): Promise<Array<{
-    request: ReimbursementRequestRecord;
-    kind: 'MANAGER' | 'FINANCE' | 'POLICY';
-    actorUserId: string;
-    approvalStepId?: string;
-  }>> {
+  /**
+   * The claims whose durable decision the system has yet to carry out (`pendingProjectionIntent`),
+   * at most `limit` of them, the most recently decided first.
+   *
+   * Newest first: a claim that failed a moment ago most likely failed in passing and is repaired on
+   * this run, while one that cannot be repaired (its line falls in a closed accounting period, say)
+   * drops down the list as new ones arrive instead of holding a place at its head for good.
+   * ponytail: no attempt counter. Past `limit` claims that cannot complete, the oldest of them stop
+   * being retried by the run; add a counter with a backoff if the failure log ever shows that many.
+   */
+  async listPendingProjectionIntents(limit = 100): Promise<Array<PendingProjectionIntent & { request: ReimbursementRequestRecord }>> {
     const [managerRows, financeRows, policyRows] = await Promise.all([
       (this.prisma.client as any).reimbursementRequest.findMany({
-        where: { status: 'PENDING_APPROVAL', currentApprovalStepId: { not: null }, cancellationPendingAt: null },
+        // Decided: no step is waiting any more. Asked of the database, not filtered afterwards:
+        // every claim still waiting for its approver is PENDING_APPROVAL too, and a page of those
+        // would otherwise crowd the decided ones out of the first `limit` rows.
+        where: {
+          status: 'PENDING_APPROVAL', currentApprovalStepId: { not: null }, cancellationPendingAt: null,
+          approvalSteps: { some: { status: 'APPROVED' }, none: { status: 'PENDING' } },
+        },
         include: {
           lines: { orderBy: { lineNo: 'asc' } },
           approvalSteps: { where: { status: 'APPROVED' } },
         },
-        orderBy: { updatedAt: 'asc' },
+        orderBy: { updatedAt: 'desc' },
         take: limit,
       }),
       (this.prisma.client as any).reimbursementRequest.findMany({
@@ -2154,43 +2171,42 @@ export class PrismaReimbursementRepository {
         },
         // The approved steps too: the replayed ready-to-pay event names the claim's approver.
         include: { lines: { orderBy: { lineNo: 'asc' } }, approvalSteps: { where: { status: 'APPROVED' } } },
-        orderBy: { updatedAt: 'asc' },
+        orderBy: { updatedAt: 'desc' },
         take: limit,
       }),
       (this.prisma.client as any).reimbursementRequest.findMany({
         where: { status: 'APPROVED', currentApprovalStepId: null, cancellationPendingAt: null },
         include: { lines: { orderBy: { lineNo: 'asc' } } },
-        orderBy: { updatedAt: 'asc' },
+        orderBy: { updatedAt: 'desc' },
         take: limit,
       }),
     ]);
-    const intents: Array<{
-      request: ReimbursementRequestRecord;
-      kind: 'MANAGER' | 'FINANCE' | 'POLICY';
-      actorUserId: string;
-      approvalStepId?: string;
-    }> = [];
-    for (const row of managerRows) {
-      const request = this.toRequest(row);
-      const step = request.approvalSteps?.find((candidate) => candidate.id === request.currentApprovalStepId);
-      if (step?.status === 'APPROVED' && step.decisionByUserId) {
-        intents.push({ request, kind: 'MANAGER', actorUserId: step.decisionByUserId, approvalStepId: step.id });
-      }
+    return [...managerRows, ...financeRows, ...policyRows]
+      .map((row: any) => this.toRequest(row))
+      .flatMap((request) => {
+        // This list is read across every company. A claim whose frozen policy cannot be read (the
+        // parser throws, as it does on every other read of that claim) is left out of it, so one
+        // such row never stops the run for everyone else's claims.
+        try {
+          const intent = pendingProjectionIntent(request);
+          return intent ? [{ request, ...intent }] : [];
+        } catch {
+          return [];
+        }
+      })
+      .sort((a, b) => b.request.updatedAt.getTime() - a.request.updatedAt.getTime())
+      .slice(0, limit);
+  }
+
+  /** Whether every line of the claim has its confirmed expense record: what the payment gate asks. */
+  async areClaimProjectionsReady(request: ReimbursementRequestRecord): Promise<boolean> {
+    try {
+      await this.assertClaimProjectionsReady(this.prisma.client as any, request);
+      return true;
+    } catch (error) {
+      if (error instanceof ConflictException) return false;
+      throw error;
     }
-    for (const row of financeRows) {
-      const request = this.toRequest(row);
-      if (request.financeReviewedByUserId) {
-        intents.push({ request, kind: 'FINANCE', actorUserId: request.financeReviewedByUserId });
-      }
-    }
-    for (const row of policyRows) {
-      const request = this.toRequest(row);
-      const snapshot = parseReimbursementPolicySnapshot(request.approvalPolicySnapshotJson);
-      if (snapshot && !snapshot.requiresApproval && !snapshot.financeReviewRequired) {
-        intents.push({ request, kind: 'POLICY', actorUserId: request.submittedByUserId ?? request.requesterUserId });
-      }
-    }
-    return intents.sort((a, b) => a.request.updatedAt.getTime() - b.request.updatedAt.getTime()).slice(0, limit);
   }
 
   private async assertClaimProjectionsReady(

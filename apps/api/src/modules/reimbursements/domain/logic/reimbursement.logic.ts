@@ -21,6 +21,7 @@ import type {
 // service, repository) and expenses never depends back — this is a pure Decimal constant,
 // so the "no Nest / Prisma" rule above still holds.
 import { SETTLE_EPSILON } from '../../../expenses/domain/logic/expense-totals.logic';
+import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
 
 // ---- Money helpers ----
 
@@ -408,6 +409,55 @@ const ALLOWED_TRANSITIONS: Record<ReimbursementRequestStatus, ReimbursementReque
 
 export function canTransition(from: ReimbursementRequestStatus, to: ReimbursementRequestStatus): boolean {
   return (ALLOWED_TRANSITIONS[from] ?? []).includes(to);
+}
+
+// ---- A decision the system has yet to carry out ----
+
+export type PendingProjectionIntent = {
+  /** MANAGER: a person approved it. FINANCE: finance passed it for payment. POLICY: it needed no approval. */
+  kind: 'MANAGER' | 'FINANCE' | 'POLICY';
+  /** Who made the decision the claim waits on (for POLICY: who sent the claim). */
+  actorUserId: string;
+  approvalStepId?: string;
+};
+
+/**
+ * The durable decision a claim waits for the system to carry out, if any. A decision is committed
+ * first and the claim's expense records are built and confirmed after it, so a failure in between
+ * leaves the claim decided but not moved on (audit B4). One definition for the scheduled reconciler,
+ * for the "ดำเนินการต่อ" call and for the flag on the claim detail, so the three cannot disagree on
+ * which claims are in that state.
+ *
+ * Needs the claim's approval steps (the approved ones at least). A claim that is being cancelled is
+ * never one: the cancellation comes first.
+ */
+export function pendingProjectionIntent(request: {
+  status: ReimbursementRequestStatus;
+  financeReviewStatus?: ReimbursementFinanceReviewStatus;
+  financeReviewedByUserId?: string | null;
+  currentApprovalStepId?: string | null;
+  cancellationPendingAt?: Date | null;
+  requesterUserId: string;
+  submittedByUserId?: string | null;
+  approvalPolicySnapshotJson?: unknown;
+  approvalSteps?: ReadonlyArray<{ id: string; status: ReimbursementApprovalStepStatus; decisionByUserId?: string | null }>;
+}): PendingProjectionIntent | undefined {
+  if (request.cancellationPendingAt) return undefined;
+  if (request.status === 'PENDING_APPROVAL') {
+    const step = request.approvalSteps?.find((candidate) => candidate.id === request.currentApprovalStepId);
+    return step?.status === 'APPROVED' && step.decisionByUserId
+      ? { kind: 'MANAGER', actorUserId: step.decisionByUserId, approvalStepId: step.id } : undefined;
+  }
+  if (request.status === 'FINANCE_REVIEW') {
+    return request.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && request.financeReviewedByUserId
+      ? { kind: 'FINANCE', actorUserId: request.financeReviewedByUserId } : undefined;
+  }
+  if (request.status === 'APPROVED' && !request.currentApprovalStepId) {
+    const snapshot = parseReimbursementPolicySnapshot(request.approvalPolicySnapshotJson);
+    return snapshot && !snapshot.requiresApproval && !snapshot.financeReviewRequired
+      ? { kind: 'POLICY', actorUserId: request.submittedByUserId ?? request.requesterUserId } : undefined;
+  }
+  return undefined;
 }
 
 // ---- Current desk (อยู่ที่ใคร) ----

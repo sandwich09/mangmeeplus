@@ -1,7 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { ConflictException, Logger } from '@nestjs/common';
 import { ReimbursementProjectionReconcilerService } from './reimbursement-projection-reconciler.service';
 import { ListReimbursementApproverOptionsUseCase } from '../use-cases/reimbursement-policy.use-case';
+
+// The pass logs a line per claim; the cases that read those lines capture them themselves.
+Logger.overrideLogger(false);
 
 /**
  * Freeze in place (owner decision 2026-08-04). This reconciler selects intents across ALL tenants
@@ -24,6 +28,7 @@ function makeService(entitlements: Array<{ featureKey: string; enabled: boolean 
   const repo = {
     listPendingProjectionIntents: async () => [{ request, kind: 'MANAGER' as const, actorUserId: 'mgr-1', approvalStepId: 'step-1' }],
     listPendingCancellationIntents: async () => [{ request, actorUserId: 'mgr-1', reason: 'ยกเลิก' }],
+    findCancellationBlocker: async () => null,
     findPolicy: async () => { calls.push('findPolicy'); return null; },
     listClaimProjections: async () => { calls.push('listClaimProjections'); return []; },
     completeApprovalProjectionAtomic: async () => { calls.push('completeApprovalProjectionAtomic'); },
@@ -48,7 +53,7 @@ describe('ReimbursementProjectionReconcilerService — freeze in place', () => {
       { featureKey: 'expenses', enabled: true },
     ]);
     const result = await service.execute();
-    assert.deepEqual(result, { completed: [], failed: [] });
+    assert.deepEqual(result, { completed: [], failed: [], blocked: [] });
     assert.deepEqual(calls, [], 'no projection, no status flip, no audit row, no outbox event');
   });
 
@@ -61,7 +66,7 @@ describe('ReimbursementProjectionReconcilerService — freeze in place', () => {
       { featureKey: 'expenses', enabled: false },
     ]);
     const result = await service.execute();
-    assert.deepEqual(result, { completed: [], failed: [] });
+    assert.deepEqual(result, { completed: [], failed: [], blocked: [] });
     assert.deepEqual(calls, [], 'no claim-born expense is materialized into a frozen family');
   });
 
@@ -188,5 +193,203 @@ describe('ReimbursementProjectionReconcilerService replay of a claim that needed
     const resent = replay('FINANCE', [approverRole('MANAGER', ['mgr-1', 'mgr-2'])], null, steps, decided(4));
     await resent.service.execute();
     assert.equal(resent.ready().approverRecipientUserIds, undefined);
+  });
+});
+
+/**
+ * Audit B4. The reconciler was only ever run by hand; it now runs on a schedule, and the same code
+ * carries out one claim for the person who presses "ดำเนินการต่อ". So a pass has to get past whatever
+ * it meets: one claim, or one company, that cannot be repaired never stops the others; a cancellation
+ * a person has to unblock is left to them; and every claim it repairs or fails to repair is one line
+ * in the log.
+ */
+describe('ReimbursementProjectionReconcilerService scheduled pass', () => {
+  const claim = (id: string, companyId = 'co-1', over: Record<string, unknown> = {}) => ({
+    id, companyId, requestNo: id, requesterUserId: 'staff-1', branchId: 'br-1', amount: '100.0000', currency: 'THB',
+    status: 'PENDING_APPROVAL', currentApprovalStepId: `step-${id}`,
+    approvalSteps: [{ id: `step-${id}`, status: 'APPROVED', decisionByUserId: 'mgr-1' }], ...over,
+  }) as any;
+
+  function pass(options: {
+    decided?: any[];
+    cancelling?: Array<{ request: any; reason?: string }>;
+    /** What stops carrying out a claim's decision, by claim id. */
+    projectionFails?: Record<string, unknown>;
+    /** What stops voiding a claim's expense record, by claim id. */
+    voidFails?: Record<string, unknown>;
+    /** Companies whose entitlement read fails. */
+    entitlementFails?: string[];
+    /** Companies whose family is switched off. */
+    frozenCompanies?: string[];
+    blockers?: Record<string, unknown>;
+    /** The claim as a later read finds it, by claim id. Default: unchanged. */
+    latest?: Record<string, any>;
+  }) {
+    const calls: string[] = [];
+    const lines: Array<{ level: 'log' | 'warn'; line: any }> = [];
+    // A claim on the cancellation list holds its intent, as the repository's query guarantees.
+    const cancelling = (options.cancelling ?? []).map((entry) => ({ ...entry, request: { cancellationPendingAt: new Date('2026-10-01T02:00:00.000Z'), ...entry.request } }));
+    const all = [...(options.decided ?? []), ...cancelling.map((entry) => entry.request)];
+    const repo = {
+      listPendingProjectionIntents: async () => (options.decided ?? []).map((request) => ({ request, kind: 'MANAGER' as const, actorUserId: 'mgr-1', approvalStepId: `step-${request.id}` })),
+      listPendingCancellationIntents: async () => cancelling.map(({ request, reason }) => ({ request, actorUserId: 'staff-1', reason: reason ?? 'ลูกค้ายกเลิกงาน' })),
+      findPolicy: async () => null,
+      findRequestById: async (_companyId: string, id: string) => (options.latest && id in options.latest ? options.latest[id] : all.find((request) => request.id === id) ?? null),
+      findCancellationBlocker: async (request: any) => options.blockers?.[request.id] ?? null,
+      listClaimProjections: async (_companyId: string, id: string) => [{ id: `exp-${id}`, sourceReimbursementLineId: `line-${id}` }],
+      assertCancellationPending: async () => undefined,
+      completeApprovalProjectionAtomic: async (input: any) => { calls.push(`ready:${input.requestId}`); },
+      completeCancellationAtomic: async (input: any) => { calls.push(`cancelled:${input.requestId}`); },
+    } as any;
+    const projections = { execute: async (_ctx: unknown, request: any) => {
+      if (options.projectionFails && request.id in options.projectionFails) throw options.projectionFails[request.id];
+      calls.push(`project:${request.id}`);
+    } } as any;
+    const voidExpense = { executeForReimbursement: async (_ctx: unknown, expenseId: string) => {
+      const id = expenseId.replace('exp-', '');
+      if (options.voidFails && id in options.voidFails) throw options.voidFails[id];
+      calls.push(`void:${id}`);
+    } } as any;
+    const prisma = { client: { companyFeatureEntitlement: { findMany: async ({ where }: any) => {
+      calls.push(`entitlement:${where.companyId}`);
+      if (options.entitlementFails?.includes(where.companyId)) throw new Error('entitlement store unavailable');
+      return options.frozenCompanies?.includes(where.companyId) ? [{ featureKey: 'reimbursement', enabled: false }, { featureKey: 'expenses', enabled: true }] : [];
+    } } } } as any;
+    const service = new ReimbursementProjectionReconcilerService(repo, projections, { log: async () => undefined } as any, voidExpense, prisma,
+      { resolveWouldBeApproverUserIds: async () => [] } as any);
+    (service as any).logger = { log: (line: any) => lines.push({ level: 'log', line }), warn: (line: any) => lines.push({ level: 'warn', line }) };
+    return { service, calls, lines, work: () => calls.filter((call) => !call.startsWith('entitlement:')) };
+  }
+
+  it('goes on past a claim that cannot be repaired and past a company whose entitlement read fails', async () => {
+    const { service, work } = pass({
+      decided: [claim('a', 'co-broken'), claim('b', 'co-1'), claim('c', 'co-1')],
+      cancelling: [{ request: claim('d', 'co-broken') }, { request: claim('e', 'co-1') }, { request: claim('f', 'co-2') }],
+      entitlementFails: ['co-broken'],
+      projectionFails: { b: new ConflictException({ code: 'accounting_period_locked', message: 'Accounting period 2026-09 is not open.' }) },
+      voidFails: { e: new Error('connection reset') },
+    });
+
+    const result = await service.execute();
+
+    assert.deepEqual(result.completed, ['c', 'f'], 'the claims after a failing one are still carried out');
+    assert.deepEqual(result.failed.map((row) => row.requestId), ['a', 'b', 'd', 'e']);
+    assert.deepEqual(work(), ['project:c', 'ready:c', 'void:f', 'cancelled:f'], 'nothing is done for a claim that failed, and nothing is skipped after it');
+  });
+
+  it('reads a company\'s entitlement once per pass, however many of its claims wait', async () => {
+    const { service, calls } = pass({ decided: [claim('a'), claim('b')], cancelling: [{ request: claim('c') }, { request: claim('d', 'co-2') }] });
+    await service.execute();
+    assert.deepEqual(calls.filter((call) => call.startsWith('entitlement:')), ['entitlement:co-1', 'entitlement:co-2']);
+  });
+
+  it('leaves a cancellation a person has to unblock to that person: no void is tried for it', async () => {
+    const { service, work, lines } = pass({
+      cancelling: [
+        { request: claim('short'), reason: 'พอ' },
+        { request: claim('closed') },
+        { request: claim('fine') },
+      ],
+      blockers: { closed: { code: 'accounting_period_locked', periodKey: '2026-09' } },
+    });
+
+    const result = await service.execute();
+
+    assert.deepEqual(result, { completed: ['fine'], failed: [], blocked: ['short', 'closed'] });
+    assert.deepEqual(work(), ['void:fine', 'cancelled:fine'], 'a blocked cancellation would fail the same way on every pass, and burn a journal number each time');
+    assert.deepEqual(lines.map((entry) => entry.line.requestId), ['fine'], 'a claim left to a person is neither repaired nor failed');
+  });
+
+  it('writes one structured line per claim it repairs or fails to repair, with a stable code and no free text', async () => {
+    const { service, lines } = pass({
+      decided: [claim('ok'), claim('locked'), claim('crashed')],
+      cancelling: [{ request: claim('gone', 'co-2') }],
+      projectionFails: {
+        locked: new ConflictException({ code: 'accounting_period_locked', message: 'Accounting period 2026-09 is not open; reopen it before confirming.' }),
+        crashed: new Error('connect ECONNREFUSED 10.0.3.7:5432'),
+      },
+    });
+
+    await service.execute();
+
+    assert.deepEqual(lines, [
+      { level: 'log', line: { msg: 'reimbursement.reconcile.repaired', companyId: 'co-1', requestId: 'ok', kind: 'MANAGER' } },
+      { level: 'warn', line: { msg: 'reimbursement.reconcile.failed', companyId: 'co-1', requestId: 'locked', kind: 'MANAGER', code: 'accounting_period_locked' } },
+      { level: 'warn', line: { msg: 'reimbursement.reconcile.failed', companyId: 'co-1', requestId: 'crashed', kind: 'MANAGER', code: 'RECONCILE_FAILED' } },
+      { level: 'log', line: { msg: 'reimbursement.reconcile.repaired', companyId: 'co-2', requestId: 'gone', kind: 'CANCELLATION' } },
+    ]);
+  });
+
+  it('does not call it a failure when a person finished, cancelled or is carrying out the same claim at that moment', async () => {
+    const changed = () => new ConflictException('reimbursement_projection_decision_changed');
+    const { service, lines } = pass({
+      decided: [claim('finished'), claim('being-cancelled'), claim('racing')],
+      cancelling: [{ request: claim('withdrawn') }, { request: claim('closed-by-person') }],
+      projectionFails: {
+        finished: changed(), 'being-cancelled': new ConflictException('reimbursement_cancellation_pending'),
+        // Two confirmations of the same expense record: PostgreSQL rolls one back.
+        racing: Object.assign(new Error('could not serialize access'), { code: 'P2034' }),
+      },
+      voidFails: { withdrawn: new ConflictException('reimbursement_cancellation_intent_changed'), 'closed-by-person': new ConflictException({ code: 'expense_changed' }) },
+      latest: {
+        finished: claim('finished', 'co-1', { status: 'READY_FOR_PAYMENT', currentApprovalStepId: undefined }),
+        'being-cancelled': claim('being-cancelled', 'co-1', { cancellationPendingAt: new Date() }),
+        withdrawn: claim('withdrawn', 'co-1', { cancellationPendingAt: undefined }),
+        'closed-by-person': claim('closed-by-person', 'co-1', { status: 'CANCELLED' }),
+      },
+    });
+
+    const result = await service.execute();
+
+    assert.deepEqual(result, { completed: [], failed: [], blocked: [] });
+    // The one claim another party is still writing is named, so a "race" that repeats on every pass is seen.
+    assert.deepEqual(lines, [{ level: 'log', line: { msg: 'reimbursement.reconcile.busy', companyId: 'co-1', requestId: 'racing', kind: 'MANAGER', code: 'P2034' } }]);
+  });
+
+  describe('one claim, for the person who presses ดำเนินการต่อ', () => {
+    it('carries out the decision the claim holds, and does nothing for a claim that holds none', async () => {
+      const waiting = pass({ decided: [claim('a')] });
+      assert.equal(await waiting.service.repair('co-1', 'a'), true);
+      assert.deepEqual(waiting.work(), ['project:a', 'ready:a']);
+      assert.deepEqual(waiting.lines.map((entry) => entry.line), [{ msg: 'reimbursement.reconcile.repaired', companyId: 'co-1', requestId: 'a', kind: 'MANAGER', by: 'person' }]);
+
+      // Pressed again after it went through, a claim still waiting for its approver, one being cancelled, one that is gone.
+      for (const [id, latest] of [
+        ['done', claim('done', 'co-1', { status: 'READY_FOR_PAYMENT', currentApprovalStepId: undefined })],
+        ['undecided', claim('undecided', 'co-1', { approvalSteps: [{ id: 'step-undecided', status: 'PENDING' }] })],
+        ['cancelling', claim('cancelling', 'co-1', { cancellationPendingAt: new Date() })],
+        ['gone', null],
+      ] as const) {
+        const idle = pass({ latest: { [id]: latest } });
+        assert.equal(await idle.service.repair('co-1', id), false, id);
+        assert.deepEqual(idle.calls, [], `${id}: nothing is read or written past the claim itself`);
+      }
+    });
+
+    it('says what stopped it, so the person reads why', async () => {
+      const locked = new ConflictException({ code: 'accounting_period_locked', message: 'closed' });
+      const { service, work } = pass({ decided: [claim('a')], projectionFails: { a: locked } });
+      await assert.rejects(service.repair('co-1', 'a'), (error) => error === locked);
+      assert.deepEqual(work(), []);
+    });
+
+    it('answers "being carried out" when the scheduled pass holds the same claim, and "nothing left" once that pass finished it', async () => {
+      const lost = Object.assign(new Error('could not serialize access'), { code: 'P2034' });
+      let reads = 0;
+      const racing = pass({ decided: [claim('a')], projectionFails: { a: lost } });
+      await assert.rejects(racing.service.repair('co-1', 'a'), /reimbursement_resume_in_progress/);
+
+      const beaten = pass({ decided: [claim('b')], projectionFails: { b: new ConflictException('reimbursement_projection_decision_changed') } });
+      const find = (beaten.service as any).repo.findRequestById;
+      (beaten.service as any).repo.findRequestById = async (companyId: string, id: string) =>
+        (++reads === 1 ? find(companyId, id) : claim('b', 'co-1', { status: 'READY_FOR_PAYMENT', currentApprovalStepId: undefined }));
+      assert.equal(await beaten.service.repair('co-1', 'b'), false);
+    });
+
+    it('leaves a frozen company\'s claim exactly as it is', async () => {
+      const { service, work } = pass({ decided: [claim('a')], frozenCompanies: ['co-1'] });
+      await assert.rejects(service.repair('co-1', 'a'), /reimbursement_resume_unavailable/);
+      assert.deepEqual(work(), []);
+    });
   });
 });

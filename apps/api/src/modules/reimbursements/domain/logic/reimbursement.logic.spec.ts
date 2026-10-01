@@ -28,6 +28,7 @@ import {
   redactPayload,
   frozenApprovalAuthority,
   currentDesk,
+  pendingProjectionIntent,
   claimSignatureAckHash,
   claimSnapshotFields,
   type CurrentDeskStepFields,
@@ -626,6 +627,50 @@ describe('currentDesk', () => {
     for (const status of ['PAID', 'REJECTED', 'CANCELLED', 'VOIDED'] as const) {
       assert.equal(currentDesk({ status, cancellationPending: true }), undefined, status);
     }
+  });
+});
+
+// Audit B4. One definition of "decided, not carried out yet" for the scheduled run, for ดำเนินการต่อ
+// and for what the claim detail says, so the three never name different claims.
+describe('pendingProjectionIntent', () => {
+  const policy = (overrides: Record<string, unknown> = {}) => ({
+    schemaVersion: 1, policyId: 'pol-1', policyVersion: 'v1', approvalRequiredFromAmount: '1000.00', requiresApproval: false, route: null,
+    allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: false, duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: false,
+    ...overrides,
+  });
+  const routed = { requiresApproval: true, route: { mode: 'MANAGER_ROLE', roleKey: 'MANAGER', effectiveTaskRole: 'MANAGER', ownerFallbackUsedAtSubmission: false } };
+  const claim = (overrides: Record<string, unknown> = {}) => ({ status: 'PENDING_APPROVAL' as const, requesterUserId: 'staff-1', ...overrides }) as Parameters<typeof pendingProjectionIntent>[0];
+  const approved = { id: 'step-2', status: 'APPROVED' as const, decisionByUserId: 'mgr-1' };
+
+  it('names the decision of the step the claim stands on, and who made it', () => {
+    assert.deepEqual(pendingProjectionIntent(claim({ currentApprovalStepId: 'step-2', approvalSteps: [{ id: 'step-1', status: 'CANCELLED' }, approved] })),
+      { kind: 'MANAGER', actorUserId: 'mgr-1', approvalStepId: 'step-2' });
+    assert.deepEqual(pendingProjectionIntent(claim({ status: 'FINANCE_REVIEW', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: 'fin-1' })),
+      { kind: 'FINANCE', actorUserId: 'fin-1' });
+    // Nobody had to approve it: the decision is the policy's, on behalf of whoever sent the claim.
+    assert.deepEqual(pendingProjectionIntent(claim({ status: 'APPROVED', approvalPolicySnapshotJson: policy(), submittedByUserId: 'fin-1' })), { kind: 'POLICY', actorUserId: 'fin-1' });
+    assert.deepEqual(pendingProjectionIntent(claim({ status: 'APPROVED', approvalPolicySnapshotJson: policy() })), { kind: 'POLICY', actorUserId: 'staff-1' });
+  });
+
+  it('names nothing while a decision is still to be made, or once it was carried out', () => {
+    for (const [why, request] of [
+      ['waiting for its approver', claim({ currentApprovalStepId: 'step-1', approvalSteps: [{ id: 'step-1', status: 'PENDING' }] })],
+      ['an earlier step was approved, the one it stands on was not', claim({ currentApprovalStepId: 'step-3', approvalSteps: [approved, { id: 'step-3', status: 'PENDING' }] })],
+      ['its steps were not loaded', claim({ currentApprovalStepId: 'step-2' })],
+      ['waiting for finance', claim({ status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' })],
+      ['approved on its way to finance', claim({ status: 'APPROVED', approvalPolicySnapshotJson: policy({ financeReviewRequired: true }) })],
+      ['approved by a person under a policy that asked for one', claim({ status: 'APPROVED', approvalPolicySnapshotJson: policy(routed) })],
+      ['a claim from before policies were frozen', claim({ status: 'APPROVED' })],
+      ['waiting for payment', claim({ status: 'READY_FOR_PAYMENT' })],
+      ['paid', claim({ status: 'PAID' })],
+    ] as const) assert.equal(pendingProjectionIntent(request), undefined, why);
+  });
+
+  it('names nothing for a claim that is being cancelled: the cancellation comes first', () => {
+    const cancellationPendingAt = new Date('2026-10-01T02:00:00.000Z');
+    assert.equal(pendingProjectionIntent(claim({ currentApprovalStepId: 'step-2', approvalSteps: [approved], cancellationPendingAt })), undefined);
+    assert.equal(pendingProjectionIntent(claim({ status: 'FINANCE_REVIEW', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: 'fin-1', cancellationPendingAt })), undefined);
+    assert.equal(pendingProjectionIntent(claim({ status: 'APPROVED', approvalPolicySnapshotJson: policy(), cancellationPendingAt })), undefined);
   });
 });
 
