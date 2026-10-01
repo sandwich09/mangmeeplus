@@ -617,6 +617,29 @@ describe('the hub\'s third tab is the pay queue where the company has no finance
   });
 });
 
+// The dialog told a signer to wait for the signature to become ready, and the refusal said to wait for its approval, while
+// the signature page says a saved signature signs at once: nothing is waited for, and nobody approves a signature.
+describe('a signer with no saved signature is told what is true and what to do (owner 2026-10-02)', () => {
+  const dialog = () => {
+    Object.assign(globalThis, { document: { body: {} } }); // Modal's portal target; never touched by a server render
+    try { return visible(renderToStaticMarkup(h(AppRouterContext.Provider, { value: router }, h(sections.MissingSavedSignatureModal, { companyId: 'company-1', onClose: noop })))); }
+    finally { Reflect.deleteProperty(globalThis, 'document'); }
+  };
+
+  it('says where to save one and that it signs at once, in the signature page\'s own words, and never to wait', () => {
+    const texts = dialog();
+    for (const text of ['ยังไม่มีลายเซ็นของคุณ', 'ไปหน้าลายเซ็น', 'ไว้ภายหลัง']) assert.ok(texts.includes(text), text);
+    const body = texts.find((text) => text.includes('ลายเซ็นของฉัน')) ?? '';
+    assert.match(body, /เซ็นบนหน้าจอหรืออัปโหลดรูปลายเซ็น บันทึกแล้วใช้ลงนามได้ทันที จากนั้นกลับมากดลงนามในใบนี้อีกครั้ง$/u);
+    const refusal = errorMessage('claim_saved_signature_required');
+    assert.match(refusal, /ใช้ลงนามได้ทันที$/u);
+    for (const text of [...texts, refusal]) assert.doesNotMatch(text, /รอให้|รออนุมัติ|พร้อมใช้งาน/u);
+    // What the dialog promises is what the signature page itself says after a save.
+    const signaturePage = readFileSync(join(__dirname, '../expenses/ExpensesWorkspacePanels.tsx'), 'utf8');
+    for (const text of ['ยังไม่มีลายเซ็นของคุณ', 'บันทึกลายเซ็นแล้ว ใช้ลงนามได้ทันที']) assert.ok(signaturePage.includes(text), text);
+  });
+});
+
 // Owner 2026-10-02: "SLA" is no word a shop owner reads. A claim that waited past the company's deadline reads "เกินกำหนด",
 // the words of the notice the server sends for it, and the policy page names the deadline for what it is.
 describe('the deadline of a claim is said in plain Thai (owner 2026-10-02)', () => {

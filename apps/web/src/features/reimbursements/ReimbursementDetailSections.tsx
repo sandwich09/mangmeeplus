@@ -263,15 +263,19 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
   );
 }
 
+/**
+ * Signing was refused because the signer has saved no signature. A signature saved on "ลายเซ็นของฉัน" is usable at
+ * once: nothing is waited for and nobody approves it, so the dialog says where to save one and to come back.
+ */
 export function MissingSavedSignatureModal({ companyId, onClose }: {
   companyId: string;
   onClose: () => void;
 }) {
   return (
-    <Modal open title="ยังไม่มีลายเซ็นที่พร้อมใช้งาน" size="sm" closeLabel="ไว้ภายหลัง" onClose={onClose}>
+    <Modal open title="ยังไม่มีลายเซ็นของคุณ" size="sm" closeLabel="ไว้ภายหลัง" onClose={onClose}>
       <div className="space-y-4">
         <p className="text-sm text-gray-600">
-          กรุณาบันทึกลายเซ็นในฟีเจอร์ลายเซ็นและรอให้ลายเซ็นมีสถานะพร้อมใช้งาน แล้วกลับมาลงนามอีกครั้ง
+          บันทึกลายเซ็นของคุณที่หน้าลายเซ็นของฉัน โดยเซ็นบนหน้าจอหรืออัปโหลดรูปลายเซ็น บันทึกแล้วใช้ลงนามได้ทันที จากนั้นกลับมากดลงนามในใบนี้อีกครั้ง
         </p>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>ไว้ภายหลัง</button>

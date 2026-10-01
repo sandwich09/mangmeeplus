@@ -610,7 +610,7 @@ const CODE_LABELS: Record<string, string> = {
   // "ยังไม่มีเลขที่เอกสาร" คือเหตุผลจริงที่พิมพ์ไม่ได้ — บอกให้ตรง ไม่ใช่แค่ว่าสถานะไม่ถูก
   claim_form_requires_submitted: 'พิมพ์แบบฟอร์มได้หลังส่งใบเบิกแล้ว เพราะใบร่างยังไม่มีเลขที่เอกสาร',
   claim_signature_role_not_eligible: 'คุณไม่ได้อยู่ในรายชื่อผู้ลงนามของใบเบิกนี้',
-  claim_saved_signature_required: 'ยังไม่มีลายเซ็นที่พร้อมใช้งาน กรุณาบันทึกและรออนุมัติลายเซ็นก่อน',
+  claim_saved_signature_required: 'ยังไม่มีลายเซ็นของคุณ กรุณาบันทึกลายเซ็นที่หน้าลายเซ็นของฉันก่อน บันทึกแล้วใช้ลงนามได้ทันที',
   claim_signature_must_be_png_or_jpeg_max_2mb: 'ไฟล์ลายเซ็นต้องเป็น PNG หรือ JPEG ขนาดไม่เกิน 2 MB',
   claim_signature_too_large: 'ไฟล์ลายเซ็นใหญ่เกิน 2 MB กรุณาย่อขนาดแล้วอัปโหลดใหม่',
   claim_signature_attachment_invalid: 'ไม่พบไฟล์ลายเซ็นของคุณสำหรับใบเบิกนี้ กรุณาอัปโหลดใหม่',

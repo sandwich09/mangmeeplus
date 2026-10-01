@@ -327,7 +327,7 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   reimbursement_payment_already_recorded: 'คำขอนี้บันทึกการจ่ายเงินไปแล้ว',
   stale_claim_snapshot: 'คำขอถูกแก้ไขหลังเปิดดูใบเบิก กรุณาเปิดใบเบิกใหม่ก่อนลงนาม',
   claim_signature_role_not_eligible: 'คุณไม่ใช่ผู้มีสิทธิ์ลงนามในช่องนี้',
-  claim_saved_signature_required: 'ยังไม่มีลายเซ็นที่พร้อมใช้งาน กรุณาบันทึกและรออนุมัติลายเซ็นก่อน',
+  claim_saved_signature_required: 'ยังไม่มีลายเซ็นของคุณ กรุณาบันทึกลายเซ็นที่หน้าลายเซ็นของฉันก่อน บันทึกแล้วใช้ลงนามได้ทันที',
   claim_signature_must_be_png_or_jpeg_max_2mb: 'ไฟล์ลายเซ็นต้องเป็น PNG/JPEG ขนาดไม่เกิน 2 MB',
   claim_signature_attachment_invalid: 'ไม่พบไฟล์ลายเซ็นของคุณสำหรับการลงนามครั้งนี้',
   claim_signature_bytes_mismatch: 'ไฟล์ลายเซ็นไม่ใช่รูปภาพตามชนิดที่ระบุ',
